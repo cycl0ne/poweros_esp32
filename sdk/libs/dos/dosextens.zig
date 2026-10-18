@@ -646,6 +646,38 @@ pub const DosListHandler = extern struct {
     /// `seg_list`. When the last one ends the code is unloaded and the
     /// next use loads it again.
     users: u32 = 0,
+    /// The file system's code that came with the partition table the
+    /// drive was mounted from, or null: what dos starts the handler from,
+    /// ahead of `handler`'s name.
+    file_sys: ?*FileSysEntry = null,
+};
+
+/// A file system's code that came with a drive's partition table (a
+/// FileSysHeaderBlock and its LoadSegBlocks), for the drives mounted from
+/// that table. The driver that mounts them makes one per file system, puts
+/// the load file in `image` and the entry on each of its nodes
+/// (`DosListHandler.file_sys`); dos loads the image when the first of
+/// those drives starts its handler, and every other one runs the same
+/// code. The entry and its code are the system's from then on: neither is
+/// ever freed.
+pub const FileSysEntry = extern struct {
+    /// fse_DosType: the DosType of the partitions it serves.
+    dos_type: u32 = 0,
+    /// fse_Version: version << 16 | revision, as fhb_Version holds it.
+    version: u32 = 0,
+    /// The load file, until dos has loaded it; then null, and freed. An
+    /// allocation with AllocVec, dos's to free once the entry is on a
+    /// node.
+    image: ?[*]u8 = null,
+    image_size: u32 = 0,
+    /// The handler's entry, once loaded; null before, and after a load
+    /// that failed - the drive then starts the handler `handler` names.
+    entry: ?TaskFn = null,
+    /// What the load made.
+    seg_list: ?*SegList = null,
+    /// What the loaded code is called on the list of loaded files: the
+    /// handler's name.
+    name: [32:0]u8 = @splat(0),
 };
 
 /// A volume's part of a DosList.

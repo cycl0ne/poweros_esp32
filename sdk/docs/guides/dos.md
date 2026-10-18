@@ -755,12 +755,23 @@ behind it, until the last of those locks is gone.
 ## Handlers and packets
 
 A handler is a process that answers the packets for the names of its
-node, started by dos the first time one of them is used. Its code is
-found by the node's handler name: among dos's resident segments, where
-the ROM's handlers are (`nil-handler`, `ram-handler`, `con-handler`,
-`pipe-handler`, `flashfs-handler`), or else as a file, a bare name from
-`HANDLERS:`, where `fat-handler` and `posfs-handler` are, unloaded again
-when the last process running it ends.
+node, started by dos the first time one of them is used. Its code is,
+in this order:
+
+1. **The code the drive's partition table brings**, when the node has
+   it (`misc.handler.file_sys`, a `FileSysEntry`): a file system kept in
+   the table that is newer than the ROM's handler for its DosType, or for
+   one the ROM has none for ([disks guide](rdb.md)). dos loads it once,
+   under a lock of its own, the first time a drive of it starts; every
+   drive with the same entry then runs that code, which stays for the
+   system's life. Code that does not load is freed, and the node's
+   handler name is tried instead.
+2. **Among dos's resident segments**, by the node's handler name: the
+   ROM's handlers (`nil-handler`, `ram-handler`, `con-handler`,
+   `pipe-handler`, `flashfs-handler`).
+3. **As a file**, a bare name from `HANDLERS:`, where `fat-handler` and
+   `posfs-handler` are, unloaded again when the last process running it
+   ends.
 
 A `DosPacket` carries an `action` (a `dos.ActionCode`: `.findinput`,
 `.read`, `.locate_object`, `.disk_info`, ...) and up to seven arguments

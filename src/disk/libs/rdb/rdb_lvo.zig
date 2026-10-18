@@ -21,6 +21,9 @@ const AddPartition = @import("partition/addpartition.zig").AddPartition;
 const RemPartition = @import("partition/rempartition.zig").RemPartition;
 const WriteRDB = @import("table/writerdb.zig").WriteRDB;
 const MountPartition = @import("partition/mountpartition.zig").MountPartition;
+const NextFileSystem = @import("filesystem/nextfilesystem.zig").NextFileSystem;
+const AddFileSystem = @import("filesystem/addfilesystem.zig").AddFileSystem;
+const RemFileSystem = @import("filesystem/remfilesystem.zig").RemFileSystem;
 
 /// rdb.library's interface, as the SDK generates it from
 /// sdk/fd/rdb_lib.fd.
@@ -55,6 +58,9 @@ const contract_files = [_][]const u8{
     @embedFile("partition/rempartition.zig"),
     @embedFile("table/writerdb.zig"),
     @embedFile("partition/mountpartition.zig"),
+    @embedFile("filesystem/nextfilesystem.zig"),
+    @embedFile("filesystem/addfilesystem.zig"),
+    @embedFile("filesystem/remfilesystem.zig"),
 };
 
 fn lvoOpenRDB(base: *RDBBase, device: [*:0]const u8, unit: u32, err: ?*i32) callconv(.c) ?*rdb.RDBHandle {
@@ -84,6 +90,15 @@ fn lvoWriteRDB(base: *RDBBase, handle: *rdb.RDBHandle) callconv(.c) i32 {
 fn lvoMountPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.RDBPartition, name: ?*rdb.MountName, flags: u32) callconv(.c) i32 {
     return MountPartition(base, handle, partition, name, flags);
 }
+fn lvoNextFileSystem(base: *RDBBase, handle: *rdb.RDBHandle, previous: ?*rdb.RDBFileSystem) callconv(.c) ?*rdb.RDBFileSystem {
+    return NextFileSystem(base, handle, previous);
+}
+fn lvoAddFileSystem(base: *RDBBase, handle: *rdb.RDBHandle, dos_type: u32, code: [*]const u8, size: u32) callconv(.c) i32 {
+    return AddFileSystem(base, handle, dos_type, code, size);
+}
+fn lvoRemFileSystem(base: *RDBBase, handle: *rdb.RDBHandle, file_system: *rdb.RDBFileSystem) callconv(.c) void {
+    return RemFileSystem(base, handle, file_system);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -101,6 +116,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRemPartition),
     vec(lvoWriteRDB),
     vec(lvoMountPartition),
+    vec(lvoNextFileSystem),
+    vec(lvoAddFileSystem),
+    vec(lvoRemFileSystem),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

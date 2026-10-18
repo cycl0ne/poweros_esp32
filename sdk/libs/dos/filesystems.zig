@@ -8,6 +8,12 @@
 //! takes every FAT DosType (`MSD`, `MSH`, any last byte), and posfs's both
 //! of posfs's (`POS\0`, `POS\1`), so each stands here once.
 //!
+//! **A file system a partition table brings** (a FileSysHeaderBlock for
+//! the DosType, sdk/libs/dos/hardblocks.zig) is what the table's
+//! partitions of that DosType run, ahead of the handler named here, when
+//! the ROM has no handler for the DosType or an older one (`storedWins`).
+//! It may also be for a DosType this table does not know.
+//!
 //! **Where each may go.**
 //! - The flash file system writes a log a block is erased for: only a
 //!   medium with an erase unit (the flash disk).
@@ -27,6 +33,8 @@
 
 const dos = @import("dos.zig");
 const posfs = @import("posfs/posfs.zig");
+const resident = @import("../exec/resident.zig");
+const ExecBase = @import("../../interface/exec.zig").ExecBase;
 
 /// The handlers' names, as dos finds them: among its segments for the
 /// flash file system, in HANDLERS: for the others.
@@ -80,6 +88,46 @@ pub fn of(dos_type: u32) ?*const FileSystem {
 pub fn handlerFor(dos_type: u32) ?[*:0]const u8 {
     const file_system = of(dos_type) orelse return null;
     return file_system.handler;
+}
+
+/// A handler's version as fhb_Version holds it - version << 16 |
+/// revision - from its ROM tag: rt_Version, and the revision its ID string
+/// gives.
+///
+/// INPUTS:
+/// - `tag` - the handler's ROM tag.
+pub fn versionOf(tag: *const resident.Resident) u32 {
+    const version = @as(u32, tag.version) << 16;
+    const id = tag.id_string orelse return version;
+    var length: usize = 0;
+    while (id[length] != 0) length += 1;
+    return version | resident.revisionOf(id[0..length]);
+}
+
+/// The version of the ROM's handler for a DosType (`versionOf`), or null
+/// when the ROM has none: the DosType names no handler, or the one it
+/// names is loaded from the disk.
+///
+/// INPUTS:
+/// - `sys` - exec, for FindResident.
+/// - `dos_type` - a partition's de_DosType.
+pub fn romVersion(sys: *ExecBase, dos_type: u32) ?u32 {
+    const name = handlerFor(dos_type) orelse return null;
+    const tag = sys.FindResident(name) orelse return null;
+    return versionOf(tag);
+}
+
+/// Whether the file system a partition table brings for a DosType is the
+/// one its partitions run: the ROM has no handler for the DosType, or the
+/// table's is newer than the ROM's.
+///
+/// INPUTS:
+/// - `stored` - the table's version, fhb_Version.
+/// - `rom` - the ROM's handler's (`versionOf`), or null when the ROM has
+///   none.
+pub fn storedWins(stored: u32, rom: ?u32) bool {
+    const in_rom = rom orelse return true;
+    return stored > in_rom;
 }
 
 /// Whether a DosType says its area begins with a partition table, which

@@ -3,7 +3,8 @@
 What a disk holds is said by the disk itself: a RigidDiskBlock in one of
 its first blocks, and a chain of PartitionBlocks hanging off it, one per
 partition, each with the name its device node gets (`DH0`), the
-cylinders it covers and the file system it is for. The flash disk's
+cylinders it covers and the file system it is for. The table can keep a
+file system's code too, which its partitions then run. The flash disk's
 table is read when the system starts, and its partitions are mounted as
 it says. `rdb.library`, in `LIBS:`, is how a program reads the table,
 changes it, writes it back and mounts a partition.
@@ -14,7 +15,7 @@ fresh table on a disk and mounting what it made. `C:RDB` is the library's own co
 table, makes a fresh one, and adds and takes away partitions from the
 shell, and gives a partition to another file system. `s3> rdb init`
 writes a first table on a blank flash chip, where there is no `C:` yet to
-run `C:RDB` from. `SYS:Programs/HDToolBox` changes the table of any
+run `C:RDB` from. `SYS:System/HDToolBox` changes the table of any
 drive in a window, with the partitions as a bar that is dragged.
 
 ## The table on the disk
@@ -26,7 +27,7 @@ bytes of a block of its own:
 |---|---|
 | `RigidDiskBlock` (`RDSK`) | the root: the block size, the disk's geometry, which blocks are kept for the table (`rdb_blocks_lo` to `rdb_blocks_hi`), which cylinders partitions may use (`lo_cylinder` to `hi_cylinder`), and the first block of each chain |
 | `PartitionBlock` (`PART`) | one partition: its flags, its drive name, and the `DosEnvec` its handler is mounted with - cylinders, block size, buffers, boot priority, DosType |
-| `FileSysHeaderBlock` (`FSHD`), `LoadSegBlock` (`LSEG`) | a file system and its code |
+| `FileSysHeaderBlock` (`FSHD`), `LoadSegBlock` (`LSEG`) | a file system kept in the table: the DosType it serves, its version and the first block of its code, a handler's load file in a chain of blocks |
 | `BadBlockBlock` (`BADB`) | a list of replaced blocks |
 
 The RigidDiskBlock is in one of the first `RDB_LOCATION_LIMIT` (16)
@@ -147,8 +148,10 @@ its own. Then the new table goes down beside the old one:
 
 1. Each PartitionBlock gets a block in the table's own area that the
    old table is not in, and so does the RigidDiskBlock, in one of the
-   first 16. They are written in the list's order with their checksums,
-   the RigidDiskBlock last.
+   first 16. So does each file system's header, and the code of each one
+   added since the disk was read (below). The code goes first, then the
+   headers, then the PartitionBlocks in the list's order, each with its
+   checksum, and the RigidDiskBlock last.
 2. The old RigidDiskBlock is wiped, and any other one in the first 16
    blocks before it.
 3. `CMD_UPDATE`, so a device that holds writes back has them on the
@@ -166,8 +169,8 @@ on any other a wiped block is written with zeroes.
 Only the table's own blocks are ever written. What is on a partition's
 cylinders stays as it is, whatever the table now says of them - adding a
 partition does not format it, and taking one out does not erase it. The
-blocks of file system headers, their code and the bad-block list are
-noted when the disk is opened, kept as they are, and never given to a
+blocks of the file systems' code and of the bad-block list are noted
+when the disk is opened, kept as they are, and never given to a
 PartitionBlock.
 
 ### Adding a partition
@@ -291,10 +294,15 @@ has its own copy of everything.
   after its last `/` or `:`, so `DEVS:usb/disk.device` is
   `disk.device`.
 - **A file system that cannot go there** is `RDBERR_FILESYSTEM`: a
-  DosType with no handler, FAT on a medium that erases, `FLS\0` on one
-  that does not, and `MSH` or `POS\1`, whose area begins with a
-  partition table of its own and so is a whole medium's, never a
-  partition's.
+  DosType with no handler and no code in the table, FAT on a medium that
+  erases, `FLS\0` on one that does not, and `MSH` or `POS\1`, whose area
+  begins with a partition table of its own and so is a whole medium's,
+  never a partition's.
+- **Code the table brings** for the DosType, newer than the ROM's
+  handler or for one the ROM has none for, is what the node runs: it is
+  copied into memory for the node (`RDBERR_IO` when it cannot be read),
+  and the drives of one unit with the same file system share the copy
+  (next section).
 
 Mount what `WriteRDB` has written: a partition only in the handle is
 mounted all the same, but the disk does not have it at the next start.
@@ -303,6 +311,64 @@ alone when the whole table is mounted, and `MountPartition` mounts what
 it is given. The node names its handler by a string held in the
 library, so once it has mounted a partition, rdb.library stays in memory
 for the system's life.
+
+## File systems kept in the table
+
+A table keeps a file system's code as a `FileSysHeaderBlock` for the
+DosType it serves, with the handler's load file - what is in
+`HANDLERS:` - in a chain of `LoadSegBlock`s. A drive can carry the file
+system it needs that way, and the system can start from a partition
+whose handler is not in the ROM. The handle holds them as a second list,
+`RDBFileSystem` nodes:
+
+```zig
+var file_system = rb.NextFileSystem(handle, null);
+while (file_system) |fs| : (file_system = rb.NextFileSystem(handle, fs)) {
+    const header = &fs.header;
+    _ = Printf(dl, "%08lx: version %u.%u, %u bytes\n", .{ header.dos_type, header.version >> 16, header.version & 0xFFFF, fs.size });
+}
+```
+
+- `AddFileSystem(handle, dos_type, code, size)` copies a handler's load
+  file into the handle for the partitions of `dos_type`, in place of one
+  kept for that DosType before. Its version (`fhb_Version`, version << 16
+  | revision) is the handler's own, from its ROM tag. Code that is not a
+  handler's load file for this machine is `RDBERR_FILESYSTEM`.
+- `RemFileSystem(handle, fs)` takes one out. The disk keeps its code
+  until `WriteRDB` writes a table without it.
+- `WriteRDB` writes the code of each one added as a new chain, gives
+  every file system a new header, and leaves the code that is on the
+  disk already where it is. Code that does not fit in the table's area
+  goes after it, up to the first partition's cylinder (on a table with no
+  partition, up to the last cylinder), and the area grows over it:
+  `rdb_blocks_hi` to the end of the cylinder the code reaches into,
+  `lo_cylinder` to the next one. Where even that is too small, nothing is
+  written and the answer is `RDBERR_FULL`. The area never shrinks.
+
+**Which code runs.** A partition runs the table's code for its DosType
+when the ROM has no handler for the DosType, or an older one
+(`sdk.dos.filesystems.storedWins`); otherwise the ROM's handler, or the
+one in `HANDLERS:` its DosType names. `HANDLERS:` is not looked at when
+the table brings newer code. The code reaches dos as a `FileSysEntry` on
+the device node (`misc.handler.file_sys`), which dos loads the first
+time a drive of it starts ([dos guide](dos.md)):
+
+- **On the flash disk** `flash.device` copies the code out of the disk
+  into memory at boot, one copy for every partition of that file system,
+  before dos is up.
+- **On a card or a stick**, and for a partition HDToolBox has just made,
+  `MountPartition` copies it, and the drives of one unit share it.
+
+A drive mounted already goes on running the code it started with until
+the system starts again. The code is for the machine it was built for,
+so a card given posfs's code on an ESP32-S3 runs it only on an S3.
+
+**Room on the flash disk.** The flash disk's area is 64 KiB unless the
+system is built with `-Drdb-size=<KiB>`, and its first partition begins
+right after it, so there is no free space for the area to grow into.
+posfs-handler is some 300 KiB: `-Drdb-size=1024` gives it room, and room
+for the new copy beside the old when it is replaced. A card's table,
+made with its first partition on the first MiB, has room for it.
 
 ## Errors
 
@@ -319,21 +385,23 @@ which may have written part of the table.
 | `RDBERR_BLOCKSIZE` | the medium's erase unit is larger than its blocks, so erasing one would take its neighbours |
 | `RDBERR_NAME` | a name that is empty, longer than `MAX_DEVICE_NAME` (30), holds a colon or a slash, or is another partition's; for `MountPartition`, taken on dos's list with every dot that fits |
 | `RDBERR_RANGE` | cylinders outside the usable ones, the wrong way round, or another partition's; or none free for 0 and 0 |
-| `RDBERR_FULL` | no block left in the table's area for another PartitionBlock |
+| `RDBERR_FULL` | no block left in the table's area for another PartitionBlock; more than 16 file systems; or code that does not fit even with the area grown up to the first partition |
 | `RDBERR_CHANGED` | the medium in the unit is not the one the table was read from |
 | `RDBERR_MOUNTED` | a device node already opens some of the partition's blocks |
-| `RDBERR_FILESYSTEM` | no handler for the partition's DosType, or one whose file system cannot go there |
+| `RDBERR_FILESYSTEM` | no handler and no code in the table for the partition's DosType, or one whose file system cannot go there; for `AddFileSystem`, code that is not a handler's load file for this machine |
 
 ## When a change is seen
 
 `flash.device` reads the table of the flash disk (its unit 0) once, when
 it starts at boot, and makes a device node for each partition not marked
 `PBFF_NOMOUNT`, with the handler its DosType names - `FLS\0` the flash
-file system, `POS\0` posfs ([posfs guide](posfs.md)). A partition whose
-file system cannot serve a part of the flash - FAT, which erases
-nothing; `MSH` or `POS\1`, whose area begins with a partition table of
-its own; a DosType there is no handler for - or that has no name, is
-passed over, and the chain is followed for 16 PartitionBlocks at most.
+file system, `POS\0` posfs ([posfs guide](posfs.md)), or the code the
+table keeps for the DosType where that wins over the ROM's handler. A
+partition whose file system cannot serve a part of the flash - FAT,
+which erases nothing; `MSH` or `POS\1`, whose area begins with a
+partition table of its own; a DosType there is no handler and no code
+in the table for - or that has no name, is passed over, and the chain is
+followed for 16 PartitionBlocks at most.
 Which DosType gets which handler, and where each may go, is
 `sdk.dos.filesystems`. It hands the nodes to
 expansion.library (`MakeDosNode`, `AddBootNode`), which keeps them until
@@ -370,9 +438,9 @@ by `MountPartition`.
 
 ## In a window: HDToolBox
 
-`SYS:Programs/HDToolBox` is a program built on these calls, and the
+`SYS:System/HDToolBox` is a program built on these calls, and the
 order it makes them in is the order any partitioning program needs
-(its readme is `SYS:Programs/Docs/HDToolBox.md`):
+(its readme is `SYS:System/Docs/HDToolBox.md`):
 
 - **The drives** are every unit of every block device the board lists
   (expansion.library's `ObtainDeviceUnits` with `DEVIF_BLOCK`). A drive
@@ -399,6 +467,12 @@ order it makes them in is the order any partitioning program needs
   restart is offered, and before `ColdReboot` every drive mounted from a
   block device is inhibited, so each file system writes out what it
   holds.
+- **File systems** is a page of its own: the table's file systems,
+  with which code each partition of that DosType runs, `AddFileSystem`
+  from a handler's file picked in a requester, and `RemFileSystem`. A
+  DosType the table keeps code for is offered to the partitions too.
+  Save offers a restart when a drive mounted from the table has a
+  file system whose code changed.
 - The partition SYS: is on - the device node whose handler serves SYS:,
   which is an assign - is not moved, removed or given another file
   system, and its drive gets no fresh table. HDToolBox formats nothing:
@@ -418,10 +492,14 @@ RDB ADD DH1 LOW 100 HIGH 199 DOSTYPE FLS BOOTABLE
 RDB ADD DH1 DOSTYPE POS              ; a partition for posfs
 RDB CHANGE DH1 DOSTYPE POS           ; a partition given to another file system
 RDB REMOVE DH1
+RDB ADDFS HANDLERS:posfs-handler DOSTYPE POS   ; posfs's code kept in the table
+RDB REMFS POS                        ; ... and taken out
 ```
 
-A change is made in the order `INIT`, `REMOVE`, `CHANGE`, `ADD`, and the
-table is written once, as a whole, and printed. `DOSTYPE` takes four
+A change is made in the order `INIT`, `REMOVE`, `CHANGE`, `ADD`,
+`REMFS`, `ADDFS`, and the table is written once, as a whole, and
+printed, with the file systems it keeps and which code each one's
+partitions run. `DOSTYPE` takes four
 characters with `\<n>` for a byte by its value (`FLS\0`, or `FLS` with
 the zero left off) or a number (`0x464C5300`). `CHANGE` sets the
 partition's DosType, its `BOOTABLE` flag, or both, and leaves its

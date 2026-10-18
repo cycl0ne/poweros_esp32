@@ -14,6 +14,13 @@
 //! go. MountPartition puts a partition on dos's list, as a device node
 //! its handler is started from.
 //!
+//! A file system's code can be kept in the table too: an `RDBFileSystem`
+//! per DosType on the handle's second list, which AddFileSystem and
+//! RemFileSystem change and WriteRDB writes as a FileSysHeaderBlock and a
+//! chain of LoadSegBlocks. The partitions of that DosType run it when the
+//! ROM has no handler for the DosType or an older one
+//! (`sdk.dos.filesystems.storedWins`).
+//!
 //! The handle and its nodes are the library's allocations, handed to the
 //! program until CloseRDB. A program changes what is documented as its to
 //! change, and leaves the list itself to the calls.
@@ -55,7 +62,8 @@ pub const RDBERR_NAME: i32 = -6;
 /// with 0 and 0 also answers it when no cylinder is free at all.
 pub const RDBERR_RANGE: i32 = -7;
 /// No block left in the RigidDiskBlock's own area for another
-/// PartitionBlock.
+/// PartitionBlock, or for the code of the table's file systems even with
+/// the area grown up to the first partition.
 pub const RDBERR_FULL: i32 = -8;
 /// The medium in the unit is not the one the handle's table was read
 /// from: it was taken out, or another put in, since OpenRDB. Nothing is
@@ -66,7 +74,8 @@ pub const RDBERR_CHANGED: i32 = -9;
 /// the whole medium or another area that reaches into it.
 pub const RDBERR_MOUNTED: i32 = -10;
 /// MountPartition: no handler serves the partition's DosType, or its file
-/// system cannot go on this medium or inside a partition.
+/// system cannot go on this medium or inside a partition. AddFileSystem:
+/// the code is not a handler's load file for this machine.
 pub const RDBERR_FILESYSTEM: i32 = -11;
 
 // --- MountPartition -------------------------------------------------------------
@@ -119,6 +128,10 @@ pub const RDBHandle = extern struct {
     /// WriteRDB and MountPartition refuse when the unit's count has moved
     /// on since. 0 for a device that does not count.
     change_num: u32 = 0,
+    /// The file systems kept in the table, RDBFileSystem nodes in the
+    /// order of the disk's chain: walk it with NextFileSystem, change it
+    /// with AddFileSystem and RemFileSystem.
+    file_systems: exec.List = .{},
 };
 
 /// One partition, on its handle's list.
@@ -132,6 +145,27 @@ pub const RDBPartition = extern struct {
     /// flags and its environment are the program's to change; `next` and
     /// the checksum are WriteRDB's.
     block: hardblocks.PartitionBlock = .{},
+};
+
+/// One file system's code kept in the table, on its handle's list. All of
+/// it is the library's: a program reads it. What the DosType is called is
+/// `sdk.dos.filesystems`'s to say.
+pub const RDBFileSystem = extern struct {
+    /// On the handle's list; it has no name.
+    node: exec.Node = .{},
+    /// The block its FileSysHeaderBlock was read from or last written to;
+    /// `end_of_list` for one AddFileSystem made that WriteRDB has not
+    /// written yet.
+    at: u32 = hardblocks.end_of_list,
+    /// The FileSysHeaderBlock: the DosType it serves (`dos_type`), its
+    /// version (`version`: version << 16 | revision) and where its code
+    /// starts on the disk.
+    header: hardblocks.FileSysHeaderBlock = .{},
+    /// The code's size in bytes: the load file's, as the chain holds it.
+    size: u32 = 0,
+    /// The blocks the code takes on the disk; 0 for code WriteRDB has
+    /// not written yet.
+    blocks: u32 = 0,
 };
 
 /// The partition's drive name, as the node calls it.

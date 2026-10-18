@@ -29,4 +29,13 @@ i32 WriteRDB(*rdb.RDBHandle handle)
 /// (with dots added while the name is taken), its handler started with
 /// RDBMF_START; the name used goes where `name` points.
 i32 MountPartition(*rdb.RDBHandle handle, *rdb.RDBPartition partition, ?*rdb.MountName name, u32 flags)
+/// The file system after `previous` on the handle's list of the file
+/// systems kept in the table, or the first.
+?*rdb.RDBFileSystem NextFileSystem(*rdb.RDBHandle handle, ?*rdb.RDBFileSystem previous)
+/// A handler's load file, `size` bytes at `code`, kept in the table for
+/// the partitions of `dos_type` - in place of one kept for it already -
+/// once WriteRDB writes it.
+i32 AddFileSystem(*rdb.RDBHandle handle, u32 dos_type, [*]const u8 code, u32 size)
+/// A file system taken out of the handle's table and freed.
+void RemFileSystem(*rdb.RDBHandle handle, *rdb.RDBFileSystem file_system)
 ##end

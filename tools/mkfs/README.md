@@ -4,8 +4,15 @@ Builds a disk image for the log file system, so the board boots with
 programs on `C:` instead of the shell copying them into `RAM:`.
 
 ```
-mkfs <out.bin> <name> <sectors> <sector-size> <page-size> [<path>[=<file>] ...]
+mkfs <out.bin> <name> <partition> <sectors> <partition-sectors> <sector-size> <page-size> <rdb-sectors> [<path>[=<file>] ...]
 ```
+
+`partition` is the drive the partition is mounted as (`DH0`).
+`partition-sectors` is its size, 0 for every sector past the table's area;
+fewer leave the rest of the disk for partitions made later. `rdb-sectors`
+is the table's area before the partition, 16 sectors at least: the room
+for more partitions and for file systems kept in the table (`-Drdb-size`
+sets it).
 
 An argument without `=` makes a directory in the image; one with `=` writes
 a file into it from the host. Directories come before what goes in them.

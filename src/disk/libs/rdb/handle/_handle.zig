@@ -5,22 +5,30 @@
 //!
 //! A handle is one allocation: the RDBHandle the program sees first, then
 //! the open unit's port and request, the block buffer, a copy of the
-//! device's name for the nodes MountPartition makes, and three maps of
+//! device's name for the nodes MountPartition makes, and four maps of
 //! the blocks at the start of the disk - those the library must not write
-//! over (the chains it does not manage), those the partition chain on the
-//! disk is in, and those a RigidDiskBlock is in. WriteRDB keeps clear of
-//! the disk's table while it can, so that the old one stays whole until
-//! the new RigidDiskBlock replaces it.
+//! over (the chains it does not manage), those the table's file systems'
+//! code is in, those the partition chain on the disk is in, and those a
+//! RigidDiskBlock is in. WriteRDB keeps clear of the disk's table while it
+//! can, so that the old one stays whole until the new RigidDiskBlock
+//! replaces it.
+//!
+//! The table's file systems are nodes of their own (`FileSys`): the
+//! FileSysHeaderBlock and what its chain of LoadSegBlocks measures, read
+//! at OpenRDB without the code itself, which is read from the disk when
+//! MountPartition wants it. One AddFileSystem made holds its code in
+//! memory until WriteRDB has put it on the disk.
 //!
 //! Every transfer is a whole block of the medium through the buffer, in
 //! the memory the medium asks for: a structure is the first 256 bytes of
-//! its block, and the rest is written as zeroes.
+//! its block, and the rest is written as zeroes; a LoadSegBlock fills it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rdb = sdk.rdb;
 const trackdisk = sdk.devices.trackdisk;
 const hardblocks = sdk.dos.hardblocks;
+const loadfile = sdk.dos.loadfile;
 const ExecBase = sdk.interface.exec.ExecBase;
 const RDBBase = @import("../rdb_base.zig").RDBBase;
 
@@ -75,11 +83,18 @@ pub const Handle = extern struct {
     has_table: bool = false,
     /// One block of the medium.
     buffer: ?[*]u8 = null,
-    /// Blocks no PartitionBlock may go in: the chains of file system
-    /// headers, their code and bad blocks.
+    /// Blocks no PartitionBlock may go in and nothing is written over:
+    /// the chains of bad blocks and of the drive's init code.
     kept: BlockMap = .{},
+    /// The blocks the table's file systems are in on the disk, headers
+    /// and code: no PartitionBlock goes in one.
+    stored: BlockMap = .{},
     /// The blocks the partition chain on the disk is in.
     on_disk: BlockMap = .{},
+    /// The first FileSysHeaderBlock of the chain on the disk, or
+    /// `end_of_list`: WriteRDB reads the chain to keep clear of its
+    /// blocks.
+    file_sys_list: u32 = hardblocks.end_of_list,
     /// The blocks of the first RDB_LOCATION_LIMIT that hold a sound
     /// RigidDiskBlock, for this block size or another: a reader takes the
     /// lowest, and WriteRDB leaves only its own.
@@ -88,6 +103,18 @@ pub const Handle = extern struct {
 
 pub fn handleOf(handle: *rdb.RDBHandle) *Handle {
     return @fieldParentPtr("public", handle);
+}
+
+/// The node behind an RDBFileSystem.
+pub const FileSys = extern struct {
+    public: rdb.RDBFileSystem = .{},
+    /// The code AddFileSystem was given, a copy, until WriteRDB has put
+    /// it on the disk; null for code that is there.
+    image: ?[*]u8 = null,
+};
+
+pub fn fileSysOf(file_system: *rdb.RDBFileSystem) *FileSys {
+    return @fieldParentPtr("public", file_system);
 }
 
 /// The bytes of one block: the medium's own.
@@ -102,6 +129,7 @@ pub fn create(base: *RDBBase) ?*Handle {
     const handle: *Handle = @ptrCast(@alignCast(memory));
     handle.* = .{ .sys = sys };
     handle.public.partitions.init(.unknown);
+    handle.public.file_systems.init(.unknown);
     return handle;
 }
 
@@ -110,6 +138,7 @@ pub fn create(base: *RDBBase) ?*Handle {
 pub fn destroy(handle: *Handle) void {
     const sys = handle.sys;
     freePartitions(handle);
+    freeFileSystems(handle);
     if (handle.io) |io| {
         if (handle.unit_open) sys.CloseDevice(&io.req);
         sys.DeleteIORequest(&io.req);
@@ -124,6 +153,42 @@ pub fn destroy(handle: *Handle) void {
 pub fn freePartitions(handle: *Handle) void {
     const sys = handle.sys;
     while (sys.RemHead(&handle.public.partitions)) |node| sys.FreeVec(node);
+}
+
+/// Every file system node taken off the list and freed, with any code it
+/// held.
+pub fn freeFileSystems(handle: *Handle) void {
+    const sys = handle.sys;
+    while (sys.RemHead(&handle.public.file_systems)) |node| freeFileSys(sys, @fieldParentPtr("node", node));
+}
+
+/// One file system node freed, off its list already.
+pub fn freeFileSys(sys: *ExecBase, file_system: *rdb.RDBFileSystem) void {
+    const node = fileSysOf(file_system);
+    sys.FreeVec(node.image);
+    sys.FreeVec(node);
+}
+
+/// A new file system node at the end of the list, holding `header`; null
+/// for no memory.
+pub fn appendFileSys(handle: *Handle, at: u32, header: *const hardblocks.FileSysHeaderBlock) ?*FileSys {
+    const sys = handle.sys;
+    const memory = sys.AllocVec(@sizeOf(FileSys), exec.MEMF_CLEAR) orelse return null;
+    const node: *FileSys = @ptrCast(@alignCast(memory));
+    node.* = .{ .public = .{ .at = at, .header = header.* } };
+    sys.AddTail(&handle.public.file_systems, &node.public.node);
+    return node;
+}
+
+/// The handler a load file holds, by its ROM tag: its name and version,
+/// or null for code that is not a handler's load file for this machine.
+pub fn handlerIn(code: []const u8) ?loadfile.HandlerTag {
+    var bytes = loadfile.Bytes{ .data = code };
+    const source = bytes.source();
+    const found = loadfile.findResident(source) orelse return null;
+    var tag: loadfile.HandlerTag = .{};
+    if (!loadfile.readHandler(source, found, &tag)) return null;
+    return tag;
 }
 
 /// A new partition node holding `block`, at the end of the list; null for
@@ -163,6 +228,14 @@ pub fn readBlock(handle: *Handle, block: u32, into: anytype) bool {
     return true;
 }
 
+/// A whole block read into the buffer: its bytes, until the next
+/// transfer, or null when it could not be read.
+pub fn readWhole(handle: *Handle, block: u32) ?[]u8 {
+    const buffer = handle.buffer orelse return null;
+    if (!command(handle, exec.CMD_READ, block, buffer)) return null;
+    return buffer[0..blockBytes(handle)];
+}
+
 /// A structure written as the start of a block, zeroes after it; the
 /// block erased first on a medium that wants it. Whether it was done.
 pub fn writeBlock(handle: *Handle, block: u32, from: anytype) bool {
@@ -171,6 +244,13 @@ pub fn writeBlock(handle: *Handle, block: u32, from: anytype) bool {
     @memset(buffer[0..blockBytes(handle)], 0);
     const bytes: [*]const u8 = @ptrCast(from);
     @memcpy(buffer[0..size], bytes[0..size]);
+    return writeBuffer(handle, block);
+}
+
+/// The buffer, as it is, written to a block, erased first on a medium
+/// that wants it. Whether it was done.
+pub fn writeBuffer(handle: *Handle, block: u32) bool {
+    const buffer = handle.buffer orelse return false;
     if (handle.public.geometry.erase_size != 0 and !command(handle, trackdisk.TDCMD_ERASE, block, null)) return false;
     return command(handle, exec.CMD_WRITE, block, buffer);
 }
@@ -247,6 +327,7 @@ pub fn readTable(handle: *Handle) i32 {
         handle.has_table = true;
     }
     if (!handle.has_table) return rdb.RDBERR_OK;
+    handle.file_sys_list = public.rdb.file_sys_header_list;
 
     var next = public.rdb.partition_list;
     var seen: u32 = 0;
@@ -263,24 +344,96 @@ pub fn readTable(handle: *Handle) i32 {
         next = part.next;
     }
 
-    keepFileSystems(handle);
+    if (readFileSystems(handle) != rdb.RDBERR_OK) return rdb.RDBERR_NOMEM;
     keepChain(handle, public.rdb.bad_block_list, hardblocks.IDNAME_BADBLOCK);
     keepChain(handle, public.rdb.drive_init, hardblocks.IDNAME_LOADSEG);
     return rdb.RDBERR_OK;
 }
 
-/// The file system headers' blocks and their code's, kept.
-fn keepFileSystems(handle: *Handle) void {
+/// The most file systems a table's chain is followed for.
+pub const max_file_systems = 16;
+
+/// The most blocks one file system's code is followed through: a chain
+/// longer than this is taken for a ring.
+pub const max_code_blocks = 1 << 16;
+
+/// A node for every sound FileSysHeaderBlock on the table's chain, with
+/// its code measured, and their blocks noted. A chain that breaks marks
+/// the table damaged, and a header whose code breaks is left out.
+/// Answers RDBERR_OK or RDBERR_NOMEM.
+fn readFileSystems(handle: *Handle) i32 {
     var next = handle.public.rdb.file_sys_header_list;
     var seen: u32 = 0;
-    while (next != hardblocks.end_of_list and seen < max_chain and !handle.kept.has(next)) : (seen += 1) {
+    while (next != hardblocks.end_of_list) : (seen += 1) {
         var header: hardblocks.FileSysHeaderBlock = undefined;
-        if (!readBlock(handle, next, &header)) return;
-        if (!hardblocks.sound(&header, hardblocks.IDNAME_FILESYSHEADER)) return;
-        handle.kept.add(next);
-        keepChain(handle, @bitCast(header.seg_list_blocks), hardblocks.IDNAME_LOADSEG);
+        if (seen == max_file_systems or !readBlock(handle, next, &header) or
+            !hardblocks.sound(&header, hardblocks.IDNAME_FILESYSHEADER))
+        {
+            handle.public.flags |= rdb.RDBF_DAMAGED;
+            return rdb.RDBERR_OK;
+        }
+        const at = next;
         next = header.next;
+        var size: u32 = 0;
+        var blocks: u32 = 0;
+        if (!measureCode(handle, @bitCast(header.seg_list_blocks), &size, &blocks)) {
+            handle.public.flags |= rdb.RDBF_DAMAGED;
+            continue;
+        }
+        const node = appendFileSys(handle, at, &header) orelse return rdb.RDBERR_NOMEM;
+        node.public.size = size;
+        node.public.blocks = blocks;
+        handle.stored.add(at);
     }
+    return rdb.RDBERR_OK;
+}
+
+/// The bytes and blocks of a chain of LoadSegBlocks, its blocks noted in
+/// `stored`; false for an empty chain or one that breaks.
+fn measureCode(handle: *Handle, first: u32, size: *u32, blocks: *u32) bool {
+    var next = first;
+    size.* = 0;
+    blocks.* = 0;
+    while (next != hardblocks.end_of_list) {
+        if (blocks.* == max_code_blocks or next >= handle.public.geometry.total_sectors) return false;
+        const block = readWhole(handle, next) orelse return false;
+        const data = hardblocks.loadSegData(block) orelse return false;
+        handle.stored.add(next);
+        size.* += @intCast(data.len);
+        blocks.* += 1;
+        next = nextOf(block);
+    }
+    return blocks.* != 0;
+}
+
+/// A LoadSegBlock's next block, from its bytes.
+pub fn nextOf(block: []const u8) u32 {
+    const at = @offsetOf(hardblocks.LoadSegBlock, "next");
+    return @as(u32, block[at]) | @as(u32, block[at + 1]) << 8 | @as(u32, block[at + 2]) << 16 | @as(u32, block[at + 3]) << 24;
+}
+
+/// A file system's code into `into`, as far as it goes: from the copy
+/// AddFileSystem made, or read from the disk's chain. The bytes put
+/// there, or null when the chain breaks before `into` is full.
+pub fn readCode(handle: *Handle, file_system: *rdb.RDBFileSystem, into: []u8) ?u32 {
+    if (fileSysOf(file_system).image) |image| {
+        const length = @min(into.len, file_system.size);
+        @memcpy(into[0..length], image[0..length]);
+        return @intCast(length);
+    }
+    var next: u32 = @bitCast(file_system.header.seg_list_blocks);
+    var done: u32 = 0;
+    var seen: u32 = 0;
+    while (done < into.len and next != hardblocks.end_of_list) : (seen += 1) {
+        if (seen == max_code_blocks) return null;
+        const block = readWhole(handle, next) orelse return null;
+        const data = hardblocks.loadSegData(block) orelse return null;
+        const length = @min(data.len, into.len - done);
+        @memcpy(into[done..][0..length], data[0..length]);
+        done += @intCast(length);
+        next = nextOf(block);
+    }
+    return if (done == into.len) done else null;
 }
 
 /// A chain of blocks that start with `id` and a next field (LoadSegBlock

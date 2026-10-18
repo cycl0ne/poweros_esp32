@@ -22,9 +22,10 @@ const display_ssh_port: u16 = 2222;
 const mmu_page = 64 * 1024;
 const disk_sector = 4096;
 const disk_page = 256;
-/// The sectors before DH0: that hold the RDB (tools/mkfs's
-/// `rdb_blocks`, RDB_LOCATION_LIMIT).
-const disk_rdb_blocks = 16;
+/// The flash disk's table area before DH0 unless `-Drdb-size` says
+/// otherwise, in KiB: the RigidDiskBlock, the PartitionBlocks, and room
+/// for the file systems kept in the table (tools/mkfs's `rdb-sectors`).
+const default_rdb_size_kib = 64;
 
 /// Where a file that is not built here is put to have it on the disk
 /// image: `disk/` in the root of the tree.
@@ -86,8 +87,11 @@ const image_dirs = [_][]const u8{
     // SYS:WBStartup - the programs the desktop starts as it comes up,
     // empty until some are put there.
     "WBStartup",
-    // SYS:System - what the desktop's own icons start: Shell.
+    // SYS:System - the system's own tools: Shell, which the desktop's
+    // own icons start, HDToolBox, CPULoad and MemMap; in Docs what each
+    // of the others is.
     "System",
+    "System/Docs",
     // The volume's trash: a file put in it is renamed there, and Empty
     // Trash deletes what it holds.
     "Trashcan",
@@ -153,25 +157,27 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/MultiView.info", .picture = "system-search", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/FontView.info", .picture = "preferences-desktop-font", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Prefs.info", .picture = "preferences-system", .fields = &.{ "KIND=TOOL", icon_stack } },
-    .{ .path = "programs/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Battery.info", .picture = "battery", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Sheet.info", .picture = "x-office-spreadsheet", .fields = &.{ "KIND=TOOL", icon_stack } },
-    .{ .path = "programs/HDToolBox.info", .picture = "drive-harddisk", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Terminal.info", .picture = "utilities-terminal", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Player.info", .picture = "multimedia-player", .fields = &.{ "KIND=TOOL", icon_stack } },
     // What each program is, in SYS:Programs/Docs: read in MultiView.
     .{ .path = "programs/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "programs/Docs/Battery.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
-    .{ .path = "programs/Docs/CPULoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/FontView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
-    .{ .path = "programs/Docs/HDToolBox.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/MultiView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Notepad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Player.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Prefs.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Sheet.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Terminal.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    // The system's tools, and what each is in SYS:System/Docs.
     .{ .path = "System/Shell.info", .picture = "utilities-terminal", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/HDToolBox.info", .picture = "drive-harddisk", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "System/Docs/CPULoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "System/Docs/HDToolBox.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
 };
 
 /// The size the desktop shows icons at on a board's screen - an eighth of
@@ -201,6 +207,7 @@ pub fn build(b: *std.Build) void {
     const board = b.option(Board, "board", "The board the kernel is built for (default: waveshare_7b)") orelse .waveshare_7b;
     const dh0_size_kib = b.option(u32, "dh0-size", "DH0:'s size in KiB, a multiple of 4; the rest of the flash disk is left for partitions made later with C:RDB ADD (default: all of it)") orelse 0;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
+    const rdb_size_kib = b.option(u32, "rdb-size", "The flash disk's partition table area before DH0:, in KiB, a multiple of 4 and 64 at least: room for more partitions and for file systems kept in the table (default: 64)") orelse default_rdb_size_kib;
     const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 (default: what the board's SYSTAG_Cores says)") orelse 0;
     const selftest = b.option(bool, "selftest", "ESP32-P4: the boot task checks the chip and runs test tasks instead of the shell (default: false)") orelse false;
     const memdebug = b.option(bool, "memdebug", "Memory debugging on from exec's start: walls behind blocks, patterns in new and freed memory, wide stack guards (default: false; s3> memdebug and C:MemDebug switch it at run time)") orelse false;
@@ -229,6 +236,12 @@ pub fn build(b: *std.Build) void {
         std.debug.panic("-Ddisk-offset={d}: the disk has to start on a 64 KiB page inside the {d} KiB of flash", .{ disk_offset_kib, flash_size / 1024 });
     }
     const disk_size = flash_size - disk_offset;
+    // The table's area, in whole sectors, every block a RigidDiskBlock may
+    // be in at least.
+    const disk_rdb_blocks: u32 = rdb_size_kib * 1024 / disk_sector;
+    if (rdb_size_kib * 1024 % disk_sector != 0 or disk_rdb_blocks < 16 or disk_rdb_blocks + 2 > disk_size / disk_sector) {
+        std.debug.panic("-Drdb-size={d}: the table's area has to be whole {d} KiB sectors, 64 KiB at least, within the {d} KiB of the disk", .{ rdb_size_kib, disk_sector / 1024, disk_size / 1024 });
+    }
     // DH0: after the RDB's blocks: all of the disk past them, or what
     // -Ddh0-size asks for.
     const dh0_sectors: u32 = dh0_size_kib * 1024 / disk_sector;
@@ -352,6 +365,7 @@ pub fn build(b: *std.Build) void {
         b.fmt("{d}", .{dh0_sectors}),
         b.fmt("{d}", .{disk_sector}),
         b.fmt("{d}", .{disk_page}),
+        b.fmt("{d}", .{disk_rdb_blocks}),
     });
     disks.addArgs(&image_dirs);
     // The directories those files need, made before anything goes in

@@ -45,10 +45,11 @@ const max_cyl_blocks: u32 = 1 << 31;
 /// to the end may be a partition's. It says nothing of its vendor or
 /// product; those fields are the program's to fill in.
 ///
-/// Every partition is taken off the list and freed, and the chains of
-/// file system headers the disk had are forgotten: the new table has
-/// none. Only the handle changes, and RDBF_CHANGED is set; WriteRDB puts
-/// it on the disk, and until then the disk keeps what it had.
+/// Every partition and every file system is taken off its list and
+/// freed, and the chains of bad blocks and drive init code the disk had
+/// are forgotten: the new table has none. Only the handle changes, and
+/// RDBF_CHANGED is set; WriteRDB puts it on the disk, and until then the
+/// disk keeps what it had.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -57,8 +58,8 @@ const max_cyl_blocks: u32 = 1 << 31;
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The partitions are freed; a pointer to any of them is no use
-/// afterwards.
+/// The partitions and file systems are freed; a pointer to any of them
+/// is no use afterwards.
 ///
 /// NOTES:
 /// A partition begins and ends on a cylinder, so on a medium of 2^32
@@ -87,7 +88,9 @@ pub fn InitRDB(_: *RDBBase, handle: *rdb.RDBHandle) i32 {
     const cylinders: u32 = @intCast(@min(geometry.total_sectors / cyl_blocks, max_cylinders));
 
     _handle.freePartitions(private);
+    _handle.freeFileSystems(private);
     private.kept = .{};
+    private.stored = .{};
     handle.rdb = .{
         .block_bytes = geometry.sector_size,
         .cylinders = cylinders,

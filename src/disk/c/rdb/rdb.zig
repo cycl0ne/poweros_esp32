@@ -4,7 +4,7 @@
 //! LIBS:rdb.library. Built against the SDK only.
 //!
 //!   RDB DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,
-//!       DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K
+//!       DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K
 //!
 //!   RDB                         flash.device unit 0
 //!   RDB sdcard.device UNIT 0    another disk
@@ -15,11 +15,14 @@
 //!   RDB ADD DH1 LOW 100 HIGH 199 DOSTYPE FLS BOOTABLE
 //!   RDB REMOVE DH1              a partition taken out of the table
 //!   RDB CHANGE DH1 DOSTYPE POS  a partition given to another file system
+//!   RDB ADDFS HANDLERS:posfs-handler DOSTYPE POS
+//!                               a file system's code kept in the table
+//!   RDB REMFS POS               ... and taken out of it
 //!
 //! The device is an exec device with trackdisk's commands, so anything
 //! that answers TD_GETGEOMETRY and CMD_READ can be read. A change is made
-//! in the order INIT, REMOVE, CHANGE, ADD, then the table is written as a
-//! whole and printed. Only the table's own blocks are written: what is on
+//! in the order INIT, REMOVE, CHANGE, ADD, REMFS, ADDFS, then the table
+//! is written as a whole and printed. Only the table's own blocks are written: what is on
 //! a partition's cylinders stays, so a partition CHANGE gives another
 //! DosType is formatted afterwards (C:Format) for its new file system.
 //! RDB mounts nothing: a disk's table is read when the system starts, so
@@ -29,6 +32,13 @@
 //!
 //! A disk with no RigidDiskBlock is not an error: it says so and stops,
 //! since that is the normal state of a blank chip.
+//!
+//! **File systems kept in the table.** ADDFS reads a handler's load file
+//! and keeps it in the table for the partitions of DOSTYPE, in place of
+//! code kept for that DosType before; its version is the handler's own,
+//! from its ROM tag. A partition of that DosType runs the table's code
+//! when the ROM has no handler for it or an older one, which the list's
+//! last column says. REMFS takes the code for a DosType out again.
 //!
 //! A DosType is printed the way a disk labels itself - four characters,
 //! with an unprintable one written as `\<n>`, so the flash file system's
@@ -51,9 +61,9 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "RDB";
-const VERSION_STRING = "\x00$VER: RDB 1.3 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: RDB 1.4 (18.10.2026)\r\n";
 
-const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K";
+const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K";
 const arg_device = 0;
 const arg_unit = 1;
 const arg_full = 2;
@@ -66,10 +76,15 @@ const arg_dostype = 8;
 const arg_bootable = 9;
 const arg_remove = 10;
 const arg_change = 11;
-const arg_count = 12;
+const arg_addfs = 12;
+const arg_remfs = 13;
+const arg_count = 14;
 
 /// The disk this system boots from, when nothing else is named.
 const default_device = "flash.device";
+
+/// The rdb.library that keeps file systems in a table.
+const file_systems_revision = 3;
 
 const MSG_NO_RDB = "%s unit %d has no RigidDiskBlock in its first %d blocks\n";
 const MSG_FOREIGN = "%s unit %d has a RigidDiskBlock for another block size\n";
@@ -78,6 +93,9 @@ const MSG_NO_PARTS = "  (no partitions)\n";
 /// One row of the partition table. The same format prints the heading and
 /// the rule, so the columns cannot drift apart.
 const row = "  %-8s %5s %-13s %9s %7s %-16s %s\n";
+
+/// One row of the file systems the table keeps.
+const fs_row = "  %-16s %-14s %-7s %7s %5s %6s %s\n";
 
 const Run = struct {
     sys: *ExecBase,
@@ -121,7 +139,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var run: Run = .{ .sys = sys, .dl = dl, .rb = rb, .handle = handle, .full = argv[arg_full] != 0 };
     showDrive(&run, device, unit, &handle.geometry);
 
-    if (argv[arg_init] != 0 or argv[arg_add] != 0 or argv[arg_remove] != 0 or argv[arg_change] != 0) {
+    if (argv[arg_init] != 0 or argv[arg_add] != 0 or argv[arg_remove] != 0 or argv[arg_change] != 0 or
+        argv[arg_addfs] != 0 or argv[arg_remfs] != 0)
+    {
         const rc = change(&run, &argv);
         if (rc != dos.RETURN_OK) return rc;
     }
@@ -135,7 +155,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_WARN;
     }
     showRdb(&run, handle.block, &handle.rdb);
-    return showPartitions(&run);
+    showPartitions(&run);
+    if (keepsFileSystems(rb)) showFileSystems(&run);
+    if (handle.flags & rdb.RDBF_DAMAGED != 0) {
+        _ = dl.PutStr("  (a chain of the table breaks at a block that is not sound: what follows it is not shown)\n");
+        return dos.RETURN_ERROR;
+    }
+    return dos.RETURN_OK;
 }
 
 /// INIT, REMOVE, CHANGE and ADD made to the table, and the table written.
@@ -197,6 +223,37 @@ fn change(run: *Run, argv: *const [arg_count]usize) i32 {
             if (rb.FindPartition(handle, name)) |part| part.block.flags |= hardblocks.PBFF_BOOTABLE;
         }
     }
+    if (argv[arg_addfs] != 0 or argv[arg_remfs] != 0) {
+        if (!keepsFileSystems(rb)) {
+            _ = Printf(dl, "ADDFS, REMFS: %s 1.%d or later keeps file systems\n", .{ rdb.RDBNAME, @as(u32, file_systems_revision) });
+            return dos.RETURN_ERROR;
+        }
+    }
+    if (rdargs.string(argv[arg_remfs])) |text| {
+        const dos_type = parseDosType(text) orelse {
+            _ = Printf(dl, "REMFS: %s is neither four characters nor a number\n", .{text});
+            return dos.RETURN_ERROR;
+        };
+        const file_system = fileSystemFor(run, dos_type) orelse {
+            _ = Printf(dl, "REMFS: the table keeps no file system for %s\n", .{text});
+            return dos.RETURN_ERROR;
+        };
+        rb.RemFileSystem(handle, file_system);
+    }
+    if (rdargs.string(argv[arg_addfs])) |path| {
+        const text = rdargs.string(argv[arg_dostype]) orelse {
+            _ = dl.PutStr("ADDFS: DOSTYPE says which partitions run it\n");
+            return dos.RETURN_ERROR;
+        };
+        const dos_type = parseDosType(text) orelse {
+            _ = Printf(dl, "DOSTYPE: %s is neither four characters nor a number\n", .{text});
+            return dos.RETURN_ERROR;
+        };
+        var size: u32 = 0;
+        const code = loadFile(run, path, &size) orelse return dos.RETURN_ERROR;
+        defer run.sys.FreeVec(code);
+        if (failed(run, "ADDFS", rb.AddFileSystem(handle, dos_type, code, size))) return dos.RETURN_ERROR;
+    }
 
     if (failed(run, "Writing the table", rb.WriteRDB(handle))) return dos.RETURN_ERROR;
     _ = dl.PutStr("Table written: the partitions are mounted as it says at the next boot\n");
@@ -219,7 +276,8 @@ fn errorText(err: i32) [*:0]const u8 {
         rdb.RDBERR_BLOCKSIZE => "the medium cannot take blocks of this size",
         rdb.RDBERR_NAME => "a name that is empty, too long, holds a colon or a slash, or is taken",
         rdb.RDBERR_RANGE => "cylinders outside the usable ones, the wrong way round, or taken",
-        rdb.RDBERR_FULL => "no room in the table's blocks for another partition",
+        rdb.RDBERR_FULL => "no room in the table's blocks for another partition, or for the file systems' code",
+        rdb.RDBERR_FILESYSTEM => "not a handler's load file for this machine",
         else => "failed",
     };
 }
@@ -358,7 +416,7 @@ fn identity(
     _ = Printf(run.dl, "%s%s\n", .{ label, @as([*:0]const u8, @ptrCast(&text)) });
 }
 
-fn showPartitions(run: *Run) i32 {
+fn showPartitions(run: *Run) void {
     const dl = run.dl;
     const rb = run.rb;
     _ = dl.PutStr("\nPartitions\n");
@@ -371,11 +429,104 @@ fn showPartitions(run: *Run) i32 {
         partitionRow(run, p.at, &p.block);
         if (run.full) partitionDetail(run, &p.block);
     }
-    if (run.handle.flags & rdb.RDBF_DAMAGED != 0) {
-        _ = dl.PutStr("  (the chain breaks after these: a block that is not a sound PartitionBlock)\n");
-        return dos.RETURN_ERROR;
+}
+
+/// The file systems the table keeps, when it keeps any: each one's
+/// DosType, name, version, size, header block and code blocks, and
+/// whether its partitions run it or the ROM's handler.
+fn showFileSystems(run: *Run) void {
+    const dl = run.dl;
+    const rb = run.rb;
+    const first = rb.NextFileSystem(run.handle, null) orelse return;
+    _ = dl.PutStr("\nFile systems\n");
+    _ = Printf(dl, fs_row, .{ "DosType", "Name", "Version", "Size", "Block", "Blocks", "Runs" });
+    _ = Printf(dl, fs_row, .{ "----------------", "--------------", "-------", "-------", "-----", "------", "----" });
+    var file_system: ?*rdb.RDBFileSystem = first;
+    while (file_system) |fs| : (file_system = rb.NextFileSystem(run.handle, fs)) {
+        const header = &fs.header;
+        var kind: [20:0]u8 = @splat(0);
+        dosTypeAsText(&kind, header.dos_type);
+        const name: [*:0]const u8 = if (dos.filesystems.of(header.dos_type)) |known| known.name else "-";
+        var version: [16:0]u8 = @splat(0);
+        _ = versionText(&version, header.version);
+        var size: [16:0]u8 = @splat(0);
+        bytesAsText(&size, fs.size);
+        var block_text: [12:0]u8 = @splat(0);
+        var blocks_text: [12:0]u8 = @splat(0);
+        if (fs.at == hardblocks.end_of_list) {
+            _ = copy(&block_text, "-");
+            _ = copy(&blocks_text, "-");
+        } else {
+            _ = decimal(&block_text, fs.at);
+            _ = decimal(&blocks_text, fs.blocks);
+        }
+        // Which code a partition of the DosType runs: the table's, or the
+        // ROM's handler when that is as new.
+        var runs: [24:0]u8 = @splat(0);
+        const rom = dos.filesystems.romVersion(run.sys, header.dos_type);
+        if (dos.filesystems.storedWins(header.version, rom)) {
+            _ = copy(&runs, "this");
+        } else {
+            const at = copy(&runs, "ROM's ");
+            _ = versionText(runs[at..], rom.?);
+        }
+        _ = Printf(dl, fs_row, .{
+            @as([*:0]const u8, @ptrCast(&kind)),
+            name,
+            @as([*:0]const u8, @ptrCast(&version)),
+            @as([*:0]const u8, @ptrCast(&size)),
+            @as([*:0]const u8, @ptrCast(&block_text)),
+            @as([*:0]const u8, @ptrCast(&blocks_text)),
+            @as([*:0]const u8, @ptrCast(&runs)),
+        });
     }
-    return dos.RETURN_OK;
+}
+
+/// Whether the library has the calls for the file systems a table keeps.
+fn keepsFileSystems(rb: *RDBBase) bool {
+    const lib = rb.lib();
+    return lib.version > 1 or lib.revision >= file_systems_revision;
+}
+
+/// The file system the table keeps for a DosType, or null.
+fn fileSystemFor(run: *Run, dos_type: u32) ?*rdb.RDBFileSystem {
+    var file_system = run.rb.NextFileSystem(run.handle, null);
+    while (file_system) |fs| : (file_system = run.rb.NextFileSystem(run.handle, fs)) {
+        if (fs.header.dos_type == dos_type) return fs;
+    }
+    return null;
+}
+
+/// A file read whole into memory of its own, its size in `size`; null,
+/// and why printed, when it cannot be.
+fn loadFile(run: *Run, path: [*:0]const u8, size: *u32) ?[*]u8 {
+    const dl = run.dl;
+    const fh = dl.Open(path, dos.MODE_OLDFILE) orelse {
+        _ = dl.PrintFault(dl.IoErr(), path);
+        return null;
+    };
+    defer _ = dl.Close(fh);
+    var fib: dos.FileInfoBlock = .{};
+    if (!dl.ExamineFH(fh, &fib)) {
+        _ = dl.PrintFault(dl.IoErr(), path);
+        return null;
+    }
+    if (fib.size == 0 or fib.size > 0xFFFF_FFFF) {
+        _ = Printf(dl, "ADDFS: %s is empty or too large\n", .{path});
+        return null;
+    }
+    const bytes: u32 = @intCast(fib.size);
+    const block: [*]u8 = @ptrCast(run.sys.AllocVec(bytes, exec.MEMF_ANY) orelse {
+        _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, path);
+        return null;
+    });
+    if (dl.Read(fh, block, @intCast(bytes)) != bytes) {
+        _ = dl.PrintFault(dl.IoErr(), path);
+        run.sys.FreeVec(block);
+        return null;
+    }
+    size.* = bytes;
+    return block;
 }
 
 fn partitionRow(run: *Run, block: u32, part: *const hardblocks.PartitionBlock) void {
@@ -464,6 +615,15 @@ fn dosTypeAsText(into: *[20:0]u8, value: u32) void {
     at += copy(into[at..], " 0x");
     at += hex(into[at..], value);
     into[at] = 0;
+}
+
+/// A version as fhb_Version holds it, version << 16 | revision: "2.5".
+/// Answers how many bytes it wrote.
+fn versionText(into: []u8, value: u32) usize {
+    var at = decimal(into, value >> 16);
+    at += copy(into[at..], ".");
+    at += decimal(into[at..], value & 0xFFFF);
+    return at;
 }
 
 /// A byte count as a person reads it: "14.9M", "4096" for something small.

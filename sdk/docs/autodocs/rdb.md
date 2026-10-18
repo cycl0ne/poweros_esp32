@@ -8,15 +8,93 @@ Generated from the source by `./zig build autodoc`.
 
 ## Index
 
+- [AddFileSystem](#addfilesystem) - Keeps a handler's load file in a handle's table, for the partitions of one DosType.
 - [AddPartition](#addpartition) - Adds a partition to a handle's table, over cylinders no other partition has.
 - [CloseRDB](#closerdb) - Lets go of a handle: its partition nodes, its buffer and the unit it has open.
 - [FindPartition](#findpartition) - The partition of a handle that has a name, in any case.
 - [InitRDB](#initrdb) - Puts a fresh RigidDiskBlock for the whole medium in a handle, with no partitions.
 - [MountPartition](#mountpartition) - Puts a partition on dos's list as a device node, so that its file system can be started.
+- [NextFileSystem](#nextfilesystem) - The file system after another on a handle's list of the table's file systems, or the first.
 - [NextPartition](#nextpartition) - The partition after another on a handle's list, or the first.
 - [OpenRDB](#openrdb) - Opens a unit of a block device and reads what the disk says about itself into a handle.
+- [RemFileSystem](#remfilesystem) - Takes a file system's code out of a handle's table and frees it.
 - [RemPartition](#rempartition) - Takes a partition off a handle's list and frees it.
-- [WriteRDB](#writerdb) - Checks a handle's table and writes it to the disk: a PartitionBlock per partition, then the RigidDiskBlock.
+- [WriteRDB](#writerdb) - Checks a handle's table and writes it to the disk: the code of its file systems, a FileSysHeaderBlock per file system, a PartitionBlock per partition, then the RigidDiskBlock.
+
+## AddFileSystem
+
+Keeps a handler's load file in a handle's table, for the partitions of one DosType.
+
+**SYNOPSIS**
+
+```zig
+fn AddFileSystem(base: *RDBBase, handle: *rdb.RDBHandle, dos_type: u32, code: [*]const u8, size: u32) i32
+```
+
+**SINCE**
+
+1.3. LVO -60.
+
+**INPUTS**
+
+- `handle`: from OpenRDB, with a table (RDBF_FOUND, or after InitRDB).
+- `dos_type`: the de_DosType of the partitions that are to run it.
+- `code`, `size`: the handler's load file, as it is in HANDLERS:.
+
+**RESULT**
+
+RDBERR_OK. RDBERR_NORDB for a handle with no table; RDBERR_FILESYSTEM
+for code that is not a load file for this machine holding a handler's
+ROM tag; RDBERR_NOMEM.
+
+**BEHAVIOR**
+
+The code is copied and a new RDBFileSystem goes at the end of the
+handle's list, with a FileSysHeaderBlock for `dos_type` whose version
+is the handler's own: its tag's rt_Version, and the revision its ID
+string gives. One kept for the same DosType before is taken out and
+freed, as RemFileSystem would. RDBF_CHANGED is set; nothing reaches
+the disk before WriteRDB, which answers RDBERR_FULL when the code does
+not fit in the table's area even grown up to the first partition.
+
+Once written, the partitions of `dos_type` on this disk run the code
+when the ROM has no handler for the DosType or an older one
+(`sdk.dos.filesystems.storedWins`): mounted by MountPartition, by the
+device that reads the table when the medium comes in, or at boot by
+the flash disk's driver.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`code` stays the caller's; the copy is the handle's until WriteRDB has
+written it, or the file system is taken out.
+
+**NOTES**
+
+The code is for the machine it was built for: a medium given the code
+on one chip runs it only there.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemFileSystem`, `NextFileSystem`, `WriteRDB`, `MountPartition`
+
+**EXAMPLES**
+
+```zig
+// `code` holds HANDLERS:posfs-handler, read with Open and Read.
+const err = rb.AddFileSystem(handle, sdk.dos.posfs.ID_POSFS_DISK, code, size);
+if (err == rdb.RDBERR_OK) _ = rb.WriteRDB(handle);
+```
 
 ## AddPartition
 
@@ -247,10 +325,11 @@ WriteRDB places in them - so every cylinder from the first past them
 to the end may be a partition's. It says nothing of its vendor or
 product; those fields are the program's to fill in.
 
-Every partition is taken off the list and freed, and the chains of
-file system headers the disk had are forgotten: the new table has
-none. Only the handle changes, and RDBF_CHANGED is set; WriteRDB puts
-it on the disk, and until then the disk keeps what it had.
+Every partition and every file system is taken off its list and
+freed, and the chains of bad blocks and drive init code the disk had
+are forgotten: the new table has none. Only the handle changes, and
+RDBF_CHANGED is set; WriteRDB puts it on the disk, and until then the
+disk keeps what it had.
 
 **CONTEXT**
 
@@ -261,8 +340,8 @@ it on the disk, and until then the disk keeps what it had.
 
 **OWNERSHIP**
 
-The partitions are freed; a pointer to any of them is no use
-afterwards.
+The partitions and file systems are freed; a pointer to any of them
+is no use afterwards.
 
 **NOTES**
 
@@ -313,9 +392,10 @@ fn MountPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.RDBPar
 **RESULT**
 
 RDBERR_OK when the node is on the list, and `name` holds its name.
-RDBERR_FILESYSTEM for a DosType no handler serves, or whose file
-system cannot go on this medium or inside a partition (`MSH`, `POS\1`,
-which want a whole medium); RDBERR_NAME for a partition name that is
+RDBERR_FILESYSTEM for a DosType no handler serves and the table brings
+no code for, or whose file system cannot go on this medium or inside a
+partition (`MSH`, `POS\1`, which want a whole medium); RDBERR_IO when
+the table's code cannot be read; RDBERR_NAME for a partition name that is
 empty or too long, or one taken on the list with every dot that fits;
 RDBERR_CHANGED when the medium in the unit is not the one the table
 was read from; RDBERR_MOUNTED when a device node on the list already
@@ -333,6 +413,15 @@ partition's device flags, its environment is a copy of the
 partition's, and its handler is the one its DosType asks for: the
 flash file system's for `FLS\0`, posfs's for `POS\0`, fat-handler for
 `MSD\0`.
+
+Where the handle's table keeps a file system for the DosType, its
+code is what the node runs when the ROM has no handler for the DosType
+or an older one (`sdk.dos.filesystems.storedWins`) - HANDLERS: plays
+no part in it. The code is copied into memory for the node, or the
+copy a node of the same unit got for the same DosType and version is
+shared; dos loads it when the handler is first started, and starts the
+handler its DosType names when the code does not load. A DosType that
+names no handler is mounted when the table brings its code.
 
 A node of the same unit whose area shares a block with the
 partition's is the partition's already, or a drive over the whole
@@ -356,8 +445,9 @@ the node there all the same, and the drive's first use says why.
 
 **OWNERSHIP**
 
-The node is the list's, for the system's life; the handle and the
-partition stay the caller's, and may be closed and freed at once.
+The node is the list's, for the system's life, and so is the copy of
+the table's code; the handle and the partition stay the caller's, and
+may be closed and freed at once.
 
 **NOTES**
 
@@ -377,7 +467,7 @@ None known.
 
 **SEE ALSO**
 
-`OpenRDB`, `FindPartition`, `WriteRDB`
+`OpenRDB`, `FindPartition`, `WriteRDB`, `AddFileSystem`
 
 **EXAMPLES**
 
@@ -386,6 +476,70 @@ var name: rdb.MountName = undefined;
 const part = rb.FindPartition(handle, "DH1") orelse return;
 if (rb.MountPartition(handle, part, &name, rdb.RDBMF_START) == rdb.RDBERR_OK) {
     _ = Printf(dl, "mounted as %s:\n", .{@as([*:0]const u8, &name)});
+}
+```
+
+## NextFileSystem
+
+The file system after another on a handle's list of the table's file systems, or the first.
+
+**SYNOPSIS**
+
+```zig
+fn NextFileSystem(base: *RDBBase, handle: *rdb.RDBHandle, previous: ?*rdb.RDBFileSystem) ?*rdb.RDBFileSystem
+```
+
+**SINCE**
+
+1.3. LVO -56.
+
+**INPUTS**
+
+- `handle`: from OpenRDB.
+- `previous`: a file system of this handle, or null for the first.
+
+**RESULT**
+
+The next file system, or null past the last (or for a table that keeps
+none).
+
+**BEHAVIOR**
+
+The order is the list's: the disk's chain of FileSysHeaderBlocks as it
+was read, then what AddFileSystem added, which is the order WriteRDB
+writes the chain in. A header on the disk whose chain of code breaks
+is not on the list, and the handle is marked RDBF_DAMAGED.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The file system stays the handle's.
+
+**NOTES**
+
+RemFileSystem, and AddFileSystem for the same DosType, free the node
+just answered: take the next one first.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddFileSystem`, `RemFileSystem`, `WriteRDB`
+
+**EXAMPLES**
+
+```zig
+var file_system = rb.NextFileSystem(handle, null);
+while (file_system) |fs| : (file_system = rb.NextFileSystem(handle, fs)) {
+    _ = Printf(dl, "%08lx version %u.%u\n", .{ fs.header.dos_type, fs.header.version >> 16, fs.header.version & 0xFFFF });
 }
 ```
 
@@ -534,6 +688,68 @@ defer rb.CloseRDB(handle);
 if (handle.flags & rdb.RDBF_FOUND == 0) _ = rb.InitRDB(handle);
 ```
 
+## RemFileSystem
+
+Takes a file system's code out of a handle's table and frees it.
+
+**SYNOPSIS**
+
+```zig
+fn RemFileSystem(base: *RDBBase, handle: *rdb.RDBHandle, file_system: *rdb.RDBFileSystem) void
+```
+
+**SINCE**
+
+1.3. LVO -64.
+
+**INPUTS**
+
+- `handle`: from OpenRDB.
+- `file_system`: one of its file systems.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Only the table in memory changes, and RDBF_CHANGED is set: the disk
+keeps the code until WriteRDB writes a table without it, whose blocks
+are then free for the table's own use.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The file system is freed, with the code AddFileSystem copied; a
+pointer to it is no use afterwards.
+
+**NOTES**
+
+A drive mounted with the code keeps running it until the system
+starts again; from then on the drive's handler is the ROM's, or the
+one its DosType names.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddFileSystem`, `NextFileSystem`, `WriteRDB`
+
+**EXAMPLES**
+
+```zig
+if (rb.NextFileSystem(handle, null)) |file_system| rb.RemFileSystem(handle, file_system);
+_ = rb.WriteRDB(handle);
+```
+
 ## RemPartition
 
 Takes a partition off a handle's list and frees it.
@@ -596,7 +812,7 @@ _ = rb.WriteRDB(handle);
 
 ## WriteRDB
 
-Checks a handle's table and writes it to the disk: a PartitionBlock per partition, then the RigidDiskBlock.
+Checks a handle's table and writes it to the disk: the code of its file systems, a FileSysHeaderBlock per file system, a PartitionBlock per partition, then the RigidDiskBlock.
 
 **SYNOPSIS**
 
@@ -622,22 +838,32 @@ the unit is not the one the table was read from; RDBERR_NAME for a
 partition whose name is empty, too long, holds a colon or a slash, or
 is another's; RDBERR_RANGE for one whose cylinders are outside the
 table's usable ones, the wrong way round or another's; RDBERR_FULL for
-more partitions than the table's own blocks hold. RDBERR_IO when the
-device refused a write, part of the way through.
+more partitions than the table's own blocks hold, more than 16 file
+systems, or code that does not fit even with the area grown up to the
+first partition; RDBERR_NOMEM; RDBERR_IO when a block of the disk's
+chain of file systems cannot be read. RDBERR_IO when the device
+refused a write, part of the way through.
 
 **BEHAVIOR**
 
 Every partition is checked first, as AddPartition checks a new one,
 since the program may have changed any of them. Each then gets a
 block in the table's own area (`rdb_blocks_lo` to `rdb_blocks_hi`),
-never one of the file system headers', their code's or the bad-block
-list's, and so does the RigidDiskBlock, in one of the first
-RDB_LOCATION_LIMIT blocks. Blocks the disk's table is not in are taken
-first.
+never one of the code the table keeps or of the bad-block list, and so
+does the RigidDiskBlock, in one of the first RDB_LOCATION_LIMIT
+blocks. Each file system gets a block for its header, and code that
+AddFileSystem gave a LoadSegBlock per piece: in the area, or past it
+up to the first partition's cylinder (on a table with no partition,
+up to its last cylinder). Blocks the disk's table is not in are taken
+first. Where the code reaches past the area, `rdb_blocks_hi` grows to
+the end of the cylinder it reaches into and `lo_cylinder` to the next
+one; the area never shrinks.
 
-The PartitionBlocks are written in the list's order, chained the same
-way, each with its checksum, then the RigidDiskBlock pointing at the
-first; then every other RigidDiskBlock in the first blocks is wiped,
+The new code is written first, as chains of LoadSegBlocks, then the
+FileSysHeaderBlocks in the list's order, chained the same way, then
+the PartitionBlocks in the list's order, chained the same way, each
+with its checksum, then the RigidDiskBlock pointing at the first of
+each; then every other RigidDiskBlock in the first blocks is wiped,
 the one the disk's readers took until now last. A reader takes the
 lowest sound RigidDiskBlock, so whichever of the old and the new is
 lower, the disk holds a whole table at every point of the write: the
@@ -647,9 +873,10 @@ block erased; on any other a wiped block is written with zeroes.
 CMD_UPDATE ends it, so a device that holds writes back has them on the
 medium when the call returns.
 
-Afterwards `block` is the RigidDiskBlock's, each partition's `at` is
-its block, RDBF_FOUND is set and RDBF_CHANGED, RDBF_DAMAGED and
-RDBF_FOREIGN are cleared.
+Afterwards `block` is the RigidDiskBlock's, each partition's and each
+file system's `at` is its block, a file system's `blocks` counts its
+code's, the copies AddFileSystem made are freed, RDBF_FOUND is set and
+RDBF_CHANGED, RDBF_DAMAGED and RDBF_FOREIGN are cleared.
 
 Nothing but the table's blocks is written: what is on a partition's
 cylinders stays, whatever the table now says of them.
@@ -682,7 +909,9 @@ written over the old one, and on a medium that erases, a cut between
 that block's erase and its write leaves the disk without a table. A
 write that fails after the first PartitionBlock that had to reuse a
 block of the old chain can leave the old table pointing at a new
-block.
+block; so can new code that had to go in the old table's blocks. Code
+that goes past the area is written over the first blocks of a
+partition that the old table had there.
 
 **SEE ALSO**
 

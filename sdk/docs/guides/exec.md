@@ -184,7 +184,7 @@ with `-Dmemdebug=true` has the mode on from exec's start. The
 **Who holds what.** `C:Avail OWNERS` lists every owner with its blocks
 and bytes: the system, each task by number and name, and the numbers of
 tasks that have ended with what they left. `C:Top` adds a column of what
-each task holds, `SYS:Programs/MemMap` draws the regions with each block
+each task holds, `SYS:System/MemMap` draws the regions with each block
 in its owner's colour, and the ROM debugger's `memowners` lists them on
 the serial console, or one owner's blocks. A program walks the blocks
 itself with `exec.RegionWalk` under `LockExecList(EXECLIST_MEMORY)`, or

@@ -118,7 +118,7 @@ and paste, find and replace; View turns word wrap and the line numbers
 on and off. The mouse wheel scrolls it, a double press selects a word and
 a third the whole line, and Return keeps a line's indentation.
 
-## Partitions: `SYS:Programs/HDToolBox`
+## Partitions: `SYS:System/HDToolBox`
 
 ![HDToolBox with three partitions on the flash disk](hdtoolbox.png)
 
@@ -132,7 +132,7 @@ system stay as they are. Save says which partitions lose their data and
 which drives stop, writes the table, and mounts the new partitions at
 once.
 
-## CPU load: `SYS:Programs/CPULoad`
+## CPU load: `SYS:System/CPULoad`
 
 ![CPULoad after a burst of C:test/Anim](cpuload.png)
 

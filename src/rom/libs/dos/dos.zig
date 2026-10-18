@@ -514,13 +514,15 @@ const StartupWait = struct {
     var name_arg: isize = 0;
     var node: ?*DosList = null;
     var claim: bool = true;
+    /// The handler's process, by the node's name.
+    var task_name: [*:0]const u8 = "NIL";
 
     /// nil-handler's entry in the test's segment; never run on the host.
     fn neverRun(_: *ExecBase) callconv(.c) void {}
 
     fn wait(proc: *Process, sys: *ExecBase) callconv(.c) *exec.Message {
         calls += 1;
-        const handler: *Process = @fieldParentPtr("task", sys.FindTask("NIL").?);
+        const handler: *Process = @fieldParentPtr("task", sys.FindTask(task_name).?);
         const pkt = DosPacket.fromMessage(sys.GetMsg(&handler.msg_port).?);
         action = pkt.getAction();
         name_arg = pkt.args.raw[0];
@@ -600,6 +602,54 @@ test "GetDeviceProc: a handler that claims nothing is started per name" {
     kexec.RemTask(kexec.SysBase, &second.task);
 
     StartupWait.claim = true;
+    try tearDown(db);
+}
+
+test "GetDeviceProc: the code a partition table brought first, the handler's name when it is none" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    StartupWait.dl = dl;
+    StartupWait.calls = 0;
+    StartupWait.claim = true;
+    var tp: TestProcess = .{};
+    tp.proc.pkt_wait = &StartupWait.wait;
+    tp.enter();
+    defer tp.leave();
+    try testing.expect(dl.AddSegment(dos_init.nil_handler_name, &never_code, dos.CMD_SYSTEM));
+
+    // Code another drive of the table loaded already: this one runs it,
+    // though its name finds nothing.
+    var loaded: dos.FileSysEntry = .{ .entry = &StartupWait.neverRun };
+    const first = dl.MakeDosEntry("FIRST", dos.DLT_DEVICE).?;
+    first.misc.handler.handler = "gone-handler";
+    first.misc.handler.file_sys = &loaded;
+    try testing.expect(dl.AddDosEntry(first));
+    StartupWait.task_name = "FIRST";
+    defer StartupWait.task_name = "NIL";
+    const dp = dl.GetDeviceProc("FIRST:", null).?;
+    try testing.expectEqual(@as(?exec.TaskFn, &StartupWait.neverRun), first.misc.handler.entry);
+    try testing.expect(first.misc.handler.seg_list == null); // the system's, never counted
+    dl.FreeDeviceProc(dp);
+    kexec.RemTask(kexec.SysBase, db.sys_base.FindTask("FIRST").?);
+    first.task = null;
+
+    // An image that is no load file is freed, and the drive starts the
+    // handler its name says.
+    const image: [*]u8 = @ptrCast(db.sys_base.AllocVec(16, exec.MEMF_CLEAR).?);
+    var broken: dos.FileSysEntry = .{ .image = image, .image_size = 16 };
+    const second = dl.MakeDosEntry("SECOND", dos.DLT_DEVICE).?;
+    second.misc.handler.handler = dos_init.nil_handler_name;
+    second.misc.handler.file_sys = &broken;
+    try testing.expect(dl.AddDosEntry(second));
+    StartupWait.task_name = "SECOND";
+    const again = dl.GetDeviceProc("SECOND:", null).?;
+    try testing.expectEqual(@as(?exec.TaskFn, &StartupWait.neverRun), second.misc.handler.entry);
+    try testing.expect(broken.image == null);
+    try testing.expect(broken.entry == null);
+    dl.FreeDeviceProc(again);
+    kexec.RemTask(kexec.SysBase, db.sys_base.FindTask("SECOND").?);
+    second.task = null;
     try tearDown(db);
 }
 

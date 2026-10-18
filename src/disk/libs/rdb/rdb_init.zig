@@ -15,7 +15,7 @@ const rdb_lvo = @import("rdb_lvo.zig");
 
 pub const LIBRARY_NAME = rdb.RDBNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 2;
+pub const LIBRARY_REVISION = 3;
 const BUILD_DATE = "18.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

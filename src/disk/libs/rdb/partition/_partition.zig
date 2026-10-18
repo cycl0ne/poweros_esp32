@@ -128,13 +128,14 @@ pub fn largestFree(handle: *rdb.RDBHandle) ?Run {
 }
 
 /// How many PartitionBlocks the table's own blocks have room for: the RDB
-/// area less the kept chains' blocks and one for the RigidDiskBlock.
+/// area less the kept chains' blocks, the table's file systems' blocks on
+/// the disk and one for the RigidDiskBlock.
 pub fn blocksFor(handle: *_handle.Handle) u32 {
     const table = &handle.public.rdb;
     var room: u32 = 0;
     var block = table.rdb_blocks_lo;
     while (block <= table.rdb_blocks_hi and block < _handle.mapped_blocks) : (block += 1) {
-        if (handle.kept.has(block)) continue;
+        if (handle.kept.has(block) or handle.stored.has(block)) continue;
         room += 1;
     }
     return if (room == 0) 0 else room - 1;

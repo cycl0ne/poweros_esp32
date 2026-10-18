@@ -53,21 +53,22 @@ const tests = [_][]const u8{
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
-/// Programs with windows, in SYS:Programs: started by their full name or
-/// from a shell there, not on the command path.
+/// Programs with windows, in SYS:Programs and - the system's own tools -
+/// SYS:System: started by their full name or from a shell there, not on
+/// the command path.
 const window_programs = [_]Program{
     .{ .disk = "programs/FontView", .source = "programs/fontview/fontview.zig", .name = "fontview" },
     .{ .disk = "programs/MultiView", .source = "programs/multiview/multiview.zig", .name = "multiview" },
     .{ .disk = "programs/Battery", .source = "programs/battery/battery.zig", .name = "battery" },
     .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs" },
-    .{ .disk = "programs/CPULoad", .source = "programs/cpuload/cpuload.zig", .name = "cpuload" },
-    .{ .disk = "programs/MemMap", .source = "programs/memmap/memmap.zig", .name = "memmap" },
     .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad" },
     .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet" },
-    .{ .disk = "programs/HDToolBox", .source = "programs/hdtoolbox/hdtoolbox.zig", .name = "hdtoolbox" },
     .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal" },
     .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player" },
     .{ .disk = "System/Shell", .source = "system/shell/shell.zig", .name = "shell" },
+    .{ .disk = "System/HDToolBox", .source = "system/hdtoolbox/hdtoolbox.zig", .name = "hdtoolbox" },
+    .{ .disk = "System/CPULoad", .source = "system/cpuload/cpuload.zig", .name = "cpuload" },
+    .{ .disk = "System/MemMap", .source = "system/memmap/memmap.zig", .name = "memmap" },
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
@@ -297,16 +298,17 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Reading.md", .source = "tests/datatypes/Reading.md" },
     // SYS:Programs/Docs - what each program is and how it is used.
     .{ .disk = "programs/Docs/Battery.md", .source = "programs/battery/README.md" },
-    .{ .disk = "programs/Docs/CPULoad.md", .source = "programs/cpuload/README.md" },
-    .{ .disk = "programs/Docs/MemMap.md", .source = "programs/memmap/README.md" },
     .{ .disk = "programs/Docs/FontView.md", .source = "programs/fontview/README.md" },
-    .{ .disk = "programs/Docs/HDToolBox.md", .source = "programs/hdtoolbox/README.md" },
     .{ .disk = "programs/Docs/MultiView.md", .source = "programs/multiview/README.md" },
     .{ .disk = "programs/Docs/Notepad.md", .source = "programs/notepad/README.md" },
     .{ .disk = "programs/Docs/Player.md", .source = "programs/player/README.md" },
     .{ .disk = "programs/Docs/Prefs.md", .source = "programs/prefs/README.md" },
     .{ .disk = "programs/Docs/Sheet.md", .source = "programs/sheet/README.md" },
     .{ .disk = "programs/Docs/Terminal.md", .source = "programs/terminal/README.md" },
+    // SYS:System/Docs - the same for the system's tools.
+    .{ .disk = "System/Docs/HDToolBox.md", .source = "system/hdtoolbox/README.md" },
+    .{ .disk = "System/Docs/CPULoad.md", .source = "system/cpuload/README.md" },
+    .{ .disk = "System/Docs/MemMap.md", .source = "system/memmap/README.md" },
 };
 
 pub fn build(b: *std.Build) void {

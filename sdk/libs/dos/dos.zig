@@ -337,6 +337,7 @@ pub const DosList = dosextens.DosList;
 pub const DosListType = dosextens.DosListType;
 pub const DosListMisc = dosextens.DosListMisc;
 pub const DosListHandler = dosextens.DosListHandler;
+pub const FileSysEntry = dosextens.FileSysEntry;
 pub const DosListVolume = dosextens.DosListVolume;
 pub const DosListAssign = dosextens.DosListAssign;
 pub const AssignList = dosextens.AssignList;

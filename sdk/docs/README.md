@@ -88,7 +88,8 @@ tags and constants, each with its doc comment.
   the check, putting it on a drive, its limits.
 - [Disks and partitions](guides/rdb.md) - the RigidDiskBlock and its
   partitions, rdb.library: reading a disk's table, changing it, a fresh
-  one, errors, when a change is seen, and `C:RDB`.
+  one, file systems kept in the table, errors, when a change is seen,
+  and `C:RDB`.
 - [Modbus](guides/modbus.md) - a device's tables, the RS-485 bus
   (rs485.device), modbus.library as a client over RTU and TCP, what a
   call answers, a server from a program's tables, the commands, and

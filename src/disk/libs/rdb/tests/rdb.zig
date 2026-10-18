@@ -531,7 +531,7 @@ test "a rewritten table goes in blocks the old one is not in, and the old one st
     try testing.expectEqual(@as(u32, 16), rb.FindPartition(handle, "work").?.block.environment.low_cyl);
 }
 
-test "a file system header's blocks are kept, and the table's own blocks run out" {
+test "a file system's blocks are kept, and the table's own blocks run out" {
     var rig = try Rig.init();
     defer rig.deinit() catch unreachable;
     const rb = rig.rb;
@@ -546,8 +546,7 @@ test "a file system header's blocks are kept, and the table's own blocks run out
     var header: hardblocks.FileSysHeaderBlock = .{ .dos_type = fls, .seg_list_blocks = 2 };
     header.checksum = hardblocks.checksumOf(&header);
     @memcpy(rig.medium.image[block_bytes..][0..@sizeOf(hardblocks.FileSysHeaderBlock)], std.mem.asBytes(&header));
-    const code: hardblocks.LoadSegBlock = .{};
-    @memcpy(rig.medium.image[2 * block_bytes ..][0..@sizeOf(hardblocks.LoadSegBlock)], std.mem.asBytes(&code));
+    hardblocks.makeLoadSeg(rig.medium.image[2 * block_bytes ..][0..block_bytes], "code", hardblocks.end_of_list);
     var table = rig.block(hardblocks.RigidDiskBlock, 0).*;
     table.file_sys_header_list = 1;
     table.checksum = hardblocks.checksumOf(&table);
@@ -557,7 +556,14 @@ test "a file system header's blocks are kept, and the table's own blocks run out
     const handle = try rig.open();
     defer rb.CloseRDB(handle);
     try testing.expectEqual(rdb.RDBF_FOUND, handle.flags);
-    // 16 blocks less the RigidDiskBlock's and the two kept: 13 partitions.
+    const kept = rb.NextFileSystem(handle, null).?;
+    try testing.expectEqual(@as(u32, 1), kept.at);
+    try testing.expectEqual(@as(u32, 4), kept.size);
+    try testing.expectEqual(@as(u32, 1), kept.blocks);
+    try testing.expect(rb.NextFileSystem(handle, kept) == null);
+    // 16 blocks less the RigidDiskBlock's and the file system's two: 13
+    // partitions. With all of them written the header has nowhere to go
+    // but its old block, and the RigidDiskBlock its own.
     var name: [4:0]u8 = .{ 'P', '0', '0', 0 };
     var cylinder: u32 = 16;
     while (cylinder < 16 + 13) : (cylinder += 1) {
@@ -911,4 +917,234 @@ test "a unit's first medium with no table: its own drive as its first block says
     try testing.expectEqual(@as(u32, 1), more.count);
     try testing.expectEqualStrings("SD0", nameText(&more.names[0]));
     try testing.expect(dos_rig.device("SD0.") == null);
+}
+
+// --- file systems kept in the table --------------------------------------------
+
+/// A DosType no handler of the system serves.
+const tes: u32 = 0x5445_5300;
+
+/// A handler's load file filling `into`: the header, one data segment
+/// with a ROM tag at its start naming "test-handler", version `version`
+/// and the revision its ID string `id` gives, then bytes that count up.
+fn handlerFile(into: []u8, version: u8, id: []const u8) void {
+    const put32 = struct {
+        fn put(file: []u8, at: usize, value: u32) void {
+            std.mem.writeInt(u32, file[at..][0..4], value, .little);
+        }
+    }.put;
+    for (into, 0..) |*byte, index| byte.* = @truncate(index * 13 + 7);
+    const segment = 20 + 16;
+    const size: u32 = @intCast(into.len - segment);
+    @memset(into[0 .. segment + 80], 0);
+    @memcpy(into[0..4], &sdk.dos.loadfile.MAGIC);
+    std.mem.writeInt(u16, into[4..6], sdk.dos.loadfile.VERSION, .little);
+    std.mem.writeInt(u16, into[6..8], 1, .little);
+    std.mem.writeInt(u16, into[10..12], sdk.dos.loadfile.native_machine, .little);
+    into[16] = 4;
+    into[20] = @intFromEnum(sdk.dos.loadfile.SegmentKind.data);
+    put32(into, 24, size);
+    put32(into, 28, size);
+    std.mem.writeInt(u16, into[segment..][0..2], 0x4AFC, .little);
+    put32(into, segment + 4, 0);
+    into[segment + 13] = version;
+    into[segment + 14] = @intFromEnum(exec.NodeType.handler);
+    put32(into, segment + 16, 32);
+    put32(into, segment + 20, 48);
+    @memcpy(into[segment + 32 ..][0.."test-handler".len], "test-handler");
+    @memcpy(into[segment + 48 ..][0..id.len], id);
+}
+
+/// The code of the chain of LoadSegBlocks from `first` on the medium,
+/// into `into`: the bytes put there.
+fn chainOf(rig: *Rig, first: u32, into: []u8) !usize {
+    var next = first;
+    var length: usize = 0;
+    while (next != hardblocks.end_of_list) {
+        const block = rig.medium.image[next * block_bytes ..][0..block_bytes];
+        const data = hardblocks.loadSegData(block) orelse return error.Broken;
+        @memcpy(into[length..][0..data.len], data);
+        length += data.len;
+        next = rig.block(hardblocks.LoadSegBlock, next).next;
+    }
+    return length;
+}
+
+test "a file system kept in the table: added, written as a header and a chain of code, read back, replaced and taken out" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const rb = rig.rb;
+    var code: [2000]u8 = undefined;
+    handlerFile(&code, 2, "test-handler 2.5 (18.10.2026)\r\n");
+    const room = comptime hardblocks.loadSegRoom(block_bytes);
+    const code_blocks = (code.len + room - 1) / room;
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        // Nothing to keep it in before there is a table, and code that
+        // is no handler's load file is refused.
+        try testing.expectEqual(rdb.RDBERR_NORDB, rb.AddFileSystem(handle, tes, &code, code.len));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "DH0", 16, 63, tes));
+        const rubbish = [_]u8{0x55} ** 64;
+        try testing.expectEqual(rdb.RDBERR_FILESYSTEM, rb.AddFileSystem(handle, tes, &rubbish, rubbish.len));
+        try testing.expect(rb.NextFileSystem(handle, null) == null);
+
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddFileSystem(handle, tes, &code, code.len));
+        const added = rb.NextFileSystem(handle, null).?;
+        try testing.expectEqual(tes, added.header.dos_type);
+        try testing.expectEqual(@as(u32, 0x0002_0005), added.header.version);
+        try testing.expectEqual(hardblocks.FHBF_SEGLIST, added.header.patch_flags);
+        try testing.expectEqual(@as(u32, code.len), added.size);
+        try testing.expectEqual(@as(u32, 0), added.blocks);
+        try testing.expectEqual(hardblocks.end_of_list, added.at);
+        try testing.expect(rb.NextFileSystem(handle, added) == null);
+
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+        try testing.expectEqual(@as(u32, code_blocks), added.blocks);
+        try testing.expect(added.at < 16);
+        try testing.expectEqual(added.at, rig.block(hardblocks.RigidDiskBlock, handle.block).file_sys_header_list);
+    }
+
+    // Read back as written: the header, and the code in its chain.
+    var first_code: u32 = undefined;
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBF_FOUND, handle.flags);
+        const read = rb.NextFileSystem(handle, null).?;
+        try testing.expectEqual(@as(u32, 0x0002_0005), read.header.version);
+        try testing.expectEqual(@as(u32, code.len), read.size);
+        try testing.expectEqual(@as(u32, code_blocks), read.blocks);
+        const header = rig.block(hardblocks.FileSysHeaderBlock, read.at);
+        try testing.expect(hardblocks.sound(header, hardblocks.IDNAME_FILESYSHEADER));
+        try testing.expectEqual(tes, header.dos_type);
+        first_code = @bitCast(header.seg_list_blocks);
+        var back: [code.len]u8 = undefined;
+        try testing.expectEqual(@as(usize, code.len), try chainOf(&rig, first_code, &back));
+        try testing.expectEqualSlices(u8, &code, &back);
+
+        // Written again, the code stays where it is under a new header.
+        const old_header = read.at;
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+        try testing.expect(read.at != old_header);
+        try testing.expectEqual(first_code, @as(u32, @bitCast(rig.block(hardblocks.FileSysHeaderBlock, read.at).seg_list_blocks)));
+    }
+
+    // A newer version for the same DosType takes the old one's place.
+    var newer: [1000]u8 = undefined;
+    handlerFile(&newer, 2, "test-handler 2.6 (19.10.2026)\r\n");
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddFileSystem(handle, tes, &newer, newer.len));
+        const only = rb.NextFileSystem(handle, null).?;
+        try testing.expectEqual(@as(u32, 0x0002_0006), only.header.version);
+        try testing.expect(rb.NextFileSystem(handle, only) == null);
+        try testing.expect(handle.flags & rdb.RDBF_CHANGED != 0);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+    }
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        const only = rb.NextFileSystem(handle, null).?;
+        try testing.expectEqual(@as(u32, 0x0002_0006), only.header.version);
+        try testing.expectEqual(@as(u32, newer.len), only.size);
+        var back: [newer.len]u8 = undefined;
+        _ = try chainOf(&rig, @bitCast(only.header.seg_list_blocks), &back);
+        try testing.expectEqualSlices(u8, &newer, &back);
+        try testing.expect(rb.NextFileSystem(handle, only) == null);
+
+        rb.RemFileSystem(handle, only);
+        try testing.expect(rb.NextFileSystem(handle, null) == null);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+        try testing.expectEqual(hardblocks.end_of_list, rig.block(hardblocks.RigidDiskBlock, handle.block).file_sys_header_list);
+    }
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expect(rb.NextFileSystem(handle, null) == null);
+    try testing.expectEqualStrings("DH0", rb.NextPartition(handle, null).?.block.name());
+}
+
+test "code that does not fit in the table's area grows it up to the first partition, and no further" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const rb = rig.rb;
+    const room = comptime hardblocks.loadSegRoom(block_bytes);
+    // Twenty blocks of code: the area's sixteen hold the RigidDiskBlock,
+    // the PartitionBlock, the header and thirteen of them.
+    var code: [20 * room]u8 = undefined;
+    handlerFile(&code, 1, "test-handler 1.0 (18.10.2026)\r\n");
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "DH0", 40, 63, tes));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddFileSystem(handle, tes, &code, code.len));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+        try testing.expectEqual(@as(u32, 22), handle.rdb.rdb_blocks_hi);
+        try testing.expectEqual(@as(u32, 23), handle.rdb.lo_cylinder);
+        // The free cylinders before DH0 start past the area now.
+        try testing.expectEqual(rdb.RDBERR_RANGE, rb.AddPartition(handle, "DH1", 22, 30, tes));
+    }
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expectEqual(@as(u32, 22), handle.rdb.rdb_blocks_hi);
+    const kept = rb.NextFileSystem(handle, null).?;
+    try testing.expectEqual(@as(u32, 20), kept.blocks);
+    var back: [code.len]u8 = undefined;
+    _ = try chainOf(&rig, @bitCast(kept.header.seg_list_blocks), &back);
+    try testing.expectEqualSlices(u8, &code, &back);
+
+    // Forty blocks do not fit before DH0 at block 40, beside the old
+    // table or over it: nothing is written.
+    var larger: [40 * room]u8 = undefined;
+    handlerFile(&larger, 1, "test-handler 1.1 (18.10.2026)\r\n");
+    try testing.expectEqual(rdb.RDBERR_OK, rb.AddFileSystem(handle, tes, &larger, larger.len));
+    const before = rig.medium.image;
+    try testing.expectEqual(rdb.RDBERR_FULL, rb.WriteRDB(handle));
+    try testing.expectEqualSlices(u8, &before, &rig.medium.image);
+}
+
+test "a partition runs the code its table brings, and the unit's partitions share one copy" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    const rb = rig.rb;
+    var code: [2000]u8 = undefined;
+    handlerFile(&code, 2, "test-handler 2.5 (18.10.2026)\r\n");
+    try writeTwo(rig, tes);
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        // No handler for the DosType, and no code for it yet.
+        try testing.expectEqual(rdb.RDBERR_FILESYSTEM, rb.MountPartition(handle, rb.FindPartition(handle, "DH0").?, null, 0));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddFileSystem(handle, tes, &code, code.len));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+    }
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        // Code the chain no longer holds whole cannot be copied.
+        const first: u32 = @bitCast(rb.NextFileSystem(handle, null).?.header.seg_list_blocks);
+        rig.medium.image[first * block_bytes + 40] ^= 1;
+        try testing.expectEqual(rdb.RDBERR_IO, rb.MountPartition(handle, rb.FindPartition(handle, "DH0").?, null, 0));
+        try testing.expect(dos_rig.device("DH0") == null);
+        rig.medium.image[first * block_bytes + 40] ^= 1;
+
+        try testing.expectEqual(rdb.RDBERR_OK, rb.MountPartition(handle, rb.FindPartition(handle, "DH0").?, null, 0));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.MountPartition(handle, rb.FindPartition(handle, "DH1").?, null, 0));
+    }
+    const dh0 = dos_rig.device("DH0") orelse return error.NotMounted;
+    const dh1 = dos_rig.device("DH1") orelse return error.NotMounted;
+    try testing.expect(dh0.misc.handler.handler == null);
+    const entry = dh0.misc.handler.file_sys orelse return error.NoCode;
+    try testing.expectEqual(@as(?*sdk.dos.FileSysEntry, entry), dh1.misc.handler.file_sys);
+    try testing.expectEqual(tes, entry.dos_type);
+    try testing.expectEqual(@as(u32, 0x0002_0005), entry.version);
+    try testing.expectEqualStrings("test-handler", std.mem.sliceTo(&entry.name, 0));
+    try testing.expectEqualSlices(u8, &code, entry.image.?[0..entry.image_size]);
+    // The entry is the system's, for its life; the test gives it back.
+    rig.sys.FreeVec(entry.image);
+    rig.sys.FreeVec(entry);
 }

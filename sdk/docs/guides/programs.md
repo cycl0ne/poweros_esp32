@@ -893,7 +893,7 @@ task once, with the core it runs on and the core it is pinned to.
 it started - in tasks, idle, in interrupts, in cycles of its clock, counted
 at every exception rather than sampled; read it twice and divide the
 differences for how busy the core was in between, which is what
-`SYS:Programs/CPULoad` charts. Each task's own share is its `timeRun()`,
+`SYS:System/CPULoad` charts. Each task's own share is its `timeRun()`,
 counted at the same moments - read under the task lists' lock, as
 `ShowInfo TASKS` reads the tasks - which `C:Top` shows: the running
 tasks, then the ready ones, then the waiting ones, the busiest first in

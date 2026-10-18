@@ -4,14 +4,18 @@
 //! shell copying programs into RAM: at every start.
 //!
 //! usage: mkfs <out.bin> <volume> <partition> <sectors> <partition-sectors>
-//!            <sector-size> <page-size> [<path-in-image>[=<host-file>] ...]
+//!            <sector-size> <page-size> <rdb-sectors>
+//!            [<path-in-image>[=<host-file>] ...]
 //!
 //! `volume` is what the file system calls itself; `partition` is what the
 //! device node is called (`DH0`), which is what flash.device reads out of
 //! the PartitionBlock at boot. `sectors` is the whole disk's, and
 //! `partition-sectors` the partition's: 0 gives it every sector past the
 //! RDB's, and fewer leave the rest of the disk for partitions made later
-//! (C:RDB ADD). A path with no `=` is a directory to make, one with `=` a
+//! (C:RDB ADD). `rdb-sectors` is the table's area before the partition,
+//! RDB_LOCATION_LIMIT at least: what is past the RigidDiskBlock and the
+//! PartitionBlock is room for more partitions and for file systems kept
+//! in the table (C:RDB ADDFS, HDToolBox). A path with no `=` is a directory to make, one with `=` a
 //! file to write from the host; directories come before what goes in them,
 //! so the order on the command line matters (build.zig writes it out).
 //!
@@ -37,12 +41,12 @@ const hardblocks = dos.hardblocks;
 const flashfs = dos.flashfs;
 const disk = @import("fs");
 
-/// The blocks kept for the RDB and its chain: the RigidDiskBlock is in the
-/// first of them (RDB_LOCATION_LIMIT) and the PartitionBlock follows.
-/// On flash a block is an erase sector, so one can be rewritten without
-/// disturbing the next, and there is room for a second partition or a file
-/// system header later.
-const rdb_blocks: u32 = hardblocks.RDB_LOCATION_LIMIT;
+/// The fewest blocks kept for the RDB and its chain: every block a
+/// RigidDiskBlock may be in (RDB_LOCATION_LIMIT). The RigidDiskBlock is in
+/// the first and the PartitionBlock follows. On flash a block is an erase
+/// sector, so one can be rewritten without disturbing the next, and the
+/// rest is room for more partitions and file systems later.
+const min_rdb_blocks: u32 = hardblocks.RDB_LOCATION_LIMIT;
 /// Where the RigidDiskBlock and the first PartitionBlock go.
 const rdb_block: u32 = 0;
 const partition_block: u32 = 1;
@@ -171,7 +175,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 8) fatal("usage: mkfs <out.bin> <volume> <partition> <sectors> <partition-sectors> <sector-size> <page-size> [<path>[=<file>] ...]", .{});
+    if (args.len < 9) fatal("usage: mkfs <out.bin> <volume> <partition> <sectors> <partition-sectors> <sector-size> <page-size> <rdb-sectors> [<path>[=<file>] ...]", .{});
 
     const out_path = args[1];
     const label = args[2];
@@ -180,6 +184,8 @@ pub fn main(init: std.process.Init) !void {
     const asked = std.fmt.parseInt(u32, args[5], 0) catch fatal("{s}: not a number", .{args[5]});
     const sector_size = std.fmt.parseInt(u32, args[6], 0) catch fatal("{s}: not a number", .{args[6]});
     const page_size = std.fmt.parseInt(u32, args[7], 0) catch fatal("{s}: not a number", .{args[7]});
+    const rdb_blocks = std.fmt.parseInt(u32, args[8], 0) catch fatal("{s}: not a number", .{args[8]});
+    if (rdb_blocks < min_rdb_blocks) fatal("{d} RDB sectors: the table needs {d} at least", .{ rdb_blocks, min_rdb_blocks });
     if (sectors < rdb_blocks + 2 or sector_size == 0) fatal("a disk needs more than its RDB blocks", .{});
     const part_sectors = if (asked == 0) sectors - rdb_blocks else asked;
     if (part_sectors < 2 or part_sectors > sectors - rdb_blocks) fatal("{d} sectors: the disk has {d} past its RDB blocks", .{ part_sectors, sectors - rdb_blocks });
@@ -190,7 +196,7 @@ pub fn main(init: std.process.Init) !void {
     // Everything the volume gets, read first.
     const cwd = std.Io.Dir.cwd();
     var entries: std.ArrayList(Entry) = .empty;
-    for (args[8..]) |entry| {
+    for (args[9..]) |entry| {
         const split = mem.indexOfScalar(u8, entry, '=');
         const path = try arena.dupeZ(u8, if (split) |at| entry[0..at] else entry);
         const content: ?[]const u8 = if (split) |at| try cwd.readFileAlloc(io, entry[at + 1 ..], arena, .unlimited) else null;
@@ -239,13 +245,13 @@ pub fn main(init: std.process.Init) !void {
     putBlock(store, rdb_block, sector_size, &rdb);
     putBlock(store, partition_block, sector_size, &part);
 
-    const used = flashfsVolume(store, part_sectors, sector_size, page_size, label, entries.items, arena);
+    const used = flashfsVolume(store, rdb_blocks, part_sectors, sector_size, page_size, label, entries.items, arena);
     try cwd.writeFile(io, .{ .sub_path = out_path, .data = store[0..used] });
 }
 
 /// The flash file system on the partition; the image's end is the last
 /// block it wrote.
-fn flashfsVolume(store: []u8, part_sectors: u32, sector_size: u32, page_size: u32, label: []const u8, entries: []const Entry, arena: mem.Allocator) usize {
+fn flashfsVolume(store: []u8, rdb_blocks: u32, part_sectors: u32, sector_size: u32, page_size: u32, label: []const u8, entries: []const Entry, arena: mem.Allocator) usize {
     var media: ImageMedia = .{
         .store = store,
         .first = rdb_blocks * sector_size,

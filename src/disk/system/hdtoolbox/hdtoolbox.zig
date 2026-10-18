@@ -3,7 +3,7 @@
 //! stick's, those of any block device the board has - shown, changed and
 //! written back as the drive's RigidDiskBlock. Built against the SDK only.
 //!
-//!   SYS:Programs/HDToolBox
+//!   SYS:System/HDToolBox
 //!
 //! **The window.** At the top the drive to work on, picked from every
 //! unit of every block device (`drives.Units`), and a line saying what it
@@ -17,6 +17,16 @@
 //! **New** makes a partition of the free run picked, **Delete** removes
 //! the one picked, **Whole disk** makes the drive one partition, **New
 //! table** an empty table, **Save** writes it, **Quit** leaves.
+//!
+//! A third page, **File systems**, lists the file systems the table
+//! keeps - the code its partitions of a DosType run when the ROM has no
+//! handler for it or an older one - with each one's version, size and
+//! whether it is the code that runs. **Add...** reads a handler's load
+//! file, from HANDLERS: as a rule, and keeps it for the DosType **For**
+//! names, in place of the one kept for it before; **Remove** takes the
+//! one picked out. A DosType the table keeps code for is offered to the
+//! partitions too. A drive mounted from the table runs the new code once
+//! the system starts again, which Save offers.
 //!
 //! **The bar.** A press picks a partition or a free run. Held in its
 //! middle a partition is moved, held at an edge resized, each as far as
@@ -91,25 +101,27 @@ const tx = sdk.gadgets.text;
 const cb = sdk.gadgets.checkbox;
 const cv = sdk.gadgets.canvas;
 const lb = sdk.gadgets.listbrowser;
+const asl = sdk.asl;
+const AslBase = sdk.interface.asl.AslBase;
 const model = @import("model.zig");
 const drives = @import("drives.zig");
 const Span = model.Span;
 
 pub const COMMAND_NAME = "HDToolBox";
-const VERSION = "1.0";
+const VERSION = "1.1";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
 const MSG_NOLIBRARY = "No %s\n";
-const MSG_OLDLIBRARY = "%s is too old: 1.2 or later is needed\n";
+const MSG_OLDLIBRARY = "%s is too old: 1.3 or later is needed\n";
 const MSG_NOSCREEN = "No screen\n";
 const MSG_NOMEMORY = "No memory for the window\n";
 
 /// The rdb.library that mounts partitions.
 const rdb_version = 1;
-const rdb_revision = 2;
+const rdb_revision = 3;
 
 // --- the gadgets' IDs ----------------------------------------------------------------
 
@@ -126,16 +138,21 @@ const ID_BUFFERS = 10;
 const ID_TRANSFER = 11;
 const ID_BOOTPRI = 12;
 const ID_AUTOMOUNT = 13;
+const ID_FS_LIST = 14;
+const ID_FS_FOR = 15;
 const ID_NEW = 20;
 const ID_DELETE = 21;
 const ID_WHOLE = 22;
 const ID_TABLE = 23;
 const ID_SAVE = 24;
 const ID_QUIT = 25;
+const ID_FS_ADD = 26;
+const ID_FS_REMOVE = 27;
 
-const tab_names = [_:null]?[*:0]const u8{ "Partition", "Advanced" };
+const tab_names = [_:null]?[*:0]const u8{ "Partition", "Advanced", "File systems" };
 const page_partition = 0;
 const page_advanced = 1;
+const page_files = 2;
 
 const tab_to_page = [_]TagItem{
     .{ .tag = ct.CLICKTAB_Current, .data = pgc.PAGE_Current },
@@ -151,6 +168,17 @@ const columns = [_]lb.Column{
     .{ .title = "Mounted", .weight = 2 },
     .{},
 };
+
+const fs_columns = [_]lb.Column{
+    .{ .title = "Name", .weight = 3 },
+    .{ .title = "Version", .weight = 3, .flags = lb.COLUMN_NUMBER },
+    .{ .title = "Size", .weight = 2, .flags = lb.COLUMN_RIGHT | lb.COLUMN_NUMBER },
+    .{ .title = "Runs", .weight = 3 },
+    .{},
+};
+
+/// The most file systems a table keeps.
+const max_stored = 16;
 
 /// The most partitions shown of a table.
 const max_parts = 64;
@@ -277,6 +305,10 @@ const App = struct {
     whole: *Object = undefined,
     new_table: *Object = undefined,
     save: *Object = undefined,
+    fs_list: *Object = undefined,
+    fs_for: *Object = undefined,
+    fs_add: *Object = undefined,
+    fs_remove: *Object = undefined,
     pages: [tab_names.len:null]?*Object = @splat(null),
 
     // The drives.
@@ -320,9 +352,25 @@ const App = struct {
 
     // The list and the fields.
     rows: exec.List = .{},
-    fs_labels: [filesystems.all.len + 2:null]?[*:0]const u8 = @splat(null),
-    fs_types: [filesystems.all.len + 1]u32 = @splat(0),
+    fs_labels: [filesystems.all.len + max_stored + 2:null]?[*:0]const u8 = @splat(null),
+    fs_types: [filesystems.all.len + max_stored + 1]u32 = @splat(0),
     fs_other: [model.type_room + 1:0]u8 = @splat(0),
+    /// The DosTypes the table keeps code for that the system does not
+    /// know, as the partition's chooser shows them.
+    fs_stored_text: [max_stored][model.type_room + 1:0]u8 = @splat(@splat(0)),
+
+    // The file systems' page.
+    fs_rows: exec.List = .{},
+    fs_picked: ?*rdb.RDBFileSystem = null,
+    /// What For offers: the file systems the drive takes.
+    for_labels: [filesystems.all.len:null]?[*:0]const u8 = @splat(null),
+    for_types: [filesystems.all.len]u32 = @splat(0),
+    for_active: usize = 0,
+    /// The DosTypes whose code was added or taken out since the drive
+    /// was read: their drives run what the table says from the next
+    /// start.
+    touched: [max_stored]u32 = @splat(0),
+    touched_count: usize = 0,
     status_text: Line(160) = .{},
     size_text: Line(model.size_room) = .{},
 
@@ -466,6 +514,8 @@ const App = struct {
         app.made_table = false;
         app.changed = false;
         app.restart_wanted = false;
+        app.touched_count = 0;
+        app.fs_picked = null;
         app.before_count = 0;
         app.mounted_count = 0;
         app.count = 0;
@@ -507,6 +557,7 @@ const App = struct {
         app.gather();
         app.showRows();
         app.showFields();
+        app.showFileSystems();
         app.showButtons();
         app.showStatus();
         app.drawBar();
@@ -733,6 +784,23 @@ const App = struct {
             app.fs_types[count] = file_system.dos_type;
             count += 1;
         }
+        // A DosType the system does not know, which the table brings the
+        // code for.
+        if (app.handle) |handle| {
+            var stored = app.rb.NextFileSystem(handle, null);
+            var index: usize = 0;
+            while (stored) |file_system| : (stored = app.rb.NextFileSystem(handle, file_system)) {
+                const dos_type = file_system.header.dos_type;
+                if (filesystems.of(dos_type) != null or index == max_stored) continue;
+                if (dos_type == own) active = count;
+                const text = model.typeText(dos_type, app.fs_stored_text[index][0..model.type_room]);
+                app.fs_stored_text[index][text.len] = 0;
+                app.fs_labels[count] = @ptrCast(&app.fs_stored_text[index]);
+                app.fs_types[count] = dos_type;
+                count += 1;
+                index += 1;
+            }
+        }
         if (active == null and part != null) {
             const text = model.typeText(own, app.fs_other[0..model.type_room]);
             app.fs_other[text.len] = 0;
@@ -757,6 +825,81 @@ const App = struct {
         app.enable(null, app.whole, app.handle != null and !system_here);
         app.enable(null, app.new_table, app.handle != null and !system_here);
         app.enable(null, app.save, app.handle != null and app.changed);
+        app.enable(page_files, app.fs_add, may_edit and app.for_labels[0] != null);
+        app.enable(page_files, app.fs_remove, may_edit and app.fs_picked != null);
+    }
+
+    /// The file systems' page made anew from the table's: the list, the
+    /// one picked still picked, and what For offers.
+    fn showFileSystems(app: *App) void {
+        app.set(page_files, app.fs_list, &.{ .{ .tag = lb.LISTBROWSER_Rows, .data = lb.LISTBROWSER_DETACH }, .{} });
+        lb.freeRows(app.sys, &app.fs_rows);
+        var selected: u32 = lb.LISTBROWSER_NONE;
+        var still_there = false;
+        var index: u32 = 0;
+        if (app.handle) |handle| {
+            var stored = if (app.hasTable()) app.rb.NextFileSystem(handle, null) else null;
+            while (stored) |file_system| : (stored = app.rb.NextFileSystem(handle, file_system)) {
+                const header = &file_system.header;
+                var type_text: [model.type_room + 1]u8 = @splat(0);
+                const name: [*:0]const u8 = if (filesystems.of(header.dos_type)) |known| known.name else blk: {
+                    _ = model.typeText(header.dos_type, type_text[0..model.type_room]);
+                    break :blk @ptrCast(&type_text);
+                };
+                var version: Line(16) = .{};
+                version.number(header.version >> 16);
+                version.add(".");
+                version.number(header.version & 0xFFFF);
+                var size: [model.size_room + 1]u8 = @splat(0);
+                const size_text = model.sizeText(file_system.size, size[0..model.size_room]);
+                size[size_text.len] = 0;
+                // The code a partition of the DosType runs: this, or the
+                // ROM's handler when that is as new.
+                var runs: Line(24) = .{};
+                const rom = filesystems.romVersion(app.sys, header.dos_type);
+                if (filesystems.storedWins(header.version, rom)) {
+                    runs.add("this");
+                } else {
+                    runs.add("ROM's ");
+                    runs.number(rom.? >> 16);
+                    runs.add(".");
+                    runs.number(rom.? & 0xFFFF);
+                }
+                const texts = [_][*:0]const u8{ name, version.ptr(), @ptrCast(&size), runs.ptr() };
+                const list_row = lb.allocRow(app.sys, &texts, 0) orelse break;
+                list_row.user_data = @intFromPtr(file_system);
+                app.sys.AddTail(&app.fs_rows, &list_row.node);
+                if (app.fs_picked == file_system) {
+                    selected = index;
+                    still_there = true;
+                }
+                index += 1;
+            }
+        }
+        if (!still_there) app.fs_picked = null;
+        app.set(page_files, app.fs_list, &.{
+            .{ .tag = lb.LISTBROWSER_Rows, .data = @intFromPtr(&app.fs_rows) },
+            .{ .tag = lb.LISTBROWSER_Selected, .data = selected },
+            .{},
+        });
+
+        // For: the file systems the drive takes.
+        const erase_size = if (app.handle) |handle| handle.geometry.erase_size else 0;
+        var count: usize = 0;
+        for (&filesystems.all) |*file_system| {
+            if (!filesystems.suits(file_system.dos_type, erase_size, false)) continue;
+            app.for_labels[count] = file_system.name;
+            app.for_types[count] = file_system.dos_type;
+            count += 1;
+        }
+        app.for_labels[count] = null;
+        if (app.for_active >= count) app.for_active = 0;
+        app.set(page_files, app.fs_for, &.{
+            .{ .tag = ch.CHOOSER_Labels, .data = @intFromPtr(&app.for_labels) },
+            .{ .tag = ch.CHOOSER_Active, .data = app.for_active },
+            .{ .tag = gc.GA_Disabled, .data = @intFromBool(!app.editable() or count == 0) },
+            .{},
+        });
     }
 
     // --- the bar --------------------------------------------------------------------
@@ -1250,7 +1393,7 @@ const App = struct {
                 rdb.RDBERR_CHANGED => "The medium has changed: it is read again",
                 rdb.RDBERR_NAME => "Two partitions have one name, or a name is wrong",
                 rdb.RDBERR_RANGE => "A partition's cylinders are wrong",
-                rdb.RDBERR_FULL => "The table has no room for so many partitions",
+                rdb.RDBERR_FULL => "The table has no room for so many partitions, or for the file systems' code",
                 rdb.RDBERR_IO => "The table could not be written",
                 else => "The table was not written",
             });
@@ -1279,7 +1422,8 @@ const App = struct {
             const name = part.block.name();
             @memcpy(picked_name[0..name.len], name);
         }
-        const restart = any_stale or app.restart_wanted;
+        const new_code = app.runsNewCode();
+        const restart = any_stale or new_code or app.restart_wanted;
         app.openDrive(app.current);
         app.restart_wanted = restart;
         for (app.parts[0..app.count]) |part| {
@@ -1287,9 +1431,142 @@ const App = struct {
         }
         app.refresh();
         app.say(said.slice());
-        if (restart and app.ask("The table is written. Drives mounted from the old one stop until the system starts again.\nRestart now?", "Restart|Later")) {
-            app.restartSystem();
+        const why: [*:0]const u8 = if (!any_stale and new_code)
+            "The table is written. Its drives run the new file system once the system starts again.\nRestart now?"
+        else
+            "The table is written. Drives mounted from the old one stop until the system starts again.\nRestart now?";
+        if (restart and app.ask(why, "Restart|Later")) app.restartSystem();
+    }
+
+    /// Whether a drive mounted from the drive shown is of a DosType whose
+    /// code was added or taken out: it runs what it ran until the system
+    /// starts again.
+    fn runsNewCode(app: *const App) bool {
+        for (app.mounted[0..app.mounted_count]) |*mounted| {
+            for (app.touched[0..app.touched_count]) |dos_type| {
+                if (mounted.env.dos_type == dos_type) return true;
+            }
         }
+        return false;
+    }
+
+    /// A DosType noted as having had its code changed.
+    fn touch(app: *App, dos_type: u32) void {
+        for (app.touched[0..app.touched_count]) |seen| {
+            if (seen == dos_type) return;
+        }
+        if (app.touched_count == app.touched.len) return;
+        app.touched[app.touched_count] = dos_type;
+        app.touched_count += 1;
+    }
+
+    // --- the file systems ------------------------------------------------------------
+
+    /// Add...: a handler's load file picked in a requester and kept in
+    /// the table for the DosType For names.
+    fn addFileSystem(app: *App) void {
+        const handle = app.handle orelse return;
+        if (!app.editable() or app.for_active >= app.for_types.len or app.for_labels[app.for_active] == null) return;
+        const dos_type = app.for_types[app.for_active];
+        var path: [264:0]u8 = @splat(0);
+        if (!app.askFile(&path)) return;
+        var size: u32 = 0;
+        const code = app.readFile(&path, &size) orelse return;
+        defer app.sys.FreeVec(code);
+        const err = app.rb.AddFileSystem(handle, dos_type, code, size);
+        if (err != rdb.RDBERR_OK) {
+            app.say(switch (err) {
+                rdb.RDBERR_FILESYSTEM => "That file is not a handler for this machine",
+                rdb.RDBERR_NOMEM => "No memory for the file system",
+                else => "The file system was not added",
+            });
+            return;
+        }
+        app.touch(dos_type);
+        app.changed = true;
+        // The one just added picked: it is the list's last.
+        var last: ?*rdb.RDBFileSystem = null;
+        var stored = app.rb.NextFileSystem(handle, null);
+        while (stored) |file_system| : (stored = app.rb.NextFileSystem(handle, file_system)) last = file_system;
+        app.fs_picked = last;
+        app.refresh();
+    }
+
+    /// Remove: the file system picked taken out of the table.
+    fn removeFileSystem(app: *App) void {
+        const handle = app.handle orelse return;
+        const file_system = app.fs_picked orelse return;
+        if (!app.editable()) return;
+        app.touch(file_system.header.dos_type);
+        app.fs_picked = null;
+        app.rb.RemFileSystem(handle, file_system);
+        app.changed = true;
+        app.refresh();
+    }
+
+    /// A row picked in the file systems' list.
+    fn pickFileSystem(app: *App) void {
+        var value: usize = 0;
+        _ = app.ib.GetAttr(lb.LISTBROWSER_SelectedRow, app.fs_list, &value);
+        app.fs_picked = if (value == 0) null else @ptrFromInt(@as(*lb.Row, @ptrFromInt(value)).user_data);
+        app.showButtons();
+    }
+
+    /// The file a requester over the window was asked for, its whole
+    /// path into `into`; false when none was picked.
+    fn askFile(app: *App, into: *[264:0]u8) bool {
+        const asl_lib = app.sys.OpenLibrary(asl.ASLNAME, 0) orelse {
+            app.say("No " ++ asl.ASLNAME);
+            return false;
+        };
+        defer app.sys.CloseLibrary(asl_lib);
+        const al: *AslBase = @ptrCast(asl_lib);
+        const request = al.AllocAslRequest(asl.ASL_FileRequest, &[_]TagItem{
+            pair(asl.ASLFR_TitleText, @intFromPtr("Which handler?")),
+            pair(asl.ASLFR_InitialDrawer, @intFromPtr("HANDLERS:")),
+            pair(asl.ASLFR_Window, @intFromPtr(app.window)),
+            .{},
+        }) orelse return false;
+        defer al.FreeAslRequest(request);
+        if (!al.AslRequest(request, null)) return false;
+        const file: *asl.FileRequester = @ptrCast(@alignCast(request));
+        const drawer = file.drawer orelse return false;
+        const name = file.file orelse return false;
+        if (name[0] == 0) return false;
+        var line: Line(263) = .{};
+        line.addText(drawer);
+        if (line.len != 0 and line.text[line.len - 1] != ':' and line.text[line.len - 1] != '/') line.add("/");
+        line.addText(name);
+        @memcpy(into[0 .. line.len + 1], line.text[0 .. line.len + 1]);
+        return true;
+    }
+
+    /// A file read whole into memory of its own, its size in `size`; null,
+    /// and why on the status line, when it cannot be.
+    fn readFile(app: *App, path: [*:0]const u8, size: *u32) ?[*]u8 {
+        const dl = app.dl;
+        const fh = dl.Open(path, dos.MODE_OLDFILE) orelse {
+            app.say("The file cannot be opened");
+            return null;
+        };
+        defer _ = dl.Close(fh);
+        var fib: dos.FileInfoBlock = .{};
+        if (!dl.ExamineFH(fh, &fib) or fib.size == 0 or fib.size > 0x7FFF_FFFF) {
+            app.say("The file cannot be read");
+            return null;
+        }
+        const bytes: u32 = @intCast(fib.size);
+        const code: [*]u8 = @ptrCast(app.sys.AllocVec(bytes, exec.MEMF_ANY) orelse {
+            app.say("No memory for the file");
+            return null;
+        });
+        if (dl.Read(fh, code, @intCast(bytes)) != bytes) {
+            app.sys.FreeVec(code);
+            app.say("The file cannot be read");
+            return null;
+        }
+        size.* = bytes;
+        return code;
     }
 
     /// A node with this startup opens a unit of a block device.
@@ -1417,6 +1694,12 @@ const App = struct {
                     ID_WHOLE => app.wholeDisk(),
                     ID_TABLE => app.newTable(),
                     ID_SAVE => app.saveTable(),
+                    ID_FS_LIST => app.pickFileSystem(),
+                    ID_FS_FOR => {
+                        app.for_active = code;
+                    },
+                    ID_FS_ADD => app.addFileSystem(),
+                    ID_FS_REMOVE => app.removeFileSystem(),
                     ID_QUIT => if (app.mayLeave()) return false,
                     else => {},
                 },
@@ -1465,6 +1748,14 @@ const App = struct {
             app.unit_text[0].add("No drive");
             app.unit_labels[0] = app.unit_text[0].ptr();
         }
+    }
+
+    /// The rows a line of the screen's font takes.
+    fn fontHeight(app: *App) i32 {
+        const font = app.draw_info.font orelse return 8;
+        var extent = graphics.FontExtent{};
+        app.gb.FontExtent(font, &extent);
+        return @max(extent.height, 8);
     }
 
     /// The window's whole layout, its gadgets kept in the App; null when
@@ -1535,6 +1826,37 @@ const App = struct {
             column(ib, &.{ app.boot_pri, app.automount }, &.{ "Boot _priority", "_Mount at start" }),
         }) orelse return null;
 
+        // The file systems' page.
+        app.fs_rows.init(.unknown);
+        app.fs_list = ib.NewObjectTagList(null, lb.LISTBROWSER_CLASS, &[_]TagItem{
+            pair(gc.GA_ID, ID_FS_LIST),
+            pair(gc.GA_RelVerify, 1),
+            pair(lb.LISTBROWSER_Columns, @intFromPtr(&fs_columns)),
+            pair(lb.LISTBROWSER_Rows, @intFromPtr(&app.fs_rows)),
+            .{},
+        }) orelse return null;
+        app.fs_for = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+            pair(gc.GA_ID, ID_FS_FOR),
+            pair(ch.CHOOSER_Labels, @intFromPtr(&app.for_labels)),
+            .{},
+        }) orelse return null;
+        app.fs_add = button(ib, "Add...", ID_FS_ADD) orelse return null;
+        app.fs_remove = button(ib, "Remove", ID_FS_REMOVE) orelse return null;
+        const fs_side = column(ib, &.{ app.fs_for, app.fs_add, app.fs_remove }, &.{ "F_or", "", "" }) orelse return null;
+        // The list as tall as the other pages' three rows of fields, so
+        // the pages keep the height they have without it.
+        const list_height: usize = @intCast(3 * app.fontHeight() + 24);
+        app.pages[page_files] = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ),
+            pair(lg.LAYOUTA_Spacing, 6),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(app.fs_list)),
+            pair(lg.CHILDA_MinHeight, list_height),
+            pair(lg.CHILDA_MaxHeight, list_height),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(fs_side)),
+            pair(lg.CHILDA_WeightWidth, 0),
+            .{},
+        }) orelse return null;
+
         const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{ pair(pgc.PAGE_Pages, @intFromPtr(&app.pages)), .{} }) orelse return null;
         app.tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
             pair(gc.GA_ID, ID_TABS),
@@ -1576,6 +1898,7 @@ const App = struct {
         app.closeDrive();
         if (app.units.list != null) app.units.release(app.eb);
         lb.freeRows(app.sys, &app.rows);
+        lb.freeRows(app.sys, &app.fs_rows);
     }
 };
 

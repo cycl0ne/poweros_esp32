@@ -78,7 +78,7 @@ ESP32-P4 boards and in Espressif's QEMU.
   loaded from disk when wanted and expunged when memory runs short;
   internal SRAM and PSRAM as memory with attributes, every block marked
   with the task that owns it, so a wrong or second free is refused and
-  `C:Avail OWNERS` and `SYS:Programs/MemMap` show who holds what. A
+  `C:Avail OWNERS` and `SYS:System/MemMap` show who holds what. A
   system log from the first byte of the boot (`C:Log` sends it to a
   syslog server), a Guru with a ROM debugger on the serial ports, memory
   debugging (a wall behind every block, patterns in new and freed
@@ -87,7 +87,7 @@ ESP32-P4 boards and in Espressif's QEMU.
   held and asked about while the system runs on - Suspend, Kill or
   Reboot. A task that ends, by itself or killed, gives back the
   semaphores it held, the windows it left open and its private memory.
-  `C:Top` and `SYS:Programs/CPULoad` show what each task and core takes.
+  `C:Top` and `SYS:System/CPULoad` show what each task and core takes.
 - **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
   log-structured flash file system (`DH0:`); posfs, a journaling file
   system of copy-on-write trees with UTF-8 names, soft and hard links,
@@ -105,8 +105,9 @@ ESP32-P4 boards and in Espressif's QEMU.
   asked for); partitions from a RigidDiskBlock on the flash disk, a card
   or a stick, each mounted as its own drive - a card's and a stick's by
   their device when they come in - and laid out on any drive by dragging
-  them in `SYS:Programs/HDToolBox` ([disks
-  guide](sdk/docs/guides/rdb.md));
+  them in `SYS:System/HDToolBox`; a file system's code kept in the
+  table, which its partitions run when the ROM has none or an older one
+  ([disks guide](sdk/docs/guides/rdb.md));
   notification when a file changes; record locks on ranges of a file;
   consoles with line editing, file name completion, and copy and paste;
   a shell with scripts and 53 commands in `C:` - `ScreenDump` saves a
@@ -121,8 +122,10 @@ ESP32-P4 boards and in Espressif's QEMU.
   spreadsheet with formulas, reading and writing CSV), Terminal (a VT100
   on a serial line), Player (WAV, MP3, FLAC and Ogg Vorbis with their
   cover, tags and chapters, and a plasma, the wave or the spectrum of
-  what is heard), FontView, CPULoad, MemMap (who holds the memory, as a
-  map), Battery, Prefs and HDToolBox (a drive's partitions).
+  what is heard), FontView, Battery and Prefs. In `SYS:System`, beside
+  the Shell, with their readmes in `SYS:System/Docs`: HDToolBox (a
+  drive's partitions), CPULoad and MemMap (who holds the memory, as a
+  map).
 - **Graphics and windows:** rtg.library for the displays - on the
   ESP32-P4 its 2D engine fills, copies, blends and scales;
   graphics.library with smooth curves, gradients, shadows and scaled
@@ -266,6 +269,7 @@ More build steps and options:
 | `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk image |
 | `-Ddh0-size=8192` | `DH0:` that many KiB, the rest of the flash disk left for partitions made later (HDToolBox, `C:RDB ADD`) |
+| `-Drdb-size=1024` | the flash disk's partition table area before `DH0:`, in KiB (default 64): room for file systems kept in the table (HDToolBox, `C:RDB ADDFS`) |
 | `-Dnet=none` | the `qemu*` steps without a network, or another QEMU `-nic` backend |
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
 | `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |

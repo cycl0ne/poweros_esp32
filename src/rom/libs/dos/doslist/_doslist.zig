@@ -88,7 +88,11 @@
 //! A disk's partitions are not dos's to find: the disk's driver reads its
 //! RigidDiskBlock and hands a device node per partition to
 //! expansion.library (MakeDosNode, AddBootNode), and dos's init takes the
-//! ones handed over before it was up with EnterBootNodes.
+//! ones handed over before it was up with EnterBootNodes. A file system's
+//! code that the table brings comes with the node, as a load file in
+//! memory (`FileSysEntry`): dos loads it when the first drive that has it
+//! starts its handler, since the driver reads the table before dos is
+//! there to load anything.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -96,6 +100,7 @@ const process = @import("../process/_process.zig");
 const DosBase = @import("../dos_base.zig").DosBase;
 const packets = @import("../packet/_packet.zig");
 const segment = @import("../program/_program.zig");
+const loadseg = @import("../program/loadseg.zig");
 const locks = @import("../lock/_lock.zig");
 const dos = sdk.dos;
 const exec = sdk.exec;
@@ -295,26 +300,35 @@ pub fn startHandler(db: *DosBase, node: *DosList, name: [*:0]const u8) ?*MsgPort
     return other orelse node.task orelse &proc.msg_port;
 }
 
-/// A device's handler code by its name (dol_Handler), whose entry the
-/// node keeps from then on so it is not looked for again.
+/// A device's handler code, whose entry the node keeps from then on so it
+/// is not looked for again.
 ///
-/// A system segment comes first: the ROM's handlers are there, under the
-/// name at the end of the path, so `HANDLERS:con-handler` finds the ROM's
-/// con-handler. Failing that the name is a file: it is loaded - as it is
-/// written, and a bare name from `HANDLERS:` - and the handler's ROM tag
-/// is looked for in it, the same tag a handler in the ROM has. The loaded
-/// code stays in the node's seglist for as long as the node lasts; two
-/// callers that both loaded it keep the first and unload the second.
+/// The code the drive's partition table brought comes first
+/// (`file_sys`), loaded once for every drive that has it. Then the name
+/// (dol_Handler): a system segment first - the ROM's handlers are there,
+/// under the name at the end of the path, so `HANDLERS:con-handler` finds
+/// the ROM's con-handler. Failing that the name is a file: it is loaded -
+/// as it is written, and a bare name from `HANDLERS:` - and the handler's
+/// ROM tag is looked for in it, the same tag a handler in the ROM has. The
+/// loaded code stays in the node's seglist for as long as the node lasts;
+/// two callers that both loaded it keep the first and unload the second.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
 /// - `h` - the node's handler fields.
 ///
 /// RESULT:
-/// The entry, or null when the node names no handler, no segment or file
-/// has that name, or the file holds no handler.
+/// The entry, or null when the table's code holds no handler and the node
+/// names none, no segment or file has that name, or the file holds no
+/// handler.
 fn findHandler(db: *DosBase, h: *dos.DosListHandler) ?exec.TaskFn {
     const dos_lib = db.iface();
+    if (h.file_sys) |stored| {
+        if (storedHandler(db, stored)) |entry| {
+            h.entry = entry;
+            return entry;
+        }
+    }
     const name = h.handler orelse return null;
     {
         _ = dos_lib.LockSegmentList(true);
@@ -325,6 +339,65 @@ fn findHandler(db: *DosBase, h: *dos.DosListHandler) ?exec.TaskFn {
         }
     }
     return loadHandler(db, h, name);
+}
+
+/// The handler in a file system's code from a partition table: loaded
+/// from the entry's image by the first drive that wants it, under
+/// `file_sys_lock`, and the image freed; every drive after it gets the
+/// same entry. The code is the system's and is never unloaded, so the
+/// node's `seg_list` stays empty and nobody counts its users.
+///
+/// INPUTS:
+/// - `db` - the library's base.
+/// - `stored` - the entry the node has.
+///
+/// RESULT:
+/// The handler's entry, or null when the image is not a load file for
+/// this machine or holds no handler - or was such an image before: the
+/// drive then starts the handler its name says.
+fn storedHandler(db: *DosBase, stored: *dos.FileSysEntry) ?exec.TaskFn {
+    const sys = db.sys_base;
+    sys.ObtainSemaphore(&db.file_sys_lock);
+    defer sys.ReleaseSemaphore(&db.file_sys_lock);
+    if (stored.entry) |entry| return entry;
+    const image = stored.image orelse return null;
+    stored.image = null;
+    defer sys.FreeVec(image);
+    const name: [*:0]const u8 = if (stored.name[0] != 0) &stored.name else "file system";
+    const seg_list = loadImage(db, image[0..stored.image_size], name) orelse return null;
+    const tag = handlerTag(seg_list) orelse {
+        db.iface().UnLoadSeg(seg_list);
+        return null;
+    };
+    stored.seg_list = seg_list;
+    stored.entry = tag.handler;
+    return tag.handler;
+}
+
+/// A load file in memory loaded, the system's: read through a handle over
+/// its bytes that no handler serves.
+///
+/// INPUTS:
+/// - `db` - the library's base.
+/// - `image` - the load file.
+/// - `name` - what the list of loaded files calls it.
+fn loadImage(db: *DosBase, image: []u8, name: [*:0]const u8) ?*dos.SegList {
+    const dos_lib = db.iface();
+    const sys = db.sys_base;
+    const object = dos_lib.AllocDosObject(dos.DOS_FILEHANDLE, null) orelse return null;
+    defer dos_lib.FreeDosObject(dos.DOS_FILEHANDLE, object);
+    const fh: *dos.FileHandle = @ptrCast(@alignCast(object));
+    fh.buf = image.ptr;
+    fh.buf_size = @intCast(image.len);
+    fh.end = fh.buf_size;
+    fh.state = .read;
+    fh.buf_owned = false;
+    sys.BeginSystemMemory();
+    defer sys.EndSystemMemory();
+    const seg_list = loadseg.loadFrom(db, fh, name);
+    fh.buf = null;
+    fh.state = .empty;
+    return seg_list;
 }
 
 /// A process running a device's loaded handler code has ended. The last
