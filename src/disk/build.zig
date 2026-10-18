@@ -49,7 +49,7 @@ const tests = [_][]const u8{
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
     "launch",      "drag",       "tap",         "app",     "engine",
     "jpeg",        "keysource",  "usbdevice",   "scsi",    "sound",
-    "memowner",    "records",
+    "memowner",    "records",    "disktest",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
@@ -153,6 +153,7 @@ const modules = [_]Program{
     .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device" },
     .{ .disk = "devs/usbotg.device", .source = "devs/usbotg/usbotg.zig", .name = "usbotg.device" },
     .{ .disk = "devs/xhci.device", .source = "devs/xhci/xhci.zig", .name = "xhci.device" },
+    .{ .disk = "devs/nvme.device", .source = "devs/nvme/nvme.zig", .name = "nvme.device" },
     .{ .disk = "devs/usb/hid.device", .source = "devs/usb/hid/hid.zig", .name = "hid.device" },
     .{ .disk = "devs/usb/disk.device", .source = "devs/usb/disk/disk.zig", .name = "disk.device" },
     .{ .disk = "devs/usb/ftdi.device", .source = "devs/usb/serial/ftdi.zig", .name = "ftdi.device" },
@@ -173,8 +174,8 @@ const mac_only = [_][]const u8{"emac.device"};
 /// does not: the DWC2 USB controller, the SD host.
 const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device" };
 /// What a RISC-V 64 machine under SBI has and the ESP32s do not: PCI,
-/// the command that lists it, and the USB controllers on it.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device" };
+/// the command that lists it, and the USB controllers and SSDs on it.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device" };
 
 /// Whether `program` is built for `chip`.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
