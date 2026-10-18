@@ -20,6 +20,34 @@ test "the crc is crc32" {
     try testing.expect(layout.seededLife(&uuid, 1) != layout.seededLife(&uuid, 2));
 }
 
+/// crc32 a byte at a time, as the format defines it.
+fn crcByBytes(running: u32, bytes: []const u8) u32 {
+    var crc = running;
+    for (bytes) |byte| {
+        crc ^= byte;
+        for (0..8) |_| crc = if (crc & 1 != 0) 0xEDB8_8320 ^ (crc >> 1) else crc >> 1;
+    }
+    return crc;
+}
+
+test "the crc is the same eight bytes at a time, from any start and in any pieces" {
+    var bytes: [4096 + 8]u8 align(8) = undefined;
+    for (&bytes, 0..) |*byte, i| byte.* = @truncate(i *% 167 +% (i >> 5) *% 31 +% 7);
+    for (0..8) |start| {
+        for (0..81) |len| {
+            const part = bytes[start..][0..len];
+            try testing.expectEqual(crcByBytes(layout.crcStart(), part), layout.crcAdd(layout.crcStart(), part));
+            // Split anywhere, run on: the same crc.
+            const cut = len / 3;
+            try testing.expectEqual(crcByBytes(layout.crcStart(), part), layout.crcAdd(layout.crcAdd(layout.crcStart(), part[0..cut]), part[cut..]));
+        }
+    }
+    const uuid: [16]u8 = @splat(0xC3);
+    const block = bytes[0..4096];
+    try testing.expectEqual(~crcByBytes(crcByBytes(layout.crcStart(), &uuid), block), layout.crcSeeded(&uuid, block));
+    try testing.expectEqual(~crcByBytes(crcByBytes(layout.crcStart(), &uuid), bytes[3..][0..4096]), layout.crcSeeded(&uuid, bytes[3..][0..4096]));
+}
+
 test "a DosType names posfs in both layouts" {
     try testing.expect(posfs.isPosfsType(posfs.ID_POSFS_DISK));
     try testing.expect(posfs.isPosfsType(posfs.ID_POSFS_MBR));

@@ -960,12 +960,10 @@ fn writeRaw(vol: *Volume, ov: *Overlay, entries: []Pending, checksums: bool) Err
     const run = try space.alloc(vol, entries.len, .held, true);
     const count: usize = @intCast(run.count);
     if (checksums) try reserveCrcs(vol, ov, count);
-    for (entries[0..count], 0..) |entry, index| {
-        vol.writeBlocks(run.start + index, entry.buffer) catch |err| {
-            try space.releaseHeld(vol, run.start, run.count);
-            return err;
-        };
-    }
+    writeRun(vol, run.start, entries[0..count]) catch |err| {
+        try space.releaseHeld(vol, run.start, run.count);
+        return err;
+    };
     var crc_first = no_crcs;
     if (checksums) {
         crc_first = @intCast(ov.crc_count);
@@ -980,6 +978,28 @@ fn writeRaw(vol: *Volume, ov: *Overlay, entries: []Pending, checksums: bool) Err
         entry.buffer = &.{};
     }
     return count;
+}
+
+/// Blocks in memory written to the run of blocks from `start`: put one
+/// after another in the volume's gather buffer and sent in one command
+/// for as many as it holds - a command a block costs the time of several
+/// blocks on an SSD - or a block at a time when there is no memory for
+/// the buffer.
+fn writeRun(vol: *Volume, start: u64, entries: []const Pending) Error!void {
+    const size: usize = vol.block_size;
+    if (entries.len > 1 and vol.gather.len == 0) vol.gather = vol.alloc(pendingMax(vol) * size) catch &.{};
+    const holds = vol.gather.len / size;
+    if (entries.len == 1 or holds < 2) {
+        for (entries, 0..) |entry, index| try vol.writeBlocks(start + index, entry.buffer);
+        return;
+    }
+    var done: usize = 0;
+    while (done < entries.len) {
+        const piece = @min(entries.len - done, holds);
+        for (entries[done..][0..piece], 0..) |entry, index| @memcpy(vol.gather[index * size ..][0..size], entry.buffer);
+        try vol.writeBlocks(start + done, vol.gather[0 .. piece * size]);
+        done += piece;
+    }
 }
 
 /// A whole chunk in memory compressed and written, when that saves a

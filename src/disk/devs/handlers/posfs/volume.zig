@@ -121,6 +121,10 @@ pub const Volume = struct {
     /// A block of room for reading file data that does not start or end
     /// on a block.
     bounce: []u8 = &.{},
+    /// Where a file's blocks in memory are put one after another to go to
+    /// the medium in one command (files.zig): made the first time, and
+    /// empty when there was no memory for it.
+    gather: []u8 = &.{},
     /// The last block of checksummed file data read in part, checked, and
     /// its address (`no_block` for none): on a medium not read as memory.
     checked: []u8 = &.{},
@@ -228,6 +232,8 @@ pub const Volume = struct {
             vol.free(vol.checked);
             vol.checked = &.{};
             vol.checked = try vol.alloc(vol.block_size);
+            vol.free(vol.gather);
+            vol.gather = &.{};
         }
         vol.checked_block = no_block;
         compress.release(vol);
@@ -270,6 +276,8 @@ pub const Volume = struct {
         vol.scratch = &.{};
         vol.free(vol.bounce);
         vol.bounce = &.{};
+        vol.free(vol.gather);
+        vol.gather = &.{};
         vol.free(vol.checked);
         vol.checked = &.{};
         vol.checked_block = no_block;
