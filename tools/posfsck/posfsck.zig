@@ -87,6 +87,10 @@ const ImageMedia = struct {
         return block;
     }
 
+    pub fn allocRaw(m: *ImageMedia, len: usize) ?[]u8 {
+        return m.allocator.alignedAlloc(u8, .@"8", len) catch null;
+    }
+
     pub fn free(m: *ImageMedia, block: []u8) void {
         const aligned: []align(8) u8 = @alignCast(block);
         m.allocator.free(aligned);

@@ -188,6 +188,11 @@ pub const Volume = struct {
         return vol.dev.alloc(len) orelse error.NoMemory;
     }
 
+    /// Not cleared: for a buffer filled whole before it is read.
+    pub fn allocRaw(vol: *Volume, len: usize) Error![]u8 {
+        return vol.dev.allocRaw(len) orelse error.NoMemory;
+    }
+
     pub fn free(vol: *Volume, memory: []u8) void {
         if (memory.len != 0) vol.dev.free(memory);
     }

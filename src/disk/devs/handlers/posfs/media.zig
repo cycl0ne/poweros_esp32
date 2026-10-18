@@ -28,6 +28,7 @@ pub const Ops = struct {
     update: *const fn (ctx: *anyopaque) bool,
     writable: *const fn (ctx: *anyopaque) bool,
     alloc: *const fn (ctx: *anyopaque, len: usize) ?[]u8,
+    allocRaw: *const fn (ctx: *anyopaque, len: usize) ?[]u8,
     free: *const fn (ctx: *anyopaque, memory: []u8) void,
     now: *const fn (ctx: *anyopaque) u64,
     random: *const fn (ctx: *anyopaque, into: *[16]u8) void,
@@ -77,6 +78,11 @@ pub const Device = struct {
     /// Eight-byte aligned and cleared, as AllocVec's are.
     pub fn alloc(dev: Device, len: usize) ?[]u8 {
         return dev.ops.alloc(dev.ctx, len);
+    }
+    /// Eight-byte aligned and not cleared: for memory that is filled
+    /// whole before it is read.
+    pub fn allocRaw(dev: Device, len: usize) ?[]u8 {
+        return dev.ops.allocRaw(dev.ctx, len);
     }
     pub fn free(dev: Device, memory: []u8) void {
         dev.ops.free(dev.ctx, memory);
@@ -129,6 +135,9 @@ fn OpsOf(comptime T: type) type {
         fn alloc(ctx: *anyopaque, len: usize) ?[]u8 {
             return self(ctx).alloc(len);
         }
+        fn allocRaw(ctx: *anyopaque, len: usize) ?[]u8 {
+            return self(ctx).allocRaw(len);
+        }
         fn free(ctx: *anyopaque, memory: []u8) void {
             self(ctx).free(memory);
         }
@@ -151,6 +160,7 @@ fn OpsOf(comptime T: type) type {
             .update = update,
             .writable = writable,
             .alloc = alloc,
+            .allocRaw = allocRaw,
             .free = free,
             .now = now,
             .random = random,
