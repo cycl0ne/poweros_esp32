@@ -142,7 +142,23 @@ put back; `SelectError` and `ErrorOutput` set and give an error stream,
 where `PrintFault` writes when there is one, else to `Output()`. The
 shell runs every command with its console as the error stream, so a
 command's errors stay on the console when `>` sends its output to a
-file. `IsInteractive` tells whether a handle is a console.
+file, or to NIL:. `*>` sends them elsewhere, as `>` does the output, and
+`*>>` adds them to the end of a file:
+
+```
+Copy >NIL: a b          ; nothing printed but the errors
+Copy >NIL: *>NIL: a b   ; nothing at all
+Copy *>RAM:errors a b   ; the errors kept in a file
+Copy *>>RAM:errors a b  ; and added to it
+```
+
+Like the others, `*>` counts only after a space and outside quotes, and
+`*` before anything else - the console's name - is left as it is.
+`Run` gives its background shell a handle of its own on the
+console - the one its output was sent to, if that is a console - unless
+its output goes to NIL:: `Run >NIL: x` runs the shell on NIL: with no
+console at all, so nothing it runs, errors included, opens a window.
+`IsInteractive` tells whether a handle is a console.
 
 ## Names and paths
 
@@ -382,8 +398,9 @@ that succeed set it too - every packet's second result lands there - so
 it is read right after the call it belongs to. `SetIoErr` sets it, for
 the shell to see once the command has returned. `Fault(code, header,
 buffer, len)` writes a code's text into a buffer; `PrintFault(code,
-header)` writes it to `Output()` with a newline (`RAM:x: object not
-found`) and leaves `IoErr()` at the code.
+header)` writes it with a newline (`RAM:x: object not found`) to the
+error stream, or to `Output()` when there is none, and leaves `IoErr()`
+at the code.
 
 A command returns `RETURN_OK` (0) when it is done, `RETURN_WARN` (5)
 when it is done with something to say - nothing matched, Ctrl-C stopped

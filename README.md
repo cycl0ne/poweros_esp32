@@ -110,7 +110,9 @@ ESP32-P4 boards and in Espressif's QEMU.
   ([disks guide](sdk/docs/guides/rdb.md));
   notification when a file changes; record locks on ranges of a file;
   consoles with line editing, file name completion, and copy and paste;
-  a shell with scripts and 53 commands in `C:` - `ScreenDump` saves a
+  a shell with scripts, a command's output and errors redirected apart
+  (`>`, `*>`: [dos guide](sdk/docs/guides/dos.md#files)), and 53
+  commands in `C:` - `ScreenDump` saves a
   screen as a PNG - test programs in `C:test` and network tools in
   `C:net`.
 - **Desktop and programs:** `LIBS:anvil.library` puts the disks, drawers

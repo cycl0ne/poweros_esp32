@@ -16,13 +16,14 @@
 //!   expanded (local, then global; "*$" escapes).
 //! - The rest of the line: ";" starts a comment (outside quotes), "+" at
 //!   the end continues on the next line, and after a space "<file",
-//!   ">file", ">>file" and "<>file" redirect (not after the first word
-//!   of Run and Set). $variables again, and "echo" (a local variable "on")
-//!   shows the line. A refused redirection runs nothing, and the rest of
-//!   the line is read past.
-//! - A command's errors go to the shell's own output whatever its line
-//!   redirects: it runs with that as its error stream (SelectError),
-//!   where PrintFault writes.
+//!   ">file", ">>file", "<>file", "*>file" and "*>>file" redirect (not
+//!   after the first word of Run and Set). $variables again, and "echo"
+//!   (a local variable "on") shows the line. A refused redirection runs
+//!   nothing, and the rest of the line is read past.
+//! - A command's errors go to the shell's own output whatever ">" does
+//!   with its output: it runs with that as its error stream
+//!   (SelectError), where PrintFault writes. "*>file" gives it another -
+//!   "*>NIL:" to say nothing at all, "*>>file" to add to the end of one.
 //! - `command` (backquotes) in the command's name and its line is replaced
 //!   by what the command prints ("*`" is a plain backquote).
 //! - The command: the resident list (FindSegment: user segments, then
@@ -60,7 +61,7 @@ const workfile = dos.workfile;
 
 pub const SHELL_NAME = "shell";
 const SHELL_VERSION = 1;
-const SHELL_REVISION = 2;
+const SHELL_REVISION = 3;
 const BUILD_DATE = "18.10.2026";
 const SHELL_VERSION_STRING =
     "\x00$VER: " ++ SHELL_NAME ++ " " ++
@@ -849,12 +850,25 @@ fn openf(gv: *Global, name: *[NAMEMAX + 1]u8, mode: i32) ?*FileHandle {
 /// A redirection failed, or the line is too long: the streams opened so far
 /// close, and the command doesn't run. The line's end has not been read,
 /// so what is left of it is read past, not taken for the next command.
-fn notRun(gv: *Global, code: i32, in: ?*FileHandle, out: ?*FileHandle) i32 {
+fn notRun(gv: *Global, code: i32, in: ?*FileHandle, out: ?*FileHandle, errors: ?*FileHandle) i32 {
     if (in) |f| _ = gv.dl.Close(f);
     if (out) |f| _ = gv.dl.Close(f);
+    if (errors) |f| _ = gv.dl.Close(f);
     gv.res2 = code;
     gv.last_ch = 0;
     return NOT_RUN;
+}
+
+/// A file opened to be written by a redirection: added to its end with
+/// `append` (">>", "*>>") - made when it is not there - else made anew.
+fn openWritten(gv: *Global, file: *[NAMEMAX + 1]u8, append: bool) ?*FileHandle {
+    if (append) {
+        if (openf(gv, file, dos.MODE_READWRITE)) |fh| {
+            _ = gv.dl.Seek(fh, 0, dos.OFFSET_END);
+            return fh;
+        }
+    }
+    return openf(gv, file, dos.MODE_NEWFILE);
 }
 
 /// The rest of the line read into the argument line (comments,
@@ -865,6 +879,7 @@ fn runLine(gv: *Global, code: *const dos.SegCode, special: bool) i32 {
     const cli = gv.cli;
     var in: ?*FileHandle = null;
     var out: ?*FileHandle = null;
+    var errors: ?*FileHandle = null;
     const termin = cli.standard_input;
     const termout = dl.Output();
     gv.count = 0;
@@ -900,12 +915,28 @@ fn runLine(gv: *Global, code: *const dos.SegCode, special: bool) i32 {
                     ch = ' ';
                     break :redirect;
                 }
-                if (append) {
-                    out = openf(gv, &file, dos.MODE_READWRITE);
-                    if (out) |o| _ = dl.Seek(o, 0, dos.OFFSET_END);
+                out = openWritten(gv, &file, append);
+                if (out == null) return notRun(gv, ERROR_REDIRECT, in, out, errors);
+                ch = ' ';
+                redirected = true;
+            },
+            '*' => redirect: {
+                // "*>" the error stream; "*" before anything else is a
+                // plain character, the console's name among them.
+                if (state <= 0 or errors != null or lastch != ' ' or (past_begin and special)) break :redirect;
+                if (getchar(gv, '*') != '>') {
+                    ungetchar(gv);
+                    break :redirect;
                 }
-                if (out == null) out = openf(gv, &file, dos.MODE_NEWFILE);
-                if (out == null) return notRun(gv, ERROR_REDIRECT, in, out);
+                ch = getchar(gv, 0);
+                const append = ch == '>';
+                if (!append) ungetchar(gv);
+                if (readItemShell(gv, &file) <= 0) {
+                    ch = ' ';
+                    break :redirect;
+                }
+                errors = openWritten(gv, &file, append);
+                if (errors == null) return notRun(gv, ERROR_REDIRECT, in, out, errors);
                 ch = ' ';
                 redirected = true;
             },
@@ -919,13 +950,13 @@ fn runLine(gv: *Global, code: *const dos.SegCode, special: bool) i32 {
                     break :redirect;
                 }
                 in = openf(gv, &file, dos.MODE_OLDFILE);
-                if (in == null) return notRun(gv, ERROR_REDIRECT, in, out);
+                if (in == null) return notRun(gv, ERROR_REDIRECT, in, out, errors);
                 if (both) { // "<>": output to the same handler's "*"
                     const console = gv.proc.console_task;
                     gv.proc.console_task = in.?.task;
                     out = dl.Open("*", dos.MODE_NEWFILE);
                     gv.proc.console_task = console;
-                    if (out == null) return notRun(gv, ERROR_REDIRECT, in, out);
+                    if (out == null) return notRun(gv, ERROR_REDIRECT, in, out, errors);
                 }
                 ch = ' ';
                 redirected = true;
@@ -945,7 +976,7 @@ fn runLine(gv: *Global, code: *const dos.SegCode, special: bool) i32 {
             if (keep) {
                 buf[pos] = @truncate(@as(u32, @bitCast(c)));
                 pos += 1;
-                if (pos > MAXCOMMAND) return notRun(gv, ERROR_COMMAND_LONG, in, out);
+                if (pos > MAXCOMMAND) return notRun(gv, ERROR_COMMAND_LONG, in, out, errors);
                 if (at_end) break;
             }
         }
@@ -960,6 +991,7 @@ fn runLine(gv: *Global, code: *const dos.SegCode, special: bool) i32 {
     if (ticked < 0) {
         if (in) |f| _ = dl.Close(f);
         if (out) |f| _ = dl.Close(f);
+        if (errors) |f| _ = dl.Close(f);
         return @intCast(-ticked);
     }
     const len = std.mem.len(@as([*:0]u8, @ptrCast(buf)));
@@ -969,7 +1001,7 @@ fn runLine(gv: *Global, code: *const dos.SegCode, special: bool) i32 {
     }
     _ = dl.SelectInput(in orelse termin);
     _ = dl.SelectOutput(out orelse termout);
-    const old_error = dl.SelectError(termout);
+    const old_error = dl.SelectError(errors orelse termout);
     _ = dl.SetIoErr(0);
     _ = dl.CheckSignal(exec.SIGBREAKF_CTRL_C);
     const rc = dl.RunCommand(code, cli.default_stack, buf, @intCast(len));
@@ -977,6 +1009,7 @@ fn runLine(gv: *Global, code: *const dos.SegCode, special: bool) i32 {
     _ = dl.SelectError(old_error);
     if (in) |f| _ = dl.Close(f);
     if (out) |f| _ = dl.Close(f);
+    if (errors) |f| _ = dl.Close(f);
     return rc;
 }
 

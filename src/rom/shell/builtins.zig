@@ -24,7 +24,11 @@
 //! - **Run** starts a background shell with SystemTagList. Its streams are
 //!   its own: NIL: for input and a fresh handle on the console for output,
 //!   because SYS_Asynch hands the streams to the shell, which closes them
-//!   at its end, and the caller's own Output() must outlive it.
+//!   at its end, and the caller's own Output() must outlive it. The
+//!   console is the one Run's own output went to when that is a console,
+//!   else the shell's; Run's output sent to NIL: (`Run >NIL: x`) puts the
+//!   background shell on NIL: with no console at all, so nothing it runs -
+//!   errors included - opens a window.
 //! - **Setenv** with no name lists the names in ENV:, where a global
 //!   variable is a file, with the List command.
 //! - **Stack** sizes are in bytes.
@@ -852,7 +856,8 @@ pub fn cmdAsk(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     return if (query[0] != 0) dos.RETURN_WARN else dos.RETURN_OK;
 }
 
-/// RUN command: in a background shell of its own, on NIL: and a new "*".
+/// RUN command: in a background shell of its own, on NIL: and a new "*" -
+/// or, with Run's output sent to NIL:, on NIL: alone and no console.
 pub fn cmdRun(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     const dl = openDos(sys) orelse return dos.RETURN_FAIL;
     defer closeDos(sys, dl);
@@ -861,7 +866,8 @@ pub fn cmdRun(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     defer dl.FreeArgs(rda);
     const command = rdargs.string(argv[0]) orelse return dos.RETURN_OK;
     const in = dl.Open("NIL:", dos.MODE_OLDFILE) orelse return dos.RETURN_ERROR;
-    const out = dl.Open("*", dos.MODE_NEWFILE) orelse dl.Open("NIL:", dos.MODE_NEWFILE) orelse {
+    const detached = onNil(dl, dl.Output());
+    const out = runOutput(sys, dl, detached) orelse {
         _ = dl.Close(in);
         return dos.RETURN_ERROR;
     };
@@ -870,6 +876,8 @@ pub fn cmdRun(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
         .{ .tag = dos.SYS_Output, .data = @intFromPtr(out) },
         .{ .tag = dos.SYS_Asynch, .data = 1 },
         .{ .tag = dos.SYS_UserShell, .data = 1 },
+        // No console: "*" in the background shell is NIL: too.
+        .{ .tag = if (detached) dos.NP_ConsoleTask else sdk.utility.TAG_IGNORE, .data = 0 },
         .{},
     };
     const number = dl.SystemTagList(command, &tags);
@@ -880,6 +888,29 @@ pub fn cmdRun(sys: *ExecBase, _: [*]const u8, _: usize) callconv(.c) i32 {
     }
     _ = Printf(dl, "[CLI %ld]\n", .{@as(i64, number)});
     return dos.RETURN_OK;
+}
+
+/// Whether `fh` is a handle on NIL:.
+fn onNil(dl: *DosBase, fh: ?*dos.FileHandle) bool {
+    const handle = fh orelse return false;
+    const nil = dl.GetDeviceProc("NIL:", null) orelse return false;
+    defer dl.FreeDeviceProc(nil);
+    return nil.port != null and nil.port == handle.task;
+}
+
+/// The background shell's output: NIL: when it is `detached`, else "*" on
+/// the console Run's own output went to when that is a console, and on
+/// this shell's console when it is not; NIL: when "*" cannot be opened.
+fn runOutput(sys: *ExecBase, dl: *DosBase, detached: bool) ?*dos.FileHandle {
+    if (detached) return dl.Open("NIL:", dos.MODE_NEWFILE);
+    const proc = thisProcess(sys);
+    const console = proc.console_task;
+    if (dl.Output()) |own| if (own.interactive) {
+        proc.console_task = own.task;
+    };
+    const star = dl.Open("*", dos.MODE_NEWFILE);
+    proc.console_task = console;
+    return star orelse dl.Open("NIL:", dos.MODE_NEWFILE);
 }
 
 /// The script a new shell reads before its console when FROM says nothing.
