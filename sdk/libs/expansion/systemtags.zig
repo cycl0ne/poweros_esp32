@@ -155,6 +155,23 @@ pub const PART_PciMem = PART_Dummy + 15;
 pub const PART_PciMemSize = PART_Dummy + 16;
 pub const PART_PciPref = PART_Dummy + 17;
 pub const PART_PciPrefSize = PART_Dummy + 18;
+/// Where the station address the board gives a network port is: six
+/// bytes, all zero while there is none. The VisionFive 2's are in its
+/// EEPROM, which U-Boot writes into the device tree it passes, and the
+/// kernel copies them from there into the bytes before anything runs.
+pub const PART_StationAddress = PART_Dummy + 19;
+/// The delays a PHY adds on RGMII, in picoseconds: to the receive clock
+/// against its data, and to the send clock. A board whose traces delay
+/// the clocks themselves says 0.
+pub const PART_RxDelay = PART_Dummy + 20;
+pub const PART_TxDelay = PART_Dummy + 21;
+/// The link speeds a PHY sends its RGMII clock inverted at (LINKSPEED_*
+/// or'd): what the board's wiring needs at each.
+pub const PART_TxClockInverted = PART_Dummy + 22;
+/// How hard a PHY drives the RGMII clock and data lines it sends the MAC,
+/// in microamperes.
+pub const PART_RxClockDrive = PART_Dummy + 23;
+pub const PART_RxDataDrive = PART_Dummy + 24;
 
 // Its lines, each a BoardPin. Which ones a part has depends on its kind.
 pub const PART_PinClock = PART_Dummy + 0x20;
@@ -375,6 +392,10 @@ pub const CHIP_JH7110_PCIE: u32 = 27;
 /// PART_BusUnit says which, counting the machine's xHCI functions in the
 /// order pci.library has them (xhci.device's unit).
 pub const CHIP_XHCI: u32 = 28;
+/// Motorcomm's YT8531, a 10/100/1000 Mbit/s Ethernet PHY (PARTKIND_NET on
+/// BUS_RGMII): PART_BusUnit the MAC it is wired to, PART_Address its
+/// address on that MAC's management bus.
+pub const CHIP_YT8531: u32 = 29;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
@@ -398,6 +419,14 @@ pub const BUS_RMII: u32 = 11;
 pub const BUS_MIPI_DSI: u32 = 12;
 /// A function on PCI, reached through pci.library.
 pub const BUS_PCI: u32 = 13;
+/// One of the chip's Ethernet MACs, to a PHY over RGMII: PART_BusUnit
+/// which MAC.
+pub const BUS_RGMII: u32 = 14;
+
+// A network link's speeds (PART_TxClockInverted).
+pub const LINKSPEED_10: u32 = 1 << 0;
+pub const LINKSPEED_100: u32 = 1 << 1;
+pub const LINKSPEED_1000: u32 = 1 << 2;
 
 // A USB socket's roles (PART_UsbRoles).
 /// The controller may be the host: it gives the bus its frames, and

@@ -282,6 +282,7 @@ fn busName(bus: u32) [*:0]const u8 {
         st.BUS_RMII => "rmii",
         st.BUS_MIPI_DSI => "mipi-dsi",
         st.BUS_PCI => "pci",
+        st.BUS_RGMII => "rgmii",
         else => "?",
     };
 }

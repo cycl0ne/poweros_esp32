@@ -10,8 +10,11 @@
 //! (`mmu-type`) and the FPU the kernel uses (F and D in `riscv,isa`). That
 //! leaves out the JH7110's S7, which the tree lists beside the U74s and
 //! the firmware would even start, but which has neither the FPU nor
-//! supervisor mode. Read once in kmain, before exec's memory exists: the
-//! tree sits in RAM exec is given, and is gone after.
+//! supervisor mode. And each Ethernet port's station address: the
+//! `local-mac-address` of every `ethernet@<address>` node, which U-Boot
+//! writes from what the board keeps for it. Read once in kmain, before
+//! exec's memory exists: the tree sits in RAM exec is given, and is gone
+//! after.
 //!
 //! The flattened tree is big-endian: a header, then a structure block of
 //! tokens - a node begins with its name, a property is its length, the
@@ -38,6 +41,13 @@ pub const max_reserved = 8;
 /// The most harts kept; more are left out.
 pub const max_harts = 8;
 
+/// The most Ethernet ports whose station address is kept.
+pub const max_stations = 4;
+
+/// An Ethernet port's station address, and where the port's registers
+/// are: the address in its node's name.
+pub const Station = struct { address: usize, bytes: [6]u8 };
+
 pub const Facts = struct {
     ram_base: ?usize = null,
     ram_size: ?usize = null,
@@ -48,6 +58,17 @@ pub const Facts = struct {
     /// The harts' ids, in the tree's order.
     harts: [max_harts]usize = undefined,
     hart_count: usize = 0,
+    stations: [max_stations]Station = undefined,
+    station_count: usize = 0,
+
+    /// The station address the tree gives the port whose registers are at
+    /// `address`, or null.
+    pub fn stationAt(facts: *const Facts, address: usize) ?[6]u8 {
+        for (facts.stations[0..facts.station_count]) |station| {
+            if (station.address == address) return station.bytes;
+        }
+        return null;
+    }
 
     /// The harts that can run the kernel.
     pub fn hartIds(facts: *const Facts) []const usize {
@@ -159,6 +180,9 @@ pub fn read(address: usize) Facts {
     var cpu_okay = true;
     var cpu_mmu = false;
     var cpu_fpu = true;
+    // The Ethernet node being read, by the address in its name.
+    var ethernet: ?usize = null;
+    var ethernet_depth: u32 = 0;
     while (at + 4 <= tree.len) {
         const token = be32(tree[at..]);
         at += 4;
@@ -180,7 +204,12 @@ pub fn read(address: usize) Facts {
                         .cpus
                     else
                         .other;
-                } else if (depth == 3 and node == .cpus and std.mem.startsWith(u8, name, "cpu@")) {
+                }
+                if (std.mem.startsWith(u8, name, "ethernet@")) {
+                    ethernet = std.fmt.parseInt(usize, name["ethernet@".len..], 16) catch null;
+                    ethernet_depth = depth;
+                }
+                if (depth == 3 and node == .cpus and std.mem.startsWith(u8, name, "cpu@")) {
                     in_cpu = true;
                     cpu_id = null;
                     cpu_okay = true;
@@ -196,6 +225,7 @@ pub fn read(address: usize) Facts {
                         facts.hart_count += 1;
                     }
                 }
+                if (ethernet != null and depth == ethernet_depth) ethernet = null;
                 depth -|= 1;
                 if (depth < 2) node = .other;
             },
@@ -204,6 +234,12 @@ pub fn read(address: usize) Facts {
                 const name = std.mem.sliceTo(strings[be32(tree[at + 4 ..])..], 0);
                 const value = tree[at + 8 ..][0..len];
                 at = std.mem.alignForward(usize, at + 8 + len, 4);
+                if (ethernet != null and depth == ethernet_depth and len == 6 and
+                    std.mem.eql(u8, name, "local-mac-address") and facts.station_count < max_stations)
+                {
+                    facts.stations[facts.station_count] = .{ .address = ethernet.?, .bytes = value[0..6].* };
+                    facts.station_count += 1;
+                }
                 if (depth == 1) {
                     if (std.mem.eql(u8, name, "#address-cells")) address_cells = be32(value);
                     if (std.mem.eql(u8, name, "#size-cells")) size_cells = be32(value);

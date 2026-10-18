@@ -147,6 +147,9 @@ pub const receive_size_mask: u32 = 0x1FFF;
 /// The checksum at the end of a received frame.
 pub const checksum_bytes = 4;
 
+/// The MAC runs at 10 and 100 Mbit/s.
+pub const gigabit = false;
+
 /// How long the software reset may take, and an MDIO transfer, in reads
 /// of the register that says it is over: a few milliseconds at 360 MHz.
 const reset_spins = 1_000_000;
@@ -167,8 +170,11 @@ pub fn reset() bool {
 /// After `reset`: the MAC at 100 Mbit/s full duplex, neither receiving
 /// nor sending, its own causes masked; the engine's bursts, its FIFOs'
 /// modes, the send FIFO flushed. Received frames are not checked for IP
-/// checksums: the network stack checks them itself.
-pub fn setUp() void {
+/// checksums: the network stack checks them itself. Each receive
+/// descriptor says how big its buffer is, so `receive_bytes` is not
+/// needed here.
+pub fn setUp(receive_bytes: u32) void {
+    _ = receive_bytes;
     reg(mac_interrupt_mask).* = 0xFFFF_FFFF;
     reg(mac_config).* = config_ps | config_fes | config_dm;
     reg(mac_frame_filter).* = 0;
@@ -181,9 +187,9 @@ pub fn setUp() void {
 }
 
 /// The line's speed and duplex, as the PHY agreed them.
-pub fn setLine(fast: bool, full_duplex: bool) void {
+pub fn setLine(mbits: u32, full_duplex: bool) void {
     var config = reg(mac_config).* & ~(config_fes | config_dm);
-    if (fast) config |= config_fes;
+    if (mbits >= 100) config |= config_fes;
     if (full_duplex) config |= config_dm;
     reg(mac_config).* = config;
 }
@@ -205,12 +211,82 @@ pub fn setFilter(promiscuous: bool, multicast: bool) void {
     reg(mac_frame_filter).* = filter;
 }
 
+// --- the descriptors ------------------------------------------------------
+
+/// A receive descriptor set up with its buffer and the next in the chain,
+/// and handed to the engine.
+pub fn prepareReceive(descriptor: *Descriptor, buffer: []u8, next: *Descriptor) void {
+    descriptor.* = .{
+        .status = own,
+        .control = receive_rch | @as(u32, @intCast(buffer.len)),
+        .buffer = @intCast(@intFromPtr(buffer.ptr)),
+        .next = @intCast(@intFromPtr(next)),
+    };
+}
+
+/// A send descriptor set up with its buffer and the next in the chain,
+/// the driver's.
+pub fn prepareSend(descriptor: *Descriptor, buffer: []u8, next: *Descriptor) void {
+    descriptor.* = .{
+        .status = send_tch,
+        .buffer = @intCast(@intFromPtr(buffer.ptr)),
+        .next = @intCast(@intFromPtr(next)),
+    };
+}
+
+/// A filled receive descriptor handed back to the engine: it keeps its
+/// buffer.
+pub fn giveBack(descriptor: *Descriptor, buffer: []u8) void {
+    _ = buffer;
+    descriptor.status = own;
+}
+
+/// What a receive descriptor holds once the engine has given it back.
+pub const Frame = struct {
+    /// The frame's length, without its checksum.
+    length: u32,
+    /// Whether it came in whole and without an error.
+    good: bool,
+};
+
+/// The frame in a receive descriptor, or null while the engine has it.
+pub fn received(descriptor: *const Descriptor, buffer_bytes: u32) ?Frame {
+    const status = descriptor.status;
+    if (status & own != 0) return null;
+    const length = (status >> receive_length_shift) & receive_length_mask;
+    const whole = receive_fs | receive_ls;
+    if (status & receive_es != 0 or status & whole != whole or
+        length < checksum_bytes or length > buffer_bytes)
+    {
+        return .{ .length = 0, .good = false };
+    }
+    return .{ .length = length - checksum_bytes, .good = true };
+}
+
+/// A send descriptor handed to the engine with the frame of `length`
+/// bytes in its buffer.
+pub fn queueSend(descriptor: *Descriptor, buffer: []u8, length: u32) void {
+    _ = buffer;
+    descriptor.control = length & send_length_mask;
+    descriptor.status = own | send_ic | send_ls | send_fs | send_tch;
+}
+
+/// Whether a send descriptor's frame went out, or null while the engine
+/// still has it.
+pub fn sendFinished(descriptor: *const Descriptor) ?bool {
+    const status = descriptor.status;
+    if (status & own != 0) return null;
+    return status & send_es == 0;
+}
+
+// --- running --------------------------------------------------------------
+
 /// Receiving and sending started on the two chains, from their first
 /// descriptors, in the order the engine wants: its causes on, the
 /// transmitter, the engine's two sides, the receiver.
-pub fn start(receive_list: usize, send_list: usize) void {
-    reg(dma_receive_list).* = @intCast(receive_list);
-    reg(dma_send_list).* = @intCast(send_list);
+pub fn start(receive_chain: []Descriptor, send_chain: []Descriptor) void {
+    reg(dma_receive_list).* = @intCast(@intFromPtr(receive_chain.ptr));
+    reg(dma_send_list).* = @intCast(@intFromPtr(send_chain.ptr));
     reg(dma_status).* = int_all;
     reg(dma_interrupt_enable).* = int_wanted;
     reg(mac_config).* |= config_te;
@@ -243,13 +319,17 @@ pub fn takeMissed() u32 {
     return (counts & 0xFFFF) + ((counts >> 17) & 0x7FF);
 }
 
-/// The receive chain looked at again: a descriptor was handed back.
-pub fn pollReceive() void {
+/// The receive chain looked at again: a descriptor was handed back. The
+/// chain goes on through its descriptors as far as they are the engine's,
+/// so which one was last does not matter.
+pub fn pollReceive(last: *const Descriptor) void {
+    _ = last;
     reg(dma_receive_poll).* = 1;
 }
 
 /// The send chain looked at again: a frame was handed over.
-pub fn pollSend() void {
+pub fn pollSend(next: *const Descriptor) void {
+    _ = next;
     reg(dma_send_poll).* = 1;
 }
 

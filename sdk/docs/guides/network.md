@@ -417,14 +417,27 @@ sent - with no stack in between.
 
 ## Ethernet: emac.device
 
-`DEVS:networks/emac.device` is the ESP32-P4's Ethernet MAC with the
-board's PHY behind it on RMII: a unit with Ethernet framing at 10 or 100
-Mbit/s, its station address the one the factory burned into the chip.
-The board's system tag list names the PHY - a `PARTKIND_NET` part on
-`BUS_RMII` with its address on the management bus, its reset line and
-the RMII pads - and a board without one gets no device, so its `ETH0` is
-skipped. Each chip's disk has its own `DEVS:NetInterfaces/ETH0`: the
-ESP32-P4's names this device, the ESP32-S3's QEMU's `openeth.device`.
+`DEVS:networks/emac.device` is the chip's own Ethernet MAC with the
+board's PHY behind it: a unit with Ethernet framing. On the ESP32-P4 it
+is the 10/100 MAC on RMII, its station address the one the factory
+burned into the chip. On the JH7110 it is GMAC0, gigabit on RGMII, its
+station address the one the board keeps in its EEPROM, which U-Boot puts
+in the device tree and the kernel takes from there
+(`PART_StationAddress`).
+
+The board's system tag list names the PHY - a `PARTKIND_NET` part with
+its address on the management bus (`PART_Address`). On `BUS_RMII` it
+gives the PHY's reset line and the RMII pads. On `BUS_RGMII` it gives
+which MAC (`PART_BusUnit`), the MAC's interrupt (`PART_Irq`), and what
+the board's wiring asks of the PHY: the delays it adds (`PART_RxDelay`,
+`PART_TxDelay`), the speeds it sends its clock inverted at
+(`PART_TxClockInverted`), and how hard it drives its lines
+(`PART_RxClockDrive`, `PART_RxDataDrive`).
+
+A board without such a part gets no device, so its `ETH0` is skipped.
+The disks of the chips with a MAC of their own have a
+`DEVS:NetInterfaces/ETH0` that names this device. The ESP32-S3's names
+QEMU's `openeth.device` instead.
 
 The device asks the PHY about its link every second. The unit is on line
 only while the cable has a partner, so the interface's DHCP waits for

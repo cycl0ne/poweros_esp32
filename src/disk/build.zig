@@ -166,8 +166,9 @@ const modules = [_]Program{
 /// its UART, Ethernet in Espressif QEMU's S3 machine. The ESP32-P4's come
 /// as drivers of their own.
 const s3_only = [_][]const u8{ "rs485.device", "openeth.device" };
-/// Drivers of the ESP32-P4's own hardware: its Ethernet MAC.
-const p4_only = [_][]const u8{"emac.device"};
+/// Drivers of hardware the ESP32-P4 and the JH7110 have and the
+/// ESP32-S3 does not: an Ethernet MAC of the chip's own.
+const mac_only = [_][]const u8{"emac.device"};
 /// Drivers of hardware both ESP32s have and a RISC-V 64 machine under SBI
 /// does not: the DWC2 USB controller, the SD host.
 const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device" };
@@ -178,9 +179,9 @@ const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device" };
 /// Whether `program` is built for `chip`.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     const others = switch (chip) {
-        .esp32s3 => &(p4_only ++ rv64_only),
+        .esp32s3 => &(mac_only ++ rv64_only),
         .esp32p4 => &(s3_only ++ rv64_only),
-        .rv64sbi => &(s3_only ++ p4_only ++ esp_only),
+        .rv64sbi => &(s3_only ++ esp_only),
     };
     for (others) |name| {
         if (std.mem.eql(u8, program.name, name)) return false;
@@ -215,10 +216,15 @@ pub const programs: []const Program = blk: {
     break :blk &done;
 };
 
-/// The ESP32-P4's disk has these in place of the shared files of the same
-/// name: its Ethernet interface names its own device.
+/// The disks of the chips with an Ethernet MAC of their own (the
+/// ESP32-P4, the JH7110) have these in place of the shared files of the
+/// same name: the Ethernet interface names emac.device.
+pub const mac_files = [_]File{
+    .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/emac/ETH0" },
+};
+
+/// The ESP32-P4's disk has these as well.
 pub const p4_files = [_]File{
-    .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/esp32p4/ETH0" },
     // A USB Wi-Fi stick: only the P4's port is fast enough for one.
     .{ .disk = "devs/NetInterfaces/WLAN1", .source = "devs/NetInterfaces/esp32p4/WLAN1" },
     // A photograph the size of the CrowPanel's screen, for C:test/Jpeg to
@@ -344,5 +350,5 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(seg, b.fmt("{s}.seg", .{program.name})).step);
     }
     for (files) |file| b.addNamedLazyPath(file.disk, b.path(file.source));
-    for (p4_files) |file| b.addNamedLazyPath(file.source, b.path(file.source));
+    for (mac_files ++ p4_files) |file| b.addNamedLazyPath(file.source, b.path(file.source));
 }

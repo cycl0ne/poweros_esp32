@@ -129,6 +129,13 @@ fn takeBoard(tree: device_tree.Facts) void {
     rv_stack_low = ram.ram_base + trap.frame_offset;
     rv_stack_high = ram.ramEnd();
     cpu1.takeHarts(tree.hartIds(), cpu.hartids[0]);
+    // The Ethernet ports' station addresses, into the bytes the board's
+    // parts point at.
+    if (@hasDecl(boards.system, "stations")) {
+        inline for (boards.system.stations) |station| {
+            if (tree.stationAt(station[0])) |bytes| station[1].* = bytes;
+        }
+    }
 }
 
 /// Each other core's stack, which its idle task goes on running on.

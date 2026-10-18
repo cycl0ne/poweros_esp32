@@ -27,6 +27,10 @@ const boardpin = sdk.expansion.boardpin;
 const BoardPin = boardpin.BoardPin;
 const TagItem = sdk.utility.TagItem;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const EmacBase = @import("_emac.zig").EmacBase;
+
+/// The parts on this kind of bus.
+pub const bus = st.BUS_RMII;
 
 /// HP_SYSTEM's GMAC_CTRL0: the interface the MAC speaks, RMII being 4.
 const gmac_ctrl0 = hardware.map.HP_SYS + 0x14C;
@@ -53,6 +57,11 @@ const send_div_mask: u32 = 0xFF << send_div_shift;
 const pad_send_clk: u32 = 1 << 13;
 const pad_receive_clk: u32 = 1 << 14;
 const pad_ref_clk: u32 = 1 << 15;
+
+/// The PHY's reset held, and the time it takes after it to start its
+/// reference clock.
+const phy_reset_us = 10_000;
+const phy_start_us = 50_000;
 
 /// The receive and send clocks' dividers, less one: 50 MHz to 25 and to
 /// 2.5.
@@ -100,6 +109,9 @@ pub const Pins = extern struct {
     reset: BoardPin = .{},
 };
 
+/// What the device keeps of its port: the lines.
+pub const Port = Pins;
+
 /// The part's lines, or null if one is missing, not a pad of the chip,
 /// or on a pad that cannot carry it.
 pub fn pinsOf(utility: *UtilityBase, tags: ?[*]const TagItem) ?Pins {
@@ -117,10 +129,29 @@ pub fn pinsOf(utility: *UtilityBase, tags: ?[*]const TagItem) ?Pins {
     return pins;
 }
 
+/// The port a part is: its lines.
+pub const portOf = pinsOf;
+
 fn padOf(utility: *UtilityBase, tags: ?[*]const TagItem, tag: u32) ?u8 {
     const pin = BoardPin.of(utility.GetTagData(tag, 0, tags));
     if (pin.kind != boardpin.BPIN_GPIO or pin.number > gpio.max_pin) return null;
     return pin.number;
+}
+
+/// The PHY held in reset while the pads are set up and the MAC's clocks
+/// started, and let go: the MAC's reset only ends once the PHY's
+/// reference clock runs.
+pub fn powerUp(pins: *const Pins, base: *EmacBase) bool {
+    const sys = base.sys_base;
+    holdPhy(pins, true);
+    sys.Disable();
+    clockOn();
+    sys.Enable();
+    connect(pins);
+    base.delay(phy_reset_us);
+    holdPhy(pins, false);
+    base.delay(phy_start_us);
+    return true;
 }
 
 /// The PHY's reset line asserted or let go, if the chip drives it.
@@ -165,18 +196,20 @@ pub fn clockOn() void {
 }
 
 /// The receive and send clocks for the line's speed.
-pub fn setSpeed(fast: bool) void {
-    const div = if (fast) div_100 else div_10;
+pub fn setSpeed(pins: *const Pins, mbits: u32) void {
+    _ = pins;
+    const div = if (mbits >= 100) div_100 else div_10;
     system.update(system.PERI_CLK_CTRL01, div << send_div_shift | div, send_div_mask | receive_div_mask);
 }
 
 /// The station address the factory burned into eFuse: the chip's base
 /// address, which is the Ethernet port's. EFUSE_RD_MAC_SYS_0 holds its
 /// last four bytes, the last lowest; _1's low half the first two.
-pub fn factoryAddress() [6]u8 {
+pub fn factoryAddress(pins: *const Pins) ?[6]u8 {
+    _ = pins;
     const low = reg(hardware.map.EFUSE + 0x44).*;
     const high = reg(hardware.map.EFUSE + 0x48).*;
-    return .{
+    return [6]u8{
         @truncate(high >> 8), @truncate(high),
         @truncate(low >> 24), @truncate(low >> 16),
         @truncate(low >> 8),  @truncate(low),

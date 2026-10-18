@@ -340,10 +340,13 @@ pub fn build(b: *std.Build) void {
     for (poweros_userland.files) |file| {
         disks.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), disk_dep.namedLazyPath(file.disk));
     }
-    // The ESP32-P4's own versions after the shared ones, which they
-    // replace on its image.
-    for (poweros_userland.p4_files) |file| {
+    // The chips' own versions after the shared ones, which they replace
+    // on their images.
+    for (poweros_userland.mac_files ++ poweros_userland.p4_files) |file| {
         make_p4_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), p4_disk_dep.namedLazyPath(file.source));
+    }
+    for (poweros_userland.mac_files) |file| {
+        make_rv64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), rv64_disk_dep.namedLazyPath(file.source));
     }
     if (wifi != null) {
         const wifi_device = poweros_userland.wifi_device;

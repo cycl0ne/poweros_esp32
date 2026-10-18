@@ -93,6 +93,40 @@ const usb = [_]Tag{
     .done,
 };
 
+/// GMAC0's station address. The kernel copies it in from the device tree
+/// U-Boot passes - the `local-mac-address` of ethernet@16030000, which
+/// U-Boot has from the board's EEPROM - before anything runs; all zero
+/// when the tree has none.
+pub var gmac0_station: [6]u8 = @splat(0);
+
+/// The station addresses the kernel takes from the device tree: for the
+/// MAC whose registers are at the first, into the second.
+pub const stations = .{.{ 0x1603_0000, &gmac0_station }};
+
+/// The Ethernet port U-Boot calls eth0: GMAC0 (0x16030000, PLIC source
+/// 7) and the Motorcomm YT8531C at 0 on its management bus, on RGMII, the
+/// PHY adding both delays. The figures are the v1.3B device tree's
+/// (Linux's jh7110-starfive-visionfive-2-v1.3b.dts), which U-Boot sets
+/// too: 1.5 ns each way, the send clock inverted at 100 and 1000 Mbit/s,
+/// and the receive lines driven at 3.97 mA (clock) and 2.91 mA (data).
+const ethernet0 = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_NET),
+    .value(st.PART_Chip, st.CHIP_YT8531),
+    .pointer(st.PART_ChipName, "yt8531c"),
+    .value(st.PART_Bus, st.BUS_RGMII),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_Address, 0),
+    .value(st.PART_Irq, 7),
+    .value(st.PART_RxDelay, 1500),
+    .value(st.PART_TxDelay, 1500),
+    .value(st.PART_TxClockInverted, st.LINKSPEED_100 | st.LINKSPEED_1000),
+    .value(st.PART_RxClockDrive, 3970),
+    .value(st.PART_RxDataDrive, 2910),
+    .pointer(st.PART_StationAddress, &gmac0_station),
+    .pointer(st.PART_Label, "Ethernet eth0"),
+    .done,
+};
+
 /// The HDMI port's picture: the one mode the display path is set up for.
 const screen = struct {
     pub const width: u32 = 1920;
@@ -143,6 +177,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &card_slot),
     .pointer(st.SYSTAG_Part, &pcie0),
     .pointer(st.SYSTAG_Part, &usb),
+    .pointer(st.SYSTAG_Part, &ethernet0),
     .done,
 };
 

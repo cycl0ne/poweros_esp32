@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
-//! emac.device: the ESP32-P4's Ethernet MAC and the board's PHY as a
-//! network device (sdk/devices/network.zig). Unit 0 is the port. It is in
-//! DEVS:networks/, and the board's system tag list says whether there is
-//! a PHY on RMII and where its lines are; a board without one gets no
-//! device.
+//! emac.device: the chip's Ethernet MAC and the board's PHY as a network
+//! device (sdk/devices/network.zig) - the ESP32-P4's 10/100 MAC on RMII,
+//! or one of the JH7110's gigabit MACs on RGMII (_emac.zig has which
+//! files are whose). Unit 0 is the port. It is in DEVS:networks/, and the
+//! board's system tag list says whether there is a PHY on the chip's bus
+//! for it and how it is wired; a board without one gets no device.
 //!
 //! What it answers is the network device API as that file describes it,
-//! on an Ethernet link: 48-bit addresses, an MTU of 1500, 10 or
-//! 100 Mbit/s. The station address is the one the factory burned into
-//! the chip.
+//! on an Ethernet link: 48-bit addresses, an MTU of 1500, 10 or 100 Mbit/s
+//! and on the JH7110 1000. The station address is the one the board gives
+//! the port (PART_StationAddress), else the one the factory burned into
+//! the chip, else one made up from the clock, locally administered.
 //!
 //! **Every request runs on the device's own task**, except S2_DEVICEQUERY
 //! and S2_GETSTATIONADDRESS, which touch no opener's buffers and are
@@ -23,10 +25,12 @@
 //! up and at what speed, and tells the unit, which goes on and off line
 //! with it (`setCarrier`).
 //!
-//! **Starting the hardware** is the task's, which can wait: the PHY held
-//! in reset while the pads are set up and let go, the MAC reset - which
-//! only ends once the PHY's reference clock runs - and set up, then the
-//! PHY reset and told to negotiate. If any of it fails, the device says
+//! **Starting the hardware** is the task's, which can wait: the port made
+//! ready (`port.powerUp`: on the P4 the PHY held in reset while the pads
+//! are set up and let go, on the JH7110 the MAC's clocks on and its
+//! resets let go), the MAC reset - which only ends once the clocks the
+//! PHY sends run - and set up, then the PHY reset, set up as the board's
+//! wiring asks and told to negotiate. If any of it fails, the device says
 //! so and refuses every OpenDevice.
 
 const std = @import("std");
@@ -39,17 +43,17 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const intbits = sdk.hardware.intbits;
 const expansion = sdk.expansion;
 const st = expansion.systemtags;
-const gmac = @import("gmac.zig");
 const phy = @import("phy.zig");
-const rmii = @import("rmii.zig");
 const _emac = @import("_emac.zig");
+const mac = _emac.mac;
+const port = _emac.port;
 const EmacBase = _emac.EmacBase;
 const Work = _emac.Work;
 
 pub const DEVICE_NAME = _emac.DEVICE_NAME;
 const DEVICE_VERSION = 1;
 const DEVICE_REVISION = 0;
-const BUILD_DATE = "10.10.2026";
+const BUILD_DATE = "18.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -58,18 +62,22 @@ const DEVICE_VERSION_STRING =
 const vec = exec.libraries.vec;
 
 /// Enough for a request and the openers' copy calls; nothing here
-/// recurses.
-const stack_size = 4096;
+/// recurses. Twice that on a 64-bit machine, whose frames are wider.
+const stack_size = if (@sizeOf(usize) == 8) 8192 else 4096;
+/// Where the block the engine and the interrupt reach comes from:
+/// internal memory, and on a machine whose memory runs past 4 GiB the
+/// part below (MEMF_DMA).
+const work_memory: u32 = exec.MEMF_INTERNAL | if (sdk.hardware.chip == .rv64sbi) exec.MEMF_DMA else 0;
 /// Above dos's processes, as the other devices' tasks are: a stack waits
 /// on this, and frames should not wait in the chain for a shell.
 const task_pri = 5;
 
 /// How often the PHY is asked about its link.
 const link_poll_us = 1_000_000;
-/// The PHY's reset held, and the time it takes after it to start its
-/// reference clock.
-const phy_reset_us = 10_000;
-const phy_start_us = 50_000;
+/// The MAC's interrupt on a chip that numbers it once for every board;
+/// null on one whose interrupt controller is wired by the board
+/// (PART_Irq).
+const fixed_irq: ?u32 = if (@hasDecl(intbits, "INTB_ETH_MAC")) intbits.INTB_ETH_MAC else null;
 /// How long the PHY's own reset may take, asked every `phy_step_us`.
 const phy_reset_steps = 10;
 const phy_step_us = 10_000;
@@ -82,7 +90,7 @@ fn intServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const base: *EmacBase = @ptrCast(@alignCast(is_data.?));
     const work = base.work orelse return 0;
-    const raised = gmac.takeInterrupts();
+    const raised = mac.takeInterrupts();
     if (raised == 0) return 0;
     work.raised |= raised;
     base.sys_base.Signal(&base.task, base.int_mask);
@@ -119,15 +127,15 @@ fn netTask(sys: *ExecBase) callconv(.c) void {
     setUp(base);
     started(base);
 
-    const timer_mask: u32 = if (base.timer_port) |port| port.sigMask() else 0;
+    const timer_mask: u32 = if (base.timer_port) |timer_port| timer_port.sigMask() else 0;
     while (true) {
         const raised = takeRaised(base);
-        if (raised & gmac.int_bus_error != 0) restart(base);
-        if (raised & gmac.int_receive_unavailable != 0) {
-            for (0..gmac.takeMissed()) |_| base.net.overrun();
+        if (raised & mac.int_bus_error != 0) restart(base);
+        if (raised & mac.int_receive_unavailable != 0) {
+            for (0..mac.takeMissed()) |_| base.net.overrun();
         }
-        if (raised & (gmac.int_receive | gmac.int_receive_unavailable) != 0) base.received();
-        if (raised & gmac.int_send != 0) base.sent();
+        if (raised & (mac.int_receive | mac.int_receive_unavailable) != 0) base.received();
+        if (raised & mac.int_send != 0) base.sent();
         if (base.polling != 0 and sys.CheckIO(&base.timer_io.node) != null) {
             _ = sys.WaitIO(&base.timer_io.node);
             base.polling = 0;
@@ -166,7 +174,7 @@ fn setUp(base: *EmacBase) void {
 
     if (!startHardware(base)) return;
 
-    sys.AddIntServer(intbits.INTB_ETH_MAC, &base.work.?.int);
+    sys.AddIntServer(base.irq, &base.work.?.int);
     base.hooked = 1;
     // The unit starts with a carrier; this one has none until the PHY
     // says so.
@@ -174,25 +182,20 @@ fn setUp(base: *EmacBase) void {
     pollLink(base);
 }
 
-/// The PHY out of reset with the pads set up, the MAC reset and set up,
-/// the PHY reset and negotiating.
+/// The port ready, the MAC reset and set up, the PHY reset, set up and
+/// negotiating.
 fn startHardware(base: *EmacBase) bool {
     const sys = base.sys_base;
-    rmii.holdPhy(&base.pins, true);
-    sys.Disable();
-    rmii.clockOn();
-    sys.Enable();
-    rmii.connect(&base.pins);
-    delay(base, phy_reset_us);
-    rmii.holdPhy(&base.pins, false);
-    delay(base, phy_start_us);
-
-    if (!gmac.reset()) {
-        sdk.exec.kprintf(sys, "%s: no reference clock from the PHY\n", .{DEVICE_NAME});
+    if (!port.powerUp(&base.port, base)) {
+        sdk.exec.kprintf(sys, "%s: the MAC stays in reset\n", .{DEVICE_NAME});
         return false;
     }
-    gmac.setUp();
-    gmac.setStation(&base.net.station);
+    if (!mac.reset()) {
+        sdk.exec.kprintf(sys, "%s: no clock from the PHY\n", .{DEVICE_NAME});
+        return false;
+    }
+    mac.setUp(_emac.buffer_bytes);
+    mac.setStation(&base.net.station);
 
     if (!phy.present(base.phy_address)) {
         sdk.exec.kprintf(sys, "%s: no PHY answers at address %u\n", .{ DEVICE_NAME, base.phy_address });
@@ -205,16 +208,10 @@ fn startHardware(base: *EmacBase) bool {
             sdk.exec.kprintf(sys, "%s: the PHY stays in reset\n", .{DEVICE_NAME});
             return false;
         }
-        delay(base, phy_step_us);
+        base.delay(phy_step_us);
     }
+    phy.configure(base.phy_address, &base.wiring);
     return phy.negotiate(base.phy_address);
-}
-
-/// `micros` waited, on the timer.
-fn delay(base: *EmacBase, micros: u64) void {
-    base.timer_io.node.command = timer.TR_ADDREQUEST;
-    base.timer_io.time = timer.TimeVal.fromMicros(micros);
-    _ = base.sys_base.DoIO(&base.timer_io.node);
 }
 
 /// The PHY asked about its link: the line set up for the speed and duplex
@@ -224,14 +221,14 @@ fn pollLink(base: *EmacBase) void {
     const sys = base.sys_base;
     const link = phy.link(base.phy_address);
     if (link.up and base.link_up == 0) {
-        gmac.setLine(link.fast, link.full_duplex);
+        mac.setLine(link.mbits, link.full_duplex);
         sys.Disable();
-        rmii.setSpeed(link.fast);
+        port.setSpeed(&base.port, link.mbits);
         sys.Enable();
+        phy.settle(base.phy_address, link, &base.wiring);
         base.link_up = 1;
-        const mbits: u32 = if (link.fast) 100 else 10;
         const duplex: [*:0]const u8 = if (link.full_duplex) "full" else "half";
-        sdk.exec.kprintf(sys, "%s: link up, %u Mbit/s %s duplex\n", .{ DEVICE_NAME, mbits, duplex });
+        sdk.exec.kprintf(sys, "%s: link up, %u Mbit/s %s duplex\n", .{ DEVICE_NAME, link.mbits, duplex });
         base.net.setCarrier(true);
     } else if (!link.up and base.link_up != 0) {
         base.link_up = 0;
@@ -357,27 +354,50 @@ fn expunge(_: *exec.Device) callconv(.c) ?*anyopaque {
     return null;
 }
 
-/// The board's Ethernet part on RMII: its lines and the PHY's address,
-/// into the base. False if the board has none, or names lines the MAC
-/// cannot use.
-fn findPart(sys: *ExecBase, utility: *UtilityBase, base: *EmacBase) bool {
+/// The board's Ethernet part on the chip's bus for it: its port, the
+/// PHY's address and wiring, the interrupt, into the base, and the
+/// station address into `station`. False if the board has none, or names
+/// lines or a MAC this cannot use.
+fn findPart(sys: *ExecBase, utility: *UtilityBase, base: *EmacBase, station: *[6]u8) bool {
     const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return false;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
     var part = eb.FindBoardPart(null, st.PARTKIND_NET, st.CHIP_ANY);
     while (part) |one| {
-        if (utility.GetTagData(st.PART_Bus, st.BUS_NONE, one.tags) != st.BUS_RMII) {
+        if (utility.GetTagData(st.PART_Bus, st.BUS_NONE, one.tags) != port.bus) {
             part = eb.FindBoardPart(one, st.PARTKIND_NET, st.CHIP_ANY);
             continue;
         }
-        base.pins = rmii.pinsOf(utility, one.tags) orelse {
-            sdk.exec.kprintf(sys, "%s: the board's Ethernet lines are on pads the MAC cannot use\n", .{DEVICE_NAME});
+        base.port = port.portOf(utility, one.tags) orelse {
+            sdk.exec.kprintf(sys, "%s: the board's Ethernet port is wired where the MAC cannot use it\n", .{DEVICE_NAME});
             return false;
         };
+        base.irq = @intCast(utility.GetTagData(st.PART_Irq, fixed_irq orelse 0, one.tags));
+        if (base.irq == 0) return false;
         base.phy_address = @intCast(utility.GetTagData(st.PART_Address, 0, one.tags) & 0x1F);
+        base.wiring = phy.wiringOf(utility, one.tags);
+        station.* = stationOf(sys, utility, one.tags, &base.port);
         return true;
     }
     return false;
+}
+
+/// The port's station address: the board's, if it gives one, else the
+/// chip's own, else one made up from the clock - locally administered,
+/// and said on the log, since it is new at every start.
+fn stationOf(sys: *ExecBase, utility: *UtilityBase, tags: ?[*]const sdk.utility.TagItem, at: *const port.Port) [6]u8 {
+    if (utility.GetTagData(st.PART_StationAddress, 0, tags) != 0) {
+        const given: *const [6]u8 = @ptrFromInt(utility.GetTagData(st.PART_StationAddress, 0, tags));
+        if (!std.mem.allEqual(u8, given, 0)) return given.*;
+    }
+    if (port.factoryAddress(at)) |factory| return factory;
+    const clock = sdk.hardware.cpu.ccount();
+    const made = [6]u8{ 0x02, 0x00, @truncate(clock >> 24), @truncate(clock >> 16), @truncate(clock >> 8), @truncate(clock) };
+    sdk.exec.kprintf(sys, "%s: the board gives no station address; %02x:%02x:%02x:%02x:%02x:%02x for now\n", .{
+        DEVICE_NAME,         @as(u32, made[0]), @as(u32, made[1]), @as(u32, made[2]),
+        @as(u32, made[3]), @as(u32, made[4]), @as(u32, made[5]),
+    });
+    return made;
 }
 
 /// exec has copied the tag's name, version and ID string into the base.
@@ -394,7 +414,8 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
 
     const utility_lib = sys_base.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return null;
     const utility: *UtilityBase = @ptrCast(utility_lib);
-    if (!findPart(sys_base, utility, base)) {
+    var station: [6]u8 = undefined;
+    if (!findPart(sys_base, utility, base, &station)) {
         sys_base.CloseLibrary(utility_lib);
         return null;
     }
@@ -405,12 +426,11 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     base.unit = .{ .msg_port = .{ .flags = exec.PA_IGNORE } };
     base.unit.msg_port.msg_list.init(.message);
 
-    const factory = rmii.factoryAddress();
-    base.net.init(sys_base, base, &factory);
+    base.net.init(sys_base, base, &station);
 
     // Aligned to a cache line by hand: AllocMem's blocks are aligned less.
     const work_bytes = @sizeOf(Work) + _emac.line_bytes - 1;
-    const memory = sys_base.AllocMem(work_bytes, exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse {
+    const memory = sys_base.AllocMem(work_bytes, work_memory | exec.MEMF_CLEAR) orelse {
         sdk.exec.kprintf(sys_base, "%s: no internal memory for the frame buffers\n", .{DEVICE_NAME});
         sys_base.CloseLibrary(utility_lib);
         return null;
@@ -474,7 +494,8 @@ const init_table = exec.InitTable{
 };
 
 /// What the device speaks, for ObtainDeviceUnits (expansion.library),
-/// and where its units come from: a unit per network part the board lists: on an ESP32-P4 board, its Ethernet PHY.
+/// and where its units come from: a unit per network part the board
+/// lists - its Ethernet PHY.
 const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_SANA2, 0 };
 
 /// No flags but AUTOINIT: the device is on the disk, in DEVS:networks/,
