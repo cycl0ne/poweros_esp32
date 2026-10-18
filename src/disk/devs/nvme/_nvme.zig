@@ -20,7 +20,9 @@ const exec = sdk.exec;
 const pci = sdk.pci;
 const td = sdk.devices.trackdisk;
 const timer = sdk.devices.timer;
+const automount = sdk.devices.automount;
 const ExecBase = sdk.interface.exec.ExecBase;
+const DosBase = sdk.interface.dos.DosBase;
 const PCIBase = sdk.interface.pci.PCIBase;
 const regs = @import("regs.zig");
 const dsm = @import("dsm.zig");
@@ -122,6 +124,8 @@ pub const Unit = extern struct {
     block_shift: u8 = 9,
     pad: [7]u8 = @splat(0),
     blocks: u64 = 0,
+    /// Its drives, made once by the mount process (mount.zig).
+    medium: automount.MediumNode = .{},
 
     pub fn blockBytes(unit: *const Unit) u32 {
         return @as(u32, 1) << @intCast(unit.block_shift);
@@ -133,6 +137,8 @@ pub const NvmeBase = extern struct {
     sys_base: *ExecBase,
     seg_list: ?*anyopaque = null,
     pci_base: ?*PCIBase = null,
+    /// For the mount process: null when dos could not be opened.
+    dos_base: ?*DosBase = null,
     /// The task that serves every unit, and its stack.
     task: exec.Task = .{},
     stack: ?*anyopaque = null,

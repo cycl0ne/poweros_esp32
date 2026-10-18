@@ -287,6 +287,7 @@ flowchart TB
     m_modbus_library --> m_bsdsocket_library
     m_modbus_library --> m_dos_library
     m_modbus_library --> m_rs485_device
+    m_nvme_device --> m_dos_library
     m_nvme_device --> m_pci_library
     m_nvme_device --> m_timer_device
     m_openeth_device --> m_timer_device

@@ -247,4 +247,12 @@ pub const Input = struct {
         input.io.data = @ptrCast(&input.event);
         _ = sys.DoIO(&input.io.req);
     }
+
+    /// input.device closed and the port deleted: for a process that ends.
+    pub fn end(input: *Input, sys: *ExecBase) void {
+        if (input.open) sys.CloseDevice(&input.io.req);
+        input.open = false;
+        if (input.port) |port| sys.DeleteMsgPort(port);
+        input.port = null;
+    }
 };

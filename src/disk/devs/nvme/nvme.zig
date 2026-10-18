@@ -36,8 +36,11 @@
 //! and out of the caller's pages. BeginIO answers what it knows - the
 //! geometry, the protection, the change count - and queues the rest.
 //!
-//! **Nothing is mounted by the device.** A MountList entry names the
-//! unit for a handler, as one does for the card.
+//! **The drives** are made once the device is up, by a DOS process of
+//! its own (mount.zig): a drive per partition where a namespace holds a
+//! RigidDiskBlock, `NV<n>` over the whole namespace otherwise - unless a
+//! MountList entry mounted by hand opens the unit already, which is then
+//! its drive.
 //!
 //! The device stays once made: it owns its task, its controllers'
 //! interrupts and the memory they read and write.
@@ -45,17 +48,20 @@
 const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const dos = sdk.dos;
 const pci = sdk.pci;
 const td = sdk.devices.trackdisk;
 const devices = sdk.expansion.devices;
 const ExecBase = sdk.interface.exec.ExecBase;
+const DosBase = sdk.interface.dos.DosBase;
 const _nvme = @import("_nvme.zig");
 const NvmeBase = _nvme.NvmeBase;
 const task_file = @import("task.zig");
+const mount = @import("mount.zig");
 
 pub const DEVICE_NAME = _nvme.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "18.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -68,6 +74,9 @@ const vec = exec.libraries.vec;
 const task_stack = 8192;
 /// Beside the handlers, as sdcard.device's is: a file system waits on it.
 const task_pri = 5;
+/// The mount process: below the handlers it starts, as sdcard.device's.
+const mount_stack = 8192;
+const mount_pri = 4;
 
 // --- the device ---------------------------------------------------------------------
 
@@ -173,7 +182,37 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     // Without its port the task has ended; without units it stays, and
     // every open is refused.
     if (base.requests == null) return null;
+    // Last: nothing after this fails, so the process never runs on a base
+    // that is freed.
+    if (base.unit_count != 0) startMounter(base);
     return dev;
+}
+
+/// The DOS process that makes the units' drives, started and waited for
+/// until it runs. Without dos.library or the process the device serves
+/// all the same, and a unit is mounted by hand (a MountList entry).
+fn startMounter(base: *NvmeBase) void {
+    const sys = base.sys_base;
+    const dl: *DosBase = @ptrCast(sys.OpenLibrary(dos.DOSNAME, 0) orelse return);
+    base.dos_base = dl;
+    const signal = sys.AllocSignal(-1);
+    if (signal < 0) return;
+    defer sys.FreeSignal(signal);
+    base.start_signal = signal;
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = dos.NP_Entry, .data = @intFromPtr(&mount.mountProcess) },
+        .{ .tag = dos.NP_Name, .data = @intFromPtr(@as([*:0]const u8, "nvme.device mount")) },
+        .{ .tag = dos.NP_StackSize, .data = mount_stack },
+        .{ .tag = dos.NP_Priority, .data = @as(usize, @bitCast(@as(isize, mount_pri))) },
+        .{ .tag = dos.NP_UserData, .data = @intFromPtr(base) },
+        .{},
+    };
+    base.starter = sys.FindTask(null);
+    if (dl.CreateNewProc(&tags) == null) {
+        base.starter = null;
+        return;
+    }
+    _ = sys.Wait(@as(u32, 1) << @intCast(signal));
 }
 
 /// The jump table: the six standard vectors.
