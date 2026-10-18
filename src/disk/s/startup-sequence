@@ -67,11 +67,13 @@ If EXISTS S:User-Startup
   Execute S:User-Startup
 EndIf
 
-; The card in the board's slot, as SD0:, before the desktop comes up so
-; it shows the card from the start; a card put in or taken out later is
-; noticed within a second, and the desktop follows. A board without a slot
-; has no device to open, and nothing is mounted.
-C:Mount >NIL: SD0:
+; The block devices in DEVS: for this board's hardware, started before the
+; desktop comes up so it shows their drives from the start: the card in
+; the slot, as SD0: or as the partitions its table names. A card put in or
+; taken out later is noticed within a second, and the desktop follows. A
+; board without a slot starts nothing. After User-Startup, so a drive
+; mounted there by hand (Mount SD0:) is the one the card gets.
+C:BindDrivers
 
 ; The USB buses whose socket can only be a host - on a board whose
 ; keyboard and mouse are USB - started before the desktop comes up, so

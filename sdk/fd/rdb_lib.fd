@@ -25,4 +25,8 @@ i32 AddPartition(*rdb.RDBHandle handle, [*:0]const u8 name, u32 low_cyl, u32 hig
 void RemPartition(*rdb.RDBHandle handle, *rdb.RDBPartition partition)
 /// The handle's table checked and written to the disk.
 i32 WriteRDB(*rdb.RDBHandle handle)
+/// A device node for a partition on dos's list, named as the partition
+/// (with dots added while the name is taken), its handler started with
+/// RDBMF_START; the name used goes where `name` points.
+i32 MountPartition(*rdb.RDBHandle handle, *rdb.RDBPartition partition, ?*rdb.MountName name, u32 flags)
 ##end

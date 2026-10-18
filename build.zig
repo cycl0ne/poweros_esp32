@@ -156,6 +156,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Battery.info", .picture = "battery", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Sheet.info", .picture = "x-office-spreadsheet", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "programs/HDToolBox.info", .picture = "drive-harddisk", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Terminal.info", .picture = "utilities-terminal", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Player.info", .picture = "multimedia-player", .fields = &.{ "KIND=TOOL", icon_stack } },
     // What each program is, in SYS:Programs/Docs: read in MultiView.
@@ -163,6 +164,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/Docs/Battery.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/CPULoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/FontView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "programs/Docs/HDToolBox.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/MultiView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Notepad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Player.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },

@@ -240,6 +240,13 @@ fn tearDown(eb: *ExpansionBase) !void {
     try kexec.expectNoLeaks();
 }
 
+/// For the tests of a module that makes device nodes, with dos.library up
+/// beside this one: expansion's own share taken down, leaving
+/// utility.library and the leak check to dos's testTearDown.
+pub fn testTakeDown(eb: *ExpansionBase) void {
+    _ = takeDown(eb);
+}
+
 test "every part of the board, in the board's order" {
     var board: Board = .{};
     const eb = try setUp(&board);

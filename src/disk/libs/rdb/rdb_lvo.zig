@@ -20,6 +20,7 @@ const FindPartition = @import("partition/findpartition.zig").FindPartition;
 const AddPartition = @import("partition/addpartition.zig").AddPartition;
 const RemPartition = @import("partition/rempartition.zig").RemPartition;
 const WriteRDB = @import("table/writerdb.zig").WriteRDB;
+const MountPartition = @import("partition/mountpartition.zig").MountPartition;
 
 /// rdb.library's interface, as the SDK generates it from
 /// sdk/fd/rdb_lib.fd.
@@ -53,6 +54,7 @@ const contract_files = [_][]const u8{
     @embedFile("partition/addpartition.zig"),
     @embedFile("partition/rempartition.zig"),
     @embedFile("table/writerdb.zig"),
+    @embedFile("partition/mountpartition.zig"),
 };
 
 fn lvoOpenRDB(base: *RDBBase, device: [*:0]const u8, unit: u32, err: ?*i32) callconv(.c) ?*rdb.RDBHandle {
@@ -79,6 +81,9 @@ fn lvoRemPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.RDBPa
 fn lvoWriteRDB(base: *RDBBase, handle: *rdb.RDBHandle) callconv(.c) i32 {
     return WriteRDB(base, handle);
 }
+fn lvoMountPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.RDBPartition, name: ?*rdb.MountName, flags: u32) callconv(.c) i32 {
+    return MountPartition(base, handle, partition, name, flags);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -95,6 +100,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoAddPartition),
     vec(lvoRemPartition),
     vec(lvoWriteRDB),
+    vec(lvoMountPartition),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

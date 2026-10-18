@@ -370,10 +370,19 @@ RDB CHANGE DH1 DOSTYPE POS       ; or one that is there, for posfs from now on
 Format DRIVE DH1: NAME Work
 ```
 
-**A card** gets posfs from its mountlist entry: `DEVS:MountList` has a
-posfs `SD0:` entry, commented out, to copy into `DEVS:SD0` - with
-`DosType = 0x504F5301` (`POS\1`) the card keeps a partition table a PC
-knows. Then:
+**A card or a stick** that holds posfs needs nothing: its device reads
+the first one put into the slot or the unit - sdcard.device, which
+`C:BindDrivers` starts at boot, and usb/disk.device when a stick is
+plugged in - and a posfs volume, or a partition table with a posfs
+partition, gives the drive (`SD0:`, `DU0:`) posfs-handler. The drive
+keeps it for the cards or sticks after. One that holds a RigidDiskBlock
+gets a drive per partition instead, each with the handler its DosType
+names - `POS\0` for posfs ([disks guide](rdb.md)). One that holds
+anything else gives the drive fat-handler; for posfs on it,
+`DEVS:MountList` has a posfs `SD0:` entry, commented out, to copy into
+`DEVS:SD0` - with `DosType = 0x504F5301` (`POS\1`) the card keeps a
+partition table a PC knows - and a stick's goes into `DEVS:DU0` the same
+way, with `Device = usb/disk.device` and the unit's number. Then:
 
 ```
 Assign SD0: DISMOUNT
@@ -386,14 +395,6 @@ Format on a `POS\1` drive writes one partition from the card's first
 table after the volume. `POSFS` makes Format refuse a drive that is not
 mounted for posfs, and say how to give it posfs: a format writes the
 file system of the handler the drive has, and never another.
-
-**A stick** that holds posfs needs nothing: usb/disk.device reads the
-first stick put into a unit, and a posfs volume, or a partition table
-with a posfs partition, gives the unit posfs-handler. The unit keeps it
-for the sticks after. A stick that holds anything else gives the unit
-fat-handler; for posfs, `DEVS:DU0` gets an entry like the card's, with
-`Device = usb/disk.device` and the unit's number, and then, as for a
-card, `Assign DU0: DISMOUNT`, `Mount DU0:` and Format.
 
 **Any other drive** gets posfs the same way: an entry in
 `DEVS:<drive>` with `Handler = posfs-handler`, the drive's device and

@@ -4,7 +4,12 @@
 //! through its jump table, against a block device of its own here - a
 //! small medium in memory that behaves like flash (a write only clears
 //! bits, an erase sets a block back to ones), so a block written without
-//! its erase reads back wrong.
+//! its erase reads back wrong. It can also be a medium that does not
+//! erase, count its medium changes, and be cut off after so many writes,
+//! as a power cut would. MountPartition's tests bring dos.library and
+//! expansion.library up beside it, as the ROM has them, and so do those of
+//! `sdk.devices.automount`, which mounts a removable unit's first medium
+//! through the library.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -15,7 +20,13 @@ const hardblocks = sdk.dos.hardblocks;
 const ExecBase = sdk.interface.exec.ExecBase;
 const RDBBase = sdk.interface.rdb.RDBBase;
 const rdb_init = @import("../rdb_init.zig");
-const kexec = @import("host_rom").exec;
+const rdb_base = @import("../rdb_base.zig");
+const host_rom = @import("host_rom");
+const kexec = host_rom.exec;
+const kutility = host_rom.utility;
+const kdos = host_rom.dos;
+const kexpansion = host_rom.expansion;
+const automount = sdk.devices.automount;
 
 const testing = std.testing;
 
@@ -39,6 +50,16 @@ const Medium = extern struct {
     /// The blocks TD_GETGEOMETRY says there are, when not 0: a large
     /// disk, of which only the image's blocks are ever read or written.
     claimed_blocks: u64 = 0,
+    /// The erase unit TD_GETGEOMETRY answers: 0 for a medium that does not
+    /// erase, whose writes put the bytes down as they are.
+    erase_size: u32 = block_bytes,
+    /// TD_CHANGENUM's count.
+    change_num: u32 = 0,
+    /// The CMD_UPDATEs seen.
+    updates: u32 = 0,
+    /// The writes and erases the medium still takes; it refuses every one
+    /// after, as a medium whose power went would.
+    changes_left: u32 = std.math.maxInt(u32),
     image: [medium_blocks * block_bytes]u8 = @splat(0xFF),
 };
 
@@ -95,8 +116,16 @@ fn serve(medium: *Medium, io: *exec.IOStdReq) i8 {
                 .cyl_sectors = 1,
                 .heads = 1,
                 .track_sectors = 1,
-                .erase_size = block_bytes,
+                .erase_size = medium.erase_size,
             };
+            return 0;
+        },
+        trackdisk.TD_CHANGENUM => {
+            io.actual = medium.change_num;
+            return 0;
+        },
+        exec.CMD_UPDATE => {
+            medium.updates += 1;
             return 0;
         },
         exec.CMD_READ, exec.CMD_WRITE, trackdisk.TDCMD_ERASE => {
@@ -104,11 +133,19 @@ fn serve(medium: *Medium, io: *exec.IOStdReq) i8 {
             const at: usize = @intCast(io.offset);
             const length: usize = @intCast(io.length);
             const part = medium.image[at..][0..length];
+            if (io.req.command != exec.CMD_READ) {
+                if (medium.changes_left == 0) return trackdisk.TDERR_WriteProt;
+                medium.changes_left -= 1;
+            }
             switch (io.req.command) {
                 exec.CMD_READ => @memcpy(@as([*]u8, @ptrCast(io.data.?))[0..length], part),
                 exec.CMD_WRITE => {
                     const from: [*]const u8 = @ptrCast(io.data.?);
-                    for (part, 0..) |*byte, i| byte.* &= from[i];
+                    if (medium.erase_size == 0) {
+                        @memcpy(part, from[0..length]);
+                    } else {
+                        for (part, 0..) |*byte, i| byte.* &= from[i];
+                    }
                 },
                 else => {
                     if (at % block_bytes != 0 or length % block_bytes != 0) return trackdisk.TDERR_SeekError;
@@ -165,6 +202,11 @@ const Rig = struct {
 
     fn init() !Rig {
         try kexec.setUp();
+        return start();
+    }
+
+    /// The medium and the library, on the exec that is up.
+    fn start() !Rig {
         const sys = kexec.SysBase.iface();
         const device = kexec.InitResident(kexec.SysBase, &medium_tag, null) orelse return error.NoDevice;
         const made = kexec.InitResident(kexec.SysBase, &rdb_init.rdb_library_tag, null) orelse return error.NoLibrary;
@@ -180,11 +222,18 @@ const Rig = struct {
     /// The library closed and expunged, the medium removed, and nothing
     /// left behind.
     fn deinit(rig: *Rig) !void {
-        rig.sys.CloseLibrary(rig.rb.lib());
-        _ = rig.sys.RemLibrary(rig.library);
-        _ = rig.sys.RemDevice(&rig.medium.dev);
+        rig.stop();
         try kexec.expectNoLeaks();
         kexec.deinit();
+    }
+
+    /// The library closed and expunged - let go of what it mounted, which
+    /// dos's list frees here - and the medium removed.
+    fn stop(rig: *Rig) void {
+        rig.sys.CloseLibrary(rig.rb.lib());
+        rdb_base.rdbBase(rig.library).mounted = false;
+        _ = rig.sys.RemLibrary(rig.library);
+        _ = rig.sys.RemDevice(&rig.medium.dev);
     }
 
     fn open(rig: *Rig) !*rdb.RDBHandle {
@@ -198,7 +247,80 @@ const Rig = struct {
     fn block(rig: *Rig, comptime T: type, number: u32) *align(1) T {
         return @ptrCast(&rig.medium.image[number * block_bytes]);
     }
+
+    /// The blocks of the first RDB_LOCATION_LIMIT holding a sound
+    /// RigidDiskBlock, as a bit each.
+    fn tables(rig: *Rig) u32 {
+        var found: u32 = 0;
+        var number: u32 = 0;
+        while (number < hardblocks.RDB_LOCATION_LIMIT) : (number += 1) {
+            const table = rig.block(hardblocks.RigidDiskBlock, number).*;
+            if (hardblocks.sound(&table, hardblocks.IDNAME_RIGIDDISK)) found |= @as(u32, 1) << @intCast(number);
+        }
+        return found;
+    }
 };
+
+/// The rig with utility.library, expansion.library and dos.library up
+/// first, as the ROM has them, for MountPartition.
+const DosRig = struct {
+    rig: Rig,
+    db: *kdos.DosBase,
+    eb: *kexpansion.ExpansionBase,
+    dl: *sdk.interface.dos.DosBase,
+
+    fn init() !DosRig {
+        try kexec.setUp();
+        _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
+        const expansion_made = kexec.InitResident(kexec.SysBase, &kexpansion.expansion_library_tag, null) orelse return error.NoExpansion;
+        const dos_made = kexec.InitResident(kexec.SysBase, &kdos.dos_library_tag, null) orelse return error.NoDos;
+        const db: *kdos.DosBase = @fieldParentPtr("lib", @as(*exec.Library, @ptrCast(@alignCast(dos_made))));
+        return .{
+            .rig = try Rig.start(),
+            .db = db,
+            .eb = @fieldParentPtr("lib", @as(*exec.Library, @ptrCast(@alignCast(expansion_made)))),
+            .dl = db.iface(),
+        };
+    }
+
+    /// The rig taken down, then expansion and dos, which frees what is on
+    /// its list and checks that nothing is left.
+    fn deinit(dos_rig: *DosRig) !void {
+        dos_rig.rig.stop();
+        kexpansion.testTakeDown(dos_rig.eb);
+        try kdos.testTearDown(dos_rig.db);
+        kexec.deinit();
+    }
+
+    /// The device node called `name`, or null.
+    fn device(dos_rig: *DosRig, name: [*:0]const u8) ?*sdk.dos.DosList {
+        const dl = dos_rig.dl;
+        const list = dl.LockDosList(sdk.dos.LDF_DEVICES | sdk.dos.LDF_READ) orelse return null;
+        defer dl.UnLockDosList(sdk.dos.LDF_DEVICES | sdk.dos.LDF_READ);
+        return dl.FindDosEntry(list, name, sdk.dos.LDF_DEVICES);
+    }
+
+    /// A node of the name on the list, standing for someone else's drive.
+    fn take(dos_rig: *DosRig, name: [*:0]const u8) !void {
+        const node = dos_rig.dl.MakeDosEntry(name, sdk.dos.DLT_DEVICE) orelse return error.NoMemory;
+        if (!dos_rig.dl.AddDosEntry(node)) return error.Taken;
+    }
+};
+
+/// A table of DH0 on cylinders 16 to 39 and DH1 on 40 to 63, both for
+/// `dos_type`, written.
+fn writeTwo(rig: *Rig, dos_type: u32) !void {
+    const handle = try rig.open();
+    defer rig.rb.CloseRDB(handle);
+    try testing.expectEqual(rdb.RDBERR_OK, rig.rb.InitRDB(handle));
+    try testing.expectEqual(rdb.RDBERR_OK, rig.rb.AddPartition(handle, "DH0", 16, 39, dos_type));
+    try testing.expectEqual(rdb.RDBERR_OK, rig.rb.AddPartition(handle, "DH1", 40, 63, dos_type));
+    try testing.expectEqual(rdb.RDBERR_OK, rig.rb.WriteRDB(handle));
+}
+
+fn nameText(name: *const rdb.MountName) []const u8 {
+    return std.mem.sliceTo(name, 0);
+}
 
 fn names(rb: *RDBBase, handle: *rdb.RDBHandle, into: []u8) []const u8 {
     var length: usize = 0;
@@ -371,7 +493,7 @@ test "a partition's blocks, to the last cylinder a table can name" {
     try testing.expectEqual(@as(u64, 6), one.blocks());
 }
 
-test "a rewritten chain goes in blocks the old one is not in, and the old one stays whole" {
+test "a rewritten table goes in blocks the old one is not in, and the old one stays whole until the new is down" {
     var rig = try Rig.init();
     defer rig.deinit() catch unreachable;
     const rb = rig.rb;
@@ -390,12 +512,17 @@ test "a rewritten chain goes in blocks the old one is not in, and the old one st
         try testing.expect(handle.flags & rdb.RDBF_CHANGED != 0);
         try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "WORK", 0, 0, fls));
         try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
-        try testing.expectEqual(@as(u32, 3), rb.FindPartition(handle, "DH1").?.at);
-        try testing.expectEqual(@as(u32, 4), rb.FindPartition(handle, "WORK").?.at);
+        // The RigidDiskBlock in the first block the old table is not in,
+        // the PartitionBlocks after it.
+        try testing.expectEqual(@as(u32, 3), handle.block);
+        try testing.expectEqual(@as(u32, 4), rb.FindPartition(handle, "DH1").?.at);
+        try testing.expectEqual(@as(u32, 5), rb.FindPartition(handle, "WORK").?.at);
     }
-    // The old chain is still there, sound, in blocks 1 and 2.
+    // The old chain is still there, sound, in blocks 1 and 2; its
+    // RigidDiskBlock is wiped, and the new one is the only one.
     try testing.expect(hardblocks.sound(rig.block(hardblocks.PartitionBlock, 1), hardblocks.IDNAME_PARTITION));
     try testing.expect(hardblocks.sound(rig.block(hardblocks.PartitionBlock, 2), hardblocks.IDNAME_PARTITION));
+    try testing.expectEqual(@as(u32, 1 << 3), rig.tables());
 
     const handle = try rig.open();
     defer rb.CloseRDB(handle);
@@ -491,4 +618,297 @@ test "a device that is not there" {
     try testing.expectEqual(rdb.RDBERR_DEVICE, err);
     try testing.expect(rig.rb.OpenRDB(MEDIUM_NAME, 3, null) == null);
     rig.rb.CloseRDB(null);
+}
+
+test "a write cut off before the old RigidDiskBlock is wiped leaves a whole table, the new one above the old or below it" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const rb = rig.rb;
+    try writeTwo(&rig, fls);
+    var text: [64]u8 = undefined;
+
+    // The new table above the old: until the old is wiped, a reader takes
+    // the old one. Two PartitionBlocks and the RigidDiskBlock, each erased
+    // and written, and the cut comes before the wipe.
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        @memcpy(rb.FindPartition(handle, "DH1").?.block.drive_name[0..3], "WRK");
+        rig.medium.changes_left = 6;
+        try testing.expectEqual(rdb.RDBERR_IO, rb.WriteRDB(handle));
+    }
+    rig.medium.changes_left = std.math.maxInt(u32);
+    try testing.expectEqual(@as(u32, 1 << 0 | 1 << 3), rig.tables());
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(@as(u32, 0), handle.block);
+        try testing.expectEqualStrings("DH0 DH1", names(rb, handle, &text));
+        // Written again, the stray one goes too.
+        @memcpy(rb.FindPartition(handle, "DH1").?.block.drive_name[0..3], "WRK");
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+        try testing.expectEqual(@as(u32, 3), handle.block);
+    }
+    try testing.expectEqual(@as(u32, 1 << 3), rig.tables());
+
+    // The new table below the old: a reader takes the new one as soon as
+    // it is written.
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqualStrings("DH0 WRK", names(rb, handle, &text));
+        @memcpy(rb.FindPartition(handle, "DH0").?.block.drive_name[0..3], "SYS");
+        rig.medium.changes_left = 6;
+        try testing.expectEqual(rdb.RDBERR_IO, rb.WriteRDB(handle));
+    }
+    rig.medium.changes_left = std.math.maxInt(u32);
+    try testing.expectEqual(@as(u32, 1 << 0 | 1 << 3), rig.tables());
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expectEqual(@as(u32, 0), handle.block);
+    try testing.expectEqualStrings("SYS WRK", names(rb, handle, &text));
+    try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+    try testing.expectEqual(@as(u32, 1 << 3), rig.tables());
+}
+
+test "a medium that does not erase: the old RigidDiskBlock written over with zeroes, and CMD_UPDATE at the end" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    rig.medium.erase_size = 0;
+    try writeTwo(&rig, sdk.dos.ID_MSDOS_DISK);
+    try testing.expectEqual(@as(u32, 0), rig.medium.erases);
+    try testing.expectEqual(@as(u32, 1), rig.medium.updates);
+    {
+        const handle = try rig.open();
+        defer rig.rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.WriteRDB(handle));
+        try testing.expectEqual(@as(u32, 3), handle.block);
+    }
+    try testing.expectEqual(@as(u32, 0), rig.medium.erases);
+    try testing.expectEqual(@as(u32, 2), rig.medium.updates);
+    try testing.expectEqual(@as(u32, 1 << 3), rig.tables());
+    for (rig.medium.image[0..block_bytes]) |byte| try testing.expectEqual(@as(u8, 0), byte);
+}
+
+test "another medium in the unit: nothing written, nothing mounted" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const rb = rig.rb;
+    rig.medium.change_num = 4;
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expectEqual(@as(u32, 4), handle.change_num);
+    try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+    try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "DH0", 0, 0, fls));
+    rig.medium.change_num = 5;
+    try testing.expectEqual(rdb.RDBERR_CHANGED, rb.WriteRDB(handle));
+    try testing.expectEqual(rdb.RDBERR_CHANGED, rb.MountPartition(handle, rb.FindPartition(handle, "DH0").?, null, 0));
+    try testing.expectEqual(@as(u32, 0), rig.medium.erases);
+    try testing.expectEqual(@as(u32, 0), rig.medium.updates);
+}
+
+test "a partition mounted: a node of its own, with a copy of its environment and its file system's handler" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    const rb = rig.rb;
+    try writeTwo(rig, sdk.dos.posfs.ID_POSFS_DISK);
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        var name: rdb.MountName = @splat('x');
+        try testing.expectEqual(rdb.RDBERR_OK, rb.MountPartition(handle, rb.FindPartition(handle, "DH1").?, &name, 0));
+        try testing.expectEqualStrings("DH1", nameText(&name));
+    }
+    // The handle and its partitions are freed; the node has its own.
+    const node = dos_rig.device("DH1") orelse return error.NotMounted;
+    try testing.expectEqualStrings(sdk.dos.posfs.HANDLER_NAME, std.mem.span(node.misc.handler.handler.?));
+    const startup = sdk.dos.filehandler.startupOf(node.misc.handler.startup) orelse return error.NoStartup;
+    try testing.expectEqual(@as(u32, 0), startup.unit);
+    try testing.expectEqualStrings(MEDIUM_NAME, std.mem.span(startup.device.?));
+    const env = startup.environ.?;
+    try testing.expectEqual(@as(u32, 40), env.low_cyl);
+    try testing.expectEqual(@as(u32, 63), env.high_cyl);
+    try testing.expectEqual(@as(u32, block_bytes), env.size_block);
+    try testing.expectEqual(sdk.dos.posfs.ID_POSFS_DISK, env.dos_type);
+    try testing.expect(dos_rig.device("DH0") == null);
+
+    // Mounted once only, by whichever handle.
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    const dh1 = rb.FindPartition(handle, "DH1").?;
+    try testing.expectEqual(rdb.RDBERR_MOUNTED, rb.MountPartition(handle, dh1, null, 0));
+    // A partition given some of DH1's cylinders since is DH1's still.
+    const dh0 = rb.FindPartition(handle, "DH0").?;
+    dh0.block.environment.high_cyl = 40;
+    try testing.expectEqual(rdb.RDBERR_MOUNTED, rb.MountPartition(handle, dh0, null, 0));
+    dh0.block.environment.high_cyl = 39;
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountPartition(handle, dh0, null, 0));
+    try testing.expect(dos_rig.device("DH0") != null);
+}
+
+test "a name in use gets a dot, as many as fit" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    const rb = rig.rb;
+    try writeTwo(rig, fls);
+    try dos_rig.take("DH0");
+    try dos_rig.take("DH0.");
+    const long = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123";
+    try dos_rig.take(long);
+
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    var name: rdb.MountName = undefined;
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountPartition(handle, rb.FindPartition(handle, "DH0").?, &name, 0));
+    try testing.expectEqualStrings("DH0..", nameText(&name));
+    try testing.expect(dos_rig.device("DH0..") != null);
+
+    // A name of MAX_DEVICE_NAME characters has no room for a dot.
+    const dh1 = rb.FindPartition(handle, "DH1").?;
+    @memcpy(dh1.block.drive_name[0..long.len], long);
+    try testing.expectEqual(rdb.RDBERR_NAME, rb.MountPartition(handle, dh1, &name, 0));
+}
+
+test "a partition's file system must suit it, and a drive over the whole medium has every partition" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    const rb = rig.rb;
+    try writeTwo(rig, fls);
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    const dh0 = rb.FindPartition(handle, "DH0").?;
+    const env = &dh0.block.environment;
+    // FAT on a medium that erases; a partition table inside a partition;
+    // a DosType no handler serves.
+    for ([_]u32{ sdk.dos.ID_MSDOS_DISK, sdk.dos.ID_MSDOS_DISK_HD, sdk.dos.posfs.ID_POSFS_MBR, 0x444F_5300 }) |dos_type| {
+        env.dos_type = dos_type;
+        try testing.expectEqual(rdb.RDBERR_FILESYSTEM, rb.MountPartition(handle, dh0, null, 0));
+    }
+    env.dos_type = fls;
+
+    // A drive of another unit is no claim; one over this unit's whole
+    // medium, named by the device's path, is.
+    const expansion_lib = rig.sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return error.NoExpansion;
+    defer rig.sys.CloseLibrary(expansion_lib);
+    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
+    const whole: sdk.dos.DosEnvec = .{ .dos_type = sdk.dos.ID_MSDOS_DISK_HD };
+    const other_unit = eb.MakeDosNode("SD8", "DEVS:" ++ MEDIUM_NAME, 1, 0, &whole) orelse return error.NoMemory;
+    try testing.expect(dos_rig.dl.AddDosEntry(other_unit));
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountPartition(handle, dh0, null, 0));
+    const this_unit = eb.MakeDosNode("SD9", "DEVS:tests/" ++ MEDIUM_NAME, 0, 0, &whole) orelse return error.NoMemory;
+    try testing.expect(dos_rig.dl.AddDosEntry(this_unit));
+    try testing.expectEqual(rdb.RDBERR_MOUNTED, rb.MountPartition(handle, rb.FindPartition(handle, "DH1").?, null, 0));
+}
+
+test "a library that has mounted a partition stays" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    try writeTwo(rig, fls);
+    {
+        const handle = try rig.open();
+        defer rig.rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.MountPartition(handle, rig.rb.FindPartition(handle, "DH0").?, null, 0));
+    }
+    rig.sys.CloseLibrary(rig.rb.lib());
+    _ = rig.sys.RemLibrary(rig.library);
+    // Still there to be opened: the node names its handler by a string of
+    // the library's.
+    const again = rig.sys.OpenLibrary(rdb.RDBNAME, 1) orelse return error.Expunged;
+    rig.rb = @ptrCast(again);
+}
+
+test "which unit a startup message opens, and which areas share a block" {
+    const filehandler = sdk.dos.filehandler;
+    const startup: filehandler.FileSysStartupMsg = .{ .unit = 2, .device = "DEVS:usb/disk.device" };
+    try testing.expect(filehandler.opensUnit(&startup, "disk.device", 2));
+    try testing.expect(filehandler.opensUnit(&startup, "usb/disk.device", 2));
+    try testing.expect(!filehandler.opensUnit(&startup, "disk.device", 0));
+    try testing.expect(!filehandler.opensUnit(&startup, "Disk.device", 2));
+    try testing.expect(!filehandler.opensUnit(&startup, "disk.devices", 2));
+    try testing.expect(!filehandler.opensUnit(&startup, "sk.device", 2));
+
+    const low: sdk.dos.DosEnvec = .{ .low_cyl = 16, .high_cyl = 39 };
+    const high: sdk.dos.DosEnvec = .{ .low_cyl = 40, .high_cyl = 63 };
+    const across: sdk.dos.DosEnvec = .{ .low_cyl = 39, .high_cyl = 40 };
+    const whole: sdk.dos.DosEnvec = .{};
+    // The same blocks counted in larger cylinders.
+    const doubled: sdk.dos.DosEnvec = .{ .low_cyl = 20, .high_cyl = 31, .blocks_per_track = 2 };
+    try testing.expect(!filehandler.sharesBlocks(&low, &high));
+    try testing.expect(filehandler.sharesBlocks(&low, &across));
+    try testing.expect(filehandler.sharesBlocks(&high, &across));
+    try testing.expect(filehandler.sharesBlocks(&whole, &high));
+    try testing.expect(filehandler.sharesBlocks(null, &high));
+    try testing.expect(filehandler.sharesBlocks(&high, &doubled));
+    try testing.expect(!filehandler.sharesBlocks(&low, &doubled));
+    // Cylinders no medium has, read off one that says what it likes: past
+    // every other area, and no overflow.
+    const huge: sdk.dos.DosEnvec = .{ .low_cyl = 0xFFFF_FFFE, .high_cyl = 0xFFFF_FFFF, .surfaces = 0xFFFF, .blocks_per_track = 0xFFFF_FFFF };
+    try testing.expect(!filehandler.sharesBlocks(&huge, &low));
+}
+
+// --- a removable unit's drives (sdk.devices.automount) ----------------------------
+
+/// The medium as a removable unit `SD0` whose drives automount makes.
+fn removable(medium: *automount.MediumNode) automount.Unit {
+    return .{ .device = MEDIUM_NAME, .number = 0, .name = "SD0", .block_bytes = block_bytes, .medium = medium };
+}
+
+test "a unit's first medium with a table: a drive per partition, dotted where the name is taken, none of its own" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    // A card: no erase unit, and FAT in its partitions.
+    rig.medium.erase_size = 0;
+    try writeTwo(rig, sdk.dos.ID_MSDOS_DISK);
+    {
+        const handle = try rig.open();
+        defer rig.rb.CloseRDB(handle);
+        rig.rb.FindPartition(handle, "DH1").?.block.flags |= hardblocks.PBFF_NOMOUNT;
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.WriteRDB(handle));
+    }
+    try dos_rig.take("DH0");
+
+    var medium: automount.MediumNode = .{};
+    var drives: automount.Drives = .{};
+    automount.mountMedium(rig.sys, dos_rig.dl, removable(&medium), &drives);
+    try testing.expectEqual(@as(u32, 1), drives.count);
+    try testing.expectEqualStrings("DH0.", nameText(&drives.names[0]));
+    const node = dos_rig.device("DH0.") orelse return error.NotMounted;
+    try testing.expectEqualStrings(sdk.dos.filesystems.fat_handler, std.mem.span(node.misc.handler.handler.?));
+    try testing.expect(dos_rig.device("DH1") == null);
+    try testing.expect(dos_rig.device("SD0") == null);
+}
+
+test "a unit's first medium with no table: its own drive as its first block says, and a unit with a drive is left alone" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    rig.medium.erase_size = 0;
+    @memset(rig.medium.image[0..block_bytes], 0);
+    std.mem.writeInt(u32, rig.medium.image[0..4], sdk.dos.posfs.layout.label_magic, .little);
+
+    var medium: automount.MediumNode = .{};
+    var drives: automount.Drives = .{};
+    automount.mountMedium(rig.sys, dos_rig.dl, removable(&medium), &drives);
+    try testing.expectEqual(@as(u32, 1), drives.count);
+    try testing.expectEqualStrings("SD0", nameText(&drives.names[0]));
+    const node = dos_rig.device("SD0") orelse return error.NotMounted;
+    try testing.expectEqualStrings(sdk.dos.posfs.HANDLER_NAME, std.mem.span(node.misc.handler.handler.?));
+    const startup = sdk.dos.filehandler.startupOf(node.misc.handler.startup) orelse return error.NoStartup;
+    try testing.expectEqual(&medium.startup, startup);
+    try testing.expectEqual(sdk.dos.posfs.ID_POSFS_DISK, startup.environ.?.dos_type);
+    try testing.expect(startup.environ.?.wholeMedium());
+
+    // The unit has a drive now: another look makes none, and names that
+    // drive to be started.
+    var again: automount.MediumNode = .{};
+    var more: automount.Drives = .{};
+    automount.mountMedium(rig.sys, dos_rig.dl, removable(&again), &more);
+    try testing.expectEqual(@as(u32, 1), more.count);
+    try testing.expectEqualStrings("SD0", nameText(&more.names[0]));
+    try testing.expect(dos_rig.device("SD0.") == null);
 }

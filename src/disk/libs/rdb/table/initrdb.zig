@@ -40,8 +40,8 @@ const max_cyl_blocks: u32 = 1 << 31;
 /// the medium's own size; a cylinder of one block, or on a medium of 2^32
 /// blocks or more, of the fewest blocks - 2, 4, 8 and so on - that leave
 /// fewer than 2^32 cylinders; and the first RDB_LOCATION_LIMIT blocks
-/// kept for the table - the RigidDiskBlock in the first, the
-/// PartitionBlocks after it - so every cylinder from the first past them
+/// kept for the table - the RigidDiskBlock and the PartitionBlocks, which
+/// WriteRDB places in them - so every cylinder from the first past them
 /// to the end may be a partition's. It says nothing of its vendor or
 /// product; those fields are the program's to fill in.
 ///
@@ -99,7 +99,6 @@ pub fn InitRDB(_: *RDBBase, handle: *rdb.RDBHandle) i32 {
         .lo_cylinder = (kept_blocks + cyl_blocks - 1) / cyl_blocks,
         .hi_cylinder = cylinders - 1,
     };
-    handle.block = 0;
     handle.flags |= rdb.RDBF_CHANGED;
     private.has_table = true;
     return rdb.RDBERR_OK;

@@ -647,21 +647,6 @@ pub fn setAssign(db: *DosBase, name: [*:0]const u8, kind: DosListType, dir: ?*Fi
     return true;
 }
 
-/// Below this a dol_Startup is a plain number (RAW:'s 1, a window's 0),
-/// not a FileSysStartupMsg: no structure lives in the first page.
-const startup_numbers: usize = 0x1000;
-
-/// A device node's dol_Startup as a FileSysStartupMsg, or null where it is
-/// none: zero, a plain number, or a value no structure could sit at.
-///
-/// INPUTS:
-/// - `startup` - the node's `startup` field.
-fn startupMsgOf(startup: usize) ?*const dos.FileSysStartupMsg {
-    if (startup < startup_numbers) return null;
-    if (startup % @alignOf(dos.FileSysStartupMsg) != 0) return null;
-    return @ptrFromInt(startup);
-}
-
 /// Whether the device nodes two handlers answer for name one medium: the
 /// same unit of the same exec device. The device list stays locked while
 /// both startups are read and compared, so neither node can go under it.
@@ -682,8 +667,8 @@ pub fn sameMedium(db: *DosBase, first_port: ?*exec.MsgPort, second_port: ?*exec.
     var entry = dos_lib.NextDosEntry(list, dos.LDF_DEVICES);
     while (entry) |node| : (entry = dos_lib.NextDosEntry(node, dos.LDF_DEVICES)) {
         const startup = node.misc.handler.startup;
-        if (first == null and node.task == first_task) first = startupMsgOf(startup);
-        if (second == null and node.task == second_task) second = startupMsgOf(startup);
+        if (first == null and node.task == first_task) first = dos.filehandler.startupOf(startup);
+        if (second == null and node.task == second_task) second = dos.filehandler.startupOf(startup);
     }
     const one = first orelse return false;
     const other = second orelse return false;

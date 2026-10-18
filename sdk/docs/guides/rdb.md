@@ -6,15 +6,16 @@ partition, each with the name its device node gets (`DH0`), the
 cylinders it covers and the file system it is for. The flash disk's
 table is read when the system starts, and its partitions are mounted as
 it says. `rdb.library`, in `LIBS:`, is how a program reads the table,
-changes it and writes it back.
+changes it, writes it back and mounts a partition.
 
 This guide is how the table is laid out, how the library holds it, and
 what a program does with it - from listing the partitions to putting a
-fresh table on a disk. `C:RDB` is the library's own command: it shows a
+fresh table on a disk and mounting what it made. `C:RDB` is the library's own command: it shows a
 table, makes a fresh one, and adds and takes away partitions from the
 shell, and gives a partition to another file system. `s3> rdb init`
 writes a first table on a blank flash chip, where there is no `C:` yet to
-run `C:RDB` from.
+run `C:RDB` from. `SYS:Programs/HDToolBox` changes the table of any
+drive in a window, with the partitions as a bar that is dragged.
 
 ## The table on the disk
 
@@ -29,8 +30,9 @@ bytes of a block of its own:
 | `BadBlockBlock` (`BADB`) | a list of replaced blocks |
 
 The RigidDiskBlock is in one of the first `RDB_LOCATION_LIMIT` (16)
-blocks. Every block carries its identifier and a checksum, so a disk
-that holds no table is recognised at once. A block is the medium's own
+blocks, and every reader takes the lowest sound one there. Every block
+carries its identifier and a checksum, so a disk that holds no table is
+recognised at once. A block is the medium's own
 block - 4096 bytes on the flash disk, its erase unit, so one structure
 can be rewritten without disturbing the next; 512 on a card.
 
@@ -81,7 +83,10 @@ like. The handle's `flags` say what was found:
 | `RDBF_FOREIGN` | a RigidDiskBlock written for another block size, left alone and counted as none |
 | `RDBF_CHANGED` | the table in memory is not the one on the disk |
 
-`handle.geometry` is what the device said about the medium.
+`handle.geometry` is what the device said about the medium, and
+`handle.change_num` its `TD_CHANGENUM` count: `WriteRDB` and
+`MountPartition` answer `RDBERR_CHANGED` once the medium in the unit is
+another than the table was read from.
 
 The handle's reply port belongs to the task that opened it: every call
 with one handle comes from that task.
@@ -138,11 +143,25 @@ before `WriteRDB`.
 `WriteRDB` checks the whole table again first, since anything may have
 been changed by hand: every name valid and nobody else's, every
 partition's cylinders inside the usable ones, the right way round and
-its own. Then it gives each PartitionBlock a block in the table's own
-area, writes them in the list's order with their checksums, and writes
-the RigidDiskBlock last. Blocks the old chain is not in are taken first,
-so the old table stays whole until that last block replaces it. A
-medium that wants erasing has each block erased before it is written.
+its own. Then the new table goes down beside the old one:
+
+1. Each PartitionBlock gets a block in the table's own area that the
+   old table is not in, and so does the RigidDiskBlock, in one of the
+   first 16. They are written in the list's order with their checksums,
+   the RigidDiskBlock last.
+2. The old RigidDiskBlock is wiped, and any other one in the first 16
+   blocks before it.
+3. `CMD_UPDATE`, so a device that holds writes back has them on the
+   medium.
+
+A reader takes the lowest sound RigidDiskBlock, so the disk holds a
+whole table at every point - the old one until the new one is written
+below it or the old one is wiped above it, the new one after - and a
+write cut off part of the way, by a card pulled or the power, leaves one
+or the other. Where the area has no block to spare for that, the
+RigidDiskBlock is written over the old one. A medium that wants erasing
+has each block erased before it is written, and a wiped block erased;
+on any other a wiped block is written with zeroes.
 
 Only the table's own blocks are ever written. What is on a partition's
 cylinders stays as it is, whatever the table now says of them - adding a
@@ -235,6 +254,56 @@ A fresh table has room for 15 PartitionBlocks; `AddPartition` answers
 `RDBERR_FULL` past that (fewer, when kept chains hold some of the 16
 blocks).
 
+## Mounting a partition
+
+`MountPartition(handle, part, name, flags)` puts a partition on dos's
+list as a device node, so its file system can start without waiting for
+the next boot:
+
+```zig
+var name: rdb.MountName = undefined;
+const part = rb.FindPartition(handle, "DH1") orelse return dos.RETURN_WARN;
+switch (rb.MountPartition(handle, part, &name, rdb.RDBMF_START)) {
+    rdb.RDBERR_OK => _ = Printf(dl, "mounted as %s:\n", .{@as([*:0]const u8, &name)}),
+    rdb.RDBERR_MOUNTED => _ = dl.PutStr("mounted already\n"),
+    else => |err| return report(err),
+}
+```
+
+The node is what a MountList entry for the partition would make: the
+handle's device and unit, the partition's device flags, a copy of its
+environment, and the handler its DosType names (`sdk.dos.filesystems`).
+With `RDBMF_START` the handler is started before the call returns, so
+the volume is on the list; without, the drive's first use starts it.
+The handle and the partition can be closed and freed at once: the node
+has its own copy of everything.
+
+- **A name in use** gets a dot added, as often as needed: a second disk
+  whose table names its partitions as the first's gets `DH0.`, then
+  `DH0..`. A device or an assign of the name counts as taken; a name of
+  30 characters with no room for a dot is `RDBERR_NAME`.
+- **Blocks in use** are refused with `RDBERR_MOUNTED`: a device node on
+  the list that opens the same device and unit and shares a block with
+  the partition - the partition mounted before, a drive over the whole
+  medium, or one over cylinders the table has since given to another
+  partition. Two file systems on one block would wreck each other.
+  Devices are compared by what they are called, the part of the name
+  after its last `/` or `:`, so `DEVS:usb/disk.device` is
+  `disk.device`.
+- **A file system that cannot go there** is `RDBERR_FILESYSTEM`: a
+  DosType with no handler, FAT on a medium that erases, `FLS\0` on one
+  that does not, and `MSH` or `POS\1`, whose area begins with a
+  partition table of its own and so is a whole medium's, never a
+  partition's.
+
+Mount what `WriteRDB` has written: a partition only in the handle is
+mounted all the same, but the disk does not have it at the next start.
+`PBFF_NOMOUNT` is the caller's to honour - it says the partition is left
+alone when the whole table is mounted, and `MountPartition` mounts what
+it is given. The node names its handler by a string held in the
+library, so once it has mounted a partition, rdb.library stays in memory
+for the system's life.
+
 ## Errors
 
 A call that can fail answers `RDBERR_OK` (0) or one of these, and
@@ -248,39 +317,92 @@ which may have written part of the table.
 | `RDBERR_IO` | the device refused a transfer: a write-protected medium, a card taken out |
 | `RDBERR_NORDB` | the handle has no table to change: the disk had none, and `InitRDB` has not made one |
 | `RDBERR_BLOCKSIZE` | the medium's erase unit is larger than its blocks, so erasing one would take its neighbours |
-| `RDBERR_NAME` | a name that is empty, longer than `MAX_DEVICE_NAME` (30), holds a colon or a slash, or is another partition's |
+| `RDBERR_NAME` | a name that is empty, longer than `MAX_DEVICE_NAME` (30), holds a colon or a slash, or is another partition's; for `MountPartition`, taken on dos's list with every dot that fits |
 | `RDBERR_RANGE` | cylinders outside the usable ones, the wrong way round, or another partition's; or none free for 0 and 0 |
 | `RDBERR_FULL` | no block left in the table's area for another PartitionBlock |
+| `RDBERR_CHANGED` | the medium in the unit is not the one the table was read from |
+| `RDBERR_MOUNTED` | a device node already opens some of the partition's blocks |
+| `RDBERR_FILESYSTEM` | no handler for the partition's DosType, or one whose file system cannot go there |
 
 ## When a change is seen
 
 `flash.device` reads the table of the flash disk (its unit 0) once, when
 it starts at boot, and makes a device node for each partition not marked
 `PBFF_NOMOUNT`, with the handler its DosType names - `FLS\0` the flash
-file system, `POS\0` posfs ([posfs guide](posfs.md)), `MSD` and `MSH`
-the FAT handler; a partition whose DosType names
-neither, or that has no name, is passed over, and the chain is followed
-for 16 PartitionBlocks at most. It hands the nodes to
+file system, `POS\0` posfs ([posfs guide](posfs.md)). A partition whose
+file system cannot serve a part of the flash - FAT, which erases
+nothing; `MSH` or `POS\1`, whose area begins with a partition table of
+its own; a DosType there is no handler for - or that has no name, is
+passed over, and the chain is followed for 16 PartitionBlocks at most.
+Which DosType gets which handler, and where each may go, is
+`sdk.dos.filesystems`. It hands the nodes to
 expansion.library (`MakeDosNode`, `AddBootNode`), which keeps them until
 dos.library is up and takes them in. The bootable partition with the
 highest boot priority is where the system starts from. So what
-`WriteRDB` writes is mounted at the next boot; until then the nodes on
-the list are the ones from before.
+`WriteRDB` writes is mounted at the next boot, and a new partition at
+once by `MountPartition`; until then the nodes on the list are the ones
+from before.
 
-Changing the cylinders of a partition that is mounted leaves its file
-system working on the old ones until the next boot, and a file system
-that finds its partition smaller than it was is not going to like it:
-change a partition's size only when what is on it can go.
+Changing the cylinders or the file system of a partition that is
+mounted leaves its drive working on the old ones until the next boot,
+and a file system that finds its partition smaller than it was is not
+going to like it: change a partition's size only when what is on it can
+go, inhibit its drive first (`Inhibit`), and start again once the table
+is written.
 
-A card in the slot is mounted as `SD0:` at boot by `Mount SD0:`, from its entry in
-`DEVS:MountList`: the whole card, DosType `MSH\0`, which says the card
-begins with a partition table and the volume is its first FAT
-partition - not a RigidDiskBlock. fat-handler reads that table and the
-boot sector it points at; a card with no table is an entry with
-`MSD\0`, the volume from the card's first block. An entry with `POS\1`
-gives the card to posfs: the same kind of table, the volume its first
-partition of type 0x7F ([posfs guide](posfs.md)). A RigidDiskBlock on a
-card is for a program that reads it.
+**A card or a stick** has its table read when the first one comes into
+the slot or the unit - by sdcard.device, which `C:BindDrivers` starts at
+boot, and by usb/disk.device when a stick is plugged in. One with a
+sound RigidDiskBlock gets a drive per partition not marked
+`PBFF_NOMOUNT`, through `MountPartition`, so a name the flash disk has
+already gets a dot (`DH0.:`), and a partition whose file system cannot
+go on the medium - the flash file system on a card - is passed over.
+One without gets a drive of its own over the whole medium, `SD0:` or
+`DU<n>:`, with the file system its first block says: posfs for a posfs
+label or a partition table with a posfs partition, otherwise FAT with
+`MSH\0`, which says the medium begins with a partition table and the
+volume is its first FAT partition ([posfs guide](posfs.md)). A unit
+that a device node opens already - a MountList entry mounted by hand
+first - is left to it. The drives stay with the handlers they got: the
+next card or stick in the unit is read through them, and a table
+written to a card is mounted as it says at the next start, or at once
+by `MountPartition`.
+
+## In a window: HDToolBox
+
+`SYS:Programs/HDToolBox` is a program built on these calls, and the
+order it makes them in is the order any partitioning program needs
+(its readme is `SYS:Programs/Docs/HDToolBox.md`):
+
+- **The drives** are every unit of every block device the board lists
+  (expansion.library's `ObtainDeviceUnits` with `DEVIF_BLOCK`). A drive
+  is opened (`OpenRDB`) only when it is picked, since a device in `DEVS:`
+  stays loaded once opened. What is mounted from it now is found on dos's
+  list: every device node whose FileSysStartupMsg names the device and
+  unit (`sdk.dos.filehandler.opensUnit`).
+- **Edits** go to the handle and nowhere else until Save: `AddPartition`,
+  `RemPartition`, and a partition's environment set field by field. A
+  partition's edges stay on whole MiB of the medium where it has no erase
+  unit, so a card's or a stick's erase blocks are never shared by two
+  partitions; on the flash disk every cylinder is an edge. The file
+  systems offered are those `sdk.dos.filesystems.suits` allows on the
+  medium.
+- **Save** first finds what the new table ends: a partition that does not
+  keep its cylinders, DosType and geometry loses its data, and a drive
+  mounted over one stops (`sameLayout` in the program's model). Each such
+  drive is inhibited before anything is written, and one that refuses -
+  a file open for writing on it - stops the save. Then `WriteRDB`; a
+  medium changed since `OpenRDB` answers `RDBERR_CHANGED`, and the drive
+  is read again with nothing written. Each partition not mounted yet and
+  not marked `PBFF_NOMOUNT` is mounted at once
+  (`MountPartition` with `RDBMF_START`). If a drive was stopped, a
+  restart is offered, and before `ColdReboot` every drive mounted from a
+  block device is inhibited, so each file system writes out what it
+  holds.
+- The partition SYS: is on - the device node whose handler serves SYS:,
+  which is an assign - is not moved, removed or given another file
+  system, and its drive gets no fresh table. HDToolBox formats nothing:
+  a new partition gets its volume from `C:Format`.
 
 ## From the shell
 

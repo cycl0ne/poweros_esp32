@@ -304,20 +304,38 @@ a stick is `DU0:`, a second one `DU1:`, and a card reader's two slots
 are two drives. A stick pulled out frees its unit, and the next one
 plugged in is `DU0:` again.
 
-**The drive is made by the device.** The first time a medium comes into
-unit n, the device puts `DU<n>` on the device list, as a MountList
-entry would, and starts the handler, which reads the stick and puts its
-volume on the list; the desktop shows it. Which handler, the first
-stick's first block says: a posfs volume (`POS\0`) or a partition table
-with a posfs partition (`POS\1`) gives posfs-handler
-([posfs guide](posfs.md)); anything else fat-handler, the whole medium,
-DosType `MSH\0`, which reads the stick's partition table and the boot
-sector of its first FAT partition. A stick with no partition table needs a MountList
-entry of the unit's name with DosType `MSD\0`, mounted before it is
-plugged in, which then stands for the unit. The node stays from then on: a stick
-going takes only its volume, and the next one in the unit brings its
-own - read by the handler the unit got. Nothing in the MountList is
-needed, and nothing USB is loaded at boot where no stick is plugged in.
+**The drives are made by the device.** The first time a medium comes
+into unit n, the device makes its drives, as MountList entries would,
+and starts their handlers, which read the stick and put its volumes on
+the list; the desktop shows them. What the first stick holds says which
+drives:
+
+- **A RigidDiskBlock** ([disks guide](rdb.md)): a drive per partition
+  not marked `PBFF_NOMOUNT`, named as the table says, with the handler
+  its DosType asks for. The unit gets no drive of its own. A partition
+  whose file system cannot go on a stick - the flash file system, or
+  `MSH`/`POS\1` inside a partition - is passed over.
+- **No table**: `DU<n>` over the whole stick, with the handler its
+  first block asks for. A posfs volume (`POS\0`) or a partition table
+  with a posfs partition (`POS\1`) gives posfs-handler
+  ([posfs guide](posfs.md)); anything else fat-handler, DosType
+  `MSH\0`, which reads the stick's partition table and the boot sector
+  of its first FAT partition. A stick with no partition table needs a
+  MountList entry of the unit with DosType `MSD\0`, mounted before it
+  is plugged in.
+
+A name already on the list gets a dot added, as often as it takes: a
+stick whose table names a partition `DH0`, plugged in beside the flash
+disk's `DH0:`, gives `DH0.:`. A unit that a device node already opens -
+a MountList entry mounted by hand - gets no drive of its own making:
+that entry is the unit's drive, and its handler is started as the
+device's own would be.
+
+The drives stay from then on, with the handlers they got: a stick going
+takes only its volumes, and the next one in the unit is read through the
+same drives - a stick with another table needs a restart to be mounted
+as that table says. Nothing in the MountList is needed, and nothing USB
+is loaded at boot where no stick is plugged in.
 
 **A card reader's slots** are looked at once a second (TEST UNIT
 READY): a card put in comes in as a stick does, one taken out goes.

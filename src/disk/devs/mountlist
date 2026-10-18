@@ -66,18 +66,21 @@ AUX3:
 	Priority  = 5
 #
 
-/* The card in the slot, on a board that has one. Both halves are on
- * this disk rather than in the ROM: the handler is HANDLERS:fat-handler,
- * which dos loads the first time the device is used, and it opens
- * sdcard.device, which ramlib loads from DEVS:. With no LowCyl and
- * HighCyl the drive is the whole card, and DosType "MSH\0" says what is
- * on it: a partition table in its first block, the volume in its first
- * FAT partition - as cards are sold, and as Format writes one - so the
- * entry names only the device, and the volume takes the card's own name.
- * A card with no table, its volume from the first block, is "MSD\0".
- * The last byte is the format Format writes: 0 FAT32 up to 32 GiB and
- * exFAT past that, 1 FAT32, 2 exFAT. Activate starts the handler at once,
- * so the volume is there as soon as the card is mounted.
+/* The card in the slot, mounted by hand. sdcard.device makes the card's
+ * drives itself when C:BindDrivers starts it at boot - SD0: over the
+ * whole card with the file system its first block says, posfs or FAT, or
+ * a drive per partition of a card with a RigidDiskBlock - so nothing here
+ * is needed for that. An entry mounted before then (Mount SD0: in
+ * S:User-Startup) is the card's drive instead, and these are its
+ * keywords: for a card the device would read otherwise, or other Buffers.
+ *
+ * With no LowCyl and HighCyl the drive is the whole card, and DosType
+ * "MSH\0" says what is on it: a partition table in its first block, the
+ * volume in its first FAT partition - as cards are sold, and as Format
+ * writes one. A card with no table, its volume from the first block, is
+ * "MSD\0". The last byte is the format Format writes: 0 FAT32 up to
+ * 32 GiB and exFAT past that, 1 FAT32, 2 exFAT. Activate starts the
+ * handler at once, so the volume is there as soon as the card is mounted.
  *
  * The stack is the handler's deepest packet, a rename, with room to spare.
  * Buffers is how many of the card's table and directory blocks the
@@ -94,16 +97,16 @@ SD0:
 	Activate  = 1
 #
 
-/* The same slot with posfs cards in it. DosType "POS\1" is a partition
- * table in the card's first block and the volume in its first partition
- * of type 0x7F, as Format writes one, so a PC still sees a table on it;
- * "POS\0" is a card that is the volume from its first block. dos loads
- * posfs-handler from HANDLERS:, as it does fat-handler. A drive keeps the
- * handler it was mounted with, so for posfs in the slot these keywords -
- * without the SD0: and the # - go into DEVS:SD0, which Mount reads before
- * this file; then Assign SD0: DISMOUNT, Mount SD0:, and Format DRIVE
- * SD0: NAME Card for a card that is not posfs yet. Buffers is how many
- * blocks of the card the handler keeps; without it, a megabyte's worth.
+/* The same slot for posfs, mounted by hand. DosType "POS\1" is a
+ * partition table in the card's first block and the volume in its first
+ * partition of type 0x7F, as Format writes one, so a PC still sees a
+ * table on it; "POS\0" is a card that is the volume from its first block.
+ * dos loads posfs-handler from HANDLERS:, as it does fat-handler. The
+ * device mounts a posfs card as posfs by itself; these keywords - without
+ * the SD0: and the # - go into DEVS:SD0, which Mount reads before this
+ * file, to give the slot to posfs for a card that is not posfs yet: then
+ * Format DRIVE SD0: NAME Card. Buffers is how many blocks of the card the
+ * handler keeps; without it, a megabyte's worth.
  *
  * SD0:
  *	Handler   = posfs-handler

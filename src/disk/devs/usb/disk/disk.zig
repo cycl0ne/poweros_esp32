@@ -33,12 +33,15 @@
 //! same and has no medium, as an empty card slot has none: a handler sits
 //! on it before a stick is there.
 //!
-//! **`DU<n>:` is made by the device**, the first time a medium comes into
-//! unit n, and stays (mount.zig): nothing USB is loaded at boot where no
+//! **The drives are made by the device**, the first time a medium comes
+//! into unit n, and stay (mount.zig, `sdk.devices.automount`): a drive
+//! per partition when the stick holds a RigidDiskBlock, `DU<n>:` over the
+//! whole stick when it does not. Nothing USB is loaded at boot where no
 //! stick is plugged in, and a node that locks point at is never taken off
-//! the list. Nothing in the MountList is needed; an entry there of the
-//! same name is used as it is. From then on a medium coming or going
-//! causes the handler's change interrupt, and the handler looks.
+//! the list. Nothing in the MountList is needed; an entry there that
+//! opens the unit is the unit's drive, used as it is. From then on a
+//! medium coming or going causes the handler's change interrupt, and the
+//! handler looks.
 //!
 //! **The work** is the device's task's (task.zig): every transfer, the
 //! units' bring-up, and a look at every unit once a second that finds a
@@ -71,7 +74,7 @@ const scsi = @import("scsi.zig");
 
 pub const DEVICE_NAME = _disk.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 4;
+const DEVICE_REVISION = 5;
 const BUILD_DATE = "18.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++

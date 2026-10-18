@@ -8,10 +8,16 @@
 //! them once, at cold start - before dos.library is up - and makes a device
 //! node for each partition not marked PBFF_NOMOUNT with expansion.library's
 //! MakeDosNode: named as the partition says (pb_DriveName), with the
-//! handler its de_DosType asks for, and the partition's DosEnvec as the
-//! environment its handler is started with. AddBootNode keeps the nodes
-//! until dos takes them in. A bootable partition stands at its de_BootPri,
-//! the others at -128, which is never booted from.
+//! handler its de_DosType asks for (sdk/libs/dos/filesystems.zig), and the
+//! partition's DosEnvec as the environment its handler is started with.
+//! AddBootNode keeps the nodes until dos takes them in. A bootable
+//! partition stands at its de_BootPri, the others at -128, which is never
+//! booted from.
+//!
+//! A partition whose file system cannot serve a part of the flash is not
+//! mounted: FAT, which erases nothing, a DosType whose area begins with a
+//! partition table of its own (`MSH`, `POS\1`), and one there is no
+//! handler for.
 //!
 //! Nothing about the disk is written down in the kernel: a second
 //! partition, or another file system on the same chip, is a matter of
@@ -36,26 +42,15 @@ const disk_unit = 0;
 /// A runaway partition chain stops here.
 const max_partitions = 16;
 
-/// The handler a partition's de_DosType asks for. The flash file system
-/// is in the ROM; posfs's and FAT's handlers are loaded from HANDLERS:,
-/// and FAT's takes every FAT DosType (`MSD`, `MSH`, with any last byte),
-/// so it stands here as one.
-const file_systems = [_]struct { dos_type: u32, handler: [*:0]const u8 }{
-    .{ .dos_type = dos.flashfs.ID_FLASHFS_DISK, .handler = "flashfs-handler" },
-    .{ .dos_type = dos.posfs.ID_POSFS_DISK, .handler = dos.posfs.HANDLER_NAME },
-    .{ .dos_type = dos.ID_MSDOS_DISK, .handler = "fat-handler" },
-};
-
-/// The handler for a DosType, or null for a file system there is none for.
+/// The handler for a partition of the flash, or null for one whose file
+/// system cannot serve it.
 ///
 /// INPUTS:
 /// - `dos_type` - the partition's de_DosType.
-pub fn handlerFor(dos_type: u32) ?[*:0]const u8 {
-    const wanted = if (dos.fat.isFatType(dos_type)) dos.ID_MSDOS_DISK else dos_type;
-    for (file_systems) |file_system| {
-        if (file_system.dos_type == wanted) return file_system.handler;
-    }
-    return null;
+/// - `erase_size` - the flash's erase unit.
+pub fn handlerFor(dos_type: u32, erase_size: u32) ?[*:0]const u8 {
+    if (!dos.filesystems.suits(dos_type, erase_size, false)) return null;
+    return dos.filesystems.handlerFor(dos_type);
 }
 
 /// The partitions a disk names, one after the other: every sound
@@ -132,7 +127,7 @@ pub fn mountPartitions(sys: *ExecBase, disk: []const u8, block_bytes: u32) void 
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
     var pb: hardblocks.PartitionBlock = undefined;
     while (partitions.nextPartition(&pb)) {
-        const handler = handlerFor(pb.environment.dos_type) orelse continue;
+        const handler = handlerFor(pb.environment.dos_type, block_bytes) orelse continue;
         const drive = pb.name();
         if (drive.len == 0) continue;
         // The partition block holds the name as a C string of at most 31
@@ -242,10 +237,52 @@ test "a RigidDiskBlock and a PartitionBlock are sound once they carry their chec
     try testing.expectEqual(@as(u64, 16 * 4096), part.environment.byteOf(0));
 }
 
-test "a partition's handler is the one its DosType asks for" {
-    try testing.expectEqualStrings("flashfs-handler", std.mem.span(handlerFor(flashfs.ID_FLASHFS_DISK).?));
-    try testing.expectEqualStrings("posfs-handler", std.mem.span(handlerFor(dos.posfs.ID_POSFS_DISK).?));
-    try testing.expectEqualStrings("fat-handler", std.mem.span(handlerFor(dos.ID_MSDOS_DISK).?));
-    try testing.expectEqualStrings("fat-handler", std.mem.span(handlerFor(dos.fat.typeWithFormat(dos.ID_MSDOS_DISK_HD, dos.fat.FORMAT_EXFAT)).?));
-    try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(0x444F5300)); // "DOS\0"
+test "a partition's handler is the one its DosType asks for, where it can serve the flash" {
+    try testing.expectEqualStrings("flashfs-handler", std.mem.span(handlerFor(flashfs.ID_FLASHFS_DISK, test_block).?));
+    try testing.expectEqualStrings("posfs-handler", std.mem.span(handlerFor(dos.posfs.ID_POSFS_DISK, test_block).?));
+    // FAT erases nothing; `POS\1` and `MSH` begin with a table of their own.
+    try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(dos.ID_MSDOS_DISK, test_block));
+    try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(dos.posfs.ID_POSFS_MBR, test_block));
+    try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(0x444F5300, test_block)); // "DOS\0"
+}
+
+test "the file systems: each DosType's handler, where it may go, and what a whole medium gets" {
+    const filesystems = dos.filesystems;
+    try testing.expectEqualStrings("fat-handler", std.mem.span(filesystems.handlerFor(dos.ID_MSDOS_DISK).?));
+    try testing.expectEqualStrings("fat-handler", std.mem.span(filesystems.handlerFor(dos.fat.typeWithFormat(dos.ID_MSDOS_DISK_HD, dos.fat.FORMAT_EXFAT)).?));
+    try testing.expectEqualStrings("posfs-handler", std.mem.span(filesystems.handlerFor(dos.posfs.ID_POSFS_MBR).?));
+    try testing.expectEqual(@as(?[*:0]const u8, null), filesystems.handlerFor(0x444F5300));
+
+    // A card erases for itself: FAT and posfs, in a partition or whole;
+    // the flash file system never.
+    try testing.expect(filesystems.suits(dos.ID_MSDOS_DISK, 0, false));
+    try testing.expect(filesystems.suits(dos.ID_MSDOS_DISK_HD, 0, true));
+    try testing.expect(!filesystems.suits(dos.ID_MSDOS_DISK_HD, 0, false));
+    try testing.expect(filesystems.suits(dos.posfs.ID_POSFS_DISK, 0, false));
+    try testing.expect(!filesystems.suits(dos.posfs.ID_POSFS_MBR, 0, false));
+    try testing.expect(!filesystems.suits(flashfs.ID_FLASHFS_DISK, 0, false));
+    try testing.expect(filesystems.suits(flashfs.ID_FLASHFS_DISK, test_block, false));
+
+    // A whole medium: a posfs label, a table with a posfs partition, and
+    // anything else FAT behind a table.
+    var block: [512]u8 = @splat(0);
+    try testing.expectEqual(dos.ID_MSDOS_DISK_HD, filesystems.wholeMediumChoice(&block).dos_type);
+    try testing.expectEqual(dos.ID_MSDOS_DISK_HD, filesystems.wholeMediumChoice(&.{}).dos_type);
+    dos.posfs.table.writeTable(&block, 2048, 100_000, 0x1234_5678);
+    try testing.expectEqual(dos.posfs.ID_POSFS_MBR, filesystems.wholeMediumChoice(&block).dos_type);
+    @memset(&block, 0);
+    std.mem.writeInt(u32, block[0..4], dos.posfs.layout.label_magic, .little);
+    const label = filesystems.wholeMediumChoice(&block);
+    try testing.expectEqual(dos.posfs.ID_POSFS_DISK, label.dos_type);
+    try testing.expectEqualStrings("posfs-handler", std.mem.span(label.handler));
+}
+
+test "a device node's startup: a FileSysStartupMsg, or a plain number" {
+    const startupOf = dos.filehandler.startupOf;
+    try testing.expect(startupOf(0) == null);
+    try testing.expect(startupOf(1) == null);
+    try testing.expect(startupOf(0xFFF) == null);
+    const msg: dos.FileSysStartupMsg = .{ .unit = 3 };
+    try testing.expectEqual(@as(u32, 3), startupOf(@intFromPtr(&msg)).?.unit);
+    try testing.expect(startupOf(@intFromPtr(&msg) + 1) == null);
 }

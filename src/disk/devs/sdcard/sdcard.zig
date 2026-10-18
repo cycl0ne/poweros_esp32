@@ -68,6 +68,13 @@
 //! card come or gone causes the handlers' change interrupts
 //! (TD_ADDCHANGEINT), and the handler looks at the slot on its own task -
 //! and tells input, so a window showing the device list looks again.
+//!
+//! **The card's drives are made by the device** (mount.zig, a DOS process
+//! of its own): when the first card is identified, a drive per partition
+//! if it holds a RigidDiskBlock, `SD0:` over the whole card if it does
+//! not, with the handler its first block asks for. Nothing in the
+//! MountList is needed; an entry there mounted by hand first is the
+//! card's drive, used as it is.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -91,11 +98,14 @@ const ExpanderBase = sdk.interface.expander.ExpanderBase;
 const _sdcard = @import("_sdcard.zig");
 const SdCardBase = _sdcard.SdCardBase;
 const Work = _sdcard.Work;
+const mount = @import("mount.zig");
+const dos = sdk.dos;
+const DosBase = sdk.interface.dos.DosBase;
 
 pub const DEVICE_NAME = _sdcard.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 4;
-const BUILD_DATE = "13.10.2026";
+const DEVICE_REVISION = 5;
+const BUILD_DATE = "18.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -108,6 +118,9 @@ const stack_size = 4096;
 /// Above dos's processes, below the kernel's tick users, as flash.device
 /// is: a file system waits on this and nothing else does.
 const task_pri = 5;
+/// The DOS process starts handlers and asks them, through dos.
+const mount_stack = 8192;
+const mount_pri = 4;
 
 // --- the interrupt --------------------------------------------------------
 
@@ -565,7 +578,25 @@ fn ready(sb: *SdCardBase) bool {
     sb.change_num +%= 1;
     report(sb);
     changed(sb);
+    tellMounter(sb);
     return true;
+}
+
+/// A card identified: the DOS process told, while the card's drives are
+/// not made yet and the last telling is not on its way. Its port is read
+/// under the lock it is set under, so a card identified before the
+/// process had one is the process's to find.
+fn tellMounter(sb: *SdCardBase) void {
+    if (@atomicLoad(bool, &sb.medium.node_made, .acquire)) return;
+    const sys = sb.sys_base;
+    sys.AcquireLock(&sb.change_lock);
+    const port = sb.mounter;
+    sys.ReleaseLock(&sb.change_lock);
+    const mounter = port orelse return;
+    if (@cmpxchgStrong(u8, &sb.told, 0, 1, .acq_rel, .monotonic) != null) return;
+    sb.tell.reply_port = null;
+    sb.tell.length = @sizeOf(exec.Message);
+    sys.PutMsg(mounter, &sb.tell);
 }
 
 fn report(sb: *SdCardBase) void {
@@ -1198,9 +1229,9 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     return null;
 }
 
-/// The device stays: it owns its task, its interrupt and the controller,
-/// and a file system sits on it. The seglist it was loaded from is kept
-/// in the base for the day it does go.
+/// The device stays: it owns its task, its interrupt, the controller and
+/// its DOS process, and a file system sits on it. The seglist it was
+/// loaded from is kept in the base for the day it does go.
 fn expunge(_: *exec.Device) callconv(.c) ?*anyopaque {
     return null;
 }
@@ -1311,7 +1342,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     // null, and ramlib gives the file back.
     findSlot(sb);
     if (sb.has_slot == 0) {
-        // Not a fault: the boot mounts SD0: on every board.
+        // Not a fault: a MountList's SD0: may be mounted on any board.
         sdk.exec.klog(sys_base, exec.LOG_DEBUG, "%s: no card slot on this board\n", .{DEVICE_NAME});
         return null;
     }
@@ -1382,7 +1413,37 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         _ = sys_base.Wait(@as(u32, 1) << @intCast(signal));
         sys_base.FreeSignal(@intCast(signal));
     }
+    // Last: nothing after this fails, so a process started here never runs
+    // on a base that is freed.
+    if (sb.controller_ready != 0) startMounter(sb);
     return dev;
+}
+
+/// The DOS process that makes the card's drives, started and waited for.
+/// Without dos.library or the process the device serves all the same,
+/// and a card is mounted by hand (`Mount SD0:`).
+fn startMounter(sb: *SdCardBase) void {
+    const sys = sb.sys_base;
+    const dl: *DosBase = @ptrCast(sys.OpenLibrary(dos.DOSNAME, 0) orelse return);
+    sb.dos_base = dl;
+    const signal = sys.AllocSignal(-1);
+    if (signal < 0) return;
+    defer sys.FreeSignal(signal);
+    sb.start_signal = signal;
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = dos.NP_Entry, .data = @intFromPtr(&mount.mountProcess) },
+        .{ .tag = dos.NP_Name, .data = @intFromPtr(@as([*:0]const u8, "sdcard.device mount")) },
+        .{ .tag = dos.NP_StackSize, .data = mount_stack },
+        .{ .tag = dos.NP_Priority, .data = @as(usize, @bitCast(@as(isize, mount_pri))) },
+        .{ .tag = dos.NP_UserData, .data = @intFromPtr(sb) },
+        .{},
+    };
+    sb.starter = sys.FindTask(null);
+    if (dl.CreateNewProc(&tags) == null) {
+        sb.starter = null;
+        return;
+    }
+    _ = sys.Wait(@as(u32, 1) << @intCast(signal));
 }
 
 /// The jump table: the six standard vectors, nothing past AbortIO.

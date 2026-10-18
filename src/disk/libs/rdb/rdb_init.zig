@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! rdb.library's ROM tag, its init and its Expunge. Open and Close are
-//! exec's standard ones: every opener shares the one base.
+//! exec's standard ones: every opener shares the one base. Once
+//! MountPartition has made a node the library is never expunged: the node
+//! names its handler by a string in the library's code.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -13,7 +15,7 @@ const rdb_lvo = @import("rdb_lvo.zig");
 
 pub const LIBRARY_NAME = rdb.RDBNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 1;
+pub const LIBRARY_REVISION = 2;
 const BUILD_DATE = "18.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -29,14 +31,15 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     return lib;
 }
 
-/// The library goes when nobody has it open: the base freed, and the
-/// file it was loaded from handed back.
+/// The library goes when nobody has it open and it has mounted nothing:
+/// the base freed, and the file it was loaded from handed back.
 fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
+    const base = _base.rdbBase(lib);
+    if (@atomicLoad(bool, &base.mounted, .acquire)) return null;
     if (lib.open_cnt != 0) {
         lib.flags |= exec.LIBF_DELEXP;
         return null;
     }
-    const base = _base.rdbBase(lib);
     const sys = base.sys_base;
     const seg_list = base.seg_list;
     sys.DetachLibrary(lib);

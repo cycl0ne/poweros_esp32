@@ -62,7 +62,7 @@ const mount = @import("mount.zig");
 
 pub const DEVICE_NAME = td.FLASHNAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
+const DEVICE_REVISION = 3;
 const BUILD_DATE = "18.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++

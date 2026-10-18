@@ -54,7 +54,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Format";
-const VERSION_STRING = "\x00$VER: Format 1.4 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Format 1.5 (18.10.2026)\r\n";
 
 const template = "DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,POSFS/S,QUICK/S,BLOCKSIZE/K/N";
 const arg_device = 0;
@@ -206,8 +206,7 @@ fn lengthOf(text: [*:0]const u8) usize {
 /// The device node's de_DosType, or 0 when it was mounted without an
 /// environment.
 fn dosTypeOf(node: *dos.DosList) u32 {
-    const startup: ?*const dos.FileSysStartupMsg = @ptrFromInt(node.misc.handler.startup);
-    const msg = startup orelse return 0;
+    const msg = dos.filehandler.startupOf(node.misc.handler.startup) orelse return 0;
     const environ = msg.environ orelse return 0;
     return environ.dos_type;
 }

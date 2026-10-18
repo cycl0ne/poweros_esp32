@@ -252,7 +252,8 @@ flowchart TB
     m_datatypes_library --> m_iffparse_library
     m_datatypes_library --> m_intuition_library
     m_disk_device --> m_dos_library
-    m_disk_device --> m_input_device
+    m_disk_device -.-> m_input_device
+    m_disk_device -.-> m_rdb_library
     m_disk_device --> m_timer_device
     m_disk_device --> m_usb_library
     m_diskfont_library --> m_dos_library
@@ -289,13 +290,18 @@ flowchart TB
     m_posfs_handler --> m_input_device
     m_posfs_handler -.-> m_sdcard_device
     m_posfs_handler --> m_timer_device
+    m_rdb_library -.-> m_disk_device
+    m_rdb_library --> m_dos_library
     m_rdb_library -.-> m_flash_device
     m_rdb_library -.-> m_sdcard_device
     m_rs485_device --> m_gpio_resource
     m_rs485_device --> m_timer_device
     m_sdcard_device --> m_dma_resource
+    m_sdcard_device --> m_dos_library
     m_sdcard_device --> m_expander_resource
     m_sdcard_device --> m_gpio_resource
+    m_sdcard_device -.-> m_input_device
+    m_sdcard_device -.-> m_rdb_library
     m_sdcard_device --> m_timer_device
     m_slip_device --> m_serial_device
     m_slip_device --> m_timer_device

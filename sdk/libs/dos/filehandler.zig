@@ -42,6 +42,79 @@ pub const FileSysStartupMsg = extern struct {
     flags: u32 = 0,
 };
 
+/// Below this a device node's dol_Startup is a plain number (RAW:'s 1, a
+/// window's 0), not a FileSysStartupMsg: no structure lives in the first
+/// page.
+pub const startup_numbers: usize = 0x1000;
+
+/// A device node's dol_Startup as a FileSysStartupMsg, or null where it is
+/// none: zero, a plain number, or a value no structure could sit at.
+///
+/// INPUTS:
+/// - `startup` - the node's `misc.handler.startup`.
+pub fn startupOf(startup: usize) ?*const FileSysStartupMsg {
+    if (startup < startup_numbers) return null;
+    if (startup % @alignOf(FileSysStartupMsg) != 0) return null;
+    return @ptrFromInt(startup);
+}
+
+/// Whether a startup message opens this unit of this device: the same
+/// unit, and the same device by what it is called - the part of each name
+/// after its last `/` or `:`, which is the name exec has it under; the
+/// path before it only says where its file is loaded from, so
+/// `DEVS:usb/disk.device` is `disk.device`.
+///
+/// INPUTS:
+/// - `startup` - a device node's FileSysStartupMsg.
+/// - `device` - the device's name, as OpenDevice is given it.
+/// - `unit` - its unit.
+pub fn opensUnit(startup: *const FileSysStartupMsg, device: [*:0]const u8, unit: u32) bool {
+    if (startup.unit != unit) return false;
+    const named = startup.device orelse return false;
+    const one = deviceName(named);
+    const other = deviceName(device);
+    var index: usize = 0;
+    while (one[index] == other[index]) : (index += 1) {
+        if (one[index] == 0) return true;
+    }
+    return false;
+}
+
+/// What a device is called: its name past the last `/` or `:` in it.
+fn deviceName(name: [*:0]const u8) [*:0]const u8 {
+    var start: usize = 0;
+    var index: usize = 0;
+    while (name[index] != 0) : (index += 1) {
+        if (name[index] == '/' or name[index] == ':') start = index + 1;
+    }
+    return name[start..];
+}
+
+/// Whether two areas of one medium share a block. One that is the whole
+/// medium (`wholeMedium`), or a missing environment, which leaves the
+/// area unknown, shares one with every area.
+///
+/// INPUTS:
+/// - `one` - an area's environment, or null.
+/// - `other` - the other's, or null.
+pub fn sharesBlocks(one: ?*const DosEnvec, other: ?*const DosEnvec) bool {
+    const first = one orelse return true;
+    const second = other orelse return true;
+    if (first.wholeMedium() or second.wholeMedium()) return true;
+    const first_bytes = bytesOf(first);
+    const second_bytes = bytesOf(second);
+    return first_bytes.start < second_bytes.end and second_bytes.start < first_bytes.end;
+}
+
+/// The bytes an area covers on its medium, from `start` up to `end`;
+/// saturated rather than overflowing, for an environment read off a
+/// medium that says what it likes.
+fn bytesOf(env: *const DosEnvec) struct { start: u64, end: u64 } {
+    const cylinder = @as(u64, env.surfaces) *| env.blocks_per_track *| env.size_block;
+    if (env.high_cyl < env.low_cyl) return .{ .start = 0, .end = 0 };
+    return .{ .start = @as(u64, env.low_cyl) *| cylinder, .end = (@as(u64, env.high_cyl) + 1) *| cylinder };
+}
+
 /// struct DosEnvec: a medium's geometry and a file system's parameters, as
 /// a MountList entry gives them. `table_size` says how many of the fields
 /// after it are filled in (DE_* below), so a handler can tell what it got.

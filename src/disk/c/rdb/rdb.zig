@@ -22,8 +22,10 @@
 //! whole and printed. Only the table's own blocks are written: what is on
 //! a partition's cylinders stays, so a partition CHANGE gives another
 //! DosType is formatted afterwards (C:Format) for its new file system.
-//! The flash disk's table is read at boot, so a partition added, changed
-//! or taken out there is mounted as it now says at the next one.
+//! RDB mounts nothing: a disk's table is read when the system starts, so
+//! a partition added, changed or taken out is mounted as it now says at
+//! the next start (a program mounts a new one at once with
+//! rdb.library's MountPartition).
 //!
 //! A disk with no RigidDiskBlock is not an error: it says so and stops,
 //! since that is the normal state of a blank chip.

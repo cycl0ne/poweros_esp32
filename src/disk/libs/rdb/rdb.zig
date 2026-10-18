@@ -9,7 +9,8 @@
 //! WriteRDB checks the table, gives each PartitionBlock a block and writes
 //! it. The blocks the library does not manage - file system headers, their
 //! code, bad-block lists - stay where they are, and no PartitionBlock is
-//! put over them.
+//! put over them. MountPartition puts a partition on dos's list as a
+//! device node, with the handler its DosType asks for.
 //!
 //! A handle is its opener's: every allocation and the open unit are in it,
 //! so the base is shared by every opener and holds only exec's handle.
@@ -17,7 +18,7 @@
 //! The jump table is rdb_lvo.zig, the ROM tag, init and expunge
 //! rdb_init.zig, the base rdb_base.zig. Each call is a file under its
 //! area: `handle/` (open, close), `table/` (a fresh table, writing it),
-//! `partition/` (the list).
+//! `partition/` (the list, and mounting a partition).
 
 const sdk = @import("sdk");
 const ExecBase = sdk.interface.exec.ExecBase;

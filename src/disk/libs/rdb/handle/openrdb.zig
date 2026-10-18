@@ -7,6 +7,7 @@ const exec = sdk.exec;
 const rdb = sdk.rdb;
 const trackdisk = sdk.devices.trackdisk;
 const hardblocks = sdk.dos.hardblocks;
+const ExecBase = sdk.interface.exec.ExecBase;
 const RDBBase = @import("../rdb_base.zig").RDBBase;
 const _handle = @import("_handle.zig");
 
@@ -34,7 +35,8 @@ const _handle = @import("_handle.zig");
 ///
 /// BEHAVIOR:
 /// The first RDB_LOCATION_LIMIT blocks are searched for a sound
-/// RigidDiskBlock, and its chain of PartitionBlocks is read into one
+/// RigidDiskBlock - the lowest is the table, as every reader of the disk
+/// takes it - and its chain of PartitionBlocks is read into one
 /// RDBPartition each, on `partitions` in the chain's order. The handle's
 /// flags say what was found:
 /// - RDBF_FOUND: a table, in `rdb`, read from block `block`.
@@ -47,7 +49,8 @@ const _handle = @import("_handle.zig");
 /// A disk with no table is not a failure - that is how a blank one looks -
 /// and InitRDB makes it one. The blocks of the file system headers, of
 /// their code and of the bad-block list are noted, so WriteRDB never puts
-/// a PartitionBlock over them.
+/// a PartitionBlock over them. `change_num` is the unit's TD_CHANGENUM,
+/// which says later whether the medium is still this one.
 ///
 /// CONTEXT:
 /// - Waits: yes, on the device.
@@ -92,6 +95,8 @@ fn open(base: *RDBBase, device: [*:0]const u8, unit: u32, reason: *i32) ?*rdb.RD
         return null;
     };
     const failed = fail: {
+        handle.device = copyName(sys, device) orelse break :fail rdb.RDBERR_NOMEM;
+        handle.unit = unit;
         handle.port = sys.CreateMsgPort() orelse break :fail rdb.RDBERR_NOMEM;
         const request = sys.CreateIORequest(handle.port, @sizeOf(exec.IOStdReq)) orelse break :fail rdb.RDBERR_NOMEM;
         const io: *exec.IOStdReq = @ptrCast(@alignCast(request));
@@ -108,6 +113,7 @@ fn open(base: *RDBBase, device: [*:0]const u8, unit: u32, reason: *i32) ?*rdb.RD
         if (geometry.total_sectors == 0 or geometry.sector_size < @sizeOf(hardblocks.RigidDiskBlock)) {
             break :fail rdb.RDBERR_DEVICE;
         }
+        handle.public.change_num = _handle.changeNum(handle);
 
         const buffer = sys.AllocVec(geometry.sector_size, geometry.buf_mem_type | exec.MEMF_CLEAR) orelse
             break :fail rdb.RDBERR_NOMEM;
@@ -119,4 +125,14 @@ fn open(base: *RDBBase, device: [*:0]const u8, unit: u32, reason: *i32) ?*rdb.RD
     _handle.destroy(handle);
     reason.* = failed;
     return null;
+}
+
+/// A copy of a C string, or null for no memory.
+fn copyName(sys: *ExecBase, name: [*:0]const u8) ?[*:0]u8 {
+    var length: usize = 0;
+    while (name[length] != 0) length += 1;
+    const memory = sys.AllocVec(length + 1, exec.MEMF_CLEAR) orelse return null;
+    const copy: [*]u8 = @ptrCast(memory);
+    @memcpy(copy[0..length], name[0..length]);
+    return @ptrCast(copy);
 }

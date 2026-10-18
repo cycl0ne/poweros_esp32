@@ -12,6 +12,7 @@ Generated from the source by `./zig build autodoc`.
 - [CloseRDB](#closerdb) - Lets go of a handle: its partition nodes, its buffer and the unit it has open.
 - [FindPartition](#findpartition) - The partition of a handle that has a name, in any case.
 - [InitRDB](#initrdb) - Puts a fresh RigidDiskBlock for the whole medium in a handle, with no partitions.
+- [MountPartition](#mountpartition) - Puts a partition on dos's list as a device node, so that its file system can be started.
 - [NextPartition](#nextpartition) - The partition after another on a handle's list, or the first.
 - [OpenRDB](#openrdb) - Opens a unit of a block device and reads what the disk says about itself into a handle.
 - [RemPartition](#rempartition) - Takes a partition off a handle's list and frees it.
@@ -241,8 +242,8 @@ The table is made for the medium as TD_GETGEOMETRY tells it: blocks of
 the medium's own size; a cylinder of one block, or on a medium of 2^32
 blocks or more, of the fewest blocks - 2, 4, 8 and so on - that leave
 fewer than 2^32 cylinders; and the first RDB_LOCATION_LIMIT blocks
-kept for the table - the RigidDiskBlock in the first, the
-PartitionBlocks after it - so every cylinder from the first past them
+kept for the table - the RigidDiskBlock and the PartitionBlocks, which
+WriteRDB places in them - so every cylinder from the first past them
 to the end may be a partition's. It says nothing of its vendor or
 product; those fields are the program's to fill in.
 
@@ -284,6 +285,108 @@ None known.
 if (rb.InitRDB(handle) != rdb.RDBERR_OK) return;
 _ = rb.AddPartition(handle, "SD0", 0, 0, dos_type);
 const err = rb.WriteRDB(handle);
+```
+
+## MountPartition
+
+Puts a partition on dos's list as a device node, so that its file system can be started.
+
+**SYNOPSIS**
+
+```zig
+fn MountPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.RDBPartition, name: ?*rdb.MountName, flags: u32) i32
+```
+
+**SINCE**
+
+1.2. LVO -52.
+
+**INPUTS**
+
+- `handle`: from OpenRDB.
+- `partition`: one of the handle's partitions.
+- `name`: where the name the node got goes, without the colon, or
+  null.
+- `flags`: RDBMF_START to start the handler before the call returns;
+  0 leaves it to the drive's first use.
+
+**RESULT**
+
+RDBERR_OK when the node is on the list, and `name` holds its name.
+RDBERR_FILESYSTEM for a DosType no handler serves, or whose file
+system cannot go on this medium or inside a partition (`MSH`, `POS\1`,
+which want a whole medium); RDBERR_NAME for a partition name that is
+empty or too long, or one taken on the list with every dot that fits;
+RDBERR_CHANGED when the medium in the unit is not the one the table
+was read from; RDBERR_MOUNTED when a device node on the list already
+opens some of the partition's blocks; RDBERR_NOMEM for no memory. The
+list is unchanged by a failure.
+
+**BEHAVIOR**
+
+The node is named as the partition is. Where the list has a device or
+an assign of that name, a dot is added and the name tried again - `DH0`,
+`DH0.`, `DH0..` - as far as MAX_DEVICE_NAME characters, so a second
+disk whose table names its partitions as the first's gets drives of
+its own. The node opens the handle's device and unit with the
+partition's device flags, its environment is a copy of the
+partition's, and its handler is the one its DosType asks for: the
+flash file system's for `FLS\0`, posfs's for `POS\0`, fat-handler for
+`MSD\0`.
+
+A node of the same unit whose area shares a block with the
+partition's is the partition's already, or a drive over the whole
+medium, or one over cylinders the table has since given another
+partition: in each case a second file system on those blocks would
+wreck the first, so nothing is mounted. Devices are compared by what
+they are called, the part of the name after its last `/` or `:`:
+`DEVS:usb/disk.device` is `disk.device`.
+
+With RDBMF_START the handler is started, which reads the partition and
+puts its volume on the list. A handler that cannot be started leaves
+the node there all the same, and the drive's first use says why.
+
+**CONTEXT**
+
+- Waits: yes, for the dos list's lock, and with RDBMF_START for the
+  handler.
+- Interrupts: no.
+- Locks: no spinlock may be held, nor the dos list.
+- Process: a Task will do; a Process with RDBMF_START.
+
+**OWNERSHIP**
+
+The node is the list's, for the system's life; the handle and the
+partition stay the caller's, and may be closed and freed at once.
+
+**NOTES**
+
+Mount what WriteRDB has put on the disk: a partition only in the
+handle is mounted all the same, but the disk does not have it at the
+next start. PBFF_NOMOUNT is the caller's to honour: it says a
+partition is left alone when a whole table is mounted, and
+MountPartition mounts what it is given.
+
+The node names its handler by a string the library holds, so once a
+partition is mounted the library stays in memory for the system's
+life.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenRDB`, `FindPartition`, `WriteRDB`
+
+**EXAMPLES**
+
+```zig
+var name: rdb.MountName = undefined;
+const part = rb.FindPartition(handle, "DH1") orelse return;
+if (rb.MountPartition(handle, part, &name, rdb.RDBMF_START) == rdb.RDBERR_OK) {
+    _ = Printf(dl, "mounted as %s:\n", .{@as([*:0]const u8, &name)});
+}
 ```
 
 ## NextPartition
@@ -378,7 +481,8 @@ no memory (RDBERR_NOMEM).
 **BEHAVIOR**
 
 The first RDB_LOCATION_LIMIT blocks are searched for a sound
-RigidDiskBlock, and its chain of PartitionBlocks is read into one
+RigidDiskBlock - the lowest is the table, as every reader of the disk
+takes it - and its chain of PartitionBlocks is read into one
 RDBPartition each, on `partitions` in the chain's order. The handle's
 flags say what was found:
 - RDBF_FOUND: a table, in `rdb`, read from block `block`.
@@ -391,7 +495,8 @@ flags say what was found:
 A disk with no table is not a failure - that is how a blank one looks -
 and InitRDB makes it one. The blocks of the file system headers, of
 their code and of the bad-block list are noted, so WriteRDB never puts
-a PartitionBlock over them.
+a PartitionBlock over them. `change_num` is the unit's TD_CHANGENUM,
+which says later whether the medium is still this one.
 
 **CONTEXT**
 
@@ -512,29 +617,39 @@ fn WriteRDB(base: *RDBBase, handle: *rdb.RDBHandle) i32
 RDBERR_OK when all of it is on the disk. Before anything is written:
 RDBERR_NORDB for a handle with no table; RDBERR_BLOCKSIZE for a medium
 whose erase unit is larger than its blocks, where erasing one block
-would take its neighbours with it; RDBERR_NAME for a partition whose
-name is empty, too long, holds a colon or a slash, or is another's;
-RDBERR_RANGE for one whose cylinders are outside the table's usable
-ones, the wrong way round or another's; RDBERR_FULL for more
-partitions than the table's own blocks hold. RDBERR_IO when the device
-refused a write, part of the way through.
+would take its neighbours with it; RDBERR_CHANGED when the medium in
+the unit is not the one the table was read from; RDBERR_NAME for a
+partition whose name is empty, too long, holds a colon or a slash, or
+is another's; RDBERR_RANGE for one whose cylinders are outside the
+table's usable ones, the wrong way round or another's; RDBERR_FULL for
+more partitions than the table's own blocks hold. RDBERR_IO when the
+device refused a write, part of the way through.
 
 **BEHAVIOR**
 
 Every partition is checked first, as AddPartition checks a new one,
 since the program may have changed any of them. Each then gets a
 block in the table's own area (`rdb_blocks_lo` to `rdb_blocks_hi`),
-never the RigidDiskBlock's and never one of the file system headers',
-their code's or the bad-block list's; blocks the chain on the disk is
-not in are taken first. The PartitionBlocks are written in the list's
-order, chained the same way, each with its checksum, and the
-RigidDiskBlock last, pointing at the first - so the disk's old table
-stays whole until that one block replaces it, as far as the free
-blocks allow. A medium that wants erasing has each block erased before
-it is written.
+never one of the file system headers', their code's or the bad-block
+list's, and so does the RigidDiskBlock, in one of the first
+RDB_LOCATION_LIMIT blocks. Blocks the disk's table is not in are taken
+first.
 
-Afterwards each partition's `at` is its block, RDBF_FOUND is set and
-RDBF_CHANGED, RDBF_DAMAGED and RDBF_FOREIGN are cleared.
+The PartitionBlocks are written in the list's order, chained the same
+way, each with its checksum, then the RigidDiskBlock pointing at the
+first; then every other RigidDiskBlock in the first blocks is wiped,
+the one the disk's readers took until now last. A reader takes the
+lowest sound RigidDiskBlock, so whichever of the old and the new is
+lower, the disk holds a whole table at every point of the write: the
+old one until the new replaces it, the new one after. A medium that
+wants erasing has each block erased before it is written, and a wiped
+block erased; on any other a wiped block is written with zeroes.
+CMD_UPDATE ends it, so a device that holds writes back has them on the
+medium when the call returns.
+
+Afterwards `block` is the RigidDiskBlock's, each partition's `at` is
+its block, RDBF_FOUND is set and RDBF_CHANGED, RDBF_DAMAGED and
+RDBF_FOREIGN are cleared.
 
 Nothing but the table's blocks is written: what is on a partition's
 cylinders stays, whatever the table now says of them.
@@ -552,20 +667,26 @@ The handle stays the caller's.
 
 **NOTES**
 
-The flash disk's table is read at boot, and its partitions mounted as
-it says, so the change is seen at the next one. Changing the cylinders
-of a partition that is mounted leaves its file system on the old ones
-until then.
+A drive mounted from a partition keeps the cylinders it was mounted
+with until the system starts again: changing a partition's cylinders
+or file system under its drive leaves the drive on the old ones.
+Inhibit the drive first, and restart once the table is written.
+
+After RDBERR_IO the handle no longer says what the disk holds: close
+it, and open the unit again to see.
 
 **BUGS**
 
-A write that fails after the first PartitionBlock that had to reuse a
+Where the table's area has no block to spare, the RigidDiskBlock is
+written over the old one, and on a medium that erases, a cut between
+that block's erase and its write leaves the disk without a table. A
+write that fails after the first PartitionBlock that had to reuse a
 block of the old chain can leave the old table pointing at a new
 block.
 
 **SEE ALSO**
 
-`OpenRDB`, `InitRDB`, `AddPartition`, `RemPartition`
+`OpenRDB`, `InitRDB`, `AddPartition`, `RemPartition`, `MountPartition`
 
 **EXAMPLES**
 

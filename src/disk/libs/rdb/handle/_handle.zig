@@ -4,11 +4,13 @@
 //! chains.
 //!
 //! A handle is one allocation: the RDBHandle the program sees first, then
-//! the open unit's port and request, the block buffer, and two maps of the
-//! blocks at the start of the disk - those the library must not write
-//! over (the chains it does not manage), and those the partition chain on
-//! the disk is in, which WriteRDB keeps clear of while it can so that the
-//! old table stays whole until the new RigidDiskBlock replaces it.
+//! the open unit's port and request, the block buffer, a copy of the
+//! device's name for the nodes MountPartition makes, and three maps of
+//! the blocks at the start of the disk - those the library must not write
+//! over (the chains it does not manage), those the partition chain on the
+//! disk is in, and those a RigidDiskBlock is in. WriteRDB keeps clear of
+//! the disk's table while it can, so that the old one stays whole until
+//! the new RigidDiskBlock replaces it.
 //!
 //! Every transfer is a whole block of the medium through the buffer, in
 //! the memory the medium asks for: a structure is the first 256 bytes of
@@ -29,6 +31,9 @@ pub const mapped_blocks = 256;
 /// The most blocks a chain is followed through before it counts as a ring.
 const max_chain = mapped_blocks;
 
+/// No block: a BlockMap's `lowest` when the map has none.
+pub const no_block = hardblocks.end_of_list;
+
 /// A set of block numbers below `mapped_blocks`.
 pub const BlockMap = extern struct {
     words: [mapped_blocks / 32]u32 = @splat(0),
@@ -42,6 +47,15 @@ pub const BlockMap = extern struct {
         if (block >= mapped_blocks) return;
         map.words[block / 32] |= @as(u32, 1) << @intCast(block % 32);
     }
+
+    /// The lowest block in the map, or `no_block`.
+    pub fn lowest(map: *const BlockMap) u32 {
+        var block: u32 = 0;
+        while (block < mapped_blocks) : (block += 1) {
+            if (map.has(block)) return block;
+        }
+        return no_block;
+    }
 };
 
 /// The handle behind an RDBHandle.
@@ -52,6 +66,10 @@ pub const Handle = extern struct {
     io: ?*exec.IOStdReq = null,
     /// Whether `io` has the unit open.
     unit_open: bool = false,
+    /// The device's name as OpenRDB was given it, and its unit: what a
+    /// node MountPartition makes opens.
+    device: ?[*:0]u8 = null,
+    unit: u32 = 0,
     /// Whether `public.rdb` is a table WriteRDB may write: one read from
     /// the disk, or one InitRDB made.
     has_table: bool = false,
@@ -62,6 +80,10 @@ pub const Handle = extern struct {
     kept: BlockMap = .{},
     /// The blocks the partition chain on the disk is in.
     on_disk: BlockMap = .{},
+    /// The blocks of the first RDB_LOCATION_LIMIT that hold a sound
+    /// RigidDiskBlock, for this block size or another: a reader takes the
+    /// lowest, and WriteRDB leaves only its own.
+    tables: BlockMap = .{},
 };
 
 pub fn handleOf(handle: *rdb.RDBHandle) *Handle {
@@ -94,6 +116,7 @@ pub fn destroy(handle: *Handle) void {
     }
     sys.DeleteMsgPort(handle.port);
     sys.FreeVec(handle.buffer);
+    sys.FreeVec(handle.device);
     sys.FreeVec(handle);
 }
 
@@ -152,12 +175,56 @@ pub fn writeBlock(handle: *Handle, block: u32, from: anytype) bool {
     return command(handle, exec.CMD_WRITE, block, buffer);
 }
 
+/// A block wiped: erased on a medium that erases, written with zeroes on
+/// any other. Whether it was done.
+pub fn clearBlock(handle: *Handle, block: u32) bool {
+    const buffer = handle.buffer orelse return false;
+    if (handle.public.geometry.erase_size != 0) return command(handle, trackdisk.TDCMD_ERASE, block, null);
+    @memset(buffer[0..blockBytes(handle)], 0);
+    return command(handle, exec.CMD_WRITE, block, buffer);
+}
+
+/// TD_CHANGENUM: how often the unit's medium has changed, or 0 from a
+/// device that does not count.
+pub fn changeNum(handle: *Handle) u32 {
+    const io = handle.io orelse return 0;
+    io.req.command = trackdisk.TD_CHANGENUM;
+    io.offset = 0;
+    io.length = 0;
+    io.data = null;
+    io.actual = 0;
+    if (handle.sys.DoIO(&io.req) != 0) return 0;
+    return @truncate(io.actual);
+}
+
+/// Whether the medium in the unit is another than the table was read
+/// from.
+pub fn changed(handle: *Handle) bool {
+    return changeNum(handle) != handle.public.change_num;
+}
+
+/// CMD_UPDATE: what the device still holds written out to the medium.
+/// Whether it was; a device that holds nothing back and does not know
+/// the command has nothing to write.
+pub fn update(handle: *Handle) bool {
+    const io = handle.io orelse return false;
+    io.req.command = exec.CMD_UPDATE;
+    io.offset = 0;
+    io.length = 0;
+    io.data = null;
+    io.actual = 0;
+    const err = handle.sys.DoIO(&io.req);
+    return err == 0 or err == exec.IOERR_NOCMD;
+}
+
 // --- reading the table ----------------------------------------------------------
 
-/// The disk's table read into the handle: the RigidDiskBlock in the first
-/// blocks, the partitions on its chain, and the blocks of the chains the
-/// library leaves alone. Answers RDBERR_OK or RDBERR_NOMEM; a disk with no
-/// table, or a broken one, is said in the handle's flags.
+/// The disk's table read into the handle: the lowest sound RigidDiskBlock
+/// in the first blocks, as every reader takes it, the partitions on its
+/// chain, and the blocks of the chains the library leaves alone; every
+/// other sound RigidDiskBlock there noted. Answers RDBERR_OK or
+/// RDBERR_NOMEM; a disk with no table, or a broken one, is said in the
+/// handle's flags.
 pub fn readTable(handle: *Handle) i32 {
     const public = &handle.public;
     const geometry = &public.geometry;
@@ -166,17 +233,20 @@ pub fn readTable(handle: *Handle) i32 {
         var found: hardblocks.RigidDiskBlock = undefined;
         if (!readBlock(handle, block, &found)) continue;
         if (!hardblocks.sound(&found, hardblocks.IDNAME_RIGIDDISK)) continue;
+        const first = handle.tables.lowest() == no_block;
+        handle.tables.add(block);
+        if (!first) continue;
         // The block numbers in it count another size of block.
         if (found.block_bytes != geometry.sector_size) {
             public.flags |= rdb.RDBF_FOREIGN;
-            return rdb.RDBERR_OK;
+            continue;
         }
         public.rdb = found;
         public.block = block;
         public.flags |= rdb.RDBF_FOUND;
         handle.has_table = true;
-        break;
-    } else return rdb.RDBERR_OK;
+    }
+    if (!handle.has_table) return rdb.RDBERR_OK;
 
     var next = public.rdb.partition_list;
     var seen: u32 = 0;

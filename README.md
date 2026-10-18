@@ -29,7 +29,7 @@ ESP32-P4 boards and in Espressif's QEMU.
 
 | | |
 |---|---|
-| [Screenshots](docs/screenshots/README.md) | the Player, the shell, Notepad, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
+| [Screenshots](docs/screenshots/README.md) | the Player, the shell, Notepad, HDToolBox, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
 | [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
 | [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
@@ -102,11 +102,14 @@ ESP32-P4 boards and in Espressif's QEMU.
   mid-write leaves a whole volume; `RAM:`, `PIPE:`, `NIL:`; any of the
   disks formatted from the running system (`C:Format`: posfs, or FAT32
   or exFAT by a card's size, or as asked, with the block or cluster size
-  asked for); partitions
-  from a RigidDiskBlock ([disks guide](sdk/docs/guides/rdb.md));
+  asked for); partitions from a RigidDiskBlock on the flash disk, a card
+  or a stick, each mounted as its own drive - a card's and a stick's by
+  their device when they come in - and laid out on any drive by dragging
+  them in `SYS:Programs/HDToolBox` ([disks
+  guide](sdk/docs/guides/rdb.md));
   notification when a file changes; record locks on ranges of a file;
   consoles with line editing, file name completion, and copy and paste;
-  a shell with scripts and 52 commands in `C:` - `ScreenDump` saves a
+  a shell with scripts and 53 commands in `C:` - `ScreenDump` saves a
   screen as a PNG - test programs in `C:test` and network tools in
   `C:net`.
 - **Desktop and programs:** `LIBS:anvil.library` puts the disks, drawers
@@ -119,7 +122,7 @@ ESP32-P4 boards and in Espressif's QEMU.
   on a serial line), Player (WAV, MP3, FLAC and Ogg Vorbis with their
   cover, tags and chapters, and a plasma, the wave or the spectrum of
   what is heard), FontView, CPULoad, MemMap (who holds the memory, as a
-  map), Battery and Prefs.
+  map), Battery, Prefs and HDToolBox (a drive's partitions).
 - **Graphics and windows:** rtg.library for the displays - on the
   ESP32-P4 its 2D engine fills, copies, blends and scales;
   graphics.library with smooth curves, gradients, shadows and scaled
@@ -262,7 +265,7 @@ More build steps and options:
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
 | `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk image |
-| `-Ddh0-size=8192` | `DH0:` that many KiB, the rest of the flash disk left for partitions made later (`C:RDB ADD`) |
+| `-Ddh0-size=8192` | `DH0:` that many KiB, the rest of the flash disk left for partitions made later (HDToolBox, `C:RDB ADD`) |
 | `-Dnet=none` | the `qemu*` steps without a network, or another QEMU `-nic` backend |
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
 | `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |

@@ -22,6 +22,9 @@ pub const filehandler = @import("filehandler.zig");
 pub const hardblocks = @import("hardblocks.zig");
 pub const flashfs = @import("flashfs.zig");
 pub const fat = @import("fat.zig");
+/// The file systems there is a handler for: which a DosType asks for, and
+/// where each may go.
+pub const filesystems = @import("filesystems.zig");
 /// posfs, the PowerOS file system: its format, its names and its own
 /// packets (sdk/libs/dos/posfs).
 pub const posfs = @import("posfs/posfs.zig");

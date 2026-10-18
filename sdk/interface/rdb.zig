@@ -22,6 +22,7 @@ pub const LVO = struct {
     pub const AddPartition = libraries.lvo(9);
     pub const RemPartition = libraries.lvo(10);
     pub const WriteRDB = libraries.lvo(11);
+    pub const MountPartition = libraries.lvo(12);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -35,6 +36,7 @@ pub const Fn = struct {
     pub const AddPartition = *const fn (*RDBBase, *rdb.RDBHandle, [*:0]const u8, u32, u32, u32) callconv(.c) i32;
     pub const RemPartition = *const fn (*RDBBase, *rdb.RDBHandle, *rdb.RDBPartition) callconv(.c) void;
     pub const WriteRDB = *const fn (*RDBBase, *rdb.RDBHandle) callconv(.c) i32;
+    pub const MountPartition = *const fn (*RDBBase, *rdb.RDBHandle, *rdb.RDBPartition, ?*rdb.MountName, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -86,5 +88,12 @@ pub const RDBBase = opaque {
     /// The handle's table checked and written to the disk.
     pub fn WriteRDB(self: *RDBBase, handle: *rdb.RDBHandle) i32 {
         return libraries.call(self, LVO.WriteRDB, Fn.WriteRDB, .{handle});
+    }
+
+    /// A device node for a partition on dos's list, named as the partition
+    /// (with dots added while the name is taken), its handler started with
+    /// RDBMF_START; the name used goes where `name` points.
+    pub fn MountPartition(self: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.RDBPartition, name: ?*rdb.MountName, flags: u32) i32 {
+        return libraries.call(self, LVO.MountPartition, Fn.MountPartition, .{ handle, partition, name, flags });
     }
 };

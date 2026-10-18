@@ -163,8 +163,8 @@ characters.
 | Name | What it is |
 |---|---|
 | `DH0:` | the flash disk's partition, volume `System` |
-| `SD0:` | the card in the slot, FAT32 or exFAT, mounted at boot on a board with a slot |
-| `DU0:`, `DU1:`, ... | a USB stick, or a card reader's slot, FAT32, exFAT or posfs: made by usb/disk.device when the first one is plugged in, and kept ([USB guide](usb.md#sticks-and-card-readers)) |
+| `SD0:` | the card in the slot, FAT32, exFAT or posfs: made by sdcard.device, which `C:BindDrivers` starts at boot on a board with a slot, from the first card, and kept; a card with a RigidDiskBlock gets a drive per partition instead ([disks guide](rdb.md)) |
+| `DU0:`, `DU1:`, ... | a USB stick, or a card reader's slot, FAT32, exFAT or posfs: made by usb/disk.device when the first one is plugged in, and kept; a stick with a RigidDiskBlock gets a drive per partition instead ([USB guide](usb.md#sticks-and-card-readers)) |
 | `RAM:` | a file system in memory, volume `Ram Disk` |
 | `CON:`, `RAW:`, `AUX:` | [consoles](#consoles) |
 | `PIPE:` | pipes: `PIPE:name` meets whoever opens the same name |
@@ -866,10 +866,13 @@ bootable partition with the highest boot priority, `C:`, `S:`, `LIBS:`,
 `DEVS:` and `HANDLERS:` late assigns to its directories, and starts the
 first shell, in a console window, reading `S:Startup-Sequence` - which
 ends by starting the desktop and closing that window.
-`Mount SD0:` puts a device on the list from its entry in
-`DEVS:MountList`; the startup-sequence does it for the card slot, and
-on a board without one nothing is left on the list. [Disks and partitions](rdb.md) has the partition
-table and how to change it.
+`Mount` puts a device on the list from its entry in `DEVS:MountList`.
+The card slot needs none: `C:BindDrivers`, in the startup-sequence,
+starts the block devices in `DEVS:` for the board's hardware -
+sdcard.device on a board with a slot - and a device that starts makes
+its drives from the first medium in it, as usb/disk.device does for a
+stick. [Disks and partitions](rdb.md) has the partition table and how
+to change it.
 
 **A handler works on what its startup message names**, and on nothing
 else: the device, the unit and the flags it opens it with, and in the
