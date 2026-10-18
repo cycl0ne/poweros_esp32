@@ -67,13 +67,9 @@ const pipe_handler_name = "pipe-handler";
 /// RigidDiskBlock and hands its partitions to expansion.library.
 const flashfs_handler_name = "flashfs-handler";
 
-/// posfs's handler (src/rom/handler/posfs), for a partition, card or
-/// stick whose DosType is `POS\0`.
-const posfs_handler_name = sdk.dos.posfs.HANDLER_NAME;
-
 /// The ROM's handlers, which dos's init adds as system segments from their
 /// tags, so a node names its handler and the handler's code is found.
-const rom_handlers = [_][*:0]const u8{ nil_handler_name, ram_handler_name, con_handler_name, pipe_handler_name, flashfs_handler_name, posfs_handler_name };
+const rom_handlers = [_][*:0]const u8{ nil_handler_name, ram_handler_name, con_handler_name, pipe_handler_name, flashfs_handler_name };
 
 /// MakeLibrary's init: the base's name, version, SysBase and
 /// utility.library; the device list with the ROM's nodes (NIL:, RAM:,

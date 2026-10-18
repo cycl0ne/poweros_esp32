@@ -2,10 +2,11 @@
 
 posfs is the PowerOS file system: a journaling file system for a
 partition of the flash disk, an SD card or a USB stick, served by
-`posfs-handler` in the ROM. Its DosType is `POS\0` for a drive that is
-the volume, and `POS\1` for a card or a stick that begins with a
-partition table, the volume in its first partition of type 0x7F. It keeps directories, files and free space in
-copy-on-write B+trees, writes every change to a journal before it
+`posfs-handler`, which dos loads from `HANDLERS:` the first time a drive
+needs it. Its DosType is `POS\0` for a drive that is the volume, and
+`POS\1` for a card or a stick that begins with a partition table, the
+volume in its first partition of type 0x7F. It keeps directories, files
+and free space in copy-on-write B+trees, writes every change to a journal before it
 answers, and never writes over a block that the volume's last durable
 state refers to. A power cut at any moment leaves a volume that mounts
 at once, holding every change that was answered.
@@ -329,13 +330,13 @@ a time, its cursor handed back each time
 
 ## Checking a volume
 
-`tools/posfsck` runs the same check on the host, over an image: the disk
-image the build makes, a dump of a board's flash, an image of a card.
+`tools/posfsck` runs the same check on the host, over an image: a dump
+of a board's flash, an image of a card.
 
 ```
-./zig build posfsck -- --data zig-out/bin/disk.bin
-DH0: volume "System", 2816 blocks of 4096 bytes, checkpoint 4
-  403 objects, 62 nodes, 2156 data blocks: no damage found
+./zig build posfsck -- --data flash.bin
+DH1: volume "W", 752 blocks of 4096 bytes, checkpoint 36
+  5 objects, 2 nodes, 2 data blocks: no damage found
 ```
 
 It finds the volumes itself - one that starts the image, the posfs
@@ -351,16 +352,16 @@ as `zig-out/bin/posfsck`.
 
 Which file system a partition gets is its DosType, in the disk's
 RigidDiskBlock ([disks guide](rdb.md)); `C:Format` then writes that file
-system's empty volume. `DH0:`, the partition the system starts from, can
-be posfs from the build:
+system's empty volume. `DH0:`, the partition the system starts from, is
+the flash file system, whose handler is in the ROM: `HANDLERS:`, where
+posfs-handler is, is on it. `-Ddh0-size=<KiB>` makes `DH0:` that size
+and leaves the rest of the flash disk for partitions made later:
 
 ```
-./zig build flash-all -Dfs=posfs -Dport=/dev/ttyACM0
+./zig build flash-all -Ddh0-size=8192 -Dport=/dev/ttyACM0
 ```
 
-`-Ddh0-size=<KiB>` makes `DH0:` that size and leaves the rest of the
-flash disk for partitions made later. Another partition is given to
-posfs from the shell:
+A partition is given to posfs from the shell:
 
 ```
 RDB ADD DH1 DOSTYPE POS          ; a new partition over the largest free run
@@ -368,9 +369,6 @@ RDB CHANGE DH1 DOSTYPE POS       ; or one that is there, for posfs from now on
                                  ; ... reboot: the table is read at boot
 Format DRIVE DH1: NAME Work
 ```
-
-`s3> rdb init DH0 POS` writes a first table for a blank chip with its
-one partition for posfs.
 
 **A card** gets posfs from its mountlist entry: `DEVS:MountList` has a
 posfs `SD0:` entry, commented out, to copy into `DEVS:SD0` - with

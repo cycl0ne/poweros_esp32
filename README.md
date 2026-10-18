@@ -259,9 +259,8 @@ More build steps and options:
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
-| `./zig build posfsck -- [--data] zig-out/bin/disk.bin` | check the posfs volumes of an image or a flash dump on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
+| `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk image |
-| `-Dfs=posfs` | the disk image's `DH0:` as posfs instead of the flash file system |
 | `-Ddh0-size=8192` | `DH0:` that many KiB, the rest of the flash disk left for partitions made later (`C:RDB ADD`) |
 | `-Dnet=none` | the `qemu*` steps without a network, or another QEMU `-nic` backend |
 | `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |

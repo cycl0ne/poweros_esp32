@@ -47,16 +47,5 @@ test {
     _ = @import("handler/flashfs/flashfs.zig");
     _ = @import("handler/flashfs/tests/notify.zig");
     _ = @import("handler/flashfs/tests/records.zig");
-    _ = @import("handler/posfs/testmedia.zig");
-    _ = @import("handler/posfs/cache.zig");
-    _ = @import("handler/posfs/tests/lz4.zig");
-    _ = @import("handler/posfs/tests/tree.zig");
-    _ = @import("handler/posfs/tests/format.zig");
-    _ = @import("handler/posfs/tests/fs.zig");
-    _ = @import("handler/posfs/tests/recycled.zig");
-    _ = @import("handler/posfs/tests/snapshots.zig");
-    _ = @import("handler/posfs/tests/powercut.zig");
-    _ = @import("handler/posfs/tests/system.zig");
-    _ = @import("handler/posfs/posfs.zig");
     _ = @import("shell/shell.zig");
 }

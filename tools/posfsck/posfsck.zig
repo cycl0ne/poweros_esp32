@@ -12,7 +12,7 @@
 //! formatted for `POS\1` has. With --offset and --length the volume is
 //! where they say.
 //!
-//! It is the check the handler runs (`src/rom/handler/posfs/check.zig`,
+//! It is the check the handler runs (`src/disk/devs/handlers/posfs/check.zig`,
 //! through the `posfs` module the build makes of it), over the image read
 //! as memory and never written: the volume is mounted read-only, what its
 //! journal holds after the newest checkpoint replayed in memory, and then

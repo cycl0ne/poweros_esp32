@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! posfs, the PowerOS file system: what everything that names it shares -
-//! the handler (src/rom/handler/posfs), the host tool that builds a disk
-//! image (tools/mkfs), the check (tools/posfsck), C:PosFS and whatever
-//! probes a medium for it.
+//! the handler (src/disk/devs/handlers/posfs), the check
+//! (tools/posfsck), C:PosFS and whatever probes a medium for it.
 //!
 //! posfs keeps its directories, its files' extents and its free space in
 //! copy-on-write B+trees, and every change in a journal of what was done

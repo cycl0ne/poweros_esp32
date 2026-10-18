@@ -44,8 +44,8 @@ with `dos`, `exec`, `rdargs`, `Printf` and `TagItem` standing for
     |
  dos.library    names to handlers, buffers, processes, the device list
     |  DosPacket (ACTION_FINDINPUT, ACTION_READ, ACTION_LOCATE_OBJECT ...)
- handler        flashfs-handler and posfs-handler (DH0:, DH1: ...), fat-handler
-    |           (SD0:, DU0:), ram-handler, con-handler (CON:, RAW:, AUX:),
+ handler        flashfs-handler (DH0:), posfs-handler and fat-handler (DH1:,
+    |           SD0:, DU0: ...), ram-handler, con-handler (CON:, RAW:, AUX:),
     |           pipe-handler, nil-handler
  exec device    flash.device, sdcard.device, usb/disk.device, console.device,
                 serial.device
@@ -758,9 +758,9 @@ A handler is a process that answers the packets for the names of its
 node, started by dos the first time one of them is used. Its code is
 found by the node's handler name: among dos's resident segments, where
 the ROM's handlers are (`nil-handler`, `ram-handler`, `con-handler`,
-`pipe-handler`, `flashfs-handler`, `posfs-handler`), or else as a file, a bare name from
-`HANDLERS:`, where `fat-handler` is, unloaded again when the last
-process running it ends.
+`pipe-handler`, `flashfs-handler`), or else as a file, a bare name from
+`HANDLERS:`, where `fat-handler` and `posfs-handler` are, unloaded again
+when the last process running it ends.
 
 A `DosPacket` carries an `action` (a `dos.ActionCode`: `.findinput`,
 `.read`, `.locate_object`, `.disk_info`, ...) and up to seven arguments

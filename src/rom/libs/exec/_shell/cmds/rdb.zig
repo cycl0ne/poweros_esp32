@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-//! rdb [init [partition] [FLS|POS]]: the flash disk's RigidDiskBlock and
-//! the partitions hanging off it (sdk/libs/dos/hardblocks.zig), which is
-//! what flash.device reads at boot to hand dos.library the partitions to
-//! mount; or a fresh one written, its partition for the flash file system
-//! or for posfs.
+//! rdb [init [partition]]: the flash disk's RigidDiskBlock and the
+//! partitions hanging off it (sdk/libs/dos/hardblocks.zig), which is what
+//! flash.device reads at boot to hand dos.library the partitions to mount;
+//! or a fresh one written.
 
 const sdk = @import("sdk");
 const _shell = @import("../shell.zig");
@@ -14,12 +13,10 @@ const trackdisk = sdk.devices.trackdisk;
 const hardblocks = sdk.dos.hardblocks;
 
 pub const name = "rdb";
-pub const usage = "rdb [init [partition] [FLS|POS]]";
+pub const usage = "rdb [init [partition]]";
 pub const help =
     \\  rdb                  the disk's RigidDiskBlock and its partitions
-    \\  rdb init [partition] [FLS|POS]
-    \\                       write a fresh one: one partition (default DH0) for the
-    \\                       flash file system (FLS, the default) or posfs (POS);
+    \\  rdb init [partition]  write a fresh one (one partition, default DH0);
     \\                       what is on the partition stays. Mounted at the next boot
     \\
 ;
@@ -33,17 +30,7 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     }
     if (args.next()) |word| {
         if (!_shell.same(word, "init")) return error.Usage;
-        var partition: []const u8 = "DH0";
-        var dos_type: u32 = sdk.dos.flashfs.ID_FLASHFS_DISK;
-        var given = args.next();
-        if (given) |first| {
-            if (fileSystem(first) == null) {
-                partition = first;
-                given = args.next();
-            }
-        }
-        if (given) |kind| dos_type = fileSystem(kind) orelse return error.Usage;
-        return rdbInit(shell, io, &geo, partition, dos_type);
+        return rdbInit(shell, io, &geo, args.next() orelse "DH0");
     }
 
     var rdb: hardblocks.RigidDiskBlock = undefined;
@@ -80,13 +67,6 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     if (seen == 0) shell.print("  no partitions\n", .{});
 }
 
-/// The DosType a file system's word names: FLS or POS, in either case.
-fn fileSystem(word: []const u8) ?u32 {
-    if (_shell.same(word, "FLS") or _shell.same(word, "fls")) return sdk.dos.flashfs.ID_FLASHFS_DISK;
-    if (_shell.same(word, "POS") or _shell.same(word, "pos")) return sdk.dos.posfs.ID_POSFS_DISK;
-    return null;
-}
-
 /// The RigidDiskBlock, if the disk has a sound one; its block number.
 fn findRdb(shell: *Shell, io: *IOStdReq, geo: *const trackdisk.DriveGeometry, into: *hardblocks.RigidDiskBlock) ?u32 {
     var block: u32 = 0;
@@ -98,11 +78,10 @@ fn findRdb(shell: *Shell, io: *IOStdReq, geo: *const trackdisk.DriveGeometry, in
 }
 
 /// A fresh RigidDiskBlock and one partition over everything past the blocks
-/// it keeps, for the file system `dos_type` names. Only those two blocks
-/// are touched, so a file system already on the partition is still there
-/// afterwards - but dos reads the RDB at its init, so the node appears at
-/// the next boot.
-fn rdbInit(shell: *Shell, io: *IOStdReq, geo: *const trackdisk.DriveGeometry, partition: []const u8, dos_type: u32) !void {
+/// it keeps. Only those two blocks are touched, so a file system already on
+/// the partition is still there afterwards - but dos reads the RDB at its
+/// init, so the node appears at the next boot.
+fn rdbInit(shell: *Shell, io: *IOStdReq, geo: *const trackdisk.DriveGeometry, partition: []const u8) !void {
     const sector = geo.sector_size;
     const sectors: u32 = @intCast(geo.total_sectors);
     const kept = hardblocks.RDB_LOCATION_LIMIT;
@@ -142,7 +121,7 @@ fn rdbInit(shell: *Shell, io: *IOStdReq, geo: *const trackdisk.DriveGeometry, pa
             .max_transfer = 0x7FFF_FFFF,
             .mask = 0xFFFF_FFFF,
             .boot_pri = 0,
-            .dos_type = dos_type,
+            .dos_type = sdk.dos.flashfs.ID_FLASHFS_DISK,
         },
     };
     @memcpy(part.drive_name[0..partition.len], partition);

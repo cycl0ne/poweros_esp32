@@ -302,8 +302,8 @@ cylinders and what is on them alone: the partition is mounted with its
 new handler at the next boot, and `C:Format` gives it that file system's
 empty volume.
 
-`s3> rdb init [partition] [FLS|POS]` writes a first table on a blank
-chip, its one partition for the flash file system or for posfs.
+`s3> rdb init [partition]` writes a first table on a blank chip, its
+one partition for the flash file system.
 
 ## See also
 

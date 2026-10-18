@@ -158,6 +158,7 @@ const modules = [_]Program{
     .{ .disk = "devs/usb/ecm.device", .source = "devs/usb/ecm/ecm.zig", .name = "ecm.device" },
     .{ .disk = "devs/usb/aic8800.device", .source = "devs/usb/aic8800/aic8800.zig", .name = "aic8800.device" },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
+    .{ .disk = "devs/handlers/posfs-handler", .source = "devs/handlers/posfs/posfs.zig", .name = "posfs-handler" },
 };
 
 /// Drivers of the ESP32-S3's own hardware, built for it alone: RS-485 on

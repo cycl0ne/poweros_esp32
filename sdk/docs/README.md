@@ -213,6 +213,7 @@ its device is used.
 | nil-handler | ROM | `NIL:`, which swallows what is written | dos.library |
 | flashfs-handler | ROM | `DH0:` and every partition of type `FLS\0` | [`flashfs.zig`](../libs/dos/flashfs.zig) |
 | fat-handler | `HANDLERS:` | `SD0:`, FAT32 and exFAT on a card | dos.library |
+| posfs-handler | `HANDLERS:` | posfs, `POS\0` and `POS\1`: a partition of the flash disk, a card, a stick | [posfs guide](guides/posfs.md), [`packets.zig`](../libs/dos/posfs/packets.zig) |
 
 ## intuition's classes
 

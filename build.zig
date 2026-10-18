@@ -36,9 +36,6 @@ const disk_tree = "disk";
 /// one, whichever board `-Dboard` names.
 const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4 };
 
-/// The file system the disk image's DH0: is made with (tools/mkfs).
-const DiskFs = enum { flashfs, posfs };
-
 /// The chip a board is built on, which picks the kernel's target, its
 /// root, start code and linker script, and how its image is made.
 const Chip = poweros_sdk.Chip;
@@ -200,7 +197,6 @@ pub fn build(b: *std.Build) void {
     const port = b.option([]const u8, "port", "Serial port used by `zig build flash`") orelse "/dev/ttyACM0";
     const baud = b.option([]const u8, "baud", "Baud rate used by `zig build flash`") orelse "921600";
     const board = b.option(Board, "board", "The board the kernel is built for (default: waveshare_7b)") orelse .waveshare_7b;
-    const disk_fs = b.option(DiskFs, "fs", "The file system of the disk image's DH0: (default: flashfs)") orelse .flashfs;
     const dh0_size_kib = b.option(u32, "dh0-size", "DH0:'s size in KiB, a multiple of 4; the rest of the flash disk is left for partitions made later with C:RDB ADD (default: all of it)") orelse 0;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
     const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 (default: what the board's SYSTAG_Cores says)") orelse 0;
@@ -271,23 +267,17 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(wifi_device.disk), "esp32s3wifi.device.seg").step);
     }
 
-    // The disk image: the same file system code the handlers run
-    // (src/rom/handler/flashfs and src/rom/handler/posfs as modules of
-    // their own), driven on the host over a block of memory. Its numbers
-    // must be the ones flash.device reports: the disk area of
-    // src/layout.zig, 4 KiB sectors, 256-byte pages.
+    // The disk image: the same file system code the handler runs
+    // (src/rom/handler/flashfs as a module of its own), driven on the host
+    // over a block of memory. Its numbers must be the ones flash.device
+    // reports: the disk area of src/layout.zig, 4 KiB sectors, 256-byte
+    // pages.
     const fs_mod = b.createModule(.{
         .root_source_file = b.path("src/rom/handler/flashfs/disk.zig"),
         .target = b.graph.host,
         .optimize = .ReleaseSafe,
     });
     fs_mod.addImport("sdk", sdk);
-    const posfs_mod = b.createModule(.{
-        .root_source_file = b.path("src/rom/handler/posfs/fs.zig"),
-        .target = b.graph.host,
-        .optimize = .ReleaseSafe,
-    });
-    posfs_mod.addImport("sdk", sdk);
     const mkfs = b.addExecutable(.{
         .name = "mkfs",
         .root_module = b.createModule(.{
@@ -298,10 +288,17 @@ pub fn build(b: *std.Build) void {
     });
     mkfs.root_module.addImport("sdk", sdk);
     mkfs.root_module.addImport("fs", fs_mod);
-    mkfs.root_module.addImport("posfs", posfs_mod);
     // tools/posfsck, the handler's check of a posfs volume run on an
     // image: `zig build posfsck -- [--data] <image>`, or without the
-    // arguments installed as zig-out/bin/posfsck.
+    // arguments installed as zig-out/bin/posfsck. The check is the
+    // handler's own code (src/disk/devs/handlers/posfs as a module of its
+    // own).
+    const posfs_mod = b.createModule(.{
+        .root_source_file = b.path("src/disk/devs/handlers/posfs/fs.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    });
+    posfs_mod.addImport("sdk", sdk);
     const posfsck = b.addExecutable(.{
         .name = "posfsck",
         .root_module = b.createModule(.{
@@ -347,7 +344,6 @@ pub fn build(b: *std.Build) void {
     const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk } };
     const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
     disks.addArgs(&.{
-        @tagName(disk_fs),
         "System",
         "DH0",
         b.fmt("{d}", .{disk_size / disk_sector}),
@@ -569,6 +565,7 @@ pub fn build(b: *std.Build) void {
     });
     disk_test_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("host_rom", host_rom);
+    disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);
     // esp32s3wifi.device's own code compiles for the chip even where the vendor

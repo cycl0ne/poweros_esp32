@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-//! mkfs: builds a disk image - a RigidDiskBlock, one partition, and a
-//! file system on it - so the board boots with a `C:` instead of the shell
-//! copying programs into RAM: at every start.
+//! mkfs: builds a disk image - a RigidDiskBlock, one partition, and the
+//! flash file system on it - so the board boots with a `C:` instead of the
+//! shell copying programs into RAM: at every start.
 //!
-//! usage: mkfs <out.bin> <flashfs|posfs> <volume> <partition> <sectors>
-//!            <partition-sectors> <sector-size> <page-size>
-//!            [<path-in-image>[=<host-file>] ...]
+//! usage: mkfs <out.bin> <volume> <partition> <sectors> <partition-sectors>
+//!            <sector-size> <page-size> [<path-in-image>[=<host-file>] ...]
 //!
-//! The file system is the flash file system (`FLS\0`) or posfs (`POS\0`).
 //! `volume` is what the file system calls itself; `partition` is what the
 //! device node is called (`DH0`), which is what flash.device reads out of
 //! the PartitionBlock at boot. `sectors` is the whole disk's, and
@@ -19,21 +17,17 @@
 //!
 //! It writes no format itself. The RigidDiskBlock and the PartitionBlock
 //! are `sdk/libs/dos/hardblocks.zig`'s structures, and the file system is the
-//! code the handler runs (`src/rom/handler/flashfs` and
-//! `src/rom/handler/posfs`, through the `fs` and `posfs` modules the build
-//! makes of them) driven over a block of memory, sent the packets a
-//! program would send. So there is one implementation of each, and what
-//! this writes is by construction what the kernel reads.
+//! code the handler runs (`src/rom/handler/flashfs`, through the `fs`
+//! module the build makes of it) driven over a block of memory, sent the
+//! packets a program would send. So there is one implementation of each,
+//! and what this writes is by construction what the kernel reads.
 //!
-//! The image holds only the blocks it needs - the RDB's, and the file
+//! The image holds only the blocks it touched - the RDB's, and the file
 //! system's - and stops there; the rest of the disk area is left as it is,
-//! which on flash means erased. The flash file system's end is the last
-//! block it wrote; posfs's is the partition's end, where its second
-//! checkpoint ring and its label's copy are.
+//! which on flash means erased.
 //!
-//! An image has no clock and no randomness, so a build from the same
-//! inputs gives the same image: every file is dated 1 Jan 1978, and a
-//! posfs volume's id is a hash of the command line and the files' bytes.
+//! An image has no clock, so a build from the same inputs gives the same
+//! image: every file is dated 1 Jan 1978.
 
 const std = @import("std");
 const mem = std.mem;
@@ -42,7 +36,6 @@ const dos = sdk.dos;
 const hardblocks = dos.hardblocks;
 const flashfs = dos.flashfs;
 const disk = @import("fs");
-const posfs_fs = @import("posfs");
 
 /// The blocks kept for the RDB and its chain: the RigidDiskBlock is in the
 /// first of them (RDB_LOCATION_LIMIT) and the PartitionBlock follows.
@@ -123,89 +116,7 @@ const ImageMedia = struct {
 
 const FileSystem = disk.FileSystem(ImageMedia);
 
-/// The medium posfs gets: the same flash, as posfs's medium contract asks
-/// for it - addresses in bytes from the partition's first, erase sectors,
-/// pages, and the store read as memory.
-const PosfsImage = struct {
-    store: []u8,
-    first: u64,
-    length: u64,
-    sector: u32,
-    page: u32,
-    allocator: mem.Allocator,
-    /// The volume's id, made from the inputs.
-    uuid: [16]u8,
-
-    pub fn size(m: *PosfsImage) u64 {
-        return m.length;
-    }
-
-    pub fn sectorSize(m: *PosfsImage) u32 {
-        return m.sector;
-    }
-
-    pub fn writeSize(m: *PosfsImage) u32 {
-        return m.page;
-    }
-
-    pub fn eraseSize(m: *PosfsImage) u32 {
-        return m.sector;
-    }
-
-    pub fn mapped(m: *PosfsImage) ?[*]const u8 {
-        return m.store[@intCast(m.first)..].ptr;
-    }
-
-    pub fn read(m: *PosfsImage, at: u64, into: []u8) bool {
-        if (at > m.length or into.len > m.length - at) return false;
-        @memcpy(into, m.store[@intCast(m.first + at)..][0..into.len]);
-        return true;
-    }
-
-    pub fn write(m: *PosfsImage, at: u64, from: []const u8) bool {
-        if (at > m.length or from.len > m.length - at) return false;
-        for (from, m.store[@intCast(m.first + at)..][0..from.len]) |b, *to| to.* &= b;
-        return true;
-    }
-
-    pub fn erase(m: *PosfsImage, at: u64, len: u64) bool {
-        if (at > m.length or len > m.length - at) return false;
-        @memset(m.store[@intCast(m.first + at)..][0..@intCast(len)], 0xFF);
-        return true;
-    }
-
-    pub fn update(_: *PosfsImage) bool {
-        return true;
-    }
-
-    pub fn writable(_: *PosfsImage) bool {
-        return true;
-    }
-
-    pub fn alloc(m: *PosfsImage, len: usize) ?[]u8 {
-        const block = m.allocator.alignedAlloc(u8, .@"8", len) catch return null;
-        @memset(block, 0);
-        return block;
-    }
-
-    pub fn free(m: *PosfsImage, block: []u8) void {
-        const aligned: []align(8) u8 = @alignCast(block);
-        m.allocator.free(aligned);
-    }
-
-    pub fn now(_: *PosfsImage) u64 {
-        return 0;
-    }
-
-    pub fn random(m: *PosfsImage, into: *[16]u8) void {
-        into.* = m.uuid;
-    }
-};
-
-/// Which file system the partition gets.
-const Kind = enum { flashfs, posfs };
-
-/// An answer from either file system.
+/// An answer from the file system.
 const Reply = struct { res1: isize, res2: i32 };
 
 fn fatal(comptime format: []const u8, args: anytype) noreturn {
@@ -260,16 +171,15 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len < 9) fatal("usage: mkfs <out.bin> <flashfs|posfs> <volume> <partition> <sectors> <partition-sectors> <sector-size> <page-size> [<path>[=<file>] ...]", .{});
+    if (args.len < 8) fatal("usage: mkfs <out.bin> <volume> <partition> <sectors> <partition-sectors> <sector-size> <page-size> [<path>[=<file>] ...]", .{});
 
     const out_path = args[1];
-    const kind = std.meta.stringToEnum(Kind, args[2]) orelse fatal("{s}: not flashfs or posfs", .{args[2]});
-    const label = args[3];
-    const drive = args[4];
-    const sectors = std.fmt.parseInt(u32, args[5], 0) catch fatal("{s}: not a number", .{args[5]});
-    const asked = std.fmt.parseInt(u32, args[6], 0) catch fatal("{s}: not a number", .{args[6]});
-    const sector_size = std.fmt.parseInt(u32, args[7], 0) catch fatal("{s}: not a number", .{args[7]});
-    const page_size = std.fmt.parseInt(u32, args[8], 0) catch fatal("{s}: not a number", .{args[8]});
+    const label = args[2];
+    const drive = args[3];
+    const sectors = std.fmt.parseInt(u32, args[4], 0) catch fatal("{s}: not a number", .{args[4]});
+    const asked = std.fmt.parseInt(u32, args[5], 0) catch fatal("{s}: not a number", .{args[5]});
+    const sector_size = std.fmt.parseInt(u32, args[6], 0) catch fatal("{s}: not a number", .{args[6]});
+    const page_size = std.fmt.parseInt(u32, args[7], 0) catch fatal("{s}: not a number", .{args[7]});
     if (sectors < rdb_blocks + 2 or sector_size == 0) fatal("a disk needs more than its RDB blocks", .{});
     const part_sectors = if (asked == 0) sectors - rdb_blocks else asked;
     if (part_sectors < 2 or part_sectors > sectors - rdb_blocks) fatal("{d} sectors: the disk has {d} past its RDB blocks", .{ part_sectors, sectors - rdb_blocks });
@@ -277,20 +187,13 @@ pub fn main(init: std.process.Init) !void {
         fatal("{s}: too long for a partition name", .{drive});
     }
 
-    // Everything the volume gets, read first: a posfs volume's id is made
-    // from it.
+    // Everything the volume gets, read first.
     const cwd = std.Io.Dir.cwd();
     var entries: std.ArrayList(Entry) = .empty;
-    var hash = std.crypto.hash.Blake3.init(.{});
-    for (args[1..]) |arg| {
-        hash.update(arg);
-        hash.update(&.{0});
-    }
-    for (args[9..]) |entry| {
+    for (args[8..]) |entry| {
         const split = mem.indexOfScalar(u8, entry, '=');
         const path = try arena.dupeZ(u8, if (split) |at| entry[0..at] else entry);
         const content: ?[]const u8 = if (split) |at| try cwd.readFileAlloc(io, entry[at + 1 ..], arena, .unlimited) else null;
-        if (content) |bytes| hash.update(bytes);
         try entries.append(arena, .{ .path = path, .content = content });
     }
 
@@ -312,10 +215,7 @@ pub fn main(init: std.process.Init) !void {
         .max_transfer = 0x7FFF_FFFF,
         .mask = 0xFFFF_FFFF,
         .boot_pri = 0,
-        .dos_type = switch (kind) {
-            .flashfs => flashfs.ID_FLASHFS_DISK,
-            .posfs => dos.posfs.ID_POSFS_DISK,
-        },
+        .dos_type = flashfs.ID_FLASHFS_DISK,
     };
     var rdb: hardblocks.RigidDiskBlock = .{
         .block_bytes = sector_size,
@@ -339,10 +239,7 @@ pub fn main(init: std.process.Init) !void {
     putBlock(store, rdb_block, sector_size, &rdb);
     putBlock(store, partition_block, sector_size, &part);
 
-    const used: usize = switch (kind) {
-        .flashfs => flashfsVolume(store, part_sectors, sector_size, page_size, label, entries.items, arena),
-        .posfs => posfsVolume(store, part_sectors, sector_size, page_size, label, entries.items, init.gpa, &hash),
-    };
+    const used = flashfsVolume(store, part_sectors, sector_size, page_size, label, entries.items, arena);
     try cwd.writeFile(io, .{ .sub_path = out_path, .data = store[0..used] });
 }
 
@@ -368,25 +265,4 @@ fn flashfsVolume(store: []u8, part_sectors: u32, sector_size: u32, page_size: u3
         if (fs.vol.segs[sector].seq != 0) used = (rdb_blocks + @as(u32, @intCast(sector)) + 1) * sector_size;
     }
     return used;
-}
-
-/// posfs on the partition, put away clean; the image's end is the
-/// partition's.
-fn posfsVolume(store: []u8, part_sectors: u32, sector_size: u32, page_size: u32, label: []const u8, entries: []const Entry, gpa: mem.Allocator, hash: *std.crypto.hash.Blake3) usize {
-    var media: PosfsImage = .{
-        .store = store,
-        .first = rdb_blocks * sector_size,
-        .length = @as(u64, part_sectors) * sector_size,
-        .sector = sector_size,
-        .page = page_size,
-        .allocator = gpa,
-        .uuid = undefined,
-    };
-    hash.final(&media.uuid);
-    var fs = posfs_fs.FileSystem.init(posfs_fs.Device.of(PosfsImage, &media));
-    defer fs.deinit();
-    fs.format(.{ .name = label, .partition_block = sector_size }) catch |e| fatal("format: {t}", .{e});
-    fill(&fs, entries);
-    fs.unmount() catch |e| fatal("putting the volume away: {t}", .{e});
-    return (rdb_blocks + part_sectors) * sector_size;
 }

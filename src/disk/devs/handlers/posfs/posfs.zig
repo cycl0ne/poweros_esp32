@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! posfs-handler: the PowerOS file system as a ROM module, for any drive
+//! posfs-handler: the PowerOS file system, a handler loaded from
+//! HANDLERS: the first time a drive needs it, for any drive
 //! whose DosType names posfs - on the internal flash, where flash.device
 //! makes a node per partition of the disk's RigidDiskBlock
 //! (src/rom/devs/flash/mount.zig), on a card a mountlist names, or on a
@@ -15,8 +16,8 @@
 //! The file system itself is `fs.zig` and what it is built on, which call
 //! no library: the medium comes to them as a table of calls
 //! (`media.Device`), so all of it runs in the host tests and in
-//! tools/mkfs as it runs here. This file is what the target needs: the
-//! ROM tag, the process, and the medium made out of the device.
+//! tools/posfsck as it runs here. This file is what the target needs:
+//! the handler's tag, the process, and the medium made out of the device.
 //!
 //! On starting it opens the device, asks for its geometry and mounts the
 //! volume, replaying the journal when the volume was not put away. A
@@ -71,6 +72,7 @@
 //! which EXAMINE_ALL tries each entry with.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
@@ -91,7 +93,7 @@ const fs_core = @import("fs.zig");
 
 pub const HANDLER_NAME = posfs.HANDLER_NAME;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 0;
+const HANDLER_REVISION = 1;
 const BUILD_DATE = "18.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -911,22 +913,48 @@ fn sameName(one: []const u8, other: []const u8) bool {
     return true;
 }
 
+/// It is in `.resident`, which program.ld KEEPs: nothing in the file
+/// refers to the tag, dos finds it by looking.
 export const posfs_handler_tag: exec.ResidentHandler linksection(".resident") = .{
     .resident = .{
         .match_tag = &posfs_handler_tag.resident,
         .flags = 0,
         .version = HANDLER_VERSION,
         .type = .handler,
-        .pri = -122,
+        .pri = 0,
         .name = HANDLER_NAME,
         .id_string = HANDLER_VERSION_STRING[1..],
     },
     .handler = &fsHandler,
 };
 
+/// A handler is not a command. Whoever runs this file gets nothing done
+/// and a return code that says so.
+fn programEntry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
+    _ = args;
+    _ = len;
+    exec.kprintf(sys, "%s is a handler, not a command\n", .{HANDLER_NAME});
+    return 20; // RETURN_FAIL, without opening dos.library to say it
+}
+
+/// The "$VER:" string, which `Version <file>` looks for. Nothing refers to
+/// it, so it needs an export and a section of its own that program.ld
+/// KEEPs.
+const version_tag: [HANDLER_VERSION_STRING.len:0]u8 linksection(".version") = HANDLER_VERSION_STRING.*;
+
+// The file's entry and its version string, under the names the loader and
+// `Version` look for. The host tests build this file beside fat-handler,
+// whose names are the same, so there they are left out.
+comptime {
+    if (!builtin.is_test) {
+        @export(&programEntry, .{ .name = "_program_entry" });
+        @export(&version_tag, .{ .name = "version_tag" });
+    }
+}
+
 const testing = std.testing;
 
-test "the ROM tag names the handler and its entry" {
+test "the handler's tag names the handler and its entry" {
     try testing.expectEqual(exec.NodeType.handler, posfs_handler_tag.resident.type);
     try testing.expectEqualStrings(HANDLER_NAME, std.mem.span(posfs_handler_tag.resident.name));
     try testing.expectEqual(@as(?exec.TaskFn, &fsHandler), posfs_handler_tag.handler);
