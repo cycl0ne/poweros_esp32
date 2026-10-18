@@ -4,7 +4,7 @@ Builds a disk image for the log file system, so the board boots with
 programs on `C:` instead of the shell copying them into `RAM:`.
 
 ```
-mkfs <out.bin> <name> <partition> <sectors> <partition-sectors> <sector-size> <page-size> <rdb-sectors> [<path>[=<file>] ...]
+mkfs [--tree=<dir>] [--manifest=<file>] <out.bin> <name> <partition> <sectors> <partition-sectors> <sector-size> <page-size> <rdb-sectors> [<path>[=<file>] ...]
 ```
 
 `partition` is the drive the partition is mounted as (`DH0`).
@@ -16,6 +16,13 @@ sets it).
 
 An argument without `=` makes a directory in the image; one with `=` writes
 a file into it from the host. Directories come before what goes in them.
+
+`--tree` writes the image's directories and files under `<dir>` as well,
+and `--manifest` lists its files, one line each: CRC-32 in hex, size, path,
+sorted by path, the later of two files at one path counted. The build makes
+both for the RISC-V 64 disk (`zig-out/disk-rv64/`,
+`zig-out/bin/disk-rv64.manifest`), for a card that is SYS: to be brought up
+to date from file by file.
 
 `build.zig` runs it for `zig-out/bin/disk.bin`, merges that into
 `flash.bin` at the disk area's offset for QEMU, and `zig build flash-disk`
