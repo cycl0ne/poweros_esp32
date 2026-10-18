@@ -18,12 +18,19 @@ pub fn build(b: *std.Build) void {
 }
 ```
 
-A program for the ESP32-P4 says so with `.chip = .esp32p4` (the
-ESP32-S3 is the default). There the code is RISC-V and PC-relative, and
-the load file holds it with its data in one segment; it reaches the ROM
-only through a pointer, never by a direct call, which `addProgram`
-refuses. A load file names the CPU it was built for, and `LoadSeg`
-refuses one built for another.
+A program for the ESP32-P4 says so with `.chip = .esp32p4`, and one for
+a RISC-V 64 machine - QEMU's virt, the VisionFive 2 - with
+`.chip = .rv64sbi` (the ESP32-S3 is the default). On both the code is
+RISC-V and PC-relative, linked without the linker's relaxation, and the
+load file holds it with its data in one segment; it reaches the ROM only
+through a pointer, never by a direct call, which `addProgram` refuses. On
+RISC-V 64 a pointer and a `usize` are 8 bytes, and so are the load file's
+address words; a format takes a `usize` as `%zd`, `%zu` or `%zx`. A load
+file names the CPU it was built for, and `LoadSeg` refuses one built for
+another. A program gets its `memcpy`, `memmove` and `memset` from exec,
+through the jump table: the loops the kernel has for the board's CPU
+([Memory](exec.md#memory)). One whose root declares `own_memory_calls`
+keeps its own.
 
 ## Hello, world - in the shell
 
@@ -276,7 +283,9 @@ for a few seconds and restarts the machine if nobody answers; `debug` at the
 `Debug(0)` from code. It talks on **both** raw ports at once - UART0 and the
 chip's own USB port - and takes a character from whichever has one, because
 which cable is plugged in is not something a stopped machine can ask. A Guru
-is copied to both for the same reason.
+is copied to both for the same reason. The ROM debugger is the ESP32s': on a
+RISC-V 64 machine `debug` and `Debug(0)` say there is none, and a dead end
+stops the machine with its Guru on the console.
 
 An address is named with the code it is in, which for a program loaded
 from disk is its file and the offset into it - the same offset its ELF
@@ -477,13 +486,15 @@ is a dead end the machine cannot run on from:
 it keeps the end of the system log over the restart (the last words,
 below), offers the ROM debugger for a few seconds, and restarts -
 `*** restarting` - unless the debugger is taken, after which it stays
-stopped (`*** system halted`).
+stopped (`*** system halted`). A RISC-V 64 machine has no ROM debugger
+and keeps no last words: such a dead end prints its Guru and
+`*** system halted`, and the machine stays stopped.
 
 `81000101` is `AN_ProgramPanic`. The fourth line names the loaded file and
 the offset into its code, which is the address in the program's linked ELF
 (its code is linked at 0). The offset is the return address of the call
 into the handler, so the call itself is just before it - 3 bytes on the
-ESP32-S3, 4 on the ESP32-P4:
+ESP32-S3, 4 on the RISC-V chips, or 2 after a call through a pointer:
 
 ```sh
 llvm-symbolizer --obj=<the program's ELF> 0x517
@@ -722,10 +733,10 @@ log holds and then every line as it comes, a UDP datagram each, to port
 514 (or `host:port`). S:Network-Startup starts it when
 `ENVARC:Sys/net/syslog` names a server.
 
-**The last words.** A dead end that nobody answers - no debugger asked
-for within a few seconds - restarts the machine rather than halting it,
-and keeps the last 4 KiB of the log in RTC memory, which a software reset
-does not touch. The next boot puts them at the head of its log, between
+**The last words.** On the ESP32s a dead end that nobody answers - no
+debugger asked for within a few seconds - restarts the machine rather
+than halting it, and keeps the last 4 KiB of the log in RTC memory, which
+a software reset does not touch. The next boot puts them at the head of its log, between
 `---- the last words of the boot before ----` and `---- the end of them
 ----`, and says so on its second line; `Log` shows them. Reboot in the
 Software Failure requester keeps them too. The reset button clears that
@@ -740,7 +751,7 @@ each for its own case:
 |---|---|---|---|
 | `ObtainSemaphore`/`ReleaseSemaphore` | as long as needed, waits included | a task that wants it sleeps until it is given back | a file, a screen, a device's unit: what its holder works on at length |
 | `AcquireLock`/`ReleaseLock` | a few hundred cycles | one that wants it tries again until it is free | a few fields or a list changed in a few lines - and with `LOCKF_INTERRUPT`, what an interrupt touches too |
-| `Disable`/`Enable` | a few lines | no interrupt runs, on either core | what exec's own interrupts touch: vectors, task queues |
+| `Disable`/`Enable` | a few lines | no interrupt runs, on any core | what exec's own interrupts touch: vectors, task queues |
 
 Which one is a question of what the holder does:
 
@@ -867,7 +878,8 @@ on every core:
 - **The cycle counter** (`sdk.hardware.cpu.ccount`) is each core's own,
   and the cores' do not agree. A wait of a few microseconds is
   `cpu.spinCycles`, which keeps the task on one core while it counts.
-- **SYSTEM's clock and reset registers** are shared by every driver on
+- **The chip's clock and reset registers** - the ESP32s' SYSTEM, the
+  JH7110's clock and reset generators - are shared by every driver on
   every core: a driver changes them inside `Disable`.
 
 A task that has to stay on one core - code written for one core, or one
@@ -893,8 +905,10 @@ core 0 up until it answers null - which is how `ShowInfo TASKS` lists every
 task once, with the core it runs on and the core it is pinned to.
 `ReadCoreTimes(core, &times)` answers how a core has spent its time since
 it started - in tasks, idle, in interrupts, in cycles of its clock, counted
-at every exception rather than sampled; read it twice and divide the
-differences for how busy the core was in between, which is what
+at every exception rather than sampled (the VisionFive 2's U74s stop
+their cycle counters while they sleep, so there an idle core's sleep is
+timed on the timebase and counted as idle as well); read it twice and
+divide the differences for how busy the core was in between, which is what
 `SYS:System/CPULoad` charts. Each task's own share is its `timeRun()`,
 counted at the same moments - read under the task lists' lock, as
 `ShowInfo TASKS` reads the tasks - which `C:Top` shows: the running

@@ -125,8 +125,9 @@ or a hash other than 1 also mounts read-only.
 
 ### Checksums
 
-There is one checksum: the reflected crc32 (polynomial 0xEDB88320, table
-worked out at compile time). Every checksum except the label's is
+There is one checksum: the reflected crc32 (polynomial 0xEDB88320),
+taken eight bytes at a time from tables worked out at compile time
+(slicing-by-8). Every checksum except the label's is
 **seeded**: the crc is run first over the volume's 16-byte id, then over
 the bytes it covers. A journal record's is seeded with the id and then
 the 8 bytes of the mount's `life`. A checksum covers only bytes written

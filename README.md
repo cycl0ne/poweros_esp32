@@ -1,14 +1,16 @@
-# PowerOS for ESP32
+# PowerOS
 
-PowerOS is an operating system for Espressif's ESP32 microcontrollers,
-written in Zig. It boots straight from the chip's ROM loader and brings up
+PowerOS is an operating system for Espressif's ESP32 microcontrollers and
+for 64-bit RISC-V machines, written in Zig. It boots straight from an
+ESP32's ROM loader, or from a RISC-V machine's SBI firmware, and brings up
 a complete little system: a multitasking kernel with libraries and
 devices, a DOS with file systems and a shell, a TCP/IP stack, and a
 windowed desktop on the board's display. Programs are loaded from disk at
 run time and built against a separate SDK.
 
 **Status: release 0.2.** It runs on two ESP32-S3 boards, on two
-ESP32-P4 boards and in Espressif's QEMU.
+ESP32-P4 boards, on StarFive's VisionFive 2 (RISC-V 64), in Espressif's
+QEMU and in QEMU's RISC-V 64 `virt` machine.
 
 [![PowerOS multitasking on the 7" Waveshare board](docs/screenshots/board-waveshare-7b.jpg)](docs/screenshots/README.md#on-the-board)
 
@@ -31,7 +33,7 @@ ESP32-P4 boards and in Espressif's QEMU.
 |---|---|
 | [Screenshots](docs/screenshots/README.md) | the Player, the shell, Notepad, HDToolBox, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
 | [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
-| [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing |
+| [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing, [the RISC-V machines](#the-risc-v-machines) |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [Debugging](sdk/docs/guides/debugging.md) | what a failure prints, from an address to a line, the ROM debugger, `s3>`, memory debugging, JTAG |
 | [The SDK](sdk/) | the package a program builds against |
@@ -52,9 +54,11 @@ ESP32-P4 boards and in Espressif's QEMU.
   built from small modules that talk through message ports and jump
   tables; a library or a device can be replaced, loaded from disk or
   patched at run time.
-- **It is** made for the ESP32 family. It drives the chip itself, register
-  by register, so everything between power-on and the desktop is in this
-  tree.
+- **It is** made for the ESP32 family, and runs on 64-bit RISC-V
+  machines under SBI firmware too. It drives the hardware itself,
+  register by register: on an ESP32 everything between power-on and the
+  desktop is in this tree, on a RISC-V machine everything after its
+  firmware hands over.
 - **It is** young. 0.2 works end to end, but the API may change before
   1.0, and not every part has run on every board.
 - **It is not** a Linux, a POSIX system or an RTOS in the usual sense:
@@ -72,11 +76,13 @@ ESP32-P4 boards and in Espressif's QEMU.
 
 ### What is in it
 
-- **Kernel (exec):** preemptive multitasking on both of the chip's cores,
+- **Kernel (exec):** preemptive multitasking on every core of the chip -
+  two on the ESP32s, four on the VisionFive 2 -
   signals, message ports, semaphores and checked spinlocks, every system
   list under a lock of its own; libraries and devices opened by name,
   loaded from disk when wanted and expunged when memory runs short;
-  internal SRAM and PSRAM as memory with attributes, every block marked
+  internal SRAM and PSRAM - on a RISC-V machine all of its RAM, 8 GB on
+  the VisionFive 2 - as memory with attributes, every block marked
   with the task that owns it, so a wrong or second free is refused and
   `C:Avail OWNERS` and `SYS:System/MemMap` show who holds what. A
   system log from the first byte of the boot (`C:Log` sends it to a
@@ -94,24 +100,24 @@ ESP32-P4 boards and in Espressif's QEMU.
   checksummed data, LZ4 compression, a Recycled directory deletes go
   to and come back from, and snapshots read under `.snapshots` that the
   volume can be rolled back to, for a partition of the flash disk, an SD
-  card or a USB stick, which a power cut at any moment leaves whole and
-  which mounts again at once, checked while in use (`C:PosFS`) ([posfs
-  guide](sdk/docs/guides/posfs.md));
+  card, a USB stick or an NVMe SSD, which a power cut at any moment
+  leaves whole and which mounts again at once, checked while in use
+  (`C:PosFS`) ([posfs guide](sdk/docs/guides/posfs.md));
   FAT32 and exFAT on SD cards
   (`SD0:`) and USB sticks (`DU0:`), written so a card pulled out
   mid-write leaves a whole volume; `RAM:`, `PIPE:`, `NIL:`; any of the
   disks formatted from the running system (`C:Format`: posfs, or FAT32
   or exFAT by a card's size, or as asked, with the block or cluster size
-  asked for); partitions from a RigidDiskBlock on the flash disk, a card
-  or a stick, each mounted as its own drive - a card's and a stick's by
-  their device when they come in - and laid out on any drive by dragging
-  them in `SYS:System/HDToolBox`; a file system's code kept in the
+  asked for); partitions from a RigidDiskBlock on the flash disk, a card,
+  a stick or an SSD, each mounted as its own drive - a card's and a
+  stick's by their device when they come in - and laid out on any drive
+  by dragging them in `SYS:System/HDToolBox`; a file system's code kept in the
   table, which its partitions run when the ROM has none or an older one
   ([disks guide](sdk/docs/guides/rdb.md));
   notification when a file changes; record locks on ranges of a file;
   consoles with line editing, file name completion, and copy and paste;
   a shell with scripts, a command's output and errors redirected apart
-  (`>`, `*>`: [dos guide](sdk/docs/guides/dos.md#files)), and 53
+  (`>`, `*>`: [dos guide](sdk/docs/guides/dos.md#files)), and 54
   commands in `C:` - `ScreenDump` saves a
   screen as a PNG - test programs in `C:test` and network tools in
   `C:net`.
@@ -131,7 +137,8 @@ ESP32-P4 boards and in Espressif's QEMU.
   drive's partitions), CPULoad and MemMap (who holds the memory, as a
   map).
 - **Graphics and windows:** rtg.library for the displays - on the
-  ESP32-P4 its 2D engine fills, copies, blends and scales;
+  ESP32-P4 its 2D engine fills, copies, blends and scales, on the
+  VisionFive 2 its HDMI port at 1920×1080;
   graphics.library with smooth curves, gradients, shadows and scaled
   pictures; layers.library; intuition.library with screens, windows,
   menus, requesters and gadget classes in layouts that fit any display,
@@ -153,13 +160,15 @@ ESP32-P4 boards and in Espressif's QEMU.
   play and reads their tags, covers and chapters (`C:Play`,
   [sound guide](sdk/docs/guides/audio.md)).
 - **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
-  UDP, IPv4 and IPv6, DHCP, DNS, multicast) on Ethernet, USB Ethernet
+  UDP, IPv4 and IPv6, DHCP, DNS, multicast) on Ethernet - at 1000 Mbit/s
+  on the VisionFive 2 - USB Ethernet
   adapters, the ESP32-S3's Wi-Fi, USB Wi-Fi sticks (AIC8800) and SLIP;
   WPA2-Personal in `LIBS:wpa.library`; a shell over Telnet or SSH with
   sftp and scp, an SSH client, a packet filter, and TLS 1.3 and 1.2 for
   `C:net/HTTPGet` ([network guide](sdk/docs/guides/network.md)).
 - **USB:** a host stack on the chip's OTG controller - at high speed on
-  the ESP32-P4, through hubs - with class drivers loaded as their devices
+  the ESP32-P4 - and on xHCI controllers on PCI Express (the VisionFive
+  2's VL805), through hubs, with class drivers loaded as their devices
   are plugged in: keyboards, mice and tablets, sticks and card readers,
   FTDI and CDC-ACM serial adapters, CDC Ethernet, AIC8800 Wi-Fi sticks
   ([USB guide](sdk/docs/guides/usb.md)).
@@ -171,8 +180,11 @@ ESP32-P4 boards and in Espressif's QEMU.
   card, I2C, touch, keyboard and mouse from any source, console,
   watchdog, DMA, GPIO, IO expander, the JPEG codec, the battery
   (`C:Battery`), the date kept while the system is off
-  (`C:SetClock`), and `LIBS:crypto.library` on the chip's SHA, AES and
-  RSA engines.
+  (`C:SetClock`), and `LIBS:crypto.library` on the ESP32s' SHA, AES and
+  RSA engines. On the RISC-V machines `LIBS:pci.library` - every function
+  behind every bridge of every PCI Express port, MSI, `C:PCIInfo` - and
+  `DEVS:nvme.device` for NVMe SSDs, with TRIM; the JH7110's random
+  number generator.
 - **Boards are data:** which parts are fitted and how they are wired is a
   description in the ROM; drivers ask for their part at run time.
 
@@ -188,6 +200,8 @@ ESP32-P4 boards and in Espressif's QEMU.
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, the UART1 and UART3-IN connectors |
+| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos on the disk image in RAM; with `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, with an `nvme` device an SSD; no network, no sound |
+| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot; not driven yet: the second Ethernet port, USB 3, the eMMC socket, sound |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network
@@ -195,8 +209,10 @@ devices, ... (`SPEAKS=serial`) - with its units on this board, none of
 them opened or loaded to find out.
 
 You need Linux or macOS, `esptool` (v5) to flash, and for the emulator
-Espressif's QEMU. Always build with the `./zig` wrapper: it fetches the
-Espressif Zig toolchain (`0.16.0-xtensa`) into `toolchain/` on first use.
+Espressif's QEMU; for the RISC-V machines `qemu-system-riscv64` and, on
+the VisionFive 2, the U-Boot it comes with. Always build with the `./zig`
+wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
+`toolchain/` on first use.
 
 ```sh
 ./zig build                  # the kernel and a flash disk: zig-out/bin/flash.bin
@@ -204,6 +220,7 @@ Espressif Zig toolchain (`0.16.0-xtensa`) into `toolchain/` on first use.
 ./zig build qemu             # boot in QEMU on the serial console (quit: Ctrl-A X)
 ./zig build qemu-display     # the same with the display in a window
 ./zig build emu              # the ESP32-P4 kernel in esp-emulator (quit: Ctrl-C)
+./zig build virt             # the RISC-V 64 kernel in QEMU's virt machine (quit: Ctrl-A X)
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
 ```
 
@@ -220,9 +237,9 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
 | `scripts/fetch-esp-emu.sh` | Espressif's esp-emulator, which runs the ESP32-P4: both cores, its interrupt controller, UART0 on the terminal, the system timer, flash, PSRAM, the Ethernet MAC and a GDB stub, from the chip's own ROM; no display. With it the v1.x chips' ROM (Espressif's ROM ELFs), which `./zig build emu` boots |
 
-Without them the disk has everything but that part. On a board the serial
-console is the chip's USB port (e.g. `tio /dev/ttyACM0`); the display
-comes up with the desktop, which S:Startup-Sequence starts at its end
+Without them the disk has everything but that part. On an ESP32 board
+the serial console is the chip's USB port (e.g. `tio /dev/ttyACM0`); the
+display comes up with the desktop, which S:Startup-Sequence starts at its end
 before it puts its own shell window away - `SYS:System/Shell` opens
 another. A desktop that cannot start leaves that shell on the display.
 
@@ -260,6 +277,40 @@ there is the ROM's debug shell, `newshell` starts a CLI (`List`, `Info`,
 2323 to the machine's Telnet port and 2222 to its SSH port, for
 `C:net/ShellServer`.
 
+### The RISC-V machines
+
+`-Dboard=qemu_virt` and `-Dboard=visionfive2` build a kernel for a
+64-bit RISC-V machine under SBI firmware, which enters it in supervisor
+mode: `zig-out/bin/kernel` (the ELF), `kernel.bin` (the same from its
+first address, 0x80200000, with the header U-Boot's `booti` reads) and
+`disk-rv64.bin`, the disk as an image of its whole 14 MB. There is no
+flash: the loader puts the image in RAM beside the kernel and names it in
+the device tree, flash.device serves it as `DH0:`, and what is written
+to it is gone when the machine stops. Nothing is flashed: the `flash*`
+steps are the ESP32 boards'.
+
+`./zig build virt` boots QEMU's virt machine on the serial console with
+four harts and 512 MB, the disk image as its initrd. QEMU run by hand
+adds the rest - a display, USB and an SSD:
+
+```sh
+./zig build -Dboard=qemu_virt
+qemu-system-riscv64 -M virt -m 512M -smp 4 -bios default \
+    -kernel zig-out/bin/kernel -initrd zig-out/bin/disk-rv64.bin \
+    -device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet \
+    -drive if=none,id=ssd,format=raw,file=ssd.img -device nvme,serial=1,drive=ssd
+```
+
+On the VisionFive 2, U-Boot loads `kernel.bin` and starts it with
+`booti`, with `disk-rv64.bin` as its ramdisk and U-Boot's device tree.
+The console is the debug UART on pins 8 and 10 of the 40-pin header,
+115200 8N1 (a 3.3 V serial adapter). The ROM holds sdcard.device and the
+FAT handler, so the machine can also start from its microSD card: a
+partition in the card's RigidDiskBlock that is bootable at a higher
+priority than `DH0:` is `SYS:`, and a card sold with a PC partition
+table keeps it, so one FAT32 volume can be both U-Boot's and PowerOS's
+([disks guide](sdk/docs/guides/rdb.md)).
+
 More build steps and options:
 
 | Command | What it does |
@@ -283,20 +334,20 @@ More build steps and options:
 | `-Dslip=tcp::5021,server,nowait` | the `qemu*` steps' UART1 (`serial.device` unit 1, a SLIP line) on that QEMU serial backend; not with `-Drs485` |
 | `-Dusb=usb-hub,usb-kbd,usb-mouse` | the `qemu*` steps' USB devices, QEMU's names (`usb-tablet`, `usb-serial` on a pty, `usb-net` on a network of its own, 10.0.3.0/24, too); an item with `=` is a property of the one before (`usb-kbd,id=kb1`, for `device_del kb1` in the monitor) |
 | `-Dusb-disk=stick.img` | a USB stick in the `qemu*` steps, its contents that image |
-| `-Dcores=1` | the cores the kernel runs on: 1 or 2 (default: what the board says - two on every board and in `qemu`) |
+| `-Dcores=1` | the cores the kernel runs on: 1 or 2, up to 4 on a RISC-V board (default: what the board says - two on the ESP32 boards and in `qemu`, four on the RISC-V boards) |
 | `-Dselftest` | the ESP32-P4's boot task checks the chip (its blocks, DMA, PSRAM, the flash) and runs test tasks on both cores, rather than the shell |
 | `-Dmemdebug=true` | memory debugging on from exec's start, so the blocks the system makes as it comes up are walled too (`C:MemDebug` and `s3> memdebug` switch it while running) |
 
 ## Repository layout
 
 ```
-src/arch/      the chip: boot, exceptions, clock, MMU, PSRAM, interrupts
+src/arch/      the chips (esp32s3, esp32p4, rv64sbi): boot, exceptions, clock, MMU, memory, interrupts
 src/rom/       what is in the ROM: libraries, devices, handlers, resources, shell
 src/boards/    one folder per board: its parts and wiring, and its drivers
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
-tools/         build helpers: mkfs, ressize, ramimage, mkicon, the autodocs, the module charts, checks
+tools/         build helpers: mkfs, ressize, ramimage, padimage, mkicon, the autodocs, the module charts, checks
 scripts/       the QEMU build and its patches, the pinned fetches (Wi-Fi libraries and firmware, fonts, certificates, icons, esp-emulator), a serial terminal
 ```
 

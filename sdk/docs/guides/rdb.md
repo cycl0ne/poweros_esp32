@@ -5,9 +5,10 @@ its first blocks, and a chain of PartitionBlocks hanging off it, one per
 partition, each with the name its device node gets (`DH0`), the
 cylinders it covers and the file system it is for. The table can keep a
 file system's code too, which its partitions then run. The flash disk's
-table is read when the system starts, and its partitions are mounted as
-it says. `rdb.library`, in `LIBS:`, is how a program reads the table,
-changes it, writes it back and mounts a partition.
+table is read when the system starts, a card's, a stick's or an SSD's
+when its device starts, and the partitions are mounted as it says.
+`rdb.library`, in `LIBS:`, is how a program reads the table, changes
+it, writes it back and mounts a partition.
 
 This guide is how the table is laid out, how the library holds it, and
 what a program does with it - from listing the partitions to putting a
@@ -35,7 +36,8 @@ blocks, and every reader takes the lowest sound one there. Every block
 carries its identifier and a checksum, so a disk that holds no table is
 recognised at once. A block is the medium's own
 block - 4096 bytes on the flash disk, its erase unit, so one structure
-can be rewritten without disturbing the next; 512 on a card.
+can be rewritten without disturbing the next; 512 on a card; 512 or 4096
+on an SSD, as its namespace is formatted.
 
 Cylinders are counted in the RigidDiskBlock's terms, `cyl_blocks`
 blocks each, and a partition is whole cylinders. The table's fields are
@@ -68,11 +70,18 @@ defer rb.CloseRDB(handle);
 
 `OpenRDB` opens a unit of a block device - any exec device that answers
 `TD_GETGEOMETRY`, `CMD_READ` and `CMD_WRITE`, and `TDCMD_ERASE` where
-its medium wants erasing: `flash.device`, `sdcard.device`. It reads the
-whole table into an `RDBHandle` and keeps the unit open until
-`CloseRDB`. It answers null only when the disk cannot be used at all -
-no such device or unit, no medium in it (`RDBERR_DEVICE`), or no memory
-(`RDBERR_NOMEM`).
+its medium wants erasing: `flash.device`, `sdcard.device`,
+`usb/disk.device`, `nvme.device`. It reads the whole table into an
+`RDBHandle` and keeps the unit open until `CloseRDB`. It answers null
+only when the disk cannot be used at all - no such device or unit, no
+medium in it (`RDBERR_DEVICE`), or no memory (`RDBERR_NOMEM`).
+
+A block device may answer `TDCMD_TRIM` too (`sdk/devices/trackdisk.zig`):
+the blocks `io_Offset` to `io_Offset + io_Length` are no longer in use,
+and the medium may forget them; what they read afterwards is the
+device's to say. nvme.device hands it to the controller as Dataset
+Management where the controller has it. A unit that cannot answers
+`IOERR_NOCMD`, so a sender treats it as a hint.
 
 A disk without a table is not a failure: that is what a blank one looks
 like. The handle's `flags` say what was found:
@@ -257,6 +266,16 @@ A fresh table has room for 15 PartitionBlocks; `AddPartition` answers
 `RDBERR_FULL` past that (fewer, when kept chains hold some of the 16
 blocks).
 
+**A medium that begins with a PC's partition table** - a card as it is
+sold, or as a PC partitioned it - keeps that block. `OpenRDB` notes a
+first block signed 55 AA that is not the boot sector of a FAT or exFAT
+volume over the whole medium, and `InitRDB` then begins the table in
+block 1, which is still among the blocks a reader looks in. The PC goes
+on seeing its partitions, and a partition of the table may name the same
+blocks as one of the PC's: an `MSD\0` partition over the PC's FAT
+partition is the same volume to both ([Starting from a
+card](#starting-from-a-card)).
+
 ## Mounting a partition
 
 `MountPartition(handle, part, name, flags)` puts a partition on dos's
@@ -356,8 +375,11 @@ time a drive of it starts ([dos guide](dos.md)):
 - **On the flash disk** `flash.device` copies the code out of the disk
   into memory at boot, one copy for every partition of that file system,
   before dos is up.
-- **On a card or a stick**, and for a partition HDToolBox has just made,
-  `MountPartition` copies it, and the drives of one unit share it.
+- **On a card, a stick or an SSD**, and for a partition HDToolBox has
+  just made, `MountPartition` copies it, and the drives of one unit
+  share it. A card the ROM's sdcard.device reads at cold start
+  ([Starting from a card](#starting-from-a-card)) runs the handlers its
+  DosTypes name, never the table's code.
 
 A drive mounted already goes on running the code it started with until
 the system starts again. The code is for the machine it was built for,
@@ -411,6 +433,13 @@ highest boot priority is where the system starts from. So what
 once by `MountPartition`; until then the nodes on the list are the ones
 from before.
 
+**On a RISC-V 64 machine** the flash disk is the disk image the loader
+put in RAM beside the kernel - `disk-rv64.bin`, QEMU's `-initrd` or
+U-Boot's `booti` with a ramdisk, found in the device tree's `/chosen`.
+flash.device serves it as a flash chip, erased to 0xFF a sector at a
+time, and reads its table the same way. What is written to it is gone
+at power off.
+
 Changing the cylinders or the file system of a partition that is
 mounted leaves its drive working on the old ones until the next boot,
 and a file system that finds its partition smaller than it was is not
@@ -420,8 +449,9 @@ is written.
 
 **A card or a stick** has its table read when the first one comes into
 the slot or the unit - by sdcard.device, which `C:BindDrivers` starts at
-boot, and by usb/disk.device when a stick is plugged in. One with a
-sound RigidDiskBlock gets a drive per partition not marked
+boot (or the ROM's, at cold start: below), and by usb/disk.device when
+a stick is plugged in. One with a sound RigidDiskBlock gets a drive per
+partition not marked
 `PBFF_NOMOUNT`, through `MountPartition`, so a name the flash disk has
 already gets a dot (`DH0.:`), and a partition whose file system cannot
 go on the medium - the flash file system on a card - is passed over.
@@ -435,6 +465,41 @@ first - is left to it. The drives stay with the handlers they got: the
 next card or stick in the unit is read through them, and a table
 written to a card is mounted as it says at the next start, or at once
 by `MountPartition`.
+
+**An SSD** on PCI Express is nvme.device's, on the RISC-V 64 disk, which
+`C:BindDrivers` starts at boot. Once its controllers are up it reads
+each namespace's table, as a card's: a drive per partition not marked
+`PBFF_NOMOUNT`, or `NV<n>:` over the whole namespace with the file
+system its first block says. A MountList entry mounted before
+BindDrivers that opens the unit is its drive instead. An SSD does not
+change, so nothing is looked at again.
+
+### Starting from a card
+
+A machine whose ROM holds sdcard.device - the VisionFive 2, with
+fat-handler in its ROM beside it - reads the card's table at cold
+start, before dos is up, and hands its partitions to expansion.library
+as boot nodes, as flash.device does (`sdk.expansion.bootdisk`). The
+bootable partition with the highest boot priority is where the system
+starts from: one above the flash disk's `DH0`, whose priority is 0,
+starts it from the card. A card with no RigidDiskBlock gets no node at
+cold start. Once dos is up, the device's first opener - `C:BindDrivers`
+in the startup-sequence - starts its DOS process. That process takes the
+nodes as the card's drives, makes `SD0:` for a card without a table, and
+mounts the first card put into a slot that was empty.
+
+The card can be one that a PC and U-Boot read too: a PC partition table
+with one FAT32 partition over the card, the RigidDiskBlock in block 1,
+and a bootable `MSD\0` partition over the FAT partition's blocks.
+`C:test/DiskTest sdcard.device` prints the PC's partitions with their
+first and last blocks, and on a card a cylinder is a block:
+
+```
+RDB sdcard.device INIT ADD SD0 LOW 8192 HIGH 62333951 DOSTYPE MSD BOOTABLE BOOTPRI 5
+```
+
+`SYS:` is then the FAT volume on the card, and it needs the system's
+drawers on it, as the disk image has them.
 
 ## In a window: HDToolBox
 
@@ -507,8 +572,27 @@ cylinders and what is on them alone: the partition is mounted with its
 new handler at the next boot, and `C:Format` gives it that file system's
 empty volume.
 
+`BOOTPRI` gives the partition `ADD` makes, or the one `CHANGE` names,
+its boot priority (0 for a new one without it): of the bootable
+partitions of every disk, dos starts from the one with the highest.
+
 `s3> rdb init [partition]` writes a first table on a blank chip, its
 one partition for the flash file system.
+
+Two programs in `C:test` measure a drive:
+
+- `C:test/DiskTest DEVICE/A,UNIT/N,...` looks at a unit through its
+  requests: its geometry, the MBR or GPT in its first blocks, and how
+  fast it reads (`SPEED` MiB from block `AT`, in requests of `BUFFER`
+  bytes, into a buffer `ALIGN` bytes past a page). `COMPARE` reads each
+  request again into a buffer on a page and compares the two. `WRITE`
+  writes a pattern and reads it back, and `TRIM` trims the blocks and
+  says what they read as; those two lose what was there.
+- `C:test/FileTest DRAWER/A,...` measures a file system through dos: a
+  large file written in pieces of `BUFFER`, read back, compared and
+  deleted (`SIZE` MiB, 256 by default), and `FILES` small ones of
+  `FILESIZE` bytes in a drawer of their own. A speed counts only the
+  time in dos's calls; `KEEP` leaves what was made.
 
 ## See also
 

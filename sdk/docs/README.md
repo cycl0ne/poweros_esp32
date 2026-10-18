@@ -32,7 +32,7 @@ tags and constants, each with its doc comment.
 - [Writing programs](guides/programs.md) - a window drawn into, and a
   window of gadgets laid out by a layout and a window object; when a
   check fails, the system log, semaphores, spinlocks and exec's list
-  locks, and what two cores change.
+  locks, and what several cores change.
 - [Debugging](guides/debugging.md) - what a failure prints and asks, from
   an address to a line, the ROM debugger with its breakpoints and
   watchpoints, the serial console's commands, the log, memory debugging,
@@ -133,12 +133,13 @@ first time something opens it.
 | motion.library | ROM | one clock for animations, timers and timelines | [md](autodocs/motion.md) · [doc](autodocs/motion.doc) |
 | asl.library | `LIBS:` | the file, font and device requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces, packet hooks | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
-| crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines; X25519, P-256, P-384 and Ed25519; signatures checked and made; ML-KEM-768 | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
+| crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines where it has them; X25519, P-256, P-384 and Ed25519; signatures checked and made; ML-KEM-768 | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
 | datatypes.library | `LIBS:` | a file opened by what is in it | [md](autodocs/datatypes.md) · [doc](autodocs/datatypes.doc) |
 | filter.library | `LIBS:` | a packet filter: rules on what comes in, on bsdsocket.library's packet hooks | [md](autodocs/filter.md) · [doc](autodocs/filter.doc) |
 | icon.library | `LIBS:` | icons: the picture a file is shown with and its fields; the default that fits a file without one | [md](autodocs/icon.md) · [doc](autodocs/icon.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |
+| pci.library | `LIBS:` | PCI Express: every function behind every bridge of the board's host bridges, their memory placed, found by class and claimed by a driver; MSI and MSI-X; a function reset (RISC-V 64 disk) | [md](autodocs/pci.md) · [doc](autodocs/pci.doc), [`pci.zig`](../libs/pci/pci.zig) |
 | rdb.library | `LIBS:` | a disk's RigidDiskBlock and partitions | [md](autodocs/rdb.md) · [doc](autodocs/rdb.doc) |
 | modbus.library | `LIBS:` | Modbus over RTU and TCP, as a client and as a server | [md](autodocs/modbus.md) · [doc](autodocs/modbus.doc) |
 | tls.library | `LIBS:` | TLS 1.3 and 1.2 sessions over a connected socket, the server's certificates checked | [md](autodocs/tls.md) · [doc](autodocs/tls.doc) |
@@ -162,20 +163,23 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | keyboard.device | ROM | the keyboards, as raw keys, from sources | [`keyboard.zig`](../devices/keyboard.zig) |
 | mouse.device | ROM | the mice, as raw events, from sources | [`mouse.zig`](../devices/mouse.zig) |
 | touch.device | ROM | a touch panel, as contacts | [`touch.zig`](../devices/touch.zig) |
-| serial.device | ROM | the chip's UARTs, a unit each | [`serial.zig`](../devices/serial.zig) |
+| serial.device | ROM | the chip's UARTs, a unit each; the console's UART on a RISC-V 64 machine | [`serial.zig`](../devices/serial.zig) |
 | usbserial.device | ROM | the USB-Serial-JTAG port, with serial.device's API | [`usbserial.zig`](../devices/usbserial.zig) |
-| flash.device | ROM | the flash chip as a block device; unit 0 is the flash disk | [`trackdisk.zig`](../devices/trackdisk.zig) |
+| flash.device | ROM | the flash chip as a block device; unit 0 is the flash disk - on a RISC-V 64 machine the disk image the loader put in RAM | [`trackdisk.zig`](../devices/trackdisk.zig) |
 | i2c.device | ROM | the two I2C controllers | [`i2c.zig`](../devices/i2c.zig) |
 | audio.device | ROM | four channels of sound | [`audio.zig`](../devices/audio.zig) |
-| sdcard.device | `DEVS:` | the card slot as a block device | [`trackdisk.zig`](../devices/trackdisk.zig) |
+| sdcard.device | `DEVS:`; ROM on the VisionFive 2 | the card slot as a block device; in the ROM, the card's partitions as disks to start from | [`trackdisk.zig`](../devices/trackdisk.zig) |
+| nvme.device | `DEVS:` | NVMe SSDs on PCI Express as block devices, a unit a namespace, with TRIM; their drives mounted when it starts (RISC-V 64 disk) | [`trackdisk.zig`](../devices/trackdisk.zig) |
 | rs485.device | `DEVS:` | the RS-485 port, in frames | [`rs485.zig`](../devices/rs485.zig) |
 | clipboard.device | `DEVS:` | what is cut, copied and pasted, a unit a clip | [`clipboard.zig`](../devices/clipboard.zig) |
 | telnet.device | `DEVS:` | a TCP connection as a stream, for a console | [`telnet.zig`](../devices/telnet.zig) |
 | ssh.device | `DEVS:` | an SSH connection as a stream, either end: the server's for a console, the client's for a shell elsewhere | [`ssh.zig`](../devices/ssh.zig), [`ssh/keys.zig`](../devices/ssh/keys.zig) |
 | openeth.device | `DEVS:networks/` | QEMU's Ethernet | [`network.zig`](../devices/network.zig) |
+| emac.device | `DEVS:networks/` | the chip's own Ethernet MAC: the ESP32-P4's on RMII, the JH7110's gigabit GMAC on RGMII | [`network.zig`](../devices/network.zig) |
 | esp32s3wifi.device | `DEVS:networks/` | the ESP32-S3's Wi-Fi, WPA2 | [`network.zig`](../devices/network.zig), [`wireless.zig`](../devices/wireless.zig) |
 | slip.device | `DEVS:networks/` | IP over a serial line (SLIP), on any device with serial.device's API | [`network.zig`](../devices/network.zig), [`slip.zig`](../devices/slip.zig) |
-| usbotg.device | `DEVS:` | the chip's USB OTG controller as a USB host controller, a unit per socket | [`usbhc.zig`](../devices/usbhc.zig) |
+| usbotg.device | `DEVS:` | the chip's USB OTG controller as a USB host controller, a unit per socket (the ESP32s' disks) | [`usbhc.zig`](../devices/usbhc.zig) |
+| xhci.device | `DEVS:` | an xHCI controller on PCI Express as a USB host controller (RISC-V 64 disk) | [`usbhc.zig`](../devices/usbhc.zig) |
 | usb/hid.device | `DEVS:usb/` | USB keyboards, mice and tablets, into keyboard.device and mouse.device; a class driver | [md](autodocs/usbclass.md) · [doc](autodocs/usbclass.doc), [`usbclass.zig`](../devices/usbclass.zig) |
 | usb/disk.device | `DEVS:usb/` | USB sticks and card readers as block devices, a unit a drive (`DU<n>:`), and SCSI commands to them; a class driver | [`trackdisk.zig`](../devices/trackdisk.zig), [`scsidisk.zig`](../devices/scsidisk.zig) |
 | usb/ftdi.device | `DEVS:usb/` | FTDI's USB serial chips, a unit a line, with serial.device's API; a class driver | [`serial.zig`](../devices/serial.zig), [`serialunit.zig`](../devices/serialunit.zig) |
@@ -213,7 +217,7 @@ its device is used.
 | pipe-handler | ROM | `PIPE:`, a pipe between two processes | dos.library |
 | nil-handler | ROM | `NIL:`, which swallows what is written | dos.library |
 | flashfs-handler | ROM | `DH0:` and every partition of type `FLS\0` | [`flashfs.zig`](../libs/dos/flashfs.zig) |
-| fat-handler | `HANDLERS:` | `SD0:`, FAT32 and exFAT on a card | dos.library |
+| fat-handler | `HANDLERS:`; ROM on the VisionFive 2 | `SD0:`, FAT32 and exFAT on a card, a stick or a partition | dos.library |
 | posfs-handler | `HANDLERS:` | posfs, `POS\0` and `POS\1`: a partition of the flash disk, a card, a stick | [posfs guide](guides/posfs.md), [`packets.zig`](../libs/dos/posfs/packets.zig) |
 
 ## intuition's classes

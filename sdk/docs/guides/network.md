@@ -608,7 +608,8 @@ caller's task, and queues everything else to the device's task, where
   part gets no device, and the interface file for it is skipped.
 - **What the hardware reaches is internal memory.** A MAC that reads and
   writes its buffers by DMA gets them in one block the init allocates
-  with `MEMF_INTERNAL`, beside the interrupt server; the base, which
+  with `MEMF_INTERNAL` - and `MEMF_DMA` on a RISC-V 64 machine, whose
+  DMA reaches only the RAM below 4 GiB - beside the interrupt server; the base, which
   MakeLibrary puts in external memory, holds only the pointer to it.
 - **A queued request is a message.** A request queued with `AddTail` has
   its node's type set to `.message`, or `WaitIO` on it returns at once.

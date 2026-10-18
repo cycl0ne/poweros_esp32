@@ -1,6 +1,6 @@
 # USB
 
-A USB socket on a board is a bus: the chip's controller is its host, and
+A USB socket on a board is a bus: the machine's controller is its host, and
 keyboards, mice, sticks and hubs are plugged into it and pulled out while
 the system runs. `usb.library`, in `LIBS:`, runs a bus: it finds what is
 plugged in, gives each device an address and a configuration, drives
@@ -25,17 +25,22 @@ and writing a controller.
                              |  USBClassBind, USBClassUnbind (DEVIF_USBCLASS)
  the bus                usb.library: a process per bus, hubs, pipes
                              |  DEVIF_USBHC: UHCMD_CONTROLXFER, ...
- the controller         usbotg.device (the chip's DWC2), a unit per socket
-                             |  OwnUSBPort, ReleaseUSBPort
- the port               usbport.resource (ROM): who holds the chip's USB ports
-                             |
- the board              PARTKIND_USB in its system tag list
+ the controller         usbotg.device (the chip's      xhci.device (xHCI on PCI),
+                        DWC2), a unit per socket       a unit per controller
+                             |  OwnUSBPort,                 |  ClaimPCIDevice
+                             |  ReleaseUSBPort              |
+ the port, PCI          usbport.resource (ROM):        pci.library: the
+                        who holds the chip's ports     machine's PCI functions
+                             |                              |
+ the board              PARTKIND_USB in its system tag list, PARTKIND_PCI
 ```
 
 | Piece | Where | What it is |
 |---|---|---|
 | `usbport.resource` | ROM | who holds each of the chip's USB ports, and which controller it is given to |
-| `usbotg.device` | `DEVS:` | the chip's USB OTG controller as a host controller: transfers to devices on its bus, its root port answered as a hub |
+| `usbotg.device` | `DEVS:` | the chip's USB OTG controller as a host controller: transfers to devices on its bus, its root port answered as a hub; on the ESP32s' disks |
+| `xhci.device` | `DEVS:` | xHCI controllers on PCI as host controllers - the VisionFive 2's VL805, QEMU's qemu-xhci - a unit per controller, its USB 2 root ports answered as a hub; on the RISC-V 64 disk |
+| `pci.library` | `LIBS:` | the machine's PCI functions, among which xhci.device finds its controllers ([pci](../autodocs/pci.md)); on the RISC-V 64 disk |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
 | `usb/hid.device` | `DEVS:usb/` | keyboards, mice and tablets, into keyboard.device and mouse.device |
 | `usb/disk.device` | `DEVS:usb/` | sticks and card readers (mass storage, SCSI over Bulk-Only) as block devices, a drive `DU<n>:` each |
@@ -62,7 +67,8 @@ USB                ; which buses run
 
 `S:Startup-Sequence` runs `USB AUTO` before the desktop comes up, so on a
 board whose keyboard and mouse are USB - the ESP32-P4-PC, whose four
-USB-A sockets are behind a hub - they work from the first picture on. A
+USB-A sockets are behind a hub, and the VisionFive 2 - they work from the
+first picture on. A
 socket that is also the console's - the ESP32-S3 boards', whose one USB
 port is the serial console and the JTAG as the chip starts - is left to
 `USB START` by hand.
@@ -92,6 +98,10 @@ On the ESP32-P4 each controller has a port of its own - USB-Serial-JTAG
 port 0, the full-speed OTG controller port 1, the high-speed one port 2
 - and nothing is switched; the resource only keeps who holds which.
 
+A controller on PCI has no port to share. xhci.device bids for none: its
+root ports are its own, and its bus is the board's `PARTKIND_USB` part
+on `BUS_PCI`, the nth xHCI function pci.library found (`PART_BusUnit`).
+
 A started bus has a process of its own. It sets up the root hub, then
 each device as it comes: the port debounced and reset, the device asked
 at address 0 for its first eight bytes, given an address, asked for its
@@ -108,6 +118,8 @@ and its address is free again.
 | CrowPanel | USB-C, wired as a device | - |
 | 7B, ES3C35P | the console's USB-C | by hand (`USB START`), the console giving up the port; not yet tried on the boards |
 | QEMU | the emulator's DWC2, with what `-Dusb` plugs in | started at boot |
+| VisionFive 2 | four USB-A on the VL805, an xHCI controller on PCI Express port 0, their USB 2 lines through the VL805's own hub | started at boot; the hub, keyboards and mice work; USB 2 only, so a USB 3 device is reached at high speed |
+| QEMU's RISC-V virt | qemu-xhci, with `-device qemu-xhci` on QEMU's command line | started at boot when the controller is there |
 
 **Speeds.** The ESP32-S3's port and the P4's full-speed controller run
 at full speed, 12 Mbit/s, a low-speed device on them at 1.5 Mbit/s. The
@@ -116,7 +128,12 @@ plugged in has it. Behind a high-speed hub - the ESP32-P4-PC's - a full-
 or low-speed device, most keyboards and mice, is reached through the
 hub's transaction translator: the controller sends it split
 transactions, a packet at a time, and the hub talks to it at its own
-speed. `USBInfo` shows each device's speed.
+speed. An xHCI controller's USB 2 root ports run at high, full or low
+speed, as what is plugged in has it; its USB 3 ports are not driven, and
+a USB 3 device is reached on its USB 2 half. Behind a high-speed hub,
+xhci.device tells the controller which hub and port a full- or
+low-speed device hangs off, and the controller does the split
+transactions itself. `USBInfo` shows each device's speed.
 
 ## What is on it
 
@@ -474,6 +491,30 @@ interval, the hub a low- or full-speed device hangs off, the setup
 packet of a control transfer, the data and its toggle. The controller
 keeps no table of devices.
 
+A controller whose hardware does keep one works it out from the bus's
+own requests. An xHCI controller wants a device slot for each device,
+made before the device has an address and told where in the tree it is,
+and xhci.device follows the bus:
+
+- A hub's port reset - the root hub's, or one sent to a hub on the bus -
+  says where the next device is, and whatever was on that port before
+  is let go.
+- The first request to address 0 after it is for that device: a slot is
+  enabled and set up with the device's address held back (Address Device
+  with BSR), so the device answers its first descriptor at address 0.
+  The route and the root port come from the hub's slot, the speed and
+  the transaction translator from the request.
+- The `SET_ADDRESS` that follows is the controller's to send: the slot is
+  addressed for real, and the bus's address bound to it.
+- `SET_CONFIGURATION` has the configuration's endpoints added first, every
+  interface's first setting, from the configuration as it was last read
+  whole; an endpoint of another setting is added when a transfer names
+  it.
+- A hub's descriptor, once read, makes its slot a hub - its ports and its
+  TT think time - before anything behind it is reset.
+- A device its hub's port shows gone has its slot let go, and every slot
+  below it.
+
 - `UHCMD_CONTROLXFER`, `UHCMD_BULKXFER`, `UHCMD_INTXFER`;
   `UHCMD_ISOXFER` is in the set, `IOERR_NOCMD` until a controller does it.
 - An interrupt endpoint is asked once per interval: one with nothing
@@ -492,13 +533,15 @@ keeps no table of devices.
   port reaches at its own speed.
 - Errors are `UHIOERR_*`: a stall, a timeout, a device gone.
 
-A controller is found by its board part: `PARTKIND_USB`, its chip, which
-of the chip's controllers (`PART_BusUnit`), and how the socket is wired
+A controller is found by its board part: `PARTKIND_USB`, its chip -
+`StartUSB` opens usbotg.device for `CHIP_DWC2` and xhci.device for
+`CHIP_XHCI` - which of the chip's controllers (`PART_BusUnit`), and how
+the socket is wired
 - its roles (`PART_UsbRoles`), its speed (`PART_UsbSpeed`), where its
 5 V comes from (`PART_UsbVbus`), a hub's reset line (`PART_PinReset`),
 a switch that gives it its pads (`PART_PinSwitch`).
 
-A controller starts by bidding for its port with `OwnUSBPort`
+A controller that shares a port starts by bidding for it with `OwnUSBPort`
 (`sdk/resources/usbport.zig`): a `USBPortHandle` with its priority
 (`USBPORTPRI_HOST`), its name, the task and signals it is told by, its
 controller (`USBCTL_OTG`, the unit) and its role. A port held by someone
@@ -508,9 +551,22 @@ reads `state`: `USBPORT_HELD` once the port is switched to it. A
 controller that stops lets go with `ReleaseUSBPort(USBPORTF_REMOVE)`
 before it powers down, and the port goes to the next bidder.
 
+A controller on PCI starts with its function instead. xhci.device's
+first `OpenDevice` of a unit claims the function (`ClaimPCIDevice`),
+resets the controller, sets its rings up, hooks its interrupt - a
+message-signalled one (MSI or MSI-X) where pci.library gives it one, its
+INTx line otherwise - and runs it; the last `CloseDevice` answers every
+transfer and halts it. Everything the controller reads or writes is DMA
+memory below 4 GiB, in whole cache lines. For a controller that sees the
+processors' caches (pci.library's `dma_coherent`: the VL805, QEMU's), a
+fence each way orders it: what the driver wrote before the controller is
+told, what the controller wrote after the driver hears of it. For one
+that does not, it is written back before the controller is told and
+dropped from the caches before it is read.
+
 ## In QEMU
 
-`-Dusb` plugs QEMU's devices into the emulator's controller:
+`-Dusb` plugs QEMU's devices into the ESP32-S3 emulator's controller:
 
 ```sh
 ./zig build qemu-display -Dusb=usb-kbd,usb-mouse
@@ -540,3 +596,9 @@ usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
 `device_del usbstick` pulls it out, and another goes in with
 `drive_add 0 if=none,id=s2,format=raw,file=<image>` and
 `device_add usb-storage,drive=s2,id=stick2`.
+
+`./zig build virt` starts QEMU's RISC-V virt machine without a USB
+controller, so its bus does not start. A QEMU started with `-device
+qemu-xhci` has one, and `-device usb-kbd`, `-device usb-mouse` or a
+`usb-storage` device go on its bus; the machine's `USB AUTO` starts it at
+boot.

@@ -377,8 +377,11 @@ plugged in - and a posfs volume, or a partition table with a posfs
 partition, gives the drive (`SD0:`, `DU0:`) posfs-handler. The drive
 keeps it for the cards or sticks after. One that holds a RigidDiskBlock
 gets a drive per partition instead, each with the handler its DosType
-names - `POS\0` for posfs ([disks guide](rdb.md)). One that holds
-anything else gives the drive fat-handler; for posfs on it,
+names - `POS\0` for posfs ([disks guide](rdb.md)). An SSD is read the
+same way by nvme.device: `NV<n>:` gets posfs-handler for a posfs volume
+or a table with a posfs partition, and a RigidDiskBlock a drive per
+partition. A card or a stick that holds anything else gives the drive
+fat-handler; for posfs on it,
 `DEVS:MountList` has a posfs `SD0:` entry, commented out, to copy into
 `DEVS:SD0` - with `DosType = 0x504F5301` (`POS\1`) the card keeps a
 partition table a PC knows - and a stick's goes into `DEVS:DU0` the same
