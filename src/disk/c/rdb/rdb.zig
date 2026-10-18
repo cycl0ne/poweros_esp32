@@ -49,7 +49,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "RDB";
-const VERSION_STRING = "\x00$VER: RDB 1.2 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: RDB 1.3 (18.10.2026)\r\n";
 
 const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K";
 const arg_device = 0;
@@ -277,7 +277,7 @@ fn showDrive(run: *Run, device: [*:0]const u8, unit: u32, geo: *const trackdisk.
         geo.sector_size,
         @as([*:0]const u8, @ptrCast(&size)),
     });
-    _ = Printf(dl, "  Geometry     %d cylinders, %d head(s), %d block(s) per track\n", .{
+    _ = Printf(dl, "  Geometry     %u cylinders, %u head(s), %u block(s) per track\n", .{
         geo.cylinders,
         geo.heads,
         geo.track_sectors,
@@ -298,7 +298,7 @@ fn showRdb(run: *Run, at: u32, table: *const hardblocks.RigidDiskBlock) void {
     const dl = run.dl;
     _ = Printf(dl, "\nRigidDiskBlock in block %d\n", .{at});
     _ = Printf(dl, "  Blocks       %d bytes\n", .{table.block_bytes});
-    _ = Printf(dl, "  Drive        %d cylinders, %d head(s), %d sector(s) per track\n", .{
+    _ = Printf(dl, "  Drive        %u cylinders, %u head(s), %u sector(s) per track\n", .{
         table.cylinders,
         table.heads,
         table.sectors,
@@ -307,7 +307,7 @@ fn showRdb(run: *Run, at: u32, table: *const hardblocks.RigidDiskBlock) void {
         table.rdb_blocks_lo,
         table.rdb_blocks_hi,
     });
-    _ = Printf(dl, "  Usable       cylinders %d to %d, %d block(s) each\n", .{
+    _ = Printf(dl, "  Usable       cylinders %u to %u, %u block(s) each\n", .{
         table.lo_cylinder,
         table.hi_cylinder,
         table.cyl_blocks,
@@ -385,7 +385,7 @@ fn partitionRow(run: *Run, block: u32, part: *const hardblocks.PartitionBlock) v
     var block_text: [12:0]u8 = @splat(0);
     _ = decimal(&block_text, block);
 
-    var cylinders: [16:0]u8 = @splat(0);
+    var cylinders: [25:0]u8 = @splat(0);
     var at = decimal(&cylinders, env.low_cyl);
     at += copy(cylinders[at..], " to ");
     at += decimal(cylinders[at..], env.high_cyl);
@@ -427,7 +427,7 @@ fn partitionDetail(run: *Run, part: *const hardblocks.PartitionBlock) void {
     const dl = run.dl;
     const env = &part.environment;
     _ = Printf(dl, "      Block size   %d bytes, %d sector(s) per block\n", .{ env.size_block, env.sector_per_block });
-    _ = Printf(dl, "      Geometry     %d surface(s), %d block(s) per track, interleave %d\n", .{
+    _ = Printf(dl, "      Geometry     %u surface(s), %u block(s) per track, interleave %u\n", .{
         env.surfaces,
         env.blocks_per_track,
         env.interleave,

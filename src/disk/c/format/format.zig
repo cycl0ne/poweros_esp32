@@ -54,7 +54,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Format";
-const VERSION_STRING = "\x00$VER: Format 1.3 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Format 1.4 (18.10.2026)\r\n";
 
 const template = "DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,POSFS/S,QUICK/S,BLOCKSIZE/K/N";
 const arg_device = 0;
@@ -71,9 +71,10 @@ const MSG_NOTFS = "%s is not a file system\n";
 const MSG_NOTFAT = "FAT32 and EXFAT are for a FAT drive, which %s is not\n";
 const MSG_NOTPOSFS =
     "%s is not mounted for posfs. Its DosType says which file system a drive\n" ++
-    "gets: on the flash, RDB CHANGE <drive> DOSTYPE POS and a reboot; for a card,\n" ++
-    "DosType = 0x504F5301 in DEVS:<drive>, then Assign <drive>: DISMOUNT and\n" ++
-    "Mount <drive>:\n";
+    "gets: on the flash disk, RDB CHANGE <drive> DOSTYPE POS and a reboot; on\n" ++
+    "another drive - a card, a stick - an entry in DEVS:<drive> with its Device\n" ++
+    "and Unit, Handler = posfs-handler and DosType = 0x504F5301 (0x504F5300 for\n" ++
+    "no partition table), then Assign <drive>: DISMOUNT and Mount <drive>:\n";
 const MSG_INITING = "Initializing disk...\n";
 const MSG_DONE = "Format complete.\n";
 

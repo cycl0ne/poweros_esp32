@@ -11,6 +11,13 @@ const _handle = @import("../handle/_handle.zig");
 /// may be in, which leaves room for a PartitionBlock each after it.
 const kept_blocks = hardblocks.RDB_LOCATION_LIMIT;
 
+/// The most cylinders a table counts, so that the last one's number and
+/// one more still fit the table's 32-bit fields.
+const max_cylinders: u64 = 0xFFFF_FFFF;
+
+/// The most blocks a cylinder of a fresh table is made of.
+const max_cyl_blocks: u32 = 1 << 31;
+
 /// Puts a fresh RigidDiskBlock for the whole medium in a handle, with no
 /// partitions.
 ///
@@ -30,9 +37,11 @@ const kept_blocks = hardblocks.RDB_LOCATION_LIMIT;
 ///
 /// BEHAVIOR:
 /// The table is made for the medium as TD_GETGEOMETRY tells it: blocks of
-/// the medium's own size, a cylinder of one block, and the first
-/// RDB_LOCATION_LIMIT blocks kept for the table - the RigidDiskBlock in
-/// the first, the PartitionBlocks after it - so every cylinder from there
+/// the medium's own size; a cylinder of one block, or on a medium of 2^32
+/// blocks or more, of the fewest blocks - 2, 4, 8 and so on - that leave
+/// fewer than 2^32 cylinders; and the first RDB_LOCATION_LIMIT blocks
+/// kept for the table - the RigidDiskBlock in the first, the
+/// PartitionBlocks after it - so every cylinder from the first past them
 /// to the end may be a partition's. It says nothing of its vendor or
 /// product; those fields are the program's to fill in.
 ///
@@ -52,8 +61,10 @@ const kept_blocks = hardblocks.RDB_LOCATION_LIMIT;
 /// afterwards.
 ///
 /// NOTES:
-/// A medium larger than 2^32 blocks has a table for the first 2^32 of
-/// them.
+/// A partition begins and ends on a cylinder, so on a medium of 2^32
+/// blocks or more it begins and ends on a multiple of the cylinder's
+/// blocks; the few blocks past the last whole cylinder are no
+/// partition's.
 ///
 /// BUGS:
 /// None known.
@@ -71,20 +82,22 @@ pub fn InitRDB(_: *RDBBase, handle: *rdb.RDBHandle) i32 {
     const private = _handle.handleOf(handle);
     const geometry = &handle.geometry;
     if (geometry.total_sectors < kept_blocks + 2) return rdb.RDBERR_RANGE;
-    const blocks: u32 = @intCast(@min(geometry.total_sectors, 0xFFFF_FFFF));
+    var cyl_blocks: u32 = 1;
+    while (geometry.total_sectors / cyl_blocks > max_cylinders and cyl_blocks < max_cyl_blocks) cyl_blocks *= 2;
+    const cylinders: u32 = @intCast(@min(geometry.total_sectors / cyl_blocks, max_cylinders));
 
     _handle.freePartitions(private);
     private.kept = .{};
     handle.rdb = .{
         .block_bytes = geometry.sector_size,
-        .cylinders = blocks,
-        .sectors = 1,
+        .cylinders = cylinders,
+        .sectors = cyl_blocks,
         .heads = 1,
-        .cyl_blocks = 1,
+        .cyl_blocks = cyl_blocks,
         .rdb_blocks_lo = 0,
         .rdb_blocks_hi = kept_blocks - 1,
-        .lo_cylinder = kept_blocks,
-        .hi_cylinder = blocks - 1,
+        .lo_cylinder = (kept_blocks + cyl_blocks - 1) / cyl_blocks,
+        .hi_cylinder = cylinders - 1,
     };
     handle.block = 0;
     handle.flags |= rdb.RDBF_CHANGED;

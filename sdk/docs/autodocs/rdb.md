@@ -238,9 +238,11 @@ table and one partition (RDB_LOCATION_LIMIT and two more).
 **BEHAVIOR**
 
 The table is made for the medium as TD_GETGEOMETRY tells it: blocks of
-the medium's own size, a cylinder of one block, and the first
-RDB_LOCATION_LIMIT blocks kept for the table - the RigidDiskBlock in
-the first, the PartitionBlocks after it - so every cylinder from there
+the medium's own size; a cylinder of one block, or on a medium of 2^32
+blocks or more, of the fewest blocks - 2, 4, 8 and so on - that leave
+fewer than 2^32 cylinders; and the first RDB_LOCATION_LIMIT blocks
+kept for the table - the RigidDiskBlock in the first, the
+PartitionBlocks after it - so every cylinder from the first past them
 to the end may be a partition's. It says nothing of its vendor or
 product; those fields are the program's to fill in.
 
@@ -263,8 +265,10 @@ afterwards.
 
 **NOTES**
 
-A medium larger than 2^32 blocks has a table for the first 2^32 of
-them.
+A partition begins and ends on a cylinder, so on a medium of 2^32
+blocks or more it begins and ends on a multiple of the cylinder's
+blocks; the few blocks past the last whole cylinder are no
+partition's.
 
 **BUGS**
 

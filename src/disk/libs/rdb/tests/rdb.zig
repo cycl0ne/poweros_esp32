@@ -36,6 +36,9 @@ const Medium = extern struct {
     /// The block size TD_GETGEOMETRY answers.
     sector_size: u32 = block_bytes,
     erases: u32 = 0,
+    /// The blocks TD_GETGEOMETRY says there are, when not 0: a large
+    /// disk, of which only the image's blocks are ever read or written.
+    claimed_blocks: u64 = 0,
     image: [medium_blocks * block_bytes]u8 = @splat(0xFF),
 };
 
@@ -84,10 +87,11 @@ fn serve(medium: *Medium, io: *exec.IOStdReq) i8 {
     switch (io.req.command) {
         trackdisk.TD_GETGEOMETRY => {
             const geometry: *trackdisk.DriveGeometry = @ptrCast(@alignCast(io.data.?));
+            const blocks: u64 = if (medium.claimed_blocks != 0) medium.claimed_blocks else size / medium.sector_size;
             geometry.* = .{
                 .sector_size = medium.sector_size,
-                .total_sectors = size / medium.sector_size,
-                .cylinders = @intCast(size / medium.sector_size),
+                .total_sectors = blocks,
+                .cylinders = @intCast(@min(blocks, 0xFFFF_FFFF)),
                 .cyl_sectors = 1,
                 .heads = 1,
                 .track_sectors = 1,
@@ -317,6 +321,54 @@ test "names and cylinders a partition may not have" {
 
     var text: [64]u8 = undefined;
     try testing.expectEqualStrings("DH0 DH1 DH2", names(rb, handle, &text));
+}
+
+test "a disk of 2^32 blocks or more gets cylinders of several blocks" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const rb = rig.rb;
+
+    const Case = struct { blocks: u64, cyl_blocks: u32, lo: u32, hi: u32 };
+    const cases = [_]Case{
+        // The most blocks one-block cylinders count, the last one's number
+        // and one more still 32-bit.
+        .{ .blocks = 0xFFFF_FFFF, .cyl_blocks = 1, .lo = 16, .hi = 0xFFFF_FFFE },
+        .{ .blocks = 1 << 32, .cyl_blocks = 2, .lo = 8, .hi = (1 << 31) - 1 },
+        // Just short of 16 TiB of 512-byte blocks: eight to a cylinder,
+        // and the five past the last whole one are no partition's.
+        .{ .blocks = (1 << 35) - 3, .cyl_blocks = 8, .lo = 2, .hi = 0xFFFF_FFFE },
+        .{ .blocks = 1 << 40, .cyl_blocks = 512, .lo = 1, .hi = (1 << 31) - 1 },
+    };
+    for (cases) |case| {
+        rig.medium.claimed_blocks = case.blocks;
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+        const table = &handle.rdb;
+        try testing.expectEqual(case.cyl_blocks, table.cyl_blocks);
+        try testing.expectEqual(case.cyl_blocks, table.heads * table.sectors);
+        try testing.expectEqual(case.lo, table.lo_cylinder);
+        try testing.expectEqual(case.hi, table.hi_cylinder);
+        try testing.expectEqual(@as(u32, case.hi) + 1, table.cylinders);
+
+        // A partition over all of it starts past the table's blocks and
+        // covers the disk to its last whole cylinder.
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "DH0", 0, 0, fls));
+        const env = &rb.FindPartition(handle, "DH0").?.block.environment;
+        try testing.expect(env.byteOf(0) >= hardblocks.RDB_LOCATION_LIMIT * block_bytes);
+        const end = env.byteOf(env.blocks()) / block_bytes;
+        try testing.expect(end <= case.blocks and case.blocks - end < case.cyl_blocks);
+    }
+}
+
+test "a partition's blocks, to the last cylinder a table can name" {
+    const DosEnvec = sdk.dos.filehandler.DosEnvec;
+    const top: DosEnvec = .{ .low_cyl = 0, .high_cyl = 0xFFFF_FFFF, .blocks_per_track = 2 };
+    try testing.expectEqual(@as(u64, 1 << 33), top.blocks());
+    const backwards: DosEnvec = .{ .low_cyl = 10, .high_cyl = 4 };
+    try testing.expectEqual(@as(u64, 0), backwards.blocks());
+    const one: DosEnvec = .{ .low_cyl = 7, .high_cyl = 7, .surfaces = 2, .blocks_per_track = 3 };
+    try testing.expectEqual(@as(u64, 6), one.blocks());
 }
 
 test "a rewritten chain goes in blocks the old one is not in, and the old one stays whole" {

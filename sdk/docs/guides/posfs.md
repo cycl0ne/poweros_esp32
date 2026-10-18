@@ -1,11 +1,11 @@
 # posfs
 
-posfs is the PowerOS file system: a journaling file system for a
-partition of the flash disk, an SD card or a USB stick, served by
-`posfs-handler`, which dos loads from `HANDLERS:` the first time a drive
-needs it. Its DosType is `POS\0` for a drive that is the volume, and
-`POS\1` for a card or a stick that begins with a partition table, the
-volume in its first partition of type 0x7F. It keeps directories, files
+posfs is the PowerOS file system: a journaling file system for any
+drive a block device serves - flash, a card, a stick, an SSD, a hard
+disk. Its handler is `posfs-handler`, which dos loads from `HANDLERS:`
+the first time a drive needs it. Its DosType is `POS\0` for a drive
+that is the volume, and `POS\1` for a drive that begins with a partition
+table, the volume in its first partition of type 0x7F. It keeps directories, files
 and free space in copy-on-write B+trees, writes every change to a journal before it
 answers, and never writes over a block that the volume's last durable
 state refers to. A power cut at any moment leaves a volume that mounts
@@ -100,7 +100,7 @@ kinds at once.
   before it gives a byte of it: a block that is not what was written
   fails the read with `ERROR_BAD_CHECKSUM` (-1 from Read), never with
   wrong bytes. On the flash a block is checked the first time it is read;
-  on a card or a stick, each time it is read from the medium.
+  on any other medium, each time it is read from it.
 - **Compression:** a file's data in chunks of 64 KiB, each compressed
   with LZ4 on its own, and stored in as few blocks as it then takes - only
   when that saves a block; data that does not shrink is stored as it is,
@@ -230,7 +230,7 @@ packet: a cut leaves the volume as it was before, or with it done.
 
 ## A medium that goes
 
-A card or a stick can be taken out at any moment. What was answered is
+A removable medium can be taken out at any moment. What was answered is
 in the volume's journal, and the next mount replays it; what an open
 file had not committed - written since its last close or flush - is
 lost, and its Close says so (`ERROR_DEVICE_NOT_MOUNTED`). The handle
@@ -253,8 +253,8 @@ no lock is left on it.
 - **Notification** (`StartNotify`) and **record locks** (`LockRecord`)
   work as on the other file systems. A format lets every watch wait for
   its name again, and gives back every record lock.
-- **AddBuffers** (`ACTION_MORE_CACHE`) sizes the cache of blocks on a
-  card or a stick: the mountlist's `Buffers`, or about 1 MiB without, 32
+- **AddBuffers** (`ACTION_MORE_CACHE`) sizes the cache of blocks on any
+  medium but the flash: the mountlist's `Buffers`, or about 1 MiB without, 32
   blocks at the least; the count is the drive's, kept for the next
   medium. On the flash, blocks are read through the mapping and nothing
   is cached: AddBuffers says the drive keeps no buffers.
@@ -341,7 +341,7 @@ DH1: volume "W", 752 blocks of 4096 bytes, checkpoint 36
 
 It finds the volumes itself - one that starts the image, the posfs
 partitions of a RigidDiskBlock anywhere in it, or the partition of type
-0x7F of a card's partition table - or takes `--offset` and `--length` in
+0x7F of a partition table - or takes `--offset` and `--length` in
 bytes. The volume is mounted without being written; what its journal
 holds after the newest checkpoint is replayed in memory, then checked.
 Every fault is printed. The exit code is 0 for none, 1 for faults, 2 for
@@ -387,10 +387,21 @@ table after the volume. `POSFS` makes Format refuse a drive that is not
 mounted for posfs, and say how to give it posfs: a format writes the
 file system of the handler the drive has, and never another.
 
-**A stick** needs nothing: usb/disk.device reads the first stick put
-into a unit, and a posfs volume, or a partition table with a posfs
-partition, gives the unit posfs-handler. The unit keeps it for the
-sticks after.
+**A stick** that holds posfs needs nothing: usb/disk.device reads the
+first stick put into a unit, and a posfs volume, or a partition table
+with a posfs partition, gives the unit posfs-handler. The unit keeps it
+for the sticks after. A stick that holds anything else gives the unit
+fat-handler; for posfs, `DEVS:DU0` gets an entry like the card's, with
+`Device = usb/disk.device` and the unit's number, and then, as for a
+card, `Assign DU0: DISMOUNT`, `Mount DU0:` and Format.
+
+**Any other drive** gets posfs the same way: an entry in
+`DEVS:<drive>` with `Handler = posfs-handler`, the drive's device and
+unit, and the DosType, then the drive dismounted and mounted. posfs asks of a device what every block device answers: its geometry,
+whether a medium is in and whether it changed, whether it is
+write-protected, reads and writes of whole sectors at 64-bit offsets,
+and `CMD_UPDATE`; `TDCMD_ERASE` on a medium with an erase unit, and the
+change interrupt where the device has one.
 
 A partition with no posfs volume on it mounts as "Not a DOS disk" and
 waits for `C:Format`. Format is refused while the drive has a lock or a
@@ -405,11 +416,11 @@ Format DRIVE SD0: NAME Films BLOCKSIZE 65536
 The block is a power of two from 1 to 64 KiB, a multiple of the
 device's sector, and on the flash of the 4 KiB erase sector; Format
 refuses any other with `ERROR_INVALID_ARGUMENT` before it writes. 4 KiB
-suits the flash and most cards. 16 to 64 KiB suits a large card or stick
-of large files: fewer extents per file and a smaller map of free space,
+suits the flash and most drives. 16 to 64 KiB suits a large drive of
+large files: fewer extents per file and a smaller map of free space,
 for more written at each checkpoint and more room left over in a file
-too large to keep in its leaf. 1 or 2 KiB, on a card, wastes the least
-on many small files.
+too large to keep in its leaf. 1 or 2 KiB, on a drive of 512-byte
+sectors, wastes the least on many small files.
 
 **Inhibit** (`ACTION_INHIBIT`, `C:Format` does it) writes a checkpoint
 and holds the drive busy until the inhibit is taken back; a lock taken
@@ -421,6 +432,7 @@ writing.
 | | |
 |---|---|
 | Volume | 64 blocks to 2^48 blocks |
+| A `POS\1` drive | its volume within the first 2^32 sectors, as a partition table counts: 2 TiB of 512-byte sectors, 16 TiB of 4 KiB ones; a `POS\0` drive has no such limit |
 | Block size | 1 to 64 KiB, a power of two; on flash a multiple of the 4 KiB erase sector |
 | Compression chunk | 64 KiB; nothing is compressed on a volume of 64 KiB blocks |
 | File | 2^64 bytes |
@@ -432,4 +444,7 @@ writing.
 
 - [dos guide](dos.md) - handlers, packets, notification and record locks.
 - [disks guide](rdb.md) - the partition table, and `C:RDB`.
-- `sdk/libs/dos/posfs/` - the structures on the medium, field by field.
+- [posfs's format](../../../docs/posfs.md) - the structures on the medium,
+  field by field, and how posfs keeps them: the journal, checkpoints,
+  replay, free space, snapshots, the check.
+- `sdk/libs/dos/posfs/` - those structures in code.

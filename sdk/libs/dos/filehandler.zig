@@ -95,10 +95,12 @@ pub const DosEnvec = extern struct {
     /// `Control = "8N1/NONE"` writes them.
     control: u32 = 0,
 
-    /// The blocks of the partition: (high_cyl - low_cyl + 1) cylinders.
+    /// The blocks of the partition: (high_cyl - low_cyl + 1) cylinders,
+    /// none when `high_cyl` is below `low_cyl`.
     pub fn blocks(env: *const DosEnvec) u64 {
-        const cylinders = env.high_cyl + 1 - env.low_cyl;
-        return @as(u64, cylinders) * env.surfaces * env.blocks_per_track;
+        if (env.high_cyl < env.low_cyl) return 0;
+        const cylinders = @as(u64, env.high_cyl - env.low_cyl) + 1;
+        return cylinders *| env.surfaces *| env.blocks_per_track;
     }
 
     /// The byte a block starts at on the medium.

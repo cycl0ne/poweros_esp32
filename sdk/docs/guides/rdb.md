@@ -34,10 +34,14 @@ that holds no table is recognised at once. A block is the medium's own
 block - 4096 bytes on the flash disk, its erase unit, so one structure
 can be rewritten without disturbing the next; 512 on a card.
 
-Cylinders are counted in the RigidDiskBlock's terms. A table the library
-makes has a cylinder of one block, so a cylinder number is a block
-number: the flash disk's `DH0` over cylinders 16 to 3583 is blocks 16 to
-3583.
+Cylinders are counted in the RigidDiskBlock's terms, `cyl_blocks`
+blocks each, and a partition is whole cylinders. The table's fields are
+32-bit, so a table names fewer than 2^32 cylinders. A table the library
+makes for a disk of fewer than 2^32 blocks has a cylinder of one block,
+so a cylinder number is a block number: the flash disk's `DH0` over
+cylinders 16 to 3583 is blocks 16 to 3583. A larger disk gets cylinders
+of the fewest blocks - 2, 4, 8 and so on - that leave fewer than 2^32 of
+them: 16 TiB of 512-byte blocks is cylinders of 16 blocks.
 
 ## Opening a disk
 
@@ -218,9 +222,10 @@ if (rb.WriteRDB(handle) != rdb.RDBERR_OK) return dos.RETURN_FAIL;
 ```
 
 `InitRDB` makes the table for the medium as the device describes it:
-blocks of the medium's own size, a cylinder of one block, the first 16
-blocks kept for the table, and every cylinder from there to the end
-usable. It drops every partition, and forgets the file system chains the
+blocks of the medium's own size, a cylinder of one block (or of several
+on a disk of 2^32 blocks or more), the first 16 blocks kept for the
+table, and every cylinder from the first past them to the end usable;
+the few blocks past the last whole cylinder are no partition's. It drops every partition, and forgets the file system chains the
 disk had - the new table has none. It answers `RDBERR_RANGE` for a
 medium of fewer than 18 blocks, too small for the table and one
 partition. As with every change, the disk keeps its old table until
