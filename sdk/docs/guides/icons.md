@@ -148,4 +148,6 @@ starts a program - a program's, and the tool, project and script
 defaults - asks for a 16 KiB stack (`STACK=16384`), what a command gets
 in a shell, so a program has the same stack opened from its icon as
 typed. Without them the disk has no icons of its own and the library's
-built-in ones stand in.
+built-in ones stand in. A picture the script gained since it last ran is
+not there until it runs again: the build leaves that one icon out and
+says which.

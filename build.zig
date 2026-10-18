@@ -175,9 +175,11 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/Shell.info", .picture = "utilities-terminal", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/HDToolBox.info", .picture = "drive-harddisk", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/MemMap.info", .picture = "computer", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "System/Docs/CPULoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/HDToolBox.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "System/Docs/MemMap.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
 };
 
 /// The size the desktop shows icons at on a board's screen - an eighth of
@@ -459,11 +461,18 @@ pub fn build(b: *std.Build) void {
         }
     }
     // The icons, from the pictures scripts/fetch-icons.sh drew at the
-    // board's size, when they are there.
+    // board's size, when they are there. An icon whose picture is
+    // missing - one the script gained since it last ran here - is left
+    // out until it runs again.
     if (iconsDir(b, iconSize(board))) |dir| {
         for (disk_icons) |one| {
+            const picture = b.pathJoin(&.{ dir, b.fmt("{s}.png", .{one.picture}) });
+            std.Io.Dir.cwd().access(b.graph.io, picture, .{}) catch {
+                std.log.info("no picture {s} (scripts/fetch-icons.sh): the disk has no {s}", .{ one.picture, one.path });
+                continue;
+            };
             const run = b.addRunArtifact(mkicon);
-            run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, b.fmt("{s}.png", .{one.picture}) }) });
+            run.addFileArg(.{ .cwd_relative = picture });
             const made_icon = run.addOutputFileArg(std.fs.path.basename(one.path));
             run.addArgs(one.fields);
             disks.addPrefixedFileArg(b.fmt("{s}=", .{one.path}), made_icon);
