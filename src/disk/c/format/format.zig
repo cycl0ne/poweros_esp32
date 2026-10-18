@@ -2,10 +2,12 @@
 //! Format: a fresh, empty volume over the medium in a drive, given a name.
 //! Built against the SDK only.
 //!
-//!   Format DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,QUICK/S
+//!   Format DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,POSFS/S,QUICK/S,BLOCKSIZE/K/N
 //!
 //!   Format DRIVE SD0: NAME Photos
 //!   Format DRIVE SD0: NAME Photos EXFAT
+//!   Format DRIVE DH1: NAME Work POSFS
+//!   Format DRIVE SD0: NAME Films BLOCKSIZE 65536
 //!
 //! DRIVE is the drive's device, with or without its colon; NAME the new
 //! volume's, without one: one to 30 characters, none of them `:` or `/`.
@@ -17,9 +19,18 @@
 //! with, in the form its DosType names. A FAT drive (`MSD`, `MSH`) writes
 //! FAT32 up to 32 GiB and exFAT past that, unless the DosType's last byte
 //! names one; FAT32 and EXFAT choose for this format, and only on a FAT
-//! drive. QUICK is accepted and changes nothing: every format here writes
-//! the volume's structures over the medium as it is, without erasing or
-//! reading it back.
+//! drive. A posfs drive (`POS\0`, `POS\1`) writes posfs. POSFS says that
+//! posfs is meant: on a drive mounted for another file system it writes
+//! nothing and says how the drive is given posfs - a format never changes
+//! the handler a drive was mounted with. QUICK is accepted and changes
+//! nothing: every format here writes the volume's structures over the
+//! medium as it is, without erasing or reading it back.
+//!
+//! BLOCKSIZE is the new volume's unit of allocation in bytes, a power of
+//! two (FormatTags's FORMAT_BlockSize): posfs's block, FAT's cluster.
+//! Without it the file system chooses by the partition and the medium's
+//! size. A size the file system or the medium cannot have is refused
+//! before anything is written.
 //!
 //! It asks before it does anything:
 //!
@@ -43,19 +54,26 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Format";
-const VERSION_STRING = "\x00$VER: Format 1.1 (17.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Format 1.3 (18.10.2026)\r\n";
 
-const template = "DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,QUICK/S";
+const template = "DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,POSFS/S,QUICK/S,BLOCKSIZE/K/N";
 const arg_device = 0;
 const arg_name = 1;
 const arg_fat32 = 2;
 const arg_exfat = 3;
-const arg_count = 5;
+const arg_posfs = 4;
+const arg_block_size = 6;
+const arg_count = 7;
 
 const MSG_INSERT = "Insert disk to be formatted in device %s\n";
 const MSG_PRESS = "Press RETURN to begin formatting or CTRL-C to abort: ";
 const MSG_NOTFS = "%s is not a file system\n";
 const MSG_NOTFAT = "FAT32 and EXFAT are for a FAT drive, which %s is not\n";
+const MSG_NOTPOSFS =
+    "%s is not mounted for posfs. Its DosType says which file system a drive\n" ++
+    "gets: on the flash, RDB CHANGE <drive> DOSTYPE POS and a reboot; for a card,\n" ++
+    "DosType = 0x504F5301 in DEVS:<drive>, then Assign <drive>: DISMOUNT and\n" ++
+    "Mount <drive>:\n";
 const MSG_INITING = "Initializing disk...\n";
 const MSG_DONE = "Format complete.\n";
 
@@ -87,10 +105,23 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = dl.PrintFault(dos.ERROR_INVALID_COMPONENT_NAME, COMMAND_NAME);
         return dos.RETURN_FAIL;
     }
-    if (argv[arg_fat32] != 0 and argv[arg_exfat] != 0) {
+    var switches: u32 = 0;
+    for ([_]usize{ arg_fat32, arg_exfat, arg_posfs }) |index| {
+        if (argv[index] != 0) switches += 1;
+    }
+    if (switches > 1) {
         _ = dl.PrintFault(dos.ERROR_TOO_MANY_ARGS, COMMAND_NAME);
         return dos.RETURN_FAIL;
     }
+    const block_size = rdargs.number(argv[arg_block_size]) orelse 0;
+    if (block_size < 0) {
+        _ = dl.PrintFault(dos.ERROR_BAD_NUMBER, COMMAND_NAME);
+        return dos.RETURN_FAIL;
+    }
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = dos.FORMAT_BlockSize, .data = @intCast(block_size) },
+        .{ .tag = sdk.utility.TAG_DONE, .data = 0 },
+    };
 
     // "SD0" and "SD0:" both name the device; the colon is what dos's
     // calls want, and what the messages read best with.
@@ -129,6 +160,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
         dos_type = fat.typeWithFormat(own, if (argv[arg_fat32] != 0) fat.FORMAT_FAT32 else fat.FORMAT_EXFAT);
     }
+    if (argv[arg_posfs] != 0 and !dos.posfs.isPosfsType(dosTypeOf(node))) {
+        _ = Printf(dl, MSG_NOTPOSFS, .{name});
+        return dos.RETURN_FAIL;
+    }
 
     // What can be told before the question is told then.
     var info: dos.InfoData = .{};
@@ -146,7 +181,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     if (!dl.Inhibit(name, true)) return fail(dl, dl.IoErr());
     _ = dl.PutStr(MSG_INITING);
-    const made = dl.Format(name, label, dos_type);
+    const made = dl.FormatTags(name, label, dos_type, &tags);
     const code = dl.IoErr();
     _ = dl.Inhibit(name, false);
     if (!made) return fail(dl, code);

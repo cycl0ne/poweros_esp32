@@ -142,7 +142,7 @@ fn loadOwnRoots(base: *TLSBase) void {
     const der: *[8192]u8 = @ptrCast(scratch);
     var path: [300]u8 = undefined;
     while (dl.ExNext(lock, &fib)) {
-        if (fib.dir_entry_type > 0) continue;
+        if (dos.isDirectory(fib.dir_entry_type)) continue;
         const name = nameOf(&fib.file_name);
         const prefix = own_directory ++ "/";
         if (prefix.len + name.len + 1 > path.len) continue;

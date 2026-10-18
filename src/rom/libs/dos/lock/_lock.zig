@@ -22,9 +22,15 @@
 //! - lockAction, for a call given a lock: the lock's handler, or for a
 //!   null lock the process's file system.
 //!
-//! Soft links are not followed and no requester is put up; a failure is
-//! the call's result and IoErr(). CurrentDir from a plain task is null,
-//! since a task has no current directory to swap.
+//! A soft link a name meets is followed (`Links`): the handler answers
+//! ERROR_IS_SOFT_LINK, ReadLink gives the path that takes the name's
+//! place, and the packet goes again with that path - to the same handler
+//! from the same directory, from the volume's root for a path that begins
+//! with a colon, or to wherever GetDeviceProc finds a path with a device of
+//! its own. After 16 links the answer is ERROR_TOO_MANY_LEVELS, which is
+//! also where a circle of links ends. A failure is the call's result and
+//! IoErr(). CurrentDir from a plain task is null, since a task has no
+//! current directory to swap.
 //!
 //! The examine calls: Examine, ExNext and ExamineFH, one object at a time
 //! into a FileInfoBlock; ExAll and ExAllEnd, many entries of a directory
@@ -62,8 +68,10 @@
 //! otherwise. The packet is ACTION_RENAME_OBJECT (source directory, source
 //! name, target directory, target name); the source is looked for along its
 //! multi-assign like any name, and the target goes into the first directory
-//! of its path, where a new file would go. A name over 255 characters is
-//! ERROR_LINE_TOO_LONG rather than cut, since a cut name is another object.
+//! of its path, where a new file would go. A soft link on either path is
+//! followed, the source's asked for first, with a count of its own for
+//! each. A name over 255 characters is ERROR_LINE_TOO_LONG rather than
+//! cut, since a cut name is another object.
 //!
 //! Pattern searches: MatchFirst, MatchNext and MatchEnd, with
 //! utility.library's patterns.
@@ -80,7 +88,10 @@
 //! cut to fit with its NUL and ERROR_BUFFER_OVERFLOW. Setting APF_DODIR
 //! before MatchNext adds an any-name level under the directory just found;
 //! when it is read through the directory comes once more with APF_DIDDIR.
-//! MatchEnd unlocks and frees the chain.
+//! An entry located through a soft link is reached as Lock reaches it;
+//! APF_DODIR on a soft link goes into nothing, as on a hard link to a
+//! directory without APF_FollowHLinks. MatchEnd unlocks and frees the
+//! chain.
 //!
 //! The device part of a pattern is literal, and a pattern is split at '/'
 //! before its groups are looked at, so a group can't hold a '/'. "*" and the
@@ -181,43 +192,152 @@ pub fn nameAction(db: *DosBase, name: [*:0]const u8, action: ActionCode, extra: 
     const dos_lib = db.iface();
     const sys = db.sys_base;
     if (db.utility_base.Strlen(name) > max_path) return failZero(db, dos.ERROR_LINE_TOO_LONG);
-    var dp = dos_lib.GetDeviceProc(name, null) orelse return 0;
+    var links: Links = .{ .db = db };
+    defer links.free();
+    var at: Place = .{ .path = name, .dp = dos_lib.GetDeviceProc(name, null) orelse return 0 };
     while (true) {
-        const port = dp.port orelse {
+        const port = at.dp.port orelse {
             // A volume with no handler behind it is one whose medium has
             // gone: ask for it back by name, and look again if the user
             // says to. A process told not to be asked, or a user who
             // gives up, gets the error as before.
-            dos_lib.FreeDeviceProc(dp);
-            if (askForVolume(db, name)) return failZero(db, dos.ERROR_DEVICE_NOT_MOUNTED);
-            dp = dos_lib.GetDeviceProc(name, null) orelse return 0;
+            dos_lib.FreeDeviceProc(at.dp);
+            if (askForVolume(db, at.path)) return failZero(db, dos.ERROR_DEVICE_NOT_MOUNTED);
+            at = .{ .path = at.path, .dp = dos_lib.GetDeviceProc(at.path, null) orelse return 0 };
             continue;
         };
         const args: [5]isize = if (extra.fh) |fh| blk: {
             fh.task = port;
-            break :blk .{ asArg(fh), asArg(dp.lock), asArg(name), 0, 0 };
-        } else .{ asArg(dp.lock), asArg(name), extra.arg3, extra.arg4, 0 };
+            break :blk .{ asArg(fh), asArg(at.dir()), asArg(at.path), 0, 0 };
+        } else .{ asArg(at.dir()), asArg(at.path), extra.arg3, extra.arg4, 0 };
         const answer = packets.exchange(sys, port, @intFromEnum(action), args) orelse {
-            dos_lib.FreeDeviceProc(dp);
+            dos_lib.FreeDeviceProc(at.dp);
             return failZero(db, dos.ERROR_NO_FREE_STORE);
         };
         if (answer.res1 != 0) {
-            dos_lib.FreeDeviceProc(dp);
+            dos_lib.FreeDeviceProc(at.dp);
             return answer.res1;
         }
-        if (!extra.retry or answer.res2 != dos.ERROR_OBJECT_NOT_FOUND or dp.flags & dos.DVPF_ASSIGN == 0) {
-            dos_lib.FreeDeviceProc(dp);
+        if (answer.res2 == dos.ERROR_IS_SOFT_LINK) {
+            const path = links.follow(port, at.dir(), at.path) orelse {
+                dos_lib.FreeDeviceProc(at.dp);
+                return 0;
+            };
+            if (!at.moveTo(db, path)) {
+                dos_lib.FreeDeviceProc(at.dp);
+                return 0;
+            }
+            continue;
+        }
+        if (!extra.retry or !at.own or answer.res2 != dos.ERROR_OBJECT_NOT_FOUND or at.dp.flags & dos.DVPF_ASSIGN == 0) {
+            dos_lib.FreeDeviceProc(at.dp);
             return failZero(db, answer.res2);
         }
         // The assign's next directory.
-        const next = dos_lib.GetDeviceProc(name, dp) orelse {
-            dos_lib.FreeDeviceProc(dp);
+        const next = dos_lib.GetDeviceProc(at.path, at.dp) orelse {
+            dos_lib.FreeDeviceProc(at.dp);
             return failZero(db, dos.ERROR_OBJECT_NOT_FOUND);
         };
-        if (next != dp) dos_lib.FreeDeviceProc(dp);
-        dp = next;
+        if (next != at.dp) dos_lib.FreeDeviceProc(at.dp);
+        at.dp = next;
     }
 }
+
+/// How many soft links one name is followed through before dos gives up
+/// with ERROR_TOO_MANY_LEVELS: more than any chain made on purpose, and
+/// the end of one that leads round in a circle.
+pub const max_links = 16;
+
+/// The soft links met on the way to an object, followed: the path each
+/// one's handler answers (ReadLink) takes the place of the name that met
+/// it. Two buffers of a path's length, allocated at the first link, take
+/// turns - the handler reads the name from one and writes the next path
+/// into the other.
+pub const Links = struct {
+    db: *DosBase,
+    memory: ?[*]u8 = null,
+    /// The buffer the last path went into.
+    which: usize = 0,
+    count: u32 = 0,
+
+    /// The path that takes the place of `name`, which met a soft link
+    /// from `lock` on the handler at `port`; null with IoErr -
+    /// ERROR_TOO_MANY_LEVELS after `max_links`, ERROR_LINE_TOO_LONG for a
+    /// path longer than dos takes, or what the handler answered.
+    pub fn follow(links: *Links, port: *MsgPort, lock: ?*FileLock, name: [*:0]const u8) ?[*:0]const u8 {
+        const db = links.db;
+        if (links.count == max_links) {
+            _ = failZero(db, dos.ERROR_TOO_MANY_LEVELS);
+            return null;
+        }
+        const memory = links.memory orelse blk: {
+            const block = db.sys_base.AllocVec(2 * link_room, exec.MEMF_ANY) orelse {
+                _ = failZero(db, dos.ERROR_NO_FREE_STORE);
+                return null;
+            };
+            links.memory = @ptrCast(block);
+            break :blk links.memory.?;
+        };
+        const other = links.which ^ 1;
+        const buffer = memory + other * link_room;
+        const length = db.iface().ReadLink(port, lock, name, buffer, link_room);
+        if (length == -2 or length >= link_room) {
+            _ = failZero(db, dos.ERROR_LINE_TOO_LONG);
+            return null;
+        }
+        if (length < 0) return null;
+        buffer[@intCast(length)] = 0;
+        links.which = other;
+        links.count += 1;
+        return @ptrCast(buffer);
+    }
+
+    pub fn free(links: *Links) void {
+        if (links.memory) |memory| links.db.sys_base.FreeVec(memory);
+        links.memory = null;
+    }
+};
+
+/// A path and its NUL.
+const link_room = max_path + 1;
+
+/// Where a packet about a name goes: the name, the handler and directory
+/// GetDeviceProc found for it, and - once a soft link sent the name to the
+/// volume's root - no directory.
+pub const Place = struct {
+    path: [*:0]const u8,
+    dp: *dos.DevProc,
+    /// Whether `path` is the name `dp` was found for: only then is an
+    /// assign's next directory the next place for it.
+    own: bool = true,
+    /// From the volume's root rather than `dp`'s directory.
+    from_root: bool = false,
+
+    /// The directory the path is from.
+    pub fn dir(at: *const Place) ?*FileLock {
+        return if (at.from_root) null else at.dp.lock;
+    }
+
+    /// On to the path a soft link gave: from the same directory, from the
+    /// volume's root when it begins with a colon, or from where
+    /// GetDeviceProc finds its device. False, with IoErr set and the place
+    /// as it was, when there is no such device.
+    pub fn moveTo(at: *Place, db: *DosBase, path: [*:0]const u8) bool {
+        var index: usize = 0;
+        while (path[index] != 0 and path[index] != ':') : (index += 1) {}
+        if (index != 0 and path[index] == ':') {
+            const dos_lib = db.iface();
+            const dp = dos_lib.GetDeviceProc(path, null) orelse return false;
+            dos_lib.FreeDeviceProc(at.dp);
+            at.* = .{ .path = path, .dp = dp };
+            return true;
+        }
+        at.path = path;
+        at.own = false;
+        if (index == 0 and path[0] == ':') at.from_root = true;
+        return true;
+    }
+};
 
 /// The volume a path names asked for by name - "Please insert volume X"
 /// - and true when the user gave up or nothing could ask.
@@ -330,73 +450,6 @@ pub fn clearOwner(fib: *FileInfoBlock) void {
 
 // --- ExAll ---
 
-/// The bytes of an ExAllData record's fields at a level, up to the end of
-/// its last one; the strings go after.
-///
-/// INPUTS:
-/// - `level` - ED_NAME .. ED_OWNER.
-fn fixedSize(level: i32) usize {
-    return switch (level) {
-        dos.ED_NAME => @offsetOf(ExAllData, "name") + @sizeOf(?[*:0]u8),
-        dos.ED_TYPE => @offsetOf(ExAllData, "type") + @sizeOf(i32),
-        dos.ED_SIZE => @offsetOf(ExAllData, "size") + @sizeOf(u64),
-        dos.ED_PROTECTION => @offsetOf(ExAllData, "prot") + @sizeOf(u32),
-        dos.ED_DATE => @offsetOf(ExAllData, "ticks") + @sizeOf(i32),
-        dos.ED_COMMENT => @offsetOf(ExAllData, "comment") + @sizeOf(?[*:0]u8),
-        else => @offsetOf(ExAllData, "owner_gid") + @sizeOf(u16),
-    };
-}
-
-/// Packs a FileInfoBlock's entry as an ExAllData record into the buffer at
-/// `pos.*`, aligned, its name (and comment) after its fields, and moves
-/// `pos.*` past it. Null, and `pos.*` unchanged, when it doesn't fit.
-///
-/// INPUTS:
-/// - `db` - dos.library's base, for utility.library.
-/// - `buffer` - the caller's ExAll buffer.
-/// - `size` - the buffer's size.
-/// - `pos` - where the next record may start.
-/// - `level` - which fields the record has.
-/// - `fib` - the entry.
-fn pack(db: *DosBase, buffer: [*]u8, size: usize, pos: *usize, level: i32, fib: *const FileInfoBlock) ?*ExAllData {
-    const utility_lib = db.utility_base;
-    const base = @intFromPtr(buffer);
-    const start = utility_lib.AlignUp(base + pos.*, @alignOf(ExAllData)) - base;
-    const name = fib.file_name[0..utility_lib.Strlen(@ptrCast(&fib.file_name))];
-    const comment = fib.comment[0..utility_lib.Strlen(@ptrCast(&fib.comment))];
-    const fixed = fixedSize(level);
-    const with_comment = level >= dos.ED_COMMENT;
-    const need = fixed + name.len + 1 + (if (with_comment) comment.len + 1 else 0);
-    if (start + need > size) return null;
-
-    const rec: *ExAllData = @ptrFromInt(base + start);
-    var text: [*]u8 = buffer + start + fixed;
-    rec.next = null;
-    @memcpy(text[0..name.len], name);
-    text[name.len] = 0;
-    rec.name = @ptrCast(text);
-    text += name.len + 1;
-    if (level >= dos.ED_TYPE) rec.type = fib.dir_entry_type;
-    if (level >= dos.ED_SIZE) rec.size = fib.size;
-    if (level >= dos.ED_PROTECTION) rec.prot = fib.protection;
-    if (level >= dos.ED_DATE) {
-        rec.days = fib.date.days;
-        rec.minute = fib.date.minute;
-        rec.ticks = fib.date.tick;
-    }
-    if (with_comment) {
-        @memcpy(text[0..comment.len], comment);
-        text[comment.len] = 0;
-        rec.comment = @ptrCast(text);
-    }
-    if (level >= dos.ED_OWNER) {
-        rec.owner_uid = fib.owner_uid;
-        rec.owner_gid = fib.owner_gid;
-    }
-    pos.* = start + need;
-    return rec;
-}
-
 /// One EXAMINE_OBJECT or EXAMINE_NEXT for the emulation. Null when the
 /// FileInfoBlock got an entry, else the error - returned rather than put in
 /// IoErr, which a plain task doesn't have.
@@ -472,7 +525,7 @@ pub fn emulate(db: *DosBase, lock: ?*FileLock, buffer: [*]u8, size: isize, level
             if (!db.utility_base.MatchPatternNoCase(pat, @ptrCast(&fib.file_name))) continue;
         }
         const mark = pos;
-        const rec = pack(db, buffer, room, &pos, level, fib) orelse {
+        const rec = dos.exall.pack(buffer, room, &pos, level, fib) orelse {
             // Not even one record fits: another call with this buffer would
             // answer the same, and a caller looping until false never ends.
             if (control.entries == 0) return endExAll(db, control, fib, dos.ERROR_BUFFER_OVERFLOW);
@@ -660,8 +713,31 @@ pub fn relLock(s: *Search, node: *AChain, name: [*:0]const u8) error{Failed}!*Fi
     const a = packets.exchange(s.db.sys_base, port, @intFromEnum(dos.ActionCode.locate_object), .{
         asArg(dir), asArg(name), dos.SHARED_LOCK, 0, 0,
     }) orelse return s.fail(dos.ERROR_NO_FREE_STORE);
-    if (a.res1 == 0) return s.fail(a.res2);
+    if (a.res1 == 0) {
+        if (a.res2 == dos.ERROR_IS_SOFT_LINK) return linkLock(s, port, dir, name);
+        return s.fail(a.res2);
+    }
     return @ptrFromInt(@as(usize, @bitCast(a.res1)));
+}
+
+/// A shared lock on what `name` in `dir` reaches through the soft link it
+/// met: Lock of the path the link's handler answers, from `dir` - so a
+/// link further on is followed as Lock follows it.
+///
+/// INPUTS:
+/// - `s` - the search, which gets the error on failure.
+/// - `port` - `dir`'s handler.
+/// - `dir` - the level's directory.
+/// - `name` - the entry's name.
+fn linkLock(s: *Search, port: *MsgPort, dir: *FileLock, name: [*:0]const u8) error{Failed}!*FileLock {
+    const dos_lib = s.db.iface();
+    var links: Links = .{ .db = s.db };
+    defer links.free();
+    const path = links.follow(port, dir, name) orelse return s.fail(lastError(s.db, dos.ERROR_IS_SOFT_LINK));
+    const old = dos_lib.CurrentDir(dir);
+    const l = dos_lib.Lock(path, dos.SHARED_LOCK);
+    _ = dos_lib.CurrentDir(old);
+    return l orelse s.fail(lastError(s.db, dos.ERROR_OBJECT_NOT_FOUND));
 }
 
 /// A shared lock on `name` with Lock, or the search's error set.

@@ -29,6 +29,8 @@ pub const console = @import("libs/console/console.zig");
 pub const gadgets = @import("libs/gadgets/gadgets.zig");
 pub const bsdsocket = @import("libs/bsdsocket/bsdsocket.zig");
 pub const crypto = @import("libs/crypto/crypto.zig");
+/// LZ4's block format (sdk/libs/lz4).
+pub const lz4 = @import("libs/lz4/lz4.zig");
 pub const diskfont = @import("libs/diskfont/diskfont.zig");
 /// The system's settings as files (ENV:Sys, ENVARC:Sys).
 pub const prefs = @import("libs/prefs/prefs.zig");

@@ -58,6 +58,7 @@ pub const rom_modules = .{
     @import("rom/handler/con/con.zig"),
     @import("rom/handler/pipe/pipe.zig"),
     @import("rom/handler/flashfs/flashfs.zig"),
+    @import("rom/handler/posfs/posfs.zig"),
     @import("rom/shell/shell.zig"),
     @import("rom/resources/watchdog/watchdog.zig"),
     @import("rom/resources/platform/platform.zig"),

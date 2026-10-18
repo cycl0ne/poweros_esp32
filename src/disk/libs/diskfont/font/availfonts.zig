@@ -175,7 +175,7 @@ fn visitDirectory(dfb: *DiskfontBase, dir: *dos.FileLock, into: *Collector) void
     const was = dl.CurrentDir(dir);
     defer _ = dl.CurrentDir(was);
     while (dl.ExNext(dir, &fib)) {
-        if (fib.dir_entry_type > 0) continue;
+        if (dos.isDirectory(fib.dir_entry_type)) continue;
         const name: [*:0]const u8 = @ptrCast(&fib.file_name);
         if (!endsInFont(name)) continue;
         var contents = _font.readContents(dfb, name);

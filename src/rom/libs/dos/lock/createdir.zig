@@ -29,7 +29,8 @@ const FileLock = dos.FileLock;
 /// BEHAVIOR:
 /// The name's handler is sent ACTION_CREATE_DIR with the directory the name
 /// is relative to and the whole name. On a multi-directory assign, the next
-/// directory is tried while the answer is ERROR_OBJECT_NOT_FOUND.
+/// directory is tried while the answer is ERROR_OBJECT_NOT_FOUND. A soft
+/// link on the way is followed as Lock follows it.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the handler's answer to a packet.

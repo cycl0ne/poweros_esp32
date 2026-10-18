@@ -501,4 +501,17 @@ bool Inhibit([*:0]const u8 drive, bool on)
 /// file system's own) in the format `dos_type` names (0: the drive's own):
 /// true, or false with IoErr. Inhibit the drive first.
 bool Format([*:0]const u8 drive, ?[*:0]const u8 name, u32 dos_type)
+// Links
+/// A link named `name`: for a hard one (`soft` false) `dest` is a lock on
+/// the object, on the same volume; for a soft one a path, kept as it is
+/// given. True, or false with IoErr.
+bool MakeLink([*:0]const u8 name, usize dest, bool soft)
+/// The path that takes the place of the soft link `path` met, from `lock`
+/// on the handler at `port`, written to `buffer`: its length, -1 with
+/// IoErr, or -2 when `size` bytes do not hold it.
+i32 ReadLink(*exec.MsgPort port, ?*dos.FileLock lock, [*:0]const u8 path, [*]u8 buffer, u32 size)
+// Drives, with tags
+/// Format with a tag list (FORMAT_*), null for none: true, or false with
+/// IoErr.
+bool FormatTags([*:0]const u8 drive, ?[*:0]const u8 name, u32 dos_type, ?[*]const utility.TagItem tags)
 ##end

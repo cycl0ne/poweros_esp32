@@ -46,7 +46,7 @@ const config_file = @import("config.zig");
 const Config = config_file.Config;
 
 pub const COMMAND_NAME = "AddNetInterface";
-const VERSION_STRING = "\x00$VER: AddNetInterface 1.6 (12.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddNetInterface 1.7 (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,QUIET/S,TIMEOUT/K/N,NOWAIT/S";
@@ -136,7 +136,7 @@ fn addAll(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, options: Options) i32 {
     if (!dl.Examine(lock, fib)) return dos.RETURN_OK;
     var result: i32 = dos.RETURN_OK;
     while (dl.ExNext(lock, fib)) {
-        if (fib.dir_entry_type > 0) continue;
+        if (dos.isDirectory(fib.dir_entry_type)) continue;
         result = @max(result, addOne(sys, dl, sb, @ptrCast(&fib.file_name), options, true));
     }
     return result;

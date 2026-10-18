@@ -306,15 +306,18 @@ plugged in is `DU0:` again.
 
 **The drive is made by the device.** The first time a medium comes into
 unit n, the device puts `DU<n>` on the device list, as a MountList
-entry would - fat-handler, the whole medium, DosType `MSH\0` - and
-starts the handler, which reads the stick's partition table and the
-boot sector of its first FAT partition and puts its volume on the list;
-the desktop shows it. A stick with no partition table needs a MountList
+entry would, and starts the handler, which reads the stick and puts its
+volume on the list; the desktop shows it. Which handler, the first
+stick's first block says: a posfs volume (`POS\0`) or a partition table
+with a posfs partition (`POS\1`) gives posfs-handler
+([posfs guide](posfs.md)); anything else fat-handler, the whole medium,
+DosType `MSH\0`, which reads the stick's partition table and the boot
+sector of its first FAT partition. A stick with no partition table needs a MountList
 entry of the unit's name with DosType `MSD\0`, mounted before it is
 plugged in, which then stands for the unit. The node stays from then on: a stick
 going takes only its volume, and the next one in the unit brings its
-own. Nothing in the MountList is needed, and nothing USB is loaded at
-boot where no stick is plugged in.
+own - read by the handler the unit got. Nothing in the MountList is
+needed, and nothing USB is loaded at boot where no stick is plugged in.
 
 **A card reader's slots** are looked at once a second (TEST UNIT
 READY): a card put in comes in as a stick does, one taken out goes.

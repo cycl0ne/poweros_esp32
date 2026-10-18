@@ -48,7 +48,7 @@ const idText = descriptor.idText;
 const textLen = descriptor.textLen;
 
 pub const COMMAND_NAME = "AddDataTypes";
-const VERSION_STRING = "\x00$VER: AddDataTypes 1.2 (15.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddDataTypes 1.3 (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILES/M,REFRESH/S,REMOVE/S,LIST/S,QUIET/S";
@@ -183,7 +183,7 @@ fn addAll(sys: *ExecBase, dl: *DosBase, ub: *UtilityBase, list: *datatypes.DataT
     if (!dl.Examine(lock, fib)) return;
     var path: [256]u8 = @splat(0);
     while (dl.ExNext(lock, fib)) {
-        if (fib.dir_entry_type > 0) continue;
+        if (dos.isDirectory(fib.dir_entry_type)) continue;
         const dir = datatypes.DATATYPES_DIR;
         @memcpy(path[0..dir.len], dir);
         path[dir.len] = '/';

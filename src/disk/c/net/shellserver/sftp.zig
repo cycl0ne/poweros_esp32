@@ -480,7 +480,9 @@ pub const Server = struct {
     }
 
     fn attrsFromFib(server: *Server, fib: *const dos.FileInfoBlock) sftp.Attrs {
-        const directory = fib.dir_entry_type > 0;
+        // A soft link in a listing is what it names to the client: Open
+        // and Lock follow it.
+        const directory = dos.isDirectory(fib.dir_entry_type);
         return .{
             .flags = sftp.ATTR_SIZE | sftp.ATTR_PERMISSIONS | sftp.ATTR_ACMODTIME,
             .size = if (directory) 0 else fib.size,

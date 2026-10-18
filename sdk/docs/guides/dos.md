@@ -44,8 +44,9 @@ with `dos`, `exec`, `rdargs`, `Printf` and `TagItem` standing for
     |
  dos.library    names to handlers, buffers, processes, the device list
     |  DosPacket (ACTION_FINDINPUT, ACTION_READ, ACTION_LOCATE_OBJECT ...)
- handler        flashfs-handler (DH0:), fat-handler (SD0:, DU0:), ram-handler,
-    |           con-handler (CON:, RAW:, AUX:), pipe-handler, nil-handler
+ handler        flashfs-handler and posfs-handler (DH0:, DH1: ...), fat-handler
+    |           (SD0:, DU0:), ram-handler, con-handler (CON:, RAW:, AUX:),
+    |           pipe-handler, nil-handler
  exec device    flash.device, sdcard.device, usb/disk.device, console.device,
                 serial.device
 ```
@@ -160,7 +161,7 @@ characters.
 |---|---|
 | `DH0:` | the flash disk's partition, volume `System` |
 | `SD0:` | the card in the slot, FAT32 or exFAT, mounted at boot on a board with a slot |
-| `DU0:`, `DU1:`, ... | a USB stick, or a card reader's slot, FAT32 or exFAT: made by usb/disk.device when the first one is plugged in, and kept ([USB guide](usb.md#sticks-and-card-readers)) |
+| `DU0:`, `DU1:`, ... | a USB stick, or a card reader's slot, FAT32, exFAT or posfs: made by usb/disk.device when the first one is plugged in, and kept ([USB guide](usb.md#sticks-and-card-readers)) |
 | `RAM:` | a file system in memory, volume `Ram Disk` |
 | `CON:`, `RAW:`, `AUX:` | [consoles](#consoles) |
 | `PIPE:` | pipes: `PIPE:name` meets whoever opens the same name |
@@ -216,7 +217,7 @@ entry in turn, and false at the end, with `IoErr()`
 | Field | Holds |
 |---|---|
 | `file_name` | the name, NUL-terminated |
-| `dir_entry_type` | above 0 a directory, below 0 a file (`ST_USERDIR`, `ST_FILE`, ...) |
+| `dir_entry_type` | a directory (`ST_ROOT`, `ST_USERDIR`, `ST_LINKDIR`) where `dos.isDirectory` says so, a file below 0 (`ST_FILE`, `ST_LINKFILE`), or a soft link (`ST_SOFTLINK`) |
 | `size`, `num_blocks` | its size in bytes and in blocks, 64-bit |
 | `protection` | the `FIBF_*` bits |
 | `date` | when it last changed, a `DateStamp` (`DateToStr` makes it text) |
@@ -228,7 +229,7 @@ defer dl.UnLock(dir);
 var fib: dos.FileInfoBlock = .{};
 if (!dl.Examine(dir, &fib)) return dos.RETURN_ERROR;
 while (dl.ExNext(dir, &fib)) {
-    const kind: [*:0]const u8 = if (fib.dir_entry_type > 0) "dir" else "file";
+    const kind: [*:0]const u8 = if (dos.isDirectory(fib.dir_entry_type)) "dir" else "file";
     _ = Printf(dl, "%s %s %lu\n", .{ @as([*:0]const u8, @ptrCast(&fib.file_name)), kind, fib.size });
 }
 if (dl.IoErr() != dos.ERROR_NO_MORE_ENTRIES) return dos.RETURN_ERROR;
@@ -241,7 +242,41 @@ answers true while more are to come, with `control.entries` records this
 time. The `ExAllControl` starts cleared, keeps the place, and can choose
 entries by a pattern (`match_string`, from utility.library's
 `ParsePatternNoCase`) or a hook (`match_func`); `ExAllEnd` stops a
-listing before its end.
+listing before its end. `C:test/ExAll DIR` lists a directory both ways,
+with ExAll and with ExNext, and checks that they agree.
+
+**A link** is another name. `MakeLink(name, dest, soft)` makes one
+named `name`, where nothing has that name yet:
+
+- A **soft link** (`soft` true, `dest` the address of a path, up to
+  `dos.path_max` characters) holds the path and nothing else, and the
+  path need not lead anywhere yet. A relative path is followed from the
+  directory the link is in, so a link that moves takes it along.
+- A **hard link** (`soft` false, `dest` the address of a lock) is the
+  locked file under a second name on the same volume
+  (`ERROR_RENAME_ACROSS_DEVICES` from another): either name opens it, and
+  it stays until its last name is deleted. A directory takes none
+  (`ERROR_OBJECT_WRONG_TYPE`).
+
+Every call that takes a name follows a soft link wherever the name meets
+one - `Lock`, `Open` and the others to its end, `DeleteFile`, `Rename`,
+`CreateDir` and the setters up to their last part, which they act on
+itself, so a link is deleted, renamed or protected as the link. A path
+with a device part goes to that device, one that begins with a colon
+from the root of the link's volume; after 16 links in one name the call
+fails with `ERROR_TOO_MANY_LEVELS`. `ReadLink(port, lock, path, buffer,
+size)` is the step dos takes for each, for a program that sends its own
+packets.
+
+A soft link is listed as `ST_SOFTLINK`, above 0 but no directory: code
+that walks a tree asks `dos.isDirectory` and takes a link as a leaf, so
+a link to a directory above it is no loop, and code that reads the files
+of one directory opens a link as the file it leads to. `C:List` shows
+`Link` for its size. `C:MakeLink FROM/A,TO/A,HARD/S,FORCE/S` makes soft
+links, and hard ones with `HARD`; without `FORCE` it makes a soft link
+only when `TO` is found from `FROM`'s directory. posfs keeps both kinds
+([posfs guide](posfs.md#links)); a file system without links - the flash
+disk, FAT, `RAM:` - answers `ERROR_ACTION_NOT_KNOWN`.
 
 ## Patterns
 
@@ -720,7 +755,7 @@ A handler is a process that answers the packets for the names of its
 node, started by dos the first time one of them is used. Its code is
 found by the node's handler name: among dos's resident segments, where
 the ROM's handlers are (`nil-handler`, `ram-handler`, `con-handler`,
-`pipe-handler`, `flashfs-handler`), or else as a file, a bare name from
+`pipe-handler`, `flashfs-handler`, `posfs-handler`), or else as a file, a bare name from
 `HANDLERS:`, where `fat-handler` is, unloaded again when the last
 process running it ends.
 
@@ -775,12 +810,51 @@ table replies it when the bytes come free or the time runs out. The
 timers of the waits come back on a port of the table's, which the
 handler waits on beside its packets and empties with `collect`.
 
+A file system that lists a directory itself answers
+`ACTION_EXAMINE_ALL` (`args.examine_all`: the lock, the buffer and its
+size, the level and the `ExAllControl`) and `ACTION_EXAMINE_ALL_END`.
+It fills a `FileInfoBlock` per entry as for `ACTION_EXAMINE_NEXT` and
+packs it with `dos.exall.pack`, so its records come out as those of a
+listing dos makes. It keeps its place in `control.last_key`, tries
+`match_string` before packing (utility's `MatchPatternNoCase`) and
+`match_func` after (`CallHookPkt`, with the level and the record),
+takes back the room of an entry either leaves out, answers
+`ERROR_BUFFER_OVERFLOW` when not even one record fits, and sets
+`last_key` to 0 at the end and at `ACTION_EXAMINE_ALL_END`. A handler
+that answers `ERROR_ACTION_NOT_KNOWN` gets the listing made for it by
+dos, from `ACTION_EXAMINE_OBJECT` and `ACTION_EXAMINE_NEXT`.
+
+A file system with links answers `ACTION_MAKE_LINK` (`args.make_link`:
+the directory, the name, the lock or the path, `LINK_HARD` or
+`LINK_SOFT`) and `ACTION_READ_LINK` (`args.read_link`: the directory,
+the name, the buffer and its size). A packet whose name meets a soft
+link - before its last part, or at its end for a packet that gives a
+lock or a handle - answers `DOSFALSE` with `ERROR_IS_SOFT_LINK`, and dos
+sends `ACTION_READ_LINK` with the same directory and name. The handler
+answers the link's path with what of the name came after the link added
+behind it, NUL-terminated in the buffer, and its length in `res1`; -1
+with the error in `res2`, or -2 when the buffer is too small. dos takes
+the answer as a name from the same directory on the same handler, from
+the volume's root when it begins with a colon, or on another device when
+it has a device part, and sends the packet again.
+
+**A handler's own packets** - what only it does - take the action
+numbers just past its DosType: `ID + 1`, `ID + 2`, ... (posfs's are
+`ID_POSFS_DISK + n`, in `dos.posfs.packets`). No list of them is kept
+anywhere, and none is needed: every other handler answers such a number
+`ERROR_ACTION_NOT_KNOWN`. A program sends one only to a drive whose
+`.disk_info` gives that `disk_type`. Its structure goes in `args.raw[0]`
+and starts with its own size, which the program sets: the handler reads
+and fills only as many bytes as the size says, so a program built against
+a shorter structure keeps working with a handler that has grown it.
+
 ## Disks at boot
 
 dos does not look for disks. A disk's driver reads its RigidDiskBlock
 and makes a device node per partition with expansion.library's
 `MakeDosNode`, named as the partition says and with the handler its
-DosType asks for (`FLS\0` flashfs-handler, `MSD` and `MSH` fat-handler), and
+DosType asks for (`FLS\0` flashfs-handler, `POS\0` posfs-handler, `MSD`
+and `MSH` fat-handler), and
 hands it over with `AddBootNode`. `flash.device` does this at cold
 start, before dos is up, so expansion.library keeps the nodes until
 dos's init takes them in with `EnterBootNodes`; a node handed over later
@@ -806,7 +880,9 @@ that is the volume itself, from its first block, and `MSH` for one that
 begins with a partition table, whose first FAT partition is the volume
 - a card or a stick as it is sold. Its last byte is the format a format
 writes (`sdk.dos.fat`): 0 FAT32 up to 32 GiB and exFAT past that, 1
-FAT32, 2 exFAT.
+FAT32, 2 exFAT. A posfs drive's is `POS\0` for a drive that is the
+volume, and `POS\1` for one that begins with a partition table, whose
+first partition of type 0x7F is the volume (`sdk.dos.posfs.table`).
 
 `Relabel(drive, name)` - and `C:Relabel DRIVE/A,NAME/A` - gives a volume
 a new name, which its handler writes where its format keeps one: the
@@ -829,17 +905,34 @@ area, named `name` (null for none on FAT, `Empty` on the flash disk), in
 the format `dos_type` names - 0 for the drive's own. A handler refuses a
 format while the drive's volume is in use, and everything it can refuse
 - a name its format cannot hold, a format the area is too small for - it
-refuses before it writes. On a FAT drive whose DosType is `MSH` it
+refuses before it writes. `FormatTags(drive, name, dos_type, tags)` is
+the same with a tag list (`dos.dostags`); its `FORMAT_BlockSize` asks
+for the unit the volume gives out space in, in bytes, where the handler
+otherwise picks one by the volume's size:
+
+| File system | `FORMAT_BlockSize` |
+|---|---|
+| posfs | the block: a power of two from 1 to 64 KiB, a multiple of the device's sector, on the flash of the 4 KiB erase sector |
+| FAT32 | the cluster: a power of two from a sector to 32 KiB, with at least 65525 of them on the volume |
+| exFAT | the cluster: a power of two from a sector to 32 MiB |
+| flash disk | not taken |
+
+A size the volume cannot have is refused with `ERROR_INVALID_ARGUMENT`,
+except on a FAT drive whose format goes by the card's size, which takes
+exFAT when FAT32 cannot have that cluster. Large units suit a large
+volume of large files: fewer runs to find, a smaller map of what is
+free, and more room left over at the end of each file. On a FAT drive whose DosType is `MSH` it
 writes a partition table too, with one partition from 4 MiB on (16 MiB
 past 32 GiB, 32 MiB past 512 GiB, never more than a 64th of the card),
 where cards keep their volume; the volume's clusters are laid on the
 same boundary. On the flash disk a format erases one sector, the
 superblock's: the new log starts at the turn after the last one on the
 flash, so what the volume before left is not the new one's, and its
-sectors are erased one by one as the log comes to them. `C:Format DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,QUICK/S`
+sectors are erased one by one as the log comes to them. `C:Format DRIVE=DEVICE/K/A,NAME/K/A,FAT32/S,EXFAT/S,POSFS/S,QUICK/S,BLOCKSIZE/K/N`
 asks first, then inhibits, formats and lets the drive go, and waits
 until it shows the new volume; FAT32 and EXFAT choose the format on a
-FAT drive. `s3> format <device> <name>` does the same from the ROM's
+FAT drive, POSFS refuses a drive not mounted for posfs, with how to
+give it posfs, and BLOCKSIZE gives `FORMAT_BlockSize`. `s3> format <device> <name>` does the same from the ROM's
 debug shell, for a disk with no `C:` on it yet.
 
 **A card or stick can go at any moment** - pulled out, the power cut -
@@ -869,8 +962,10 @@ BUFFERS it only asks. fat-handler's cache holds a card's table and
 directory blocks, never a file's bytes. It starts at the mountlist's
 `Buffers` (32 when there is none), never goes below 4, and the count is
 the handler's rather than the card's: the card in the slot has its cache
-changed at once, and the next one starts at the same size. The flash
-file system and `RAM:` keep no buffers - one reads the flash through its
+changed at once, and the next one starts at the same size. posfs on a
+card or a stick keeps a cache of its blocks the same way, a megabyte's
+worth to start, 32 blocks at the least. The file systems on the flash
+and `RAM:` keep no buffers - the first read the flash through its
 mapping, the other is memory - and answer `ERROR_ACTION_NOT_KNOWN`,
 which AddBuffers prints as `DH0: keeps no buffers`.
 

@@ -26,7 +26,9 @@ const FileHandle = dos.FileHandle;
 /// RESULT:
 /// The number of bytes read; 0 at the end of the file; -1 on an error, with
 /// `IoErr()` set (`ERROR_INVALID_LOCK` for a null handle or one without a
-/// handler, `ERROR_NO_FREE_STORE`, or the handler's code).
+/// handler, `ERROR_NO_FREE_STORE`, or the handler's code -
+/// `ERROR_BAD_CHECKSUM` from a file system that checks what it reads
+/// against what it wrote).
 ///
 /// BEHAVIOR:
 /// What the handle already holds comes first: pushed-back characters, then

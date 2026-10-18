@@ -60,6 +60,7 @@ Generated from the source by `./zig build autodoc`.
 - [FindVar](#findvar) - Finds a process's local variable or alias by name.
 - [Flush](#flush) - Empties a file handle's buffer.
 - [Format](#format) - Writes a fresh, empty volume over the medium in a drive.
+- [FormatTags](#formattags) - Writes a fresh, empty volume over the medium in a drive, as a tag list says.
 - [FreeArgs](#freeargs) - Frees what ReadArgs allocated.
 - [FreeDeviceProc](#freedeviceproc) - Frees a DevProc GetDeviceProc gave.
 - [FreeDosEntry](#freedosentry) - Frees a node MakeDosEntry made.
@@ -87,6 +88,7 @@ Generated from the source by `./zig build autodoc`.
 - [LockRecords](#lockrecords) - Locks a series of records.
 - [LockSegmentList](#locksegmentlist) - Locks the resident segment list and returns its first segment.
 - [MakeDosEntry](#makedosentry) - Makes a device list node with a copy of its name.
+- [MakeLink](#makelink) - Makes a link: a second name for an object, or a name for a path.
 - [MatchEnd](#matchend) - Ends a pattern search, freeing what it holds.
 - [MatchFirst](#matchfirst) - Starts a pattern search and finds the first object the pattern names.
 - [MatchNext](#matchnext) - Finds the next object a pattern search names.
@@ -106,6 +108,7 @@ Generated from the source by `./zig build autodoc`.
 - [Read](#read) - Reads up to `length` bytes from a file.
 - [ReadArgs](#readargs) - Parses a command line by a template into the caller's slots.
 - [ReadItem](#readitem) - Reads the next item of a command line into a buffer.
+- [ReadLink](#readlink) - Asks a handler for the path a soft link gives, in place of the name that met it.
 - [Relabel](#relabel) - Gives the volume in a drive a new name, when its file system can.
 - [RemAssignList](#remassignlist) - Removes one directory from an assign.
 - [RemDosEntry](#remdosentry) - Takes a node off the device list.
@@ -1069,7 +1072,8 @@ handler's error).
 
 The name's handler is sent ACTION_CREATE_DIR with the directory the name
 is relative to and the whole name. On a multi-directory assign, the next
-directory is tried while the answer is ERROR_OBJECT_NOT_FOUND.
+directory is tried while the answer is ERROR_OBJECT_NOT_FOUND. A soft
+link on the way is followed as Lock follows it.
 
 **CONTEXT**
 
@@ -1465,7 +1469,9 @@ the handler's error).
 
 The name's handler is sent ACTION_DELETE_OBJECT with the directory the
 name is relative to and the whole name, along a multi-directory assign
-while the object isn't found.
+while the object isn't found. A soft link on the way is followed as
+Lock follows it; one at the end of the name is what is deleted - the
+link, not what it names.
 
 **CONTEXT**
 
@@ -3144,7 +3150,7 @@ fn Format(db: *DosBase, drive: [*:0]const u8, name: ?[*:0]const u8, dos_type: u3
 - `drive` - the drive's device, with its colon (`SD0:`).
 - `name` - the new volume's name, without a colon: one to 30
   characters, none of them `:` or `/`. Null for the file system's own:
-  none on FAT, `Empty` on the flash file system.
+  none on FAT, `Empty` on the flash file system and on posfs.
 - `dos_type` - the format, for a file system that writes more than one;
   0 for the drive's own. A FAT drive takes its own DosType with the
   last byte `FORMAT_FAT32`, `FORMAT_EXFAT` or `FORMAT_BY_SIZE`
@@ -3163,10 +3169,99 @@ hold; `ERROR_ACTION_NOT_KNOWN` from a handler that cannot format.
 
 **BEHAVIOR**
 
-`ACTION_FORMAT` to the drive's handler, with the name and the
-DosType. The handler refuses what it can before it writes anything,
-then lays the volume out over the drive's area as its startup message
-gives it - the whole medium, or the blocks its node names. Everything
+FormatTags with no tags: `ACTION_FORMAT` to the drive's handler, with
+the name and the DosType, and the file system's own choice of
+everything else. The handler refuses what it can before it writes
+anything, then lays the volume out over the drive's area as its startup
+message gives it - the whole medium, or the blocks its node names.
+Everything that was on the area is gone. An inhibited drive keeps the new volume
+until the last inhibit is taken back; one that held no volume mounts
+it at once.
+
+**CONTEXT**
+
+- Waits: yes, for the handler, which writes the volume's structures -
+  on a large card a few seconds.
+- Interrupts: no.
+- Locks: no spinlock may be held, nor the device list.
+- Process: a Process.
+
+**OWNERSHIP**
+
+`name` is read while the call lasts.
+
+**NOTES**
+
+Inhibit the drive first: a drive whose volume is in use refuses. The
+medium is taken as it is - nothing is erased or checked block by block
+- so a format of a large card is quick.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FormatTags`, `Inhibit`, `Relabel`, `Info`
+
+**EXAMPLES**
+
+```zig
+if (dos_lib.Inhibit("SD0:", true)) {
+    if (!dos_lib.Format("SD0:", "Photos", 0)) _ = dos_lib.PrintFault(dos_lib.IoErr(), "Format");
+    _ = dos_lib.Inhibit("SD0:", false);
+}
+```
+
+## FormatTags
+
+Writes a fresh, empty volume over the medium in a drive, as a tag list says.
+
+**SYNOPSIS**
+
+```zig
+fn FormatTags(db: *DosBase, drive: [*:0]const u8, name: ?[*:0]const u8, dos_type: u32, tags: ?[*]const TagItem) bool
+```
+
+**SINCE**
+
+1.9. LVO -604.
+
+**INPUTS**
+
+- `drive` - the drive's device, with its colon (`SD0:`).
+- `name` - the new volume's name, without a colon: one to 30
+  characters, none of them `:` or `/`. Null for the file system's own:
+  none on FAT, `Empty` on the flash file system and on posfs.
+- `dos_type` - the format, for a file system that writes more than one;
+  0 for the drive's own. A FAT drive takes its own DosType with the
+  last byte `FORMAT_FAT32`, `FORMAT_EXFAT` or `FORMAT_BY_SIZE`
+  (`sdk.dos.fat.typeWithFormat`).
+- `tags` - FORMAT_* tags, or null for none:
+  - `FORMAT_BlockSize` - the volume's unit of allocation in bytes, a
+    power of two: posfs's block (4096 to 65536, and on the flash a
+    multiple of its sector), FAT's cluster (one sector to 32 KiB on
+    FAT32, to 32 MiB on exFAT, and as many clusters as the format
+    needs). 0, or the tag left out, for the file system's own choice.
+    The flash file system has the one size, its sector.
+
+**RESULT**
+
+True when the volume is written; false with IoErr saying why -
+`ERROR_INVALID_COMPONENT_NAME` for a name that cannot be a volume's, or
+what the handler answered: `ERROR_OBJECT_IN_USE` for a drive that is
+not inhibited and has a volume, or one with something on it locked;
+`ERROR_NO_DISK`; `ERROR_DISK_WRITE_PROTECTED`; `ERROR_INVALID_ARGUMENT`
+for a format the medium cannot have, a DosType the handler does not
+write or a FORMAT_BlockSize it cannot have; `ERROR_INVALID_COMPONENT_NAME` for a name its format cannot
+hold; `ERROR_ACTION_NOT_KNOWN` from a handler that cannot format.
+
+**BEHAVIOR**
+
+`ACTION_FORMAT` to the drive's handler, with the name, the DosType and
+the tags. The handler reads the tags it knows and passes the others
+by; it refuses what it can before it writes anything, then lays the
+volume out over the drive's area as its startup message gives it - the whole medium, or the blocks its node names. Everything
 that was on the area is gone. An inhibited drive keeps the new volume
 until the last inhibit is taken back; one that held no volume mounts
 it at once.
@@ -3195,13 +3290,17 @@ None known.
 
 **SEE ALSO**
 
-`Inhibit`, `Relabel`, `Info`
+`Format`, `Inhibit`, `Relabel`, `Info`
 
 **EXAMPLES**
 
 ```zig
+const tags = [_]TagItem{
+    .{ .tag = dos.FORMAT_BlockSize, .data = 16384 },
+    .{ .tag = sdk.utility.TAG_DONE, .data = 0 },
+};
 if (dos_lib.Inhibit("SD0:", true)) {
-    if (!dos_lib.Format("SD0:", "Photos", 0)) _ = dos_lib.PrintFault(dos_lib.IoErr(), "Format");
+    if (!dos_lib.FormatTags("SD0:", "Photos", 0, &tags)) _ = dos_lib.PrintFault(dos_lib.IoErr(), "Format");
     _ = dos_lib.Inhibit("SD0:", false);
 }
 ```
@@ -4477,7 +4576,8 @@ fn Lock(db: *DosBase, name: [*:0]const u8, mode: i32) ?*FileLock
 
 The lock, or null with IoErr() saying why: ERROR_LINE_TOO_LONG,
 ERROR_OBJECT_NOT_FOUND, ERROR_OBJECT_IN_USE, ERROR_DEVICE_NOT_MOUNTED,
-ERROR_NO_FREE_STORE, or whatever the handler answers.
+ERROR_TOO_MANY_LEVELS, ERROR_NO_FREE_STORE, or whatever the handler
+answers.
 
 **BEHAVIOR**
 
@@ -4487,6 +4587,13 @@ directory's lock, the whole name (device part included) and `mode`. On a
 multi-directory assign, a directory that answers ERROR_OBJECT_NOT_FOUND
 passes the question to the assign's next directory; any other error ends
 the search.
+
+A soft link on the way, or at the end of the name, is followed: the
+handler answers ERROR_IS_SOFT_LINK, ReadLink gives the path that takes
+the name's place, and the packet goes again with it - from the same
+directory, from the volume's root for a path that begins with a colon,
+or from wherever GetDeviceProc finds a path's own device. After 16
+links the answer is ERROR_TOO_MANY_LEVELS.
 
 **CONTEXT**
 
@@ -4851,6 +4958,83 @@ const node = dos_lib.MakeDosEntry("RAM", dos.DLT_DEVICE) orelse return null;
 node.misc.handler.handler = "ram-handler";
 ```
 
+## MakeLink
+
+Makes a link: a second name for an object, or a name for a path.
+
+**SYNOPSIS**
+
+```zig
+fn MakeLink(db: *DosBase, name: [*:0]const u8, dest: usize, soft: bool) bool
+```
+
+**SINCE**
+
+1.9. LVO -596.
+
+**INPUTS**
+
+- `name` - the link's name, as for Lock; nothing may have it yet.
+- `dest` - for a hard link the address of a lock on the object, which
+  must be on the volume `name` is on; for a soft link the address of a
+  path, NUL-terminated, at most `sdk.dos.path_max` characters.
+- `soft` - true for a soft link, false for a hard one.
+
+**RESULT**
+
+True when the link is made; false with IoErr saying why -
+ERROR_REQUIRED_ARG_MISSING for no path or an empty one,
+ERROR_LINE_TOO_LONG, ERROR_INVALID_LOCK for no lock,
+ERROR_RENAME_ACROSS_DEVICES for a lock on another handler than the
+name's, or what the handler answered: ERROR_OBJECT_EXISTS,
+ERROR_OBJECT_WRONG_TYPE for a hard link to a directory where the file
+system has none, ERROR_ACTION_NOT_KNOWN from one without links.
+
+**BEHAVIOR**
+
+ACTION_MAKE_LINK to the name's handler, as (the directory `name` is
+from, `name`, `dest`, LINK_SOFT or LINK_HARD), in the first directory
+of a multi-assign, where a new file would go. A hard link is the object
+itself under another name: either name opens it, and it stays until its
+last name is deleted. A soft link holds its path and nothing else; the
+path need not lead anywhere yet. Lock and Open follow it, from the
+link's directory for a path without a device part; Delete, Rename and
+the setters act on the link itself.
+
+**CONTEXT**
+
+- Waits: yes, for the handler.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do; a process gets IoErr.
+
+**OWNERSHIP**
+
+The lock stays the caller's, to UnLock; the path is copied by the
+handler.
+
+**NOTES**
+
+A soft link's path is kept as it is given: a relative one is followed
+from the directory the link is in, so a link that moves takes it along.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReadLink`, `Lock`, `DeleteFile`
+
+**EXAMPLES**
+
+```zig
+// Work:Tools names SYS:Utilities, wherever it is followed from.
+if (!dos_lib.MakeLink("Work:Tools", @intFromPtr("SYS:Utilities"), true)) {
+    _ = dos_lib.PrintFault(dos_lib.IoErr(), "MakeLink");
+}
+```
+
 ## MatchEnd
 
 Ends a pattern search, freeing what it holds.
@@ -5003,10 +5187,12 @@ a handler's error.
 **BEHAVIOR**
 
 With APF_DODIR the directory just found is gone into (a hard link to a
-directory only with APF_FollowHLinks); once it is read through it comes
-once more, with APF_DIDDIR set, which stays set until the caller clears
-it. APF_DirChanged says the entry is in another directory than the one
-before. The break signals are checked, and cleared, between entries. Any
+directory only with APF_FollowHLinks, a soft link never); once it is
+read through it comes once more, with APF_DIDDIR set, which stays set
+until the caller clears it. A soft link on an inner level of the
+pattern is followed, as Lock follows it, so `a/#?/b` finds the `b` in
+a directory a link in `a` names. APF_DirChanged says the entry is in
+another directory than the one before. The break signals are checked, and cleared, between entries. Any
 error but ERROR_BUFFER_OVERFLOW frees the chain.
 
 **CONTEXT**
@@ -5033,7 +5219,7 @@ None known.
 
 ```zig
 while (dos_lib.MatchNext(&anchor) == 0) {
-    if (anchor.info.dir_entry_type > 0 and anchor.flags & dos.APF_DIDDIR == 0) anchor.flags |= dos.APF_DODIR;
+    if (dos.isDirectory(anchor.info.dir_entry_type) and anchor.flags & dos.APF_DIDDIR == 0) anchor.flags |= dos.APF_DODIR;
     anchor.flags &= ~dos.APF_DIDDIR;
 }
 ```
@@ -5316,7 +5502,8 @@ as `Lock` resolves one, and the packet carries the new handle, the
 directory's lock and the name. Along a multi-assign the next directory
 is tried while the file isn't found - except for `MODE_NEWFILE`, which
 creates the file in the first directory rather than looking for one to
-replace.
+replace. A soft link on the way or at the end of the name is followed
+as Lock follows it, so a link opens the file it names.
 
 "*" is the process's console, as CONSOLE:, or NIL: when the process has
 none (or the caller is a plain Task). The handle starts line buffered,
@@ -5830,7 +6017,9 @@ fn Read(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, length: isize) isize
 
 The number of bytes read; 0 at the end of the file; -1 on an error, with
 `IoErr()` set (`ERROR_INVALID_LOCK` for a null handle or one without a
-handler, `ERROR_NO_FREE_STORE`, or the handler's code).
+handler, `ERROR_NO_FREE_STORE`, or the handler's code -
+`ERROR_BAD_CHECKSUM` from a file system that checks what it reads
+against what it wrote).
 
 **BEHAVIOR**
 
@@ -6008,6 +6197,83 @@ var word: [64]u8 = undefined;
 var cs: dos.CSource = .{ .buffer = line, .length = line_len };
 while (dos_lib.ReadItem(&word, word.len, &cs) > 0) {
     // word holds the next item
+}
+```
+
+## ReadLink
+
+Asks a handler for the path a soft link gives, in place of the name that met it.
+
+**SYNOPSIS**
+
+```zig
+fn ReadLink(db: *DosBase, port: *MsgPort, lock: ?*FileLock, path: [*:0]const u8, buffer: [*]u8, size: u32) i32
+```
+
+**SINCE**
+
+1.9. LVO -600.
+
+**INPUTS**
+
+- `port` - the handler's port: the one that answered
+  ERROR_IS_SOFT_LINK.
+- `lock` - the directory `path` is from, on that handler; null for its
+  volume's root.
+- `path` - the name that met the link, as it was sent.
+- `buffer` - where the new path goes, with its NUL.
+- `size` - the buffer's bytes; `sdk.dos.path_max + 1` holds every path.
+
+**RESULT**
+
+The new path's length, without its NUL. -1 with IoErr saying why: what
+the handler answered - ERROR_OBJECT_WRONG_TYPE when `path` meets no soft
+link, ERROR_OBJECT_NOT_FOUND - or ERROR_NO_FREE_STORE when no packet
+could be sent. -2 with IoErr ERROR_BUFFER_OVERFLOW when `size` bytes do
+not hold the path and its NUL.
+
+**BEHAVIOR**
+
+ACTION_READ_LINK to the handler, with (`lock`, `path`, `buffer`,
+`size`). The handler walks `path` from `lock` to the first soft link on
+it and answers the link's path with what of `path` came after the link
+added behind it: the name, with the link resolved. The answer is a path
+from `lock` too, unless it has a device part of its own (`Work:new`) or
+begins with a colon, for the root of the link's volume. dos calls this
+itself whenever a handler answers ERROR_IS_SOFT_LINK, so a caller of
+Lock, Open and the others never needs it; it is for one that sends its
+own packets.
+
+**CONTEXT**
+
+- Waits: yes, for the handler.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do; a process gets IoErr.
+
+**OWNERSHIP**
+
+`path` is read and `buffer` written while the call lasts; both stay the
+caller's.
+
+**NOTES**
+
+A handler that knows no soft links answers ERROR_ACTION_NOT_KNOWN.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`MakeLink`, `Lock`, `GetDeviceProc`
+
+**EXAMPLES**
+
+```zig
+var path: [sdk.dos.path_max + 1]u8 = undefined;
+if (dos_lib.ReadLink(port, dir, name, &path, path.len) >= 0) {
+    _ = dos_lib.PutStr(@ptrCast(&path));
 }
 ```
 
@@ -6277,7 +6543,8 @@ fn Rename(db: *DosBase, from: [*:0]const u8, to: [*:0]const u8) bool
 True when the object was renamed. False otherwise, with IoErr set:
 ERROR_LINE_TOO_LONG for a name over 255 characters,
 ERROR_RENAME_ACROSS_DEVICES when the two names are on different
-handlers, ERROR_DEVICE_NOT_MOUNTED for a node with no handler,
+handlers, ERROR_TOO_MANY_LEVELS when a path leads through more than 16
+soft links, ERROR_DEVICE_NOT_MOUNTED for a node with no handler,
 ERROR_NO_FREE_STORE when the packet could not be sent, and whatever the
 handler answers - ERROR_OBJECT_EXISTS when `to` is already there,
 ERROR_OBJECT_NOT_FOUND when `from` isn't.
@@ -6290,6 +6557,12 @@ looked for along its multi-assign: while the handler answers
 ERROR_OBJECT_NOT_FOUND and the name is an assign, the next directory is
 tried. ACTION_RENAME_OBJECT is sent as (source directory, `from`, target
 directory, `to`); the handler strips the device part of each name.
+
+A soft link on the way of either name is followed: on
+ERROR_IS_SOFT_LINK the source's path is given to ReadLink first, and
+when it has no link the target's, and the packet goes again with the
+path that came back (see `Lock`). A link at the end of `from` is what is
+renamed: the link itself.
 
 **CONTEXT**
 
@@ -6940,7 +7213,8 @@ ACTION_SET_COMMENT carries the comment's address; the handler copies it
 and refuses one that is too long. The name is resolved with
 GetDeviceProc and the packet sent as (the directory's lock, `name`, the
 value); along a multi-assign each directory is tried in turn while the
-object isn't found.
+object isn't found. A soft link on the way is followed as Lock follows
+it; one at the end of the name is what gets the comment.
 
 **CONTEXT**
 
@@ -7118,7 +7392,9 @@ doesn't keep this.
 ACTION_SET_DATE carries the DateStamp's address; the handler copies the
 stamp. The name is resolved with GetDeviceProc and the packet sent as
 (the directory's lock, `name`, the value); along a multi-assign each
-directory is tried in turn while the object isn't found.
+directory is tried in turn while the object isn't found. A soft link on
+the way is followed as Lock follows it; one at the end of the name is
+what gets the date.
 
 **CONTEXT**
 
@@ -7421,7 +7697,8 @@ doesn't keep this.
 ACTION_SET_OWNER carries `owner_info` as it is. The name is resolved
 with GetDeviceProc and the packet sent as (the directory's lock, `name`,
 the value); along a multi-assign each directory is tried in turn while
-the object isn't found.
+the object isn't found. A soft link on the way is followed as Lock
+follows it; one at the end of the name is what gets the owner.
 
 **CONTEXT**
 
@@ -7654,7 +7931,9 @@ doesn't keep this.
 ACTION_SET_PROTECT carries the bits as they are, all 32 of them. The
 name is resolved with GetDeviceProc and the packet sent as (the
 directory's lock, `name`, the value); along a multi-assign each
-directory is tried in turn while the object isn't found.
+directory is tried in turn while the object isn't found. A soft link on
+the way is followed as Lock follows it; one at the end of the name is
+what gets the bits.
 
 **CONTEXT**
 

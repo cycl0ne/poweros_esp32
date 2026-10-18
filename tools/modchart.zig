@@ -52,6 +52,8 @@ const left_out = [_][]const u8{ "exec.library", "utility.library", "expansion.li
 const run_time = [_][2][]const u8{
     // The device in the mount entry: the flash disk's partitions, SD0:.
     .{ "flashfs-handler", "flash.device" },
+    .{ "posfs-handler", "flash.device" },
+    .{ "posfs-handler", "sdcard.device" },
     .{ "fat-handler", "sdcard.device" },
     // The disk the caller names.
     .{ "rdb.library", "flash.device" },

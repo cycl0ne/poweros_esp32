@@ -25,7 +25,9 @@ const nameAction = _lock.nameAction;
 /// BEHAVIOR:
 /// The name's handler is sent ACTION_DELETE_OBJECT with the directory the
 /// name is relative to and the whole name, along a multi-directory assign
-/// while the object isn't found.
+/// while the object isn't found. A soft link on the way is followed as
+/// Lock follows it; one at the end of the name is what is deleted - the
+/// link, not what it names.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the handler's answer to a packet.

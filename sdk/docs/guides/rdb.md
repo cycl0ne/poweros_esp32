@@ -12,8 +12,9 @@ This guide is how the table is laid out, how the library holds it, and
 what a program does with it - from listing the partitions to putting a
 fresh table on a disk. `C:RDB` is the library's own command: it shows a
 table, makes a fresh one, and adds and takes away partitions from the
-shell. `s3> rdb init` writes a first table on a blank flash chip, where
-there is no `C:` yet to run `C:RDB` from.
+shell, and gives a partition to another file system. `s3> rdb init`
+writes a first table on a blank flash chip, where there is no `C:` yet to
+run `C:RDB` from.
 
 ## The table on the disk
 
@@ -251,7 +252,8 @@ which may have written part of the table.
 `flash.device` reads the table of the flash disk (its unit 0) once, when
 it starts at boot, and makes a device node for each partition not marked
 `PBFF_NOMOUNT`, with the handler its DosType names - `FLS\0` the flash
-file system, `MSD` and `MSH` the FAT handler; a partition whose DosType names
+file system, `POS\0` posfs ([posfs guide](posfs.md)), `MSD` and `MSH`
+the FAT handler; a partition whose DosType names
 neither, or that has no name, is passed over, and the chain is followed
 for 16 PartitionBlocks at most. It hands the nodes to
 expansion.library (`MakeDosNode`, `AddBootNode`), which keeps them until
@@ -270,7 +272,9 @@ A card in the slot is mounted as `SD0:` at boot by `Mount SD0:`, from its entry 
 begins with a partition table and the volume is its first FAT
 partition - not a RigidDiskBlock. fat-handler reads that table and the
 boot sector it points at; a card with no table is an entry with
-`MSD\0`, the volume from the card's first block. A RigidDiskBlock on a
+`MSD\0`, the volume from the card's first block. An entry with `POS\1`
+gives the card to posfs: the same kind of table, the volume its first
+partition of type 0x7F ([posfs guide](posfs.md)). A RigidDiskBlock on a
 card is for a program that reads it.
 
 ## From the shell
@@ -284,13 +288,22 @@ RDB INIT                             ; a fresh table on a disk with none
 RDB INIT FORCE                       ; ... or in place of the one it has
 RDB ADD DH1                          ; the largest free run, the flash file system
 RDB ADD DH1 LOW 100 HIGH 199 DOSTYPE FLS BOOTABLE
+RDB ADD DH1 DOSTYPE POS              ; a partition for posfs
+RDB CHANGE DH1 DOSTYPE POS           ; a partition given to another file system
 RDB REMOVE DH1
 ```
 
-A change is made in the order `INIT`, `REMOVE`, `ADD`, and the table is
-written once, as a whole, and printed. `DOSTYPE` takes four characters
-with `\<n>` for a byte by its value (`FLS\0`, or `FLS` with the zero
-left off) or a number (`0x464C5300`).
+A change is made in the order `INIT`, `REMOVE`, `CHANGE`, `ADD`, and the
+table is written once, as a whole, and printed. `DOSTYPE` takes four
+characters with `\<n>` for a byte by its value (`FLS\0`, or `FLS` with
+the zero left off) or a number (`0x464C5300`). `CHANGE` sets the
+partition's DosType, its `BOOTABLE` flag, or both, and leaves its
+cylinders and what is on them alone: the partition is mounted with its
+new handler at the next boot, and `C:Format` gives it that file system's
+empty volume.
+
+`s3> rdb init [partition] [FLS|POS]` writes a first table on a blank
+chip, its one partition for the flash file system or for posfs.
 
 ## See also
 

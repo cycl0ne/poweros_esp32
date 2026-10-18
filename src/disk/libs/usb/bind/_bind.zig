@@ -84,7 +84,7 @@ pub fn table(base: *UsbBase) ?*Drivers {
     var fib: dos.FileInfoBlock = .{};
     if (!dl.Examine(dir, &fib)) return drivers;
     while (dl.ExNext(dir, &fib)) {
-        if (fib.dir_entry_type >= 0) continue;
+        if (dos.isDirectory(fib.dir_entry_type)) continue;
         if (drivers.count >= max_drivers) break;
         readDriver(base, &drivers.list[drivers.count], fileName(&fib)) catch continue;
         drivers.count += 1;

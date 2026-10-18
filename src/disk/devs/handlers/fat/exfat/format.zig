@@ -36,6 +36,8 @@ const Error = _fat.Error;
 
 /// The smallest volume the format allows: one MiB.
 const least_bytes: u64 = 1024 * 1024;
+/// The largest cluster the format has.
+const max_cluster_bytes: u32 = 32 * 1024 * 1024;
 /// Sectors of zeroes a clear writes at a time, at most.
 const run_most: u32 = 128;
 /// What the boot sector's DriveSelect holds: a fixed disk.
@@ -84,9 +86,15 @@ pub const Plan = struct {
 /// whole one; null for less than the format's smallest volume, or for one
 /// left with no free cluster.
 pub fn plan(first: u64, sectors: u64, sector_bytes: u32, boundary: u32) ?Plan {
+    return planCluster(first, sectors, sector_bytes, boundary, clusterBytesFor(sectors * sector_bytes, sector_bytes));
+}
+
+/// `plan` with clusters of `cluster_bytes`: a power of two from one sector
+/// to 32 MiB. Null when the volume cannot have them.
+pub fn planCluster(first: u64, sectors: u64, sector_bytes: u32, boundary: u32, cluster_bytes: u32) ?Plan {
     if (sectors * sector_bytes < least_bytes) return null;
+    if (cluster_bytes < sector_bytes or cluster_bytes > max_cluster_bytes or cluster_bytes & (cluster_bytes - 1) != 0) return null;
     const sector_shift: u5 = @intCast(std.math.log2_int(u32, sector_bytes));
-    const cluster_bytes = clusterBytesFor(sectors * sector_bytes, sector_bytes);
     const cluster_shift: u5 = @intCast(std.math.log2_int(u32, cluster_bytes / sector_bytes));
     const per_cluster: u64 = @as(u64, 1) << cluster_shift;
 

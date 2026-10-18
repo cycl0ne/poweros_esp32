@@ -28,7 +28,8 @@ const FileLock = dos.FileLock;
 /// RESULT:
 /// The lock, or null with IoErr() saying why: ERROR_LINE_TOO_LONG,
 /// ERROR_OBJECT_NOT_FOUND, ERROR_OBJECT_IN_USE, ERROR_DEVICE_NOT_MOUNTED,
-/// ERROR_NO_FREE_STORE, or whatever the handler answers.
+/// ERROR_TOO_MANY_LEVELS, ERROR_NO_FREE_STORE, or whatever the handler
+/// answers.
 ///
 /// BEHAVIOR:
 /// GetDeviceProc finds the name's handler and the directory the name is
@@ -37,6 +38,13 @@ const FileLock = dos.FileLock;
 /// multi-directory assign, a directory that answers ERROR_OBJECT_NOT_FOUND
 /// passes the question to the assign's next directory; any other error ends
 /// the search.
+///
+/// A soft link on the way, or at the end of the name, is followed: the
+/// handler answers ERROR_IS_SOFT_LINK, ReadLink gives the path that takes
+/// the name's place, and the packet goes again with it - from the same
+/// directory, from the volume's root for a path that begins with a colon,
+/// or from wherever GetDeviceProc finds a path's own device. After 16
+/// links the answer is ERROR_TOO_MANY_LEVELS.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the handler's answer to a packet.

@@ -31,7 +31,8 @@ const bitsArg = _lock.bitsArg;
 /// ACTION_SET_OWNER carries `owner_info` as it is. The name is resolved
 /// with GetDeviceProc and the packet sent as (the directory's lock, `name`,
 /// the value); along a multi-assign each directory is tried in turn while
-/// the object isn't found.
+/// the object isn't found. A soft link on the way is followed as Lock
+/// follows it; one at the end of the name is what gets the owner.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the handler's answer.

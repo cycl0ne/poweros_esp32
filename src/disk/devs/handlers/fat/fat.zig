@@ -130,8 +130,8 @@ const cache_area = @import("cache.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 9;
-const BUILD_DATE = "17.10.2026";
+const HANDLER_REVISION = 10;
+const BUILD_DATE = "18.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -779,8 +779,9 @@ fn inhibit(st: *State, on: bool) _fat.Answer {
 /// a DosType of 0 is the drive's own). Only on a drive with nothing on it in
 /// use - inhibited, or with no volume - else ERROR_OBJECT_IN_USE; with no
 /// card ERROR_NO_DISK, with one that will not be written
-/// ERROR_DISK_WRITE_PROTECTED, and a name or a format the volume cannot
-/// have is refused before anything is written. An inhibited drive stays
+/// ERROR_DISK_WRITE_PROTECTED, and a name, a format or a cluster
+/// (FORMAT_BlockSize in the tags in dp_Arg3) the volume cannot have is
+/// refused before anything is written. An inhibited drive stays
 /// so, and its volume is read when it is let go; otherwise at once.
 fn formatDrive(st: *State, pkt: *DosPacket) _fat.Answer {
     if (st.inhibited == 0 and st.bodies.active() != null) return _fat.no(dos.ERROR_OBJECT_IN_USE);
@@ -791,7 +792,9 @@ fn formatDrive(st: *State, pkt: *DosPacket) _fat.Answer {
     const dos_type = if (given_type == 0) st.media.dos_type else given_type;
     const given: ?[*:0]const u8 = @ptrFromInt(@as(usize, @bitCast(pkt.args.raw[0])));
     const name: ?[]const u8 = if (given) |label| std.mem.span(label) else null;
-    format_area.format(&st.media, st.ub, dos_type, name) catch |e| return _fat.no(_fat.codeOf(e));
+    const cluster_bytes = st.ub.GetTagData(dos.FORMAT_BlockSize, 0, pkt.args.format.tags);
+    if (cluster_bytes > 0xFFFF_FFFF) return _fat.no(dos.ERROR_INVALID_ARGUMENT);
+    format_area.formatWith(&st.media, st.ub, dos_type, name, @intCast(cluster_bytes)) catch |e| return _fat.no(_fat.codeOf(e));
     if (!st.media.update()) return _fat.no(dos.ERROR_NOT_A_DOS_DISK);
     if (st.inhibited == 0) {
         st.bodies.mount();

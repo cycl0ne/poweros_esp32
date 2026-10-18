@@ -22,6 +22,9 @@ const display_ssh_port: u16 = 2222;
 const mmu_page = 64 * 1024;
 const disk_sector = 4096;
 const disk_page = 256;
+/// The sectors before DH0: that hold the RDB (tools/mkfs's
+/// `rdb_blocks`, RDB_LOCATION_LIMIT).
+const disk_rdb_blocks = 16;
 
 /// Where a file that is not built here is put to have it on the disk
 /// image: `disk/` in the root of the tree.
@@ -32,6 +35,9 @@ const disk_tree = "disk";
 /// virtual display, keyboard and mouse: the `qemu*` steps always run that
 /// one, whichever board `-Dboard` names.
 const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4 };
+
+/// The file system the disk image's DH0: is made with (tools/mkfs).
+const DiskFs = enum { flashfs, posfs };
 
 /// The chip a board is built on, which picks the kernel's target, its
 /// root, start code and linker script, and how its image is made.
@@ -194,10 +200,13 @@ pub fn build(b: *std.Build) void {
     const port = b.option([]const u8, "port", "Serial port used by `zig build flash`") orelse "/dev/ttyACM0";
     const baud = b.option([]const u8, "baud", "Baud rate used by `zig build flash`") orelse "921600";
     const board = b.option(Board, "board", "The board the kernel is built for (default: waveshare_7b)") orelse .waveshare_7b;
+    const disk_fs = b.option(DiskFs, "fs", "The file system of the disk image's DH0: (default: flashfs)") orelse .flashfs;
+    const dh0_size_kib = b.option(u32, "dh0-size", "DH0:'s size in KiB, a multiple of 4; the rest of the flash disk is left for partitions made later with C:RDB ADD (default: all of it)") orelse 0;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
     const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 (default: what the board's SYSTAG_Cores says)") orelse 0;
     const selftest = b.option(bool, "selftest", "ESP32-P4: the boot task checks the chip and runs test tasks instead of the shell (default: false)") orelse false;
     const memdebug = b.option(bool, "memdebug", "Memory debugging on from exec's start: walls behind blocks, patterns in new and freed memory, wide stack guards (default: false; s3> memdebug and C:MemDebug switch it at run time)") orelse false;
+    const posfs_soak = b.option(u32, "posfs-soak", "`zig build test`: run posfs's power-cut test on this many more seeds, each on flash, a card and a stick (default: 0)") orelse 0;
     if (cores > 2) std.debug.panic("-Dcores={d}: this chip has two cores", .{cores});
     const net = b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
     const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file");
@@ -222,6 +231,12 @@ pub fn build(b: *std.Build) void {
         std.debug.panic("-Ddisk-offset={d}: the disk has to start on a 64 KiB page inside the {d} KiB of flash", .{ disk_offset_kib, flash_size / 1024 });
     }
     const disk_size = flash_size - disk_offset;
+    // DH0: after the RDB's blocks: all of the disk past them, or what
+    // -Ddh0-size asks for.
+    const dh0_sectors: u32 = dh0_size_kib * 1024 / disk_sector;
+    if (dh0_size_kib * 1024 % disk_sector != 0 or (dh0_size_kib != 0 and dh0_sectors + disk_rdb_blocks > disk_size / disk_sector)) {
+        std.debug.panic("-Ddh0-size={d}: DH0: has to be whole {d} KiB sectors within the {d} KiB the disk has past its RDB", .{ dh0_size_kib, disk_sector / 1024, disk_size / 1024 - disk_rdb_blocks * disk_sector / 1024 });
+    }
 
     const target = b.resolveTargetQuery(poweros_sdk.target_query);
     const p4_target = b.resolveTargetQuery(poweros_sdk.p4_target_query);
@@ -256,16 +271,23 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(wifi_device.disk), "esp32s3wifi.device.seg").step);
     }
 
-    // The disk image: the same file system code the handler runs
-    // (src/rom/handler/flashfs as a module of its own), driven on the host over a
-    // block of memory. Its numbers must be the ones flash.device reports:
-    // the disk area of src/layout.zig, 4 KiB sectors, 256-byte pages.
+    // The disk image: the same file system code the handlers run
+    // (src/rom/handler/flashfs and src/rom/handler/posfs as modules of
+    // their own), driven on the host over a block of memory. Its numbers
+    // must be the ones flash.device reports: the disk area of
+    // src/layout.zig, 4 KiB sectors, 256-byte pages.
     const fs_mod = b.createModule(.{
         .root_source_file = b.path("src/rom/handler/flashfs/disk.zig"),
         .target = b.graph.host,
         .optimize = .ReleaseSafe,
     });
     fs_mod.addImport("sdk", sdk);
+    const posfs_mod = b.createModule(.{
+        .root_source_file = b.path("src/rom/handler/posfs/fs.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    });
+    posfs_mod.addImport("sdk", sdk);
     const mkfs = b.addExecutable(.{
         .name = "mkfs",
         .root_module = b.createModule(.{
@@ -276,6 +298,26 @@ pub fn build(b: *std.Build) void {
     });
     mkfs.root_module.addImport("sdk", sdk);
     mkfs.root_module.addImport("fs", fs_mod);
+    mkfs.root_module.addImport("posfs", posfs_mod);
+    // tools/posfsck, the handler's check of a posfs volume run on an
+    // image: `zig build posfsck -- [--data] <image>`, or without the
+    // arguments installed as zig-out/bin/posfsck.
+    const posfsck = b.addExecutable(.{
+        .name = "posfsck",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/posfsck/posfsck.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    posfsck.root_module.addImport("sdk", sdk);
+    posfsck.root_module.addImport("posfs", posfs_mod);
+    const posfsck_step = b.step("posfsck", "Check the posfs volumes of an image (zig build posfsck -- [--data] <image>)");
+    if (b.args) |given| {
+        const run_posfsck = b.addRunArtifact(posfsck);
+        run_posfsck.addArgs(given);
+        posfsck_step.dependOn(&run_posfsck.step);
+    } else posfsck_step.dependOn(&b.addInstallArtifact(posfsck, .{}).step);
 
     // tools/mkicon, which makes the disk's icons from pictures.
     const mkicon = b.addExecutable(.{
@@ -305,9 +347,11 @@ pub fn build(b: *std.Build) void {
     const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk } };
     const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
     disks.addArgs(&.{
+        @tagName(disk_fs),
         "System",
         "DH0",
         b.fmt("{d}", .{disk_size / disk_sector}),
+        b.fmt("{d}", .{dh0_sectors}),
         b.fmt("{d}", .{disk_sector}),
         b.fmt("{d}", .{disk_page}),
     });
@@ -503,12 +547,15 @@ pub fn build(b: *std.Build) void {
     b.step("emu", "Boot the ESP32-P4 kernel in esp-emulator (quit with Ctrl-C)").dependOn(&run_emu.step);
     // Target-independent code, tested on the host.
     const test_step = b.step("test", "Run the unit tests on the host");
+    const test_options = b.addOptions();
+    test_options.addOption(u32, "posfs_soak", posfs_soak);
     for ([_][]const u8{ "src/tests.zig", "src/rom/devs/timer/timeval.zig" }) |path| {
         const test_mod = b.createModule(.{
             .root_source_file = b.path(path),
             .target = b.graph.host,
         });
         test_mod.addImport("sdk", sdk);
+        test_mod.addOptions("test_options", test_options);
         const unit_tests = b.addTest(.{ .root_module = test_mod });
         test_step.dependOn(&b.addRunArtifact(unit_tests).step);
     }
@@ -523,6 +570,7 @@ pub fn build(b: *std.Build) void {
     disk_test_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("host_rom", host_rom);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
+    test_step.dependOn(&posfsck.step);
     // esp32s3wifi.device's own code compiles for the chip even where the vendor
     // libraries it links are missing: as an object, which needs no link.
     const wifi_check = b.addObject(.{
@@ -1060,16 +1108,38 @@ fn addP4Image(b: *std.Build, esptool: []const u8, ramimage: *std.Build.Step.Comp
     const cut = b.addRunArtifact(ramimage);
     cut.addFileArg(whole);
     const image = cut.addOutputFileArg("kernel.bin");
-    const flash_part = b.addObjCopy(kernel_elf, .{ .format = .bin, .only_section = ".flash" });
+    const unchecked_part = b.addObjCopy(kernel_elf, .{ .format = .bin, .only_section = ".flash" });
+    // The RAM part has to end below the flash part, and the flash part
+    // below the disk, or writing one overwrites the next. Everything that
+    // flashes or merges them takes them from here.
+    const fits = b.addSystemCommand(&.{
+        "sh", "-c",
+        b.fmt(
+            \\ram=$(wc -c < "$0")
+            \\part=$(wc -c < "$1")
+            \\if [ "$ram" -gt {d} ]; then
+            \\  echo "kernel.bin is $ram bytes, more than the {d} KiB below the flash part" >&2
+            \\  exit 1
+            \\fi
+            \\if [ "$part" -gt {d} ]; then
+            \\  echo "kernel-flash.bin is $part bytes, more than the {d} KiB between 0x{x} and the disk: raise -Ddisk-offset" >&2
+            \\  exit 1
+            \\fi
+            \\cp "$1" "$2"
+        , .{ p4_flash_part_offset - 0x2000, (p4_flash_part_offset - 0x2000) / 1024, disk_offset - p4_flash_part_offset, (disk_offset - p4_flash_part_offset) / 1024, p4_flash_part_offset }),
+    });
+    fits.addFileArg(image);
+    fits.addFileArg(unchecked_part.getOutput());
+    const flash_part = fits.addOutputFileArg("kernel-flash.bin");
     const merge = b.addSystemCommand(&.{ esptool, "--chip", "esp32p4", "merge-bin", "--pad-to-size", "16MB", "-o" });
     const flash_image = merge.addOutputFileArg("flash.bin");
     merge.addArg("0x2000");
     merge.addFileArg(image);
     merge.addArg(b.fmt("0x{x}", .{p4_flash_part_offset}));
-    merge.addFileArg(flash_part.getOutput());
+    merge.addFileArg(flash_part);
     merge.addArg(b.fmt("0x{x}", .{disk_offset}));
     merge.addFileArg(disk_bin);
-    return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = flash_image, .flash_part = flash_part.getOutput() };
+    return .{ .kernel_elf = kernel_elf, .image = image, .flash_image = flash_image, .flash_part = flash_part };
 }
 
 /// The kernel for `board`: src/main.zig with the board's description

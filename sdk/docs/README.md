@@ -82,6 +82,10 @@ tags and constants, each with its doc comment.
   telnet.device, SSH both ways (ShellServer SSH with sftp and scp,
   `C:net/SSH`, `C:net/SCP`, ssh.device), a packet filter and the packet hooks under it, and the
   commands.
+- [posfs](guides/posfs.md) - the journaling file system: when a change
+  is durable, names and attributes, files, checksums and compression,
+  links, Recycled and undelete, snapshots and rollback, `C:PosFS` and
+  the check, putting it on a drive, its limits.
 - [Disks and partitions](guides/rdb.md) - the RigidDiskBlock and its
   partitions, rdb.library: reading a disk's table, changing it, a fresh
   one, errors, when a change is seen, and `C:RDB`.

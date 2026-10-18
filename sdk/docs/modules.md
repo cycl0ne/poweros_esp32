@@ -54,6 +54,7 @@ flowchart TB
     m_mouse_device["mouse.device"]
     m_nil_handler["nil-handler"]
     m_pipe_handler["pipe-handler"]
+    m_posfs_handler["posfs-handler"]
     m_ram_handler["ram-handler"]
     m_ramlib_library["ramlib.library"]
     m_rtg_library["rtg.library"]
@@ -118,6 +119,10 @@ flowchart TB
     m_mouse_device --> m_timer_device
     m_nil_handler --> m_dos_library
     m_pipe_handler --> m_dos_library
+    m_posfs_handler --> m_dos_library
+    m_posfs_handler -.-> m_flash_device
+    m_posfs_handler --> m_input_device
+    m_posfs_handler --> m_timer_device
     m_ram_handler --> m_dos_library
     m_ram_handler -.-> m_timer_device
     m_ramlib_library --> m_dos_library
@@ -136,7 +141,7 @@ flowchart TB
     classDef res fill:#fef3c7,stroke:#d97706,color:#111827
     class m_battclock_resource,m_battery_resource,m_dma_resource,m_expander_resource,m_gpio_resource,m_jpeg_resource,m_usbport_resource res
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
-    class m_Shell,m_con_handler,m_flashfs_handler,m_nil_handler,m_pipe_handler,m_ram_handler hand
+    class m_Shell,m_con_handler,m_flashfs_handler,m_nil_handler,m_pipe_handler,m_posfs_handler,m_ram_handler hand
 ```
 <!-- modchart end -->
 

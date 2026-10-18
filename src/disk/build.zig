@@ -36,6 +36,7 @@ const commands = [_][]const u8{
     "requestdevice", "diskchange", "modbus",   "more",          "relabel",
     "loadanvil",     "iconx",      "usb",      "usbinfo",       "battery",
     "setclock",      "top",        "play",     "screendump",    "memdebug",
+    "makelink",      "posfs",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",     "anim",
@@ -48,7 +49,7 @@ const tests = [_][]const u8{
     "cores",       "scroll",     "listbrowser", "notify",  "icon",
     "launch",      "drag",       "tap",         "app",     "engine",
     "jpeg",        "keysource",  "usbdevice",   "scsi",    "sound",
-    "memowner",    "records",
+    "memowner",    "records",    "exall",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 

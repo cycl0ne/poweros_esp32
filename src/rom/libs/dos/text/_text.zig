@@ -716,6 +716,7 @@ const texts = [_]Text{
     .{ .code = 409, .text = "handler not loaded" },
     .{ .code = 410, .text = "handler failed to start" },
     .{ .code = 411, .text = "the other end of the pipe is gone" },
+    .{ .code = 412, .text = "checksum error: the data read is not what was written" },
 };
 
 /// The text for `code`, or null when there is none.

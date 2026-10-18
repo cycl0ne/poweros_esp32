@@ -94,6 +94,28 @@ SD0:
 	Activate  = 1
 #
 
+/* The same slot with posfs cards in it. DosType "POS\1" is a partition
+ * table in the card's first block and the volume in its first partition
+ * of type 0x7F, as Format writes one, so a PC still sees a table on it;
+ * "POS\0" is a card that is the volume from its first block. posfs-handler
+ * is in the ROM. A drive keeps the handler it was mounted with, so for
+ * posfs in the slot these keywords - without the SD0: and the # - go into
+ * DEVS:SD0, which Mount reads before this file; then Assign SD0: DISMOUNT,
+ * Mount SD0:, and Format DRIVE SD0: NAME Card for a card that is not
+ * posfs yet. Buffers is how many blocks of the card the handler keeps;
+ * without it, a megabyte's worth.
+ *
+ * SD0:
+ *	Handler   = posfs-handler
+ *	Device    = sdcard.device
+ *	Unit      = 0
+ *	DosType   = 0x504F5301
+ *	StackSize = 16384
+ *	Priority  = 5
+ *	Activate  = 1
+ * #
+ */
+
 /* A second partition of the flash disk, were one to be made. The numbers
  * are the ones the RigidDiskBlock carries for DH0 (C:RDB FULL prints
  * them), with LowCyl and HighCyl moved past it; DosType "FLS\0" is what

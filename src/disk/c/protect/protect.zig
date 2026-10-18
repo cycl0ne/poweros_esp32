@@ -22,7 +22,8 @@
 //!        ram:t/x...done
 //!
 //! QUIET keeps that quiet. ALL steps into directories, and the directory
-//! itself is set as well as what is in it.
+//! itself is set as well as what is in it; a soft link gets the bits
+//! itself and is not stepped through.
 //!
 //! A file that already has the bits asked for is left alone and still says
 //! "done". The H bit (0x80) is among the bits it may set although nothing
@@ -37,7 +38,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Protect";
-const VERSION_STRING = "\x00$VER: Protect 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Protect 1.1 (18.10.2026)\r\n";
 
 const template = "FILE/A,FLAGS,ADD/S,SUB/S,ALL/S,QUIET/S";
 const arg_file = 0;
@@ -156,7 +157,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             continue;
         }
 
-        const is_dir = ap.info.dir_entry_type >= 0;
+        const is_dir = dos.isDirectory(ap.info.dir_entry_type);
         if (is_dir and all) {
             ap.flags |= dos.APF_DODIR;
             indent += 1;

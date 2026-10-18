@@ -36,11 +36,13 @@ const disk_unit = 0;
 /// A runaway partition chain stops here.
 const max_partitions = 16;
 
-/// The handler a partition's de_DosType asks for. The flash file system is
-/// in the ROM; FAT's handler is loaded from HANDLERS:, and takes every FAT
-/// DosType (`MSD`, `MSH`, with any last byte), so it stands here as one.
+/// The handler a partition's de_DosType asks for. The flash file system
+/// and posfs are in the ROM; FAT's handler is loaded from HANDLERS:, and
+/// takes every FAT DosType (`MSD`, `MSH`, with any last byte), so it
+/// stands here as one.
 const file_systems = [_]struct { dos_type: u32, handler: [*:0]const u8 }{
     .{ .dos_type = dos.flashfs.ID_FLASHFS_DISK, .handler = "flashfs-handler" },
+    .{ .dos_type = dos.posfs.ID_POSFS_DISK, .handler = dos.posfs.HANDLER_NAME },
     .{ .dos_type = dos.ID_MSDOS_DISK, .handler = "fat-handler" },
 };
 
@@ -242,6 +244,7 @@ test "a RigidDiskBlock and a PartitionBlock are sound once they carry their chec
 
 test "a partition's handler is the one its DosType asks for" {
     try testing.expectEqualStrings("flashfs-handler", std.mem.span(handlerFor(flashfs.ID_FLASHFS_DISK).?));
+    try testing.expectEqualStrings("posfs-handler", std.mem.span(handlerFor(dos.posfs.ID_POSFS_DISK).?));
     try testing.expectEqualStrings("fat-handler", std.mem.span(handlerFor(dos.ID_MSDOS_DISK).?));
     try testing.expectEqualStrings("fat-handler", std.mem.span(handlerFor(dos.fat.typeWithFormat(dos.ID_MSDOS_DISK_HD, dos.fat.FORMAT_EXFAT)).?));
     try testing.expectEqual(@as(?[*:0]const u8, null), handlerFor(0x444F5300)); // "DOS\0"

@@ -162,6 +162,9 @@ pub const LVO = struct {
     pub const UnLockRecords = libraries.lvo(145);
     pub const Inhibit = libraries.lvo(146);
     pub const Format = libraries.lvo(147);
+    pub const MakeLink = libraries.lvo(148);
+    pub const ReadLink = libraries.lvo(149);
+    pub const FormatTags = libraries.lvo(150);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -311,6 +314,9 @@ pub const Fn = struct {
     pub const UnLockRecords = *const fn (*DosBase, ?[*]const dos.record.RecordLock) callconv(.c) bool;
     pub const Inhibit = *const fn (*DosBase, [*:0]const u8, bool) callconv(.c) bool;
     pub const Format = *const fn (*DosBase, [*:0]const u8, ?[*:0]const u8, u32) callconv(.c) bool;
+    pub const MakeLink = *const fn (*DosBase, [*:0]const u8, usize, bool) callconv(.c) bool;
+    pub const ReadLink = *const fn (*DosBase, *exec.MsgPort, ?*dos.FileLock, [*:0]const u8, [*]u8, u32) callconv(.c) i32;
+    pub const FormatTags = *const fn (*DosBase, [*:0]const u8, ?[*:0]const u8, u32, ?[*]const utility.TagItem) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1208,5 +1214,25 @@ pub const DosBase = opaque {
     /// true, or false with IoErr. Inhibit the drive first.
     pub fn Format(self: *DosBase, drive: [*:0]const u8, name: ?[*:0]const u8, dos_type: u32) bool {
         return libraries.call(self, LVO.Format, Fn.Format, .{ drive, name, dos_type });
+    }
+
+    /// A link named `name`: for a hard one (`soft` false) `dest` is a lock on
+    /// the object, on the same volume; for a soft one a path, kept as it is
+    /// given. True, or false with IoErr.
+    pub fn MakeLink(self: *DosBase, name: [*:0]const u8, dest: usize, soft: bool) bool {
+        return libraries.call(self, LVO.MakeLink, Fn.MakeLink, .{ name, dest, soft });
+    }
+
+    /// The path that takes the place of the soft link `path` met, from `lock`
+    /// on the handler at `port`, written to `buffer`: its length, -1 with
+    /// IoErr, or -2 when `size` bytes do not hold it.
+    pub fn ReadLink(self: *DosBase, port: *exec.MsgPort, lock: ?*dos.FileLock, path: [*:0]const u8, buffer: [*]u8, size: u32) i32 {
+        return libraries.call(self, LVO.ReadLink, Fn.ReadLink, .{ port, lock, path, buffer, size });
+    }
+
+    /// Format with a tag list (FORMAT_*), null for none: true, or false with
+    /// IoErr.
+    pub fn FormatTags(self: *DosBase, drive: [*:0]const u8, name: ?[*:0]const u8, dos_type: u32, tags: ?[*]const utility.TagItem) bool {
+        return libraries.call(self, LVO.FormatTags, Fn.FormatTags, .{ drive, name, dos_type, tags });
     }
 };
