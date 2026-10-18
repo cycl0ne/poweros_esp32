@@ -47,8 +47,8 @@ const roothub = @import("roothub.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "17.10.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "18.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -159,7 +159,11 @@ fn start(host: *Host) bool {
         .data = host,
         .code = &controller.intServer,
     };
-    host.int_hooked = pb.AddPCIIntServer(host.function, &host.int);
+    // A message of its own where the function and its host bridge have
+    // them: no line shared with anything else.
+    host.int_vector = pb.AllocPCIVectors(host.function, 1) == 1 and pb.AddPCIVectorServer(host.function, 0, &host.int);
+    if (!host.int_vector) pb.FreePCIVectors(host.function);
+    host.int_hooked = host.int_vector or pb.AddPCIIntServer(host.function, &host.int);
     if (!host.int_hooked) {
         sdk.exec.kprintf(host.sys, "%s: unit %d: no interrupt; the controller is polled\n", .{ DEVICE_NAME, host.number });
     }
@@ -174,8 +178,15 @@ fn start(host: *Host) bool {
 
 fn unhook(host: *Host) void {
     if (!host.int_hooked) return;
-    host.dev_base.pci_base.?.RemPCIIntServer(host.function, &host.int);
+    const pb = host.dev_base.pci_base.?;
+    if (host.int_vector) {
+        pb.RemPCIVectorServer(host.function, 0, &host.int);
+        pb.FreePCIVectors(host.function);
+    } else {
+        pb.RemPCIIntServer(host.function, &host.int);
+    }
     host.int_hooked = false;
+    host.int_vector = false;
 }
 
 /// Everything stopped: the controller halted, the transfers answered, the
@@ -399,7 +410,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     base.seg_list = seg_list;
     base.hosts = @splat(null);
     base.units = 0;
-    const pci_lib = sys_base.OpenLibrary(pci.PCINAME, 1) orelse {
+    const pci_lib = sys_base.OpenLibrary(pci.PCINAME, 2) orelse {
         sdk.exec.kprintf(sys_base, "%s: no %s\n", .{ DEVICE_NAME, pci.PCINAME });
         return null;
     };

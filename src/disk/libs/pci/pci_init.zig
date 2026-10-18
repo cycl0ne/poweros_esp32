@@ -3,13 +3,14 @@
 //! exec's standard ones: every opener shares the one base.
 //!
 //! **The init** is where the machine's PCI is set up: each of the board's
-//! PCI parts (PARTKIND_PCI) of a chip the library knows is brought up
-//! and walked (scan/scan.zig), and every function found is put on the
-//! base's chain. A board without one gets no library: the init answers
-//! null before anything is kept. Bringing a PCI Express port up takes its
-//! time - PERST# held for 100 ms, as long again before the link is asked,
-//! up to a second for the link - which the opener waits out on
-//! timer.device.
+//! PCI parts (PARTKIND_PCI) of a chip the library knows is brought up,
+//! all of them side by side; then the buses behind each are walked
+//! (scan/scan.zig), what was found placed (scan/place.zig), and every
+//! function put on the base's chain. A board without one gets no
+//! library: the init answers null before anything is kept. Bringing a
+//! PCI Express port up takes its time - PERST# held for 100 ms, as long
+//! again before the link is asked, up to a second for the link - which
+//! the opener waits out on timer.device, once for all the ports.
 //!
 //! **The library stays** once it is loaded: the buses are numbered and
 //! the BARs placed as it found them, and a library loaded again would
@@ -19,7 +20,6 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const pci = sdk.pci;
-const timer = sdk.devices.timer;
 const st = sdk.expansion.systemtags;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _base = @import("pci_base.zig");
@@ -29,11 +29,14 @@ const _host = @import("host/_host.zig");
 const Host = _host.Host;
 const Entry = _host.Entry;
 const scan = @import("scan/scan.zig");
+const place = @import("scan/place.zig");
+const Delay = @import("delay.zig").Delay;
+const _state = @import("host/_state.zig");
 
 pub const LIBRARY_NAME = pci.PCINAME;
-pub const LIBRARY_VERSION = 1;
+pub const LIBRARY_VERSION = 2;
 pub const LIBRARY_REVISION = 0;
-const BUILD_DATE = "17.10.2026";
+const BUILD_DATE = "18.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -61,30 +64,9 @@ fn expunge(_: *exec.Library) callconv(.c) ?*anyopaque {
 
 pub const expungeVector = expunge;
 
-/// timer.device's micro timer, waited on from the opener's task while
-/// the bridges come up.
-const Delay = struct {
-    sys: *ExecBase,
-    port: *exec.MsgPort,
-    io: timer.TimeRequest = .{},
-
-    fn open(delay: *Delay) bool {
-        delay.io.node.message.reply_port = delay.port;
-        delay.io.node.message.length = @sizeOf(timer.TimeRequest);
-        return delay.sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &delay.io.node, 0) == 0;
-    }
-
-    /// `us` microseconds waited out.
-    pub fn wait(delay: *Delay, us: u32) void {
-        delay.io.node.command = timer.TR_ADDREQUEST;
-        delay.io.time = timer.TimeVal.fromMicros(us);
-        _ = delay.sys.DoIO(&delay.io.node);
-    }
-
-    fn close(delay: *Delay) void {
-        delay.sys.CloseDevice(&delay.io.node);
-    }
-};
+/// The functions the walk has room for behind one host bridge: more
+/// than a machine has, and the rest left out, and said so.
+const max_nodes = 256;
 
 /// Every PCI part of the board's brought up and walked. Whether one was.
 fn findHosts(base: *PCIBase) bool {
@@ -95,14 +77,15 @@ fn findHosts(base: *PCIBase) bool {
     const expansion_lib = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return false;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
-    const port = sys.CreateMsgPort() orelse return false;
-    defer sys.DeleteMsgPort(port);
-    var delay = Delay{ .sys = sys, .port = port };
-    if (!delay.open()) return false;
+    var delay = Delay.open(sys) orelse return false;
     defer delay.close();
+    const nodes_bytes = max_nodes * @sizeOf(scan.Node);
+    const nodes_memory = sys.AllocMem(nodes_bytes, exec.MEMF_CLEAR) orelse return false;
+    defer sys.FreeMem(nodes_memory, nodes_bytes);
+    const nodes = @as([*]scan.Node, @ptrCast(@alignCast(nodes_memory)))[0..max_nodes];
 
-    var tail: *?*pci.PCIDevice = &base.first;
-    var found = false;
+    var hosts: [_host.max_hosts]*Host = undefined;
+    var count: usize = 0;
     var segment: u8 = 0;
     var part = eb.FindBoardPart(null, st.PARTKIND_PCI, st.CHIP_ANY);
     while (part) |it| : (part = eb.FindBoardPart(it, st.PARTKIND_PCI, st.CHIP_ANY)) {
@@ -111,8 +94,10 @@ fn findHosts(base: *PCIBase) bool {
         const chip = _host.chipOf(@truncate(ub.GetTagData(st.PART_Chip, st.CHIP_NONE, it.tags))) orelse continue;
         const config = ub.GetTagData(st.PART_PciConfig, 0, it.tags);
         if (config == 0) continue;
-        const memory = sys.AllocMem(@sizeOf(Host), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return found;
+        const memory = sys.AllocMem(@sizeOf(Host), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse break;
         const host: *Host = @ptrCast(@alignCast(memory));
+        const mem = ub.GetTagData(st.PART_PciMem, 0, it.tags);
+        const pref = ub.GetTagData(st.PART_PciPref, 0, it.tags);
         host.* = .{
             .sys = sys,
             .chip = chip,
@@ -121,34 +106,61 @@ fn findHosts(base: *PCIBase) bool {
             .registers = ub.GetTagData(st.PART_Address, 0, it.tags),
             .config = config,
             .windows = .{
-                .mem = .of(ub.GetTagData(st.PART_PciMem, 0, it.tags), ub.GetTagData(st.PART_PciMemSize, 0, it.tags)),
-                .pref = .of(ub.GetTagData(st.PART_PciPref, 0, it.tags), ub.GetTagData(st.PART_PciPrefSize, 0, it.tags)),
+                .io = .ofIo(
+                    ub.GetTagData(st.PART_PciIo, 0, it.tags),
+                    ub.GetTagData(st.PART_PciIoBus, 0, it.tags),
+                    ub.GetTagData(st.PART_PciIoSize, 0, it.tags),
+                ),
+                .mem = .of(mem, ub.GetTagData(st.PART_PciMemBus, mem, it.tags), ub.GetTagData(st.PART_PciMemSize, 0, it.tags)),
+                .pref = .of(pref, ub.GetTagData(st.PART_PciPrefBus, pref, it.tags), ub.GetTagData(st.PART_PciPrefSize, 0, it.tags)),
             },
             .irq = @truncate(ub.GetTagData(st.PART_Irq, 0, it.tags)),
             .perst = ub.GetTagData(st.PART_PinReset, 0, it.tags),
         };
-        if (!_host.bringUp(host, &delay)) {
+        if (!_host.start(host)) {
             sys.FreeMem(memory, @sizeOf(Host));
             continue;
         }
-        var collect = Collect{ .sys = sys, .host = host, .tail = tail };
-        _ = scan.walk(_host.Space{ .host = host }, &collect, &host.windows, .{ .root_devices = _host.rootDevices(host) }, 0);
-        tail = collect.tail;
-        found = true;
+        hosts[count] = host;
+        count += 1;
     }
-    return found;
+    if (count == 0) return false;
+    _host.bringUp(hosts[0..count], &delay);
+
+    var tail: *?*pci.PCIDevice = &base.first;
+    for (hosts[0..count]) |host| walkHost(host, nodes, &tail, &delay);
+    return true;
 }
 
-/// What the walk finds behind a host, put on the chain.
-const Collect = struct {
-    sys: *ExecBase,
-    host: *Host,
-    tail: *?*pci.PCIDevice,
+/// PCIDevice.bridge_windows: the windows a bridge has.
+fn windowsOf(node: *const scan.Node) u8 {
+    var windows: u8 = 0;
+    if (node.has_io) windows |= pci.PCI_WINDOW_IO;
+    if (node.has_io and node.io32) windows |= pci.PCI_WINDOW_IO32;
+    if (node.has_pref) windows |= pci.PCI_WINDOW_PREF;
+    if (node.has_pref and node.pref64) windows |= pci.PCI_WINDOW_PREF64;
+    return windows;
+}
 
-    pub fn function(collect: *Collect, at: scan.Address, info: *const scan.Function) bool {
-        const memory = collect.sys.AllocMem(@sizeOf(Entry), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return false;
-        const entry: *Entry = @ptrCast(@alignCast(memory));
-        const host = collect.host;
+/// The buses behind `host` walked, what is on them placed, and a
+/// PCIDevice for each function put on the chain at `tail`.
+fn walkHost(host: *Host, nodes: []scan.Node, tail: **?*pci.PCIDevice, delay: *Delay) void {
+    const sys = host.sys;
+    const space = _host.Space{ .host = host };
+    const result = scan.walk(space, delay, nodes, .{ .root_devices = _host.rootDevices(host) }, 0);
+    if (result.full) {
+        sdk.exec.kprintf(sys, "%s: more than %ld functions behind host bridge %ld, the rest left out\n", .{ LIBRARY_NAME, @as(i64, max_nodes), @as(i64, host.segment) });
+    }
+    if (result.count == 0) return;
+    const found = nodes[0..result.count];
+    place.place(space, found, &host.windows);
+
+    const bytes = found.len * @sizeOf(Entry);
+    const memory = sys.AllocMem(bytes, exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return;
+    const entries = @as([*]Entry, @ptrCast(@alignCast(memory)))[0..found.len];
+    for (found, entries) |*node, *entry| {
+        const info = &node.info;
+        const at = node.at;
         const interrupt = _host.interruptOf(host, info.root_device, info.root_pin);
         entry.* = .{
             .device = .{
@@ -167,18 +179,36 @@ const Collect = struct {
                 .interrupt = interrupt,
                 .bars = info.bars,
                 .private = host,
+                .parent = if (node.parent) |p| &entries[p].device else null,
+                .rom = info.rom,
+                .secondary_bus = node.secondary,
+                .subordinate_bus = node.subordinate,
+                .express_type = info.express_type,
+                .found_power = info.found_power,
+                .link_speed = info.link_speed,
+                .link_width = info.link_width,
+                .link_max_speed = info.link_max_speed,
+                .link_max_width = info.link_max_width,
+                .msi_vectors = info.msi_vectors,
+                .msix_vectors = info.msix_vectors,
+                .max_payload = info.max_payload,
+                .bridge_windows = windowsOf(node),
             },
             .host = host,
             .root_pin = info.root_pin,
+            .cap_pm = info.cap_pm,
+            .cap_msi = info.cap_msi,
+            .cap_msix = info.cap_msix,
+            .cap_express = info.cap_express,
         };
         // The line register says where the line went, as far as a byte
         // does; nothing here reads it back.
         if (info.interrupt_pin != 0) _host.write(host, at, pci.PCI_INTERRUPT_LINE, 1, interrupt & 0xFF);
-        collect.tail.* = &entry.device;
-        collect.tail = &entry.device.next;
-        return true;
+        if (info.header_type == pci.PCI_HEADER_NORMAL) entry.kept = _state.save(entry);
+        tail.*.* = &entry.device;
+        tail.* = &entry.device.next;
     }
-};
+}
 
 const init_table = exec.InitTable{
     .data_size = @sizeOf(PCIBase),

@@ -20,6 +20,13 @@ const ClaimPCIDevice = @import("claim/claimpcidevice.zig").ClaimPCIDevice;
 const ReleasePCIDevice = @import("claim/releasepcidevice.zig").ReleasePCIDevice;
 const AddPCIIntServer = @import("interrupt/addpciintserver.zig").AddPCIIntServer;
 const RemPCIIntServer = @import("interrupt/rempciintserver.zig").RemPCIIntServer;
+const FindPCICapability = @import("config/findpcicapability.zig").FindPCICapability;
+const FindPCIExtCapability = @import("config/findpciextcapability.zig").FindPCIExtCapability;
+const AllocPCIVectors = @import("interrupt/allocpcivectors.zig").AllocPCIVectors;
+const FreePCIVectors = @import("interrupt/freepcivectors.zig").FreePCIVectors;
+const AddPCIVectorServer = @import("interrupt/addpcivectorserver.zig").AddPCIVectorServer;
+const RemPCIVectorServer = @import("interrupt/rempcivectorserver.zig").RemPCIVectorServer;
+const ResetPCIDevice = @import("reset/resetpcidevice.zig").ResetPCIDevice;
 
 /// pci.library's interface, as the SDK generates it from
 /// sdk/fd/pci_lib.fd.
@@ -53,6 +60,13 @@ const contract_files = [_][]const u8{
     @embedFile("claim/releasepcidevice.zig"),
     @embedFile("interrupt/addpciintserver.zig"),
     @embedFile("interrupt/rempciintserver.zig"),
+    @embedFile("config/findpcicapability.zig"),
+    @embedFile("config/findpciextcapability.zig"),
+    @embedFile("interrupt/allocpcivectors.zig"),
+    @embedFile("interrupt/freepcivectors.zig"),
+    @embedFile("interrupt/addpcivectorserver.zig"),
+    @embedFile("interrupt/rempcivectorserver.zig"),
+    @embedFile("reset/resetpcidevice.zig"),
 };
 
 fn lvoFindPCIDevice(base: *PCIBase, previous: ?*pci.PCIDevice, vendor: u32, device: u32) callconv(.c) ?*pci.PCIDevice {
@@ -79,6 +93,27 @@ fn lvoAddPCIIntServer(base: *PCIBase, device: *pci.PCIDevice, server: *exec.Inte
 fn lvoRemPCIIntServer(base: *PCIBase, device: *pci.PCIDevice, server: *exec.Interrupt) callconv(.c) void {
     return RemPCIIntServer(base, device, server);
 }
+fn lvoFindPCICapability(base: *PCIBase, device: *pci.PCIDevice, id: u32, after: u32) callconv(.c) u32 {
+    return FindPCICapability(base, device, id, after);
+}
+fn lvoFindPCIExtCapability(base: *PCIBase, device: *pci.PCIDevice, id: u32, after: u32) callconv(.c) u32 {
+    return FindPCIExtCapability(base, device, id, after);
+}
+fn lvoAllocPCIVectors(base: *PCIBase, device: *pci.PCIDevice, count: u32) callconv(.c) u32 {
+    return AllocPCIVectors(base, device, count);
+}
+fn lvoFreePCIVectors(base: *PCIBase, device: *pci.PCIDevice) callconv(.c) void {
+    return FreePCIVectors(base, device);
+}
+fn lvoAddPCIVectorServer(base: *PCIBase, device: *pci.PCIDevice, vector: u32, server: *exec.Interrupt) callconv(.c) bool {
+    return AddPCIVectorServer(base, device, vector, server);
+}
+fn lvoRemPCIVectorServer(base: *PCIBase, device: *pci.PCIDevice, vector: u32, server: *exec.Interrupt) callconv(.c) void {
+    return RemPCIVectorServer(base, device, vector, server);
+}
+fn lvoResetPCIDevice(base: *PCIBase, device: *pci.PCIDevice) callconv(.c) bool {
+    return ResetPCIDevice(base, device);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -95,6 +130,13 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoReleasePCIDevice),
     vec(lvoAddPCIIntServer),
     vec(lvoRemPCIIntServer),
+    vec(lvoFindPCICapability),
+    vec(lvoFindPCIExtCapability),
+    vec(lvoAllocPCIVectors),
+    vec(lvoFreePCIVectors),
+    vec(lvoAddPCIVectorServer),
+    vec(lvoRemPCIVectorServer),
+    vec(lvoResetPCIDevice),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

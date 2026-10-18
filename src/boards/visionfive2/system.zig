@@ -57,9 +57,8 @@ const card_slot = [_]Tag{
 /// PCI Express port 0, and the VL805 USB controller on it that the four
 /// USB-A sockets are: the bridge's registers at 0x2B000000, its
 /// configuration space at 0x9_4000_0000, memory at 0x30000000 (128 MiB)
-/// and at 0x9_0000_0000 (1 GiB), its INTA to INTD gathered on PLIC source
-/// 56, PERST# on GPIO26. Port 1, the M.2 slot, is not listed: nothing is
-/// in it, and a port without a link costs a second to find out.
+/// and at 0x9_0000_0000 (1 GiB), its INTA to INTD and its messages
+/// gathered on PLIC source 56, PERST# on GPIO26.
 const pcie0 = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_PCI),
     .value(st.PART_Chip, st.CHIP_JH7110_PCIE),
@@ -75,6 +74,30 @@ const pcie0 = [_]Tag{
     .value(st.PART_Irq, 56),
     .value(st.PART_PinReset, pins.gpioLow(26)),
     .pointer(st.PART_Label, "PCIe 0: the USB sockets' VL805"),
+    .done,
+};
+
+/// PCI Express port 1, the M.2 slot (M key, one lane): the bridge's
+/// registers at 0x2C000000, its configuration space at 0x9_C000_0000,
+/// memory at 0x38000000 (128 MiB) and at 0x9_8000_0000 (1 GiB), its
+/// interrupts on PLIC source 57, PERST# on GPIO28. Both ports come up
+/// side by side: an empty slot costs the second its link is waited for
+/// once, not after port 0's.
+const pcie1 = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PCI),
+    .value(st.PART_Chip, st.CHIP_JH7110_PCIE),
+    .pointer(st.PART_ChipName, "jh7110 pcie1"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_BusUnit, 1),
+    .value(st.PART_Address, 0x2C00_0000),
+    .value(st.PART_PciConfig, 0x9_C000_0000),
+    .value(st.PART_PciMem, 0x3800_0000),
+    .value(st.PART_PciMemSize, 0x0800_0000),
+    .value(st.PART_PciPref, 0x9_8000_0000),
+    .value(st.PART_PciPrefSize, 0x4000_0000),
+    .value(st.PART_Irq, 57),
+    .value(st.PART_PinReset, pins.gpioLow(28)),
+    .pointer(st.PART_Label, "PCIe 1: the M.2 slot"),
     .done,
 };
 
@@ -176,6 +199,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &trng),
     .pointer(st.SYSTAG_Part, &card_slot),
     .pointer(st.SYSTAG_Part, &pcie0),
+    .pointer(st.SYSTAG_Part, &pcie1),
     .pointer(st.SYSTAG_Part, &usb),
     .pointer(st.SYSTAG_Part, &ethernet0),
     .done,

@@ -31,4 +31,24 @@ void ReleasePCIDevice(*pci.PCIDevice device)
 bool AddPCIIntServer(*pci.PCIDevice device, *exec.Interrupt server)
 /// The server taken off the function's line.
 void RemPCIIntServer(*pci.PCIDevice device, *exec.Interrupt server)
+/// Where the function's next capability `id` (PCI_CAP_ID_*) is, after
+/// the one at `after` (0: from the first); 0 for none.
+u32 FindPCICapability(*pci.PCIDevice device, u32 id, u32 after)
+/// Where the function's next extended capability `id` (PCI_EXT_CAP_ID_*)
+/// is, after the one at `after` (0: from the first); 0 for none.
+u32 FindPCIExtCapability(*pci.PCIDevice device, u32 id, u32 after)
+/// Up to `count` message-signalled interrupts for the function, MSI-X
+/// where it has it: how many it got; 0 for none, and it keeps its INTx
+/// line.
+u32 AllocPCIVectors(*pci.PCIDevice device, u32 count)
+/// The function's vectors given back, and its INTx line on again.
+void FreePCIVectors(*pci.PCIDevice device)
+/// `server` run whenever the function signals vector `vector`; false for
+/// a vector it was not given.
+bool AddPCIVectorServer(*pci.PCIDevice device, u32 vector, *exec.Interrupt server)
+/// The server taken off the vector.
+void RemPCIVectorServer(*pci.PCIDevice device, u32 vector, *exec.Interrupt server)
+/// The function reset on its own (a function level reset), and what the
+/// library set up in it put back; false if it cannot be.
+bool ResetPCIDevice(*pci.PCIDevice device)
 ##end

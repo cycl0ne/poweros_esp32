@@ -418,6 +418,12 @@ pub fn build(b: *std.Build) void {
             make_p4_disk.addPrefixedFileArg(b.fmt("devs/usb/firmware/aic8800/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
         }
     }
+    // DEVS:pci.ids - the PCI ID Repository's list, which C:PCIInfo names
+    // vendors and devices from, as scripts/fetch-pciids.sh fetched it. On
+    // the RISC-V 64 disk alone, the one with PCI.
+    if (pciIdsFile(b)) |list| {
+        make_rv64_disk.addPrefixedFileArg("devs/pci.ids=", .{ .cwd_relative = list });
+    }
     // The icons, from the pictures scripts/fetch-icons.sh drew at the
     // board's size, when they are there.
     if (iconsDir(b, iconSize(board))) |dir| {
@@ -918,6 +924,17 @@ fn aic8800Dir(b: *std.Build) ?[]const u8 {
     const path = b.pathFromRoot("toolchain/aic8800");
     std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "fmacfw.bin" }), .{}) catch {
         std.log.info("no AIC8800 firmware (scripts/fetch-aic8800.sh): the disk has no DEVS:usb/firmware/aic8800/", .{});
+        return null;
+    };
+    return path;
+}
+
+/// The list scripts/fetch-pciids.sh fetched, or null without it.
+fn pciIdsFile(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/pciids/pci.ids");
+    std.Io.Dir.cwd().access(io, path, .{}) catch {
+        std.log.info("no PCI ID list (scripts/fetch-pciids.sh): the RISC-V disk has no DEVS:pci.ids", .{});
         return null;
     };
     return path;

@@ -52,8 +52,9 @@ const display = [_]Tag{
 
 /// The machine's PCI Express host bridge, which QEMU sets up itself: its
 /// configuration space at 0x30000000 (256 buses), memory below 4 GiB at
-/// 0x40000000 and above it at 16 GiB, its slots' INTA to INTD on PLIC
-/// sources 32 to 35. What `-device` adds is behind it.
+/// 0x40000000 and above it at 16 GiB, its I/O space's 64 KiB at
+/// 0x03000000, its slots' INTA to INTD on PLIC sources 32 to 35. What
+/// `-device` adds is behind it.
 const pci_host = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_PCI),
     .value(st.PART_Chip, st.CHIP_PCI_ECAM),
@@ -64,6 +65,8 @@ const pci_host = [_]Tag{
     .value(st.PART_PciMemSize, 0x4000_0000),
     .value(st.PART_PciPref, 0x4_0000_0000),
     .value(st.PART_PciPrefSize, 0x4_0000_0000),
+    .value(st.PART_PciIo, 0x0300_0000),
+    .value(st.PART_PciIoSize, 0x1_0000),
     .value(st.PART_Irq, 32),
     .pointer(st.PART_Label, "PCI Express"),
     .done,

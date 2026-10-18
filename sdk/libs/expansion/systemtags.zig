@@ -147,9 +147,11 @@ pub const PART_Label = PART_Dummy + 12;
 pub const PART_Irq = PART_Dummy + 13;
 /// A PCI host bridge's configuration space (ECAM: a function's 4 KiB at
 /// bus << 20 | device << 15 | function << 12), and the windows the
-/// processor reaches its buses' memory through, each at the same address
-/// on the bus as for the processor: one below 4 GiB, and one for
-/// prefetchable memory, which may be above. A window's size 0: none.
+/// processor reaches its buses' memory through: one below 4 GiB on the
+/// bus, and one for prefetchable memory, which may be above. A window's
+/// size 0: none. Where a window is at another address on the bus than
+/// for the processor, PART_PciMemBus and PART_PciPrefBus say where;
+/// absent, it is at the same.
 pub const PART_PciConfig = PART_Dummy + 14;
 pub const PART_PciMem = PART_Dummy + 15;
 pub const PART_PciMemSize = PART_Dummy + 16;
@@ -172,6 +174,16 @@ pub const PART_TxClockInverted = PART_Dummy + 22;
 /// in microamperes.
 pub const PART_RxClockDrive = PART_Dummy + 23;
 pub const PART_RxDataDrive = PART_Dummy + 24;
+/// A PCI host bridge's window onto its buses' I/O space: where the
+/// processor reaches it, its size (0: none), and the first port it is
+/// on the bus - absent, port 0.
+pub const PART_PciIo = PART_Dummy + 25;
+pub const PART_PciIoSize = PART_Dummy + 26;
+pub const PART_PciIoBus = PART_Dummy + 27;
+/// Where a PCI host bridge's windows (PART_PciMem, PART_PciPref) are on
+/// the bus, where that is not where the processor reaches them.
+pub const PART_PciMemBus = PART_Dummy + 28;
+pub const PART_PciPrefBus = PART_Dummy + 29;
 
 // Its lines, each a BoardPin. Which ones a part has depends on its kind.
 pub const PART_PinClock = PART_Dummy + 0x20;
@@ -313,7 +325,9 @@ pub const PARTKIND_RTC: u32 = 19;
 pub const PARTKIND_RNG: u32 = 20;
 /// A PCI or PCI Express host bridge, which pci.library brings up and
 /// walks: PART_Chip which bridge, PART_PciConfig its configuration space,
-/// PART_PciMem and PART_PciPref its windows, PART_Irq its interrupt -
+/// PART_PciMem, PART_PciPref and PART_PciIo its windows (and where each
+/// is on the bus, if not where the processor has it), PART_BusUnit which
+/// of the chip's bridges it is, PART_Irq its interrupt -
 /// the first of its INTA to INTD where they are sources of their own -
 /// and PART_PinReset the line that holds what is plugged in in reset
 /// (PERST#).

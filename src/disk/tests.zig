@@ -73,6 +73,7 @@ test {
     _ = @import("libs/iffparse/tests/iffparse.zig");
     _ = @import("libs/datatypes/tests/datatypes.zig");
     _ = @import("c/adddatatypes/tests/descriptor.zig");
+    _ = @import("c/pciinfo/tests/pciinfo.zig");
     _ = @import("c/net/addnetinterface/config.zig");
     _ = @import("c/net/timesync/tests/zone.zig");
     _ = @import("c/net/httpget/http.zig");

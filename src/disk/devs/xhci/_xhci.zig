@@ -6,7 +6,9 @@
 //! **A unit is a controller**: unit n is the nth xHCI function
 //! pci.library found (class 0C0330). The first OpenDevice of a unit
 //! makes its block and starts it - the function claimed, the controller
-//! reset and running, its interrupt hooked - and the last CloseDevice
+//! reset and running, its interrupt hooked: a message-signalled one
+//! (MSI or MSI-X, vector 0, the first interrupter's) where pci.library
+//! gives it one, its INTx line otherwise - and the last CloseDevice
 //! stops it again.
 //!
 //! **Everything happens on the unit's task.** BeginIO puts a transfer on
@@ -186,6 +188,9 @@ pub const Host = struct {
     stack: ?*anyopaque = null,
     int: exec.Interrupt = .{},
     int_hooked: bool = false,
+    /// Whether it is hooked on vector 0 (AllocPCIVectors), not on the
+    /// INTx line.
+    int_vector: bool = false,
     /// The task's signals: the interrupt, an abort, a command from an
     /// opener (start the controller, or stop it).
     int_signal: u32 = 0,

@@ -23,7 +23,8 @@ const _host = @import("../host/_host.zig");
 ///
 /// RESULT:
 /// True when the server is on the line; false for a function that has
-/// no INTx line (`interrupt_pin` 0).
+/// no INTx line (`interrupt_pin` 0), or signals messages instead
+/// (AllocPCIVectors), which switched it off.
 ///
 /// BEHAVIOR:
 /// Where the host bridge's lines are sources of the interrupt controller
@@ -53,12 +54,15 @@ const _host = @import("../host/_host.zig");
 /// INTx is a level: a server makes its function let go of the line
 /// before it answers, or it is run again at once.
 ///
+/// A function with message-signalled interrupts is hooked with
+/// AddPCIVectorServer: its messages do not share a line, and a bridge
+/// with many functions behind it has no more lines than four.
+///
 /// BUGS:
-/// MSI and MSI-X are not set up: every function interrupts on its INTx
-/// line.
+/// None known.
 ///
 /// SEE ALSO:
-/// `RemPCIIntServer`, `AddIntServer`
+/// `RemPCIIntServer`, `AllocPCIVectors`, `AddIntServer`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -67,7 +71,7 @@ const _host = @import("../host/_host.zig");
 /// ```
 pub fn AddPCIIntServer(_: *PCIBase, device: *pci.PCIDevice, server: *exec.Interrupt) bool {
     const entry = _host.entryOf(device);
-    if (entry.root_pin == 0 or device.interrupt == 0) return false;
+    if (entry.root_pin == 0 or device.interrupt == 0 or device.vectors != 0) return false;
     _host.addServer(entry, server);
     return true;
 }

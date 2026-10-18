@@ -24,6 +24,13 @@ pub const LVO = struct {
     pub const ReleasePCIDevice = libraries.lvo(9);
     pub const AddPCIIntServer = libraries.lvo(10);
     pub const RemPCIIntServer = libraries.lvo(11);
+    pub const FindPCICapability = libraries.lvo(12);
+    pub const FindPCIExtCapability = libraries.lvo(13);
+    pub const AllocPCIVectors = libraries.lvo(14);
+    pub const FreePCIVectors = libraries.lvo(15);
+    pub const AddPCIVectorServer = libraries.lvo(16);
+    pub const RemPCIVectorServer = libraries.lvo(17);
+    pub const ResetPCIDevice = libraries.lvo(18);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -37,6 +44,13 @@ pub const Fn = struct {
     pub const ReleasePCIDevice = *const fn (*PCIBase, *pci.PCIDevice) callconv(.c) void;
     pub const AddPCIIntServer = *const fn (*PCIBase, *pci.PCIDevice, *exec.Interrupt) callconv(.c) bool;
     pub const RemPCIIntServer = *const fn (*PCIBase, *pci.PCIDevice, *exec.Interrupt) callconv(.c) void;
+    pub const FindPCICapability = *const fn (*PCIBase, *pci.PCIDevice, u32, u32) callconv(.c) u32;
+    pub const FindPCIExtCapability = *const fn (*PCIBase, *pci.PCIDevice, u32, u32) callconv(.c) u32;
+    pub const AllocPCIVectors = *const fn (*PCIBase, *pci.PCIDevice, u32) callconv(.c) u32;
+    pub const FreePCIVectors = *const fn (*PCIBase, *pci.PCIDevice) callconv(.c) void;
+    pub const AddPCIVectorServer = *const fn (*PCIBase, *pci.PCIDevice, u32, *exec.Interrupt) callconv(.c) bool;
+    pub const RemPCIVectorServer = *const fn (*PCIBase, *pci.PCIDevice, u32, *exec.Interrupt) callconv(.c) void;
+    pub const ResetPCIDevice = *const fn (*PCIBase, *pci.PCIDevice) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -91,5 +105,46 @@ pub const PCIBase = opaque {
     /// The server taken off the function's line.
     pub fn RemPCIIntServer(self: *PCIBase, device: *pci.PCIDevice, server: *exec.Interrupt) void {
         return libraries.call(self, LVO.RemPCIIntServer, Fn.RemPCIIntServer, .{ device, server });
+    }
+
+    /// Where the function's next capability `id` (PCI_CAP_ID_*) is, after
+    /// the one at `after` (0: from the first); 0 for none.
+    pub fn FindPCICapability(self: *PCIBase, device: *pci.PCIDevice, id: u32, after: u32) u32 {
+        return libraries.call(self, LVO.FindPCICapability, Fn.FindPCICapability, .{ device, id, after });
+    }
+
+    /// Where the function's next extended capability `id` (PCI_EXT_CAP_ID_*)
+    /// is, after the one at `after` (0: from the first); 0 for none.
+    pub fn FindPCIExtCapability(self: *PCIBase, device: *pci.PCIDevice, id: u32, after: u32) u32 {
+        return libraries.call(self, LVO.FindPCIExtCapability, Fn.FindPCIExtCapability, .{ device, id, after });
+    }
+
+    /// Up to `count` message-signalled interrupts for the function, MSI-X
+    /// where it has it: how many it got; 0 for none, and it keeps its INTx
+    /// line.
+    pub fn AllocPCIVectors(self: *PCIBase, device: *pci.PCIDevice, count: u32) u32 {
+        return libraries.call(self, LVO.AllocPCIVectors, Fn.AllocPCIVectors, .{ device, count });
+    }
+
+    /// The function's vectors given back, and its INTx line on again.
+    pub fn FreePCIVectors(self: *PCIBase, device: *pci.PCIDevice) void {
+        return libraries.call(self, LVO.FreePCIVectors, Fn.FreePCIVectors, .{device});
+    }
+
+    /// `server` run whenever the function signals vector `vector`; false for
+    /// a vector it was not given.
+    pub fn AddPCIVectorServer(self: *PCIBase, device: *pci.PCIDevice, vector: u32, server: *exec.Interrupt) bool {
+        return libraries.call(self, LVO.AddPCIVectorServer, Fn.AddPCIVectorServer, .{ device, vector, server });
+    }
+
+    /// The server taken off the vector.
+    pub fn RemPCIVectorServer(self: *PCIBase, device: *pci.PCIDevice, vector: u32, server: *exec.Interrupt) void {
+        return libraries.call(self, LVO.RemPCIVectorServer, Fn.RemPCIVectorServer, .{ device, vector, server });
+    }
+
+    /// The function reset on its own (a function level reset), and what the
+    /// library set up in it put back; false if it cannot be.
+    pub fn ResetPCIDevice(self: *PCIBase, device: *pci.PCIDevice) bool {
+        return libraries.call(self, LVO.ResetPCIDevice, Fn.ResetPCIDevice, .{device});
     }
 };

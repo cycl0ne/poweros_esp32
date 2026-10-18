@@ -18,12 +18,14 @@
 //!    off (with nowhere to forward to it hangs the bridge), and its
 //!    prefetchable window 64-bit;
 //! 6. its address translation: configuration space and each memory
-//!    window from the processor's side to the same addresses on the bus
-//!    (AXI slave 0's tables), and every address from the bus's side to
-//!    the same address in memory - the RAM a function moves data to;
+//!    window from the processor's side to where the board says it is on
+//!    the bus (AXI slave 0's tables), and every address from the bus's
+//!    side to the same address in memory - the RAM a function moves data
+//!    to;
 //! 7. its interrupts masked, what they had seen cleared;
 //! 8. PERST# let go after 100 ms, 100 ms more before the first
-//!    configuration request, and up to a second for the link.
+//!    configuration request, and up to a second for the link - waited
+//!    out for both ports at once (`_host.bringUp`).
 //!
 //! **What the walk does not see**: the root port's BAR0 and BAR1, which
 //! are the bridge's window onto memory from the bus side, not memory the
@@ -31,9 +33,17 @@
 //!
 //! **Interrupts.** The bridge gathers INTA to INTD - what it has had of
 //! each from the link - in its own status register, and raises one
-//! interrupt for all of them (PART_Irq, PLIC source 56 for port 0). The
-//! library hooks it once the first function's server is added: what it
-//! saw is cleared, and the servers of each line that was raised run.
+//! interrupt for all of them (PART_Irq, PLIC source 56 for port 0, 57 for
+//! port 1). The library hooks it once the first function's server is
+//! added: what it saw is cleared, and the servers of each line that was
+//! raised run.
+//!
+//! **Message-signalled interrupts** end up there too. The bridge takes a
+//! function's messages at an address of its own on the bus, which its
+//! IMSI_ADDR register says, and keeps a bit for each of 32 vectors - the
+//! message's data - in ISTATUS_MSI; that any is set is one more bit of
+//! its status register. Each vector's bit is cleared before its servers
+//! run, as an edge is: a message that comes while they run is seen again.
 //!
 //! The clock, reset and syscon numbers are the JH7110's as Linux and
 //! U-Boot have them (jh7110-crg.h, the VisionFive 2's device tree);
@@ -49,6 +59,7 @@ const BoardPin = sdk.expansion.BoardPin;
 const _host = @import("_host.zig");
 const Host = _host.Host;
 const Address = _host.Address;
+const Window = @import("../scan/place.zig").Window;
 
 fn reg(address: usize) *volatile u32 {
     return @ptrFromInt(address);
@@ -137,6 +148,13 @@ const IMASK_LOCAL = 0x180;
 const ISTATUS_LOCAL = 0x184;
 const INTX_SHIFT = 24;
 const INTX_MASK: u32 = 0xF << INTX_SHIFT;
+/// ISTATUS_LOCAL and IMASK_LOCAL: a message-signalled interrupt came.
+const MSI_EVENT: u32 = 1 << 28;
+/// Where on the bus the bridge takes the messages, and the vectors it
+/// has had.
+const IMSI_ADDR = 0x190;
+const ISTATUS_MSI = 0x194;
+const msi_vectors = 32;
 const PMSG_SUPPORT_RX = 0x3F0;
 const PMSG_LTR_SUPPORT: u32 = 1 << 2;
 
@@ -168,10 +186,10 @@ const TRSL_MEMORY: u32 = 0;
 /// The configuration space's window: 256 buses.
 const config_bytes: u64 = 1 << 28;
 
-/// The port up, and its link waited for (`host.link_up`). False for a
-/// port the chip does not have, or a part that does not say where its
-/// registers are.
-pub fn bringUp(host: *Host, delay: anytype) bool {
+/// The port up as far as PERST#, which is held (`_host.start`). False
+/// for a port the chip does not have, or a part that does not say where
+/// its registers are.
+pub fn start(host: *Host) bool {
     if (host.unit >= syscon_block.len or host.registers == 0 or host.config == 0) return false;
     const unit = host.unit;
     const syscon = STG_SYSCON + syscon_block[unit];
@@ -211,9 +229,9 @@ pub fn bringUp(host: *Host, delay: anytype) bool {
     var entry: u32 = 0;
     translate(bridge, entry, host.config, 0, config_bytes, TRSL_CONFIG);
     entry += 1;
-    for ([_]@import("../scan/scan.zig").Window{ host.windows.mem, host.windows.pref }) |window| {
+    for ([_]Window{ host.windows.mem, host.windows.pref }) |window| {
         if (window.size == 0) continue;
-        translate(bridge, entry, window.base, window.base, window.size, TRSL_MEMORY);
+        translate(bridge, entry, window.cpu, window.base, window.size, TRSL_MEMORY);
         entry += 1;
     }
     while (entry < ATR_ENTRIES) : (entry += 1) reg(bridge + ATR_AXI4_SLV0 + entry * ATR_ENTRY + ATR_SRCADDR_PARAM).* = 0;
@@ -226,20 +244,21 @@ pub fn bringUp(host: *Host, delay: anytype) bool {
 
     reg(bridge + IMASK_LOCAL).* = 0;
     reg(bridge + ISTATUS_LOCAL).* = 0xFFFF_FFFF;
-
-    delay.wait(100_000);
-    holdPerst(host, false);
-    delay.wait(100_000);
-    host.link_up = false;
-    tries = 0;
-    while (tries < 10) : (tries += 1) {
-        if (reg(syscon + SYSCON_LNKSTA).* & DATA_LINK_ACTIVE != 0) {
-            host.link_up = true;
-            break;
-        }
-        delay.wait(100_000);
-    }
+    reg(bridge + ISTATUS_MSI).* = 0xFFFF_FFFF;
+    host.msi_address = reg(bridge + IMSI_ADDR).*;
+    host.msi_count = msi_vectors;
     return true;
+}
+
+/// PERST# let go (`_host.release`).
+pub fn release(host: *Host) void {
+    holdPerst(host, false);
+}
+
+/// Whether the port's data link layer is up (`_host.linkUp`).
+pub fn linkUp(host: *const Host) bool {
+    const syscon = STG_SYSCON + syscon_block[host.unit];
+    return reg(syscon + SYSCON_LNKSTA).* & DATA_LINK_ACTIVE != 0;
 }
 
 /// AXI slave 0's entry `index`: `bytes` from `axi` on the processor's
@@ -270,6 +289,38 @@ pub fn hidden(at: Address, offset: u32) bool {
     return at.bus == 0 and at.device == 0 and at.function == 0 and offset >= 0x10 and offset < 0x18;
 }
 
+/// The bridge's interrupt hooked, if it is not yet. Under Disable.
+fn hook(host: *Host) void {
+    if (host.gathering) return;
+    host.gathering = true;
+    host.gather = .{
+        .node = .{ .type = .interrupt, .pri = 0, .name = "pci.library" },
+        .data = host,
+        .code = @ptrCast(&gather),
+    };
+    host.sys.AddIntServer(host.irq, &host.gather);
+}
+
+/// The bridge's interrupt let go once nothing is on it: no line's
+/// server, no vector's. Under Disable.
+fn unhookIfIdle(host: *Host) void {
+    for (&host.lines) |*line| {
+        if (!line.isEmpty()) return;
+    }
+    if (!vectorsIdle(host)) return;
+    if (host.gathering) {
+        host.sys.RemIntServer(host.irq, &host.gather);
+        host.gathering = false;
+    }
+}
+
+fn vectorsIdle(host: *Host) bool {
+    for (&host.vectors) |*list| {
+        if (!list.isEmpty()) return false;
+    }
+    return true;
+}
+
 /// `server` on line `pin` (1 to 4); the bridge's interrupt hooked with
 /// the first, and the line let through.
 pub fn addServer(host: *Host, pin: u8, server: *exec.Interrupt) void {
@@ -277,55 +328,89 @@ pub fn addServer(host: *Host, pin: u8, server: *exec.Interrupt) void {
     sys.Disable();
     defer sys.Enable();
     sys.Enqueue(&host.lines[pin - 1], &server.node);
-    if (!host.gathering) {
-        host.gathering = true;
-        host.gather = .{
-            .node = .{ .type = .interrupt, .pri = 0, .name = "pci.library" },
-            .data = host,
-            .code = @ptrCast(&gather),
-        };
-        sys.AddIntServer(host.irq, &host.gather);
-    }
+    hook(host);
     reg(host.registers + IMASK_LOCAL).* |= lineBit(pin);
 }
 
 /// `server` off line `pin`; the line masked once it has none, the
-/// bridge's interrupt let go once no line has.
+/// bridge's interrupt let go once nothing has.
 pub fn remServer(host: *Host, pin: u8, server: *exec.Interrupt) void {
     const sys = host.sys;
     sys.Disable();
     defer sys.Enable();
     sys.Remove(&server.node);
     if (host.lines[pin - 1].isEmpty()) reg(host.registers + IMASK_LOCAL).* &= ~lineBit(pin);
-    for (&host.lines) |*line| {
-        if (!line.isEmpty()) return;
-    }
-    if (host.gathering) {
-        sys.RemIntServer(host.irq, &host.gather);
-        host.gathering = false;
-    }
+    unhookIfIdle(host);
+}
+
+/// `server` on vector `vector`; the bridge's interrupt hooked with the
+/// first, and the messages let through.
+pub fn addVectorServer(host: *Host, vector: u8, server: *exec.Interrupt) void {
+    const sys = host.sys;
+    sys.Disable();
+    defer sys.Enable();
+    sys.Enqueue(&host.vectors[vector], &server.node);
+    hook(host);
+    reg(host.registers + IMASK_LOCAL).* |= MSI_EVENT;
+}
+
+/// `server` off the vector it is on; the messages masked once no vector
+/// has a server, the bridge's interrupt let go once nothing has.
+pub fn remVectorServer(host: *Host, server: *exec.Interrupt) void {
+    const sys = host.sys;
+    sys.Disable();
+    defer sys.Enable();
+    sys.Remove(&server.node);
+    if (vectorsIdle(host)) reg(host.registers + IMASK_LOCAL).* &= ~MSI_EVENT;
+    unhookIfIdle(host);
+}
+
+/// Every server off vectors `first` to `first + count - 1`.
+pub fn clearVectors(host: *Host, first: u8, count: u16) void {
+    const sys = host.sys;
+    sys.Disable();
+    defer sys.Enable();
+    var v: u32 = first;
+    while (v < @as(u32, first) + count) : (v += 1) host.vectors[v].init(.interrupt);
+    if (vectorsIdle(host)) reg(host.registers + IMASK_LOCAL).* &= ~MSI_EVENT;
+    unhookIfIdle(host);
 }
 
 fn lineBit(pin: u8) u32 {
     return @as(u32, 1) << @intCast(INTX_SHIFT + pin - 1);
 }
 
-/// The bridge's interrupt: what it saw of each line cleared first - a
-/// line raised again while its servers run is seen again - then the
-/// servers of every line it saw, each line's until one answers.
+/// The bridge's interrupt: what it saw cleared first - a line raised
+/// again while its servers run is seen again - then the servers of every
+/// line it saw, each line's until one answers; and of every vector that
+/// came, each vector's bit cleared before its servers run.
 fn gather(data: ?*anyopaque, number: u32) callconv(.c) i32 {
     const host: *Host = @ptrCast(@alignCast(data.?));
-    const seen = reg(host.registers + ISTATUS_LOCAL).* & reg(host.registers + IMASK_LOCAL).* & INTX_MASK;
+    const bridge = host.registers;
+    const seen = reg(bridge + ISTATUS_LOCAL).* & reg(bridge + IMASK_LOCAL).* & (INTX_MASK | MSI_EVENT);
     if (seen == 0) return 0;
-    reg(host.registers + ISTATUS_LOCAL).* = seen;
-    for (&host.lines, 0..) |*line, n| {
-        if (seen & lineBit(@intCast(n + 1)) == 0) continue;
-        var it = line.iterator();
-        while (it.next()) |node| {
-            const server: *exec.Interrupt = @fieldParentPtr("node", node);
-            const code: exec.IntServerFn = @ptrCast(@alignCast(server.code orelse continue));
-            if (code(server.data, number) != 0) break;
+    reg(bridge + ISTATUS_LOCAL).* = seen;
+    if (seen & MSI_EVENT != 0) {
+        const came = reg(bridge + ISTATUS_MSI).*;
+        for (&host.vectors, 0..) |*list, v| {
+            const bit = @as(u32, 1) << @intCast(v);
+            if (came & bit == 0) continue;
+            reg(bridge + ISTATUS_MSI).* = bit;
+            run(list, number);
         }
     }
+    for (&host.lines, 0..) |*line, n| {
+        if (seen & lineBit(@intCast(n + 1)) != 0) run(line, number);
+    }
     return 1;
+}
+
+/// A chain's servers, until one answers.
+fn run(list: *exec.List, number: u32) void {
+    var it = list.iterator();
+    while (it.next()) |node| {
+        const server: *exec.Interrupt = @fieldParentPtr("node", node);
+        const code: exec.IntServerFn = @ptrCast(@alignCast(server.code orelse continue));
+        if (code(server.data, number) != 0) break;
+    }
 }

@@ -2,15 +2,18 @@
 //! pci.library: the machine's PCI and PCI Express functions, on the disk
 //! in LIBS:. As it is first opened it brings up the board's host bridges
 //! (PARTKIND_PCI), walks the buses behind them, numbers them, places the
-//! functions' memory and keeps a PCIDevice for each function; a driver
-//! finds its function, claims it, reads and writes its configuration
-//! space and hooks its INTx line through the library.
+//! functions' memory and I/O and keeps a PCIDevice for each function; a
+//! driver finds its function, claims it, reads and writes its
+//! configuration space, finds its capabilities, hooks its INTx line or
+//! its message-signalled interrupts, and resets it through the library.
 //!
 //! The jump table is pci_lvo.zig, the ROM tag, the init and the expunge
-//! pci_init.zig, the base pci_base.zig. The walk is scan/, the host
-//! bridges host/ - `_host.zig` what both have, `ecam.zig` QEMU's, and
-//! `jh7110.zig` the JH7110's PCI Express ports. Each call is a file
-//! under its area: `find/`, `config/`, `claim/`, `interrupt/`.
+//! pci_init.zig, the base pci_base.zig, the timer waits delay.zig. The
+//! walk is scan/ - `scan.zig` what is there, `place.zig` where it goes -
+//! the host bridges host/ - `_host.zig` what both have, `ecam.zig`
+//! QEMU's, and `jh7110.zig` the JH7110's PCI Express ports. Each call is
+//! a file under its area: `find/`, `config/`, `claim/`, `interrupt/`
+//! (`_vectors.zig` MSI and MSI-X), `reset/`.
 
 const sdk = @import("sdk");
 const ExecBase = sdk.interface.exec.ExecBase;
