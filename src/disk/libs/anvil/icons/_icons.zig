@@ -148,6 +148,15 @@ pub const Icon = struct {
         ic.y = cell_y + @as(i32, @intCast(look.icon_size)) - ic.height();
     }
 
+    /// The top-left of the cell the icon would sit in as it lies now:
+    /// `putInCell`'s place turned back.
+    pub fn cellOrigin(ic: *const Icon, look: *const Look) place.Point {
+        return .{
+            .x = ic.x - @divTrunc(look.cell.width - ic.width(), 2),
+            .y = ic.y - (@as(i32, @intCast(look.icon_size)) - ic.height()),
+        };
+    }
+
     /// The name measured in the look's font through `rp`, and cut to what
     /// fits in a cell.
     pub fn measure(ic: *Icon, gb: *GraphicsBase, rp: *graphics.RastPort, look: *const Look) void {

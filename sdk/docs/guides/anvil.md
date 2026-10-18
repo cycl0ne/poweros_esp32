@@ -57,7 +57,7 @@ What lies under the icons is one line in `ENV:Sys/anvil.prefs`
 (`sdk.prefs.anvil`, edited on the Desktop page of `SYS:Programs/Prefs`):
 
 ```
-GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON
+GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO
 ```
 
 A colour, or two shaded from the top down - left out, the screen's
@@ -85,7 +85,9 @@ All Files. Where the icons' pictures come from is in the
 ## What it follows
 
 `anvil.prefs` and `font.prefs` are watched with StartNotify: a line saved
-there is in force at once, and the ground and the icons are made anew.
+there is in force at once, and the ground and the icons are made anew -
+but for a change of `SNAP` alone, which changes nothing drawn and only
+sets the menu's mark.
 The screen's pens are followed through `IDCMP_NEWPREFS`, so a ground left
 to the background pen changes with the palette.
 
@@ -115,7 +117,8 @@ Viewed by name, date or size, the drawer is rows of text - the name, the
 size or "Drawer", the date and the protection bits - drawers first, then
 by the name, the newest or the largest. Bars in the right and bottom
 borders scroll it, a step at a time. A disk's window says in its title
-how full the disk is. The drawer is watched (StartNotify) and read again
+how full the disk is - `Work  45% full, 1,234K free, 980K in use` - in
+K, or past 9,999 of one unit in the next: M, G, T, P. The drawer is watched (StartNotify) and read again
 when anything changes it.
 
 The Window menu has Open Parent, Close, Update, Show (only icons, or all
@@ -197,8 +200,10 @@ An icon held and moved a few pixels is dragged: the icons picked in its
 window, pictures and names, follow the pointer as one picture laid over
 the screen. Where the button is let go decides what happens:
 
-- On the ground of the window it came from, the icons move there. The
-  new places are kept until Update, unless Snapshot writes them.
+- On the ground of the window it came from, the icons move there - each
+  into the nearest free cell of the grid while Snap to Grid is ticked
+  ([below](#working-with-files)). The new places are kept until Update,
+  unless Snapshot writes them.
 - On a drawer, a disk or the trash, or into another drawer's window, the
   files go there. On the same volume they are moved, each with its icon;
   on another volume they are copied.
@@ -235,9 +240,26 @@ The Icons menu works on the icons picked:
 | Empty Trash | what is in the trash deleted |
 
 The Window menu adds New Drawer (asks the name, makes the drawer and its
-icon), Clean Up (the icons laid out in rows again) and Snapshot: Window
-writes the window's box, view and shown files into the drawer's icon, and
-All writes every icon's place as well.
+icon), Clean Up (the icons laid out in rows again), Clean Up By, Snap to
+Grid and Snapshot: Window writes the window's box, view and shown files
+into the drawer's icon, and All writes every icon's place as well.
+
+**Clean Up By** Name, Date or Size sorts the icons - drawers first, then
+by the name, the newest or the largest, a tie by the name, as a drawer
+viewed as text is sorted - and lays them out in that order as Clean Up
+does. On the desktop's ground the disks are sorted by name alone, since
+a disk has no date or size of its own. The places are kept until
+Snapshot writes them.
+
+**Snap to Grid**, ticked, puts an icon that is moved into the nearest
+free cell of the grid its ground's icons are laid out on: a drawer's
+cells counted from its top left, the desktop's from its right edge, as
+Clean Up places them. The cell nearest where the icon was let go is
+taken when it is free, else the nearest free one around it; a group
+moved together is snapped one icon after the other. The mark is kept in
+`anvil.prefs` as `SNAP=YES` or `SNAP=NO`, in `ENV:` and `ENVARC:`, so it
+lasts across a boot; the Desktop page of `SYS:Programs/Prefs` sets it
+too.
 
 ## Information
 
@@ -361,8 +383,9 @@ and of them only Open for programs' icons; Tools only while programs have
 items in it; Delete not for a disk or the trash, Empty Trash only for the trash,
 Format Disk only for disks, Leave Out only for icons in drawers, Put Away
 only for left-out ones; Open Parent, Close, Update, New Drawer, Show, View
-By and Snapshot Window only in a drawer; Clean Up only where icons are
-shown.
+By and Snapshot Window only in a drawer; Clean Up and Clean Up By only
+where icons are shown, and on the desktop's ground by name alone. Snap to
+Grid is on everywhere, its mark the prefs'.
 
 | Anvil | |
 |---|---|
@@ -370,7 +393,8 @@ shown.
 | Execute Command | a command asked for and run, its output in a window that opens if it prints |
 | Redraw All, Update All | every window drawn again; the disks looked at and every drawer read again |
 | Last Message | what the desktop last said in the screen's title, said again |
-| About, Quit | |
+| About | the desktop's version and what it runs on: the system's release, the board, the processor (the chip, how many cores, the clock), the memory - all of it and how much is free, then the internal memory and the PSRAM apart - and the screen's size and depth, each asked of the running system |
+| Quit | |
 
 ## Trying it
 

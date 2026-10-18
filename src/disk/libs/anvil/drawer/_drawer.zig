@@ -505,6 +505,38 @@ fn place(d: *Desktop, dr: *Drawer, ic: *Icon) void {
     ic.putInCell(&d.drawer_look, found.at.x, found.at.y);
 }
 
+/// An icon moved in the drawer put in the free cell nearest where it was
+/// let go, of the grid `place` puts icons on: Snap to Grid. The grid
+/// reaches a row past the lowest icon, so a free cell is always there.
+/// Without the memory to list the other icons, it stays where it is.
+pub fn snap(d: *Desktop, dr: *Drawer, ic: *Icon) void {
+    const look = &d.drawer_look;
+    var count: usize = 0;
+    var lowest: i32 = 0;
+    var it = dr.icons.iterator();
+    while (it.next()) |node| : (count += 1) {
+        const other: *Icon = @alignCast(@fieldParentPtr("node", node));
+        lowest = @max(lowest, other.box(look).max_y);
+    }
+    const memory = d.sys.AllocVec(@max(count, 1) * @sizeOf(Rect), exec.MEMF_ANY) orelse return;
+    defer d.sys.FreeVec(memory);
+    const taken: [*]Rect = @ptrCast(@alignCast(memory));
+    var others: usize = 0;
+    it = dr.icons.iterator();
+    while (it.next()) |node| {
+        const other: *Icon = @alignCast(@fieldParentPtr("node", node));
+        if (other == ic) continue;
+        taken[others] = other.box(look);
+        others += 1;
+    }
+    const near = ic.cellOrigin(look);
+    const width = @max(dr.inner_width, look.cell.width + 2 * margin);
+    const bottom = @max(lowest, near.y + look.cell.height) + look.cell.height;
+    const area = Rect{ .min_x = margin, .min_y = margin, .max_x = width - margin, .max_y = bottom + margin };
+    const at = icons.place.nearestFree(area, look.cell, taken[0..others], near, .rows_from_left);
+    ic.putInCell(look, at.x, at.y);
+}
+
 /// Every icon let go of, and the drawer read again from the start.
 pub fn reread(d: *Desktop, dr: *Drawer) void {
     stopReading(d, dr);

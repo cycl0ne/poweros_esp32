@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! anvil.prefs: the desktop's settings as a file - one line:
 //!
-//!     GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON
+//!     GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO
 //!
 //! - GROUND: the desktop's colour, `#RRGGBB`, or two, `#top..#bottom`,
 //!   shaded from the one at the top to the one at the bottom. Left out,
@@ -15,13 +15,17 @@
 //!   to 256; a larger one is scaled down to it.
 //! - VIEW: how a drawer is shown that has no view of its own - by ICON,
 //!   NAME, DATE or SIZE.
+//! - SNAP: YES to put an icon that is moved in the nearest free cell of
+//!   the grid its ground's icons are laid out on, NO to leave it where it
+//!   is let go.
 //!
 //! One left out keeps the value it has. `parse` reads the line into
 //! `Settings`, `write` writes them as the line, `groundOf` reads the
-//! ground's colours alone (for a field that takes them typed), and
-//! `header` is the explanation a program that writes the file puts
-//! before it. The desktop reads the file when it starts and follows it
-//! with StartNotify.
+//! ground's colours alone (for a field that takes them typed), `sameLook`
+//! tells whether two settings draw the desktop alike, and `header` is the
+//! explanation a program that writes the file puts before it. The desktop
+//! reads the file when it starts and follows it with StartNotify; its
+//! Window menu's Snap to Grid writes the file too.
 
 const graphics = @import("../graphics/graphics.zig");
 const style = @import("style.zig");
@@ -37,6 +41,9 @@ pub const place_names = [3][]const u8{ "TILED", "CENTRED", "SCALED" };
 /// How a drawer is shown: its icons, or a list by name, date or size.
 pub const View = enum(u8) { icon, name, date, size };
 pub const view_names = [4][]const u8{ "ICON", "NAME", "DATE", "SIZE" };
+
+/// SNAP's words, for false and true.
+pub const snap_names = [2][]const u8{ "NO", "YES" };
 
 /// The longest picture's name, its NUL aside.
 pub const picture_max = 127;
@@ -55,6 +62,8 @@ pub const Settings = struct {
     place: Place = .tiled,
     icon_size: u32 = 48,
     view: View = .icon,
+    /// Whether a moved icon goes to the nearest free cell of the grid.
+    snap: bool = false,
 
     /// The picture's name, or null for none.
     pub fn pictureName(settings: *const Settings) ?[]const u8 {
@@ -76,6 +85,19 @@ pub const Settings = struct {
         return settings.ground_given and settings.top != settings.bottom;
     }
 };
+
+/// Whether `a` and `b` draw the desktop alike: the same in all but SNAP,
+/// which changes nothing drawn - so a change of it alone needs no new
+/// ground, look or icons.
+pub fn sameLook(a: *const Settings, b: *const Settings) bool {
+    if (a.ground_given != b.ground_given or a.top != b.top or a.bottom != b.bottom) return false;
+    if (a.place != b.place or a.icon_size != b.icon_size or a.view != b.view) return false;
+    for (a.picture, b.picture) |left, right| {
+        if (left != right) return false;
+        if (left == 0) break;
+    }
+    return true;
+}
 
 /// A ground typed: `#RRGGBB`, or `#top..#bottom`. Null when it is neither.
 pub fn groundOf(text: []const u8) ?[2]Pen {
@@ -139,7 +161,13 @@ pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
             settings.view = for (view_names, 0..) |name, k| {
                 if (style.same(value, name)) break @enumFromInt(k);
             } else return "VIEW is ICON, NAME, DATE or SIZE";
-        } else return "not in the form GROUND=#RRGGBB PICTURE=name PLACE=TILED ICONSIZE=48 VIEW=ICON";
+        } else if (style.same(word, "SNAP")) {
+            if (style.same(value, snap_names[1])) {
+                settings.snap = true;
+            } else if (style.same(value, snap_names[0])) {
+                settings.snap = false;
+            } else return "SNAP is YES or NO";
+        } else return "not in the form GROUND=#RRGGBB PICTURE=name PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO";
     }
     return null;
 }
@@ -169,7 +197,7 @@ fn number(value: u32, into: []u8) usize {
     return n;
 }
 
-/// `settings` written as the line, into `into` (224 bytes will do); how
+/// `settings` written as the line, into `into` (240 bytes will do); how
 /// many bytes, no newline. The ground only when it was given; the
 /// picture's name in quotes when it has a space in it.
 pub fn write(settings: *const Settings, into: []u8) usize {
@@ -206,6 +234,8 @@ pub fn write(settings: *const Settings, into: []u8) usize {
     n += number(settings.icon_size, into[n..]);
     put(into, &n, " VIEW=");
     put(into, &n, view_names[@intFromEnum(settings.view)]);
+    put(into, &n, " SNAP=");
+    put(into, &n, snap_names[@intFromBool(settings.snap)]);
     return n;
 }
 
@@ -225,9 +255,12 @@ pub const header =
     \\#           a larger one is scaled down.
     \\# VIEW      how a drawer with no view of its own is shown: ICON,
     \\#           NAME, DATE or SIZE.
+    \\# SNAP      YES to put an icon that is moved in the nearest free
+    \\#           cell of its ground's grid, NO to leave it where it is
+    \\#           let go.
     \\#
     \\# One left out keeps the desktop's own. These are its own:
     \\#
-    \\# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON
+    \\# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO
     \\
 ;

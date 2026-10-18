@@ -117,13 +117,46 @@ test "a drawer's path: its parent, a name joined on, its last part" {
     try testing.expectEqualStrings("Work", drawer_path.lastPart("Work:"));
 }
 
-test "a disk's title: how full, free and used, in K and past 9,999K in M" {
+test "snapping: the free cell nearest where an icon was let go, counted from the ground's own edge" {
+    const area = Rect{ .min_x = 0, .min_y = 0, .max_x = 300, .max_y = 200 };
+    const cell = place.Cell{ .width = 100, .height = 100 };
+    // A drawer's grid from the left: the cell nearest, rounded.
+    try testing.expectEqual(place.Point{ .x = 100, .y = 0 }, place.nearestFree(area, cell, &.{}, .{ .x = 90, .y = 10 }, .rows_from_left));
+    try testing.expectEqual(place.Point{ .x = 200, .y = 100 }, place.nearestFree(area, cell, &.{}, .{ .x = 160, .y = 70 }, .rows_from_left));
+    // Past the ground's edge: the last cell inside it.
+    try testing.expectEqual(place.Point{ .x = 200, .y = 100 }, place.nearestFree(area, cell, &.{}, .{ .x = 900, .y = 900 }, .rows_from_left));
+    try testing.expectEqual(place.Point{ .x = 0, .y = 0 }, place.nearestFree(area, cell, &.{}, .{ .x = -50, .y = -50 }, .rows_from_left));
+    // That cell taken: the free one nearest of the ring round it.
+    const there = [_]Rect{.{ .min_x = 110, .min_y = 10, .max_x = 160, .max_y = 60 }};
+    try testing.expectEqual(place.Point{ .x = 0, .y = 0 }, place.nearestFree(area, cell, &there, .{ .x = 90, .y = 10 }, .rows_from_left));
+    try testing.expectEqual(place.Point{ .x = 200, .y = 0 }, place.nearestFree(area, cell, &there, .{ .x = 140, .y = 0 }, .rows_from_left));
+    // The desktop's grid from the right edge: an area not a whole number
+    // of cells wide still has its first column at the edge.
+    const wide = Rect{ .min_x = 0, .min_y = 0, .max_x = 350, .max_y = 200 };
+    try testing.expectEqual(place.Point{ .x = 250, .y = 100 }, place.nearestFree(wide, cell, &.{}, .{ .x = 240, .y = 110 }, .columns_from_right));
+    try testing.expectEqual(place.Point{ .x = 150, .y = 0 }, place.nearestFree(wide, cell, &.{}, .{ .x = 170, .y = 20 }, .columns_from_right));
+    // Every cell taken: the nearest, rather than off the ground.
+    const all = [_]Rect{area};
+    try testing.expectEqual(place.Point{ .x = 100, .y = 0 }, place.nearestFree(area, cell, &all, .{ .x = 90, .y = 10 }, .rows_from_left));
+}
+
+test "a disk's title: how full, free and used, in K, then M, G, T and P past 9,999 of each" {
     var text: [96]u8 = undefined;
     const n = drawer_path.diskTitle(&text, "Work", 1000, 450, 1024);
     try testing.expectEqualStrings("Work  45% full, 550K free, 450K in use", text[0..n]);
     const m = drawer_path.diskTitle(&text, "Card", 4_000_000, 1_000_000, 512);
     try testing.expectEqualStrings("Card  25% full, 1,464M free, 488M in use", text[0..m]);
+    // A 2 TB disk a quarter full, in 4 KiB blocks.
+    const g = drawer_path.diskTitle(&text, "Big", 488_281_250, 122_070_312, 4096);
+    try testing.expectEqualStrings("Big  25% full, 1,396G free, 465G in use", text[0..g]);
     try testing.expectEqualStrings("Gone", text[0..drawer_path.diskTitle(&text, "Gone", 0, 0, 0)]);
+    // Each unit up to 9,999, the next past it; P as far as a u64 goes.
+    var size: [24]u8 = undefined;
+    try testing.expectEqualStrings("9,999M", size[0..drawer_path.amount(&size, 9999 << 20)]);
+    try testing.expectEqualStrings("9G", size[0..drawer_path.amount(&size, 10000 << 20)]);
+    try testing.expectEqualStrings("12T", size[0..drawer_path.amount(&size, 12 << 40)]);
+    try testing.expectEqualStrings("10P", size[0..drawer_path.amount(&size, 10 << 50)]);
+    try testing.expectEqualStrings("16,383P", size[0..drawer_path.amount(&size, ~@as(u64, 0))]);
 }
 
 test "rows: names in order case aside, the protection as hsparwed" {

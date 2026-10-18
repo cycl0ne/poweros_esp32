@@ -32,7 +32,9 @@ The settings are on six pages, under tabs:
   desktop's icons.
 - **Desktop:** the desktop's ground - one colour, or two shaded from top
   to bottom - a picture over it and how it is placed, how large icons are
-  shown, and how a drawer with no view of its own is shown.
+  shown, whether an icon that is moved snaps into the nearest free cell
+  of the grid (as the desktop's Window menu switches it too), and how a
+  drawer with no view of its own is shown.
 - **System:** the double-click time, the height of a screen's font when
   it is given none, when the keyboard on the screen comes up, whether a
   window may be moved partly past the screen's edges, and whether the
