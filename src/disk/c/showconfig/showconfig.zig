@@ -177,9 +177,10 @@ fn printDevices(dl: *DosBase, eb: *ExpansionBase, speaks: ?[*:0]const u8) i32 {
 }
 
 /// Every pad that is held, and by whom. Nothing on a machine without
-/// gpio.resource.
+/// gpio.resource, or a chip without pads.
 fn printHolders(sys: *ExecBase, dl: *DosBase) void {
     const gpio = sdk.resources.gpio;
+    if (comptime gpio.GPIO_PADS == 0) return;
     const found = sys.OpenResource(gpio.GPIONAME) orelse return;
     const gb: *gpio.GpioBase = @ptrCast(@alignCast(found));
 
@@ -260,6 +261,8 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_USB => "usb",
         st.PARTKIND_UART => "uart",
         st.PARTKIND_RTC => "rtc",
+        st.PARTKIND_RNG => "rng",
+        st.PARTKIND_PCI => "pci",
         else => "?",
     };
 }
@@ -278,6 +281,8 @@ fn busName(bus: u32) [*:0]const u8 {
         st.BUS_TWAI => "twai",
         st.BUS_RMII => "rmii",
         st.BUS_MIPI_DSI => "mipi-dsi",
+        st.BUS_PCI => "pci",
+        st.BUS_RGMII => "rgmii",
         else => "?",
     };
 }

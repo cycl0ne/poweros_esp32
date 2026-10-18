@@ -24,7 +24,11 @@
 //!   nothing else; UART0 on the emulator, which QEMU puts on its
 //!   terminal. There is one such port and
 //!   everything shares it, so this handler claims its node and serves
-//!   every Open of it from the one process.
+//!   every Open of it from the one process. It reads that port only while
+//!   a handle opened for reading is open or a READ or WAIT_CHAR waits: the
+//!   ROM shell reads it too once a newshell's shell has ended, and a
+//!   program started with Run that still prints here must not take every
+//!   other key from it.
 //!
 //! Both are the same two commands on an exec device, CMD_READ of a byte
 //! and CMD_WRITE of a string, which is why the handler above them is one
@@ -120,8 +124,8 @@ pub const window = @import("window.zig");
 pub const HANDLER_NAME = "con-handler";
 const HANDLER_VERSION = 1;
 /// 1: Tab completes names.
-const HANDLER_REVISION = 5;
-const BUILD_DATE = "09.10.2026";
+const HANDLER_REVISION = 6;
+const BUILD_DATE = "18.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -133,6 +137,9 @@ const max_reads = 16;
 /// for its answer, so this is one per program writing here.
 const max_held = 8;
 pub const max_waits = 4;
+/// Handles open for reading told apart; past that many the console reads
+/// its terminal until the last handle closes.
+const max_readers = 16;
 
 /// The banner as it reaches the terminal: the editor turns each "\n" of it
 /// into CR LF.
@@ -171,6 +178,10 @@ pub fn Handler(comptime Io: type) type {
         /// only ever written to is a program's output and gets none.
         read_opened: bool = false,
         opens: u32 = 0,
+        /// The handles open now that were opened for reading (FINDINPUT,
+        /// FINDUPDATE), and whether more were than this holds.
+        readers: [max_readers]?*dos.FileHandle = @splat(null),
+        readers_lost: bool = false,
         reads: [max_reads]*DosPacket = undefined,
         read_count: usize = 0,
         /// WRITEs waiting to go out, in the order they came. While the
@@ -192,6 +203,7 @@ pub fn Handler(comptime Io: type) type {
         }
 
         pub fn packet(h: *Self, pkt: *DosPacket) void {
+            defer h.listen();
             switch (pkt.getAction()) {
                 .findinput, .findoutput, .findupdate => h.open(pkt),
                 .end => h.end(pkt),
@@ -332,8 +344,45 @@ pub fn Handler(comptime Io: type) type {
             fh.interactive = true;
             fh.key = fh;
             h.opens += 1;
-            if (pkt.getAction() != .findoutput) h.read_opened = true;
+            if (pkt.getAction() != .findoutput) {
+                h.read_opened = true;
+                h.addReader(fh);
+            }
             h.io.reply(pkt, dos.DOSTRUE, 0);
+        }
+
+        fn addReader(h: *Self, fh: *dos.FileHandle) void {
+            for (&h.readers) |*r| {
+                if (r.* != null) continue;
+                r.* = fh;
+                return;
+            }
+            h.readers_lost = true;
+        }
+
+        fn dropReader(h: *Self, fh: *dos.FileHandle) void {
+            for (&h.readers) |*r| {
+                if (r.* == fh) r.* = null;
+            }
+        }
+
+        /// Whether anything here could take what is typed: a handle opened
+        /// for reading, or a READ or WAIT_CHAR waiting on any handle.
+        fn wantsInput(h: *const Self) bool {
+            if (h.readers_lost or h.read_count > 0) return true;
+            for (h.readers) |r| {
+                if (r != null) return true;
+            }
+            for (h.waits) |w| {
+                if (w != null) return true;
+            }
+            return false;
+        }
+
+        /// The terminal listened to while something here could take what
+        /// is typed, and only then (`Io.listen`).
+        fn listen(h: *Self) void {
+            if (h.terminal_open) h.io.listen(h.wantsInput());
         }
 
         fn end(h: *Self, pkt: *DosPacket) void {
@@ -362,7 +411,10 @@ pub fn Handler(comptime Io: type) type {
                 h.writeOut(waiting);
             }
             if (h.opens > 0) h.opens -= 1;
+            if (pkt.args.file.fh) |closing| h.dropReader(closing);
             if (h.opens == 0) {
+                h.readers = @splat(null);
+                h.readers_lost = false;
                 for (&h.waits, 0..) |*w, slot| {
                     const waiting = w.* orelse continue;
                     h.io.stopTimer(slot);
@@ -407,6 +459,7 @@ pub fn Handler(comptime Io: type) type {
             const pkt = h.waits[slot] orelse return;
             h.waits[slot] = null;
             h.io.reply(pkt, dos.DOSFALSE, 0);
+            h.listen();
         }
 
         /// A byte from the terminal.
@@ -425,6 +478,7 @@ pub fn Handler(comptime Io: type) type {
             h.serve();
             // The key may have been the one that lets held output go.
             h.writeHeld();
+            h.listen();
         }
 
         /// The terminal has ended - its stream, its window: the end of the
@@ -468,10 +522,11 @@ pub fn Handler(comptime Io: type) type {
 
 // --- On the board ---
 
-/// One port of a console: its read request, always out for one byte while
-/// the console is open, and a copy of it for writing. A window's console
-/// and a serial port answer the same two commands - CMD_READ of a byte,
-/// CMD_WRITE of a string - so the handler drives either one through this.
+/// One port of a console: its read request, out for one byte while the
+/// console listens (`DeviceIo.listen`), and a copy of it for writing. A
+/// window's console and a serial port answer the same two commands -
+/// CMD_READ of a byte, CMD_WRITE of a string - so the handler drives either
+/// one through this.
 const Unit = struct {
     device: [*:0]const u8,
     unit: u32,
@@ -479,7 +534,9 @@ const Unit = struct {
     write: serial.IOExtSer = .{},
     byte: u8 = 0,
     open: bool = false,
-    /// Its stream has ended (IOERR_ENDOFSTREAM): no read is out.
+    /// The read is out.
+    listening: bool = false,
+    /// Its stream has ended (IOERR_ENDOFSTREAM): no read goes out again.
     ended: bool = false,
 };
 
@@ -504,6 +561,9 @@ const DeviceIo = struct {
     win: ?*wn.Window = null,
     /// The window's own port, where its close gadget is heard.
     user_port: ?*MsgPort = null,
+    /// The machine's own console port, which the ROM shell reads too: read
+    /// only while something here could take what is typed (`listen`).
+    shared: bool = false,
     /// The last handle has closed: this console has done its work.
     finished: bool = false,
     /// A window told to WAIT has had the key that lets it go.
@@ -676,6 +736,7 @@ const DeviceIo = struct {
         }
         var any = false;
         const uart = io.consoleOnUart();
+        io.shared = true;
         for (&io.units, 0..) |*u, i| {
             // Unit 0 of the table is UART0, unit 1 the USB port.
             if ((i == 0) != uart) {
@@ -687,6 +748,8 @@ const DeviceIo = struct {
         return any;
     }
 
+    /// The device opened, and its read sent unless the port is shared:
+    /// that one waits for `listen`.
     fn openUnit(io: *DeviceIo, u: *Unit, flags: u32) bool {
         u.read = .{
             .io_ser = .{ .req = .{ .message = .{ .reply_port = io.port, .length = @sizeOf(serial.IOExtSer) } } },
@@ -696,7 +759,7 @@ const DeviceIo = struct {
         u.write = u.read;
         if (!u.open) return false;
         io.setLine(u);
-        io.readNext(u);
+        if (!io.shared) io.readNext(u);
         return true;
     }
 
@@ -759,6 +822,32 @@ const DeviceIo = struct {
         u.read.io_ser.data = &u.byte;
         u.read.io_ser.length = 1;
         io.sys.SendIO(&u.read.io_ser.req);
+        u.listening = true;
+    }
+
+    /// The machine's port read while something here could take what is
+    /// typed (`on`), and left alone otherwise. The ROM shell reads that
+    /// port as well once a newshell's shell has ended, so a byte taken here
+    /// for a console that is only written to - what a program started with
+    /// Run still prints - would be lost to it: the two would share what is
+    /// typed, a character each. A Ctrl-C or Ctrl-S typed then goes to the
+    /// ROM shell, not to the writer. Any other console reads all along: a
+    /// window is its own, and Ctrl-C typed into a program's output window
+    /// is how it is stopped.
+    fn listen(io: *DeviceIo, on: bool) void {
+        if (!io.shared) return;
+        for (&io.units) |*u| {
+            if (!u.open or u.ended or u.listening == on) continue;
+            if (on) {
+                io.readNext(u);
+            } else {
+                // A byte that came meanwhile goes with it: nothing here
+                // was going to read it.
+                _ = io.sys.AbortIO(&u.read.io_ser.req);
+                _ = io.sys.WaitIO(&u.read.io_ser.req);
+                u.listening = false;
+            }
+        }
     }
 
     fn close(io: *DeviceIo) void {
@@ -768,14 +857,16 @@ const DeviceIo = struct {
         if (io.waitPending()) return;
         for (&io.units) |*u| {
             if (!u.open) continue;
-            if (!u.ended) {
+            if (u.listening) {
                 _ = io.sys.AbortIO(&u.read.io_ser.req);
                 _ = io.sys.WaitIO(&u.read.io_ser.req);
             }
             io.sys.CloseDevice(&u.read.io_ser.req);
             u.open = false;
+            u.listening = false;
             u.ended = false;
         }
+        io.shared = false;
         io.closeWindow();
     }
 
@@ -885,9 +976,10 @@ pub fn conHandler(sb: *ExecBase) callconv(.c) void {
             h.terminalEnded();
         }
         for (&st.io.units) |*u| {
-            if (!u.open or u.ended or sb.CheckIO(&u.read.io_ser.req) == null) continue;
+            if (!u.open or !u.listening or sb.CheckIO(&u.read.io_ser.req) == null) continue;
             any = true;
             const err = sb.WaitIO(&u.read.io_ser.req);
+            u.listening = false;
             if (err == exec.IOERR_ENDOFSTREAM) {
                 u.ended = true;
                 h.terminalEnded();
@@ -986,6 +1078,8 @@ pub const TestIo = struct {
     signal_port: ?*MsgPort = null,
     opened: u32 = 0,
     closed: u32 = 0,
+    /// What the handler last asked of `listen`.
+    listening: bool = false,
     timers: [max_waits]bool = @splat(false),
     /// What a Tab finds, whatever the directory, and the directory it
     /// asked for last.
@@ -1024,6 +1118,9 @@ pub const TestIo = struct {
     }
     pub fn close(io: *TestIo) void {
         io.closed += 1;
+    }
+    pub fn listen(io: *TestIo, on: bool) void {
+        io.listening = on;
     }
     pub fn startTimer(io: *TestIo, slot: usize, micros: u64) bool {
         _ = micros;
@@ -1323,6 +1420,58 @@ test "the handler: opens, pending READs, partial lines, END" {
     var end2 = DosPacket.init(.end, .{ .file = .{ .fh = &other } });
     h.packet(&end2);
     try testing.expectEqual(@as(u32, 1), io.closed); // the last: devices closed
+}
+
+test "the handler listens to its terminal only while something could read it" {
+    var io: TestIo = .{};
+    var h = Handler(TestIo).init(&io, false);
+    var shell_in: dos.FileHandle = .{};
+    var shell_out: dos.FileHandle = .{};
+    var background: dos.FileHandle = .{};
+    var reader_port: MsgPort = .{};
+
+    // A shell's input and output, and Run's "*" for a program it started.
+    var find = DosPacket.init(.findinput, .{ .find = .{ .fh = &shell_in, .lock = null, .name = "AUX:" } });
+    h.packet(&find);
+    try testing.expect(io.listening);
+    find = DosPacket.init(.findoutput, .{ .find = .{ .fh = &shell_out, .lock = null, .name = "*" } });
+    h.packet(&find);
+    find = DosPacket.init(.findoutput, .{ .find = .{ .fh = &background, .lock = null, .name = "*" } });
+    h.packet(&find);
+    try testing.expect(io.listening);
+
+    // The shell ends; the program still prints, and nothing reads.
+    var end = DosPacket.init(.end, .{ .file = .{ .fh = &shell_in } });
+    h.packet(&end);
+    end = DosPacket.init(.end, .{ .file = .{ .fh = &shell_out } });
+    h.packet(&end);
+    try testing.expectEqual(@as(u32, 0), io.closed);
+    try testing.expect(!io.listening);
+
+    // A READ on a handle opened for writing is listened for until it is
+    // answered, and so is a WAIT_CHAR until its time is up.
+    var buffer: [8]u8 = undefined;
+    var read = DosPacket.init(.read, .{ .io = .{ .fh = &background, .buffer = &buffer, .length = 8 } });
+    read.port = &reader_port;
+    h.packet(&read);
+    try testing.expect(io.listening);
+    for ("ok\r") |c| h.input(c);
+    try testing.expectEqual(@as(isize, 3), read.res1);
+    try testing.expect(!io.listening);
+    var wait = DosPacket.init(.wait_char, .{ .wait = .{ .timeout = 1000 } });
+    h.packet(&wait);
+    try testing.expect(io.listening);
+    h.timerDone(0);
+    try testing.expect(!io.listening);
+
+    // FINDUPDATE reads as well.
+    var update: dos.FileHandle = .{};
+    find = DosPacket.init(.findupdate, .{ .find = .{ .fh = &update, .lock = null, .name = "AUX:" } });
+    h.packet(&find);
+    try testing.expect(io.listening);
+    end = DosPacket.init(.end, .{ .file = .{ .fh = &update } });
+    h.packet(&end);
+    try testing.expect(!io.listening);
 }
 
 test "a console only written to gets no banner: a program's output, not a terminal" {

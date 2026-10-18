@@ -10,10 +10,11 @@
 //! resolved it (those relocations stay in the file as R_XTENSA_SLOT0_OP and
 //! are ignored here); on RISC-V the code is built PC-relative (medany), and
 //! its auipc pairs, branches and calls are resolved the same way. What is
-//! left are the words that hold an address: R_XTENSA_32, R_RISCV_32. For
-//! each one this writes down which segment the word is in, its offset
-//! there, and which segment it points into; the loader adds that segment's
-//! base to the word.
+//! left are the words that hold an address: R_XTENSA_32, R_RISCV_32, and
+//! in a 64-bit RISC-V program (ELF64) R_RISCV_64, a doubleword. For each
+//! one this writes down which segment the word is in, its offset there,
+//! and which segment it points into; the loader adds that segment's base
+//! to the word, which is as wide as the header's `word_size` says.
 //!
 //! The linker wrote the address the program was linked at, so each such word
 //! is made relative to the segment it points into first: the loader knows
@@ -41,26 +42,77 @@ const std = @import("std");
 const mem = std.mem;
 const loadfile = @import("sdk").dos.loadfile;
 
-// ELF32 header offsets (little-endian; the same hand-rolled style as
-// tools/ressize.zig, which needs no std.elf either).
+// ELF header offsets (little-endian; the same hand-rolled style as
+// tools/ressize.zig, which needs no std.elf either), ELF32's and ELF64's.
 const e_type = 0x10;
 const e_machine = 0x12;
 const e_entry = 0x18;
-const e_shoff = 0x20;
-const e_shentsize = 0x2E;
-const e_shnum = 0x30;
-const e_shstrndx = 0x32;
 
-const sh_name = 0;
-const sh_type = 4;
-const sh_flags = 8;
-const sh_addr = 12;
-const sh_offset = 16;
-const sh_size = 20;
-const sh_link = 24;
-const sh_info = 28;
-const sh_addralign = 32;
-const sh_entsize = 36;
+/// Where the fields an ELF class puts in different places are.
+const Layout = struct {
+    e_shoff: usize,
+    e_shentsize: usize,
+    e_shnum: usize,
+    e_shstrndx: usize,
+    /// Section header fields, and whether the wide ones are 8 bytes.
+    sh_name: usize = 0,
+    sh_type: usize = 4,
+    sh_flags: usize,
+    sh_addr: usize,
+    sh_offset: usize,
+    sh_size: usize,
+    sh_link: usize,
+    sh_info: usize,
+    sh_addralign: usize,
+    sh_entsize: usize,
+    /// The size of a field that holds an address or a size.
+    word: usize,
+    /// A Rela entry's size, and a symbol's: its value and section index.
+    rela_size: usize,
+    sym_size: usize,
+    st_value: usize,
+    st_shndx: usize,
+};
+
+const elf32: Layout = .{
+    .e_shoff = 0x20,
+    .e_shentsize = 0x2E,
+    .e_shnum = 0x30,
+    .e_shstrndx = 0x32,
+    .sh_flags = 8,
+    .sh_addr = 12,
+    .sh_offset = 16,
+    .sh_size = 20,
+    .sh_link = 24,
+    .sh_info = 28,
+    .sh_addralign = 32,
+    .sh_entsize = 36,
+    .word = 4,
+    .rela_size = 12,
+    .sym_size = 16,
+    .st_value = 4,
+    .st_shndx = 14,
+};
+
+const elf64: Layout = .{
+    .e_shoff = 0x28,
+    .e_shentsize = 0x3A,
+    .e_shnum = 0x3C,
+    .e_shstrndx = 0x3E,
+    .sh_flags = 8,
+    .sh_addr = 16,
+    .sh_offset = 24,
+    .sh_size = 32,
+    .sh_link = 40,
+    .sh_info = 44,
+    .sh_addralign = 48,
+    .sh_entsize = 56,
+    .word = 8,
+    .rela_size = 24,
+    .sym_size = 24,
+    .st_value = 8,
+    .st_shndx = 6,
+};
 
 const SHT_PROGBITS = 1;
 const SHT_SYMTAB = 2;
@@ -83,6 +135,7 @@ const R_XTENSA_SLOT0_OP = 20;
 
 const R_RISCV_NONE = 0;
 const R_RISCV_32 = 1;
+const R_RISCV_64 = 2;
 const R_RISCV_BRANCH = 16;
 const R_RISCV_JAL = 17;
 const R_RISCV_CALL = 18;
@@ -119,6 +172,15 @@ fn u32At(buf: []const u8, off: usize) u32 {
     return mem.readInt(u32, buf[off..][0..4], .little);
 }
 
+/// A field of `layout.word` bytes: an address, an offset or a size. A
+/// program is linked at 0 and is far smaller than 4 GiB, so each one fits
+/// 32 bits; one that does not is no program of ours.
+fn wordAt(layout: *const Layout, buf: []const u8, off: usize) u32 {
+    if (layout.word == 4) return u32At(buf, off);
+    const value = mem.readInt(u64, buf[off..][0..8], .little);
+    return std.math.cast(u32, value) orelse fatal("0x{x} at 0x{x} is past 4 GiB", .{ value, off });
+}
+
 const Section = struct {
     name: []const u8,
     type: u32,
@@ -153,13 +215,15 @@ pub fn main(init: std.process.Init) !void {
 
     const cwd = std.Io.Dir.cwd();
     const elf = try cwd.readFileAlloc(io, args[1], arena, .unlimited);
-    if (elf.len < 52 or !mem.eql(u8, elf[0..4], "\x7fELF") or elf[4] != 1 or elf[5] != 1)
-        fatal("{s}: not a little-endian ELF32 file", .{args[1]});
+    if (elf.len < 64 or !mem.eql(u8, elf[0..4], "\x7fELF") or (elf[4] != 1 and elf[4] != 2) or elf[5] != 1)
+        fatal("{s}: not a little-endian ELF file", .{args[1]});
+    const layout: *const Layout = if (elf[4] == 2) &elf64 else &elf32;
     const machine = u16At(elf, e_machine);
     if (machine != EM_XTENSA and machine != EM_RISCV) fatal("{s}: neither an Xtensa nor a RISC-V file", .{args[1]});
+    if (machine == EM_XTENSA and layout.word != 4) fatal("{s}: a 64-bit Xtensa file", .{args[1]});
     if (u16At(elf, e_type) != ET_EXEC) fatal("{s}: not a linked executable", .{args[1]});
 
-    const sections = try readSections(elf, arena);
+    const sections = try readSections(layout, elf, arena);
 
     // The three segments, in the order the loader sees them.
     var segments = [_]Segment{
@@ -209,53 +273,54 @@ pub fn main(init: std.process.Init) !void {
     }
     if (segments[0].size == 0) fatal("{s}: no code", .{args[1]});
 
-    try collectRelocs(elf, machine, sections, &segments, arena);
+    try collectRelocs(layout, elf, machine, sections, &segments, arena);
 
-    const entry = u32At(elf, e_entry);
+    const entry = wordAt(layout, elf, e_entry);
     if (entry < segments[0].addr or entry >= segments[0].addr + segments[0].size)
         fatal("entry 0x{x} is not in the code segment", .{entry});
 
-    const out = try write(&segments, machine, entry - segments[0].addr, arena);
+    const out = try write(&segments, machine, @intCast(layout.word), entry - segments[0].addr, arena);
     try cwd.writeFile(io, .{ .sub_path = args[2], .data = out });
 }
 
-fn readSections(elf: []const u8, arena: mem.Allocator) ![]Section {
-    const shoff = u32At(elf, e_shoff);
-    const shentsize = u16At(elf, e_shentsize);
-    const shnum = u16At(elf, e_shnum);
-    const shstrndx = u16At(elf, e_shstrndx);
+fn readSections(layout: *const Layout, elf: []const u8, arena: mem.Allocator) ![]Section {
+    const shoff = wordAt(layout, elf, layout.e_shoff);
+    const shentsize = u16At(elf, layout.e_shentsize);
+    const shnum = u16At(elf, layout.e_shnum);
+    const shstrndx = u16At(elf, layout.e_shstrndx);
     if (shoff == 0 or shnum == 0) fatal("no section headers", .{});
-    const names_off = u32At(elf, shoff + @as(usize, shstrndx) * shentsize + sh_offset);
+    const names_off = wordAt(layout, elf, shoff + @as(usize, shstrndx) * shentsize + layout.sh_offset);
 
     const sections = try arena.alloc(Section, shnum);
     for (sections, 0..) |*s, i| {
         const h = shoff + i * shentsize;
-        const name_off = names_off + u32At(elf, h + sh_name);
+        const name_off = names_off + u32At(elf, h + layout.sh_name);
         const end = mem.indexOfScalarPos(u8, elf, name_off, 0) orelse elf.len;
         s.* = .{
             .name = elf[name_off..end],
-            .type = u32At(elf, h + sh_type),
-            .flags = u32At(elf, h + sh_flags),
-            .addr = u32At(elf, h + sh_addr),
-            .offset = u32At(elf, h + sh_offset),
-            .size = u32At(elf, h + sh_size),
-            .link = u32At(elf, h + sh_link),
-            .info = u32At(elf, h + sh_info),
-            .addralign = u32At(elf, h + sh_addralign),
-            .entsize = u32At(elf, h + sh_entsize),
+            .type = u32At(elf, h + layout.sh_type),
+            .flags = wordAt(layout, elf, h + layout.sh_flags),
+            .addr = wordAt(layout, elf, h + layout.sh_addr),
+            .offset = wordAt(layout, elf, h + layout.sh_offset),
+            .size = wordAt(layout, elf, h + layout.sh_size),
+            .link = u32At(elf, h + layout.sh_link),
+            .info = u32At(elf, h + layout.sh_info),
+            .addralign = wordAt(layout, elf, h + layout.sh_addralign),
+            .entsize = wordAt(layout, elf, h + layout.sh_entsize),
         };
     }
     return sections;
 }
 
-/// Every R_XTENSA_32 or R_RISCV_32 of an allocatable section: the word at
-/// its offset holds an address, so the target's segment and the site's
-/// segment are written down. The relocations the linker already applied
-/// are skipped; anything else fails the build, since the loader could not
-/// do it.
-fn collectRelocs(elf: []const u8, machine: u16, sections: []Section, segments: *[3]Segment, arena: mem.Allocator) !void {
+/// Every R_XTENSA_32, R_RISCV_32 or (64-bit) R_RISCV_64 of an allocatable
+/// section: the word at its offset holds an address, so the target's
+/// segment and the site's segment are written down. The relocations the
+/// linker already applied are skipped; anything else fails the build,
+/// since the loader could not do it.
+fn collectRelocs(layout: *const Layout, elf: []const u8, machine: u16, sections: []Section, segments: *[3]Segment, arena: mem.Allocator) !void {
+    const word = layout.word;
     for (sections) |rela| {
-        if (rela.type != SHT_RELA or rela.entsize < 12) continue;
+        if (rela.type != SHT_RELA or rela.entsize < layout.rela_size) continue;
         if (rela.info >= sections.len) continue;
         const target = &sections[rela.info];
         const site_segment = target.segment orelse continue; // debug sections
@@ -263,15 +328,18 @@ fn collectRelocs(elf: []const u8, machine: u16, sections: []Section, segments: *
         if (symtab.type != SHT_SYMTAB) fatal("{s}: link is not a symbol table", .{rela.name});
 
         var off: usize = 0;
-        while (off + 12 <= rela.size) : (off += rela.entsize) {
+        while (off + layout.rela_size <= rela.size) : (off += rela.entsize) {
             const e = rela.offset + off;
-            const r_offset = u32At(elf, e);
-            const r_info = u32At(elf, e + 4);
-            const addend = u32At(elf, e + 8);
-            const kind = r_info & 0xFF;
-            const sym = r_info >> 8;
+            const r_offset = wordAt(layout, elf, e);
+            // ELF32: the type in the low byte of r_info, the symbol above;
+            // ELF64: a 32-bit type, the symbol in the high half. The
+            // addend is kept to 32 bits, as every address here is.
+            const kind, const sym, const addend = if (word == 4)
+                .{ u32At(elf, e + 4) & 0xFF, u32At(elf, e + 4) >> 8, u32At(elf, e + 8) }
+            else
+                .{ u32At(elf, e + 8), u32At(elf, e + 12), u32At(elf, e + 16) };
             if (machine == EM_RISCV) {
-                switch (riscvKind(kind)) {
+                switch (riscvKind(kind, word)) {
                     .address => {},
                     .done => continue,
                     // PC-relative: resolved by the linker, and right
@@ -279,12 +347,13 @@ fn collectRelocs(elf: []const u8, machine: u16, sections: []Section, segments: *
                     // goes with it. A fixed address does not; the linker
                     // names one by symbol 0 and the address as the addend.
                     .pc_relative => {
-                        const reached = symbolValue(elf, symtab, sym) +% addend;
-                        if (symbolSection(elf, symtab, sym) == SHN_ABS or !inProgram(segments, reached))
+                        const reached = symbolValue(layout, elf, symtab, sym) +% addend;
+                        if (symbolSection(layout, elf, symtab, sym) == SHN_ABS or !inProgram(segments, reached))
                             fatal("{s}: the code at 0x{x} reaches 0x{x}, a fixed address, PC-relatively (a direct call into the ROM?): reach it through a pointer", .{ rela.name, r_offset, reached });
                         continue;
                     },
                     .absolute_code => fatal("{s}: an absolute address in the code at 0x{x}: build with -mcmodel=medany", .{ rela.name, r_offset }),
+                    .narrow_address => fatal("{s}: a 32-bit address word at 0x{x} in a 64-bit program: the loader relocates doublewords", .{ rela.name, r_offset }),
                     .unsupported => fatal("{s}: relocation type {d} at 0x{x} is not supported (GOT, TLS?)", .{ rela.name, kind, r_offset }),
                 }
             } else switch (kind) {
@@ -292,23 +361,25 @@ fn collectRelocs(elf: []const u8, machine: u16, sections: []Section, segments: *
                 R_XTENSA_NONE, R_XTENSA_SLOT0_OP, R_XTENSA_ASM_EXPAND, R_XTENSA_DIFF32 => continue,
                 else => fatal("{s}: relocation type {d} at 0x{x} is not supported", .{ rela.name, kind, r_offset }),
             }
-            if (symbolSection(elf, symtab, sym) == SHN_ABS) continue;
-            const value = symbolValue(elf, symtab, sym);
+            if (symbolSection(layout, elf, symtab, sym) == SHN_ABS) continue;
+            const value = symbolValue(layout, elf, symtab, sym);
             const address = value +% addend;
             const to = segmentOf(segments, address) orelse
                 fatal("{s}: 0x{x} points outside the program", .{ rela.name, address });
             const seg = &segments[site_segment];
-            if (r_offset < seg.addr or r_offset + 4 > seg.addr + seg.size)
+            if (r_offset < seg.addr or r_offset + word > seg.addr + seg.size)
                 fatal("{s}: relocation at 0x{x} is outside its segment", .{ rela.name, r_offset });
             const site = r_offset - seg.addr;
-            if (site + 4 > seg.bytes.items.len)
+            if (site + word > seg.bytes.items.len)
                 fatal("{s}: relocation at 0x{x} has no bytes (a bss segment?)", .{ rela.name, r_offset });
             // The word holds the linked address; the loader adds where it
             // put that segment, so store the offset into it.
-            const stored = mem.readInt(u32, seg.bytes.items[site..][0..4], .little);
+            const bytes = seg.bytes.items[site..][0..word];
+            const stored: u64 = if (word == 4) mem.readInt(u32, bytes[0..4], .little) else mem.readInt(u64, bytes[0..8], .little);
             if (stored != address)
                 fatal("{s}: the word at 0x{x} is 0x{x}, not the 0x{x} its relocation names", .{ rela.name, r_offset, stored, address });
-            mem.writeInt(u32, seg.bytes.items[site..][0..4], address - segments[to].addr, .little);
+            const relative = address - segments[to].addr;
+            if (word == 4) mem.writeInt(u32, bytes[0..4], relative, .little) else mem.writeInt(u64, bytes[0..8], relative, .little);
             try seg.relocs[to].append(arena, site);
         }
     }
@@ -327,12 +398,18 @@ const RiscvKind = enum {
     /// An absolute address in an instruction (lui, or a load or store
     /// off it): only right at the address the program was linked at.
     absolute_code,
+    /// A 32-bit word holding an address in a 64-bit program, where the
+    /// loader relocates doublewords.
+    narrow_address,
     unsupported,
 };
 
-fn riscvKind(kind: u32) RiscvKind {
+/// What a relocation of type `kind` is, in a file whose address words are
+/// `word` bytes.
+fn riscvKind(kind: u32, word: usize) RiscvKind {
     return switch (kind) {
-        R_RISCV_32 => .address,
+        R_RISCV_32 => if (word == 4) .address else .narrow_address,
+        R_RISCV_64 => if (word == 8) .address else .unsupported,
         R_RISCV_NONE, R_RISCV_PCREL_LO12_I, R_RISCV_PCREL_LO12_S, R_RISCV_ALIGN, R_RISCV_RELAX => .done,
         R_RISCV_ADD8...R_RISCV_SUB64, R_RISCV_SUB6...R_RISCV_SET32, R_RISCV_SET_ULEB128, R_RISCV_SUB_ULEB128 => .done,
         R_RISCV_BRANCH, R_RISCV_JAL, R_RISCV_CALL, R_RISCV_CALL_PLT, R_RISCV_PCREL_HI20 => .pc_relative,
@@ -342,17 +419,17 @@ fn riscvKind(kind: u32) RiscvKind {
     };
 }
 
-fn symbolValue(elf: []const u8, symtab: *const Section, index: u32) u32 {
-    const entsize: u32 = if (symtab.entsize != 0) symtab.entsize else 16;
+fn symbolValue(layout: *const Layout, elf: []const u8, symtab: *const Section, index: u32) u32 {
+    const entsize: u32 = if (symtab.entsize != 0) symtab.entsize else @intCast(layout.sym_size);
     if ((index + 1) * entsize > symtab.size) fatal("symbol {d} is outside the symbol table", .{index});
-    return u32At(elf, symtab.offset + index * entsize + 4); // st_value
+    return wordAt(layout, elf, symtab.offset + index * entsize + layout.st_value);
 }
 
 /// The section index of a symbol (st_shndx), SHN_ABS for a fixed address.
-fn symbolSection(elf: []const u8, symtab: *const Section, index: u32) u16 {
-    const entsize: u32 = if (symtab.entsize != 0) symtab.entsize else 16;
+fn symbolSection(layout: *const Layout, elf: []const u8, symtab: *const Section, index: u32) u16 {
+    const entsize: u32 = if (symtab.entsize != 0) symtab.entsize else @intCast(layout.sym_size);
     if ((index + 1) * entsize > symtab.size) fatal("symbol {d} is outside the symbol table", .{index});
-    return mem.readInt(u16, elf[symtab.offset + index * entsize + 14 ..][0..2], .little);
+    return mem.readInt(u16, elf[symtab.offset + index * entsize + layout.st_shndx ..][0..2], .little);
 }
 
 /// Whether an address is in the program, or the byte just past one of
@@ -374,7 +451,7 @@ fn segmentOf(segments: *const [3]Segment, address: u32) ?u16 {
     return null;
 }
 
-fn write(segments: *[3]Segment, machine: u16, entry_offset: u32, arena: mem.Allocator) ![]u8 {
+fn write(segments: *[3]Segment, machine: u16, word_size: u8, entry_offset: u32, arena: mem.Allocator) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     // Each segment's place in the file: an empty one is left out, and the
     // relocations name the segments by their place.
@@ -389,7 +466,7 @@ fn write(segments: *[3]Segment, machine: u16, entry_offset: u32, arena: mem.Allo
         .entry_segment = 0,
         .machine = if (machine == EM_RISCV) loadfile.MACHINE_RISCV else loadfile.MACHINE_XTENSA,
         .entry_offset = entry_offset,
-        .word_size = 4,
+        .word_size = word_size,
     });
     for (segments) |*s| {
         if (s.size == 0) continue;

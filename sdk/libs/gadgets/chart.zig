@@ -2,7 +2,7 @@
 //! chart.gadget: values over time as lines or bars, over an axis.
 //!
 //! The gadget keeps the values: a ring of `CHART_Capacity` for each of its
-//! `CHART_Series` (1 to 4). A program adds to one with `CHART_Current` and
+//! `CHART_Series` (1 to 8). A program adds to one with `CHART_Current` and
 //! `CHART_Add` - repeated in one tag list for several values or several
 //! series - and the oldest value of a full ring makes room, so the chart
 //! scrolls to the left as a live plot does. The newest value is at the
@@ -14,8 +14,8 @@
 //! series is drawn as `CHART_Kind` says - a line through its values, or a
 //! bar for each, the series' bars side by side - in its colour: the
 //! style's indicator (`PART_INDICATOR`) for the first unless
-//! `CHART_ColourRGB` gives one, and a red, a green and an orange for the
-//! others. It is never pressed.
+//! `CHART_ColourRGB` gives one, and a red, a green, an orange, a purple, a
+//! teal, a brown and a pink for the others. It is never pressed.
 //!
 //!   const plot = ib.NewObjectTagList(null, cr.CHART_CLASS, &.{
 //!       .{ .tag = cr.CHART_Series, .data = 2 },
@@ -38,7 +38,7 @@ pub const CHART_LIBRARY = "gadgets/chart.gadget";
 pub const CHART_CLASS = "chart.gadget";
 
 pub const CHART_Dummy = gadgets.GADGETS_Dummy + 27 * gadgets.GADGETS_Step;
-/// How many series it holds, 1 to 4 (1). Made only.
+/// How many series it holds, 1 to 8 (1). Made only.
 pub const CHART_Series = CHART_Dummy + 0x01;
 /// How many values each series keeps, 2 to 1024 (64). Made only.
 pub const CHART_Capacity = CHART_Dummy + 0x02;
@@ -70,4 +70,4 @@ pub const CHART_LINES: u32 = 0;
 pub const CHART_BARS: u32 = 1;
 
 /// The most series a chart holds.
-pub const CHART_MAX_SERIES = 4;
+pub const CHART_MAX_SERIES = 8;

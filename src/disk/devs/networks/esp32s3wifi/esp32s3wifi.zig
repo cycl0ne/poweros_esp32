@@ -55,6 +55,10 @@ comptime {
     _ = @import("regulatory.zig");
 }
 
+/// memcpy, memmove and memset are the chip ROM's (libc.zig), which the
+/// radio's libraries were built against, not exec's (sdk/program.zig).
+pub const own_memory_calls = true;
+
 pub const DEVICE_NAME = _wifi.DEVICE_NAME;
 const DEVICE_VERSION = 1;
 const DEVICE_REVISION = 1;

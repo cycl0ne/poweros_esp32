@@ -4,21 +4,24 @@
 //! Five units on three delay lists:
 //!
 //!   TD_ECLOCKLIST   units 0, 2, 4 (MICROHZ, ECLOCK, WAITECLOCK): targets in
-//!                   E-clock ticks. The micro timer, SYSTIMER alarm 0 in
-//!                   one-shot mode, is always set to the first request
-//!                   (RethinkMicroTimer); precise.
+//!                   E-clock ticks. The micro timer, a one-shot alarm, is
+//!                   always set to the first request (RethinkMicroTimer);
+//!                   precise.
 //!   TD_VBLANKLIST   unit 1 (VBLANK): targets in E-clock ticks, checked on
 //!                   every VBLANK; cheap, resolution 1/50 s.
 //!   TD_SYSTIMELIST  unit 3 (WAITUNTIL): targets in system time, checked
 //!                   on every VBLANK.
 //!
-//! VBLANK is SYSTIMER alarm 1 in periodic mode at 50 Hz. Both alarms come
-//! in through exec's AddIntServer. The interrupts take expired requests off
-//! the list heads (IntCommon) and reply them after Enable (IntEnd).
+//! VBLANK is a periodic alarm at 50 Hz. Both alarms come in through
+//! exec's AddIntServer. The interrupts take expired requests off the list
+//! heads (IntCommon) and reply them after Enable (IntEnd).
 //!
-//! The E-clock is SYSTIMER unit 0 (16 MHz from boot). The device builds
-//! against the SDK: it keeps the SysBase its init gets and calls exec
-//! through the SDK's interface to exec's jump table.
+//! The alarms and the E-clock are the chip's (`alarms`): on the ESP32s
+//! SYSTIMER's alarms 0 and 1 on its unit 0, 16 MHz from boot
+//! (systimer_alarms.zig); under SBI firmware the kernel's two alarms on
+//! the SBI timer, with the E-clock in microseconds (sbi_alarms.zig). The
+//! device builds against the SDK: it keeps the SysBase its init gets and
+//! calls exec through the SDK's interface to exec's jump table.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -51,8 +54,14 @@ pub const TR_GETSYSTIME = types.TR_GETSYSTIME;
 pub const TR_SETSYSTIME = types.TR_SETSYSTIME;
 const unit_count = 5;
 
-/// The E-clock's rate: SYSTIMER's.
-pub const eclock_hz: u32 = systimer.SYSTIMER_HZ;
+/// The chip's alarms and E-clock.
+const alarms = switch (sdk.hardware.chip) {
+    .esp32s3, .esp32p4 => @import("systimer_alarms.zig"),
+    .rv64sbi => @import("sbi_alarms.zig"),
+};
+
+/// The E-clock's rate.
+pub const eclock_hz: u32 = alarms.eclock_hz;
 const ticks_per_us = eclock_hz / 1_000_000;
 /// The VBLANK rate (PAL).
 pub const vblank_hz: u32 = 50;
@@ -123,18 +132,12 @@ var systime_offset: u64 = 0;
 /// The last system time GetSysTime handed out: it only ever rises.
 var last_systime: u64 = 0;
 
-// SYSTIMER: alarm 0 is the micro timer (one-shot), alarm 1 is VBLANK
-// (periodic). Both compare against unit 0.
-const systimer = sdk.hardware.systimer;
-const reg = sdk.hardware.mmio.reg;
-/// ETS_SYSTIMER_TARGET0_INTR_SOURCE (57) and TARGET1 (58).
-const micro_source: u32 = sdk.hardware.intbits.INTB_SYSTIMER_TARGET0;
-const vblank_source: u32 = sdk.hardware.intbits.INTB_SYSTIMER_TARGET1;
+// The micro timer (one-shot) and VBLANK (periodic), and their sources.
+const micro_source: u32 = alarms.micro_source;
+const vblank_source: u32 = alarms.vblank_source;
 const vblank_period: u32 = eclock_hz / vblank_hz;
-/// How far ahead a micro timer target that is already past gets moved.
-const min_ahead_ticks: u64 = 2 * ticks_per_us;
 /// Where the micro timer waits while TD_ECLOCKLIST is empty.
-const parked: u64 = (1 << 52) - 1;
+const parked: u64 = alarms.parked;
 
 fn timerBase(dev: *exec.Device) *TimerBase {
     return @fieldParentPtr("dev", dev);
@@ -149,7 +152,7 @@ fn unitNumber(tb: *TimerBase, unit: *exec.Unit) u32 {
 }
 
 fn sysTime() u64 {
-    return systimer.uptimeUs() +% systime_offset;
+    return alarms.uptimeUs() +% systime_offset;
 }
 
 /// The system time as GetSysTime hands it out. As in the ROM it only ever
@@ -182,24 +185,11 @@ fn insertReq(tb: *TimerBase, list: *exec.List, req: *TimeRequest) void {
     tb.sys_base.Insert(list, &req.node.message.node, pred);
 }
 
-/// Set the micro timer to `ticks`. An alarm that is already past doesn't
-/// fire on the chip, so it moves to just after now (as ESP-IDF does).
-fn armMicroTimer(ticks: u64) void {
-    var target = ticks;
-    while (true) {
-        reg(systimer.TARGET0_HI).* = @as(u32, @truncate(target >> 32)) & systimer.VALUE_HI_MASK;
-        reg(systimer.TARGET0_LO).* = @truncate(target);
-        reg(systimer.COMP0_LOAD).* = 1;
-        if (target > systimer.readUnit0() or reg(systimer.INT_RAW).* & systimer.INT_TARGET0 != 0) return;
-        target = systimer.readUnit0() + min_ahead_ticks;
-    }
-}
-
 /// RethinkMicroTimer: the micro timer to the first request on
 /// TD_ECLOCKLIST, or parked when there is none. Disable held.
 fn rethinkMicroTimer(tb: *TimerBase) void {
-    const node = tb.eclock_list.first() orelse return armMicroTimer(parked);
-    armMicroTimer(eclockOf(requestOf(node)).toTicks());
+    const node = tb.eclock_list.first() orelse return alarms.armMicro(parked);
+    alarms.armMicro(eclockOf(requestOf(node)).toTicks());
 }
 
 /// TermIO: reply, unless the caller asked for IOF_QUICK.
@@ -231,15 +221,9 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         tu.unit.msg_port.msg_list.init(.message);
     }
 
-    // Both alarms quiet until their servers are in place: an interrupt
-    // raised before its source is routed is lost, and the line stays high
-    // with no new edge. The micro timer is parked; VBLANK runs periodically.
-    reg(systimer.INT_ENA).* &= ~(systimer.INT_TARGET0 | systimer.INT_TARGET1);
-    reg(systimer.TARGET0_CONF).* = 0; // one-shot, on unit 0
-    armMicroTimer(parked);
-    reg(systimer.TARGET1_CONF).* = systimer.TARGET_PERIOD_MODE | vblank_period; // periodic, on unit 0
-    reg(systimer.COMP1_LOAD).* = 1;
-    reg(systimer.CONF).* |= systimer.CONF_TARGET0_WORK_EN | systimer.CONF_TARGET1_WORK_EN;
+    // Both alarms quiet until their servers are in place. The micro timer
+    // is parked; VBLANK runs periodically.
+    alarms.setUp(vblank_period);
     tb.micro_int = .{
         .node = .{ .type = .interrupt, .name = DEVICE_NAME },
         .data = tb,
@@ -252,8 +236,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     };
     sys_base.AddIntServer(micro_source, &tb.micro_int);
     sys_base.AddIntServer(vblank_source, &tb.vblank_int);
-    reg(systimer.INT_CLR).* = systimer.INT_TARGET0 | systimer.INT_TARGET1;
-    reg(systimer.INT_ENA).* |= systimer.INT_TARGET0 | systimer.INT_TARGET1;
+    alarms.start();
     return dev;
 }
 
@@ -292,9 +275,7 @@ fn expunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
     const tb = timerBase(dev);
     const sys = tb.sys_base;
     sys.Disable();
-    reg(systimer.INT_ENA).* &= ~(systimer.INT_TARGET0 | systimer.INT_TARGET1);
-    reg(systimer.CONF).* &= ~(systimer.CONF_TARGET0_WORK_EN | systimer.CONF_TARGET1_WORK_EN);
-    reg(systimer.INT_CLR).* = systimer.INT_TARGET0 | systimer.INT_TARGET1;
+    alarms.stop();
     sys.Enable();
     sys.RemIntServer(micro_source, &tb.micro_int);
     sys.RemIntServer(vblank_source, &tb.vblank_int);
@@ -322,7 +303,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         },
         TR_SETSYSTIME => {
             tb.sys_base.Disable();
-            systime_offset = req.time.toMicros() -% systimer.uptimeUs();
+            systime_offset = req.time.toMicros() -% alarms.uptimeUs();
             last_systime = req.time.toMicros(); // may go backwards
             tb.sys_base.Enable();
             termIOC(tb, io);
@@ -339,7 +320,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 fn newTimer(tb: *TimerBase, req: *TimeRequest) void {
     req.node.flags &= ~exec.IOF_QUICK;
     const unit = unitNumber(tb, req.node.unit.?);
-    const now = systimer.readUnit0();
+    const now = alarms.now();
     switch (unit) {
         // CalcDelay0: relative time to an E-clock target.
         UNIT_MICROHZ, UNIT_VBLANK => eclockOf(req).* = EClockVal.fromTicks(now + req.time.toMicros() * ticks_per_us),
@@ -404,11 +385,10 @@ fn intEnd(tb: *TimerBase) void {
 /// Tick0: the micro timer's server (TD_ECLOCKLIST).
 fn tick0(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
-    if (reg(systimer.INT_ST).* & systimer.INT_TARGET0 == 0) return 0; // not ours
-    reg(systimer.INT_CLR).* = systimer.INT_TARGET0;
+    if (!alarms.takeMicro()) return 0; // not ours
     const tb: *TimerBase = @ptrCast(@alignCast(is_data.?));
     tb.sys_base.Disable();
-    intCommon(tb, &tb.eclock_list, systimer.readUnit0());
+    intCommon(tb, &tb.eclock_list, alarms.now());
     rethinkMicroTimer(tb);
     tb.sys_base.Enable();
     intEnd(tb);
@@ -418,11 +398,10 @@ fn tick0(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
 /// Tick1: the VBLANK server (TD_VBLANKLIST and TD_SYSTIMELIST).
 fn tick1(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
-    if (reg(systimer.INT_ST).* & systimer.INT_TARGET1 == 0) return 0; // not ours
-    reg(systimer.INT_CLR).* = systimer.INT_TARGET1;
+    if (!alarms.takeVblank()) return 0; // not ours
     const tb: *TimerBase = @ptrCast(@alignCast(is_data.?));
     tb.sys_base.Disable();
-    intCommon(tb, &tb.vblank_list, systimer.readUnit0());
+    intCommon(tb, &tb.vblank_list, alarms.now());
     intCommon(tb, &tb.systime_list, sysTime());
     tb.sys_base.Enable();
     intEnd(tb);
@@ -443,7 +422,7 @@ fn lvoCmpTime(_: *TimerBase, dest: *const TimeVal, src: *const TimeVal) callconv
 
 /// The E-clock count now; returns the E-clock's rate.
 fn lvoReadEClock(_: *TimerBase, dest: *EClockVal) callconv(.c) u32 {
-    dest.* = EClockVal.fromTicks(systimer.readUnit0());
+    dest.* = EClockVal.fromTicks(alarms.now());
     return eclock_hz;
 }
 

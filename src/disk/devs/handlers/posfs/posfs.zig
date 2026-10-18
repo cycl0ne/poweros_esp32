@@ -93,7 +93,7 @@ const fs_core = @import("fs.zig");
 
 pub const HANDLER_NAME = posfs.HANDLER_NAME;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 1;
+const HANDLER_REVISION = 3;
 const BUILD_DATE = "18.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -290,6 +290,13 @@ pub const DeviceMedia = struct {
     /// Eight-byte aligned and cleared, as the file system wants.
     pub fn alloc(m: *DeviceMedia, len: usize) ?[]u8 {
         const block = m.sys.AllocVec(@intCast(len), exec.MEMF_CLEAR) orelse return null;
+        const bytes: [*]u8 = @ptrCast(block);
+        return bytes[0..len];
+    }
+
+    /// Eight-byte aligned, as it is: for memory filled whole first.
+    pub fn allocRaw(m: *DeviceMedia, len: usize) ?[]u8 {
+        const block = m.sys.AllocVec(@intCast(len), exec.MEMF_ANY) orelse return null;
         const bytes: [*]u8 = @ptrCast(block);
         return bytes[0..len];
     }

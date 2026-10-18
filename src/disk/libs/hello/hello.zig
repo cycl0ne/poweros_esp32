@@ -47,7 +47,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) 
     // asks.
     const HelloFn = *const fn (*exec.Library) callconv(.c) [*:0]const u8;
     const answer = lib.vector(HelloFn, exec.libraries.lvo(4))(lib);
-    sdk.exec.kprintf(sys, "%s %d.%d from a file, base at 0x%08x: %s\n", .{
+    sdk.exec.kprintf(sys, "%s %d.%d from a file, base at 0x%08zx: %s\n", .{
         lib.name(),
         lib.version,
         lib.revision,

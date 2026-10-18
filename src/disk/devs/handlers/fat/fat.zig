@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! fat-handler: FAT32 and exFAT on a card, as a handler on the disk -
 //! `HANDLERS:fat-handler`, which dos loads the first time the device is
-//! used and keeps in the device node from then on.
+//! used and keeps in the device node from then on - or in the ROM of a
+//! machine that can start from its card.
 //!
 //! **What it works on** is what its startup message says: the device, its
 //! unit and its flags, and the environment's area - cylinders of a disk,
@@ -933,7 +934,8 @@ fn sweepGone(dl: *DosBase, st: *State) void {
 }
 
 /// It is in `.resident`, which program.ld KEEPs: nothing in the file
-/// refers to the tag, dos finds it by looking.
+/// refers to the tag, dos finds it by looking - in the loaded file, or in
+/// the ROM, whose handlers dos puts on its segment list by name.
 export const fat_handler_tag: exec.ResidentHandler linksection(".resident") = .{
     .resident = .{
         .match_tag = &fat_handler_tag.resident,
@@ -949,7 +951,7 @@ export const fat_handler_tag: exec.ResidentHandler linksection(".resident") = .{
 
 /// A handler is not a command. Whoever runs this file gets nothing done
 /// and a return code that says so.
-export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
+fn programEntry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
     sdk.exec.kprintf(sys, "%s is a handler, not a command\n", .{HANDLER_NAME});
@@ -959,7 +961,21 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 /// The "$VER:" string, which `Version <file>` looks for. Nothing refers to
 /// it, so it needs an export and a section of its own that program.ld
 /// KEEPs.
-export const version_tag: [HANDLER_VERSION_STRING.len:0]u8 linksection(".version") = HANDLER_VERSION_STRING.*;
+const version_tag: [HANDLER_VERSION_STRING.len:0]u8 linksection(".version") = HANDLER_VERSION_STRING.*;
+
+/// Whether this is the ROM's copy: the kernel's root lists the ROM's
+/// modules, a program's does not.
+const in_rom = @hasDecl(@import("root"), "rom_modules");
+
+// The file's entry and its version string, which only the file has: in
+// the ROM there is no file, and every module the ROM takes from the disk
+// would bring its own by the same names.
+comptime {
+    if (!in_rom) {
+        @export(&programEntry, .{ .name = "_program_entry" });
+        @export(&version_tag, .{ .name = "version_tag" });
+    }
+}
 
 const testing = std.testing;
 

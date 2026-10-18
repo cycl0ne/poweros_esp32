@@ -649,9 +649,10 @@ pub fn room(vol: *Volume) Error!void {
 }
 
 /// The buffer for file block `file_block`, made when there is none: read
-/// in first unless `whole` (what is in it now does not count). A block of
-/// a compressed chunk brings the whole chunk into memory first.
-fn pendingFor(vol: *Volume, ov: *Overlay, node: *const Inode, file_block: u64, whole: bool) Error![]u8 {
+/// in first, unless the caller `fills` that many bytes from the block's
+/// start and nothing in it now counts - the rest is cleared. A block of a
+/// compressed chunk brings the whole chunk into memory first.
+fn pendingFor(vol: *Volume, ov: *Overlay, node: *const Inode, file_block: u64, fills: ?usize) Error![]u8 {
     if (pendingOf(ov, file_block)) |buffer| return buffer;
     if (runOf(ov, file_block)) |index| {
         if (ov.runs[index].compressed()) {
@@ -659,7 +660,7 @@ fn pendingFor(vol: *Volume, ov: *Overlay, node: *const Inode, file_block: u64, w
             return pendingOf(ov, file_block) orelse error.Corrupt;
         }
     } else if (!ov.trunc_all) try pullChunk(vol, ov, node, file_block);
-    return newPending(vol, ov, node, file_block, whole);
+    return newPending(vol, ov, node, file_block, fills);
 }
 
 /// Room in the overlay's list for `more` blocks in memory.
@@ -690,7 +691,7 @@ fn pullChunk(vol: *Volume, ov: *Overlay, node: *const Inode, file_block: u64) Er
     var each = first;
     while (each < last) : (each += 1) {
         if (each == file_block or pendingOf(ov, each) != null or runOf(ov, each) != null) continue;
-        _ = try newPending(vol, ov, node, each, false);
+        _ = try newPending(vol, ov, node, each, null);
     }
 }
 
@@ -706,7 +707,7 @@ fn unpack(vol: *Volume, ov: *Overlay, index: usize) Error!void {
     var taken: usize = 0;
     errdefer for (made[0..taken]) |entry| vol.free(entry.buffer);
     while (taken < count) : (taken += 1) {
-        made[taken] = .{ .file_block = run.file_block + taken, .buffer = try vol.alloc(vol.block_size) };
+        made[taken] = .{ .file_block = run.file_block + taken, .buffer = try vol.allocRaw(vol.block_size) };
     }
     const plain = try compress.read(vol, run.chunk(vol), run.count << vol.block_shift);
     for (made) |entry| @memcpy(entry.buffer, plain[@intCast((entry.file_block - run.file_block) << vol.block_shift)..][0..vol.block_size]);
@@ -718,15 +719,17 @@ fn unpack(vol: *Volume, ov: *Overlay, index: usize) Error!void {
     vol.space.promised += count;
 }
 
-/// A new buffer in memory for file block `file_block`.
-fn newPending(vol: *Volume, ov: *Overlay, node: *const Inode, file_block: u64, whole: bool) Error![]u8 {
+/// A new buffer in memory for file block `file_block`, as `pendingFor`
+/// says: every byte of it read in, cleared, or the caller's to fill, so
+/// it is not cleared when it is made.
+fn newPending(vol: *Volume, ov: *Overlay, node: *const Inode, file_block: u64, fills: ?usize) Error![]u8 {
     if (ov.pending_count >= pendingMax(vol)) try spill(vol, ov, false);
     try room(vol);
     try reservePending(vol, ov, 1);
-    const buffer = try vol.alloc(vol.block_size);
+    const buffer = try vol.allocRaw(vol.block_size);
     errdefer vol.free(buffer);
-    if (whole) {
-        @memset(buffer, 0);
+    if (fills) |count| {
+        @memset(buffer[count..], 0);
     } else try readThrough(vol, ov, node, file_block << vol.block_shift, buffer);
     ov.pending[ov.pending_count] = .{ .file_block = file_block, .buffer = buffer };
     ov.pending_count += 1;
@@ -748,7 +751,7 @@ pub fn write(vol: *Volume, ov: *Overlay, node: *const Inode, offset: u64, bytes:
         // Nothing of the block counts when the write starts it and runs
         // to its end, or to the file's end.
         const whole = within == 0 and (piece == size or at + piece >= ov.size);
-        const buffer = pendingFor(vol, ov, node, file_block, whole) catch |err| {
+        const buffer = pendingFor(vol, ov, node, file_block, if (whole) piece else null) catch |err| {
             if (done == 0) return err;
             failed.* = err;
             return done;
@@ -783,7 +786,7 @@ pub fn setSize(vol: *Volume, ov: *Overlay, node: *const Inode, size: u64) Error!
     if (size % block_size != 0) {
         const last = size >> vol.block_shift;
         if (pendingOf(ov, last) != null or runOf(ov, last) != null) {
-            const buffer = try pendingFor(vol, ov, node, last, false);
+            const buffer = try pendingFor(vol, ov, node, last, null);
             @memset(buffer[@intCast(size % block_size)..], 0);
         }
     }
@@ -960,12 +963,10 @@ fn writeRaw(vol: *Volume, ov: *Overlay, entries: []Pending, checksums: bool) Err
     const run = try space.alloc(vol, entries.len, .held, true);
     const count: usize = @intCast(run.count);
     if (checksums) try reserveCrcs(vol, ov, count);
-    for (entries[0..count], 0..) |entry, index| {
-        vol.writeBlocks(run.start + index, entry.buffer) catch |err| {
-            try space.releaseHeld(vol, run.start, run.count);
-            return err;
-        };
-    }
+    writeRun(vol, run.start, entries[0..count]) catch |err| {
+        try space.releaseHeld(vol, run.start, run.count);
+        return err;
+    };
     var crc_first = no_crcs;
     if (checksums) {
         crc_first = @intCast(ov.crc_count);
@@ -980,6 +981,28 @@ fn writeRaw(vol: *Volume, ov: *Overlay, entries: []Pending, checksums: bool) Err
         entry.buffer = &.{};
     }
     return count;
+}
+
+/// Blocks in memory written to the run of blocks from `start`: put one
+/// after another in the volume's gather buffer and sent in one command
+/// for as many as it holds - a command a block costs the time of several
+/// blocks on an SSD - or a block at a time when there is no memory for
+/// the buffer.
+fn writeRun(vol: *Volume, start: u64, entries: []const Pending) Error!void {
+    const size: usize = vol.block_size;
+    if (entries.len > 1 and vol.gather.len == 0) vol.gather = vol.allocRaw(pendingMax(vol) * size) catch &.{};
+    const holds = vol.gather.len / size;
+    if (entries.len == 1 or holds < 2) {
+        for (entries, 0..) |entry, index| try vol.writeBlocks(start + index, entry.buffer);
+        return;
+    }
+    var done: usize = 0;
+    while (done < entries.len) {
+        const piece = @min(entries.len - done, holds);
+        for (entries[done..][0..piece], 0..) |entry, index| @memcpy(vol.gather[index * size ..][0..size], entry.buffer);
+        try vol.writeBlocks(start + done, vol.gather[0 .. piece * size]);
+        done += piece;
+    }
 }
 
 /// A whole chunk in memory compressed and written, when that saves a
@@ -1085,7 +1108,7 @@ pub fn commit(vol: *Volume, ov: *Overlay) Error!void {
     } else {
         // Inline bytes that stay are among the new data.
         if (ov.base_inline and !ov.trunc_all and pendingOf(ov, 0) == null and runOf(ov, 0) == null) {
-            _ = try pendingFor(vol, ov, &node, 0, false);
+            _ = try pendingFor(vol, ov, &node, 0, null);
         }
         try spill(vol, ov, true);
         try vol.barrier();

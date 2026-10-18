@@ -51,7 +51,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
 
     shell.print("semaphore   name            owner           nest  queue  waiting\n", .{});
     for (rows[0..count]) |*row| {
-        shell.print("0x%08x  %-14s  %-14s %5d  %5d  %d\n", .{
+        shell.print("0x%08zx  %-14s  %-14s %5d  %5d  %d\n", .{
             row.address,    @as([*:0]const u8, @ptrCast(&row.name)), @as([*:0]const u8, @ptrCast(&row.owner)),
             row.nest_count, row.queue_count,                         row.waiting,
         });

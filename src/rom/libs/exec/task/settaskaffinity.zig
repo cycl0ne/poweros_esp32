@@ -19,23 +19,25 @@ const Task = sdk.exec.Task;
 ///
 /// INPUTS:
 /// - `task` - the task; null for the caller.
-/// - `cores` - `TF_CORE0` to keep it on core 0, `TF_CORE1` on core 1;
-///   0 (or both) for whichever core is free. Other bits are ignored.
+/// - `cores` - the cores' flags, `TF_CORE0` to `TF_CORE3`: `TF_CORE0` to
+///   keep it on core 0, `TF_CORE1 | TF_CORE2` on those two; 0 (or every
+///   core) for whichever core is free. Other bits are ignored.
 ///
 /// RESULT:
-/// The cores it was set to before: `TF_CORE0`, `TF_CORE1`, both or 0.
+/// The cores it was set to before, as `cores`.
 ///
 /// BEHAVIOR:
-/// The cores are the task's `TF_CORE0` and `TF_CORE1` flags. Every
+/// The cores are the task's `TF_CORE0` to `TF_CORE3` flags. Every
 /// dispatcher looks at them each time it picks a task, so the change holds
 /// from the next pick on: a ready task is offered to a core it may run on
 /// now, and a running one on a core it may no longer use is switched out
-/// at that core's next switch point and taken up by the other.
+/// at that core's next switch point and taken up by another.
 ///
 /// The idle tasks are pinned, one to each core, and so is the code that
 /// must keep to one core - the Wi-Fi vendor code to core 0.
 ///
-/// With one core running, a task pinned to core 1 never runs.
+/// A task pinned only to cores that are not running never runs; one
+/// pinned only to cores the machine does not have counts as not pinned.
 ///
 /// CONTEXT:
 /// - Waits: no, but the caller may switch - to the other core, when it
@@ -50,7 +52,7 @@ const Task = sdk.exec.Task;
 ///
 /// NOTES:
 /// A task that is to be pinned from its first instruction has its
-/// `TF_CORE0` or `TF_CORE1` set in the `Task` handed to `AddTask`; dos's
+/// core flags set in the `Task` handed to `AddTask`; dos's
 /// `NP_Affinity` does it for a process.
 ///
 /// BUGS:
@@ -71,7 +73,7 @@ const Task = sdk.exec.Task;
 /// ```
 pub fn SetTaskAffinity(base: *ExecBase, task: ?*Task, cores: u32) u32 {
     const sys = base.iface();
-    const pins: u8 = sdk.exec.TF_CORE0 | sdk.exec.TF_CORE1;
+    const pins: u8 = sdk.exec.TF_CORES;
     sys.Disable();
     defer sys.Enable(); // where a move of the caller is taken
     const target = task orelse base.cpu().this_task;

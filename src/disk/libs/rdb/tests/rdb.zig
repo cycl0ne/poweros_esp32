@@ -402,6 +402,48 @@ test "a fresh table with one partition over the whole medium, written and read b
     try testing.expect(rb.NextPartition(handle, part) == null);
 }
 
+test "a PC's partition table in the first block stays, and the table goes in the second" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const rb = rig.rb;
+
+    // A card as it is sold: block 0 a partition table, one FAT32
+    // partition from block 16 to the end.
+    const mbr = rig.medium.image[0..block_bytes];
+    @memset(mbr, 0);
+    const entry = mbr[sdk.dos.fat.partition_table_at..][0..sdk.dos.fat.partition_entry_bytes];
+    entry[4] = 0x0C;
+    sdk.dos.fat.putU32(entry, 8, 16);
+    sdk.dos.fat.putU32(entry, 12, medium_blocks - 16);
+    sdk.dos.fat.putU16(mbr, sdk.dos.fat.signature_at, sdk.dos.fat.signature);
+    var before: [block_bytes]u8 = undefined;
+    @memcpy(&before, mbr);
+
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+        try testing.expectEqual(@as(u32, 1), handle.rdb.rdb_blocks_lo);
+        try testing.expectEqual(@as(u32, hardblocks.RDB_LOCATION_LIMIT), handle.rdb.lo_cylinder);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "SD0", 16, medium_blocks - 1, sdk.dos.ID_MSDOS_DISK));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+        const part = rb.FindPartition(handle, "SD0") orelse return error.NotFound;
+        try testing.expectEqual(@as(u32, 2), part.at);
+    }
+    try testing.expectEqualSlices(u8, &before, rig.medium.image[0..block_bytes]);
+    const table = rig.block(hardblocks.RigidDiskBlock, 1).*;
+    try testing.expect(hardblocks.sound(&table, hardblocks.IDNAME_RIGIDDISK));
+    try testing.expectEqual(@as(u32, 2), table.partition_list);
+
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expectEqual(rdb.RDBF_FOUND, handle.flags);
+    try testing.expectEqual(@as(u32, 1), handle.block);
+    const part = rb.NextPartition(handle, null) orelse return error.NoPartition;
+    try testing.expectEqualStrings("SD0", part.block.name());
+    try testing.expectEqual(@as(u32, 16), part.block.environment.low_cyl);
+}
+
 test "names and cylinders a partition may not have" {
     var rig = try Rig.init();
     defer rig.deinit() catch unreachable;

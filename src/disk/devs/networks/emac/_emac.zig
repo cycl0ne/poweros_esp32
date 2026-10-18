@@ -4,17 +4,25 @@
 //! the unit - the two descriptor chains, what is being sent, and what
 //! came in.
 //!
+//! **Which hardware.** The MAC (`mac`) and how it reaches its PHY
+//! (`port`) are the chip's: on the ESP32-P4 its own 10/100 MAC on RMII
+//! (gmac.zig, rmii.zig), on the JH7110 its gigabit MACs on RGMII
+//! (eqos.zig, rgmii.zig). Both engines answer the same calls for their
+//! descriptors, so the chains below are the same code on either.
+//!
 //! **Why a second block of memory.** The base is wherever MakeLibrary put
 //! it, which is external memory. The engine reads its descriptors and the
 //! frames to send from memory and writes received frames there, so all of
-//! them live in one block the init allocates internal, aligned to the
-//! data cache's 64-byte line: each descriptor and each buffer is whole
-//! lines, written back before the engine reads it and invalidated before
-//! the task reads what the engine wrote. The interrupt server and what it
-//! collects are past them, in lines the engine never touches.
+//! them live in one block the init allocates internal - and on the JH7110
+//! below 4 GiB, where the engine's 32-bit tail pointers reach -
+//! aligned to the data cache's 64-byte line: each descriptor and each
+//! buffer is whole lines, written back before the engine reads it and
+//! invalidated before the task reads what the engine wrote. The interrupt
+//! server and what it collects are past them, in lines the engine never
+//! touches.
 //!
 //! **The chains.** `receive_count` descriptors receive and `send_count`
-//! send, each chained to the next and the last to the first, each with a
+//! send, each followed by the next and the last by the first, each with a
 //! buffer of its own that holds a whole frame. Frames come in in order;
 //! the task hands each to the unit and gives its descriptor back at once.
 //! Writes go out in order too: `sending` holds the request of each send
@@ -28,10 +36,21 @@ const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const TimerBase = sdk.interface.timer.TimerBase;
-const gmac = @import("gmac.zig");
-const rmii = @import("rmii.zig");
+const phy = @import("phy.zig");
 const ethernet = sdk.devices.network.ethernet;
 const unit_file = sdk.devices.network.unit;
+
+/// The chip's MAC, and its side of the line to the PHY.
+pub const mac = switch (sdk.hardware.chip) {
+    .esp32p4 => @import("gmac.zig"),
+    .rv64sbi => @import("eqos.zig"),
+    .esp32s3 => @compileError("the ESP32-S3 has no Ethernet MAC"),
+};
+pub const port = switch (sdk.hardware.chip) {
+    .esp32p4 => @import("rmii.zig"),
+    .rv64sbi => @import("rgmii.zig"),
+    .esp32s3 => @compileError("the ESP32-S3 has no Ethernet MAC"),
+};
 
 pub const DEVICE_NAME = "emac.device";
 
@@ -49,8 +68,8 @@ pub const line_bytes = 64;
 /// The block the engine and the interrupt reach: internal memory, never
 /// moved once the init has it.
 pub const Work = extern struct {
-    receive_chain: [receive_count]gmac.Descriptor align(line_bytes),
-    send_chain: [send_count]gmac.Descriptor,
+    receive_chain: [receive_count]mac.Descriptor align(line_bytes),
+    send_chain: [send_count]mac.Descriptor,
     receive: [receive_count][buffer_bytes]u8,
     send: [send_count][buffer_bytes]u8,
     /// The interrupt server, whose data points back at the base.
@@ -78,9 +97,13 @@ pub const EmacBase = extern struct {
     work_memory: ?*anyopaque = null,
     /// utility.library, for the tag lists OpenDevice is handed.
     utility: ?*UtilityBase = null,
-    /// The board's lines, and the PHY's address on the management bus.
-    pins: rmii.Pins = .{},
+    /// The board's port - the MAC's lines or which MAC - the PHY's address
+    /// on the management bus, what the board's wiring asks of the PHY, and
+    /// the MAC's interrupt.
+    port: port.Port = .{},
     phy_address: u32 = 0,
+    wiring: phy.Wiring = .{},
+    irq: u32 = 0,
     /// The task's signal the engine's interrupt raises.
     int_mask: u32 = 0,
     /// For the system time a unit goes online at, the waits while the
@@ -115,12 +138,12 @@ pub const EmacBase = extern struct {
 
     // --- the unit's link --------------------------------------------------
 
-    /// The link's speed as the unit reports it: the PHY's best. A link
-    /// that came up at 10 Mbit/s runs at 10 all the same.
-    pub const bps: u64 = 100_000_000;
+    /// The link's speed as the unit reports it: the MAC's best. A link
+    /// that came up slower runs slower all the same.
+    pub const bps: u64 = if (mac.gigabit) 1_000_000_000 else 100_000_000;
 
     pub fn setStation(_: *EmacBase, address: *const ethernet.Address) void {
-        gmac.setStation(address);
+        mac.setStation(address);
     }
 
     /// The chains set up afresh and the engine started, or the engine
@@ -128,26 +151,17 @@ pub const EmacBase = extern struct {
     pub fn setRunning(base: *EmacBase, on: bool) void {
         const work = base.work.?;
         if (!on) {
-            gmac.stop();
+            mac.stop();
             base.running = 0;
             base.sent();
             while (base.send_busy > 0) base.finishSend(false);
             return;
         }
         for (&work.receive_chain, 0..) |*descriptor, slot| {
-            descriptor.* = .{
-                .status = gmac.own,
-                .control = gmac.receive_rch | buffer_bytes,
-                .buffer = @intCast(@intFromPtr(&work.receive[slot])),
-                .next = @intCast(@intFromPtr(&work.receive_chain[(slot + 1) % receive_count])),
-            };
+            mac.prepareReceive(descriptor, &work.receive[slot], &work.receive_chain[(slot + 1) % receive_count]);
         }
         for (&work.send_chain, 0..) |*descriptor, slot| {
-            descriptor.* = .{
-                .status = gmac.send_tch,
-                .buffer = @intCast(@intFromPtr(&work.send[slot])),
-                .next = @intCast(@intFromPtr(&work.send_chain[(slot + 1) % send_count])),
-            };
+            mac.prepareSend(descriptor, &work.send[slot], &work.send_chain[(slot + 1) % send_count]);
         }
         base.writeBack(&work.receive_chain, @sizeOf(@TypeOf(work.receive_chain)));
         base.writeBack(&work.send_chain, @sizeOf(@TypeOf(work.send_chain)));
@@ -155,7 +169,7 @@ pub const EmacBase = extern struct {
         base.send_next = 0;
         base.send_done = 0;
         base.send_busy = 0;
-        gmac.start(@intFromPtr(&work.receive_chain), @intFromPtr(&work.send_chain));
+        mac.start(&work.receive_chain, &work.send_chain);
         base.running = 1;
     }
 
@@ -165,7 +179,7 @@ pub const EmacBase = extern struct {
     pub fn setFilter(_: *EmacBase, groups: []const unit_file.Group, promiscuous: bool) void {
         var multicast = false;
         for (groups) |group| multicast = multicast or group.users != 0;
-        gmac.setFilter(promiscuous, multicast);
+        mac.setFilter(promiscuous, multicast);
     }
 
     /// Every free send descriptor given a write, while there are writes.
@@ -182,12 +196,18 @@ pub const EmacBase = extern struct {
             base.send_busy += 1;
             base.writeBack(&work.send[slot], length);
             const descriptor = &work.send_chain[slot];
-            descriptor.control = length & gmac.send_length_mask;
-            descriptor.status = gmac.own | gmac.send_ic | gmac.send_ls | gmac.send_fs | gmac.send_tch;
-            base.writeBack(descriptor, @sizeOf(gmac.Descriptor));
+            mac.queueSend(descriptor, &work.send[slot], length);
+            base.writeBack(descriptor, @sizeOf(mac.Descriptor));
             started = true;
         }
-        if (started) gmac.pollSend();
+        if (started) mac.pollSend(&work.send_chain[base.send_next]);
+    }
+
+    /// `micros` waited, on the timer.
+    pub fn delay(base: *EmacBase, micros: u64) void {
+        base.timer_io.node.command = timer.TR_ADDREQUEST;
+        base.timer_io.time = timer.TimeVal.fromMicros(micros);
+        _ = base.sys_base.DoIO(&base.timer_io.node);
     }
 
     pub fn now(base: *EmacBase) timer.TimeVal {
@@ -205,29 +225,24 @@ pub const EmacBase = extern struct {
     /// and its descriptor given back.
     pub fn received(base: *EmacBase) void {
         const work = base.work.?;
-        var gave_back = false;
+        var last: ?*mac.Descriptor = null;
         while (base.running != 0) {
             const slot = base.receive_next;
             const descriptor = &work.receive_chain[slot];
-            base.invalidate(descriptor, @sizeOf(gmac.Descriptor));
-            const status = descriptor.status;
-            if (status & gmac.own != 0) break;
-            const length = (status >> gmac.receive_length_shift) & gmac.receive_length_mask;
-            const whole = gmac.receive_fs | gmac.receive_ls;
-            if (status & gmac.receive_es != 0 or status & whole != whole or
-                length < gmac.checksum_bytes or length > buffer_bytes)
-            {
+            base.invalidate(descriptor, @sizeOf(mac.Descriptor));
+            const frame = mac.received(descriptor, buffer_bytes) orelse break;
+            if (!frame.good) {
                 base.net.damaged();
             } else {
-                base.invalidate(&work.receive[slot], length);
-                base.net.receive(work.receive[slot][0 .. length - gmac.checksum_bytes]);
+                base.invalidate(&work.receive[slot], frame.length);
+                base.net.receive(work.receive[slot][0..frame.length]);
             }
-            descriptor.status = gmac.own;
-            base.writeBack(descriptor, @sizeOf(gmac.Descriptor));
+            mac.giveBack(descriptor, &work.receive[slot]);
+            base.writeBack(descriptor, @sizeOf(mac.Descriptor));
             base.receive_next = (slot + 1) % receive_count;
-            gave_back = true;
+            last = descriptor;
         }
-        if (gave_back) gmac.pollReceive();
+        if (last) |descriptor| mac.pollReceive(descriptor);
     }
 
     /// Every write whose descriptor the engine has given back, answered,
@@ -236,10 +251,10 @@ pub const EmacBase = extern struct {
         const work = base.work.?;
         while (base.send_busy > 0) {
             const descriptor = &work.send_chain[base.send_done];
-            base.invalidate(descriptor, @sizeOf(gmac.Descriptor));
-            const status = descriptor.status;
-            if (status & gmac.own != 0 and base.running != 0) break;
-            base.finishSend(status & (gmac.own | gmac.send_es) == 0);
+            base.invalidate(descriptor, @sizeOf(mac.Descriptor));
+            const finished = mac.sendFinished(descriptor);
+            if (finished == null and base.running != 0) break;
+            base.finishSend(finished orelse false);
         }
         base.startWrites();
     }

@@ -30,7 +30,22 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const uart = sdk.hardware.uart;
-const usbjtag = @import("usbjtag.zig");
+/// The USB-Serial-JTAG port, on the chips that have one: the ESP32s. A
+/// machine under SBI firmware has none, and its stand-in never has input.
+const usbjtag = if (sdk.hardware.chip == .rv64sbi) no_usbjtag else @import("usbjtag.zig");
+const no_usbjtag = struct {
+    pub const source: u32 = 0;
+    pub fn put(_: u8) void {}
+    pub fn flush() void {}
+    pub fn read() ?u8 {
+        return null;
+    }
+    pub fn enableRx() void {}
+    pub fn disableRx() void {}
+    pub fn takeRxInterrupt() bool {
+        return false;
+    }
+};
 const pads = sdk.hardware.gpio;
 const gpio_resource = sdk.resources.gpio;
 const GpioBase = gpio_resource.GpioBase;
@@ -271,6 +286,8 @@ pub fn findPads(dev: *exec.Device, sys_base: *ExecBase) void {
 /// first open: false when another driver holds one. A unit without pads
 /// has nothing to take.
 fn takePads(sb: *SerialBase, line: *const Line) bool {
+    // A chip whose pads gpio.resource does not hand out has none to take.
+    if (comptime gpio_resource.GPIO_PADS == 0) return true;
     if (line.tx_pad == no_pad) return true;
     const port = line.port.uartPort() orelse return true;
     const sys = sb.sys_base;
@@ -296,6 +313,7 @@ fn takePads(sb: *SerialBase, line: *const Line) bool {
 /// driven, the UART's RX reading a high line, both pads free for another
 /// driver.
 fn givePads(sb: *SerialBase, line: *const Line) void {
+    if (comptime gpio_resource.GPIO_PADS == 0) return;
     if (line.tx_pad == no_pad) return;
     const port = line.port.uartPort() orelse return;
     pads.outputEnable(line.tx_pad, false);

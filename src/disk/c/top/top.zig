@@ -365,7 +365,7 @@ fn take(into: *Look, task: *const exec.Task, state: State, core: ?u32) void {
         into.missed += 1;
         return;
     }
-    const pins = task.flags & (exec.TF_CORE0 | exec.TF_CORE1);
+    const pins = task.flags & exec.TF_CORES;
     const seen = &into.seen[into.count];
     into.count += 1;
     seen.* = .{
@@ -374,7 +374,7 @@ fn take(into: *Look, task: *const exec.Task, state: State, core: ?u32) void {
         .pri = task.node.pri,
         .state = state,
         .core = core,
-        .idle = task.node.pri == -128 and (pins == exec.TF_CORE0 or pins == exec.TF_CORE1),
+        .idle = task.node.pri == -128 and @popCount(pins) == 1,
         .id = task.id,
     };
     copyName(&seen.name, task.node.name);
@@ -425,7 +425,7 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
             tenth(idle, all),
         });
     }
-    screen.line("memory   %u KiB free internal, %u KiB external", .{
+    screen.line("memory   %zu KiB free internal, %zu KiB external", .{
         sys.AvailMem(exec.MEMF_INTERNAL) / 1024,
         sys.AvailMem(exec.MEMF_EXTERNAL) / 1024,
     });
@@ -446,7 +446,7 @@ fn show(screen: *Screen, now: *const Look, before: *const Look, interval: u32) v
         ended_bytes += owner.bytes;
         ended += 1;
     }
-    screen.line("held     %u KiB by the system, %u KiB by %u tasks that have ended", .{
+    screen.line("held     %zu KiB by the system, %zu KiB by %u tasks that have ended", .{
         system_bytes / 1024,
         ended_bytes / 1024,
         ended,

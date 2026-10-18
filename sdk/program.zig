@@ -5,9 +5,22 @@
 //! `$VER:` string) are what the linker keeps - and gives the whole the
 //! SDK's panic handler, so that a failed safety check anywhere in it is a
 //! Guru naming the check and the place.
+//!
+//! It also gives it memcpy, memmove and memset: exec's `CopyMem` and
+//! `SetMem` (sdk/libs/exec/libc.zig), the loops the kernel has for the
+//! board. A program with its own - one whose root has `own_memory_calls`
+//! - keeps them.
+
+const program = @import("program");
 
 comptime {
-    _ = @import("program");
+    _ = program;
+    if (!@hasDecl(program, "own_memory_calls")) {
+        const libc = @import("sdk").exec.libc;
+        @export(&libc.memcpy, .{ .name = "memcpy" });
+        @export(&libc.memmove, .{ .name = "memmove" });
+        @export(&libc.memset, .{ .name = "memset" });
+    }
 }
 
 pub const panic = @import("sdk").exec.panic;

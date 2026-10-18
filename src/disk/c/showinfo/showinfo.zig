@@ -284,7 +284,7 @@ const Seen = struct {
             .pri = task.node.pri,
             .is_process = task.node.type == .process,
             .own = own,
-            .pins = task.flags & (exec.TF_CORE0 | exec.TF_CORE1),
+            .pins = task.flags & exec.TF_CORES,
             .state = state,
             .core = core,
         };
@@ -296,12 +296,21 @@ const Seen = struct {
     fn show(seen: *const Seen) void {
         var core_text: [4:0]u8 = .{ '-', 0, 0, 0 };
         if (seen.core) |number| core_text[0] = '0' + @as(u8, @intCast(number % 10));
-        const pinned: [*:0]const u8 = switch (seen.pins) {
-            exec.TF_CORE0 => "core 0",
-            exec.TF_CORE1 => "core 1",
-            else => "-",
-        };
-        _ = Printf(dl, "%-8s %-4s  %-6s  %4d  0x%08x  %s%s%s\n", .{
+        // "core 0" for one, "cores 02" for several.
+        var pin_text: [10:0]u8 = @splat(0);
+        var length: usize = 0;
+        if (seen.pins != 0) {
+            const word = if (@popCount(seen.pins) == 1) "core " else "cores ";
+            @memcpy(pin_text[0..word.len], word);
+            length = word.len;
+            for (0..4) |number| {
+                if (seen.pins & exec.coreFlag(@intCast(number)) == 0) continue;
+                pin_text[length] = '0' + @as(u8, @intCast(number));
+                length += 1;
+            }
+        } else pin_text[0] = '-';
+        const pinned: [*:0]const u8 = &pin_text;
+        _ = Printf(dl, "%-8s %-4s  %-6s  %4d  0x%08zx  %s%s%s\n", .{
             seen.state,
             @as([*:0]const u8, &core_text),
             pinned,
@@ -329,7 +338,7 @@ fn modules(title: [*:0]const u8, which: u32) void {
     _ = dl.PutStr("name                  ver  open  pri  address\n");
     const copy = copyRows(which);
     for (rows[0..copy.count]) |*row| {
-        _ = Printf(dl, "%-20s %2d.%-2d %4d  %3d  0x%08x\n", .{
+        _ = Printf(dl, "%-20s %2d.%-2d %4d  %3d  0x%08zx\n", .{
             @as([*:0]const u8, @ptrCast(&row.name)),
             row.version,
             row.revision,
@@ -366,7 +375,7 @@ fn semaphores() void {
 fn nodeList(which: u32) void {
     const copy = copyRows(which);
     for (rows[0..copy.count]) |*row| {
-        _ = Printf(dl, "%-20s %4d  0x%08x\n", .{
+        _ = Printf(dl, "%-20s %4d  0x%08zx\n", .{
             @as([*:0]const u8, @ptrCast(&row.name)),
             row.pri,
             row.address,
@@ -383,7 +392,7 @@ fn memory() void {
     const copy = copyRows(exec.EXECLIST_MEMORY);
     for (rows[0..copy.count]) |*row| {
         const largest = sys.AvailMem(row.attributes | exec.MEMF_LARGEST);
-        _ = Printf(dl, "%-29s %4d  %8d  %10d\n", .{
+        _ = Printf(dl, "%-29s %4d  %8zd  %10zd\n", .{
             @as([*:0]const u8, @ptrCast(&row.name)),
             row.pri,
             row.free,
@@ -573,7 +582,7 @@ fn segments() void {
     var segment = dl.LockSegmentList(true);
     defer dl.UnLockSegmentList();
     while (segment) |s| : (segment = s.next) {
-        _ = Printf(dl, "%-20s %5s  0x%08x\n", .{
+        _ = Printf(dl, "%-20s %5s  0x%08zx\n", .{
             name(s.name),
             useCount(s.uc),
             @intFromPtr(s),

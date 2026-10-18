@@ -174,7 +174,7 @@ pub fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process {
             .mem_block = block,
             .mem_size = total,
             .user_data = @ptrFromInt(ub.GetTagData(dos.NP_UserData, 0, tags)),
-            .flags = @as(u8, @truncate(ub.GetTagData(dos.NP_Affinity, 0, tags))) & (sdk.exec.TF_CORE0 | sdk.exec.TF_CORE1),
+            .flags = @as(u8, @truncate(ub.GetTagData(dos.NP_Affinity, 0, tags))) & sdk.exec.TF_CORES,
             .end_msg = @ptrFromInt(ub.GetTagData(dos.NP_EndMsg, 0, tags)),
         },
         .stack_size = @intCast(stack),

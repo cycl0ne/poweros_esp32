@@ -20,7 +20,7 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     if (_shell.same(kind, "ill")) {
         // Each core's own: Xtensa's ILL, RISC-V's all-zero instruction.
         switch (builtin.cpu.arch) {
-            .riscv32 => asm volatile ("unimp"),
+            .riscv32, .riscv64 => asm volatile ("unimp"),
             else => asm volatile ("ill"),
         }
     } else if (_shell.same(kind, "load")) {

@@ -37,6 +37,7 @@ pub const USBPORTNAME = "usbport.resource";
 pub const USBPORT_PORTS: u32 = switch (hardware.chip) {
     .esp32s3 => 1,
     .esp32p4 => 3,
+    .rv64sbi => 0,
 };
 
 /// The controllers a port is given to (`USBPortHandle.controller`).

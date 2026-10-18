@@ -181,7 +181,7 @@ fn printBoards(dl: *DosBase, rb: *RtgBase) i32 {
         const got = rb.GetBoardInfo(b, &info, @sizeOf(rtg.RtgBoardInfo));
         if (got == 0) continue;
         const shown = rb.BoardDisplayBitMap(b);
-        _ = Printf(dl, "%-11s  %-8s  %4dx%-4d %-8s  %10d  %s\n", .{
+        _ = Printf(dl, "%-11s  %-8s  %4dx%-4d %-8s  %10zd  %s\n", .{
             name(info.name),
             name(info.driver),
             info.width,
@@ -281,14 +281,14 @@ fn printModes(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
 fn printMemory(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
     var info: rtg.RtgBoardInfo = .{};
     if (rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo)) == 0) return;
-    _ = Printf(dl, "%-12s %d bytes, %d free, largest piece %d\n", .{
+    _ = Printf(dl, "%-12s %zd bytes, %zd free, largest piece %zd\n", .{
         "Memory",
         info.memory_total,
         info.memory_free,
         info.memory_largest,
     });
     if (rb.BoardDisplayBitMap(board)) |shown| {
-        _ = Printf(dl, "%-12s 0x%08x, %dx%d %s, %d bytes a row, %d bytes\n", .{
+        _ = Printf(dl, "%-12s 0x%08zx, %dx%d %s, %d bytes a row, %zd bytes\n", .{
             "Showing",
             @intFromPtr(shown.pixels),
             shown.width,

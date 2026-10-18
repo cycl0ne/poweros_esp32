@@ -1,0 +1,284 @@
+// SPDX-License-Identifier: MPL-2.0
+//! What the kernel reads from the device tree the firmware passes in a1:
+//! RAM (the first `/memory` node's first range), the disk image the
+//! loader put in RAM beside the kernel (`/chosen`'s `linux,initrd-start`
+//! and `linux,initrd-end`, which QEMU's -initrd and U-Boot's booti write),
+//! and the RAM that is not the kernel's: the header's reservation block
+//! (where U-Boot puts the disk image) and every `/reserved-memory` node
+//! with a `reg` (where OpenSBI puts itself); and the harts that can run
+//! the kernel - every `/cpus/cpu@` node that is not disabled, has an MMU
+//! (`mmu-type`) and the FPU the kernel uses (F and D in `riscv,isa`). That
+//! leaves out the JH7110's S7, which the tree lists beside the U74s and
+//! the firmware would even start, but which has neither the FPU nor
+//! supervisor mode. And each Ethernet port's station address: the
+//! `local-mac-address` of every `ethernet@<address>` node, which U-Boot
+//! writes from what the board keeps for it. Read once in kmain, before
+//! exec's memory exists: the tree sits in RAM exec is given, and is gone
+//! after.
+//!
+//! The flattened tree is big-endian: a header, then a structure block of
+//! tokens - a node begins with its name, a property is its length, the
+//! offset of its name in the strings block, and its value, each padded to
+//! four bytes - and the strings block.
+
+const std = @import("std");
+
+const magic: u32 = 0xD00D_FEED;
+const BEGIN_NODE = 1;
+const END_NODE = 2;
+const PROP = 3;
+const NOP = 4;
+const END = 9;
+
+/// A range of memory, `start` up to `end`.
+pub const Range = struct { start: usize, end: usize };
+
+/// The most reserved ranges kept apart. One more is folded into the last,
+/// which then reserves all between them: more is kept from exec, never
+/// less.
+pub const max_reserved = 8;
+
+/// The most harts kept; more are left out.
+pub const max_harts = 8;
+
+/// The most Ethernet ports whose station address is kept.
+pub const max_stations = 4;
+
+/// An Ethernet port's station address, and where the port's registers
+/// are: the address in its node's name.
+pub const Station = struct { address: usize, bytes: [6]u8 };
+
+pub const Facts = struct {
+    ram_base: ?usize = null,
+    ram_size: ?usize = null,
+    initrd_start: ?usize = null,
+    initrd_end: ?usize = null,
+    reserved: [max_reserved]Range = undefined,
+    reserved_count: usize = 0,
+    /// The harts' ids, in the tree's order.
+    harts: [max_harts]usize = undefined,
+    hart_count: usize = 0,
+    stations: [max_stations]Station = undefined,
+    station_count: usize = 0,
+
+    /// The station address the tree gives the port whose registers are at
+    /// `address`, or null.
+    pub fn stationAt(facts: *const Facts, address: usize) ?[6]u8 {
+        for (facts.stations[0..facts.station_count]) |station| {
+            if (station.address == address) return station.bytes;
+        }
+        return null;
+    }
+
+    /// The harts that can run the kernel.
+    pub fn hartIds(facts: *const Facts) []const usize {
+        return facts.harts[0..facts.hart_count];
+    }
+
+    /// The reserved ranges.
+    pub fn reservedRanges(facts: *const Facts) []const Range {
+        return facts.reserved[0..facts.reserved_count];
+    }
+
+    fn reserve(facts: *Facts, start: usize, size: usize) void {
+        if (size == 0) return;
+        const range: Range = .{ .start = start, .end = start +| size };
+        if (facts.reserved_count < max_reserved) {
+            facts.reserved[facts.reserved_count] = range;
+            facts.reserved_count += 1;
+        } else {
+            const last = &facts.reserved[max_reserved - 1];
+            last.* = .{ .start = @min(last.start, range.start), .end = @max(last.end, range.end) };
+        }
+    }
+};
+
+const Header = extern struct {
+    magic: u32,
+    totalsize: u32,
+    off_dt_struct: u32,
+    off_dt_strings: u32,
+    off_mem_rsvmap: u32,
+    version: u32,
+    last_comp_version: u32,
+    boot_cpuid_phys: u32,
+    size_dt_strings: u32,
+    size_dt_struct: u32,
+};
+
+fn be32(bytes: []const u8) u32 {
+    return std.mem.readInt(u32, bytes[0..4], .big);
+}
+
+fn be64(bytes: []const u8) u64 {
+    return std.mem.readInt(u64, bytes[0..8], .big);
+}
+
+/// A property's value as a number of `cells` 32-bit cells (1 or 2).
+fn cellsAt(bytes: []const u8, cells: u32) usize {
+    var value: u64 = 0;
+    for (0..cells) |i| value = value << 32 | be32(bytes[i * 4 ..]);
+    return @intCast(value);
+}
+
+/// A property that holds one number, of whichever width it was written.
+fn number(bytes: []const u8) ?usize {
+    return switch (bytes.len) {
+        4 => cellsAt(bytes, 1),
+        8 => cellsAt(bytes, 2),
+        else => null,
+    };
+}
+
+/// Whether an ISA string - `rv64imafdc_zicsr...` - has the F and D
+/// extensions, or G, which has both: its single letters, up to the first
+/// multi-letter one. One that is not an RV string is taken at its word.
+fn hasFpu(isa: []const u8) bool {
+    if (isa.len < 4 or !std.mem.startsWith(u8, isa, "rv")) return true;
+    const letters = isa[4..@max(std.mem.indexOfScalar(u8, isa, '_') orelse isa.len, 4)];
+    if (std.mem.indexOfScalar(u8, letters, 'g') != null) return true;
+    return std.mem.indexOfScalar(u8, letters, 'f') != null and std.mem.indexOfScalar(u8, letters, 'd') != null;
+}
+
+/// The facts the tree at `address` has; none if there is no tree there.
+pub fn read(address: usize) Facts {
+    var facts: Facts = .{};
+    if (address == 0 or address % 4 != 0) return facts;
+    const header: *const Header = @ptrFromInt(address);
+    if (std.mem.bigToNative(u32, header.magic) != magic) return facts;
+    const total = std.mem.bigToNative(u32, header.totalsize);
+    const tree: []const u8 = @as([*]const u8, @ptrFromInt(address))[0..total];
+    const strings = tree[std.mem.bigToNative(u32, header.off_dt_strings)..];
+
+    // The reservation block: an address and a size, 64 bits each, until
+    // both are 0.
+    var entry: usize = std.mem.bigToNative(u32, header.off_mem_rsvmap);
+    while (entry + 16 <= tree.len) : (entry += 16) {
+        const start = be64(tree[entry..]);
+        const size = be64(tree[entry + 8 ..]);
+        if (start == 0 and size == 0) break;
+        facts.reserve(@intCast(start), @intCast(size));
+    }
+
+    var at: usize = std.mem.bigToNative(u32, header.off_dt_struct);
+
+    // The root's cell sizes, which /memory's reg is written in.
+    var address_cells: u32 = 2;
+    var size_cells: u32 = 1;
+    // /reserved-memory's, which its nodes' reg is written in.
+    var reserved_address_cells: u32 = 2;
+    var reserved_size_cells: u32 = 1;
+    var depth: u32 = 0;
+    // What the root's child being read is.
+    const Node = enum { other, memory, chosen, reserved_memory, cpus };
+    var node: Node = .other;
+    // /cpus's cell size, which a cpu node's reg is written in; and the cpu
+    // node being read, if one is: its id, and whether it can run us.
+    var cpus_address_cells: u32 = 1;
+    var in_cpu = false;
+    var cpu_id: ?usize = null;
+    var cpu_okay = true;
+    var cpu_mmu = false;
+    var cpu_fpu = true;
+    // The Ethernet node being read, by the address in its name.
+    var ethernet: ?usize = null;
+    var ethernet_depth: u32 = 0;
+    while (at + 4 <= tree.len) {
+        const token = be32(tree[at..]);
+        at += 4;
+        switch (token) {
+            BEGIN_NODE => {
+                const name = std.mem.sliceTo(tree[at..], 0);
+                at = std.mem.alignForward(usize, at + name.len + 1, 4);
+                depth += 1;
+                if (depth == 2) {
+                    node = if (std.mem.eql(u8, name, "chosen"))
+                        .chosen
+                    else if (std.mem.eql(u8, name, "reserved-memory")) reserved: {
+                        reserved_address_cells = address_cells;
+                        reserved_size_cells = size_cells;
+                        break :reserved .reserved_memory;
+                    } else if (std.mem.startsWith(u8, name, "memory") and facts.ram_size == null)
+                        .memory
+                    else if (std.mem.eql(u8, name, "cpus"))
+                        .cpus
+                    else
+                        .other;
+                }
+                if (std.mem.startsWith(u8, name, "ethernet@")) {
+                    ethernet = std.fmt.parseInt(usize, name["ethernet@".len..], 16) catch null;
+                    ethernet_depth = depth;
+                }
+                if (depth == 3 and node == .cpus and std.mem.startsWith(u8, name, "cpu@")) {
+                    in_cpu = true;
+                    cpu_id = null;
+                    cpu_okay = true;
+                    cpu_mmu = false;
+                    cpu_fpu = true;
+                }
+            },
+            END_NODE => {
+                if (depth == 3 and in_cpu) {
+                    in_cpu = false;
+                    if (cpu_id != null and cpu_okay and cpu_mmu and cpu_fpu and facts.hart_count < max_harts) {
+                        facts.harts[facts.hart_count] = cpu_id.?;
+                        facts.hart_count += 1;
+                    }
+                }
+                if (ethernet != null and depth == ethernet_depth) ethernet = null;
+                depth -|= 1;
+                if (depth < 2) node = .other;
+            },
+            PROP => {
+                const len = be32(tree[at..]);
+                const name = std.mem.sliceTo(strings[be32(tree[at + 4 ..])..], 0);
+                const value = tree[at + 8 ..][0..len];
+                at = std.mem.alignForward(usize, at + 8 + len, 4);
+                if (ethernet != null and depth == ethernet_depth and len == 6 and
+                    std.mem.eql(u8, name, "local-mac-address") and facts.station_count < max_stations)
+                {
+                    facts.stations[facts.station_count] = .{ .address = ethernet.?, .bytes = value[0..6].* };
+                    facts.station_count += 1;
+                }
+                if (depth == 1) {
+                    if (std.mem.eql(u8, name, "#address-cells")) address_cells = be32(value);
+                    if (std.mem.eql(u8, name, "#size-cells")) size_cells = be32(value);
+                } else if (depth == 2 and node == .memory and std.mem.eql(u8, name, "reg")) {
+                    if (len >= (address_cells + size_cells) * 4 and address_cells <= 2 and size_cells <= 2) {
+                        facts.ram_base = cellsAt(value, address_cells);
+                        facts.ram_size = cellsAt(value[address_cells * 4 ..], size_cells);
+                    }
+                } else if (depth == 2 and node == .chosen) {
+                    if (std.mem.eql(u8, name, "linux,initrd-start")) facts.initrd_start = number(value);
+                    if (std.mem.eql(u8, name, "linux,initrd-end")) facts.initrd_end = number(value);
+                } else if (depth == 2 and node == .cpus) {
+                    if (std.mem.eql(u8, name, "#address-cells")) cpus_address_cells = be32(value);
+                } else if (depth == 3 and in_cpu) {
+                    if (std.mem.eql(u8, name, "reg") and cpus_address_cells >= 1 and cpus_address_cells <= 2 and len >= cpus_address_cells * 4) {
+                        cpu_id = cellsAt(value, cpus_address_cells);
+                    }
+                    if (std.mem.eql(u8, name, "status")) cpu_okay = std.mem.startsWith(u8, value, "okay") or std.mem.startsWith(u8, value, "ok");
+                    if (std.mem.eql(u8, name, "mmu-type")) cpu_mmu = true;
+                    if (std.mem.eql(u8, name, "riscv,isa")) cpu_fpu = hasFpu(std.mem.sliceTo(value, 0));
+                } else if (depth == 2 and node == .reserved_memory) {
+                    if (std.mem.eql(u8, name, "#address-cells")) reserved_address_cells = be32(value);
+                    if (std.mem.eql(u8, name, "#size-cells")) reserved_size_cells = be32(value);
+                } else if (depth == 3 and node == .reserved_memory and std.mem.eql(u8, name, "reg")) {
+                    // Every range of it: a node without reg is memory a
+                    // system allocates for itself, which is not this one.
+                    const ac = reserved_address_cells;
+                    const sc = reserved_size_cells;
+                    if (ac >= 1 and ac <= 2 and sc >= 1 and sc <= 2) {
+                        var range: usize = 0;
+                        while (range + (ac + sc) * 4 <= len) : (range += (ac + sc) * 4) {
+                            facts.reserve(cellsAt(value[range..], ac), cellsAt(value[range + ac * 4 ..], sc));
+                        }
+                    }
+                }
+            },
+            NOP => {},
+            else => break, // END, or a tree this does not understand
+        }
+    }
+    return facts;
+}

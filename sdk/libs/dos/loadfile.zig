@@ -160,7 +160,7 @@ pub fn findResident(source: Source) ?FoundTag {
     if (version >= 2) {
         if (!source.readAt(source.context, 0, &header_bytes)) return null;
         if (word16(header_bytes[10..12]) != native_machine) return null;
-        if (header_bytes[16] != 4) return null;
+        if (header_bytes[16] != native_word_size) return null;
         header_size = @sizeOf(Header);
     } else if (native_machine != MACHINE_XTENSA) {
         return null;
@@ -175,7 +175,7 @@ pub fn findResident(source: Source) ?FoundTag {
             const kind: SegmentKind = @enumFromInt(segment_bytes[0]);
             const file_size = word32(segment_bytes[4..8]);
             const start = at + @sizeOf(SegmentHeader);
-            if (kind == wanted and file_size >= @sizeOf(u32) * 2) {
+            if (kind == wanted and file_size >= native_word_size * 2) {
                 if (scanSegment(source, start, file_size)) |tag| {
                     return .{ .file_offset = start, .size = file_size, .tag = tag };
                 }
@@ -187,27 +187,34 @@ pub fn findResident(source: Source) ?FoundTag {
 }
 
 /// The offset of the first ROM tag in a segment's `size` bytes at
-/// `start`, read a chunk at a time.
+/// `start`, read a chunk at a time. A tag is aligned to an address word,
+/// and its self-pointer is the word after the match word's.
 fn scanSegment(source: Source, start: u32, size: u32) ?u32 {
     const chunk = 256;
-    // Each chunk overlaps the next by a tag's first eight bytes, so a tag
+    const head: u32 = native_word_size * 2;
+    // Each chunk overlaps the next by a tag's first two words, so a tag
     // that starts near a chunk's end is still seen whole.
-    var buffer: [chunk + 8]u8 = undefined;
+    var buffer: [chunk + head]u8 = undefined;
     var base: u32 = 0;
-    while (base + 8 <= size) : (base += chunk) {
-        const want: u32 = @min(@as(u32, chunk + 8), size - base);
+    while (base + head <= size) : (base += chunk) {
+        const want: u32 = @min(@as(u32, chunk + head), size - base);
         if (!source.readAt(source.context, start + base, buffer[0..want])) return null;
         var offset: u32 = 0;
-        while (offset + 8 <= want) : (offset += 4) {
+        while (offset + head <= want) : (offset += native_word_size) {
             if (word16(buffer[offset..][0..2]) != 0x4AFC) continue;
-            if (word32(buffer[offset + 4 ..][0..4]) == base + offset) return base + offset;
+            if (word32(buffer[offset + native_word_size ..][0..4]) != base + offset) continue;
+            // A pointer of a 64-bit file: the high half of an offset is 0.
+            if (native_word_size == 8 and word32(buffer[offset + 12 ..][0..4]) != 0) continue;
+            return base + offset;
         }
     }
     return null;
 }
 
-/// The address word at `offset` of a found tag's segment (a pointer of
-/// the tag: an offset into the segment), or null past its end.
+/// The 32-bit word at `offset` of a found tag's segment, or null past its
+/// end: a field of the tag, or one of its pointers - an offset into the
+/// segment, which an address word's first four bytes hold on a 64-bit CPU
+/// too (they are little-endian, and the offset is under 4 GiB).
 pub fn readWord(source: Source, found: FoundTag, offset: u32) ?u32 {
     if (offset > found.size or found.size - offset < 4) return null;
     var bytes: [4]u8 = undefined;
@@ -239,20 +246,22 @@ const resident = @import("../exec/resident.zig");
 const NodeType = @import("../exec/nodes.zig").NodeType;
 
 /// Where a ROM tag's fields lie in a load file, whose address words are
-/// four bytes (its header says so): a Resident's, then a
+/// `native_word_size` bytes (its header says so): a Resident's, then a
 /// ResidentDevice's own. Written out rather than taken from the types, so
-/// a build with wider pointers - the host tests' - reads a file the same.
-const TAG_FLAGS = 12;
-const TAG_NAME = 16;
-const TAG_ID_STRING = 20;
-const DEVICE_SPEAKS = 28;
-const DEVICE_UNIT_PART = 32;
-const DEVICE_UNITS = 36;
-const DEVICE_UNIT_LABELS = 40;
-const DEVICE_UNIT_CHIP = 44;
+/// a build with wider pointers than its files' - the host tests' - reads
+/// a file the same.
+const narrow = native_word_size == 4;
+const TAG_FLAGS = if (narrow) 12 else 24;
+const TAG_NAME = if (narrow) 16 else 32;
+const TAG_ID_STRING = if (narrow) 20 else 40;
+const DEVICE_SPEAKS = if (narrow) 28 else 56;
+const DEVICE_UNIT_PART = if (narrow) 32 else 64;
+const DEVICE_UNITS = if (narrow) 36 else 68;
+const DEVICE_UNIT_LABELS = if (narrow) 40 else 72;
+const DEVICE_UNIT_CHIP = if (narrow) 44 else 80;
 
 comptime {
-    if (@sizeOf(usize) == 4) {
+    if (@sizeOf(usize) == native_word_size) {
         const Device = resident.ResidentDevice;
         if (@offsetOf(resident.Resident, "flags") != TAG_FLAGS or @offsetOf(resident.Resident, "name") != TAG_NAME or
             @offsetOf(resident.Resident, "id_string") != TAG_ID_STRING or @offsetOf(Device, "speaks") != DEVICE_SPEAKS or
@@ -363,7 +372,7 @@ pub const Bytes = struct {
 /// segment is its version string, never a label.
 pub fn readUnitLabel(source: Source, found: FoundTag, tag: *const DeviceTag, index: u32, into: []u8) ?[:0]u8 {
     if (tag.labels == 0 or index >= tag.units) return null;
-    const at = readWord(source, found, tag.labels + index * 4) orelse return null;
+    const at = readWord(source, found, tag.labels + index * native_word_size) orelse return null;
     if (at == 0) return null;
     return readString(source, found, at, into);
 }

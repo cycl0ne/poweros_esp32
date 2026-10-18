@@ -27,7 +27,7 @@ pub const target_query: std.Target.Query = .{
 };
 
 /// The chips code is built for.
-pub const Chip = enum { esp32s3, esp32p4 };
+pub const Chip = enum { esp32s3, esp32p4, rv64sbi };
 
 /// The ESP32-P4's HP cores: RV32IMAFC with the CSR and fence.i
 /// instructions, and none of the chip's own extensions (PIE, hardware
@@ -38,6 +38,17 @@ pub const p4_target_query: std.Target.Query = .{
     .abi = .none,
     .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv32 },
     .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .f, .c, .zicsr, .zifencei }),
+};
+
+/// A RISC-V 64 machine in supervisor mode under SBI firmware (OpenSBI):
+/// QEMU's virt and the StarFive JH7110's U74 cores. RV64GC, so the LP64D
+/// ABI: a task carries the D extension's FPU registers.
+pub const rv64_target_query: std.Target.Query = .{
+    .cpu_arch = .riscv64,
+    .os_tag = .freestanding,
+    .abi = .none,
+    .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv64 },
+    .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .f, .d, .c, .zicsr, .zifencei }),
 };
 
 /// What a program for `chip` is built for. On the P4 without the linker's
@@ -51,11 +62,16 @@ pub fn programTargetQuery(chip: Chip) std.Target.Query {
             query.cpu_features_sub = std.Target.riscv.featureSet(&.{.relax});
             break :blk query;
         },
+        .rv64sbi => blk: {
+            var query = rv64_target_query;
+            query.cpu_features_sub = std.Target.riscv.featureSet(&.{.relax});
+            break :blk query;
+        },
     };
 }
 
 /// The libraries with an `.fd` file, each made into `interface/<name>.zig`.
-const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "jpeg", "dos", "rtg", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "asl", "iffparse", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil", "usb", "usbclass", "battery", "usbport", "battclock", "audiocodec", "wpa" };
+const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "jpeg", "dos", "rtg", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "asl", "iffparse", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil", "usb", "usbclass", "battery", "usbport", "battclock", "audiocodec", "wpa", "pci" };
 
 pub fn build(b: *std.Build) void {
     const sdk = b.addModule("sdk", .{ .root_source_file = b.path("sdk.zig") });
@@ -183,7 +199,8 @@ pub const Program = struct {
 /// a load file: the `.seg` dos's LoadSeg reads. What goes on the disk.
 ///
 /// It is linked with the SDK's `program.ld` (`program_esp32p4.ld` on the
-/// P4, where the code is PC-relative, -mcmodel=medany) and with the
+/// P4 and `program_rv64sbi.ld` on RV64, where the code is PC-relative,
+/// -mcmodel=medany) and with the
 /// linker's relocations kept (`--emit-relocs`); `elf2seg` keeps the ones
 /// that hold an address and makes the load file from them. The entry is
 /// `_program_entry`, which a command exports; a module's ROM tag is what
@@ -192,7 +209,7 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
     const target = b.resolveTargetQuery(programTargetQuery(program.chip));
     const code_model: std.builtin.CodeModel = switch (program.chip) {
         .esp32s3 => .default,
-        .esp32p4 => .medany,
+        .esp32p4, .rv64sbi => .medany,
     };
     const own = b.createModule(.{
         .root_source_file = program.root,
@@ -223,6 +240,7 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
     const script_name = switch (program.chip) {
         .esp32s3 => "program.ld",
         .esp32p4 => "program_esp32p4.ld",
+        .rv64sbi => "program_rv64sbi.ld",
     };
     if (program.rom_scripts.len == 0) {
         exe.setLinkerScript(dep.path(script_name));

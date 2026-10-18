@@ -215,7 +215,7 @@ found once can be watched early in the next run.
   signals it waits for and has.
 - `cores` - per core: what it runs, its dispatches and idle rounds, and
   the longest it held or waited for the interrupt lock, with the code
-  that did ([Two cores](programs.md#two-cores)).
+  that did ([Several cores](programs.md#several-cores)).
 - `locks` - which task holds which semaphore, how often and whether
   shared, and which one each task waits for.
 - `sems`, `ports` - the public semaphores and message ports.

@@ -195,8 +195,9 @@ pub fn readValue(db: *DosBase, fh: *dos.FileHandle, comptime T: type) ?T {
 /// What the loader keeps about a segment while it reads the file.
 pub const Loaded = struct {
     /// The base its relocations add: the instruction address for code. It
-    /// is a usize because the host tests run on a 64-bit machine; only the
-    /// low 32 bits reach the word being patched.
+    /// is a usize because the host tests run on a 64-bit machine; only as
+    /// many of its bits as an address word has (`native_word_size`) reach
+    /// the word being patched.
     base: usize = 0,
     /// Relocation groups still to read for it.
     groups: u32 = 0,
@@ -296,9 +297,12 @@ pub fn relocate(db: *DosBase, fh: *dos.FileHandle, first: ?*SegList, loaded: *co
             var n: u32 = 0;
             while (n < group.count) : (n += 1) {
                 const offset = readValue(db, fh, u32) orelse return failBool(db, dos.ERROR_BAD_HUNK);
-                // A word must fit whole; a segment under 4 bytes has room for none.
-                if (s.mem_size < 4 or offset > s.mem_size - 4) return failBool(db, dos.ERROR_BAD_HUNK);
-                const word: *align(1) u32 = @ptrCast(s.data.? + offset);
+                // An address word, as wide as LoadSeg checked the header
+                // says: it must fit whole, and a segment smaller than one
+                // has room for none.
+                const Word = if (loadfile.native_word_size == 8) u64 else u32;
+                if (s.mem_size < @sizeOf(Word) or offset > s.mem_size - @sizeOf(Word)) return failBool(db, dos.ERROR_BAD_HUNK);
+                const word: *align(1) Word = @ptrCast(s.data.? + offset);
                 word.* +%= @truncate(base);
             }
         }

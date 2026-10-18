@@ -35,7 +35,7 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = cr.CHART_CLASS,
     .version = 1,
-    .date = "02.10.2026",
+    .date = "17.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -69,7 +69,7 @@ pub const Data = extern struct {
 };
 
 /// The colours of the series after the first.
-const series_colours = [cr.CHART_MAX_SERIES]Pen{ 0, 0xFFC8_3C3C, 0xFF3C_A050, 0xFFE0_9020 };
+const series_colours = [cr.CHART_MAX_SERIES]Pen{ 0, 0xFFC8_3C3C, 0xFF3C_A050, 0xFFE0_9020, 0xFF8C_50C8, 0xFF30_A0A8, 0xFFA0_7040, 0xFFD0_60A0 };
 const nominal = gc.Box{ .width = 200, .height = 100 };
 
 /// The `i`th value of a series, oldest first.

@@ -44,8 +44,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tx.TEXT_CLASS,
     .version = 1,
-    .revision = 1,
-    .date = "03.10.2026",
+    .revision = 2,
+    .date = "18.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -363,7 +363,7 @@ fn measureRuns(base: *gadgets.Base, own: *const Data, runs: [*]const tx.TextRun,
         .{},
     }) orelse return .{};
     defer gb.FreeBitMap(pixel);
-    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(pixel) }, .{} }) orelse return .{};
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(pixel) }, .{} }) orelse return .{};
     defer gb.FreeRastPort(rp);
     if (font) |f| graphics.SetFont(gb, rp, f);
     // No font to measure in anywhere: the system's own.

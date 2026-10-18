@@ -34,11 +34,14 @@ pub const DRIVE_NAME = "SD0";
 
 /// The blocks one transfer moves at a time. A file system asks in
 /// clusters, and a card of 4 to 32 GB is formatted with 32 KiB ones, so
-/// such a cluster takes two rounds. The second round costs a command -
-/// tens of microseconds against the milliseconds the data takes - and a
-/// buffer twice the size would cost 16 KiB of internal memory, which is
-/// worth more than that.
-pub const chunk_blocks: u32 = 32;
+/// such a cluster takes two rounds. On the ESP32s the second round costs
+/// a command - tens of microseconds against the milliseconds the data
+/// takes - and a buffer twice the size would cost 16 KiB of internal
+/// memory, which is worth more than that. A machine with gigabytes of it
+/// takes 256 KiB a round: a card writes a long run of blocks much faster
+/// than the same blocks in pieces, and what Copy asks for in one go is
+/// one round.
+pub const chunk_blocks: u32 = if (sdk.hardware.chip == .rv64sbi) 512 else 32;
 pub const chunk_bytes: u32 = chunk_blocks * @as(u32, @intCast(card.block_bytes));
 /// One descriptor per 4096 bytes of it.
 pub const descriptors: u32 = chunk_bytes / sdmmc.dma_buffer_max;
@@ -179,6 +182,8 @@ pub const Slot = extern struct {
     /// The switch of the card's supply, as a BoardPin's data; 0 for a
     /// slot whose card is always powered.
     power: u32 = 0,
+    /// The SD/MMC host's interrupt, as exec numbers it.
+    irq: u32 = 0,
 };
 
 pub fn sdCardBase(dev: *exec.Device) *SdCardBase {

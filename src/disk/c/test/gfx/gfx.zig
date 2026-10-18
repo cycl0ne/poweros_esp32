@@ -239,7 +239,7 @@ fn fillDisplay(gb: *GraphicsBase) ?graphics.Rect {
         graphics.penRGB(0, 0, 255),
         graphics.penRGB(255, 255, 255),
     };
-    const bar_width = @divTrunc(bounds.width(), pens.len);
+    const bar_width = @divTrunc(bounds.width(), @as(i32, pens.len));
     const top = @divTrunc(bounds.height(), 8);
     const bottom = @divTrunc(bounds.height(), 2);
     for (pens, 0..) |pen, i| {

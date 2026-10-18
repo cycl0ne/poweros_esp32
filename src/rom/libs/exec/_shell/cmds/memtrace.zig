@@ -35,7 +35,7 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
         report(shell, trace);
     } else if (_shell.same(word, "min")) {
         trace.min_size = try args.number();
-        shell.print("memtrace: printing blocks of %d bytes and up\n", .{trace.min_size});
+        shell.print("memtrace: printing blocks of %zd bytes and up\n", .{trace.min_size});
     } else return error.Usage;
 }
 

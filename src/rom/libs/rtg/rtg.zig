@@ -1017,6 +1017,26 @@ test "the pointer: converted once, placed by its point, shown and hidden" {
     try tearDown(rb);
 }
 
+test "the pointer on a 32-bit board: its channels in the order the format names them" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    board.info.format = .bgra32;
+
+    // A red pixel and a grey one, rgba32.
+    var pixels = [_]u32{ rgba(0xFF0000FF), rgba(0x102030FF) };
+    const image = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 2, .height = 1, .pitch = 8, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &image, 0, 0));
+    const made = fk.log.pointer_image.?;
+    try testing.expectEqual(rtg.PixelFormat.bgra32, made.format);
+    try testing.expectEqualSlices(u8, &.{ 0x00, 0x00, 0xFF, 0xFF, 0x30, 0x20, 0x10, 0xFF }, made.pixels[0..8]);
+
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
 test "the overlay: its coverage dithered, following the pointer, placed on its own, freed with the board" {
     const rb = try setUp();
     defer kexec.deinit();

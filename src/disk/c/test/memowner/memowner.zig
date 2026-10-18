@@ -115,10 +115,10 @@ fn blocks(sys: *ExecBase, dl: *DosBase) i32 {
     sys.FreeMem(shared, 100);
     const free_after = sys.AvailMem(exec.MEMF_ANY);
     if (free_after != free_before) {
-        _ = Printf(dl, "\nfree memory %u before, %u after: not all came back\n", .{ free_before, free_after });
+        _ = Printf(dl, "\nfree memory %zu before, %zu after: not all came back\n", .{ free_before, free_after });
         return dos.RETURN_ERROR;
     }
-    _ = Printf(dl, "\nall freed: %u bytes free before and after\n", .{free_after});
+    _ = Printf(dl, "\nall freed: %zu bytes free before and after\n", .{free_after});
     return dos.RETURN_OK;
 }
 

@@ -247,6 +247,12 @@ fn word32(address: usize) ?u32 {
     return @as(*const volatile u32, @ptrFromInt(address)).*;
 }
 
+/// A pointer-sized word, if it is aligned and can be read.
+fn wordAt(address: usize) ?usize {
+    if (address & (@sizeOf(usize) - 1) != 0 or !readable(address)) return null;
+    return @as(*const volatile usize, @ptrFromInt(address)).*;
+}
+
 /// Where an address is, printed after it: `(the ROM)` or the file and
 /// the offset into it.
 fn named(address: usize) void {
@@ -351,7 +357,7 @@ noinline fn spillWindows(depth: u32) u32 {
 /// stack that may be what broke.
 fn backtrace() void {
     const chip = debug_hardware orelse return;
-    if (builtin.cpu.arch == .riscv32) return backtraceByFramePointers(chip);
+    if (builtin.cpu.arch.isRISCV()) return backtraceByFramePointers(chip);
     if (reason == .asked) @as(*volatile u32, &spill_sink).* = spillWindows(18);
     var pc: usize = 0;
     var sp: usize = 0;
@@ -388,9 +394,10 @@ fn backtrace() void {
 }
 
 /// The call chain by frame pointers, as RISC-V code keeps them: each
-/// frame's return address at fp - 4 and the frame before it at fp - 8.
-/// From a trap the chain starts at the stopped code's frame pointer; from
-/// a call, at this function's own.
+/// frame's return address one word below fp and the frame before it two
+/// words below - 4 and 8 bytes on RV32, 8 and 16 on RV64. From a trap the
+/// chain starts at the stopped code's frame pointer; from a call, at this
+/// function's own.
 fn backtraceByFramePointers(chip: *const DebugHardware) void {
     var fp: usize = @frameAddress();
     var depth: u32 = 0;
@@ -405,8 +412,8 @@ fn backtraceByFramePointers(chip: *const DebugHardware) void {
         fp = at(f);
     }
     while (depth < max_frames) : (depth += 1) {
-        const ret = word32(fp -% 4) orelse break;
-        const before = word32(fp -% 8) orelse break;
+        const ret = wordAt(fp -% @sizeOf(usize)) orelse break;
+        const before = wordAt(fp -% 2 * @sizeOf(usize)) orelse break;
         if (ret == 0 or !inCode(ret)) break;
         // Two back: inside the call, whether it took two bytes or four.
         printFrame(depth, ret - 2);

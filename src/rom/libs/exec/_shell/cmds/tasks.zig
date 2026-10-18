@@ -32,7 +32,7 @@ const Entry = struct {
     state: sdk.exec.TaskState,
     /// The core it runs on, for a running one.
     core: u8,
-    /// The cores it may run on: its TF_CORE0 and TF_CORE1 flags.
+    /// The cores it may run on: its TF_CORE0 to TF_CORE3 flags.
     pins: u8,
     sig_wait: u32,
     sig_recvd: u32,
@@ -64,13 +64,18 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
 
     shell.print("task        name             type     pri  state  core  pin  wait      recvd     except    userdata  excdata\n", .{});
     for (entries[0..count]) |*entry| {
-        const core: [*:0]const u8 = if (entry.state != .run) "" else if (entry.core == 0) "0" else "1";
-        const pin: [*:0]const u8 = switch (entry.pins) {
-            sdk.exec.TF_CORE0 => "0",
-            sdk.exec.TF_CORE1 => "1",
-            else => "",
-        };
-        shell.print("0x%08x  %-16s %-7s %4d  %-6s %-4s  %-3s  %08x  %08x  %08x  %08x  %08x\n", .{
+        var core_text: [2:0]u8 = .{ '0' + entry.core % 10, 0 };
+        const core: [*:0]const u8 = if (entry.state != .run) "" else &core_text;
+        // The digits of the cores it is pinned to.
+        var pin_text: [4:0]u8 = @splat(0);
+        var digits: usize = 0;
+        for (0..4) |number| {
+            if (entry.pins & sdk.exec.coreFlag(@intCast(number)) == 0) continue;
+            pin_text[digits] = '0' + @as(u8, @intCast(number));
+            digits += 1;
+        }
+        const pin: [*:0]const u8 = &pin_text;
+        shell.print("0x%08zx  %-16s %-7s %4d  %-6s %-4s  %-3s  %08x  %08x  %08x  %08zx  %08zx\n", .{
             entry.address,                                       @as([*:0]const u8, @ptrCast(&entry.name)),
             _shell.enumName(sdk.exec.NodeType, entry.node_type), entry.pri,
             _shell.enumName(sdk.exec.TaskState, entry.state),    core,
@@ -99,7 +104,7 @@ fn keep(entries: *[max_shown]Entry, count: *usize, missed: *u32, task: *const Ta
         .pri = task.node.pri,
         .state = task.state,
         .core = core,
-        .pins = task.flags & (sdk.exec.TF_CORE0 | sdk.exec.TF_CORE1),
+        .pins = task.flags & sdk.exec.TF_CORES,
         .sig_wait = task.sig_wait,
         .sig_recvd = task.sig_recvd,
         .sig_except = task.sig_except,

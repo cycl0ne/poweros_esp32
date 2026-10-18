@@ -119,6 +119,9 @@ pub const Desktop = struct {
     libraries: [8]?*exec.Library = @splat(null),
     /// The board's battery, for the title; a resource, never closed.
     battery: ?*sdk.interface.battery.BatteryBase = null,
+    /// Whether the machine's RAM is one kind (SYSTAG_UnifiedMemory): the
+    /// title shows one figure of free memory, not internal and PSRAM.
+    unified: bool = false,
     ib: *IntuitionBase = undefined,
     gb: *GraphicsBase = undefined,
     ub: *UtilityBase = undefined,
@@ -236,6 +239,7 @@ pub const Desktop = struct {
         // screen's font.
         d.dt = @ptrCast(d.open(.datatypes, sdk.datatypes.DATATYPESNAME, 0));
         d.battery = @ptrCast(@alignCast(d.sys.OpenResource(sdk.resources.battery.BATTERYNAME)));
+        d.unified = unifiedMemory(sys, d.ub);
         d.df = @ptrCast(d.open(.diskfont, sdk.diskfont.DISKFONTNAME, 0));
         d.has_scroller = d.open(.scroller, sdk.gadgets.scroller.SCROLLER_LIBRARY, 0) != null;
 
@@ -614,11 +618,11 @@ pub const Desktop = struct {
             d.message_ticks -= 1;
             if (d.message_ticks != 0) return;
         }
-        const internal = d.sys.AvailMem(exec.MEMF_INTERNAL);
-        const external = d.sys.AvailMem(exec.MEMF_EXTERNAL);
+        const internal = d.sys.AvailMem(if (d.unified) exec.MEMF_ANY else exec.MEMF_INTERNAL);
+        const external = if (d.unified) 0 else d.sys.AvailMem(exec.MEMF_EXTERNAL);
         var cell: sdk.resources.battery.BatteryState = .{};
         const measured = if (d.battery) |bb| bb.ReadBattery(&cell) else false;
-        _ = title_text.memoryTitle(&d.title, internal, external, if (measured) &cell else null);
+        _ = title_text.memoryTitle(&d.title, internal, external, d.unified, if (measured) &cell else null);
         if (d.backdrop) |window| d.ib.SetWindowTitles(window, wn.TITLE_UNCHANGED, &d.title);
         var it = d.drawers.iterator();
         while (it.next()) |node| {
@@ -1096,6 +1100,15 @@ pub const Desktop = struct {
 
 /// The backfill hook: a strip of the backdrop painted from the ground.
 /// Called on whichever task uncovered it.
+/// Whether the board says its RAM is one kind (SYSTAG_UnifiedMemory).
+/// No when expansion.library is not there to ask.
+fn unifiedMemory(sys: *ExecBase, ub: *UtilityBase) bool {
+    const library = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return false;
+    defer sys.CloseLibrary(library);
+    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(library);
+    return ub.GetTagData(sdk.expansion.systemtags.SYSTAG_UnifiedMemory, 0, eb.SystemTags()) != 0;
+}
+
 fn paintGround(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const d: *Desktop = @ptrCast(@alignCast(hook.data orelse return 0));
     const rp: *graphics.RastPort = @ptrCast(object orelse return 0);

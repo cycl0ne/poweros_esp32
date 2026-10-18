@@ -46,7 +46,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
     shell.print("base        name                   version  open  flags\n", .{});
     for (rows[0..count]) |*row| {
         const pending = if (row.flags & sdk.exec.LIBF_DELEXP != 0) "  expunge pending" else "";
-        shell.print("0x%08x  %-22s %3d.%-4d %4d  0x%02x%s\n", .{ row.address, @as([*:0]const u8, @ptrCast(&row.name)), row.version, row.revision, row.open_cnt, row.flags, pending });
+        shell.print("0x%08zx  %-22s %3d.%-4d %4d  0x%02x%s\n", .{ row.address, @as([*:0]const u8, @ptrCast(&row.name)), row.version, row.revision, row.open_cnt, row.flags, pending });
     }
     if (more != 0) shell.print("... and %u more\n", .{more});
 }

@@ -23,7 +23,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
     defer dl.UnLockDosList(flags);
     shell.print("name            type        port\n", .{});
     while (dl.NextDosEntry(node, flags)) |entry| : (node = entry) {
-        shell.print("%-15s %-10s  0x%08x\n", .{ entry.name, _shell.enumName(sdk.dos.DosListType, entry.type), @intFromPtr(entry.task) });
+        shell.print("%-15s %-10s  0x%08zx\n", .{ entry.name, _shell.enumName(sdk.dos.DosListType, entry.type), @intFromPtr(entry.task) });
         showAssign(shell, dl, entry);
     }
 }

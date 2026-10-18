@@ -29,10 +29,12 @@ pub const ExecBase = @import("../../interface/exec.zig").ExecBase;
 /// a panic handler, whose signature is Zig's. The word sits in internal
 /// memory right below the chip ROM's reserved area: on the ESP32-S3 just
 /// above the kernel's stack, on the ESP32-P4 at the top of the low part of
-/// L2MEM.
+/// L2MEM; on a machine under SBI firmware in the page right below the
+/// kernel, which every one of them links at 0x8020_0000.
 pub const AbsExecBase: *const *ExecBase = @ptrFromInt(switch (@import("../../hardware/hardware.zig").chip) {
     .esp32s3 => 0x3FCE_9700,
     .esp32p4 => 0x4FF3_ABC0,
+    .rv64sbi => 0x801F_F000,
 });
 
 pub const NodeType = nodes.NodeType;
@@ -147,8 +149,14 @@ pub const TF_GUARDED = tasks.TF_GUARDED;
 pub const TF_WIDEGUARD = tasks.TF_WIDEGUARD;
 pub const TB_CORE0 = tasks.TB_CORE0;
 pub const TB_CORE1 = tasks.TB_CORE1;
+pub const TB_CORE2 = tasks.TB_CORE2;
+pub const TB_CORE3 = tasks.TB_CORE3;
 pub const TF_CORE0 = tasks.TF_CORE0;
 pub const TF_CORE1 = tasks.TF_CORE1;
+pub const TF_CORE2 = tasks.TF_CORE2;
+pub const TF_CORE3 = tasks.TF_CORE3;
+pub const TF_CORES = tasks.TF_CORES;
+pub const coreFlag = tasks.coreFlag;
 pub const CoreTimes = tasks.CoreTimes;
 pub const SIGF_ABORT = tasks.SIGF_ABORT;
 pub const SIGF_CHILD = tasks.SIGF_CHILD;
@@ -265,4 +273,6 @@ pub const AN_LockDeadlock = alerts.AN_LockDeadlock;
 pub const AN_BadFreeSize = alerts.AN_BadFreeSize;
 pub const AN_MemWall = alerts.AN_MemWall;
 pub const panic = @import("panic.zig").panic;
+/// A program's memcpy, memmove and memset: exec's (`sdk/program.zig`).
+pub const libc = @import("libc.zig");
 pub const AG_MakeLib = alerts.AG_MakeLib;

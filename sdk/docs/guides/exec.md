@@ -2,7 +2,7 @@
 
 exec.library is the kernel every other module stands on: it finds
 libraries, devices and resources by name, hands out memory, keeps the
-lists the system is made of, runs tasks on both cores, wakes them with
+lists the system is made of, runs tasks on every core, wakes them with
 signals and carries messages between them. This guide is how those pieces
 fit together, for a program and for a module of the system. Each call is
 in the reference, [exec](../autodocs/exec.md); locking, the system log and
@@ -301,8 +301,8 @@ priorities take turns, four ticks each. A program normally runs at 0, and
 the system's own tasks above it - input at 20, motion.library's clock at
 10 - so a program that never waits starves everything below it and
 nothing above it. `SetTaskPri` changes a priority and answers the old
-one. Both cores take tasks from one ready list, so two tasks do run at
-once; [Two cores](programs.md#two-cores) has what that changes.
+one. Every core takes tasks from one ready list, so tasks do run at
+once; [Several cores](programs.md#several-cores) has what that changes.
 
 **Starting one.** `CreateTask(name, pri, code, stack_size)` allocates the
 task, its name and its stack in one block (8 KiB of stack for 0), starts
@@ -608,7 +608,7 @@ An interrupt does no waiting, allocates nothing and reaches no handler.
 It may `Signal`, `Cause`, `PutMsg`, `ReplyMsg` and `ReplyIO`, which is how
 it hands its work to a task. What it reads belongs in internal memory,
 and the `Interrupt` outlives its place on the chain (`RemIntServer` takes
-it off). `Disable` and `Enable` hold every interrupt off, on both cores,
+it off). `Disable` and `Enable` hold every interrupt off, on every core,
 around the few lines that change what an interrupt also reads.
 
 ## A library or a device of your own
@@ -654,7 +654,7 @@ the rules exec checks and the lock order are in
 | `ReadLog`, `SetLogSignal`, `LogControl` | the system log: [The system log](programs.md#the-system-log) |
 | `Alert`, `AlertAt`, `Debug`, `MemDebug` | a Guru, the ROM debugger and memory debugging: [Debugging](debugging.md), [When a check fails](programs.md#when-a-check-fails), [When it stops](programs.md#when-it-stops) |
 | `LockExecList`, `UnlockExecList` | exec's own lists, read under their lock |
-| `SetTaskAffinity`, `CoreTask`, `ReadCoreTimes` | tasks and cores: [Two cores](programs.md#two-cores) |
+| `SetTaskAffinity`, `CoreTask`, `ReadCoreTimes` | tasks and cores: [Several cores](programs.md#several-cores) |
 | `SetTaskEndMsg`, `AddTaskEndHook`, `RemTaskEndHook` | told when a task has ended; a library letting go of what it holds for a task - run before the task's private memory is freed, after its semaphores are let go |
 | `NewStackRun` | a function run on a bigger stack of its own, and back |
 | `RawDoFmt`, `RawPutChar` | formatting, and the raw serial port; `sdk.exec.kprintf` is the two together |

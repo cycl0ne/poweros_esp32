@@ -76,31 +76,45 @@ test "the ground: a picture scaled to cover, centred, and which colours are ligh
     try testing.expect(!ground.isLight(0xFF000000));
 }
 
-test "the title: kilobytes free, the thousands parted, PSRAM only when there is some" {
+test "the title: free memory in the unit that suits it, PSRAM only when there is some" {
     var text: [96]u8 = undefined;
-    const n = title.memoryTitle(&text, 123 * 1024 + 500, 4_620_288, null);
-    try testing.expectEqualStrings("Anvil   Internal 123 KB free   PSRAM 4,512 KB free", text[0..n]);
+    const n = title.memoryTitle(&text, 123 * 1024 + 500, 4_620_288, false, null);
+    try testing.expectEqualStrings("Anvil   Internal 123 KB free   PSRAM 4.4 MB free", text[0..n]);
     try testing.expectEqual(@as(u8, 0), text[n]);
-    const m = title.memoryTitle(&text, 1_234_567 * 1024, 0, null);
-    try testing.expectEqualStrings("Anvil   Internal 1,234,567 KB free", text[0..m]);
+    const m = title.memoryTitle(&text, 1_000 * 1024, 0, false, null);
+    try testing.expectEqualStrings("Anvil   Internal 1,000 KB free", text[0..m]);
+    // Rounded down: a megabyte short of a gigabyte is not one.
+    const k = title.memoryTitle(&text, 1023 * 1024 * 1024 + 1023 * 1024, 1024 * 1024, false, null);
+    try testing.expectEqualStrings("Anvil   Internal 1023.9 MB free   PSRAM 1.0 MB free", text[0..k]);
+}
+
+test "the title: one figure where the RAM is one kind" {
+    var text: [96]u8 = undefined;
+    const n = title.memoryTitle(&text, 8_373_475 * 1024, 123, true, null);
+    try testing.expectEqualStrings("Anvil   Memory 7.98 GB free", text[0..n]);
+    const m = title.memoryTitle(&text, 508_548 * 1024, 0, true, null);
+    try testing.expectEqualStrings("Anvil   Memory 496.6 MB free", text[0..m]);
+    // A hundredth below ten keeps its nought.
+    const k = title.memoryTitle(&text, 2 * 1024 * 1024 * 1024 + 64 * 1024 * 1024, 0, true, null);
+    try testing.expectEqualStrings("Anvil   Memory 2.06 GB free", text[0..k]);
 }
 
 test "the title: the battery's charge where a cell is measured" {
     const battery = @import("sdk").resources.battery;
     var text: [96]u8 = undefined;
     var state = battery.BatteryState{ .flags = battery.BATTF_MEASURED | battery.BATTF_PRESENT, .percent = 70 };
-    var n = title.memoryTitle(&text, 446 * 1024, 32_747 * 1024, &state);
-    try testing.expectEqualStrings("Anvil   Internal 446 KB free   PSRAM 32,747 KB free   Battery 70%", text[0..n]);
+    var n = title.memoryTitle(&text, 446 * 1024, 32_747 * 1024, false, &state);
+    try testing.expectEqualStrings("Anvil   Internal 446 KB free   PSRAM 31.9 MB free   Battery 70%", text[0..n]);
     state.flags |= battery.BATTF_KNOWS_EXTERNAL | battery.BATTF_EXTERNAL;
-    n = title.memoryTitle(&text, 446 * 1024, 0, &state);
+    n = title.memoryTitle(&text, 446 * 1024, 0, false, &state);
     try testing.expectEqualStrings("Anvil   Internal 446 KB free   Battery 70%, external power", text[0..n]);
     state.flags |= battery.BATTF_CHARGING;
     state.percent = 100;
-    n = title.memoryTitle(&text, 446 * 1024, 32_747 * 1024, &state);
-    try testing.expectEqualStrings("Anvil   Internal 446 KB free   PSRAM 32,747 KB free   Battery 100%, charging", text[0..n]);
+    n = title.memoryTitle(&text, 446 * 1024, 32_747 * 1024, false, &state);
+    try testing.expectEqualStrings("Anvil   Internal 446 KB free   PSRAM 31.9 MB free   Battery 100%, charging", text[0..n]);
     // Measured, but no cell: nothing said.
     state.flags = battery.BATTF_MEASURED;
-    n = title.memoryTitle(&text, 446 * 1024, 0, &state);
+    n = title.memoryTitle(&text, 446 * 1024, 0, false, &state);
     try testing.expectEqualStrings("Anvil   Internal 446 KB free", text[0..n]);
 }
 

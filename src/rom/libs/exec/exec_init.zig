@@ -51,9 +51,12 @@ pub const LIBRARY_VERSION = 1;
 /// EndSystemMemory, SetMemOwner, and memory debugging. 12: a task's end
 /// gives back its semaphores (Task.holds) and its private memory; Kill
 /// (the Software Failure requester, now exec's on every chip); MemDebug,
-/// and memory debugging from the start (BOOTF_MEMDEBUG).
-pub const LIBRARY_REVISION = 12;
-const BUILD_DATE = "16.10.2026";
+/// and memory debugging from the start (BOOTF_MEMDEBUG). 13: CopyMem,
+/// CopyMemQuick and SetMem a word at a time, shifting where the two
+/// areas are differently aligned; they are the kernel's memcpy, memmove
+/// and memset, and a program's.
+pub const LIBRARY_REVISION = 13;
+const BUILD_DATE = "18.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

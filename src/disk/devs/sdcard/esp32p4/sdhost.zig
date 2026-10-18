@@ -24,6 +24,16 @@ const system = hardware.system;
 const signals = hardware.signals;
 const Pins = @import("../sdmmc.zig").Pins;
 
+/// The controller's registers.
+pub const base: usize = hardware.map.SDMMC;
+
+/// The clock the controller's divider is fed from, the 160 MHz PLL, and
+/// the divider: the controller runs at 80 MHz.
+pub const source_hz: u32 = 160_000_000;
+pub const clock_div: u32 = 2;
+/// No high speed: the phases above 20 MHz have not been measured here.
+pub const high_speed_hz: u32 = 0;
+
 // PERI_CLK_CTRL01: the controller's clock source and its gate.
 const hs_mode: u32 = 1 << 22;
 const source_pll160: u32 = 1 << 23;

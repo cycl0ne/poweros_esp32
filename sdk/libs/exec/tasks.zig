@@ -91,13 +91,31 @@ pub const TF_GUARDED: u8 = 1 << TB_GUARDED;
 /// than the narrow guard still lands in it rather than past it.
 pub const TB_WIDEGUARD = 3;
 pub const TF_WIDEGUARD: u8 = 1 << TB_WIDEGUARD;
-/// The cores a task runs on: TF_CORE0 alone keeps it on core 0, TF_CORE1
-/// alone on core 1; neither (or both) lets it run on whichever core is
-/// free.
+/// The cores a task runs on, a flag each: TF_CORE0 alone keeps it on core
+/// 0, TF_CORE0 and TF_CORE2 on those two; none - or every core the machine
+/// has - lets it run on whichever core is free. A flag for a core the
+/// machine does not have counts as none.
 pub const TB_CORE0 = 1;
 pub const TB_CORE1 = 2;
+pub const TB_CORE2 = 4;
+pub const TB_CORE3 = 5;
 pub const TF_CORE0: u8 = 1 << TB_CORE0;
 pub const TF_CORE1: u8 = 1 << TB_CORE1;
+pub const TF_CORE2: u8 = 1 << TB_CORE2;
+pub const TF_CORE3: u8 = 1 << TB_CORE3;
+/// All four.
+pub const TF_CORES: u8 = TF_CORE0 | TF_CORE1 | TF_CORE2 | TF_CORE3;
+
+/// Core `core`'s flag; 0 for a core past the fourth.
+pub fn coreFlag(core: u32) u8 {
+    return switch (core) {
+        0 => TF_CORE0,
+        1 => TF_CORE1,
+        2 => TF_CORE2,
+        3 => TF_CORE3,
+        else => 0,
+    };
+}
 
 /// How a core has spent its time since it started, in cycles of its own
 /// clock (`ReadCoreTimes`): running tasks, in its idle task, and in
@@ -142,7 +160,7 @@ pub const TaskEndHook = extern struct {
 pub const Task = extern struct {
     /// tc_Node: ln_Type NT_TASK, ln_Pri, ln_Name.
     node: Node = .{ .type = .task },
-    /// tc_Flags: TF_SWITCH, TF_LAUNCH, TF_CORE0, TF_CORE1.
+    /// tc_Flags: TF_SWITCH, TF_LAUNCH, TF_CORE0 to TF_CORE3.
     flags: u8 = 0,
     /// tc_State
     state: TaskState = .invalid,

@@ -188,6 +188,7 @@ pub const chip_cache: CacheHardware = switch (sdk.hardware.chip) {
         .invalidate = invalidate,
     },
     .esp32p4 => p4.hardware,
+    .rv64sbi => rv64.hardware,
 };
 
 /// A DCache line, in bytes.
@@ -213,11 +214,13 @@ pub const Range = struct {
 pub const data_bus: Range = switch (sdk.hardware.chip) {
     .esp32s3 => .{ .start = 0x3C00_0000, .end = 0x3E00_0000 },
     .esp32p4 => .{ .start = sdk.hardware.cache.CACHED_START, .end = sdk.hardware.cache.CACHED_END },
+    .rv64sbi => .{ .start = sdk.hardware.map.DRAM_START, .end = sdk.hardware.map.DRAM_END },
 };
 /// The instruction bus, through the ICache: on the P4 the same addresses.
 pub const instruction_bus: Range = switch (sdk.hardware.chip) {
     .esp32s3 => .{ .start = 0x4200_0000, .end = 0x4400_0000 },
     .esp32p4 => data_bus,
+    .rv64sbi => data_bus,
 };
 
 /// The start of the line holding `address`.
@@ -331,6 +334,11 @@ pub const chip_code_map: CodeMap = switch (sdk.hardware.chip) {
         .data_start = sdk.hardware.map.PSRAM_START,
         .instruction_start = sdk.hardware.map.PSRAM_START,
         .size = sdk.hardware.map.DRAM_END - sdk.hardware.map.PSRAM_START,
+    },
+    .rv64sbi => .{
+        .data_start = sdk.hardware.map.DRAM_START,
+        .instruction_start = sdk.hardware.map.DRAM_START,
+        .size = sdk.hardware.map.DRAM_END - sdk.hardware.map.DRAM_START,
     },
 };
 
@@ -487,5 +495,50 @@ const p4 = struct {
             dropEngine(state);
             at += piece;
         }
+    }
+};
+
+// --- a RISC-V 64 machine under SBI firmware ----------------------------------
+
+/// QEMU's virt keeps its caches coherent with the devices', so a DMA
+/// range needs nothing written back or invalidated. The JH7110 does not:
+/// its devices go past the U74s' caches, and a range there is written
+/// back and dropped by the L2 cache controller's flush, a line at a time
+/// (`sdk.hardware.ccache`, which does nothing on a board that names no
+/// controller). The flush both writes back and drops, so it is what
+/// writing back and invalidating each are. Writing every line back has
+/// no register: CacheClearU leaves the data where it is, and a driver
+/// names its range. Code and data share one address
+/// space, and code written to memory is reached by fencing each core's
+/// instruction fetch: this one's at once, every other one's at its next
+/// exception exit (`syncFetch`).
+const rv64 = struct {
+    const hardware: CacheHardware = .{
+        .writeback_all = nothing,
+        .invalidate_icache_all = fenceFetch,
+        .writeback = flush,
+        .writeback_line = flushLine,
+        .invalidate = flush,
+        .invalidate_icache = fenceFetchRange,
+    };
+
+    fn nothing() void {}
+
+    fn flush(addr: usize, size: usize) void {
+        sdk.hardware.ccache.flush(addr, size);
+    }
+
+    fn flushLine(addr: usize) void {
+        sdk.hardware.ccache.flush(addr, line_size);
+    }
+
+    fn fenceFetchRange(_: usize, _: usize) void {
+        fenceFetch();
+    }
+
+    fn fenceFetch() void {
+        asm volatile ("fence.i" ::: .{ .memory = true });
+        const mine = @as(u32, 1) << @intCast(exec_base.coreId());
+        _ = @atomicRmw(u32, &fetch_stale, .Or, ~mine, .release);
     }
 };

@@ -60,6 +60,8 @@ pub const icon = @import("libs/icon/icon.zig");
 pub const anvil = @import("libs/anvil/anvil.zig");
 /// usb.library: the USB buses, their devices, pipes to their endpoints.
 pub const usb = @import("libs/usb/usb.zig");
+/// The machine's PCI functions, through pci.library.
+pub const pci = @import("libs/pci/pci.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------
@@ -129,7 +131,7 @@ fn isFixed(comptime T: type) bool {
 
 comptime {
     const arch = @import("builtin").cpu.arch;
-    if (arch == .xtensa or arch == .riscv32) {
+    if (arch == .xtensa or arch == .riscv32 or arch == .riscv64) {
         @setEvalBranchQuota(20_000_000);
         checkConstants(@This(), 0);
         checkConstants(@import("root"), 0);

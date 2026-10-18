@@ -293,6 +293,15 @@ pub const TestMedia = struct {
         return memory;
     }
 
+    /// Filled with a pattern rather than cleared, so a test finds the
+    /// file system reading what it never wrote.
+    pub fn allocRaw(m: *TestMedia, len: usize) ?[]u8 {
+        const memory = std.testing.allocator.alignedAlloc(u8, .@"8", len) catch return null;
+        @memset(memory, 0xA5);
+        m.live += 1;
+        return memory;
+    }
+
     pub fn free(m: *TestMedia, memory: []u8) void {
         m.live -= 1;
         const aligned: []align(8) u8 = @alignCast(memory);

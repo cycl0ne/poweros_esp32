@@ -55,8 +55,9 @@ pub const SYSTAG_LogSize = SYSTAG_Dummy + 11;
 /// whose raw port (UART0) reaches no host, so that the USB port is the
 /// only way to read it. Absent, 0; `C:Log MIRROR` changes it.
 pub const SYSTAG_LogMirror = SYSTAG_Dummy + 12;
-/// How many cores the kernel runs tasks on: 1 or 2. Absent, 1. The
-/// build's `-Dcores` has the last word.
+/// How many cores the kernel runs tasks on: 1 or 2 on the ESP32s, up to 4
+/// on a RISC-V 64 machine, which uses as many as its device tree has harts
+/// for. Absent, 1. The build's `-Dcores` has the last word.
 pub const SYSTAG_Cores = SYSTAG_Dummy + 13;
 /// The PSRAM's bus clock in MHz: as fast as the board's wiring holds it
 /// without errors. The ESP32-P4 runs it at 200 or 80; absent, 80.
@@ -66,6 +67,37 @@ pub const SYSTAG_PsramSpeed = SYSTAG_Dummy + 14;
 /// a bank of I/O pins or their pull-ups from it. The ESP32-P4 only;
 /// absent, 0, and the channel is left as the ROM left it.
 pub const SYSTAG_Ldo4Voltage = SYSTAG_Dummy + 15;
+/// The machine's RAM, where it starts and how many bytes: a machine under
+/// SBI firmware, whose RAM is one block. The firmware's own part at its
+/// start is left out by the kernel, which links above it.
+pub const SYSTAG_RamBase = SYSTAG_Dummy + 16;
+pub const SYSTAG_RamSize = SYSTAG_Dummy + 17;
+/// The rate of RISC-V's `time` counter, in Hz: what the SBI timer counts
+/// in. A whole number of MHz.
+pub const SYSTAG_Timebase = SYSTAG_Dummy + 18;
+/// The console UART, a 16550, as the machine has it: its address; its
+/// registers' spacing, as a shift (register n at base + n << shift); 1
+/// when its registers want 32-bit accesses; the clock its divisor
+/// divides, in Hz; and its interrupt source on the PLIC.
+pub const SYSTAG_ConsoleBase = SYSTAG_Dummy + 19;
+pub const SYSTAG_ConsoleShift = SYSTAG_Dummy + 20;
+pub const SYSTAG_ConsoleWide = SYSTAG_Dummy + 21;
+pub const SYSTAG_ConsoleClock = SYSTAG_Dummy + 22;
+pub const SYSTAG_ConsoleIrq = SYSTAG_Dummy + 23;
+/// Which PLIC context is supervisor mode of hart n: first + stride * n.
+pub const SYSTAG_PlicFirst = SYSTAG_Dummy + 24;
+pub const SYSTAG_PlicStride = SYSTAG_Dummy + 25;
+/// The L2 cache controller's Flush64 register (SiFive's ccache), on a
+/// machine whose devices do not see the cores' caches: what exec writes
+/// a line's address to, to have it written back to RAM and dropped.
+/// Absent, the devices see the caches - QEMU's virt - and DMA wants
+/// nothing written back.
+pub const SYSTAG_CacheFlush = SYSTAG_Dummy + 26;
+/// 1: the machine's RAM is one kind - every region is internal and
+/// external memory at once, as on a machine under SBI firmware - so there
+/// is one figure of free memory to show, not two. Absent, 0: internal
+/// memory and PSRAM apart, as on the ESP32s.
+pub const SYSTAG_UnifiedMemory = SYSTAG_Dummy + 27;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;
@@ -109,6 +141,49 @@ pub const PART_UsbVbus = PART_Dummy + 11;
 /// "header UART2", "USB-C UART1". ObtainDeviceUnits gives it as the
 /// label of the unit the part is.
 pub const PART_Label = PART_Dummy + 12;
+/// The interrupt the part raises, as exec numbers it (sdk.hardware.intbits),
+/// on a machine whose interrupt controller the board wires: a PLIC source.
+/// A chip that numbers a part's interrupt once for every board needs none.
+pub const PART_Irq = PART_Dummy + 13;
+/// A PCI host bridge's configuration space (ECAM: a function's 4 KiB at
+/// bus << 20 | device << 15 | function << 12), and the windows the
+/// processor reaches its buses' memory through: one below 4 GiB on the
+/// bus, and one for prefetchable memory, which may be above. A window's
+/// size 0: none. Where a window is at another address on the bus than
+/// for the processor, PART_PciMemBus and PART_PciPrefBus say where;
+/// absent, it is at the same.
+pub const PART_PciConfig = PART_Dummy + 14;
+pub const PART_PciMem = PART_Dummy + 15;
+pub const PART_PciMemSize = PART_Dummy + 16;
+pub const PART_PciPref = PART_Dummy + 17;
+pub const PART_PciPrefSize = PART_Dummy + 18;
+/// Where the station address the board gives a network port is: six
+/// bytes, all zero while there is none. The VisionFive 2's are in its
+/// EEPROM, which U-Boot writes into the device tree it passes, and the
+/// kernel copies them from there into the bytes before anything runs.
+pub const PART_StationAddress = PART_Dummy + 19;
+/// The delays a PHY adds on RGMII, in picoseconds: to the receive clock
+/// against its data, and to the send clock. A board whose traces delay
+/// the clocks themselves says 0.
+pub const PART_RxDelay = PART_Dummy + 20;
+pub const PART_TxDelay = PART_Dummy + 21;
+/// The link speeds a PHY sends its RGMII clock inverted at (LINKSPEED_*
+/// or'd): what the board's wiring needs at each.
+pub const PART_TxClockInverted = PART_Dummy + 22;
+/// How hard a PHY drives the RGMII clock and data lines it sends the MAC,
+/// in microamperes.
+pub const PART_RxClockDrive = PART_Dummy + 23;
+pub const PART_RxDataDrive = PART_Dummy + 24;
+/// A PCI host bridge's window onto its buses' I/O space: where the
+/// processor reaches it, its size (0: none), and the first port it is
+/// on the bus - absent, port 0.
+pub const PART_PciIo = PART_Dummy + 25;
+pub const PART_PciIoSize = PART_Dummy + 26;
+pub const PART_PciIoBus = PART_Dummy + 27;
+/// Where a PCI host bridge's windows (PART_PciMem, PART_PciPref) are on
+/// the bus, where that is not where the processor reaches them.
+pub const PART_PciMemBus = PART_Dummy + 28;
+pub const PART_PciPrefBus = PART_Dummy + 29;
 
 // Its lines, each a BoardPin. Which ones a part has depends on its kind.
 pub const PART_PinClock = PART_Dummy + 0x20;
@@ -245,6 +320,18 @@ pub const PARTKIND_UART: u32 = 18;
 /// cell: PART_Bus and PART_BusUnit the I2C bus, PART_Address the chip.
 /// battclock.resource keeps the date in it.
 pub const PARTKIND_RTC: u32 = 19;
+/// A random number generator in the chip, which sdk.hardware.rng reads:
+/// PART_Address where its registers are (BUS_MEMORY).
+pub const PARTKIND_RNG: u32 = 20;
+/// A PCI or PCI Express host bridge, which pci.library brings up and
+/// walks: PART_Chip which bridge, PART_PciConfig its configuration space,
+/// PART_PciMem, PART_PciPref and PART_PciIo its windows (and where each
+/// is on the bus, if not where the processor has it), PART_BusUnit which
+/// of the chip's bridges it is, PART_Irq its interrupt -
+/// the first of its INTA to INTD where they are sources of their own -
+/// and PART_PinReset the line that holds what is plugged in in reset
+/// (PERST#).
+pub const PARTKIND_PCI: u32 = 21;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -295,6 +382,34 @@ pub const CHIP_TP4054: u32 = 21;
 /// NXP's PCF8563 clock (PARTKIND_RTC), at 0x51 on I2C; the BM8563 is the
 /// same chip to a driver.
 pub const CHIP_PCF8563: u32 = 22;
+/// The JH7110's TRNG, in its security block (PARTKIND_RNG on
+/// BUS_MEMORY), which the kernel starts.
+pub const CHIP_JH7110_TRNG: u32 = 23;
+/// QEMU's ramfb (PARTKIND_PANEL on BUS_MEMORY): a picture in RAM the
+/// emulator shows, set up through its firmware configuration device, whose
+/// registers PART_Address names.
+pub const CHIP_QEMU_RAMFB: u32 = 24;
+/// The JH7110's display controller and its HDMI transmitter
+/// (PARTKIND_PANEL on BUS_MEMORY, PART_Address the controller): 1920x1080
+/// at 60 Hz, as the board's firmware sets it up.
+pub const CHIP_JH7110_DC8200: u32 = 25;
+/// A PCI host bridge that is nothing but its configuration space and its
+/// windows, as the firmware or the emulator set them up (PARTKIND_PCI on
+/// BUS_MEMORY): QEMU's "pci-host-ecam-generic". A slot's INTA to INTD are
+/// PART_Irq on, rotated by the slot's number.
+pub const CHIP_PCI_ECAM: u32 = 26;
+/// One of the JH7110's two PCI Express root ports, PLDA's XpressRICH
+/// (PARTKIND_PCI on BUS_MEMORY): PART_BusUnit which one, PART_Address its
+/// bridge's registers; its INTA to INTD are gathered on PART_Irq.
+pub const CHIP_JH7110_PCIE: u32 = 27;
+/// An xHCI USB host controller, found on PCI (PARTKIND_USB on BUS_PCI):
+/// PART_BusUnit says which, counting the machine's xHCI functions in the
+/// order pci.library has them (xhci.device's unit).
+pub const CHIP_XHCI: u32 = 28;
+/// Motorcomm's YT8531, a 10/100/1000 Mbit/s Ethernet PHY (PARTKIND_NET on
+/// BUS_RGMII): PART_BusUnit the MAC it is wired to, PART_Address its
+/// address on that MAC's management bus.
+pub const CHIP_YT8531: u32 = 29;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
@@ -316,6 +431,16 @@ pub const BUS_TWAI: u32 = 10;
 pub const BUS_RMII: u32 = 11;
 /// The chip's MIPI-DSI host, to a panel or a bridge.
 pub const BUS_MIPI_DSI: u32 = 12;
+/// A function on PCI, reached through pci.library.
+pub const BUS_PCI: u32 = 13;
+/// One of the chip's Ethernet MACs, to a PHY over RGMII: PART_BusUnit
+/// which MAC.
+pub const BUS_RGMII: u32 = 14;
+
+// A network link's speeds (PART_TxClockInverted).
+pub const LINKSPEED_10: u32 = 1 << 0;
+pub const LINKSPEED_100: u32 = 1 << 1;
+pub const LINKSPEED_1000: u32 = 1 << 2;
 
 // A USB socket's roles (PART_UsbRoles).
 /// The controller may be the host: it gives the bus its frames, and

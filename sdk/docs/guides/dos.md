@@ -435,7 +435,7 @@ if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) {
 | `NP_Input`, `NP_Output`, `NP_Error` | its streams (default none), the first two closed at its end unless `NP_CloseInput`, `NP_CloseOutput` say false |
 | `NP_CurrentDir`, `NP_HomeDir` | locks it takes over (default copies of the caller's) |
 | `NP_Cli` | a CLI of its own, with the caller's prompt and command path |
-| `NP_Affinity` | the cores it runs on: `exec.TF_CORE0`, `exec.TF_CORE1`, or 0 for either |
+| `NP_Affinity` | the cores it runs on: `exec.TF_CORE0` to `exec.TF_CORE3` (`exec.coreFlag(core)`), or 0 for any |
 | `NP_EndMsg`, `NP_HoldLibrary` | a message replied once it is gone; a library open count dos closes after its code has returned |
 
 **The code a process runs must stay loaded until the process is gone.**

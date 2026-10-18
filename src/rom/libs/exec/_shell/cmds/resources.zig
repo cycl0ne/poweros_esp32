@@ -40,6 +40,6 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
     sys.UnlockExecList(sdk.exec.EXECLIST_RESOURCES);
 
     shell.print("base        name                    pri\n", .{});
-    for (rows[0..count]) |*row| shell.print("0x%08x  %-22s %4d\n", .{ row.address, @as([*:0]const u8, @ptrCast(&row.name)), row.pri });
+    for (rows[0..count]) |*row| shell.print("0x%08zx  %-22s %4d\n", .{ row.address, @as([*:0]const u8, @ptrCast(&row.name)), row.pri });
     if (more != 0) shell.print("... and %u more\n", .{more});
 }

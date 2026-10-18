@@ -2,7 +2,9 @@
 //! The board this image is built for. `-Dboard` picks the directory, and
 //! each board's directory holds what is true of that board: `system.zig`,
 //! its system tag list (a ROM tag of its own, which expansion.library
-//! reads), and `romtags.zig`, the drivers its parts want in the image.
+//! reads), and `romtags.zig`, the drivers its parts want in the image. A
+//! board whose firmware needs something done before it resets the machine
+//! has `reset.zig` too (`before_reset`).
 //!
 //! The kernel's own code reads the same list at compile time, through
 //! `fact` and `partFact`, so a fact is written once whoever reads it.
@@ -23,6 +25,8 @@ pub const system = switch (build_options.board) {
     .esp32p4_emu => @import("esp32p4_emu/system.zig"),
     .olimex_p4pc => @import("olimex_p4pc/system.zig"),
     .crowpanel_p4 => @import("crowpanel_p4/system.zig"),
+    .qemu_virt => @import("qemu_virt/system.zig"),
+    .visionfive2 => @import("visionfive2/system.zig"),
 };
 
 pub const romtags = switch (build_options.board) {
@@ -32,6 +36,14 @@ pub const romtags = switch (build_options.board) {
     .esp32p4_emu => @import("esp32p4_emu/romtags.zig"),
     .olimex_p4pc => @import("olimex_p4pc/romtags.zig"),
     .crowpanel_p4 => @import("crowpanel_p4/romtags.zig"),
+    .qemu_virt => @import("qemu_virt/romtags.zig"),
+    .visionfive2 => @import("visionfive2/romtags.zig"),
+};
+
+/// What the board does before the firmware resets the machine, or null.
+pub const before_reset: ?*const fn () void = switch (build_options.board) {
+    .visionfive2 => @import("visionfive2/reset.zig").prepare,
+    else => null,
 };
 
 /// The first item of `list` with `tag`, or null. A list's tags are plain

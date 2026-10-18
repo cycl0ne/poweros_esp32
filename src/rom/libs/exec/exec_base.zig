@@ -30,18 +30,24 @@ const List = sdk.exec.List;
 const Resident = sdk.exec.Resident;
 const Task = sdk.exec.Task;
 
-/// How many cores exec keeps state for. A one-core ROM uses the first.
-pub const max_cores = 2;
+/// How many cores exec keeps state for: the ESP32s' two, the four of a
+/// 64-bit RISC-V machine (and the host's tests). A one-core ROM uses the
+/// first.
+pub const max_cores = switch (builtin.cpu.arch) {
+    .xtensa, .riscv32 => 2,
+    else => 4,
+};
 
 /// The core's cycle counter; none on the host.
 pub inline fn cycles() u32 {
-    if (comptime builtin.cpu.arch != .xtensa and builtin.cpu.arch != .riscv32) return 0;
+    if (comptime builtin.cpu.arch != .xtensa and !builtin.cpu.arch.isRISCV()) return 0;
     return sdk.hardware.cpu.ccount();
 }
 
 /// The core this code runs on: 0 or 1. On the Xtensa from PRID (0xCDCD
-/// for core 0, 0xABAB for core 1 - bit 13 tells them apart), on RISC-V
-/// from mhartid. The host tests have one.
+/// for core 0, 0xABAB for core 1 - bit 13 tells them apart), on the
+/// ESP32-P4 from mhartid, under SBI firmware from tp. The host tests have
+/// one.
 pub inline fn coreId() u32 {
     switch (comptime builtin.cpu.arch) {
         .xtensa => {
@@ -53,6 +59,11 @@ pub inline fn coreId() u32 {
         .riscv32 => return asm volatile ("csrr %[id], mhartid"
             : [id] "=r" (-> u32),
         ),
+        // Supervisor mode cannot read mhartid, and a hart is not a core:
+        // each core keeps its number in tp (src/arch/rv64sbi/cpu.zig).
+        .riscv64 => return @truncate(asm volatile ("mv %[id], tp"
+            : [id] "=r" (-> u64),
+        )),
         else => return 0,
     }
 }
@@ -208,9 +219,9 @@ pub const ExecBase = extern struct {
     /// 0 until the kernel lets multitasking start (`startMultitasking`):
     /// until then no core switches away from a running task.
     multitasking: u32 = 0,
-    /// How many cores are taking tasks, and whether core 1 takes any task
-    /// rather than only those pinned to it. The kernel lets the second
-    /// core share once the system has started.
+    /// How many cores are taking tasks, and whether the cores but core 0
+    /// take any task rather than only those pinned to them. The kernel
+    /// lets the others share once the system has started.
     cores_running: u32 = 1,
     share_cores: u32 = 0,
     /// The word a lock in PSRAM is taken under, where this chip has no

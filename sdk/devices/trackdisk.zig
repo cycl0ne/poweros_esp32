@@ -22,6 +22,8 @@
 //!                    so it goes with SendIO, on a request of its own.
 //!   TD_REMCHANGEINT  that same request, taken off again and answered.
 //!   TDCMD_ERASE      ours: erases the blocks io_Offset..io_Offset+io_Length.
+//!   TDCMD_TRIM       ours: the blocks io_Offset..io_Offset+io_Length are
+//!                    no longer in use, and the medium may forget them.
 //!
 //! What the medium being flash, not a floppy, changes:
 //! - io_Offset and io_Length are 64-bit (exec's IOStdReq), so a unit may be
@@ -29,6 +31,8 @@
 //! - TDCMD_ERASE and DriveGeometry's `erase_size` and `map_base` are added:
 //!   flash must be erased before it is written, and the medium can be read
 //!   through the CPU's address space without a request at all.
+//! - TDCMD_TRIM is added: an SSD that is told which blocks are free keeps
+//!   no copies of them, and writes faster for it.
 //! - No motor, seek, index or raw-track commands (TD_MOTOR, TD_SEEK,
 //!   TD_RAWREAD, TD_RAWWRITE, TD_GETDRIVETYPE) and no ETD_* (the extended
 //!   requests that check a change number). A unit whose medium can be taken
@@ -44,11 +48,12 @@
 const exec = @import("../libs/exec/exec.zig");
 
 /// The block devices that speak this API: the board's flash (unit 0 is
-/// the flash disk), the card slot, and USB sticks and card readers
-/// (a unit each, `DU<n>:`).
+/// the flash disk), the card slot, USB sticks and card readers (a unit
+/// each, `DU<n>:`), and NVM Express SSDs (a unit each namespace).
 pub const FLASHNAME = "flash.device";
 pub const SDCARDNAME = "sdcard.device";
 pub const USBDISKNAME = "usb/disk.device";
+pub const NVMENAME = "nvme.device";
 
 /// The bytes of a TD_SECTOR-sized block. Our units report their own block
 /// size in the DriveGeometry; this is only the traditional default.
@@ -74,6 +79,13 @@ pub const TD_EJECT: u16 = exec.CMD_NONSTD + 15;
 /// An addition: erase the blocks a write is going to use. A medium that
 /// needs no erasing answers it as a no-op.
 pub const TDCMD_ERASE: u16 = exec.CMD_NONSTD + 16;
+/// An addition: the blocks a file system no longer uses, given back to
+/// the medium (an SSD's TRIM or Deallocate). What they read afterwards is
+/// the device's to say - zeroes, or what was there - so a file system
+/// reads nothing back from them. Whole blocks, as for CMD_WRITE; io_Actual
+/// is io_Length once done. A unit that cannot answers IOERR_NOCMD, and a
+/// file system sends it as a hint only.
+pub const TDCMD_TRIM: u16 = exec.CMD_NONSTD + 17;
 
 /// io_Error, in trackdisk.device's slots (32 on): only the ones a solid-state medium
 /// can give.

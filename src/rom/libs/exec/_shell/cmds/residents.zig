@@ -33,7 +33,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
         const vectors = residentVectors(shell, tag);
         total_vectors += vectors orelse 0;
         const vec_text: [*:0]const u8 = if (vectors) |n| decimal(shell, &vec_buf, n) else "-";
-        shell.print("0x%08x  %-20s %3d %-10s %4d  %6d %6d %6d  %3s  %s\n", .{
+        shell.print("0x%08zx  %-20s %3d %-10s %4d  %6d %6d %6d  %3s  %s\n", .{
             @intFromPtr(tag), tag.name,  tag.version,           _shell.enumName(sdk.exec.NodeType, tag.type), tag.pri,
             size.code,        size.data, size.code + size.data, vec_text,                                     residentFlags(tag.flags, &flag_buf),
         });

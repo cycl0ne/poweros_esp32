@@ -2037,7 +2037,14 @@ exec.library/WaitPort
 	worth stating because it is the one thing a caller cannot test for
 	cheaply and the one that fails intermittently when it is wrong.
 
-	Word-sized loads and stores are used where the alignment allows.
+	Whole words where the length allows: bytes up to a word boundary,
+	then words, shifted into place where the two areas are not as far from
+	a boundary as each other - each load and store aligned, on a CPU that
+	has no fast misaligned ones.
+
+	A program's memcpy and memmove - what its `@memcpy` and struct copies
+	become - are this call (sdk/libs/exec/libc.zig), so a program copies
+	with the loop the kernel was built with for the board.
 
    CONTEXT
 	- Waits: no.
@@ -2076,9 +2083,10 @@ exec.library/WaitPort
 	Nothing.
 
    BEHAVIOR
-	Arguments that do not meet the conditions are **handed to `CopyMem`**
-	rather than giving a wrong answer, so this is always safe to call and
-	only sometimes faster. Overlap is handled, as there.
+	The loop is `CopyMem`'s, so arguments that do not meet the conditions
+	are **copied as `CopyMem` copies them** rather than giving a wrong
+	answer: always safe, and as fast as `CopyMem` at any alignment. Overlap
+	is handled, as there.
 
    CONTEXT
 	- Waits: no.
@@ -6476,7 +6484,10 @@ exec.library/WaitPort
 	Nothing.
 
    BEHAVIOR
-	Word-sized stores where the alignment allows.
+	Bytes up to a word boundary, then whole words, then the bytes left.
+
+	A program's memset - what its `@memset` becomes - is this call
+	(sdk/libs/exec/libc.zig).
 
    CONTEXT
 	- Waits: no.
@@ -6665,23 +6676,25 @@ exec.library/WaitPort
 
    INPUTS
 	- `task` - the task; null for the caller.
-	- `cores` - `TF_CORE0` to keep it on core 0, `TF_CORE1` on core 1;
-	  0 (or both) for whichever core is free. Other bits are ignored.
+	- `cores` - the cores' flags, `TF_CORE0` to `TF_CORE3`: `TF_CORE0` to
+	  keep it on core 0, `TF_CORE1 | TF_CORE2` on those two; 0 (or every
+	  core) for whichever core is free. Other bits are ignored.
 
    RESULT
-	The cores it was set to before: `TF_CORE0`, `TF_CORE1`, both or 0.
+	The cores it was set to before, as `cores`.
 
    BEHAVIOR
-	The cores are the task's `TF_CORE0` and `TF_CORE1` flags. Every
+	The cores are the task's `TF_CORE0` to `TF_CORE3` flags. Every
 	dispatcher looks at them each time it picks a task, so the change holds
 	from the next pick on: a ready task is offered to a core it may run on
 	now, and a running one on a core it may no longer use is switched out
-	at that core's next switch point and taken up by the other.
+	at that core's next switch point and taken up by another.
 
 	The idle tasks are pinned, one to each core, and so is the code that
 	must keep to one core - the Wi-Fi vendor code to core 0.
 
-	With one core running, a task pinned to core 1 never runs.
+	A task pinned only to cores that are not running never runs; one
+	pinned only to cores the machine does not have counts as not pinned.
 
    CONTEXT
 	- Waits: no, but the caller may switch - to the other core, when it
@@ -6696,7 +6709,7 @@ exec.library/WaitPort
 
    NOTES
 	A task that is to be pinned from its first instruction has its
-	`TF_CORE0` or `TF_CORE1` set in the `Task` handed to `AddTask`; dos's
+	core flags set in the `Task` handed to `AddTask`; dos's
 	`NP_Affinity` does it for a process.
 
    BUGS

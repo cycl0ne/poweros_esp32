@@ -4,8 +4,9 @@
 //! against its values, and debug.lib's kprintf.
 //!
 //! The data stream holds the values in the order of the format's `%`s,
-//! packed: `%d %u %x %c` take 32 bits, with `l` 64 bits, and `%s` takes a
-//! pointer to a NUL-terminated string. fmtStream packs a tuple that way;
+//! packed: `%d %u %x %c` take 32 bits, with `l` 64 bits, with `z` a
+//! usize (32 bits on the ESP32s, 64 on RV64), and `%s` takes a pointer to
+//! a NUL-terminated string. fmtStream packs a tuple that way;
 //! checkFormat makes sure a format and a tuple fit together.
 //!
 //!   sdk.exec.kprintf(sys, "%s: %ld bytes\n", .{ name, @as(u64, size) });
@@ -61,8 +62,9 @@ fn kindOf(comptime T: type) Kind {
 
 /// A compile error unless `format` and `Args` (a tuple type) fit together
 /// as RawDoFmt reads them: one value per conversion, a 32-bit or smaller
-/// integer for %d %u %x %c, a wider one for %ld %lu %lx %lc, and a
-/// NUL-terminated string (or null) for %s.
+/// integer for %d %u %x %c, a wider one for %ld %lu %lx %lc, one as wide
+/// as a usize for %zd %zu %zx %zc, and a NUL-terminated string (or null)
+/// for %s.
 pub fn checkFormat(comptime format: []const u8, comptime Args: type) void {
     comptime {
         @setEvalBranchQuota(1000 + 10 * format.len);
@@ -79,8 +81,9 @@ pub fn checkFormat(comptime format: []const u8, comptime Args: type) void {
                 i += 1;
                 while (i < format.len and std.ascii.isDigit(format[i])) i += 1;
             }
-            const long = i < format.len and format[i] == 'l';
-            if (long) i += 1;
+            const size = i < format.len and format[i] == 'z';
+            const long = i < format.len and (format[i] == 'l' or (size and @sizeOf(usize) == 8));
+            if (i < format.len and (format[i] == 'l' or size)) i += 1;
             if (i >= format.len) break;
             const conversion = format[i];
             i += 1;
@@ -93,7 +96,7 @@ pub fn checkFormat(comptime format: []const u8, comptime Args: type) void {
             const T = fields[used].type;
             if (kindOf(T) != want) @compileError(std.fmt.comptimePrint(
                 "format \"{s}\": value {d} ({s}) doesn't fit %{s}{c}",
-                .{ format, used + 1, @typeName(T), if (long) "l" else "", conversion },
+                .{ format, used + 1, @typeName(T), if (size) "z" else if (long) "l" else "", conversion },
             ));
             used += 1;
         }

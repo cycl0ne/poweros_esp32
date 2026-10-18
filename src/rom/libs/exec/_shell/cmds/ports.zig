@@ -61,7 +61,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
             sdk.exec.PA_SOFTINT => "softint",
             else => "ignore",
         };
-        shell.print("0x%08x  %-14s %4d  %-7s %4d  %-14s %d\n", .{
+        shell.print("0x%08zx  %-14s %4d  %-7s %4d  %-14s %d\n", .{
             row.address,                              @as([*:0]const u8, @ptrCast(&row.name)), row.pri, action_name, row.sig_bit,
             @as([*:0]const u8, @ptrCast(&row.owner)), row.queued,
         });

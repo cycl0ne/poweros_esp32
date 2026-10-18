@@ -79,7 +79,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     if (asked == 1) {
         // One number and nothing else, which is what a script wants.
-        _ = Printf(dl, "%d\n", .{sys.AvailMem(one)});
+        _ = Printf(dl, "%zd\n", .{sys.AvailMem(one)});
         return dos.RETURN_OK;
     }
 
@@ -88,9 +88,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // literal each (RawDoFmt has no %*d), so all four line up under the
     // heading.
     inline for (.{
-        .{ "internal%11d %9d %9d %9d\n", exec.MEMF_INTERNAL },
-        .{ "external%11d %9d %9d %9d\n", exec.MEMF_EXTERNAL },
-        .{ "total%14d %9d %9d %9d\n", exec.MEMF_ANY },
+        .{ "internal%11zd %9zd %9zd %9zd\n", exec.MEMF_INTERNAL },
+        .{ "external%11zd %9zd %9zd %9zd\n", exec.MEMF_EXTERNAL },
+        .{ "total%14zd %9zd %9zd %9zd\n", exec.MEMF_ANY },
     }) |row| {
         const available = sys.AvailMem(row[1]);
         const maximum = sys.AvailMem(row[1] | exec.MEMF_TOTAL);
@@ -110,16 +110,16 @@ fn showOwners(sys: *ExecBase, dl: *DosBase) i32 {
     _ = dl.PutStr("Owner  Task                      Blocks       Bytes     Private\n");
     for (tally.owners[0..tally.used]) |*owner| {
         if (owner.system()) {
-            _ = Printf(dl, "system                          %6u  %10u  %10u\n", .{ owner.blocks, owner.bytes, owner.private_bytes });
+            _ = Printf(dl, "system                          %6u  %10zu  %10zu\n", .{ owner.blocks, owner.bytes, owner.private_bytes });
             continue;
         }
         const task: [*:0]const u8 = if (owner.living) @ptrCast(&owner.name) else "(ended)";
-        _ = Printf(dl, "%5u  %-24s  %6u  %10u  %10u\n", .{ owner.id, task, owner.blocks, owner.bytes, owner.private_bytes });
+        _ = Printf(dl, "%5u  %-24s  %6u  %10zu  %10zu\n", .{ owner.id, task, owner.blocks, owner.bytes, owner.private_bytes });
     }
     if (tally.rest_owners != 0) {
-        _ = Printf(dl, "%5u  more owners               %6u  %10u  %10u\n", .{ tally.rest_owners, tally.rest.blocks, tally.rest.bytes, tally.rest.private_bytes });
+        _ = Printf(dl, "%5u  more owners               %6u  %10zu  %10zu\n", .{ tally.rest_owners, tally.rest.blocks, tally.rest.bytes, tally.rest.private_bytes });
     }
-    _ = Printf(dl, "free   in %u chunks                       %10u\n", .{ tally.free_chunks, tally.free_bytes });
+    _ = Printf(dl, "free   in %u chunks                       %10zu\n", .{ tally.free_chunks, tally.free_bytes });
     if (tally.damaged) |at| {
         _ = Printf(dl, "damaged at 0x%08x: the rest of that region is not counted\n", .{@as(u32, @truncate(at))});
         return dos.RETURN_WARN;

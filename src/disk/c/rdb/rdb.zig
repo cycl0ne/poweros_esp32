@@ -4,7 +4,7 @@
 //! LIBS:rdb.library. Built against the SDK only.
 //!
 //!   RDB DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,
-//!       DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K
+//!       DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N
 //!
 //!   RDB                         flash.device unit 0
 //!   RDB sdcard.device UNIT 0    another disk
@@ -13,6 +13,9 @@
 //!   RDB INIT FORCE              ... or in place of the one it has
 //!   RDB ADD DH1                 a partition over the largest free run
 //!   RDB ADD DH1 LOW 100 HIGH 199 DOSTYPE FLS BOOTABLE
+//!   RDB sdcard.device ADD SD0 LOW 8192 HIGH 62333951 DOSTYPE MSD
+//!       BOOTABLE BOOTPRI 5      the card's FAT partition, started from
+//!                               before the flash disk (whose BootPri is 0)
 //!   RDB REMOVE DH1              a partition taken out of the table
 //!   RDB CHANGE DH1 DOSTYPE POS  a partition given to another file system
 //!   RDB ADDFS HANDLERS:posfs-handler DOSTYPE POS
@@ -45,8 +48,12 @@
 //! `FLS\0` reads as it is spelled - and the longword after it. DOSTYPE
 //! takes it the same way (`FLS\0`, or `FLS` with the zero left off) or as
 //! a number (`0x464C5300`); without it a partition ADD makes is for the
-//! flash file system. CHANGE takes DOSTYPE, BOOTABLE or both for the
-//! partition it names: posfs's is `POS`.
+//! flash file system. CHANGE takes DOSTYPE, BOOTABLE, BOOTPRI or more for
+//! the partition it names: posfs's is `POS`.
+//!
+//! BOOTPRI is the partition's de_BootPri, 0 for a new one without it: of
+//! the bootable partitions of every disk, dos starts from the one with the
+//! highest.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -63,7 +70,7 @@ const Printf = dos.stdio.Printf;
 pub const COMMAND_NAME = "RDB";
 const VERSION_STRING = "\x00$VER: RDB 1.4 (18.10.2026)\r\n";
 
-const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K";
+const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N";
 const arg_device = 0;
 const arg_unit = 1;
 const arg_full = 2;
@@ -78,7 +85,8 @@ const arg_remove = 10;
 const arg_change = 11;
 const arg_addfs = 12;
 const arg_remfs = 13;
-const arg_count = 14;
+const arg_boot_pri = 14;
+const arg_count = 15;
 
 /// The disk this system boots from, when nothing else is named.
 const default_device = "flash.device";
@@ -92,7 +100,7 @@ const MSG_NO_PARTS = "  (no partitions)\n";
 
 /// One row of the partition table. The same format prints the heading and
 /// the rule, so the columns cannot drift apart.
-const row = "  %-8s %5s %-13s %9s %7s %-16s %s\n";
+const row = "  %-8s %5s %-16s %9s %7s %-16s %s\n";
 
 /// One row of the file systems the table keeps.
 const fs_row = "  %-16s %-14s %-7s %7s %5s %6s %s\n";
@@ -189,8 +197,8 @@ fn change(run: *Run, argv: *const [arg_count]usize) i32 {
             _ = Printf(dl, "CHANGE: there is no partition %s\n", .{name});
             return dos.RETURN_ERROR;
         };
-        if (argv[arg_dostype] == 0 and argv[arg_bootable] == 0) {
-            _ = dl.PutStr("CHANGE: DOSTYPE, BOOTABLE or both say what changes\n");
+        if (argv[arg_dostype] == 0 and argv[arg_bootable] == 0 and argv[arg_boot_pri] == 0) {
+            _ = dl.PutStr("CHANGE: DOSTYPE, BOOTABLE, BOOTPRI or more say what changes\n");
             return dos.RETURN_ERROR;
         }
         if (rdargs.string(argv[arg_dostype])) |text| {
@@ -200,6 +208,7 @@ fn change(run: *Run, argv: *const [arg_count]usize) i32 {
             };
         }
         if (argv[arg_bootable] != 0) part.block.flags |= hardblocks.PBFF_BOOTABLE;
+        if (rdargs.number(argv[arg_boot_pri])) |pri| part.block.environment.boot_pri = @max(-128, @min(pri, 127));
         handle.flags |= rdb.RDBF_CHANGED;
     }
     if (rdargs.string(argv[arg_add])) |name| {
@@ -219,8 +228,9 @@ fn change(run: *Run, argv: *const [arg_count]usize) i32 {
         const low_cyl: u32 = @intCast(low orelse 0);
         const high_cyl: u32 = @intCast(high orelse 0);
         if (failed(run, "ADD", rb.AddPartition(handle, name, low_cyl, high_cyl, dos_type))) return dos.RETURN_ERROR;
-        if (argv[arg_bootable] != 0) {
-            if (rb.FindPartition(handle, name)) |part| part.block.flags |= hardblocks.PBFF_BOOTABLE;
+        if (rb.FindPartition(handle, name)) |part| {
+            if (argv[arg_bootable] != 0) part.block.flags |= hardblocks.PBFF_BOOTABLE;
+            if (rdargs.number(argv[arg_boot_pri])) |pri| part.block.environment.boot_pri = @max(-128, @min(pri, 127));
         }
     }
     if (argv[arg_addfs] != 0 or argv[arg_remfs] != 0) {
@@ -350,7 +360,7 @@ fn showDrive(run: *Run, device: [*:0]const u8, unit: u32, geo: *const trackdisk.
         _ = Printf(dl, "  Write        %d bytes at a time\n", .{geo.write_size});
     }
     if (geo.map_base != 0) {
-        _ = Printf(dl, "  Mapped at    0x%08x, so a read costs no request\n", .{geo.map_base});
+        _ = Printf(dl, "  Mapped at    0x%08zx, so a read costs no request\n", .{geo.map_base});
     }
 }
 
@@ -421,7 +431,7 @@ fn showPartitions(run: *Run) void {
     const rb = run.rb;
     _ = dl.PutStr("\nPartitions\n");
     _ = Printf(dl, row, .{ "Name", "Block", "Cylinders", "Blocks", "Size", "File system", "Flags" });
-    _ = Printf(dl, row, .{ "--------", "-----", "-------------", "---------", "-------", "----------------", "-----" });
+    _ = Printf(dl, row, .{ "--------", "-----", "----------------", "---------", "-------", "----------------", "-----" });
 
     var part = rb.NextPartition(run.handle, null);
     if (part == null) _ = dl.PutStr(MSG_NO_PARTS);

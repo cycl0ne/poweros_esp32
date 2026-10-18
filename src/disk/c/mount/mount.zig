@@ -52,7 +52,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Mount";
-const VERSION_STRING = "\x00$VER: Mount 1.0 (20.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Mount 1.1 (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICE/M,FROM/K";
@@ -321,9 +321,10 @@ fn addNode(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, entry: *const Entr
     while (name[i] != 0 and i < max_token - 1) : (i += 1) upper_name[i] = upper(name[i]);
     upper_name[i] = 0;
     const node = dl.MakeDosEntry(&upper_name, dos.DLT_DEVICE) orelse return .memory;
-    // The name dos will look up, which for a handler written as a file is
-    // the file's own name without the path.
-    node.misc.handler.handler = if (entry.handler) |h| lastPart(h) else null;
+    // As written: dos looks the name at the end of the path up among the
+    // segments, and failing that loads the file from the path - a bare
+    // name from HANDLERS:.
+    node.misc.handler.handler = entry.handler;
     node.misc.handler.stack_size = entry.stack_size;
     node.misc.handler.priority = entry.priority;
     node.misc.handler.startup = entry.startup;
