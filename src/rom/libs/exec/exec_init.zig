@@ -61,8 +61,9 @@ pub const LIBRARY_VERSION = 1;
 /// on each core at once; CacheClearE, CachePreDMA and CachePostDMA share
 /// a long range between them where the cores each drive the cache
 /// controller, and on the JH7110 CacheClearE writes a range back once,
-/// since its write-back drops the lines as well.
-pub const LIBRARY_REVISION = 15;
+/// since its write-back drops the lines as well. 16: the Software Failure
+/// requester's screen is brought in front of the others.
+pub const LIBRARY_REVISION = 16;
 const BUILD_DATE = "19.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -3,7 +3,7 @@
 //! against the SDK only.
 //!
 //!   Intuition WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S,
-//!             EXECALERT/S,PANIC/S,CRASH/S
+//!             EXECALERT/S,PANIC/S,CRASH/S,INFRONT/S
 //!
 //! With nothing asked for it locks the default public screen - which opens
 //! it, the first time - prints its size, depth, title bar and pens, and
@@ -83,7 +83,10 @@
 //! PANIC fails a safety check in this program, and CRASH reads address
 //! 0x10, which nothing may read:
 //! each fails the program, which is asked about on the display - Suspend
-//! holds it and the system runs on, Reboot starts it again.
+//! holds it and the system runs on, Reboot starts it again. With INFRONT
+//! they first open a quiet screen of their own, with no title bar, and
+//! fail with it in front, as a game might: the requester has to come out
+//! in front of it.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -102,10 +105,10 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Intuition";
-const VERSION_STRING = "\x00$VER: Intuition 1.11 (04.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Intuition 1.12 (19.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S,EXECALERT/S,PANIC/S,CRASH/S";
+const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S,EXECALERT/S,PANIC/S,CRASH/S,INFRONT/S";
 const arg_windows = 0;
 const arg_gadgets = 1;
 const arg_sliders = 2;
@@ -119,9 +122,11 @@ const arg_alert = 9;
 const arg_execalert = 10;
 const arg_panic = 11;
 const arg_crash = 12;
+const arg_in_front = 13;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display, or it shows another screen\n";
+const MSG_NO_OWN_SCREEN = "No screen of its own to fail in front of\n";
 const MSG_SCREEN = "Screen     %s, %dx%d, %d bits a pixel, title bar %d rows\n";
 const MSG_PEN = "  %-16s %08lx\n";
 const MSG_IMAGES = "Images     %d drawn with DrawImage and DrawImageState\n";
@@ -1075,7 +1080,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [13]usize = @splat(0);
+    var argv: [14]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -1098,6 +1103,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         ib.UnlockPubScreen(null, s);
         ib.DisplayBeep(null);
         return dos.RETURN_OK;
+    }
+    if (argv[arg_in_front] != 0 and (argv[arg_panic] != 0 or argv[arg_crash] != 0)) {
+        // Left open, in front: the program fails with it there.
+        _ = ib.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_Quiet, .data = 1 }, .{} }) orelse {
+            ib.UnlockPubScreen(null, s);
+            _ = Printf(dl, MSG_NO_OWN_SCREEN, .{});
+            return dos.RETURN_FAIL;
+        };
     }
     if (argv[arg_panic] != 0) {
         ib.UnlockPubScreen(null, s);
