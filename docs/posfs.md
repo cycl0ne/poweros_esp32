@@ -883,9 +883,10 @@ A check no slice came for in 10 seconds ends. What it verifies:
   against its crc, every compressed chunk checked and decoded.
 
 `tools/posfsck` finds the volumes in an image itself - one at its start,
-the posfs partitions of a RigidDiskBlock, or a `0x7F` partition of a partition
-table - mounts each without writing, replays its journal in memory, and
-runs the durable check.
+the posfs partitions of a RigidDiskBlock or of the one in a GPT's
+PowerOS container, a GPT partition that starts with a posfs label, or a
+`0x7F` partition of a partition table - mounts each without writing,
+replays its journal in memory, and runs the durable check.
 
 ## The handler
 

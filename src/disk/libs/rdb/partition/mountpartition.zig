@@ -15,6 +15,13 @@
 //! handler is first started. The nodes of one unit's partitions of that
 //! file system share one entry: the first one made is found on the list
 //! by its DosType and version. An entry is the system's, as the node is.
+//!
+//! **A table in a container.** Its partitions count their cylinders from
+//! the container's first block, so the node's environment gets the
+//! container's cylinders added: the container starts on a multiple of a
+//! cylinder, as InitRDB makes it.
+//!
+//! `add` and `start` are MountGPTPartition's too.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -57,8 +64,10 @@ const list_lock = dos.LDF_DEVICES | dos.LDF_WRITE;
 /// empty or too long, or one taken on the list with every dot that fits;
 /// RDBERR_CHANGED when the medium in the unit is not the one the table
 /// was read from; RDBERR_MOUNTED when a device node on the list already
-/// opens some of the partition's blocks; RDBERR_NOMEM for no memory. The
-/// list is unchanged by a failure.
+/// opens some of the partition's blocks; RDBERR_RANGE for a partition of
+/// a container that does not start on a multiple of the partition's
+/// cylinder, or that reaches past the cylinders 32 bits count;
+/// RDBERR_NOMEM for no memory. The list is unchanged by a failure.
 ///
 /// BEHAVIOR:
 /// The node is named as the partition is. Where the list has a device or
@@ -67,7 +76,9 @@ const list_lock = dos.LDF_DEVICES | dos.LDF_WRITE;
 /// disk whose table names its partitions as the first's gets drives of
 /// its own. The node opens the handle's device and unit with the
 /// partition's device flags, its environment is a copy of the
-/// partition's, and its handler is the one its DosType asks for: the
+/// partition's - with the container's cylinders added for a table in a
+/// GPT's container (RDBF_CONTAINER), so it names the partition's blocks
+/// on the disk - and its handler is the one its DosType asks for: the
 /// flash file system's for `FLS\0`, posfs's for `POS\0`, fat-handler for
 /// `MSD\0`.
 ///
@@ -142,6 +153,8 @@ pub fn MountPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.RD
     if (handler == null and stored == null) return rdb.RDBERR_FILESYSTEM;
     const drive = _partition.driveName(partition);
     if (!_partition.validName(drive)) return rdb.RDBERR_NAME;
+    var env = partition.block.environment;
+    if (!onDisk(handle, &env)) return rdb.RDBERR_RANGE;
     if (_handle.changed(private)) return rdb.RDBERR_CHANGED;
 
     const dos_lib = sys.OpenLibrary(dos.DOSNAME, 1) orelse return rdb.RDBERR_NOMEM;
@@ -163,7 +176,7 @@ pub fn MountPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.RD
     }
     var text: rdb.MountName = @splat(0);
     @memcpy(text[0..drive.len], drive);
-    const answer = add(dl, eb, private, partition, handler, entry, &text, drive.len);
+    const answer = add(dl, eb, private, &env, partition.block.dev_flags, handler, entry, &text, drive.len);
     if (answer != rdb.RDBERR_OK) {
         if (made) freeEntry(sys, entry.?);
         return answer;
@@ -174,26 +187,42 @@ pub fn MountPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.RD
     return rdb.RDBERR_OK;
 }
 
-/// The node made and put on the list under `text`, dotted while the name
-/// is taken, with the list locked from the check to the adding.
-fn add(
+/// An environment of the table's moved to the disk's cylinders: the
+/// container's added for a table in one. False when the container does
+/// not start on a multiple of the environment's cylinder, or the sum does
+/// not fit.
+fn onDisk(handle: *rdb.RDBHandle, env: *dos.DosEnvec) bool {
+    if (handle.flags & rdb.RDBF_CONTAINER == 0) return true;
+    const cylinder = @as(u64, env.surfaces) * env.blocks_per_track;
+    if (cylinder == 0 or handle.container % cylinder != 0) return false;
+    const offset = handle.container / cylinder;
+    if (offset + env.high_cyl > 0xFFFF_FFFF) return false;
+    env.low_cyl += @intCast(offset);
+    env.high_cyl += @intCast(offset);
+    return true;
+}
+
+/// The node made with `env` and `dev_flags` and put on the list under
+/// `text`, dotted while the name is taken, with the list locked from the
+/// check to the adding.
+pub fn add(
     dl: *DosBase,
     eb: *ExpansionBase,
     handle: *_handle.Handle,
-    partition: *rdb.RDBPartition,
+    env: *const dos.DosEnvec,
+    dev_flags: u32,
     handler: ?[*:0]const u8,
     entry: ?*dos.FileSysEntry,
     text: *rdb.MountName,
     drive_length: usize,
 ) i32 {
     const device = handle.device orelse return rdb.RDBERR_NOMEM;
-    const env = &partition.block.environment;
     const list = dl.LockDosList(list_lock) orelse return rdb.RDBERR_NOMEM;
     defer dl.UnLockDosList(list_lock);
     if (claimed(dl, list, device, handle.unit, env)) return rdb.RDBERR_MOUNTED;
     var length = drive_length;
     while (true) {
-        const node = eb.MakeDosNode(text, device, handle.unit, partition.block.dev_flags, env) orelse return rdb.RDBERR_NOMEM;
+        const node = eb.MakeDosNode(text, device, handle.unit, dev_flags, env) orelse return rdb.RDBERR_NOMEM;
         node.misc.handler.handler = handler;
         node.misc.handler.file_sys = entry;
         if (dl.AddDosEntry(node)) return rdb.RDBERR_OK;
@@ -281,7 +310,7 @@ fn freeEntry(sys: *ExecBase, entry: *dos.FileSysEntry) void {
 }
 
 /// The drive's handler started: asking dos for its port starts it.
-fn start(dl: *DosBase, text: *const rdb.MountName, drive_length: usize) void {
+pub fn start(dl: *DosBase, text: *const rdb.MountName, drive_length: usize) void {
     var length = drive_length;
     while (length < text.len and text[length] != 0) length += 1;
     var drive: [dos.MAX_DEVICE_NAME + 1:0]u8 = @splat(0);

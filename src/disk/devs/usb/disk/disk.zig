@@ -35,8 +35,8 @@
 //!
 //! **The drives are made by the device**, the first time a medium comes
 //! into unit n, and stay (mount.zig, `sdk.devices.automount`): a drive
-//! per partition when the stick holds a RigidDiskBlock, `DU<n>:` over the
-//! whole stick when it does not. Nothing USB is loaded at boot where no
+//! per partition when the stick holds a RigidDiskBlock or a GPT, `DU<n>:`
+//! over the whole stick when it holds neither. Nothing USB is loaded at boot where no
 //! stick is plugged in, and a node that locks point at is never taken off
 //! the list. Nothing in the MountList is needed; an entry there that
 //! opens the unit is the unit's drive, used as it is. From then on a

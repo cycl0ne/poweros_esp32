@@ -22,6 +22,13 @@
 //! Every transfer is a whole block of the medium through the buffer, in
 //! the memory the medium asks for: a structure is the first 256 bytes of
 //! its block, and the rest is written as zeroes; a LoadSegBlock fills it.
+//!
+//! **The window.** The table's blocks are counted from `window`: 0 for a
+//! table over the whole disk, the container's first block for the table
+//! in a GPT's container. readBlock, writeBlock and the rest add it, so
+//! every call that works on the table works the same in a container;
+//! the GPT's own blocks are read and written by their number on the disk
+//! (`readAt`, `writeAt`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -29,9 +36,11 @@ const rdb = sdk.rdb;
 const trackdisk = sdk.devices.trackdisk;
 const hardblocks = sdk.dos.hardblocks;
 const fat = sdk.dos.fat;
+const gpt = sdk.dos.gpt;
 const loadfile = sdk.dos.loadfile;
 const ExecBase = sdk.interface.exec.ExecBase;
 const RDBBase = @import("../rdb_base.zig").RDBBase;
+const _gpt = @import("../gpt/_gpt.zig");
 
 /// The blocks the maps cover: an RDB area reaching past them is used only
 /// up to here.
@@ -103,6 +112,18 @@ pub const Handle = extern struct {
     /// RigidDiskBlock, for this block size or another: a reader takes the
     /// lowest, and WriteRDB leaves only its own.
     tables: BlockMap = .{},
+    /// The block of the disk the table's block 0 is: the container's
+    /// first, or 0.
+    window: u64 align(4) = 0,
+    /// The disk held a GPT when it was opened, or has one since WriteGPT:
+    /// what WriteRDB wipes after RemGPT.
+    gpt_on_disk: bool = false,
+    /// RemGPT took the GPT out of the handle: WriteRDB wipes the disk's
+    /// once the new table is down.
+    wipe_gpt: bool = false,
+    /// The GUIDs made so far, for the host tests' stand-in for random
+    /// bytes.
+    guids_made: u32 = 0,
 };
 
 pub fn handleOf(handle: *rdb.RDBHandle) *Handle {
@@ -134,6 +155,7 @@ pub fn create(base: *RDBBase) ?*Handle {
     handle.* = .{ .sys = sys };
     handle.public.partitions.init(.unknown);
     handle.public.file_systems.init(.unknown);
+    handle.public.gpt_partitions.init(.unknown);
     return handle;
 }
 
@@ -143,6 +165,7 @@ pub fn destroy(handle: *Handle) void {
     const sys = handle.sys;
     freePartitions(handle);
     freeFileSystems(handle);
+    _gpt.freeGptPartitions(handle);
     if (handle.io) |io| {
         if (handle.unit_open) sys.CloseDevice(&io.req);
         sys.DeleteIORequest(&io.req);
@@ -211,16 +234,42 @@ pub fn appendPartition(handle: *Handle, at: u32, block: *const hardblocks.Partit
 
 // --- the medium ---------------------------------------------------------------
 
-/// One command to the unit; whether it was done.
+/// One command to the unit for a block of the table, counted from the
+/// window; whether it was done.
 fn command(handle: *Handle, code: u16, block: u32, data: ?*anyopaque) bool {
+    return commandAt(handle, code, handle.window + block, data);
+}
+
+/// One command to the unit for a block of the disk, by its number there;
+/// whether it was done.
+fn commandAt(handle: *Handle, code: u16, block: u64, data: ?*anyopaque) bool {
     const io = handle.io orelse return false;
     const bytes = blockBytes(handle);
     io.req.command = code;
-    io.offset = @as(u64, block) * bytes;
+    io.offset = block * bytes;
     io.length = bytes;
     io.data = data;
     io.actual = 0;
     return handle.sys.DoIO(&io.req) == 0;
+}
+
+/// A block of the disk, by its number there, read into the buffer: its
+/// bytes until the next transfer, or null when it could not be read.
+pub fn readAt(handle: *Handle, block: u64) ?[]u8 {
+    const buffer = handle.buffer orelse return null;
+    if (!commandAt(handle, exec.CMD_READ, block, buffer)) return null;
+    return buffer[0..blockBytes(handle)];
+}
+
+/// A block of the disk, by its number there, written with `bytes` (at
+/// most a block, zeroes after them), erased first on a medium that wants
+/// it. Whether it was done.
+pub fn writeAt(handle: *Handle, block: u64, bytes: []const u8) bool {
+    const buffer = handle.buffer orelse return false;
+    @memset(buffer[0..blockBytes(handle)], 0);
+    @memcpy(buffer[0..bytes.len], bytes);
+    if (handle.public.geometry.erase_size != 0 and !commandAt(handle, trackdisk.TDCMD_ERASE, block, null)) return false;
+    return commandAt(handle, exec.CMD_WRITE, block, buffer);
 }
 
 /// A block's structure read into `into`; whether the block could be read.
@@ -268,6 +317,15 @@ pub fn clearBlock(handle: *Handle, block: u32) bool {
     return command(handle, exec.CMD_WRITE, block, buffer);
 }
 
+/// A block of the disk, by its number there, wiped as `clearBlock` wipes
+/// one. Whether it was done.
+pub fn clearAt(handle: *Handle, block: u64) bool {
+    const buffer = handle.buffer orelse return false;
+    if (handle.public.geometry.erase_size != 0) return commandAt(handle, trackdisk.TDCMD_ERASE, block, null);
+    @memset(buffer[0..blockBytes(handle)], 0);
+    return commandAt(handle, exec.CMD_WRITE, block, buffer);
+}
+
 /// TD_CHANGENUM: how often the unit's medium has changed, or 0 from a
 /// device that does not count.
 pub fn changeNum(handle: *Handle) u32 {
@@ -306,30 +364,20 @@ pub fn update(handle: *Handle) bool {
 /// The disk's table read into the handle: the lowest sound RigidDiskBlock
 /// in the first blocks, as every reader takes it, the partitions on its
 /// chain, and the blocks of the chains the library leaves alone; every
-/// other sound RigidDiskBlock there noted. Answers RDBERR_OK or
+/// other sound RigidDiskBlock there noted. A disk with none has its GPT
+/// read, and the table looked for in the GPT's container. Answers RDBERR_OK or
 /// RDBERR_NOMEM; a disk with no table, or a broken one, is said in the
 /// handle's flags.
 pub fn readTable(handle: *Handle) i32 {
     const public = &handle.public;
-    const geometry = &public.geometry;
-    var block: u32 = 0;
-    while (block < hardblocks.RDB_LOCATION_LIMIT and block < geometry.total_sectors) : (block += 1) {
-        var found: hardblocks.RigidDiskBlock = undefined;
-        if (!readBlock(handle, block, &found)) continue;
-        if (block == 0) handle.pc_table = pcTable(handle);
-        if (!hardblocks.sound(&found, hardblocks.IDNAME_RIGIDDISK)) continue;
-        const first = handle.tables.lowest() == no_block;
-        handle.tables.add(block);
-        if (!first) continue;
-        // The block numbers in it count another size of block.
-        if (found.block_bytes != geometry.sector_size) {
-            public.flags |= rdb.RDBF_FOREIGN;
-            continue;
-        }
-        public.rdb = found;
-        public.block = block;
-        public.flags |= rdb.RDBF_FOUND;
-        handle.has_table = true;
+    public.disk_blocks = public.geometry.total_sectors;
+    findTable(handle);
+    // A disk with no RigidDiskBlock of its own may have a GPT, and the
+    // table in its container.
+    if (handle.tables.lowest() == no_block) {
+        const read = _gpt.readGpt(handle);
+        if (read != rdb.RDBERR_OK) return read;
+        if (public.flags & rdb.RDBF_CONTAINER != 0) findTable(handle);
     }
     if (!handle.has_table) return rdb.RDBERR_OK;
     handle.file_sys_list = public.rdb.file_sys_header_list;
@@ -355,13 +403,41 @@ pub fn readTable(handle: *Handle) i32 {
     return rdb.RDBERR_OK;
 }
 
+/// The lowest sound RigidDiskBlock in the window's first blocks taken as
+/// the table, every other one noted, and whether the disk's first block
+/// is a PC's partition table.
+fn findTable(handle: *Handle) void {
+    const public = &handle.public;
+    const geometry = &public.geometry;
+    var block: u32 = 0;
+    while (block < hardblocks.RDB_LOCATION_LIMIT and block < geometry.total_sectors) : (block += 1) {
+        var found: hardblocks.RigidDiskBlock = undefined;
+        if (!readBlock(handle, block, &found)) continue;
+        if (block == 0 and handle.window == 0) handle.pc_table = pcTable(handle);
+        if (!hardblocks.sound(&found, hardblocks.IDNAME_RIGIDDISK)) continue;
+        const first = handle.tables.lowest() == no_block;
+        handle.tables.add(block);
+        if (!first) continue;
+        // The block numbers in it count another size of block.
+        if (found.block_bytes != geometry.sector_size) {
+            public.flags |= rdb.RDBF_FOREIGN;
+            continue;
+        }
+        public.rdb = found;
+        public.block = block;
+        public.flags |= rdb.RDBF_FOUND;
+        handle.has_table = true;
+    }
+}
+
 /// Whether the block in the buffer is a PC's partition table: signed with
 /// 55 AA, as a boot sector is too, but not the boot sector of a FAT or
-/// exFAT volume that is the whole medium - whose second block is its own.
+/// exFAT volume that is the whole medium - whose second block is its own
+/// - and not the protective MBR of a GPT, whose second block is the GPT's.
 fn pcTable(handle: *const Handle) bool {
     const buffer = handle.buffer orelse return false;
     const block = buffer[0..blockBytes(handle)];
-    return fat.signed(block) and fat.formatOf(block) == .unknown;
+    return fat.signed(block) and fat.formatOf(block) == .unknown and !gpt.protective(block);
 }
 
 /// The most file systems a table's chain is followed for.

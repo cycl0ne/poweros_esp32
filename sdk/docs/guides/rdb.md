@@ -4,7 +4,10 @@ What a disk holds is said by the disk itself: a RigidDiskBlock in one of
 its first blocks, and a chain of PartitionBlocks hanging off it, one per
 partition, each with the name its device node gets (`DH0`), the
 cylinders it covers and the file system it is for. The table can keep a
-file system's code too, which its partitions then run. The flash disk's
+file system's code too, which its partitions then run. A disk shared
+with other systems, partitioned with a GUID partition table, keeps the
+table in a GPT partition of its own, the PowerOS container ([A disk
+with a GPT](#a-disk-with-a-gpt)). The flash disk's
 table is read when the system starts, a card's, a stick's or an SSD's
 when its device starts, and the partitions are mounted as it says.
 `rdb.library`, in `LIBS:`, is how a program reads the table, changes
@@ -13,8 +16,9 @@ it, writes it back and mounts a partition.
 This guide is how the table is laid out, how the library holds it, and
 what a program does with it - from listing the partitions to putting a
 fresh table on a disk and mounting what it made. `C:RDB` is the library's own command: it shows a
-table, makes a fresh one, and adds and takes away partitions from the
-shell, and gives a partition to another file system. `s3> rdb init`
+table and a GPT, makes a fresh table or a GPT with a container, and adds
+and takes away partitions from the shell, and gives a partition to
+another file system. `s3> rdb init`
 writes a first table on a blank flash chip, where there is no `C:` yet to
 run `C:RDB` from. `SYS:System/HDToolBox` changes the table of any
 drive in a window, with the partitions as a bar that is dragged.
@@ -392,11 +396,149 @@ posfs-handler is some 300 KiB: `-Drdb-size=1024` gives it room, and room
 for the new copy beside the old when it is replaced. A card's table,
 made with its first partition on the first MiB, has room for it.
 
+## A disk with a GPT
+
+A disk partitioned by a PC, or sold so - an SSD, a large card - holds a
+GUID partition table (`sdk.dos.gpt`): a protective MBR in block 0, which
+an MBR-only program sees as one partition over the whole disk, the GPT's
+header in block 1 with its entries after it, and a copy of both at the
+end of the disk. PowerOS keeps its partitions on such a disk in a GPT
+partition of its own, the **PowerOS container**, of the type
+`4CA96E42-B070-42FB-A098-B3C5B1F92837` (`gpt.TYPE_CONTAINER`). Its first
+blocks hold a RigidDiskBlock, and the table in it is the one this guide
+is about. Another system sees the container as a partition of a type it
+does not know and leaves it alone; the GPT's other partitions are its
+own, and PowerOS mounts those it can read.
+
+**What `OpenRDB` reads.** A RigidDiskBlock in the disk's first 16 blocks
+comes first, whatever block 0 holds. Where there is none, and block 0 is
+a protective MBR or block 1 holds a GPT header, the GPT is read: the
+header in block 1 with its entries when both are sound - their crc32s
+agree, the blocks they name fit the disk, and no two partitions share a
+block - and otherwise the copy at the end. A hybrid MBR, which names
+some of the GPT's partitions beside its 0xEE partition, is read as the
+GPT, never as a PC table.
+
+| Flag | |
+|---|---|
+| `RDBF_GPT` | the disk has a GPT, or `InitGPT` made one: its partitions are `GPTPartition` nodes on `handle.gpt_partitions`, its header is `handle.gpt_header` |
+| `RDBF_GPTDAMAGED` | the disk says it has a GPT, but neither copy is sound: there are no GPT partitions, and nothing is written over it before `InitGPT` or `RemGPT` |
+| `RDBF_GPTCHANGED` | the GPT in memory is not the one on the disk: it was changed, or read from the copy at the end |
+| `RDBF_CONTAINER` | the table is the one in the container (below) |
+
+### The container
+
+The GPT's first container is the handle's window onto the disk:
+`handle.container` is its first block, `handle.geometry` counts its
+blocks, and the table's block numbers and cylinders count from the
+container's first block, so the table reads the same wherever the
+container lies. `handle.disk_blocks` is the whole disk's. Everything
+this guide says of a table holds in the window - `NextPartition`,
+`AddPartition`, `InitRDB`, `WriteRDB` - and `MountPartition` mounts a
+partition where it lies on the disk, its cylinders moved along by the
+container's. A container starts on a multiple of its table's cylinder,
+which every container the library makes does: it starts on a whole MiB,
+and a cylinder is a power of two blocks. A disk has one container; a
+second is a GPT partition like any other, and its table is not read.
+
+A GPT with no container has no table: `InitRDB` answers `RDBERR_GPT`
+there, since a table over the whole disk would write over the GPT. Add
+a container first, or take the GPT out (`RemGPT`, below).
+
+### The GPT's partitions
+
+```zig
+const gpt = sdk.dos.gpt;
+
+if (handle.flags & rdb.RDBF_GPT != 0) {
+    var part = rb.NextGPTPartition(handle, null);
+    while (part) |p| : (part = rb.NextGPTPartition(handle, p)) {
+        var name: [gpt.name_units:0]u8 = undefined;
+        _ = gpt.nameText(&p.entry, &name);
+        const kind = gpt.typeName(&p.entry.partition_type_guid) orelse "another type";
+        _ = Printf(dl, "%u: blocks %ld to %ld, %s \"%s\"\n", .{
+            p.number,
+            p.entry.starting_lba,
+            p.entry.ending_lba,
+            kind,
+            @as([*:0]const u8, &name),
+        });
+    }
+}
+```
+
+`p.number` is the partition's entry number, from 1; `p.entry` is the
+entry as the disk holds it - its type and unique GUIDs, its first and
+last block, its attributes, and its name. Bit 63 of the attributes
+(`gpt.ATTR_NO_AUTOMOUNT`) says the partition is not mounted when its
+disk comes in.
+
+`MountGPTPartition(handle, part, name, mounted, flags)` mounts a GPT
+partition as `MountPartition` mounts a table's, under `name` (dotted
+while it is taken) with the name it got in `mounted`. A GPT entry's
+type says what a partition is for, not which file system is on it - a
+"basic data" partition may be FAT32, exFAT or NTFS - so the partition's
+first block decides: a posfs label is posfs, a FAT32 or exFAT boot
+sector is FAT, and anything else is `RDBERR_FILESYSTEM`, as is the
+container. An EFI System partition is a FAT volume and is mounted as
+one.
+
+### Making a GPT
+
+```zig
+if (rb.InitGPT(handle) != rdb.RDBERR_OK) return dos.RETURN_FAIL; // too small
+
+// A FAT partition for the PC, the rest a container.
+var shared: gpt.Entry = .{ .partition_type_guid = gpt.TYPE_BASIC_DATA, .starting_lba = 2048, .ending_lba = 2048 + 524288 - 1 };
+gpt.setName(&shared, "Shared");
+var err: i32 = rdb.RDBERR_OK;
+_ = rb.AddGPTPartition(handle, &shared, &err) orelse return report(err);
+
+var container: gpt.Entry = .{ .partition_type_guid = gpt.TYPE_CONTAINER };
+gpt.setName(&container, "PowerOS");
+_ = rb.AddGPTPartition(handle, &container, &err) orelse return report(err);
+
+if (rb.InitRDB(handle) != rdb.RDBERR_OK) return dos.RETURN_FAIL; // the table, in the container
+if (rb.AddPartition(handle, "DH1", 0, 0, sdk.dos.posfs.ID_POSFS_DISK) != rdb.RDBERR_OK) return dos.RETURN_FAIL;
+
+if (rb.WriteGPT(handle) != rdb.RDBERR_OK) return dos.RETURN_FAIL;
+if (rb.WriteRDB(handle) != rdb.RDBERR_OK) return dos.RETURN_FAIL;
+```
+
+- `InitGPT(handle)` puts a fresh GPT for the whole medium in the handle:
+  the medium's own block size, 128 entries, every block between the two
+  copies usable, a new random disk GUID, no partitions. Whatever the
+  handle held goes with it - the GPT's partitions and any table.
+- `AddGPTPartition(handle, entry, err)` adds a partition under the
+  lowest free entry number. Blocks 0 and 0 take the largest free run;
+  any other first block must be on a whole MiB (`gpt.alignment_bytes`),
+  which keeps a partition on the medium's own erase blocks. A unique GUID
+  of all zeroes gets a new random one. A container becomes the handle's
+  window at once, and `InitRDB` makes the table in it.
+- `RemGPTPartition(handle, part)` takes one out; taking out the container
+  takes its table with it.
+- `WriteGPT(handle)` writes both copies: the entries and the header at
+  the end first, then the entries after block 1, then the header in
+  block 1, so the disk holds a whole GPT at every point of the write.
+  Block 0 is made a protective MBR where it is not one - a hybrid MBR is
+  left as it is - a RigidDiskBlock left in the first 16 blocks is wiped,
+  and `CMD_UPDATE` ends it.
+
+Write the GPT before the table in its container: `WriteRDB` answers
+`RDBERR_GPT` for a table whose container is not on the disk yet, or a
+GPT read from its copy at the end, which `WriteGPT` mends.
+
+**Back to a table over the whole disk.** `RemGPT(handle)` takes the GPT
+out of the handle with every partition of it and the container's table:
+`InitRDB` then makes a table over the whole disk, and `WriteRDB`, once
+its table is down, wipes the GPT's two headers and the protective MBR
+where the new table does not use those blocks.
+
 ## Errors
 
 A call that can fail answers `RDBERR_OK` (0) or one of these, and
-changes nothing when it fails - except `WriteRDB` with `RDBERR_IO`,
-which may have written part of the table.
+changes nothing when it fails - except `WriteRDB` and `WriteGPT` with
+`RDBERR_IO`, which may have written part of the table.
 
 | Error | |
 |---|---|
@@ -406,11 +548,13 @@ which may have written part of the table.
 | `RDBERR_NORDB` | the handle has no table to change: the disk had none, and `InitRDB` has not made one |
 | `RDBERR_BLOCKSIZE` | the medium's erase unit is larger than its blocks, so erasing one would take its neighbours |
 | `RDBERR_NAME` | a name that is empty, longer than `MAX_DEVICE_NAME` (30), holds a colon or a slash, or is another partition's; for `MountPartition`, taken on dos's list with every dot that fits |
-| `RDBERR_RANGE` | cylinders outside the usable ones, the wrong way round, or another partition's; or none free for 0 and 0 |
+| `RDBERR_RANGE` | cylinders outside the usable ones, the wrong way round, or another partition's; or none free for 0 and 0; a container that does not start on one of its table's cylinders; for `AddGPTPartition`, blocks outside the GPT's usable ones or another's, or a first block not on a whole MiB |
 | `RDBERR_FULL` | no block left in the table's area for another PartitionBlock; more than 16 file systems; or code that does not fit even with the area grown up to the first partition |
 | `RDBERR_CHANGED` | the medium in the unit is not the one the table was read from |
 | `RDBERR_MOUNTED` | a device node already opens some of the partition's blocks |
-| `RDBERR_FILESYSTEM` | no handler and no code in the table for the partition's DosType, or one whose file system cannot go there; for `AddFileSystem`, code that is not a handler's load file for this machine |
+| `RDBERR_FILESYSTEM` | no handler and no code in the table for the partition's DosType, or one whose file system cannot go there; for `AddFileSystem`, code that is not a handler's load file for this machine; for `MountGPTPartition`, a first block that holds no file system this machine reads, or the container |
+| `RDBERR_GPT` | the call does not go with the disk's GPT: `InitRDB` on a GPT with no container, `WriteRDB` of a table whose container is not on the disk yet, `AddGPTPartition` of a type of all zeroes or of a second container |
+| `RDBERR_NOGPT` | the handle has no sound GPT to change or write, and `InitGPT` has not made one |
 
 ## When a change is seen
 
@@ -459,7 +603,13 @@ One without gets a drive of its own over the whole medium, `SD0:` or
 `DU<n>:`, with the file system its first block says: posfs for a posfs
 label or a partition table with a posfs partition, otherwise FAT with
 `MSH\0`, which says the medium begins with a partition table and the
-volume is its first FAT partition ([posfs guide](posfs.md)). A unit
+volume is its first FAT partition ([posfs guide](posfs.md)). One with a
+GPT gets a drive per partition of its container's table, as above, and
+then one for each other GPT partition that holds a FAT32, exFAT or posfs
+volume and is not marked `gpt.ATTR_NO_AUTOMOUNT`: the first under the
+unit's own name, `SD0:` or `DU0:`, every later one under the unit's name
+with `P` and its entry number, `SD0P3:`. An EFI System partition is one
+of them. A unit
 that a device node opens already - a MountList entry mounted by hand
 first - is left to it. The drives stay with the handlers they got: the
 next card or stick in the unit is read through them, and a table
@@ -470,7 +620,8 @@ by `MountPartition`.
 `C:BindDrivers` starts at boot. Once its controllers are up it reads
 each namespace's table, as a card's: a drive per partition not marked
 `PBFF_NOMOUNT`, or `NV<n>:` over the whole namespace with the file
-system its first block says. A MountList entry mounted before
+system its first block says; one with a GPT gets its container's
+partitions and its other ones, `NV0:` and `NV0P2:`, as a card does. A MountList entry mounted before
 BindDrivers that opens the unit is its drive instead. An SSD does not
 change, so nothing is looked at again.
 
@@ -484,7 +635,10 @@ bootable partition with the highest boot priority is where the system
 starts from: one above the flash disk's `DH0`, whose priority is 0,
 starts it from the card. Those nodes are the card's drives; a card with
 no RigidDiskBlock gets none at cold start, and is mounted by hand
-(`Mount SD0:`).
+(`Mount SD0:`). A card with a GPT has the partitions of its container's
+table read the same way - only the GPT's copy in block 1, which needs
+the card's size for nothing - and its other GPT partitions get no node
+at cold start.
 
 The card can be one that a PC and U-Boot read too: a PC partition table
 with one FAT32 partition over the card, the RigidDiskBlock in block 1,
@@ -512,7 +666,14 @@ order it makes them in is the order any partitioning program needs
   list: every device node whose FileSysStartupMsg names the device and
   unit (`sdk.dos.filehandler.opensUnit`).
 - **Edits** go to the handle and nowhere else until Save: `AddPartition`,
-  `RemPartition`, and a partition's environment set field by field. A
+  `RemPartition`, and a partition's environment set field by field. On
+  a drive with a GPT the bar is the whole disk: the GPT's partitions lie
+  on it fixed, and are only picked and deleted (`RemGPTPartition`), and
+  the container's table is edited in the container's cylinders. New on
+  a GPT with no container makes one over its largest free run
+  (`AddGPTPartition`, then `InitRDB`), and New table offers a
+  RigidDiskBlock over the whole drive (`RemGPT`, `InitRDB`) or a GPT
+  with a container (`InitGPT`). A
   partition's edges stay on whole MiB of the medium where it has no erase
   unit, so a card's or a stick's erase blocks are never shared by two
   partitions; on the flash disk every cylinder is an edge. The file
@@ -520,9 +681,11 @@ order it makes them in is the order any partitioning program needs
   medium.
 - **Save** first finds what the new table ends: a partition that does not
   keep its cylinders, DosType and geometry loses its data, and a drive
-  mounted over one stops (`sameLayout` in the program's model). Each such
+  mounted over one stops (`sameLayout` in the program's model), and so
+  does one over a GPT partition deleted. Each such
   drive is inhibited before anything is written, and one that refuses -
-  a file open for writing on it - stops the save. Then `WriteRDB`; a
+  a file open for writing on it - stops the save. Then `WriteGPT` where
+  the GPT changed or was read from its copy, and `WriteRDB`; a
   medium changed since `OpenRDB` answers `RDBERR_CHANGED`, and the drive
   is read again with nothing written. Each partition not mounted yet and
   not marked `PBFF_NOMOUNT` is mounted at once
@@ -550,6 +713,7 @@ RDB                                  ; flash.device unit 0
 RDB sdcard.device UNIT 0 FULL        ; another disk, every field
 RDB INIT                             ; a fresh table on a disk with none
 RDB INIT FORCE                       ; ... or in place of the one it has
+RDB nvme.device INIT GPT FORCE       ; a GPT, a PowerOS container over it, a table in that
 RDB ADD DH1                          ; the largest free run, the flash file system
 RDB ADD DH1 LOW 100 HIGH 199 DOSTYPE FLS BOOTABLE
 RDB ADD DH1 DOSTYPE POS              ; a partition for posfs
@@ -562,7 +726,14 @@ RDB REMFS POS                        ; ... and taken out
 A change is made in the order `INIT`, `REMOVE`, `CHANGE`, `ADD`,
 `REMFS`, `ADDFS`, and the table is written once, as a whole, and
 printed, with the file systems it keeps and which code each one's
-partitions run. `DOSTYPE` takes four
+partitions run. A disk with a GPT has it listed first - each partition's
+entry number, first and last block, size, type and name, and which one
+holds the table - and its table is the container's, in the container's
+cylinders. `INIT` on such a disk makes the table in its container,
+`INIT GPT` a new GPT for the whole disk with a container over its free
+blocks, and `INIT FORCE` on a GPT with no container a table over the
+whole disk in place of the GPT. A changed GPT is written before the
+table. `DOSTYPE` takes four
 characters with `\<n>` for a byte by its value (`FLS\0`, or `FLS` with
 the zero left off) or a number (`0x464C5300`). `CHANGE` sets the
 partition's DosType, its `BOOTABLE` flag, or both, and leaves its

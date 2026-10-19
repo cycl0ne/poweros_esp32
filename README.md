@@ -111,7 +111,10 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   asked for); partitions from a RigidDiskBlock on the flash disk, a card,
   a stick or an SSD, each mounted as its own drive - a card's and a
   stick's by their device when they come in - and laid out on any drive
-  by dragging them in `SYS:System/HDToolBox`; a file system's code kept in the
+  by dragging them in `SYS:System/HDToolBox`; a disk with a GPT read and
+  written, its PowerOS partitions in a PowerOS container among the GPT's
+  and its FAT, exFAT and posfs partitions mounted beside them (`SD0:`,
+  `SD0P2:`); a file system's code kept in the
   table, which its partitions run when the ROM has none or an older one
   ([disks guide](sdk/docs/guides/rdb.md));
   notification when a file changes; record locks on ranges of a file;
@@ -306,9 +309,10 @@ On the VisionFive 2, U-Boot loads `kernel.bin` and starts it with
 The console is the debug UART on pins 8 and 10 of the 40-pin header,
 115200 8N1 (a 3.3 V serial adapter). The ROM holds sdcard.device and the
 FAT handler, so the machine can also start from its microSD card: a
-partition in the card's RigidDiskBlock that is bootable at a higher
-priority than `DH0:` is `SYS:`, and a card sold with a PC partition
-table keeps it, so one FAT32 volume can be both U-Boot's and PowerOS's
+partition in the card's RigidDiskBlock, or in the one in the PowerOS
+container of its GPT, that is bootable at a higher priority than `DH0:`
+is `SYS:`, and a card sold with a PC partition table keeps it, so one
+FAT32 volume can be both U-Boot's and PowerOS's
 ([disks guide](sdk/docs/guides/rdb.md)).
 
 More build steps and options:

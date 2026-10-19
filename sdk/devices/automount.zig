@@ -13,6 +13,14 @@
 //!    added while the name is taken (`DH0` becomes `DH0.` beside the flash
 //!    disk's). A partition whose file system cannot go on the medium is
 //!    passed over. The unit gets no drive of its own.
+//!
+//!    A medium with a sound GPT and no RigidDiskBlock of its own gets the
+//!    same for the table in its PowerOS container, and then a drive for
+//!    each other GPT partition whose first block holds a FAT32, exFAT or
+//!    posfs volume (MountGPTPartition), but none marked
+//!    `gpt.ATTR_NO_AUTOMOUNT`: the first of them under the unit's own
+//!    name (`SD0`), every later one under the unit's name with `P` and
+//!    its entry's number (`SD0P3`). The unit gets no drive of its own.
 //! 3. **The unit's own drive** otherwise (`DU0`, `SD0`), over the whole
 //!    medium, with the file system its first block says
 //!    (`sdk.dos.filesystems.wholeMediumChoice`), dotted the same way.
@@ -36,6 +44,7 @@
 const exec = @import("../libs/exec/exec.zig");
 const dos = @import("../libs/dos/dos.zig");
 const rdb = @import("../libs/rdb/rdb.zig");
+const gpt = @import("../libs/dos/gpt.zig");
 const ie = @import("inputevent.zig");
 const input_device = @import("input.zig");
 const ExecBase = @import("../interface/exec.zig").ExecBase;
@@ -46,13 +55,17 @@ const RDBBase = @import("../interface/rdb.zig").RDBBase;
 const handler_stack: u32 = 16384;
 const handler_pri: i32 = 5;
 
-/// The most drives one medium gets: a partition for each PartitionBlock
-/// a table's first blocks hold, or the unit's own.
+/// The most drives of one medium that are started when it comes in: a
+/// partition for each PartitionBlock a table's first blocks hold, or the
+/// unit's own. A medium with more - a GPT's partitions beside its
+/// container's - has the rest mounted too, started at their first use.
 pub const max_drives = 16;
 
-/// The rdb.library that has MountPartition.
+/// The rdb.library that has MountPartition, and the one that reads a
+/// GPT.
 const rdb_version = 1;
 const rdb_revision = 2;
+const gpt_revision = 4;
 
 /// What a unit keeps for its drives: whether its first medium has been
 /// looked at, and what the unit's own drive points at, which lives as
@@ -155,9 +168,9 @@ fn nameOf(text: [*:0]const u8) []const u8 {
     return text[0..length];
 }
 
-/// The medium's partitions mounted, when it holds a sound RigidDiskBlock.
-/// Whether it does: such a medium gets no drive of its own, even when
-/// none of its partitions could be mounted.
+/// The medium's partitions mounted, when it holds a sound RigidDiskBlock
+/// or a sound GPT. Whether it does: such a medium gets no drive of its
+/// own, even when none of its partitions could be mounted.
 fn mountTable(sys: *ExecBase, unit: Unit, drives: *Drives) bool {
     const lib = sys.OpenLibrary(rdb.RDBNAME, rdb_version) orelse return false;
     defer sys.CloseLibrary(lib);
@@ -165,7 +178,16 @@ fn mountTable(sys: *ExecBase, unit: Unit, drives: *Drives) bool {
     const rb: *RDBBase = @ptrCast(lib);
     const handle = rb.OpenRDB(unit.device, unit.number, null) orelse return false;
     defer rb.CloseRDB(handle);
-    if (handle.flags & rdb.RDBF_FOUND == 0) return false;
+    const reads_gpt = lib.version > rdb_version or lib.revision >= gpt_revision;
+    const has_gpt = reads_gpt and handle.flags & (rdb.RDBF_GPT | rdb.RDBF_GPTDAMAGED) == rdb.RDBF_GPT;
+    if (handle.flags & rdb.RDBF_FOUND == 0 and !has_gpt) return false;
+    if (handle.flags & rdb.RDBF_FOUND != 0) mountPartitions(rb, handle, drives);
+    if (has_gpt) mountGpt(rb, handle, unit, drives);
+    return true;
+}
+
+/// The table's partitions mounted, but those marked PBFF_NOMOUNT.
+fn mountPartitions(rb: *RDBBase, handle: *rdb.RDBHandle, drives: *Drives) void {
     var part = rb.NextPartition(handle, null);
     while (part) |partition| : (part = rb.NextPartition(handle, partition)) {
         if (partition.block.flags & dos.hardblocks.PBFF_NOMOUNT != 0) continue;
@@ -173,7 +195,43 @@ fn mountTable(sys: *ExecBase, unit: Unit, drives: *Drives) bool {
         if (rb.MountPartition(handle, partition, &name, 0) != rdb.RDBERR_OK) continue;
         drives.add(nameOf(&name));
     }
-    return true;
+}
+
+/// The GPT's partitions but the container mounted, by what their first
+/// block holds, and none marked ATTR_NO_AUTOMOUNT: the first that mounts
+/// under the unit's name, each later one under the unit's name with `P`
+/// and its entry's number.
+fn mountGpt(rb: *RDBBase, handle: *rdb.RDBHandle, unit: Unit, drives: *Drives) void {
+    const unit_name = nameOf(unit.name);
+    var first = true;
+    var part = rb.NextGPTPartition(handle, null);
+    while (part) |partition| : (part = rb.NextGPTPartition(handle, partition)) {
+        if (gpt.isContainer(&partition.entry)) continue;
+        if (partition.entry.attributes & gpt.ATTR_NO_AUTOMOUNT != 0) continue;
+        var wanted: rdb.MountName = @splat(0);
+        @memcpy(wanted[0..unit_name.len], unit_name);
+        if (!first) numbered(&wanted, unit_name.len, partition.number);
+        var name: rdb.MountName = undefined;
+        if (rb.MountGPTPartition(handle, partition, &wanted, &name, 0) != rdb.RDBERR_OK) continue;
+        drives.add(nameOf(&name));
+        first = false;
+    }
+}
+
+/// `P` and a partition's number put after the unit's name in `name`.
+fn numbered(name: *rdb.MountName, length: usize, number: u32) void {
+    var digits: [10]u8 = undefined;
+    var count: usize = 0;
+    var left = number;
+    while (true) {
+        digits[count] = '0' + @as(u8, @intCast(left % 10));
+        count += 1;
+        left /= 10;
+        if (left == 0) break;
+    }
+    if (length + 1 + count > name.len) return;
+    name[length] = 'P';
+    for (0..count) |index| name[length + 1 + index] = digits[count - 1 - index];
 }
 
 /// The unit's own drive over the whole medium, with the file system its

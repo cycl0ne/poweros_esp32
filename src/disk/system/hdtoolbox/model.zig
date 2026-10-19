@@ -3,8 +3,8 @@
 //! partitions lie and what is free between them, a partition made in a
 //! free run, moved and resized as far as its neighbours let it, the
 //! boundaries a partition snaps to, the bar's cylinders and pixels, the
-//! name a new partition is offered, sizes as text, and which drives a
-//! save leaves without their data.
+//! name a new partition is offered, sizes as text, which drives a save
+//! leaves without their data, and a GPT's partitions on the bar.
 //!
 //! **Cylinders.** A partition is a run of the table's usable cylinders,
 //! lo_cylinder to hi_cylinder (`Span`). A boundary is the place before a
@@ -32,6 +32,14 @@
 //! and so is one over the whole medium once the medium has a table. A
 //! partition of the old table that no partition of the new one is laid
 //! out as loses what it holds.
+//!
+//! **A disk with a GPT.** The bar is the whole disk: its cylinders are
+//! the table's, counted from the disk's first block, and the table's own
+//! are moved along by the container's first cylinder. The GPT's other
+//! partitions lie on the bar over the cylinders their blocks reach into
+//! (`blockSpan`). A drive mounted from the container reads the table's
+//! cylinders moved along the same way (`onDisk`), and one mounted from a
+//! partition of the GPT reads exactly that partition's blocks (`covers`).
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -220,6 +228,18 @@ pub const Bar = struct {
 /// Where a partition is held: by an edge, or in the middle to move it.
 pub const Grip = enum { low, middle, high };
 
+/// Which of the `spans` is drawn under pixel `pixel` of the bar, by its
+/// index; null for none.
+pub fn under(bar: Bar, spans: []const Span, pixel: i32) ?usize {
+    if (pixel < 0 or pixel >= bar.width) return null;
+    const at: u32 = @intCast(pixel);
+    for (spans, 0..) |span, index| {
+        const drawn = bar.pixels(span);
+        if (at >= drawn.left and at < drawn.right) return index;
+    }
+    return null;
+}
+
 /// What a pixel of the bar is over.
 pub const Hit = union(enum) {
     /// Off the bar, or a pixel no run is drawn at.
@@ -255,6 +275,37 @@ pub fn hit(bar: Bar, sorted: []const Span, pixel: i32, grip: u32) Hit {
     }
     if (cylinder < next) return .none;
     return .{ .gap = .{ .low = @intCast(next), .high = bar.area.high } };
+}
+
+// --- a GPT -----------------------------------------------------------------------
+
+/// Blocks `first` to `last` of a disk as the cylinders of `unit` blocks
+/// each that they reach into.
+pub fn blockSpan(first: u64, last: u64, unit: u64) Span {
+    const per = @max(unit, 1);
+    return .{ .low = @intCast(@min(first / per, 0xFFFF_FFFF)), .high = @intCast(@min(last / per, 0xFFFF_FFFF)) };
+}
+
+/// A table's partition as it lies on the disk when the table is in a
+/// container whose first block is `container`: its cylinders counted
+/// from the disk's first block, as MountPartition mounts it. A container
+/// that does not start on one of the partition's cylinders leaves it as
+/// it is, since such a partition is not mounted.
+pub fn onDisk(env: *const DosEnvec, container: u64) DosEnvec {
+    var moved_env = env.*;
+    const cylinder = @as(u64, env.surfaces) * env.blocks_per_track;
+    if (container == 0 or cylinder == 0 or container % cylinder != 0) return moved_env;
+    const offset = container / cylinder;
+    moved_env.low_cyl = @intCast(@min(@as(u64, env.low_cyl) + offset, 0xFFFF_FFFF));
+    moved_env.high_cyl = @intCast(@min(@as(u64, env.high_cyl) + offset, 0xFFFF_FFFF));
+    return moved_env;
+}
+
+/// Whether a drive over `env` reads exactly blocks `first` to `last` of
+/// `block_bytes` each: a partition of the GPT, mounted.
+pub fn covers(env: *const DosEnvec, first: u64, last: u64, block_bytes: u32) bool {
+    if (env.wholeMedium() or last < first) return false;
+    return env.byteOf(0) == first * block_bytes and env.blocks() * env.size_block == (last - first + 1) * block_bytes;
 }
 
 // --- names -----------------------------------------------------------------------

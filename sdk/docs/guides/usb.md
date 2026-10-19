@@ -332,6 +332,12 @@ drives:
   its DosType asks for. The unit gets no drive of its own. A partition
   whose file system cannot go on a stick - the flash file system, or
   `MSH`/`POS\1` inside a partition - is passed over.
+- **A GPT**, as a PC partitions a stick: a drive per partition of the
+  RigidDiskBlock in its PowerOS container, as above, and one for each
+  other GPT partition that holds a FAT32, exFAT or posfs volume and is
+  not marked to be left alone (attribute bit 63) - the first `DU<n>`,
+  every later one `DU<n>P<entry>`, `DU0P3:`. The unit gets no drive of
+  its own.
 - **No table**: `DU<n>` over the whole stick, with the handler its
   first block asks for. A posfs volume (`POS\0`) or a partition table
   with a posfs partition (`POS\1`) gives posfs-handler

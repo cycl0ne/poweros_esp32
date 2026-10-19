@@ -50,6 +50,7 @@ test {
     _ = @import("libs/wpa/tests/library.zig");
     _ = @import("libs/wpa/wpa_lvo.zig");
     _ = @import("libs/rdb/tests/rdb.zig");
+    _ = @import("libs/rdb/tests/gpt.zig");
     _ = @import("libs/pci/tests/pci.zig");
     _ = @import("libs/usb/tests/usb.zig");
     _ = @import("devs/xhci/tests/xhci.zig");

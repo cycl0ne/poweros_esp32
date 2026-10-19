@@ -6,8 +6,8 @@ const rdb = sdk.rdb;
 const RDBBase = @import("../rdb_base.zig").RDBBase;
 const _handle = @import("_handle.zig");
 
-/// Lets go of a handle: its partition nodes, its buffer and the unit it
-/// has open.
+/// Lets go of a handle: its partition nodes, its GPT's, its buffer and
+/// the unit it has open.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -23,8 +23,9 @@ const _handle = @import("_handle.zig");
 /// None.
 ///
 /// BEHAVIOR:
-/// Nothing is written: a table changed and not written with WriteRDB is
-/// dropped, and the disk keeps the one it has. Null does nothing.
+/// Nothing is written: a table changed and not written with WriteRDB, or
+/// a GPT not written with WriteGPT, is dropped, and the disk keeps what
+/// it has. Null does nothing.
 ///
 /// CONTEXT:
 /// - Waits: yes, CloseDevice may.
@@ -33,8 +34,8 @@ const _handle = @import("_handle.zig");
 /// - Process: the task that opened the handle.
 ///
 /// OWNERSHIP:
-/// The handle and every RDBPartition of it are freed; a pointer to any of
-/// them is no use afterwards.
+/// The handle and every RDBPartition, RDBFileSystem and GPTPartition of
+/// it are freed; a pointer to any of them is no use afterwards.
 ///
 /// NOTES:
 /// None.

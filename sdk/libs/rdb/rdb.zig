@@ -21,6 +21,20 @@
 //! ROM has no handler for the DosType or an older one
 //! (`sdk.dos.filesystems.storedWins`).
 //!
+//! **A disk with a GPT.** OpenRDB reads a GUID partition table too
+//! (`sdk.dos.gpt`), when the disk has no RigidDiskBlock in its first
+//! blocks: one `GPTPartition` per used entry, on the handle's third list.
+//! The disk's PowerOS partitions are in its container, a GPT partition of
+//! the type `gpt.TYPE_CONTAINER` with a RigidDiskBlock of its own, which
+//! the handle's table is then (RDBF_CONTAINER): its block numbers and
+//! cylinders count from the container's first block, and `geometry` is
+//! the container's. MountPartition puts the container's partitions where
+//! they are on the disk, and MountGPTPartition mounts the GPT's other
+//! partitions by what their first block holds. InitGPT, AddGPTPartition
+//! and RemGPTPartition change the GPT in the handle, and WriteGPT puts it
+//! on the disk, both copies; RemGPT takes it out of the handle, for a
+//! table over the whole disk.
+//!
 //! The handle and its nodes are the library's allocations, handed to the
 //! program until CloseRDB. A program changes what is documented as its to
 //! change, and leaves the list itself to the calls.
@@ -29,6 +43,7 @@ const exec = @import("../exec/exec.zig");
 const trackdisk = @import("../../devices/trackdisk.zig");
 const hardblocks = @import("../dos/hardblocks.zig");
 const path = @import("../dos/path.zig");
+const gpt = @import("../dos/gpt.zig");
 
 /// The library's name, for OpenLibrary.
 pub const RDBNAME = "rdb.library";
@@ -76,7 +91,17 @@ pub const RDBERR_MOUNTED: i32 = -10;
 /// MountPartition: no handler serves the partition's DosType, or its file
 /// system cannot go on this medium or inside a partition. AddFileSystem:
 /// the code is not a handler's load file for this machine.
+/// MountGPTPartition: the partition's first block holds no file system
+/// this machine reads, or the partition is the container.
 pub const RDBERR_FILESYSTEM: i32 = -11;
+/// The call does not go with the disk's GPT: InitRDB on a disk with a GPT
+/// and no container (RemGPT first, or a container added), WriteRDB of a
+/// table whose container WriteGPT has not put on the disk yet, or
+/// AddGPTPartition of a type of all zeroes or of a second container.
+pub const RDBERR_GPT: i32 = -12;
+/// The handle holds no GPT to change or write: the disk had none, or
+/// none that is sound, and InitGPT has not made one.
+pub const RDBERR_NOGPT: i32 = -13;
 
 // --- MountPartition -------------------------------------------------------------
 
@@ -105,6 +130,20 @@ pub const RDBF_FOREIGN: u32 = 4;
 /// or RemPartition changed it since it was read or written. A program
 /// that changes a field directly sets it itself, if it cares.
 pub const RDBF_CHANGED: u32 = 8;
+/// The disk holds a GPT - a protective MBR in its first block, or a GPT
+/// header in its second - or InitGPT made one: its partitions are on
+/// `gpt_partitions`.
+pub const RDBF_GPT: u32 = 16;
+/// The disk says it holds a GPT, but neither copy is sound: the list is
+/// empty, and nothing is written over it before InitGPT or RemGPT.
+pub const RDBF_GPTDAMAGED: u32 = 32;
+/// The GPT in memory is not the one on the disk: InitGPT, AddGPTPartition
+/// or RemGPTPartition changed it, or it was read from the copy at the end.
+pub const RDBF_GPTCHANGED: u32 = 64;
+/// The table is the one in the GPT's container, whose first block on the
+/// disk is `container`: `block`, the table's block numbers and cylinders
+/// count from there, and `geometry` is the container's.
+pub const RDBF_CONTAINER: u32 = 128;
 
 /// A disk's RigidDiskBlock and partitions, in memory. OpenRDB makes it,
 /// CloseRDB frees it; the library keeps more behind it than is shown here.
@@ -132,6 +171,21 @@ pub const RDBHandle = extern struct {
     /// order of the disk's chain: walk it with NextFileSystem, change it
     /// with AddFileSystem and RemFileSystem.
     file_systems: exec.List = .{},
+    /// With RDBF_GPT: the GPT's partitions, GPTPartition nodes in the
+    /// order of their entries, the container among them: walk it with
+    /// NextGPTPartition, change it with AddGPTPartition and
+    /// RemGPTPartition.
+    gpt_partitions: exec.List = .{},
+    /// The blocks of the whole medium: `geometry.total_sectors`, but for
+    /// a table in a container, whose `geometry` is the container's.
+    disk_blocks: u64 align(4) = 0,
+    /// With RDBF_CONTAINER: the container's first block on the medium.
+    container: u64 align(4) = 0,
+    /// With RDBF_GPT: the GPT's header, as read from the disk - the copy
+    /// in block 1, or the one in the last block where that is not sound -
+    /// or as InitGPT made it. Its disk GUID and usable blocks say what the
+    /// GPT's partitions may have; the rest is WriteGPT's.
+    gpt_header: gpt.Header = .{},
 };
 
 /// One partition, on its handle's list.
@@ -166,6 +220,21 @@ pub const RDBFileSystem = extern struct {
     /// The blocks the code takes on the disk; 0 for code WriteRDB has
     /// not written yet.
     blocks: u32 = 0,
+};
+
+/// One partition of the GPT, on its handle's list.
+pub const GPTPartition = extern struct {
+    /// On the handle's list; it has no name (`gpt.nameText` gives the
+    /// entry's).
+    node: exec.Node = .{},
+    /// The entry: its type, its own GUID, its first and last block on the
+    /// medium, its attributes (`gpt.ATTR_*`) and its name. The name and
+    /// the attributes are the program's to change; the rest is the
+    /// calls'.
+    entry: gpt.Entry = .{},
+    /// Its entry's place in the GPT, from 1: what the drive of a medium's
+    /// second partition is named after (`DU0P2`).
+    number: u32 = 0,
 };
 
 /// The partition's drive name, as the node calls it.

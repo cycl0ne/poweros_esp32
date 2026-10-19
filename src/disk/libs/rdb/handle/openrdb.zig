@@ -46,6 +46,22 @@ const _handle = @import("_handle.zig");
 /// - RDBF_FOREIGN: a RigidDiskBlock written for another block size,
 ///   which is left as it is and counts as none.
 ///
+/// A disk with no RigidDiskBlock of its own whose first block is a
+/// protective MBR, or whose second begins with a GPT header, holds a GPT
+/// (`sdk.dos.gpt`):
+/// - RDBF_GPT: its partitions are on `gpt_partitions`, a GPTPartition per
+///   used entry, and its header is `gpt_header` - the one in block 1 with
+///   its entries where both are sound, the copy in the last block
+///   otherwise, which also sets RDBF_GPTCHANGED.
+/// - RDBF_GPTDAMAGED: neither copy is sound, and the list is empty.
+/// - RDBF_CONTAINER: the first of its partitions of the type
+///   `gpt.TYPE_CONTAINER` is where the table is looked for, as on a disk
+///   of its own: `container` is its first block on the disk, every block
+///   number and cylinder of the table counts from there, `geometry`
+///   counts the container's blocks and `disk_blocks` the disk's.
+/// A RigidDiskBlock in the disk's own first blocks is the table even where
+/// the disk has a GPT too, and the GPT is not read.
+///
 /// A disk with no table is not a failure - that is how a blank one looks -
 /// and InitRDB makes it one. The blocks of the file system headers, of
 /// their code and of the bad-block list are noted, so WriteRDB never puts
@@ -72,7 +88,7 @@ const _handle = @import("_handle.zig");
 /// WriteRDB uses none of them.
 ///
 /// SEE ALSO:
-/// `CloseRDB`, `NextPartition`, `InitRDB`, `WriteRDB`
+/// `CloseRDB`, `NextPartition`, `InitRDB`, `WriteRDB`, `NextGPTPartition`
 ///
 /// EXAMPLES:
 /// ```zig

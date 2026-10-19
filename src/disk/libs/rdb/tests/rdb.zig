@@ -61,6 +61,16 @@ const Medium = extern struct {
     /// after, as a medium whose power went would.
     changes_left: u32 = std.math.maxInt(u32),
     image: [medium_blocks * block_bytes]u8 = @splat(0xFF),
+    /// A larger medium than `image`, the test's allocation, when not
+    /// null: what every command reads and writes then.
+    large: ?[*]u8 = null,
+    large_bytes: usize = 0,
+
+    /// What the medium holds: `large`, or `image`.
+    fn bytes(medium: *Medium) []u8 {
+        if (medium.large) |large| return large[0..medium.large_bytes];
+        return &medium.image;
+    }
 };
 
 fn mediumOf(dev: *exec.Device) *Medium {
@@ -104,7 +114,8 @@ fn mediumBeginIO(dev: *exec.Device, request: *exec.IORequest) callconv(.c) void 
 }
 
 fn serve(medium: *Medium, io: *exec.IOStdReq) i8 {
-    const size = medium.image.len;
+    const image = medium.bytes();
+    const size = image.len;
     switch (io.req.command) {
         trackdisk.TD_GETGEOMETRY => {
             const geometry: *trackdisk.DriveGeometry = @ptrCast(@alignCast(io.data.?));
@@ -132,7 +143,7 @@ fn serve(medium: *Medium, io: *exec.IOStdReq) i8 {
             if (io.offset + io.length > size) return trackdisk.TDERR_SeekError;
             const at: usize = @intCast(io.offset);
             const length: usize = @intCast(io.length);
-            const part = medium.image[at..][0..length];
+            const part = image[at..][0..length];
             if (io.req.command != exec.CMD_READ) {
                 if (medium.changes_left == 0) return trackdisk.TDERR_WriteProt;
                 medium.changes_left -= 1;
@@ -245,7 +256,7 @@ const Rig = struct {
 
     /// A block of the medium as the structure at its start.
     fn block(rig: *Rig, comptime T: type, number: u32) *align(1) T {
-        return @ptrCast(&rig.medium.image[number * block_bytes]);
+        return @ptrCast(&rig.medium.bytes()[@as(usize, number) * block_bytes]);
     }
 
     /// The blocks of the first RDB_LOCATION_LIMIT holding a sound
@@ -1189,4 +1200,423 @@ test "a partition runs the code its table brings, and the unit's partitions shar
     // The entry is the system's, for its life; the test gives it back.
     rig.sys.FreeVec(entry.image);
     rig.sys.FreeVec(entry);
+}
+
+// --- a disk with a GPT -----------------------------------------------------------
+
+const gpt = sdk.dos.gpt;
+
+/// A medium of 4 MiB, room for a GPT and partitions on 1 MiB steps.
+const gpt_blocks = 8192;
+/// Its last usable block, below the copy's entries and header.
+const last_usable = gpt_blocks - 34;
+
+/// The rig's medium made a card of `gpt_blocks` zeroed blocks, in memory
+/// the test allocates.
+const Large = struct {
+    memory: []u8,
+
+    fn attach(rig: *Rig) !Large {
+        const memory = try testing.allocator.alloc(u8, gpt_blocks * block_bytes);
+        @memset(memory, 0);
+        rig.medium.large = memory.ptr;
+        rig.medium.large_bytes = memory.len;
+        rig.medium.erase_size = 0;
+        return .{ .memory = memory };
+    }
+
+    fn detach(large: *Large, rig: *Rig) void {
+        rig.medium.large = null;
+        rig.medium.large_bytes = 0;
+        testing.allocator.free(large.memory);
+    }
+
+    fn block(large: *Large, number: u64) []u8 {
+        return large.memory[@intCast(number * block_bytes)..][0..block_bytes];
+    }
+
+    fn at(large: *Large, number: u64, length: u64) []u8 {
+        return large.memory[@intCast(number * block_bytes)..][0..@intCast(length)];
+    }
+
+    /// A GPT with `entries`, both copies and the protective MBR, laid
+    /// down as another system's tool would.
+    fn lay(large: *Large, entries: []const gpt.Entry) !void {
+        const guid = gpt.parseGuid("11111111-2222-4333-8444-555555555555").?;
+        var primary = gpt.freshHeader(gpt_blocks, block_bytes, &guid) orelse return error.TooSmall;
+        const length = gpt.entriesLength(&primary);
+        const array = large.at(primary.partition_entry_lba, length);
+        @memset(array, 0);
+        for (entries, 0..) |*entry, index| gpt.putEntry(&primary, array, @intCast(index), entry);
+        var backup = gpt.backupOf(&primary);
+        @memcpy(large.at(backup.partition_entry_lba, length), array);
+        gpt.putHeader(&primary, gpt.entriesCrc(&primary, array), large.block(primary.my_lba));
+        gpt.putHeader(&backup, gpt.entriesCrc(&backup, array), large.block(backup.my_lba));
+        gpt.makeProtective(large.block(0), gpt_blocks);
+    }
+
+    /// The header in block `number` when it and its entries are sound.
+    fn copy(large: *Large, number: u64) ?gpt.Header {
+        const header = gpt.readHeader(large.block(number), number, gpt_blocks) orelse return null;
+        const entries = large.at(header.partition_entry_lba, gpt.entriesLength(&header));
+        if (!gpt.entriesSound(&header, entries)) return null;
+        return header;
+    }
+
+    /// Entry `index` of the copy in block `number`.
+    fn entryOf(large: *Large, header: *const gpt.Header, index: u32) gpt.Entry {
+        return gpt.entryAt(header, large.at(header.partition_entry_lba, gpt.entriesLength(header)), index);
+    }
+
+    /// The first block of a FAT32 volume.
+    fn fatVolume(large: *Large, number: u64) void {
+        const boot = large.block(number);
+        @memset(boot, 0);
+        sdk.dos.fat.putU16(boot, sdk.dos.fat.bpb_bytes_per_sector, block_bytes);
+        boot[sdk.dos.fat.bpb_sectors_per_cluster] = 8;
+        sdk.dos.fat.putU16(boot, sdk.dos.fat.bpb_reserved_sectors, 32);
+        boot[sdk.dos.fat.bpb_fat_count] = 2;
+        sdk.dos.fat.putU32(boot, sdk.dos.fat.bpb_sectors_per_fat_32, 16);
+        sdk.dos.fat.putU32(boot, sdk.dos.fat.bpb_root_cluster, 2);
+        sdk.dos.fat.putU16(boot, sdk.dos.fat.signature_at, sdk.dos.fat.signature);
+    }
+
+    /// The first block of a posfs volume.
+    fn posfsVolume(large: *Large, number: u64) void {
+        const label = large.block(number);
+        @memset(label, 0);
+        std.mem.writeInt(u32, label[0..4], sdk.dos.posfs.layout.label_magic, .little);
+    }
+};
+
+fn gptEntry(type_guid: gpt.Guid, first: u64, last: u64, name: []const u8) gpt.Entry {
+    var made: gpt.Entry = .{ .partition_type_guid = type_guid, .starting_lba = first, .ending_lba = last };
+    made.unique_partition_guid = @splat(@truncate(first >> 8));
+    gpt.setName(&made, name);
+    return made;
+}
+
+fn gptNumbers(rb: *RDBBase, handle: *rdb.RDBHandle) u32 {
+    var numbers: u32 = 0;
+    var part = rb.NextGPTPartition(handle, null);
+    while (part) |p| : (part = rb.NextGPTPartition(handle, p)) numbers = numbers * 10 + p.number;
+    return numbers;
+}
+
+test "a GPT read: its partitions in the order of their entries, and the table in its container, counted from the container's first block" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    var large = try Large.attach(&rig);
+    defer large.detach(&rig);
+    const rb = rig.rb;
+    try large.lay(&.{
+        gptEntry(gpt.TYPE_EFI_SYSTEM, 2048, 4095, "EFI"),
+        gptEntry(gpt.TYPE_CONTAINER, 4096, last_usable, "PowerOS"),
+    });
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBF_GPT | rdb.RDBF_CONTAINER, handle.flags);
+        try testing.expectEqual(@as(u32, 12), gptNumbers(rb, handle));
+        try testing.expectEqual(@as(u64, gpt_blocks), handle.disk_blocks);
+        try testing.expectEqual(@as(u64, 4096), handle.container);
+        try testing.expectEqual(@as(u64, last_usable - 4096 + 1), handle.geometry.total_sectors);
+        try testing.expectEqual(gpt.parseGuid("11111111-2222-4333-8444-555555555555").?, handle.gpt_header.disk_guid);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+        try testing.expectEqual(@as(u32, 0), handle.rdb.rdb_blocks_lo);
+        try testing.expectEqual(@as(u32, last_usable - 4096), handle.rdb.hi_cylinder);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "DH1", 0, 0, sdk.dos.posfs.ID_POSFS_DISK));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+        try testing.expectEqual(@as(u32, 0), handle.block);
+    }
+    const table = rig.block(hardblocks.RigidDiskBlock, 4096).*;
+    try testing.expect(hardblocks.sound(&table, hardblocks.IDNAME_RIGIDDISK));
+    try testing.expect(large.copy(1) != null);
+    try testing.expect(large.copy(gpt_blocks - 1) != null);
+
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expectEqual(rdb.RDBF_FOUND | rdb.RDBF_GPT | rdb.RDBF_CONTAINER, handle.flags);
+    const part = rb.FindPartition(handle, "DH1") orelse return error.NotFound;
+    try testing.expectEqual(@as(u32, 16), part.block.environment.low_cyl);
+}
+
+test "a GPT with no container: no table, InitRDB refused; after RemGPT a table over the whole disk, which wipes the GPT" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    var large = try Large.attach(&rig);
+    defer large.detach(&rig);
+    const rb = rig.rb;
+    try large.lay(&.{gptEntry(gpt.TYPE_EFI_SYSTEM, 2048, 4095, "EFI")});
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBF_GPT, handle.flags);
+        try testing.expectEqual(rdb.RDBERR_GPT, rb.InitRDB(handle));
+        rb.RemGPT(handle);
+        try testing.expectEqual(@as(u32, 0), handle.flags & (rdb.RDBF_GPT | rdb.RDBF_CONTAINER));
+        try testing.expect(rb.NextGPTPartition(handle, null) == null);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+        // A protective MBR is no PC's table to keep.
+        try testing.expectEqual(@as(u32, 0), handle.rdb.rdb_blocks_lo);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "DH1", 0, 0, sdk.dos.posfs.ID_POSFS_DISK));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+    }
+    try testing.expect(!gpt.signed(large.block(1)));
+    try testing.expect(!gpt.signed(large.block(gpt_blocks - 1)));
+    try testing.expect(!gpt.protective(large.block(0)));
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expectEqual(rdb.RDBF_FOUND, handle.flags);
+}
+
+test "a fresh GPT: a partition and a container added, the GPT written before the table in it, both copies and a protective MBR" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    var large = try Large.attach(&rig);
+    defer large.detach(&rig);
+    const rb = rig.rb;
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(@as(u32, 0), handle.flags);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitGPT(handle));
+        try testing.expectEqual(rdb.RDBF_GPT | rdb.RDBF_GPTCHANGED | rdb.RDBF_CHANGED, handle.flags);
+        try testing.expectEqual(rdb.RDBERR_GPT, rb.InitRDB(handle));
+
+        var err: i32 = 99;
+        var shared = gptEntry(gpt.TYPE_BASIC_DATA, 2048, 4095, "Shared");
+        shared.unique_partition_guid = @splat(0);
+        const first = rb.AddGPTPartition(handle, &shared, &err) orelse return error.NotAdded;
+        try testing.expectEqual(rdb.RDBERR_OK, err);
+        try testing.expectEqual(@as(u32, 1), first.number);
+        try testing.expect(!gpt.isNull(&first.entry.unique_partition_guid));
+
+        // The blocks a partition may not have, and what is no partition.
+        var wrong = gptEntry(gpt.TYPE_LINUX, 4000, 5000, "");
+        try testing.expect(rb.AddGPTPartition(handle, &wrong, &err) == null);
+        try testing.expectEqual(rdb.RDBERR_RANGE, err);
+        wrong = gptEntry(gpt.TYPE_LINUX, 4097, 5000, "");
+        try testing.expect(rb.AddGPTPartition(handle, &wrong, &err) == null);
+        try testing.expectEqual(rdb.RDBERR_RANGE, err);
+        wrong = gptEntry(@splat(0), 4096, 5000, "");
+        try testing.expect(rb.AddGPTPartition(handle, &wrong, &err) == null);
+        try testing.expectEqual(rdb.RDBERR_GPT, err);
+
+        // The container takes the largest free run, and is the window.
+        const container_entry = gptEntry(gpt.TYPE_CONTAINER, 0, 0, "PowerOS");
+        const container = rb.AddGPTPartition(handle, &container_entry, &err) orelse return error.NotAdded;
+        try testing.expectEqual(@as(u32, 2), container.number);
+        try testing.expectEqual(@as(u64, 4096), container.entry.starting_lba);
+        try testing.expectEqual(@as(u64, last_usable), container.entry.ending_lba);
+        try testing.expect(handle.flags & rdb.RDBF_CONTAINER != 0);
+        try testing.expect(rb.AddGPTPartition(handle, &container_entry, &err) == null);
+        try testing.expectEqual(rdb.RDBERR_GPT, err);
+
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "DH1", 0, 0, sdk.dos.posfs.ID_POSFS_DISK));
+        try testing.expectEqual(rdb.RDBERR_GPT, rb.WriteRDB(handle));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteGPT(handle));
+        try testing.expectEqual(@as(u32, 0), handle.flags & rdb.RDBF_GPTCHANGED);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+    }
+    try testing.expect(gpt.protective(large.block(0)));
+    const primary = large.copy(1) orelse return error.NoPrimary;
+    const backup = large.copy(gpt_blocks - 1) orelse return error.NoBackup;
+    try testing.expectEqual(primary.disk_guid, backup.disk_guid);
+    try testing.expectEqual(primary.partition_entry_array_crc32, backup.partition_entry_array_crc32);
+    try testing.expect(gpt.isContainer(&large.entryOf(&primary, 1)));
+    var name: [gpt.name_units:0]u8 = undefined;
+    try testing.expectEqualStrings("Shared", gpt.nameText(&large.entryOf(&backup, 0), &name));
+    const table = rig.block(hardblocks.RigidDiskBlock, 4096).*;
+    try testing.expect(hardblocks.sound(&table, hardblocks.IDNAME_RIGIDDISK));
+
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expectEqual(rdb.RDBF_FOUND | rdb.RDBF_GPT | rdb.RDBF_CONTAINER, handle.flags);
+    try testing.expectEqual(@as(u32, 12), gptNumbers(rb, handle));
+    // Taking the container out takes its table along.
+    var part = rb.NextGPTPartition(handle, null);
+    while (part) |p| : (part = rb.NextGPTPartition(handle, p)) {
+        if (!gpt.isContainer(&p.entry)) continue;
+        rb.RemGPTPartition(handle, p);
+        break;
+    }
+    try testing.expectEqual(@as(u32, 0), handle.flags & (rdb.RDBF_FOUND | rdb.RDBF_CONTAINER));
+    try testing.expect(rb.NextPartition(handle, null) == null);
+    try testing.expectEqual(@as(u64, gpt_blocks), handle.geometry.total_sectors);
+}
+
+test "a GPT whose block 1 is damaged is read from its copy at the end, and WriteGPT puts block 1 back; with both damaged nothing is written" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    var large = try Large.attach(&rig);
+    defer large.detach(&rig);
+    const rb = rig.rb;
+    try large.lay(&.{gptEntry(gpt.TYPE_CONTAINER, 2048, last_usable, "PowerOS")});
+    large.block(1)[40] ^= 1;
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBF_GPT | rdb.RDBF_GPTCHANGED | rdb.RDBF_CONTAINER, handle.flags);
+        try testing.expectEqual(@as(u64, gpt_blocks - 1), handle.gpt_header.my_lba);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+        try testing.expectEqual(rdb.RDBERR_GPT, rb.WriteRDB(handle));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteGPT(handle));
+        try testing.expectEqual(@as(u64, 1), handle.gpt_header.my_lba);
+    }
+    try testing.expect(large.copy(1) != null);
+
+    large.block(1)[40] ^= 1;
+    large.block(gpt_blocks - 1)[40] ^= 1;
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expectEqual(rdb.RDBF_GPT | rdb.RDBF_GPTDAMAGED, handle.flags);
+    try testing.expect(rb.NextGPTPartition(handle, null) == null);
+    try testing.expectEqual(rdb.RDBERR_GPT, rb.InitRDB(handle));
+    try testing.expectEqual(rdb.RDBERR_NOGPT, rb.WriteGPT(handle));
+    const entry = gptEntry(gpt.TYPE_LINUX, 2048, 4095, "");
+    var err: i32 = 0;
+    try testing.expect(rb.AddGPTPartition(handle, &entry, &err) == null);
+    try testing.expectEqual(rdb.RDBERR_NOGPT, err);
+}
+
+test "a GPT write cut off at any point leaves a whole GPT on the disk, the old one or the new" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    var large = try Large.attach(&rig);
+    defer large.detach(&rig);
+    const rb = rig.rb;
+    try large.lay(&.{gptEntry(gpt.TYPE_EFI_SYSTEM, 2048, 4095, "old")});
+    const before = try testing.allocator.dupe(u8, large.memory);
+    defer testing.allocator.free(before);
+
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    rb.RemGPTPartition(handle, rb.NextGPTPartition(handle, null).?);
+    const entry = gptEntry(gpt.TYPE_LINUX, 4096, 6143, "new");
+    _ = rb.AddGPTPartition(handle, &entry, null) orelse return error.NotAdded;
+    var cut: u32 = 0;
+    var finished = false;
+    while (!finished) : (cut += 1) {
+        @memcpy(large.memory, before);
+        rig.medium.changes_left = cut;
+        finished = rb.WriteGPT(handle) == rdb.RDBERR_OK;
+        const header = large.copy(1) orelse large.copy(gpt_blocks - 1) orelse return error.NoGpt;
+        const first = large.entryOf(&header, 0);
+        try testing.expect(gpt.sameGuid(&first.partition_type_guid, &gpt.TYPE_EFI_SYSTEM) or
+            gpt.sameGuid(&first.partition_type_guid, &gpt.TYPE_LINUX));
+    }
+    rig.medium.changes_left = std.math.maxInt(u32);
+    try testing.expect(cut > 60);
+    try testing.expect(gpt.sameGuid(&large.entryOf(&large.copy(1).?, 0).partition_type_guid, &gpt.TYPE_LINUX));
+}
+
+test "a protective MBR is no PC's table: a RigidDiskBlock in block 1 behind one is the table, and a fresh table starts at block 0" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const rb = rig.rb;
+    @memset(rig.medium.image[0 .. 2 * block_bytes], 0);
+    gpt.makeProtective(rig.medium.image[0..block_bytes], medium_blocks);
+    var table: hardblocks.RigidDiskBlock = .{ .block_bytes = block_bytes, .cylinders = medium_blocks, .sectors = 1, .heads = 1, .cyl_blocks = 1, .rdb_blocks_lo = 1, .rdb_blocks_hi = 15, .lo_cylinder = 16, .hi_cylinder = medium_blocks - 1 };
+    table.checksum = hardblocks.checksumOf(&table);
+    @memcpy(rig.medium.image[block_bytes..][0..@sizeOf(hardblocks.RigidDiskBlock)], std.mem.asBytes(&table));
+
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expectEqual(rdb.RDBF_FOUND, handle.flags);
+    try testing.expectEqual(@as(u32, 1), handle.block);
+    try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+    try testing.expectEqual(@as(u32, 0), handle.rdb.rdb_blocks_lo);
+}
+
+test "a container's partition mounted at its blocks on the disk, and a GPT partition by what its first block holds" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    var large = try Large.attach(rig);
+    defer large.detach(rig);
+    const rb = rig.rb;
+    try large.lay(&.{
+        gptEntry(gpt.TYPE_BASIC_DATA, 2048, 3071, "FAT"),
+        gptEntry(gpt.TYPE_LINUX, 3072, 4095, "Linux"),
+        gptEntry(gpt.TYPE_BASIC_DATA, 4096, 5119, "posfs"),
+        gptEntry(gpt.TYPE_CONTAINER, 6144, last_usable, "PowerOS"),
+    });
+    large.fatVolume(2048);
+    large.posfsVolume(4096);
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "DH1", 16, 100, sdk.dos.posfs.ID_POSFS_DISK));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+    }
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountPartition(handle, rb.FindPartition(handle, "DH1").?, null, 0));
+    var env = sdk.dos.filehandler.startupOf(dos_rig.device("DH1").?.misc.handler.startup).?.environ.?;
+    try testing.expectEqual(@as(u32, 6144 + 16), env.low_cyl);
+    try testing.expectEqual(@as(u32, 6144 + 100), env.high_cyl);
+
+    const fat_part = rb.NextGPTPartition(handle, null).?;
+    const linux = rb.NextGPTPartition(handle, fat_part).?;
+    const posfs_part = rb.NextGPTPartition(handle, linux).?;
+    const container = rb.NextGPTPartition(handle, posfs_part).?;
+    var name: rdb.MountName = undefined;
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountGPTPartition(handle, fat_part, "SD0", &name, 0));
+    try testing.expectEqualStrings("SD0", nameText(&name));
+    const fat_node = dos_rig.device("SD0") orelse return error.NotMounted;
+    try testing.expectEqualStrings(sdk.dos.filesystems.fat_handler, std.mem.span(fat_node.misc.handler.handler.?));
+    env = sdk.dos.filehandler.startupOf(fat_node.misc.handler.startup).?.environ.?;
+    try testing.expectEqual(sdk.dos.ID_MSDOS_DISK, env.dos_type);
+    try testing.expectEqual(@as(u32, 2048), env.low_cyl);
+    try testing.expectEqual(@as(u32, 3071), env.high_cyl);
+    try testing.expectEqual(@as(u64, 1024), env.blocks());
+    try testing.expectEqual(rdb.RDBERR_MOUNTED, rb.MountGPTPartition(handle, fat_part, "SD1", null, 0));
+
+    try testing.expectEqual(rdb.RDBERR_FILESYSTEM, rb.MountGPTPartition(handle, linux, "SD0P2", null, 0));
+    try testing.expectEqual(rdb.RDBERR_FILESYSTEM, rb.MountGPTPartition(handle, container, "SD0P4", null, 0));
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountGPTPartition(handle, posfs_part, "SD0", &name, 0));
+    try testing.expectEqualStrings("SD0.", nameText(&name));
+    env = sdk.dos.filehandler.startupOf(dos_rig.device("SD0.").?.misc.handler.startup).?.environ.?;
+    try testing.expectEqual(sdk.dos.posfs.ID_POSFS_DISK, env.dos_type);
+}
+
+test "a unit's first medium with a GPT: the container's partitions, then its FAT and posfs partitions under the unit's name, none it may not mount, none of its own" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    var large = try Large.attach(rig);
+    defer large.detach(rig);
+    var hidden = gptEntry(gpt.TYPE_BASIC_DATA, 7168, last_usable, "hidden");
+    hidden.attributes = gpt.ATTR_NO_AUTOMOUNT;
+    try large.lay(&.{
+        gptEntry(gpt.TYPE_EFI_SYSTEM, 2048, 3071, "EFI"),
+        gptEntry(gpt.TYPE_CONTAINER, 3072, 5119, "PowerOS"),
+        gptEntry(gpt.TYPE_LINUX, 5120, 6143, "Linux"),
+        gptEntry(gpt.TYPE_BASIC_DATA, 6144, 7167, "Work"),
+        hidden,
+    });
+    large.fatVolume(2048);
+    large.posfsVolume(6144);
+    large.fatVolume(7168);
+    {
+        const handle = try rig.open();
+        defer rig.rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.InitRDB(handle));
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.AddPartition(handle, "DH1", 0, 0, sdk.dos.posfs.ID_POSFS_DISK));
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.WriteRDB(handle));
+    }
+
+    var medium: automount.MediumNode = .{};
+    var drives: automount.Drives = .{};
+    automount.mountMedium(rig.sys, dos_rig.dl, removable(&medium), &drives);
+    try testing.expectEqual(@as(u32, 3), drives.count);
+    try testing.expectEqualStrings("DH1", nameText(&drives.names[0]));
+    try testing.expectEqualStrings("SD0", nameText(&drives.names[1]));
+    try testing.expectEqualStrings("SD0P4", nameText(&drives.names[2]));
+    try testing.expect(dos_rig.device("SD0P5") == null);
+    const work = dos_rig.device("SD0P4") orelse return error.NotMounted;
+    try testing.expectEqualStrings(sdk.dos.posfs.HANDLER_NAME, std.mem.span(work.misc.handler.handler.?));
 }

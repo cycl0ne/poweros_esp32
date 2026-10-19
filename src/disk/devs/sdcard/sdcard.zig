@@ -74,15 +74,16 @@
 //!
 //! **The card's drives are made by the device** (mount.zig, a DOS process
 //! of its own): when the first card is identified, a drive per partition
-//! if it holds a RigidDiskBlock, `SD0:` over the whole card if it does
-//! not, with the handler its first block asks for. Nothing in the
+//! if it holds a RigidDiskBlock or a GPT, `SD0:` over the whole card if
+//! it holds neither, with the handler its first block asks for. Nothing in the
 //! MountList is needed; an entry there mounted by hand first is the
 //! card's drive, used as it is.
 //!
 //! **In the ROM.** A board that can start from its card has the device in
 //! the ROM as well (the VisionFive 2): there it starts at cold start, and
 //! before its init lets go the task looks at the slot and hands the
-//! partitions the card's RigidDiskBlock names to expansion.library as boot
+//! partitions the card's RigidDiskBlock names - or the one in its GPT's
+//! PowerOS container - to expansion.library as boot
 //! nodes (sdk/libs/expansion/bootdisk.zig), as flash.device does for its
 //! disk - so a bootable partition with a higher de_BootPri than the flash
 //! disk's is where dos starts from. Those are the card's drives then: dos
@@ -1062,9 +1063,10 @@ const CardDisk = struct {
     }
 };
 
-/// The partitions the card's RigidDiskBlock names, handed to
-/// expansion.library as boot nodes on unit 0. A card without one - a
-/// PC's, say - has none, and is SD0: when the startup sequence mounts it.
+/// The partitions the card's RigidDiskBlock names, or the one in its
+/// GPT's PowerOS container, handed to expansion.library as boot nodes on
+/// unit 0. A card without one - a PC's, say - has none, and is SD0: when
+/// the startup sequence mounts it.
 fn bootPartitions(sb: *SdCardBase) void {
     const sys = sb.sys_base;
     const memory = sys.AllocVec(card.block_bytes, exec.MEMF_ANY) orelse return;

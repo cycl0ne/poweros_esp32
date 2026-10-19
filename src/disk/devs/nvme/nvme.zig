@@ -38,7 +38,7 @@
 //!
 //! **The drives** are made once the device is up, by a DOS process of
 //! its own (mount.zig): a drive per partition where a namespace holds a
-//! RigidDiskBlock, `NV<n>` over the whole namespace otherwise - unless a
+//! RigidDiskBlock or a GPT, `NV<n>` over the whole namespace otherwise - unless a
 //! MountList entry mounted by hand opens the unit already, which is then
 //! its drive.
 //!

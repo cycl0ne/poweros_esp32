@@ -4,7 +4,9 @@
 //! **Each unit** gets the drives `sdk.devices.automount` makes: a drive
 //! per partition when the namespace holds a RigidDiskBlock, named as its
 //! table says, with the file system the table brings when the ROM has
-//! none of its own; otherwise `NV<n>` over the whole namespace, with the
+//! none of its own; with a GPT, those of the table in its PowerOS
+//! container and one for each other GPT partition with a FAT or posfs
+//! volume (`NV0`, then `NV0P2`); otherwise `NV<n>` over the whole namespace, with the
 //! handler its first block asks for. A name in use gets a dot added
 //! (`DH0.`). A unit a device node already opens - a MountList entry
 //! mounted by hand before BindDrivers - gets nothing: that entry is its
