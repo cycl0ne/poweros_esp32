@@ -93,8 +93,10 @@ The rest, on the stream the request was opened on:
 ## What the board has
 
 `AUDIOCMD_QUERY` writes an `AudioInfo` to `std.data` - when it is not
-null and `std.length` is large enough - and answers the stream's
-`position`, the frames it has played since it was opened:
+null, as much of it as `std.length` holds, `std.actual` saying how much,
+so a program built when the structure was shorter gets the fields it
+knows - and answers the stream's `position`, the frames it has played
+since it was opened:
 
 | Field | What |
 |---|---|
@@ -106,6 +108,7 @@ null and `std.length` is large enough - and answers the stream's
 | `master` | the master volume |
 | `has_input` | whether unit 1 records on this board |
 | `output` | the part the sound comes out of, as the board names it |
+| `underruns` | buffers the output played again because the next was not mixed in time - each a gap heard - since the device started |
 
 A stereo stream on a board with one output is heard as its two sides
 together, so every program is heard whole on every board; the position
@@ -254,7 +257,15 @@ It is not driven yet: opening it fails with `AUDIOERR_NOINPUT`.
 Audio                         440 Hz for two seconds
 Audio HZ 220 SECONDS 5 PAN -100
 Audio CHORD                   a major chord, three streams at once
+Audio BENCH 16                sixteen streams for ten seconds, then the
+                              gaps and the device task's share of a core
 ```
+
+`./zig build audio-bench` times the mixer on the host, for 1, 4, 8 and
+16 streams; the board's own figure is `Audio BENCH`'s. The mixer is held
+to a reference mix byte for byte by a host test
+(`src/rom/devs/audio/golden.zig`); a change to it that is meant to change
+what is heard writes the reference again with `./zig build audio-golden`.
 
 `C:test/Sound FILE` plays a file through datatypes.library with no
 window, waiting for the object's signal that it has played out:

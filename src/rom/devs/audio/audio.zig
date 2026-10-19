@@ -68,8 +68,8 @@ const gpio = sdk.hardware.gpio;
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "13.10.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "19.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -161,6 +161,13 @@ const AudioBase = extern struct {
     pad4: [2]u8 = .{ 0, 0 },
     /// The task's signal to end, for an expunge.
     quit_mask: u32 = 0,
+    /// The buffers the DMA has finished, counted by its interrupt, and the
+    /// count the task had mixed up to: when it wakes more than one behind,
+    /// the DMA has gone round to a buffer the task had not mixed yet, and
+    /// what was in it played again - a gap, counted in `underruns`.
+    ended: u32 = 0,
+    mixed: u32 = 0,
+    underruns: u32 = 0,
     /// What the board's parts say, read at init: where the stream goes
     /// (`has_output`), whether that is a codec to set up (`has_codec`) and
     /// its I2C unit and address, the pads of the I2S lines - MCLK only for
@@ -264,6 +271,7 @@ fn intServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     const status = db.DMAIntStatus(ab.channel, dmares.DMA_OUT);
     if (status & dmares.DMAINTF_OUT_EOF == 0) return 0;
     db.ClearDMAInts(ab.channel, dmares.DMA_OUT, status);
+    _ = @atomicRmw(u32, &ab.ended, .Add, 1, .release);
     ab.sys_base.Signal(&ab.task, ab.int_mask);
     return 1;
 }
@@ -454,8 +462,14 @@ fn freeBuffer(ab: *AudioBase) []i16 {
     return stream[which * buffer_samples ..][0..buffer_samples];
 }
 
-/// One buffer's worth of sound, and whatever that finished replied.
+/// One buffer's worth of sound, and whatever that finished replied. A
+/// buffer the DMA finished while the task was still behind with the one
+/// before is a gap: counted, and the count caught up.
 fn mixBuffer(ab: *AudioBase) void {
+    const ended = @atomicLoad(u32, &ab.ended, .acquire);
+    const behind = ended -% ab.mixed;
+    if (behind > 1) ab.underruns +%= behind - 1;
+    ab.mixed = ended;
     const out = freeBuffer(ab);
     mixInto(ab, out);
     var bytes: u32 = @intCast(out.len * 2);
@@ -708,6 +722,7 @@ fn infoOf(ab: *AudioBase) audio.AudioInfo {
         .master = ab.master,
         .has_input = 0,
         .output = ab.output_name,
+        .underruns = ab.underruns,
     };
 }
 
@@ -769,13 +784,14 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         audio.AUDIOCMD_QUERY => {
             ioa.position = ab.voices[n].played;
             if (ioa.std.data) |into| {
-                if (ioa.std.length >= @sizeOf(audio.AudioInfo)) {
-                    const info: *audio.AudioInfo = @ptrCast(@alignCast(into));
-                    info.* = infoOf(ab);
-                    ioa.std.actual = @sizeOf(audio.AudioInfo);
-                } else {
-                    io.err = exec.IOERR_BADLENGTH;
-                }
+                // As much of it as the caller made room for: one built when
+                // the answer was shorter gets the fields it knows.
+                const info = infoOf(ab);
+                const room: usize = @intCast(@min(ioa.std.length, @sizeOf(audio.AudioInfo)));
+                const to: [*]u8 = @ptrCast(into);
+                const from: [*]const u8 = @ptrCast(&info);
+                for (0..room) |at| to[at] = from[at];
+                ioa.std.actual = room;
             }
         },
         audio.AUDIOCMD_MASTER => {
@@ -1283,7 +1299,18 @@ test "the query says what the output is and how far the stream has got; the mast
     try testing.expectEqual(buffer_frames * buffers, info.latency);
     try testing.expectEqual(@as(u32, 1), info.streams);
     try testing.expectEqual(@as(u32, max_streams), info.max_streams);
+    try testing.expectEqual(@as(u32, 0), info.underruns);
     try testing.expectEqual(@as(u32, 0), ask.position);
+
+    // A caller built when the answer was shorter gets the fields it knows.
+    var short: [8]u32 = @splat(0xFFFF_FFFF);
+    ask.std.data = &short;
+    ask.std.length = 2 * @sizeOf(u32);
+    try testing.expectEqual(@as(i32, 0), command(&ask, &io, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(@as(u64, 8), ask.std.actual);
+    try testing.expectEqual(@as(u32, 48_000), short[0]);
+    try testing.expectEqual(@as(u32, 2), short[1]);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), short[2]);
 
     const note = pcm16(&.{ 1000, 1000, 1000 });
     var write = requestFor(ab, port);

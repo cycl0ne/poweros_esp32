@@ -32,8 +32,10 @@
 //!                         the format for the writes sent after it - each
 //!                         write keeps the format it was sent in
 //!   AUDIOCMD_QUERY        an `AudioInfo` written to `std.data` (when it
-//!                         is not null), and `position`: the frames this
-//!                         stream has played since it was opened
+//!                         is not null) - as much of it as `std.length`
+//!                         holds, `std.actual` saying how much - and
+//!                         `position`: the frames this stream has played
+//!                         since it was opened
 //!   AUDIOCMD_MASTER       how loud everything is, from `volume`: the
 //!                         device's, every stream's
 //!
@@ -140,6 +142,9 @@ pub const AudioInfo = extern struct {
     has_input: u32 = 0,
     /// The part the sound comes out of, as the board names it.
     output: ?[*:0]const u8 = null,
+    /// Buffers the output played again because the device had not mixed
+    /// the next in time - each one a gap heard - since the device started.
+    underruns: u32 = 0,
 };
 
 /// Bytes a frame takes in `format` with `channels` channels; 0 for a

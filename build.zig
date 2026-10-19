@@ -339,6 +339,41 @@ pub fn build(b: *std.Build) void {
         posfsck_step.dependOn(&run_posfsck.step);
     } else posfsck_step.dependOn(&b.addInstallArtifact(posfsck, .{}).step);
 
+    // audio.device's mixer on the host: `audio-golden` writes the golden
+    // mix's reference file again (src/rom/devs/audio/golden.zig, whose
+    // test holds the mixer to it), and `audio-bench` says how fast the
+    // mixer is - on stderr, which a test may not write to.
+    const golden_mod = b.createModule(.{
+        .root_source_file = b.path("src/rom/devs/audio/golden.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    });
+    const audiogolden = b.addExecutable(.{
+        .name = "audiogolden",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/audio/audiogolden.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    audiogolden.root_module.addImport("golden", golden_mod);
+    const write_golden = b.addRunArtifact(audiogolden);
+    write_golden.addArg(b.pathFromRoot("src/rom/devs/audio/golden.pcm"));
+    write_golden.has_side_effects = true;
+    b.step("audio-golden", "Write audio.device's golden mix again (src/rom/devs/audio/golden.pcm)").dependOn(&write_golden.step);
+    const audiobench = b.addExecutable(.{
+        .name = "audiobench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/audio/audiobench.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    audiobench.root_module.addImport("golden", golden_mod);
+    const run_bench = b.addRunArtifact(audiobench);
+    run_bench.has_side_effects = true;
+    b.step("audio-bench", "Time audio.device's mixer on the host for 1, 4, 8 and 16 voices").dependOn(&run_bench.step);
+
     // tools/mkicon, which makes the disk's icons from pictures.
     const mkicon = b.addExecutable(.{
         .name = "mkicon",
