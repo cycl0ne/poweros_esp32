@@ -6,15 +6,17 @@
 //! **A voice plays one stream.** Its samples are 8-, 16- or 32-bit, one
 //! channel or two interleaved, and every write can be in a form of its
 //! own: the voice reads each as the write says. Whatever the form, a
-//! sample is worked on at 16 bits.
+//! sample is worked on at 16 bits: a 32-bit one is rounded to the nearest,
+//! not cut, which would pull every sample down by half a step.
 //!
 //! **Its rate is its own** and the output's is the output's, so a voice
 //! keeps a position in its frames - a whole frame and a fraction of one -
 //! and a step to add to it per output frame, in 65536ths. What plays is
 //! the line between the frame under the position and the one after it, as
-//! far along as the fraction says: holding each frame for a whole number
-//! of output frames instead - two or three, unevenly, for a sound at
-//! 22 kHz - is heard as grit.
+//! far along as the fraction says, to 32768ths of the way and rounded:
+//! holding each frame for a whole number of output frames instead - two
+//! or three, unevenly, for a sound at 22 kHz - is heard as grit, and a
+//! coarse fraction as a faint noise under a slow, loud tone.
 //!
 //! **Loud and where**: a gain for each side, in 4096ths, made from the
 //! stream's volume and pan (`gains`). A one-channel stream goes to both
@@ -22,6 +24,7 @@
 //! own. After every voice is summed, the master gain - the device's volume
 //! - goes over the lot, and a sum past what a 16-bit sample holds is
 //! clipped rather than wrapped: wrapping turns a loud note into a shriek.
+//! Every product of a gain is rounded to the nearest.
 //!
 //! **A voice holds the write after the one it plays**: it takes over in
 //! the frame the first one ends in, and so does another loop of a write
@@ -44,6 +47,9 @@ pub const one: u32 = 1 << shift;
 /// A gain of as loud as it came, in 4096ths.
 pub const gain_unity: i32 = 1 << gain_shift;
 const gain_shift: u5 = 12;
+/// Half a 4096th: what a gain's product is rounded by, to the nearest
+/// rather than down - down pulls every voice half a step low.
+const gain_half: i32 = 1 << (gain_shift - 1);
 
 /// A sample's form in memory, as the SDK numbers it.
 pub const s8: u8 = 1;
@@ -150,75 +156,124 @@ pub fn masterGain(volume: u32) i32 {
 pub fn fill(voices: []Voice, out: []i16, sides: Sides, master: i32, refill: ?Refill) Done {
     var done: Done = .{};
     const frames = out.len / 2;
-    for (0..frames) |frame| {
-        var left: i32 = 0;
-        var right: i32 = 0;
-        for (voices, 0..) |*v, i| {
-            if (!v.playing() or v.stopped != 0) continue;
-            if (v.index >= v.frames and !advance(v, i, &done, refill)) continue;
-            const fine = v.fraction >> (shift - 8);
-            const first = blend(v, 0, fine);
-            if (v.channels == 2) {
-                left += (first * v.gain_left) >> gain_shift;
-                right += (blend(v, 1, fine) * v.gain_right) >> gain_shift;
-            } else {
-                left += (first * v.gain_left) >> gain_shift;
-                right += (first * v.gain_right) >> gain_shift;
+    var start: usize = 0;
+    while (start < frames) : (start += run_frames) {
+        const count: usize = @min(run_frames, frames - start);
+        var sums: [run_frames * 2]i32 = @splat(0);
+        for (voices, 0..) |*v, i| addVoice(v, i, sums[0 .. count * 2], &done, refill);
+        for (0..count) |frame| {
+            // Sixteen voices at four times their volume overrun 32 bits
+            // once the master goes over them, so the master is taken in 64.
+            var first: i64 = (@as(i64, sums[frame * 2]) * master + gain_half) >> gain_shift;
+            var second: i64 = (@as(i64, sums[frame * 2 + 1]) * master + gain_half) >> gain_shift;
+            switch (sides) {
+                .left_first => {},
+                .right_first => {
+                    const swap = first;
+                    first = second;
+                    second = swap;
+                },
+                .mono => {
+                    first = @divTrunc(first + second, 2);
+                    second = first;
+                },
             }
-            v.fraction += v.step;
-            const moved = v.fraction >> shift;
-            v.index += moved;
-            v.played +%= moved;
-            v.fraction &= one - 1;
+            out[(start + frame) * 2] = clip(first);
+            out[(start + frame) * 2 + 1] = clip(second);
         }
-        // Sixteen voices at four times their volume overrun 32 bits once
-        // the master goes over them, so the master is taken in 64.
-        var first: i64 = (@as(i64, left) * master) >> gain_shift;
-        var second: i64 = (@as(i64, right) * master) >> gain_shift;
-        switch (sides) {
-            .left_first => {},
-            .right_first => {
-                const swap = first;
-                first = second;
-                second = swap;
-            },
-            .mono => {
-                first = @divTrunc(first + second, 2);
-                second = first;
-            },
-        }
-        out[frame * 2] = clip(first);
-        out[frame * 2 + 1] = clip(second);
     }
     return done;
 }
 
+/// Frames mixed at a time. Their sums are kept while each voice is added
+/// in, a voice at a time, so a voice's loop is the one made for its form
+/// and channels: a choice of form made for every sample read costs a
+/// quarter of the mix.
+const run_frames: usize = 64;
+
+/// One voice added into the sums of a run of frames, each write it gets
+/// to in the loop for its form and channels.
+fn addVoice(v: *Voice, voice: usize, sums: []i32, done: *Done, refill: ?Refill) void {
+    const count = sums.len / 2;
+    var frame: usize = 0;
+    while (frame < count) {
+        if (!v.playing() or v.stopped != 0) return;
+        if (v.index >= v.frames and !advance(v, voice, done, refill)) return;
+        const stereo = v.channels == 2;
+        frame = switch (v.format) {
+            s8 => if (stereo) addFrames(s8, 2, v, sums, frame) else addFrames(s8, 1, v, sums, frame),
+            s32 => if (stereo) addFrames(s32, 2, v, sums, frame) else addFrames(s32, 1, v, sums, frame),
+            else => if (stereo) addFrames(s16, 2, v, sums, frame) else addFrames(s16, 1, v, sums, frame),
+        };
+    }
+}
+
+/// The voice's write added into the sums from `from` on, until the run
+/// ends or the write's frames do: the frame it stopped at. A one-channel
+/// write is heard on both sides, each at its gain; a two-channel one
+/// keeps its sides.
+fn addFrames(comptime format: u8, comptime channels: u8, v: *Voice, sums: []i32, from: usize) usize {
+    const count = sums.len / 2;
+    var frame = from;
+    while (frame < count and v.index < v.frames) : (frame += 1) {
+        const fine = v.fraction >> (shift - fine_shift);
+        const first = blendIn(format, v, 0, fine);
+        const second = if (channels == 2) blendIn(format, v, 1, fine) else first;
+        sums[frame * 2] += (first * v.gain_left + gain_half) >> gain_shift;
+        sums[frame * 2 + 1] += (second * v.gain_right + gain_half) >> gain_shift;
+        v.fraction += v.step;
+        const moved = v.fraction >> shift;
+        v.index += moved;
+        v.played +%= moved;
+        v.fraction &= one - 1;
+    }
+    return frame;
+}
+
+/// How finely the line between two frames is followed: to `1 <<
+/// fine_shift`ths of the way.
+const fine_shift: u5 = 15;
+
 /// The line between a voice's frame under its position and the one after
-/// it, on channel `channel`, `fine` 256ths of the way along: a 16-bit
-/// sample.
-fn blend(v: *const Voice, channel: usize, fine: u32) i32 {
-    const here = sampleAt(v.data.?, v.format, v.channels, v.index, channel);
-    const next = nextSample(v, channel);
-    return here + (((next - here) * @as(i32, @intCast(fine))) >> 8);
+/// it, in `format`, on channel `channel`, `fine` 32768ths of the way
+/// along, rounded to the nearest: a 16-bit sample. The difference of two
+/// 16-bit samples times a 15-bit fraction, rounded, still fits 32 bits.
+fn blendIn(comptime format: u8, v: *const Voice, channel: usize, fine: u32) i32 {
+    const data = v.data.?;
+    const here = sampleIn(format, data, v.channels, v.index, channel);
+    const after = v.index + 1;
+    const next = if (after < v.frames) sampleIn(format, data, v.channels, after, channel) else nextSample(v, channel);
+    return here + (((next - here) * @as(i32, @intCast(fine)) + (1 << (fine_shift - 1))) >> fine_shift);
 }
 
 /// Frame `frame`'s sample on `channel` of frames in `format`, at 16 bits.
 /// A one-channel write has its one sample for either channel.
 fn sampleAt(data: [*]const u8, format: u8, channels: u8, frame: u32, channel: usize) i32 {
-    const slot = @as(usize, frame) * channels + @min(channel, channels - 1);
     return switch (format) {
-        s8 => @as(i32, @as(i8, @bitCast(data[slot]))) * 256,
-        s32 => blk: {
+        s8 => sampleIn(s8, data, channels, frame, channel),
+        s32 => sampleIn(s32, data, channels, frame, channel),
+        else => sampleIn(s16, data, channels, frame, channel),
+    };
+}
+
+/// `sampleAt` for a form known while compiling. A 32-bit sample is
+/// rounded to the nearest: the bit below the cut added - the top of the
+/// scale rounds to 32768, which the mix clips.
+fn sampleIn(comptime format: u8, data: [*]const u8, channels: u8, frame: u32, channel: usize) i32 {
+    const slot = @as(usize, frame) * channels + @min(channel, channels - 1);
+    switch (format) {
+        s8 => return @as(i32, @as(i8, @bitCast(data[slot]))) * 256,
+        s32 => {
             const at = slot * 4;
             const word = @as(u32, data[at]) | @as(u32, data[at + 1]) << 8 | @as(u32, data[at + 2]) << 16 | @as(u32, data[at + 3]) << 24;
-            break :blk @as(i32, @bitCast(word)) >> 16;
+            return (@as(i32, @bitCast(word)) >> 16) + @as(i32, @intCast((word >> 15) & 1));
         },
-        else => blk: {
+        else => {
             const at = slot * 2;
             const half = @as(u16, data[at]) | @as(u16, data[at + 1]) << 8;
-            break :blk @as(i16, @bitCast(half));
+            return @as(i16, @bitCast(half));
         },
-    };
+    }
 }
 
 /// The sample after the frame under a voice's position: the next of its
@@ -342,7 +397,7 @@ test "8-bit and 32-bit samples are heard at 16 bits" {
     _ = fill(&voices, &out, .left_first, gain_unity, null);
     try testing.expectEqualSlices(i16, &.{ 100 * 256, 100 * 256, -100 * 256, -100 * 256 }, &out);
 
-    // A 32-bit sample: its top 16 bits.
+    // A 32-bit sample: its top 16 bits, the low ones rounded away.
     const word: u32 = @bitCast(@as(i32, -1234) << 16 | 0x55);
     const wide = [4]u8{ @truncate(word), @truncate(word >> 8), @truncate(word >> 16), @truncate(word >> 24) };
     voices[0] = .{ .data = &wide, .frames = 1, .format = s32, .channels = 1, .step = one, .loops = 1 };
@@ -421,6 +476,36 @@ test "between two frames the line between them plays" {
     _ = fill(&voices, &out, .left_first, gain_unity, null);
     const heard = [_]i16{ 0, 250, 500, 750, 1000, 750 };
     for (heard, 0..) |sample, frame| try testing.expectEqual(sample, out[frame * 2]);
+}
+
+test "a 32-bit sample is rounded to the nearest 16-bit one, not cut" {
+    const cases = [_]struct { word: u32, heard: i32 }{
+        .{ .word = 0x0000_7FFF, .heard = 0 },
+        .{ .word = 0x0000_8000, .heard = 1 },
+        .{ .word = 0x0123_C000, .heard = 0x124 },
+        .{ .word = 0xFFFF_8000, .heard = 0 },
+        .{ .word = 0xFFFF_7FFF, .heard = -1 },
+        .{ .word = 0x8000_0000, .heard = -32768 },
+        // The top of the scale rounds past it; the mix clips it back.
+        .{ .word = 0x7FFF_FFFF, .heard = 32768 },
+    };
+    for (cases) |case| {
+        const wide = [4]u8{ @truncate(case.word), @truncate(case.word >> 8), @truncate(case.word >> 16), @truncate(case.word >> 24) };
+        try testing.expectEqual(case.heard, sampleAt(&wide, s32, 1, 0, 0));
+    }
+}
+
+test "the line between two frames is followed to within half a step, wherever along it" {
+    const ramp = pcm16(&.{ -30_000, 30_000 });
+    const v = monoVoice(&ramp);
+    var fine: u32 = 0;
+    while (fine < 1 << fine_shift) : (fine += 1) {
+        const heard: i64 = blendIn(s16, &v, 0, fine);
+        // The exact point, doubled and in 32768ths: -30000 + 60000 * fine / 32768.
+        const exact2: i64 = 2 * (-30_000 * 32_768 + 60_000 * @as(i64, fine));
+        const off = heard * 2 * 32_768 - exact2;
+        try testing.expect(off <= 32_768 and off >= -32_768);
+    }
 }
 
 test "what runs past the end is carried into the next write" {

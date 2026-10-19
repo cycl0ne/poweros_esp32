@@ -133,6 +133,13 @@ being heard: a 48 kHz click during a 44.1 kHz song is converted, and
 the song goes on unbroken. The query's `rate` says what the output runs
 at now.
 
+A stream at another rate is converted by following the line between
+its frames, to a 32768th of the way from one to the next, and rounded
+to the nearest sample. Every sample is worked on at 16 bits: a 32-bit
+one is rounded to the nearest 16-bit one, and every gain - a stream's
+volume and pan, the master - is rounded the same way, so no stream is
+pulled down by a fraction of a step.
+
 ## Choosing an output
 
 A machine may have more than one output - a jack and a speaker, a DAC
