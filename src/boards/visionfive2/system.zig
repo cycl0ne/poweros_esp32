@@ -171,6 +171,21 @@ const display = [_]Tag{
     .done,
 };
 
+/// The HDMI port's sound: I2STX0 into the HDMI transmitter, fed by the
+/// DMA controller (interrupt 73), its master clock the 12.288 MHz
+/// oscillator on GPIO4 (the device tree's mclk_ext).
+const hdmi_sound = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_CODEC),
+    .value(st.PART_Chip, st.CHIP_JH7110_HDMI),
+    .pointer(st.PART_ChipName, "jh7110 hdmi"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x2959_0000),
+    .value(st.PART_Irq, 73),
+    .value(st.PART_PinMCLK, pins.gpio(4)),
+    .pointer(st.PART_Label, "HDMI sound"),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -196,6 +211,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &display),
+    .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &trng),
     .pointer(st.SYSTAG_Part, &card_slot),
     .pointer(st.SYSTAG_Part, &pcie0),

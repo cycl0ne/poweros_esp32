@@ -1,9 +1,11 @@
 # Sound
 
 `audio.device` plays sound out of the board: through an ES8311 codec
-and the speaker or jack behind it, or straight into I2S amplifiers - the
-CrowPanel's two speakers. It is in the ROM of every board that has one of
-these. A program opens a **stream**, says what its samples are, and
+and the speaker or jack behind it, straight into I2S amplifiers - the
+CrowPanel's two speakers - or out of the VisionFive 2's HDMI port to the
+monitor's speakers, in stereo at 48000 Hz while the picture is up. It is
+in the ROM of every board that has one of these. A program opens a
+**stream**, says what its samples are, and
 writes buffers to it; the device mixes every stream into the output.
 
 This guide is a stream first, then writing to it as it plays, what the

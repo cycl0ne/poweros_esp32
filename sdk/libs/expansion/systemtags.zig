@@ -410,6 +410,12 @@ pub const CHIP_XHCI: u32 = 28;
 /// BUS_RGMII): PART_BusUnit the MAC it is wired to, PART_Address its
 /// address on that MAC's management bus.
 pub const CHIP_YT8531: u32 = 29;
+/// The JH7110's HDMI transmitter as the machine's sound (PARTKIND_CODEC on
+/// BUS_MEMORY, PART_Address the transmitter): I2STX0's stream, which the
+/// chip's DMA controller feeds - PART_Irq is that controller's interrupt -
+/// with the board's 12.288 MHz oscillator as its master clock, in on
+/// PART_PinMCLK. Only while the picture (CHIP_JH7110_DC8200) is up.
+pub const CHIP_JH7110_HDMI: u32 = 30;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
