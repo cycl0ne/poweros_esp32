@@ -64,6 +64,11 @@ pub const AudioSink = extern struct {
     /// ln_Name is the output's name, as the board names its part
     /// ("es8311", "ns4168"); ln_Pri orders the list, highest first.
     node: Node = .{},
+    /// The output's number, the library's: the same for the same output
+    /// from one boot to the next, as it is worked out from its driver's
+    /// name and its own, and never 0. What a program or a preference names
+    /// an output by.
+    id: u32 = 0,
     rta_base: ?*RtaBase = null,
     driver: ?*RtaDriver = null,
     /// The line its part is fed over, for a sink that has one.

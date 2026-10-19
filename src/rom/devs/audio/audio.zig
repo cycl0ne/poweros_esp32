@@ -6,12 +6,16 @@
 //! once; a task mixes them into one stereo stream (`mixer.zig`) at the rate
 //! the output runs at.
 //!
-//! The output is rta.library's: the first sink on its list, the one its
-//! drivers made most wanted - a codec behind a speaker, an amplifier that
-//! takes I2S, a stream that plays into nothing on a machine without a
-//! sound part. The device knows none of them by name; what it reads of a
-//! sink is its mode - the rate, how many sides are heard, what the halves
-//! of a frame carry - and the ring of buffers it runs on.
+//! The output is a sink of rta.library's: the first on its list, the one
+//! its drivers made most wanted - a codec behind a speaker, an amplifier
+//! that takes I2S, a stream that plays into nothing on a machine without
+//! a sound part - until a program picks another (AUDIOCMD_SETOUTPUT). The
+//! device knows none of them by name; what it reads of a sink is its
+//! number, its mode - the rate, how many sides are heard, what the halves
+//! of a frame carry - and the ring of buffers it runs on. A change of
+//! output is the task's to make, since a sink's driver brings its part
+//! up on the task that starts it: the old sink stopped, every stream
+//! stepped for the new one's rate where it stood, the new one started.
 //!
 //! Nothing is touched until the first OpenDevice. That starts the task,
 //! which starts the sink - its driver brings the part up - and from then
@@ -36,9 +40,9 @@ const IOAudio = audio.IOAudio;
 const mixer = @import("mixer.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
-const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "19.10.2026";
+const DEVICE_VERSION = 3;
+const DEVICE_REVISION = 0;
+const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -101,10 +105,15 @@ const AudioBase = extern struct {
     start_signal: i8 = -1,
     pad: u8 = 0,
     starter: ?*exec.Task = null,
-    /// The task's signal a played buffer raises, and its signal to end,
-    /// for an expunge.
+    /// The task a played buffer wakes and the signal it raises, and the
+    /// task's signal to end, for an expunge.
+    feed_task: ?*exec.Task = null,
     feed_mask: u32 = 0,
     quit_mask: u32 = 0,
+    /// The task's port for the commands it carries out itself - a change
+    /// of output - and the signal a request put on it raises.
+    commands: exec.MsgPort = .{},
+    command_mask: u32 = 0,
     /// The output played through, once it is started, and what its mode
     /// says: the rate every stream is stepped for, and what the halves of
     /// a frame carry.
@@ -138,18 +147,13 @@ fn sidesOf(mode: *const rta.AudioMode) mixer.Sides {
     };
 }
 
-/// The output started for `task`, which `feed_mask` wakes every time a
-/// buffer has been played: the most wanted sink rta.library has. Every
-/// stream open is stepped for its rate. False if there is none, or it
-/// would not start.
-fn attachSink(ab: *AudioBase, task: *exec.Task, feed_mask: u32) bool {
+/// The sink started for the feeding task, which its signal wakes every
+/// time a buffer has been played, and made the output: every stream open
+/// is stepped for its rate. False if it would not start.
+fn attachSink(ab: *AudioBase, sink: *rta.AudioSink) bool {
     const sys = ab.sys_base;
     const rb = ab.rta_base;
-    const sink = rb.NextSink(null) orelse {
-        exec.kprintf(sys, "%s: the machine has no sound output\n", .{DEVICE_NAME});
-        return false;
-    };
-    const code = rb.StartSink(sink, task, feed_mask);
+    const code = rb.StartSink(sink, ab.feed_task.?, ab.feed_mask);
     if (code != rta.errors.RTAERR_OK) {
         exec.kprintf(sys, "%s: %s: %s\n", .{ DEVICE_NAME, sink.node.name orelse "?", rb.RtaErrorText(code) });
         return false;
@@ -176,6 +180,78 @@ fn detachSink(ab: *AudioBase) void {
     const sink = ab.sink orelse return;
     ab.rta_base.StopSink(sink);
     ab.sink = null;
+}
+
+/// The sink of that number, or for 0 the first on the list: the default.
+fn sinkOf(ab: *AudioBase, id: u32) ?*rta.AudioSink {
+    const rb = ab.rta_base;
+    var sink = rb.NextSink(null);
+    if (id == 0) return sink;
+    while (sink) |each| : (sink = rb.NextSink(each)) {
+        if (each.id == id) return each;
+    }
+    return null;
+}
+
+/// AUDIOCMD_SETOUTPUT, on the task: the output of that number played
+/// through from now on. The streams go on where they were, stepped for
+/// its rate; one that will not start leaves the one before playing.
+/// Under the device's lock.
+fn setOutput(ab: *AudioBase, id: u32) i8 {
+    const wanted = sinkOf(ab, id) orelse return audio.AUDIOERR_NOOUTPUT;
+    const before = ab.sink;
+    if (before == wanted) return 0;
+    detachSink(ab);
+    if (attachSink(ab, wanted)) return 0;
+    if (before) |sink| _ = attachSink(ab, sink);
+    return audio.AUDIOERR_NOOUTPUT;
+}
+
+/// What a program is told of an output: its number, whether it is the
+/// default and the one played through, the most sides any of its modes
+/// plays, their rates and its name.
+fn outputInfoOf(ab: *AudioBase, sink: *rta.AudioSink) audio.AudioOutputInfo {
+    var info: audio.AudioOutputInfo = .{ .id = sink.id };
+    if (sink == ab.rta_base.NextSink(null)) info.flags |= audio.AUDIOOF_DEFAULT;
+    if (sink == ab.sink) info.flags |= audio.AUDIOOF_CURRENT;
+    var it = sink.modes.iterator();
+    while (it.next()) |node| {
+        const mode: *rta.AudioMode = @fieldParentPtr("node", node);
+        info.channels = @max(info.channels, mode.channels);
+        addRate(&info, mode.rate);
+    }
+    const name = sink.node.name orelse "";
+    var at: usize = 0;
+    while (name[at] != 0 and at < info.name.len - 1) : (at += 1) info.name[at] = name[at];
+    return info;
+}
+
+/// A rate put among the info's, in order, once; past the room it has, the
+/// rest are left out.
+fn addRate(info: *audio.AudioOutputInfo, rate: u32) void {
+    const count = info.rate_count;
+    var at: u32 = 0;
+    while (at < count and info.rates[at] < rate) at += 1;
+    if (at < count and info.rates[at] == rate) return;
+    if (count == info.rates.len) return;
+    var move = count;
+    while (move > at) : (move -= 1) info.rates[move] = info.rates[move - 1];
+    info.rates[at] = rate;
+    info.rate_count = count + 1;
+}
+
+/// The commands the task carries out itself, each replied when done.
+fn serveCommands(ab: *AudioBase) void {
+    const sys = ab.sys_base;
+    while (sys.GetMsg(&ab.commands)) |message| {
+        const io: *exec.IORequest = @fieldParentPtr("message", message);
+        const ioa = ioAudio(io);
+        sys.ObtainSemaphore(&ab.lock);
+        io.err = setOutput(ab, ioa.output);
+        if (ab.sink) |sink| ioa.output = sink.id;
+        sys.ReleaseSemaphore(&ab.lock);
+        sys.ReplyIO(io);
+    }
 }
 
 // --- the mix --------------------------------------------------------------
@@ -328,11 +404,21 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
     const ab: *AudioBase = @alignCast(@fieldParentPtr("task", sys.FindTask(null).?));
     const signal = sys.AllocSignal(-1);
     const quit = sys.AllocSignal(-1);
-    var ok = signal >= 0 and quit >= 0;
+    const carry = sys.AllocSignal(-1);
+    var ok = signal >= 0 and quit >= 0 and carry >= 0;
     if (ok) {
+        ab.feed_task = &ab.task;
         ab.feed_mask = @as(u32, 1) << @intCast(signal);
         ab.quit_mask = @as(u32, 1) << @intCast(quit);
-        ok = attachSink(ab, &ab.task, ab.feed_mask);
+        ab.command_mask = @as(u32, 1) << @intCast(carry);
+        ab.commands = .{ .flags = exec.PA_SIGNAL, .sig_bit = @intCast(carry), .sig_task = &ab.task };
+        ab.commands.msg_list.init(.message);
+        if (ab.rta_base.NextSink(null)) |sink| {
+            ok = attachSink(ab, sink);
+        } else {
+            exec.kprintf(sys, "%s: the machine has no sound output\n", .{DEVICE_NAME});
+            ok = false;
+        }
     }
     if (ok) ab.ready = 1;
     if (ab.starter) |starter| {
@@ -342,11 +428,14 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
     if (!ok) return;
 
     while (true) {
-        const got = sys.Wait(ab.feed_mask | ab.quit_mask);
+        const got = sys.Wait(ab.feed_mask | ab.quit_mask | ab.command_mask);
         if (got & ab.quit_mask != 0) break;
-        sys.ObtainSemaphore(&ab.lock);
-        mixBuffer(ab);
-        sys.ReleaseSemaphore(&ab.lock);
+        if (got & ab.command_mask != 0) serveCommands(ab);
+        if (got & ab.feed_mask != 0) {
+            sys.ObtainSemaphore(&ab.lock);
+            mixBuffer(ab);
+            sys.ReleaseSemaphore(&ab.lock);
+        }
     }
     // Expunged: the output given back.
     detachSink(ab);
@@ -441,7 +530,19 @@ fn infoOf(ab: *AudioBase) audio.AudioInfo {
     info.latency = sink.buffer_frames * sink.buffers;
     info.output = sink.node.name;
     info.underruns = sink.underruns;
+    info.output_id = sink.id;
     return info;
+}
+
+/// As much of an answer as the caller made room for in `std.data`, and
+/// how much that was in `std.actual`: one built when the answer was
+/// shorter gets the fields it knows. Nothing for a null `std.data`.
+fn answer(ioa: *IOAudio, bytes: []const u8) void {
+    const into = ioa.std.data orelse return;
+    const room: usize = @intCast(@min(ioa.std.length, bytes.len));
+    const to: [*]u8 = @ptrCast(into);
+    for (0..room) |at| to[at] = bytes[at];
+    ioa.std.actual = room;
 }
 
 // --- the commands ---------------------------------------------------------
@@ -501,15 +602,30 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         },
         audio.AUDIOCMD_QUERY => {
             ioa.position = ab.voices[n].played;
-            if (ioa.std.data) |into| {
-                // As much of it as the caller made room for: one built when
-                // the answer was shorter gets the fields it knows.
+            if (ioa.std.data != null) {
                 const info = infoOf(ab);
-                const room: usize = @intCast(@min(ioa.std.length, @sizeOf(audio.AudioInfo)));
-                const to: [*]u8 = @ptrCast(into);
-                const from: [*]const u8 = @ptrCast(&info);
-                for (0..room) |at| to[at] = from[at];
-                ioa.std.actual = room;
+                answer(ioa, std.mem.asBytes(&info));
+            }
+        },
+        audio.AUDIOCMD_NEXTOUTPUT, audio.AUDIOCMD_GETOUTPUT, audio.AUDIOCMD_SETOUTPUT => {
+            // A request from before the output commands has no `output`.
+            if (io.message.length < @sizeOf(IOAudio)) {
+                io.err = exec.IOERR_BADLENGTH;
+            } else if (io.command == audio.AUDIOCMD_SETOUTPUT) {
+                // The task's to carry out, replied when it has.
+                io.flags &= ~exec.IOF_QUICK;
+                sys.PutMsg(&ab.commands, &io.message);
+                return;
+            } else {
+                const found = if (io.command == audio.AUDIOCMD_GETOUTPUT) ab.sink else nextOutput(ab, ioa.output);
+                if (found) |sink| {
+                    ioa.output = sink.id;
+                    const info = outputInfoOf(ab, sink);
+                    answer(ioa, std.mem.asBytes(&info));
+                } else {
+                    ioa.output = 0;
+                    io.err = audio.AUDIOERR_NOOUTPUT;
+                }
             }
         },
         audio.AUDIOCMD_MASTER => {
@@ -520,6 +636,14 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         else => io.err = exec.IOERR_NOCMD,
     }
     sys.ReplyIO(io);
+}
+
+/// The output after the one of that number, or for 0 the first; null past
+/// the last, or for a number no output has.
+fn nextOutput(ab: *AudioBase, id: u32) ?*rta.AudioSink {
+    const rb = ab.rta_base;
+    if (id == 0) return rb.NextSink(null);
+    return rb.NextSink(sinkOf(ab, id) orelse return null);
 }
 
 /// AbortIO: a write answered IOERR_ABORTED - one waiting taken out, the
@@ -566,7 +690,7 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
     const ab = audioBase(dev);
     if (unit_number == audio.AUDIO_UNIT_RECORD) return audio.AUDIOERR_NOINPUT;
     if (unit_number != audio.AUDIO_UNIT_PLAY) return exec.IOERR_OPENFAIL;
-    if (io.message.length < @sizeOf(IOAudio)) return exec.IOERR_OPENFAIL;
+    if (io.message.length < audio.AUDIO_MIN_REQUEST) return exec.IOERR_OPENFAIL;
     if (!start(ab)) return exec.IOERR_OPENFAIL;
     return openStream(ab, ioAudio(io));
 }
@@ -724,7 +848,18 @@ fn testDevice() !*AudioBase {
     _ = iface.CreateSinkTagList(capture.DRIVER_NAME, &sink_tags) orelse return error.NoSink;
     const made = kexec.InitResident(kexec.SysBase, &audio_device_tag.resident, null) orelse return error.NoDevice;
     const ab = audioBase(@ptrCast(@alignCast(made)));
-    if (!attachSink(ab, kexec.SysBase.iface().FindTask(null).?, 1 << 20)) return error.NoOutput;
+    // The test's task stands in for the device's: the sink wakes it, and
+    // the commands the task carries out come to it.
+    const sys = kexec.SysBase.iface();
+    const me = sys.FindTask(null).?;
+    const feed = sys.AllocSignal(-1);
+    const carry = sys.AllocSignal(-1);
+    ab.feed_task = me;
+    ab.feed_mask = @as(u32, 1) << @intCast(feed);
+    ab.command_mask = @as(u32, 1) << @intCast(carry);
+    ab.commands = .{ .flags = exec.PA_SIGNAL, .sig_bit = @intCast(carry), .sig_task = me };
+    ab.commands.msg_list.init(.message);
+    if (!attachSink(ab, iface.NextSink(null).?)) return error.NoOutput;
     return ab;
 }
 
@@ -736,6 +871,9 @@ fn testDeviceGone(ab: *AudioBase, ports: []const *exec.MsgPort) !void {
     const sink = ab.sink.?;
     detachSink(ab);
     iface.DeleteSink(sink);
+    const sys = kexec.SysBase.iface();
+    sys.FreeSignal(@intCast(@ctz(ab.feed_mask)));
+    sys.FreeSignal(@intCast(@ctz(ab.command_mask)));
     _ = kexec.RemDevice(kexec.SysBase, &ab.dev);
     try rta_lib.tearDownForTests(@ptrCast(@alignCast(iface)));
 }
@@ -1065,5 +1203,98 @@ test "the output's buffers are mixed as it plays them, and what it misses is cou
     try testing.expectEqual(@as(i16, 0), capture.capturedOf(sink)[capture.buffer_frames * 4]);
 
     _ = close(&ab.dev, &io.std.req);
+    try testDeviceGone(ab, &.{port});
+}
+
+/// An output command on the stream `from` was opened on, sent; one the
+/// task carries out is served as the task would.
+fn outputCommand(ab: *AudioBase, io: *IOAudio, from: *const IOAudio, which: u16, output: u32, info: ?*audio.AudioOutputInfo) i8 {
+    const sys = kexec.SysBase.iface();
+    io.std.req.unit = from.std.req.unit;
+    io.std.req.command = which;
+    io.std.req.flags = 0;
+    io.std.data = info;
+    io.std.length = @sizeOf(audio.AudioOutputInfo);
+    io.output = output;
+    sys.SendIO(&io.std.req);
+    serveCommands(ab);
+    return @intCast(sys.WaitIO(&io.std.req));
+}
+
+test "the outputs are listed in order and one is chosen; the streams go on where they were" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const rb = ab.rta_base;
+    const head_tags = [_]sdk.utility.TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("Headphones") },
+        .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -1)) },
+        .{},
+    };
+    const headphones = rb.CreateSinkTagList(capture.DRIVER_NAME, &head_tags).?;
+    const speaker = ab.sink.?;
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+
+    // Speaker first - the default, and played through - then the
+    // headphones, then no more.
+    var info: audio.AudioOutputInfo = .{};
+    var ask = requestFor(ab, port);
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_NEXTOUTPUT, 0, &info));
+    try testing.expectEqual(speaker.id, ask.output);
+    try testing.expectEqual(speaker.id, info.id);
+    try testing.expectEqual(audio.AUDIOOF_DEFAULT | audio.AUDIOOF_CURRENT, info.flags);
+    try testing.expectEqualStrings(test_output, std.mem.sliceTo(&info.name, 0));
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 1), info.rate_count);
+    try testing.expectEqual(capture.rate, info.rates[0]);
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_NEXTOUTPUT, ask.output, &info));
+    try testing.expectEqual(headphones.id, ask.output);
+    try testing.expectEqual(@as(u32, 0), info.flags);
+    try testing.expectEqualStrings("Headphones", std.mem.sliceTo(&info.name, 0));
+    try testing.expectEqual(audio.AUDIOERR_NOOUTPUT, outputCommand(ab, &ask, &io, audio.AUDIOCMD_NEXTOUTPUT, ask.output, &info));
+    try testing.expectEqual(@as(u32, 0), ask.output);
+
+    // A tone counting up, a buffer of it played on the speaker.
+    var samples: [capture.buffer_frames * 4]i16 = undefined;
+    for (&samples, 0..) |*sample, i| sample.* = @intCast(i + 1);
+    var write = requestFor(ab, port);
+    sendWrite(&write, &io, std.mem.sliceAsBytes(&samples), 1);
+    capture.played(speaker);
+    mixBuffer(ab);
+    try testing.expectEqual(@as(i16, 1), capture.capturedOf(speaker)[0]);
+
+    // Over to the headphones: the speaker stopped, and the tone goes on
+    // there from where it was.
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, headphones.id, null));
+    try testing.expectEqual(headphones, ab.sink.?);
+    try testing.expect(speaker.flags & rta.sinks.AUDIOSF_RUNNING == 0);
+    capture.played(headphones);
+    mixBuffer(ab);
+    const heard = capture.capturedOf(headphones);
+    try testing.expectEqual(@as(i16, capture.buffer_frames + 1), heard[0]);
+    var query = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), command(&query, &io, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(@as(u32, 2 * capture.buffer_frames), query.position);
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_GETOUTPUT, 0, &info));
+    try testing.expectEqual(headphones.id, ask.output);
+    try testing.expectEqual(audio.AUDIOOF_CURRENT, info.flags);
+
+    // A number no output has changes nothing; 0 is the default again.
+    try testing.expectEqual(audio.AUDIOERR_NOOUTPUT, outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, headphones.id +% 7, null));
+    try testing.expectEqual(headphones, ab.sink.?);
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, 0, null));
+    try testing.expectEqual(speaker, ab.sink.?);
+    try testing.expectEqual(speaker.id, ask.output);
+
+    // A request from before the output commands is refused them.
+    var old = requestFor(ab, port);
+    old.std.req.message.length = audio.AUDIO_MIN_REQUEST;
+    try testing.expectEqual(@as(i8, exec.IOERR_BADLENGTH), outputCommand(ab, &old, &io, audio.AUDIOCMD_GETOUTPUT, 0, &info));
+
+    _ = close(&ab.dev, &io.std.req);
+    _ = replied(port);
+    rb.DeleteSink(headphones);
     try testDeviceGone(ab, &.{port});
 }

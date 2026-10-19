@@ -230,6 +230,32 @@ test "a sink: named, in its default mode, on the list by priority, its driver he
     try tearDownForTests(rb);
 }
 
+test "a sink's number: the same for the same driver and name, never shared, never 0" {
+    const rb = try setUpForTests();
+    defer kexec.deinit();
+    const named = [_]TagItem{ .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("speaker") }, .{} };
+    const other = [_]TagItem{ .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("jack") }, .{} };
+
+    const speaker = base(rb).CreateSinkTagList("capture", &named).?;
+    const id = speaker.id;
+    try testing.expect(id != 0);
+    const jack = base(rb).CreateSinkTagList("capture", &other).?;
+    try testing.expect(jack.id != id);
+    // Made again - the next boot, or the part plugged in again - it has
+    // the same number.
+    base(rb).DeleteSink(speaker);
+    const again = base(rb).CreateSinkTagList("capture", &named).?;
+    try testing.expectEqual(id, again.id);
+    // A second of the same name and driver moves on.
+    const twin = base(rb).CreateSinkTagList("capture", &named).?;
+    try testing.expectEqual(id +% 1, twin.id);
+
+    base(rb).DeleteSink(twin);
+    base(rb).DeleteSink(again);
+    base(rb).DeleteSink(jack);
+    try tearDownForTests(rb);
+}
+
 test "a started sink: a buffer when one has been played, what is handed back played, deletion refused" {
     const rb = try setUpForTests();
     defer kexec.deinit();

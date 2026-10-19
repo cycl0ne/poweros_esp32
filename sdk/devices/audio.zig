@@ -38,6 +38,16 @@
 //!                         since it was opened
 //!   AUDIOCMD_MASTER       how loud everything is, from `volume`: the
 //!                         device's, every stream's
+//!   AUDIOCMD_NEXTOUTPUT   the output after the one `output` names (0:
+//!                         the first), its number in `output` and its
+//!                         `AudioOutputInfo` to `std.data`, as much as
+//!                         `std.length` holds; AUDIOERR_NOOUTPUT past
+//!                         the last
+//!   AUDIOCMD_SETOUTPUT    the device plays through the output `output`
+//!                         names from now on (0: the first on the list);
+//!                         every stream goes on where it was
+//!   AUDIOCMD_GETOUTPUT    the output played through: its number in
+//!                         `output`, its `AudioOutputInfo` to `std.data`
 //!
 //! AbortIO takes a write back: one that waits, or the one that plays,
 //! which stops, the next going on.
@@ -49,6 +59,14 @@
 //! write and its being heard. Unit 1, the way in, is the number a
 //! recording stream will open; until a board's input is driven it is
 //! refused (`AUDIOERR_NOINPUT`).
+//!
+//! **A machine may have several outputs** - a jack and a speaker, a DAC
+//! plugged in - and the device plays through one at a time: the first on
+//! the list until it is told another. Each has a number that stays the
+//! same from one boot to the next, which is how a program or a
+//! preference names it. The output commands read `output`, a field an
+//! IOAudio of version 2 had not got: a request smaller than the whole is
+//! refused them with IOERR_BADLENGTH, and opens as before.
 
 const exec = @import("../libs/exec/exec.zig");
 const IOStdReq = exec.IOStdReq;
@@ -85,6 +103,10 @@ pub const AUDIO_PAN_FULL: i32 = 0x10000;
 pub const AUDIOCMD_SETPARAMS: u16 = exec.CMD_NONSTD + 0;
 pub const AUDIOCMD_QUERY: u16 = exec.CMD_NONSTD + 1;
 pub const AUDIOCMD_MASTER: u16 = exec.CMD_NONSTD + 2;
+/// Since version 3.
+pub const AUDIOCMD_NEXTOUTPUT: u16 = exec.CMD_NONSTD + 3;
+pub const AUDIOCMD_SETOUTPUT: u16 = exec.CMD_NONSTD + 4;
+pub const AUDIOCMD_GETOUTPUT: u16 = exec.CMD_NONSTD + 5;
 
 // --- errors -----------------------------------------------------------------------
 
@@ -94,6 +116,8 @@ pub const AUDIOERR_BADFORMAT: i8 = -10;
 pub const AUDIOERR_NOSTREAM: i8 = -11;
 /// There is no way in on this board, or the device does not drive it yet.
 pub const AUDIOERR_NOINPUT: i8 = -12;
+/// No output of that number, none after it, or one that would not start.
+pub const AUDIOERR_NOOUTPUT: i8 = -13;
 
 /// What a command to audio.device is written in. The first fields are an
 /// IOStdReq, so it is one.
@@ -120,7 +144,14 @@ pub const IOAudio = extern struct {
     /// AUDIOCMD_QUERY: the frames this stream has played since it was
     /// opened, counted round at 2^32.
     position: u32 = 0,
+    /// The output commands: an output's number (`AudioOutputInfo.id`);
+    /// 0 for the first. Since version 3.
+    output: u32 = 0,
 };
+
+/// The fewest bytes a request given to OpenDevice may have: an IOAudio up
+/// to `output`, as version 2 knew it.
+pub const AUDIO_MIN_REQUEST: usize = @offsetOf(IOAudio, "output");
 
 /// What AUDIOCMD_QUERY writes about the device and the board.
 pub const AudioInfo = extern struct {
@@ -143,9 +174,39 @@ pub const AudioInfo = extern struct {
     /// The part the sound comes out of, as the board names it.
     output: ?[*:0]const u8 = null,
     /// Buffers the output played again because the device had not mixed
-    /// the next in time - each one a gap heard - since the device started.
+    /// the next in time - each one a gap heard - since its driver made it.
     underruns: u32 = 0,
+    /// The output's number (`AudioOutputInfo.id`), 0 for none. Since
+    /// version 3.
+    output_id: u32 = 0,
 };
+
+/// How many of an output's rates `AudioOutputInfo` holds.
+pub const AUDIO_MAX_RATES = 8;
+/// How long an output's name may be, its NUL included.
+pub const AUDIO_NAME_LEN = 32;
+
+/// What AUDIOCMD_NEXTOUTPUT and AUDIOCMD_GETOUTPUT write about an output.
+pub const AudioOutputInfo = extern struct {
+    /// Its number: the same from one boot to the next, never 0.
+    id: u32 = 0,
+    /// AUDIOOF_*
+    flags: u32 = 0,
+    /// The most sides any of its modes plays: 1 or 2.
+    channels: u32 = 0,
+    /// The rates it runs at, `rate_count` of them, lowest first.
+    rate_count: u32 = 0,
+    rates: [AUDIO_MAX_RATES]u32 = @splat(0),
+    /// Its name, as the board names the part, NUL-terminated.
+    name: [AUDIO_NAME_LEN]u8 = @splat(0),
+};
+
+/// AudioOutputInfo.flags
+/// The first on the list: what the device plays through until it is told
+/// another.
+pub const AUDIOOF_DEFAULT: u32 = 1 << 0;
+/// The one the device plays through now.
+pub const AUDIOOF_CURRENT: u32 = 1 << 1;
 
 /// Bytes a frame takes in `format` with `channels` channels; 0 for a
 /// format the device does not know.

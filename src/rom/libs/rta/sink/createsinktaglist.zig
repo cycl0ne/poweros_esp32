@@ -42,7 +42,9 @@ const Private = _sink.Private;
 /// not started; nothing of the part is touched until `StartSink`. It goes
 /// on the list by `RTAA_Priority`, so the first on the list is the output
 /// most wanted. Without `RTAA_Name` it is named after the driver and a
-/// number: null0.
+/// number: null0. Since 1.1 it has a number (`AudioSink.id`) worked out
+/// from its driver's name and its own: the same output has the same one
+/// from one boot to the next, and no two sinks on the list share one.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the sink list, and if the
@@ -130,6 +132,7 @@ pub fn CreateSinkTagList(rb: *RtaBase, driver_name: [*:0]const u8, tag_list: ?[*
     driver.open_cnt += 1;
 
     sys.ObtainSemaphore(&rb.sink_lock);
+    sink.id = _sink.idFor(rb, driver.node.name orelse driver_name, sink.node.name.?);
     sys.Enqueue(&rb.sinks, &sink.node);
     rb.serial += 1;
     sys.ReleaseSemaphore(&rb.sink_lock);

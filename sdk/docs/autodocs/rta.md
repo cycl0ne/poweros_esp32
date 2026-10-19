@@ -246,7 +246,9 @@ on. The sink comes up in the mode its driver marked the default and is
 not started; nothing of the part is touched until `StartSink`. It goes
 on the list by `RTAA_Priority`, so the first on the list is the output
 most wanted. Without `RTAA_Name` it is named after the driver and a
-number: null0.
+number: null0. Since 1.1 it has a number (`AudioSink.id`) worked out
+from its driver's name and its own: the same output has the same one
+from one boot to the next, and no two sinks on the list share one.
 
 **CONTEXT**
 

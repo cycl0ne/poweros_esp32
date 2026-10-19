@@ -2,7 +2,8 @@
 //! Audio: a note out of the speaker, through audio.device. Built against
 //! the SDK only.
 //!
-//!   Audio HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N
+//!   Audio HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,
+//!         OUTPUTS/S,OUTPUT/K
 //!
 //! It asks the device what the board has - the part the sound comes out
 //! of, the rate the output runs at, one side or two, how far behind a
@@ -27,6 +28,12 @@
 //! late (`AudioInfo.underruns`, before and after) and what share of a core
 //! the device's task took meanwhile - its own count of the time it ran
 //! (`Task.timeRun`) against the cycles core 0 counted (`ReadCoreTimes`).
+//!
+//! OUTPUTS lists the machine's outputs instead - each one's name, its
+//! number, how many sides it plays and at what rates, which is the
+//! default and which plays now - and plays nothing. OUTPUT name has the
+//! device play through that output from then on, for every program,
+//! before the note.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -37,17 +44,19 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Audio";
-const VERSION_STRING = "\x00$VER: Audio 2.1 (19.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Audio 2.2 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N";
+const template = "HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,OUTPUTS/S,OUTPUT/K";
 const arg_hz = 0;
 const arg_seconds = 1;
 const arg_volume = 2;
 const arg_pan = 3;
 const arg_chord = 4;
 const arg_bench = 5;
-const arg_count = 6;
+const arg_outputs = 6;
+const arg_output = 7;
+const arg_count = 8;
 
 const MSG_NODEVICE = "No %s - this machine has no sound\n";
 const MSG_OUTPUT = "%s: %s, %u Hz, %s, %u frames behind, %u of %u streams in use\n";
@@ -59,6 +68,14 @@ const MSG_BADNOTE = "%s: HZ is 20 to 2000\n";
 const MSG_BADBENCH = "%s: BENCH is 1 to %u streams\n";
 const MSG_BENCHNOTE = "%s: with that many streams HZ is at most %u\n";
 const MSG_FAILED = "A write came back with error %d\n";
+const MSG_ONEOUTPUT = "%s  number %x, %s, ";
+const MSG_RATE = "%u ";
+const MSG_HZ = "Hz";
+const MSG_DEFAULT = ", the default";
+const MSG_CURRENT = ", playing";
+const MSG_NEWLINE = "\n";
+const MSG_NOOUTPUT = "%s: no output %s\n";
+const MSG_NOSWITCH = "%s: %s would not start\n";
 
 /// One cycle of a sine, as 16-bit samples: long enough that the note is
 /// a clean one.
@@ -167,9 +184,28 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         note.opened = true;
     }
 
+    const first = notes[0].io.?;
+    if (argv[arg_outputs] != 0) {
+        listOutputs(sys, dl, first);
+        return dos.RETURN_OK;
+    }
+    if (argv[arg_output] != 0) {
+        const wanted: [*:0]const u8 = @ptrFromInt(argv[arg_output]);
+        const id = outputNamed(sys, first, wanted) orelse {
+            _ = Printf(dl, MSG_NOOUTPUT, .{ COMMAND_NAME, wanted });
+            return dos.RETURN_ERROR;
+        };
+        first.std.req.command = audio.AUDIOCMD_SETOUTPUT;
+        first.std.data = null;
+        first.output = id;
+        if (sys.DoIO(&first.std.req) != 0) {
+            _ = Printf(dl, MSG_NOSWITCH, .{ COMMAND_NAME, wanted });
+            return dos.RETURN_ERROR;
+        }
+    }
+
     // What the board has, from the first stream.
     var info: audio.AudioInfo = .{};
-    const first = notes[0].io.?;
     first.std.req.command = audio.AUDIOCMD_QUERY;
     first.std.data = &info;
     first.std.length = @sizeOf(audio.AudioInfo);
@@ -222,6 +258,56 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_BENCHED, .{ after.underruns -% before.underruns, tenths / 10, tenths % 10 });
     }
     return if (err == 0) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+/// Every output the device can play through, a line each.
+fn listOutputs(sys: *ExecBase, dl: *DosBase, io: *audio.IOAudio) void {
+    var info: audio.AudioOutputInfo = .{};
+    io.output = 0;
+    while (nextOutput(sys, io, &info)) {
+        _ = Printf(dl, MSG_ONEOUTPUT, .{
+            @as([*:0]const u8, @ptrCast(&info.name)),
+            info.id,
+            @as([*:0]const u8, if (info.channels == 1) "one side" else "two sides"),
+        });
+        for (info.rates[0..info.rate_count]) |rate| _ = Printf(dl, MSG_RATE, .{rate});
+        _ = Printf(dl, MSG_HZ, .{});
+        if (info.flags & audio.AUDIOOF_DEFAULT != 0) _ = Printf(dl, MSG_DEFAULT, .{});
+        if (info.flags & audio.AUDIOOF_CURRENT != 0) _ = Printf(dl, MSG_CURRENT, .{});
+        _ = Printf(dl, MSG_NEWLINE, .{});
+    }
+}
+
+/// The output after the one `io.output` names into `info`, its number
+/// left in `io.output`; false past the last.
+fn nextOutput(sys: *ExecBase, io: *audio.IOAudio, info: *audio.AudioOutputInfo) bool {
+    io.std.req.command = audio.AUDIOCMD_NEXTOUTPUT;
+    io.std.data = info;
+    io.std.length = @sizeOf(audio.AudioOutputInfo);
+    return sys.DoIO(&io.std.req) == 0;
+}
+
+/// The number of the output of that name, its case not minded.
+fn outputNamed(sys: *ExecBase, io: *audio.IOAudio, wanted: [*:0]const u8) ?u32 {
+    var info: audio.AudioOutputInfo = .{};
+    io.output = 0;
+    while (nextOutput(sys, io, &info)) {
+        if (sameName(&info.name, wanted)) return info.id;
+    }
+    return null;
+}
+
+fn sameName(name: []const u8, wanted: [*:0]const u8) bool {
+    var at: usize = 0;
+    while (at < name.len) : (at += 1) {
+        if (lower(name[at]) != lower(wanted[at])) return false;
+        if (name[at] == 0) return true;
+    }
+    return false;
+}
+
+fn lower(char: u8) u8 {
+    return if (char >= 'A' and char <= 'Z') char + 32 else char;
 }
 
 /// What a bench compares: the output's count of buffers played again, the

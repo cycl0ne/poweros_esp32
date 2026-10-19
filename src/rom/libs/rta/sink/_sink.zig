@@ -78,6 +78,39 @@ pub fn defaultMode(sink: *rta.AudioSink) ?*rta.AudioMode {
     return first;
 }
 
+/// The number a new sink is known by: FNV-1a over its driver's name, a
+/// slash and its own name, so the same output has the same number from
+/// one boot to the next whatever else the machine has; never 0. One that
+/// another sink on the list has already moves on by one. Under the sink
+/// list's semaphore, held to add the sink.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `driver_name` - the name of the driver that made it.
+/// - `name` - its own name.
+pub fn idFor(rb: *RtaBase, driver_name: [*:0]const u8, name: [*:0]const u8) u32 {
+    var hash: u32 = 0x811C_9DC5;
+    for ([_][*:0]const u8{ driver_name, "/", name }) |part| {
+        var at: usize = 0;
+        while (part[at] != 0) : (at += 1) {
+            hash ^= part[at];
+            hash *%= 0x0100_0193;
+        }
+    }
+    while (hash == 0 or taken(rb, hash)) hash +%= 1;
+    return hash;
+}
+
+/// Whether a sink on the list has that number.
+fn taken(rb: *RtaBase, id: u32) bool {
+    var it = rb.sinks.iterator();
+    while (it.next()) |node| {
+        const sink: *rta.AudioSink = @fieldParentPtr("node", node);
+        if (sink.id == id) return true;
+    }
+    return false;
+}
+
 /// Whether the sink has been started and not stopped.
 ///
 /// INPUTS:

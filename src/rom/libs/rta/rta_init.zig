@@ -15,8 +15,8 @@ const RtaBase = @import("rta_base.zig").RtaBase;
 
 pub const LIBRARY_NAME = rta.RTANAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 0;
-const BUILD_DATE = "19.10.2026";
+pub const LIBRARY_REVISION = 1;
+const BUILD_DATE = "20.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

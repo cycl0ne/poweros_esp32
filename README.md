@@ -158,9 +158,10 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   ([datatypes guide](sdk/docs/guides/datatypes.md)); fonts bitmap and
   TrueType, at any size ([fonts guide](sdk/docs/guides/fonts.md)).
 - **Sound:** `audio.device` mixes up to sixteen streams, each in its own
-  form, rate, volume and pan, into the outputs of rta.library's drivers:
-  an ES8311 codec, I2S amplifiers, and in QEMU an output into nothing
-  that keeps time;
+  form, rate, volume and pan, into one of the outputs of rta.library's
+  drivers - an ES8311 codec, I2S amplifiers, and in QEMU an output into
+  nothing that keeps time - picked by a number that stays the same from
+  boot to boot;
   `LIBS:audiocodec.library` decodes WAV, MP3, FLAC and Ogg Vorbis as they
   play and reads their tags, covers and chapters (`C:Play`,
   [sound guide](sdk/docs/guides/audio.md)).

@@ -109,11 +109,54 @@ since it was opened:
 | `master` | the master volume |
 | `has_input` | whether unit 1 records on this board |
 | `output` | the output played through: the part the sound comes out of, as the board names it, or `null` |
-| `underruns` | buffers the output played again because the next was not mixed in time - each a gap heard - since the device started |
+| `underruns` | buffers the output played again because the next was not mixed in time - each a gap heard - since its driver made it |
+| `output_id` | the output's number (below), since version 3 |
 
 A stereo stream on a board with one output is heard as its two sides
 together, so every program is heard whole on every board; the position
 and the latency are what a picture is kept in step with sound by.
+
+## Choosing an output
+
+A machine may have more than one output - a jack and a speaker, a DAC
+plugged in - and the device plays through one of them at a time: the
+first on the list until a program picks another. Each output has a
+**number** that stays the same from one boot to the next, worked out
+from its driver's name and its own; it is what a program or a
+preference keeps to name it by. Three commands, since version 3, read
+it from the request's `output`:
+
+| Command | What |
+|---|---|
+| `AUDIOCMD_NEXTOUTPUT` | the output after the one `output` names - 0 for the first - its number back in `output` and its `AudioOutputInfo` to `std.data`; `AUDIOERR_NOOUTPUT` past the last |
+| `AUDIOCMD_SETOUTPUT` | the device plays through that output from now on, for every program; 0 is the first on the list again |
+| `AUDIOCMD_GETOUTPUT` | the output played through: its number in `output`, its `AudioOutputInfo` to `std.data` |
+
+`AudioOutputInfo` holds the number, its flags - `AUDIOOF_DEFAULT` for
+the first on the list, `AUDIOOF_CURRENT` for the one played through -
+the most sides it plays, the rates it runs at (`rate_count` of
+`rates`, lowest first) and its name. As with the query, as much of it
+is written as `std.length` holds.
+
+```zig
+var info: audio.AudioOutputInfo = .{};
+io.std.req.command = audio.AUDIOCMD_NEXTOUTPUT;
+io.std.data = &info;
+io.std.length = @sizeOf(audio.AudioOutputInfo);
+io.output = 0;
+while (sys.DoIO(&io.std.req) == 0) {
+    // info.name, info.id; io.output is info.id, so the next DoIO goes on
+}
+```
+
+A change of output does not interrupt anything: every stream goes on
+from the frame it had got to, on the new output at its own rate, and
+`position` goes on counting from where it was. One that will not start
+leaves the one before playing and answers `AUDIOERR_NOOUTPUT`.
+
+`output` is a field at the end of `IOAudio` that version 2 had not got.
+A request of that size still opens and does everything else; only the
+output commands refuse it, with `IOERR_BADLENGTH`.
 
 ## The master volume
 
@@ -303,6 +346,8 @@ Audio HZ 220 SECONDS 5 PAN -100
 Audio CHORD                   a major chord, three streams at once
 Audio BENCH 16                sixteen streams for ten seconds, then the
                               gaps and the device task's share of a core
+Audio OUTPUTS                 every output: name, number, sides, rates
+Audio OUTPUT Headphones       play through that one from now on
 ```
 
 In QEMU the output is `null`: the sound is mixed as on a board, buffer
