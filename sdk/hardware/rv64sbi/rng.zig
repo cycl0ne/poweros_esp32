@@ -11,18 +11,17 @@
 //!
 //! Every program built with the SDK has a copy of this code, the kernel's
 //! is only one, so the generator is found where each can see it: a part
-//! of kind PARTKIND_RNG in the board's system tag list, reached through
-//! exec's FindResident - no library to open, so any code may call this.
+//! of kind PARTKIND_RNG in the board's system tag list (`parts.zig`) - no
+//! library to open, so any code may call this.
 //! Once per copy, on the first call. A request runs with interrupts off,
 //! so two callers' requests do not meet in its registers; that holds on
 //! one core.
 
 const cpu = @import("cpu.zig");
 const trng = @import("trng.zig");
+const parts = @import("parts.zig");
 const exec = @import("../../libs/exec/exec.zig");
 const st = @import("../../libs/expansion/systemtags.zig");
-const SYSTEM_RESIDENT = @import("../../libs/expansion/expansion.zig").SYSTEM_RESIDENT;
-const tagitem = @import("../../libs/utility/tagitem.zig");
 
 var state: u64 = 0x9E37_79B9_7F4A_7C15;
 
@@ -56,30 +55,11 @@ fn sysBase() *exec.ExecBase {
     return cell.*;
 }
 
-/// The value of `tag` in `list`, or null.
-fn find(list: [*]const tagitem.TagItem, tag: tagitem.Tag) ?usize {
-    var at: usize = 0;
-    while (list[at].tag != tagitem.TAG_DONE) : (at += 1) {
-        if (list[at].tag == tag) return list[at].data;
-    }
-    return null;
-}
-
 /// Where the board's generator is: its PARTKIND_RNG part's PART_Address,
 /// for a generator this code drives.
 fn findGenerator() ?usize {
-    const tag = sysBase().FindResident(SYSTEM_RESIDENT) orelse return null;
-    if (tag.type != .board) return null;
-    const root: [*]const tagitem.TagItem = @ptrCast(@alignCast(tag.init orelse return null));
-    var at: usize = 0;
-    while (root[at].tag != tagitem.TAG_DONE) : (at += 1) {
-        if (root[at].tag != st.SYSTAG_Part) continue;
-        const part: [*]const tagitem.TagItem = @ptrFromInt(root[at].data);
-        if (find(part, st.PART_Kind) != st.PARTKIND_RNG) continue;
-        if (find(part, st.PART_Chip) != st.CHIP_JH7110_TRNG) continue;
-        return find(part, st.PART_Address);
-    }
-    return null;
+    const part = parts.find(st.PARTKIND_RNG, st.CHIP_JH7110_TRNG) orelse return null;
+    return parts.value(part, st.PART_Address);
 }
 
 /// One request's worth from the generator, or null - and jitter from

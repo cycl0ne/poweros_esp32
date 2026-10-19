@@ -171,8 +171,20 @@ const display = [_]Tag{
     .done,
 };
 
-/// The HDMI port's sound: I2STX0 into the HDMI transmitter, fed by the
-/// DMA controller (interrupt 73), its master clock the 12.288 MHz
+/// The DMA controller, DesignWare's AXI DMA: its four channels are
+/// dma.resource's, all on PLIC source 73.
+const dmac = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_DMA),
+    .value(st.PART_Chip, st.CHIP_JH7110_DMAC),
+    .pointer(st.PART_ChipName, "jh7110 dmac"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x1605_0000),
+    .value(st.PART_Irq, 73),
+    .done,
+};
+
+/// The HDMI port's sound: I2STX0 into the HDMI transmitter, fed by a
+/// channel of the DMA controller, its master clock the 12.288 MHz
 /// oscillator on GPIO4 (the device tree's mclk_ext).
 const hdmi_sound = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_CODEC),
@@ -180,7 +192,6 @@ const hdmi_sound = [_]Tag{
     .pointer(st.PART_ChipName, "jh7110 hdmi"),
     .value(st.PART_Bus, st.BUS_MEMORY),
     .value(st.PART_Address, 0x2959_0000),
-    .value(st.PART_Irq, 73),
     .value(st.PART_PinMCLK, pins.gpio(4)),
     .pointer(st.PART_Label, "HDMI sound"),
     .done,
@@ -213,6 +224,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &trng),
+    .pointer(st.SYSTAG_Part, &dmac),
     .pointer(st.SYSTAG_Part, &card_slot),
     .pointer(st.SYSTAG_Part, &pcie0),
     .pointer(st.SYSTAG_Part, &pcie1),

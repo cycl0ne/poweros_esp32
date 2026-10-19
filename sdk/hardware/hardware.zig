@@ -93,6 +93,10 @@ pub const trng = if (chip == .rv64sbi) own.trng else struct {};
 /// devices do not see the caches (the JH7110). The ESP32s' caches are
 /// `cache`'s, so there it is empty.
 pub const ccache = if (chip == .rv64sbi) own.ccache else struct {};
+/// The DesignWare AXI DMA controller's channels, as their owners drive
+/// them (the JH7110's; dma.resource hands them out). The ESP32s' DMA is
+/// `gdma`'s and `dma2d`'s, so there it is empty.
+pub const dwdma = if (chip == .rv64sbi) own.dwdma else struct {};
 
 /// The crystal: the clock the chip starts on, and the UARTs' clock.
 pub const XTAL_HZ = own.XTAL_HZ;

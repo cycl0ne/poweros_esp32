@@ -14,8 +14,9 @@
 //! amplifier that takes I2S itself and needs nothing set up - the
 //! CrowPanel's pair, one a speaker. Either has an enable line the device
 //! drives while the stream runs. On the VisionFive 2 it is the HDMI port
-//! (`jh7110/hdmi.zig`), and the JH7110's own DMA controller feeds the I2S
-//! controller (`jh7110/dma.zig`) in place of dma.resource.
+//! (`jh7110/hdmi.zig`), and the channel is one of the JH7110's DesignWare
+//! DMA controller, which dma.resource hands out and the device drives
+//! through `sdk.hardware.dwdma`.
 //!
 //! Nothing is touched until the first OpenDevice. That starts the task,
 //! which brings the codec up over i2c.device if there is one, turns the
@@ -55,10 +56,11 @@ const i2s = if (builtin.is_test) no_i2s else switch (sdk.hardware.chip) {
     .rv64sbi => @import("jh7110/i2s.zig"),
 };
 
-/// The JH7110's way out: the HDMI port, from I2STX0, which the chip's own
-/// DMA controller feeds. No pads to take, no codec, no amplifier.
+/// The JH7110's way out: the HDMI port, from I2STX0, which a channel of
+/// the chip's DesignWare DMA controller feeds. No pads to take, no codec,
+/// no amplifier.
 const jh7110 = !builtin.is_test and sdk.hardware.chip == .rv64sbi;
-const ring_dma = if (jh7110) @import("jh7110/dma.zig") else struct {
+const ring_dma = if (jh7110) sdk.hardware.dwdma else struct {
     pub const Ring = extern struct {};
 };
 const hdmi = if (jh7110) @import("jh7110/hdmi.zig") else struct {};
@@ -79,7 +81,7 @@ const gpio = sdk.hardware.gpio;
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "19.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -198,8 +200,8 @@ const AudioBase = extern struct {
     /// amplifier pair takes the sides as the board wires them
     /// (PART_SidesSwapped).
     sides: mixer.Sides = .left_first,
-    /// On the JH7110: the DMA controller's ring round the buffers. MCLK's
-    /// pad is `mclk_pin`, which there is an input.
+    /// On the JH7110: the DMA channel's ring round the buffers. MCLK's pad
+    /// is `mclk_pin`, which there is an input.
     ring: ring_dma.Ring = .{},
 };
 
@@ -462,9 +464,9 @@ fn giveBack(ab: *AudioBase) void {
 
 // --- the JH7110's HDMI port ---------------------------------------------
 
-/// The stream started out of the HDMI port: the buffers, the DMA
-/// controller's ring round them, I2STX0 on the board's oscillator, and
-/// the transmitter's sound on. Only once the display driver has the
+/// The stream started out of the HDMI port: a DMA channel, the buffers
+/// and its ring round them, I2STX0 on the board's oscillator, and the
+/// transmitter's sound on. Only once the display driver has the
 /// transmitter up.
 fn bringUpHdmi(ab: *AudioBase) bool {
     const sys = ab.sys_base;
@@ -472,6 +474,22 @@ fn bringUpHdmi(ab: *AudioBase) bool {
         sdk.exec.kprintf(sys, "%s: the HDMI port is not up\n", .{DEVICE_NAME});
         return false;
     }
+    // A channel of the controller, the last free one first, at the
+    // highest priority, as Linux's device tree gives the I2S its channel.
+    const db: *dmares.DmaBase = @ptrCast(sys.OpenResource(dmares.DMANAME) orelse return false);
+    ab.dma = db;
+    var n: u32 = dmares.DWDMA_CHANNELS;
+    const ch = while (n > 0) {
+        n -= 1;
+        const candidate = dmares.DWDMA_CHANNEL0 + n;
+        if (db.AllocDMAChannel(candidate, DEVICE_NAME) == null) break candidate;
+    } else {
+        sdk.exec.kprintf(sys, "%s: no DMA channel free\n", .{DEVICE_NAME});
+        return false;
+    };
+    ab.channel = ch;
+    ab.has_channel = 1;
+    const controller = ring_dma.find() orelse return false;
     // The buffers, written back with the silence they start with, and the
     // list items, each on 64 bytes of its own: one more for the rounding.
     const memory = sys.AllocVec(buffer_bytes * buffers, exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return false;
@@ -482,15 +500,18 @@ fn bringUpHdmi(ab: *AudioBase) bool {
     const block = sys.AllocVec(item_bytes * (buffers + 1), exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return false;
     ab.ring.block = block;
     ab.ring.items = @ptrFromInt(std.mem.alignForward(usize, @intFromPtr(block), item_bytes));
+    ab.ring.base = controller.base;
+    ab.ring.channel = ch - dmares.DWDMA_CHANNEL0;
+    ab.ring.priority = ring_dma.max_priority;
     ab.ring.buffers = @intFromPtr(memory);
     ab.ring.target = i2s.TXDMA;
     ab.ring.count = buffers;
     ab.ring.bytes = buffer_bytes;
+    ab.ring.dst_width = ring_dma.WIDTH_16;
 
-    ring_dma.init();
     i2s.init(ab.mclk_pin);
     i2s.reset();
-    sys.AddIntServer(ab.ring.irq, &ab.int);
+    sys.AddIntServer(dmares.dmaIntNumber(ch, dmares.DMA_OUT), &ab.int);
     ab.int_added = 1;
     ring_dma.start(sys, &ab.ring, i2s.dma_handshake);
     i2s.start();
@@ -509,12 +530,14 @@ fn giveBackHdmi(ab: *AudioBase) void {
     const sys = ab.sys_base;
     if (ab.streaming != 0) {
         hdmi.stop();
-        ring_dma.stop();
+        ring_dma.stop(ab.ring.base, ab.ring.channel);
         i2s.stop();
     }
     ab.streaming = 0;
-    if (ab.int_added != 0) sys.RemIntServer(ab.ring.irq, &ab.int);
+    if (ab.int_added != 0) sys.RemIntServer(dmares.dmaIntNumber(ab.channel, dmares.DMA_OUT), &ab.int);
     ab.int_added = 0;
+    if (ab.has_channel != 0) ab.dma.?.FreeDMAChannel(ab.channel);
+    ab.has_channel = 0;
     ab.ring.items = null;
     if (ab.ring.block) |block| sys.FreeVec(block);
     ab.ring.block = null;
@@ -522,14 +545,12 @@ fn giveBackHdmi(ab: *AudioBase) void {
     ab.stream = null;
 }
 
-/// The HDMI port's part: the pad the master clock comes in on, and the
-/// DMA controller's interrupt.
+/// The HDMI port's part: the pad the master clock comes in on.
 fn findHdmi(ab: *AudioBase, eb: *sdk.interface.expansion.ExpansionBase, ub: *sdk.interface.utility.UtilityBase) void {
     const part = eb.FindBoardPart(null, st.PARTKIND_CODEC, st.CHIP_JH7110_HDMI) orelse return;
     const mclk = BoardPin.of(ub.GetTagData(st.PART_PinMCLK, 0, part.tags));
     if (mclk.kind != expansion.boardpin.BPIN_GPIO) return;
     ab.mclk_pin = mclk.number;
-    ab.ring.irq = @intCast(ub.GetTagData(st.PART_Irq, 0, part.tags));
     ab.output_name = part.node.name orelse "hdmi";
     ab.has_output = 1;
 }

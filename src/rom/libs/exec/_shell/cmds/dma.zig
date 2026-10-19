@@ -42,8 +42,10 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
             const owner: [*:0]const u8 = db.DMAChannelOwner(channel) orelse "-";
             if (channel < dmares.DMA2D_CHANNEL0) {
                 shell.print("%7d  %s\n", .{ channel, owner });
-            } else {
+            } else if (channel < dmares.DWDMA_CHANNEL0) {
                 shell.print("%7d  %s (2D-DMA %d)\n", .{ channel, owner, channel - dmares.DMA2D_CHANNEL0 });
+            } else {
+                shell.print("%7d  %s (DesignWare DMA %d)\n", .{ channel, owner, channel - dmares.DWDMA_CHANNEL0 });
             }
         }
         return;

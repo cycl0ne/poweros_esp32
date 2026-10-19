@@ -52,6 +52,7 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_RTC => "rtc",
         st.PARTKIND_RNG => "rng",
         st.PARTKIND_PCI => "pci",
+        st.PARTKIND_DMA => "dma",
         else => "part",
     };
 }

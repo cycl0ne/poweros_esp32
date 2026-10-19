@@ -332,6 +332,10 @@ pub const PARTKIND_RNG: u32 = 20;
 /// and PART_PinReset the line that holds what is plugged in in reset
 /// (PERST#).
 pub const PARTKIND_PCI: u32 = 21;
+/// A DMA controller in the chip, whose channels dma.resource hands out:
+/// PART_Chip which, PART_Address its registers (BUS_MEMORY), PART_Irq the
+/// interrupt its channels share.
+pub const PARTKIND_DMA: u32 = 22;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -411,11 +415,15 @@ pub const CHIP_XHCI: u32 = 28;
 /// address on that MAC's management bus.
 pub const CHIP_YT8531: u32 = 29;
 /// The JH7110's HDMI transmitter as the machine's sound (PARTKIND_CODEC on
-/// BUS_MEMORY, PART_Address the transmitter): I2STX0's stream, which the
-/// chip's DMA controller feeds - PART_Irq is that controller's interrupt -
-/// with the board's 12.288 MHz oscillator as its master clock, in on
-/// PART_PinMCLK. Only while the picture (CHIP_JH7110_DC8200) is up.
+/// BUS_MEMORY, PART_Address the transmitter): I2STX0's stream, which a
+/// channel of the chip's DMA controller (CHIP_JH7110_DMAC) feeds, with the
+/// board's 12.288 MHz oscillator as its master clock, in on PART_PinMCLK.
+/// Only while the picture (CHIP_JH7110_DC8200) is up.
 pub const CHIP_JH7110_HDMI: u32 = 30;
+/// The JH7110's DMA controller, Synopsys's DesignWare AXI DMA with four
+/// channels (PARTKIND_DMA on BUS_MEMORY), which dma.resource clocks and
+/// hands out as its DWDMA channels.
+pub const CHIP_JH7110_DMAC: u32 = 31;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

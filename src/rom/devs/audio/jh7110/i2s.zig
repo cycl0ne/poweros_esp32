@@ -11,10 +11,11 @@
 //! of 32 bits, each sample in the top 16 of its slot - and the word clock
 //! is the bit clock over 64. MCLK goes to the HDMI transmitter as well.
 //!
-//! Samples come out of memory through the DMA controller (`dma.zig`).
-//! The transmitter asks it for more on the line its "FIFO empty"
-//! interrupt drives, so that interrupt is unmasked. It reaches the DMA
-//! controller, not the processor: I2STX0 has no line to the PLIC.
+//! Samples come out of memory through a channel of the DMA controller
+//! (`sdk.hardware.dwdma`). The transmitter asks it for more on the line
+//! its "FIFO empty" interrupt drives, so that interrupt is unmasked. It
+//! reaches the DMA controller, not the processor: I2STX0 has no line to
+//! the PLIC.
 //!
 //! After Linux's dwc-i2s.c (jh7110_i2s_crg_master_init, the i2stx0's
 //! data) and the JH7110's clock driver, clk-starfive-jh7110-sys.c. It
