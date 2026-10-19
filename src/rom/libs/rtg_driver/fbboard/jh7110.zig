@@ -88,6 +88,11 @@ const VIC_1080P60: u32 = 16;
 
 /// The display controller.
 const DC: usize = 0x2940_0000;
+/// Its interrupts: reading ACKNOWLEDGE says which came since it was last
+/// read, and clears them; ENABLE says which may come, and `start` lets
+/// them, as U-Boot does.
+const INTERRUPT_ACKNOWLEDGE = 0x0010;
+const INTERRUPT_ENABLE = 0x0014;
 const FRAMEBUFFER_ADDRESS = 0x1400;
 const FRAMEBUFFER_STRIDE = 0x1408;
 const PANEL_START = 0x1CCC;
@@ -227,7 +232,7 @@ pub fn start(address: usize, pitch: u32, waiter: anytype) Failure {
 
     // The controller: 1920x1080 at 60 Hz from the picture at `address`,
     // to the transmitter (sf_display_init).
-    dc(0x0014).* = 0xC000_1FFF;
+    dc(INTERRUPT_ENABLE).* = 0xC000_1FFF;
     dc(0x1CC0).* = 0x0000_2000;
     dc(0x1800).* = 0x0000_0000;
     dc(0x24D8).* = 0x0000_0000;
@@ -287,6 +292,12 @@ fn hold() void {
 fn letGo() void {
     dc(FRAMEBUFFER_CONFIG_EX).* |= FRAMEBUFFER_SHADOW;
     dc(PANEL_CONFIG_EX).* &= ~PANEL_HOLD;
+}
+
+/// What the controller raised since this was last asked, cleared: 0 when
+/// the interrupt was not its.
+pub fn takeInterrupts() u32 {
+    return dc(INTERRUPT_ACKNOWLEDGE).*;
 }
 
 /// The picture at `address` shown from now on.

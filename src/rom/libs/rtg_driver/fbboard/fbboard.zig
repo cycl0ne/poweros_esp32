@@ -35,6 +35,16 @@
 //! Two buffers take turns, so the one the controller reads is never the
 //! one written. The overlay is still laid in the composed frame.
 //!
+//! The board's engine is the processor's own cores (`engine.zig`): a
+//! fill, a copy, a colour or a picture laid over, a pattern or a template
+//! that covers much of a buffer is cut into bands of rows, one for each
+//! core, and the write-back a refresh ends with is shared out the same
+//! way.
+//!
+//! Where the display raises an interrupt at each frame (the board's part
+//! gives it as PART_Irq), a flip and WaitVBlank wait for it; elsewhere,
+//! and should it stop coming, they wait as long as a frame takes.
+//!
 //! The module keeps nothing of its own: a ROM image is read only, so the
 //! driver node and everything that changes are allocated at init and found
 //! again through the node.
@@ -51,14 +61,15 @@ const st = sdk.expansion.systemtags;
 
 const ramfb = @import("ramfb.zig");
 const jh7110 = @import("jh7110.zig");
+const engine = @import("engine.zig");
 const tags = rtg.tags;
 const timer = sdk.devices.timer;
 
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 0;
-const BUILD_DATE = "17.10.2026";
+const REVISION = 1;
+const BUILD_DATE = "19.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -145,17 +156,92 @@ const Screen = struct {
     /// origin, unless a screen is pulled down.
     bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
     band_count: u32 = 0,
+    /// The cores, as the board's engine.
+    engine: engine.Engine = .{},
+    /// The display's frame interrupt, where it has one: its number (0 for
+    /// none), its server and whether that is on, the frames it has
+    /// counted, the tasks waiting for frames, and whether it has been seen
+    /// to come.
+    frame_irq: u32 = 0,
+    frame_int: exec.Interrupt = .{},
+    frame_hooked: bool = false,
+    frames: u32 = 0,
+    frame_waiters: ?*FrameWaiter = null,
+    frames_come: bool = false,
 };
 
 /// A frame at 60 a second.
 const frame_us = 16_667;
 
-/// Wait as long as `frames` frames take. Nothing here says when one
-/// begins, so this is what makes a program that paces itself by the
-/// display - a flip, WaitVBlank - run at the speed it would on a display
-/// that does, and give the CPU away while it waits.
+/// Wait for `frames` frames: for the display's frame interrupt to come
+/// that many times, where it comes, so that a flip is waited out to the
+/// frame the new picture starts in; else for as long as they take, which
+/// is what makes a program that paces itself by the display - a flip,
+/// WaitVBlank - run at the speed it would on a display that says when a
+/// frame begins. The CPU is given away meanwhile, either way.
 fn pace(screen: *Screen, frames: u32) void {
+    if (@atomicLoad(bool, &screen.frames_come, .acquire) and waitFrames(screen, frames)) return;
     sleep(screen, @as(u64, frame_us) * frames);
+}
+
+/// A task waiting for frames, on its own stack: the count of frames it
+/// waits for, and what the frame interrupt signals when it is reached.
+const FrameWaiter = struct {
+    next: ?*FrameWaiter = null,
+    until: u32 = 0,
+    reached: exec.Waitable = .{},
+};
+
+/// Until the frame interrupt has come `frames` more times. False when it
+/// did not within two frames more: it is taken to have stopped, and the
+/// clock paces from then on.
+fn waitFrames(screen: *Screen, frames: u32) bool {
+    const sys = screen.sys;
+    var waiter = FrameWaiter{};
+    sys.Disable();
+    waiter.until = screen.frames +% frames;
+    waiter.next = screen.frame_waiters;
+    screen.frame_waiters = &waiter;
+    sys.Enable();
+    const answer = sys.WaitForAny(&[_]*exec.Waitable{&waiter.reached}, 1, @as(u64, frame_us) * (frames + 2));
+    sys.Disable();
+    var link = &screen.frame_waiters;
+    while (link.*) |at| : (link = &at.next) {
+        if (at != &waiter) continue;
+        link.* = at.next;
+        break;
+    }
+    sys.Enable();
+    if (answer != exec.WAIT_TIMEOUT) return true;
+    @atomicStore(bool, &screen.frames_come, false, .release);
+    return false;
+}
+
+/// The display's interrupt: a frame counted, and every task whose count
+/// it reaches told.
+fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
+    _ = int_number;
+    const screen: *Screen = @ptrCast(@alignCast(data.?));
+    if (jh7110.takeInterrupts() == 0) return 0;
+    screen.frames +%= 1;
+    @atomicStore(bool, &screen.frames_come, true, .release);
+    var at = screen.frame_waiters;
+    while (at) |waiter| : (at = waiter.next) {
+        if (@as(i32, @bitCast(screen.frames -% waiter.until)) >= 0) screen.sys.SignalWaitable(&waiter.reached);
+    }
+    return 1;
+}
+
+/// The frame interrupt's server on, once the display runs.
+fn hookFrames(screen: *Screen) void {
+    if (screen.frame_irq == 0 or screen.frame_hooked) return;
+    screen.frame_int = .{
+        .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
+        .data = screen,
+        .code = &frameServer,
+    };
+    screen.sys.AddIntServer(screen.frame_irq, &screen.frame_int);
+    screen.frame_hooked = true;
 }
 
 /// Wait `micros` on timer.device, the CPU given away meanwhile. Nothing
@@ -525,11 +611,13 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     if (screen.width == 0 or screen.height == 0) return err.RTGERR_BAD_ARG;
     if (screen.width > 0x3FFF or screen.height > 0x3FFF) return err.RTGERR_BAD_ARG;
     screen.pitch = std.mem.alignForward(u32, screen.width * bytes, row_alignment);
-    // The JH7110's one mode, and a display that does not see the caches.
+    // The JH7110's one mode, a display that does not see the caches, and
+    // its frame interrupt.
     if (scanout == .jh7110) {
         if (screen.width != jh7110.width or screen.height != jh7110.height) return err.RTGERR_BAD_ARG;
         if (format != .bgra32) return err.RTGERR_BAD_FORMAT;
         screen.cached = true;
+        screen.frame_irq = @truncate(rb.GetRtgTagData(st.PART_Irq, 0, tag_list));
     }
 
     // One mode: the picture the board was built for.
@@ -573,12 +661,16 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     board.info.buffers = frames;
     board.info.pixel_clock_hz = screen.mode.pixel_clock_hz;
     board.info.refresh_mhz = screen.mode.refresh_mhz;
+    engine.setUp(&screen.engine, sys);
     state.board = board;
     return err.RTGERR_OK;
 }
 
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const screen = screenOf(board);
+    engine.takeDown(&screen.engine);
+    if (screen.frame_hooked) screen.sys.RemIntServer(screen.frame_irq, &screen.frame_int);
+    screen.frame_hooked = false;
     if (screen.timer_open) screen.sys.CloseDevice(&screen.timer_io.node);
     screen.timer_open = false;
     if (screen.memory) |memory| screen.sys.FreeMem(memory, screen.memory_size);
@@ -630,6 +722,7 @@ fn begin(screen: *Screen, address: usize) bool {
             if (failure == .none and !jh7110.monitor()) {
                 exec.kprintf(screen.sys, "%s: no monitor on the HDMI port\n", .{MODULE_NAME});
             }
+            if (failure == .none) hookFrames(screen);
         },
     }
     return screen.scanning == address;
@@ -675,7 +768,7 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
     const first = if (rows == 0) 0 else @min(y, bitmap.height);
     const last = if (rows == 0) bitmap.height else @min(y +| rows, bitmap.height);
     // Any buffer, shown or not: one drawn ahead is shown by naming it.
-    handOn(screen, bitmap.pixels.? + first * bitmap.pitch, (last - first) * bitmap.pitch);
+    if (screen.cached) engine.flush(&screen.engine, screen.sys, bitmap.pixels.?, bitmap.pitch, first, last);
     if (!composing(screen)) return err.RTGERR_OK;
     var shown = false;
     for (screen.bands[0..screen.band_count], 0..) |band, i| {
@@ -708,7 +801,8 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
     return err.RTGERR_OK;
 }
 
-/// Frames waited out by the clock: nothing here says when one begins.
+/// Frames waited for: by the frame interrupt where it comes, else by the
+/// clock.
 fn waitVBlank(board: *rtg.RtgBoard, frames: u32) callconv(.c) i32 {
     pace(screenOf(board), if (frames == 0) 1 else frames);
     return err.RTGERR_OK;
@@ -717,6 +811,36 @@ fn waitVBlank(board: *rtg.RtgBoard, frames: u32) callconv(.c) i32 {
 fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
     const screen = screenOf(board);
     into.frames = screen.updates;
+}
+
+// --- the engine: the cores (engine.zig) ---------------------------------------
+
+fn fillRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
+    return engine.fill(&screenOf(board).engine, bitmap, area, color);
+}
+
+fn copyRect(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, what: *const rtg.RtgCopy) callconv(.c) i32 {
+    return engine.copy(&screenOf(board).engine, src, dest, what);
+}
+
+fn blitTemplate(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, shape: *const rtg.bitmaps.RtgTemplate) callconv(.c) i32 {
+    return engine.template(&screenOf(board).engine, bitmap, area, shape);
+}
+
+fn blitPattern(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.bitmaps.RtgPattern) callconv(.c) i32 {
+    return engine.pattern(&screenOf(board).engine, bitmap, area, tile);
+}
+
+fn waitBlit(board: *rtg.RtgBoard) callconv(.c) void {
+    engine.waitIdle(&screenOf(board).engine);
+}
+
+fn blendRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
+    return engine.blendRect(&screenOf(board).engine, bitmap, area, color);
+}
+
+fn scalePixels(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) callconv(.c) i32 {
+    return engine.scale(&screenOf(board).engine, bitmap, area, pixels, width, height);
 }
 
 const ops = rtg.boards.RtgBoardOps{
@@ -732,6 +856,13 @@ const ops = rtg.boards.RtgBoardOps{
     .show_bands = &showBands,
     .set_overlay = &setOverlay,
     .move_overlay = &moveOverlay,
+    .fill_rect = &fillRect,
+    .copy_rect = &copyRect,
+    .blit_template = &blitTemplate,
+    .blit_pattern = &blitPattern,
+    .wait_blit = &waitBlit,
+    .blend_rect = &blendRect,
+    .scale_pixels = &scalePixels,
 };
 
 const driver_ops = rtg.boards.RtgDriverOps{ .create_board = &createBoard };

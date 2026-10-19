@@ -157,13 +157,15 @@ const screen = struct {
 };
 
 /// The display controller behind the HDMI port, which reads its picture
-/// out of RAM: what the fb rtg driver is told comes with it.
+/// out of RAM and raises PLIC source 95 at each frame: what the fb rtg
+/// driver is told comes with it.
 const display = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_PANEL),
     .value(st.PART_Chip, st.CHIP_JH7110_DC8200),
     .pointer(st.PART_ChipName, "jh7110 dc8200 hdmi"),
     .value(st.PART_Bus, st.BUS_MEMORY),
     .value(st.PART_Address, 0x2940_0000),
+    .value(st.PART_Irq, 95),
     .value(tags.RTGA_Width, screen.width),
     .value(tags.RTGA_Height, screen.height),
     .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
