@@ -243,7 +243,10 @@ pub fn write64(c: *const Controller, offset: usize, value: u64) void {
 // --- memory the controller reads and writes ---------------------------------------------
 
 /// What the processor wrote in [address, address + bytes) put in memory,
-/// for the controller to read - where it does not see the caches.
+/// for the controller to read - where it does not see the caches. Where
+/// it does, nothing is needed here: every such write is followed by
+/// `submit`, whose `barrier` orders it before the doorbell, as Linux's
+/// writel does.
 pub fn toDevice(c: *const Controller, address: usize, bytes: usize) void {
     if (bytes == 0 or c.coherent) return;
     var length: u32 = @intCast(bytes);
@@ -252,6 +255,9 @@ pub fn toDevice(c: *const Controller, address: usize, bytes: usize) void {
 
 /// The caches' copy of [address, address + bytes) dropped, so what the
 /// controller wrote there is read - where it does not see the caches.
+/// Where it does, nothing is needed here: every such read comes after a
+/// completion's phase and `readBarrier`, as Linux's dma_rmb has it, and
+/// the barrier's clobber keeps the compiler from reading it earlier.
 pub fn fromDevice(c: *const Controller, address: usize, bytes: usize) void {
     if (bytes == 0 or c.coherent) return;
     var length: u32 = @intCast(bytes);
