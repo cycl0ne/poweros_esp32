@@ -56,18 +56,17 @@ flowchart TB
     m_pipe_handler["pipe-handler"]
     m_ram_handler["ram-handler"]
     m_ramlib_library["ramlib.library"]
+    m_rta_library["rta.library"]
     m_rtg_library["rtg.library"]
     m_serial_device["serial.device"]
+    m_sound_drivers["sound drivers"]
     m_timer_device["timer.device"]
     m_touch_device["touch.device"]
     m_usbport_resource["usbport.resource"]
     m_usbserial_device["usbserial.device"]
 
     m_Shell --> m_dos_library
-    m_audio_device --> m_dma_resource
-    m_audio_device --> m_gpio_resource
-    m_audio_device --> m_i2c_device
-    m_audio_device --> m_timer_device
+    m_audio_device --> m_rta_library
     m_battclock_resource --> m_i2c_device
     m_battclock_resource --> m_timer_device
     m_battery_resource --> m_expander_resource
@@ -123,6 +122,11 @@ flowchart TB
     m_ramlib_library --> m_dos_library
     m_serial_device --> m_gpio_resource
     m_serial_device -.-> m_timer_device
+    m_sound_drivers --> m_dma_resource
+    m_sound_drivers --> m_gpio_resource
+    m_sound_drivers --> m_i2c_device
+    m_sound_drivers --> m_rta_library
+    m_sound_drivers --> m_timer_device
     m_touch_device --> m_expander_resource
     m_touch_device --> m_gpio_resource
     m_touch_device --> m_i2c_device
@@ -130,7 +134,7 @@ flowchart TB
     m_usbserial_device --> m_usbport_resource
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_display_drivers,m_dos_library,m_graphics_library,m_intuition_library,m_keymap_library,m_layers_library,m_motion_library,m_ramlib_library,m_rtg_library lib
+    class m_display_drivers,m_dos_library,m_graphics_library,m_intuition_library,m_keymap_library,m_layers_library,m_motion_library,m_ramlib_library,m_rta_library,m_rtg_library,m_sound_drivers lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_audio_device,m_console_device,m_flash_device,m_i2c_device,m_input_device,m_keyboard_device,m_mouse_device,m_serial_device,m_timer_device,m_touch_device,m_usbserial_device dev
     classDef res fill:#fef3c7,stroke:#d97706,color:#111827
@@ -144,6 +148,11 @@ flowchart TB
   on the ES3C35P, qemuboard in QEMU, and the command buses a panel is
   spoken to over - qspibus, and i2cbus over i2c.device. Each opens only
   what its panel needs.
+- **The sound drivers** are the board's too: i2s, a line on the chip's
+  I2S controller, and over it es8311 (the codec, set up over i2c.device)
+  on the ES3C35P and the ESP32-P4-PC, or i2samp (amplifiers that take I2S)
+  on the CrowPanel; null in both QEMUs. Each makes its outputs with
+  rta.library, and audio.device plays through the first on its list.
 - **ramlib.library** sits in front of `OpenLibrary` and `OpenDevice`: a library
   or device not in memory it loads from `LIBS:` or `DEVS:` through
   dos.library. A handler on the disk dos loads from `HANDLERS:` itself.

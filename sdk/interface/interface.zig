@@ -14,6 +14,7 @@ pub const gpio = @import("gpio.zig");
 pub const jpeg = @import("jpeg.zig");
 pub const dos = @import("dos.zig");
 pub const rtg = @import("rtg.zig");
+pub const rta = @import("rta.zig");
 pub const graphics = @import("graphics.zig");
 pub const layers = @import("layers.zig");
 pub const intuition = @import("intuition.zig");

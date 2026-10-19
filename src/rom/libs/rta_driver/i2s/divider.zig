@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The I2S controllers' fractional divider: how a source clock is divided
 //! down to the master clock a codec counts in, worked out for every chip
-//! this device drives. Nothing here touches hardware, so the host tests
+//! the I2S line drives. Nothing here touches hardware, so the host tests
 //! hold it.
 //!
 //! The controller divides by a whole number and a fraction. It counts the

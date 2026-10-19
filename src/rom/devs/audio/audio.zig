@@ -1,74 +1,43 @@
 // SPDX-License-Identifier: MPL-2.0
-//! audio.device: streams of sound, mixed into the board's codec or
-//! amplifiers.
+//! audio.device: streams of sound, mixed into the machine's output.
 //!
 //! Each open is a stream (`sdk/devices/audio.zig`): its own sample form,
 //! rate, volume and pan, and a queue of writes. Up to sixteen play at
 //! once; a task mixes them into one stereo stream (`mixer.zig`) at the rate
-//! the output runs at, and a DMA channel hands that stream to the chip's
-//! I2S controller (`esp32s3/i2s.zig`, `esp32p4/i2s.zig`).
+//! the output runs at.
 //!
-//! Where the stream goes is the board's: an ES8311 codec (`es8311.zig`)
-//! set up over I2C, with an amplifier in front of the speaker, or an
-//! amplifier that takes I2S itself and needs nothing set up - the
-//! CrowPanel's pair, one a speaker. Either has an enable line the device
-//! drives while the stream runs.
+//! The output is rta.library's: the first sink on its list, the one its
+//! drivers made most wanted - a codec behind a speaker, an amplifier that
+//! takes I2S, a stream that plays into nothing on a machine without a
+//! sound part. The device knows none of them by name; what it reads of a
+//! sink is its mode - the rate, how many sides are heard, what the halves
+//! of a frame carry - and the ring of buffers it runs on.
 //!
 //! Nothing is touched until the first OpenDevice. That starts the task,
-//! which brings the codec up over i2c.device if there is one, turns the
-//! amplifier on, takes a DMA channel from dma.resource and starts the
-//! stream. From then on the DMA raises an interrupt every time it
-//! finishes a buffer, the interrupt signals the task, and the task mixes
-//! the next one - so the stream is fed ahead of itself and nothing waits
-//! on a bus at the moment a sample is due.
+//! which starts the sink - its driver brings the part up - and from then
+//! on the sink raises the task's signal every time a buffer has been
+//! played, and the task mixes the next one into it - so the output is fed
+//! ahead of itself and nothing waits on a bus at the moment a sample is
+//! due.
 //!
-//! A board with neither has no audio.device: only the ROM tags of a board
-//! that has one link it.
+//! A machine with no sink has no output: every open fails. Only the ROM
+//! tags of a board that has sound - or an emulator, with the null sink -
+//! link the device.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const audio = sdk.devices.audio;
-const i2c = sdk.devices.i2c;
-const timer = sdk.devices.timer;
-const dmares = sdk.resources.dma;
-const intbits = sdk.hardware.intbits;
+const rta = sdk.rta;
 const ExecBase = sdk.interface.exec.ExecBase;
+const RtaBase = sdk.interface.rta.RtaBase;
 const IOAudio = audio.IOAudio;
 
 const mixer = @import("mixer.zig");
-const es8311 = @import("es8311.zig");
-const expansion = sdk.expansion;
-const st = expansion.systemtags;
-const BoardPin = expansion.BoardPin;
-const gpio_resource = sdk.resources.gpio;
-const GpioBase = gpio_resource.GpioBase;
-/// The chip's I2S controller; in the host tests a stand-in with its
-/// numbers and nothing behind its calls.
-const i2s = if (builtin.is_test) no_i2s else switch (sdk.hardware.chip) {
-    .esp32s3 => @import("esp32s3/i2s.zig"),
-    .esp32p4 => @import("esp32p4/i2s.zig"),
-    .rv64sbi => @compileError("audio.device: no I2S for this chip yet"),
-};
-
-const no_i2s = struct {
-    pub const sample_rate: u32 = 48_000;
-    pub const signal_bclk: u32 = 0;
-    pub const signal_mclk: u32 = 0;
-    pub const signal_ws: u32 = 0;
-    pub const signal_data_out: u32 = 0;
-    pub const dma_peripheral: u32 = 0;
-    pub fn init() void {}
-    pub fn reset() void {}
-    pub fn start() void {}
-    pub fn stop() void {}
-};
-const gpio = sdk.hardware.gpio;
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "19.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -82,20 +51,12 @@ const vec = exec.libraries.vec;
 const task_pri = 15;
 const stack_size = 4096;
 
-/// The stream: two buffers the DMA runs round, each of `buffer_frames`
-/// stereo frames. One plays while the other is mixed, so the task has a
-/// buffer's worth of time to do it in - about five milliseconds.
-const buffer_frames: u32 = 256;
-const buffer_samples: u32 = buffer_frames * 2;
-const buffer_bytes: u32 = buffer_samples * 2;
-const buffers: u32 = 2;
-
-/// How loud the codec is driven. The amplifier does the rest, and half
-/// of what the part can do is as much as this speaker wants.
-const codec_volume: u32 = 50;
-
 /// How many streams there are: a voice of the mixer each.
 const max_streams = mixer.max_voices;
+
+/// The rate a stream is stepped for until an output is there: what every
+/// output so far runs at. Attaching one steps every stream for its own.
+const usual_rate: u32 = 48_000;
 
 /// One stream: what an open made, and what every request on it points at
 /// (`io_Unit`).
@@ -122,6 +83,8 @@ const Stream = extern struct {
 const AudioBase = extern struct {
     dev: exec.Device,
     sys_base: *ExecBase,
+    /// rta.library, opened by the init and kept: the outputs are its.
+    rta_base: *RtaBase,
     /// The streams and their voices, shared by the task's mixer and every
     /// caller's BeginIO: a semaphore, since the mixer holds it for a whole
     /// buffer.
@@ -132,72 +95,24 @@ const AudioBase = extern struct {
     master: u32 = audio.AUDIO_VOLUME_UNITY,
     task: exec.Task = .{},
     stack: ?*anyopaque = null,
-    int: exec.Interrupt = .{},
-    /// The task is running and the codec answered.
+    /// The task is running and its output started.
     ready: u8 = 0,
     started: u8 = 0,
     start_signal: i8 = -1,
     pad: u8 = 0,
     starter: ?*exec.Task = null,
-    /// The task's signal the DMA's interrupt raises.
-    int_mask: u32 = 0,
-    /// Owned by the task.
-    port: ?*exec.MsgPort = null,
-    i2c_io: i2c.IOExtI2C = .{},
-    timer_io: timer.TimeRequest = .{},
-    dma: ?*dmares.DmaBase = null,
-    channel: u32 = 0,
-    has_channel: u8 = 0,
-    pad2: [3]u8 = .{ 0, 0, 0 },
-    /// The stream: the buffers, and a descriptor apiece linked into a
-    /// ring, so the end of each one is an interrupt and the other is the
-    /// one to mix into.
-    stream: ?[*]i16 = null,
-    chain: [buffers]?*dmares.DMADescriptor = @splat(null),
-    /// The stream runs (the controller started), and the DMA's interrupt
-    /// server is in.
-    streaming: u8 = 0,
-    int_added: u8 = 0,
-    pad4: [2]u8 = .{ 0, 0 },
-    /// The task's signal to end, for an expunge.
+    /// The task's signal a played buffer raises, and its signal to end,
+    /// for an expunge.
+    feed_mask: u32 = 0,
     quit_mask: u32 = 0,
-    /// The buffers the DMA has finished, counted by its interrupt, and the
-    /// count the task had mixed up to: when it wakes more than one behind,
-    /// the DMA has gone round to a buffer the task had not mixed yet, and
-    /// what was in it played again - a gap, counted in `underruns`.
-    ended: u32 = 0,
-    mixed: u32 = 0,
-    underruns: u32 = 0,
-    /// What the board's parts say, read at init: where the stream goes
-    /// (`has_output`), whether that is a codec to set up (`has_codec`) and
-    /// its I2C unit and address, the pads of the I2S lines - MCLK only for
-    /// a codec, `no_pad` otherwise - the amplifier's enable line, and the
-    /// output's chip name.
-    has_codec: u8 = 0,
-    has_output: u8 = 0,
-    codec_address: u16 = 0,
-    bus_unit: u32 = 0,
-    output_name: [*:0]const u8 = "",
-    mclk_pin: u8 = no_pad,
-    bclk_pin: u8 = 0,
-    ws_pin: u8 = 0,
-    data_out_pin: u8 = 0,
-    amplifier: BoardPin = .{},
-    /// The pads taken from gpio.resource while the stream runs: the I2S
-    /// lines, and the amplifier's enable when it is a pad of the chip.
-    gpio_base: ?*GpioBase = null,
-    held_pads: [5]u8 = .{ 0, 0, 0, 0, 0 },
-    held_count: u8 = 0,
-    /// The pads are this device's: taken, or no resource to take them from.
-    pads_held: u8 = 0,
-    /// What the output's halves of a frame get: an ES8311 is mono, an I2S
-    /// amplifier pair takes the sides as the board wires them
-    /// (PART_SidesSwapped).
+    /// The output played through, once it is started, and what its mode
+    /// says: the rate every stream is stepped for, and what the halves of
+    /// a frame carry.
+    sink: ?*rta.AudioSink = null,
+    rate: u32 = usual_rate,
     sides: mixer.Sides = .left_first,
+    pad2: [3]u8 = .{ 0, 0, 0 },
 };
-
-/// An I2S line the board does not bring out: MCLK, for an amplifier.
-const no_pad: u8 = 0xFF;
 
 fn audioBase(dev: *exec.Device) *AudioBase {
     return @alignCast(@fieldParentPtr("dev", dev));
@@ -212,268 +127,68 @@ fn ioAudio(io: *exec.IORequest) *IOAudio {
     return @alignCast(@fieldParentPtr("std", std_req));
 }
 
-// --- the hardware ---------------------------------------------------------
+// --- the output -----------------------------------------------------------
 
-fn wait(ab: *AudioBase, us: u32) void {
-    const sys = ab.sys_base;
-    ab.timer_io.node.command = timer.TR_ADDREQUEST;
-    ab.timer_io.time = timer.TimeVal.fromMicros(us);
-    _ = sys.DoIO(&ab.timer_io.node);
-}
-
-/// One register of the codec.
-fn writeCodec(ab: *AudioBase, register: u8, value: u8) bool {
-    var bytes = [2]u8{ register, value };
-    const io = &ab.i2c_io;
-    io.req.req.command = exec.CMD_WRITE;
-    io.req.req.flags = exec.IOF_QUICK;
-    io.address = ab.codec_address;
-    io.req.data = &bytes;
-    io.req.length = bytes.len;
-    _ = ab.sys_base.DoIO(&io.req.req);
-    return io.req.req.err == 0;
-}
-
-/// The amplifier in front of the speaker, switched by its enable line - a
-/// pad, asserted as the board says. A board without one has nothing to
-/// switch.
-fn amplifier(ab: *AudioBase, on: bool) void {
-    const line = ab.amplifier;
-    if (line.kind != expansion.boardpin.BPIN_GPIO) return;
-    gpio.toMatrix(line.number);
-    gpio.connectOut(line.number, gpio.out_of_gpio, true);
-    gpio.outputEnable(line.number, true);
-    gpio.setLevel(line.number, if (line.active_low != 0) !on else on);
-}
-
-/// The pads the controller drives: the clocks the output takes and the
-/// data out.
-fn connectPads(ab: *AudioBase) void {
-    const pads = [_]struct { pin: u8, signal: u32 }{
-        .{ .pin = ab.mclk_pin, .signal = i2s.signal_mclk },
-        .{ .pin = ab.bclk_pin, .signal = i2s.signal_bclk },
-        .{ .pin = ab.ws_pin, .signal = i2s.signal_ws },
-        .{ .pin = ab.data_out_pin, .signal = i2s.signal_data_out },
+/// What the halves of a frame carry, as a mode says it.
+fn sidesOf(mode: *const rta.AudioMode) mixer.Sides {
+    return switch (mode.sides) {
+        rta.AUDIOSIDES_RIGHT_FIRST => .right_first,
+        rta.AUDIOSIDES_MONO => .mono,
+        else => .left_first,
     };
-    for (pads) |pad| {
-        if (pad.pin == no_pad) continue;
-        gpio.toMatrix(pad.pin);
-        gpio.connectOut(pad.pin, pad.signal, false);
-        gpio.outputEnable(pad.pin, true);
-    }
 }
 
-/// The interrupt: a buffer has been played, so the task has one to mix.
-fn intServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
-    _ = int_number;
-    const ab: *AudioBase = @ptrCast(@alignCast(is_data.?));
-    const db = ab.dma orelse return 0;
-    const status = db.DMAIntStatus(ab.channel, dmares.DMA_OUT);
-    if (status & dmares.DMAINTF_OUT_EOF == 0) return 0;
-    db.ClearDMAInts(ab.channel, dmares.DMA_OUT, status);
-    _ = @atomicRmw(u32, &ab.ended, .Add, 1, .release);
-    ab.sys_base.Signal(&ab.task, ab.int_mask);
-    return 1;
-}
-
-fn step(ab: *AudioBase, what: [*:0]const u8) void {
-    sdk.exec.kprintf(ab.sys_base, "%s: %s\n", .{ DEVICE_NAME, what });
-}
-
-/// The codec brought up, the stream started: the device's hardware, in
-/// the order the parts want it.
-fn bringUp(ab: *AudioBase) bool {
+/// The output started for `task`, which `feed_mask` wakes every time a
+/// buffer has been played: the most wanted sink rta.library has. Every
+/// stream open is stepped for its rate. False if there is none, or it
+/// would not start.
+fn attachSink(ab: *AudioBase, task: *exec.Task, feed_mask: u32) bool {
     const sys = ab.sys_base;
-    if (ab.has_output == 0) {
-        sdk.exec.kprintf(sys, "%s: the board has no codec or I2S amplifier\n", .{DEVICE_NAME});
-        return false;
-    }
-    if (!takePads(ab)) return false;
-
-    if (ab.has_codec != 0) {
-        ab.port = sys.CreateMsgPort() orelse return false;
-        ab.i2c_io = .{};
-        ab.i2c_io.req.req.message.reply_port = ab.port;
-        ab.i2c_io.req.req.message.length = @sizeOf(i2c.IOExtI2C);
-        if (sys.OpenDevice(i2c.DEVICE_NAME, ab.bus_unit, &ab.i2c_io.req.req, 0) != 0) {
-            sdk.exec.kprintf(sys, "%s: no %s unit %d\n", .{ DEVICE_NAME, i2c.DEVICE_NAME, ab.bus_unit });
-            return false;
-        }
-        ab.timer_io = .{};
-        ab.timer_io.node.message.reply_port = ab.port;
-        ab.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
-        if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &ab.timer_io.node, 0) != 0) return false;
-        step(ab, "i2c.device and timer.device open");
-    }
-
-    // The stream's memory: the buffers the DMA reads and the descriptors
-    // that ring them, both where the DMA can reach them. Where the data
-    // cache covers that memory, the silence it starts with is written
-    // back, or the DMA plays whatever was there before.
-    const memory = sys.AllocVec(buffer_bytes * buffers, exec.MEMF_INTERNAL | exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return false;
-    ab.stream = @ptrCast(@alignCast(memory));
-    var stream_bytes: u32 = buffer_bytes * buffers;
-    _ = sys.CachePreDMA(memory, &stream_bytes, 0);
-
-    // A channel of the engine that serves the controller: one the
-    // controller cannot be connected to is given back, and the next tried.
-    const db: *dmares.DmaBase = @ptrCast(sys.OpenResource(dmares.DMANAME) orelse return false);
-    ab.dma = db;
-    const ch = for (0..dmares.DMA_CHANNELS) |n| {
-        const candidate: u32 = @intCast(n);
-        if (db.AllocDMAChannel(candidate, DEVICE_NAME) != null) continue;
-        // A ring that never stops: the stream is endless, and a buffer
-        // handed back would be a buffer the DMA stopped at.
-        if (db.ConnectDMAChannel(candidate, i2s.dma_peripheral, dmares.DMACF_LOOP)) break candidate;
-        db.FreeDMAChannel(candidate);
-    } else {
-        sdk.exec.kprintf(sys, "%s: no DMA channel free\n", .{DEVICE_NAME});
+    const rb = ab.rta_base;
+    const sink = rb.NextSink(null) orelse {
+        exec.kprintf(sys, "%s: the machine has no sound output\n", .{DEVICE_NAME});
         return false;
     };
-    ab.channel = ch;
-    ab.has_channel = 1;
-    // A descriptor a buffer, linked head to tail: the DMA runs round them
-    // for ever and says at the end of each which one has been played. The
-    // links are written after AllocDMAChain wrote the chains back, so
-    // they are written back again.
-    const stream: [*]u8 = @ptrCast(memory);
-    for (0..buffers) |i| {
-        ab.chain[i] = db.AllocDMAChain(dmares.DMA_OUT, stream + i * buffer_bytes, buffer_bytes, 0) orelse return false;
+    const code = rb.StartSink(sink, task, feed_mask);
+    if (code != rta.errors.RTAERR_OK) {
+        exec.kprintf(sys, "%s: %s: %s\n", .{ DEVICE_NAME, sink.node.name orelse "?", rb.RtaErrorText(code) });
+        return false;
     }
-    for (0..buffers) |i| {
-        const one = ab.chain[i].?;
-        one.next = ab.chain[(i + 1) % buffers];
-        var descriptor_bytes: u32 = @sizeOf(dmares.DMADescriptor);
-        _ = sys.CachePreDMA(@ptrCast(one), &descriptor_bytes, 0);
+    const mode = rb.SinkMode(sink).?;
+    ab.sink = sink;
+    ab.rate = mode.rate;
+    ab.sides = sidesOf(mode);
+    for (0..max_streams) |n| {
+        if (ab.streams[n].in_use != 0) ab.voices[n].step = mixer.stepFor(ab.streams[n].rate, ab.rate);
     }
-    step(ab, "DMA channel and buffers");
-
-    // The codec, over the bus it shares with the touch controller.
-    if (ab.has_codec != 0) {
-        for (es8311.bring_up) |one| {
-            if (!writeCodec(ab, one.reg, one.value)) {
-                sdk.exec.kprintf(sys, "%s: the codec does not answer at 0x%02x\n", .{ DEVICE_NAME, @as(u32, ab.codec_address) });
-                return false;
-            }
-            if (one.delay_ms != 0) wait(ab, @as(u32, one.delay_ms) * 1000);
-        }
-        step(ab, "codec up");
-    }
-
-    // The controller, its pads, and the stream running. The codec counts
-    // everything in the master clock, so the clocks come before its
-    // volume goes up.
-    i2s.init();
-    connectPads(ab);
-    i2s.reset();
-    _ = db.StartDMA(ch, dmares.DMA_OUT, ab.chain[0].?);
-    db.EnableDMAInts(ch, dmares.DMA_OUT, dmares.DMAINTF_OUT_EOF);
-    sys.AddIntServer(dmares.dmaIntNumber(ch, dmares.DMA_OUT), &ab.int);
-    ab.int_added = 1;
-    i2s.start();
-    ab.streaming = 1;
-
-    if (ab.has_codec != 0) _ = writeCodec(ab, es8311.reg_volume, es8311.volumeFor(codec_volume));
-    amplifier(ab, true);
-    sdk.exec.kprintf(sys, "%s: %s, %d Hz %s, up to %d streams mixed\n", .{
+    exec.kprintf(sys, "%s: %s, %d Hz %s, up to %d streams mixed\n", .{
         DEVICE_NAME,
-        ab.output_name,
-        i2s.sample_rate,
-        @as([*:0]const u8, if (ab.sides == .mono) "mono" else "stereo"),
+        sink.node.name orelse "?",
+        mode.rate,
+        @as([*:0]const u8, if (mode.channels == 1) "mono" else "stereo"),
         @as(u32, max_streams),
     });
     return true;
 }
 
-/// The codec's I2S pads and the amplifier's enable, taken from
-/// gpio.resource. False if another driver holds one; a machine without the
-/// resource takes nothing.
-fn takePads(ab: *AudioBase) bool {
-    const sys = ab.sys_base;
-    const gb: *GpioBase = @ptrCast(@alignCast(sys.OpenResource(gpio_resource.GPIONAME) orelse {
-        ab.pads_held = 1;
-        return true;
-    }));
-    var wanted: [5]u8 = @splat(0);
-    var count: u8 = 0;
-    for ([_]u8{ ab.mclk_pin, ab.bclk_pin, ab.ws_pin, ab.data_out_pin }) |pad| {
-        if (pad == no_pad) continue;
-        wanted[count] = pad;
-        count += 1;
-    }
-    if (ab.amplifier.kind == expansion.boardpin.BPIN_GPIO) {
-        wanted[count] = ab.amplifier.number;
-        count += 1;
-    }
-    if (gpio_resource.allocPads(gb, wanted[0..count], DEVICE_NAME)) |refused| {
-        sdk.exec.kprintf(sys, "%s: GPIO%d is %s's\n", .{ DEVICE_NAME, refused.pad, refused.holder });
-        return false;
-    }
-    ab.gpio_base = gb;
-    ab.held_pads = wanted;
-    ab.held_count = count;
-    ab.pads_held = 1;
-    return true;
-}
-
-fn giveBack(ab: *AudioBase) void {
-    const sys = ab.sys_base;
-    // The amplifier's line is driven only while it is this device's.
-    if (ab.pads_held != 0) amplifier(ab, false);
-    if (ab.streaming != 0) i2s.stop();
-    ab.streaming = 0;
-    if (ab.int_added != 0) sys.RemIntServer(dmares.dmaIntNumber(ab.channel, dmares.DMA_OUT), &ab.int);
-    ab.int_added = 0;
-    if (ab.has_channel != 0) {
-        const db = ab.dma.?;
-        db.StopDMA(ab.channel, dmares.DMA_OUT);
-        db.EnableDMAInts(ab.channel, dmares.DMA_OUT, 0);
-        for (&ab.chain) |*chain| {
-            if (chain.*) |one| db.FreeDMAChain(one);
-            chain.* = null;
-        }
-        db.FreeDMAChannel(ab.channel);
-        ab.has_channel = 0;
-    }
-    if (ab.stream) |stream| sys.FreeVec(stream);
-    ab.stream = null;
-    if (ab.timer_io.node.device != null) sys.CloseDevice(&ab.timer_io.node);
-    if (ab.i2c_io.req.req.device != null) sys.CloseDevice(&ab.i2c_io.req.req);
-    if (ab.port) |port| sys.DeleteMsgPort(port);
-    ab.port = null;
-    if (ab.gpio_base) |gb| gpio_resource.freePads(gb, ab.held_pads[0..ab.held_count]);
-    ab.gpio_base = null;
-    ab.held_count = 0;
-    ab.pads_held = 0;
+/// The output stopped and given back: everything its driver took.
+fn detachSink(ab: *AudioBase) void {
+    const sink = ab.sink orelse return;
+    ab.rta_base.StopSink(sink);
+    ab.sink = null;
 }
 
 // --- the mix --------------------------------------------------------------
 
-/// The buffer that has just been played, which is the one to mix into:
-/// the DMA is in the other one now.
-fn freeBuffer(ab: *AudioBase) []i16 {
-    const stream = ab.stream.?;
-    const db = ab.dma.?;
-    const ended = db.DMAEOFDescriptor(ab.channel, dmares.DMA_OUT);
-    var which: usize = 0;
-    for (ab.chain, 0..) |one, i| {
-        if (one == ended) which = i;
-    }
-    return stream[which * buffer_samples ..][0..buffer_samples];
-}
-
-/// One buffer's worth of sound, and whatever that finished replied. A
-/// buffer the DMA finished while the task was still behind with the one
-/// before is a gap: counted, and the count caught up.
+/// The buffer the output has just played mixed again, and whatever that
+/// finished replied. A wake with no buffer played - the output's signal
+/// raised for something else - mixes nothing.
 fn mixBuffer(ab: *AudioBase) void {
-    const ended = @atomicLoad(u32, &ab.ended, .acquire);
-    const behind = ended -% ab.mixed;
-    if (behind > 1) ab.underruns +%= behind - 1;
-    ab.mixed = ended;
-    const out = freeBuffer(ab);
-    mixInto(ab, out);
-    var bytes: u32 = @intCast(out.len * 2);
-    _ = ab.sys_base.CachePreDMA(@ptrCast(out.ptr), &bytes, 0);
+    const sink = ab.sink orelse return;
+    const rb = ab.rta_base;
+    const frames = rb.SinkBuffer(sink) orelse return;
+    mixInto(ab, frames[0 .. sink.buffer_frames * 2]);
+    _ = rb.PlaySinkBuffer(sink, frames);
 }
 
 /// `out` mixed from the streams, and the writes that played out replied.
@@ -613,14 +328,13 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
     const ab: *AudioBase = @alignCast(@fieldParentPtr("task", sys.FindTask(null).?));
     const signal = sys.AllocSignal(-1);
     const quit = sys.AllocSignal(-1);
-    const ok = signal >= 0 and quit >= 0 and bringUp(ab);
+    var ok = signal >= 0 and quit >= 0;
     if (ok) {
-        ab.int_mask = @as(u32, 1) << @intCast(signal);
+        ab.feed_mask = @as(u32, 1) << @intCast(signal);
         ab.quit_mask = @as(u32, 1) << @intCast(quit);
-        ab.ready = 1;
-    } else {
-        giveBack(ab);
+        ok = attachSink(ab, &ab.task, ab.feed_mask);
     }
+    if (ok) ab.ready = 1;
     if (ab.starter) |starter| {
         ab.starter = null;
         sys.Signal(starter, @as(u32, 1) << @intCast(ab.start_signal));
@@ -628,18 +342,18 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
     if (!ok) return;
 
     while (true) {
-        const got = sys.Wait(ab.int_mask | ab.quit_mask);
+        const got = sys.Wait(ab.feed_mask | ab.quit_mask);
         if (got & ab.quit_mask != 0) break;
         sys.ObtainSemaphore(&ab.lock);
         mixBuffer(ab);
         sys.ReleaseSemaphore(&ab.lock);
     }
-    // Expunged: everything the stream held given back.
-    giveBack(ab);
+    // Expunged: the output given back.
+    detachSink(ab);
 }
 
-/// The task started and waited for, so an open knows whether there is a
-/// codec. Under the opener's own signal.
+/// The task started and waited for, so an open knows whether there is an
+/// output. Under the opener's own signal.
 fn start(ab: *AudioBase) bool {
     const sys = ab.sys_base;
     if (ab.started != 0) return ab.ready != 0;
@@ -698,7 +412,7 @@ fn takeParams(ab: *AudioBase, n: usize, io: *const IOAudio) void {
     stream.volume = io.volume;
     stream.pan = io.pan;
     const voice = &ab.voices[n];
-    voice.step = mixer.stepFor(io.rate, i2s.sample_rate);
+    voice.step = mixer.stepFor(io.rate, ab.rate);
     const g = mixer.gains(io.volume, io.pan);
     voice.gain_left = g.left;
     voice.gain_right = g.right;
@@ -711,19 +425,23 @@ fn openStreams(ab: *AudioBase) u32 {
     return count;
 }
 
-/// What the device and the board are, for AUDIOCMD_QUERY.
+/// What the device and its output are, for AUDIOCMD_QUERY: the output's
+/// mode, the ring it runs through, and its gaps.
 fn infoOf(ab: *AudioBase) audio.AudioInfo {
-    return .{
-        .rate = i2s.sample_rate,
-        .channels = if (ab.sides == .mono) 1 else 2,
-        .bits = 16,
-        .latency = buffer_frames * buffers,
+    var info: audio.AudioInfo = .{
         .streams = openStreams(ab),
         .master = ab.master,
         .has_input = 0,
-        .output = ab.output_name,
-        .underruns = ab.underruns,
     };
+    const sink = ab.sink orelse return info;
+    const mode = ab.rta_base.SinkMode(sink).?;
+    info.rate = mode.rate;
+    info.channels = mode.channels;
+    info.bits = mode.bits;
+    info.latency = sink.buffer_frames * sink.buffers;
+    info.output = sink.node.name;
+    info.underruns = sink.underruns;
+    return info;
 }
 
 // --- the commands ---------------------------------------------------------
@@ -891,9 +609,9 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
 }
 
 /// Expunge: while it is open only marked, to go at the last close. Then
-/// the task is told to end - it gives the stream, the DMA, the codec and
-/// the pads back - and once it has left its stack, the device goes.
-/// exec makes it again from its ROM tag when it is next opened.
+/// the task is told to end - it stops the output, whose driver gives back
+/// everything the part took - and once it has left its stack, the device
+/// goes. exec makes it again from its ROM tag when it is next opened.
 fn expunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
     const ab = audioBase(dev);
     const sys = ab.sys_base;
@@ -914,6 +632,7 @@ fn expunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
         while (sys.GetMsg(port) == null) _ = sys.Wait(port.sigMask());
     }
     if (ab.stack) |stack| sys.FreeMem(stack, stack_size);
+    sys.CloseLibrary(@ptrCast(@alignCast(ab.rta_base)));
     sys.DetachLibrary(dev);
     const start_of: *anyopaque = @ptrFromInt(@intFromPtr(dev) - dev.neg_size);
     sys.FreeMem(start_of, @as(usize, dev.neg_size) + dev.pos_size);
@@ -924,86 +643,19 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     _ = seg_list;
     dev.revision = DEVICE_REVISION;
     const ab = audioBase(dev);
+    // Without rta.library there is no output to play through, and no
+    // device.
+    const library = sys_base.OpenLibrary(rta.RTANAME, rta.RTA_VERSION) orelse return null;
     // The base comes zeroed; what it starts as is its fields' defaults -
-    // the master at as recorded, no MCLK pad - the node exec made kept.
+    // the master at as recorded - the node exec made kept.
     const made = ab.dev;
-    ab.* = .{ .dev = made, .sys_base = sys_base };
+    ab.* = .{ .dev = made, .sys_base = sys_base, .rta_base = @ptrCast(library) };
     sys_base.InitSemaphore(&ab.lock);
     for (&ab.streams) |*stream| {
         stream.writes.init(.message);
         stream.unit.msg_port.msg_list.init(.message);
     }
-    ab.int = .{
-        .node = .{ .type = .interrupt, .pri = 0, .name = DEVICE_NAME },
-        .data = ab,
-        .code = &intServer,
-    };
-    findOutput(ab);
     return dev;
-}
-
-/// Where the stream goes, read into the base: the board's codec - an
-/// ES8311, the codec this device drives - and its amplifier, or on a board
-/// without one an amplifier that takes I2S itself. One whose I2S lines are
-/// not pads of the chip is no output; with none, `has_output` stays clear
-/// and every open fails.
-fn findOutput(ab: *AudioBase) void {
-    const sys = ab.sys_base;
-    const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return;
-    defer sys.CloseLibrary(utility_lib);
-    const ub: *sdk.interface.utility.UtilityBase = @ptrCast(utility_lib);
-    const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return;
-    defer sys.CloseLibrary(expansion_lib);
-    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
-    if (eb.FindBoardPart(null, st.PARTKIND_CODEC, st.CHIP_ES8311)) |codec| {
-        const tags = codec.tags;
-        if (!readLines(ab, ub, tags)) return;
-        const mclk = BoardPin.of(ub.GetTagData(st.PART_PinMCLK, 0, tags));
-        if (mclk.kind != expansion.boardpin.BPIN_GPIO) return;
-        ab.mclk_pin = mclk.number;
-        ab.codec_address = @truncate(ub.GetTagData(st.PART_Address, es8311.address, tags));
-        ab.bus_unit = @truncate(ub.GetTagData(st.PART_BusUnit, 0, tags));
-        if (eb.FindBoardPart(null, st.PARTKIND_AMPLIFIER, st.CHIP_ANY)) |amp| {
-            ab.amplifier = BoardPin.of(ub.GetTagData(st.PART_PinEnable, 0, amp.tags));
-        }
-        ab.output_name = codec.node.name orelse "es8311";
-        ab.sides = es8311.sides;
-        ab.has_codec = 1;
-        ab.has_output = 1;
-        return;
-    }
-    // No codec: an amplifier on I2S, which is its own enable line's.
-    var found = eb.FindBoardPart(null, st.PARTKIND_AMPLIFIER, st.CHIP_ANY);
-    while (found) |amp| : (found = eb.FindBoardPart(amp, st.PARTKIND_AMPLIFIER, st.CHIP_ANY)) {
-        if (ub.GetTagData(st.PART_Bus, st.BUS_NONE, amp.tags) != st.BUS_I2S) continue;
-        if (!readLines(ab, ub, amp.tags)) return;
-        ab.amplifier = BoardPin.of(ub.GetTagData(st.PART_PinEnable, 0, amp.tags));
-        ab.output_name = amp.node.name orelse "amplifier";
-        ab.sides = sidesOf(ub, amp.tags);
-        ab.has_output = 1;
-        return;
-    }
-}
-
-/// Which side the part's speakers take first in a frame.
-fn sidesOf(ub: *sdk.interface.utility.UtilityBase, tags: ?[*]const sdk.utility.TagItem) mixer.Sides {
-    return if (ub.GetTagData(st.PART_SidesSwapped, 0, tags) != 0) .right_first else .left_first;
-}
-
-/// The bit clock, the word clock and the data out of a part's tags, into
-/// the base. False if one is not a pad of the chip.
-fn readLines(ab: *AudioBase, ub: *sdk.interface.utility.UtilityBase, tags: ?[*]const sdk.utility.TagItem) bool {
-    const lines = [_]sdk.utility.Tag{ st.PART_PinBCLK, st.PART_PinWS, st.PART_PinDataOut };
-    var pads: [lines.len]u8 = undefined;
-    for (lines, 0..) |tag, at| {
-        const line = BoardPin.of(ub.GetTagData(tag, 0, tags));
-        if (line.kind != expansion.boardpin.BPIN_GPIO) return false;
-        pads[at] = line.number;
-    }
-    ab.bclk_pin = pads[0];
-    ab.ws_pin = pads[1];
-    ab.data_out_pin = pads[2];
-    return true;
 }
 
 const vectors = [_]*const anyopaque{
@@ -1023,11 +675,13 @@ const init_table = exec.InitTable{
 };
 
 /// What the device speaks, for ObtainDeviceUnits (expansion.library),
-/// and where its units come from: its one unit; it is in the ROM of a board with a codec or an amplifier.
+/// and where its units come from: its one unit; it is in the ROM of a
+/// board with sound, and of an emulator's.
 const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_AUDIO, 0 };
 
-/// Cold start at 26: after i2c.device (35), dma.resource (70) and
-/// timer.device, which its first open needs, and before the shell.
+/// Cold start at 26: after rta.library (33), which it opens, and the
+/// sound drivers (31, 32), whose sinks its first open plays through, and
+/// before the shell.
 export const audio_device_tag: exec.ResidentDevice linksection(".resident") = .{
     .resident = .{
         .match_tag = @ptrCast(&audio_device_tag),
@@ -1045,27 +699,45 @@ export const audio_device_tag: exec.ResidentDevice linksection(".resident") = .{
 
 // --- tests (host: ./zig build test) -----------------------------------------
 //
-// The device made from its ROM tag without the hardware: no board to read,
-// no task. Opens go straight to the stream an open makes, and the mix is
-// driven by hand (`mixInto` stands in for the output). The output runs at
-// 48 kHz with the sides in order, so a stream at 48 kHz moves a frame an
-// output frame and a one-channel stream is heard on both sides.
+// The device made from its ROM tag over rta.library, with the capture
+// sink attached as the output - no task. Opens go straight to the stream
+// an open makes, and the mix is driven by hand (`mixInto` stands in for
+// the output, or `mixBuffer` through the sink). The sink runs at 48 kHz
+// with the sides in order, so a stream at 48 kHz moves a frame an output
+// frame and a one-channel stream is heard on both sides.
 
 const testing = std.testing;
 const kexec = @import("../../libs/exec/exec.zig");
+const rta_lib = @import("../../libs/rta/rta.zig");
+const capture = @import("../../libs/rta_driver/capture/capture.zig");
+
+/// What the test's output is called.
+const test_output = "Speaker";
 
 fn testDevice() !*AudioBase {
-    try kexec.setUp();
+    const rb = try rta_lib.setUpForTests();
+    const iface: *RtaBase = @ptrCast(rb);
+    const sink_tags = [_]sdk.utility.TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr(test_output) },
+        .{},
+    };
+    _ = iface.CreateSinkTagList(capture.DRIVER_NAME, &sink_tags) orelse return error.NoSink;
     const made = kexec.InitResident(kexec.SysBase, &audio_device_tag.resident, null) orelse return error.NoDevice;
-    return audioBase(@ptrCast(@alignCast(made)));
+    const ab = audioBase(@ptrCast(@alignCast(made)));
+    if (!attachSink(ab, kexec.SysBase.iface().FindTask(null).?, 1 << 20)) return error.NoOutput;
+    return ab;
 }
 
-/// The test's ports deleted, the device expunged - which frees it - and
-/// nothing left over.
+/// The test's ports deleted, the output stopped and its sink deleted, the
+/// device expunged - which frees it - and nothing left over.
 fn testDeviceGone(ab: *AudioBase, ports: []const *exec.MsgPort) !void {
     for (ports) |port| kexec.SysBase.iface().DeleteMsgPort(port);
+    const iface = ab.rta_base;
+    const sink = ab.sink.?;
+    detachSink(ab);
+    iface.DeleteSink(sink);
     _ = kexec.RemDevice(kexec.SysBase, &ab.dev);
-    try kexec.expectNoLeaks();
+    try rta_lib.tearDownForTests(@ptrCast(@alignCast(iface)));
 }
 
 /// A request for a 16-bit stream of one channel at the output's rate.
@@ -1296,7 +968,8 @@ test "the query says what the output is and how far the stream has got; the mast
     try testing.expectEqual(@as(u32, 48_000), info.rate);
     try testing.expectEqual(@as(u32, 2), info.channels);
     try testing.expectEqual(@as(u32, 16), info.bits);
-    try testing.expectEqual(buffer_frames * buffers, info.latency);
+    try testing.expectEqual(capture.buffer_frames * capture.buffers, info.latency);
+    try testing.expectEqualStrings(test_output, std.mem.span(info.output.?));
     try testing.expectEqual(@as(u32, 1), info.streams);
     try testing.expectEqual(@as(u32, max_streams), info.max_streams);
     try testing.expectEqual(@as(u32, 0), info.underruns);
@@ -1348,6 +1021,49 @@ test "a write is whole frames, or it is refused" {
     write.std.data = null;
     write.std.length = 4;
     try testing.expectEqual(@as(i32, exec.IOERR_BADLENGTH), command(&write, &io, exec.CMD_WRITE));
+    _ = close(&ab.dev, &io.std.req);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "the output's buffers are mixed as it plays them, and what it misses is counted" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+    const sink = ab.sink.?;
+
+    var samples: [capture.buffer_frames * 2]i16 = undefined;
+    for (&samples, 0..) |*sample, i| sample.* = @intCast(i + 1);
+    const data = std.mem.sliceAsBytes(&samples);
+    var write = requestFor(ab, port);
+    sendWrite(&write, &io, data, 1);
+    // Nothing played yet: nothing to mix into.
+    mixBuffer(ab);
+    try testing.expectEqual(@as(usize, 0), capture.capturedOf(sink).len);
+    // Two buffers played: the one played into, and one missed.
+    capture.played(sink);
+    capture.played(sink);
+    mixBuffer(ab);
+    const heard = capture.capturedOf(sink);
+    try testing.expectEqual(@as(usize, capture.buffer_frames * 2), heard.len);
+    for (0..capture.buffer_frames) |frame| {
+        try testing.expectEqual(samples[frame], heard[frame * 2]);
+        try testing.expectEqual(samples[frame], heard[frame * 2 + 1]);
+    }
+    try testing.expectEqual(@as(u32, 1), sink.underruns);
+    capture.played(sink);
+    mixBuffer(ab);
+    try testing.expectEqual(@as(usize, capture.buffer_frames * 4), capture.capturedOf(sink).len);
+    try testing.expectEqual(samples[capture.buffer_frames], capture.capturedOf(sink)[capture.buffer_frames * 2]);
+    // The write played out: replied at the mix that finds it ended, which
+    // is quiet.
+    capture.played(sink);
+    mixBuffer(ab);
+    try testing.expect(replied(port) == &write.std.req.message);
+    try testing.expectEqual(@as(i16, 0), capture.capturedOf(sink)[capture.buffer_frames * 4]);
+
     _ = close(&ab.dev, &io.std.req);
     try testDeviceGone(ab, &.{port});
 }

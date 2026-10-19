@@ -10,7 +10,11 @@ pub const modules = .{
     @import("../../rom/libs/rtg_driver/i2cbus/i2cbus.zig"),
     // The panel's own touch controller.
     @import("../../rom/devs/touch/touch.zig"),
-    // The codec and its amplifier.
+    // The codec and its amplifier: rta.library, the I2S line's driver and
+    // the codec's, and audio.device over them.
+    @import("../../rom/libs/rta/rta.zig"),
+    @import("../../rom/libs/rta_driver/i2s/i2s.zig"),
+    @import("../../rom/libs/rta_driver/es8311/es8311.zig"),
     @import("../../rom/devs/audio/audio.zig"),
     // The panel: a DCS controller on a QSPI bus.
     @import("../../rom/libs/rtg_driver/qspibus/qspibus.zig"),

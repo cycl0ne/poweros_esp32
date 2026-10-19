@@ -45,6 +45,9 @@ pub const NodeType = enum(u8) {
     board = 23,
     /// A spinlock (sdk/libs/exec/locks.zig).
     lock = 24,
+    /// A sound driver's ROM tag: like a display driver's, it registers
+    /// itself - with rta.library - and exec never puts it on a list.
+    rta_driver = 25,
     _,
 };
 

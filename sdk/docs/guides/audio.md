@@ -3,12 +3,13 @@
 `audio.device` plays sound out of the board: through an ES8311 codec
 and the speaker or jack behind it, or straight into I2S amplifiers - the
 CrowPanel's two speakers. It is in the ROM of every board that has one of
-these. A program opens a **stream**, says what its samples are, and
-writes buffers to it; the device mixes every stream into the output.
+these, and of both QEMUs, where the sound goes into nothing in time. A
+program opens a **stream**, says what its samples are, and writes buffers
+to it; the device mixes every stream into the output.
 
 This guide is a stream first, then writing to it as it plays, what the
-board has, the master volume, and sound decoded from a file
-(audiocodec.library).
+board has, the master volume, sound decoded from a file
+(audiocodec.library), and the outputs underneath (rta.library).
 
 ## A stream
 
@@ -107,7 +108,7 @@ since it was opened:
 | `streams`, `max_streams` | streams open now, and how many may be |
 | `master` | the master volume |
 | `has_input` | whether unit 1 records on this board |
-| `output` | the part the sound comes out of, as the board names it |
+| `output` | the output played through: the part the sound comes out of, as the board names it, or `null` |
 | `underruns` | buffers the output played again because the next was not mixed in time - each a gap heard - since the device started |
 
 A stereo stream on a board with one output is heard as its two sides
@@ -244,6 +245,49 @@ samples at `heard`. The request asked with is best kept on a reply port
 of its own: a `DoIO` that has to wait takes its port's signal, which
 would otherwise tell the program that one of its writes came back.
 
+## Outputs: rta.library
+
+The device plays through an **output** of rta.library, the ROM's list of
+the machine's sound outputs and the drivers behind them. A driver makes
+its outputs - sinks - at its own cold start, from the parts the board's
+system list names (expansion.library's `FindBoardPart`): one for each
+part it can drive. audio.device takes the first sink on the list when it
+is first opened and starts it; it reads only the sink's mode - its rate,
+whether one side or two is heard, which half of a frame is which - and
+its ring of buffers. No name of a part or a chip is in the device.
+
+| Driver | Kind | What it makes |
+|---|---|---|
+| `i2s` | line | a line on the chip's I2S controller, for a part fed over I2S: its DMA ring, its interrupt, its pads, the buffers it played again |
+| `es8311` | sink | the ES8311 codec, set up over i2c.device, on a line of its own; its amplifier's enable pad |
+| `i2samp` | sink | an amplifier that takes I2S itself - the CrowPanel's pair, one part with two sides - on a line of its own |
+| `null` | sink | a stream into nothing, kept in time by timer.device's E-clock: the emulators' output, at the bottom of the list |
+
+A sink for a part on I2S is made over a line (`RTAA_Transport`): the
+sink's driver brings its part up and starts the line, and the line runs
+the buffers. Sinks are on the list by priority (`RTAA_Priority`), so a
+real output always comes before `null`.
+
+```zig
+const rta = sdk.rta;
+
+const rb: *sdk.interface.rta.RtaBase = @ptrCast(sys.OpenLibrary(rta.RTANAME, rta.RTA_VERSION) orelse return);
+defer sys.CloseLibrary(@ptrCast(@alignCast(rb)));
+var sink = rb.NextSink(null);
+while (sink) |each| : (sink = rb.NextSink(each)) {
+    const mode = rb.SinkMode(each).?;
+    // each.node.name, mode.rate, mode.channels, each.buffer_frames * each.buffers
+}
+```
+
+A driver of a new part follows the same shape: it opens rta.library at
+cold start (after 33), hands in an `RtaDriver` of the sink kind with
+`AddRtaDriver`, and calls `CreateSinkTagList` for each part it finds; the
+library allocates the sink and its driver's instance beside it, and calls
+the driver's `create_sink` to fill in its modes, its ops and its ring.
+The calls are in [rta's autodoc](../autodocs/rta.md); the types in
+`sdk/libs/rta/`.
+
 ## Recording
 
 Unit 1 is the way in - the ES8311's input, the CrowPanel's microphones.
@@ -260,6 +304,10 @@ Audio CHORD                   a major chord, three streams at once
 Audio BENCH 16                sixteen streams for ten seconds, then the
                               gaps and the device task's share of a core
 ```
+
+In QEMU the output is `null`: the sound is mixed as on a board, buffer
+for buffer at 48 kHz, and goes nowhere, so a program that plays runs as
+it would on a board, and `Audio BENCH` measures the mix.
 
 `./zig build audio-bench` times the mixer on the host, for 1, 4, 8 and
 16 streams; the board's own figure is `Audio BENCH`'s. The mixer is held

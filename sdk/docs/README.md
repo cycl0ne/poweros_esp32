@@ -96,8 +96,8 @@ tags and constants, each with its doc comment.
   the bus in QEMU.
 - [Sound](guides/audio.md) - audio.device: a stream and its form,
   writing buffers as they play, what the board has, the master volume,
-  WAV and MP3 decoded by audiocodec.library, recording, `C:Play` and
-  `C:test/Audio`.
+  WAV and MP3 decoded by audiocodec.library, the outputs and their
+  drivers (rta.library), recording, `C:Play` and `C:test/Audio`.
 - [USB](guides/usb.md) - a bus and starting it, what is on it, driving
   a device from a program (claims, pipes, control transfers), writing a
   class driver, keyboards and mice as sources, sticks, serial and
@@ -126,6 +126,7 @@ first time something opens it.
 | dos.library | ROM | processes, files, locks, handlers, assigns, `ReadArgs` | [md](autodocs/dos.md) · [doc](autodocs/dos.doc) |
 | expansion.library | ROM | the board: which parts it has and how they are wired; the devices by what they speak, with their units on this board; the disks' partitions until dos takes them in | [md](autodocs/expansion.md) · [doc](autodocs/expansion.doc) |
 | rtg.library | ROM | displays and their boards | [md](autodocs/rtg.md) · [doc](autodocs/rtg.doc) |
+| rta.library | ROM, on a board with sound and in QEMU | sound outputs and the drivers behind them | [md](autodocs/rta.md) · [doc](autodocs/rta.doc), [`rta.zig`](../libs/rta/rta.zig) |
 | graphics.library | ROM | drawing: RastPorts, bitmaps, text, fonts | [md](autodocs/graphics.md) · [doc](autodocs/graphics.doc) |
 | layers.library | ROM | overlapping layers and their clipping | [md](autodocs/layers.md) · [doc](autodocs/layers.doc) |
 | intuition.library | ROM | screens, windows, gadgets, menus, requesters, BOOPSI, styles | [md](autodocs/intuition.md) · [doc](autodocs/intuition.doc) |
@@ -167,7 +168,7 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | usbserial.device | ROM | the USB-Serial-JTAG port, with serial.device's API | [`usbserial.zig`](../devices/usbserial.zig) |
 | flash.device | ROM | the flash chip as a block device; unit 0 is the flash disk - on a RISC-V 64 machine the disk image the loader put in RAM | [`trackdisk.zig`](../devices/trackdisk.zig) |
 | i2c.device | ROM | the two I2C controllers | [`i2c.zig`](../devices/i2c.zig) |
-| audio.device | ROM | four channels of sound | [`audio.zig`](../devices/audio.zig) |
+| audio.device | ROM | streams of sound, up to sixteen mixed into the machine's output | [`audio.zig`](../devices/audio.zig) |
 | sdcard.device | `DEVS:`; ROM on the VisionFive 2 | the card slot as a block device; in the ROM, the card's partitions as disks to start from | [`trackdisk.zig`](../devices/trackdisk.zig) |
 | nvme.device | `DEVS:` | NVMe SSDs on PCI Express as block devices, a unit a namespace, with TRIM; their drives mounted when it starts (RISC-V 64 disk) | [`trackdisk.zig`](../devices/trackdisk.zig) |
 | rs485.device | `DEVS:` | the RS-485 port, in frames | [`rs485.zig`](../devices/rs485.zig) |

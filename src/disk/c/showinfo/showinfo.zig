@@ -32,7 +32,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowInfo";
-const VERSION_STRING = "\x00$VER: ShowInfo 1.2 (04.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowInfo 1.3 (19.10.2026)\r\n";
 
 const template = "TASKS/S,DEVS/S,LIBS/S,RESOURCES/S,PORTS/S,SEMAPHORES/S," ++
     "HANDLERS/S,RESIDENTS/S,INTS/S,MEM/S,SEGMENTS/S,ALL/S";
@@ -435,6 +435,7 @@ fn typeName(node_type: exec.NodeType) [*:0]const u8 {
         .process => "process",
         .handler => "handler",
         .rtg_driver => "rtg driver",
+        .rta_driver => "rta driver",
         .shell => "shell",
         .msgport => "port",
         .semaphore, .signalsem => "semaphore",

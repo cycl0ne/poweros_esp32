@@ -6,7 +6,8 @@
 //! `rom/libs/<m>/<m>.zig` is `<m>.library`, `rom/devs/` holds devices,
 //! `rom/resources/` resources, `rom/handler/` `<m>-handler`s,
 //! `rom/shell/shell.zig` is the Shell, and the display drivers under
-//! `rom/libs/rtg_driver/` are one node - and the disk's, a
+//! `rom/libs/rtg_driver/` are one node, as are the sound drivers under
+//! `rom/libs/rta_driver/` - and the disk's, a
 //! `<name>=<root file>` line each in the file <disk modules> (the build
 //! writes it from the disk package's list).
 //!
@@ -39,7 +40,11 @@ const Allocator = mem.Allocator;
 const Token = std.zig.Token;
 const Tokenizer = std.zig.Tokenizer;
 
-const display_drivers = "display drivers";
+/// The folders of drivers drawn as one node each, and the node's name.
+const driver_folders = [_][2][]const u8{
+    .{ "rtg_driver", "display drivers" },
+    .{ "rta_driver", "sound drivers" },
+};
 const gadget_classes = "gadget classes";
 const datatype_classes = "datatype classes";
 
@@ -277,8 +282,8 @@ fn findRomModules(io: Io, arena: Allocator, graph: *Graph, src_path: []const u8)
         while (try it.next(io)) |entry| {
             if (entry.kind != .directory) continue;
             const folder = try arena.dupe(u8, entry.name);
-            if (mem.eql(u8, folder, "rtg_driver")) {
-                try findDrivers(io, arena, graph, try path.join(arena, &.{ home_path, folder }));
+            if (driversNode(folder)) |node| {
+                try findDrivers(io, arena, graph, try path.join(arena, &.{ home_path, folder }), node);
                 continue;
             }
             const root = try std.fmt.allocPrint(arena, "{s}/{s}/{s}.zig", .{ home_path, folder, folder });
@@ -292,8 +297,16 @@ fn findRomModules(io: Io, arena: Allocator, graph: *Graph, src_path: []const u8)
     try graph.modules.append(arena, .{ .name = "Shell", .root = shell, .rom = true });
 }
 
-/// Every display driver, as the one node they are drawn as.
-fn findDrivers(io: Io, arena: Allocator, graph: *Graph, drivers_path: []const u8) !void {
+/// The node a folder of drivers is drawn as, or null for a module's own.
+fn driversNode(folder: []const u8) ?[]const u8 {
+    for (driver_folders) |drivers| {
+        if (mem.eql(u8, folder, drivers[0])) return drivers[1];
+    }
+    return null;
+}
+
+/// Every driver in a folder of them, as the one node they are drawn as.
+fn findDrivers(io: Io, arena: Allocator, graph: *Graph, drivers_path: []const u8, node: []const u8) !void {
     const cwd = Io.Dir.cwd();
     var dir = try cwd.openDir(io, drivers_path, .{ .iterate = true });
     defer dir.close(io);
@@ -302,7 +315,7 @@ fn findDrivers(io: Io, arena: Allocator, graph: *Graph, drivers_path: []const u8
         if (entry.kind != .directory) continue;
         const root = try std.fmt.allocPrint(arena, "{s}/{s}/{s}.zig", .{ drivers_path, entry.name, entry.name });
         cwd.access(io, root, .{}) catch continue;
-        try graph.modules.append(arena, .{ .name = display_drivers, .root = root, .rom = true });
+        try graph.modules.append(arena, .{ .name = node, .root = root, .rom = true });
     }
 }
 

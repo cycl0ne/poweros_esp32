@@ -20,6 +20,7 @@ pub const dos = @import("libs/dos/dos.zig");
 pub const resources = @import("resources/resources.zig");
 pub const hardware = @import("hardware/hardware.zig");
 pub const rtg = @import("libs/rtg/rtg.zig");
+pub const rta = @import("libs/rta/rta.zig");
 pub const expansion = @import("libs/expansion/expansion.zig");
 pub const graphics = @import("libs/graphics/graphics.zig");
 pub const layers = @import("libs/layers/layers.zig");

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The ES8311 codec: the registers audio.device writes over I2C to make
-//! it take a stereo stream and drive a speaker, and the bring-up as a run
-//! of writes. Nothing here touches a bus, so the host tests hold it.
+//! The ES8311 codec: the registers its driver writes over I2C to make it
+//! take a stereo stream and drive a speaker, and the bring-up as a run of
+//! writes. Nothing here touches a bus, so the host tests hold it.
 //!
 //! The part is told two things about timing: where its master clock comes
 //! from, and how that clock divides into the sample rate. The divisions
@@ -11,13 +11,13 @@
 //!
 //! It is a mono part with one speaker output. The stream it is given is
 //! still stereo, because that is what the I2S frame is; the part takes
-//! the left channel of it, so the mixer puts both sides into each half.
+//! the left channel of it, so its mode asks for both sides in each half.
 
 const std = @import("std");
-const mixer = @import("mixer.zig");
+const rta = @import("sdk").rta;
 
 /// One output: both sides in each half of the frame.
-pub const sides: mixer.Sides = .mono;
+pub const sides: u8 = rta.AUDIOSIDES_MONO;
 
 /// Where it answers by default, with its address pin low.
 pub const address: u16 = 0x18;
