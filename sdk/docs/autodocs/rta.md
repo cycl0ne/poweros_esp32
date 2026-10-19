@@ -19,14 +19,17 @@ Generated from the source by `./zig build autodoc`.
 - [DeleteSink](#deletesink) - Gives a sink back.
 - [FindRtaDriver](#findrtadriver) - Finds a driver by its name.
 - [FindSink](#findsink) - Finds a sink by its name.
+- [FindSinkMode](#findsinkmode) - Finds a sink's mode by its rate and sides.
 - [LockRtaDrivers](#lockrtadrivers) - Holds the driver list still.
 - [NextRtaDriver](#nextrtadriver) - Walks the driver list.
 - [NextSink](#nextsink) - Walks the list of sinks.
+- [NextSinkMode](#nextsinkmode) - Walks a sink's modes.
 - [PlayAudioTransportBuffer](#playaudiotransportbuffer) - Hands a filled buffer to the line.
 - [PlaySinkBuffer](#playsinkbuffer) - Hands a filled buffer on to the output.
 - [RemRtaDriver](#remrtadriver) - Takes a driver off the library's list.
 - [RtaErrorText](#rtaerrortext) - An error code in words.
 - [RtaLastError](#rtalasterror) - Why the last create failed.
+- [SetSinkMode](#setsinkmode) - Puts a sink in a mode.
 - [SinkBuffer](#sinkbuffer) - The next buffer of a running sink to fill.
 - [SinkControl](#sinkcontrol) - Asks a sink's driver for something of its own.
 - [SinkMode](#sinkmode) - The mode a sink is in.
@@ -494,6 +497,61 @@ None known.
 const sink = rb.FindSink("null") orelse return null;
 ```
 
+## FindSinkMode
+
+Finds a sink's mode by its rate and sides.
+
+**SYNOPSIS**
+
+```zig
+fn FindSinkMode(rb: *RtaBase, sink: *rta.AudioSink, rate: u32, channels: u32) ?*rta.AudioMode
+```
+
+**SINCE**
+
+1.2. LVO -120.
+
+**INPUTS**
+
+- `sink` - the sink.
+- `rate` - the frames a second wanted, or 0 for any.
+- `channels` - the sides wanted, 1 or 2, or 0 for any.
+
+**RESULT**
+
+The first mode that matches, or null. With both 0, the sink's default
+mode - the one marked `AUDIOMF_DEFAULT`, or else its first.
+
+**BEHAVIOR**
+
+Each 0 matches anything, so a caller can ask whether a sink runs at
+44100 Hz at all, or for its default.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It calls through the jump table.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`NextSinkMode`, `SetSinkMode`
+
+**EXAMPLES**
+
+```zig
+const cd = rb.FindSinkMode(sink, 44_100, 0) orelse rb.FindSinkMode(sink, 0, 0).?;
+```
+
 ## LockRtaDrivers
 
 Holds the driver list still.
@@ -654,6 +712,60 @@ None known.
 ```zig
 var sink = rb.NextSink(null);
 while (sink) |s| : (sink = rb.NextSink(s)) list(s);
+```
+
+## NextSinkMode
+
+Walks a sink's modes.
+
+**SYNOPSIS**
+
+```zig
+fn NextSinkMode(_: *RtaBase, sink: *rta.AudioSink, after: ?*rta.AudioMode) ?*rta.AudioMode
+```
+
+**SINCE**
+
+1.2. LVO -116.
+
+**INPUTS**
+
+- `sink` - the sink.
+- `after` - the mode to go on from, or null for the first.
+
+**RESULT**
+
+The next mode, or null at the end.
+
+**BEHAVIOR**
+
+The modes are the driver's, fixed when the sink was made, in the order
+it gave them.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe: the modes do not change after the sink is made.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The modes are the sink's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindSinkMode`, `SetSinkMode`, `SinkMode`
+
+**EXAMPLES**
+
+```zig
+var mode = rb.NextSinkMode(sink, null);
+while (mode) |m| : (mode = rb.NextSinkMode(sink, m)) list(m);
 ```
 
 ## PlayAudioTransportBuffer
@@ -926,6 +1038,64 @@ None known.
 
 ```zig
 const sink = rb.CreateSinkTagList("es8311", tags) orelse return rb.RtaLastError();
+```
+
+## SetSinkMode
+
+Puts a sink in a mode.
+
+**SYNOPSIS**
+
+```zig
+fn SetSinkMode(rb: *RtaBase, sink: *rta.AudioSink, mode: ?*rta.AudioMode) i32
+```
+
+**SINCE**
+
+1.2. LVO -124.
+
+**INPUTS**
+
+- `sink` - the sink.
+- `mode` - one of its modes, or null for its default.
+
+**RESULT**
+
+`RTAERR_OK`, or: `RTAERR_IN_USE` while the sink is started,
+`RTAERR_BAD_MODE` for a mode that is not the sink's.
+
+**BEHAVIOR**
+
+The mode is the one the sink starts in from now on: `StartSink` hands
+it to the driver, which clocks its part for it, and `SinkMode` answers
+it. A started sink keeps the mode it runs in; a caller that wants
+another stops it, sets the mode and starts it again.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It calls through the jump table.
+- Locks: none needed: one task plays through a sink.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindSinkMode`, `SinkMode`, `StartSink`
+
+**EXAMPLES**
+
+```zig
+rb.StopSink(sink);
+_ = rb.SetSinkMode(sink, rb.FindSinkMode(sink, 44_100, 0));
+_ = rb.StartSink(sink, task, mask);
 ```
 
 ## SinkBuffer

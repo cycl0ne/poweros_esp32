@@ -29,8 +29,11 @@ pub const buffer_frames: u32 = 8;
 pub const buffers: u32 = 2;
 /// How many samples of what it played it keeps: what fits, then no more.
 pub const captured_samples: usize = 512;
-/// The rate its one mode runs at.
+/// The rate of its default mode, and of its other: 44.1 kHz.
 pub const rate: u32 = 48_000;
+pub const cd_rate: u32 = 44_100;
+const rates = [_]u32{ rate, cd_rate };
+const mode_names = [_][*:0]const u8{ "48000 Hz stereo", "44100 Hz stereo" };
 /// SinkControl's answer to AUDIOCTRL_DRIVER: the value it was given and
 /// this, so a test sees the call went through.
 pub const control_answer: isize = 0x1234;
@@ -65,10 +68,12 @@ fn sinkState(sink: *rta.AudioSink) *State {
     return stateOf(sink.driver.?);
 }
 
-/// One sink's own: its mode, its ring, which buffer is next, how many
-/// have been played and not yet asked for, and what it captured.
+/// One sink's own: its modes, the rate it was started at, its ring, which
+/// buffer is next, how many have been played and not yet asked for, and
+/// what it captured.
 pub const Instance = struct {
-    mode: rta.AudioMode = .{},
+    modes: [rates.len]rta.AudioMode = @splat(.{}),
+    started_rate: u32 = 0,
     ring: [buffers][buffer_frames * 2]i16 = @splat(@splat(0)),
     next: u32 = 0,
     due: u32 = 0,
@@ -105,15 +110,18 @@ fn createSink(driver: *rta.RtaDriver, sink: *rta.AudioSink, _: ?[*]const TagItem
     const state = stateOf(driver);
     const instance = instanceOf(sink);
     instance.* = .{};
-    instance.mode = .{
-        .node = .{ .name = "48000 Hz stereo" },
-        .rate = rate,
-        .bits = 16,
-        .channels = 2,
-        .sides = rta.AUDIOSIDES_LEFT_FIRST,
-        .flags = rta.sinks.AUDIOMF_DEFAULT,
-    };
-    state.sys.AddTail(&sink.modes, &instance.mode.node);
+    for (&instance.modes, rates, mode_names, 0..) |*mode, mode_rate, name, n| {
+        mode.* = .{
+            .node = .{ .name = name },
+            .id = @intCast(n),
+            .rate = mode_rate,
+            .bits = 16,
+            .channels = 2,
+            .sides = rta.AUDIOSIDES_LEFT_FIRST,
+            .flags = if (n == 0) rta.sinks.AUDIOMF_DEFAULT else 0,
+        };
+        state.sys.AddTail(&sink.modes, &mode.node);
+    }
     sink.ops = &ops;
     sink.buffer_frames = buffer_frames;
     sink.buffers = buffers;
@@ -125,9 +133,10 @@ fn destroy(sink: *rta.AudioSink) callconv(.c) void {
     sinkState(sink).log.destroyed += 1;
 }
 
-fn start(sink: *rta.AudioSink, _: *const rta.AudioMode, task: *exec.Task, signal_mask: u32) callconv(.c) i32 {
+fn start(sink: *rta.AudioSink, mode: *const rta.AudioMode, task: *exec.Task, signal_mask: u32) callconv(.c) i32 {
     const state = sinkState(sink);
     const instance = instanceOf(sink);
+    instance.started_rate = mode.rate;
     instance.next = 0;
     instance.due = 0;
     instance.ring = @splat(@splat(0));

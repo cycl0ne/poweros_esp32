@@ -33,15 +33,17 @@ const Enable = @import("../enable.zig").Enable;
 const MODULE_NAME = "rta-i2samp";
 const DRIVER_NAME = "i2samp";
 const VERSION = 1;
-const REVISION = 0;
-const BUILD_DATE = "19.10.2026";
+const REVISION = 1;
+const BUILD_DATE = "20.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// The rate the line is clocked for.
-const rate: u32 = 48_000;
+/// The rates the line is clocked for - 48 kHz, the default, and a CD's
+/// 44.1 kHz - and their modes' names.
+const rates = [_]u32{ 48_000, 44_100 };
+const mode_names = [_][*:0]const u8{ "48000 Hz stereo", "44100 Hz stereo" };
 
 /// Everything this driver has that changes, allocated once by the init.
 const State = struct {
@@ -55,11 +57,11 @@ fn stateOf(driver: *rta.RtaDriver) *State {
     return @fieldParentPtr("driver", driver);
 }
 
-/// What one sink keeps: its enable line and its mode.
+/// What one sink keeps: its enable line and its modes.
 const Instance = struct {
     state: *State,
     amplifier: Enable = .{},
-    mode: rta.AudioMode = .{},
+    modes: [rates.len]rta.AudioMode = @splat(.{}),
 };
 
 fn instanceOf(sink: *rta.AudioSink) *Instance {
@@ -76,15 +78,19 @@ fn createSink(made_by: *rta.RtaDriver, sink: *rta.AudioSink, tag_list: ?[*]const
         .amplifier = Enable.of(ub.GetTagData(st.PART_PinEnable, 0, tag_list)),
     };
     const swapped = ub.GetTagData(st.PART_SidesSwapped, 0, tag_list) != 0;
-    instance.mode = .{
-        .node = .{ .name = "48000 Hz stereo" },
-        .rate = rate,
-        .bits = 16,
-        .channels = 2,
-        .sides = if (swapped) rta.AUDIOSIDES_RIGHT_FIRST else rta.AUDIOSIDES_LEFT_FIRST,
-        .flags = rta.sinks.AUDIOMF_DEFAULT,
-    };
-    state.sys.AddTail(&sink.modes, &instance.mode.node);
+    const sides = if (swapped) rta.AUDIOSIDES_RIGHT_FIRST else rta.AUDIOSIDES_LEFT_FIRST;
+    for (&instance.modes, rates, mode_names, 0..) |*mode, mode_rate, name, n| {
+        mode.* = .{
+            .node = .{ .name = name },
+            .id = @intCast(n),
+            .rate = mode_rate,
+            .bits = 16,
+            .channels = 2,
+            .sides = sides,
+            .flags = if (n == 0) rta.sinks.AUDIOMF_DEFAULT else 0,
+        };
+        state.sys.AddTail(&sink.modes, &mode.node);
+    }
     sink.ops = &ops;
     sink.buffer_frames = io.buffer_frames;
     sink.buffers = io.buffers;

@@ -84,6 +84,9 @@ test {
     _ = @import("sink/sinkbuffer.zig");
     _ = @import("sink/playsinkbuffer.zig");
     _ = @import("sink/sinkcontrol.zig");
+    _ = @import("sink/nextsinkmode.zig");
+    _ = @import("sink/findsinkmode.zig");
+    _ = @import("sink/setsinkmode.zig");
     _ = @import("transport/_transport.zig");
     _ = @import("transport/createaudiotransporttaglist.zig");
     _ = @import("transport/deleteaudiotransport.zig");
@@ -253,6 +256,40 @@ test "a sink's number: the same for the same driver and name, never shared, neve
     base(rb).DeleteSink(twin);
     base(rb).DeleteSink(again);
     base(rb).DeleteSink(jack);
+    try tearDownForTests(rb);
+}
+
+test "a sink's modes: walked, found by rate, set while it is stopped" {
+    const rb = try setUpForTests();
+    defer kexec.deinit();
+    const no_tags = [_]TagItem{.{}};
+    const sink = base(rb).CreateSinkTagList("capture", &no_tags).?;
+    const other = base(rb).CreateSinkTagList("capture", &no_tags).?;
+
+    const first = base(rb).NextSinkMode(sink, null).?;
+    const second = base(rb).NextSinkMode(sink, first).?;
+    try testing.expect(base(rb).NextSinkMode(sink, second) == null);
+    try testing.expectEqual(first, base(rb).FindSinkMode(sink, 0, 0).?);
+    const cd = base(rb).FindSinkMode(sink, capture.cd_rate, 2).?;
+    try testing.expectEqual(second, cd);
+    try testing.expect(base(rb).FindSinkMode(sink, capture.cd_rate, 1) == null);
+
+    try testing.expectEqual(err.RTAERR_OK, base(rb).SetSinkMode(sink, cd));
+    try testing.expectEqual(cd, base(rb).SinkMode(sink).?);
+    try testing.expect(cd.flags & rta.sinks.AUDIOMF_CURRENT != 0);
+    try testing.expect(first.flags & rta.sinks.AUDIOMF_CURRENT == 0);
+    // Started in it, and held in it while started.
+    try testing.expectEqual(err.RTAERR_OK, base(rb).StartSink(sink, kexec.SysBase.iface().FindTask(null).?, 1));
+    try testing.expectEqual(capture.cd_rate, capture.instanceOf(sink).started_rate);
+    try testing.expectEqual(err.RTAERR_IN_USE, base(rb).SetSinkMode(sink, null));
+    base(rb).StopSink(sink);
+    // Another sink's mode is not this one's; null is the default again.
+    try testing.expectEqual(err.RTAERR_BAD_MODE, base(rb).SetSinkMode(sink, base(rb).NextSinkMode(other, null)));
+    try testing.expectEqual(err.RTAERR_OK, base(rb).SetSinkMode(sink, null));
+    try testing.expectEqual(first, base(rb).SinkMode(sink).?);
+
+    base(rb).DeleteSink(other);
+    base(rb).DeleteSink(sink);
     try tearDownForTests(rb);
 }
 

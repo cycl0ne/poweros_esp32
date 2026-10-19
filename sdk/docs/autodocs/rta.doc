@@ -8,14 +8,17 @@ rta.library/DeleteAudioTransport
 rta.library/DeleteSink
 rta.library/FindRtaDriver
 rta.library/FindSink
+rta.library/FindSinkMode
 rta.library/LockRtaDrivers
 rta.library/NextRtaDriver
 rta.library/NextSink
+rta.library/NextSinkMode
 rta.library/PlayAudioTransportBuffer
 rta.library/PlaySinkBuffer
 rta.library/RemRtaDriver
 rta.library/RtaErrorText
 rta.library/RtaLastError
+rta.library/SetSinkMode
 rta.library/SinkBuffer
 rta.library/SinkControl
 rta.library/SinkMode
@@ -370,6 +373,47 @@ rta.library/UnlockRtaDrivers
 
    EXAMPLES
 	    const sink = rb.FindSink("null") orelse return null;
+rta.library/FindSinkMode                              rta.library/FindSinkMode
+
+   NAME
+	FindSinkMode -- Finds a sink's mode by its rate and sides.
+
+   SYNOPSIS
+	    fn FindSinkMode(rb: *RtaBase, sink: *rta.AudioSink, rate: u32, channels: u32) ?*rta.AudioMode
+
+   SINCE
+	1.2. LVO -120.
+
+   INPUTS
+	- `sink` - the sink.
+	- `rate` - the frames a second wanted, or 0 for any.
+	- `channels` - the sides wanted, 1 or 2, or 0 for any.
+
+   RESULT
+	The first mode that matches, or null. With both 0, the sink's default
+	mode - the one marked `AUDIOMF_DEFAULT`, or else its first.
+
+   BEHAVIOR
+	Each 0 matches anything, so a caller can ask whether a sink runs at
+	44100 Hz at all, or for its default.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It calls through the jump table.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`NextSinkMode`, `SetSinkMode`
+
+   EXAMPLES
+	    const cd = rb.FindSinkMode(sink, 44_100, 0) orelse rb.FindSinkMode(sink, 0, 0).?;
 rta.library/LockRtaDrivers                          rta.library/LockRtaDrivers
 
    NAME
@@ -490,6 +534,46 @@ rta.library/UnlockRtaDrivers
    EXAMPLES
 	    var sink = rb.NextSink(null);
 	    while (sink) |s| : (sink = rb.NextSink(s)) list(s);
+rta.library/NextSinkMode                              rta.library/NextSinkMode
+
+   NAME
+	NextSinkMode -- Walks a sink's modes.
+
+   SYNOPSIS
+	    fn NextSinkMode(_: *RtaBase, sink: *rta.AudioSink, after: ?*rta.AudioMode) ?*rta.AudioMode
+
+   SINCE
+	1.2. LVO -116.
+
+   INPUTS
+	- `sink` - the sink.
+	- `after` - the mode to go on from, or null for the first.
+
+   RESULT
+	The next mode, or null at the end.
+
+   BEHAVIOR
+	The modes are the driver's, fixed when the sink was made, in the order
+	it gave them.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: safe: the modes do not change after the sink is made.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The modes are the sink's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FindSinkMode`, `SetSinkMode`, `SinkMode`
+
+   EXAMPLES
+	    var mode = rb.NextSinkMode(sink, null);
+	    while (mode) |m| : (mode = rb.NextSinkMode(sink, m)) list(m);
 rta.library/PlayAudioTransportBuffer      rta.library/PlayAudioTransportBuffer
 
    NAME
@@ -691,6 +775,50 @@ rta.library/UnlockRtaDrivers
 
    EXAMPLES
 	    const sink = rb.CreateSinkTagList("es8311", tags) orelse return rb.RtaLastError();
+rta.library/SetSinkMode                                rta.library/SetSinkMode
+
+   NAME
+	SetSinkMode -- Puts a sink in a mode.
+
+   SYNOPSIS
+	    fn SetSinkMode(rb: *RtaBase, sink: *rta.AudioSink, mode: ?*rta.AudioMode) i32
+
+   SINCE
+	1.2. LVO -124.
+
+   INPUTS
+	- `sink` - the sink.
+	- `mode` - one of its modes, or null for its default.
+
+   RESULT
+	`RTAERR_OK`, or: `RTAERR_IN_USE` while the sink is started,
+	`RTAERR_BAD_MODE` for a mode that is not the sink's.
+
+   BEHAVIOR
+	The mode is the one the sink starts in from now on: `StartSink` hands
+	it to the driver, which clocks its part for it, and `SinkMode` answers
+	it. A started sink keeps the mode it runs in; a caller that wants
+	another stops it, sets the mode and starts it again.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It calls through the jump table.
+	- Locks: none needed: one task plays through a sink.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FindSinkMode`, `SinkMode`, `StartSink`
+
+   EXAMPLES
+	    rb.StopSink(sink);
+	    _ = rb.SetSinkMode(sink, rb.FindSinkMode(sink, 44_100, 0));
+	    _ = rb.StartSink(sink, task, mask);
 rta.library/SinkBuffer                                  rta.library/SinkBuffer
 
    NAME

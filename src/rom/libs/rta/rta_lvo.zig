@@ -42,6 +42,9 @@ const AudioTransportBuffer = @import("transport/audiotransportbuffer.zig").Audio
 const PlayAudioTransportBuffer = @import("transport/playaudiotransportbuffer.zig").PlayAudioTransportBuffer;
 const RtaLastError = @import("errors/rtalasterror.zig").RtaLastError;
 const RtaErrorText = @import("errors/rtaerrortext.zig").RtaErrorText;
+const NextSinkMode = @import("sink/nextsinkmode.zig").NextSinkMode;
+const FindSinkMode = @import("sink/findsinkmode.zig").FindSinkMode;
+const SetSinkMode = @import("sink/setsinkmode.zig").SetSinkMode;
 
 /// rta.library's interface, as the SDK generates it from sdk/fd/rta_lib.fd.
 const interface = sdk.interface.rta;
@@ -96,6 +99,9 @@ const contract_files = [_][]const u8{
     @embedFile("transport/playaudiotransportbuffer.zig"),
     @embedFile("errors/rtalasterror.zig"),
     @embedFile("errors/rtaerrortext.zig"),
+    @embedFile("sink/nextsinkmode.zig"),
+    @embedFile("sink/findsinkmode.zig"),
+    @embedFile("sink/setsinkmode.zig"),
 };
 
 fn lvoAddRtaDriver(rb: *RtaBase, driver: *rta.RtaDriver) callconv(.c) bool {
@@ -170,6 +176,15 @@ fn lvoRtaLastError(rb: *RtaBase) callconv(.c) i32 {
 fn lvoRtaErrorText(rb: *RtaBase, error_code: i32) callconv(.c) [*:0]const u8 {
     return RtaErrorText(rb, error_code);
 }
+fn lvoNextSinkMode(rb: *RtaBase, sink: *rta.AudioSink, after: ?*rta.AudioMode) callconv(.c) ?*rta.AudioMode {
+    return NextSinkMode(rb, sink, after);
+}
+fn lvoFindSinkMode(rb: *RtaBase, sink: *rta.AudioSink, rate: u32, channels: u32) callconv(.c) ?*rta.AudioMode {
+    return FindSinkMode(rb, sink, rate, channels);
+}
+fn lvoSetSinkMode(rb: *RtaBase, sink: *rta.AudioSink, mode: ?*rta.AudioMode) callconv(.c) i32 {
+    return SetSinkMode(rb, sink, mode);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -202,6 +217,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoPlayAudioTransportBuffer),
     vec(lvoRtaLastError),
     vec(lvoRtaErrorText),
+    vec(lvoNextSinkMode),
+    vec(lvoFindSinkMode),
+    vec(lvoSetSinkMode),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -209,7 +227,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 28), vectors.len);
+    try testing.expectEqual(@as(usize, 31), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

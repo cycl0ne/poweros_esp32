@@ -45,8 +45,8 @@ const controller = switch (sdk.hardware.chip) {
 const MODULE_NAME = "rta-i2s";
 const DRIVER_NAME = "i2s";
 const VERSION = 1;
-const REVISION = 0;
-const BUILD_DATE = "19.10.2026";
+const REVISION = 1;
+const BUILD_DATE = "20.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -204,15 +204,15 @@ fn connectPads(instance: *Instance) void {
 /// and the stream.
 fn start(io: *rta.AudioTransport, mode: *const rta.AudioMode, task: *exec.Task, signal_mask: u32) callconv(.c) i32 {
     const instance = instanceOf(io);
-    // The controller is clocked for one rate, at sixteen bits.
-    if (mode.rate != controller.sample_rate or mode.bits != controller.bits_per_sample) return err.RTAERR_BAD_MODE;
+    // Sixteen bits a sample, at a rate the controller can be clocked for.
+    if (mode.bits != controller.bits_per_sample or !controller.takes(mode.rate)) return err.RTAERR_BAD_MODE;
     if (!takePads(instance)) return err.RTAERR_IN_USE;
-    const code = startRing(instance, task, signal_mask);
+    const code = startRing(instance, mode.rate, task, signal_mask);
     if (code != err.RTAERR_OK) giveBack(instance);
     return code;
 }
 
-fn startRing(instance: *Instance, task: *exec.Task, signal_mask: u32) i32 {
+fn startRing(instance: *Instance, rate: u32, task: *exec.Task, signal_mask: u32) i32 {
     const sys = instance.sys;
     // The ring's memory: the buffers the DMA reads and the descriptors
     // that ring them, both where the DMA can reach them. Where the data
@@ -260,7 +260,7 @@ fn startRing(instance: *Instance, task: *exec.Task, signal_mask: u32) i32 {
     instance.signal_mask = signal_mask;
     instance.ended = 0;
     instance.taken = 0;
-    controller.init();
+    controller.init(rate);
     connectPads(instance);
     controller.reset();
     _ = db.StartDMA(channel, dmares.DMA_OUT, instance.chain[0].?);

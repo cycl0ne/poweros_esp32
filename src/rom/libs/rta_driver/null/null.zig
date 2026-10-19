@@ -30,8 +30,8 @@ const err = rta.errors;
 const MODULE_NAME = "rta-null";
 const DRIVER_NAME = "null";
 const VERSION = 1;
-const REVISION = 0;
-const BUILD_DATE = "19.10.2026";
+const REVISION = 1;
+const BUILD_DATE = "20.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -41,7 +41,10 @@ const VERSION_STRING =
 /// milliseconds long at 48 kHz, two of them.
 const buffer_frames: u32 = 256;
 const buffers: u32 = 2;
-const rate: u32 = 48_000;
+/// The rates it runs at, as a board's output does - 48 kHz, the default,
+/// and 44.1 kHz - and their modes' names.
+const rates = [_]u32{ 48_000, 44_100 };
+const mode_names = [_][*:0]const u8{ "48000 Hz stereo", "44100 Hz stereo" };
 
 /// Below every real output.
 const priority: i8 = -100;
@@ -56,11 +59,12 @@ fn stateOf(driver: *rta.RtaDriver) *State {
     return @fieldParentPtr("driver", driver);
 }
 
-/// What the sink keeps: its mode, the buffer it hands out, and while it
-/// plays the clock it keeps time by.
+/// What the sink keeps: its modes, the buffer it hands out, and while it
+/// plays the clock it keeps time by and the rate it keeps it for.
 const Instance = struct {
     sys: *ExecBase,
-    mode: rta.AudioMode = .{},
+    modes: [rates.len]rta.AudioMode = @splat(.{}),
+    rate: u32 = rates[0],
     frames: [buffer_frames * 2]i16 = @splat(0),
     /// The port the timer's request comes back to: the starting task's,
     /// on its own signal.
@@ -83,15 +87,18 @@ fn createSink(made_by: *rta.RtaDriver, sink: *rta.AudioSink, _: ?[*]const TagIte
     const state = stateOf(made_by);
     const instance = instanceOf(sink);
     instance.* = .{ .sys = state.sys };
-    instance.mode = .{
-        .node = .{ .name = "48000 Hz stereo" },
-        .rate = rate,
-        .bits = 16,
-        .channels = 2,
-        .sides = rta.AUDIOSIDES_LEFT_FIRST,
-        .flags = rta.sinks.AUDIOMF_DEFAULT,
-    };
-    state.sys.AddTail(&sink.modes, &instance.mode.node);
+    for (&instance.modes, rates, mode_names, 0..) |*mode, mode_rate, name, n| {
+        mode.* = .{
+            .node = .{ .name = name },
+            .id = @intCast(n),
+            .rate = mode_rate,
+            .bits = 16,
+            .channels = 2,
+            .sides = rta.AUDIOSIDES_LEFT_FIRST,
+            .flags = if (n == 0) rta.sinks.AUDIOMF_DEFAULT else 0,
+        };
+        state.sys.AddTail(&sink.modes, &mode.node);
+    }
     sink.ops = &ops;
     sink.buffer_frames = buffer_frames;
     sink.buffers = buffers;
@@ -101,7 +108,7 @@ fn createSink(made_by: *rta.RtaDriver, sink: *rta.AudioSink, _: ?[*]const TagIte
 /// When buffer `n` has played, on the E-clock. Worked out wide: a
 /// 16 MHz clock times the frames of a year's buffers is past 64 bits.
 fn deadline(instance: *const Instance, n: u64) u64 {
-    const since: u128 = @as(u128, n) * buffer_frames * instance.eclock_hz / rate;
+    const since: u128 = @as(u128, n) * buffer_frames * instance.eclock_hz / instance.rate;
     return instance.start_ticks +% @as(u64, @truncate(since));
 }
 
@@ -114,10 +121,11 @@ fn arm(instance: *Instance) void {
     instance.waiting = true;
 }
 
-fn start(sink: *rta.AudioSink, _: *const rta.AudioMode, task: *exec.Task, signal_mask: u32) callconv(.c) i32 {
+fn start(sink: *rta.AudioSink, mode: *const rta.AudioMode, task: *exec.Task, signal_mask: u32) callconv(.c) i32 {
     const instance = instanceOf(sink);
     const sys = instance.sys;
     if (signal_mask == 0) return err.RTAERR_BAD_ARG;
+    instance.rate = mode.rate;
     // The port the request comes back to raises the starter's signal: the
     // one it waits on for a buffer.
     instance.port = .{

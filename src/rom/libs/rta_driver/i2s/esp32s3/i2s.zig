@@ -11,10 +11,11 @@
 //! the 160 MHz clock, divided to MCLK by a whole number and a fraction,
 //! then to BCLK by a whole number.
 //!
-//! 48000 samples a second is what this file is set up for, because the
-//! chain then divides exactly: 160 MHz over 13 + 1/48 is 12.288 MHz, and
-//! that over 8 is the bit clock. A rate that does not divide exactly
-//! would wander against the codec's own idea of it.
+//! The rate is the caller's. The master clock is 256 times it, which the
+//! fractional divider makes out of 160 MHz exactly on average - 13 + 1/48
+//! for 48 kHz, 14 + 76/441 for 44.1 kHz - and the bit clock is an eighth
+//! of that at every rate. `takes` says whether a rate's divider fits the
+//! controller's fields.
 //!
 //! Samples come out of memory through a GDMA channel, which dma.resource
 //! hands out; this file programs the controller and nothing else. It
@@ -24,6 +25,7 @@
 
 const hardware = @import("sdk").hardware;
 const divide = @import("../divider.zig").divide;
+const usable = @import("../divider.zig").usable;
 const reg = hardware.mmio.reg;
 const system = hardware.system;
 const signals = hardware.signals;
@@ -87,10 +89,9 @@ const tx_tdm_tot_chan_num_shift: u5 = 16;
 /// The clock the divider is fed from.
 const source_hz: u32 = 160_000_000;
 
-/// What this file is set up for: the rate, the master clock at 256 times
-/// it, and sixteen bits a sample in two channels.
-pub const sample_rate: u32 = 48_000;
-pub const mclk_hz: u32 = sample_rate * 256;
+/// The master clock in periods of the word clock, and sixteen bits a
+/// sample in two channels.
+const mclk_per_rate: u32 = 256;
 pub const bits_per_sample: u32 = 16;
 pub const channels: u32 = 2;
 /// Bytes one stereo sample takes in memory.
@@ -106,13 +107,20 @@ pub const signal_data_out: u32 = signals.I2S0O_SD;
 /// (dma.resource's DMAPERI_I2S0).
 pub const dma_peripheral: u32 = 3;
 
+/// Whether the controller can be clocked for `rate` frames a second.
+pub fn takes(rate: u32) bool {
+    if (rate == 0 or rate > 192_000) return false;
+    return usable(divide(source_hz, rate * mclk_per_rate));
+}
+
 /// The controller clocked, out of reset and set up as the master of a
-/// stereo stream of 16-bit samples at `sample_rate`. Nothing comes out
-/// until `start`.
-pub fn init() void {
+/// stereo stream of 16-bit samples at `rate`, one `takes` takes. Nothing
+/// comes out until `start`.
+pub fn init(rate: u32) void {
     system.enable(.i2s0);
 
-    // The master clock: 160 MHz over 13 + 1/48, which is 12.288 MHz.
+    // The master clock: 160 MHz over the divider, 256 times the rate.
+    const mclk_hz = rate * mclk_per_rate;
     const divider = divide(source_hz, mclk_hz);
     reg(tx_clkm_conf).* = clk_en | (tx_clk_sel_pll_160m << tx_clk_sel_shift) |
         (2 << tx_clkm_div_num_shift);
@@ -130,7 +138,7 @@ pub fn init() void {
     // The frame: two channels of sixteen bits, the bit clock a
     // thirty-second of the master clock, and the data one bit after the
     // word clock's edge, which is what I2S means by its name.
-    const bck_div = mclk_hz / (sample_rate * bits_per_sample * channels);
+    const bck_div = mclk_per_rate / (bits_per_sample * channels);
     reg(tx_conf1).* = tx_msb_shift | tx_bck_no_dly |
         ((bits_per_sample - 1) << tx_tdm_chan_bits_shift) |
         ((bits_per_sample - 1) << tx_half_sample_bits_shift) |

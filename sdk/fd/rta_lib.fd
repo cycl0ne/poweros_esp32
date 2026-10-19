@@ -73,4 +73,11 @@ i32 PlayAudioTransportBuffer(*rta.AudioTransport io, [*]i16 buffer)
 i32 RtaLastError()
 /// An RTAERR_ code in words.
 [*:0]const u8 RtaErrorText(i32 error_code)
+/// The next mode of a sink, or its first for null.
+?*rta.AudioMode NextSinkMode(*rta.AudioSink sink, ?*rta.AudioMode after)
+/// The sink's mode at that rate and with that many sides; 0 is any, and
+/// both 0 its default.
+?*rta.AudioMode FindSinkMode(*rta.AudioSink sink, u32 rate, u32 channels)
+/// The mode a stopped sink starts in from now on; null for its default.
+i32 SetSinkMode(*rta.AudioSink sink, ?*rta.AudioMode mode)
 ##end

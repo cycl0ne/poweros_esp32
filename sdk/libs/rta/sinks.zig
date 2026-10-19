@@ -76,7 +76,7 @@ pub const AudioSink = extern struct {
     ops: ?*const AudioSinkOps = null,
     /// The modes, AudioMode nodes. The driver fills the list before it
     /// returns from create; the library makes its default the current
-    /// one.
+    /// one, and SetSinkMode another.
     modes: List = .{},
     mode: ?*AudioMode = null,
     /// The ring a started sink runs on: frames a buffer, and how many
@@ -115,7 +115,9 @@ pub const AudioSinkOps = extern struct {
     /// The next buffer to fill - `buffer_frames` stereo frames of 16-bit
     /// samples - or null when none has been played since the last.
     buffer: ?*const fn (*AudioSink) callconv(.c) ?[*]i16 = null,
-    /// The buffer `buffer` gave, filled: on to the part.
+    /// The buffer `buffer` gave, filled: on to the part. The buffers are
+    /// 16-bit stereo whatever the mode's `bits`; a part that takes more
+    /// widens them here.
     play: ?*const fn (*AudioSink, [*]i16) callconv(.c) i32 = null,
     /// Something only this driver knows about (AUDIOCTRL_DRIVER and up).
     control: ?*const fn (*AudioSink, u32, isize) callconv(.c) isize = null,

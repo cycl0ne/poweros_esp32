@@ -14,8 +14,10 @@
 //! HP_SYS_CLKRST, which every peripheral shares: its source, a whole and
 //! fractional divider down to MCLK, and its enable. The source is the
 //! 40 MHz crystal - on this revision of the chip the only other is the
-//! audio PLL, which nothing has brought up - so MCLK is 40 MHz over
-//! 3 + 49/192, 12.288 MHz exactly on average, and BCLK an eighth of it.
+//! audio PLL, which nothing has brought up - so MCLK, 256 times the rate,
+//! is 40 MHz over 3 + 49/192 for 48 kHz and 3 + 479/882 for 44.1 kHz,
+//! exact on average, and BCLK an eighth of it. `takes` says whether a
+//! rate's divider fits the fields: the crystal is too slow for 96 kHz.
 //!
 //! I2S1 rather than I2S0 because I2S0 is the only controller that takes
 //! a PDM microphone in, which a board's microphones will want.
@@ -30,6 +32,7 @@
 const sdk = @import("sdk");
 const hardware = sdk.hardware;
 const divide = @import("../divider.zig").divide;
+const usable = @import("../divider.zig").usable;
 const reg = hardware.mmio.reg;
 const system = hardware.system;
 const signals = hardware.signals;
@@ -91,10 +94,9 @@ const clk_mst_clk_sel: u32 = 1 << 10;
 /// The clock the divider is fed from.
 const source_hz: u32 = 40_000_000;
 
-/// What this file is set up for: the rate, the master clock at 256 times
-/// it, and sixteen bits a sample in two channels.
-pub const sample_rate: u32 = 48_000;
-pub const mclk_hz: u32 = sample_rate * 256;
+/// The master clock in periods of the word clock, and sixteen bits a
+/// sample in two channels.
+const mclk_per_rate: u32 = 256;
 pub const bits_per_sample: u32 = 16;
 pub const channels: u32 = 2;
 /// Bytes one stereo sample takes in memory.
@@ -110,16 +112,22 @@ pub const signal_data_out: u32 = signals.I2S1_O_SD;
 /// engine's.
 pub const dma_peripheral: u32 = sdk.resources.dma.DMAPERI_I2S1;
 
+/// Whether the controller can be clocked for `rate` frames a second.
+pub fn takes(rate: u32) bool {
+    if (rate == 0 or rate > 192_000) return false;
+    return usable(divide(source_hz, rate * mclk_per_rate));
+}
+
 /// The controller clocked, out of reset and set up as the master of a
-/// stereo stream of 16-bit samples at `sample_rate`. Nothing comes out
-/// until `start`.
-pub fn init() void {
+/// stereo stream of 16-bit samples at `rate`, one `takes` takes. Nothing
+/// comes out until `start`.
+pub fn init(rate: u32) void {
     system.enable(.i2s1);
 
     // The transmit clock: off while it changes, from the crystal, divided
-    // to 12.288 MHz. The divider takes a small division first and the
-    // fraction before the whole number, as ESP-IDF sets it.
-    const divider = divide(source_hz, mclk_hz);
+    // to 256 times the rate. The divider takes a small division first and
+    // the fraction before the whole number, as ESP-IDF sets it.
+    const divider = divide(source_hz, rate * mclk_per_rate);
     system.update(system.PERI_CLK_CTRL15, clk_tx_src_xtal << clk_tx_src_shift, clk_tx_en | clk_tx_src_mask);
     system.update(system.PERI_CLK_CTRL16, 2 << clk_div_n_shift, clk_div_n_mask);
     system.update(system.PERI_CLK_CTRL17, 0, clk_div_yn1 | clk_div_z_mask);
@@ -136,7 +144,7 @@ pub fn init() void {
     // the master clock, and the data one bit after the word clock's edge,
     // which is what I2S means by its name. The rest is the controller's
     // own reset state: no compression, no PDM.
-    const bck_div = mclk_hz / (sample_rate * bits_per_sample * channels);
+    const bck_div = mclk_per_rate / (bits_per_sample * channels);
     reg(tx_conf1).* = ((bits_per_sample - 1) << tx_tdm_chan_bits_shift) |
         ((bits_per_sample - 1) << tx_half_sample_bits_shift) |
         ((bits_per_sample - 1) << tx_bits_mod_shift) |

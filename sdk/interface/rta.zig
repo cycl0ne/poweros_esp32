@@ -43,6 +43,9 @@ pub const LVO = struct {
     pub const PlayAudioTransportBuffer = libraries.lvo(25);
     pub const RtaLastError = libraries.lvo(26);
     pub const RtaErrorText = libraries.lvo(27);
+    pub const NextSinkMode = libraries.lvo(28);
+    pub const FindSinkMode = libraries.lvo(29);
+    pub const SetSinkMode = libraries.lvo(30);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -72,6 +75,9 @@ pub const Fn = struct {
     pub const PlayAudioTransportBuffer = *const fn (*RtaBase, *rta.AudioTransport, [*]i16) callconv(.c) i32;
     pub const RtaLastError = *const fn (*RtaBase) callconv(.c) i32;
     pub const RtaErrorText = *const fn (*RtaBase, i32) callconv(.c) [*:0]const u8;
+    pub const NextSinkMode = *const fn (*RtaBase, *rta.AudioSink, ?*rta.AudioMode) callconv(.c) ?*rta.AudioMode;
+    pub const FindSinkMode = *const fn (*RtaBase, *rta.AudioSink, u32, u32) callconv(.c) ?*rta.AudioMode;
+    pub const SetSinkMode = *const fn (*RtaBase, *rta.AudioSink, ?*rta.AudioMode) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -213,5 +219,21 @@ pub const RtaBase = opaque {
     /// An RTAERR_ code in words.
     pub fn RtaErrorText(self: *RtaBase, error_code: i32) [*:0]const u8 {
         return libraries.call(self, LVO.RtaErrorText, Fn.RtaErrorText, .{error_code});
+    }
+
+    /// The next mode of a sink, or its first for null.
+    pub fn NextSinkMode(self: *RtaBase, sink: *rta.AudioSink, after: ?*rta.AudioMode) ?*rta.AudioMode {
+        return libraries.call(self, LVO.NextSinkMode, Fn.NextSinkMode, .{ sink, after });
+    }
+
+    /// The sink's mode at that rate and with that many sides; 0 is any, and
+    /// both 0 its default.
+    pub fn FindSinkMode(self: *RtaBase, sink: *rta.AudioSink, rate: u32, channels: u32) ?*rta.AudioMode {
+        return libraries.call(self, LVO.FindSinkMode, Fn.FindSinkMode, .{ sink, rate, channels });
+    }
+
+    /// The mode a stopped sink starts in from now on; null for its default.
+    pub fn SetSinkMode(self: *RtaBase, sink: *rta.AudioSink, mode: ?*rta.AudioMode) i32 {
+        return libraries.call(self, LVO.SetSinkMode, Fn.SetSinkMode, .{ sink, mode });
     }
 };

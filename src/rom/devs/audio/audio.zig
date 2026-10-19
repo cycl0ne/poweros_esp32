@@ -17,6 +17,15 @@
 //! up on the task that starts it: the old sink stopped, every stream
 //! stepped for the new one's rate where it stood, the new one started.
 //!
+//! A sink may run at more than one rate. The device runs it in the mode
+//! that the most open streams play in unconverted: the mode whose rate
+//! the most of them have; a tie goes to the sink's default mode, then to
+//! the mode with more sides, then to the higher rate. It chooses when it
+//! starts a sink, and again when a write would start sound on a device
+//! that is quiet - no stream has one - so a change of rate never cuts
+//! into sound being heard. That write, too, is the task's to carry out:
+//! it stops the sink, starts it in the new mode, and queues the write.
+//!
 //! Nothing is touched until the first OpenDevice. That starts the task,
 //! which starts the sink - its driver brings the part up - and from then
 //! on the sink raises the task's signal every time a buffer has been
@@ -41,7 +50,7 @@ const mixer = @import("mixer.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 3;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -110,9 +119,10 @@ const AudioBase = extern struct {
     feed_task: ?*exec.Task = null,
     feed_mask: u32 = 0,
     quit_mask: u32 = 0,
-    /// The task's port for the commands it carries out itself - a change
-    /// of output - and the signal a request put on it raises.
-    commands: exec.MsgPort = .{},
+    /// The requests the task carries out itself - a change of output, a
+    /// write that changes the output's mode - in the order they came, and
+    /// the signal that tells it there are some. Under the lock.
+    handoff: exec.List = .{},
     command_mask: u32 = 0,
     /// The output played through, once it is started, and what its mode
     /// says: the rate every stream is stepped for, and what the halves of
@@ -153,7 +163,15 @@ fn sidesOf(mode: *const rta.AudioMode) mixer.Sides {
 fn attachSink(ab: *AudioBase, sink: *rta.AudioSink) bool {
     const sys = ab.sys_base;
     const rb = ab.rta_base;
-    const code = rb.StartSink(sink, ab.feed_task.?, ab.feed_mask);
+    // The mode the open streams want, or - if the part will not run in
+    // it - its default.
+    const chosen = chooseMode(ab, sink);
+    _ = rb.SetSinkMode(sink, chosen);
+    var code = rb.StartSink(sink, ab.feed_task.?, ab.feed_mask);
+    if (code != rta.errors.RTAERR_OK and chosen != rb.FindSinkMode(sink, 0, 0)) {
+        _ = rb.SetSinkMode(sink, null);
+        code = rb.StartSink(sink, ab.feed_task.?, ab.feed_mask);
+    }
     if (code != rta.errors.RTAERR_OK) {
         exec.kprintf(sys, "%s: %s: %s\n", .{ DEVICE_NAME, sink.node.name orelse "?", rb.RtaErrorText(code) });
         return false;
@@ -180,6 +198,54 @@ fn detachSink(ab: *AudioBase) void {
     const sink = ab.sink orelse return;
     ab.rta_base.StopSink(sink);
     ab.sink = null;
+}
+
+/// The mode of the sink the open streams play in with the least
+/// converting: the rule in the header.
+fn chooseMode(ab: *AudioBase, sink: *rta.AudioSink) ?*rta.AudioMode {
+    const rb = ab.rta_base;
+    var best: ?*rta.AudioMode = null;
+    var best_score: u32 = 0;
+    var mode = rb.NextSinkMode(sink, null);
+    while (mode) |m| : (mode = rb.NextSinkMode(sink, m)) {
+        var score: u32 = 0;
+        for (&ab.streams) |*stream| {
+            if (stream.in_use != 0 and stream.rate == m.rate) score += 1;
+        }
+        const better = if (best) |b|
+            score > best_score or (score == best_score and preferred(m, b))
+        else
+            true;
+        if (better) {
+            best = m;
+            best_score = score;
+        }
+    }
+    return best;
+}
+
+/// Between two modes as many streams want: the default, then the one with
+/// more sides, then the higher rate.
+fn preferred(mode: *const rta.AudioMode, over: *const rta.AudioMode) bool {
+    const default = rta.sinks.AUDIOMF_DEFAULT;
+    if ((mode.flags & default != 0) != (over.flags & default != 0)) return mode.flags & default != 0;
+    if (mode.channels != over.channels) return mode.channels > over.channels;
+    return mode.rate > over.rate;
+}
+
+/// Whether the streams open would have the output in another mode than
+/// the one it runs in.
+fn wantsOtherMode(ab: *AudioBase) bool {
+    const sink = ab.sink orelse return false;
+    return chooseMode(ab, sink) != ab.rta_base.SinkMode(sink);
+}
+
+/// Nothing plays: no stream has a write.
+fn quiet(ab: *AudioBase) bool {
+    for (&ab.streams) |*stream| {
+        if (stream.writes.first() != null) return false;
+    }
+    return true;
 }
 
 /// The sink of that number, or for 0 the first on the list: the default.
@@ -240,18 +306,56 @@ fn addRate(info: *audio.AudioOutputInfo, rate: u32) void {
     info.rate_count = count + 1;
 }
 
-/// The commands the task carries out itself, each replied when done.
+/// A request handed to the task: on the list, and the task told.
+fn handOff(ab: *AudioBase, io: *exec.IORequest) void {
+    const sys = ab.sys_base;
+    io.flags &= ~exec.IOF_QUICK;
+    sys.AddTail(&ab.handoff, &io.message.node);
+    sys.Signal(ab.feed_task.?, ab.command_mask);
+}
+
+/// Whether a write waits for the task: one sent after it waits too, so
+/// the writes play in the order they were sent.
+fn writeHandedOff(ab: *AudioBase) bool {
+    var it = ab.handoff.iterator();
+    while (it.next()) |node| {
+        if (ioOf(node).std.req.command == exec.CMD_WRITE) return true;
+    }
+    return false;
+}
+
+/// The requests handed to the task, in order: a change of output replied
+/// when made; a write queued once the output is in the mode the streams
+/// want - if nothing else plays - and replied when it has played.
 fn serveCommands(ab: *AudioBase) void {
     const sys = ab.sys_base;
-    while (sys.GetMsg(&ab.commands)) |message| {
-        const io: *exec.IORequest = @fieldParentPtr("message", message);
-        const ioa = ioAudio(io);
-        sys.ObtainSemaphore(&ab.lock);
+    sys.ObtainSemaphore(&ab.lock);
+    defer sys.ReleaseSemaphore(&ab.lock);
+    while (sys.RemHead(&ab.handoff)) |node| {
+        const ioa = ioOf(node);
+        const io = &ioa.std.req;
+        if (io.command == exec.CMD_WRITE) {
+            const n = streamOf(ab, ioa) orelse {
+                io.err = exec.IOERR_OPENFAIL;
+                sys.ReplyIO(io);
+                continue;
+            };
+            if (quiet(ab) and wantsOtherMode(ab)) remode(ab);
+            queueWrite(ab, n, ioa);
+            continue;
+        }
         io.err = setOutput(ab, ioa.output);
         if (ab.sink) |sink| ioa.output = sink.id;
-        sys.ReleaseSemaphore(&ab.lock);
         sys.ReplyIO(io);
     }
+}
+
+/// The output started again in the mode the streams want; the same sink,
+/// so a gap of a buffer at most, and only while nothing plays.
+fn remode(ab: *AudioBase) void {
+    const sink = ab.sink orelse return;
+    detachSink(ab);
+    _ = attachSink(ab, sink);
 }
 
 // --- the mix --------------------------------------------------------------
@@ -363,8 +467,20 @@ fn endFront(ab: *AudioBase, n: usize, err: i8) void {
 /// CMD_FLUSH.
 fn flushStream(ab: *AudioBase, n: usize, err: i8) void {
     const stream = &ab.streams[n];
-    while (ab.sys_base.RemHead(&stream.writes)) |node| {
-        const io = ioOf(node);
+    // The stream's writes still with the task go first: they were sent
+    // after the ones it holds.
+    var node = ab.handoff.first();
+    while (node) |each| {
+        node = each.next();
+        const io = ioOf(each);
+        if (io.std.req.command != exec.CMD_WRITE or io.std.req.unit != &stream.unit) continue;
+        ab.sys_base.Remove(each);
+        io.std.req.err = err;
+        io.std.actual = 0;
+        ab.sys_base.ReplyIO(&io.std.req);
+    }
+    while (ab.sys_base.RemHead(&stream.writes)) |queued| {
+        const io = ioOf(queued);
         io.std.req.err = err;
         io.std.actual = 0;
         ab.sys_base.ReplyIO(&io.std.req);
@@ -411,8 +527,6 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
         ab.feed_mask = @as(u32, 1) << @intCast(signal);
         ab.quit_mask = @as(u32, 1) << @intCast(quit);
         ab.command_mask = @as(u32, 1) << @intCast(carry);
-        ab.commands = .{ .flags = exec.PA_SIGNAL, .sig_bit = @intCast(carry), .sig_task = &ab.task };
-        ab.commands.msg_list.init(.message);
         if (ab.rta_base.NextSink(null)) |sink| {
             ok = attachSink(ab, sink);
         } else {
@@ -577,14 +691,13 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
                 ioa.format = stream.format;
                 ioa.channels = stream.channels;
                 ioa.std.actual = 0;
-                io.flags &= ~exec.IOF_QUICK;
-                sys.AddTail(&stream.writes, &io.message.node);
-                if (stream.handed == 0) {
-                    startFront(ab, n);
-                } else if (stream.handed == 1) {
-                    ab.voices[n].queued = queuedOf(ioa);
-                    stream.handed = 2;
+                // One that starts sound on a quiet device, in another mode
+                // than the output runs in, waits for the task to change it.
+                if (writeHandedOff(ab) or (quiet(ab) and wantsOtherMode(ab))) {
+                    handOff(ab, io);
+                    return;
                 }
+                queueWrite(ab, n, ioa);
                 return;
             }
         },
@@ -613,8 +726,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
                 io.err = exec.IOERR_BADLENGTH;
             } else if (io.command == audio.AUDIOCMD_SETOUTPUT) {
                 // The task's to carry out, replied when it has.
-                io.flags &= ~exec.IOF_QUICK;
-                sys.PutMsg(&ab.commands, &io.message);
+                handOff(ab, io);
                 return;
             } else {
                 const found = if (io.command == audio.AUDIOCMD_GETOUTPUT) ab.sink else nextOutput(ab, ioa.output);
@@ -638,6 +750,22 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     sys.ReplyIO(io);
 }
 
+/// A write on the stream it was sent on, behind the others: the mixer is
+/// handed it at once if it is the front or the one after. Replied when
+/// its frames have been played.
+fn queueWrite(ab: *AudioBase, n: usize, ioa: *IOAudio) void {
+    const stream = &ab.streams[n];
+    const io = &ioa.std.req;
+    io.flags &= ~exec.IOF_QUICK;
+    ab.sys_base.AddTail(&stream.writes, &io.message.node);
+    if (stream.handed == 0) {
+        startFront(ab, n);
+    } else if (stream.handed == 1) {
+        ab.voices[n].queued = queuedOf(ioa);
+        stream.handed = 2;
+    }
+}
+
 /// The output after the one of that number, or for 0 the first; null past
 /// the last, or for a number no output has.
 fn nextOutput(ab: *AudioBase, id: u32) ?*rta.AudioSink {
@@ -656,6 +784,14 @@ fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     sys.ObtainSemaphore(&ab.lock);
     defer sys.ReleaseSemaphore(&ab.lock);
     if (io.command != exec.CMD_WRITE) return -1;
+    // One the task has not queued yet is simply taken back.
+    if (onList(&ab.handoff, ioa)) {
+        sys.Remove(&io.message.node);
+        io.err = exec.IOERR_ABORTED;
+        ioa.std.actual = 0;
+        sys.ReplyIO(io);
+        return 0;
+    }
     const n = streamOf(ab, ioa) orelse return -1;
     const stream = &ab.streams[n];
     if (!onList(&stream.writes, ioa)) return -1;
@@ -775,6 +911,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     const made = ab.dev;
     ab.* = .{ .dev = made, .sys_base = sys_base, .rta_base = @ptrCast(library) };
     sys_base.InitSemaphore(&ab.lock);
+    ab.handoff.init(.message);
     for (&ab.streams) |*stream| {
         stream.writes.init(.message);
         stream.unit.msg_port.msg_list.init(.message);
@@ -857,8 +994,6 @@ fn testDevice() !*AudioBase {
     ab.feed_task = me;
     ab.feed_mask = @as(u32, 1) << @intCast(feed);
     ab.command_mask = @as(u32, 1) << @intCast(carry);
-    ab.commands = .{ .flags = exec.PA_SIGNAL, .sig_bit = @intCast(carry), .sig_task = me };
-    ab.commands.msg_list.init(.message);
     if (!attachSink(ab, iface.NextSink(null).?)) return error.NoOutput;
     return ab;
 }
@@ -1247,8 +1382,10 @@ test "the outputs are listed in order and one is chosen; the streams go on where
     try testing.expectEqual(audio.AUDIOOF_DEFAULT | audio.AUDIOOF_CURRENT, info.flags);
     try testing.expectEqualStrings(test_output, std.mem.sliceTo(&info.name, 0));
     try testing.expectEqual(@as(u32, 2), info.channels);
-    try testing.expectEqual(@as(u32, 1), info.rate_count);
-    try testing.expectEqual(capture.rate, info.rates[0]);
+    // Its two rates, lowest first.
+    try testing.expectEqual(@as(u32, 2), info.rate_count);
+    try testing.expectEqual(capture.cd_rate, info.rates[0]);
+    try testing.expectEqual(capture.rate, info.rates[1]);
     try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_NEXTOUTPUT, ask.output, &info));
     try testing.expectEqual(headphones.id, ask.output);
     try testing.expectEqual(@as(u32, 0), info.flags);
@@ -1296,5 +1433,124 @@ test "the outputs are listed in order and one is chosen; the streams go on where
     _ = close(&ab.dev, &io.std.req);
     _ = replied(port);
     rb.DeleteSink(headphones);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "the output runs at the rate the most open streams have; a tie keeps its default" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sink = ab.sink.?;
+    const rb = ab.rta_base;
+    // Nothing open: the default.
+    try testing.expectEqual(capture.rate, chooseMode(ab, sink).?.rate);
+    ab.streams[0].in_use = 1;
+    ab.streams[0].rate = capture.cd_rate;
+    try testing.expectEqual(capture.cd_rate, chooseMode(ab, sink).?.rate);
+    // One each way: the default.
+    ab.streams[1].in_use = 1;
+    ab.streams[1].rate = capture.rate;
+    try testing.expectEqual(capture.rate, chooseMode(ab, sink).?.rate);
+    // Two against one.
+    ab.streams[2].in_use = 1;
+    ab.streams[2].rate = capture.cd_rate;
+    try testing.expectEqual(capture.cd_rate, chooseMode(ab, sink).?.rate);
+    // A rate no mode has counts for none.
+    for (ab.streams[0..3]) |*stream| stream.rate = 22_050;
+    try testing.expectEqual(capture.rate, chooseMode(ab, sink).?.rate);
+    for (ab.streams[0..3]) |*stream| stream.in_use = 0;
+    try testing.expectEqual(capture.rate, rb.SinkMode(sink).?.rate);
+    try testDeviceGone(ab, &.{});
+}
+
+test "a 44.1 kHz stream that starts on a quiet device is played at 44.1 kHz, unconverted; one that joins it changes nothing" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const rb = ab.rta_base;
+    const sink = ab.sink.?;
+    const port = sys.CreateMsgPort().?;
+    var cd = requestFor(ab, port);
+    cd.rate = capture.cd_rate;
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &cd));
+    // An open alone changes nothing.
+    try testing.expectEqual(capture.rate, rb.SinkMode(sink).?.rate);
+
+    var samples: [capture.buffer_frames * 4]i16 = undefined;
+    for (&samples, 0..) |*sample, i| sample.* = @intCast(i + 1);
+    var write = requestFor(ab, port);
+    sendWrite(&write, &cd, std.mem.sliceAsBytes(&samples), 1);
+    // The write waits for the task, which starts the output again at
+    // 44.1 kHz and queues it.
+    try testing.expect(ab.handoff.first() != null);
+    serveCommands(ab);
+    try testing.expect(ab.handoff.first() == null);
+    try testing.expectEqual(capture.cd_rate, rb.SinkMode(sink).?.rate);
+    try testing.expectEqual(capture.cd_rate, capture.instanceOf(sink).started_rate);
+    try testing.expectEqual(capture.cd_rate, ab.rate);
+    capture.played(sink);
+    mixBuffer(ab);
+    const heard = capture.capturedOf(sink);
+    for (0..capture.buffer_frames) |frame| {
+        try testing.expectEqual(samples[frame], heard[frame * 2]);
+    }
+
+    // A 48 kHz stream joins while it plays: its write is queued at once,
+    // and the output stays where it is.
+    var dat = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &dat));
+    const note = pcm16(&.{ 500, 500 });
+    var joined = requestFor(ab, port);
+    sendWrite(&joined, &dat, &note, 0);
+    try testing.expect(ab.handoff.first() == null);
+    try testing.expectEqual(capture.cd_rate, rb.SinkMode(sink).?.rate);
+    var info: audio.AudioInfo = .{};
+    var ask = requestFor(ab, port);
+    ask.std.data = &info;
+    ask.std.length = @sizeOf(audio.AudioInfo);
+    try testing.expectEqual(@as(i32, 0), command(&ask, &cd, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(capture.cd_rate, info.rate);
+
+    // A write still with the task is taken back by AbortIO.
+    _ = close(&ab.dev, &dat.std.req);
+    try testing.expect(replied(port) == &joined.std.req.message);
+    var late = requestFor(ab, port);
+    _ = command(&ask, &cd, exec.CMD_FLUSH);
+    _ = replied(port);
+    // Quiet again, and the 44.1 kHz stream alone: no change wanted, so a
+    // write goes straight on.
+    sendWrite(&late, &cd, std.mem.sliceAsBytes(&samples), 1);
+    try testing.expect(ab.handoff.first() == null);
+    try testing.expectEqual(@as(i32, 0), abortIO(&ab.dev, &late.std.req));
+    try testing.expect(replied(port) == &late.std.req.message);
+
+    _ = close(&ab.dev, &cd.std.req);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "a write still with the task is taken back by AbortIO and by a flush" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const port = sys.CreateMsgPort().?;
+    var cd = requestFor(ab, port);
+    cd.rate = capture.cd_rate;
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &cd));
+    const note = pcm16(&.{ 100, 200 });
+    var first = requestFor(ab, port);
+    var second = requestFor(ab, port);
+    var third = requestFor(ab, port);
+    sendWrite(&first, &cd, &note, 1);
+    // Behind one that waits, a write waits too, so they keep their order.
+    sendWrite(&second, &cd, &note, 1);
+    sendWrite(&third, &cd, &note, 1);
+    try testing.expectEqual(@as(i32, 0), abortIO(&ab.dev, &second.std.req));
+    try testing.expect(replied(port) == &second.std.req.message);
+    try testing.expectEqual(exec.IOERR_ABORTED, second.std.req.err);
+    var control = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), command(&control, &cd, exec.CMD_FLUSH));
+    try testing.expect(replied(port) == &first.std.req.message);
+    try testing.expect(replied(port) == &third.std.req.message);
+    try testing.expect(ab.handoff.first() == null);
+    _ = close(&ab.dev, &cd.std.req);
     try testDeviceGone(ab, &.{port});
 }

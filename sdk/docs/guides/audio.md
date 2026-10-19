@@ -116,6 +116,23 @@ A stereo stream on a board with one output is heard as its two sides
 together, so every program is heard whole on every board; the position
 and the latency are what a picture is kept in step with sound by.
 
+## The output's rate
+
+An output may run at more than one rate - the codecs and amplifiers
+here at 48 kHz and at a CD's 44.1 kHz - and the device runs it at the
+rate the open streams play in with the least converting: the mode whose
+rate the most of them have. A tie goes to the output's default mode,
+then to the mode with more sides, then to the higher rate; a stream at
+a rate no mode has counts for none. So a player that opens one stream
+at 44.1 kHz on a quiet machine has its samples go out unconverted.
+
+The device chooses when it starts an output and again when a write
+would start sound on a device that is quiet - no stream has a write.
+While anything plays, the rate stays, so a change never cuts into sound
+being heard: a 48 kHz click during a 44.1 kHz song is converted, and
+the song goes on unbroken. The query's `rate` says what the output runs
+at now.
+
 ## Choosing an output
 
 A machine may have more than one output - a jack and a speaker, a DAC
@@ -301,7 +318,7 @@ its ring of buffers. No name of a part or a chip is in the device.
 
 | Driver | Kind | What it makes |
 |---|---|---|
-| `i2s` | line | a line on the chip's I2S controller, for a part fed over I2S: its DMA ring, its interrupt, its pads, the buffers it played again |
+| `i2s` | line | a line on the chip's I2S controller, for a part fed over I2S: its DMA ring, its interrupt, its pads, the buffers it played again; clocked for the rate of the mode its sink starts in |
 | `es8311` | sink | the ES8311 codec, set up over i2c.device, on a line of its own; its amplifier's enable pad |
 | `i2samp` | sink | an amplifier that takes I2S itself - the CrowPanel's pair, one part with two sides - on a line of its own |
 | `null` | sink | a stream into nothing, kept in time by timer.device's E-clock: the emulators' output, at the bottom of the list |
@@ -310,6 +327,13 @@ A sink for a part on I2S is made over a line (`RTAA_Transport`): the
 sink's driver brings its part up and starts the line, and the line runs
 the buffers. Sinks are on the list by priority (`RTAA_Priority`), so a
 real output always comes before `null`.
+
+A sink's modes are its driver's: each a rate, the bits a sample its part
+takes, how many sides are heard and which half of a frame is which.
+`NextSinkMode` walks them, `FindSinkMode` finds one by rate and sides,
+and `SetSinkMode` picks the one a stopped sink starts in. Whatever the
+mode, the buffers a sink runs on are 16-bit stereo: a part that takes
+more bits widens them in its driver.
 
 ```zig
 const rta = sdk.rta;
