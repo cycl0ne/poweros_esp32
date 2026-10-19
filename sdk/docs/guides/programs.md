@@ -413,8 +413,15 @@ _ = ib.SetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Keyboard, .data = intuit
 ```
 
 `C:SetPrefs` gives them all from `ENV:Sys` in one call: intuition.prefs,
-font.prefs, palette.prefs (the [screens' pens](styles.md#the-screens-pens))
-and style.prefs.
+font.prefs, palette.prefs (the [screens' pens](styles.md#the-screens-pens)),
+style.prefs and sound.prefs - what a beep does: whether the display
+flashes (`IPREFS_BeepFlash`), and its sound (`IPREFS_BeepSound`), none,
+a tone made from the line or a sound file read whole:
+
+```
+FLASH=YES SOUND=BEEP VOLUME=80 TONE=880 DURATION=80
+FLASH=NO SOUND=SAMPLE SAMPLE=SYS:Sounds/ding.wav
+```
 
 The keyboard is a window opened with `WA_NoActivate`: a press on it
 reaches its gadgets and leaves the active window - and the field being

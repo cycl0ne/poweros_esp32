@@ -54,6 +54,22 @@ pub const IntuitionBase = extern struct {
     /// the request each wait copies.
     timer_io: sdk.devices.timer.TimeRequest,
     timer_open: bool,
+    /// DisplayBeep's sound (`IPREFS_BeepSound`): a copy of the one given,
+    /// the samples after it in one block, or null for none. audio.device,
+    /// opened for triggers alone the first time a beep is heard, the
+    /// request each beep is sent in, and the port it comes back to, which
+    /// signals nobody - the next beep finds it there. `beep_unheard`: the
+    /// device would not open, so a beep only flashes until another sound
+    /// is given. All under `beep_lock`.
+    beep_sound: ?*intuition.BeepSound,
+    beep_io: sdk.devices.audio.IOAudio,
+    beep_port: exec.MsgPort,
+    beep_open: bool,
+    beep_sent: bool,
+    beep_unheard: bool,
+    /// Whether a beep flashes the display (`IPREFS_BeepFlash`): 0 or 1.
+    beep_flash: u32,
+    beep_lock: exec.SignalSemaphore,
     /// The alert up, if one is; one at a time, under `alert_lock`.
     alert: @import("misc/_misc.zig").AlertState,
     alert_lock: exec.SignalSemaphore,

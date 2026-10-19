@@ -16,6 +16,11 @@
 //! superclass plays it from there; a subclass then answers no
 //! `SDTM_DECODE` of its own.
 //!
+//! A short sound that no window shows - a click, a chime - plays without
+//! a process: decoded whole on its first play, on the task that plays it,
+//! and kept, it is sent to audio.device as one trigger
+//! (`AUDIOCMD_TRIGGER`). Played again, it starts again from the top.
+//!
 //! A program plays, pauses and stops a sound with `DTM_TRIGGER`
 //! (`STM_PLAY`, `STM_PAUSE`, `STM_STOP`, `STM_RESUME`, `STM_LOCATE` with
 //! a frame, `STM_FASTFORWARD` and `STM_REWIND` ten seconds), reads where
@@ -69,11 +74,12 @@ pub const SDTA_Playing = SDTA_Dummy + 50;
 
 /// The methods.
 pub const SDTM_Dummy: classusr.MethodID = 0x720;
-/// Asked of the subclass, on the player process: the next frames of the
-/// sound, as 16-bit samples, the channels interleaved. It answers how
-/// many it wrote, 0 at the end.
+/// Asked of the subclass, on the player process - or, for a short sound
+/// played while it is not shown, on the task that first plays it: the
+/// next frames of the sound, as 16-bit samples, the channels interleaved.
+/// It answers how many it wrote, 0 at the end.
 pub const SDTM_DECODE: classusr.MethodID = 0x721;
-/// Asked of the subclass, on the player process: the next `SDTM_DECODE`
+/// Asked of the subclass, where `SDTM_DECODE` is: the next `SDTM_DECODE`
 /// from `frame` on. It answers 1 when it moved there, 0 when it cannot.
 pub const SDTM_SEEK: classusr.MethodID = 0x722;
 

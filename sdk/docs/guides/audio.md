@@ -190,6 +190,43 @@ summed and the master goes over the sum; a sum past what the output
 holds is clipped, so many loud streams are better turned down here than
 left to clip.
 
+## Sounds for a moment: triggers
+
+A click, a beep, a chime is a trigger: `AUDIOCMD_TRIGGER` plays the
+request's samples at once, in the request's own `format`, `channels`,
+`rate`, `volume` and pan, `loops` times over, and replies when they
+have played. There is no queue and nothing to feed, no process and no
+timer: the samples are the program's until the reply, and that is all.
+
+```zig
+const click = sys.CreateIORequest(port, @sizeOf(audio.IOAudio)) orelse return;
+const io: *audio.IOAudio = @ptrCast(@alignCast(click));
+if (sys.OpenDevice(audio.AUDIONAME, audio.AUDIO_UNIT_PLAY, &io.std.req, audio.AUDIOF_TRIGGER) != 0) return;
+io.std.req.command = audio.AUDIOCMD_TRIGGER;
+io.std.data = @constCast(&samples);
+io.std.length = @sizeOf(@TypeOf(samples));
+io.format = audio.AUDIO_S16;
+io.channels = 1;
+io.rate = 48_000;
+sys.SendIO(&io.std.req); // replied when it has played
+```
+
+Triggers play on `AUDIO_MAX_TRIGGERS` (8) voices of their own, beside
+the streams, so a trigger never takes a stream's place and a stream is
+never cut for one. When all eight play, a new trigger takes the voice
+of the one of lowest priority - the `pri` of the request's message node
+- and of those the one that has played longest, so long as that is not
+above its own; the one that gives way comes back `IOERR_ABORTED`, and a
+trigger no voice gives way to `AUDIOERR_NOVOICE`. The system's beep
+plays at 85, above a program's sounds at 0. `AbortIO` takes a trigger
+back.
+
+An open with `AUDIOF_TRIGGER` in OpenDevice's flags takes no stream: it
+sends triggers, asks the query and the output commands and sets the
+master, and a write on it is `IOERR_NOCMD`. A stream's open may send
+triggers too. A trigger plays on after its open is closed; the query's
+`triggers` says how many play now.
+
 ## Decoding: audiocodec.library
 
 `LIBS:audiocodec.library` turns a sound file into the 16-bit samples a
@@ -379,6 +416,8 @@ Audio BENCH 16                sixteen streams for ten seconds, then the
                               gaps and the device task's share of a core
 Audio OUTPUTS                 every output: name, number, sides, rates
 Audio OUTPUT Headphones       play through that one from now on
+Audio TRIGGER 10              ten clicks as fast as they can be sent,
+                              then what became of each, and the gaps
 ```
 
 In QEMU the output is `null`: the sound is mixed as on a board, buffer

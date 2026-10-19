@@ -26,6 +26,15 @@
 //! into sound being heard. That write, too, is the task's to carry out:
 //! it stops the sink, starts it in the new mode, and queues the write.
 //!
+//! A trigger (AUDIOCMD_TRIGGER) is a sound for a moment, on one of the
+//! voices that come after the streams' in the mixer: it holds no queue
+//! and is handed nothing more, so it is the request itself in a slot,
+//! begun at once and replied when the mixer says it has ended. When every
+//! slot is taken the one of lowest priority gives way, the oldest of
+//! those - a count the device keeps of triggers begun says which. An open
+//! for triggers alone points its requests at a unit of the device's that
+//! is no stream.
+//!
 //! Nothing is touched until the first OpenDevice. That starts the task,
 //! which starts the sink - its driver brings the part up - and from then
 //! on the sink raises the task's signal every time a buffer has been
@@ -49,8 +58,8 @@ const IOAudio = audio.IOAudio;
 const mixer = @import("mixer.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
-const DEVICE_VERSION = 3;
-const DEVICE_REVISION = 2;
+const DEVICE_VERSION = 4;
+const DEVICE_REVISION = 0;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -64,8 +73,13 @@ const vec = exec.libraries.vec;
 const task_pri = 15;
 const stack_size = 4096;
 
-/// How many streams there are: a voice of the mixer each.
-const max_streams = mixer.max_voices;
+/// How many streams there are, and sounds played by trigger: a voice of
+/// the mixer each, the streams' first.
+const max_streams: usize = audio.AUDIO_MAX_STREAMS;
+const max_triggers: usize = audio.AUDIO_MAX_TRIGGERS;
+comptime {
+    std.debug.assert(max_streams + max_triggers == mixer.max_voices);
+}
 
 /// The rate a stream is stepped for until an output is there: what every
 /// output so far runs at. Attaching one steps every stream for its own.
@@ -103,7 +117,15 @@ const AudioBase = extern struct {
     /// buffer.
     lock: exec.SignalSemaphore = .{},
     streams: [max_streams]Stream = @splat(.{}),
-    voices: [max_streams]mixer.Voice = @splat(.{}),
+    voices: [mixer.max_voices]mixer.Voice = @splat(.{}),
+    /// The triggers playing, a slot each with the voice `max_streams` on
+    /// from it, and the count of triggers begun when each was: the one
+    /// that has played longest is the furthest behind the count.
+    triggers: [max_triggers]?*IOAudio = @splat(null),
+    trigger_began: [max_triggers]u32 = @splat(0),
+    triggered: u32 = 0,
+    /// What an open for triggers alone points its requests at.
+    trigger_unit: exec.Unit = .{},
     /// The device's volume, over every stream (AUDIOCMD_MASTER).
     master: u32 = audio.AUDIO_VOLUME_UNITY,
     task: exec.Task = .{},
@@ -183,6 +205,9 @@ fn attachSink(ab: *AudioBase, sink: *rta.AudioSink) bool {
     for (0..max_streams) |n| {
         if (ab.streams[n].in_use != 0) ab.voices[n].step = mixer.stepFor(ab.streams[n].rate, ab.rate);
     }
+    for (ab.triggers, 0..) |held, slot| {
+        if (held) |ioa| ab.voices[max_streams + slot].step = mixer.stepFor(ioa.rate, ab.rate);
+    }
     exec.kprintf(sys, "%s: %s, %d Hz %s, up to %d streams mixed\n", .{
         DEVICE_NAME,
         sink.node.name orelse "?",
@@ -240,12 +265,12 @@ fn wantsOtherMode(ab: *AudioBase) bool {
     return chooseMode(ab, sink) != ab.rta_base.SinkMode(sink);
 }
 
-/// Nothing plays: no stream has a write.
+/// Nothing plays: no stream has a write, and no trigger plays.
 fn quiet(ab: *AudioBase) bool {
     for (&ab.streams) |*stream| {
         if (stream.writes.first() != null) return false;
     }
-    return true;
+    return triggersPlaying(ab) == 0;
 }
 
 /// The sink of that number, or for 0 the first on the list: the default.
@@ -378,12 +403,21 @@ fn mixInto(ab: *AudioBase, out: []i16) void {
     for (0..max_streams) |n| {
         for (0..done.ended[n]) |_| playedOut(ab, n);
     }
+    for (0..max_triggers) |slot| {
+        if (done.ended[max_streams + slot] == 0) continue;
+        const ioa = ab.triggers[slot] orelse continue;
+        ab.triggers[slot] = null;
+        ioa.std.actual = ioa.std.length * @max(ioa.loops, 1);
+        ab.sys_base.ReplyIO(&ioa.std.req);
+    }
 }
 
 /// The mixer has taken over the write it held and asks for the one after
 /// it: the first write it has not been given yet.
 fn handNext(context: *anyopaque, n: usize) ?mixer.Queued {
     const ab: *AudioBase = @ptrCast(@alignCast(context));
+    // A trigger is handed nothing after it.
+    if (n >= max_streams) return null;
     const stream = &ab.streams[n];
     const io = writeAt(stream, stream.handed) orelse return null;
     stream.handed += 1;
@@ -487,6 +521,77 @@ fn flushStream(ab: *AudioBase, n: usize, err: i8) void {
     }
     silence(ab, n);
     stream.handed = 0;
+}
+
+// --- the triggers ---------------------------------------------------------
+
+/// AUDIOCMD_TRIGGER: the request's sound begun on a trigger voice - a free
+/// one, or the one that gives way to it. Null when it plays, to be replied
+/// when it has; else what is wrong with it.
+fn startTrigger(ab: *AudioBase, ioa: *IOAudio) ?i8 {
+    if (!paramsValid(ioa)) return audio.AUDIOERR_BADFORMAT;
+    const frame = audio.frameBytes(ioa.format, ioa.channels);
+    if (ioa.std.data == null or ioa.std.length == 0 or ioa.std.length % frame != 0 or ioa.std.length / frame > std.math.maxInt(u32)) return exec.IOERR_BADLENGTH;
+    const slot = triggerVoice(ab, ioa.std.req.message.node.pri) orelse return audio.AUDIOERR_NOVOICE;
+    endTrigger(ab, slot, exec.IOERR_ABORTED);
+    ioa.std.req.flags &= ~exec.IOF_QUICK;
+    ioa.std.actual = 0;
+    ab.triggers[slot] = ioa;
+    ab.trigger_began[slot] = ab.triggered;
+    ab.triggered +%= 1;
+    const g = mixer.gains(ioa.volume, ioa.pan);
+    ab.voices[max_streams + slot] = .{
+        .data = @ptrCast(ioa.std.data),
+        .frames = @intCast(ioa.std.length / frame),
+        .format = ioa.format,
+        .channels = ioa.channels,
+        .loops = ioa.loops,
+        .endless = if (ioa.loops == 0) 1 else 0,
+        .step = mixer.stepFor(ioa.rate, ab.rate),
+        .gain_left = g.left,
+        .gain_right = g.right,
+    };
+    return null;
+}
+
+/// The slot a new trigger of priority `pri` plays in: a free one, else
+/// the one whose sound has the lowest priority - of those, the one that
+/// has played longest - if that is not above `pri`. Null when every
+/// sound playing is above it.
+fn triggerVoice(ab: *AudioBase, pri: i8) ?usize {
+    var chosen: ?usize = null;
+    for (ab.triggers, 0..) |held, slot| {
+        const ioa = held orelse return slot;
+        const its = ioa.std.req.message.node.pri;
+        if (its > pri) continue;
+        if (chosen) |best| {
+            const best_pri = ab.triggers[best].?.std.req.message.node.pri;
+            if (its > best_pri) continue;
+            if (its == best_pri and ab.triggered -% ab.trigger_began[slot] <= ab.triggered -% ab.trigger_began[best]) continue;
+        }
+        chosen = slot;
+    }
+    return chosen;
+}
+
+/// The sound in a trigger slot, if there is one, ended before its time:
+/// replied with `err`, and its voice silent.
+fn endTrigger(ab: *AudioBase, slot: usize, err: i8) void {
+    const ioa = ab.triggers[slot] orelse return;
+    ab.triggers[slot] = null;
+    ab.voices[max_streams + slot] = .{};
+    ioa.std.req.err = err;
+    ioa.std.actual = 0;
+    ab.sys_base.ReplyIO(&ioa.std.req);
+}
+
+/// How many triggers play.
+fn triggersPlaying(ab: *AudioBase) u32 {
+    var count: u32 = 0;
+    for (ab.triggers) |held| {
+        if (held != null) count += 1;
+    }
+    return count;
 }
 
 fn firstWrite(stream: *Stream) ?*IOAudio {
@@ -635,6 +740,7 @@ fn infoOf(ab: *AudioBase) audio.AudioInfo {
         .streams = openStreams(ab),
         .master = ab.master,
         .has_input = 0,
+        .triggers = triggersPlaying(ab),
     };
     const sink = ab.sink orelse return info;
     const mode = ab.rta_base.SinkMode(sink).?;
@@ -663,7 +769,8 @@ fn answer(ioa: *IOAudio, bytes: []const u8) void {
 
 /// BeginIO: every command under the device's lock, which the mixer holds
 /// for each buffer, so a command lands between two buffers. A command acts
-/// on the stream the request was opened on.
+/// on the stream the request was opened on; an open for triggers alone
+/// has none, and takes only the commands that need none.
 fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     const ab = audioBase(dev);
     const ioa = ioAudio(io);
@@ -674,47 +781,19 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     sys.ObtainSemaphore(&ab.lock);
     defer sys.ReleaseSemaphore(&ab.lock);
 
-    const n = streamOf(ab, ioa) orelse {
+    const n = streamOf(ab, ioa);
+    if (n == null and io.unit != &ab.trigger_unit) {
         io.err = exec.IOERR_OPENFAIL;
         sys.ReplyIO(io);
         return;
-    };
-    const stream = &ab.streams[n];
+    }
     switch (io.command) {
-        exec.CMD_WRITE => {
-            const frame = audio.frameBytes(stream.format, stream.channels);
-            if (ioa.std.data == null or ioa.std.length == 0 or ioa.std.length % frame != 0 or ioa.std.length / frame > std.math.maxInt(u32)) {
-                io.err = exec.IOERR_BADLENGTH;
-            } else {
-                // The write keeps the form the stream has now; replied when
-                // its frames have been played, not now.
-                ioa.format = stream.format;
-                ioa.channels = stream.channels;
-                ioa.std.actual = 0;
-                // One that starts sound on a quiet device, in another mode
-                // than the output runs in, waits for the task to change it.
-                if (writeHandedOff(ab) or (quiet(ab) and wantsOtherMode(ab))) {
-                    handOff(ab, io);
-                    return;
-                }
-                queueWrite(ab, n, ioa);
-                return;
-            }
-        },
-        // A stopped stream holds its write, and those sent to it, until it
-        // is started.
-        exec.CMD_STOP => ab.voices[n].stopped = 1,
-        exec.CMD_START => ab.voices[n].stopped = 0,
-        exec.CMD_FLUSH => flushStream(ab, n, exec.IOERR_ABORTED),
-        exec.CMD_RESET => {
-            flushStream(ab, n, exec.IOERR_ABORTED);
-            ab.voices[n].stopped = 0;
-        },
-        audio.AUDIOCMD_SETPARAMS => {
-            if (paramsValid(ioa)) takeParams(ab, n, ioa) else io.err = audio.AUDIOERR_BADFORMAT;
+        audio.AUDIOCMD_TRIGGER => {
+            // Replied when it has played, not now.
+            io.err = startTrigger(ab, ioa) orelse return;
         },
         audio.AUDIOCMD_QUERY => {
-            ioa.position = ab.voices[n].played;
+            ioa.position = if (n) |own| ab.voices[own].played else 0;
             if (ioa.std.data != null) {
                 const info = infoOf(ab);
                 answer(ioa, std.mem.asBytes(&info));
@@ -745,9 +824,60 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         },
         // Nothing is cached and nothing is buffered anywhere else.
         exec.CMD_CLEAR, exec.CMD_UPDATE => {},
-        else => io.err = exec.IOERR_NOCMD,
+        else => {
+            const own = n orelse {
+                io.err = exec.IOERR_NOCMD;
+                sys.ReplyIO(io);
+                return;
+            };
+            if (streamCommand(ab, own, ioa)) return;
+        },
     }
     sys.ReplyIO(io);
+}
+
+/// A command on a stream: true when the device keeps the request - a
+/// write queued, or handed to the task - to reply it later; else its
+/// answer is in `io_Error`. Under the device's lock.
+fn streamCommand(ab: *AudioBase, n: usize, ioa: *IOAudio) bool {
+    const io = &ioa.std.req;
+    const stream = &ab.streams[n];
+    switch (io.command) {
+        exec.CMD_WRITE => {
+            const frame = audio.frameBytes(stream.format, stream.channels);
+            if (ioa.std.data == null or ioa.std.length == 0 or ioa.std.length % frame != 0 or ioa.std.length / frame > std.math.maxInt(u32)) {
+                io.err = exec.IOERR_BADLENGTH;
+            } else {
+                // The write keeps the form the stream has now; replied when
+                // its frames have been played, not now.
+                ioa.format = stream.format;
+                ioa.channels = stream.channels;
+                ioa.std.actual = 0;
+                // One that starts sound on a quiet device, in another mode
+                // than the output runs in, waits for the task to change it.
+                if (writeHandedOff(ab) or (quiet(ab) and wantsOtherMode(ab))) {
+                    handOff(ab, io);
+                    return true;
+                }
+                queueWrite(ab, n, ioa);
+                return true;
+            }
+        },
+        // A stopped stream holds its write, and those sent to it, until it
+        // is started.
+        exec.CMD_STOP => ab.voices[n].stopped = 1,
+        exec.CMD_START => ab.voices[n].stopped = 0,
+        exec.CMD_FLUSH => flushStream(ab, n, exec.IOERR_ABORTED),
+        exec.CMD_RESET => {
+            flushStream(ab, n, exec.IOERR_ABORTED);
+            ab.voices[n].stopped = 0;
+        },
+        audio.AUDIOCMD_SETPARAMS => {
+            if (paramsValid(ioa)) takeParams(ab, n, ioa) else io.err = audio.AUDIOERR_BADFORMAT;
+        },
+        else => io.err = exec.IOERR_NOCMD,
+    }
+    return false;
 }
 
 /// A write on the stream it was sent on, behind the others: the mixer is
@@ -775,14 +905,22 @@ fn nextOutput(ab: *AudioBase, id: u32) ?*rta.AudioSink {
 }
 
 /// AbortIO: a write answered IOERR_ABORTED - one waiting taken out, the
-/// one playing stopped and the one after it begun. -1 for a request the
-/// device does not hold.
+/// one playing stopped and the one after it begun - or a trigger, stopped.
+/// -1 for a request the device does not hold.
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const ab = audioBase(dev);
     const ioa = ioAudio(io);
     const sys = ab.sys_base;
     sys.ObtainSemaphore(&ab.lock);
     defer sys.ReleaseSemaphore(&ab.lock);
+    if (io.command == audio.AUDIOCMD_TRIGGER) {
+        for (ab.triggers, 0..) |held, slot| {
+            if (held != ioa) continue;
+            endTrigger(ab, slot, exec.IOERR_ABORTED);
+            return 0;
+        }
+        return -1;
+    }
     if (io.command != exec.CMD_WRITE) return -1;
     // One the task has not queued yet is simply taken back.
     if (onList(&ab.handoff, ioa)) {
@@ -819,16 +957,29 @@ fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
 }
 
 /// OpenDevice: the device's task and hardware the first time, then a
-/// stream of the request's form, rate, volume and pan. Unit 1, the way
-/// in, is not driven yet (AUDIOERR_NOINPUT).
+/// stream of the request's form, rate, volume and pan - or, with
+/// AUDIOF_TRIGGER, an open for triggers alone. Unit 1, the way in, is not
+/// driven yet (AUDIOERR_NOINPUT).
 fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) callconv(.c) i32 {
-    _ = flags;
     const ab = audioBase(dev);
     if (unit_number == audio.AUDIO_UNIT_RECORD) return audio.AUDIOERR_NOINPUT;
     if (unit_number != audio.AUDIO_UNIT_PLAY) return exec.IOERR_OPENFAIL;
     if (io.message.length < audio.AUDIO_MIN_REQUEST) return exec.IOERR_OPENFAIL;
     if (!start(ab)) return exec.IOERR_OPENFAIL;
+    if (flags & audio.AUDIOF_TRIGGER != 0) return openForTriggers(ab, ioAudio(io));
     return openStream(ab, ioAudio(io));
+}
+
+/// An open that takes no stream: its requests point at the device's unit
+/// for triggers.
+fn openForTriggers(ab: *AudioBase, io: *IOAudio) i32 {
+    const sys = ab.sys_base;
+    sys.ObtainSemaphore(&ab.lock);
+    defer sys.ReleaseSemaphore(&ab.lock);
+    io.std.req.unit = &ab.trigger_unit;
+    ab.dev.open_cnt += 1;
+    ab.dev.flags &= ~exec.LIBF_DELEXP;
+    return 0;
 }
 
 /// A stream for the request, if its parameters are good and one is free.
@@ -853,6 +1004,8 @@ fn openStream(ab: *AudioBase, io: *IOAudio) i32 {
 
 /// CloseDevice: the stream's writes that are left answered IOERR_ABORTED -
 /// a program that forgot them gets them back - and the stream free again.
+/// The triggers sent on it play on: their samples are the sender's until
+/// each is replied.
 fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     const ab = audioBase(dev);
     const sys = ab.sys_base;
@@ -868,14 +1021,14 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     return null;
 }
 
-/// Expunge: while it is open only marked, to go at the last close. Then
-/// the task is told to end - it stops the output, whose driver gives back
+/// Expunge: while it is open, or a trigger plays, only marked, to go at
+/// the last close. Then the task is told to end - it stops the output, whose driver gives back
 /// everything the part took - and once it has left its stack, the device
 /// goes. exec makes it again from its ROM tag when it is next opened.
 fn expunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
     const ab = audioBase(dev);
     const sys = ab.sys_base;
-    if (dev.open_cnt != 0) {
+    if (dev.open_cnt != 0 or triggersPlaying(ab) != 0) {
         dev.flags |= exec.LIBF_DELEXP;
         return null;
     }
@@ -912,6 +1065,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     ab.* = .{ .dev = made, .sys_base = sys_base, .rta_base = @ptrCast(library) };
     sys_base.InitSemaphore(&ab.lock);
     ab.handoff.init(.message);
+    ab.trigger_unit.msg_port.msg_list.init(.message);
     for (&ab.streams) |*stream| {
         stream.writes.init(.message);
         stream.unit.msg_port.msg_list.init(.message);
@@ -1552,5 +1706,120 @@ test "a write still with the task is taken back by AbortIO and by a flush" {
     try testing.expect(replied(port) == &third.std.req.message);
     try testing.expect(ab.handoff.first() == null);
     _ = close(&ab.dev, &cd.std.req);
+    try testDeviceGone(ab, &.{port});
+}
+
+/// A trigger of `data` sent on what `from` was opened on, `loops` times,
+/// at priority `pri`.
+fn sendTrigger(io: *IOAudio, from: *const IOAudio, data: []const u8, loops: u32, pri: i8) void {
+    io.std.req.unit = from.std.req.unit;
+    io.std.req.command = audio.AUDIOCMD_TRIGGER;
+    io.std.req.flags = 0;
+    io.std.req.message.node.pri = pri;
+    io.std.data = @ptrCast(@constCast(data.ptr));
+    io.std.length = data.len;
+    io.loops = loops;
+    kexec.SysBase.iface().SendIO(&io.std.req);
+}
+
+test "a trigger plays at once on a voice of its own, beside a stream, and comes back when it has played" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+    var clicks = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openForTriggers(ab, &clicks));
+    // An open for triggers takes no stream.
+    try testing.expectEqual(@as(u32, 1), openStreams(ab));
+
+    const note = pcm16(&.{1000});
+    var forever = requestFor(ab, port);
+    sendWrite(&forever, &io, &note, 0);
+    const click = pcm16(&.{ 300, 400 });
+    var shot = requestFor(ab, port);
+    shot.volume = audio.AUDIO_VOLUME_UNITY / 2;
+    sendTrigger(&shot, &clicks, &click, 1, 0);
+    try testing.expect(replied(port) == null);
+
+    // Asked on the open for triggers: no stream's position, one playing.
+    var info: audio.AudioInfo = .{};
+    var ask = requestFor(ab, port);
+    ask.std.data = &info;
+    ask.std.length = @sizeOf(audio.AudioInfo);
+    try testing.expectEqual(@as(i32, 0), command(&ask, &clicks, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(@as(u32, 1), info.triggers);
+    try testing.expectEqual(@as(u32, max_triggers), info.max_triggers);
+    try testing.expectEqual(@as(u32, 0), ask.position);
+
+    // At half its volume over the note, for its two frames, then the note.
+    const out = mix(ab, 3);
+    try testing.expectEqualSlices(i16, &.{ 1150, 1150, 1200, 1200, 1000, 1000 }, &out);
+    try testing.expect(replied(port) == &shot.std.req.message);
+    try testing.expectEqual(@as(u64, 4), shot.std.actual);
+    try testing.expectEqual(@as(i8, 0), shot.std.req.err);
+
+    // What only a stream does is not taken without one.
+    var stray = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, exec.IOERR_NOCMD), command(&stray, &clicks, exec.CMD_WRITE));
+    try testing.expectEqual(@as(i32, exec.IOERR_NOCMD), command(&stray, &clicks, audio.AUDIOCMD_SETPARAMS));
+
+    // A trigger plays on after its open is closed, and keeps the device
+    // from going until it has been taken back.
+    sendTrigger(&shot, &clicks, &click, 0, 0);
+    _ = close(&ab.dev, &clicks.std.req);
+    _ = close(&ab.dev, &io.std.req);
+    try testing.expect(replied(port) == &forever.std.req.message);
+    try testing.expectEqual(@as(i16, 150), mix(ab, 1)[0]);
+    try testing.expect(expunge(&ab.dev) == null);
+    try testing.expect(ab.dev.flags & exec.LIBF_DELEXP != 0);
+    try testing.expectEqual(@as(i32, 0), abortIO(&ab.dev, &shot.std.req));
+    try testing.expect(replied(port) == &shot.std.req.message);
+    try testing.expectEqual(exec.IOERR_ABORTED, shot.std.req.err);
+    try testing.expectEqual(@as(i16, 0), mix(ab, 1)[0]);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "with every trigger voice playing, the lowest priority gives way, the oldest of those; one below them all is refused" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const port = sys.CreateMsgPort().?;
+    var clicks = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openForTriggers(ab, &clicks));
+
+    const click = pcm16(&.{100});
+    var shots: [max_triggers + 3]IOAudio = undefined;
+    // Eight that play until stopped: the first at priority 10, the rest at 0.
+    for (shots[0..max_triggers], 0..) |*shot, n| {
+        shot.* = requestFor(ab, port);
+        sendTrigger(shot, &clicks, &click, 0, if (n == 0) 10 else 0);
+    }
+    try testing.expect(replied(port) == null);
+    // A ninth at 0: the one at 0 that has played longest gives way.
+    shots[8] = requestFor(ab, port);
+    sendTrigger(&shots[8], &clicks, &click, 0, 0);
+    try testing.expect(replied(port) == &shots[1].std.req.message);
+    try testing.expectEqual(exec.IOERR_ABORTED, shots[1].std.req.err);
+    // One below every sound playing is refused, and nothing gives way.
+    shots[9] = requestFor(ab, port);
+    sendTrigger(&shots[9], &clicks, &click, 0, -5);
+    try testing.expect(replied(port) == &shots[9].std.req.message);
+    try testing.expectEqual(audio.AUDIOERR_NOVOICE, shots[9].std.req.err);
+    try testing.expect(replied(port) == null);
+    // One above them all: the oldest of the lowest, never the one at 10.
+    shots[10] = requestFor(ab, port);
+    sendTrigger(&shots[10], &clicks, &click, 0, 20);
+    try testing.expect(replied(port) == &shots[2].std.req.message);
+    // Eight play together.
+    try testing.expectEqual(@as(i16, 800), mix(ab, 1)[0]);
+
+    for (&shots) |*shot| _ = abortIO(&ab.dev, &shot.std.req);
+    var count: usize = 0;
+    while (replied(port)) |_| count += 1;
+    try testing.expectEqual(max_triggers, count);
+    try testing.expectEqual(@as(u32, 0), triggersPlaying(ab));
+    _ = close(&ab.dev, &clicks.std.req);
     try testDeviceGone(ab, &.{port});
 }

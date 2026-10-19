@@ -161,7 +161,9 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   form, rate, volume and pan, into one of the outputs of rta.library's
   drivers - an ES8311 codec, I2S amplifiers, and in QEMU an output into
   nothing that keeps time - picked by a number that stays the same from
-  boot to boot;
+  boot to boot; a click or a beep plays at once as a trigger, on voices
+  of its own, with no process and nothing to feed, and `DisplayBeep`
+  plays one as `sound.prefs` says;
   `LIBS:audiocodec.library` decodes WAV, MP3, FLAC and Ogg Vorbis as they
   play and reads their tags, covers and chapters (`C:Play`,
   [sound guide](sdk/docs/guides/audio.md)).

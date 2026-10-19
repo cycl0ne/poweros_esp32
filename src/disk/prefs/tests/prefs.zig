@@ -159,6 +159,7 @@ test "the settings files of a fresh disk: the explanation the SDK writes" {
     try testing.expectEqualStrings(prefs.style.header, @embedFile("../env-archive/Sys/style.prefs"));
     try testing.expectEqualStrings(prefs.intuition.header, @embedFile("../env-archive/Sys/intuition.prefs"));
     try testing.expectEqualStrings(prefs.palette.header, @embedFile("../env-archive/Sys/palette.prefs"));
+    try testing.expectEqualStrings(prefs.sound.header, @embedFile("../env-archive/Sys/sound.prefs"));
     const fonts = @embedFile("../env-archive/Sys/font.prefs");
     try testing.expect(std.mem.startsWith(u8, fonts, prefs.font.header));
     // Every commented line of the style's default reads as a line.
@@ -171,6 +172,51 @@ test "the settings files of a fresh disk: the explanation the SDK writes" {
         read += 1;
     }
     try testing.expect(read > 20);
+}
+
+test "sound.prefs: a line read, its file quoted, written back; the tone rises, sounds and dies away" {
+    var settings: prefs.sound.Settings = .{};
+    try testing.expect(prefs.sound.parse("FLASH=no SOUND=beep TONE=1000 DURATION=50", &settings) == null);
+    try testing.expectEqual(@as(u32, 0), settings.flash);
+    try testing.expectEqual(prefs.sound.SOUND_BEEP, settings.sound);
+    // One left out has the system's value.
+    try testing.expectEqual(@as(u32, 80), settings.volume);
+    var out: [352]u8 = undefined;
+    try testing.expectEqualStrings("FLASH=NO SOUND=BEEP VOLUME=80 TONE=1000 DURATION=50", out[0..prefs.sound.write(&settings, &out)]);
+
+    // A file with a space in its name is quoted, and read back.
+    try testing.expect(prefs.sound.parse("SOUND=SAMPLE SAMPLE=\"SYS:Sounds/a ding.wav\" VOLUME=40", &settings) == null);
+    try testing.expectEqualStrings("SYS:Sounds/a ding.wav", std.mem.sliceTo(&settings.sample, 0));
+    const line = out[0..prefs.sound.write(&settings, &out)];
+    try testing.expectEqualStrings("FLASH=NO SOUND=SAMPLE VOLUME=40 TONE=1000 DURATION=50 SAMPLE=\"SYS:Sounds/a ding.wav\"", line);
+    var again: prefs.sound.Settings = .{};
+    try testing.expect(prefs.sound.parse(line, &again) == null);
+    try testing.expectEqualStrings(std.mem.sliceTo(&settings.sample, 0), std.mem.sliceTo(&again.sample, 0));
+    try testing.expectEqual(sdk.devices.audio.AUDIO_VOLUME_UNITY / 100 * 40, prefs.sound.volumeOf(&again));
+
+    // What it does not take.
+    var bad: prefs.sound.Settings = .{};
+    try testing.expect(prefs.sound.parse("SOUND=SAMPLE", &bad) != null);
+    try testing.expect(prefs.sound.parse("TONE=20", &bad) != null);
+    try testing.expect(prefs.sound.parse("VOLUME=0", &bad) != null);
+    try testing.expect(prefs.sound.parse("SAMPLE=\"open", &bad) != null);
+    try testing.expect(prefs.sound.parse("SOUND=LOUD", &bad) != null);
+
+    // The tone: 50 ms at 48 kHz, silent at its start, as loud as it gets
+    // within its first part, and nearly silent again at its end.
+    var tone: prefs.sound.Settings = .{ .sound = prefs.sound.SOUND_BEEP, .tone = 1000, .duration = 50 };
+    var samples: [prefs.sound.beep_rate / 20]i16 = undefined;
+    const beep = prefs.sound.makeBeep(&tone, &samples);
+    try testing.expectEqual(@as(u32, samples.len), beep.frames);
+    try testing.expectEqual(prefs.sound.beep_rate, beep.rate);
+    try testing.expectEqual(@as(u32, 1), beep.channels);
+    try testing.expectEqual(@as(i16, 0), samples[0]);
+    var loudest: i32 = 0;
+    for (samples[0..480]) |sample| loudest = @max(loudest, @as(i32, sample));
+    try testing.expect(loudest > 25_000 and loudest <= 30_000);
+    for (samples[samples.len - 24 ..]) |sample| try testing.expect(sample < 400 and sample > -400);
+    tone.duration = 10;
+    try testing.expectEqual(@as(u32, 480), prefs.sound.beepFrames(&tone));
 }
 
 test "the styles the editor offers: every line read" {

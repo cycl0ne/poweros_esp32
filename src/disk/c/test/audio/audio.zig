@@ -3,11 +3,12 @@
 //! the SDK only.
 //!
 //!   Audio HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,
-//!         OUTPUTS/S,OUTPUT/K
+//!         OUTPUTS/S,OUTPUT/K,TRIGGER/K/N
 //!
 //! It asks the device what the board has - the part the sound comes out
 //! of, the rate the output runs at, one side or two, how far behind a
-//! write is heard - and says so. Then it opens a stream of 16-bit
+//! write is heard, the streams open and the sounds playing by trigger -
+//! and says so. Then it opens a stream of 16-bit
 //! samples, one channel, writes one cycle of a sine to it and lets it play
 //! for as long as it was told: a write played `loops` times over, so the
 //! device plays it round and round without the program feeding it.
@@ -34,6 +35,13 @@
 //! default and which plays now - and plays nothing. OUTPUT name has the
 //! device play through that output from then on, for every program,
 //! before the note.
+//!
+//! TRIGGER n plays n short clicks instead - a twentieth of a second of
+//! the note each - as fast as they can be sent, each a trigger on one
+//! open for triggers alone: no stream, nothing fed. It says how many
+//! played to their end, how many gave way to a newer one when every
+//! trigger voice was taken, how many were refused, and how many buffers
+//! the output played again meanwhile.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -44,10 +52,10 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Audio";
-const VERSION_STRING = "\x00$VER: Audio 2.2 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Audio 2.3 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,OUTPUTS/S,OUTPUT/K";
+const template = "HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,OUTPUTS/S,OUTPUT/K,TRIGGER/K/N";
 const arg_hz = 0;
 const arg_seconds = 1;
 const arg_volume = 2;
@@ -56,10 +64,11 @@ const arg_chord = 4;
 const arg_bench = 5;
 const arg_outputs = 6;
 const arg_output = 7;
-const arg_count = 8;
+const arg_trigger = 8;
+const arg_count = 9;
 
 const MSG_NODEVICE = "No %s - this machine has no sound\n";
-const MSG_OUTPUT = "%s: %s, %u Hz, %s, %u frames behind, %u of %u streams in use\n";
+const MSG_OUTPUT = "%s: %s, %u Hz, %s, %u frames behind, %u of %u streams in use, %u sounds triggered\n";
 const MSG_PLAYING = "%u Hz, volume %u%%, pan %d, %u seconds\n";
 const MSG_CHORD = "%u, %u and %u Hz, volume %u%%, %u seconds\n";
 const MSG_BENCH = "%u streams, a semitone apart from %u Hz, volume %u%%, %u seconds\n";
@@ -76,6 +85,8 @@ const MSG_CURRENT = ", playing";
 const MSG_NEWLINE = "\n";
 const MSG_NOOUTPUT = "%s: no output %s\n";
 const MSG_NOSWITCH = "%s: %s would not start\n";
+const MSG_BADTRIGGER = "%s: TRIGGER is 1 to %u clicks\n";
+const MSG_TRIGGERS = "%u clicks of %u Hz triggered: %u played, %u gave way, %u refused; %u buffers played again\n";
 
 /// One cycle of a sine, as 16-bit samples: long enough that the note is
 /// a clean one.
@@ -83,6 +94,9 @@ const wave_len = 64;
 
 /// The most streams BENCH plays.
 const max_notes = audio.AUDIO_MAX_STREAMS;
+
+/// The most clicks TRIGGER sends.
+const max_clicks = 64;
 
 /// Each of sixteen notes a semitone above the one before: 2^(n/12) in
 /// thousandths, so the notes are worked out without floating point.
@@ -146,9 +160,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const percent: u32 = if (argv[arg_volume] != 0) @intCast(@min(@max(numberAt(argv[arg_volume]), 0), 400)) else 80;
     const pan_percent: i32 = if (argv[arg_pan] != 0) @min(@max(numberAt(argv[arg_pan]), -100), 100) else 0;
     const chord = argv[arg_chord] != 0;
+    const clicks: u32 = if (argv[arg_trigger] != 0) @intCast(@max(numberAt(argv[arg_trigger]), 0)) else 0;
+    if (argv[arg_trigger] != 0 and (clicks < 1 or clicks > max_clicks)) {
+        _ = Printf(dl, MSG_BADTRIGGER, .{ COMMAND_NAME, @as(u32, max_clicks) });
+        return dos.RETURN_ERROR;
+    }
 
     const port = sys.CreateMsgPort() orelse return dos.RETURN_FAIL;
     defer sys.DeleteMsgPort(port);
+
+    if (clicks != 0) return triggerClicks(sys, dl, port, clicks, hz, percent, pan_percent);
 
     // The note, and for a chord its major third and fifth, or for a bench
     // a semitone apart: a stream each.
@@ -218,6 +239,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             info.latency,
             info.streams,
             info.max_streams,
+            info.triggers,
         });
     }
     if (bench != 0) {
@@ -258,6 +280,59 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_BENCHED, .{ after.underruns -% before.underruns, tenths / 10, tenths % 10 });
     }
     return if (err == 0) dos.RETURN_OK else dos.RETURN_WARN;
+}
+
+/// `count` clicks of the note, each a trigger sent as soon as the last
+/// has gone, on one open for triggers; then every one waited for, and
+/// what became of them said.
+fn triggerClicks(sys: *ExecBase, dl: *DosBase, port: *exec.MsgPort, count: u32, hz: u32, percent: u32, pan_percent: i32) i32 {
+    var shots: [max_clicks]?*audio.IOAudio = @splat(null);
+    defer for (shots[0..count]) |held| {
+        if (held) |io| sys.DeleteIORequest(&io.std.req);
+    };
+    for (shots[0..count]) |*slot| {
+        slot.* = @ptrCast(@alignCast(sys.CreateIORequest(port, @sizeOf(audio.IOAudio)) orelse return dos.RETURN_FAIL));
+    }
+    const opened = shots[0].?;
+    if (sys.OpenDevice(audio.AUDIONAME, audio.AUDIO_UNIT_PLAY, &opened.std.req, audio.AUDIOF_TRIGGER) != 0) {
+        _ = Printf(dl, MSG_NODEVICE, .{audio.AUDIONAME});
+        return dos.RETURN_FAIL;
+    }
+    defer sys.CloseDevice(&opened.std.req);
+    var info: audio.AudioInfo = .{};
+    const before = Measure.take(sys, opened, &info);
+    // Each a copy of the opened request: the same device and unit.
+    const template_io = opened.*;
+    for (shots[0..count]) |held| {
+        const io = held.?;
+        io.* = template_io;
+        io.std.req.message.reply_port = port;
+        io.std.req.command = audio.AUDIOCMD_TRIGGER;
+        io.std.req.flags = 0;
+        io.std.data = @ptrCast(@constCast(&wave));
+        io.std.length = wave.len;
+        io.format = audio.AUDIO_S16;
+        io.channels = 1;
+        io.rate = hz * wave_len;
+        io.volume = audio.AUDIO_VOLUME_UNITY / 100 * percent;
+        io.pan = @divTrunc(audio.AUDIO_PAN_FULL, 100) * pan_percent;
+        // A twentieth of a second of the note.
+        io.loops = @max(hz / 20, 1);
+        sys.SendIO(&io.std.req);
+    }
+    var played: u32 = 0;
+    var gave_way: u32 = 0;
+    var refused: u32 = 0;
+    for (shots[0..count]) |held| {
+        switch (sys.WaitIO(&held.?.std.req)) {
+            0 => played += 1,
+            exec.IOERR_ABORTED => gave_way += 1,
+            else => refused += 1,
+        }
+    }
+    const after = Measure.take(sys, opened, &info);
+    _ = Printf(dl, MSG_TRIGGERS, .{ count, hz, played, gave_way, refused, after.underruns -% before.underruns });
+    return if (refused == 0) dos.RETURN_OK else dos.RETURN_WARN;
 }
 
 /// Every output the device can play through, a line each.

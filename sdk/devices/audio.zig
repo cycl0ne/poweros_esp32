@@ -48,9 +48,27 @@
 //!                         every stream goes on where it was
 //!   AUDIOCMD_GETOUTPUT    the output played through: its number in
 //!                         `output`, its `AudioOutputInfo` to `std.data`
+//!   AUDIOCMD_TRIGGER      a sound played at once, on a voice of its own:
+//!                         `std.data` and `std.length` in the request's
+//!                         own format, channels, rate, volume and pan,
+//!                         `loops` times over; replied when it has played
 //!
 //! AbortIO takes a write back: one that waits, or the one that plays,
-//! which stops, the next going on.
+//! which stops, the next going on. It takes a trigger back the same way.
+//!
+//! **A sound for a moment** - a click, a beep - is a trigger: no stream is
+//! fed for it and nothing waits on a timer for it. It plays on one of
+//! `AUDIO_MAX_TRIGGERS` voices of its own, beside the streams, so it never
+//! takes a stream's place and a stream is never cut for it. When every
+//! one is playing, a new trigger takes the voice of the one of lowest
+//! priority - the `pri` of the request's message node - and of those the
+//! one that has played longest, so long as that priority is not above its
+//! own; the one that gives way is answered IOERR_ABORTED, and a trigger no
+//! voice gives way to AUDIOERR_NOVOICE. The samples are the program's
+//! until the trigger is replied. An open with `AUDIOF_TRIGGER` in its
+//! flags is for triggers alone and takes no stream: of the commands it
+//! takes AUDIOCMD_TRIGGER, the query and the output and master commands.
+//! A trigger plays on when the open it was sent on is closed.
 //!
 //! **What the board has** is the query's answer: the rate the output runs
 //! at, whether it is one speaker or a codec that plays one side
@@ -107,6 +125,15 @@ pub const AUDIOCMD_MASTER: u16 = exec.CMD_NONSTD + 2;
 pub const AUDIOCMD_NEXTOUTPUT: u16 = exec.CMD_NONSTD + 3;
 pub const AUDIOCMD_SETOUTPUT: u16 = exec.CMD_NONSTD + 4;
 pub const AUDIOCMD_GETOUTPUT: u16 = exec.CMD_NONSTD + 5;
+/// Since version 4.
+pub const AUDIOCMD_TRIGGER: u16 = exec.CMD_NONSTD + 6;
+
+/// OpenDevice's flags: an open for triggers alone, which takes no stream.
+/// Since version 4.
+pub const AUDIOF_TRIGGER: u32 = 1 << 0;
+
+/// How many sounds play by trigger at once, beside the streams.
+pub const AUDIO_MAX_TRIGGERS: u32 = 8;
 
 // --- errors -----------------------------------------------------------------------
 
@@ -118,6 +145,8 @@ pub const AUDIOERR_NOSTREAM: i8 = -11;
 pub const AUDIOERR_NOINPUT: i8 = -12;
 /// No output of that number, none after it, or one that would not start.
 pub const AUDIOERR_NOOUTPUT: i8 = -13;
+/// Every trigger voice plays a sound of a higher priority.
+pub const AUDIOERR_NOVOICE: i8 = -14;
 
 /// What a command to audio.device is written in. The first fields are an
 /// IOStdReq, so it is one.
@@ -139,7 +168,8 @@ pub const IOAudio = extern struct {
     /// alike, AUDIO_PAN_FULL right only. On a stereo stream it weighs the
     /// two sides against each other.
     pan: i32 = 0,
-    /// CMD_WRITE: how many times the buffer plays; 0 until stopped.
+    /// CMD_WRITE and AUDIOCMD_TRIGGER: how many times the samples play; 0
+    /// until stopped.
     loops: u32 = 1,
     /// AUDIOCMD_QUERY: the frames this stream has played since it was
     /// opened, counted round at 2^32.
@@ -179,6 +209,9 @@ pub const AudioInfo = extern struct {
     /// The output's number (`AudioOutputInfo.id`), 0 for none. Since
     /// version 3.
     output_id: u32 = 0,
+    /// Sounds playing by trigger now, and how many may. Since version 4.
+    triggers: u32 = 0,
+    max_triggers: u32 = AUDIO_MAX_TRIGGERS,
 };
 
 /// How many of an output's rates `AudioOutputInfo` holds.

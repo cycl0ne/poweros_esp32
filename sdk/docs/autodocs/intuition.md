@@ -37,7 +37,7 @@ Generated from the source by `./zig build autodoc`.
 - [CreateMenusA](#createmenusa) - Makes a menu strip, or one panel's items, from a table.
 - [CurrentTime](#currenttime) - Answers the time of the latest input event.
 - [DisplayAlert](#displayalert) - Shows an alert and waits for an answer.
-- [DisplayBeep](#displaybeep) - Flashes a screen, to draw the eye without a requester.
+- [DisplayBeep](#displaybeep) - Draws the eye without a requester: a sound, a flash, or both.
 - [DisposeObject](#disposeobject) - Frees an object.
 - [DoGadgetMethodA](#dogadgetmethoda) - Sends a gadget a method with its window's GadgetInfo.
 - [DoubleClick](#doubleclick) - Whether two moments are close enough to be a double-click.
@@ -1528,7 +1528,7 @@ if (!ib.DisplayAlert(exec.AT_Recovery, "Out of memory.\nLeft: go on   Right: sto
 
 ## DisplayBeep
 
-Flashes a screen, to draw the eye without a requester.
+Draws the eye without a requester: a sound, a flash, or both.
 
 **SYNOPSIS**
 
@@ -1550,7 +1550,14 @@ Nothing.
 
 **BEHAVIOR**
 
-For a tenth of a second the display shows, in place of the screen, a
+The system's beep sound, when one is set (`IPREFS_BeepSound`), is
+played through audio.device as a trigger, above a program's own
+sounds; a beep while the last still sounds starts it again. The flash
+follows when `IPREFS_BeepFlash` is on - as the system starts - and
+also when there is a sound to play and none can be heard: no
+audio.device, or every trigger voice playing something above a beep.
+
+The flash: for a tenth of a second the display shows, in place of the screen, a
 picture of one colour - the screen's background pen turned about, dark
 for a light one and light for a dark one - and then the screen again.
 Both changes are flips at a frame's start, so the whole display flashes
@@ -1561,7 +1568,8 @@ bar flashes.
 
 **CONTEXT**
 
-- Waits: for the screen list's semaphore, and a tenth of a second.
+- Waits: for the screen list's semaphore, and a tenth of a second;
+  the first beep with a sound also for audio.device to open.
 - Interrupts: no.
 - Locks: no spinlock may be held.
 - Process: a Task will do.
@@ -1572,7 +1580,8 @@ Nothing changes hands.
 
 **NOTES**
 
-It is for something that needs noticing and not answering.
+It is for something that needs noticing and not answering. It never
+waits for the sound to end.
 
 **BUGS**
 
@@ -1580,7 +1589,7 @@ None known.
 
 **SEE ALSO**
 
-`DisplayAlert`
+`DisplayAlert`, `SetPrefs`
 
 **EXAMPLES**
 
@@ -3059,9 +3068,11 @@ What the system is born with, whatever has been set since: a
 double-click of 1500 milliseconds, a screen font 16 rows tall, the
 keyboard on the screen on a board with none, every window kept wholly
 on its screen, the title bars' gadgets narrow, pospaz from the ROM for
-all three fonts, the built-in pens. Written as `GetPrefs` writes them;
-what a settings editor's "use the defaults" hands to `SetPrefs`. The
-style is the default when none is set: `IPREFS_Style` with null.
+all three fonts, the built-in pens, a beep that flashes. Written as
+`GetPrefs` writes them; what a settings editor's "use the defaults"
+hands to `SetPrefs`. The style is the default when none is set:
+`IPREFS_Style` with null; and a beep has no sound: `IPREFS_BeepSound`
+with null.
 
 **CONTEXT**
 
@@ -3236,7 +3247,7 @@ fn GetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) u32
 - `tags` - the settings wanted, each an `IPREFS_` tag whose data is
   where its value is written: a `*u32` for `IPREFS_DoubleClick`
   (milliseconds), `IPREFS_ScreenFontHeight` (rows), `IPREFS_Keyboard`,
-  `IPREFS_OffScreen` and `IPREFS_WideGadgets`; a
+  `IPREFS_OffScreen`, `IPREFS_WideGadgets` and `IPREFS_BeepFlash`; a
   `*?*graphics.TextFont` for the three fonts; a
   `*[NUMDRIPENS]graphics.Pen` for `IPREFS_Pens`.
 
@@ -3247,8 +3258,8 @@ How many were written.
 **BEHAVIOR**
 
 Each tag asked is written; a data of 0, a tag that is not a setting,
-and `IPREFS_Style` - a style once read is intuition's own and has no
-list to give back - are passed over. A font is opened for the caller,
+and `IPREFS_Style` and `IPREFS_BeepSound` - each once read is
+intuition's own and has nothing to give back - are passed over. A font is opened for the caller,
 as `OpenSystemFont` opens it.
 
 **CONTEXT**
@@ -7062,8 +7073,8 @@ fn SetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) bool
 
 True when every setting given was taken; false when one was not - a
 value that means nothing, a fixed font that is proportional, no memory
-for a style - and then that one keeps its value and the rest are
-taken all the same.
+for a style or a sound - and then that one keeps its value and the
+rest are taken all the same.
 
 **BEHAVIOR**
 
@@ -7091,6 +7102,12 @@ value:
   sets them - every screen without pens of its own is painted again.
 - `IPREFS_Style`: the system's style, as `SetStyle` with no screen
   sets it - every window it reaches is drawn again.
+- `IPREFS_BeepFlash`: whether `DisplayBeep` flashes the display, 0 or
+  1; anything else is refused.
+- `IPREFS_BeepSound`: the sound `DisplayBeep` plays, copied, or none
+  for null. One with no frames, a rate past `AUDIO_MAX_RATE`, other
+  than one or two channels or a volume past `AUDIO_VOLUME_MAX` is
+  refused. A beep still sounding is taken back first.
 
 Every window that asked for `IDCMP_NEWPREFS` is told, whichever
 screen it is on: a window that draws something the settings decide
@@ -7107,7 +7124,7 @@ reads them again and draws it anew.
 **OWNERSHIP**
 
 The list and all it points to stay the caller's: intuition opens fonts
-of its own and copies the pens and the style.
+of its own and copies the pens, the style and the beep's sound.
 
 **NOTES**
 

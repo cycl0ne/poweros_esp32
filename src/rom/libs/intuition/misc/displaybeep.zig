@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! DisplayBeep: flashes a screen.
+//! DisplayBeep: plays the system's beep sound, and flashes a screen.
 
 const sdk = @import("sdk");
 const graphics = sdk.graphics;
@@ -15,7 +15,7 @@ const _misc = @import("_misc.zig");
 /// How long a screen shows the other way round.
 const flash_us = 100_000;
 
-/// Flashes a screen, to draw the eye without a requester.
+/// Draws the eye without a requester: a sound, a flash, or both.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -31,7 +31,14 @@ const flash_us = 100_000;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// For a tenth of a second the display shows, in place of the screen, a
+/// The system's beep sound, when one is set (`IPREFS_BeepSound`), is
+/// played through audio.device as a trigger, above a program's own
+/// sounds; a beep while the last still sounds starts it again. The flash
+/// follows when `IPREFS_BeepFlash` is on - as the system starts - and
+/// also when there is a sound to play and none can be heard: no
+/// audio.device, or every trigger voice playing something above a beep.
+///
+/// The flash: for a tenth of a second the display shows, in place of the screen, a
 /// picture of one colour - the screen's background pen turned about, dark
 /// for a light one and light for a dark one - and then the screen again.
 /// Both changes are flips at a frame's start, so the whole display flashes
@@ -41,7 +48,8 @@ const flash_us = 100_000;
 /// bar flashes.
 ///
 /// CONTEXT:
-/// - Waits: for the screen list's semaphore, and a tenth of a second.
+/// - Waits: for the screen list's semaphore, and a tenth of a second;
+///   the first beep with a sound also for audio.device to open.
 /// - Interrupts: no.
 /// - Locks: no spinlock may be held.
 /// - Process: a Task will do.
@@ -50,19 +58,23 @@ const flash_us = 100_000;
 /// Nothing changes hands.
 ///
 /// NOTES:
-/// It is for something that needs noticing and not answering.
+/// It is for something that needs noticing and not answering. It never
+/// waits for the sound to end.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `DisplayAlert`
+/// `DisplayAlert`, `SetPrefs`
 ///
 /// EXAMPLES:
 /// ```zig
 /// ib.DisplayBeep(null); // a key with nothing bound to it
 /// ```
 pub fn DisplayBeep(ib: *IntuitionBase, screen: ?*Screen) void {
+    // The sound first: it plays while the display flashes.
+    const heard = _misc.soundBeep(ib);
+    if (ib.beep_flash == 0 and heard != .unheard) return;
     _screen.lock(ib);
     defer _screen.unlock(ib);
     if (screen) |s| return flash(ib, s);

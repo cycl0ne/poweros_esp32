@@ -101,6 +101,7 @@ flowchart TB
     m_input_device --> m_mouse_device
     m_input_device --> m_timer_device
     m_input_device --> m_touch_device
+    m_intuition_library --> m_audio_device
     m_intuition_library --> m_graphics_library
     m_intuition_library --> m_input_device
     m_intuition_library --> m_keyboard_device

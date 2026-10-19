@@ -36,8 +36,9 @@
 
 const std = @import("std");
 
-/// How many voices are mixed: a stream each.
-pub const max_voices: usize = 16;
+/// How many voices are mixed: one for each stream, and one for each sound
+/// played by trigger.
+pub const max_voices: usize = 24;
 
 /// The fraction's width: a position and a step are `1 << shift` to the
 /// frame.

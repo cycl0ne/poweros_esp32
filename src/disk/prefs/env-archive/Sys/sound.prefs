@@ -1,0 +1,17 @@
+# ENVARC:Sys/sound.prefs - what a beep does: the flash of the display
+# and the sound, which C:SetPrefs hands to intuition at boot. One line:
+#
+# FLASH     whether the display flashes: YES or NO.
+# SOUND     what is heard: NONE, BEEP (a tone) or SAMPLE (the file
+#           SAMPLE names).
+# VOLUME    how loud, in percent of as recorded: 1 to 100.
+# TONE      the beep's pitch, in Hz: 100 to 8000.
+# DURATION  how long the beep lasts, in milliseconds: 10 to 1000.
+# SAMPLE    a sound file, any a sound datatype reads, played whole -
+#           in double quotes when its name has a space in it.
+#
+# One left out has the value the system starts with. A beep that has
+# a sound and cannot be heard - no audio.device - flashes instead.
+# These are the system's own:
+#
+# FLASH=YES SOUND=NONE VOLUME=80 TONE=880 DURATION=80
