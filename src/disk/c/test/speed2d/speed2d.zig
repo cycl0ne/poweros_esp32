@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Speed2D: how long the display takes to be drawn over whole - a fill, a
-//! colour laid over it at half strength, a picture scaled up twice, a
-//! window's worth moved, a pattern and a template - and whether each was
-//! drawn right. Built against the SDK only.
+//! colour laid over it at half strength, a picture with coverage laid
+//! over it, a picture scaled up twice, a window's worth moved, a pattern
+//! and a template - and whether each was drawn right. Built against the
+//! SDK only.
 //!
 //!   Speed2D ROUNDS/K/N
 //!
@@ -19,7 +20,11 @@
 //! The move is 800 x 600 within the buffer, 16 to the right and 8 down
 //! and back again in turns, as a window dragged over the screen is. Then
 //! come the data cache's write-backs alone, which every draw ends with:
-//! CacheClearE over 1 MiB, and RefreshBitMap over the whole buffer.
+//! CacheClearE over 64 KiB, 128 KiB, 256 KiB, 1 MiB and 4 MiB of the buffer, its
+//! lines dirty - written just before each, outside the time - and clean,
+//! as a second write-back finds them; CachePreDMA over 1 MiB, dirty, which
+//! writes back without invalidating; and RefreshBitMap over the whole
+//! buffer.
 //!
 //! Last, the cases that are not whole and even are drawn once each and
 //! checked the same way: rectangles that start and end anywhere, and one
@@ -50,7 +55,7 @@ export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VER
 
 const template = "ROUNDS/K/N";
 
-const Case = enum { fill, blend, scale, move, pattern, template };
+const Case = enum { fill, blend, lay, scale, move, pattern, template };
 
 /// The pens: the fill's, the blend's - orange at half strength - and the
 /// pattern's and the template's two.
@@ -91,11 +96,13 @@ const Bench = struct {
     board_rp: *graphics.RastPort,
     plain: rtg.Surface,
     plain_rp: *graphics.RastPort,
-    /// The picture the scale takes, half the display each way, and the
-    /// template's shape, the display's size.
+    /// The picture the scale takes, half the display each way; the one
+    /// laid over it, the display's size; and the template's shape, the
+    /// display's size.
     picture: [*]u32,
     picture_width: u32,
     picture_height: u32,
+    overlay: [*]u32,
     shape: [*]u8,
     shape_pitch: u32,
 };
@@ -127,6 +134,23 @@ fn paintPicture(picture: [*]u32, width: u32, height: u32) void {
             const red = x * 255 / width;
             const green = y * 255 / height;
             const blue = (x + y) * 127 / (width + height) + (x ^ y) % 64;
+            picture[y * width + x] = alpha << 24 | red << 16 | green << 8 | blue;
+        }
+    }
+}
+
+/// The picture laid over the display: colours from its coordinates, and
+/// its coverage running through every level, so nearly every pixel is
+/// mixed.
+fn paintOverlay(picture: [*]u32, width: u32, height: u32) void {
+    var y: u32 = 0;
+    while (y < height) : (y += 1) {
+        var x: u32 = 0;
+        while (x < width) : (x += 1) {
+            const alpha = (x * 3 + y) & 0xFF;
+            const red = x * 255 / width;
+            const green = y * 255 / height;
+            const blue = (x ^ y) & 0xFF;
             picture[y * width + x] = alpha << 24 | red << 16 | green << 8 | blue;
         }
     }
@@ -178,6 +202,10 @@ fn draw(b: *Bench, case: Case, rp: *graphics.RastPort, surface: *const rtg.Surfa
             setPens(b, rp, blend_pen, back_pen, graphics.DRMD_JAM1 | graphics.DRMD_BLEND, false);
             b.gb.RectFill(rp, &whole);
         },
+        .lay => {
+            setPens(b, rp, fill_pen, back_pen, graphics.DRMD_JAM1, false);
+            b.gb.BlendPixelArray(rp, @ptrCast(b.overlay), surface.width * 4, @intFromEnum(rtg.PixelFormat.bgra32), 0, 0, &whole);
+        },
         .scale => {
             setPens(b, rp, fill_pen, back_pen, graphics.DRMD_JAM1, true);
             const from = Rect{ .min_x = 0, .min_y = 0, .max_x = @intCast(b.picture_width), .max_y = @intCast(b.picture_height) };
@@ -211,6 +239,8 @@ const Check = struct {
     case: Case,
     area: Rect,
     pen: u32 = fill_pen,
+    /// The order of the picture laid over.
+    format: rtg.PixelFormat = .bgra32,
     from: Rect = .{ .min_x = 0, .min_y = 0, .max_x = 0, .max_y = 0 },
     dx: i32 = 0,
     dy: i32 = 0,
@@ -235,6 +265,9 @@ const checks = [_]Check{
     .{ .name = "blend 400x300 at 13,7, 1/255", .case = .blend, .area = rect(13, 7, 400, 300), .pen = 0x01FF_8000 },
     .{ .name = "blend 400x300 at 13,7, 254/255", .case = .blend, .area = rect(13, 7, 400, 300), .pen = 0xFE00_C0FF },
     .{ .name = "blend 97x50 at 31,5, 50%", .case = .blend, .area = rect(31, 5, 97, 50), .pen = blend_pen },
+    .{ .name = "lay 401x299 at 13,7, from 5,3", .case = .lay, .area = rect(13, 7, 401, 299), .from = rect(5, 3, 0, 0) },
+    .{ .name = "lay 1915x1077 at 3,1, rgba32", .case = .lay, .area = rect(3, 1, 1915, 1077), .format = .rgba32 },
+    .{ .name = "lay 97x50 at 31,5", .case = .lay, .area = rect(31, 5, 97, 50) },
     .{ .name = "scale 333x250 to 1001x777 at 17,9", .case = .scale, .area = rect(17, 9, 1001, 777), .from = rect(7, 3, 333, 250) },
     .{ .name = "scale 960x540 to 401x301 at 5,5", .case = .scale, .area = rect(5, 5, 401, 301), .from = rect(0, 0, 960, 540) },
     move("move 800x600 by 16,8", window, 16, 8),
@@ -264,6 +297,10 @@ fn drawCheck(b: *Bench, check: *const Check, rp: *graphics.RastPort, surface: *c
         .blend => {
             setPens(b, rp, check.pen, back_pen, graphics.DRMD_JAM1 | graphics.DRMD_BLEND, false);
             b.gb.RectFill(rp, &area);
+        },
+        .lay => {
+            setPens(b, rp, fill_pen, back_pen, graphics.DRMD_JAM1, false);
+            b.gb.BlendPixelArray(rp, @ptrCast(b.overlay), surface.width * 4, @intFromEnum(check.format), check.from.min_x, check.from.min_y, &area);
         },
         .scale => {
             setPens(b, rp, fill_pen, back_pen, graphics.DRMD_JAM1, true);
@@ -323,6 +360,7 @@ fn compare(b: *Bench) Compared {
 const names = [_][*:0]const u8{
     "fill 1920x1080",
     "blend 1920x1080, 50%",
+    "picture 1920x1080 laid over",
     "scale 2x, 960x540 to 1920x1080",
     "move 800x600 by 16,8",
     "pattern 16x16 over 1920x1080",
@@ -374,18 +412,47 @@ fn told(b: *Bench, result: Compared) bool {
     return result.wrong == 0;
 }
 
+/// A write-back over the buffer's first bytes.
+const Flush = struct { name: [*:0]const u8, size: u32, dirty: bool, pre_dma: bool = false };
+
+const flush_cases = [_]Flush{
+    .{ .name = "CacheClearE 64 KiB, dirty", .size = 64 << 10, .dirty = true },
+    .{ .name = "CacheClearE 64 KiB, clean", .size = 64 << 10, .dirty = false },
+    .{ .name = "CacheClearE 128 KiB, dirty", .size = 128 << 10, .dirty = true },
+    .{ .name = "CacheClearE 128 KiB, clean", .size = 128 << 10, .dirty = false },
+    .{ .name = "CacheClearE 256 KiB, dirty", .size = 256 << 10, .dirty = true },
+    .{ .name = "CacheClearE 256 KiB, clean", .size = 256 << 10, .dirty = false },
+    .{ .name = "CacheClearE 1 MiB, dirty", .size = 1 << 20, .dirty = true },
+    .{ .name = "CacheClearE 1 MiB, clean", .size = 1 << 20, .dirty = false },
+    .{ .name = "CacheClearE 4 MiB, dirty", .size = 4 << 20, .dirty = true },
+    .{ .name = "CacheClearE 4 MiB, clean", .size = 4 << 20, .dirty = false },
+    .{ .name = "CachePreDMA 1 MiB, dirty", .size = 1 << 20, .dirty = true, .pre_dma = true },
+};
+
 /// The write-backs alone.
 fn flushes(b: *Bench, rounds: u32) void {
-    const mib = 1 << 20;
-    var start = now(b.tb);
+    const pixels = b.bitmap.pixels.?;
+    for (flush_cases) |case| {
+        var took: u64 = 0;
+        var round: u32 = 0;
+        while (round < rounds) : (round += 1) {
+            if (case.dirty) @memset(pixels[0..case.size], @truncate(round));
+            const start = now(b.tb);
+            if (case.pre_dma) {
+                var length: u32 = case.size;
+                _ = b.sys.CachePreDMA(pixels, &length, exec.DMAF_ReadFromRAM);
+            } else {
+                b.sys.CacheClearE(pixels, case.size, exec.CACRF_ClearD);
+            }
+            took += now(b.tb) - start;
+        }
+        const us = took / rounds;
+        _ = Printf(b.dl, "%-32s %4lu.%03lu ms\n", .{ case.name, us / 1000, us % 1000 });
+    }
+    const start = now(b.tb);
     var round: u32 = 0;
-    while (round < rounds) : (round += 1) b.sys.CacheClearE(b.bitmap.pixels.?, mib, exec.CACRF_ClearD);
-    var us = (now(b.tb) - start) / rounds;
-    _ = Printf(b.dl, "%-32s %4lu.%03lu ms\n", .{ @as([*:0]const u8, "CacheClearE 1 MiB"), us / 1000, us % 1000 });
-    start = now(b.tb);
-    round = 0;
     while (round < rounds) : (round += 1) _ = b.rb.RefreshBitMap(b.bitmap, 0, 0);
-    us = (now(b.tb) - start) / rounds;
+    const us = (now(b.tb) - start) / rounds;
     _ = Printf(b.dl, "%-32s %4lu.%03lu ms\n", .{ @as([*:0]const u8, "RefreshBitMap 1920x1080"), us / 1000, us % 1000 });
 }
 
@@ -453,6 +520,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const picture_height = info.height / 2;
     const picture_memory = sys.AllocVec(picture_width * picture_height * 4, exec.MEMF_ANY) orelse return noMemory(dl);
     defer sys.FreeVec(picture_memory);
+    const overlay_memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return noMemory(dl);
+    defer sys.FreeVec(overlay_memory);
     const shape_pitch = (info.width + 7) / 8;
     const shape_memory = sys.AllocVec(shape_pitch * info.height, exec.MEMF_ANY) orelse return noMemory(dl);
     defer sys.FreeVec(shape_memory);
@@ -470,6 +539,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .picture = @ptrCast(@alignCast(picture_memory)),
         .picture_width = picture_width,
         .picture_height = picture_height,
+        .overlay = @ptrCast(@alignCast(overlay_memory)),
         .shape = @ptrCast(shape_memory),
         .shape_pitch = shape_pitch,
     };
@@ -480,11 +550,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     b.plain_rp = gb.CreateRastPortTagList(&plain_tags) orelse return noMemory(dl);
     defer gb.FreeRastPort(b.plain_rp);
     paintPicture(b.picture, picture_width, picture_height);
+    paintOverlay(b.overlay, info.width, info.height);
     paintShape(b.shape, shape_pitch, info.width, info.height);
 
     _ = Printf(dl, "%u rounds each, the time one takes:\n", .{rounds});
     var failures: u32 = 0;
-    for ([_]Case{ .fill, .blend, .scale, .move, .pattern, .template }) |case| {
+    for ([_]Case{ .fill, .blend, .lay, .scale, .move, .pattern, .template }) |case| {
         if (!runCase(&b, case, rounds)) failures += 1;
     }
     flushes(&b, rounds);

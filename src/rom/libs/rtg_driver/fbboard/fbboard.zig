@@ -36,10 +36,11 @@
 //! one written. The overlay is still laid in the composed frame.
 //!
 //! The board's engine is the processor's own cores (`engine.zig`): a
-//! fill, a copy, a colour or a picture laid over, a pattern or a template
-//! that covers much of a buffer is cut into bands of rows, one for each
-//! core, and the write-back a refresh ends with is shared out the same
-//! way.
+//! fill, a copy, a colour or a picture with coverage laid over, a picture
+//! scaled, a pattern or a template that covers much of a buffer is cut
+//! into bands of rows, which exec's workers draw at once (ShareWork). The
+//! write-back a refresh ends with is a CacheClearE, which exec shares
+//! between the cores the same way.
 //!
 //! Where the display raises an interrupt at each frame (the board's part
 //! gives it as PART_Irq), a flip and WaitVBlank wait for it; elsewhere,
@@ -68,7 +69,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 1;
+const REVISION = 2;
 const BUILD_DATE = "19.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -668,7 +669,6 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
 
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const screen = screenOf(board);
-    engine.takeDown(&screen.engine);
     if (screen.frame_hooked) screen.sys.RemIntServer(screen.frame_irq, &screen.frame_int);
     screen.frame_hooked = false;
     if (screen.timer_open) screen.sys.CloseDevice(&screen.timer_io.node);
@@ -768,7 +768,7 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
     const first = if (rows == 0) 0 else @min(y, bitmap.height);
     const last = if (rows == 0) bitmap.height else @min(y +| rows, bitmap.height);
     // Any buffer, shown or not: one drawn ahead is shown by naming it.
-    if (screen.cached) engine.flush(&screen.engine, screen.sys, bitmap.pixels.?, bitmap.pitch, first, last);
+    handOn(screen, bitmap.pixels.? + first * bitmap.pitch, (last - first) * bitmap.pitch);
     if (!composing(screen)) return err.RTGERR_OK;
     var shown = false;
     for (screen.bands[0..screen.band_count], 0..) |band, i| {
@@ -839,6 +839,10 @@ fn blendRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgR
     return engine.blendRect(&screenOf(board).engine, bitmap, area, color);
 }
 
+fn blendPixels(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) callconv(.c) i32 {
+    return engine.blendPixels(&screenOf(board).engine, bitmap, area, pixels, alpha);
+}
+
 fn scalePixels(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) callconv(.c) i32 {
     return engine.scale(&screenOf(board).engine, bitmap, area, pixels, width, height);
 }
@@ -861,6 +865,7 @@ const ops = rtg.boards.RtgBoardOps{
     .blit_template = &blitTemplate,
     .blit_pattern = &blitPattern,
     .wait_blit = &waitBlit,
+    .blend_pixels = &blendPixels,
     .blend_rect = &blendRect,
     .scale_pixels = &scalePixels,
 };

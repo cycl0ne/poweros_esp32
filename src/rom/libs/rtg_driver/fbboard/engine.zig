@@ -2,22 +2,15 @@
 //! The fb board's engine: the processor's own cores. A display that reads
 //! its picture out of RAM has no drawing engine, so every pixel is the
 //! CPU's - and the CPU is several cores on a machine that has them. A job
-//! over much of a buffer is cut into bands of rows, a band for each core,
-//! and the cores draw them at once.
+//! over much of a buffer is cut into bands of rows, and exec's workers, a
+//! task on each core, draw them at once with the task that asked
+//! (ShareWork): it draws a band itself, and its call returns when every
+//! band is drawn. Every job is finished when its call returns, so WaitBlit
+//! has only other tasks' to wait for.
 //!
-//! **The workers** are a task on each core, pinned to it, made with the
-//! board and kept for as long as it lives. Each waits on a signal of its
-//! own. The task that asks for a job draws a band of it itself, hands one
-//! to the worker of each other core, and waits until they are done: each
-//! worker counts itself out, and the last signals the asker. A worker
-//! runs at the asker's priority, so a job is as urgent as the task it is
-//! drawn for.
-//!
-//! One job at a time: a job asked for while another is under way is drawn
-//! by its asker alone, on its own core, rather than waiting for the cores;
-//! so is one too small to be worth handing out (`smallest`), since that
-//! costs a few signals between the cores. Every job is finished when its
-//! call returns, so WaitBlit has only another task's to wait for.
+//! A job too small to be worth handing out (`smallest`) is drawn by its
+//! asker alone, since handing it out costs a few signals between the
+//! cores; so is one asked for while exec's workers are busy with another.
 //!
 //! **What it draws** is what graphics.library draws in software, pixel
 //! for pixel - the same sums, rounded the same way - so a picture does
@@ -34,14 +27,13 @@
 //! into bands that run at once: a band would read rows that another is
 //! writing. Rows `d` apart, `d` the rows the copy moves by, form chains,
 //! each row read before the row `d` further on is written; the chains do
-//! not meet, so each worker takes whole chains and walks them away from
+//! not meet, so each part takes whole chains and walks them away from
 //! where the rows are going. A copy along its own rows (`d` 0) is a move
 //! within each row, and its rows are bands again.
 //!
 //! **The caches** are left to the refresh every draw ends with, which
-//! writes the rows back for the display (`flush`) - in bands as well: the
-//! L2 controller takes one 64-byte line at a time, at about 60 ns a line,
-//! so a whole 1920 x 1080 buffer is 8 ms on one core.
+//! writes the rows back for the display with CacheClearE - which exec
+//! shares between the cores as well.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -50,205 +42,54 @@ const rtg = sdk.rtg;
 const err = rtg.errors;
 const ExecBase = sdk.interface.exec.ExecBase;
 
-/// The most cores a machine has, and so workers.
-const max_cores = 4;
 /// The fewest pixels a job has before it is shared: about 64 KiB of a
 /// buffer.
 const smallest = 16384;
-/// The fewest bytes a write-back has before it is shared: 4096 lines.
-const smallest_flush = 256 * 1024;
+/// The most parts a job is asked to be cut into: exec cuts it into no
+/// more than it has cores for.
+const most_parts = 16;
 /// The cache line, which a band starts on.
 const line_bytes = 64;
-/// Each worker's stack.
-const worker_stack = 8192;
-
-const worker_names = [max_cores][*:0]const u8{ "fb engine 0", "fb engine 1", "fb engine 2", "fb engine 3" };
-
-const Worker = struct {
-    engine: *Engine = undefined,
-    task: ?*exec.Task = null,
-    /// The core it is pinned to.
-    core: u32 = 0,
-    /// The signal it waits for a job on.
-    go: u32 = 0,
-    /// Its part of the job under way.
-    part: u32 = 0,
-};
 
 /// The engine, in the board's instance.
 pub const Engine = struct {
     sys: ?*ExecBase = null,
-    /// Held while a job is shared out.
-    lock: exec.SignalSemaphore = .{},
-    workers: [max_cores]Worker = @splat(.{}),
-    /// How many there are: none on a machine with one core.
-    count: u32 = 0,
-    /// The job under way: a copy of the asker's, how many parts it is in,
-    /// who asked and the signal it waits on, and how many workers are
-    /// still at it.
-    job: Job = .{ .fill = undefined },
-    parts: u32 = 0,
-    asker: ?*exec.Task = null,
-    done: u32 = 0,
-    remaining: u32 = 0,
-    /// Set when the workers are to end.
-    quitting: bool = false,
+    /// Held shared by each job while it is drawn, so WaitBlit can wait
+    /// for every one under way.
+    drawing: exec.SignalSemaphore = .{},
 };
 
-// --- the workers -------------------------------------------------------------
-
-/// A worker's code. It waits until its creator has said which worker it
-/// is, takes a signal, and counts itself in; then it does its part of
-/// every job it is handed until it is told to end.
-fn workerEntry(sys: *ExecBase) callconv(.c) void {
-    const me = sys.FindTask(null).?;
-    while (@atomicLoad(?*anyopaque, &me.user_data, .acquire) == null) _ = sys.Wait(exec.SIGF_SINGLE);
-    const worker: *Worker = @ptrCast(@alignCast(me.user_data.?));
-    const engine = worker.engine;
-    const bit = sys.AllocSignal(-1);
-    worker.go = if (bit < 0) exec.SIGF_SINGLE else @as(u32, 1) << @intCast(bit);
-    finished(sys, engine);
-    while (true) {
-        _ = sys.Wait(worker.go);
-        if (@atomicLoad(bool, &engine.quitting, .acquire)) break;
-        engine.job.run(worker.part, engine.parts);
-        finished(sys, engine);
-    }
-    finished(sys, engine);
-}
-
-/// A worker's part done: counted out, and the asker told by the last.
-/// Who to tell is read first - once the count is out, the asker may go on.
-fn finished(sys: *ExecBase, engine: *Engine) void {
-    const asker = engine.asker.?;
-    const done = engine.done;
-    if (@atomicRmw(u32, &engine.remaining, .Sub, 1, .acq_rel) == 1) sys.Signal(asker, done);
-}
-
-/// Until every worker handed something has counted itself out.
-fn join(sys: *ExecBase, engine: *Engine) void {
-    while (@atomicLoad(u32, &engine.remaining, .acquire) != 0) _ = sys.Wait(engine.done);
-    _ = sys.SetSignal(0, engine.done);
-}
-
-/// A worker on each core that runs, pinned to it. None on a machine with
-/// one core, or when they cannot all be made: then every job is its
-/// asker's. The tasks are the system's, not the calling task's.
 pub fn setUp(engine: *Engine, sys: *ExecBase) void {
     engine.* = .{ .sys = sys };
-    sys.InitSemaphore(&engine.lock);
-    var cores: u32 = 0;
-    var times: exec.CoreTimes = .{};
-    for (0..max_cores) |core| {
-        if (!sys.ReadCoreTimes(@intCast(core), &times)) continue;
-        engine.workers[cores] = .{ .engine = engine, .core = @intCast(core) };
-        cores += 1;
-    }
-    if (cores < 2) return;
-    const bit = sys.AllocSignal(-1);
-    if (bit < 0) return;
-    defer sys.FreeSignal(bit);
-    engine.asker = sys.FindTask(null);
-    engine.done = @as(u32, 1) << @intCast(bit);
-    @atomicStore(u32, &engine.remaining, cores, .release);
-    var made: u32 = 0;
-    sys.BeginSystemMemory();
-    for (engine.workers[0..cores], 0..) |*worker, i| {
-        const task = sys.CreateTask(worker_names[i], 0, &workerEntry, worker_stack) orelse break;
-        _ = sys.SetTaskAffinity(task, exec.coreFlag(worker.core));
-        worker.task = task;
-        @atomicStore(?*anyopaque, &task.user_data, worker, .release);
-        sys.Signal(task, exec.SIGF_SINGLE);
-        made += 1;
-    }
-    sys.EndSystemMemory();
-    // The ones not made will not count themselves in.
-    if (made < cores) _ = @atomicRmw(u32, &engine.remaining, .Sub, cores - made, .acq_rel);
-    join(sys, engine);
-    engine.count = made;
-    if (made < cores) takeDown(engine);
+    sys.InitSemaphore(&engine.drawing);
 }
 
-/// The workers ended, after the job under way.
-pub fn takeDown(engine: *Engine) void {
-    const sys = engine.sys orelse return;
-    if (engine.count == 0) return;
-    sys.ObtainSemaphore(&engine.lock);
-    defer sys.ReleaseSemaphore(&engine.lock);
-    const bit = sys.AllocSignal(-1);
-    if (bit < 0) return;
-    defer sys.FreeSignal(bit);
-    engine.asker = sys.FindTask(null);
-    engine.done = @as(u32, 1) << @intCast(bit);
-    @atomicStore(bool, &engine.quitting, true, .release);
-    @atomicStore(u32, &engine.remaining, engine.count, .release);
-    for (engine.workers[0..engine.count]) |*worker| sys.Signal(worker.task.?, worker.go);
-    join(sys, engine);
-    engine.count = 0;
-}
-
-/// Until the job under way, another task's, is done.
+/// Until the jobs under way, other tasks', are done.
 pub fn waitIdle(engine: *Engine) void {
     const sys = engine.sys orelse return;
-    if (engine.count == 0) return;
-    sys.ObtainSemaphore(&engine.lock);
-    sys.ReleaseSemaphore(&engine.lock);
+    sys.ObtainSemaphore(&engine.drawing);
+    sys.ReleaseSemaphore(&engine.drawing);
 }
 
-/// The core `task` is running on, or null.
-fn coreOf(sys: *ExecBase, task: *exec.Task) ?u32 {
-    sys.Disable();
-    defer sys.Enable();
-    for (0..max_cores) |core| {
-        if (sys.CoreTask(@intCast(core)) == task) return @intCast(core);
-    }
-    return null;
-}
-
-/// `job` done in as many as `wanted` parts, shared between the asker and
-/// the workers of the other cores: alone when it is one part, there are
-/// no workers, or they are busy with another job.
+/// `job` done in as many as `wanted` parts, by the asker and exec's
+/// workers.
 fn share(engine: *Engine, job: Job, wanted: u32) void {
     const sys = engine.sys orelse return job.run(0, 1);
-    if (wanted < 2 or engine.count < 2) return job.run(0, 1);
-    if (!sys.AttemptSemaphore(&engine.lock)) return job.run(0, 1);
-    defer sys.ReleaseSemaphore(&engine.lock);
-    // A job whose asker was ended before it was done may still be under
-    // way on the workers.
-    if (@atomicLoad(u32, &engine.remaining, .acquire) != 0) return job.run(0, 1);
-    const bit = sys.AllocSignal(-1);
-    if (bit < 0) return job.run(0, 1);
-    defer sys.FreeSignal(bit);
-    const me = sys.FindTask(null).?;
-    const here = coreOf(sys, me);
-    var chosen: [max_cores]*Worker = undefined;
-    var helpers: u32 = 0;
-    for (engine.workers[0..engine.count]) |*worker| {
-        if (helpers + 1 >= wanted) break;
-        if (here == worker.core) continue;
-        chosen[helpers] = worker;
-        helpers += 1;
-    }
-    if (helpers == 0) return job.run(0, 1);
-    engine.job = job;
-    engine.parts = helpers + 1;
-    engine.asker = me;
-    engine.done = @as(u32, 1) << @intCast(bit);
-    @atomicStore(u32, &engine.remaining, helpers, .release);
-    for (chosen[0..helpers], 1..) |worker, part| {
-        worker.part = @intCast(part);
-        const task = worker.task.?;
-        if (task.node.pri != me.node.pri) _ = sys.SetTaskPri(task, me.node.pri);
-        sys.Signal(task, worker.go);
-    }
-    engine.job.run(0, engine.parts);
-    join(sys, engine);
+    sys.ObtainSemaphoreShared(&engine.drawing);
+    defer sys.ReleaseSemaphore(&engine.drawing);
+    var shared = job;
+    _ = sys.ShareWork(&runPart, &shared, wanted);
+}
+
+/// A part of a job, on whichever core exec gave it to.
+fn runPart(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
+    const job: *const Job = @ptrCast(@alignCast(data.?));
+    job.run(part, parts);
 }
 
 /// How many parts a job of `pixels` is worth.
-fn partsFor(engine: *const Engine, pixels: u64) u32 {
-    if (pixels < smallest) return 1;
-    return @intCast(@min(pixels / smallest, @max(engine.count, 1)));
+fn partsFor(pixels: u64) u32 {
+    return @intCast(@min(pixels / smallest, most_parts));
 }
 
 // --- the jobs ----------------------------------------------------------------
@@ -282,7 +123,7 @@ const Job = union(enum) {
     scale: Scale,
     pattern: Pattern,
     template: Template,
-    flush: Flush,
+    lay: Lay,
 
     /// Part `part` of `parts`.
     fn run(job: *const Job, part: u32, parts: u32) void {
@@ -367,7 +208,7 @@ fn fillRun(to: [*]u32, count: u32, color: u32) void {
 /// FillRect: the rectangle has been clipped to the buffer.
 pub fn fill(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) i32 {
     if (!drawable(bitmap)) return err.RTGERR_NOT_SUPPORTED;
-    share(engine, .{ .fill = .{ .rows = rowsOf(bitmap, area), .target = targetOf(bitmap, area), .color = color } }, partsFor(engine, pixelsOf(area)));
+    share(engine, .{ .fill = .{ .rows = rowsOf(bitmap, area), .target = targetOf(bitmap, area), .color = color } }, partsFor(pixelsOf(area)));
     return err.RTGERR_OK;
 }
 
@@ -432,7 +273,85 @@ pub fn blendRect(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRe
         .rb = parts.rb,
         .g = parts.g,
         .inverse = 255 - alpha,
-    } }, partsFor(engine, pixelsOf(area)));
+    } }, partsFor(pixelsOf(area)));
+    return err.RTGERR_OK;
+}
+
+// --- a picture laid over -----------------------------------------------------
+
+const Lay = struct {
+    rows: Rows,
+    target: Target,
+    /// The picture's pixel that lands on the rectangle's top left, and
+    /// the bytes from one of its rows to the next.
+    picture: [*]const u8,
+    picture_pitch: u32,
+    /// Red and blue the other way round: a picture in rgba32.
+    swap: bool,
+    /// The strength it is laid at, 1 to 255.
+    alpha: u32,
+
+    fn band(job: *const Lay, lo: u32, hi: u32) void {
+        var y = lo;
+        while (y < hi) : (y += 1) {
+            const in: [*]const u32 = @ptrCast(@alignCast(job.picture + @as(usize, y - job.rows.first) * job.picture_pitch));
+            const out = job.target.row(y);
+            const count = job.target.width;
+            const full = job.alpha == 255;
+            if (job.swap) {
+                if (full) layRow(out, in, count, 255, true, true) else layRow(out, in, count, job.alpha, true, false);
+            } else {
+                if (full) layRow(out, in, count, 255, false, true) else layRow(out, in, count, job.alpha, false, false);
+            }
+        }
+    }
+};
+
+/// A row of a picture laid over a row of the buffer as graphics.library's
+/// `blendPixel` lays each pixel: by its coverage - times `alpha` / 256 for
+/// a picture laid at less than full strength, as the S3's engine does it -
+/// a pixel fully covered stored as it is, one not covered left alone.
+fn layRow(out: [*]u32, in: [*]const u32, count: u32, alpha: u32, comptime swap: bool, comptime full: bool) void {
+    for (out[0..count], in[0..count]) |*pixel, source| {
+        const pen = if (swap) (source & 0xFF00_FF00) | (source >> 16 & 0xFF) | (source & 0xFF) << 16 else source;
+        const coverage = if (full) pen >> 24 else (pen >> 24) * alpha >> 8;
+        if (coverage == 0xFF) {
+            pixel.* = pen;
+        } else if (coverage != 0) {
+            const parts = mixOf(pen, coverage);
+            pixel.* = mix(pixel.*, parts.rb, parts.g, 255 - coverage);
+        }
+    }
+}
+
+/// BlendPixels: the rectangle has been clipped to the buffer, and the
+/// picture's corner moved with it. A picture of 32 bits a pixel with its
+/// coverage in the top byte, red and blue either way round (bgra32,
+/// rgba32), and not in the rows it is laid over: bands that run at once
+/// would read what another has written.
+pub fn blendPixels(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) i32 {
+    if (!drawable(bitmap)) return err.RTGERR_NOT_SUPPORTED;
+    const picture = pixels.pixels orelse return err.RTGERR_NOT_SUPPORTED;
+    if (pixels.format != .bgra32 and pixels.format != .rgba32) return err.RTGERR_NOT_SUPPORTED;
+    if (@intFromPtr(picture) % 4 != 0 or pixels.pitch % 4 != 0) return err.RTGERR_NOT_SUPPORTED;
+    if (pixels.x < 0 or pixels.y < 0) return err.RTGERR_NOT_SUPPORTED;
+    if (alpha == 0) return err.RTGERR_OK;
+    const width: u32 = @intCast(area.width);
+    const height: u32 = @intCast(area.height);
+    const first = picture + @as(usize, @intCast(pixels.y)) * pixels.pitch + @as(usize, @intCast(pixels.x)) * 4;
+    const picture_start = @intFromPtr(first);
+    const picture_end = picture_start + @as(usize, height - 1) * pixels.pitch + @as(usize, width) * 4;
+    const dest_start = rowAddress(bitmap, @intCast(area.x), @intCast(area.y));
+    const dest_end = rowAddress(bitmap, @intCast(area.x + area.width), @intCast(area.y + area.height - 1));
+    if (picture_start < dest_end and dest_start < picture_end) return err.RTGERR_NOT_SUPPORTED;
+    share(engine, .{ .lay = .{
+        .rows = rowsOf(bitmap, area),
+        .target = targetOf(bitmap, area),
+        .picture = first,
+        .picture_pitch = pixels.pitch,
+        .swap = pixels.format == .rgba32,
+        .alpha = @min(alpha, 255),
+    } }, partsFor(pixelsOf(area)));
     return err.RTGERR_OK;
 }
 
@@ -523,7 +442,7 @@ pub fn copy(engine: *Engine, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, what: *c
     const src_end = rowAddress(src, sx + width, sy + height - 1);
     const dest_first = rowAddress(dest, dx, dy);
     const dest_end = rowAddress(dest, dx + width, dy + height - 1);
-    var parts = partsFor(engine, @as(u64, width) * height);
+    var parts = partsFor(@as(u64, width) * height);
     if (src_first < dest_end and dest_first < src_end) {
         // The two meet: only as one buffer, with one pitch.
         if (src.pixels != dest.pixels or src.pitch != dest.pitch) return err.RTGERR_NOT_SUPPORTED;
@@ -651,7 +570,7 @@ pub fn scale(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, 
         .dest_top = area.y,
         .dest_height = area.height,
         .columns = columns,
-    } }, partsFor(engine, pixelsOf(area) * 4));
+    } }, partsFor(pixelsOf(area) * 4));
     return err.RTGERR_OK;
 }
 
@@ -729,7 +648,7 @@ pub fn pattern(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect
         .origin_x = tile.origin_x,
         .origin_y = tile.origin_y,
         .pens = Pens.of(tile.fg, tile.bg, tile.flags),
-    } }, partsFor(engine, pixelsOf(area)));
+    } }, partsFor(pixelsOf(area)));
     return err.RTGERR_OK;
 }
 
@@ -766,28 +685,6 @@ pub fn template(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRec
         .src_x = shape.src_x,
         .src_y = shape.src_y,
         .pens = Pens.of(shape.fg, shape.bg, shape.flags),
-    } }, partsFor(engine, pixelsOf(area)));
+    } }, partsFor(pixelsOf(area)));
     return err.RTGERR_OK;
-}
-
-// --- the write-back ----------------------------------------------------------
-
-const Flush = struct {
-    rows: Rows,
-    sys: *ExecBase,
-    pixels: [*]u8,
-    pitch: u32,
-
-    fn band(job: *const Flush, lo: u32, hi: u32) void {
-        job.sys.CacheClearE(job.pixels + @as(usize, lo) * job.pitch, (hi - lo) * job.pitch, exec.CACRF_ClearD);
-    }
-};
-
-/// Rows `first` up to `end` of a buffer whose rows are `pitch` apart
-/// written back out of the caches, in bands when there are many of them.
-pub fn flush(engine: *Engine, sys: *ExecBase, pixels: [*]u8, pitch: u32, first: u32, end: u32) void {
-    if (end <= first) return;
-    const bytes = @as(u64, end - first) * pitch;
-    const parts: u32 = if (bytes < smallest_flush) 1 else @intCast(@min(bytes / smallest_flush, @max(engine.count, 1)));
-    share(engine, .{ .flush = .{ .rows = Rows.of(first, end, pitch), .sys = sys, .pixels = pixels, .pitch = pitch } }, parts);
 }
