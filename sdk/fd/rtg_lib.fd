@@ -192,4 +192,8 @@ i32 BlendRect(*rtg.RtgBitMap dest, *const rtg.RtgRect area, u32 color)
 /// cut: one not wholly inside the buffer is RTGERR_NOT_SUPPORTED, as is
 /// any job the board's engine does not take.
 i32 ScalePixels(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPixels pixels, u32 width, u32 height)
+/// A rectangle of a buffer was written: hand its pixels to the display,
+/// as RefreshBitMap hands on rows - only those of the rectangle where the
+/// board can, its rows where it cannot. Cut down to the buffer.
+i32 RefreshRect(*rtg.RtgBitMap bitmap, *const rtg.RtgRect area)
 ##end

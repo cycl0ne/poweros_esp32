@@ -563,6 +563,18 @@ test "what is written is handed on by the row" {
     try testing.expectEqual(@as(u32, 2), fk.log.last_refresh_rows);
     try testing.expectEqual(rtg.errors.RTGERR_BOUNDS, base(rb).RefreshBitMap(bitmap, 20, 1));
 
+    // A rectangle, on a board with no way of its own: its rows, cut to
+    // the buffer; one with nothing inside reaches no driver.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bitmap, &.{ .x = 3, .y = 4, .width = 5, .height = 6 }));
+    try testing.expectEqual(@as(u32, 4), fk.log.last_refresh_y);
+    try testing.expectEqual(@as(u32, 6), fk.log.last_refresh_rows);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bitmap, &.{ .x = 30, .y = -2, .width = 8, .height = 5 }));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_refresh_y);
+    try testing.expectEqual(@as(u32, 3), fk.log.last_refresh_rows);
+    const refreshed = fk.log.refreshed;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bitmap, &.{ .x = 32, .y = 0, .width = 4, .height = 4 }));
+    try testing.expectEqual(refreshed, fk.log.refreshed);
+
     base(rb).FreeBitMap(bitmap);
     base(rb).DeleteBoard(board);
     try tearDown(rb);

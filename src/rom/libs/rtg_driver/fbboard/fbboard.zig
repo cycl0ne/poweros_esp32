@@ -40,7 +40,9 @@
 //! scaled, a pattern or a template that covers much of a buffer is cut
 //! into bands of rows, which exec's workers draw at once (ShareWork). The
 //! write-back a refresh ends with is a CacheClearE, which exec shares
-//! between the cores the same way.
+//! between the cores the same way. A rectangle refreshed (RefreshRect)
+//! writes back only its own pixels, a run a row, so tiles drawn on
+//! several cores can each hand on their own.
 //!
 //! Where the display raises an interrupt at each frame (the board's part
 //! gives it as PART_Irq), a flip and WaitVBlank wait for it; elsewhere,
@@ -69,7 +71,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 2;
+const REVISION = 3;
 const BUILD_DATE = "19.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -769,7 +771,34 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
     const last = if (rows == 0) bitmap.height else @min(y +| rows, bitmap.height);
     // Any buffer, shown or not: one drawn ahead is shown by naming it.
     handOn(screen, bitmap.pixels.? + first * bitmap.pitch, (last - first) * bitmap.pitch);
-    if (!composing(screen)) return err.RTGERR_OK;
+    compose(screen, bitmap, first, last);
+    return err.RTGERR_OK;
+}
+
+/// A rectangle written: the write-back of its pixels alone, a run a row -
+/// one run over the rows where it is as wide as the buffer - then the
+/// rows composed as a refresh composes them.
+fn refreshRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const first: u32 = @intCast(area.y);
+    const last = first + @as(u32, @intCast(area.height));
+    const bytes = rtg.formatBytes(bitmap.format);
+    const left = @as(usize, @intCast(area.x)) * bytes;
+    const run = @as(usize, @intCast(area.width)) * bytes;
+    if (left == 0 and run >= bitmap.pitch) {
+        handOn(screen, bitmap.pixels.? + first * bitmap.pitch, (last - first) * bitmap.pitch);
+    } else {
+        var y = first;
+        while (y < last) : (y += 1) handOn(screen, bitmap.pixels.? + y * bitmap.pitch + left, run);
+    }
+    compose(screen, bitmap, first, last);
+    return err.RTGERR_OK;
+}
+
+/// Rows of a buffer handed on, copied into the composed frame where the
+/// display reads that, and the images laid over them again.
+fn compose(screen: *Screen, bitmap: *rtg.RtgBitMap, first: u32, last: u32) void {
+    if (!composing(screen)) return;
     var shown = false;
     for (screen.bands[0..screen.band_count], 0..) |band, i| {
         if (band.bitmap != bitmap) continue;
@@ -780,7 +809,6 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
         shown = true;
     }
     if (shown) lay(screen);
-    return err.RTGERR_OK;
 }
 
 /// Several buffers at once, in bands: composed, shown, and a frame waited
@@ -868,6 +896,7 @@ const ops = rtg.boards.RtgBoardOps{
     .blend_pixels = &blendPixels,
     .blend_rect = &blendRect,
     .scale_pixels = &scalePixels,
+    .refresh_rect = &refreshRect,
 };
 
 const driver_ops = rtg.boards.RtgDriverOps{ .create_board = &createBoard };

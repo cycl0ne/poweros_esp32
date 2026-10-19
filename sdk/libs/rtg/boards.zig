@@ -430,6 +430,14 @@ pub const RtgBoardOps = extern struct {
     /// over it by its coverage. The rectangle lies wholly inside the
     /// buffer.
     scale_pixels: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, *const bitmaps.RtgPixels, u32, u32) callconv(.c) i32 = null,
+
+    // --- a refresh narrower than whole rows. ---
+
+    /// A rectangle of a buffer was written by the CPU: hand its pixels on
+    /// to the display, as `refresh` hands on rows. The rectangle has been
+    /// clipped to the buffer and is never empty. A board without it is
+    /// refreshed the rectangle's rows.
+    refresh_rect: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect) callconv(.c) i32 = null,
 };
 
 /// Part of the display shown from a buffer: from display line `line`

@@ -45,6 +45,7 @@ const SetBoardOverlay = @import("pointer/setboardoverlay.zig").SetBoardOverlay;
 const MoveBoardOverlay = @import("pointer/moveboardoverlay.zig").MoveBoardOverlay;
 const BoardDisplayBitMap = @import("display/boarddisplaybitmap.zig").BoardDisplayBitMap;
 const RefreshBitMap = @import("bitmap/refreshbitmap.zig").RefreshBitMap;
+const RefreshRect = @import("bitmap/refreshrect.zig").RefreshRect;
 const WaitVBlank = @import("display/waitvblank.zig").WaitVBlank;
 const SetBoardDisplay = @import("display/setboarddisplay.zig").SetBoardDisplay;
 const SetBoardBrightness = @import("display/setboardbrightness.zig").SetBoardBrightness;
@@ -346,6 +347,9 @@ fn lvoBlendRect(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, co
 fn lvoScalePixels(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) callconv(.c) i32 {
     return ScalePixels(rb, dest, area, pixels, width, height);
 }
+fn lvoRefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
+    return RefreshRect(rb, bitmap, area);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -413,6 +417,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoBlendPixels),
     vec(lvoBlendRect),
     vec(lvoScalePixels),
+    vec(lvoRefreshRect),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -420,7 +425,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 63), vectors.len);
+    try testing.expectEqual(@as(usize, 64), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

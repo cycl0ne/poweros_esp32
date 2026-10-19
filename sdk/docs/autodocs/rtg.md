@@ -48,6 +48,7 @@ Generated from the source by `./zig build autodoc`.
 - [NextRtgDriver](#nextrtgdriver) - Walks the driver list.
 - [PackRtgColor](#packrtgcolor) - Packs three eight-bit channels into one pixel of a format.
 - [RefreshBitMap](#refreshbitmap) - Hands rows of a buffer that were written on to the display.
+- [RefreshRect](#refreshrect) - Hands a rectangle of a buffer that was written on to the display.
 - [RemRtgDriver](#remrtgdriver) - Takes a driver off the library's list.
 - [RemRtgEventServer](#remrtgeventserver) - Takes an interrupt server off one of a board's events.
 - [RtgErrorText](#rtgerrortext) - Says what an `RTGERR_` code means, in words.
@@ -2110,6 +2111,71 @@ None known.
 
 ```zig
 _ = rb.RefreshBitMap(buffer, 10, 50);
+```
+
+## RefreshRect
+
+Hands a rectangle of a buffer that was written on to the display.
+
+**SYNOPSIS**
+
+```zig
+fn RefreshRect(_: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32
+```
+
+**SINCE**
+
+1.5. LVO -256.
+
+**INPUTS**
+
+- `bitmap` - the buffer.
+- `area` - the rectangle written.
+
+**RESULT**
+
+`RTGERR_OK` - also for a rectangle with nothing of it inside the
+buffer - `RTGERR_BAD_ARG` for a buffer with no pixels or no board,
+`RTGERR_NOT_SUPPORTED` for a board that needs no telling, or what the
+driver answered.
+
+**BEHAVIOR**
+
+What `RefreshBitMap` does for rows, for a rectangle: what a caller
+that wrote part of a row - a window, a tile of a picture drawn in
+tiles - calls when it has finished. A board whose display reads the
+buffer through a cache the CPU writes into writes back only the
+rectangle's pixels, where whole rows would write back the rest of
+each row too. A board that has no way of its own is handed the
+rectangle's rows, as `RefreshBitMap` would hand them. The rectangle is
+cut to the buffer first.
+
+Rectangles that do not overlap may be handed on at once by several
+tasks, as tiles drawn on several cores are.
+
+**CONTEXT**
+
+- Waits: only if the driver does.
+- Interrupts: no. The driver may wait on its bus.
+- Locks: no spinlock may be held: a driver may wait.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RefreshBitMap`, `AllocBitMap`
+
+**EXAMPLES**
+
+```zig
+_ = rb.RefreshRect(buffer, &.{ .x = 64, .y = 128, .width = 64, .height = 64 });
 ```
 
 ## RemRtgDriver
