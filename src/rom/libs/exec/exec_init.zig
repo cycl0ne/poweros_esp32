@@ -18,6 +18,7 @@ const exec_lvo = @import("exec_lvo.zig");
 const _library = @import("library/_library.zig");
 const _resident = @import("resident/_resident.zig");
 const _task = @import("task/_task.zig");
+const _workers = @import("task/_workers.zig");
 const _locks = @import("locks/_locks.zig");
 
 const ExecBase = exec.ExecBase;
@@ -56,8 +57,12 @@ pub const LIBRARY_VERSION = 1;
 /// areas are differently aligned; they are the kernel's memcpy, memmove
 /// and memset, and a program's. 14: waitables - SignalWaitable,
 /// ResetWaitable, and WaitForAny, which waits for any of several and for
-/// no longer than it is told.
-pub const LIBRARY_REVISION = 14;
+/// no longer than it is told. 15: ShareWork, a job done by a worker task
+/// on each core at once; CacheClearE, CachePreDMA and CachePostDMA share
+/// a long range between them where the cores each drive the cache
+/// controller, and on the JH7110 CacheClearE writes a range back once,
+/// since its write-back drops the lines as well.
+pub const LIBRARY_REVISION = 15;
 const BUILD_DATE = "19.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -184,10 +189,12 @@ pub fn startSystem(base: *ExecBase, boot: *const exec.BootInfo) error{OutOfMemor
 const exec_task_pri = 5;
 const exec_task_stack = 16 * 1024;
 
-/// The exec task. The RTF_COLDSTART residents need multitasking and a
+/// The exec task. It makes the workers ShareWork hands parts to, a task
+/// on each core. The RTF_COLDSTART residents need multitasking and a
 /// proper stack, so they start here. The last one is dos.library, whose
 /// init starts the RTF_AFTERDOS residents. Then the task returns and ends
 /// quietly: RemTask frees it.
 pub fn execTask(_: *exec.interface.ExecBase) callconv(.c) void {
+    _workers.setUp(exec.SysBase);
     _ = exec.SysBase.iface().InitCode(sdk.exec.RTF_COLDSTART, 0);
 }

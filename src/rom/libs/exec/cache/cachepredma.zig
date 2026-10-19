@@ -12,7 +12,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn CachePreDMA(_: *ExecBase, address: *anyopaque, length: *u32,
+/// fn CachePreDMA(base: *ExecBase, address: *anyopaque, length: *u32,
 ///     flags: u32) *anyopaque
 /// ```
 ///
@@ -35,11 +35,13 @@ const ExecBase = @import("../exec.zig").ExecBase;
 ///
 /// BEHAVIOR:
 /// Dirty lines over the range are written back, so what is in memory is
-/// what the CPU last wrote.
+/// what the CPU last wrote. A long range is shared between the cores as
+/// `CacheClearE` shares it.
 ///
 /// CONTEXT:
-/// - Waits: no.
-/// - Interrupts: safe.
+/// - Waits: only for the other cores' parts of a long range, and never
+///   where a task may not wait.
+/// - Interrupts: safe - the range is then done alone.
 /// - Locks: none needed.
 /// - Process: a Task will do.
 ///
@@ -58,8 +60,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// var len: u32 = @intCast(buf.len);
 /// const dma_addr = sys.CachePreDMA(buf.ptr, &len, exec.DMAF_ReadFromRAM);
 /// ```
-pub fn CachePreDMA(_: *ExecBase, address: *anyopaque, length: *u32, flags: u32) *anyopaque {
+pub fn CachePreDMA(base: *ExecBase, address: *anyopaque, length: *u32, flags: u32) *anyopaque {
     _ = flags;
-    if (_cache.data_bus.clip(@intFromPtr(address), length.*)) |range| _cache.writeBack(range);
+    if (_cache.data_bus.clip(@intFromPtr(address), length.*)) |range| _cache.writeBack(base, range);
     return address;
 }

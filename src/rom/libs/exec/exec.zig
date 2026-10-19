@@ -161,6 +161,7 @@ pub const MemDebug = @import("memory/memdebug.zig").MemDebug;
 pub const SignalWaitable = @import("waitable/signalwaitable.zig").SignalWaitable;
 pub const ResetWaitable = @import("waitable/resetwaitable.zig").ResetWaitable;
 pub const WaitForAny = @import("waitable/waitforany.zig").WaitForAny;
+pub const ShareWork = @import("task/sharework.zig").ShareWork;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const startMultitasking = _task.startMultitasking;
@@ -2972,6 +2973,51 @@ test "signals: Signal wakes a waiting task, Wait, SetSignal, AllocSignal" {
     try testing.expectEqual(boot, SysBase.cpu().this_task);
     RemTask(SysBase, waiter);
     try expectNoLeaks();
+}
+
+test "ShareWork: the whole job the caller's, as one part, without workers or where it may not wait" {
+    try setUp();
+    defer deinit();
+    const Calls = struct {
+        count: u32 = 0,
+        part: u32 = 99,
+        parts: u32 = 99,
+
+        fn work(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
+            const calls: *@This() = @ptrCast(@alignCast(data.?));
+            calls.count += 1;
+            calls.part = part;
+            calls.parts = parts;
+        }
+    };
+    var calls = Calls{};
+
+    // No workers: the host has one core, and no exec task made any.
+    try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Calls.work, &calls, 4));
+    try testing.expectEqual(@as(u32, 1), calls.count);
+    try testing.expectEqual(@as(u32, 0), calls.part);
+    try testing.expectEqual(@as(u32, 1), calls.parts);
+
+    // With workers, still alone where the caller may not wait for them:
+    // before multitasking, inside Disable, in an interrupt, holding a
+    // spinlock; and when one part is asked for.
+    SysBase.workers.count = 2;
+    defer SysBase.workers.count = 0;
+    SysBase.multitasking = 0;
+    try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Calls.work, &calls, 4));
+    SysBase.multitasking = 1;
+    Disable(SysBase);
+    try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Calls.work, &calls, 4));
+    Enable(SysBase);
+    SysBase.cpu().int_depth = 1;
+    try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Calls.work, &calls, 4));
+    SysBase.cpu().int_depth = 0;
+    SysBase.cpu().hold_count = 1;
+    try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Calls.work, &calls, 4));
+    SysBase.cpu().hold_count = 0;
+    try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Calls.work, &calls, 1));
+    try testing.expectEqual(@as(u32, 6), calls.count);
+    try testing.expectEqual(@as(u32, 1), calls.parts);
 }
 
 test "waitables: SignalWaitable, ResetWaitable, WaitForAny's answers, a waiter woken, timed out and withdrawn" {

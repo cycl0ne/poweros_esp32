@@ -31,6 +31,7 @@ const List = sdk.exec.List;
 const MemDamage = sdk.exec.MemDamage;
 const MemDebugInfo = sdk.exec.MemDebugInfo;
 const Waitable = sdk.exec.Waitable;
+const WorkFn = sdk.exec.WorkFn;
 const MemHeader = sdk.exec.MemHeader;
 const Message = sdk.exec.Message;
 const MsgPort = sdk.exec.MsgPort;
@@ -352,6 +353,7 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoSignalWaitable),
     vec(lvoResetWaitable),
     vec(lvoWaitForAny),
+    vec(lvoShareWork),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -921,6 +923,12 @@ fn lvoResetWaitable(base: *ExecBase, waitable: *Waitable) callconv(.c) void {
 
 fn lvoWaitForAny(base: *ExecBase, waitables: [*]const *Waitable, count: u32, timeout_us: u64) callconv(.c) i32 {
     return exec.WaitForAny(base, waitables, count, timeout_us);
+}
+
+// --- work shared between the cores ------------------------------------------
+
+fn lvoShareWork(base: *ExecBase, work: WorkFn, data: ?*anyopaque, parts: u32) callconv(.c) u32 {
+    return exec.ShareWork(base, work, data, parts);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -152,6 +152,7 @@ pub const LVO = struct {
     pub const SignalWaitable = libraries.lvo(140);
     pub const ResetWaitable = libraries.lvo(141);
     pub const WaitForAny = libraries.lvo(142);
+    pub const ShareWork = libraries.lvo(143);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -294,6 +295,7 @@ pub const Fn = struct {
     pub const SignalWaitable = *const fn (*ExecBase, *exec.Waitable) callconv(.c) void;
     pub const ResetWaitable = *const fn (*ExecBase, *exec.Waitable) callconv(.c) void;
     pub const WaitForAny = *const fn (*ExecBase, [*]const *exec.Waitable, u32, u64) callconv(.c) i32;
+    pub const ShareWork = *const fn (*ExecBase, exec.WorkFn, ?*anyopaque, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -952,5 +954,15 @@ pub const ExecBase = opaque {
     /// The time is kept to the system tick. Not from interrupts.
     pub fn WaitForAny(self: *ExecBase, waitables: [*]const *exec.Waitable, count: u32, timeout_us: u64) i32 {
         return libraries.call(self, LVO.WaitForAny, Fn.WaitForAny, .{ waitables, count, timeout_us });
+    }
+
+    /// `work` done in as many as `parts` parts at once: by a worker task
+    /// pinned to each other core, and by the caller, which does part 0 and
+    /// returns when every part is done. The parts it was cut into: 1 when the
+    /// caller did the whole job alone - one part asked for, one core, the
+    /// workers busy, or a caller that may not wait. A part must not obtain a
+    /// semaphore the caller holds: it runs on another task.
+    pub fn ShareWork(self: *ExecBase, work: exec.WorkFn, data: ?*anyopaque, parts: u32) u32 {
+        return libraries.call(self, LVO.ShareWork, Fn.ShareWork, .{ work, data, parts });
     }
 };

@@ -76,6 +76,12 @@
 //! walks the range must not then be written back, which would put stale
 //! data into memory.
 //!
+//! **Many cores at once.** Where each core drives the controller itself -
+//! the JH7110's L2 takes a line's flush from any core - a long range is
+//! shared between the cores (`spread`, through ShareWork's workers), a
+//! run of whole lines each; where the caller may not wait for them, or
+//! they are busy, it does the range alone.
+//!
 //! **One engine for both cores.** The controller's sync registers - the
 //! address, the size, the go - and the autoload switch are the chip's,
 //! not a core's: two cores writing back at once would set each other's
@@ -88,6 +94,7 @@ const sdk = @import("sdk");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const _interrupt = @import("../interrupt/_interrupt.zig");
+const _workers = @import("../task/_workers.zig");
 const exec_base = @import("../exec_base.zig");
 
 /// Who has the cache controller's sync engine: the core's number and one,
@@ -160,7 +167,18 @@ pub const CacheHardware = struct {
     /// a chip whose two caches share their addresses, where `invalidate`
     /// is the data cache's. None where the address tells them apart.
     invalidate_icache: ?*const fn (addr: usize, size: usize) void = null,
+    /// Writing back drops the lines too: a range written back has nothing
+    /// left to invalidate.
+    writeback_drops: bool = false,
+    /// Whether each core drives the controller itself, so that a long
+    /// range is worth sharing between them: never where the controller
+    /// has one engine for the chip.
+    cores_share: *const fn () bool = never,
 };
+
+fn never() bool {
+    return false;
+}
 
 /// exec's cache driver; in the host tests, nothing (or a test's stub).
 pub var cache_hardware: CacheHardware = if (builtin.is_test) no_cache else chip_cache;
@@ -269,27 +287,62 @@ pub fn inChunks(range: Range, operation: *const fn (usize, usize) void) void {
     }
 }
 
+/// What each core is given of a shared range at least, so a range is
+/// shared from twice this. Measured on the JH7110, four cores over 64 KiB
+/// took as long as one, waking the others costing what they saved; over
+/// 256 KiB they took 0.31 ms against 0.36.
+const share_from = 64 * 1024;
+
+/// A range of whole lines handed to the hardware: shared between the
+/// cores where they each drive it and the range is long enough, else a
+/// chunk at a time.
+///
+/// INPUTS:
+/// - `base` - exec, whose workers share it.
+/// - `range` - whole lines.
+/// - `operation` - what the hardware does with each piece.
+fn spread(base: *ExecBase, range: Range, operation: *const fn (usize, usize) void) void {
+    const bytes = range.end - range.start;
+    if (bytes < share_from or !cache_hardware.cores_share()) return inChunks(range, operation);
+    var job = Spread{ .range = range, .operation = operation };
+    _ = _workers.share(base, &spreadPart, &job, @intCast(@min(bytes / share_from, exec_base.max_cores)));
+}
+
+/// A range shared between the cores.
+const Spread = struct { range: Range, operation: *const fn (usize, usize) void };
+
+/// One core's run of whole lines out of a shared range.
+fn spreadPart(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
+    const job: *const Spread = @ptrCast(@alignCast(data.?));
+    const lines = (job.range.end - job.range.start) / line_size;
+    const start = job.range.start + lines * part / parts * line_size;
+    const end = job.range.start + lines * (part + 1) / parts * line_size;
+    if (start < end) inChunks(.{ .start = start, .end = end }, job.operation);
+}
+
 /// The range's dirty DCache lines to memory.
 ///
 /// INPUTS:
+/// - `base` - exec, whose workers share a long range.
 /// - `range` - on the data bus.
-pub fn writeBack(range: Range) void {
+pub fn writeBack(base: *ExecBase, range: Range) void {
     const parts = Parts.of(range);
     if (parts.first) |line| cache_hardware.writeback_line(line);
     if (parts.last) |line| cache_hardware.writeback_line(line);
-    if (parts.middle) |middle| inChunks(middle, cache_hardware.writeback);
+    if (parts.middle) |middle| spread(base, middle, cache_hardware.writeback);
 }
 
 /// The range's DCache lines invalidated.
 ///
 /// INPUTS:
-/// - `base` - exec, for the Disable a shared line needs.
+/// - `base` - exec, for the Disable a shared line needs, and whose
+///   workers share a long range.
 /// - `range` - on the data bus.
 pub fn invalidateData(base: *ExecBase, range: Range) void {
     const parts = Parts.of(range);
     if (parts.first) |line| invalidateShared(base, line);
     if (parts.last) |line| invalidateShared(base, line);
-    if (parts.middle) |middle| inChunks(middle, cache_hardware.invalidate);
+    if (parts.middle) |middle| spread(base, middle, cache_hardware.invalidate);
 }
 
 /// A line other data shares: written back first, so that data stays, and
@@ -511,7 +564,9 @@ const p4 = struct {
 /// names its range. Code and data share one address
 /// space, and code written to memory is reached by fencing each core's
 /// instruction fetch: this one's at once, every other one's at its next
-/// exception exit (`syncFetch`).
+/// exception exit (`syncFetch`). Each core writes its lines to the
+/// controller itself, and the controller takes them from several at once
+/// faster than from one, so a long range is shared between the cores.
 const rv64 = struct {
     const hardware: CacheHardware = .{
         .writeback_all = nothing,
@@ -520,9 +575,16 @@ const rv64 = struct {
         .writeback_line = flushLine,
         .invalidate = flush,
         .invalidate_icache = fenceFetchRange,
+        .writeback_drops = true,
+        .cores_share = flushing,
     };
 
     fn nothing() void {}
+
+    /// Whether there is a controller to flush through: none on QEMU.
+    fn flushing() bool {
+        return sdk.hardware.ccache.flush64 != 0;
+    }
 
     fn flush(addr: usize, size: usize) void {
         sdk.hardware.ccache.flush(addr, size);

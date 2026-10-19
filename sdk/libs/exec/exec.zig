@@ -13,6 +13,7 @@ pub const ports = @import("ports.zig");
 pub const semaphores = @import("semaphores.zig");
 pub const locks = @import("locks.zig");
 pub const waitables = @import("waitables.zig");
+pub const work = @import("work.zig");
 pub const devices = @import("devices.zig");
 pub const resident = @import("resident.zig");
 pub const alerts = @import("alerts.zig");
@@ -193,6 +194,8 @@ pub const Waitable = waitables.Waitable;
 pub const WAIT_FOREVER = waitables.WAIT_FOREVER;
 pub const WAIT_TIMEOUT = waitables.WAIT_TIMEOUT;
 pub const WAIT_MAX = waitables.WAIT_MAX;
+
+pub const WorkFn = work.WorkFn;
 
 pub const Device = devices.Device;
 pub const Unit = devices.Unit;

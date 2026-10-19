@@ -21,6 +21,7 @@ const _interrupt = @import("interrupt/_interrupt.zig");
 const _library = @import("library/_library.zig");
 const _log = @import("log/_log.zig");
 const _waitable = @import("waitable/_waitable.zig");
+const _workers = @import("task/_workers.zig");
 const _memory = @import("memory/_memory.zig");
 const _failure = @import("failure/_failure.zig");
 
@@ -198,6 +199,9 @@ pub const ExecBase = extern struct {
     /// The tasks in WaitForAny, by a record on each one's stack
     /// (waitable/_waitable.zig). Under Disable.
     waiting: ?*_waitable.Record = null,
+    /// The worker task on each core that ShareWork hands parts to
+    /// (task/_workers.zig).
+    workers: _workers.Pool = .{},
     /// exec's own spinlocks, a domain each (locks/_locks.zig): the
     /// semaphores - their counts and queues, and the public list; the
     /// memory - its regions and what is free in them.
