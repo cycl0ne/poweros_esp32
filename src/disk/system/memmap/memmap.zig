@@ -14,6 +14,12 @@
 //! Under the bands a legend says what the colours are: the system, the
 //! tasks that hold the most, the ended ones together, the rest, free.
 //!
+//! On a machine whose RAM is one kind (the board's SYSTAG_UnifiedMemory)
+//! the regions are pieces of that one RAM, so they share one band: in the
+//! order of their addresses, each given pixels for its size, every pixel
+//! the same number of bytes, and a short dark tick where one region ends
+//! and the next begins. Amounts are in KB, MB or GB, as suits them.
+//!
 //! A look is the two steps of `sdk.exec.memowners`: the regions walked with
 //! exec's memory list locked - a spinlock, under which this only writes
 //! bytes into memory it took before, one a pixel, its owner's index - and
@@ -33,6 +39,8 @@ const intuition = sdk.intuition;
 const motion = sdk.motion;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const MotionBase = sdk.interface.motion.MotionBase;
@@ -48,10 +56,12 @@ const wc = intuition.windowclass;
 const sc = intuition.screens;
 const classusr = intuition.classusr;
 const cv = sdk.gadgets.canvas;
+const figures = @import("figures.zig");
+const amount = figures.amount;
 
 pub const COMMAND_NAME = "MemMap";
-const VERSION = "1.0";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (15.10.2026)\r\n";
+const VERSION = "1.1";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while its window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -64,13 +74,20 @@ const MSG_NOMEMORY = "%s: no memory for the window\n";
 const MSG_NOSCREEN = "%s: no screen to open on\n";
 const MSG_NOWINDOW = "%s: no window\n";
 
-/// The regions drawn; any more are counted, not drawn.
+/// The regions drawn, a band each; any more are counted, not drawn.
 const max_regions = 6;
+/// The regions drawn in the one band of a machine whose RAM is one kind.
+const max_joined = 32;
 /// The owners told apart. Each takes two pixel values - its colour and
-/// the darker private one - below the two kept for the rest and for free.
+/// the darker private one - below the three kept for the ticks between
+/// regions, for the rest and for free.
 const max_owners = 120;
+const cell_mark: u8 = 0xFD;
 const cell_rest: u8 = 0xFE;
 const cell_free: u8 = 0xFF;
+comptime {
+    if (max_owners * 2 > cell_mark) @compileError("MemMap: more owners than pixel values");
+}
 
 /// The picture's size to start with, which is what it asks the layout for.
 const start_width = 560;
@@ -87,6 +104,7 @@ const colour_free: Pen = 0xFFE4E4E4;
 const colour_system: Pen = 0xFF5470A0;
 const colour_ended: Pen = 0xFFD03030;
 const colour_others: Pen = 0xFF9A9A9A;
+const colour_mark: Pen = 0xFF202020;
 
 fn pair(t: sdk.utility.Tag, data: usize) TagItem {
     return .{ .tag = t, .data = data };
@@ -101,7 +119,8 @@ fn darker(colour: Pen) Pen {
     return 0xFF00_0000 | red << 16 | green << 8 | blue;
 }
 
-/// One region as the last look found it, and where its band is.
+/// A band as the last look laid it out: one region's, or on a machine
+/// whose RAM is one kind all of them.
 const Band = struct {
     name: [40:0]u8 = @splat(0),
     size: usize = 0,
@@ -110,6 +129,13 @@ const Band = struct {
     first: usize = 0,
     top: i32 = 0,
     rows: i32 = 0,
+};
+
+/// The pixels of `Map.cells` one region is drawn into: its band's, or its
+/// share of the one band.
+const Part = struct {
+    first: usize = 0,
+    pixels: usize = 0,
 };
 
 /// What the program keeps: too much for its stack, so it is in a block of
@@ -125,14 +151,17 @@ const Map = struct {
     width: i32 = start_width,
     height: i32 = start_height,
     interval: u32,
+    /// Whether the board says its RAM is one kind: one band for all of it.
+    unified: bool = false,
     /// The pixels of the bands, one byte each: an owner's index twice, one
-    /// more when private, or `cell_rest` or `cell_free`. Allocated outside
-    /// the walk, which may not allocate.
+    /// more when private, or `cell_mark`, `cell_rest` or `cell_free`.
+    /// Allocated outside the walk, which may not allocate.
     cells: ?[*]u8 = null,
     cells_size: usize = 0,
     tally: exec.memowners.Tally(max_owners) = .{},
     bands: [max_regions]Band = @splat(.{}),
     band_count: usize = 0,
+    parts: [max_joined]Part = @splat(.{}),
     band_width: usize = 0,
     regions_left_out: u32 = 0,
     /// Pixel value to colour.
@@ -176,22 +205,48 @@ const Map = struct {
         return @intCast(value);
     }
 
-    /// The bands laid out for `count` regions: each a line for its name and
-    /// as many rows as share the height left above the legend.
-    fn place(map: *Map, count: usize) void {
-        const shown: i32 = @intCast(@min(count, max_regions));
+    /// The bands laid out for the regions drawn: a band each - or one for
+    /// all of them on a machine whose RAM is one kind - each a line for its
+    /// name and as many rows as share the height left above the legend; and
+    /// each region's pixels in them.
+    fn place(map: *Map, regions: []const *const exec.MemHeader) void {
+        const bands: usize = if (map.unified) @min(regions.len, 1) else regions.len;
+        map.band_count = bands;
+        const shown: i32 = @intCast(bands);
         map.band_width = @intCast(@max(map.width - 2 * margin, 1));
         const legend_height = (legend_rows + 1) * map.line_height + margin;
         const room = map.height - 2 * margin - legend_height - shown * map.line_height;
         const rows = @max(@divTrunc(room, @max(shown, 1)), 2);
         var top: i32 = margin;
         var first: usize = 0;
-        for (map.bands[0..@intCast(shown)]) |*band| {
+        for (map.bands[0..bands]) |*band| {
             band.top = top + map.line_height;
             band.rows = rows;
             band.first = first;
             first += map.band_width * @as(usize, @intCast(rows));
             top = band.top + rows;
+        }
+        if (!map.unified) {
+            for (regions, map.bands[0..bands], map.parts[0..bands]) |region, *band, *part| {
+                band.size = sizeOf(region);
+                copyName(&band.name, region.node.name);
+                part.* = .{ .first = band.first, .pixels = map.band_width * @as(usize, @intCast(band.rows)) };
+            }
+            return;
+        }
+        if (bands == 0) return;
+        // One band: each region's pixels in proportion to its bytes, so a
+        // pixel is the same number of bytes all along.
+        const band = &map.bands[0];
+        copyName(&band.name, "Memory");
+        band.size = 0;
+        for (regions) |region| band.size += sizeOf(region);
+        const pixels = map.band_width * @as(usize, @intCast(band.rows));
+        var before: usize = 0;
+        for (regions, map.parts[0..regions.len]) |region, *part| {
+            const piece = figures.share(before, sizeOf(region), band.size, pixels);
+            before += sizeOf(region);
+            part.* = .{ .first = band.first + piece.first, .pixels = piece.pixels };
         }
     }
 
@@ -202,38 +257,66 @@ const Map = struct {
         const sys = map.sys;
         map.tally = .{};
         map.band_count = 0;
-        map.regions_left_out = 0;
         const list = sys.LockExecList(exec.EXECLIST_MEMORY).?;
+        // The regions, as many as are kept apart: in the list's order, or
+        // by address where they are pieces of one RAM.
+        var order: [max_joined]*const exec.MemHeader = undefined;
+        var kept: usize = 0;
         var count: usize = 0;
         var counting = list.iterator();
-        while (counting.next()) |_| count += 1;
-        map.place(count);
-        var it = list.iterator();
-        while (it.next()) |node| {
-            const region: *const exec.MemHeader = @fieldParentPtr("node", node);
-            map.tally.regions += 1;
-            const band: ?*Band = if (map.band_count < max_regions and map.cells != null) &map.bands[map.band_count] else null;
-            if (band) |shown| {
-                map.band_count += 1;
-                shown.size = @intFromPtr(region.upper) - @intFromPtr(region.lower);
-                copyName(&shown.name, node.name);
-            } else map.regions_left_out += 1;
-            const pixels = map.band_width * @as(usize, @intCast(if (band) |shown| shown.rows else 0));
-            const into: []u8 = if (band) |shown| map.cells.?[shown.first..][0..pixels] else &.{};
-            if (band != null and into.len <= map.cells_size) @memset(into, cell_free);
-            var walk = exec.RegionWalk.init(region);
-            while (walk.next()) |stretch| {
-                const slot = map.tally.add(stretch);
-                const shown = band orelse continue;
-                if (into.len > map.cells_size) continue;
-                const value: u8 = if (stretch.free) cell_free else if (slot) |index| @intCast(index * 2 + @intFromBool(stretch.private)) else cell_rest;
-                paint(into, @intFromPtr(region.lower), shown.size, stretch, value);
-            }
-            if (map.tally.damaged == null) map.tally.damaged = walk.damaged;
+        while (counting.next()) |node| : (count += 1) {
+            if (kept == order.len) continue;
+            order[kept] = @fieldParentPtr("node", node);
+            kept += 1;
+        }
+        if (map.unified) byAddress(order[0..kept]);
+        const shown: usize = if (map.cells == null) 0 else if (map.unified) kept else @min(kept, max_regions);
+        map.place(order[0..shown]);
+        for (order[0..kept], 0..) |region, index| map.walkRegion(region, if (index < shown) &map.parts[index] else null);
+        // Those past what `order` holds: counted, not drawn.
+        var index: usize = 0;
+        var rest = list.iterator();
+        while (rest.next()) |node| : (index += 1) {
+            if (index >= kept) map.walkRegion(@fieldParentPtr("node", node), null);
+        }
+        // A tick where one region of the one band ends and the next begins:
+        // the first pixel of the next, and the ones above and below it.
+        if (map.unified and shown > 1) {
+            for (map.parts[1..shown]) |part| map.mark(part.first);
         }
         sys.UnlockExecList(exec.EXECLIST_MEMORY);
+        map.regions_left_out = @intCast(count - shown);
         map.tally.name(sys);
         map.colour();
+    }
+
+    /// One region's blocks counted, and painted into `part` when it is
+    /// drawn.
+    fn walkRegion(map: *Map, region: *const exec.MemHeader, part: ?*const Part) void {
+        map.tally.regions += 1;
+        const drawn = part orelse &Part{};
+        const into: []u8 = if (drawn.pixels != 0 and drawn.first + drawn.pixels <= map.cells_size) map.cells.?[drawn.first..][0..drawn.pixels] else &.{};
+        @memset(into, cell_free);
+        const size = sizeOf(region);
+        var walk = exec.RegionWalk.init(region);
+        while (walk.next()) |stretch| {
+            const slot = map.tally.add(stretch);
+            if (into.len == 0) continue;
+            const value: u8 = if (stretch.free) cell_free else if (slot) |index| @intCast(index * 2 + @intFromBool(stretch.private)) else cell_rest;
+            paint(into, @intFromPtr(region.lower), size, stretch, value);
+        }
+        if (map.tally.damaged == null) map.tally.damaged = walk.damaged;
+    }
+
+    /// The tick at pixel `at` of the one band.
+    fn mark(map: *Map, at: usize) void {
+        const cells = map.cells orelse return;
+        const band = &map.bands[0];
+        const end = band.first + map.band_width * @as(usize, @intCast(band.rows));
+        if (at >= end or end > map.cells_size) return;
+        cells[at] = cell_mark;
+        if (at >= band.first + map.band_width) cells[at - map.band_width] = cell_mark;
+        if (at + map.band_width < end) cells[at + map.band_width] = cell_mark;
     }
 
     /// The table from pixel values to colours: the system's, the ended
@@ -245,6 +328,7 @@ const Map = struct {
             map.table[index * 2] = base;
             map.table[index * 2 + 1] = darker(base);
         }
+        map.table[cell_mark] = colour_mark;
         map.table[cell_rest] = colour_others;
         map.table[cell_free] = colour_free;
     }
@@ -260,9 +344,13 @@ const Map = struct {
         var text: [96:0]u8 = @splat(0);
         for (map.bands[0..map.band_count]) |*band| {
             const per_pixel = band.size / @max(map.band_width * @as(usize, @intCast(band.rows)), 1);
-            const stream = exec.fmtStream(.{ @as([*:0]const u8, &band.name), @as(u32, @intCast(band.size / 1024)), @as(u32, @intCast(@max(per_pixel, 1))) });
-            comptime exec.checkFormat("%s - %u KiB, a pixel %u bytes", @TypeOf(.{ @as([*:0]const u8, ""), @as(u32, 0), @as(u32, 0) }));
-            _ = map.sys.RawDoFmt("%s - %u KiB, a pixel %u bytes", &stream, null, &text);
+            var size_text: [24:0]u8 = @splat(0);
+            var pixel_text: [24:0]u8 = @splat(0);
+            _ = amount(&size_text, band.size);
+            _ = amount(&pixel_text, @max(per_pixel, 1));
+            const stream = exec.fmtStream(.{ @as([*:0]const u8, &band.name), @as([*:0]const u8, &size_text), @as([*:0]const u8, &pixel_text) });
+            comptime exec.checkFormat("%s - %s, a pixel %s", @TypeOf(.{ @as([*:0]const u8, ""), @as([*:0]const u8, ""), @as([*:0]const u8, "") }));
+            _ = map.sys.RawDoFmt("%s - %s, a pixel %s", &stream, null, &text);
             write(map, margin, band.top - map.line_height, ink, &text);
             const cells = map.cells orelse continue;
             gb.WriteLUTPixelArray(rp, cells + band.first, @intCast(map.band_width), &map.table, 0, 0, &.{
@@ -283,9 +371,9 @@ const Map = struct {
         var y = map.height - margin - (legend_rows + 1) * map.line_height;
         var text: [96:0]u8 = @splat(0);
         if (tally.damaged) |at| {
-            const stream = exec.fmtStream(.{@as(u32, @truncate(at))});
-            comptime exec.checkFormat("A region is damaged at 0x%08x: the rest of it is not shown", @TypeOf(.{@as(u32, 0)}));
-            _ = map.sys.RawDoFmt("A region is damaged at 0x%08x: the rest of it is not shown", &stream, null, &text);
+            const stream = exec.fmtStream(.{at});
+            comptime exec.checkFormat("A region is damaged at 0x%08zx: the rest of it is not shown", @TypeOf(.{@as(usize, 0)}));
+            _ = map.sys.RawDoFmt("A region is damaged at 0x%08zx: the rest of it is not shown", &stream, null, &text);
         } else if (map.regions_left_out != 0) {
             const stream = exec.fmtStream(.{ tally.regions, tally.blocks, map.regions_left_out, map.interval });
             comptime exec.checkFormat("%u regions, %u blocks (%u regions not shown) - every %u s", @TypeOf(.{ @as(u32, 0), @as(u32, 0), @as(u32, 0), @as(u32, 0) }));
@@ -331,7 +419,7 @@ const Map = struct {
     }
 
     /// One entry of the legend: a swatch - two-toned when `shade` differs -
-    /// and its words, with the KiB when there is a count.
+    /// and its words, with the amount when there is a count.
     fn legendEntry(map: *Map, index: *usize, top: i32, colour_value: Pen, shade: Pen, label: [*:0]const u8, bytes: ?usize) void {
         if (index.* >= 2 * legend_rows) return;
         const column: i32 = @intCast(index.* % 2);
@@ -346,9 +434,11 @@ const Map = struct {
         map.gb.RectFill(map.rp, &.{ .min_x = x + @divTrunc(swatch, 2), .min_y = y + 2, .max_x = x + swatch, .max_y = y + 2 + swatch });
         var text: [64:0]u8 = @splat(0);
         if (bytes) |count| {
-            const stream = exec.fmtStream(.{ label, @as(u32, @intCast(count / 1024)) });
-            comptime exec.checkFormat("%s  %u KiB", @TypeOf(.{ @as([*:0]const u8, ""), @as(u32, 0) }));
-            _ = map.sys.RawDoFmt("%s  %u KiB", &stream, null, &text);
+            var count_text: [24:0]u8 = @splat(0);
+            _ = amount(&count_text, count);
+            const stream = exec.fmtStream(.{ label, @as([*:0]const u8, &count_text) });
+            comptime exec.checkFormat("%s  %s", @TypeOf(.{ @as([*:0]const u8, ""), @as([*:0]const u8, "") }));
+            _ = map.sys.RawDoFmt("%s  %s", &stream, null, &text);
         } else {
             const stream = exec.fmtStream(.{label});
             comptime exec.checkFormat("%s", @TypeOf(.{@as([*:0]const u8, "")}));
@@ -369,6 +459,35 @@ fn paint(into: []u8, lower: usize, size: usize, stretch: exec.Stretch, value: u8
     const first: usize = @intCast(@min(from * pixels / size, pixels - 1));
     const last: usize = @intCast(@min(@max((to * pixels + size - 1) / size, first + 1), pixels));
     @memset(into[first..last], value);
+}
+
+/// A region's bytes.
+fn sizeOf(region: *const exec.MemHeader) usize {
+    return @intFromPtr(region.upper) - @intFromPtr(region.lower);
+}
+
+/// The regions by their lowest address; few enough to sort by insertion,
+/// under the memory list's lock.
+fn byAddress(regions: []*const exec.MemHeader) void {
+    var index: usize = 1;
+    while (index < regions.len) : (index += 1) {
+        const moving = regions[index];
+        var to = index;
+        while (to > 0 and @intFromPtr(regions[to - 1].lower) > @intFromPtr(moving.lower)) : (to -= 1) regions[to] = regions[to - 1];
+        regions[to] = moving;
+    }
+}
+
+/// Whether the board says its RAM is one kind (SYSTAG_UnifiedMemory). No
+/// when expansion.library is not there to ask.
+fn unifiedMemory(sys: *ExecBase) bool {
+    const expansion = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return false;
+    defer sys.CloseLibrary(expansion);
+    const utility = sys.OpenLibrary(sdk.utility.UTILITYNAME, 0) orelse return false;
+    defer sys.CloseLibrary(utility);
+    const eb: *ExpansionBase = @ptrCast(expansion);
+    const ub: *UtilityBase = @ptrCast(utility);
+    return ub.GetTagData(sdk.expansion.systemtags.SYSTAG_UnifiedMemory, 0, eb.SystemTags()) != 0;
 }
 
 /// The living task of rank `rank` - 0 holds the most - or null.
@@ -502,7 +621,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }));
     defer sys.FreeVec(map);
-    map.* = .{ .sys = sys, .gb = gb, .ib = ib, .canvas = canvas, .draw_info = draw_info, .interval = interval };
+    map.* = .{ .sys = sys, .gb = gb, .ib = ib, .canvas = canvas, .draw_info = draw_info, .interval = interval, .unified = unifiedMemory(sys) };
     defer if (map.cells) |cells| sys.FreeVec(cells);
 
     var open = wc.WmOpen{};

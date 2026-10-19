@@ -200,7 +200,8 @@ with `-Dmemdebug=true` has the mode on from exec's start. The
 and bytes: the system, each task by number and name, and the numbers of
 tasks that have ended with what they left. `C:Top` adds a column of what
 each task holds, `SYS:System/MemMap` draws the regions with each block
-in its owner's colour, and the ROM debugger's `memowners` lists them on
+in its owner's colour - on a machine whose RAM is one kind all of them
+in one band, by address - and the ROM debugger's `memowners` lists them on
 the serial console, or one owner's blocks. A program walks the blocks
 itself with `exec.RegionWalk` under `LockExecList(EXECLIST_MEMORY)`, or
 sums them with `exec.memowners.Tally`.
@@ -238,7 +239,10 @@ for (keys.slice()) |key| use(key);
 regions with those attributes; with `MEMF_LARGEST` the largest block
 `AllocMem` could answer, with `MEMF_TOTAL` the regions' whole size. Another task, on any
 core, may allocate the moment it has answered, so a program allocates and
-tests the answer rather than asking first. `C:Avail` prints the numbers.
+tests the answer rather than asking first. `C:Avail` prints the numbers:
+internal, external and the total, or on a machine whose RAM is one kind
+(the board's `SYSTAG_UnifiedMemory`), where every region is both, the
+total alone.
 
 **When memory runs short.** An allocation that finds no room asks the
 low-memory handlers, highest priority first, and tries again after each
