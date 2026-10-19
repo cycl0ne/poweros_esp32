@@ -30,6 +30,7 @@ const LibraryInit = sdk.exec.LibraryInit;
 const List = sdk.exec.List;
 const MemDamage = sdk.exec.MemDamage;
 const MemDebugInfo = sdk.exec.MemDebugInfo;
+const Waitable = sdk.exec.Waitable;
 const MemHeader = sdk.exec.MemHeader;
 const Message = sdk.exec.Message;
 const MsgPort = sdk.exec.MsgPort;
@@ -348,6 +349,9 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoEndSystemMemory),
     vec(lvoSetMemOwner),
     vec(lvoMemDebug),
+    vec(lvoSignalWaitable),
+    vec(lvoResetWaitable),
+    vec(lvoWaitForAny),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -903,6 +907,20 @@ fn lvoSetMemOwner(base: *ExecBase, memory_block: ?*anyopaque, task: ?*Task) call
 
 fn lvoMemDebug(base: *ExecBase, action: u32, info: ?*MemDebugInfo, found: ?[*]MemDamage, found_max: u32) callconv(.c) u32 {
     return exec.MemDebug(base, action, info, found, found_max);
+}
+
+// --- waitables -----------------------------------------------------------------
+
+fn lvoSignalWaitable(base: *ExecBase, waitable: *Waitable) callconv(.c) void {
+    exec.SignalWaitable(base, waitable);
+}
+
+fn lvoResetWaitable(base: *ExecBase, waitable: *Waitable) callconv(.c) void {
+    exec.ResetWaitable(base, waitable);
+}
+
+fn lvoWaitForAny(base: *ExecBase, waitables: [*]const *Waitable, count: u32, timeout_us: u64) callconv(.c) i32 {
+    return exec.WaitForAny(base, waitables, count, timeout_us);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

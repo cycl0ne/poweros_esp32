@@ -83,6 +83,7 @@ const Remove = @import("../list/remove.zig").Remove;
 const AddTail = @import("../list/addtail.zig").AddTail;
 const Deallocate = @import("../memory/deallocate.zig").Deallocate;
 const _locks = @import("../locks/_locks.zig");
+const _waitable = @import("../waitable/_waitable.zig");
 const _memory = @import("../memory/_memory.zig");
 
 /// SysFlags: scheduling attention required (a switch may be due).
@@ -602,6 +603,7 @@ pub fn killTask(base: *ExecBase, task: *Task) bool {
     }
     stopElsewhere(base, task);
     _locks.withdraw(base, task);
+    _waitable.withdraw(base, task);
     sys.Disable();
     defer sys.Enable();
     if (task.state == .ready or task.state == .wait) sys.Remove(&task.node);

@@ -115,4 +115,5 @@ fn onTick(_: u6) void {
     }
     exec.tickQuantum(exec.SysBase);
     exec.tickLog(exec.SysBase);
+    exec.tickWaitables(exec.SysBase);
 }

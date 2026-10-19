@@ -149,6 +149,9 @@ pub const LVO = struct {
     pub const EndSystemMemory = libraries.lvo(137);
     pub const SetMemOwner = libraries.lvo(138);
     pub const MemDebug = libraries.lvo(139);
+    pub const SignalWaitable = libraries.lvo(140);
+    pub const ResetWaitable = libraries.lvo(141);
+    pub const WaitForAny = libraries.lvo(142);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -288,6 +291,9 @@ pub const Fn = struct {
     pub const EndSystemMemory = *const fn (*ExecBase) callconv(.c) void;
     pub const SetMemOwner = *const fn (*ExecBase, ?*anyopaque, ?*exec.Task) callconv(.c) bool;
     pub const MemDebug = *const fn (*ExecBase, u32, ?*exec.MemDebugInfo, ?[*]exec.MemDamage, u32) callconv(.c) u32;
+    pub const SignalWaitable = *const fn (*ExecBase, *exec.Waitable) callconv(.c) void;
+    pub const ResetWaitable = *const fn (*ExecBase, *exec.Waitable) callconv(.c) void;
+    pub const WaitForAny = *const fn (*ExecBase, [*]const *exec.Waitable, u32, u64) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -927,5 +933,24 @@ pub const ExecBase = opaque {
     /// state and its counts. The number of things wrong for a check, else 0.
     pub fn MemDebug(self: *ExecBase, action: u32, info: ?*exec.MemDebugInfo, found: ?[*]exec.MemDamage, found_max: u32) u32 {
         return libraries.call(self, LVO.MemDebug, Fn.MemDebug, .{ action, info, found, found_max });
+    }
+
+    /// Signal `waitable`: it stays signalled until ResetWaitable, and every
+    /// task waiting on it in WaitForAny is woken. From interrupts too.
+    pub fn SignalWaitable(self: *ExecBase, waitable: *exec.Waitable) void {
+        return libraries.call(self, LVO.SignalWaitable, Fn.SignalWaitable, .{waitable});
+    }
+
+    /// `waitable` unsignalled again, for the next time it is waited on.
+    pub fn ResetWaitable(self: *ExecBase, waitable: *exec.Waitable) void {
+        return libraries.call(self, LVO.ResetWaitable, Fn.ResetWaitable, .{waitable});
+    }
+
+    /// Wait until one of `count` waitables (at most WAIT_MAX) is signalled, or
+    /// `timeout_us` has gone by: the first one signalled, by its place in
+    /// `waitables`, or WAIT_TIMEOUT. 0 only looks; WAIT_FOREVER has no limit.
+    /// The time is kept to the system tick. Not from interrupts.
+    pub fn WaitForAny(self: *ExecBase, waitables: [*]const *exec.Waitable, count: u32, timeout_us: u64) i32 {
+        return libraries.call(self, LVO.WaitForAny, Fn.WaitForAny, .{ waitables, count, timeout_us });
     }
 };

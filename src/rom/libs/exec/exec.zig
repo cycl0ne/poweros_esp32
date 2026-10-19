@@ -101,6 +101,8 @@ pub const DebugHardware = @import("debug/_debug.zig").DebugHardware;
 /// The chip's part of the ROM debugger, which the kernel installs.
 pub const debug_hardware = &@import("debug/_debug.zig").debug_hardware;
 pub const tickLog = _log.tickLog;
+/// From core 0's tick: the waiters of WaitForAny whose time has run out.
+pub const tickWaitables = @import("waitable/_waitable.zig").tickWaitables;
 /// The log's clock, microseconds since the boot; the kernel sets it.
 pub const log_clock = &_log.clock;
 pub const log_ring = &_log.ring;
@@ -156,6 +158,9 @@ pub const BeginSystemMemory = @import("memory/beginsystemmemory.zig").BeginSyste
 pub const EndSystemMemory = @import("memory/endsystemmemory.zig").EndSystemMemory;
 pub const SetMemOwner = @import("memory/setmemowner.zig").SetMemOwner;
 pub const MemDebug = @import("memory/memdebug.zig").MemDebug;
+pub const SignalWaitable = @import("waitable/signalwaitable.zig").SignalWaitable;
+pub const ResetWaitable = @import("waitable/resetwaitable.zig").ResetWaitable;
+pub const WaitForAny = @import("waitable/waitforany.zig").WaitForAny;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const startMultitasking = _task.startMultitasking;
@@ -2966,6 +2971,76 @@ test "signals: Signal wakes a waiting task, Wait, SetSignal, AllocSignal" {
     try testing.expectEqual(boot_ctx, exceptionExit(ctx(waiter)));
     try testing.expectEqual(boot, SysBase.cpu().this_task);
     RemTask(SysBase, waiter);
+    try expectNoLeaks();
+}
+
+test "waitables: SignalWaitable, ResetWaitable, WaitForAny's answers, a waiter woken, timed out and withdrawn" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+    const _waitable = @import("waitable/_waitable.zig");
+    const Waitable = sdk.exec.Waitable;
+    const TIMEOUT = sdk.exec.WAIT_TIMEOUT;
+    const FOREVER = sdk.exec.WAIT_FOREVER;
+    const SINGLE = sdk.exec.tasks.SIGF_SINGLE;
+
+    // Nothing signalled: 0 only looks, and a count out of range answers
+    // at once.
+    var one: Waitable = .{};
+    var two: Waitable = .{};
+    const both = [_]*Waitable{ &one, &two };
+    try testing.expectEqual(TIMEOUT, WaitForAny(SysBase, &both, 2, 0));
+    try testing.expectEqual(TIMEOUT, WaitForAny(SysBase, &both, 0, FOREVER));
+    try testing.expectEqual(TIMEOUT, WaitForAny(SysBase, &both, sdk.exec.WAIT_MAX + 1, FOREVER));
+    // One signalled before the wait is found at once; of two, the first
+    // in the list; it stays signalled until it is reset.
+    SignalWaitable(SysBase, &two);
+    try testing.expectEqual(@as(i32, 1), WaitForAny(SysBase, &both, 2, FOREVER));
+    SignalWaitable(SysBase, &one);
+    try testing.expectEqual(@as(i32, 0), WaitForAny(SysBase, &both, 2, FOREVER));
+    try testing.expectEqual(@as(i32, 0), WaitForAny(SysBase, &both, 2, 0));
+    ResetWaitable(SysBase, &one);
+    ResetWaitable(SysBase, &two);
+    try testing.expectEqual(TIMEOUT, WaitForAny(SysBase, &both, 2, 0));
+
+    // A task waiting on `one` alone (the part of WaitForAny before its
+    // Wait): `two` does not wake it, `one` does.
+    const boot = SysBase.cpu().this_task;
+    const waiter = CreateTask(SysBase, "waiter", 5, &idleCode, 1024).?;
+    try testing.expectEqual(ctx(waiter), exceptionExit(boot_ctx));
+    var record = _waitable.Record{ .task = waiter, .waitables = &both, .count = 1, .deadline = 1000 };
+    _waitable.enlist(SysBase, &record);
+    _task.blockCurrent(SysBase, waiter, SINGLE);
+    try testing.expectEqual(boot_ctx, exceptionExit(ctx(waiter)));
+    SignalWaitable(SysBase, &two);
+    try testing.expectEqual(TaskState.wait, waiter.state);
+    SignalWaitable(SysBase, &one);
+    try testing.expectEqual(TaskState.ready, waiter.state);
+    try testing.expectEqual(ctx(waiter), exceptionExit(boot_ctx));
+    try testing.expectEqual(SINGLE, Wait(SysBase, SINGLE));
+    ResetWaitable(SysBase, &one);
+
+    // Its time: not yet at 999 microseconds, out at 1000.
+    _task.blockCurrent(SysBase, waiter, SINGLE);
+    try testing.expectEqual(boot_ctx, exceptionExit(ctx(waiter)));
+    _waitable.expire(SysBase, 999);
+    try testing.expect(!record.timed_out);
+    try testing.expectEqual(TaskState.wait, waiter.state);
+    _waitable.expire(SysBase, 1000);
+    try testing.expect(record.timed_out);
+    try testing.expectEqual(TaskState.ready, waiter.state);
+    try testing.expectEqual(ctx(waiter), exceptionExit(boot_ctx));
+    _ = Wait(SysBase, SINGLE);
+
+    // Removed while it waits: off the list, which the next signal walks.
+    _ = SetTaskPri(SysBase, waiter, -5);
+    try testing.expectEqual(boot_ctx, exceptionExit(ctx(waiter)));
+    try testing.expectEqual(boot, SysBase.cpu().this_task);
+    try testing.expect(SysBase.waiting == &record);
+    RemTask(SysBase, waiter);
+    try testing.expect(SysBase.waiting == null);
+    SignalWaitable(SysBase, &one);
     try expectNoLeaks();
 }
 

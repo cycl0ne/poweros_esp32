@@ -87,4 +87,5 @@ fn onTick(_: u5) void {
     ticks +%= 1;
     exec.tickQuantum(exec.SysBase);
     exec.tickLog(exec.SysBase);
+    exec.tickWaitables(exec.SysBase);
 }

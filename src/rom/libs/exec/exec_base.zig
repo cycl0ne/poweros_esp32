@@ -20,6 +20,7 @@ const exec = @import("exec.zig");
 const _interrupt = @import("interrupt/_interrupt.zig");
 const _library = @import("library/_library.zig");
 const _log = @import("log/_log.zig");
+const _waitable = @import("waitable/_waitable.zig");
 const _memory = @import("memory/_memory.zig");
 const _failure = @import("failure/_failure.zig");
 
@@ -194,6 +195,9 @@ pub const ExecBase = extern struct {
     /// ticks that pace the signals.
     log_told: u64 align(4) = 0,
     log_ticks: u32 = 0,
+    /// The tasks in WaitForAny, by a record on each one's stack
+    /// (waitable/_waitable.zig). Under Disable.
+    waiting: ?*_waitable.Record = null,
     /// exec's own spinlocks, a domain each (locks/_locks.zig): the
     /// semaphores - their counts and queues, and the public list; the
     /// memory - its regions and what is free in them.

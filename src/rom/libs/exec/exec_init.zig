@@ -54,9 +54,11 @@ pub const LIBRARY_VERSION = 1;
 /// and memory debugging from the start (BOOTF_MEMDEBUG). 13: CopyMem,
 /// CopyMemQuick and SetMem a word at a time, shifting where the two
 /// areas are differently aligned; they are the kernel's memcpy, memmove
-/// and memset, and a program's.
-pub const LIBRARY_REVISION = 13;
-const BUILD_DATE = "18.10.2026";
+/// and memset, and a program's. 14: waitables - SignalWaitable,
+/// ResetWaitable, and WaitForAny, which waits for any of several and for
+/// no longer than it is told.
+pub const LIBRARY_REVISION = 14;
+const BUILD_DATE = "19.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

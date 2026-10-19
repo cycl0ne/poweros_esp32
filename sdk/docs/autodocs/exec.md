@@ -123,6 +123,7 @@ Generated from the source by `./zig build autodoc`.
 - [ReplyIO](#replyio) - For a device: finishes a request and sends it back.
 - [ReplyMsg](#replymsg) - Sends a message back to whoever sent it.
 - [ResModules](#resmodules) - Hands back the table of resident modules.
+- [ResetWaitable](#resetwaitable) - Makes a waitable unsignalled again, for the next time it is waited on.
 - [SafePutToPort](#safeputtoport) - Puts a message to the public port of a name, if there is one.
 - [SendIO](#sendio) - Starts an I/O request and returns at once.
 - [SetExcept](#setexcept) - Chooses which of the calling task's signals raise its exception code.
@@ -138,9 +139,11 @@ Generated from the source by `./zig build autodoc`.
 - [SetTaskPri](#settaskpri) - Changes a task's priority, and reschedules if that changed who should run.
 - [SetTrapCode](#settrapcode) - Sets the running task's trap code, which takes its CPU exceptions.
 - [Signal](#signal) - Sends signals to a task, waking it if it was waiting for one of them.
+- [SignalWaitable](#signalwaitable) - Signals a waitable: it stays signalled until it is reset, and every task waiting on it in WaitForAny is woken.
 - [UnlockExecList](#unlockexeclist) - Gives back the lock `LockExecList` took on list `which`.
 - [Vacate](#vacate) - Withdraws a bid, or gives back the semaphore it won.
 - [Wait](#wait) - Sleeps until one of a set of signals arrives.
+- [WaitForAny](#waitforany) - Waits until one of several waitables is signalled, or a time has gone by.
 - [WaitIO](#waitio) - Waits until a device is done with a request, and takes it back.
 - [WaitPort](#waitport) - Waits until a port has a message, and answers the first one without taking it.
 
@@ -7782,6 +7785,62 @@ var i: usize = 0;
 while (table[i]) |tag| : (i += 1) { ... }
 ```
 
+## ResetWaitable
+
+Makes a waitable unsignalled again, for the next time it is waited on.
+
+**SYNOPSIS**
+
+```zig
+fn ResetWaitable(base: *ExecBase, waitable: *Waitable) void
+```
+
+**SINCE**
+
+1.14. LVO -568.
+
+**INPUTS**
+
+- `waitable` - the waitable.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Only the state changes: a task waiting on it goes on waiting. A
+waitable is reset before the thing it stands for is started - the job
+handed out, the frame asked for - so that a signal from it cannot come
+before the reset and be lost.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes.
+- Locks: none.
+- Process: a Task or an interrupt.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SignalWaitable`, `WaitForAny`
+
+**EXAMPLES**
+
+```zig
+sys.ResetWaitable(&job.done);
+startJob(&job);
+_ = sys.WaitForAny(&.{&job.done}, 1, exec.WAIT_FOREVER);
+```
+
 ## SafePutToPort
 
 Puts a message to the public port of a name, if there is one.
@@ -8840,6 +8899,62 @@ None known.
 sys.Signal(waiting_task, @as(u32, 1) << @intCast(bit));
 ```
 
+## SignalWaitable
+
+Signals a waitable: it stays signalled until it is reset, and every task waiting on it in WaitForAny is woken.
+
+**SYNOPSIS**
+
+```zig
+fn SignalWaitable(base: *ExecBase, waitable: *Waitable) void
+```
+
+**SINCE**
+
+1.14. LVO -564.
+
+**INPUTS**
+
+- `waitable` - the waitable.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+A waitable signalled while nobody waits stays signalled, so a task
+that comes to wait for it later returns at once: there is no moment
+between looking and waiting in which the signal could be lost.
+Signalling one that is signalled already changes nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes. This is how a driver's interrupt says that what a
+  task waits for has happened.
+- Locks: takes Disable.
+- Process: a Task or an interrupt.
+
+**OWNERSHIP**
+
+Nothing is allocated. The waitable stays its owner's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ResetWaitable`, `WaitForAny`, `Signal`
+
+**EXAMPLES**
+
+```zig
+// In the interrupt that ends a job:
+sys.SignalWaitable(&job.done);
+```
+
 ## UnlockExecList
 
 Gives back the lock `LockExecList` took on list `which`.
@@ -9040,6 +9155,74 @@ None known.
 const got = sys.Wait(port_mask | exec.SIGBREAKF_CTRL_C);
 if (got & exec.SIGBREAKF_CTRL_C != 0) return;
 while (sys.GetMsg(port)) |msg| { ... }
+```
+
+## WaitForAny
+
+Waits until one of several waitables is signalled, or a time has gone by.
+
+**SYNOPSIS**
+
+```zig
+fn WaitForAny(base: *ExecBase, waitables: [*]const *Waitable, count: u32, timeout_us: u64) i32
+```
+
+**SINCE**
+
+1.14. LVO -572.
+
+**INPUTS**
+
+- `waitables` - the waitables, one pointer each.
+- `count` - how many: 1 to `WAIT_MAX`.
+- `timeout_us` - how long to wait at most, in microseconds. 0 only
+  looks, and `WAIT_FOREVER` waits with no limit.
+
+**RESULT**
+
+The place in `waitables` of the first that is signalled, or
+`WAIT_TIMEOUT` when the time ran out first - and at once for a `count`
+of 0 or more than `WAIT_MAX`.
+
+**BEHAVIOR**
+
+One already signalled answers at once, without waiting: a waitable
+stays signalled until it is reset, so one signalled before the call is
+not missed. Nothing is reset here; that is the caller's, when it
+wants to wait for the same thing again.
+
+The time is kept by the system's tick, so the limit is met to within
+one tick - 10 ms at the usual 100 Hz - and never short of it. While it
+waits the task holds the processor no more than in `Wait`, and the
+task waits on `SIGF_SINGLE`, which exec uses for its own waits.
+
+**CONTEXT**
+
+- Waits: yes, unless one is signalled or `timeout_us` is 0.
+- Interrupts: no.
+- Locks: no spinlock may be held: it may wait.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The waitables stay their owners', and none may
+go while the call waits on it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SignalWaitable`, `ResetWaitable`, `Wait`
+
+**EXAMPLES**
+
+```zig
+const which = sys.WaitForAny(&.{ &frame, &job.done }, 2, 50_000);
+if (which == exec.WAIT_TIMEOUT) {
+    // neither within 50 ms
+}
 ```
 
 ## WaitIO

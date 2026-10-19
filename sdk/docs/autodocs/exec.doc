@@ -114,6 +114,7 @@ exec.library/RemoveMsg
 exec.library/ReplyIO
 exec.library/ReplyMsg
 exec.library/ResModules
+exec.library/ResetWaitable
 exec.library/SafePutToPort
 exec.library/SendIO
 exec.library/SetExcept
@@ -129,9 +130,11 @@ exec.library/SetTaskEndMsg
 exec.library/SetTaskPri
 exec.library/SetTrapCode
 exec.library/Signal
+exec.library/SignalWaitable
 exec.library/UnlockExecList
 exec.library/Vacate
 exec.library/Wait
+exec.library/WaitForAny
 exec.library/WaitIO
 exec.library/WaitPort
 exec.library/AbortIO                                      exec.library/AbortIO
@@ -6113,6 +6116,48 @@ exec.library/WaitPort
 	    const table = sys.ResModules() orelse return;
 	    var i: usize = 0;
 	    while (table[i]) |tag| : (i += 1) { ... }
+exec.library/ResetWaitable                          exec.library/ResetWaitable
+
+   NAME
+	ResetWaitable -- Makes a waitable unsignalled again, for the next time it is waited on.
+
+   SYNOPSIS
+	    fn ResetWaitable(base: *ExecBase, waitable: *Waitable) void
+
+   SINCE
+	1.14. LVO -568.
+
+   INPUTS
+	- `waitable` - the waitable.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	Only the state changes: a task waiting on it goes on waiting. A
+	waitable is reset before the thing it stands for is started - the job
+	handed out, the frame asked for - so that a signal from it cannot come
+	before the reset and be lost.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: yes.
+	- Locks: none.
+	- Process: a Task or an interrupt.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`SignalWaitable`, `WaitForAny`
+
+   EXAMPLES
+	    sys.ResetWaitable(&job.done);
+	    startJob(&job);
+	    _ = sys.WaitForAny(&.{&job.done}, 1, exec.WAIT_FOREVER);
 exec.library/SafePutToPort                          exec.library/SafePutToPort
 
    NAME
@@ -6949,6 +6994,48 @@ exec.library/WaitPort
 
    EXAMPLES
 	    sys.Signal(waiting_task, @as(u32, 1) << @intCast(bit));
+exec.library/SignalWaitable                        exec.library/SignalWaitable
+
+   NAME
+	SignalWaitable -- Signals a waitable: it stays signalled until it is reset, and every task waiting on it in WaitForAny is woken.
+
+   SYNOPSIS
+	    fn SignalWaitable(base: *ExecBase, waitable: *Waitable) void
+
+   SINCE
+	1.14. LVO -564.
+
+   INPUTS
+	- `waitable` - the waitable.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	A waitable signalled while nobody waits stays signalled, so a task
+	that comes to wait for it later returns at once: there is no moment
+	between looking and waiting in which the signal could be lost.
+	Signalling one that is signalled already changes nothing.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: yes. This is how a driver's interrupt says that what a
+	  task waits for has happened.
+	- Locks: takes Disable.
+	- Process: a Task or an interrupt.
+
+   OWNERSHIP
+	Nothing is allocated. The waitable stays its owner's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ResetWaitable`, `WaitForAny`, `Signal`
+
+   EXAMPLES
+	    // In the interrupt that ends a job:
+	    sys.SignalWaitable(&job.done);
 exec.library/UnlockExecList                        exec.library/UnlockExecList
 
    NAME
@@ -7106,6 +7193,60 @@ exec.library/WaitPort
 	    const got = sys.Wait(port_mask | exec.SIGBREAKF_CTRL_C);
 	    if (got & exec.SIGBREAKF_CTRL_C != 0) return;
 	    while (sys.GetMsg(port)) |msg| { ... }
+exec.library/WaitForAny                                exec.library/WaitForAny
+
+   NAME
+	WaitForAny -- Waits until one of several waitables is signalled, or a time has gone by.
+
+   SYNOPSIS
+	    fn WaitForAny(base: *ExecBase, waitables: [*]const *Waitable, count: u32, timeout_us: u64) i32
+
+   SINCE
+	1.14. LVO -572.
+
+   INPUTS
+	- `waitables` - the waitables, one pointer each.
+	- `count` - how many: 1 to `WAIT_MAX`.
+	- `timeout_us` - how long to wait at most, in microseconds. 0 only
+	  looks, and `WAIT_FOREVER` waits with no limit.
+
+   RESULT
+	The place in `waitables` of the first that is signalled, or
+	`WAIT_TIMEOUT` when the time ran out first - and at once for a `count`
+	of 0 or more than `WAIT_MAX`.
+
+   BEHAVIOR
+	One already signalled answers at once, without waiting: a waitable
+	stays signalled until it is reset, so one signalled before the call is
+	not missed. Nothing is reset here; that is the caller's, when it
+	wants to wait for the same thing again.
+
+	The time is kept by the system's tick, so the limit is met to within
+	one tick - 10 ms at the usual 100 Hz - and never short of it. While it
+	waits the task holds the processor no more than in `Wait`, and the
+	task waits on `SIGF_SINGLE`, which exec uses for its own waits.
+
+   CONTEXT
+	- Waits: yes, unless one is signalled or `timeout_us` is 0.
+	- Interrupts: no.
+	- Locks: no spinlock may be held: it may wait.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The waitables stay their owners', and none may
+	go while the call waits on it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`SignalWaitable`, `ResetWaitable`, `Wait`
+
+   EXAMPLES
+	    const which = sys.WaitForAny(&.{ &frame, &job.done }, 2, 50_000);
+	    if (which == exec.WAIT_TIMEOUT) {
+	        // neither within 50 ms
+	    }
 exec.library/WaitIO                                        exec.library/WaitIO
 
    NAME
