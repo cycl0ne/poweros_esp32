@@ -33,10 +33,22 @@
 //! first - where the test keeps the back layer from every pixel - and the
 //! back one first, and with the test after the colour; each has to come
 //! out as the first did on one core.
+//!
+//! Textures: the same two layers, each square a quarter of a 256 x 256
+//! texture each way - 64 texels over 40 pixels, so its second level -
+//! filtered bilinear, with depth: the front layer first, on all the cores
+//! and on one, the back one first, and with the test after the colour.
+//! Then nearest in RGB565, and smooth colours, mixed in perspective; and a
+//! corridor running away from the eye over the whole viewport, from
+//! texels larger than a pixel at its sides to the texture's last level at
+//! its end. Each is drawn once on one core into the plain memory, and has
+//! to come out the same on all the cores.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const raster = @import("raster");
+const board = @import("board.zig");
+const scenes = @import("scenes.zig");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const rtg = sdk.rtg;
@@ -54,7 +66,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Raster";
-const VERSION_STRING = "\x00$VER: Raster 1.0 (19.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Raster 1.1 (19.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/K/N,HOLD/K/N";
@@ -69,52 +81,8 @@ const fill_pen: u32 = 0xFF30_60C0;
 const viewport_width = 800;
 const viewport_height = 600;
 
-/// What the core is given of the system: exec's workers, rtg's
-/// RefreshRect for the screen's buffer, exec's memory and the timer.
-const System = struct {
-    sys: *ExecBase,
-    rb: *RtgBase,
-    tb: *TimerBase,
-    bitmap: *rtg.RtgBitMap,
-
-    fn host(system: *System) raster.Host {
-        return .{ .context = system, .share = &share, .hand_on = &handOn, .allocate = &allocate, .free = &free, .now = &clock };
-    }
-
-    /// The same on one core, handing on nothing: for plain memory.
-    fn alone(system: *System) raster.Host {
-        return .{ .context = system, .share = &raster.Host.oneAfterAnother, .hand_on = &handNowhere, .allocate = &allocate, .free = &free, .now = &clock };
-    }
-
-    fn handNowhere(_: ?*anyopaque, _: raster.Rect) void {}
-
-    fn clock(context: ?*anyopaque) u64 {
-        return now(of(context).tb);
-    }
-
-    fn of(context: ?*anyopaque) *System {
-        return @ptrCast(@alignCast(context.?));
-    }
-
-    fn share(context: ?*anyopaque, work: raster.Work, data: ?*anyopaque, parts: u32) u32 {
-        return of(context).sys.ShareWork(work, data, parts);
-    }
-
-    fn handOn(context: ?*anyopaque, area: raster.Rect) void {
-        const system = of(context);
-        const rect = rtg.RtgRect{ .x = @intCast(area.x), .y = @intCast(area.y), .width = @intCast(area.width), .height = @intCast(area.height) };
-        _ = system.rb.RefreshRect(system.bitmap, &rect);
-    }
-
-    fn allocate(context: ?*anyopaque, bytes: usize) ?[*]u8 {
-        return @ptrCast(of(context).sys.AllocVec(bytes, exec.MEMF_ANY));
-    }
-
-    fn free(context: ?*anyopaque, memory: [*]u8, bytes: usize) void {
-        _ = bytes;
-        of(context).sys.FreeVec(memory);
-    }
-};
+const System = board.System;
+const now = board.now;
 
 /// What every case works on.
 const Bench = struct {
@@ -131,12 +99,6 @@ const Bench = struct {
     plain_rp: *graphics.RastPort,
     format: raster.Format,
 };
-
-fn now(tb: *TimerBase) u64 {
-    var ev: timer.EClockVal = .{};
-    const rate = tb.ReadEClock(&ev);
-    return ev.toTicks() * 1_000_000 / rate;
-}
 
 /// The colour a buffer starts with at (x, y): every channel different
 /// from its neighbours', opaque.
@@ -164,14 +126,14 @@ fn boardSurface(b: *Bench) *const rtg.Surface {
 const Compared = struct { wrong: u32 = 0, first_x: u32 = 0, first_y: u32 = 0 };
 
 fn compare(b: *Bench) Compared {
-    const board = boardSurface(b);
+    const buffer = boardSurface(b);
     var result = Compared{};
     var y: u32 = 0;
-    while (y < board.height) : (y += 1) {
-        const one: [*]const u32 = @ptrCast(@alignCast(board.pixels.? + @as(usize, y) * board.pitch));
+    while (y < buffer.height) : (y += 1) {
+        const one: [*]const u32 = @ptrCast(@alignCast(buffer.pixels.? + @as(usize, y) * buffer.pitch));
         const two: [*]const u32 = @ptrCast(@alignCast(b.plain.pixels.? + @as(usize, y) * b.plain.pitch));
         var x: u32 = 0;
-        while (x < board.width) : (x += 1) {
+        while (x < buffer.width) : (x += 1) {
             if (one[x] == two[x]) continue;
             if (result.wrong == 0) {
                 result.first_x = x;
@@ -475,7 +437,9 @@ const layered_triangles = layered_squares * 2;
 const front_depth: f32 = 0.3;
 const back_depth: f32 = 0.6;
 
-/// The squares' corners, four each, the front layer's first.
+/// The squares' corners, four each, the front layer's first. A square's
+/// colour is its first corner's, the others' a little off it; it has a
+/// quarter of the texture each way, a quarter on from its neighbours'.
 fn layers(comptime Vertex: type, vertices: *[layered_squares * 4]Vertex) void {
     var at: usize = 0;
     for ([_]f32{ 0, -square / 2 }, [_]f32{ front_depth, back_depth }, [_]u32{ 0, 1 }) |offset, depth, more| {
@@ -483,9 +447,14 @@ fn layers(comptime Vertex: type, vertices: *[layered_squares * 4]Vertex) void {
             const left = offset + @as(f32, @floatFromInt(column * square));
             const top = offset + @as(f32, @floatFromInt(row * square));
             const color = patternAt(@intCast(column), @intCast(row), 4 + more);
+            const u = @as(f32, @floatFromInt(column % 4)) / 4;
+            const v = @as(f32, @floatFromInt(row % 4)) / 4;
             // Clockwise on the screen.
-            for ([_][2]f32{ .{ left, top }, .{ left + square, top }, .{ left + square, top + square }, .{ left, top + square } }) |corner| {
-                vertices[at] = .{ .position = .{ corner[0] * 2 / viewport_width - 1, corner[1] * 2 / viewport_height - 1, depth }, .color = color };
+            const corners = [_][2]f32{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
+            for (corners, 0..) |corner, k| {
+                const position = [3]f32{ (left + corner[0] * square) * 2 / viewport_width - 1, (top + corner[1] * square) * 2 / viewport_height - 1, depth };
+                const off = @as(u32, @intCast(k)) * 0x0030_5070;
+                vertices[at] = scenes.vertexOf(Vertex, position, color ^ off, .{ u + corner[0] / 4, v + corner[1] / 4 });
                 at += 1;
             }
         };
@@ -574,6 +543,95 @@ fn overdraw(b: *Bench, rounds: u32) bool {
 fn layered(b: *Bench, name: [*:0]const u8, timed: Timed) bool {
     const result = compare(b);
     printTimed(b, name, timed, layered_triangles, if (result.wrong == 0) "ok" else "WRONG");
+    return told(b, result);
+}
+
+/// Pipelines whose colour changes over a triangle, with depth, and the
+/// corridor's, which needs none: nothing in it is in front of anything.
+const Pictured = raster.Pipeline(.{ .color = .texture, .front = .clockwise, .depth = .less });
+const PicturedLate = raster.Pipeline(.{ .color = .texture, .front = .clockwise, .depth = .less, .early_depth = false });
+const Nearest = raster.Pipeline(.{ .color = .texture, .sampling = .{ .format = .rgb565, .filter = .nearest }, .front = .clockwise, .depth = .less });
+const Smooth = raster.Pipeline(.{ .color = .smooth, .front = .clockwise, .depth = .less });
+const Corridor = raster.Pipeline(.{ .color = .texture, .cull = .none });
+
+/// The layers textured, nearest in 565 and smooth, and the corridor:
+/// whether each came out on all the cores as on one.
+fn textured(b: *Bench, rounds: u32) bool {
+    const Kinds = struct {
+        pictured: [layered_squares * 4]Pictured.Vertex,
+        late: [layered_squares * 4]PicturedLate.Vertex,
+        nearest: [layered_squares * 4]Nearest.Vertex,
+        smooth: [layered_squares * 4]Smooth.Vertex,
+        corridor: [scenes.corridor_vertices]Corridor.Vertex,
+        front_first: [layered_triangles * 3]u16,
+        back_first: [layered_triangles * 3]u16,
+    };
+    const kinds: *Kinds = @ptrCast(@alignCast(b.sys.AllocVec(@sizeOf(Kinds), exec.MEMF_ANY) orelse return noTarget(b)));
+    defer b.sys.FreeVec(kinds);
+    const full = b.sys.AllocVec(scenes.textureBytes(.rgba8888), exec.MEMF_ANY) orelse return noTarget(b);
+    defer b.sys.FreeVec(full);
+    const half = b.sys.AllocVec(scenes.textureBytes(.rgb565), exec.MEMF_ANY) orelse return noTarget(b);
+    defer b.sys.FreeVec(half);
+    const rgba = scenes.patternTexture(.rgba8888, @ptrCast(full));
+    const rgb565 = scenes.patternTexture(.rgb565, @ptrCast(half));
+    layers(Pictured.Vertex, &kinds.pictured);
+    layers(PicturedLate.Vertex, &kinds.late);
+    layers(Nearest.Vertex, &kinds.nearest);
+    layers(Smooth.Vertex, &kinds.smooth);
+    kinds.corridor = scenes.corridor(Corridor.Vertex);
+    layerIndices(&kinds.front_first, true);
+    layerIndices(&kinds.back_first, false);
+
+    const viewport = viewportOf(viewportArea(b));
+    const deep = raster.Attachments{ .color = .{ .clear = 0xFF10_1020 }, .depth = .{ .used = true } };
+    const pictured = Pictured{ .viewport = viewport, .texture = &rgba };
+    const late = PicturedLate{ .viewport = viewport, .texture = &rgba };
+    const nearest = Nearest{ .viewport = viewport, .texture = &rgb565 };
+    const smooth = Smooth{ .viewport = viewport };
+    var corridor = Corridor{ .viewport = viewport, .texture = &rgba };
+    corridor.transform = scenes.corridorTransform(@as(f32, viewport_width) / viewport_height);
+    var right = true;
+    right = checked(b, "textured overdraw 2, front first", deep, &pictured, &kinds.pictured, &kinds.front_first, layered_triangles, rounds, rounds) and right;
+    right = checked(b, "textured overdraw 2, back first", deep, &pictured, &kinds.pictured, &kinds.back_first, layered_triangles, rounds, 1) and right;
+    right = checked(b, "textured overdraw 2, depth after", deep, &late, &kinds.late, &kinds.front_first, layered_triangles, rounds, 1) and right;
+    right = checked(b, "nearest 565 overdraw 2, front first", deep, &nearest, &kinds.nearest, &kinds.front_first, layered_triangles, rounds, 1) and right;
+    right = checked(b, "smooth overdraw 2, front first", deep, &smooth, &kinds.smooth, &kinds.front_first, layered_triangles, rounds, 1) and right;
+    right = checked(b, "corridor 800x600, bilinear", .{ .color = .{ .clear = 0xFF10_1020 } }, &corridor, &kinds.corridor, &scenes.corridor_indices, scenes.corridor_triangles, rounds, 1) and right;
+    return right;
+}
+
+/// A case drawn on one core into the plain memory - `one_rounds` times,
+/// and timed when that is more than once - and `rounds` times on all the
+/// cores into the buffer, timed: whether the two came out alike.
+fn checked(
+    b: *Bench,
+    name: [*:0]const u8,
+    attachments: raster.Attachments,
+    pipeline: anytype,
+    vertices: []const @TypeOf(pipeline.*).Vertex,
+    indices: []const u16,
+    triangles: u32,
+    rounds: u32,
+    one_rounds: u32,
+) bool {
+    const area = viewportArea(b);
+    var plain_target = raster.Target.init(b.system.alone(), .{
+        .pixels = b.plain.pixels.?,
+        .pitch = b.plain.pitch,
+        .width = b.plain.width,
+        .height = b.plain.height,
+        .format = b.format,
+    }, area, attachments) catch return noTarget(b);
+    defer plain_target.deinit();
+    paint(&b.plain, 6);
+    paint(boardSurface(b), 6);
+    const one = drawFrames(&plain_target, pipeline, vertices, indices, one_rounds, b.tb) orelse return noTarget(b);
+    var target = targetOver(b, area, attachments) orelse return noTarget(b);
+    defer target.deinit();
+    const all = drawFrames(&target, pipeline, vertices, indices, rounds, b.tb) orelse return noTarget(b);
+    const result = compare(b);
+    printTimed(b, name, all, triangles, if (result.wrong == 0) "ok" else "WRONG");
+    if (one_rounds > 1) printTimed(b, "  the same on one core", one, triangles, "");
     return told(b, result);
 }
 
@@ -698,6 +756,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (bitmap.width >= viewport_width and bitmap.height >= viewport_height) {
         if (!scattered(&b, rounds)) failures += 1;
         if (!overdraw(&b, rounds)) failures += 1;
+        if (!textured(&b, rounds)) failures += 1;
     }
 
     dl.Delay(hold * 50);

@@ -39,6 +39,35 @@ const Tile = @import("target.zig").Tile;
 /// `left` to one before `right` from the tile's left. Rows with nothing
 /// inside are left out.
 pub inline fn runs(tile: *const Tile, triangle: *const Header, context: anytype, comptime run: anytype) void {
+    walk(false, tile, triangle, context, run);
+}
+
+/// A row's pixels from `left` to one before `right`, from the tile's
+/// left; none where the two are the same.
+pub const Span = struct {
+    left: u32,
+    right: u32,
+
+    pub const none = Span{ .left = 0, .right = 0 };
+
+    pub inline fn empty(span: Span) bool {
+        return span.left >= span.right;
+    }
+
+    pub inline fn holds(span: Span, x: u32) bool {
+        return x >= span.left and x < span.right;
+    }
+};
+
+/// The runs two rows at a time, for drawing in 2 x 2 quads: each even row
+/// `y` from the tile's top and the one under it, handed to `run(context,
+/// y, upper, lower)` - either may be empty, the rows past the triangle's
+/// box always are; a pair with nothing in either is left out.
+pub inline fn quads(tile: *const Tile, triangle: *const Header, context: anytype, comptime run: anytype) void {
+    walk(true, tile, triangle, context, run);
+}
+
+inline fn walk(comptime paired: bool, tile: *const Tile, triangle: *const Header, context: anytype, comptime run: anytype) void {
     const span = tile.span(triangle) orelse return;
     const edges = &triangle.edges;
     var top = span.top;
@@ -77,11 +106,11 @@ pub inline fn runs(tile: *const Tile, triangle: *const Header, context: anytype,
     const y: i64 = tile.y + top;
     const box = Box{ .left = span.left, .width = span.right - span.left, .top = top, .bottom = bottom };
     if (ins == 2) {
-        rows(2, 1, .{ .of(edges[in[0]], x, y), .of(edges[in[1]], x, y) }, .{.of(edges[out[0]], x, y)}, box, context, run);
+        rows(paired, 2, 1, .{ .of(edges[in[0]], x, y), .of(edges[in[1]], x, y) }, .{.of(edges[out[0]], x, y)}, box, context, run);
     } else if (outs == 2) {
-        rows(1, 2, .{.of(edges[in[0]], x, y)}, .{ .of(edges[out[0]], x, y), .of(edges[out[1]], x, y) }, box, context, run);
+        rows(paired, 1, 2, .{.of(edges[in[0]], x, y)}, .{ .of(edges[out[0]], x, y), .of(edges[out[1]], x, y) }, box, context, run);
     } else if (ins == 1 and outs == 1) {
-        rows(1, 1, .{.of(edges[in[0]], x, y)}, .{.of(edges[out[0]], x, y)}, box, context, run);
+        rows(paired, 1, 1, .{.of(edges[in[0]], x, y)}, .{.of(edges[out[0]], x, y)}, box, context, run);
     }
 }
 
@@ -96,8 +125,9 @@ const Box = struct {
 };
 
 /// The rows of a box, with `n_in` edges that come inside and `n_out` that
-/// go out.
+/// go out: each row's run, or each pair's.
 inline fn rows(
+    comptime paired: bool,
     comptime n_in: usize,
     comptime n_out: usize,
     in: [n_in]Crossing(.comes_in),
@@ -108,6 +138,8 @@ inline fn rows(
 ) void {
     var comes_in = in;
     var goes_out = out;
+    // With pairs: the even row's run, until its pair is made.
+    var upper = Span.none;
     var y = box.top;
     while (y < box.bottom) : (y += 1) {
         var first: i64 = 0;
@@ -120,7 +152,18 @@ inline fn rows(
             end = @min(end, crossing.column);
             crossing.down();
         }
-        if (first < end) run(context, y, box.left +% column(first), box.left +% column(end));
+        if (!paired) {
+            if (first < end) run(context, y, box.left +% column(first), box.left +% column(end));
+            continue;
+        }
+        const here = if (first < end) Span{ .left = box.left +% column(first), .right = box.left +% column(end) } else Span.none;
+        if (y & 1 == 0) {
+            upper = here;
+            if (y + 1 == box.bottom and !here.empty()) run(context, y, here, Span.none);
+        } else {
+            if (!upper.empty() or !here.empty()) run(context, y - 1, upper, here);
+            upper = Span.none;
+        }
     }
 }
 

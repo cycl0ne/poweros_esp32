@@ -31,6 +31,7 @@
 
 const target = @import("target.zig");
 const pipeline = @import("pipeline.zig");
+const texture = @import("texture.zig");
 
 pub const Target = target.Target;
 pub const Attachments = target.Attachments;
@@ -48,6 +49,12 @@ pub const Viewport = pipeline.Viewport;
 pub const Winding = pipeline.Winding;
 pub const Cull = pipeline.Cull;
 pub const DepthTest = pipeline.DepthTest;
+pub const Blend = pipeline.Blend;
+pub const Texture = texture.Texture;
+pub const TextureFormat = texture.Format;
+pub const Filter = texture.Filter;
+pub const Address = texture.Address;
+pub const Sampling = texture.Sampling;
 pub const Matrix = pipeline.Matrix;
 pub const identity = pipeline.identity;
 pub const draw = pipeline.draw;
@@ -56,4 +63,6 @@ pub const most_parts = target.most_parts;
 
 test {
     _ = @import("tests/raster.zig");
+    _ = @import("tests/texture.zig");
+    _ = @import("tests/shaded.zig");
 }

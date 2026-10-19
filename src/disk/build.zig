@@ -84,6 +84,7 @@ const window_programs = [_]Program{
 /// Test programs built with an inner module.
 const inner_tests = [_]Program{
     .{ .disk = "c/test/raster", .source = "c/test/raster/raster.zig", .name = "raster", .imports = &.{"raster"} },
+    .{ .disk = "c/test/cube", .source = "c/test/raster/cube.zig", .name = "cube", .imports = &.{"raster"} },
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a

@@ -11,7 +11,9 @@
 //!
 //! A tile is drawn in a buffer of the part's own - its colour and its
 //! depth, 24 KiB, which stays in the cache while the part works on it -
-//! then its colour is copied into the surface. The depth lives only
+//! then its colour is copied into the surface. The buffer keeps colours
+//! as 0xAARRGGBB, whatever the surface's order, which they are put in as
+//! they are copied. The depth lives only
 //! there: it starts cleared with each tile and is gone when the tile is
 //! written back, so it costs no memory traffic at all.
 //!
@@ -304,7 +306,7 @@ pub const Target = struct {
     pub fn begin(target: *Target) void {
         const cleared = target.attachments.color.load == .clear;
         for (target.tiles) |*state| state.* = .{ .dirty = cleared };
-        target.clear_pixel = target.surface.format.pack(target.attachments.color.clear);
+        target.clear_pixel = target.attachments.color.clear;
         target.arena.reset();
         target.pending = &.{};
         target.pending_count = 0;
@@ -430,7 +432,7 @@ pub const Target = struct {
         while (row < tile.bottom) : (row += 1) {
             const from: [*]const u32 = @ptrCast(@alignCast(surface.pixels + @as(usize, tile.y + row) * surface.pitch));
             const into = tile.buffer.color[row * tile_size ..];
-            @memcpy(into[tile.left..tile.right], from[tile.x + tile.left .. tile.x + tile.right]);
+            copy(surface.format, into[tile.left..tile.right], from[tile.x + tile.left .. tile.x + tile.right]);
         }
     }
 
@@ -441,10 +443,21 @@ pub const Target = struct {
         while (row < tile.bottom) : (row += 1) {
             const into: [*]u32 = @ptrCast(@alignCast(surface.pixels + @as(usize, tile.y + row) * surface.pitch));
             const from = tile.buffer.color[row * tile_size ..];
-            @memcpy(into[tile.x + tile.left .. tile.x + tile.right], from[tile.left..tile.right]);
+            copy(surface.format, into[tile.x + tile.left .. tile.x + tile.right], from[tile.left..tile.right]);
         }
     }
 };
+
+/// A row between a tile's buffer, 0xAARRGGBB, and a surface in `format`:
+/// red and blue swapped on the way for rgba32, which is its own undoing.
+fn copy(format: Format, into: []u32, from: []const u32) void {
+    switch (format) {
+        .bgra32 => @memcpy(into, from),
+        .rgba32 => for (into, from) |*pixel, color| {
+            pixel.* = format.pack(color);
+        },
+    }
+}
 
 /// A part of the drawing: tiles taken one at a time, while there are any,
 /// and drawn in the part's own buffer.

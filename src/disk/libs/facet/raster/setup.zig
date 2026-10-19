@@ -64,14 +64,14 @@ pub fn ClipVertex(comptime count: usize) type {
 
 /// The planes a triangle is cut by, as how far inside a vertex is: 0 or
 /// more is in.
-const Plane = enum(u3) {
+const ClipPlane = enum(u3) {
     near,
     left,
     right,
     top,
     bottom,
 
-    fn distance(plane: Plane, p: [4]f32, guard: Guard) f32 {
+    fn distance(plane: ClipPlane, p: [4]f32, guard: Guard) f32 {
         return switch (plane) {
             .near => p[2],
             .left => p[0] - guard.left * p[3],
@@ -125,7 +125,7 @@ pub fn cut(comptime V: type, triangle: [3]V, guard: Guard, out: *[most_cut]V) us
     var polygon: [most_cut]V = undefined;
     @memcpy(polygon[0..3], &triangle);
     var count: usize = 3;
-    for ([_]Plane{ .near, .left, .right, .top, .bottom }) |plane| {
+    for ([_]ClipPlane{ .near, .left, .right, .top, .bottom }) |plane| {
         var kept: [most_cut]V = undefined;
         var made: usize = 0;
         for (0..count) |i| {
@@ -266,23 +266,40 @@ pub const Linear = struct {
     dx: f64,
     dy: f64,
 
+    /// The plane through `values`, one a vertex in the order of the
+    /// edges (`Triangle.inOrder`).
     pub fn of(made: *const Triangle, values: [3]f64) Linear {
         // The weight of vertex i is its opposite edge over the area.
-        const area: f64 = @floatFromInt(made.area);
+        const per_area = 1 / @as(f64, @floatFromInt(made.area));
         var plane = Linear{ .origin = 0, .dx = 0, .dy = 0 };
         for (0..3) |i| {
-            plane.origin += @as(f64, @floatFromInt(made.exact_c[i])) * values[i];
-            plane.dx += @as(f64, @floatFromInt(made.edges[i].a)) * values[i];
-            plane.dy += @as(f64, @floatFromInt(made.edges[i].b)) * values[i];
+            const value = values[i] * per_area;
+            plane.origin += @as(f64, @floatFromInt(made.exact_c[i])) * value;
+            plane.dx += @as(f64, @floatFromInt(made.edges[i].a)) * value;
+            plane.dy += @as(f64, @floatFromInt(made.edges[i].b)) * value;
         }
-        plane.origin /= area;
-        plane.dx /= area;
-        plane.dy /= area;
         return plane;
     }
 
     pub inline fn at(plane: Linear, x: f64, y: f64) f64 {
         return plane.origin + plane.dx * x + plane.dy * y;
+    }
+};
+
+/// A plane in f32 for the tiles, from the pixel at the top left of the
+/// triangle's box: at pixel (x, y) it is `origin + dx * (x - left) + dy *
+/// (y - top)`. Its numbers stay small there, where f32 holds them best.
+pub const Plane = struct {
+    origin: f32,
+    dx: f32,
+    dy: f32,
+
+    pub fn of(linear: Linear, made: *const Triangle) Plane {
+        return .{
+            .origin = @floatCast(linear.at(@floatFromInt(made.left), @floatFromInt(made.top))),
+            .dx = @floatCast(linear.dx),
+            .dy = @floatCast(linear.dy),
+        };
     }
 };
 

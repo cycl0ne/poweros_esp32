@@ -11,7 +11,7 @@ const Target = raster.Target;
 const Rect = raster.Rect;
 
 /// What the host was asked: the rectangles handed on.
-const Log = struct {
+pub const Log = struct {
     handed: [1024]Rect = undefined,
     count: u32 = 0,
 };
@@ -46,7 +46,7 @@ fn callPart(work: raster.Work, data: ?*anyopaque, part: u32, parts: u32) void {
     work(data, part, parts);
 }
 
-fn host(log: *Log, threads: bool) raster.Host {
+pub fn host(log: *Log, threads: bool) raster.Host {
     return .{
         .context = log,
         .share = if (threads) &onThreads else &raster.Host.oneAfterAnother,
@@ -56,15 +56,15 @@ fn host(log: *Log, threads: bool) raster.Host {
     };
 }
 
-const width = 300;
-const height = 200;
-const background: u32 = 0x1234_5678;
+pub const width = 300;
+pub const height = 200;
+pub const background: u32 = 0x1234_5678;
 
-fn surfaceOf(pixels: []u32, format: raster.Format) raster.Surface {
+pub fn surfaceOf(pixels: []u32, format: raster.Format) raster.Surface {
     return .{ .pixels = @ptrCast(pixels.ptr), .pitch = width * 4, .width = width, .height = height, .format = format };
 }
 
-fn inside(area: Rect, x: u32, y: u32) bool {
+pub fn inside(area: Rect, x: u32, y: u32) bool {
     return x >= area.x and x < area.x + area.width and y >= area.y and y < area.y + area.height;
 }
 
@@ -360,7 +360,7 @@ test "triangles over many tiles, on threads, each pixel drawn by the right one" 
 
 /// Somewhere across `pixels` in clip space, on a pixel's corner or its
 /// centre, every 6 pixels.
-fn onGrid(r: std.Random, pixels: f32) f32 {
+pub fn onGrid(r: std.Random, pixels: f32) f32 {
     const pixel = @as(f32, @floatFromInt(r.uintLessThan(u32, 8))) * 6 + 2 + if (r.boolean()) @as(f32, 0.5) else 0;
     return pixel * 2 / pixels - 1;
 }

@@ -661,6 +661,13 @@ pub fn build(b: *std.Build) void {
     });
     disk_test_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("host_rom", host_rom);
+    // The rasterizer core: its own tests, and the module its test programs
+    // import, for the scenes they draw (c/test/raster/reference.zig). A
+    // file belongs to one module, so the core is tested on its own.
+    const raster_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/facet/raster/raster.zig"), .target = b.graph.host });
+    raster_mod.addImport("sdk", sdk);
+    disk_test_mod.addImport("raster", raster_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = raster_mod })).step);
     disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);
