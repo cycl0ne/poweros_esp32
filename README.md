@@ -79,9 +79,11 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
 - **Kernel (exec):** preemptive multitasking on every core of the chip -
   two on the ESP32s, four on the VisionFive 2 -
   signals, message ports, semaphores and checked spinlocks, every system
-  list under a lock of its own; libraries and devices opened by name,
-  loaded from disk when wanted and expunged when memory runs short;
-  internal SRAM and PSRAM - on a RISC-V machine all of its RAM, 8 GB on
+  list under a lock of its own; waitables that a task or an interrupt
+  sets and that stay set until reset (`WaitForAny`), and a job shared
+  out to every core at once (`ShareWork`); libraries and devices opened
+  by name, loaded from disk when wanted and expunged when memory runs
+  short; internal SRAM and PSRAM - on a RISC-V machine all of its RAM, 8 GB on
   the VisionFive 2 - as memory with attributes, every block marked
   with the task that owns it, so a wrong or second free is refused and
   `C:Avail OWNERS` and `SYS:System/MemMap` show who holds what. A
@@ -142,7 +144,7 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   map).
 - **Graphics and windows:** rtg.library for the displays - on the
   ESP32-P4 its 2D engine fills, copies, blends and scales, on the
-  VisionFive 2 its HDMI port at 1920×1080;
+  VisionFive 2 its four cores do the same, over HDMI at 1920×1080;
   graphics.library with smooth curves, gradients, shadows and scaled
   pictures; layers.library; intuition.library with screens, windows,
   menus, requesters and gadget classes in layouts that fit any display,
@@ -151,7 +153,11 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   `SYS:classes/gadgets/` - tabs, charts, dials, a calendar, rich text, QR
   codes, a keyboard on the screen, text to edit with undo - the
   requesters of `LIBS:asl.library`, and motion.library for whatever moves
-  ([motion guide](sdk/docs/guides/motion.md)).
+  ([motion guide](sdk/docs/guides/motion.md)). `LIBS:facet.library`
+  draws in three dimensions as Vulkan's model has it - command buffers,
+  pipelines whose shaders are the program's own functions, depth,
+  textures, alpha - on the machine's cores, and shows it on a screen or in
+  a window through a swapchain ([reference](sdk/docs/autodocs/facet.md)).
 - **Datatypes and fonts:** `LIBS:datatypes.library` opens pictures (ILBM,
   BMP, PNG, GIF, JPEG - on the ESP32-P4 by its codec), text (plain, FTXT,
   Markdown), animations (GIF, Lottie) and sounds (WAV, MP3, FLAC, Ogg
@@ -160,12 +166,12 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   TrueType, at any size ([fonts guide](sdk/docs/guides/fonts.md)).
 - **Sound:** `audio.device` mixes up to sixteen streams, each in its own
   form, rate, volume and pan, into one of the outputs of rta.library's
-  drivers - an ES8311 codec, I2S amplifiers, USB speakers and headsets
-  (`DEVS:usb/uac.device`), a WAV file written in time, and in QEMU an
-  output into nothing that keeps time - picked by a number that stays
-  the same from boot to boot; the output preferred takes the sound over
-  when it is plugged in, and it or the first takes over when the one
-  playing is unplugged; each output keeps its own volume, and both are
+  drivers - an ES8311 codec, I2S amplifiers, the VisionFive 2's HDMI
+  port, USB speakers and headsets (`DEVS:usb/uac.device`), a WAV file
+  written in time, and in QEMU an output into nothing that keeps time -
+  picked by a number that stays the same from boot to boot; the output
+  preferred takes the sound over when it is plugged in, and it or the
+  first takes over when the one playing is unplugged; each output keeps its own volume, and both are
   set with `C:Audio`, on the Sound page of Prefs or in
   `SYS:Programs/Volume` and given back at boot from `audio.prefs`; a
   click or a beep plays at once as a trigger, on voices
@@ -177,7 +183,7 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   play and reads their tags, covers and chapters (`C:Play`,
   [sound guide](sdk/docs/guides/audio.md)).
 - **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
-  UDP, IPv4 and IPv6, DHCP, DNS, multicast) on Ethernet - at 1000 Mbit/s
+  UDP, IPv4 and IPv6, DHCP and DHCPv6, DNS, multicast) on Ethernet - at 1000 Mbit/s
   on the VisionFive 2 - USB Ethernet
   adapters, the ESP32-S3's Wi-Fi, USB Wi-Fi sticks (AIC8800) and SLIP;
   WPA2-Personal in `LIBS:wpa.library`; a shell over Telnet or SSH with
@@ -219,7 +225,7 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, playing into a file, the UART1 and UART3-IN connectors |
 | `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos on the disk image in RAM; with `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, with an `nvme` device an SSD; sound into an output that goes nowhere, and with `-device usb-audio` through QEMU's USB speaker, sample for sample, plugged in and out as it plays; no network |
-| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot; not yet tried on the board: sound through a USB speaker or headset; not driven yet: the second Ethernet port, USB 3, the eMMC socket, sound over HDMI |
+| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: sound through a USB speaker or headset; not driven yet: the second Ethernet port, USB 3, the eMMC socket |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network
