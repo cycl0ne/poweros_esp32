@@ -148,7 +148,7 @@ pub const Packing = struct {
     /// bands. A channel is scaled to the display's steps, not cut to its
     /// top bits: a display shows 565 widened, a channel's bits repeated
     /// below themselves (31 of red is 255, 16 is 132), and the pixels of
-    /// a four by four average to the colour as it shows them, to less than
+    /// a four by four average to the colour as it shows them, to within
     /// one of 255. The thresholds stay inside a step by as much as
     /// widening lands off its middle, so a colour 565 holds exactly - a
     /// 565 texel, 132 of red - comes out as it is in every pixel; read

@@ -28,7 +28,9 @@ pub const LIBRARY_VERSION = 1;
 /// command buffers recorded on the 32-bit chips too, whose chunks put
 /// the commands 4 bytes off the 8 they are aligned to.
 /// 3: a window's pixels read from intuition 0.48 (`WA_PixelFormat`).
-pub const LIBRARY_REVISION = 3;
+/// 4: a triangle's edges sorted the way its rows are walked once, as it
+/// is set up, not again in every tile it touches.
+pub const LIBRARY_REVISION = 4;
 const BUILD_DATE = "20.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

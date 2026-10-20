@@ -285,6 +285,7 @@ pub fn Pipeline(comptime config: Config) type {
                 .least_inverse_w = if (shaded) @min(projected[0].inverse_w, projected[1].inverse_w, projected[2].inverse_w) else {},
                 .texture = texture,
             };
+            bins.sortForWalk(&triangle.header.edges);
             try target.addPending(&triangle.header);
         }
 

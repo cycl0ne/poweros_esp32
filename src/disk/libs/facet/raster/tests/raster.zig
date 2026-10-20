@@ -5,6 +5,7 @@
 const std = @import("std");
 const raster = @import("../raster.zig");
 const setup = @import("../setup.zig");
+const bins = @import("../bins.zig");
 const testing = std.testing;
 
 const Target = raster.Target;
@@ -507,6 +508,23 @@ test "each row's run is the pixels inside all three edges, for triangles of ever
             }
         };
     }
+}
+
+test "a triangle's edges sorted as its rows are walked: those that come inside, those that go out, the one along the rows" {
+    const in = bins.Edge.of(256, 0, 0);
+    const in_too = bins.Edge.of(512, -256, 0);
+    const out = bins.Edge.of(-512, 0, 0);
+    const out_too = bins.Edge.of(-256, 256, 0);
+    const along = bins.Edge.of(0, 256, 0);
+    const kinds = [_][3]bins.Edge{ .{ in, in_too, out }, .{ in, out, out_too }, .{ in, out, along } };
+    const orders = [_][3]u2{ .{ 0, 1, 2 }, .{ 0, 2, 1 }, .{ 1, 0, 2 }, .{ 1, 2, 0 }, .{ 2, 0, 1 }, .{ 2, 1, 0 } };
+    for (kinds) |kind| for (orders) |order| {
+        var sorted = [3]bins.Edge{ kind[order[0]], kind[order[1]], kind[order[2]] };
+        bins.sortForWalk(&sorted);
+        const ways = [3]i64{ std.math.sign(sorted[0].a), std.math.sign(sorted[1].a), std.math.sign(sorted[2].a) };
+        const want = [3]i64{ std.math.sign(kind[0].a), std.math.sign(kind[1].a), std.math.sign(kind[2].a) };
+        try testing.expectEqual(want, ways);
+    };
 }
 
 /// Triangles with depth, one colour each: the pixels each has where it is
