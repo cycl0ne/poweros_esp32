@@ -24,7 +24,8 @@ const max_images = @import("../swapchain/_swapchain.zig").max_images;
 /// - `capabilities` - filled in.
 ///
 /// RESULT:
-/// `success`.
+/// `success`; `error_surface_lost`, and nothing written, when the window
+/// the surface is over has closed.
 ///
 /// BEHAVIOR:
 /// A swapchain on a screen is the screen's size, which is its display's,
@@ -34,9 +35,9 @@ const max_images = @import("../swapchain/_swapchain.zig").max_images;
 /// and shown as they are drawn: no transform, no alpha.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: on a window's surface, for the screens' semaphore.
 /// - Interrupts: no.
-/// - Locks: none.
+/// - Locks: on a window's surface, no layer's lock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -63,7 +64,7 @@ pub fn GetPhysicalDeviceSurfaceCapabilities(base: *FacetBase, physical: *facet.P
     _ = base;
     _ = physical;
     const made = _objects.of(Surface, surface);
-    const now = made.ops.shape(made);
+    const now = made.ops.shape(made) orelse return .error_surface_lost;
     const extent = facet.Extent2D{ .width = now.width, .height = now.height };
     capabilities.* = .{
         .min_image_count = 1,

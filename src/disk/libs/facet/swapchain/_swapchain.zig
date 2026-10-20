@@ -9,7 +9,9 @@
 //! and `freed` wakes whoever waits in AcquireNextImage. A swapchain of
 //! one image hands out the image shown: it is drawn while it is seen. On
 //! a surface that copies what it shows - a window - none is ever shown:
-//! an image is free again once copied.
+//! an image is free again once copied. A surface lost - its window closed
+//! while the swapchain was in use - shows nothing more: what was presented
+//! comes free unshown, and the program is told the surface is lost.
 //!
 //! Everything here changes under `lock`; the queue's task and the program
 //! both take it.
@@ -74,10 +76,19 @@ pub fn lay(swapchain: *Swapchain, sys: *ExecBase, usage: u32) void {
     }
 }
 
-/// The surface's shape still the swapchain's.
-pub fn current(swapchain: *const Swapchain) bool {
-    const now = swapchain.surface.ops.shape(swapchain.surface);
-    return now.width == swapchain.width and now.height == swapchain.height and now.format == swapchain.format;
+/// Whether the surface still has the swapchain's shape.
+pub const Fit = enum {
+    current,
+    /// Sized, or its pixels another format: a new swapchain is wanted.
+    changed,
+    /// What it was over has gone: nothing more is shown on it.
+    lost,
+};
+
+pub fn fit(swapchain: *const Swapchain) Fit {
+    const now = swapchain.surface.ops.shape(swapchain.surface) orelse return .lost;
+    if (now.width != swapchain.width or now.height != swapchain.height or now.format != swapchain.format) return .changed;
+    return .current;
 }
 
 /// What AcquireNextImage comes to: an image, or why not.
@@ -89,6 +100,7 @@ pub const Acquired = union(enum) {
     /// None free in the time given.
     timeout,
     out_of_date,
+    lost,
 };
 
 /// An image for the program, waiting up to `timeout` microseconds
@@ -98,9 +110,14 @@ pub fn acquire(swapchain: *Swapchain, sys: *ExecBase, timeout: u64) Acquired {
     var waited = false;
     while (true) {
         sys.ObtainSemaphore(&swapchain.lock);
-        if (swapchain.retired or !current(swapchain)) {
+        const unfit: ?Acquired = if (swapchain.retired) .out_of_date else switch (fit(swapchain)) {
+            .current => null,
+            .changed => .out_of_date,
+            .lost => .lost,
+        };
+        if (unfit) |answer| {
             sys.ReleaseSemaphore(&swapchain.lock);
-            return .out_of_date;
+            return answer;
         }
         if (free(swapchain)) |index| {
             swapchain.states[index] = .acquired;
@@ -165,16 +182,17 @@ pub fn giveBack(swapchain: *Swapchain, sys: *ExecBase, index: u32) void {
 }
 
 /// On the queue's task: image `index` shown, and the one shown before
-/// it free - or, copied out, free itself.
+/// it free - or, copied out or not shown at all on a surface lost, free
+/// itself.
 pub fn show(swapchain: *Swapchain, sys: *ExecBase, index: u32) void {
     const surface = swapchain.surface;
-    surface.ops.show(surface, &swapchain.pictures[index]);
+    const shown = surface.ops.show(surface, &swapchain.pictures[index]);
     sys.ObtainSemaphore(&swapchain.lock);
     defer sys.ReleaseSemaphore(&swapchain.lock);
-    for (swapchain.states[0..swapchain.count], 0..) |*state, k| {
+    if (shown) for (swapchain.states[0..swapchain.count], 0..) |*state, k| {
         if (k != index and state.* == .shown) state.* = .free;
-    }
-    swapchain.states[index] = if (surface.ops.copies) .free else .shown;
+    };
+    swapchain.states[index] = if (shown and !surface.ops.copies) .shown else .free;
     swapchain.presenting -= 1;
     sys.SignalWaitable(&swapchain.freed);
 }

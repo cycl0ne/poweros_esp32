@@ -129,7 +129,8 @@ fn AcquireNextImage(base: *FacetBase, device: *facet.Device, swapchain: *facet.S
 `success`; `timeout`, or `not_ready` with a timeout of 0, when none
 came free in time, or none will - each held by the program, or shown
 with nothing presented after it; `error_out_of_date` when the surface's
-size or format has changed, or the swapchain has been handed on.
+size or format has changed, or the swapchain has been handed on;
+`error_surface_lost` when the window the surface is over has closed.
 
 **BEHAVIOR**
 
@@ -142,7 +143,8 @@ swapchain of one image hands out the image shown, drawn while it is seen.
 
 - Waits: for an image to come free, at most `timeout`.
 - Interrupts: no.
-- Locks: no spinlock may be held.
+- Locks: no spinlock may be held; on a window's surface, no layer's
+  lock either - its window is found under the screens' semaphore.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -170,6 +172,7 @@ var index: u32 = 0;
 switch (fb.AcquireNextImage(device, swapchain.?, facet.WAIT_FOREVER_NS, acquired.?, null, &index)) {
     .success => {},
     .error_out_of_date => return remake(),
+    .error_surface_lost => return error.WindowClosed,
     else => return error.NoImage,
 }
 ```
@@ -1933,6 +1936,13 @@ CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
 the others are taken and do nothing). A pipeline with the rasterizer
 discarding, or culling front and back, draws nothing.
 
+`PIPELINE_CREATE_DEPTH_PREPASS` in `flags`, facet.library's own, has the
+pipeline's triangles' depth drawn first in each tile and each pixel then
+shaded once, by the nearest: a scene drawn back to front costs little
+more than one drawn front to back, which costs a little more than
+without it. For a depth test of LESS or LESS_OR_EQUAL, written, and no
+blending; ignored otherwise. Other flags are taken and do nothing.
+
 Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
 as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
 each, up to four bindings and eight locations.
@@ -2577,7 +2587,8 @@ surface has a swapchain that is not `old_swapchain`;
 `error_initialization_failed` for a size that is not the surface's;
 `error_format_not_supported` for a format that is not its;
 `error_feature_not_present` for a use, a present mode or layers it does
-not have; `error_out_of_host_memory`.
+not have; `error_surface_lost` when the window the surface is over has
+closed; `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -2656,7 +2667,8 @@ fn CreateWindowSurface(base: *FacetBase, instance: *facet.Instance, info: *const
 **RESULT**
 
 `success`; `error_initialization_failed` without intuition.library,
-graphics.library, layers.library or rtg.library;
+graphics.library, layers.library or rtg.library, or with an
+intuition.library that does not number its windows (before 0.47);
 `error_out_of_host_memory`.
 
 **BEHAVIOR**
@@ -2681,6 +2693,15 @@ swapchain of the new size is made, the old one handed to it as
 `old_swapchain`. A picture presented after the window was made smaller
 and before that is cut to the window's inside.
 
+The window is found by its number (`WA_Number`) each time it is read or
+drawn into, so a window that closes under the surface is never drawn
+into once it has gone. That is what happens to a program that ends -
+returns, or is stopped by a fault - with its window open while facet's
+queue still has a frame of it to show: intuition closes the window, the
+frame is not copied, and AcquireNextImage, QueuePresent, CreateSwapchain
+and the surface queries answer `error_surface_lost` from then on. The
+swapchain and the surface are still destroyed as before.
+
 intuition.library, graphics.library, layers.library and rtg.library are
 opened for as long as the surface lasts.
 
@@ -2688,7 +2709,9 @@ opened for as long as the surface lasts.
 
 - Waits: no.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: none needed; while the surface lasts, the calls that read or
+  show on it take the screens' semaphore (`LockIBase`), so they are
+  never made holding a layer's lock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4633,7 +4656,8 @@ fn GetPhysicalDeviceSurfaceCapabilities(base: *FacetBase, physical: *facet.Physi
 
 **RESULT**
 
-`success`.
+`success`; `error_surface_lost`, and nothing written, when the window
+the surface is over has closed.
 
 **BEHAVIOR**
 
@@ -4645,9 +4669,9 @@ and shown as they are drawn: no transform, no alpha.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: on a window's surface, for the screens' semaphore.
 - Interrupts: no.
-- Locks: none.
+- Locks: on a window's surface, no layer's lock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4699,7 +4723,9 @@ fn GetPhysicalDeviceSurfaceFormats(base: *FacetBase, physical: *facet.PhysicalDe
 
 **RESULT**
 
-`success`, or `incomplete` when `formats` was too short for them all.
+`success`, or `incomplete` when `formats` was too short for them all;
+`error_surface_lost`, and none, when the window the surface is over has
+closed.
 
 **BEHAVIOR**
 
@@ -4709,9 +4735,9 @@ panels, has none: facet.library draws 32 bits a pixel.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: on a window's surface, for the screens' semaphore.
 - Interrupts: no.
-- Locks: none.
+- Locks: on a window's surface, no layer's lock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4825,7 +4851,8 @@ fn GetPhysicalDeviceSurfaceSupport(base: *FacetBase, physical: *facet.PhysicalDe
 
 **RESULT**
 
-`success`.
+`success`; `error_surface_lost`, and not supported, when the window the
+surface is over has closed.
 
 **BEHAVIOR**
 
@@ -4834,9 +4861,9 @@ facet.library draws in: 32 bits, in either order of red and blue.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: on a window's surface, for the screens' semaphore.
 - Interrupts: no.
-- Locks: none.
+- Locks: on a window's surface, no layer's lock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5017,6 +5044,7 @@ fn QueuePresent(base: *FacetBase, queue: *facet.Queue, info: *const facet.Presen
 
 `success`; `error_out_of_date` when a swapchain's surface has changed,
 or an image was not one the program held - that image is not shown;
+`error_surface_lost` when the window a surface is over has closed;
 `error_out_of_host_memory`. The worst of them, and each in `results`.
 
 **BEHAVIOR**
@@ -5025,13 +5053,15 @@ The images go on the queue after the work submitted before: when the
 queue's task comes to them it waits for the semaphores, then shows each,
 returning when the display has taken it up at the start of a frame. The
 image shown before it then comes free for AcquireNextImage. The call
-itself returns at once.
+itself returns at once. A window closed by then - its program ended, and
+its windows closed with it - is not drawn into: the image comes free
+unshown, and the next AcquireNextImage answers `error_surface_lost`.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: on a window's surface, for the screens' semaphore.
 - Interrupts: no.
-- Locks: none.
+- Locks: on a window's surface, no layer's lock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**

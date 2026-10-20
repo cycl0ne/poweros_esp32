@@ -149,6 +149,7 @@ const GadgetStyleState = @import("style/gadgetstylestate.zig").GadgetStyleState;
 const BeginDrag = @import("input/begindrag.zig").BeginDrag;
 const EndDrag = @import("input/enddrag.zig").EndDrag;
 const DoubleTap = @import("input/doubletap.zig").DoubleTap;
+const FindWindowNumber = @import("window/findwindownumber.zig").FindWindowNumber;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -655,6 +656,9 @@ fn lvoEndDrag(ib: *IntuitionBase, window: *intuition.Window, flags: u32) callcon
 fn lvoDoubleTap(ib: *IntuitionBase, first: *const intuition.Tap, second: *const intuition.Tap) callconv(.c) bool {
     return DoubleTap(ib, first, second);
 }
+fn lvoFindWindowNumber(ib: *IntuitionBase, number: u32) callconv(.c) ?*intuition.Window {
+    return @ptrCast(FindWindowNumber(ib, number));
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -788,6 +792,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoBeginDrag),
     vec(lvoEndDrag),
     vec(lvoDoubleTap),
+    vec(lvoFindWindowNumber),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

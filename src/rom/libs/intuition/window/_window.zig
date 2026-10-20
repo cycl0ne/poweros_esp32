@@ -121,6 +121,11 @@ pub const Window = extern struct {
     /// window that takes the activation back when the active one closes
     /// is the one with the highest number on the screen.
     activated: u32 = 0,
+    /// Its number, from `window_numbers` as it opened: no other window
+    /// has it while the machine runs, so a program that keeps the number
+    /// can ask whether the window is still open (`FindWindowNumber`)
+    /// where a pointer might by then be another window's.
+    number: u32 = 0,
     /// Its help group: every window with the same number shares gadget
     /// help (`WA_HelpGroup`).
     help_group: u32 = 0,

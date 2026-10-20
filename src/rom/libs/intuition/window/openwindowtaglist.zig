@@ -483,6 +483,9 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         return null;
     }
 
+    ib.window_numbers +%= 1;
+    if (ib.window_numbers == 0) ib.window_numbers = 1;
+    w.number = ib.window_numbers;
     ib.sys_base.AddTail(@ptrCast(&s.windows), @ptrCast(&w.node));
     if (ub.GetTagData(wn.WA_Gadgets, 0, tags) != 0) {
         _ = it.AddGList(@ptrCast(w), @ptrFromInt(ub.GetTagData(wn.WA_Gadgets, 0, tags)), -1, -1);

@@ -153,6 +153,7 @@ pub const LVO = struct {
     pub const BeginDrag = libraries.lvo(127);
     pub const EndDrag = libraries.lvo(128);
     pub const DoubleTap = libraries.lvo(129);
+    pub const FindWindowNumber = libraries.lvo(130);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -284,6 +285,7 @@ pub const Fn = struct {
     pub const BeginDrag = *const fn (*IntuitionBase, *intuition.Window, *const rtg.Surface, u32, u32) callconv(.c) bool;
     pub const EndDrag = *const fn (*IntuitionBase, *intuition.Window, u32) callconv(.c) ?*intuition.Window;
     pub const DoubleTap = *const fn (*IntuitionBase, *const intuition.Tap, *const intuition.Tap) callconv(.c) bool;
+    pub const FindWindowNumber = *const fn (*IntuitionBase, u32) callconv(.c) ?*intuition.Window;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1063,5 +1065,11 @@ pub const IntuitionBase = opaque {
     /// the double-click time and within DOUBLETAP_DISTANCE pixels each way.
     pub fn DoubleTap(self: *IntuitionBase, first: *const intuition.Tap, second: *const intuition.Tap) bool {
         return libraries.call(self, LVO.DoubleTap, Fn.DoubleTap, .{ first, second });
+    }
+
+    /// The open window with a number (WA_Number), or null once it has closed.
+    /// The caller holds LockIBase to keep the window open while it uses it.
+    pub fn FindWindowNumber(self: *IntuitionBase, number: u32) ?*intuition.Window {
+        return libraries.call(self, LVO.FindWindowNumber, Fn.FindWindowNumber, .{number});
     }
 };

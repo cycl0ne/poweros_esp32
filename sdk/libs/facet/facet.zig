@@ -1178,6 +1178,16 @@ pub const PipelineDynamicStateCreateInfo = extern struct {
     dynamic_states: ?[*]const DynamicState = null,
 };
 
+/// facet.library's own, in `GraphicsPipelineCreateInfo.flags`: the depth
+/// pre-pass. In each tile the pipeline's triangles have their depth drawn
+/// first, alone, and are then shaded only where theirs is the depth left,
+/// so that a pixel several cover is shaded once, by the nearest, in
+/// whatever order they were drawn. Nothing drawn looks different. For a
+/// pipeline whose depth test is LESS or LESS_OR_EQUAL, written, and not
+/// blended; any other ignores it. It covers the triangles of a tile up to
+/// the first of a pipeline without it, so the opaque are drawn first.
+pub const PIPELINE_CREATE_DEPTH_PREPASS: u32 = 1 << 31;
+
 /// What a graphics pipeline is made with.
 pub const GraphicsPipelineCreateInfo = extern struct {
     flags: u32 = 0,

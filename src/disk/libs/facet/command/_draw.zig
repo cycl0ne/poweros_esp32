@@ -117,6 +117,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .depth_test = pipeline.depth_test,
         .depth_write = pipeline.depth_write,
         .blend = pipeline.blend,
+        .prepass = pipeline.prepass,
         .varyings = pipeline.varyings,
         .fragment = pipeline.fragment,
         .resources = resources,

@@ -52,6 +52,7 @@ Generated from the source by `./zig build autodoc`.
 - [EndRequest](#endrequest) - Takes a requester down.
 - [EraseImage](#eraseimage) - Erases what an image covers.
 - [FindClass](#findclass) - Finds a public class by name.
+- [FindWindowNumber](#findwindownumber) - The open window with a number, or null once it has closed.
 - [FreeClass](#freeclass) - Frees a class.
 - [FreeMenus](#freemenus) - Gives back a strip, or a panel's items, that CreateMenusA made.
 - [FreeScreenBuffer](#freescreenbuffer) - Gives back a buffer from `AllocScreenBuffer`.
@@ -2543,6 +2544,82 @@ defer ib.UnlockClassList();
 const exists = ib.FindClass("imageclass") != null;
 ```
 
+## FindWindowNumber
+
+The open window with a number, or null once it has closed.
+
+**SYNOPSIS**
+
+```zig
+fn FindWindowNumber(ib: *IntuitionBase, number: u32) ?*Window
+```
+
+**SINCE**
+
+0.47. LVO -524.
+
+**INPUTS**
+
+- `number` - a window's number, as `GetWindowAttrs` read it
+  (`WA_Number`).
+
+**RESULT**
+
+The window, or null when no open window has the number - it has
+closed, or the number was never one.
+
+**BEHAVIOR**
+
+Every screen's windows are looked through. A number is given to one
+window and never again while the machine runs, so the answer is that
+window or nothing - never another window opened since in the memory
+the first one had, which a pointer kept and compared would take for
+it.
+
+**CONTEXT**
+
+- Waits: yes, for the screens' semaphore.
+- Interrupts: no.
+- Locks: no layer's lock may be held (`LockIBase`).
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The window is its opener's. It stays open only while the caller holds
+`LockIBase`: without it, the window may close the moment the answer is
+given.
+
+**NOTES**
+
+- What another task draws into keeps the number: a library rendering
+  into a program's window from a task of its own - the program may end,
+  and its windows close with it, at any time - finds the window under
+  `LockIBase`, takes the window's layer, lets the screens go and draws,
+  and finds it gone instead of drawing into memory that was freed.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetWindowAttrs`, `LockIBase`, `OpenWindowTagList`
+
+**EXAMPLES**
+
+```zig
+const held = ib.LockIBase(0);
+const window = ib.FindWindowNumber(number) orelse {
+    ib.UnlockIBase(held);
+    return error.WindowClosed;
+};
+var layer: usize = 0;
+const ask = [_]TagItem{ .{ .tag = WA_Layer, .data = @intFromPtr(&layer) }, .{} };
+ib.GetWindowAttrs(window, &ask);
+layers_base.LockLayer(@ptrFromInt(layer));
+ib.UnlockIBase(held);
+```
+
 ## FreeClass
 
 Frees a class.
@@ -3524,9 +3601,9 @@ fn GetWindowAttrs(ib: *IntuitionBase, window: *Window,
   the limits, `WA_Title`, `WA_IDCMP`, `WA_RastPort`, `WA_UserPort`,
   `WA_Screen`, `WA_Layer`, `WA_BorderLeft`/`Top`/`Right`/`Bottom`,
   `WA_Active`, `WA_SimpleRefresh`, `WA_Backdrop`, `WA_Checkmark`,
-  `WA_AmigaKey`, `WA_MenuHelp`. `WA_Left` and `WA_Top` are signed,
-  written by their bits: a window past the screen's left edge
-  (`IPREFS_OffScreen`) has a negative left.
+  `WA_AmigaKey`, `WA_MenuHelp`, `WA_Number`. `WA_Left` and `WA_Top`
+  are signed, written by their bits: a window past the screen's left
+  edge (`IPREFS_OffScreen`) has a negative left.
 
 **RESULT**
 

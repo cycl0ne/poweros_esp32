@@ -26,7 +26,8 @@ const window = @import("window.zig");
 ///
 /// RESULT:
 /// `success`; `error_initialization_failed` without intuition.library,
-/// graphics.library, layers.library or rtg.library;
+/// graphics.library, layers.library or rtg.library, or with an
+/// intuition.library that does not number its windows (before 0.47);
 /// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
@@ -50,13 +51,24 @@ const window = @import("window.zig");
 /// `old_swapchain`. A picture presented after the window was made smaller
 /// and before that is cut to the window's inside.
 ///
+/// The window is found by its number (`WA_Number`) each time it is read or
+/// drawn into, so a window that closes under the surface is never drawn
+/// into once it has gone. That is what happens to a program that ends -
+/// returns, or is stopped by a fault - with its window open while facet's
+/// queue still has a frame of it to show: intuition closes the window, the
+/// frame is not copied, and AcquireNextImage, QueuePresent, CreateSwapchain
+/// and the surface queries answer `error_surface_lost` from then on. The
+/// swapchain and the surface are still destroyed as before.
+///
 /// intuition.library, graphics.library, layers.library and rtg.library are
 /// opened for as long as the surface lasts.
 ///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Locks: none needed.
+/// - Locks: none needed; while the surface lasts, the calls that read or
+///   show on it take the screens' semaphore (`LockIBase`), so they are
+///   never made holding a layer's lock.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

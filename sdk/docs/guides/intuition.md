@@ -175,6 +175,14 @@ intuition puts on the task, with a line on the system log naming the
 task. A window opened between `BeginSystemMemory` and `EndSystemMemory`
 is the system's and stays.
 
+So a window can close under anyone else who draws into it - a library
+showing pictures in it from a task of its own, as facet.library's window
+surfaces do. Such a one keeps the window's number (`WA_Number`, given to
+no other window while the machine runs) rather than the window, and
+before each use finds it with `FindWindowNumber` under `LockIBase`, takes
+its layer, and lets the screens go: a window that has closed is not
+found, where a pointer kept would by then be another window's memory.
+
 The gadgets in a title bar are as tall as the bar, which follows the
 screen's font, and narrow: the close gadget 15 columns for every 11 rows,
 the depth and zoom gadgets 18, a screen's depth gadget 17. With

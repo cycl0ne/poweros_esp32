@@ -174,10 +174,13 @@ const TileState = struct {
     list: bins.List = .{},
 };
 
-/// A part's tile: its colour and depth, a cache line aligned.
+/// A part's tile: its colour and depth, a cache line aligned, and the
+/// pixels the depth pre-pass's second pass has shaded, a bit each, a row
+/// a word.
 const Buffer = extern struct {
     color: [tile_pixels]u32 align(line_bytes),
     depth: [tile_pixels]u16,
+    shaded: [tile_size]u64,
 };
 
 /// The tile a part draws: its buffer, and where it lies on the surface.
@@ -457,11 +460,36 @@ pub const Target = struct {
         }
         if (target.attachments.depth.used) @memset(&buffer.depth, target.attachments.depth.clear);
         const state = &target.tiles[tile.index];
+        // The triangles at the head of the list that ask for the depth
+        // pre-pass are shaded where their depth was left, the rest as
+        // ever.
+        const lead = prepass(tile, &state.list);
+        var drawn: usize = 0;
         var block = state.list.first;
         while (block) |each| : (block = each.next) {
-            for (each.triangles[0..each.count]) |triangle| triangle.raster(tile, triangle);
+            for (each.triangles[0..each.count]) |triangle| {
+                if (drawn < lead) triangle.prepass.?.shade(tile, triangle) else triangle.raster(tile, triangle);
+                drawn += 1;
+            }
         }
         target.store(tile);
+    }
+
+    /// The depth pre-pass's first pass (prepass.zig): the depth of the
+    /// triangles at the head of a tile's list whose pipelines ask for it,
+    /// drawn alone; how many they are.
+    fn prepass(tile: *const Tile, list: *const bins.List) usize {
+        var lead: usize = 0;
+        var block = list.first;
+        walk: while (block) |each| : (block = each.next) {
+            for (each.triangles[0..each.count]) |triangle| {
+                const passes = triangle.prepass orelse break :walk;
+                passes.depth(tile, triangle);
+                lead += 1;
+            }
+        }
+        if (lead != 0) tile.buffer.shaded = @splat(0);
+        return lead;
     }
 
     /// The part of a tile inside the area, handed on.

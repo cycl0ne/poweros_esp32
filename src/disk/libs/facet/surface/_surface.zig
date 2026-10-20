@@ -50,7 +50,9 @@ pub const Ops = struct {
     /// again as soon as it is shown and the display never reads it, or
     /// hands it to the display, which reads it until another is shown.
     copies: bool = false,
-    shape: *const fn (surface: *Surface) Shape,
+    /// Null once what the surface is over has gone - its window closed:
+    /// the surface is lost, and stays so.
+    shape: *const fn (surface: *Surface) ?Shape,
     /// The most buffers a swapchain could be given.
     most: *const fn (surface: *Surface) u32,
     /// `pictures.len` buffers of the surface's shape made: false, and
@@ -61,8 +63,9 @@ pub const Ops = struct {
     /// The buffer shown, from the display's next frame on: returns when
     /// the display has taken it up, and no sooner than a frame from now
     /// where it is not taken up at all - the screen behind another, or
-    /// the buffer shown already.
-    show: *const fn (surface: *Surface, picture: *Picture) void,
+    /// the buffer shown already. False, and nothing shown, on a surface
+    /// lost.
+    show: *const fn (surface: *Surface, picture: *Picture) bool,
     /// What the surface kept given back, as it goes.
     close: *const fn (surface: *Surface) void,
 };

@@ -2149,6 +2149,47 @@ test "windows: a task's end closes what it left open; a window of the system's i
     try tearDown(ib);
 }
 
+test "windows: a number each, never given again, found while the window is open" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const display = try Display.up(ib);
+    const it = ib.iface();
+    const tags = [_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{},
+    };
+    const first = it.OpenWindowTagList(&tags).?;
+    const second = it.OpenWindowTagList(&tags).?;
+    const first_number = windowAttr(ib, first, wn.WA_Number);
+    const second_number = windowAttr(ib, second, wn.WA_Number);
+    try testing.expect(first_number != 0);
+    try testing.expect(second_number != first_number);
+    try testing.expectEqual(@as(?*intuition.Window, first), it.FindWindowNumber(@intCast(first_number)));
+    try testing.expectEqual(@as(?*intuition.Window, second), it.FindWindowNumber(@intCast(second_number)));
+    try testing.expectEqual(@as(?*intuition.Window, null), it.FindWindowNumber(0));
+
+    // Closed, the number finds nothing - not the window opened next, even
+    // where it is given the memory the closed one had.
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, first, wn.WA_Screen));
+    it.CloseWindow(first);
+    const third = it.OpenWindowTagList(&tags).?;
+    const third_number = windowAttr(ib, third, wn.WA_Number);
+    try testing.expect(third_number != first_number and third_number != second_number);
+    try testing.expectEqual(@as(?*intuition.Window, null), it.FindWindowNumber(@intCast(first_number)));
+    try testing.expectEqual(@as(?*intuition.Window, third), it.FindWindowNumber(@intCast(third_number)));
+
+    it.CloseWindow(third);
+    it.CloseWindow(second);
+    try testing.expectEqual(@as(?*intuition.Window, null), it.FindWindowNumber(@intCast(second_number)));
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windows: a border of frame and gadget images, and the screen held open" {
     const ib = try setUp();
     defer kexec.deinit();

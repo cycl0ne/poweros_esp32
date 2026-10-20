@@ -69,7 +69,7 @@ fn of(surface: *Surface) *Screen {
     return @ptrCast(@alignCast(surface.context.?));
 }
 
-fn shape(surface: *Surface) Shape {
+fn shape(surface: *Surface) ?Shape {
     const bitmap = of(surface).own.bitmap;
     return .{
         .width = bitmap.width,
@@ -116,13 +116,14 @@ fn unmake(surface: *Surface, pictures: []Picture, shown: ?u32) void {
 
 /// ChangeScreenBuffer, again at the next frame while the screen's menus
 /// are up; a frame waited for where the display did not flip to it.
-fn show(surface: *Surface, picture: *Picture) void {
+fn show(surface: *Surface, picture: *Picture) bool {
     const screen = of(surface);
     const buffer = bufferOf(picture);
     const was_showing = buffer.bitmap.flags & rtg.bitmaps.RTGBMF_SHOWING != 0;
     while (!screen.ib.ChangeScreenBuffer(screen.screen, buffer)) _ = screen.rb.WaitVBlank(boardOf(screen), 0);
     const flipped = !was_showing and buffer.bitmap.flags & rtg.bitmaps.RTGBMF_SHOWING != 0;
     if (!flipped) _ = screen.rb.WaitVBlank(boardOf(screen), 0);
+    return true;
 }
 
 fn close(surface: *Surface) void {

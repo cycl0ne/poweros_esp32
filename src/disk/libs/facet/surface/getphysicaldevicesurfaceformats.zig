@@ -26,7 +26,9 @@ const Surface = _surface.Surface;
 /// - `formats` - where they go, or null.
 ///
 /// RESULT:
-/// `success`, or `incomplete` when `formats` was too short for them all.
+/// `success`, or `incomplete` when `formats` was too short for them all;
+/// `error_surface_lost`, and none, when the window the surface is over has
+/// closed.
 ///
 /// BEHAVIOR:
 /// A surface has one format, its display's: `b8g8r8a8_unorm` or
@@ -34,9 +36,9 @@ const Surface = _surface.Surface;
 /// panels, has none: facet.library draws 32 bits a pixel.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: on a window's surface, for the screens' semaphore.
 /// - Interrupts: no.
-/// - Locks: none.
+/// - Locks: on a window's surface, no layer's lock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -62,7 +64,10 @@ pub fn GetPhysicalDeviceSurfaceFormats(base: *FacetBase, physical: *facet.Physic
     _ = base;
     _ = physical;
     const made = _objects.of(Surface, surface);
-    const format = made.ops.shape(made).format;
+    const format = (made.ops.shape(made) orelse {
+        count.* = 0;
+        return .error_surface_lost;
+    }).format;
     const there: u32 = @intFromBool(_surface.drawable(format));
     const into = formats orelse {
         count.* = there;

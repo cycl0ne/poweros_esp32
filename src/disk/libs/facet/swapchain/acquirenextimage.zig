@@ -31,7 +31,8 @@ const _sync = @import("../sync/_sync.zig");
 /// `success`; `timeout`, or `not_ready` with a timeout of 0, when none
 /// came free in time, or none will - each held by the program, or shown
 /// with nothing presented after it; `error_out_of_date` when the surface's
-/// size or format has changed, or the swapchain has been handed on.
+/// size or format has changed, or the swapchain has been handed on;
+/// `error_surface_lost` when the window the surface is over has closed.
 ///
 /// BEHAVIOR:
 /// An image is handed out when the display no longer reads it: the one
@@ -42,7 +43,8 @@ const _sync = @import("../sync/_sync.zig");
 /// CONTEXT:
 /// - Waits: for an image to come free, at most `timeout`.
 /// - Interrupts: no.
-/// - Locks: no spinlock may be held.
+/// - Locks: no spinlock may be held; on a window's surface, no layer's
+///   lock either - its window is found under the screens' semaphore.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -65,6 +67,7 @@ const _sync = @import("../sync/_sync.zig");
 /// switch (fb.AcquireNextImage(device, swapchain.?, facet.WAIT_FOREVER_NS, acquired.?, null, &index)) {
 ///     .success => {},
 ///     .error_out_of_date => return remake(),
+///     .error_surface_lost => return error.WindowClosed,
 ///     else => return error.NoImage,
 /// }
 /// ```
@@ -81,5 +84,6 @@ pub fn AcquireNextImage(base: *FacetBase, device: *facet.Device, swapchain: *fac
         },
         .none, .timeout => return if (timeout == 0) .not_ready else .timeout,
         .out_of_date => return .error_out_of_date,
+        .lost => return .error_surface_lost,
     }
 }

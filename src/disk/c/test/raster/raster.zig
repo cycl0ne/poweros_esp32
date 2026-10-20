@@ -37,12 +37,24 @@
 //! Textures: the same two layers, each square a quarter of a 256 x 256
 //! texture each way - 64 texels over 40 pixels, so its second level -
 //! filtered bilinear, with depth: the front layer first, on all the cores
-//! and on one, the back one first, and with the test after the colour.
+//! and on one, the back one first, and with the test after the colour;
+//! then both orders with the depth pre-pass, which shades each pixel once
+//! whichever layer comes first.
 //! Then nearest in RGB565, and smooth colours, mixed in perspective; and a
 //! corridor running away from the eye over the whole viewport, from
 //! texels larger than a pixel at its sides to the texture's last level at
 //! its end. Each is drawn once on one core into the plain memory, and has
 //! to come out the same on all the cores.
+//!
+//! Large textures: the two layers again, each square a part of its own of
+//! one of the textures - a texel of the first level a pixel - the squares
+//! dealt out among them in turn, a draw for each texture; once from one
+//! texture of 256 x 256, which the L2 holds, and once from four of
+//! 1024 x 1024, 45 MB, which it does not: what the cache misses cost. The
+//! front layer first and the back one first, which has to come out on all
+//! the cores as on one. (8888 kept packed, in 32 bits and spread as it
+//! was read, was slower in both: by 5 and 10% with the one texture, by 5
+//! and 9% with the four.)
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -66,7 +78,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Raster";
-const VERSION_STRING = "\x00$VER: Raster 1.1 (19.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Raster 1.2 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/K/N,HOLD/K/N";
@@ -550,6 +562,7 @@ fn layered(b: *Bench, name: [*:0]const u8, timed: Timed) bool {
 /// corridor's, which needs none: nothing in it is in front of anything.
 const Pictured = raster.Pipeline(.{ .color = .texture, .front = .clockwise, .depth = .less });
 const PicturedLate = raster.Pipeline(.{ .color = .texture, .front = .clockwise, .depth = .less, .early_depth = false });
+const PicturedFirst = raster.Pipeline(.{ .color = .texture, .front = .clockwise, .depth = .less, .prepass = true });
 const Nearest = raster.Pipeline(.{ .color = .texture, .sampling = .{ .format = .rgb565, .filter = .nearest }, .front = .clockwise, .depth = .less });
 const Smooth = raster.Pipeline(.{ .color = .smooth, .front = .clockwise, .depth = .less });
 const Corridor = raster.Pipeline(.{ .color = .texture, .cull = .none });
@@ -560,6 +573,7 @@ fn textured(b: *Bench, rounds: u32) bool {
     const Kinds = struct {
         pictured: [layered_squares * 4]Pictured.Vertex,
         late: [layered_squares * 4]PicturedLate.Vertex,
+        first: [layered_squares * 4]PicturedFirst.Vertex,
         nearest: [layered_squares * 4]Nearest.Vertex,
         smooth: [layered_squares * 4]Smooth.Vertex,
         corridor: [scenes.corridor_vertices]Corridor.Vertex,
@@ -576,6 +590,7 @@ fn textured(b: *Bench, rounds: u32) bool {
     const rgb565 = scenes.patternTexture(.rgb565, @ptrCast(half));
     layers(Pictured.Vertex, &kinds.pictured);
     layers(PicturedLate.Vertex, &kinds.late);
+    layers(PicturedFirst.Vertex, &kinds.first);
     layers(Nearest.Vertex, &kinds.nearest);
     layers(Smooth.Vertex, &kinds.smooth);
     kinds.corridor = scenes.corridor(Corridor.Vertex);
@@ -586,6 +601,7 @@ fn textured(b: *Bench, rounds: u32) bool {
     const deep = raster.Attachments{ .color = .{ .clear = 0xFF10_1020 }, .depth = .{ .used = true } };
     const pictured = Pictured{ .viewport = viewport, .texture = &rgba };
     const late = PicturedLate{ .viewport = viewport, .texture = &rgba };
+    const first = PicturedFirst{ .viewport = viewport, .texture = &rgba };
     const nearest = Nearest{ .viewport = viewport, .texture = &rgb565 };
     const smooth = Smooth{ .viewport = viewport };
     var corridor = Corridor{ .viewport = viewport, .texture = &rgba };
@@ -594,6 +610,8 @@ fn textured(b: *Bench, rounds: u32) bool {
     right = checked(b, "textured overdraw 2, front first", deep, &pictured, &kinds.pictured, &kinds.front_first, layered_triangles, rounds, rounds) and right;
     right = checked(b, "textured overdraw 2, back first", deep, &pictured, &kinds.pictured, &kinds.back_first, layered_triangles, rounds, 1) and right;
     right = checked(b, "textured overdraw 2, depth after", deep, &late, &kinds.late, &kinds.front_first, layered_triangles, rounds, 1) and right;
+    right = checked(b, "textured overdraw 2, pre-pass, front first", deep, &first, &kinds.first, &kinds.front_first, layered_triangles, rounds, 1) and right;
+    right = checked(b, "textured overdraw 2, pre-pass, back first", deep, &first, &kinds.first, &kinds.back_first, layered_triangles, rounds, 1) and right;
     right = checked(b, "nearest 565 overdraw 2, front first", deep, &nearest, &kinds.nearest, &kinds.front_first, layered_triangles, rounds, 1) and right;
     right = checked(b, "smooth overdraw 2, front first", deep, &smooth, &kinds.smooth, &kinds.front_first, layered_triangles, rounds, 1) and right;
     right = checked(b, "corridor 800x600, bilinear", .{ .color = .{ .clear = 0xFF10_1020 } }, &corridor, &kinds.corridor, &scenes.corridor_indices, scenes.corridor_triangles, rounds, 1) and right;
@@ -603,6 +621,143 @@ fn textured(b: *Bench, rounds: u32) bool {
 /// A case drawn on one core into the plain memory - `one_rounds` times,
 /// and timed when that is more than once - and `rounds` times on all the
 /// cores into the buffer, timed: whether the two came out alike.
+/// The scenes of large textures: how many textures, their side and their
+/// levels.
+const Large = struct { count: u32, side: u32, levels: u32, name: [*:0]const u8 };
+const large_scenes = [_]Large{
+    .{ .count = 1, .side = 256, .levels = 9, .name = "1 texture of 256" },
+    .{ .count = 4, .side = 1024, .levels = 11, .name = "4 textures of 1024" },
+};
+const most_large = 4;
+
+/// The squares' triangles for each layer - the front's, the back's - and
+/// each texture, and how many indices each list has.
+const LargeLists = struct {
+    indices: [2][most_large][layered_triangles * 3]u16,
+    counts: [2][most_large]u32,
+};
+
+/// Each scene of large textures timed: whether each came out on all the
+/// cores as on one.
+fn largeTextures(b: *Bench, rounds: u32) bool {
+    const Kinds = struct { vertices: [layered_squares * 4]Pictured.Vertex, lists: LargeLists };
+    const kinds: *Kinds = @ptrCast(@alignCast(b.sys.AllocVec(@sizeOf(Kinds), exec.MEMF_ANY) orelse return noTarget(b)));
+    defer b.sys.FreeVec(kinds);
+    layers(Pictured.Vertex, &kinds.vertices);
+    var right = true;
+    for (large_scenes) |scene| {
+        largeLists(&kinds.lists, scene.count);
+        largeCoordinates(&kinds.vertices, scene);
+        right = largeCase(b, scene, &kinds.vertices, &kinds.lists, rounds) and right;
+    }
+    return right;
+}
+
+/// The squares dealt out among `count` textures in turn, into a list for
+/// each layer and texture.
+fn largeLists(lists: *LargeLists, count: u32) void {
+    lists.counts = @splat(@splat(0));
+    for (0..layered_squares) |square_index| {
+        const layer: usize = @intFromBool(square_index >= front_squares);
+        const k = square_index % count;
+        const first: u16 = @intCast(square_index * 4);
+        for ([_]u16{ 0, 1, 2, 0, 2, 3 }) |corner| {
+            lists.indices[layer][k][lists.counts[layer][k]] = first + corner;
+            lists.counts[layer][k] += 1;
+        }
+    }
+}
+
+/// Each square's coordinates: a cell of its own of 40 x 40 texels of its
+/// texture's first level, the cells taken row by row - round again once
+/// all are.
+fn largeCoordinates(vertices: *[layered_squares * 4]Pictured.Vertex, scene: Large) void {
+    const per_row = scene.side / square;
+    const side: f32 = @floatFromInt(scene.side);
+    const corners = [_][2]f32{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
+    for (0..layered_squares) |square_index| {
+        const cell: u32 = @intCast(square_index / scene.count);
+        const u: f32 = @floatFromInt(cell % per_row * square);
+        const v: f32 = @floatFromInt(cell / per_row % per_row * square);
+        for (corners, 0..) |corner, k| vertices[square_index * 4 + k].uv = .{ (u + corner[0] * square) / side, (v + corner[1] * square) / side };
+    }
+}
+
+/// A scene's textures made and its frames timed on all the cores, the
+/// front layer first and the back one first, the back one first drawn once
+/// on one core into the plain memory as well: whether the two came out
+/// alike. True, said, where there is no memory for the textures.
+fn largeCase(b: *Bench, scene: Large, vertices: []const Pictured.Vertex, lists: *const LargeLists, rounds: u32) bool {
+    const bytes = raster.Texture.bytes(.rgba8888, scene.side, scene.side, scene.levels) catch unreachable;
+    const memory: [*]u8 = @ptrCast(b.sys.AllocVec(bytes * scene.count, exec.MEMF_ANY) orelse {
+        _ = Printf(b.dl, "%s: no memory for the textures\n", .{scene.name});
+        return true;
+    });
+    defer b.sys.FreeVec(memory);
+    var textures: [most_large]raster.Texture = undefined;
+    for (textures[0..scene.count], 0..) |*made, k| {
+        made.* = raster.Texture.init(.rgba8888, scene.side, scene.side, scene.levels, memory + k * bytes) catch unreachable;
+        for (0..scene.levels) |lod| {
+            const level: u32 = @intCast(lod);
+            for (0..made.height(level)) |y| for (0..made.width(level)) |x| {
+                made.put(level, @intCast(x), @intCast(y), scenes.patternAt(@intCast(x << @intCast(lod)), @intCast(y << @intCast(lod))) ^ @as(u32, @intCast(k)) * 0x0020_3040);
+            };
+        }
+    }
+    const area = viewportArea(b);
+    const viewport = viewportOf(area);
+    const deep = raster.Attachments{ .color = .{ .clear = 0xFF10_1020 }, .depth = .{ .used = true } };
+    var plain_target = raster.Target.init(b.system.alone(), .{
+        .pixels = b.plain.pixels.?,
+        .pitch = b.plain.pitch,
+        .width = b.plain.width,
+        .height = b.plain.height,
+        .format = b.format,
+    }, area, deep) catch return noTarget(b);
+    defer plain_target.deinit();
+    var target = targetOver(b, area, deep) orelse return noTarget(b);
+    defer target.deinit();
+    paint(&b.plain, 7);
+    paint(boardSurface(b), 7);
+    const front_first = [2]usize{ 0, 1 };
+    const back_first = [2]usize{ 1, 0 };
+    const scene_frames = LargeFrames{ .scene = scene, .viewport = viewport, .textures = &textures, .vertices = vertices, .lists = lists };
+    var name: [64]u8 = undefined;
+    const front_us = scene_frames.timed(&target, front_first, rounds, b.tb) orelse return noTarget(b);
+    printTime(b, std.fmt.bufPrintZ(&name, "{s}, front first", .{std.mem.span(scene.name)}) catch "", front_us, "");
+    _ = scene_frames.timed(&plain_target, back_first, 1, b.tb) orelse return noTarget(b);
+    const back_us = scene_frames.timed(&target, back_first, rounds, b.tb) orelse return noTarget(b);
+    const result = compare(b);
+    printTime(b, std.fmt.bufPrintZ(&name, "{s}, back first", .{std.mem.span(scene.name)}) catch "", back_us, if (result.wrong == 0) "ok" else "WRONG");
+    return told(b, result);
+}
+
+/// A frame of a scene of large textures: a draw for each layer and
+/// texture, the layers in the order given.
+const LargeFrames = struct {
+    scene: Large,
+    viewport: raster.Viewport,
+    textures: *const [most_large]raster.Texture,
+    vertices: []const Pictured.Vertex,
+    lists: *const LargeLists,
+
+    /// The microseconds a frame takes, over `rounds`; null when the
+    /// frame's memory ran out.
+    fn timed(frames: LargeFrames, target: *raster.Target, layers_in_turn: [2]usize, rounds: u32, tb: *TimerBase) ?u64 {
+        const start = now(tb);
+        var round: u32 = 0;
+        while (round < rounds) : (round += 1) {
+            target.begin();
+            for (layers_in_turn) |layer| for (0..frames.scene.count) |k| {
+                const pipeline = Pictured{ .viewport = frames.viewport, .texture = &frames.textures[k] };
+                raster.draw(target, &pipeline, frames.vertices, frames.lists.indices[layer][k][0..frames.lists.counts[layer][k]]) catch return null;
+            };
+            _ = target.finish();
+        }
+        return (now(tb) - start) / rounds;
+    }
+};
+
 fn checked(
     b: *Bench,
     name: [*:0]const u8,
@@ -757,6 +912,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         if (!scattered(&b, rounds)) failures += 1;
         if (!overdraw(&b, rounds)) failures += 1;
         if (!textured(&b, rounds)) failures += 1;
+        if (!largeTextures(&b, rounds)) failures += 1;
     }
 
     dl.Delay(hold * 50);

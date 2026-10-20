@@ -3,7 +3,7 @@
 //! test's own: what it says it can be given, images handed out in turn
 //! and shown in the order presented, drawn into where they are the
 //! surface's buffers, and what is refused - a surface that changed, a
-//! swapchain handed on, no room, a second swapchain.
+//! swapchain handed on, no room, a second swapchain, a surface lost.
 //!
 //! The tests' exec runs no task but theirs, so a present is shown as
 //! QueuePresent is called (`inline_queues`).
@@ -37,6 +37,11 @@ const Fake = struct {
     shown: [16]u32 = undefined,
     shows: u32 = 0,
     closed: bool = false,
+    /// What it is over has gone: no shape. `goes_in_flight`: it goes as
+    /// the next present comes to be shown - a window closed while its
+    /// frame was on the queue.
+    lost: bool = false,
+    goes_in_flight: bool = false,
 
     const ops = _surface.Ops{ .shape = &shape, .most = &most, .make = &make, .unmake = &unmake, .show = &show, .close = &close };
 
@@ -44,8 +49,9 @@ const Fake = struct {
         return @ptrCast(@alignCast(surface.context.?));
     }
 
-    fn shape(surface: *_surface.Surface) _surface.Shape {
+    fn shape(surface: *_surface.Surface) ?_surface.Shape {
         const fake = of(surface);
+        if (fake.lost) return null;
         return .{ .width = fake.width, .height = fake.height, .format = fake.format };
     }
 
@@ -69,10 +75,13 @@ const Fake = struct {
         fake.unmade_shown = shown;
     }
 
-    fn show(surface: *_surface.Surface, picture: *_surface.Picture) void {
+    fn show(surface: *_surface.Surface, picture: *_surface.Picture) bool {
         const fake = of(surface);
+        if (fake.goes_in_flight) fake.lost = true;
+        if (fake.lost) return false;
         fake.shown[fake.shows] = @intCast(@intFromPtr(picture.handle.?) - 1);
         fake.shows += 1;
+        return true;
     }
 
     fn close(surface: *_surface.Surface) void {
@@ -336,6 +345,56 @@ test "refused: a surface that changed, a swapchain handed on, no room, a second 
     result, _ = bench.swapchain(1, second);
     try testing.expectEqual(facet.Result.error_initialization_failed, result);
     fb.DestroySwapchain(bench.device, second);
+    try testing.expectEqual(@as(u32, 0), fake.made);
+}
+
+test "lost: what the surface is over gone before a present, and with one on its way" {
+    var fake = Fake{};
+    var bench = try Bench.up(&fake);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    var result, const swapchain = bench.swapchain(2, null);
+    try testing.expectEqual(facet.Result.success, result);
+
+    // Gone as the frame was on the queue: the present was taken, nothing
+    // is shown, and the next acquire is told.
+    var acquired, var index = bench.acquire(swapchain.?, 0);
+    try testing.expectEqual(facet.Result.success, acquired);
+    fake.goes_in_flight = true;
+    try testing.expectEqual(facet.Result.success, bench.present(swapchain.?, index));
+    try testing.expectEqual(@as(u32, 0), fake.shows);
+    acquired, _ = bench.acquire(swapchain.?, facet.WAIT_FOREVER_NS);
+    try testing.expectEqual(facet.Result.error_surface_lost, acquired);
+
+    // Nothing more can be asked of it, or made on it.
+    var capabilities: facet.SurfaceCapabilities = undefined;
+    try testing.expectEqual(facet.Result.error_surface_lost, fb.GetPhysicalDeviceSurfaceCapabilities(bench.physical, bench.surface, &capabilities));
+    var count: u32 = 7;
+    try testing.expectEqual(facet.Result.error_surface_lost, fb.GetPhysicalDeviceSurfaceFormats(bench.physical, bench.surface, &count, null));
+    try testing.expectEqual(@as(u32, 0), count);
+    var supported = true;
+    try testing.expectEqual(facet.Result.error_surface_lost, fb.GetPhysicalDeviceSurfaceSupport(bench.physical, 0, bench.surface, &supported));
+    try testing.expect(!supported);
+    result, const another = bench.swapchain(1, swapchain);
+    try testing.expectEqual(facet.Result.error_surface_lost, result);
+    try testing.expectEqual(@as(?*facet.Swapchain, null), another);
+    fb.DestroySwapchain(bench.device, swapchain);
+    try testing.expectEqual(@as(u32, 0), fake.made);
+
+    // Gone with an image held: its present is refused, and the image given
+    // back.
+    fake.lost = false;
+    fake.goes_in_flight = false;
+    result, const again = bench.swapchain(2, null);
+    try testing.expectEqual(facet.Result.success, result);
+    acquired, index = bench.acquire(again.?, 0);
+    try testing.expectEqual(facet.Result.success, acquired);
+    fake.lost = true;
+    try testing.expectEqual(facet.Result.error_surface_lost, bench.present(again.?, index));
+    try testing.expectEqual(@as(u32, 0), fake.shows);
+    acquired, _ = bench.acquire(again.?, 0);
+    try testing.expectEqual(facet.Result.error_surface_lost, acquired);
+    fb.DestroySwapchain(bench.device, again);
     try testing.expectEqual(@as(u32, 0), fake.made);
 }
 

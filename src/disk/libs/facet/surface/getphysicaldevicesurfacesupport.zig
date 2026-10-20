@@ -24,16 +24,17 @@ const Surface = _surface.Surface;
 /// - `supported` - true where the family's queues can present to it.
 ///
 /// RESULT:
-/// `success`.
+/// `success`; `error_surface_lost`, and not supported, when the window the
+/// surface is over has closed.
 ///
 /// BEHAVIOR:
 /// The one queue family can present to a surface whose pixels
 /// facet.library draws in: 32 bits, in either order of red and blue.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: on a window's surface, for the screens' semaphore.
 /// - Interrupts: no.
-/// - Locks: none.
+/// - Locks: on a window's surface, no layer's lock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -58,6 +59,10 @@ pub fn GetPhysicalDeviceSurfaceSupport(base: *FacetBase, physical: *facet.Physic
     _ = base;
     _ = physical;
     const made = _objects.of(Surface, surface);
-    supported.* = family == 0 and _surface.drawable(made.ops.shape(made).format);
+    const now = made.ops.shape(made) orelse {
+        supported.* = false;
+        return .error_surface_lost;
+    };
+    supported.* = family == 0 and _surface.drawable(now.format);
     return .success;
 }

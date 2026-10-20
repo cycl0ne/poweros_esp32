@@ -220,6 +220,7 @@ const PipelineState = struct {
     width: f32 = 64,
     height: f32 = 64,
     dynamic: []const facet.DynamicState = &.{},
+    flags: u32 = 0,
 };
 
 fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*facet.Pipeline } {
@@ -241,6 +242,7 @@ fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*fa
     const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&state.blend) };
     const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = @intCast(state.dynamic.len), .dynamic_states = state.dynamic.ptr };
     const info = facet.GraphicsPipelineCreateInfo{
+        .flags = state.flags,
         .stage_count = 2,
         .stages = &stages,
         .vertex_input_state = &input,
@@ -476,6 +478,7 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     try testing.expectEqual(.clockwise, made.front);
     try testing.expectEqual(.greater_or_equal, made.depth_test.?);
     try testing.expect(made.depth_write);
+    try testing.expect(!made.prepass);
     try testing.expectEqual(.alpha, made.blend);
     try testing.expectEqual(@as(f32, 64), made.viewport.?.width);
     try testing.expect(made.scissor == null);
@@ -596,7 +599,11 @@ test "a frame drawn: a triangle coloured by its fragment function, the clear col
     try testing.expectEqual(red, picture.at(62, 33));
 }
 
-test "depths in order: nearer kept whatever was drawn first; a scissor and a render area cut what is drawn" {
+test "depths in order: nearer kept whatever was drawn first, with the depth pre-pass or without; a scissor and a render area cut what is drawn" {
+    for ([_]u32{ 0, facet.PIPELINE_CREATE_DEPTH_PREPASS }) |flags| try depthsInOrder(flags);
+}
+
+fn depthsInOrder(flags: u32) !void {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -611,7 +618,7 @@ test "depths in order: nearer kept whatever was drawn first; a scissor and a ren
     defer fb.DestroyShaderModule(device, flat);
     const layout = try pipelineLayout(&bench, &.{}, 4);
     defer fb.DestroyPipelineLayout(device, layout);
-    _, const tested = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .depth = .{ .depth_test_enable = true, .depth_write_enable = true }, .dynamic = &.{.scissor} });
+    _, const tested = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .depth = .{ .depth_test_enable = true, .depth_write_enable = true }, .dynamic = &.{.scissor}, .flags = flags });
     defer fb.DestroyPipeline(device, tested);
 
     // Whole squares at depths 0.8, 0.2 over the left half, and 0.5.
@@ -781,7 +788,7 @@ const Window = struct {
         return @ptrCast(@alignCast(surface.context.?));
     }
 
-    fn shape(_: *_surface.Surface) _surface.Shape {
+    fn shape(_: *_surface.Surface) ?_surface.Shape {
         return .{ .width = cube_width, .height = cube_height, .format = .b8g8r8a8_unorm };
     }
 
@@ -800,7 +807,7 @@ const Window = struct {
         of(surface).made -= @intCast(pictures.len);
     }
 
-    fn show(surface: *_surface.Surface, picture: *_surface.Picture) void {
+    fn show(surface: *_surface.Surface, picture: *_surface.Picture) bool {
         const window = of(surface);
         const from: *const [cube_width * cube_height]u32 = @ptrCast(@alignCast(picture.handle.?));
         for (0..cube_height) |y| for (0..cube_width) |x| {
@@ -810,6 +817,7 @@ const Window = struct {
             window.screen[at_y][at_x] = from[y * cube_width + x];
         };
         window.shows += 1;
+        return true;
     }
 
     fn close(_: *_surface.Surface) void {}

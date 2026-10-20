@@ -29,6 +29,17 @@ pub const Header = struct {
     /// Its edges: `edges[i]` is the one opposite vertex i, and a pixel is
     /// inside where all three are 0 or more (`Edge`).
     edges: [3]Edge,
+    /// How it is drawn in the depth pre-pass (prepass.zig), for a
+    /// triangle of a pipeline that asks for one; null for any other.
+    prepass: ?*const Prepass = null,
+};
+
+/// A triangle drawn in two passes over a tile: its depth alone, first,
+/// with the others' at the head of the tile's list; then its colour where
+/// its depth is the one left, in the list's order.
+pub const Prepass = struct {
+    depth: *const fn (tile: *const Tile, triangle: *const Header) void,
+    shade: *const fn (tile: *const Tile, triangle: *const Header) void,
 };
 
 /// An edge's function: `a * x + b * y + c` at pixel (x, y) - its centre -

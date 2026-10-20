@@ -35,7 +35,8 @@ const Surface = _surface.Surface;
 /// `error_initialization_failed` for a size that is not the surface's;
 /// `error_format_not_supported` for a format that is not its;
 /// `error_feature_not_present` for a use, a present mode or layers it does
-/// not have; `error_out_of_host_memory`.
+/// not have; `error_surface_lost` when the window the surface is over has
+/// closed; `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// `min_image_count` images are made, at least one and at most four. On a
@@ -90,7 +91,7 @@ pub fn CreateSwapchain(base: *FacetBase, device: *facet.Device, info: *const fac
     const surface = _objects.of(Surface, info.surface);
     const old: ?*Swapchain = if (info.old_swapchain) |handle| _objects.of(Swapchain, handle) else null;
     if (surface.swapchain) |live| if (live != old) return .error_native_window_in_use;
-    const now = surface.ops.shape(surface);
+    const now = surface.ops.shape(surface) orelse return .error_surface_lost;
     if (info.image_extent.width != now.width or info.image_extent.height != now.height) return .error_initialization_failed;
     if (info.image_format != now.format or !_surface.drawable(now.format)) return .error_format_not_supported;
     if (info.image_usage & ~_surface.usage != 0 or info.image_array_layers != 1 or info.present_mode != .fifo) return .error_feature_not_present;
@@ -99,7 +100,7 @@ pub fn CreateSwapchain(base: *FacetBase, device: *facet.Device, info: *const fac
     made.* = .{ .device = owner, .surface = surface, .width = now.width, .height = now.height, .format = now.format, .count = count };
     if (!surface.ops.make(surface, made.pictures[0..count])) {
         _objects.destroy(sys, made);
-        return .error_out_of_device_memory;
+        return if (surface.ops.shape(surface) == null) .error_surface_lost else .error_out_of_device_memory;
     }
     _swapchain.lay(made, sys, info.image_usage);
     if (old) |previous| _swapchain.retire(previous, sys);

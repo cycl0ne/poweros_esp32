@@ -20,7 +20,10 @@
 //! against the tile's before the pixel's colour is, unless `early_depth`
 //! is off. On the VisionFive 2 a test costs about 8 cycles a pixel: two
 //! layers over 800 x 600 took 6.0 ms without depth and 8.5 ms with, the
-//! front layer drawn first, 8.8 ms the back one first.
+//! front layer drawn first, 8.8 ms the back one first. A pipeline whose
+//! colour changes over its triangles may ask for the depth pre-pass
+//! (prepass.zig): their depth drawn first, then each pixel shaded once,
+//! whatever the order they come in.
 //!
 //! A triangle whose colour changes over it - mixed from its vertices'
 //! colours, or read from a texture at coordinates mixed from theirs - is
@@ -46,6 +49,7 @@ const Target = target_zig.Target;
 const Tile = target_zig.Tile;
 const Texture = texture_zig.Texture;
 const walk = @import("walk.zig");
+const prepass = @import("prepass.zig");
 const Span = walk.Span;
 const Header = bins.Header;
 const tile_size = target_zig.tile_size;
@@ -108,6 +112,12 @@ pub const Config = struct {
     /// Whether a pixel is tested before its colour is worked out, so that
     /// one behind costs nothing more, or after.
     early_depth: bool = true,
+    /// The depth pre-pass (prepass.zig): the triangles' depth drawn into
+    /// a tile first, then their colour only where theirs is the depth
+    /// left, so that a pixel is shaded once however many cover it and in
+    /// whatever order. For a colour that changes over the triangle, not
+    /// blended, with a depth test; on a target without depth it is off.
+    prepass: bool = false,
 };
 
 pub fn Pipeline(comptime config: Config) type {
@@ -159,6 +169,11 @@ pub fn Pipeline(comptime config: Config) type {
         const Clip = setup.ClipVertex(varyings);
 
         const tests_depth = config.depth != .off;
+
+        comptime {
+            if (config.prepass and !(shaded and config.blend == .off and tests_depth))
+                @compileError("the depth pre-pass is for an unblended pipeline whose colour changes over it, with a depth test");
+        }
 
         /// A triangle set up for the tiles.
         const Triangle = struct {
@@ -262,6 +277,7 @@ pub fn Pipeline(comptime config: Config) type {
                     .right = made.right,
                     .bottom = made.bottom,
                     .edges = made.edges,
+                    .prepass = if (config.prepass and target.attachments.depth.used) &two_passes else null,
                 },
                 .pixel = color,
                 .depth = if (tests_depth) .of(&made, &projected) else {},
@@ -360,21 +376,42 @@ pub fn Pipeline(comptime config: Config) type {
             // both ways of dividing, unroll more than the default allows.
             @setEvalBranchQuota(10_000);
             const triangle: *const Triangle = @alignCast(@fieldParentPtr("header", header));
-            walk.quads(tile, header, Shaded(false).of(tile, triangle), Shaded(false).run);
+            walk.quads(tile, header, Shaded(.untested).of(tile, triangle), Shaded(.untested).run);
         }
 
         /// The same over those of its pixels the depth test keeps.
         fn rasterShadedDepth(tile: *const Tile, header: *const Header) void {
             @setEvalBranchQuota(10_000);
             const triangle: *const Triangle = @alignCast(@fieldParentPtr("header", header));
-            walk.quads(tile, header, Shaded(true).of(tile, triangle), Shaded(true).run);
+            walk.quads(tile, header, Shaded(.tested).of(tile, triangle), Shaded(.tested).run);
         }
 
-        /// A triangle's quads in a tile, `tested` against its depth or
-        /// not. What they need of the triangle is copied in, as with
-        /// `Tested`, the planes moved to the tile's top left, where their
-        /// numbers are smallest.
-        fn Shaded(comptime tested: bool) type {
+        /// The same over those of its pixels where its depth is what the
+        /// pre-pass left: its second pass.
+        fn rasterShadedSecond(tile: *const Tile, header: *const Header) void {
+            @setEvalBranchQuota(10_000);
+            const triangle: *const Triangle = @alignCast(@fieldParentPtr("header", header));
+            walk.quads(tile, header, Shaded(.second).of(tile, triangle), Shaded(.second).run);
+        }
+
+        const two_passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle).raster, .shade = &rasterShadedSecond };
+
+        /// How a triangle's quads are tested against the tile's depth.
+        const Testing = enum {
+            untested,
+            /// By the pipeline's test, and their depth written.
+            tested,
+            /// As the pre-pass's second pass does: their depth the one
+            /// left (`prepass.keep`), and nothing written.
+            second,
+        };
+
+        /// A triangle's quads in a tile, tested against its depth as
+        /// `testing` says. What they need of the triangle is copied in, as
+        /// with `Tested`, the planes moved to the tile's top left, where
+        /// their numbers are smallest.
+        fn Shaded(comptime testing: Testing) type {
+            const tested = testing != .untested;
             return struct {
                 tile: *const Tile,
                 /// At the tile's pixel (x, y): `origin + x * dx + y * dy`.
@@ -457,11 +494,13 @@ pub fn Pipeline(comptime config: Config) type {
                         var kept = covered;
                         if (tested) {
                             near = .{ units(z_upper), units(z_upper +% step), units(z_lower), units(z_lower +% step) };
-                            inline for (0..4) |i| {
+                            if (testing == .second) {
+                                kept = prepass.keep(tile, config.depth == .less_equal, x, y, covered, near, depths);
+                            } else inline for (0..4) |i| {
                                 if (kept >> i & 1 != 0 and !passes(near[i], depths[offset(i) + x])) kept &= ~(@as(u4, 1) << i);
                             }
                         }
-                        const shown = if (tested and config.early_depth) kept else covered;
+                        const shown = if (tested and (config.early_depth or testing == .second)) kept else covered;
                         if (shown == 0) continue;
                         const pixels = context.shade(exact, covered, rows, across);
                         if (kept == 0xF) {
@@ -494,7 +533,7 @@ pub fn Pipeline(comptime config: Config) type {
 
                 /// A pixel kept: its colour and its depth put into the tile.
                 inline fn put(_: Context, colors: [*]u32, depths: [*]u16, at: u32, color: u32, near: u64) void {
-                    if (tested) depths[at] = @truncate(near);
+                    if (testing == .tested) depths[at] = @truncate(near);
                     colors[at] = blended(color, colors[at]);
                 }
 
