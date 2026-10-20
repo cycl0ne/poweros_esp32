@@ -333,8 +333,8 @@ qemu-system-riscv64 -M virt -m 512M -smp 4 -bios default \
 ```
 
 `-device usb-audio,audiodev=snd -audiodev pa,id=snd` adds a USB speaker
-(`-audiodev wav,id=snd,path=out.wav,out.frequency=48000` plays into a
-file instead).
+(`-audiodev wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
+plays into a file instead).
 
 On the VisionFive 2, U-Boot loads `kernel.bin` and starts it with
 `booti`, with `disk-rv64.bin` as its ramdisk and U-Boot's device tree.

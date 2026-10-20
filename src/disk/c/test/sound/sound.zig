@@ -27,7 +27,7 @@ const Printf = dos.stdio.Printf;
 const TagItem = utility.TagItem;
 
 pub const COMMAND_NAME = "Sound";
-const VERSION_STRING = "\x00$VER: Sound 1.0 (13.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Sound 1.1 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,VOLUME/K/N,CYCLES/K/N";
@@ -71,7 +71,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const sound = dt.NewDTObjectA(file, &[_]TagItem{
         .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_SOUND },
-        .{ .tag = sdt.SDTA_Volume, .data = audio.AUDIO_VOLUME_UNITY / 100 * percent },
+        .{ .tag = sdt.SDTA_Volume, .data = audio.AUDIO_VOLUME_UNITY * percent / 100 },
         .{ .tag = sdt.SDTA_Cycles, .data = cycles },
         .{ .tag = sdt.SDTA_SignalTask, .data = @intFromPtr(sys.FindTask(null)) },
         .{ .tag = sdt.SDTA_SignalBit, .data = @as(u32, @intCast(bit)) },

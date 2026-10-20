@@ -667,14 +667,20 @@ for buffer at 48 kHz, and goes nowhere, so a program that plays runs as
 it would on a board, and `C:test/AudioTest BENCH` measures the mix. QEMU's virt
 machine with `-device qemu-xhci -device usb-audio,audiodev=snd` and an
 audiodev has a USB speaker, which uac.device plays through; with
-`-audiodev wav,id=snd,path=out.wav,out.mixing-engine=off` what it was
-sent lands in a WAV file on the host, sample for sample.
+`-audiodev wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
+what it was sent lands in a WAV file on the host, sample for sample
+(QEMU 11.1.2). QEMU's speaker plays its 0 dB at 240/255 of full scale
+and spreads its feature unit's volume over 255 steps: a volume of half,
+-6 dB at the unit, is 229/255.
 
 `./zig build audio-bench` times the mixer on the host, for 1, 4, 8 and
 16 streams; the board's own figure is `C:test/AudioTest BENCH`'s. The mixer
 is held to a reference mix byte for byte by a host test
 (`src/rom/devs/audio/golden.zig`); a change to it that is meant to change
 what is heard writes the reference again with `./zig build audio-golden`.
+Every sample is worked out with integers, so a mix is the same on every
+processor: `C:test/AudioTest CHORD TOFILE` gives the same file on the S3
+and on RISC-V 64.
 
 `C:Record FILE` records the way in into a WAV file until Ctrl-C, or for
 `SECONDS`; by default at the output's rate, with as many channels as the

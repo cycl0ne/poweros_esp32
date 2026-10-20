@@ -26,7 +26,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Record";
-const VERSION_STRING = "\x00$VER: Record 1.0 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Record 1.1 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,SECONDS/K/N,RATE/K/N,CHANNELS/K/N,BITS/K/N,VOLUME/K/N,QUIET/S";
@@ -104,7 +104,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     first.format = format;
     first.channels = if (asked_channels != 0) @intCast(asked_channels) else 1;
     first.rate = if (argv[arg_rate] != 0) @intCast(@max(numberAt(argv[arg_rate]), 0)) else usual_rate;
-    first.volume = audio.AUDIO_VOLUME_UNITY / 100 * percent;
+    first.volume = audio.AUDIO_VOLUME_UNITY * percent / 100;
     const opened = sys.OpenDevice(audio.AUDIONAME, audio.AUDIO_UNIT_RECORD, &first.std.req, 0);
     if (opened != 0) {
         switch (opened) {

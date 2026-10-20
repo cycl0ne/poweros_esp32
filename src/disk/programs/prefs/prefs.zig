@@ -115,7 +115,7 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.9";
+const VERSION = "1.10";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.

@@ -676,6 +676,8 @@ controller, so its bus does not start. A QEMU started with `-device
 qemu-xhci` has one, and `-device usb-kbd`, `-device usb-mouse` or a
 `usb-storage` device go on its bus; the machine's `USB AUTO` starts it at
 boot. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
-pa,id=snd`, or `wav,id=snd,path=out.wav,out.frequency=48000` for a file)
-is a speaker for `usb/uac.device`; `device_del spk` pulls it out while it
-plays. QEMU's own mixing engine plays 0 dB at 240/255 of full scale.
+pa,id=snd`, or `wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
+for a file) is a speaker for `usb/uac.device`; `device_del spk` pulls it
+out while it plays. QEMU's own mixing engine plays 0 dB at 240/255 of
+full scale. Its speaker has no feedback endpoint and never loses a
+packet, so those two are a real device's to show (QEMU 11.1.2).

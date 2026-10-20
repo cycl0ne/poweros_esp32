@@ -180,7 +180,7 @@ pub fn beepFrames(settings: *const Settings) u32 {
 
 /// audio.device's volume for the line's percent.
 pub fn volumeOf(settings: *const Settings) u32 {
-    return audio.AUDIO_VOLUME_UNITY / 100 * settings.volume;
+    return audio.AUDIO_VOLUME_UNITY * settings.volume / 100;
 }
 
 /// One cycle of a sine, a little below full scale, worked out while

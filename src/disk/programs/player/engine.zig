@@ -233,7 +233,7 @@ pub const Engine = struct {
         io.format = audio.AUDIO_S16;
         io.channels = @intCast(@max(engine.info.channels, 1));
         io.rate = @max(engine.info.rate, 1);
-        io.volume = audio.AUDIO_VOLUME_UNITY / 100 * engine.volume;
+        io.volume = audio.AUDIO_VOLUME_UNITY * engine.volume / 100;
         io.pan = 0;
         _ = engine.sys.DoIO(&io.std.req);
     }

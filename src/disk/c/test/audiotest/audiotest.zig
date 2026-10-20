@@ -61,7 +61,7 @@ const RtaBase = sdk.interface.rta.RtaBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "AudioTest";
-const VERSION_STRING = "\x00$VER: AudioTest 2.5 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AudioTest 2.6 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,OUTPUTS/S,OUTPUT/K,TRIGGER/K/N,TOFILE/K";
@@ -216,7 +216,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         io.channels = 1;
         io.rate = rates[n] * wave_len;
         // Three notes together are three times as loud: each a third.
-        io.volume = audio.AUDIO_VOLUME_UNITY / 100 * percent / @as(u32, @intCast(count));
+        io.volume = audio.AUDIO_VOLUME_UNITY * percent / 100 / @as(u32, @intCast(count));
         io.pan = @divTrunc(audio.AUDIO_PAN_FULL, 100) * pan_percent;
         if (sys.OpenDevice(audio.AUDIONAME, audio.AUDIO_UNIT_PLAY, &io.std.req, 0) != 0) {
             _ = Printf(dl, MSG_NODEVICE, .{audio.AUDIONAME});
@@ -334,7 +334,7 @@ fn triggerClicks(sys: *ExecBase, dl: *DosBase, port: *exec.MsgPort, count: u32, 
         io.format = audio.AUDIO_S16;
         io.channels = 1;
         io.rate = hz * wave_len;
-        io.volume = audio.AUDIO_VOLUME_UNITY / 100 * percent;
+        io.volume = audio.AUDIO_VOLUME_UNITY * percent / 100;
         io.pan = @divTrunc(audio.AUDIO_PAN_FULL, 100) * pan_percent;
         // A twentieth of a second of the note.
         io.loops = @max(hz / 20, 1);
