@@ -27,7 +27,9 @@ const _notify = @import("_notify.zig");
 /// On every change of any bus the signals are sent: a device added to or
 /// removed from the list, an interface bound. They say that something
 /// changed, not what; the task reads the list again. Changes close
-/// together may come as one signal.
+/// together may come as one signal. A window hears of a device that comes
+/// or goes without a task of its own: input.device is told
+/// (`IECLASS_USB`), and intuition tells the windows (`IDCMP_USBCHANGE`).
 ///
 /// CONTEXT:
 /// - Waits: yes, for the notification list.
@@ -43,7 +45,8 @@ const _notify = @import("_notify.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `RemUSBNotify`, `ObtainUSBDeviceList`
+/// `RemUSBNotify`, `ObtainUSBDeviceList`, `inputevent.IECLASS_USB`,
+/// `windows.IDCMP_USBCHANGE`
 ///
 /// EXAMPLES:
 /// ```zig

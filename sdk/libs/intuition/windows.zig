@@ -441,6 +441,11 @@ pub const IDCMP_GADGETHELP: u32 = 0x0400_0000;
 /// pointer took it. `code` holds the notches, read with `wheelDown` and
 /// `wheelAcross`; `mouse_x` and `mouse_y` are where the pointer is.
 pub const IDCMP_MOUSEWHEEL: u32 = 0x0800_0000;
+/// A USB device was plugged in or pulled out, on any bus: `code` is
+/// `inputevent.IESUBCLASS_USB_ATTACHED` or `IESUBCLASS_USB_DETACHED`.
+/// Which device it was is read from usb.library's device list. Every
+/// window that asks hears it, as with the disk messages.
+pub const IDCMP_USBCHANGE: u32 = 0x1000_0000;
 
 /// IDCMP_MOUSEWHEEL's `code`: the notches down, up negative.
 pub fn wheelDown(code: u32) i16 {

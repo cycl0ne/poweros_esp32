@@ -88,6 +88,7 @@ pub fn bringUp(host: *Host) bool {
     host.max_slots = @min(regs.maxSlots(params1), _xhci.max_slots);
     host.max_ports = regs.maxPorts(params1);
     host.scratchpads = regs.scratchpads(params2);
+    host.iso_lead = regs.istFrames(params2) + 1;
     host.context_size = if (cparams1 & regs.HCC_CSZ != 0) 64 else 32;
     host.power_switched = cparams1 & regs.HCC_PPC != 0;
     host.first_port = 1;
@@ -120,6 +121,9 @@ pub fn bringUp(host: *Host) bool {
         host.memory_made = true;
     }
     slots.forgetAll(host);
+    // MFINDEX starts again from 0 as the controller runs.
+    host.frame_seen = 0;
+    host.frame_ms = _xhci.now(host);
     return true;
 }
 

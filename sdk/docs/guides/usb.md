@@ -173,6 +173,18 @@ ub.ReleaseUSBDeviceList();
 `AddUSBNotify(task, signals)` sends the signals whenever a device comes,
 goes or is bound; the program reads the list again.
 
+input.device hears of the same: usb.library writes an `IECLASS_USB`
+event for every device that comes, once its interfaces were offered to
+the class drivers (a hub before what is plugged into it), and for every
+one that goes, once it is off the list - `subclass`
+`IESUBCLASS_USB_ATTACHED` or `IESUBCLASS_USB_DETACHED`, `code` the bus
+and address (`bus << 8 | address`), `x` and `y` the vendor and product
+id. A device that could not be set up comes too: it is on the list,
+`USBDF_FAILED`. intuition tells every window that asks for
+`IDCMP_USBCHANGE`, the subclass in its `code` (`WMHI_USBCHANGE` for a
+windowclass window), so a window showing devices needs no task of its
+own to hear of them. `C:test/Input` prints the events as they pass.
+
 A device's descriptors are kept as they came, in its `config`.
 `FindUSBInterface` finds an interface by class, subclass and protocol,
 `FindUSBEndpoint` an interface's endpoint by direction and type, and
@@ -215,16 +227,33 @@ if (sys.DoIO(&pipe.io.std.req) == 0) use(buffer[0..@intCast(pipe.io.std.actual)]
   every 8 ms until the device answers, so an idle keyboard or mouse
   costs little, and the first report after a pause is at most 8 ms
   late. Read one packet at a time: a device sends a report a packet.
-- An **isochronous** write is a run of packets, one each `interval`:
+- An **isochronous** transfer is a run of packets, one each
+  `interval`, at most `UHC_ISO_PACKETS` of them, nothing resent:
   `std.length` bytes cut into packets of `iso_packet` (the endpoint's
-  packet size unless set smaller), at most `UHC_ISO_PACKETS` of them,
-  nothing resent. A stream keeps two or more on the controller, a pipe
+  packet size unless set smaller), or with `iso_list` and `iso_count` a
+  `UsbIsoPacket` each, its own length, the packets one after the other
+  in the data. A stream keeps two or more on the controller, a pipe
   each on the endpoint: each starts in the interval after the one
   before ends, so one sent before the last has played leaves no gap.
-  The endpoint is in a setting of its own, chosen with
-  `SET_INTERFACE` first. xhci.device has them, OUT only; usbotg.device
-  answers `IOERR_NOCMD`. A high-speed endpoint asking more often than
-  once a millisecond gets no pipe.
+  The endpoint is in a setting of its own, chosen with `SET_INTERFACE`
+  first. xhci.device has them, OUT and IN; usbotg.device answers
+  `IOERR_NOCMD`. A high-speed endpoint asking more often than once a
+  millisecond gets no pipe.
+- **What became of each packet** comes back with the transfer, which
+  ends with `io_Error` 0 however many were lost: `std.actual` the bytes
+  that went or came, `iso_lost` the packets that did not, and in a list
+  each packet's `actual` and `status` - `UHIOERR_MISSED` for one whose
+  time had passed before the controller had it. `iso_frame` is the frame
+  the transfer started in; `iso_gap` the frames the endpoint went
+  without since the transfer before it, which a stream that ran dry
+  shows - 0 for one that followed on, and for the first after AbortIO.
+  `UHF_ISO_FRAME` in `flags` starts a transfer in the frame `iso_frame`
+  names, up to `UHC_ISO_AHEAD` frames on (`USBHCInfo.frame` from
+  `UHCMD_QUERYDEVICE` is the frame now); one that cannot be had is
+  answered `UHIOERR_MISSED`.
+- **Bus time** is the controller's: it adds an endpoint only while the
+  bus's frames have room for it, and a transfer to one it cannot fit
+  ends with `UHIOERR_BANDWIDTH`.
 - A **stall** ends a transfer with `UHIOERR_STALL`; `ClearUSBStall`
   clears the endpoint's halt and its toggle.
 - A device that goes ends its transfers with `UHIOERR_DETACHED`.
@@ -511,13 +540,26 @@ interface on a bus without isochronous transfers: a packet of silence
 sent as the interface is offered comes back `IOERR_NOCMD` on
 usbotg.device.
 
-Started, the interface is put in its setting, its rate set where the
-endpoint has that control, and its feature unit's mute lifted and its
-volume set to 0 dB - or the most it has, below that. Three transfers of
-ten milliseconds go round, each refilled as it comes back; one that
-comes back with nothing else left on the bus is counted as a gap
-(`underruns`). Pulled out while it plays, its sink is deleted, and
-audio.device goes on through the next output on the list.
+Started, the interface is put in its setting and its rate set where
+the endpoint has that control. Three transfers of ten milliseconds go
+round, each refilled as it comes back. What became of each is the
+controller's to say: a transfer with a packet lost (`iso_lost`), or
+with frames before it that the endpoint went without (`iso_gap`, the
+ring ran dry), is counted as a gap (`underruns`) - all but the frames
+before the first transfer after a start. Pulled out while it plays, its
+sink is deleted, and audio.device goes on through the next output on
+the list.
+
+The volume audio.device plays the speaker at goes to its feature unit:
+every channel with a volume is set in 1/256 dB within the range the
+unit gives as it is bound (`GET_MIN`, `GET_MAX`), the mute is put on for
+none at all, and what the range does not reach is left to the mix. A
+device on its own clock - an asynchronous endpoint naming a feedback
+endpoint - has a transfer of a buffer's packets kept on that endpoint
+while it plays, an isochronous IN one; the rate its last whole packet
+tells (10.14 samples a frame in three bytes, 16.16 in four) is noted,
+and at the stop the average and its distance from 48 kHz go to the
+debug output, in parts a million.
 
 ## Writing a controller
 
@@ -645,7 +687,11 @@ usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
 controller, so its bus does not start. A QEMU started with `-device
 qemu-xhci` has one, and `-device usb-kbd`, `-device usb-mouse` or a
 `usb-storage` device go on its bus; the machine's `USB AUTO` starts it at
-boot. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
-pa,id=snd`, or `wav,id=snd,path=out.wav,out.frequency=48000` for a file)
-is a speaker for `usb/uac.device`; `device_del spk` pulls it out while it
-plays. QEMU's own mixing engine plays 0 dB at 240/255 of full scale.
+boot. QEMU puts a `usb-storage` on a SuperSpeed port, which xhci.device
+does not drive: `-device qemu-xhci,p3=0` gives the controller USB 2
+ports only, and the stick comes in at high speed. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
+pa,id=snd`, or `wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
+for a file) is a speaker for `usb/uac.device`; `device_del spk` pulls it
+out while it plays. QEMU's own mixing engine plays 0 dB at 240/255 of
+full scale. Its speaker has no feedback endpoint and never loses a
+packet, so those two are a real device's to show (QEMU 11.1.2).

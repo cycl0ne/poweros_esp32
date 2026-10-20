@@ -27,7 +27,7 @@ const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Play";
-const VERSION_STRING = "\x00$VER: Play 1.1 (14.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Play 1.2 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,VOLUME/K/N,START/K/N,QUIET/S";
@@ -138,7 +138,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     first.format = audio.AUDIO_S16;
     first.channels = @intCast(info.channels);
     first.rate = info.rate;
-    first.volume = audio.AUDIO_VOLUME_UNITY / 100 * percent;
+    first.volume = audio.AUDIO_VOLUME_UNITY * percent / 100;
     const opened = sys.OpenDevice(audio.AUDIONAME, audio.AUDIO_UNIT_PLAY, &first.std.req, 0);
     if (opened != 0) {
         if (opened == audio.AUDIOERR_BADFORMAT) {

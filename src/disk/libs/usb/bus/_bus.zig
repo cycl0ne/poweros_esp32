@@ -21,6 +21,11 @@
 //! first, then each driver told (USBClassUnbind), then it leaves the list
 //! and its address is free again. Addresses are handed out round, so one
 //! that was just freed is not given to the next device at once.
+//!
+//! **input.device is told** of each device that comes, once its
+//! interfaces are offered (a hub before what is plugged into it), and of
+//! each that goes, once it is off the list: an IECLASS_USB event, so
+//! windows hear of it through intuition (IDCMP_USBCHANGE).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -28,6 +33,8 @@ const dos = sdk.dos;
 const usb = sdk.usb;
 const usbhc = sdk.devices.usbhc;
 const timer = sdk.devices.timer;
+const ie = sdk.devices.inputevent;
+const automount = sdk.devices.automount;
 const d = usb.descriptors;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UsbBase = @import("../usb_base.zig").UsbBase;
@@ -99,6 +106,8 @@ pub const Bus = struct {
     addresses: [4]u32 = .{ 1, 0, 0, 0 },
     next_address: u8 = 1,
     root: ?*Device = null,
+    /// input.device, opened by the process the first time a device comes.
+    input: automount.Input = .{},
 };
 
 pub fn deviceOf(public: *usb.USBDevice) *Device {
@@ -138,12 +147,7 @@ pub fn busProcess(sys: *ExecBase) callconv(.c) void {
     while (true) {
         const got = sys.Wait(port_mask | bus.stop_signal);
         if (got & bus.stop_signal != 0) break;
-        while (sys.GetMsg(bus.port.?)) |msg| {
-            const req: *usbhc.IOUsbHC = @ptrCast(@alignCast(msg));
-            const hub: *Hub = @alignCast(@fieldParentPtr("status", req));
-            hub.pending = 0;
-            hubChanged(bus, hub);
-        }
+        hubsChanged(bus);
     }
 
     if (bus.root) |root| detach(bus, root);
@@ -155,6 +159,7 @@ pub fn busProcess(sys: *ExecBase) callconv(.c) void {
 /// The process's end: what it opened let go, and whoever waits told.
 fn finishStart(bus: *Bus, stop_bit: i8) void {
     const sys = bus.usb_base.sys_base;
+    bus.input.end(sys);
     if (bus.delay_io.node.device != null) sys.CloseDevice(&bus.delay_io.node);
     if (bus.port) |port| sys.DeleteMsgPort(port);
     bus.port = null;
@@ -342,13 +347,24 @@ pub fn attach(bus: *Bus, parent: ?*Hub, port: u8, speed: u8) ?*Device {
     sys.ReleaseSemaphore(&base.devices_lock);
     _notify.changed(base);
 
-    if (device.public.flags & usb.USBDF_FAILED != 0) return device;
-    if (isHub(device)) {
-        hubSetUp(bus, device);
-    } else {
-        bindAll(bus, device);
-    }
+    const failed = device.public.flags & usb.USBDF_FAILED != 0;
+    const hub = !failed and isHub(device);
+    if (!failed and !hub) bindAll(bus, device);
+    // A hub is told of before what is plugged into it.
+    announce(bus, device, ie.IESUBCLASS_USB_ATTACHED);
+    if (hub) hubSetUp(bus, device);
     return device;
+}
+
+/// input.device told that `device` came or went.
+fn announce(bus: *Bus, device: *const Device, subclass: u32) void {
+    bus.input.write(bus.usb_base.sys_base, .{
+        .class = ie.IECLASS_USB,
+        .subclass = subclass,
+        .code = bus.number << 8 | device.public.address,
+        .x = device.public.descriptor.vendor_id,
+        .y = device.public.descriptor.product_id,
+    });
 }
 
 /// Configuration `index`'s descriptors read into the device. False if it
@@ -551,6 +567,7 @@ pub fn detach(bus: *Bus, device: *Device) void {
     sys.ObtainSemaphore(&base.devices_lock);
     sys.Remove(&device.public.node);
     sys.ReleaseSemaphore(&base.devices_lock);
+    announce(bus, device, ie.IESUBCLASS_USB_DETACHED);
     freeAddress(bus, device.public.address);
     if (device.config_memory) |config| sys.FreeMem(config, device.config_size);
     sys.FreeMem(device, @sizeOf(Device));
@@ -626,6 +643,18 @@ fn sendStatus(bus: *Bus, hub: *Hub) void {
     hub.status.std.length = @min((@as(u32, hub.ports) + 8) / 8, hub.bitmap.len);
     hub.pending = 1;
     bus.usb_base.sys_base.SendIO(&hub.status.std.req);
+}
+
+/// Every hub's status transfer that came back dealt with. On the bus's
+/// process.
+pub fn hubsChanged(bus: *Bus) void {
+    const sys = bus.usb_base.sys_base;
+    while (sys.GetMsg(bus.port.?)) |msg| {
+        const req: *usbhc.IOUsbHC = @ptrCast(@alignCast(msg));
+        const hub: *Hub = @alignCast(@fieldParentPtr("status", req));
+        hub.pending = 0;
+        hubChanged(bus, hub);
+    }
 }
 
 /// A hub's status transfer came back: each port it names looked at, and

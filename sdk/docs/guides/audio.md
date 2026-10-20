@@ -229,6 +229,14 @@ volume in force when it takes over. The device keeps
 `AUDIO_MAX_VOLUMES` (16) of them, forgetting the one set longest ago
 past that.
 
+Since 2.10 an output with a **volume of its own** - a USB speaker's
+feature unit - is set there: the device hands the master in force to
+the sink (`SinkControl` with `AUDIOCTRL_VOLUME`) whenever it changes and
+whenever the output starts, and the mix gives that output only what the
+part's range leaves over, so its sound leaves at full scale and its
+quiet end keeps every bit. Every other output has the master as a gain
+in the mix. The query's `master` is the master either way.
+
 ## Choosing from a program: `sdk.devices.audiocontrol`
 
 A program that only chooses - a shell command, a preferences editor, a
@@ -534,11 +542,22 @@ count is in the console's log as the file is closed.
 with an isochronous OUT endpoint, linear PCM, one or two channels of 16,
 24 or 32 bits, at 48 kHz. Each is a sink named as the device names its
 product, at the bottom of the board's own outputs. Started, its
-interface is put in its setting, its rate set where the endpoint has
-the control, its feature unit's mute lifted and its volume set to 0 dB
-(or its most below that); then three buffers of ten milliseconds go
-round as isochronous transfers. It needs a controller with isochronous
-transfers - xhci.device - and declines a device on any other.
+interface is put in its setting and its rate set where the endpoint has
+the control; then three buffers of ten milliseconds go round as
+isochronous transfers. A buffer with a packet the controller could not
+send, or with frames before it that went without - the ring ran dry -
+counts in `underruns`. It needs a controller with isochronous transfers
+- xhci.device - and declines a device on any other.
+
+Its volume is the feature unit's: `AUDIOCTRL_VOLUME` sets every channel
+with a volume, in 1/256 dB within the range the unit gives, mutes it for
+none at all, and leaves the mix only what that range does not reach - a
+volume above the unit's most, or below its least. A unit without a
+volume control is set to 0 dB and takes none; the mix carries it all.
+A device on its own clock - an asynchronous endpoint with a feedback
+endpoint - has the rate it tells measured while it plays: at the stop
+the debug output has its average and how far it is from 48 kHz, in
+parts a million. The stream is not paced by it.
 
 A **source** is a way in, on a list of its own: a driver of the source
 kind makes them with `CreateSourceTagList`, `NextSource` walks them,
@@ -648,14 +667,20 @@ for buffer at 48 kHz, and goes nowhere, so a program that plays runs as
 it would on a board, and `C:test/AudioTest BENCH` measures the mix. QEMU's virt
 machine with `-device qemu-xhci -device usb-audio,audiodev=snd` and an
 audiodev has a USB speaker, which uac.device plays through; with
-`-audiodev wav,id=snd,path=out.wav,out.mixing-engine=off` what it was
-sent lands in a WAV file on the host, sample for sample.
+`-audiodev wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
+what it was sent lands in a WAV file on the host, sample for sample
+(QEMU 11.1.2). QEMU's speaker plays its 0 dB at 240/255 of full scale
+and spreads its feature unit's volume over 255 steps: a volume of half,
+-6 dB at the unit, is 229/255.
 
 `./zig build audio-bench` times the mixer on the host, for 1, 4, 8 and
 16 streams; the board's own figure is `C:test/AudioTest BENCH`'s. The mixer
 is held to a reference mix byte for byte by a host test
 (`src/rom/devs/audio/golden.zig`); a change to it that is meant to change
 what is heard writes the reference again with `./zig build audio-golden`.
+Every sample is worked out with integers, so a mix is the same on every
+processor: `C:test/AudioTest CHORD TOFILE` gives the same file on the S3
+and on RISC-V 64.
 
 `C:Record FILE` records the way in into a WAV file until Ctrl-C, or for
 `SECONDS`; by default at the output's rate, with as many channels as the

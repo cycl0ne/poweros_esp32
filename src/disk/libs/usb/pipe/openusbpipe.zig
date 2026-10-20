@@ -39,9 +39,12 @@ const _pipe = @import("_pipe.zig");
 /// address, speed and hub, the endpoint, its packet size and its interval
 /// in milliseconds, its data toggle at DATA0. The caller sets io_Data and
 /// io_Length - and a control pipe's setup packet, an isochronous pipe's
-/// `iso_packet` if its packets are smaller than the endpoint's - and
-/// sends it with SendIO or DoIO, as often as it likes; the toggle stays
-/// in it.
+/// `iso_packet` if its packets are smaller than the endpoint's, or its
+/// `iso_list` for packets of their own lengths - and sends it with
+/// SendIO or DoIO, as often as it likes; the toggle stays in it. An
+/// isochronous transfer comes back with what became of its packets
+/// (`iso_lost`, the list's `status`), the frame it started in and its
+/// gap behind the one before (sdk/devices/usbhc.zig).
 ///
 /// An isochronous endpoint's interval is 2^(bInterval - 1) frames or, at
 /// high speed, microframes; it is taken only at a millisecond or more,

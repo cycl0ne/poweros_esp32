@@ -163,7 +163,8 @@ source of a driver, made from the parts the board's description names,
 or when a USB speaker is plugged in. `audio.device` mixes up to sixteen
 streams, each in its own form, rate, volume and pan, into one sink; the
 output preferred takes over when it is plugged in, each keeps its own
-volume (`C:Audio`, Prefs, `SYS:Programs/Volume`), a click plays at once
+volume (`C:Audio`, Prefs, `SYS:Programs/Volume`) - a USB speaker's at
+its own control - a click plays at once
 as a trigger, and unit 1 records (`C:Record`). `LIBS:audiocodec.library`
 decodes WAV, MP3, FLAC and Ogg Vorbis as they play
 ([sound guide](sdk/docs/guides/audio.md)).
@@ -201,7 +202,8 @@ Beside them:
   `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)).
 - **Devices:** timer, serial, console, input from keyboards, mice and
   touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
-  ESP32s' OTG and on xHCI, with class drivers for keyboards, mice,
+  ESP32s' OTG and on xHCI, a device plugged in or pulled out told to the
+  windows that ask, with class drivers for keyboards, mice,
   sticks, serial and Ethernet adapters, Wi-Fi sticks, and on xHCI
   speakers and headsets
   ([USB guide](sdk/docs/guides/usb.md)); Ethernet up to 1000 Mbit/s, the
@@ -339,8 +341,10 @@ qemu-system-riscv64 -M virt -m 512M -smp 4 -bios default \
 ```
 
 `-device usb-audio,audiodev=snd -audiodev pa,id=snd` adds a USB speaker
-(`-audiodev wav,id=snd,path=out.wav,out.frequency=48000` plays into a
-file instead).
+(`-audiodev wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
+plays into a file instead). A stick (`-device usb-storage,drive=...`)
+needs `-device qemu-xhci,p3=0`: QEMU puts it on a SuperSpeed port
+otherwise, and those are not driven yet.
 
 On the VisionFive 2, U-Boot loads `kernel.bin` and starts it with
 `booti`, with `disk-rv64.bin` as its ramdisk and U-Boot's device tree.

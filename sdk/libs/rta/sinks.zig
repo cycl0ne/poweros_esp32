@@ -131,6 +131,17 @@ pub const AudioSinkOps = extern struct {
 /// SinkControl's `what`. Everything below AUDIOCTRL_DRIVER means the same
 /// on every sink; a driver's own start at AUDIOCTRL_DRIVER.
 pub const AUDIOCTRL_DRIVER: u32 = 0x1000;
+/// The output's volume, set at its part - a USB speaker's own control:
+/// `value` is the gain, AUDIOGAIN_UNITY as played, up to four times that.
+/// The answer is the gain the buffers are still to be given, for what the
+/// part's range does not reach - AUDIOGAIN_UNITY when it took it all - or
+/// RTAERR_NOT_SUPPORTED from a sink whose part has no volume, whose
+/// buffers carry it all. Asked of a sink started or not; a sink keeps the
+/// one it was given last across a stop and a start. Since 1.5.
+pub const AUDIOCTRL_VOLUME: u32 = 1;
+
+/// A gain as AUDIOCTRL_VOLUME takes it: 16.16, this as played.
+pub const AUDIOGAIN_UNITY: u32 = 0x10000;
 
 /// RtaDriver.type: what a driver makes.
 pub const RTADT_SINK: u32 = 1 << 0;

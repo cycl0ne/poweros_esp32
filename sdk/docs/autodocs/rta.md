@@ -39,7 +39,7 @@ Generated from the source by `./zig build autodoc`.
 - [RtaLastError](#rtalasterror) - Why the last create failed.
 - [SetSinkMode](#setsinkmode) - Puts a sink in a mode.
 - [SinkBuffer](#sinkbuffer) - The next buffer of a running sink to fill.
-- [SinkControl](#sinkcontrol) - Asks a sink's driver for something of its own.
+- [SinkControl](#sinkcontrol) - Asks a sink's driver for something: one of the codes every sink reads alike, or one of its own.
 - [SinkMode](#sinkmode) - The mode a sink is in.
 - [SourceBuffer](#sourcebuffer) - The buffer of a running source that has just been filled.
 - [StartAudioTransport](#startaudiotransport) - Starts a line for a sink.
@@ -1468,7 +1468,7 @@ _ = rb.PlaySinkBuffer(sink, frames);
 
 ## SinkControl
 
-Asks a sink's driver for something of its own.
+Asks a sink's driver for something: one of the codes every sink reads alike, or one of its own.
 
 **SYNOPSIS**
 
@@ -1483,7 +1483,8 @@ fn SinkControl(rb: *RtaBase, sink: *rta.AudioSink, what: u32, value: isize) isiz
 **INPUTS**
 
 - `sink` - the sink.
-- `what` - the driver's own code, `AUDIOCTRL_DRIVER` and up.
+- `what` - `AUDIOCTRL_VOLUME`, or the driver's own code,
+  `AUDIOCTRL_DRIVER` and up.
 - `value` - what goes with it.
 
 **RESULT**
@@ -1493,7 +1494,10 @@ not know or a driver that takes none.
 
 **BEHAVIOR**
 
-Passed on to the driver unchanged.
+Passed on to the driver unchanged. `AUDIOCTRL_VOLUME` sets the output's
+volume at its part and answers the gain left for the buffers
+(`sdk/libs/rta/sinks.zig`); a sink that answers RTAERR_NOT_SUPPORTED to
+it has no volume of its own.
 
 **CONTEXT**
 
@@ -1504,7 +1508,8 @@ Passed on to the driver unchanged.
 
 **OWNERSHIP**
 
-As the driver documents the code.
+As the driver documents the code; nothing is kept from `value` for
+`AUDIOCTRL_VOLUME`.
 
 **BUGS**
 
@@ -1512,12 +1517,13 @@ None known.
 
 **SEE ALSO**
 
-`StartSink`
+`StartSink`, `PlaySinkBuffer`
 
 **EXAMPLES**
 
 ```zig
-const answer = rb.SinkControl(sink, rta.sinks.AUDIOCTRL_DRIVER, 0);
+const rest = rb.SinkControl(sink, rta.sinks.AUDIOCTRL_VOLUME, rta.sinks.AUDIOGAIN_UNITY / 2);
+const gain: u32 = if (rest < 0) rta.sinks.AUDIOGAIN_UNITY / 2 else @intCast(rest);
 ```
 
 ## SinkMode

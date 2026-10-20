@@ -27,18 +27,22 @@
 //! descriptor, and a hub's port status that shows its device gone, are
 //! answered only after the task has told the controller (`posted`).
 //!
-//! **An isochronous transfer** is a TD a packet - an Isoch TRB, Start
-//! Isoch ASAP, so each goes in the interval after the one before, and an
-//! idle ring starts as soon as the controller can - and up to
-//! `iso_in_flight` requests are on the ring at once, so the next is
-//! there before the last has played. Only a request's last TRB
-//! interrupts; its event answers it and every one before it on the ring
-//! (the controller may report a run of missed TDs once, at their end).
-//! Each request's packets go in a slice of the endpoint's buffer, a
-//! stride apart (`strideOf`); the slices are taken round in turn, as the
-//! requests are answered in turn. Nothing halts and nothing is resent.
-//! Taking one back stops the endpoint and answers every one on it. IN
-//! endpoints are answered IOERR_NOCMD.
+//! **An isochronous transfer** is a TD a packet - an Isoch TRB with the
+//! frame it goes in - and up to `iso_in_flight` requests are on the ring
+//! at once, so the next is there before the last has played. Where a
+//! request starts is `isoPlan`'s: in the frame after the one before it
+//! while the stream runs, its packets too late for that marked missed
+//! without going on the ring; as soon as the controller can place it
+//! (`iso_lead` frames on) when the ring ran dry, the frames between
+//! counted as its gap; in the frame it names with UHF_ISO_FRAME. Every
+//! TRB interrupts, and its event says what became of its packet; a run
+//! of missed TDs the controller tells once, at its end, so every TD the
+//! endpoint's `expect` passes on the way to an event's was missed. The
+//! event of a request's last TD answers it. Each request's packets go in
+//! a slice of the endpoint's buffer, a stride apart (`strideOf`); the
+//! slices are taken round in turn, as the requests are answered in turn.
+//! Nothing halts and nothing is resent. Taking one back stops the
+//! endpoint, answers every one on it and ends the stream.
 //!
 //! **An error** halts the endpoint on the controller: the request is
 //! answered, and the endpoint reset - Reset Endpoint, its ring's dequeue
@@ -108,10 +112,13 @@ fn accept(host: *Host, req: *usbhc.IOUsbHC) void {
     } else {
         dci = regs.dciOf(req.endpoint);
         if (req.std.req.command == usbhc.UHCMD_ISOXFER) {
-            if (isIn(req)) return _xhci.reply(host, req, exec.IOERR_NOCMD);
+            req.iso_lost = 0;
+            req.iso_gap = 0;
             if (!isoFits(req)) return _xhci.reply(host, req, exec.IOERR_BADLENGTH);
         }
-        if (dci < 2 or !slots.ensureEndpoint(host, slot, dci, req)) return _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
+        if (dci < 2) return _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
+        const refused = slots.ensureEndpoint(host, slot, dci, req);
+        if (refused != 0) return _xhci.reply(host, req, refused);
     }
     if (req.nak_timeout != 0 and req.std.req.command != usbhc.UHCMD_ISOXFER) {
         req.hc_private[_xhci.PRIV_FLAGS] |= _xhci.PRIVF_DEADLINE;
@@ -139,55 +146,163 @@ pub fn schedule(host: *Host) void {
     }
 }
 
-/// An isochronous request's packets: its length cut into `iso_packet`
-/// bytes, none bigger than the endpoint's packet; 0 for none.
+/// An isochronous request's packets: its list's, or its length cut into
+/// `iso_packet` bytes, none bigger than the endpoint's packet; 0 for
+/// none.
 fn isoPackets(req: *const usbhc.IOUsbHC) u32 {
-    const packet = if (req.iso_packet != 0) req.iso_packet else req.max_packet;
+    if (req.iso_list != null) return req.iso_count;
+    const packet = isoPacket(req);
     if (packet == 0 or packet > @max(req.max_packet & 0x7FF, 1)) return 0;
     const length: u32 = @intCast(req.std.length);
     return (length + packet - 1) / packet;
 }
 
-fn isoFits(req: *const usbhc.IOUsbHC) bool {
-    const packets = isoPackets(req);
-    return packets != 0 and packets <= usbhc.UHC_ISO_PACKETS;
+fn isoPacket(req: *const usbhc.IOUsbHC) u32 {
+    return if (req.iso_packet != 0) req.iso_packet else req.max_packet;
 }
 
-/// An isochronous request's TDs: each packet copied to its place in the
-/// next slice of the buffer and an Isoch TRB put on the ring for it, the
-/// last one interrupting; the request on the endpoint's flight.
+/// Whether a request's packets fit a transfer: one to UHC_ISO_PACKETS of
+/// them, none bigger than the endpoint's packet, all in its data.
+fn isoFits(req: *const usbhc.IOUsbHC) bool {
+    const packets = isoPackets(req);
+    if (packets == 0 or packets > usbhc.UHC_ISO_PACKETS) return false;
+    const list = req.iso_list orelse return true;
+    const most: u32 = @max(req.max_packet & 0x7FF, 1);
+    var total: u32 = 0;
+    for (list[0..packets]) |entry| {
+        if (entry.length > most) return false;
+        total += entry.length;
+    }
+    return total <= req.std.length;
+}
+
+/// Packet `n`'s bytes, and where it lies in the request's data: as its
+/// list says, or `iso_packet` each, the last taking what is left.
+fn isoAsked(req: *const usbhc.IOUsbHC, n: u32) u32 {
+    if (req.iso_list) |list| return list[n].length;
+    const packet = isoPacket(req);
+    const length: u32 = @intCast(req.std.length);
+    return @min(packet, length - n * packet);
+}
+
+fn isoOffset(req: *const usbhc.IOUsbHC, n: u32) u32 {
+    const list = req.iso_list orelse return n * isoPacket(req);
+    var offset: u32 = 0;
+    for (list[0..n]) |entry| offset += entry.length;
+    return offset;
+}
+
+/// Where an isochronous request goes: the frame of its first packet, the
+/// frames the endpoint goes without before it, the packets too late to
+/// go - or refused, for a frame asked for that cannot be had.
+pub const IsoPlan = struct {
+    start: u32 = 0,
+    gap: u32 = 0,
+    late: u32 = 0,
+    refused: bool = false,
+};
+
+/// `a` comes before `b`, counted round.
+fn before(a: u32, b: u32) bool {
+    return @as(i32, @bitCast(a -% b)) < 0;
+}
+
+/// A request of `packets` packets, `every` frames apart, placed: `now`
+/// the frame the controller is in, `lead` how far ahead it must have a
+/// TD, `asked` the frame number UHF_ISO_FRAME names. While the stream
+/// runs (`flying` requests on the ring) it follows on at `next`, its
+/// packets before `now + lead` missed - or, all of them too late, as
+/// soon as it can, the frames between its gap. A stream run dry follows
+/// on at `next` if that is still ahead, else starts as soon as it can,
+/// the frames since its gap. A new stream starts as soon as it can.
+pub fn isoPlan(now: u32, lead: u32, streaming: bool, flying: u32, next: u32, asked: ?u16, packets: u32, every: u32) IsoPlan {
+    const soonest = now +% lead;
+    if (asked) |frame| {
+        const ahead = (@as(u32, frame) -% now) & (usbhc.UHC_FRAMES - 1);
+        if (ahead < lead or ahead > usbhc.UHC_ISO_AHEAD) return .{ .refused = true };
+        const first = now +% ahead;
+        return .{ .start = first, .gap = if (streaming and before(next, first)) first -% next else 0 };
+    }
+    if (!streaming) return .{ .start = soonest };
+    if (!before(next, soonest)) return .{ .start = next };
+    const behind = soonest -% next;
+    if (flying != 0) {
+        const late = (behind + every - 1) / every;
+        if (late < packets) return .{ .start = next, .late = late };
+    }
+    return .{ .start = soonest, .gap = behind };
+}
+
+/// A packet's frames apart: the endpoint's interval, at least a frame.
+fn framesApart(ep: *const Endpoint) u32 {
+    if (ep.interval <= 3) return 1;
+    return @as(u32, 1) << @intCast(ep.interval - 3);
+}
+
+/// An isochronous request's TDs: placed by `isoPlan`, its late packets
+/// marked missed, each other packet - an OUT one copied to its place in
+/// the next slice of the buffer - an Isoch TRB in its frame, every one
+/// interrupting; the request on the endpoint's flight.
 fn startIso(host: *Host, slot: *Slot, dci: u32, ep: *Endpoint, req: *usbhc.IOUsbHC) void {
     const slice_bytes = usbhc.UHC_ISO_PACKETS * ep.stride;
     if (!ensureBounce(host, ep, _xhci.iso_in_flight * slice_bytes)) return _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
     const packets = isoPackets(req);
-    const packet = if (req.iso_packet != 0) req.iso_packet else req.max_packet;
-    const length: u32 = @intCast(req.std.length);
+    const every = framesApart(ep);
+    const asked: ?u16 = if (req.flags & usbhc.UHF_ISO_FRAME != 0) req.iso_frame else null;
+    const plan = isoPlan(_xhci.currentFrame(host), host.iso_lead, ep.streaming, ep.flying, ep.next_frame, asked, packets, every);
+    if (plan.refused) return _xhci.reply(host, req, usbhc.UHIOERR_MISSED);
+    req.iso_frame = @truncate(plan.start & (usbhc.UHC_FRAMES - 1));
+    req.iso_gap = @truncate(@min(plan.gap, 0xFFFF));
+    var n: u32 = 0;
+    while (n < plan.late) : (n += 1) record(host, ep, req, n, usbhc.UHIOERR_MISSED, 0);
+
     const slice = ep.next_slice;
     ep.next_slice = (slice + 1) % _xhci.iso_in_flight;
     const area = ep.bounce.? + slice * slice_bytes;
+    const in = isIn(req);
+    if (ep.flying == 0) ep.expect = ep.ring.enqueue;
     const first = ep.ring.enqueue;
     var last: u32 = first;
-    var n: u32 = 0;
     while (n < packets) : (n += 1) {
-        const offset = n * packet;
-        const bytes = @min(packet, length - offset);
+        const bytes = isoAsked(req, n);
         const into = area + n * ep.stride;
-        @memcpy(into[0..bytes], dataOf(req)[offset..][0..bytes]);
+        if (!in) @memcpy(into[0..bytes], dataOf(req)[isoOffset(req, n)..][0..bytes]);
         const buffer: u64 = @intFromPtr(into);
         const at = ep.ring.push(.{
             .param_lo = ring.lo(buffer),
             .param_hi = ring.hi(buffer),
             .status = bytes,
-            .control = regs.typeField(regs.TRB_ISOCH) | regs.TRB_SIA | (if (n + 1 == packets) regs.TRB_IOC else 0),
+            .control = regs.typeField(regs.TRB_ISOCH) | regs.frameIdField(plan.start +% n * every) | regs.TRB_IOC,
         });
         last = indexOf(ep, at);
     }
-    _xhci.toDevice(host, @intFromPtr(area), slice_bytes);
+    if (!in) _xhci.toDevice(host, @intFromPtr(area), slice_bytes);
+    req.hc_private[_xhci.PRIV_LATE] = plan.late;
     req.hc_private[_xhci.PRIV_SPAN] = _xhci.spanOf(first, last, slice);
     host.sys.AddTail(&ep.flight, _xhci.nodeOf(req));
     ep.flying += 1;
+    ep.streaming = true;
+    ep.next_frame = plan.start +% packets * every;
     _xhci.toDevice(host, @intFromPtr(ep.ring.trbs), ep.ring.bytes());
     _xhci.ringDoorbell(host, slot.id, dci);
+}
+
+/// What became of an isochronous request's packet `n`: its list told,
+/// its bytes counted - an IN packet's copied to its place in the data -
+/// a lost one counted.
+fn record(host: *Host, ep: *Endpoint, req: *usbhc.IOUsbHC, n: u32, status: i8, got: u32) void {
+    if (req.iso_list) |list| {
+        list[n].actual = @truncate(got);
+        list[n].status = status;
+    }
+    if (status != 0) req.iso_lost += 1;
+    if (got == 0) return;
+    req.std.actual += got;
+    if (!isIn(req)) return;
+    const slice = _xhci.spanSlice(req.hc_private[_xhci.PRIV_SPAN]);
+    const from = ep.bounce.? + slice * usbhc.UHC_ISO_PACKETS * ep.stride + n * ep.stride;
+    _xhci.fromDevice(host, @intFromPtr(from), got);
+    @memcpy(dataOf(req)[isoOffset(req, n)..][0..got], from[0..got]);
 }
 
 /// A TRB's place on its endpoint's ring, from its address.
@@ -195,9 +310,15 @@ fn indexOf(ep: *const Endpoint, address: usize) u32 {
     return @intCast((address - @intFromPtr(ep.ring.trbs)) / @sizeOf(Trb));
 }
 
-/// How far `index` is round the ring from `from`.
+/// How many TDs on from `from` the one at `index` is, on a ring of
+/// `count` TRBs: its last is the Link, which is none.
 pub fn ringDistance(from: u32, index: u32, count: u32) u32 {
-    return (index + count - from) % count;
+    return (index + count - 1 - from) % (count - 1);
+}
+
+/// The TD after the one at `index`, past the Link.
+fn nextIndex(index: u32, count: u32) u32 {
+    return if (index + 1 == count - 1) 0 else index + 1;
 }
 
 fn isIn(req: *const usbhc.IOUsbHC) bool {
@@ -373,30 +494,54 @@ pub fn completed(host: *Host, event: Trb) void {
     finish(host, slot, ep, if (runt) usbhc.UHIOERR_RUNTPACKET else 0);
 }
 
-/// An isochronous endpoint's event: every request on the ring up to the
-/// TRB it names - its last at or before that TRB - answered. A ring run
-/// dry or full names none; an error on a packet within a request names
-/// that packet, and the request goes on.
+/// What a TD's completion code makes of its packet.
+pub fn isoStatus(code: u32) i8 {
+    return switch (code) {
+        regs.CC_SUCCESS, regs.CC_SHORT_PACKET => 0,
+        regs.CC_MISSED_SERVICE => usbhc.UHIOERR_MISSED,
+        regs.CC_TRANSACTION, regs.CC_SPLIT_TRANSACTION => usbhc.UHIOERR_CRCERROR,
+        regs.CC_BABBLE => usbhc.UHIOERR_OVERFLOW,
+        else => usbhc.UHIOERR_HOSTERROR,
+    };
+}
+
+/// An isochronous endpoint's event: the packet of the TD it names told
+/// what became of it, every TD before it with no event of its own told
+/// it was missed, and each request whose last TD that passes answered. A
+/// ring run dry or full names no TD: what it cost is the next request's
+/// gap.
 fn isoCompleted(host: *Host, ep: *Endpoint, event: Trb) void {
     const code = regs.completionCode(event.status);
     if (code == regs.CC_STOPPED or code == regs.CC_STOPPED_LENGTH_INVALID or code == regs.CC_STOPPED_SHORT_PACKET) return;
+    if (code == regs.CC_RING_UNDERRUN or code == regs.CC_RING_OVERRUN) return;
     const pointer = event.param();
     const start_address: u64 = @intFromPtr(ep.ring.trbs);
     if (pointer < start_address or pointer >= start_address + ep.ring.bytes()) return;
     const at = indexOf(ep, @intCast(pointer));
-    const head = ep.flight.first() orelse return;
     const tail = ep.flight.last() orelse return;
-    const from = _xhci.spanFirst(_xhci.requestOfNode(head).hc_private[_xhci.PRIV_SPAN]);
     const count = ep.ring.count;
-    // A TRB of no request on the ring.
-    if (ringDistance(from, at, count) > ringDistance(from, _xhci.spanLast(_xhci.requestOfNode(tail).hc_private[_xhci.PRIV_SPAN]), count)) return;
+    // A TRB of no request on the ring, or one already told.
+    if (ringDistance(ep.expect, at, count) > ringDistance(ep.expect, _xhci.spanLast(_xhci.requestOfNode(tail).hc_private[_xhci.PRIV_SPAN]), count)) return;
     while (ep.flight.first()) |node| {
         const req = _xhci.requestOfNode(node);
-        if (ringDistance(from, at, count) < ringDistance(from, _xhci.spanLast(req.hc_private[_xhci.PRIV_SPAN]), count)) break;
-        host.sys.Remove(node);
-        ep.flying -= 1;
-        req.std.actual = req.std.length;
-        _xhci.reply(host, req, 0);
+        const span = req.hc_private[_xhci.PRIV_SPAN];
+        const index = ep.expect;
+        const n: u32 = @intCast(req.hc_private[_xhci.PRIV_LATE] + ringDistance(_xhci.spanFirst(span), index, count));
+        if (index == at) {
+            const status = isoStatus(code);
+            const asked = isoAsked(req, n);
+            const got = if (status == 0) asked -| regs.residual(event.status) else 0;
+            record(host, ep, req, n, status, got);
+        } else {
+            record(host, ep, req, n, usbhc.UHIOERR_MISSED, 0);
+        }
+        ep.expect = nextIndex(index, count);
+        if (index == _xhci.spanLast(span)) {
+            host.sys.Remove(node);
+            ep.flying -= 1;
+            _xhci.reply(host, req, 0);
+        }
+        if (index == at) break;
     }
 }
 
@@ -410,14 +555,15 @@ fn cancelIso(host: *Host, slot: *Slot, dci: u32, err: i8) void {
     dropFlight(host, ep, err);
 }
 
-/// Every request on an isochronous endpoint's ring answered `err`.
+/// Every request on an isochronous endpoint's ring answered `err`, and
+/// its stream ended: the next request starts a new one.
 fn dropFlight(host: *Host, ep: *Endpoint, err: i8) void {
     while (host.sys.RemHead(&ep.flight)) |node| {
         const req = _xhci.requestOfNode(node);
-        req.std.actual = 0;
         _xhci.reply(host, req, err);
     }
     ep.flying = 0;
+    ep.streaming = false;
 }
 
 /// The endpoint's TD ended: its request answered `err` - or posted, if

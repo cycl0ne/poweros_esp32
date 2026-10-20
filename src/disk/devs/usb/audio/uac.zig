@@ -20,12 +20,29 @@
 //! isochronous transfer of ten packets on a pipe of its own, all sent at
 //! the start: the controller plays them one after the other, and each
 //! one's reply - on a port that raises the playing task's signal - is a
-//! buffer played, filled again and sent again. A reply with nothing else
-//! left on the bus means the stream ran dry: an underrun. Started, the
+//! buffer played, filled again and sent again. A buffer with a packet the
+//! controller could not send, or with frames before it that the endpoint
+//! went without - the ring ran dry - is an underrun; the frames before
+//! the first after a start are only the stream starting. Started, the
 //! interface is put in its setting and its rate set where the endpoint
-//! has the control; the feature unit's mute is lifted and its volume set
-//! to 0 dB, or the most it has below that. Stopped, the transfers are
-//! taken back and the interface goes back to its empty setting.
+//! has the control. Stopped, the transfers are taken back and the
+//! interface goes back to its empty setting.
+//!
+//! **The volume** is the feature unit's (AUDIOCTRL_VOLUME): the gain
+//! audio.device hands over is set on every channel with a volume, in
+//! 1/256 dB within the range the unit gives at bind, the mute lifted -
+//! put on for none at all - and the answer is what the range does not
+//! reach, for the mix. A started sink is set to the gain it was given
+//! last, as played before any. A unit without volume, or whose range is
+//! not read, takes none: it is set to 0 dB and the mix carries it all.
+//!
+//! **An asynchronous device** - playing on its own clock - tells that
+//! clock's rate on a feedback endpoint. While it plays, a transfer of a
+//! buffer's packets on it is kept on the bus, and the rate its last whole
+//! packet tells is noted: at the stop, the rate on average and how far
+//! that and the slowest and fastest are from 48 kHz, in parts a million,
+//! go to the debug output. The stream is not paced by it: what is
+//! measured is how far the two clocks drift apart.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -48,7 +65,7 @@ const stream = @import("stream.zig");
 pub const DEVICE_NAME = "uac.device";
 const DRIVER_NAME = "uac";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -88,6 +105,18 @@ fn baseOf(dev: *exec.Device) *Base {
     return @alignCast(@fieldParentPtr("dev", dev));
 }
 
+/// A feature unit's volume, in 1/256 dB, from lowest to highest.
+const Range = struct { min: i16, max: i16 };
+
+/// The rates a feedback endpoint told while a stream played, in
+/// thousandths of a hertz.
+const Measure = struct {
+    readings: u32 = 0,
+    sum: u64 = 0,
+    low: u64 = 0,
+    high: u64 = 0,
+};
+
 /// A bound output: its device, its setting and feature unit, its sink,
 /// its pipes and their buffers.
 const Speaker = struct {
@@ -110,6 +139,19 @@ const Speaker = struct {
     out: [ring]u8 = @splat(0),
     in_flight: u32 = 0,
     ready: ?u32 = null,
+    /// Set until the first transfer after a start has come back.
+    first: u8 = 0,
+    /// The gain handed over last, and the feature unit's range.
+    volume: u32 = rta.sinks.AUDIOGAIN_UNITY,
+    range: ?Range = null,
+    /// The feedback endpoint's pipe, whether its transfer is on the bus,
+    /// its packets, and what they told.
+    feedback_pipe: ?*usb.USBPipe = null,
+    feedback_out: u8 = 0,
+    feedback_packets: u32 = 0,
+    feedback_list: [buffer_ms]usbhc.UsbIsoPacket = @splat(.{}),
+    feedback_data: [buffer_ms * 4]u8 = @splat(0),
+    measure: Measure = .{},
     /// Set by the unbind: nothing is sent after it.
     leaving: u8 = 0,
     /// Who waits for the sink to be gone, on which signal.
@@ -186,6 +228,35 @@ fn probe(speaker: *Speaker) bool {
     return answer != exec.IOERR_NOCMD;
 }
 
+/// The feature unit's volume range, read from its first channel with a
+/// volume; null for a unit without one, or one that does not say.
+fn readRange(speaker: *Speaker) ?Range {
+    const feature = speaker.feature orelse return null;
+    if (feature.volumes == 0) return null;
+    const from_unit = d.USB_DIR_IN | d.USB_TYPE_CLASS | d.USB_RECIP_INTERFACE;
+    const index = @as(u16, feature.unit) << 8 | feature.interface;
+    const value = @as(u16, d.UAC_FU_VOLUME) << 8 | @ctz(feature.volumes);
+    var lowest: [2]u8 = .{ 0, 0 };
+    var highest: [2]u8 = .{ 0, 0 };
+    if (!control(speaker, from_unit, d.UAC_GET_MIN, value, index, &lowest, 2)) return null;
+    if (!control(speaker, from_unit, d.UAC_GET_MAX, value, index, &highest, 2)) return null;
+    const min: i16 = @bitCast(@as(u16, lowest[0]) | @as(u16, lowest[1]) << 8);
+    const max: i16 = @bitCast(@as(u16, highest[0]) | @as(u16, highest[1]) << 8);
+    if (min > max) return null;
+    // 0x8000 is silence, no step of the range.
+    return .{ .min = @max(min, -0x7FFF), .max = max };
+}
+
+/// The feedback endpoint's pipe opened, its transfer a buffer's packets
+/// long; none for a setting without one, or a packet this cannot hold.
+fn openFeedback(speaker: *Speaker) void {
+    const setting = speaker.setting;
+    if (setting.feedback == 0 or setting.feedback_packet < 3 or setting.feedback_packet > 4) return;
+    const pipe = speaker.base.usb_base.?.OpenUSBPipe(speaker.device, setting.feedback, &speaker.port) orelse return;
+    speaker.feedback_pipe = pipe;
+    speaker.feedback_packets = @max(buffer_ms / @max(pipe.io.interval, 1), 1);
+}
+
 /// A streaming interface with a setting to play through: its pipes
 /// opened, the controller asked whether it can, and its sink made.
 fn bind(base: *Base, binding: *usb.USBBinding) bool {
@@ -216,6 +287,8 @@ fn bind(base: *Base, binding: *usb.USBBinding) bool {
         sys.FreeMem(memory, @sizeOf(Speaker));
         return false;
     }
+    speaker.range = readRange(speaker);
+    openFeedback(speaker);
 
     const product = device.product orelse "USB audio";
     var at: usize = 0;
@@ -228,6 +301,7 @@ fn bind(base: *Base, binding: *usb.USBBinding) bool {
     if (rb.CreateSinkTagList(DRIVER_NAME, &sink_tags) == null) {
         exec.kprintf(sys, "%s: no sink: %s\n", .{ DEVICE_NAME, rb.RtaErrorText(rb.RtaLastError()) });
         for (speaker.pipes) |pipe| ub.CloseUSBPipe(pipe);
+        if (speaker.feedback_pipe) |pipe| ub.CloseUSBPipe(pipe);
         sys.FreeMem(memory, @sizeOf(Speaker));
         return false;
     }
@@ -247,6 +321,9 @@ fn unbind(base: *Base, binding: *usb.USBBinding) void {
     for (speaker.pipes, 0..) |pipe, n| {
         if (@atomicLoad(u8, &speaker.out[n], .acquire) != 0) _ = sys.AbortIO(&pipe.io.std.req);
     }
+    if (speaker.feedback_pipe) |pipe| {
+        if (@atomicLoad(u8, &speaker.feedback_out, .acquire) != 0) _ = sys.AbortIO(&pipe.io.std.req);
+    }
     if (speaker.sink) |sink| {
         const signal = sys.AllocSignal(-1);
         if (signal >= 0) {
@@ -260,6 +337,7 @@ fn unbind(base: *Base, binding: *usb.USBBinding) void {
         }
     }
     for (speaker.pipes) |pipe| base.usb_base.?.CloseUSBPipe(pipe);
+    if (speaker.feedback_pipe) |pipe| base.usb_base.?.CloseUSBPipe(pipe);
     sys.FreeMem(speaker, @sizeOf(Speaker));
     binding.driver_data = null;
 }
@@ -314,34 +392,100 @@ fn destroy(sink: *rta.AudioSink) callconv(.c) void {
     }
 }
 
-/// The feature unit's mute lifted and its volume set to 0 dB - or the
-/// most it has below that - on every channel that has them.
-fn unmute(speaker: *Speaker) void {
-    const feature = speaker.feature orelse return;
+/// The feature unit set for the gain handed over last, on every channel
+/// that has a mute or a volume: the volume as far as its range goes - 0
+/// dB for a unit whose range is not known - and the mute on for no gain
+/// at all, off otherwise. The gain left for the mix.
+fn setLevel(speaker: *Speaker) u32 {
+    const feature = speaker.feature orelse return speaker.volume;
+    const level: stream.Level = if (speaker.range) |range| stream.levelFor(speaker.volume, range.min, range.max) else .{ .value = 0, .rest = speaker.volume };
+    const silent = speaker.volume == 0 and speaker.range != null;
     const to_unit = d.USB_DIR_OUT | d.USB_TYPE_CLASS | d.USB_RECIP_INTERFACE;
-    const from_unit = d.USB_DIR_IN | d.USB_TYPE_CLASS | d.USB_RECIP_INTERFACE;
     const index = @as(u16, feature.unit) << 8 | feature.interface;
+    const volume: u16 = @bitCast(level.value);
     var channel: u5 = 0;
     while (channel <= speaker.setting.channels) : (channel += 1) {
         const bit = @as(u32, 1) << channel;
         if (feature.mutes & bit != 0) {
-            var off: [1]u8 = .{0};
-            _ = control(speaker, to_unit, d.UAC_SET_CUR, @as(u16, d.UAC_FU_MUTE) << 8 | channel, index, &off, 1);
+            var mute: [1]u8 = .{@intFromBool(silent)};
+            _ = control(speaker, to_unit, d.UAC_SET_CUR, @as(u16, d.UAC_FU_MUTE) << 8 | channel, index, &mute, 1);
         }
         if (feature.volumes & bit != 0) {
-            var most: [2]u8 = .{ 0, 0 };
-            const value = @as(u16, d.UAC_FU_VOLUME) << 8 | channel;
-            if (control(speaker, from_unit, d.UAC_GET_MAX, value, index, &most, 2)) {
-                const max: i16 = @bitCast(@as(u16, most[0]) | @as(u16, most[1]) << 8);
-                if (max < 0) {
-                    _ = control(speaker, to_unit, d.UAC_SET_CUR, value, index, &most, 2);
-                    continue;
-                }
-            }
-            var zero: [2]u8 = .{ 0, 0 };
-            _ = control(speaker, to_unit, d.UAC_SET_CUR, value, index, &zero, 2);
+            var value: [2]u8 = .{ @truncate(volume), @truncate(volume >> 8) };
+            _ = control(speaker, to_unit, d.UAC_SET_CUR, @as(u16, d.UAC_FU_VOLUME) << 8 | channel, index, &value, 2);
         }
     }
+    return level.rest;
+}
+
+/// AUDIOCTRL_VOLUME: the gain set at the feature unit, as far as its
+/// range goes; the answer is the gain left for the mix. A unit without a
+/// volume, or whose range is not known, takes none.
+fn controlSink(sink: *rta.AudioSink, what: u32, value: isize) callconv(.c) isize {
+    if (what != rta.sinks.AUDIOCTRL_VOLUME) return err.RTAERR_NOT_SUPPORTED;
+    const speaker = speakerOf(sink);
+    if (speaker.range == null) return err.RTAERR_NOT_SUPPORTED;
+    if (value < 0) return err.RTAERR_BAD_ARG;
+    speaker.volume = @intCast(@min(value, @as(isize, 4 * rta.sinks.AUDIOGAIN_UNITY)));
+    if (@atomicLoad(u8, &speaker.leaving, .acquire) != 0) return @intCast(speaker.volume);
+    return @intCast(setLevel(speaker));
+}
+
+/// The feedback endpoint's transfer sent: a buffer's packets.
+fn sendFeedback(speaker: *Speaker) void {
+    const pipe = speaker.feedback_pipe orelse return;
+    const io = &pipe.io;
+    const packet: u16 = @intCast(speaker.setting.feedback_packet);
+    for (speaker.feedback_list[0..speaker.feedback_packets]) |*each| each.* = .{ .length = packet };
+    io.std.data = &speaker.feedback_data;
+    io.std.length = speaker.feedback_packets * packet;
+    io.std.actual = 0;
+    io.iso_list = &speaker.feedback_list;
+    io.iso_count = @intCast(speaker.feedback_packets);
+    @atomicStore(u8, &speaker.feedback_out, 1, .release);
+    speaker.base.sys_base.SendIO(&io.std.req);
+}
+
+/// The feedback transfer back: the rate its last whole packet told
+/// noted, and the next sent - unless it failed, was taken back, or the
+/// device is going.
+fn heardFeedback(speaker: *Speaker, pipe: *usb.USBPipe) void {
+    @atomicStore(u8, &speaker.feedback_out, 0, .release);
+    if (pipe.io.std.req.err != 0 or @atomicLoad(u8, &speaker.leaving, .acquire) != 0) return;
+    const high_speed = speaker.device.speed == usbhc.USB_SPEED_HIGH;
+    var n = speaker.feedback_packets;
+    while (n > 0) {
+        n -= 1;
+        const packet = speaker.feedback_list[n];
+        if (packet.status != 0) continue;
+        const at = n * speaker.setting.feedback_packet;
+        const told = stream.feedbackRate(speaker.feedback_data[at..][0..packet.actual], high_speed) orelse continue;
+        const measure = &speaker.measure;
+        if (measure.readings == 0 or told < measure.low) measure.low = told;
+        if (measure.readings == 0 or told > measure.high) measure.high = told;
+        measure.readings +%= 1;
+        measure.sum +%= told;
+        break;
+    }
+    sendFeedback(speaker);
+}
+
+/// What the feedback endpoint told while the stream played, to the debug
+/// output.
+fn reportDrift(speaker: *Speaker) void {
+    const measure = speaker.measure;
+    if (measure.readings == 0) return;
+    const average = measure.sum / measure.readings;
+    exec.kprintf(speaker.base.sys_base, "%s: %s ran at %u.%03u Hz on average, %d ppm (%d to %d), %u readings\n", .{
+        DEVICE_NAME,
+        @as([*:0]const u8, @ptrCast(&speaker.name)),
+        @as(u32, @intCast(average / 1000)),
+        @as(u32, @intCast(average % 1000)),
+        stream.driftPpm(average, rate),
+        stream.driftPpm(measure.low, rate),
+        stream.driftPpm(measure.high, rate),
+        measure.readings,
+    });
 }
 
 /// A buffer's transfer sent: its pipe on the bus.
@@ -365,17 +509,20 @@ fn start(sink: *rta.AudioSink, mode: *const rta.AudioMode, task: *exec.Task, sig
         var frequency: [3]u8 = .{ @truncate(rate), @truncate(rate >> 8), @truncate(rate >> 16) };
         _ = control(speaker, d.USB_DIR_OUT | d.USB_TYPE_CLASS | d.USB_RECIP_ENDPOINT, d.UAC_SET_CUR, @as(u16, d.UAC_EP_SAMPLING_FREQ) << 8, speaker.setting.endpoint, &frequency, 3);
     }
-    unmute(speaker);
+    _ = setLevel(speaker);
     speaker.port.sig_bit = @intCast(@ctz(signal_mask));
     speaker.port.sig_task = task;
     speaker.port.flags = exec.PA_SIGNAL;
     speaker.in_flight = 0;
     speaker.ready = null;
+    speaker.first = 1;
+    speaker.measure = .{};
     var n: u32 = 0;
     while (n < ring) : (n += 1) {
         @memset(speaker.data[n][0..speaker.bytes], 0);
         send(speaker, n);
     }
+    sendFeedback(speaker);
     return err.RTAERR_OK;
 }
 
@@ -390,6 +537,14 @@ fn stop(sink: *rta.AudioSink) callconv(.c) void {
         _ = sys.WaitIO(&pipe.io.std.req);
         @atomicStore(u8, &speaker.out[n], 0, .release);
     }
+    if (speaker.feedback_pipe) |pipe| {
+        if (@atomicLoad(u8, &speaker.feedback_out, .acquire) != 0) {
+            _ = sys.AbortIO(&pipe.io.std.req);
+            _ = sys.WaitIO(&pipe.io.std.req);
+            @atomicStore(u8, &speaker.feedback_out, 0, .release);
+        }
+    }
+    reportDrift(speaker);
     speaker.port.flags = exec.PA_IGNORE;
     speaker.in_flight = 0;
     speaker.ready = null;
@@ -397,20 +552,30 @@ fn stop(sink: *rta.AudioSink) callconv(.c) void {
 }
 
 /// The buffer of a transfer that has come back; none from one taken
-/// back or from a device that has gone.
+/// back or from a device that has gone. A feedback transfer back is
+/// noted on the way.
 fn buffer(sink: *rta.AudioSink) callconv(.c) ?[*]i16 {
     const speaker = speakerOf(sink);
     const sys = speaker.base.sys_base;
     while (sys.GetMsg(&speaker.port)) |message| {
+        if (speaker.feedback_pipe) |pipe| {
+            if (message == &pipe.io.std.req.message) {
+                heardFeedback(speaker, pipe);
+                continue;
+            }
+        }
         const n = for (speaker.pipes, 0..) |pipe, at| {
             if (message == &pipe.io.std.req.message) break @as(u32, @intCast(at));
         } else continue;
         @atomicStore(u8, &speaker.out[n], 0, .release);
         speaker.in_flight -= 1;
-        const answer = speaker.pipes[n].io.std.req.err;
+        const io = &speaker.pipes[n].io;
+        const answer = io.std.req.err;
         if (answer == usbhc.UHIOERR_DETACHED or answer == exec.IOERR_ABORTED) continue;
         if (@atomicLoad(u8, &speaker.leaving, .acquire) != 0) continue;
-        if (speaker.in_flight == 0) sink.underruns +%= 1;
+        const first = speaker.first != 0;
+        speaker.first = 0;
+        if (io.iso_lost != 0 or (io.iso_gap != 0 and !first)) sink.underruns +%= 1;
         speaker.ready = n;
         return &speaker.frames;
     }
@@ -434,6 +599,7 @@ const ops = rta.AudioSinkOps{
     .stop = &stop,
     .buffer = &buffer,
     .play = &play,
+    .control = &controlSink,
 };
 
 const driver_ops = rta.RtaDriverOps{ .create_sink = &createSink };

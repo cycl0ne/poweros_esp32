@@ -1,8 +1,17 @@
 // SPDX-License-Identifier: MIT
-//! Host tests of usb.library's parts that need no bus: the jump table,
-//! walking a device's descriptors, the class drivers' match order,
-//! reading a ROM tag from a load file's bytes, and the pipe an endpoint
-//! is given.
+//! Host tests of usb.library: the jump table, walking a device's
+//! descriptors, the class drivers' match order, reading a ROM tag from a
+//! load file's bytes, the pipe an endpoint is given, isochronous
+//! transfers on such a pipe, and a bus's devices coming and going - all
+//! against a host controller that plays a script (hc.zig), a class
+//! driver that counts (driver.zig) and an input.device that keeps what it
+//! is told (input.zig).
+//!
+//! **A bus under test** has the test task for its process: the test opens
+//! the controller and its clock into the bus as the process does, attaches
+//! the root hub, and after each change to the script takes the hubs'
+//! replies (`_bus.hubsChanged`), as the process's loop does when its port
+//! is signalled.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -20,6 +29,15 @@ const CloseUSBPipe = @import("../pipe/closeusbpipe.zig").CloseUSBPipe;
 const usbhc = sdk.devices.usbhc;
 const host_rom = @import("host_rom");
 const kexec = host_rom.exec;
+const standin = @import("hc.zig");
+const standin_driver = @import("driver.zig");
+const standin_input = @import("input.zig");
+const ie = sdk.devices.inputevent;
+const usb_init = @import("../usb_init.zig");
+const usbBase = @import("../usb_base.zig").usbBase;
+const _bind = @import("../bind/_bind.zig");
+const timer = sdk.devices.timer;
+const UsbLibrary = sdk.interface.usb.UsbBase;
 
 const testing = std.testing;
 
@@ -71,9 +89,9 @@ test "interfaces and endpoints are found in a configuration as it came" {
 /// second with an isochronous OUT endpoint of 192-byte packets, every
 /// frame - the interval at offset 33.
 const speaker_bytes = [_]u8{
-    9, d.USB_DT_CONFIG,    36,   0,    1, 1,    0, 0x80, 50,
-    9, d.USB_DT_INTERFACE, 1,    0,    0, 1,    2, 0,    0,
-    9, d.USB_DT_INTERFACE, 1,    1,    1, 1,    2, 0,    0,
+    9, d.USB_DT_CONFIG,    36,   0,    1,   1, 0, 0x80, 50,
+    9, d.USB_DT_INTERFACE, 1,    0,    0,   1, 2, 0,    0,
+    9, d.USB_DT_INTERFACE, 1,    1,    1,   1, 2, 0,    0,
     9, d.USB_DT_ENDPOINT,  0x01, 0x09, 192, 0, 1, 0,    0,
 };
 
@@ -180,4 +198,463 @@ test "a ROM tag is found in a load file's data segment, by its self-offset" {
     // A file for another CPU is refused.
     std.mem.writeInt(u16, file[10..12], 1, .little);
     try testing.expect(loadfile.findResident(source) == null);
+}
+
+/// A recording interface's streaming setting: an isochronous IN
+/// endpoint of 64-byte packets, every frame.
+const microphone_bytes = [_]u8{
+    9, d.USB_DT_CONFIG,    27,   0,    1,  1, 0, 0x80, 50,
+    9, d.USB_DT_INTERFACE, 1,    1,    1,  1, 2, 0,    0,
+    9, d.USB_DT_ENDPOINT,  0x81, 0x05, 64, 0, 1, 0,    0,
+};
+
+/// exec, the stand-in controller opened into a bus, and a device on that
+/// bus with `config`.
+const Rig = struct {
+    sys: *sdk.interface.exec.ExecBase,
+    base: UsbBase = undefined,
+    bus: _bus.Bus = undefined,
+    device: _bus.Device = undefined,
+    port: sdk.exec.MsgPort = .{},
+    hc: *standin.HC = undefined,
+
+    fn init(rig: *Rig, config: []const u8) !void {
+        try kexec.setUp();
+        rig.sys = kexec.SysBase.iface();
+        rig.base.sys_base = rig.sys;
+        const made = kexec.InitResident(kexec.SysBase, &standin.tag, null) orelse return error.NoDevice;
+        rig.hc = standin.hcOf(@ptrCast(@alignCast(made)));
+        rig.bus.hc_io = .{};
+        rig.bus.hc_io.std.req.message.length = @sizeOf(usbhc.IOUsbHC);
+        if (rig.sys.OpenDevice(standin.NAME, 0, &rig.bus.hc_io.std.req, 0) != 0) return error.NotOpened;
+        rig.port.msg_list.init(.message);
+        rig.device = _bus.Device{ .bus = &rig.bus };
+        rig.device.public.config = config.ptr;
+        rig.device.public.config_length = @intCast(config.len);
+        rig.device.public.speed = usbhc.USB_SPEED_FULL;
+    }
+
+    fn deinit(rig: *Rig) !void {
+        rig.sys.CloseDevice(&rig.bus.hc_io.std.req);
+        _ = rig.sys.RemDevice(&rig.hc.dev);
+        try kexec.expectNoLeaks();
+        kexec.deinit();
+    }
+};
+
+test "an isochronous transfer comes back with each packet's result, one lost and the transfer whole" {
+    var rig: Rig = .{ .sys = undefined };
+    try rig.init(&speaker_bytes);
+    const pipe = OpenUSBPipe(&rig.base, &rig.device.public, 0x01, &rig.port).?;
+
+    var data: [720]u8 = undefined;
+    for (&data, 0..) |*byte, at| byte.* = @truncate(at);
+    var list = [_]usbhc.UsbIsoPacket{ .{ .length = 192 }, .{ .length = 192 }, .{ .length = 96 }, .{ .length = 192 }, .{ .length = 48 } };
+    rig.hc.lost = 1 << 2;
+    pipe.io.std.data = &data;
+    pipe.io.std.length = data.len;
+    pipe.io.iso_list = &list;
+    pipe.io.iso_count = list.len;
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&pipe.io.std.req));
+    // The lost packet is a result: the transfer went, the rest whole.
+    try testing.expectEqual(@as(usize, 720 - 96), pipe.io.std.actual);
+    try testing.expectEqual(@as(u16, 1), pipe.io.iso_lost);
+    try testing.expectEqual(usbhc.UHIOERR_MISSED, list[2].status);
+    try testing.expectEqual(@as(u16, 0), list[2].actual);
+    for ([_]usize{ 0, 1, 3, 4 }) |n| {
+        try testing.expectEqual(@as(i8, 0), list[n].status);
+        try testing.expectEqual(list[n].length, list[n].actual);
+    }
+    // What went is every packet but the third, each from its place.
+    try testing.expectEqual(@as(u32, 720 - 96), rig.hc.sent_length);
+    try testing.expectEqualSlices(u8, data[0..384], rig.hc.sent[0..384]);
+    try testing.expectEqualSlices(u8, data[480..720], rig.hc.sent[384..624]);
+    try testing.expectEqual(@as(u16, 100), pipe.io.iso_frame);
+    try testing.expectEqual(@as(u16, 0), pipe.io.iso_gap);
+
+    CloseUSBPipe(&rig.base, pipe);
+    try rig.deinit();
+}
+
+test "a stream that ran dry says by how much in the next transfer's gap" {
+    var rig: Rig = .{ .sys = undefined };
+    try rig.init(&speaker_bytes);
+    const pipe = OpenUSBPipe(&rig.base, &rig.device.public, 0x01, &rig.port).?;
+    var data: [1920]u8 = @splat(0);
+    pipe.io.std.data = &data;
+    pipe.io.std.length = data.len;
+    rig.hc.gap_before = 1;
+    rig.hc.gap = 7;
+
+    // Ten packets of the endpoint's 192 bytes, a frame each.
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&pipe.io.std.req));
+    try testing.expectEqual(@as(u16, 100), pipe.io.iso_frame);
+    try testing.expectEqual(@as(u16, 0), pipe.io.iso_gap);
+    try testing.expectEqual(@as(usize, 1920), pipe.io.std.actual);
+    // The next comes seven frames after the last one ended.
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&pipe.io.std.req));
+    try testing.expectEqual(@as(u16, 117), pipe.io.iso_frame);
+    try testing.expectEqual(@as(u16, 7), pipe.io.iso_gap);
+    try testing.expectEqual(@as(u16, 0), pipe.io.iso_lost);
+
+    // One placed in a frame of its own, from the frame the controller is
+    // in: what it skipped is its gap.
+    var info: usbhc.USBHCInfo = .{};
+    var query = rig.bus.hc_io;
+    query.std.req.command = usbhc.UHCMD_QUERYDEVICE;
+    query.std.data = &info;
+    query.std.length = @sizeOf(usbhc.USBHCInfo);
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&query.std.req));
+    try testing.expectEqual(@as(u32, 127), info.frame);
+    pipe.io.flags |= usbhc.UHF_ISO_FRAME;
+    pipe.io.iso_frame = @truncate(info.frame + 20);
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&pipe.io.std.req));
+    try testing.expectEqual(@as(u16, 147), pipe.io.iso_frame);
+    try testing.expectEqual(@as(u16, 20), pipe.io.iso_gap);
+
+    CloseUSBPipe(&rig.base, pipe);
+    try rig.deinit();
+}
+
+test "an isochronous IN transfer's packets each at their place, a short one as long as it came" {
+    var rig: Rig = .{ .sys = undefined };
+    try rig.init(&microphone_bytes);
+    const pipe = OpenUSBPipe(&rig.base, &rig.device.public, 0x81, &rig.port).?;
+    try testing.expectEqual(usbhc.UHCMD_ISOXFER, pipe.io.std.req.command);
+
+    var data: [192]u8 = @splat(0xEE);
+    var list = [_]usbhc.UsbIsoPacket{ .{ .length = 64 }, .{ .length = 64 }, .{ .length = 64 } };
+    rig.hc.short_packet = 1;
+    rig.hc.short_bytes = 10;
+    pipe.io.std.data = &data;
+    pipe.io.std.length = data.len;
+    pipe.io.iso_list = &list;
+    pipe.io.iso_count = list.len;
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&pipe.io.std.req));
+    try testing.expectEqual(@as(usize, 64 + 10 + 64), pipe.io.std.actual);
+    try testing.expectEqual(@as(u16, 10), list[1].actual);
+    try testing.expectEqual(@as(u16, 0), pipe.io.iso_lost);
+    // Each packet at its asked place; the short one leaves the rest of
+    // its room as it was.
+    for (data[0..64]) |byte| try testing.expectEqual(@as(u8, 0), byte);
+    for (data[64..74]) |byte| try testing.expectEqual(@as(u8, 1), byte);
+    for (data[74..128]) |byte| try testing.expectEqual(@as(u8, 0xEE), byte);
+    for (data[128..192]) |byte| try testing.expectEqual(@as(u8, 2), byte);
+
+    CloseUSBPipe(&rig.base, pipe);
+    try rig.deinit();
+}
+
+// --- a bus's devices coming and going ------------------------------------------
+
+/// usb.library made, the stand-in controller and its clock opened into a
+/// bus the test task is the process of, the stand-in class driver in the
+/// library's table, taking HID interfaces, and the stand-in input.device.
+/// Not to be moved once made: the bus's devices point at it.
+const BusRig = struct {
+    sys: *sdk.interface.exec.ExecBase,
+    library: *sdk.exec.Library,
+    base: *UsbBase,
+    hc: *standin.HC,
+    driver: *standin_driver.Driver,
+    input: *standin_input.Input,
+    bus: _bus.Bus,
+
+    fn init(rig: *BusRig) !void {
+        try kexec.setUp();
+        rig.sys = kexec.SysBase.iface();
+        const made = kexec.InitResident(kexec.SysBase, &usb_init.usb_library_tag, null) orelse return error.NoLibrary;
+        rig.library = @ptrCast(@alignCast(made));
+        rig.base = usbBase(rig.library);
+        const hc_made = kexec.InitResident(kexec.SysBase, &standin.tag, null) orelse return error.NoDevice;
+        rig.hc = standin.hcOf(@ptrCast(@alignCast(hc_made)));
+        const driver_made = kexec.InitResident(kexec.SysBase, &standin_driver.tag, null) orelse return error.NoDevice;
+        rig.driver = standin_driver.driverOf(@ptrCast(@alignCast(driver_made)));
+        const input_made = kexec.InitResident(kexec.SysBase, &standin_input.tag, null) orelse return error.NoDevice;
+        rig.input = standin_input.inputOf(@ptrCast(@alignCast(input_made)));
+
+        // The table as DEVS:usb/ would have given it, freed with the
+        // library.
+        const memory = rig.sys.AllocMem(@sizeOf(_bind.Drivers), sdk.exec.MEMF_CLEAR) orelse return error.NoMemory;
+        const drivers: *_bind.Drivers = @ptrCast(@alignCast(memory));
+        drivers.* = .{ .count = 1 };
+        @memcpy(drivers.list[0].name[0..standin_driver.NAME.len], standin_driver.NAME);
+        drivers.list[0].matches[0] = .{ .fields = usbclass.USBMATCH_CLASS, .interface_class = d.USB_CLASS_HID };
+        drivers.list[0].match_count = 1;
+        rig.base.drivers = drivers;
+
+        rig.bus = .{ .usb_base = rig.base, .number = 0, .hc_name = standin.NAME, .hc_unit = 0 };
+        const port = rig.sys.CreateMsgPort() orelse return error.NoPort;
+        rig.bus.port = port;
+        rig.bus.hc_io.std.req.message.reply_port = port;
+        rig.bus.hc_io.std.req.message.length = @sizeOf(usbhc.IOUsbHC);
+        if (rig.sys.OpenDevice(standin.NAME, 0, &rig.bus.hc_io.std.req, 0) != 0) return error.NotOpened;
+        rig.bus.delay_io.node.message.reply_port = port;
+        rig.bus.delay_io.node.message.length = @sizeOf(timer.TimeRequest);
+        if (rig.sys.OpenDevice(standin.NAME, standin.CLOCK_UNIT, &rig.bus.delay_io.node, 0) != 0) return error.NotOpened;
+    }
+
+    /// The root hub attached, as the process does once it has the
+    /// controller.
+    fn start(rig: *BusRig) *_bus.Device {
+        rig.bus.root = _bus.attach(&rig.bus, null, 0, usbhc.USB_SPEED_FULL);
+        return rig.bus.root.?;
+    }
+
+    /// The devices on the library's list.
+    fn count(rig: *BusRig) u32 {
+        const library: *UsbLibrary = @ptrCast(rig.library);
+        const list = library.ObtainUSBDeviceList();
+        defer library.ReleaseUSBDeviceList();
+        var found: u32 = 0;
+        var it = list.iterator();
+        while (it.next()) |_| found += 1;
+        return found;
+    }
+
+    /// Whether `address` is given out on the bus.
+    fn inUse(rig: *const BusRig, address: u8) bool {
+        return rig.bus.addresses[address / 32] & (@as(u32, 1) << @intCast(address % 32)) != 0;
+    }
+
+    /// The bus stopped as the process stops it, and everything made freed.
+    fn deinit(rig: *BusRig) !void {
+        if (rig.bus.root) |root| _bus.detach(&rig.bus, root);
+        rig.bus.root = null;
+        rig.bus.input.end(rig.sys);
+        rig.sys.CloseDevice(&rig.bus.delay_io.node);
+        rig.sys.CloseDevice(&rig.bus.hc_io.std.req);
+        rig.sys.DeleteMsgPort(rig.bus.port.?);
+        _ = rig.sys.RemDevice(&rig.hc.dev);
+        _ = rig.sys.RemDevice(&rig.driver.dev);
+        _ = rig.sys.RemDevice(&rig.input.dev);
+        _ = rig.sys.RemLibrary(rig.library);
+        try kexec.expectNoLeaks();
+        kexec.deinit();
+    }
+};
+
+fn childOf(device: *_bus.Device, port: u8) ?*_bus.Device {
+    return device.hub.?.children[port - 1];
+}
+
+/// That `event` says the device at `address` on bus 0 came or went.
+fn expectUsbEvent(event: ie.InputEvent, subclass: u32, address: u8) !void {
+    try testing.expectEqual(ie.IECLASS_USB, event.class);
+    try testing.expectEqual(subclass, event.subclass);
+    try testing.expectEqual(@as(u32, address), event.code);
+}
+
+test "a device on the root hub is addressed, configured and bound, and goes when pulled" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = standin.addRoot(hc, 2);
+    const keyboard = standin.addDevice(hc, standin.root, 1, usbhc.USB_SPEED_LOW, 0x046D, 0xC31C, d.USB_CLASS_HID, .{ "Maker", "Keyboard", "K1" });
+    standin.plug(hc, keyboard);
+
+    const library: *UsbLibrary = @ptrCast(rig.library);
+    const signal = rig.sys.AllocSignal(-1);
+    const mask = @as(u32, 1) << @intCast(signal);
+    const notify = library.AddUSBNotify(rig.sys.FindTask(null).?, mask).?;
+    _ = rig.sys.SetSignal(0, mask);
+
+    const root = rig.start();
+    try testing.expectEqual(@as(u8, 1), root.public.address);
+    try testing.expect(root.public.flags & usb.USBDF_HUB != 0);
+    try testing.expectEqual(@as(u8, 2), root.hub.?.ports);
+    const device = childOf(root, 1).?;
+    try testing.expectEqual(@as(u8, 2), device.public.address);
+    try testing.expectEqual(@as(u8, 2), hc.functions[keyboard].address);
+    try testing.expectEqual(usbhc.USB_SPEED_LOW, device.public.speed);
+    try testing.expectEqual(@as(u8, 8), device.public.descriptor.max_packet_size0);
+    try testing.expectEqual(@as(u16, 0xC31C), device.public.descriptor.product_id);
+    try testing.expect(device.public.flags & usb.USBDF_CONFIGURED != 0);
+    try testing.expectEqual(@as(u8, 1), hc.functions[keyboard].configuration);
+    try testing.expectEqualStrings("Keyboard", std.mem.span(device.public.product.?));
+    try testing.expectEqualStrings("K1", std.mem.span(device.public.serial.?));
+    try testing.expectEqual(@as(u32, 1), rig.driver.binds);
+    try testing.expectEqual(@as(u8, 0), rig.driver.last_interface);
+    try testing.expectEqualStrings(standin_driver.NAME, std.mem.span(device.public.drivers[0].?));
+    try testing.expectEqual(@as(u32, 2), rig.count());
+    try testing.expect(rig.sys.SetSignal(0, mask) & mask != 0);
+    // The ports' power and the debounce were waited for, on the clock.
+    try testing.expect(hc.clock >= 200_000);
+    // The root hub's status transfer is out, held until a port changes.
+    try testing.expect(root.hub.?.pending != 0);
+    try testing.expect(hc.functions[standin.root].held != null);
+    // input.device told of both, the root hub first, the keyboard with
+    // its ids.
+    var events = standin_input.written(rig.input);
+    try testing.expectEqual(@as(usize, 2), events.len);
+    try expectUsbEvent(events[0], ie.IESUBCLASS_USB_ATTACHED, 1);
+    try expectUsbEvent(events[1], ie.IESUBCLASS_USB_ATTACHED, 2);
+    try testing.expectEqual(@as(i32, 0x046D), events[1].x);
+    try testing.expectEqual(@as(i32, 0xC31C), events[1].y);
+
+    standin.pull(hc, keyboard);
+    _bus.hubsChanged(&rig.bus);
+    events = standin_input.written(rig.input);
+    try testing.expectEqual(@as(usize, 3), events.len);
+    try expectUsbEvent(events[2], ie.IESUBCLASS_USB_DETACHED, 2);
+    try testing.expectEqual(@as(i32, 0xC31C), events[2].y);
+    try testing.expect(childOf(root, 1) == null);
+    try testing.expectEqual(@as(u32, 1), rig.driver.unbinds);
+    try testing.expectEqual(@as(u32, 0), rig.driver.holding);
+    try testing.expectEqual(@as(u32, 1), rig.count());
+    try testing.expect(!rig.inUse(2));
+    try testing.expect(rig.sys.SetSignal(0, mask) & mask != 0);
+    try testing.expect(hc.functions[standin.root].held != null);
+
+    library.RemUSBNotify(notify);
+    rig.sys.FreeSignal(signal);
+    try rig.deinit();
+}
+
+test "a hub with two devices, a third plugged in later, and the hub pulled with all three" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = standin.addRoot(hc, 1);
+    const hub = standin.addHub(hc, standin.root, 1, usbhc.USB_SPEED_HIGH, 4);
+    const mouse = standin.addDevice(hc, hub, 1, usbhc.USB_SPEED_FULL, 0x1234, 0x0001, d.USB_CLASS_HID, .{ "", "Mouse", "" });
+    const stick = standin.addDevice(hc, hub, 3, usbhc.USB_SPEED_HIGH, 0x0781, 0x5567, d.USB_CLASS_MASS_STORAGE, .{ "", "Stick", "" });
+    const keyboard = standin.addDevice(hc, hub, 2, usbhc.USB_SPEED_LOW, 0x1234, 0x0002, d.USB_CLASS_HID, .{ "", "Keyboard", "" });
+    standin.plug(hc, hub);
+    standin.plug(hc, mouse);
+    standin.plug(hc, stick);
+
+    const root = rig.start();
+    const hub_device = childOf(root, 1).?;
+    try testing.expect(hub_device.public.flags & usb.USBDF_HUB != 0);
+    try testing.expectEqual(@as(u8, 2), hub_device.public.address);
+    try testing.expectEqual(@as(u8, 1), hub_device.public.depth);
+    try testing.expectEqual(@as(u8, 4), hub_device.hub.?.ports);
+    try testing.expectEqualStrings("usb.library", std.mem.span(hub_device.public.drivers[0].?));
+    // The ports looked at in order: the mouse on 1, the stick on 3.
+    const mouse_device = childOf(hub_device, 1).?;
+    const stick_device = childOf(hub_device, 3).?;
+    try testing.expectEqual(@as(u8, 3), mouse_device.public.address);
+    try testing.expectEqual(@as(u8, 4), stick_device.public.address);
+    try testing.expectEqual(@as(u8, 2), mouse_device.public.depth);
+    try testing.expectEqual(&hub_device.public, mouse_device.public.hub.?);
+    try testing.expectEqual(@as(u8, 3), stick_device.public.port);
+    // A full-speed device behind a high-speed hub is reached through that
+    // hub's translator, at its port; a high-speed one needs none.
+    try testing.expectEqual(@as(u8, 2), mouse_device.hub_address);
+    try testing.expectEqual(@as(u8, 1), mouse_device.hub_port);
+    try testing.expectEqual(@as(u8, 0), stick_device.hub_address);
+    // The stick is configured, and no driver of the table takes it.
+    try testing.expect(stick_device.public.flags & usb.USBDF_CONFIGURED != 0);
+    try testing.expect(stick_device.public.drivers[0] == null);
+    try testing.expectEqual(@as(u32, 1), rig.driver.binds);
+    try testing.expectEqual(@as(u32, 4), rig.count());
+
+    standin.plug(hc, keyboard);
+    _bus.hubsChanged(&rig.bus);
+    const keyboard_device = childOf(hub_device, 2).?;
+    try testing.expectEqual(@as(u8, 5), keyboard_device.public.address);
+    try testing.expectEqual(@as(u8, 2), keyboard_device.hub_port);
+    try testing.expectEqual(@as(u32, 2), rig.driver.binds);
+    try testing.expectEqual(@as(u32, 5), rig.count());
+
+    // The hub's own status transfer comes back detached after the root
+    // hub's change: it is found replied when the hub is taken down.
+    // A hub is told of before what is in it.
+    var events = standin_input.written(rig.input);
+    try testing.expectEqual(@as(usize, 5), events.len);
+    for ([_]u8{ 1, 2, 3, 4, 5 }, events) |address, event| try expectUsbEvent(event, ie.IESUBCLASS_USB_ATTACHED, address);
+
+    standin.pull(hc, hub);
+    _bus.hubsChanged(&rig.bus);
+    // What hangs off the hub goes before it, port by port.
+    events = standin_input.written(rig.input);
+    try testing.expectEqual(@as(usize, 9), events.len);
+    for ([_]u8{ 3, 5, 4, 2 }, events[5..]) |address, event| try expectUsbEvent(event, ie.IESUBCLASS_USB_DETACHED, address);
+    try testing.expect(childOf(root, 1) == null);
+    try testing.expectEqual(@as(u32, 2), rig.driver.unbinds);
+    try testing.expectEqual(@as(u32, 0), rig.driver.holding);
+    try testing.expectEqual(@as(u32, 1), rig.count());
+    for ([_]u8{ 2, 3, 4, 5 }) |address| try testing.expect(!rig.inUse(address));
+    try testing.expect(rig.inUse(1));
+    try rig.deinit();
+}
+
+test "a stalled request: strings left out, a configuration that never comes leaves the device failed" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = standin.addRoot(hc, 2);
+    const quiet = standin.addDevice(hc, standin.root, 1, usbhc.USB_SPEED_FULL, 0x1234, 0x0010, d.USB_CLASS_HID, .{ "Maker", "Quiet", "" });
+    hc.functions[quiet].stall_request = d.USB_REQ_GET_DESCRIPTOR;
+    hc.functions[quiet].stall_kind = d.USB_DT_STRING;
+    const broken = standin.addDevice(hc, standin.root, 2, usbhc.USB_SPEED_FULL, 0x1234, 0x0011, d.USB_CLASS_HID, .{ "", "Broken", "" });
+    hc.functions[broken].stall_request = d.USB_REQ_GET_DESCRIPTOR;
+    hc.functions[broken].stall_kind = d.USB_DT_CONFIG;
+    standin.plug(hc, quiet);
+    standin.plug(hc, broken);
+
+    const root = rig.start();
+    const quiet_device = childOf(root, 1).?;
+    try testing.expect(quiet_device.public.flags & usb.USBDF_CONFIGURED != 0);
+    try testing.expect(quiet_device.public.product == null);
+    try testing.expect(quiet_device.public.manufacturer == null);
+    try testing.expect(quiet_device.public.drivers[0] != null);
+
+    // On the list, with its address, unconfigured and offered to no
+    // driver.
+    const broken_device = childOf(root, 2).?;
+    try testing.expect(broken_device.public.flags & usb.USBDF_FAILED != 0);
+    try testing.expect(broken_device.public.flags & usb.USBDF_CONFIGURED == 0);
+    try testing.expectEqual(@as(u8, 3), broken_device.public.address);
+    try testing.expectEqual(@as(u8, 0), hc.functions[broken].configuration);
+    try testing.expect(broken_device.public.drivers[0] == null);
+    try testing.expectEqual(@as(u32, 1), rig.driver.binds);
+    try testing.expectEqual(@as(u32, 3), rig.count());
+
+    standin.pull(hc, broken);
+    _bus.hubsChanged(&rig.bus);
+    try testing.expect(childOf(root, 2) == null);
+    try testing.expectEqual(@as(u32, 0), rig.driver.unbinds);
+    try testing.expectEqual(@as(u32, 2), rig.count());
+    try testing.expect(!rig.inUse(3));
+    try rig.deinit();
+}
+
+test "a device pulled in the middle of its enumeration goes at its hub's next change" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = standin.addRoot(hc, 1);
+    const device = standin.addDevice(hc, standin.root, 1, usbhc.USB_SPEED_FULL, 0x1234, 0x0020, d.USB_CLASS_HID, .{ "", "Gone", "" });
+    // Its first eight bytes and its address answered, then pulled.
+    hc.functions[device].pull_after = 2;
+    standin.plug(hc, device);
+
+    const root = rig.start();
+    const half = childOf(root, 1).?;
+    try testing.expect(half.public.flags & usb.USBDF_FAILED != 0);
+    try testing.expectEqual(@as(u8, 2), half.public.address);
+    // Told of, failed as it is: it is on the list.
+    try expectUsbEvent(standin_input.written(rig.input)[1], ie.IESUBCLASS_USB_ATTACHED, 2);
+    try testing.expectEqual(@as(u32, 0), rig.driver.binds);
+    try testing.expectEqual(@as(u32, 2), rig.count());
+    // The port's change was there when the status transfer went: it is
+    // answered already.
+    try testing.expect(hc.functions[standin.root].held == null);
+
+    _bus.hubsChanged(&rig.bus);
+    try testing.expect(childOf(root, 1) == null);
+    try testing.expectEqual(@as(u32, 1), rig.count());
+    try testing.expect(!rig.inUse(2));
+
+    // Back in: a whole device, at an address not the one just freed.
+    hc.functions[device].pull_after = standin.none;
+    standin.plug(hc, device);
+    _bus.hubsChanged(&rig.bus);
+    const whole = childOf(root, 1).?;
+    try testing.expect(whole.public.flags & usb.USBDF_CONFIGURED != 0);
+    try testing.expectEqual(@as(u8, 3), whole.public.address);
+    try testing.expectEqual(@as(u32, 1), rig.driver.binds);
+    try rig.deinit();
 }

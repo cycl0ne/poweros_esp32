@@ -739,15 +739,22 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
 const Telling = struct {
     ib: *IntuitionBase,
     class: u32,
+    code: u32 = 0,
 
     fn one(t: *Telling, w: *_window.Window) void {
-        _window.send(t.ib, w, t.class, 0);
+        _window.send(t.ib, w, t.class, t.code);
     }
 };
 
 /// One class of message to every open window that listens for it.
 pub fn tellAll(ib: *IntuitionBase, class: u32) void {
-    var telling = Telling{ .ib = ib, .class = class };
+    tellAllCode(ib, class, 0);
+}
+
+/// One class of message, with its code, to every open window that
+/// listens for it.
+fn tellAllCode(ib: *IntuitionBase, class: u32, code: u32) void {
+    var telling = Telling{ .ib = ib, .class = class, .code = code };
     _window.eachWindow(ib, &telling, Telling.one);
 }
 
@@ -773,6 +780,7 @@ fn handleFree(ib: *IntuitionBase, e: *const InputEvent) void {
         ie.IECLASS_DISKINSERTED => tellAll(ib, wn.IDCMP_DISKINSERTED),
         ie.IECLASS_DISKREMOVED => tellAll(ib, wn.IDCMP_DISKREMOVED),
         ie.IECLASS_NEWPREFS => tellAll(ib, wn.IDCMP_NEWPREFS),
+        ie.IECLASS_USB => tellAllCode(ib, wn.IDCMP_USBCHANGE, e.subclass),
         ie.IECLASS_TIMER => if (ib.active_window) |w| {
             _window.tick(ib, w);
             helpTick(ib, w);

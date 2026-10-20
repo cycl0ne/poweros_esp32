@@ -32,6 +32,15 @@ pub fn maxPorts(params1: u32) u32 {
 pub fn scratchpads(params2: u32) u32 {
     return ((params2 >> 21) & 0x1F) << 5 | (params2 >> 27);
 }
+/// HCSPARAMS2: the Isochronous Scheduling Threshold - how far ahead of
+/// the frame it is in the controller must have a TD - in whole frames,
+/// rounded up: its low three bits count frames with bit 3 set,
+/// microframes without.
+pub fn istFrames(params2: u32) u32 {
+    const count = params2 & 7;
+    if (params2 & 8 != 0) return count;
+    return (count + 7) / 8;
+}
 
 /// HCCPARAMS1: 64-bit addresses, 64-byte contexts, port power switches,
 /// and where the extended capabilities start, in words.
@@ -109,6 +118,9 @@ pub const SPEED_SUPER: u32 = 4;
 
 // --- runtime registers ------------------------------------------------------------
 
+/// The microframe the controller is in, its low 14 bits: the frame
+/// number times 8, and the microframe within it.
+pub const MFINDEX: usize = 0x00;
 /// Interrupter 0's registers, from the runtime block.
 pub const IMAN: usize = 0x20;
 pub const IMOD: usize = 0x24;
@@ -151,6 +163,10 @@ pub const TRB_DIR_IN: u32 = 1 << 16;
 /// An Isoch TRB's Start Isoch ASAP: in the interval after the TD before
 /// it, or as soon as the controller can on an idle ring.
 pub const TRB_SIA: u32 = 1 << 31;
+/// An Isoch TRB's Frame ID, without SIA: the frame its TD goes in.
+pub fn frameIdField(frame: u32) u32 {
+    return (frame & 0x7FF) << 20;
+}
 pub const TRB_TYPE_SHIFT = 10;
 
 pub fn trbType(control: u32) u32 {

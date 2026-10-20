@@ -91,6 +91,19 @@ pub const IETABLET_MAX: i32 = 0xFFFF;
 /// is in the panel's pixels. Every finger is reported this way; the first
 /// one down is also the pointer.
 pub const IECLASS_TOUCH: u32 = 0x16;
+/// A USB device was plugged in or pulled out: `subclass` is
+/// IESUBCLASS_USB_ATTACHED or IESUBCLASS_USB_DETACHED, `code` the bus and
+/// the device's address (`bus << 8 | address`), `x` its vendor and `y` its
+/// product id. usb.library writes it on the bus's process: for a device
+/// that came once it is set up and its interfaces offered to the class
+/// drivers - a hub before what is plugged into it - and for one that went
+/// once its drivers were told and it is off the device list. A device
+/// that could not be set up comes too, USBDF_FAILED in the list. The
+/// device itself is read from usb.library's list (ObtainUSBDeviceList).
+pub const IECLASS_USB: u32 = 0x17;
+/// IECLASS_USB's `subclass`.
+pub const IESUBCLASS_USB_ATTACHED: u32 = 1;
+pub const IESUBCLASS_USB_DETACHED: u32 = 2;
 
 // --- codes ---------------------------------------------------------------------
 

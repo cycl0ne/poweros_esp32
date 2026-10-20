@@ -32,7 +32,7 @@ const _window = @import("../window/_window.zig");
 ///   on the display the screen is), `SA_WBorTop`, `SA_WBorLeft`,
 ///   `SA_WBorRight`, `SA_WBorBottom`, `SA_Top` (how far down its display
 ///   the screen is now), `SA_Left` (0), `SA_Draggable`, `SA_Exclusive`,
-///   `SA_PixelFormat` (since 0.48). A tag it does not know, or a null
+///   `SA_PixelFormat` (since 0.49). A tag it does not know, or a null
 ///   data, is passed over.
 ///
 /// RESULT:

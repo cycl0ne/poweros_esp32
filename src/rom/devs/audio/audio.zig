@@ -38,6 +38,11 @@
 //! from the table, or keeps the one in force when it has none there; a
 //! volume set for the output played through, or none, goes into the table
 //! too, and the table forgets the one set longest ago when it is full.
+//! The master in force is handed to the output's part first
+//! (AUDIOCTRL_VOLUME): one with a volume of its own - a USB speaker's
+//! control - is set there, and the mix gives it only what the part's
+//! range does not reach, so its sound leaves at full scale; for any other
+//! the master is a gain in the mix.
 //!
 //! A sink may run at more than one rate. The device runs it in the mode
 //! that the most open streams play in unconverted: the mode whose rate
@@ -99,7 +104,7 @@ const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 9;
+const DEVICE_REVISION = 10;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -205,6 +210,9 @@ const AudioBase = extern struct {
     /// The device's volume, over every stream (AUDIOCMD_MASTER): the
     /// output's that plays, from `volumes`.
     master: u32 = audio.AUDIO_VOLUME_UNITY,
+    /// What the mix gives of it: all of it, or what the output's own
+    /// volume leaves over.
+    gain: u32 = audio.AUDIO_VOLUME_UNITY,
     /// Each output's volume that was set, and the count of them set.
     volumes: [audio.AUDIO_MAX_VOLUMES]Volume = @splat(.{}),
     volumes_set: u32 = 0,
@@ -297,6 +305,7 @@ fn attachSink(ab: *AudioBase, sink: *rta.AudioSink) bool {
     ab.rate = mode.rate;
     ab.sides = sidesOf(mode);
     if (volumeOf(ab, sink.id)) |volume| ab.master = volume;
+    applyMaster(ab);
     for (0..max_streams) |n| {
         if (ab.streams[n].in_use != 0) ab.voices[n].step = mixer.stepFor(ab.streams[n].rate, ab.rate);
     }
@@ -436,7 +445,19 @@ fn setMaster(ab: *AudioBase, output: u32, volume: u32) void {
     const playing: u32 = if (ab.sink) |sink| sink.id else 0;
     const id = if (output != 0) output else playing;
     keepVolume(ab, id, volume);
-    if (id == playing) ab.master = volume;
+    if (id != playing) return;
+    ab.master = volume;
+    applyMaster(ab);
+}
+
+/// The master in force handed to the output played through: set at its
+/// part when it has a volume of its own, the mix giving what is left;
+/// all of it a gain in the mix otherwise. Under the device's lock.
+fn applyMaster(ab: *AudioBase) void {
+    ab.gain = ab.master;
+    const sink = ab.sink orelse return;
+    const rest = ab.rta_base.SinkControl(sink, rta.sinks.AUDIOCTRL_VOLUME, @intCast(ab.master));
+    if (rest >= 0) ab.gain = @intCast(@min(rest, @as(isize, audio.AUDIO_VOLUME_MAX)));
 }
 
 /// AUDIOCMD_PREFEROUTPUT, on the task: the output of that number
@@ -618,7 +639,7 @@ fn mixBuffer(ab: *AudioBase) void {
 /// `out` mixed from the streams, and the writes that played out replied.
 /// Under the device's lock.
 fn mixInto(ab: *AudioBase, out: []i16) void {
-    const done = mixer.fill(&ab.voices, out, ab.sides, mixer.masterGain(ab.master), .{ .context = ab, .next = handNext });
+    const done = mixer.fill(&ab.voices, out, ab.sides, mixer.masterGain(ab.gain), .{ .context = ab, .next = handNext });
     for (0..max_streams) |n| {
         for (0..done.ended[n]) |_| playedOut(ab, n);
     }
@@ -1909,6 +1930,61 @@ test "the query says what the output is and how far the stream has got; the mast
     try testing.expectEqual(@as(i16, 500), mix(ab, 1)[0]);
     master.volume = audio.AUDIO_VOLUME_MAX + 1;
     try testing.expectEqual(@as(i32, audio.AUDIOERR_BADFORMAT), command(&master, &io, audio.AUDIOCMD_MASTER));
+
+    _ = close(&ab.dev, &io.std.req);
+    try testing.expect(replied(port) == &write.std.req.message);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "an output with a volume of its own is set there, and the mix gives it what its range leaves" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const rb = ab.rta_base;
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+    const own_tags = [_]sdk.utility.TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("USB speaker") },
+        .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -1)) },
+        .{ .tag = capture.own_volume, .data = 1 },
+        .{},
+    };
+    const usb_speaker = rb.CreateSinkTagList(capture.DRIVER_NAME, &own_tags).?;
+    var ask = requestFor(ab, port);
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, usb_speaker.id, null));
+    try testing.expectEqual(usb_speaker, ab.sink.?);
+
+    const note = pcm16(&.{ 1000, 1000, 1000 });
+    var write = requestFor(ab, port);
+    sendWrite(&write, &io, &note, 0);
+    // Half: all of it at the part, the mix at full scale; the query says
+    // the master.
+    var master = requestFor(ab, port);
+    master.volume = audio.AUDIO_VOLUME_UNITY / 2;
+    try testing.expectEqual(@as(i32, 0), command(&master, &io, audio.AUDIOCMD_MASTER));
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 2, capture.instanceOf(usb_speaker).volume);
+    try testing.expectEqual(@as(i16, 1000), mix(ab, 1)[0]);
+    var info: audio.AudioInfo = .{};
+    var query = requestFor(ab, port);
+    query.std.data = &info;
+    query.std.length = @sizeOf(audio.AudioInfo);
+    try testing.expectEqual(@as(i32, 0), command(&query, &io, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 2, info.master);
+    // Twice as loud: the part at its most, the rest in the mix.
+    master.volume = 2 * audio.AUDIO_VOLUME_UNITY;
+    try testing.expectEqual(@as(i32, 0), command(&master, &io, audio.AUDIOCMD_MASTER));
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY, capture.instanceOf(usb_speaker).volume);
+    try testing.expectEqual(@as(i16, 2000), mix(ab, 1)[0]);
+
+    // The speaker has no volume of its own: the mix carries its master,
+    // a quarter, and the USB speaker's part keeps what it was set to.
+    master.volume = audio.AUDIO_VOLUME_UNITY / 4;
+    master.output = ab.rta_base.NextSink(null).?.id;
+    try testing.expectEqual(@as(i32, 0), command(&master, &io, audio.AUDIOCMD_MASTER));
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, master.output, null));
+    try testing.expectEqual(@as(i16, 250), mix(ab, 1)[0]);
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY, capture.instanceOf(usb_speaker).volume);
 
     _ = close(&ab.dev, &io.std.req);
     try testing.expect(replied(port) == &write.std.req.message);

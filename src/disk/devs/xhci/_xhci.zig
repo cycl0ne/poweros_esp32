@@ -133,6 +133,14 @@ pub const Endpoint = struct {
     flying: u32 = 0,
     next_slice: u32 = 0,
     stride: u32 = 0,
+    /// The ring's next TD to be told of: its event names it, or one past
+    /// it (a run of missed TDs is told once, at its end).
+    expect: u32 = 0,
+    /// A stream runs on it - a request went, and none was taken back
+    /// since - and the frame after its last packet (`Host.frame`'s
+    /// count).
+    streaming: bool = false,
+    next_frame: u32 = 0,
 };
 
 /// A device slot, and the device in it: where it is in the tree, what
@@ -261,6 +269,14 @@ pub const Host = struct {
     /// Control transfers done that wait for what the task does after
     /// them before they are answered.
     posted: exec.List = .{},
+    /// The frames since the controller started, counted on from MFINDEX
+    /// each time it is read (`currentFrame`): the frame number read last,
+    /// and the millisecond (`now`) it was read at; how many frames ahead
+    /// an isochronous TD must be placed.
+    frame: u32 = 0,
+    frame_seen: u32 = 0,
+    frame_ms: u32 = 0,
+    iso_lead: u32 = 1,
 };
 
 /// hc_private[0]: the request's flags.
@@ -268,6 +284,9 @@ pub const PRIV_FLAGS = 0;
 /// hc_private[1]: its deadline, in the task's milliseconds, with
 /// PRIVF_DEADLINE.
 pub const PRIV_DUE = 1;
+/// hc_private[1], an isochronous request's: its packets too late for
+/// the ring, missed before its first TD.
+pub const PRIV_LATE = 1;
 /// hc_private[2]: an isochronous request's TDs on the ring - the index
 /// of its first TRB and its last - and the slice of the buffer it uses
 /// (`spanOf`).
@@ -286,6 +305,9 @@ pub fn spanFirst(span: usize) u32 {
 }
 pub fn spanLast(span: usize) u32 {
     return @intCast((span >> 12) & 0xFFF);
+}
+pub fn spanSlice(span: usize) u32 {
+    return @intCast((span >> 24) & 0xFF);
 }
 
 /// Whether an endpoint is an isochronous one: several requests on its
@@ -337,6 +359,27 @@ pub inline fn op(host: *const Host, offset: usize) *volatile u32 {
 
 pub inline fn rt(host: *const Host, offset: usize) *volatile u32 {
     return reg(host.rt + offset);
+}
+
+/// The frames since the controller started: MFINDEX's frame number, its
+/// steps since the last read added (`framesSince`).
+pub fn currentFrame(host: *Host) u32 {
+    const number = (rt(host, regs.MFINDEX).* & 0x3FFF) >> 3;
+    const ms = now(host);
+    host.frame +%= framesSince(host.frame_seen, number, ms -% host.frame_ms);
+    host.frame_seen = number;
+    host.frame_ms = ms;
+    return host.frame;
+}
+
+/// The frames gone from frame number `seen` to `number`, `elapsed_ms`
+/// apart: the number's steps, and as many whole rounds of its 2048 as
+/// the clock says went by besides - a frame is a millisecond.
+pub fn framesSince(seen: u32, number: u32, elapsed_ms: u32) u32 {
+    const steps = (number -% seen) & 0x7FF;
+    if (elapsed_ms <= steps) return steps;
+    const rounds = (elapsed_ms - steps + 1024) / 2048;
+    return steps + rounds * 2048;
 }
 
 /// A 64-bit register written as two words, low first.

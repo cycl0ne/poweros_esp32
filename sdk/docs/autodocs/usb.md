@@ -53,7 +53,9 @@ A handle for RemUSBNotify, or null without memory.
 On every change of any bus the signals are sent: a device added to or
 removed from the list, an interface bound. They say that something
 changed, not what; the task reads the list again. Changes close
-together may come as one signal.
+together may come as one signal. A window hears of a device that comes
+or goes without a task of its own: input.device is told
+(`IECLASS_USB`), and intuition tells the windows (`IDCMP_USBCHANGE`).
 
 **CONTEXT**
 
@@ -73,7 +75,8 @@ None known.
 
 **SEE ALSO**
 
-`RemUSBNotify`, `ObtainUSBDeviceList`
+`RemUSBNotify`, `ObtainUSBDeviceList`, `inputevent.IECLASS_USB`,
+`windows.IDCMP_USBCHANGE`
 
 **EXAMPLES**
 
@@ -654,9 +657,12 @@ command set by the endpoint's type (`UHCMD_CONTROLXFER`,
 address, speed and hub, the endpoint, its packet size and its interval
 in milliseconds, its data toggle at DATA0. The caller sets io_Data and
 io_Length - and a control pipe's setup packet, an isochronous pipe's
-`iso_packet` if its packets are smaller than the endpoint's - and
-sends it with SendIO or DoIO, as often as it likes; the toggle stays
-in it.
+`iso_packet` if its packets are smaller than the endpoint's, or its
+`iso_list` for packets of their own lengths - and sends it with
+SendIO or DoIO, as often as it likes; the toggle stays in it. An
+isochronous transfer comes back with what became of its packets
+(`iso_lost`, the list's `status`), the frame it started in and its
+gap behind the one before (sdk/devices/usbhc.zig).
 
 An isochronous endpoint's interval is 2^(bInterval - 1) frames or, at
 high speed, microframes; it is taken only at a millisecond or more,

@@ -397,7 +397,8 @@ is nothing more. The message's whole `code` goes where `WmHandleInput`'s
 | `WMHI_MOUSEWHEEL` | the wheel, with `IDCMP_MOUSEWHEEL`, where no gadget took it | the notches down, as an `i16`'s bits; `code` has both directions |
 
 `WMHI_NEWPREFS`, `WMHI_DISKINSERTED` and `WMHI_DISKREMOVED` follow
-their classes too.
+their classes too, and `WMHI_USBCHANGE` carries `IDCMP_USBCHANGE`'s code:
+a USB device attached or detached.
 
 What the word has no room for is read from the object after it: the
 keys held with the message (`WINDOWA_Qualifier`, the

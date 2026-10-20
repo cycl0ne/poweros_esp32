@@ -36,7 +36,7 @@ const interior = _window.interior;
 ///   `WA_Screen`, `WA_Layer`, `WA_BorderLeft`/`Top`/`Right`/`Bottom`,
 ///   `WA_Active`, `WA_SimpleRefresh`, `WA_Backdrop`, `WA_Checkmark`,
 ///   `WA_AmigaKey`, `WA_MenuHelp`, `WA_Number`, `WA_PixelFormat` (since
-///   0.48, its screen's `SA_PixelFormat`). `WA_Left` and `WA_Top`
+///   0.49, its screen's `SA_PixelFormat`). `WA_Left` and `WA_Top`
 ///   are signed, written by their bits: a window past the screen's left
 ///   edge (`IPREFS_OffScreen`) has a negative left.
 ///

@@ -20,8 +20,8 @@
 //! The window listens for `IDCMP_CLOSEWINDOW`, `IDCMP_GADGETUP`,
 //! `IDCMP_GADGETDOWN`, `IDCMP_MENUPICK` and `IDCMP_VANILLAKEY` whatever it
 //! is told; `WA_IDCMP` adds to them - `IDCMP_RAWKEY`, `IDCMP_NEWSIZE`,
-//! `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW`, `IDCMP_DISKINSERTED` and
-//! `IDCMP_DISKREMOVED` have words of their own.
+//! `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW`, `IDCMP_DISKINSERTED`,
+//! `IDCMP_DISKREMOVED` and `IDCMP_USBCHANGE` have words of their own.
 //!
 //! A character typed is offered to the layout first: the gadget whose
 //! `GA_Key` it is - the letter underlined in its label - is worked as a
@@ -184,3 +184,8 @@ pub const WMHI_IDCMPUPDATE: usize = 13 << 16;
 /// negative, as an i16's bits; the message's whole code - both directions,
 /// `windows.wheelDown` and `wheelAcross` - goes where `code` points.
 pub const WMHI_MOUSEWHEEL: usize = 14 << 16;
+/// A USB device was plugged in or pulled out (the window asked for
+/// `IDCMP_USBCHANGE`). The low bits are `inputevent.IESUBCLASS_USB_ATTACHED`
+/// or `IESUBCLASS_USB_DETACHED`; which device it was is read from
+/// usb.library's device list.
+pub const WMHI_USBCHANGE: usize = 15 << 16;

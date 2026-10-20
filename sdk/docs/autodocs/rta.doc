@@ -1103,7 +1103,7 @@ rta.library/UnlockRtaDrivers
 rta.library/SinkControl                                rta.library/SinkControl
 
    NAME
-	SinkControl -- Asks a sink's driver for something of its own.
+	SinkControl -- Asks a sink's driver for something: one of the codes every sink reads alike, or one of its own.
 
    SYNOPSIS
 	    fn SinkControl(rb: *RtaBase, sink: *rta.AudioSink, what: u32, value: isize) isize
@@ -1113,7 +1113,8 @@ rta.library/UnlockRtaDrivers
 
    INPUTS
 	- `sink` - the sink.
-	- `what` - the driver's own code, `AUDIOCTRL_DRIVER` and up.
+	- `what` - `AUDIOCTRL_VOLUME`, or the driver's own code,
+	  `AUDIOCTRL_DRIVER` and up.
 	- `value` - what goes with it.
 
    RESULT
@@ -1121,7 +1122,10 @@ rta.library/UnlockRtaDrivers
 	not know or a driver that takes none.
 
    BEHAVIOR
-	Passed on to the driver unchanged.
+	Passed on to the driver unchanged. `AUDIOCTRL_VOLUME` sets the output's
+	volume at its part and answers the gain left for the buffers
+	(`sdk/libs/rta/sinks.zig`); a sink that answers RTAERR_NOT_SUPPORTED to
+	it has no volume of its own.
 
    CONTEXT
 	- Waits: yes, if the driver does.
@@ -1130,16 +1134,18 @@ rta.library/UnlockRtaDrivers
 	- Process: a Task will do.
 
    OWNERSHIP
-	As the driver documents the code.
+	As the driver documents the code; nothing is kept from `value` for
+	`AUDIOCTRL_VOLUME`.
 
    BUGS
 	None known.
 
    SEE ALSO
-	`StartSink`
+	`StartSink`, `PlaySinkBuffer`
 
    EXAMPLES
-	    const answer = rb.SinkControl(sink, rta.sinks.AUDIOCTRL_DRIVER, 0);
+	    const rest = rb.SinkControl(sink, rta.sinks.AUDIOCTRL_VOLUME, rta.sinks.AUDIOGAIN_UNITY / 2);
+	    const gain: u32 = if (rest < 0) rta.sinks.AUDIOGAIN_UNITY / 2 else @intCast(rest);
 rta.library/SinkMode                                      rta.library/SinkMode
 
    NAME

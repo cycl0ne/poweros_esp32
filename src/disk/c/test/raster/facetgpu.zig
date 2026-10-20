@@ -159,7 +159,7 @@ pub const Gpu = struct {
         return true;
     }
 
-    /// What the screen's or the window's pixels are (intuition 0.48's
+    /// What the screen's or the window's pixels are (intuition 0.49's
     /// `SA_PixelFormat`, `WA_PixelFormat`): a surface facet.library does
     /// not draw in lists no format.
     fn pixelsOf(gpu: *Gpu, of: union(enum) { screen: *intuition.Screen, window: *intuition.Window }) PixelFormat {

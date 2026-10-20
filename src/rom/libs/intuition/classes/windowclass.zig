@@ -344,6 +344,7 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
                 break :blk wc.WMHI_IDCMPUPDATE | (said & wc.WMHI_GADGETMASK);
             },
             wn.IDCMP_MOUSEWHEEL => wc.WMHI_MOUSEWHEEL | (said & 0xFFFF),
+            wn.IDCMP_USBCHANGE => wc.WMHI_USBCHANGE | (said & 0xFFFF),
             else => continue,
         };
         if (code) |out| out.* = said;

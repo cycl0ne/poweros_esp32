@@ -253,7 +253,7 @@ fn insideOf(ib: *IntuitionBase, window: *intuition.Window) Inside {
 }
 
 /// What the pixels of the window's screen are (`WA_PixelFormat`): none
-/// facet.library draws in from an intuition older than 0.48, which cannot
+/// facet.library draws in from an intuition older than 0.49, which cannot
 /// say.
 fn pixelsOf(ib: *IntuitionBase, window: *intuition.Window) PixelFormat {
     var value: usize = 0xFF;

@@ -95,7 +95,7 @@ const Visual = visual.Visual;
 const cover = @import("cover.zig");
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.3";
+const VERSION = "1.4";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.

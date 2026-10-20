@@ -2,8 +2,9 @@
 //! Host tests of xhci.device's parts that need no controller: the rings
 //! and their cycle bits (ring.zig), a configuration's endpoints and their
 //! intervals (slots.zig), a root port's PORTSC as a hub's port status
-//! (roothub.zig), the contexts' words (regs.zig), and where an
-//! isochronous request's packets lie (slots.zig, transfer.zig).
+//! (roothub.zig), the contexts' words (regs.zig), where an isochronous
+//! request's packets lie and in which frames they go, and what becomes
+//! of each (slots.zig, transfer.zig, _xhci.zig).
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -221,8 +222,94 @@ test "an isochronous request's span on the ring, and how far round it lies" {
     const span = _xhci.spanOf(250, 9, 3);
     try testing.expectEqual(@as(u32, 250), _xhci.spanFirst(span));
     try testing.expectEqual(@as(u32, 9), _xhci.spanLast(span));
-    // Past the end and round: a TD at 9 is 15 on from one at 250.
-    try testing.expectEqual(@as(u32, 15), transfer.ringDistance(250, 9, 256));
+    try testing.expectEqual(@as(u32, 3), _xhci.spanSlice(span));
+    // Past the end and round, the Link at 255 no TD: a TD at 9 is the
+    // 14th on from one at 250 - 251 to 254, then 0 to 9.
+    try testing.expectEqual(@as(u32, 14), transfer.ringDistance(250, 9, 256));
     try testing.expectEqual(@as(u32, 0), transfer.ringDistance(250, 250, 256));
+    try testing.expectEqual(@as(u32, 1), transfer.ringDistance(254, 0, 256));
     try testing.expect(transfer.ringDistance(250, 5, 256) < transfer.ringDistance(250, 9, 256));
+}
+
+test "an isochronous TD goes in its frame, and the controller's lead is whole frames" {
+    try testing.expectEqual(@as(u32, 0x7FF << 20), regs.frameIdField(2047));
+    // Frame numbers go round at 2048.
+    try testing.expectEqual(@as(u32, 5 << 20), regs.frameIdField(2048 + 5));
+    // IST in microframes (bit 3 clear) rounds up to a frame; in frames,
+    // as it says.
+    try testing.expectEqual(@as(u32, 0), regs.istFrames(0));
+    try testing.expectEqual(@as(u32, 1), regs.istFrames(1));
+    try testing.expectEqual(@as(u32, 1), regs.istFrames(7));
+    try testing.expectEqual(@as(u32, 2), regs.istFrames(8 | 2));
+}
+
+test "the frame count follows MFINDEX round its 2048, and the clock past them" {
+    try testing.expectEqual(@as(u32, 10), _xhci.framesSince(100, 110, 10));
+    // Round the end of the frame numbers.
+    try testing.expectEqual(@as(u32, 6), _xhci.framesSince(2045, 3, 6));
+    // The clock a little behind the frames: still their steps.
+    try testing.expectEqual(@as(u32, 10), _xhci.framesSince(100, 110, 9));
+    // Five seconds unread: two whole rounds besides the steps.
+    try testing.expectEqual(@as(u32, 4904 + 96), _xhci.framesSince(0, 904, 5000));
+}
+
+test "a stream follows on, its late packets missed, and starts again after a dry ring" {
+    // A new stream: as soon as the controller can.
+    var plan = transfer.isoPlan(1000, 3, false, 0, 0, null, 10, 1);
+    try testing.expectEqual(@as(u32, 1003), plan.start);
+    try testing.expectEqual(@as(u32, 0), plan.gap);
+    // Running, the next request follows on in the frame after the last.
+    plan = transfer.isoPlan(1000, 3, true, 2, 1020, null, 10, 1);
+    try testing.expectEqual(@as(u32, 1020), plan.start);
+    try testing.expectEqual(@as(u32, 0), plan.late);
+    // Running but behind: the packets before frame 1003 are missed, the
+    // rest go in their frames.
+    plan = transfer.isoPlan(1000, 3, true, 1, 998, null, 10, 1);
+    try testing.expectEqual(@as(u32, 998), plan.start);
+    try testing.expectEqual(@as(u32, 5), plan.late);
+    try testing.expectEqual(@as(u32, 0), plan.gap);
+    // Every packet too late: it starts as soon as it can, the frames
+    // between its gap.
+    plan = transfer.isoPlan(1000, 3, true, 1, 980, null, 10, 1);
+    try testing.expectEqual(@as(u32, 1003), plan.start);
+    try testing.expectEqual(@as(u32, 23), plan.gap);
+    try testing.expectEqual(@as(u32, 0), plan.late);
+    // The ring ran dry: nothing missed, the frames gone without its gap.
+    plan = transfer.isoPlan(1000, 3, true, 0, 995, null, 10, 1);
+    try testing.expectEqual(@as(u32, 1003), plan.start);
+    try testing.expectEqual(@as(u32, 8), plan.gap);
+    // Dry, but the next frame still ahead: it follows on.
+    plan = transfer.isoPlan(1000, 3, true, 0, 1004, null, 10, 1);
+    try testing.expectEqual(@as(u32, 1004), plan.start);
+    try testing.expectEqual(@as(u32, 0), plan.gap);
+    // Packets two frames apart: late is counted in packets.
+    plan = transfer.isoPlan(1000, 3, true, 1, 998, null, 10, 2);
+    try testing.expectEqual(@as(u32, 3), plan.late);
+    // Round the end of the frame count.
+    plan = transfer.isoPlan(0xFFFF_FFFE, 3, true, 2, 4, null, 10, 1);
+    try testing.expectEqual(@as(u32, 4), plan.start);
+}
+
+test "a frame asked for is the next time its number comes, within the controller's reach" {
+    // Frame number 1010 is 10 frames on from 3048 (1000 + 2048).
+    var plan = transfer.isoPlan(3048, 3, false, 0, 0, 1010, 10, 1);
+    try testing.expect(!plan.refused);
+    try testing.expectEqual(@as(u32, 3058), plan.start);
+    // Too soon for the controller, or further than it places: refused.
+    try testing.expect(transfer.isoPlan(1000, 3, false, 0, 0, 1001, 10, 1).refused);
+    try testing.expect(transfer.isoPlan(1000, 3, false, 0, 0, 999, 10, 1).refused);
+    try testing.expect(transfer.isoPlan(1000, 3, false, 0, 0, 1000 + 896, 10, 1).refused);
+    try testing.expect(!transfer.isoPlan(1000, 3, false, 0, 0, 1000 + 895, 10, 1).refused);
+    // Asked for past where the stream would go on: the frames between
+    // its gap.
+    plan = transfer.isoPlan(1000, 3, true, 1, 1010, 1020, 10, 1);
+    try testing.expectEqual(@as(u32, 10), plan.gap);
+}
+
+test "what an isochronous TD's completion code makes of its packet" {
+    try testing.expectEqual(@as(i8, 0), transfer.isoStatus(regs.CC_SUCCESS));
+    try testing.expectEqual(@as(i8, 0), transfer.isoStatus(regs.CC_SHORT_PACKET));
+    try testing.expectEqual(sdk.devices.usbhc.UHIOERR_MISSED, transfer.isoStatus(regs.CC_MISSED_SERVICE));
+    try testing.expectEqual(sdk.devices.usbhc.UHIOERR_CRCERROR, transfer.isoStatus(regs.CC_TRANSACTION));
+    try testing.expectEqual(sdk.devices.usbhc.UHIOERR_OVERFLOW, transfer.isoStatus(regs.CC_BABBLE));
 }

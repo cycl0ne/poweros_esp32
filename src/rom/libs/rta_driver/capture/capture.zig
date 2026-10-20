@@ -17,7 +17,10 @@
 //! round: a test hands it a buffer's samples (`recorded`), as a
 //! microphone's DMA would fill one, and that is the buffer it gives next.
 //! Made with `mono` in its tags it records one side, in the first half of
-//! each frame.
+//! each frame. A sink made with `own_volume` in its tags has a volume of
+//! its own, as a USB speaker's control is: it takes AUDIOCTRL_VOLUME up to
+//! as played, keeps it in `volume`, and leaves what is above that to the
+//! buffers.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -41,6 +44,8 @@ const mode_names = [_][*:0]const u8{ "48000 Hz stereo", "44100 Hz stereo" };
 const mono_names = [_][*:0]const u8{ "48000 Hz mono", "44100 Hz mono" };
 /// A source's tag: one that records one side.
 pub const mono = sdk.utility.TAG_USER | 0x7E57;
+/// A sink's tag: one with a volume of its own.
+pub const own_volume = sdk.utility.TAG_USER | 0x7E58;
 /// SinkControl's answer to AUDIOCTRL_DRIVER: the value it was given and
 /// this, so a test sees the call went through.
 pub const control_answer: isize = 0x1234;
@@ -88,6 +93,9 @@ pub const Instance = struct {
     due: u32 = 0,
     captured: [captured_samples]i16 = @splat(0),
     count: usize = 0,
+    /// Made with `own_volume`, and the volume its part was set to.
+    has_volume: bool = false,
+    volume: u32 = rta.sinks.AUDIOGAIN_UNITY,
 };
 
 /// The sink's instance.
@@ -115,10 +123,10 @@ pub fn capturedOf(sink: *rta.AudioSink) []const i16 {
     return instance.captured[0..instance.count];
 }
 
-fn createSink(driver: *rta.RtaDriver, sink: *rta.AudioSink, _: ?[*]const TagItem) callconv(.c) i32 {
+fn createSink(driver: *rta.RtaDriver, sink: *rta.AudioSink, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const state = stateOf(driver);
     const instance = instanceOf(sink);
-    instance.* = .{};
+    instance.* = .{ .has_volume = tagSet(tag_list, own_volume) };
     for (&instance.modes, rates, mode_names, 0..) |*mode, mode_rate, name, n| {
         mode.* = .{
             .node = .{ .name = name },
@@ -182,9 +190,16 @@ fn play(sink: *rta.AudioSink, frames: [*]i16) callconv(.c) i32 {
     return err.RTAERR_OK;
 }
 
-fn control(_: *rta.AudioSink, what: u32, value: isize) callconv(.c) isize {
-    if (what != rta.sinks.AUDIOCTRL_DRIVER) return err.RTAERR_NOT_SUPPORTED;
-    return value + control_answer;
+/// AUDIOCTRL_DRIVER answered with the value and `control_answer`;
+/// AUDIOCTRL_VOLUME, on a sink with a volume, taken up to as played.
+fn control(sink: *rta.AudioSink, what: u32, value: isize) callconv(.c) isize {
+    if (what == rta.sinks.AUDIOCTRL_DRIVER) return value + control_answer;
+    const instance = instanceOf(sink);
+    if (what != rta.sinks.AUDIOCTRL_VOLUME or !instance.has_volume) return err.RTAERR_NOT_SUPPORTED;
+    if (value < 0) return err.RTAERR_BAD_ARG;
+    const gain: u32 = @intCast(value);
+    instance.volume = @min(gain, rta.sinks.AUDIOGAIN_UNITY);
+    return @max(gain, rta.sinks.AUDIOGAIN_UNITY);
 }
 
 const ops = rta.AudioSinkOps{
@@ -227,17 +242,22 @@ pub fn recorded(source: *rta.AudioSource, samples: []const i16) void {
     instance.due += 1;
 }
 
+/// Whether `tag` is in the list with a value other than 0.
+fn tagSet(tag_list: ?[*]const TagItem, tag: u32) bool {
+    const list = tag_list orelse return false;
+    var set = false;
+    var at: usize = 0;
+    while (list[at].tag != sdk.utility.TAG_DONE) : (at += 1) {
+        if (list[at].tag == tag) set = list[at].data != 0;
+    }
+    return set;
+}
+
 fn createSource(driver: *rta.RtaDriver, source: *rta.AudioSource, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const state = stateOf(driver);
     const instance = sourceInstanceOf(source);
     instance.* = .{};
-    var one_side = false;
-    if (tag_list) |list| {
-        var at: usize = 0;
-        while (list[at].tag != sdk.utility.TAG_DONE) : (at += 1) {
-            if (list[at].tag == mono) one_side = list[at].data != 0;
-        }
-    }
+    const one_side = tagSet(tag_list, mono);
     for (&instance.modes, rates, 0..) |*mode, mode_rate, n| {
         mode.* = .{
             .node = .{ .name = if (one_side) mono_names[n] else mode_names[n] },

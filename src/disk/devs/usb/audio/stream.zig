@@ -15,6 +15,17 @@
 //! **A packet** is a millisecond's frames, or the interval's when the
 //! endpoint asks less often: at a rate of whole frames a millisecond,
 //! every packet is as long as the next.
+//!
+//! **An asynchronous endpoint** runs on the device's own clock and names
+//! the IN endpoint of its setting that tells that clock's rate back
+//! (bSynchAddress): samples a frame, 10.14 in three bytes, 16.16 in four
+//! (`feedbackRate`).
+//!
+//! **A volume** is a gain - 0x10000 as played - and the feature unit's is
+//! in 1/256 dB: the gain's level put within the unit's range, and the
+//! gain left over for the mix where the range does not reach it
+//! (`levelFor`). The log and the power of two are worked out in fixed
+//! point, to a 65536th.
 
 const sdk = @import("sdk");
 const d = sdk.usb.descriptors;
@@ -36,6 +47,12 @@ pub const Setting = struct {
     rate_control: bool = false,
     /// The terminal the interface is linked to.
     terminal: u8 = 0,
+    /// The endpoint's synchronisation (USB_ENDPOINT_SYNC_*).
+    sync: u8 = 0,
+    /// An asynchronous endpoint's feedback endpoint, and the bytes of its
+    /// packets; 0 for none.
+    feedback: u8 = 0,
+    feedback_packet: u32 = 0,
 
     /// Milliseconds between packets.
     pub fn intervalMs(setting: Setting) u32 {
@@ -66,7 +83,26 @@ const Candidate = struct {
     type_i: bool = false,
     has_rate: bool = false,
     out_iso: bool = false,
+    /// The OUT endpoint's bSynchAddress, the setting's isochronous IN
+    /// endpoint and its packet size, and whether the endpoint seen last
+    /// was the OUT one.
+    synch_address: u8 = 0,
+    in_endpoint: u8 = 0,
+    in_packet: u32 = 0,
+    last_out: bool = false,
 };
+
+/// A candidate's setting, with its feedback endpoint when it is
+/// asynchronous and names one the setting has.
+fn settled(candidate: Candidate) Setting {
+    var setting = candidate.setting;
+    const named = candidate.synch_address;
+    if (setting.sync == d.USB_ENDPOINT_SYNC_ASYNC and named & d.USB_DIR_IN != 0 and named == candidate.in_endpoint) {
+        setting.feedback = named;
+        setting.feedback_packet = candidate.in_packet;
+    }
+    return setting;
+}
 
 fn word(bytes: []const u8, at: usize) u16 {
     return @as(u16, bytes[at]) | @as(u16, bytes[at + 1]) << 8;
@@ -121,7 +157,7 @@ pub fn findSetting(config: []const u8, interface: u8, rate: u32) ?Setting {
         switch (here[1]) {
             d.USB_DT_INTERFACE => if (length >= 9) {
                 if (current) |done| {
-                    if (playable(done, rate) and (best == null or better(done.setting, best.?))) best = done.setting;
+                    if (playable(done, rate) and (best == null or better(done.setting, best.?))) best = settled(done);
                 }
                 current = null;
                 if (here[2] == interface and here[5] == d.USB_CLASS_AUDIO and here[6] == d.AUDIO_SUBCLASS_STREAMING) {
@@ -141,22 +177,32 @@ pub fn findSetting(config: []const u8, interface: u8, rate: u32) ?Setting {
                 }
             },
             d.USB_DT_ENDPOINT => if (current) |*candidate| {
-                if (length >= 7 and here[3] & d.USB_ENDPOINT_XFERTYPE_MASK == d.USB_ENDPOINT_XFER_ISOC and here[2] & d.USB_DIR_IN == 0) {
-                    candidate.out_iso = true;
-                    candidate.setting.endpoint = here[2];
-                    candidate.setting.max_packet = word(here, 4) & 0x7FF;
-                    candidate.setting.interval = here[6];
+                candidate.last_out = false;
+                if (length >= 7 and here[3] & d.USB_ENDPOINT_XFERTYPE_MASK == d.USB_ENDPOINT_XFER_ISOC) {
+                    if (here[2] & d.USB_DIR_IN == 0) {
+                        candidate.out_iso = true;
+                        candidate.last_out = true;
+                        candidate.setting.endpoint = here[2];
+                        candidate.setting.max_packet = word(here, 4) & 0x7FF;
+                        candidate.setting.interval = here[6];
+                        candidate.setting.sync = here[3] & d.USB_ENDPOINT_SYNCTYPE_MASK;
+                        // An audio endpoint's descriptor is nine bytes.
+                        candidate.synch_address = if (length >= 9) here[8] else 0;
+                    } else {
+                        candidate.in_endpoint = here[2];
+                        candidate.in_packet = word(here, 4) & 0x7FF;
+                    }
                 }
             },
             d.USB_DT_CS_ENDPOINT => if (current) |*candidate| {
-                if (length >= 3 and here[2] == d.UAC_EP_GENERAL) candidate.setting.rate_control = here[3] & d.UAC_EP_SAMPLING_FREQ != 0;
+                if (length >= 3 and here[2] == d.UAC_EP_GENERAL and candidate.last_out) candidate.setting.rate_control = here[3] & d.UAC_EP_SAMPLING_FREQ != 0;
             },
             else => {},
         }
         at += length;
     }
     if (current) |done| {
-        if (playable(done, rate) and (best == null or better(done.setting, best.?))) best = done.setting;
+        if (playable(done, rate) and (best == null or better(done.setting, best.?))) best = settled(done);
     }
     return best;
 }
@@ -234,6 +280,97 @@ pub fn convert(setting: Setting, frames: [*]const i16, count: u32, into: [*]u8) 
         }
     }
     return @intCast(at);
+}
+
+/// The rate a feedback packet tells, in thousandths of a hertz: three
+/// bytes are 10.14 samples a frame; four are 16.16 samples a frame, or a
+/// microframe at high speed. Null for a packet too short, or for zero.
+pub fn feedbackRate(packet: []const u8, high_speed: bool) ?u64 {
+    if (packet.len < 3) return null;
+    var value: u64 = @as(u64, packet[0]) | @as(u64, packet[1]) << 8 | @as(u64, packet[2]) << 16;
+    if (packet.len == 3) {
+        if (value == 0) return null;
+        return value * 1_000_000 >> 14;
+    }
+    value |= @as(u64, packet[3]) << 24;
+    if (value == 0) return null;
+    const per_second: u64 = if (high_speed) 8000 else 1000;
+    return value * per_second * 1000 >> 16;
+}
+
+/// How far a rate in thousandths of a hertz is from `rate`, in parts a
+/// million.
+pub fn driftPpm(rate_mhz: u64, rate: u32) i32 {
+    const nominal = @as(i64, rate) * 1000;
+    const told: i64 = @intCast(@min(rate_mhz, 1 << 40));
+    const ppm = @divTrunc((told - nominal) * 1_000_000, nominal);
+    return @intCast(@max(@min(ppm, 0x7FFF_FFFF), -0x7FFF_FFFF));
+}
+
+/// A gain as played: 0x10000.
+pub const unity: u32 = 0x10000;
+/// The most gain the mix is left: four times as played.
+const most_rest: u32 = 4 * unity;
+/// 20 * log10(2) in 1/256 dB, a thousandth of it a step: the level of a
+/// doubling.
+const doubling_db: i64 = 1_541_274;
+
+/// log2 of `gain` (not 0), both 16.16.
+fn log2Of(gain: u32) i32 {
+    const top: u5 = @intCast(31 - @clz(gain));
+    // The gain as a number from 1 to 2, 1.31, squared a bit at a time.
+    var z: u64 = @as(u64, gain) << (31 - @as(u6, top));
+    var fraction: i32 = 0;
+    var bit: i32 = 1 << 15;
+    while (bit != 0) : (bit >>= 1) {
+        z = (z * z) >> 31;
+        if (z >= 1 << 32) {
+            z >>= 1;
+            fraction |= bit;
+        }
+    }
+    return (@as(i32, top) - 16) * 65536 + fraction;
+}
+
+/// 2 to the power `x`, both 16.16, at most `most_rest`.
+fn exp2Of(x: i32) u32 {
+    const whole = x >> 16;
+    const f: u64 = @intCast(x & 0xFFFF);
+    // 2^f from 0 to 1: 1 + 0.69583 f + 0.22606 f^2 + 0.07807 f^3.
+    const power: u64 = 65536 + ((f * (45602 + ((f * (14815 + ((f * 5116) >> 16))) >> 16))) >> 16);
+    if (whole >= 2) return most_rest;
+    if (whole >= 0) return @intCast(@min(power << @intCast(whole), most_rest));
+    if (whole < -31) return 0;
+    return @intCast(power >> @intCast(-whole));
+}
+
+/// A gain's level, in 1/256 dB.
+pub fn dbOf(gain: u32) i32 {
+    return @intCast(@divTrunc(@as(i64, log2Of(gain)) * doubling_db, 65_536_000));
+}
+
+/// The gain of a level in 1/256 dB.
+pub fn gainOf(db: i32) u32 {
+    return exp2Of(@intCast(@divTrunc(@as(i64, db) * 65_536_000, doubling_db)));
+}
+
+/// What a feature unit is set to for a gain, and what the mix is left.
+pub const Level = struct {
+    /// The unit's volume, 1/256 dB.
+    value: i16,
+    /// The gain the mix still gives: `unity` when the unit took it all.
+    rest: u32,
+};
+
+/// The level of `gain` within a unit's range, `min` to `max`, and the
+/// gain left for the mix: what is above the range, or below it. None at
+/// all is the range's bottom and nothing left.
+pub fn levelFor(gain: u32, min: i16, max: i16) Level {
+    if (gain == 0) return .{ .value = min, .rest = 0 };
+    const wanted = dbOf(gain);
+    const value = @max(@min(wanted, @as(i32, max)), @as(i32, min));
+    if (value == wanted) return .{ .value = @intCast(value), .rest = unity };
+    return .{ .value = @intCast(value), .rest = gainOf(wanted - value) };
 }
 
 // --- tests ------------------------------------------------------------------------
@@ -314,4 +451,86 @@ test "frames into samples: both sides, one, and wider" {
     const mono = Setting{ .channels = 1, .bytes = 3 };
     try testing.expectEqual(@as(u32, 6), convert(mono, &frames, 2, &into));
     try testing.expectEqualSlices(u8, &.{ 0, 0x34, 0x12, 0, 0x02, 0x01 }, into[0..6]);
+}
+
+/// A sound adapter on its own clock: setting 1 plays 16-bit stereo at
+/// 48 kHz on OUT endpoint 1, asynchronous, its rate told back on IN
+/// endpoint 2 in three-byte packets.
+const adapter = [_]u8{ 9, d.USB_DT_CONFIG, 0, 0, 1, 1, 0, 0x80, 50 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 1, 0, 0, d.USB_CLASS_AUDIO, d.AUDIO_SUBCLASS_STREAMING, 0, 0 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 1, 1, 2, d.USB_CLASS_AUDIO, d.AUDIO_SUBCLASS_STREAMING, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_CS_INTERFACE, d.UAC_AS_GENERAL, 1, 1, 0x01, 0x00 } ++
+    [_]u8{ 11, d.USB_DT_CS_INTERFACE, d.UAC_FORMAT_TYPE, d.UAC_FORMAT_TYPE_I, 2, 2, 16, 1, 0x80, 0xBB, 0x00 } ++
+    [_]u8{ 9, d.USB_DT_ENDPOINT, 0x01, 0x05, 0xC4, 0x00, 1, 0, 0x82 } ++
+    [_]u8{ 7, d.USB_DT_CS_ENDPOINT, d.UAC_EP_GENERAL, 1, 0, 0, 0 } ++
+    [_]u8{ 9, d.USB_DT_ENDPOINT, 0x82, 0x01, 0x03, 0x00, 1, 5, 0 };
+
+test "an asynchronous setting names its feedback endpoint; one that follows the stream has none" {
+    const setting = findSetting(&adapter, 1, 48_000).?;
+    try testing.expectEqual(d.USB_ENDPOINT_SYNC_ASYNC, setting.sync);
+    try testing.expectEqual(@as(u8, 0x82), setting.feedback);
+    try testing.expectEqual(@as(u32, 3), setting.feedback_packet);
+    try testing.expectEqual(@as(u8, 0x01), setting.endpoint);
+    try testing.expect(setting.rate_control);
+    // Named, but not there: no feedback. bSynchAddress is the OUT
+    // endpoint's last byte, before the class endpoint and the IN one.
+    var elsewhere = adapter;
+    elsewhere[adapter.len - 9 - 7 - 1] = 0x83;
+    try testing.expectEqual(@as(u8, 0), findSetting(&elsewhere, 1, 48_000).?.feedback);
+    const adaptive = findSetting(&speaker, 1, 48_000).?;
+    try testing.expectEqual(d.USB_ENDPOINT_SYNC_ADAPTIVE, adaptive.sync);
+    try testing.expectEqual(@as(u8, 0), adaptive.feedback);
+}
+
+test "a feedback packet's rate, and how far it is off" {
+    // 48 samples a frame, 10.14; a little fast; 16.16 at high speed.
+    try testing.expectEqual(@as(?u64, 48_000_000), feedbackRate(&.{ 0x00, 0x00, 0x0C }, false));
+    try testing.expectEqual(@as(?u64, 48_000_976), feedbackRate(&.{ 0x10, 0x00, 0x0C }, false));
+    try testing.expectEqual(@as(?u64, 48_000_000), feedbackRate(&.{ 0x00, 0x00, 0x06, 0x00 }, true));
+    try testing.expectEqual(@as(?u64, 48_000_000), feedbackRate(&.{ 0x00, 0x00, 0x30, 0x00 }, false));
+    try testing.expectEqual(@as(?u64, null), feedbackRate(&.{ 0x00, 0x0C }, false));
+    try testing.expectEqual(@as(?u64, null), feedbackRate(&.{ 0, 0, 0 }, false));
+    try testing.expectEqual(@as(i32, 20), driftPpm(48_000_976, 48_000));
+    try testing.expectEqual(@as(i32, -1000), driftPpm(47_952_000, 48_000));
+    try testing.expectEqual(@as(i32, 0x7FFF_FFFF), driftPpm(1 << 50, 48_000));
+}
+
+fn near(expected: u32, got: u32, per_mille: u32) !void {
+    const off = if (got > expected) got - expected else expected - got;
+    if (@as(u64, off) * 1000 > @as(u64, expected) * per_mille) {
+        std.debug.print("expected {d}, got {d}\n", .{ expected, got });
+        return error.TestExpectedApproxEq;
+    }
+}
+
+test "a gain's level and back" {
+    try testing.expectEqual(@as(i32, 0), dbOf(unity));
+    // Half is 6.02 dB down, twice 6.02 up; a tenth 20 dB down.
+    try testing.expectEqual(@as(i32, -1541), dbOf(unity / 2));
+    try testing.expectEqual(@as(i32, 1541), dbOf(2 * unity));
+    try testing.expectEqual(@as(i32, -5119), dbOf(unity / 10 + 1));
+    try testing.expectEqual(unity, gainOf(0));
+    try near(unity / 2, gainOf(-1541), 1);
+    try near(unity / 10, gainOf(-5120), 1);
+    try near(2 * unity, gainOf(1541), 1);
+    try testing.expectEqual(most_rest, gainOf(12 * 256 + 512));
+    try testing.expectEqual(@as(u32, 0), gainOf(-200 * 256));
+}
+
+test "a gain at a feature unit: within its range, above it, below it, none" {
+    const min: i16 = -60 * 256;
+    const within = levelFor(unity / 2, min, 0);
+    try testing.expectEqual(@as(i16, -1541), within.value);
+    try testing.expectEqual(unity, within.rest);
+    // Above the unit's most: the rest in the mix.
+    const above = levelFor(2 * unity, min, 0);
+    try testing.expectEqual(@as(i16, 0), above.value);
+    try near(2 * unity, above.rest, 2);
+    // Below its least: the unit at its bottom, the mix the rest of the way.
+    const below = levelFor(7, min, 0);
+    try testing.expectEqual(min, below.value);
+    try near(7000, below.rest, 10);
+    const none = levelFor(0, min, 0);
+    try testing.expectEqual(min, none.value);
+    try testing.expectEqual(@as(u32, 0), none.rest);
 }

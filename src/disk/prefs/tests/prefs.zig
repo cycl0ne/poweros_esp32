@@ -193,7 +193,7 @@ test "sound.prefs: a line read, its file quoted, written back; the tone rises, s
     var again: prefs.sound.Settings = .{};
     try testing.expect(prefs.sound.parse(line, &again) == null);
     try testing.expectEqualStrings(std.mem.sliceTo(&settings.sample, 0), std.mem.sliceTo(&again.sample, 0));
-    try testing.expectEqual(sdk.devices.audio.AUDIO_VOLUME_UNITY / 100 * 40, prefs.sound.volumeOf(&again));
+    try testing.expectEqual(sdk.devices.audio.AUDIO_VOLUME_UNITY * 40 / 100, prefs.sound.volumeOf(&again));
 
     // What it does not take.
     var bad: prefs.sound.Settings = .{};

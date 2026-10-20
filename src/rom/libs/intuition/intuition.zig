@@ -5682,6 +5682,48 @@ test "disk messages: every window that asked for one hears it, whichever screen 
     try tearDown(ib);
 }
 
+test "USB messages: a device plugged in or pulled out is told to every window that asked, its subclass the code" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const ie = sdk.devices.inputevent;
+
+    const listening = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_USBCHANGE },
+        .{},
+    }).?;
+    const other = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_DISKINSERTED },
+        .{},
+    }).?;
+
+    _input.handle(ib, &ie.InputEvent{ .class = ie.IECLASS_USB, .subclass = ie.IESUBCLASS_USB_ATTACHED, .code = 2, .x = 0x046D, .y = 0xC31C });
+    const came = it.GetIMsg(listening).?;
+    try testing.expectEqual(wn.IDCMP_USBCHANGE, came.class);
+    try testing.expectEqual(ie.IESUBCLASS_USB_ATTACHED, came.code);
+    it.ReplyIMsg(came);
+    try testing.expect(it.GetIMsg(other) == null);
+
+    _input.handle(ib, &ie.InputEvent{ .class = ie.IECLASS_USB, .subclass = ie.IESUBCLASS_USB_DETACHED, .code = 2 });
+    const went = it.GetIMsg(listening).?;
+    try testing.expectEqual(ie.IESUBCLASS_USB_DETACHED, went.code);
+    it.ReplyIMsg(went);
+    try testing.expect(it.GetIMsg(other) == null);
+
+    const on: *intuition.Screen = @ptrFromInt(windowAttr(ib, listening, wn.WA_Screen));
+    it.CloseWindow(other);
+    it.CloseWindow(listening);
+    try testing.expect(it.CloseScreen(on));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windowclass: opened at its layout's size in the middle, answered a word at a time, closed and opened again" {
     const ib = try setUp();
     defer kexec.deinit();

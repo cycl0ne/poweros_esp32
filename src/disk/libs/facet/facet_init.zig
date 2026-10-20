@@ -27,7 +27,7 @@ pub const LIBRARY_VERSION = 1;
 /// 8 bits a channel, dithered 4 x 4 into 16 bits as they are stored;
 /// command buffers recorded on the 32-bit chips too, whose chunks put
 /// the commands 4 bytes off the 8 they are aligned to.
-/// 3: a window's pixels read from intuition 0.48 (`WA_PixelFormat`).
+/// 3: a window's pixels read from intuition 0.49 (`WA_PixelFormat`).
 /// 4: a triangle's edges sorted the way its rows are walked once, as it
 /// is set up, not again in every tile it touches.
 pub const LIBRARY_REVISION = 4;
