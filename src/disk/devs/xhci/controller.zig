@@ -9,7 +9,8 @@
 //! device context base address array is - its entry 0 the scratchpad's
 //! array, when the controller wants a scratchpad - where the command
 //! ring is, and where its event ring's one segment is; its interrupter
-//! 0 enabled, moderated to 4000 interrupts a second; then run. The
+//! 0 enabled, moderated to 4000 interrupts a second; the USB 3 root
+//! ports' U1 and U2 timeouts, which outlast a reset, back to 0; then run. The
 //! Supported Protocol capabilities say which root ports are USB 2's and
 //! which USB 3's: all are the root hub's, the USB 2 ones first
 //! (roothub.zig). The memory is made the first time and kept, rings
@@ -85,11 +86,14 @@ pub fn bringUp(host: *Host) bool {
     host.db = host.regs + (reg(host.regs + regs.DBOFF).* & ~@as(u32, 3));
     const params1 = reg(host.regs + regs.HCSPARAMS1).*;
     const params2 = reg(host.regs + regs.HCSPARAMS2).*;
+    const params3 = reg(host.regs + regs.HCSPARAMS3).*;
     const cparams1 = reg(host.regs + regs.HCCPARAMS1).*;
     host.max_slots = @min(regs.maxSlots(params1), _xhci.max_slots);
     host.max_ports = regs.maxPorts(params1);
     host.scratchpads = regs.scratchpads(params2);
     host.iso_lead = regs.istFrames(params2) + 1;
+    host.u1_exit = regs.u1ExitOf(params3);
+    host.u2_exit = regs.u2ExitOf(params3);
     host.context_size = if (cparams1 & regs.HCC_CSZ != 0) 64 else 32;
     host.power_switched = cparams1 & regs.HCC_PPC != 0;
     host.max_psa_size = regs.maxPsaSize(cparams1);
@@ -261,6 +265,7 @@ pub fn run(host: *Host) bool {
     _xhci.write64(host.rt + regs.ERSTBA, @intFromPtr(host.erst));
     rt(host, regs.IMOD).* = moderation;
     rt(host, regs.IMAN).* = regs.IMAN_IE | regs.IMAN_IP;
+    roothub.clearTimeouts(host);
     op(host, regs.USBSTS).* = regs.USBSTS_EINT | regs.USBSTS_PCD | regs.USBSTS_HSE;
     op(host, regs.USBCMD).* = regs.USBCMD_RS | regs.USBCMD_INTE | regs.USBCMD_HSEE;
     if (!pollFor(host, regs.USBSTS, regs.USBSTS_HCH, 0, 100)) {

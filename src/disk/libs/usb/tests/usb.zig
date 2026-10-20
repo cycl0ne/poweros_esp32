@@ -2,7 +2,8 @@
 //! Host tests of usb.library: the jump table, walking a device's
 //! descriptors, the class drivers' match order, reading a ROM tag from a
 //! load file's bytes, the pipe an endpoint is given, isochronous
-//! transfers on such a pipe, and a bus's devices coming and going - all
+//! transfers on such a pipe, a bus's devices coming and going, and a
+//! SuperSpeed link's U1 and U2 - all
 //! against a host controller that plays a script (hc.zig), a class
 //! driver that counts (driver.zig) and an input.device that keeps what it
 //! is told (input.zig).
@@ -36,6 +37,7 @@ const ie = sdk.devices.inputevent;
 const usb_init = @import("../usb_init.zig");
 const usbBase = @import("../usb_base.zig").usbBase;
 const _bind = @import("../bind/_bind.zig");
+const _linkpower = @import("../bus/_linkpower.zig");
 const timer = sdk.devices.timer;
 const UsbLibrary = sdk.interface.usb.UsbBase;
 
@@ -862,4 +864,106 @@ test "a SuperSpeed hub's port status in the USB 2 form" {
     const empty_port: u16 = d.USB_SS_PORT_STAT_POWER | d.USB_SS_LINK_INACTIVE << d.USB_SS_PORT_STAT_LINK_STATE_SHIFT;
     try testing.expectEqual(d.USB_PORT_STAT_POWER, d.superPortStatus(.{ .status = empty_port }).status);
     try testing.expectEqual(d.USB_SS_LINK_INACTIVE, d.superLinkState(empty_port));
+}
+
+test "a BOS's SuperSpeed capability, after another, and none in one cut short" {
+    const bos = [_]u8{ 5, d.USB_DT_BOS, 22, 0, 2 } ++
+        [_]u8{ 7, d.USB_DT_DEVICE_CAPABILITY, 2, 2, 0, 0, 0 } ++
+        [_]u8{ 10, d.USB_DT_DEVICE_CAPABILITY, d.USB_CAP_SUPERSPEED, 0, 0x0E, 0, 1, 10, 0x20, 0x01 };
+    const capability = d.superSpeedCapabilityOf(&bos).?;
+    try testing.expectEqual(@as(u8, 10), capability.u1_exit);
+    try testing.expectEqual(@as(u16, 0x120), capability.u2_exit);
+    try testing.expect(d.superSpeedCapabilityOf(bos[0..15]) == null);
+    try testing.expect(d.superSpeedCapabilityOf(bos[0..12]) == null);
+}
+
+test "the way back from U1 and U2: on a root port, behind a hub, and timeouts past their fields" {
+    // The root hub's ports: 2 and 20 µs; a hub on one, 4 and 100 µs, its
+    // header decode 0.4 µs and delay 400 ns; a device of 10 and 32 µs.
+    const root: _linkpower.Upstream = .{ .exits = .{ 2, 20 }, .root = true };
+    const direct = _linkpower.pathOf(.{ 10, 32 }, root, 0);
+    try testing.expectEqual([2]u32{ 12580, 34580 }, direct.mel);
+    try testing.expectEqual([2]u32{ 10000, 32000 }, direct.pel);
+    try testing.expectEqual([2]u32{ 10000, 32000 }, direct.sel);
+    try testing.expectEqual(d.SelData{ .u1_sel = 10, .u1_pel = 10, .u2_sel = 32, .u2_pel = 32 }, _linkpower.selOf(direct));
+    try testing.expectEqual(@as(u16, 35), _linkpower.exitLatencyOf(direct, .{ 10, 32 }));
+    // Without U2 only U1's way counts.
+    try testing.expectEqual(@as(u16, 13), _linkpower.exitLatencyOf(direct, .{ 10, 0 }));
+    try testing.expectEqual(@as(u8, 30), _linkpower.timeoutOf(_linkpower.U1, direct));
+    try testing.expectEqual(@as(u8, 1), _linkpower.timeoutOf(_linkpower.U2, direct));
+
+    const hub_path = _linkpower.pathOf(.{ 4, 100 }, root, 0);
+    const hub: _linkpower.Upstream = .{ .path = hub_path, .exits = .{ 4, 100 }, .header_latency = 4, .hub_delay = 400 };
+    const behind = _linkpower.pathOf(.{ 10, 32 }, hub, 1);
+    try testing.expectEqual([2]u32{ 17860, 203860 }, behind.mel);
+    // U2's wake passed up through the hub takes longer than the last
+    // link's own.
+    try testing.expectEqual([2]u32{ 10000, 197000 }, behind.pel);
+    try testing.expectEqual([2]u32{ 12350, 199350 }, behind.sel);
+    try testing.expectEqual(d.SelData{ .u1_sel = 13, .u1_pel = 10, .u2_sel = 200, .u2_pel = 197 }, _linkpower.selOf(behind));
+    try testing.expectEqual(@as(u16, 204), _linkpower.exitLatencyOf(behind, .{ 10, 32 }));
+    try testing.expectEqual(@as(u8, 38), _linkpower.timeoutOf(_linkpower.U1, behind));
+    try testing.expectEqual(@as(u8, 3), _linkpower.timeoutOf(_linkpower.U2, behind));
+
+    // Past 127 µs, past 254 x 256 µs: the port leaves the link to the
+    // device.
+    const long: _linkpower.Latencies = .{ .sel = .{ 50_000, 30_000_000 } };
+    try testing.expectEqual(d.USB_LPM_TIMEOUT_ACCEPT, _linkpower.timeoutOf(_linkpower.U1, long));
+    try testing.expectEqual(d.USB_LPM_TIMEOUT_ACCEPT, _linkpower.timeoutOf(_linkpower.U2, long));
+    // SET_SEL's U1 fields hold at most 255 µs.
+    try testing.expectEqual(@as(u8, 0xFF), _linkpower.selOf(.{ .sel = .{ 300_000, 0 } }).u1_sel);
+}
+
+test "a SuperSpeed device's link rests in U1 and U2: not a hub's, not one with isochronous data, and not a state refused" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    const root_index = standin.addRoot(hc, 2);
+    hc.functions[root_index].descriptor.bcd_usb = 0x0210;
+    hc.functions[root_index].exits = .{ 2, 20 };
+    const hub = standin.addHub(hc, standin.root, 1, usbhc.USB_SPEED_SUPER, 2);
+    hc.functions[hub].exits = .{ 4, 100 };
+    const stick = standin.addDevice(hc, hub, 1, usbhc.USB_SPEED_SUPER, 0x0781, 0x5581, d.USB_CLASS_MASS_STORAGE, .{ "", "Stick", "" });
+    hc.functions[stick].exits = .{ 10, 32 };
+    const speaker = standin.addDevice(hc, hub, 2, usbhc.USB_SPEED_SUPER, 0x1234, 0x0040, d.USB_CLASS_AUDIO, .{ "", "Speaker", "" });
+    hc.functions[speaker].exits = .{ 10, 32 };
+    standin.makeIsochronous(hc, speaker);
+    const direct = standin.addDevice(hc, standin.root, 2, usbhc.USB_SPEED_SUPER, 0x0781, 0x5582, d.USB_CLASS_MASS_STORAGE, .{ "", "Direct", "" });
+    hc.functions[direct].exits = .{ 10, 32 };
+    hc.functions[direct].refused_feature = d.USB_DEVICE_U2_ENABLE;
+    for ([_]u8{ hub, stick, speaker, direct }) |index| standin.plug(hc, index);
+
+    const root = rig.start();
+    try testing.expectEqual([2]u16{ 2, 20 }, root.exits);
+    const hub_device = childOf(root, 1).?;
+    try testing.expectEqual(@as(u8, standin.hub_header_latency), hub_device.hub.?.header_latency);
+
+    // Behind the hub: the way back as worked out above, both states.
+    const stick_device = childOf(hub_device, 1).?;
+    try testing.expectEqual(d.SelData{ .u1_sel = 13, .u1_pel = 10, .u2_sel = 200, .u2_pel = 197 }, hc.functions[stick].sel);
+    try testing.expectEqual(@as(u16, 204), hc.functions[stick].sel_latency);
+    try testing.expectEqual(@as(u32, 3), hc.functions[stick].features);
+    try testing.expectEqual([2]u8{ 38, 3 }, hc.functions[hub].timeouts[0]);
+    try testing.expectEqual(usb.USBDF_U1 | usb.USBDF_U2, stick_device.public.flags & (usb.USBDF_U1 | usb.USBDF_U2));
+    // The speaker's data cannot wait: nothing sent it, nothing at its port.
+    try testing.expectEqual(@as(u16, 0), hc.functions[speaker].sel_latency);
+    try testing.expectEqual(@as(u32, 0), hc.functions[speaker].features);
+    try testing.expectEqual([2]u8{ 0, 0 }, hc.functions[hub].timeouts[1]);
+    // The hub's own link stays in U0.
+    try testing.expectEqual([2]u8{ 0, 0 }, hc.functions[root_index].timeouts[0]);
+    try testing.expectEqual(@as(u32, 0), hc.functions[hub].features);
+    try testing.expect(hub_device.public.flags & (usb.USBDF_U1 | usb.USBDF_U2) == 0);
+    // On the root port: U2 refused, its timeout back at 0, U1 kept.
+    const direct_device = childOf(root, 2).?;
+    try testing.expectEqual(d.SelData{ .u1_sel = 10, .u1_pel = 10, .u2_sel = 32, .u2_pel = 32 }, hc.functions[direct].sel);
+    try testing.expectEqual(@as(u32, 1), hc.functions[direct].features);
+    try testing.expectEqual([2]u8{ 30, 0 }, hc.functions[root_index].timeouts[1]);
+    try testing.expectEqual(usb.USBDF_U1, direct_device.public.flags & (usb.USBDF_U1 | usb.USBDF_U2));
+
+    // The stick pulled: its port's timeouts taken back.
+    standin.pull(hc, stick);
+    _bus.hubsChanged(&rig.bus);
+    try testing.expect(childOf(hub_device, 1) == null);
+    try testing.expectEqual([2]u8{ 0, 0 }, hc.functions[hub].timeouts[0]);
+    try rig.deinit();
 }

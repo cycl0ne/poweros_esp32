@@ -118,6 +118,8 @@ fn accept(host: *Host, req: *usbhc.IOUsbHC) void {
         const setup = req.setup;
         if (isRequest(setup, d.USB_DIR_OUT, d.USB_REQ_SET_CONFIGURATION)) {
             if (!slots.configure(host, slot, @truncate(setup.value))) return _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
+        } else if (isRequest(setup, d.USB_DIR_OUT, d.USB_REQ_SET_SEL)) {
+            if (!slots.setExitLatency(host, slot, req.exit_latency)) return _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
         } else if (isRequest(setup, d.USB_DIR_OUT | d.USB_RT_PORT, d.USB_REQ_SET_FEATURE) and
             (setup.value == d.USB_PORT_FEAT_RESET or setup.value == d.USB_PORT_FEAT_BH_PORT_RESET))
         {

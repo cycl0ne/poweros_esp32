@@ -32,6 +32,12 @@
 //! as the controller's arrays hold, at most `max_streams`, each entry
 //! pointing at its lane's ring (`freshStreams`).
 //!
+//! **SET_SEL** has the slot's Max Exit Latency set first, from the
+//! request's `exit_latency` (Evaluate Context): the controller allows
+//! that long for the links on the way to come back from U1 or U2. One
+//! that cannot answers the request UHIOERR_HOSTERROR, and it goes nowhere
+//! (`setExitLatency`).
+//!
 //! **A hub** is told the controller once its hub descriptor has been
 //! read: its ports and its TT think time (`hubUpdate`), before anything
 //! behind it is reset.
@@ -284,7 +290,7 @@ fn buildInput(host: *Host, slot: *Slot, add: u32, drop: u32) void {
     control[regs.ICC_ADD] = add;
     const context = _xhci.inputContext(host, slot, 1);
     context[0] = regs.slotWord0(slot.route, slot.speed, slot.hub, slot.entries);
-    context[1] = regs.slotWord1(slot.root_port, if (slot.hub) slot.hub_ports else 0);
+    context[1] = regs.slotWord1(slot.exit_latency, slot.root_port, if (slot.hub) slot.hub_ports else 0);
     context[2] = regs.slotWord2(slot.tt_slot, slot.tt_port, slot.ttt);
     var dci: u32 = 1;
     while (dci < 32) : (dci += 1) {
@@ -378,6 +384,7 @@ fn clear(slot: *Slot) void {
     slot.hub = false;
     slot.hub_ports = 0;
     slot.ttt = 0;
+    slot.exit_latency = 0;
     slot.entries = 1;
     slot.config_length = 0;
 }
@@ -506,6 +513,22 @@ pub fn checkPacketSize(host: *Host, slot: *Slot, req: *const usbhc.IOUsbHC) bool
     ep0.max_packet = size;
     buildInput(host, slot, regs.addFlag(1), 0);
     return contextCommand(host, slot, regs.TRB_EVALUATE_CONTEXT, 0) == regs.CC_SUCCESS;
+}
+
+/// SET_SEL about to go: the request's exit latency into the slot's Max
+/// Exit Latency (Evaluate Context), so the controller allows for the
+/// links on the way coming back. False if it cannot, the slot's left as
+/// it was.
+pub fn setExitLatency(host: *Host, slot: *Slot, exit_latency: u16) bool {
+    if (slot.exit_latency == exit_latency) return true;
+    const before = slot.exit_latency;
+    slot.exit_latency = exit_latency;
+    buildInput(host, slot, regs.ADD_SLOT, 0);
+    const code = contextCommand(host, slot, regs.TRB_EVALUATE_CONTEXT, 0);
+    if (code == regs.CC_SUCCESS) return true;
+    sdk.exec.kprintf(host.sys, "%s: unit %d: a device's exit latency of %d us was not taken (%d)\n", .{ _xhci.DEVICE_NAME, host.number, @as(u32, exit_latency), code });
+    slot.exit_latency = before;
+    return false;
 }
 
 /// SET_CONFIGURATION(`value`) about to go: every endpoint there was

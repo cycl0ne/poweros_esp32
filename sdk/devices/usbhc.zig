@@ -51,6 +51,15 @@
 //! whose stream arrays are too small for the one named, answers
 //! UHIOERR_HOSTERROR.
 //!
+//! **A SuperSpeed link may rest** in U1 or U2 while it has nothing to
+//! move, as usb.library sets it up. The SET_SEL it sends such a device
+//! carries `exit_latency`, the longest the links on the way to it take to
+//! come back: a controller that schedules by it takes it first, and one
+//! that cannot allow for that much answers the SET_SEL UHIOERR_HOSTERROR
+//! without sending it on. A root hub of USB 3 ports answers a BOS with
+//! its ports' own exit latencies, and takes PORT_U1_TIMEOUT and
+//! PORT_U2_TIMEOUT on them as a SuperSpeed hub does.
+//!
 //! **A lost packet is a result, not an error.** The request is answered
 //! with io_Error 0 whatever became of its packets: `io_Actual` is the
 //! bytes that went or came, `iso_lost` the packets that did not, and a
@@ -117,8 +126,9 @@ pub const UHIOERR_TIMEOUT: i8 = 4;
 /// The device sent more than was asked for.
 pub const UHIOERR_OVERFLOW: i8 = 5;
 /// The controller could not do it: its DMA could not reach the memory,
-/// it has no such stream, it was reset under the transfer, or the
-/// transfer's endpoint was added afresh or dropped under it.
+/// it has no such stream, it cannot allow for a SET_SEL's exit latency,
+/// it was reset under the transfer, or the transfer's endpoint was added
+/// afresh or dropped under it.
 pub const UHIOERR_HOSTERROR: i8 = 6;
 /// The device is gone.
 pub const UHIOERR_DETACHED: i8 = 7;
@@ -244,6 +254,10 @@ pub const IOUsbHC = extern struct {
     /// transfer goes on.
     streams: u16 = 0,
     stream: u16 = 0,
+    /// On a SET_SEL: the longest the links from the controller to the
+    /// device take to come back from U1 or U2, in µs (its MEL); 0
+    /// elsewhere.
+    exit_latency: u16 = 0,
 };
 
 /// What `UHCMD_QUERYDEVICE` answers.

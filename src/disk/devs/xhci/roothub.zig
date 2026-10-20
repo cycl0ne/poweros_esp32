@@ -16,6 +16,12 @@
 //! C_SUSPEND, a link that could not be set up (CEC) as C_ENABLE. A Port
 //! Status Change Event wakes the held transfer.
 //!
+//! **U1 and U2** are a USB 3 port's as a SuperSpeed hub's: the root hub
+//! answers a BOS whose SuperSpeed capability has the ports' exit
+//! latencies (HCSPARAMS3), and takes PORT_U1_TIMEOUT and PORT_U2_TIMEOUT
+//! into the port's PORTPMSC. They are sticky, and the controller's start
+//! sets every one back to 0 (`clearTimeouts`).
+//!
 //! **A reset** is the controller's: PR is written and the port resets
 //! itself, saying so in PRC; the bus asks the port's status until it has.
 //! A USB 3 link that failed - SS.Inactive, compliance mode - takes a warm
@@ -34,9 +40,10 @@ const Host = _xhci.Host;
 const op = _xhci.op;
 const slots = @import("slots.zig");
 
-/// The root hub's device descriptor: a high-speed hub.
+/// The root hub's device descriptor: a high-speed hub, of a USB version
+/// with a BOS.
 const device_descriptor = d.DeviceDescriptor{
-    .bcd_usb = 0x0200,
+    .bcd_usb = 0x0210,
     .device_class = d.USB_CLASS_HUB,
     .device_protocol = 1,
     .max_packet_size0 = 64,
@@ -67,12 +74,19 @@ const config_descriptor = extern struct {
     },
 };
 
+/// Its BOS: the SuperSpeed capability alone.
+const Bos = extern struct {
+    header: d.BosDescriptor,
+    superspeed: d.SSUsbCapability,
+};
+
 /// Its strings: the language list (US English), and its name.
 const languages = [_]u8{ 4, d.USB_DT_STRING, 0x09, 0x04 };
 const product_name = "xHCI root hub";
 
 comptime {
     if (@sizeOf(@TypeOf(config_descriptor)) != 25) @compileError("the root hub's configuration is not 25 bytes");
+    if (@sizeOf(Bos) != 15) @compileError("the root hub's BOS is not 15 bytes");
 }
 
 /// A request to the root hub: a control transfer answered, an interrupt
@@ -130,6 +144,10 @@ fn control(host: *Host, req: *usbhc.IOUsbHC) void {
             d.USB_REQ_GET_DESCRIPTOR => switch (@as(u8, @truncate(value >> 8))) {
                 d.USB_DT_DEVICE => give(req, asBytes(&device_descriptor)),
                 d.USB_DT_CONFIG => give(req, asBytes(&config_descriptor)),
+                d.USB_DT_BOS => {
+                    const bos = bosOf(host);
+                    give(req, asBytes(&bos));
+                },
                 d.USB_DT_STRING => {
                     if (value & 0xFF == 0) {
                         give(req, &languages);
@@ -186,11 +204,12 @@ fn control(host: *Host, req: *usbhc.IOUsbHC) void {
             }
         },
         d.USB_DIR_OUT | d.USB_RT_PORT => {
-            const port = setup.index;
+            // The port in wIndex's low byte, a timeout in its high one.
+            const port = setup.index & 0xFF;
             if (port == 0 or port > host.ports) {
                 err = usbhc.UHIOERR_STALL;
             } else if (setup.request == d.USB_REQ_SET_FEATURE) {
-                err = setFeature(host, port, value);
+                err = setFeature(host, port, value, @truncate(setup.index >> 8));
             } else if (setup.request == d.USB_REQ_CLEAR_FEATURE) {
                 err = clearFeature(host, port, value);
             } else {
@@ -209,7 +228,32 @@ fn portWrite(host: *Host, port: u32, set: u32, clear: u32) void {
     at.* = (at.* & regs.PORT_NEUTRAL & ~clear) | set;
 }
 
-fn setFeature(host: *Host, port: u32, feature: u16) i8 {
+/// The BOS's SuperSpeed capability: every speed, and the root ports'
+/// exit latencies.
+pub fn bosOf(host: *const Host) Bos {
+    return .{
+        .header = .{ .total_length = @sizeOf(Bos), .num_capabilities = 1 },
+        .superspeed = .{ .speeds = 0x000F, .u1_exit = host.u1_exit, .u2_exit = host.u2_exit },
+    };
+}
+
+/// A USB 3 port's PORTPMSC: its U1 or U2 timeout set to `timeout`.
+fn setTimeout(host: *Host, port: u32, shift: u5, timeout: u8) void {
+    const at = op(host, regs.portpmsc(host.port_map[port - 1]));
+    at.* = (at.* & ~(@as(u32, 0xFF) << shift)) | @as(u32, timeout) << shift;
+}
+
+/// Every USB 3 port's U1 and U2 timeouts back to 0.
+pub fn clearTimeouts(host: *Host) void {
+    var port: u32 = 1;
+    while (port <= host.ports) : (port += 1) {
+        if (!isSuper(host, port)) continue;
+        const at = op(host, regs.portpmsc(host.port_map[port - 1]));
+        at.* &= ~regs.PMSC_TIMEOUTS;
+    }
+}
+
+fn setFeature(host: *Host, port: u32, feature: u16, timeout: u8) i8 {
     switch (feature) {
         d.USB_PORT_FEAT_POWER => portWrite(host, port, regs.PORT_PP, 0),
         d.USB_PORT_FEAT_RESET => {
@@ -219,6 +263,11 @@ fn setFeature(host: *Host, port: u32, feature: u16) i8 {
         },
         // Suspend is left to a hub that needs it.
         d.USB_PORT_FEAT_SUSPEND => {},
+        d.USB_PORT_FEAT_U1_TIMEOUT, d.USB_PORT_FEAT_U2_TIMEOUT => {
+            if (!isSuper(host, port)) return usbhc.UHIOERR_STALL;
+            const shift: u5 = if (feature == d.USB_PORT_FEAT_U1_TIMEOUT) regs.PMSC_U1_TIMEOUT_SHIFT else regs.PMSC_U2_TIMEOUT_SHIFT;
+            setTimeout(host, port, shift, timeout);
+        },
         else => return usbhc.UHIOERR_STALL,
     }
     return 0;

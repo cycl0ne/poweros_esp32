@@ -53,6 +53,24 @@ pub const USB_REQ_SET_INTERFACE: u8 = 11;
 
 /// A standard feature: an endpoint's halt, cleared to take a stall away.
 pub const USB_FEATURE_ENDPOINT_HALT: u16 = 0;
+/// A SuperSpeed device's features: it may itself take its link to U1, to
+/// U2, when it has nothing to move.
+pub const USB_DEVICE_U1_ENABLE: u16 = 48;
+pub const USB_DEVICE_U2_ENABLE: u16 = 49;
+
+/// A SuperSpeed device's SET_SEL: how long the way back from U1 and U2
+/// takes (`SelData`), so that it wakes its link early enough.
+pub const USB_REQ_SET_SEL: u8 = 48;
+
+/// SET_SEL's six bytes, each state's in µs: from the device starting its
+/// link's way back until the controller's first packet reaches it (SEL),
+/// and until its hub's link to the controller is back (PEL).
+pub const SelData = extern struct {
+    u1_sel: u8 = 0,
+    u1_pel: u8 = 0,
+    u2_sel: u16 align(1) = 0,
+    u2_pel: u16 align(1) = 0,
+};
 
 // --- descriptors -----------------------------------------------------------------
 
@@ -71,6 +89,11 @@ pub const USB_DT_SS_HUB: u8 = 0x2A;
 /// A SuperSpeed endpoint's companion, right after its endpoint's
 /// descriptor (`SSEndpointCompanion`).
 pub const USB_DT_SS_ENDPOINT_COMP: u8 = 0x30;
+/// The Binary Object Store of a device of bcdUSB 2.01 and later: a
+/// header (`BosDescriptor`), then its capabilities, each a
+/// USB_DT_DEVICE_CAPABILITY.
+pub const USB_DT_BOS: u8 = 0x0F;
+pub const USB_DT_DEVICE_CAPABILITY: u8 = 0x10;
 
 /// What every descriptor starts with: its length, which is how the next
 /// one is found, and its type.
@@ -192,6 +215,59 @@ pub const SSEndpointCompanion = extern struct {
     bytes_per_interval: u16 align(1) = 0,
 };
 
+/// The Binary Object Store's header, before its capabilities.
+pub const BosDescriptor = extern struct {
+    /// bLength: 5.
+    length: u8 = 5,
+    /// bDescriptorType: USB_DT_BOS.
+    descriptor_type: u8 = USB_DT_BOS,
+    /// wTotalLength: the header and every capability.
+    total_length: u16 align(1) = 5,
+    /// bNumDeviceCaps
+    num_capabilities: u8 = 0,
+};
+
+/// bDevCapabilityType: SuperSpeed USB (`SSUsbCapability`).
+pub const USB_CAP_SUPERSPEED: u8 = 0x03;
+
+/// A device's SuperSpeed USB capability, in its BOS: its speeds, and how
+/// long its link takes to come back from U1 and U2 to U0.
+pub const SSUsbCapability = extern struct {
+    /// bLength: 10.
+    length: u8 = 10,
+    /// bDescriptorType: USB_DT_DEVICE_CAPABILITY.
+    descriptor_type: u8 = USB_DT_DEVICE_CAPABILITY,
+    /// bDevCapabilityType: USB_CAP_SUPERSPEED.
+    capability_type: u8 = USB_CAP_SUPERSPEED,
+    /// bmAttributes: bit 1, it sends Latency Tolerance Messages.
+    attributes: u8 = 0,
+    /// wSpeedsSupported: a bit per speed, low (bit 0) to SuperSpeed (3).
+    speeds: u16 align(1) = 0,
+    /// bFunctionalitySupport: the lowest speed it works fully at.
+    functionality: u8 = 0,
+    /// bU1DevExitLat: its link's way back from U1, in µs, at most 10.
+    u1_exit: u8 = 0,
+    /// wU2DevExitLat: from U2, in µs, at most 2047.
+    u2_exit: u16 align(1) = 0,
+};
+
+/// The SuperSpeed USB capability in a BOS as it came, or null if it has
+/// none or the BOS ends before it.
+pub fn superSpeedCapabilityOf(bos: []const u8) ?SSUsbCapability {
+    if (bos.len < @sizeOf(BosDescriptor) or bos[1] != USB_DT_BOS) return null;
+    var at: usize = bos[0];
+    while (at + 3 <= bos.len) {
+        const length = bos[at];
+        if (length < 3 or at + length > bos.len) return null;
+        if (bos[at + 1] == USB_DT_DEVICE_CAPABILITY and bos[at + 2] == USB_CAP_SUPERSPEED and length >= @sizeOf(SSUsbCapability)) {
+            const capability: *align(1) const SSUsbCapability = @ptrCast(bos[at..].ptr);
+            return capability.*;
+        }
+        at += length;
+    }
+    return null;
+}
+
 /// An endpoint address's number.
 pub const USB_ENDPOINT_NUMBER_MASK: u8 = 0x0F;
 /// bmAttributes' transfer type.
@@ -308,6 +384,19 @@ pub const USB_PORT_FEAT_C_PORT_LINK_STATE: u16 = 25;
 pub const USB_PORT_FEAT_C_PORT_CONFIG_ERROR: u16 = 26;
 pub const USB_PORT_FEAT_BH_PORT_RESET: u16 = 28;
 pub const USB_PORT_FEAT_C_BH_PORT_RESET: u16 = 29;
+/// A SuperSpeed hub's port's timeouts, set with SET_FEATURE, the value
+/// in wIndex's high byte, the port in its low one: how long the link is
+/// idle before the port takes it to U1 - in µs, at most
+/// `USB_U1_TIMEOUT_MAX` - and on to U2, in 256 µs, at most
+/// `USB_U2_TIMEOUT_MAX`.
+pub const USB_PORT_FEAT_U1_TIMEOUT: u16 = 23;
+pub const USB_PORT_FEAT_U2_TIMEOUT: u16 = 24;
+pub const USB_U1_TIMEOUT_MAX: u8 = 0x7F;
+pub const USB_U2_TIMEOUT_MAX: u8 = 0xFE;
+/// A timeout's other values: the port never takes the link down, nor
+/// lets the device; the port lets the device take it down, never itself.
+pub const USB_LPM_TIMEOUT_OFF: u8 = 0;
+pub const USB_LPM_TIMEOUT_ACCEPT: u8 = 0xFF;
 
 /// GET_STATUS of a port: wPortStatus, then wPortChange.
 pub const PortStatus = extern struct {
@@ -486,6 +575,7 @@ comptime {
     if (@sizeOf(SetupPacket) != 8 or @sizeOf(DeviceDescriptor) != 18 or
         @sizeOf(ConfigDescriptor) != 9 or @sizeOf(InterfaceDescriptor) != 9 or
         @sizeOf(EndpointDescriptor) != 7 or @sizeOf(HubDescriptor) != 9 or
-        @sizeOf(PortStatus) != 4)
+        @sizeOf(PortStatus) != 4 or @sizeOf(SelData) != 6 or
+        @sizeOf(BosDescriptor) != 5 or @sizeOf(SSUsbCapability) != 10)
         @compileError("a USB descriptor's layout is not what goes on the wire");
 }

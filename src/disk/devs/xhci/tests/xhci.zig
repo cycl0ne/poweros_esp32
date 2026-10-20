@@ -3,7 +3,8 @@
 //! and their cycle bits (ring.zig), a configuration's endpoints, their
 //! intervals and SuperSpeed companions (slots.zig), the root ports the
 //! root hub has (controller.zig), a root port's PORTSC as a hub's port
-//! status (roothub.zig), the contexts' words (regs.zig), where an isochronous
+//! status and the root hub's BOS (roothub.zig), the contexts' words
+//! (regs.zig), where an isochronous
 //! request's packets lie and in which frames they go, and what becomes
 //! of each (slots.zig, transfer.zig, _xhci.zig).
 
@@ -286,6 +287,22 @@ test "a root port's PORTSC as a hub's port status" {
     try testing.expectEqual(d.USB_PORT_STAT_C_CONNECTION, gone.change);
 }
 
+test "the root ports' exit latencies, their timeouts' register, and the root hub's BOS" {
+    // HCSPARAMS3: U1 in its low byte, U2 in its top half.
+    try testing.expectEqual(@as(u8, 4), regs.u1ExitOf(0x0200_0004));
+    try testing.expectEqual(@as(u16, 0x200), regs.u2ExitOf(0x0200_0004));
+    try testing.expectEqual(@as(usize, 0x424), regs.portpmsc(3));
+    var host: _xhci.Host = undefined;
+    host.u1_exit = 4;
+    host.u2_exit = 0x200;
+    const bos = roothub.bosOf(&host);
+    const bytes = std.mem.asBytes(&bos);
+    try testing.expectEqual(@as(usize, 15), bytes.len);
+    const capability = d.superSpeedCapabilityOf(bytes).?;
+    try testing.expectEqual(@as(u8, 4), capability.u1_exit);
+    try testing.expectEqual(@as(u16, 0x200), capability.u2_exit);
+}
+
 test "PORTSC's neutral write keeps no change bit, PED or PR" {
     try testing.expect(regs.PORT_NEUTRAL & regs.PORT_CHANGES == 0);
     try testing.expect(regs.PORT_NEUTRAL & regs.PORT_PED == 0);
@@ -297,11 +314,13 @@ test "a slot context's words" {
     // Behind a hub on root port 3, port 2 of it, a low-speed device
     // through hub slot 5's TT on port 2.
     try testing.expectEqual(@as(u32, 0x2 | 2 << 20 | 1 << 27), regs.slotWord0(2, regs.SPEED_LOW, false, 1));
-    try testing.expectEqual(@as(u32, 3 << 16), regs.slotWord1(3, 0));
+    try testing.expectEqual(@as(u32, 3 << 16), regs.slotWord1(0, 3, 0));
     try testing.expectEqual(@as(u32, 5 | 2 << 8), regs.slotWord2(5, 2, 0));
     // A high-speed hub with four ports.
     try testing.expectEqual(@as(u32, 3 << 20 | 1 << 26 | 3 << 27), regs.slotWord0(0, regs.SPEED_HIGH, true, 3));
-    try testing.expectEqual(@as(u32, 1 << 16 | 4 << 24), regs.slotWord1(1, 4));
+    try testing.expectEqual(@as(u32, 1 << 16 | 4 << 24), regs.slotWord1(0, 1, 4));
+    // A device whose links take 204 us to come back, on root port 2.
+    try testing.expectEqual(@as(u32, 204 | 2 << 16), regs.slotWord1(204, 2, 0));
     // Endpoint 0 at 64 bytes; an interrupt IN at 8 bytes, every 8 ms.
     try testing.expectEqual(@as(u32, 3 << 1 | 4 << 3 | 64 << 16), regs.endpointWord1(regs.EP_CONTROL, 0, 64));
     try testing.expectEqual(@as(u32, 6 << 16), regs.endpointWord0(6, 0, 0));

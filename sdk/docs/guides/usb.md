@@ -143,8 +143,24 @@ up to its bytes an interval, in as many bursts as its Mult says; a
 high-speed interrupt or isochronous endpoint has its more transactions
 a microframe. A SuperSpeed bulk endpoint may have streams, queues of
 its own each with a transfer out at once, the device choosing which it
-moves next (`OpenUSBStreamPipe`). The link's U1 and U2 power states are
-not used. Behind a high-speed hub, xhci.device tells the controller which
+moves next (`OpenUSBStreamPipe`).
+
+**A SuperSpeed link rests** in U1 and U2 while it has nothing to move,
+where the device's BOS offers them. usb.library works out how long the
+way back from each takes, over every link between the controller and
+the device, and tells the device with SET_SEL - xhci.device takes the
+longest into the slot's Max Exit Latency, and a controller that cannot
+allow for it refuses the SET_SEL, which leaves the link in U0. The
+port then takes the link down after it has been idle three times that
+long (its U1 and U2 timeouts; U1's at most 127 µs, else the port leaves
+it to the device), and the device is let take it down itself
+(U1_ENABLE, U2_ENABLE). A state the device refuses has its port's
+timeout back at 0. A hub's own link stays in U0, and so does a
+device's whose configuration has an isochronous endpoint: its data
+cannot wait for the link to come back. What was set at a port is taken
+back as its device goes.
+
+Behind a high-speed hub, xhci.device tells the controller which
 hub and port a full- or low-speed device hangs off, and the controller
 does the split transactions itself.
 `USBInfo` shows each device's speed.
@@ -154,7 +170,7 @@ does the split transactions itself.
 `USBInfo` lists every device: its bus and address, the hub and port it
 is plugged into, its speed, vendor and product, its name, and who drives
 each of its interfaces. `USBInfo FULL` adds the interfaces and
-endpoints.
+endpoints, and the states a SuperSpeed device's link rests in.
 
 ```
 bus addr hub port speed  id         class  device

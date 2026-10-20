@@ -25,6 +25,12 @@
 //! features alone. A function the script brings up in SS.Inactive shows
 //! no connection until its port is warm reset.
 //!
+//! **U1 and U2**: a function with exit latencies answers a BOS with
+//! them, keeps the SET_SEL it is sent - and the exit latency the request
+//! carried - and takes U1_ENABLE and U2_ENABLE, but for the one the
+//! script has it refuse; a hub keeps each port's timeouts. A SuperSpeed
+//! hub's header decode latency is 0.4 µs, its delay 400 ns.
+//!
 //! **A hub's status transfer** (UHCMD_INTXFER) is answered when a port of
 //! it has a change, at once or when one comes, its bitmap a bit per such
 //! port; a hub pulled answers a held one UHIOERR_DETACHED after its own
@@ -108,7 +114,24 @@ pub const Function = extern struct {
     warm_resets: u32 = 0,
     /// The script: a SuperSpeed link that comes up in SS.Inactive.
     inactive: bool = false,
+    /// The script: its link's exit latencies from U1 and U2 in µs, in
+    /// its BOS - none without - and the device feature it refuses.
+    exits: [2]u16 = .{ 0, 0 },
+    refused_feature: u16 = no_feature,
+    /// What it was told: the SET_SEL and the request's exit latency, the
+    /// device features set (a bit each, from U1_ENABLE), and a hub's
+    /// ports' U1 and U2 timeouts.
+    sel: d.SelData = .{},
+    sel_latency: u16 = 0,
+    features: u32 = 0,
+    timeouts: [max_ports][2]u8 = @splat(.{ 0, 0 }),
 };
+
+/// No device feature refused.
+pub const no_feature: u16 = 0xFFFF;
+/// A SuperSpeed hub's latencies, in its descriptor.
+pub const hub_header_latency: u8 = 4;
+pub const hub_delay: u16 = 400;
 
 /// No SET_HUB_DEPTH yet.
 pub const no_depth: u16 = 0xFFFF;
@@ -355,6 +378,11 @@ fn add(hc: *HC, parent: u8, port: u8, speed: u8, vendor: u16, product: u16, clas
     return index;
 }
 
+/// Function `index`'s endpoint made an isochronous one.
+pub fn makeIsochronous(hc: *HC, index: u8) void {
+    hc.functions[index].config[18 + 3] = d.USB_ENDPOINT_XFER_ISOC;
+}
+
 /// Function `index` plugged into its port.
 pub fn plug(hc: *HC, index: u8) void {
     const function = &hc.functions[index];
@@ -482,6 +510,18 @@ fn control(hc: *HC, req: *usbhc.IOUsbHC) i8 {
         d.USB_DIR_OUT => switch (setup.request) {
             d.USB_REQ_SET_ADDRESS => function.address = @truncate(setup.value),
             d.USB_REQ_SET_CONFIGURATION => function.configuration = @truncate(setup.value),
+            d.USB_REQ_SET_SEL => {
+                if (req.std.length < @sizeOf(d.SelData)) return usbhc.UHIOERR_STALL;
+                const sel: *align(1) const d.SelData = @ptrCast(req.std.data.?);
+                function.sel = sel.*;
+                function.sel_latency = req.exit_latency;
+                req.std.actual = @sizeOf(d.SelData);
+            },
+            d.USB_REQ_SET_FEATURE => {
+                if (setup.value != d.USB_DEVICE_U1_ENABLE and setup.value != d.USB_DEVICE_U2_ENABLE) return usbhc.UHIOERR_STALL;
+                if (setup.value == function.refused_feature) return usbhc.UHIOERR_STALL;
+                function.features |= @as(u32, 1) << @intCast(setup.value - d.USB_DEVICE_U1_ENABLE);
+            },
             else => return usbhc.UHIOERR_STALL,
         },
         d.USB_DIR_IN | d.USB_RT_HUB => {
@@ -489,7 +529,7 @@ fn control(hc: *HC, req: *usbhc.IOUsbHC) i8 {
             const kind = setup.value >> 8;
             if (isSuperHub(hc, index)) {
                 if (kind != d.USB_DT_SS_HUB) return usbhc.UHIOERR_STALL;
-                const hub = d.SSHubDescriptor{ .num_ports = function.ports, .power_on_to_good = 50 };
+                const hub = d.SSHubDescriptor{ .num_ports = function.ports, .power_on_to_good = 50, .header_latency = hub_header_latency, .hub_delay = hub_delay };
                 return answer(req, std.mem.asBytes(&hub));
             }
             if (kind != d.USB_DT_HUB) return usbhc.UHIOERR_STALL;
@@ -508,7 +548,11 @@ fn control(hc: *HC, req: *usbhc.IOUsbHC) i8 {
         d.USB_DIR_OUT | d.USB_RT_PORT => {
             if (!is_port) return usbhc.UHIOERR_STALL;
             switch (setup.request) {
-                d.USB_REQ_SET_FEATURE => setFeature(hc, index, port, setup.value),
+                d.USB_REQ_SET_FEATURE => switch (setup.value) {
+                    d.USB_PORT_FEAT_U1_TIMEOUT => function.timeouts[port - 1][0] = @truncate(setup.index >> 8),
+                    d.USB_PORT_FEAT_U2_TIMEOUT => function.timeouts[port - 1][1] = @truncate(setup.index >> 8),
+                    else => setFeature(hc, index, port, setup.value),
+                },
                 d.USB_REQ_CLEAR_FEATURE => if (isSuperHub(hc, index)) {
                     function.port_change[port - 1] &= ~(superChange(setup.value) orelse return usbhc.UHIOERR_STALL);
                 } else if (setup.value >= d.USB_PORT_FEAT_C_CONNECTION) {
@@ -594,6 +638,16 @@ fn setFeature(hc: *HC, index: u8, port: u8, feature: u16) void {
 /// A standard descriptor of the function.
 fn descriptor(function: *const Function, req: *usbhc.IOUsbHC, kind: u8, index: u8) i8 {
     switch (kind) {
+        d.USB_DT_BOS => {
+            if (function.exits[0] == 0 and function.exits[1] == 0) return usbhc.UHIOERR_STALL;
+            // A USB 2.0 extension before the SuperSpeed capability, as
+            // devices have it.
+            const extension = [_]u8{ 7, d.USB_DT_DEVICE_CAPABILITY, 2, 2, 0, 0, 0 };
+            const header = d.BosDescriptor{ .total_length = 5 + extension.len + 10, .num_capabilities = 2 };
+            const superspeed = d.SSUsbCapability{ .speeds = 0x000E, .functionality = 1, .u1_exit = @intCast(function.exits[0]), .u2_exit = function.exits[1] };
+            const bos = std.mem.asBytes(&header).* ++ extension ++ std.mem.asBytes(&superspeed).*;
+            return answer(req, &bos);
+        },
         d.USB_DT_DEVICE => return answer(req, std.mem.asBytes(&function.descriptor)),
         d.USB_DT_CONFIG => return answer(req, function.config[0..function.config_length]),
         d.USB_DT_STRING => {

@@ -5,7 +5,8 @@
 //!
 //!   USBInfo            every device: where it is, how fast, what it is,
 //!                      and who drives each of its interfaces
-//!   USBInfo FULL       with each device's interfaces and endpoints
+//!   USBInfo FULL       with each device's interfaces and endpoints,
+//!                      and the states its SuperSpeed link rests in
 //!   USBInfo DEVICE 3   the device at address 3 only
 //!   USBInfo PORTS      the chip's USB ports and who holds each
 //!                      (usbport.resource) instead
@@ -26,7 +27,7 @@ const usbport = sdk.resources.usbport;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "USBInfo";
-const VERSION_STRING = "\x00$VER: USBInfo 1.2 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: USBInfo 1.3 (20.10.2026)\r\n";
 
 const template = "DEVICE/K/N,FULL/S,PORTS/S";
 const arg_device = 0;
@@ -186,8 +187,16 @@ fn printDevice(dl: *DosBase, copy: *const Copy) void {
     }
 }
 
-/// Each interface and endpoint of the device's configuration.
+/// The states the device's link rests in, then each interface and
+/// endpoint of its configuration.
 fn printConfig(dl: *DosBase, copy: *const Copy) void {
+    const resting: [*:0]const u8 = switch (copy.flags & (usb.USBDF_U1 | usb.USBDF_U2)) {
+        usb.USBDF_U1 | usb.USBDF_U2 => "U1 and U2",
+        usb.USBDF_U1 => "U1",
+        usb.USBDF_U2 => "U2",
+        else => "",
+    };
+    if (resting[0] != 0) _ = Printf(dl, "      link rests in %s when idle\n", .{resting});
     var at: u32 = 0;
     while (at + 2 <= copy.config_length) {
         const length = copy.config[at];

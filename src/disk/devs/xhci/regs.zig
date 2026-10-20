@@ -15,6 +15,7 @@
 pub const CAPLENGTH: usize = 0x00;
 pub const HCSPARAMS1: usize = 0x04;
 pub const HCSPARAMS2: usize = 0x08;
+pub const HCSPARAMS3: usize = 0x0C;
 pub const HCCPARAMS1: usize = 0x10;
 pub const DBOFF: usize = 0x14;
 pub const RTSOFF: usize = 0x18;
@@ -42,6 +43,15 @@ pub fn istFrames(params2: u32) u32 {
     return (count + 7) / 8;
 }
 
+/// HCSPARAMS3: how long a root port's link takes to come back from U1
+/// (at most 10) and from U2 (at most 2047), in µs.
+pub fn u1ExitOf(params3: u32) u8 {
+    return @truncate(params3);
+}
+pub fn u2ExitOf(params3: u32) u16 {
+    return @truncate(params3 >> 16);
+}
+
 /// HCCPARAMS1: 64-bit addresses, 64-byte contexts, port power switches,
 /// and where the extended capabilities start, in words.
 pub const HCC_AC64: u32 = 1 << 0;
@@ -67,6 +77,10 @@ pub const CONFIG: usize = 0x38;
 /// Root port n's PORTSC (n from 1).
 pub fn portsc(port: u32) usize {
     return 0x400 + 0x10 * @as(usize, port - 1);
+}
+/// Its PORTPMSC, after it.
+pub fn portpmsc(port: u32) usize {
+    return portsc(port) + 4;
 }
 
 pub const USBCMD_RS: u32 = 1 << 0;
@@ -113,6 +127,11 @@ pub const PORT_CHANGES: u32 = PORT_CSC | PORT_PEC | PORT_WRC | PORT_OCC | PORT_P
 /// port - nor any change bit, nor PR.
 pub const PORT_NEUTRAL: u32 = PORT_CCS | PORT_OCA | PORT_SPEED_MASK | PORT_DR |
     PORT_PLS_MASK | PORT_PP | PORT_PIC_MASK | PORT_WAKE_MASK;
+/// A USB 3 port's PORTPMSC: its U1 timeout (bits 7:0) and U2 timeout
+/// (15:8), as a SuperSpeed hub's port takes them.
+pub const PMSC_U1_TIMEOUT_SHIFT = 0;
+pub const PMSC_U2_TIMEOUT_SHIFT = 8;
+pub const PMSC_TIMEOUTS: u32 = 0xFFFF;
 /// PLS's U3: the port suspended. A USB 3 link's SS.Inactive and
 /// compliance mode: it failed, and only a warm reset brings it back.
 pub const PLS_U3: u32 = 3;
@@ -278,6 +297,9 @@ pub const CC_MISSED_SERVICE: u32 = 23;
 pub const CC_STOPPED: u32 = 26;
 pub const CC_STOPPED_LENGTH_INVALID: u32 = 27;
 pub const CC_STOPPED_SHORT_PACKET: u32 = 28;
+/// Evaluate Context: the controller cannot allow for the slot's Max Exit
+/// Latency.
+pub const CC_MAX_EXIT_LATENCY: u32 = 29;
 pub const CC_SPLIT_TRANSACTION: u32 = 36;
 
 // --- contexts ---------------------------------------------------------------------
@@ -295,9 +317,9 @@ pub fn addFlag(dci: u32) u32 {
 pub fn slotWord0(route: u32, speed: u32, hub: bool, entries: u32) u32 {
     return (route & 0xF_FFFF) | speed << 20 | @as(u32, @intFromBool(hub)) << 26 | entries << 27;
 }
-/// Word 1: the root port, and a hub's ports.
-pub fn slotWord1(root_port: u32, ports: u32) u32 {
-    return root_port << 16 | ports << 24;
+/// Word 1: the Max Exit Latency in µs, the root port, and a hub's ports.
+pub fn slotWord1(exit_latency: u32, root_port: u32, ports: u32) u32 {
+    return (exit_latency & 0xFFFF) | root_port << 16 | ports << 24;
 }
 /// Word 2: the transaction translator - its hub's slot and port - and a
 /// high-speed hub's think time.

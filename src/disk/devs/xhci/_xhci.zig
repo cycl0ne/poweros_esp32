@@ -196,6 +196,8 @@ pub const Slot = struct {
     hub: bool = false,
     hub_ports: u8 = 0,
     ttt: u8 = 0,
+    /// Its Max Exit Latency in µs, from the SET_SEL it was sent.
+    exit_latency: u16 = 0,
     /// The highest endpoint in its context.
     entries: u32 = 1,
     /// Its device context, which the controller writes, and the input
@@ -243,6 +245,9 @@ pub const Host = struct {
     power_switched: bool = false,
     /// HCCPARAMS1's MaxPSASize: 0, no streams.
     max_psa_size: u32 = 0,
+    /// HCSPARAMS3: its root ports' exit latencies from U1 and U2, in µs.
+    u1_exit: u8 = 0,
+    u2_exit: u16 = 0,
     /// The root hub's ports: the controller's root ports, the USB 2 ones
     /// first. Each one's PORTSC number, and a bit per USB 3 one (from bit
     /// 1, as the hub numbers them).

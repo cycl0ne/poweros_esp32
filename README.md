@@ -202,11 +202,11 @@ Beside them:
   `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)).
 - **Devices:** timer, serial, console, input from keyboards, mice and
   touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
-  ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), a device
-  plugged in or pulled out told to the windows that ask, with class
-  drivers for keyboards, mice, sticks and disks (Bulk-Only and UAS),
-  serial and Ethernet adapters, Wi-Fi sticks, and on xHCI speakers and
-  headsets
+  ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), bulk
+  streams and links resting in U1 and U2, a device plugged in or pulled
+  out told to the windows that ask, with class drivers for keyboards,
+  mice, sticks and disks (Bulk-Only and UAS), serial and Ethernet
+  adapters, Wi-Fi sticks, and on xHCI speakers and headsets
   ([USB guide](sdk/docs/guides/usb.md)); Ethernet up to 1000 Mbit/s, the
   ESP32-S3's Wi-Fi and SLIP, and a shell over Telnet or SSH
   ([network guide](sdk/docs/guides/network.md)).
