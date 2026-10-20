@@ -215,16 +215,33 @@ if (sys.DoIO(&pipe.io.std.req) == 0) use(buffer[0..@intCast(pipe.io.std.actual)]
   every 8 ms until the device answers, so an idle keyboard or mouse
   costs little, and the first report after a pause is at most 8 ms
   late. Read one packet at a time: a device sends a report a packet.
-- An **isochronous** write is a run of packets, one each `interval`:
+- An **isochronous** transfer is a run of packets, one each
+  `interval`, at most `UHC_ISO_PACKETS` of them, nothing resent:
   `std.length` bytes cut into packets of `iso_packet` (the endpoint's
-  packet size unless set smaller), at most `UHC_ISO_PACKETS` of them,
-  nothing resent. A stream keeps two or more on the controller, a pipe
+  packet size unless set smaller), or with `iso_list` and `iso_count` a
+  `UsbIsoPacket` each, its own length, the packets one after the other
+  in the data. A stream keeps two or more on the controller, a pipe
   each on the endpoint: each starts in the interval after the one
   before ends, so one sent before the last has played leaves no gap.
-  The endpoint is in a setting of its own, chosen with
-  `SET_INTERFACE` first. xhci.device has them, OUT only; usbotg.device
-  answers `IOERR_NOCMD`. A high-speed endpoint asking more often than
-  once a millisecond gets no pipe.
+  The endpoint is in a setting of its own, chosen with `SET_INTERFACE`
+  first. xhci.device has them, OUT and IN; usbotg.device answers
+  `IOERR_NOCMD`. A high-speed endpoint asking more often than once a
+  millisecond gets no pipe.
+- **What became of each packet** comes back with the transfer, which
+  ends with `io_Error` 0 however many were lost: `std.actual` the bytes
+  that went or came, `iso_lost` the packets that did not, and in a list
+  each packet's `actual` and `status` - `UHIOERR_MISSED` for one whose
+  time had passed before the controller had it. `iso_frame` is the frame
+  the transfer started in; `iso_gap` the frames the endpoint went
+  without since the transfer before it, which a stream that ran dry
+  shows - 0 for one that followed on, and for the first after AbortIO.
+  `UHF_ISO_FRAME` in `flags` starts a transfer in the frame `iso_frame`
+  names, up to `UHC_ISO_AHEAD` frames on (`USBHCInfo.frame` from
+  `UHCMD_QUERYDEVICE` is the frame now); one that cannot be had is
+  answered `UHIOERR_MISSED`.
+- **Bus time** is the controller's: it adds an endpoint only while the
+  bus's frames have room for it, and a transfer to one it cannot fit
+  ends with `UHIOERR_BANDWIDTH`.
 - A **stall** ends a transfer with `UHIOERR_STALL`; `ClearUSBStall`
   clears the endpoint's halt and its toggle.
 - A device that goes ends its transfers with `UHIOERR_DETACHED`.

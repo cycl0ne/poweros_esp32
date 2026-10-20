@@ -430,8 +430,9 @@ pub fn configure(host: *Host, slot: *Slot, value: u8) bool {
 
 /// The endpoint a transfer is for there as the transfer says it is: added
 /// if it is not in the slot's context, added afresh if it is there as
-/// something else. False if the controller would not have it.
-pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUsbHC) bool {
+/// something else. 0, or why the controller would not have it:
+/// UHIOERR_BANDWIDTH when its frames have no room for it.
+pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUsbHC) i8 {
     const ep = &slot.endpoints[dci];
     const in = req.endpoint & d.USB_DIR_IN != 0;
     const kind: u32 = switch (req.std.req.command) {
@@ -440,7 +441,7 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
         else => if (in) regs.EP_INTERRUPT_IN else regs.EP_INTERRUPT_OUT,
     };
     const packet: u32 = @max(req.max_packet & 0x7FF, 1);
-    if (ep.enabled and ep.kind == kind and ep.max_packet == packet) return true;
+    if (ep.enabled and ep.kind == kind and ep.max_packet == packet) return 0;
     const drop = if (ep.enabled) regs.addFlag(dci) else 0;
     ep.enabled = false;
     ep.kind = kind;
@@ -448,14 +449,17 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
     ep.interval = if (isPeriodic(kind)) intervalOfMs(slot.speed, req.interval) else 0;
     ep.stride = strideOf(packet);
     ep.next_slice = 0;
-    if (!freshRing(host, ep)) return false;
+    ep.expect = 0;
+    ep.streaming = false;
+    if (!freshRing(host, ep)) return usbhc.UHIOERR_HOSTERROR;
     ep.enabled = true;
     slot.entries = highestOf(slot);
     buildInput(host, slot, regs.ADD_SLOT | regs.addFlag(dci), drop);
-    if (contextCommand(host, slot, regs.TRB_CONFIGURE_ENDPOINT, 0) == regs.CC_SUCCESS) return true;
+    const code = contextCommand(host, slot, regs.TRB_CONFIGURE_ENDPOINT, 0);
+    if (code == regs.CC_SUCCESS) return 0;
     ep.enabled = false;
     slot.entries = highestOf(slot);
-    return false;
+    return if (code == regs.CC_BANDWIDTH) usbhc.UHIOERR_BANDWIDTH else usbhc.UHIOERR_HOSTERROR;
 }
 
 /// How far apart an isochronous endpoint's packets lie in its buffer: a

@@ -8,9 +8,10 @@
 //!   UHCMD_BULKXFER     a bulk transfer, in rounds of 16 KiB
 //!   UHCMD_INTXFER      an interrupt transfer, asked by the controller at
 //!                      the endpoint's interval until the device answers
-//!   UHCMD_ISOXFER      an isochronous transfer OUT: a TD a packet, up to
-//!                      four requests on the endpoint's ring at once;
-//!                      IN answered IOERR_NOCMD
+//!   UHCMD_ISOXFER      an isochronous transfer, OUT or IN: a TD a packet
+//!                      in its frame, each packet told what became of
+//!                      it, up to four requests on the endpoint's ring
+//!                      at once
 //!   UHCMD_USBRESET     every transfer answered, the controller started
 //!                      afresh
 //!   UHCMD_USBSUSPEND,
@@ -46,10 +47,11 @@ const Host = _xhci.Host;
 const controller = @import("controller.zig");
 const transfer = @import("transfer.zig");
 const roothub = @import("roothub.zig");
+const regs = @import("regs.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 3;
+const DEVICE_REVISION = 4;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -237,6 +239,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
                 .speed = usbhc.USB_SPEED_HIGH,
                 .channels = host.max_slots,
                 .ports = host.ports,
+                .frame = if (host.ready != 0) (_xhci.rt(host, regs.MFINDEX).* & 0x3FFF) >> 3 else 0,
             };
             if (req.std.data) |data| {
                 const count = @min(@as(usize, @intCast(req.std.length)), @sizeOf(usbhc.USBHCInfo));

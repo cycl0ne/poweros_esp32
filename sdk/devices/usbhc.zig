@@ -29,18 +29,39 @@
 //! nothing for a while less often, a few milliseconds apart.
 //!
 //! **An isochronous transfer** is a run of packets at the endpoint's
-//! interval, one each interval: `io_Length` bytes cut into packets of
-//! `iso_packet`, the last taking what is left, at most
-//! `UHC_ISO_PACKETS` of them. Nothing is resent and nothing waits for an
-//! answer - a packet has its time and is gone - and a request is
-//! replied once its last packet's time has passed, `io_Actual` what went.
-//! Requests sent one after the other follow on with no gap: each starts
-//! in the interval after the last packet of the one before, so a
-//! controller with the next one before the last has ended plays an
-//! unbroken stream. One sent to an idle endpoint starts as soon as the
-//! controller can place it. A controller takes several at once on an
-//! endpoint; AbortIO of one on the wire takes back every one on that
-//! endpoint, each answered IOERR_ABORTED.
+//! interval, one each interval, at most `UHC_ISO_PACKETS` of them:
+//! `io_Length` bytes cut into packets of `iso_packet`, the last taking
+//! what is left - or, with `iso_list`, `iso_count` packets each of its
+//! own length, lying one after the other in `io_Data`. Nothing is resent
+//! and nothing waits for an answer - a packet has its time and is gone -
+//! and a request is replied once its last packet's time has passed.
+//!
+//! **A lost packet is a result, not an error.** The request is answered
+//! with io_Error 0 whatever became of its packets: `io_Actual` is the
+//! bytes that went or came, `iso_lost` the packets that did not, and a
+//! list has each packet's own `actual` and `status` (UHIOERR_MISSED for
+//! one whose time passed before the controller had it). io_Error is for
+//! the request as a whole: the device gone, the request taken back, an
+//! endpoint the bus has no time for (UHIOERR_BANDWIDTH).
+//!
+//! **Each packet has its frame.** Requests sent one after the other
+//! follow on with no gap: each starts in the interval after the last
+//! packet of the one before, so a controller with the next one before
+//! the last has ended plays an unbroken stream. One sent to an idle
+//! endpoint starts as soon as the controller can place it, and one with
+//! `UHF_ISO_FRAME` in the frame `iso_frame` names. Every request is
+//! answered with the frame it started in (`iso_frame`) and the frames the
+//! endpoint went without since the request before it ended (`iso_gap`):
+//! a stream that ran dry shows there by how much. A controller takes
+//! several at once on an endpoint; AbortIO of one on the wire takes back
+//! every one on that endpoint, each answered IOERR_ABORTED, and the next
+//! request starts a new stream, with no gap counted.
+//!
+//! **Bus time is the controller's to give.** The bus keeps most of each
+//! frame for isochronous and interrupt endpoints, and the controller adds
+//! an endpoint only while that has room for it; one it cannot fit is
+//! refused with UHIOERR_BANDWIDTH on its first transfer. usb.library
+//! keeps no account of its own.
 
 const exec = @import("../libs/exec/exec.zig");
 const descriptors = @import("../libs/usb/descriptors.zig");
@@ -53,9 +74,9 @@ pub const UHCMD_CONTROLXFER: u16 = exec.CMD_NONSTD + 0;
 pub const UHCMD_BULKXFER: u16 = exec.CMD_NONSTD + 1;
 /// An interrupt transfer: asked every `interval` ms until answered.
 pub const UHCMD_INTXFER: u16 = exec.CMD_NONSTD + 2;
-/// An isochronous transfer: packets of `iso_packet` bytes, one each
-/// interval, its direction the endpoint's. A controller that has none
-/// answers IOERR_NOCMD.
+/// An isochronous transfer: packets of `iso_packet` bytes, or as
+/// `iso_list` says, one each interval, its direction the endpoint's. A
+/// controller that has none answers IOERR_NOCMD.
 pub const UHCMD_ISOXFER: u16 = exec.CMD_NONSTD + 3;
 /// The controller started afresh: every transfer answered
 /// UHIOERR_HOSTERROR, the root port powered and empty.
@@ -87,9 +108,18 @@ pub const UHIOERR_HOSTERROR: i8 = 6;
 pub const UHIOERR_DETACHED: i8 = 7;
 /// A short packet ended the transfer, and `flags` said that is an error.
 pub const UHIOERR_RUNTPACKET: i8 = 8;
+/// An isochronous packet's time passed before the controller had it: it
+/// did not go, or nothing was taken - a packet's `status`. As io_Error:
+/// the frame UHF_ISO_FRAME asked for could not be had, and nothing went.
+pub const UHIOERR_MISSED: i8 = 9;
+/// The bus has no time left for the endpoint in its frames: the
+/// isochronous and interrupt endpoints already on it take it.
+pub const UHIOERR_BANDWIDTH: i8 = 10;
 
 /// The most packets an isochronous transfer carries.
 pub const UHC_ISO_PACKETS: u32 = 32;
+/// USB frame numbers run 0 to 2047, a millisecond each, and start again.
+pub const UHC_FRAMES: u16 = 2048;
 
 /// `speed`: how fast the device is.
 pub const USB_SPEED_LOW: u8 = 0;
@@ -101,6 +131,27 @@ pub const UHF_SHORT_NOT_OK: u8 = 1 << 0;
 /// `flags`: an OUT transfer whose length is a whole number of packets is
 /// ended with an empty one.
 pub const UHF_ZERO_PACKET: u8 = 1 << 1;
+/// `flags`: an isochronous transfer starts in the frame `iso_frame`
+/// names, the next time it comes. One the controller can no longer place
+/// in time - too soon, or more than `UHC_ISO_AHEAD` frames off - is
+/// answered UHIOERR_MISSED, and nothing goes.
+pub const UHF_ISO_FRAME: u8 = 1 << 2;
+/// The furthest ahead an isochronous transfer can be placed, in frames.
+pub const UHC_ISO_AHEAD: u16 = 895;
+
+/// One packet of an isochronous transfer, in its `iso_list`.
+pub const UsbIsoPacket = extern struct {
+    /// Its bytes: those sent (OUT), the room for those that come (IN); at
+    /// most the endpoint's max packet size.
+    length: u16 = 0,
+    /// Written by the controller: the bytes that went or came.
+    actual: u16 = 0,
+    /// Written by the controller: 0, or how the packet was lost -
+    /// UHIOERR_MISSED, UHIOERR_CRCERROR (it came damaged or not at all),
+    /// UHIOERR_OVERFLOW (the device sent more), UHIOERR_HOSTERROR.
+    status: i8 = 0,
+    pad: [3]u8 = @splat(0),
+};
 
 /// A transfer for a host controller device.
 pub const IOUsbHC = extern struct {
@@ -143,6 +194,20 @@ pub const IOUsbHC = extern struct {
     iso_packet: u32 = 0,
     /// The controller's, while it has the request.
     hc_private: [4]usize = @splat(0),
+    /// An isochronous transfer's packets one by one: `iso_count` of them,
+    /// each of its own length, and written back with what became of it.
+    /// Null: `io_Length` cut into `iso_packet`s.
+    iso_list: ?[*]UsbIsoPacket = null,
+    iso_count: u16 = 0,
+    /// The USB frame number the transfer's first packet goes in: with
+    /// UHF_ISO_FRAME the one asked for; written back with the one it
+    /// started in.
+    iso_frame: u16 = 0,
+    /// Written back: the packets that did not go or did not come, and the
+    /// frames the endpoint went without between the request before this
+    /// one and this one - 0 when it followed on, or starts a stream.
+    iso_lost: u16 = 0,
+    iso_gap: u16 = 0,
 };
 
 /// What `UHCMD_QUERYDEVICE` answers.
@@ -155,4 +220,8 @@ pub const USBHCInfo = extern struct {
     channels: u32 = 0,
     /// Its root hub's ports.
     ports: u32 = 0,
+    /// The USB frame number as it answered, for a transfer placed in a
+    /// frame of its own (UHF_ISO_FRAME); 0 from a controller without
+    /// isochronous transfers.
+    frame: u32 = 0,
 };
