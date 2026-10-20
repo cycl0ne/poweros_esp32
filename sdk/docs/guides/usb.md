@@ -601,8 +601,12 @@ resets the controller, sets its rings up, hooks its interrupt - a
 message-signalled one (MSI or MSI-X) where pci.library gives it one, its
 INTx line otherwise - and runs it; the last `CloseDevice` answers every
 transfer and halts it. Everything the controller reads or writes is DMA
-memory below 4 GiB, in whole cache lines, written back before the
-controller is told and dropped from the caches before it is read.
+memory below 4 GiB, in whole cache lines. For a controller that sees the
+processors' caches (pci.library's `dma_coherent`: the VL805, QEMU's), a
+fence each way orders it: what the driver wrote before the controller is
+told, what the controller wrote after the driver hears of it. For one
+that does not, it is written back before the controller is told and
+dropped from the caches before it is read.
 
 ## In QEMU
 

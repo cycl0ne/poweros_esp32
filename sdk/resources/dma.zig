@@ -16,9 +16,17 @@
 //! like the general ones; their owner sets them up and starts them
 //! through `sdk.hardware.dma2d`, and the general calls refuse them.
 //!
+//! **The DesignWare AXI DMA's channels**, DWDMA_CHANNELS of them from
+//! DWDMA_CHANNEL0 on (the JH7110's four, where the board lists the
+//! controller; the ESP32s and QEMU's virt have none): claimed, given back
+//! and asked about like the others; their owner sets them up and starts
+//! them through `sdk.hardware.dwdma`, and the general calls refuse them.
+//!
 //! A channel's interrupts are exec's: AddIntServer(dmaIntNumber(channel,
 //! side), ...). The sources are level-triggered, so a server clears what it
-//! handles (DMAIntStatus, ClearDMAInts).
+//! handles (DMAIntStatus, ClearDMAInts). A DesignWare channel's is its
+//! controller's, which the four share: a server asks its own channel
+//! before it answers non-zero.
 
 const hardware = @import("../hardware/hardware.zig");
 const intbits = hardware.intbits;
@@ -39,8 +47,14 @@ pub const DMA2D_CHANNELS: u32 = switch (hardware.chip) {
     .rv64sbi => 0,
 };
 pub const DMA2D_CHANNEL0: u32 = DMA_CHANNELS;
-/// Every channel the resource hands out, general and 2D.
-pub const DMA_ALL_CHANNELS: u32 = DMA_CHANNELS + DMA2D_CHANNELS;
+/// The DesignWare AXI DMA's channels, numbered from DWDMA_CHANNEL0.
+pub const DWDMA_CHANNELS: u32 = switch (hardware.chip) {
+    .esp32s3, .esp32p4 => 0,
+    .rv64sbi => hardware.dwdma.channels,
+};
+pub const DWDMA_CHANNEL0: u32 = DMA2D_CHANNEL0 + DMA2D_CHANNELS;
+/// Every channel the resource hands out: general, 2D and DesignWare.
+pub const DMA_ALL_CHANNELS: u32 = DMA_CHANNELS + DMA2D_CHANNELS + DWDMA_CHANNELS;
 
 /// A channel's sides: IN receives (device to memory), OUT transmits
 /// (memory to device).
@@ -192,10 +206,12 @@ pub const DMADescriptor = extern struct {
 };
 
 /// What dmaIntNumber answers for a side there is not: 2D channel 2's
-/// receive side.
+/// receive side, or a DesignWare channel where the board has no such
+/// controller.
 pub const DMA_NOINT: u32 = 0xFFFF_FFFF;
 
-/// exec's interrupt number for a channel's side, general or 2D.
+/// exec's interrupt number for a channel's side: general, 2D, or
+/// DesignWare - its controller's, from the board's part, for either side.
 pub fn dmaIntNumber(channel: u32, side: u32) u32 {
     const in = side == DMA_IN;
     switch (hardware.chip) {
@@ -209,7 +225,11 @@ pub fn dmaIntNumber(channel: u32, side: u32) u32 {
             if (channel >= 3) return (if (in) intbits.INTB_AXI_PDMA_IN_CH0 else intbits.INTB_AXI_PDMA_OUT_CH0) + channel - 3;
             return (if (in) intbits.INTB_AHB_PDMA_IN_CH0 else intbits.INTB_AHB_PDMA_OUT_CH0) + channel;
         },
-        .rv64sbi => return DMA_NOINT,
+        .rv64sbi => {
+            if (channel < DWDMA_CHANNEL0 or channel >= DMA_ALL_CHANNELS) return DMA_NOINT;
+            const controller = hardware.dwdma.find() orelse return DMA_NOINT;
+            return controller.irq;
+        },
     }
 }
 

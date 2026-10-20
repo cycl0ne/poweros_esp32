@@ -30,15 +30,17 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// BEHAVIOR:
 /// The range is invalidated, so the next read comes from memory and not
 /// from a line the cache held from before the transfer. Without this a
-/// device's data is written and then read straight past.
+/// device's data is written and then read straight past. A long range is
+/// shared between the cores as `CacheClearE` shares it.
 ///
 /// **Nothing is done for `DMAF_ReadFromRAM` or `DMAF_NoModify`**: the
 /// engine only read, so nothing in memory changed and there is nothing
 /// stale to drop.
 ///
 /// CONTEXT:
-/// - Waits: no.
-/// - Interrupts: safe.
+/// - Waits: only for the other cores' parts of a long range, and never
+///   where a task may not wait.
+/// - Interrupts: safe - the range is then done alone.
 /// - Locks: none needed.
 /// - Process: a Task will do.
 ///

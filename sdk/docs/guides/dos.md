@@ -902,10 +902,13 @@ directories, and starts the first shell, in a console window, reading
 that window.
 `Mount` puts a device on the list from its entry in `DEVS:MountList`.
 The card slot needs none: `C:BindDrivers`, in the startup-sequence,
-starts the block devices in `DEVS:` for the board's hardware -
-sdcard.device on a board with a slot, nvme.device on the RISC-V 64
-disk - and a device that starts makes its drives from the first medium
-in it, as usb/disk.device does for a stick. [Disks and
+starts the block devices for the board's hardware - sdcard.device on a
+board with a slot, nvme.device on the RISC-V 64 disk - and a device that
+starts makes its drives from the first medium in it, as usb/disk.device
+does for a stick. A board that has sdcard.device in the ROM, to start
+from its card (the VisionFive 2), hands the partitions of the card's
+RigidDiskBlock to dos at cold start; opened by `C:BindDrivers`, the
+device makes `SD0:` for a card without one. [Disks and
 partitions](rdb.md) has the partition table and how to change it.
 
 **A handler works on what its startup message names**, and on nothing

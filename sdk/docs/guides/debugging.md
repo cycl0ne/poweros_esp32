@@ -90,11 +90,9 @@ has the details). Any other dead end stops the machine: it keeps the end
 of the log over the restart, offers the ROM debugger for a few seconds
 (`*** enter the debugger? (y)`), and restarts if nobody answers. The next
 boot's log starts with the last words of the one before; `Log` shows
-them.
-
-A RISC-V 64 machine asks nothing and has no debugger: every dead end
-prints its Guru and `*** system halted`, and the machine stays stopped,
-for whoever reads the console.
+them. On the VisionFive 2 and QEMU virt such a dead end halts the
+machine (`*** system halted`): they have no ROM debugger and keep no
+last words, so the raw port is where it is read.
 
 ## From an address to a line
 

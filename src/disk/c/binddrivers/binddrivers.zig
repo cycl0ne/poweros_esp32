@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: MIT
-//! BindDrivers: the block devices in DEVS: for this board's hardware
-//! started, so that each mounts its drives. Built against the SDK only.
+//! BindDrivers: the block devices for this board's hardware started, so
+//! that each mounts its drives. Built against the SDK only.
 //!
 //!   BindDrivers
 //!
 //! expansion.library lists the units of every block device the board has
 //! (ObtainDeviceUnits with DEVIF_BLOCK): a device in DEVS: is listed only
 //! for the parts the board was built with - sdcard.device where there is
-//! a card slot. Each one listed that is a file in DEVS: is opened once
-//! and closed again; opening loads it, and a block device that starts
-//! makes the drives of what is in it (a card's partitions, or SD0:) and
-//! stays. The ROM's devices are up already, and a USB class driver is
-//! loaded by usb.library when what it drives is plugged in, so neither
-//! is opened. A device that finds no hardware behind it does not start,
-//! and is passed over without a word.
+//! a card slot. Each one listed is opened once and closed again. Opening
+//! a file in DEVS: loads it, and a block device that starts makes the
+//! drives of what is in it (a card's partitions, or SD0:) and stays. A
+//! device in the ROM started at cold start, before dos: opened now, it
+//! makes the drives it could not make then (sdcard.device on the
+//! VisionFive 2). A USB class driver is loaded by usb.library when what
+//! it drives is plugged in, so it is not opened. A device that finds no
+//! hardware behind it does not start, and is passed over without a word.
 //!
 //! The startup-sequence runs it after S:User-Startup, so a drive mounted
 //! there by hand - `Mount SD0:` from the MountList - is the one the device
@@ -29,7 +30,7 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "BindDrivers";
-const VERSION_STRING = "\x00$VER: BindDrivers 1.0 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: BindDrivers 1.1 (18.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -103,7 +104,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             if (sameName(previous, name)) continue;
         }
         last = name;
-        if (unit.flags & devices.DUF_ROM != 0) continue;
         if (speaks(unit, devices.DEVIF_USBCLASS)) continue;
         start(sys, name, unit.unit);
     }

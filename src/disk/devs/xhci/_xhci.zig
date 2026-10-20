@@ -28,10 +28,15 @@
 //! SET_ADDRESS that follows binds the address to it (slots.zig).
 //!
 //! **Memory the controller reads or writes** is DMA memory, below 4 GiB,
-//! in blocks of whole cache lines: on the VisionFive 2 the VL805 does
-//! not see the processor's caches, and what the driver writes is written
-//! back before the controller is told, and what the controller wrote is
-//! dropped from the caches before it is read (`toDevice`, `fromDevice`).
+//! in blocks of whole cache lines. What the driver writes there is out
+//! before the controller is told, and what the controller wrote is read
+//! afresh once the driver hears of it (`toDevice`, `fromDevice`). For a
+//! controller that sees the processors' caches (PCIDevice.dma_coherent),
+//! as the VisionFive 2's VL805 and QEMU's do, that is a fence each way,
+//! which keeps the compiler from holding on to memory too: without the
+//! one in `fromDevice` the VL805's root hub found no device behind it.
+//! For one that does not, the lines are written back to memory, and
+//! dropped from the caches before they are read.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -182,6 +187,10 @@ pub const Host = struct {
     sys: *ExecBase,
     number: u32,
     function: *pci.PCIDevice,
+    /// Whether what it reads and writes in memory sees the processors'
+    /// caches (PCIDevice.dma_coherent): then nothing is written back or
+    /// dropped for it.
+    coherent: bool = false,
     /// Where its register blocks are: BAR0, the operational registers,
     /// the runtime registers, the doorbells.
     regs: usize = 0,
@@ -345,16 +354,29 @@ pub fn ringDoorbell(host: *const Host, slot: u32, target: u32) void {
 }
 
 /// What the driver wrote at [address, address + bytes) out to memory,
-/// for the controller to read.
+/// for the controller to read. Where it sees the caches the writes are
+/// only ordered before the register write that tells it, as Linux's
+/// writel orders them (`fence w, o`).
 pub fn toDevice(host: *const Host, address: usize, bytes: usize) void {
+    if (host.coherent) {
+        asm volatile ("fence w, o" ::: .{ .memory = true });
+        return;
+    }
     if (bytes == 0) return;
     var length: u32 = @intCast(bytes);
     _ = host.sys.CachePreDMA(@ptrFromInt(address), &length, 0);
 }
 
 /// The caches' copy of [address, address + bytes) dropped, so what the
-/// controller wrote there is read.
+/// controller wrote there is read. Where it sees the caches the reads are
+/// only ordered after the register read that said it was written, as
+/// Linux's readl orders them (`fence i, r`), and the compiler keeps
+/// nothing of that memory from before.
 pub fn fromDevice(host: *const Host, address: usize, bytes: usize) void {
+    if (host.coherent) {
+        asm volatile ("fence i, r" ::: .{ .memory = true });
+        return;
+    }
     if (bytes == 0) return;
     var length: u32 = @intCast(bytes);
     host.sys.CachePostDMA(@ptrFromInt(address), &length, 0);

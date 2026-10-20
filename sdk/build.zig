@@ -71,7 +71,7 @@ pub fn programTargetQuery(chip: Chip) std.Target.Query {
 }
 
 /// The libraries with an `.fd` file, each made into `interface/<name>.zig`.
-const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "jpeg", "dos", "rtg", "rta", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "asl", "iffparse", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil", "usb", "usbclass", "battery", "usbport", "battclock", "audiocodec", "wpa", "pci" };
+const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "jpeg", "dos", "rtg", "rta", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "asl", "iffparse", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil", "usb", "usbclass", "battery", "usbport", "battclock", "audiocodec", "wpa", "pci", "facet" };
 
 pub fn build(b: *std.Build) void {
     const sdk = b.addModule("sdk", .{ .root_source_file = b.path("sdk.zig") });
@@ -193,6 +193,10 @@ pub const Program = struct {
     /// archives that call into mask ROM; their addresses are added to
     /// `program.ld` (tools/romld) and left alone by elf2seg.
     rom_scripts: []const std.Build.LazyPath = &.{},
+    /// Modules compiled into it beside the SDK, by the names it imports
+    /// them by: code of the disk's own that a program shares with another
+    /// rather than loading it.
+    imports: []const std.Build.Module.Import = &.{},
 };
 
 /// A program, library, device or handler built for the chip and made into
@@ -220,6 +224,7 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
         .code_model = code_model,
     });
     own.addImport("sdk", dep.module("sdk"));
+    for (program.imports) |import| own.addImport(import.name, import.module);
     // The root is the SDK's program.zig, which takes the program's own
     // root in and gives it the SDK's panic handler.
     const module = b.createModule(.{

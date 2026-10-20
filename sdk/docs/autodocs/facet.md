@@ -1,0 +1,5610 @@
+# facet.library
+
+facet.library's functions: three-dimensional drawing as Vulkan has
+it - an instance, the devices, their memory, buffers and images,
+render passes, pipelines whose shaders are the program's own
+functions, and command buffers played on a queue - on the machine's
+cores - and the swapchains that show what is drawn on a screen. Open
+it with OpenLibrary("facet.library", 1); the structures are in
+sdk.facet.
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [AcquireNextImage](#acquirenextimage) - An image of the swapchain to draw into, its number written to `index`.
+- [AllocateCommandBuffers](#allocatecommandbuffers) - Command buffers allocated from a pool.
+- [AllocateDescriptorSets](#allocatedescriptorsets) - A descriptor set for each layout `info` names, into `sets`.
+- [AllocateMemory](#allocatememory) - A block of the device's memory, of one of its memory types.
+- [BeginCommandBuffer](#begincommandbuffer) - The command buffer's recording begun.
+- [BindBufferMemory](#bindbuffermemory) - The buffer bound into a block of memory, at an offset.
+- [BindImageMemory](#bindimagememory) - The image bound into a block of memory, at an offset.
+- [CmdBeginRenderPass](#cmdbeginrenderpass) - Recorded: a render pass begun, drawing into a framebuffer.
+- [CmdBindDescriptorSets](#cmdbinddescriptorsets) - Recorded: descriptor sets bound, from set `first_set` on.
+- [CmdBindIndexBuffer](#cmdbindindexbuffer) - Recorded: the index buffer CmdDrawIndexed reads.
+- [CmdBindPipeline](#cmdbindpipeline) - Recorded: the pipeline the draws after it draw with.
+- [CmdBindVertexBuffers](#cmdbindvertexbuffers) - Recorded: vertex buffers bound, from binding `first_binding` on.
+- [CmdCopyBuffer](#cmdcopybuffer) - Recorded: bytes copied from one buffer to another.
+- [CmdCopyBufferToImage](#cmdcopybuffertoimage) - Recorded: rectangles of texels copied from a buffer into an image.
+- [CmdDraw](#cmddraw) - Recorded: vertices drawn, in the order they are in the vertex buffers.
+- [CmdDrawIndexed](#cmddrawindexed) - Recorded: vertices drawn in the order the index buffer gives them.
+- [CmdEndRenderPass](#cmdendrenderpass) - Recorded: the render pass ended, and what it drew stored.
+- [CmdPipelineBarrier](#cmdpipelinebarrier) - Recorded: a barrier between the work before it and the work after.
+- [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
+- [CmdSetScissor](#cmdsetscissor) - Recorded: the scissor, for a pipeline that leaves it to commands.
+- [CmdSetViewport](#cmdsetviewport) - Recorded: the viewport, for a pipeline that leaves it to commands.
+- [CreateBuffer](#createbuffer) - A buffer of so many bytes, for what its usage says.
+- [CreateCommandPool](#createcommandpool) - A pool the device's command buffers are allocated from.
+- [CreateDescriptorPool](#createdescriptorpool) - A descriptor pool: the most sets it gives out at once.
+- [CreateDescriptorSetLayout](#createdescriptorsetlayout) - A descriptor set layout: a set's bindings, each of a kind, with its descriptors.
+- [CreateDevice](#createdevice) - A device of the program's own, with its queue.
+- [CreateFence](#createfence) - A fence: signalled by a queue when the submission it came with is done.
+- [CreateFramebuffer](#createframebuffer) - A framebuffer: an image view for each of a render pass's attachments.
+- [CreateGraphicsPipelines](#creategraphicspipelines) - `count` graphics pipelines, one for each of `infos`, into `pipelines`.
+- [CreateImage](#createimage) - An image: a texture, an attachment, or what a copy moves.
+- [CreateImageView](#createimageview) - A view of an image: the levels of it a texture descriptor samples, or what a framebuffer draws into.
+- [CreateInstance](#createinstance) - A program's hold on the library, through which it finds the devices.
+- [CreatePipelineLayout](#createpipelinelayout) - A pipeline layout: the descriptor sets and the push constants a pipeline's shaders read.
+- [CreateRenderPass](#createrenderpass) - A render pass: the attachments it draws into, what each starts with and what is kept of it.
+- [CreateScreenSurface](#createscreensurface) - A surface over a screen the program has opened, written to `surface`.
+- [CreateSemaphore](#createsemaphore) - A semaphore: signalled by one submission, waited for by another.
+- [CreateShaderModule](#createshadermodule) - A shader module: the vertex and fragment functions a `shader.Code` names.
+- [CreateSwapchain](#createswapchain) - A swapchain on a surface, written to `swapchain`.
+- [CreateWindowSurface](#createwindowsurface) - A surface over the inside of a window the program has opened, written to `surface`.
+- [DestroyBuffer](#destroybuffer) - The buffer given back.
+- [DestroyCommandPool](#destroycommandpool) - The pool given back, and every command buffer allocated from it.
+- [DestroyDescriptorPool](#destroydescriptorpool) - The descriptor pool given back, and every set allocated from it.
+- [DestroyDescriptorSetLayout](#destroydescriptorsetlayout) - The descriptor set layout given back; the sets allocated with it stay.
+- [DestroyDevice](#destroydevice) - The device given back, and its queue's task ended.
+- [DestroyFence](#destroyfence) - The fence given back.
+- [DestroyFramebuffer](#destroyframebuffer) - The framebuffer given back.
+- [DestroyImage](#destroyimage) - The image given back.
+- [DestroyImageView](#destroyimageview) - The view given back.
+- [DestroyInstance](#destroyinstance) - The instance given back.
+- [DestroyPipeline](#destroypipeline) - The pipeline given back: no submission still drawing with it.
+- [DestroyPipelineLayout](#destroypipelinelayout) - The pipeline layout given back.
+- [DestroyRenderPass](#destroyrenderpass) - The render pass given back.
+- [DestroySemaphore](#destroysemaphore) - The semaphore given back.
+- [DestroyShaderModule](#destroyshadermodule) - The shader module given back; the pipelines made from it stay.
+- [DestroySurface](#destroysurface) - The surface given back: every swapchain made on it destroyed first.
+- [DestroySwapchain](#destroyswapchain) - The swapchain given back, and its images.
+- [DeviceWaitIdle](#devicewaitidle) - Wait until every queue of the device has done all it was given.
+- [EndCommandBuffer](#endcommandbuffer) - The command buffer's recording ended: it can be submitted.
+- [EnumeratePhysicalDevices](#enumeratephysicaldevices) - The instance's physical devices.
+- [FreeCommandBuffers](#freecommandbuffers) - Command buffers given back to the pool they came from.
+- [FreeDescriptorSets](#freedescriptorsets) - `count` descriptor sets given back to the pool they came from.
+- [FreeMemory](#freememory) - The block given back.
+- [GetBufferMemoryRequirements](#getbuffermemoryrequirements) - What the buffer needs of the memory it is bound into.
+- [GetDeviceQueue](#getdevicequeue) - A queue the device was made with.
+- [GetFenceStatus](#getfencestatus) - Whether a fence is signalled, without waiting.
+- [GetImageMemoryRequirements](#getimagememoryrequirements) - What the image needs of the memory it is bound into.
+- [GetImageSubresourceLayout](#getimagesubresourcelayout) - Where a level of an image lies in its memory, and how its rows do.
+- [GetPhysicalDeviceFormatProperties](#getphysicaldeviceformatproperties) - What the device does with a format, in each tiling and in a buffer.
+- [GetPhysicalDeviceMemoryProperties](#getphysicaldevicememoryproperties) - The physical device's memory types and heaps.
+- [GetPhysicalDeviceProperties](#getphysicaldeviceproperties) - What a physical device is, and the most it does.
+- [GetPhysicalDeviceQueueFamilyProperties](#getphysicaldevicequeuefamilyproperties) - The physical device's queue families.
+- [GetPhysicalDeviceSurfaceCapabilities](#getphysicaldevicesurfacecapabilities) - What a swapchain on the surface can be, into `capabilities`.
+- [GetPhysicalDeviceSurfaceFormats](#getphysicaldevicesurfaceformats) - The formats a swapchain on the surface can have into `formats`, at most `count.*` of them, and how many there are into `count`; null for `formats` counts alone.
+- [GetPhysicalDeviceSurfacePresentModes](#getphysicaldevicesurfacepresentmodes) - The present modes of the surface into `modes`, at most `count.*` of them, and how many there are into `count`; null for `modes` counts alone.
+- [GetPhysicalDeviceSurfaceSupport](#getphysicaldevicesurfacesupport) - Whether queue family `family` can present to the surface, into `supported`.
+- [GetSwapchainImages](#getswapchainimages) - The swapchain's images into `images`, at most `count.*` of them, and how many there are into `count`; null for `images` counts alone.
+- [MapMemory](#mapmemory) - The address of a block's memory, from an offset on.
+- [QueuePresent](#queuepresent) - Images handed to the queue to be shown, once the semaphores are signalled.
+- [QueueSubmit](#queuesubmit) - Batches of work for the queue, played in order by its task.
+- [QueueWaitIdle](#queuewaitidle) - Wait until the queue has done all it was given.
+- [ResetCommandBuffer](#resetcommandbuffer) - The command buffer back to where it started.
+- [ResetCommandPool](#resetcommandpool) - Every command buffer of the pool back to where it started.
+- [ResetDescriptorPool](#resetdescriptorpool) - Every set allocated from the pool freed at once.
+- [ResetFences](#resetfences) - Fences back to unsignalled.
+- [UnmapMemory](#unmapmemory) - The block's mapping ended.
+- [UpdateDescriptorSets](#updatedescriptorsets) - Descriptors written into sets, and copied from one set to another.
+- [WaitForFences](#waitforfences) - Wait until fences are signalled: all of them, or any.
+
+## AcquireNextImage
+
+An image of the swapchain to draw into, its number written to `index`.
+
+**SYNOPSIS**
+
+```zig
+fn AcquireNextImage(base: *FacetBase, device: *facet.Device, swapchain: *facet.Swapchain, timeout: u64, semaphore: ?*facet.Semaphore, fence: ?*facet.Fence, index: *u32) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -356.
+
+**INPUTS**
+
+- `device` - the device it was made with.
+- `swapchain` - the swapchain.
+- `timeout` - the nanoseconds to wait for one at most; WAIT_FOREVER_NS
+  waits as long as it takes, 0 not at all.
+- `semaphore`, `fence` - signalled when the image can be drawn into, or
+  null.
+- `index` - the image's number, as GetSwapchainImages lists them.
+
+**RESULT**
+
+`success`; `timeout`, or `not_ready` with a timeout of 0, when none
+came free in time, or none will - each held by the program, or shown
+with nothing presented after it; `error_out_of_date` when the surface's
+size or format has changed, or the swapchain has been handed on.
+
+**BEHAVIOR**
+
+An image is handed out when the display no longer reads it: the one
+shown comes free when the display has taken up the next presented. So
+the semaphore and the fence are signalled as the call returns. A
+swapchain of one image hands out the image shown, drawn while it is seen.
+
+**CONTEXT**
+
+- Waits: for an image to come free, at most `timeout`.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The image is the program's until it is presented.
+
+**NOTES**
+
+With two images, a frame is drawn into one while the other is shown,
+and the next acquire waits for the display to take up the frame
+presented: this is what holds a program to the display's rate.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`QueuePresent`, `GetSwapchainImages`
+
+**EXAMPLES**
+
+```zig
+var index: u32 = 0;
+switch (fb.AcquireNextImage(device, swapchain.?, facet.WAIT_FOREVER_NS, acquired.?, null, &index)) {
+    .success => {},
+    .error_out_of_date => return remake(),
+    else => return error.NoImage,
+}
+```
+
+## AllocateCommandBuffers
+
+Command buffers allocated from a pool.
+
+**SYNOPSIS**
+
+```zig
+fn AllocateCommandBuffers(base: *FacetBase, device: *facet.Device, info: *const facet.CommandBufferAllocateInfo, buffers: [*]?*facet.CommandBuffer) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -132.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - the pool, and how many: primary ones.
+- `buffers` - where they are written, `info.command_buffer_count` of
+  them; all null when it fails.
+
+**RESULT**
+
+`success`; `error_feature_not_present` for secondary command buffers;
+`error_out_of_host_memory`, none allocated.
+
+**BEHAVIOR**
+
+Each buffer starts with nothing recorded, ready for
+BeginCommandBuffer.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffers are the pool's, given back by FreeCommandBuffers or with it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FreeCommandBuffers`, `BeginCommandBuffer`
+
+**EXAMPLES**
+
+```zig
+var commands: [1]?*facet.CommandBuffer = undefined;
+if (fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.? }, &commands) != .success) return error.NoCommands;
+```
+
+## AllocateDescriptorSets
+
+A descriptor set for each layout `info` names, into `sets`.
+
+**SYNOPSIS**
+
+```zig
+fn AllocateDescriptorSets(base: *FacetBase, device: *facet.Device, info: *const facet.DescriptorSetAllocateInfo, sets: [*]?*facet.DescriptorSet) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -256.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - the pool, and a layout for each set.
+- `sets` - where the sets are written, one for each layout; all null
+  when it fails.
+
+**RESULT**
+
+`success`; `error_out_of_pool_memory` when the pool has given out its
+most; `error_out_of_host_memory`. Either way none is allocated.
+
+**BEHAVIOR**
+
+A set's descriptors start empty: a shader reads null for each until it
+is written (UpdateDescriptorSets).
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The sets are the pool's: they go with it, with ResetDescriptorPool or
+with FreeDescriptorSets.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UpdateDescriptorSets`, `CmdBindDescriptorSets`, `FreeDescriptorSets`
+
+**EXAMPLES**
+
+```zig
+var set: ?*facet.DescriptorSet = null;
+_ = fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, @ptrCast(&set));
+```
+
+## AllocateMemory
+
+A block of the device's memory, of one of its memory types.
+
+**SYNOPSIS**
+
+```zig
+fn AllocateMemory(base: *FacetBase, device: *facet.Device, info: *const facet.MemoryAllocateInfo, memory: *?*facet.DeviceMemory) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -56.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - how many bytes, and of which memory type.
+- `memory` - where the block is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_out_of_device_memory` when no region with the
+type's attributes has room, for no bytes, and for a type the device
+has not got; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The memory is exec's (AllocMem, with the attributes of the type's
+heap), aligned to a cache line and not cleared. Memory of the lazily
+allocated type takes nothing: it is for an attachment whose pixels
+stay in the tiles, and cannot be mapped.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: exec's memory list.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The block is the caller's, until FreeMemory. It is the calling task's
+memory as exec's tools show it, and not private: the queue's task
+reads and writes it.
+
+**NOTES**
+
+A few large blocks with many buffers and images bound into each cost
+less than a block for each.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FreeMemory`, `MapMemory`, `GetPhysicalDeviceMemoryProperties`
+
+**EXAMPLES**
+
+```zig
+var memory: ?*facet.DeviceMemory = null;
+const info = facet.MemoryAllocateInfo{ .allocation_size = 1 << 20, .memory_type_index = 0 };
+if (fb.AllocateMemory(device, &info, &memory) != .success) return error.NoMemory;
+defer fb.FreeMemory(device, memory);
+```
+
+## BeginCommandBuffer
+
+The command buffer's recording begun.
+
+**SYNOPSIS**
+
+```zig
+fn BeginCommandBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, info: *const facet.CommandBufferBeginInfo) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -140.
+
+**INPUTS**
+
+- `buffer` - a command buffer that is not pending.
+- `info` - how it is used: COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT for a
+  buffer submitted once.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+What it recorded before is gone, its memory kept for this recording.
+The Cmd calls that follow record into it until EndCommandBuffer.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffer stays its pool's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`EndCommandBuffer`, `ResetCommandBuffer`
+
+**EXAMPLES**
+
+```zig
+_ = fb.BeginCommandBuffer(commands, &.{ .flags = facet.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT });
+```
+
+## BindBufferMemory
+
+The buffer bound into a block of memory, at an offset.
+
+**SYNOPSIS**
+
+```zig
+fn BindBufferMemory(base: *FacetBase, device: *facet.Device, buffer: *facet.Buffer, memory: *facet.DeviceMemory, offset: u64) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -88.
+
+**INPUTS**
+
+- `device` - the device both are of.
+- `buffer` - a buffer not yet bound.
+- `memory` - the block.
+- `offset` - where in it the buffer starts.
+
+**RESULT**
+
+`success`; `error_out_of_device_memory` when the buffer does not fit
+there - past the block's end, the offset not aligned as
+GetBufferMemoryRequirements says, or a type the buffer may not be in -
+or it is bound already.
+
+**BEHAVIOR**
+
+The buffer's bytes are the block's from `offset` on, for as long as
+both last; what the program writes there through MapMemory is what the
+queue reads.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The block stays the caller's to free, after the buffer is no longer in
+use.
+
+**NOTES**
+
+Several buffers may be bound into one block side by side.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetBufferMemoryRequirements`, `AllocateMemory`
+
+**EXAMPLES**
+
+```zig
+if (fb.BindBufferMemory(device, vertices, memory, 0) != .success) return error.NoBind;
+```
+
+## BindImageMemory
+
+The image bound into a block of memory, at an offset.
+
+**SYNOPSIS**
+
+```zig
+fn BindImageMemory(base: *FacetBase, device: *facet.Device, image: *facet.Image, memory: *facet.DeviceMemory, offset: u64) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -104.
+
+**INPUTS**
+
+- `device` - the device both are of.
+- `image` - an image not yet bound.
+- `memory` - the block.
+- `offset` - where in it the image starts.
+
+**RESULT**
+
+`success`; `error_out_of_device_memory` when the image does not fit
+there - past the block's end, the offset not aligned as
+GetImageMemoryRequirements says, or a type the image may not be in -
+or it is bound already, as a swapchain's image always is.
+
+**BEHAVIOR**
+
+The image's texels are the block's from `offset` on, for as long as
+both last, undefined until something is copied or drawn into them.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The block stays the caller's to free, after the image is no longer in
+use.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetImageMemoryRequirements`, `AllocateMemory`, `CreateImageView`
+
+**EXAMPLES**
+
+```zig
+if (fb.BindImageMemory(device, picture, memory, 0) != .success) return error.NoBind;
+```
+
+## CmdBeginRenderPass
+
+Recorded: a render pass begun, drawing into a framebuffer.
+
+**SYNOPSIS**
+
+```zig
+fn CmdBeginRenderPass(base: *FacetBase, buffer: *facet.CommandBuffer, info: *const facet.RenderPassBeginInfo, contents: facet.SubpassContents) void
+```
+
+**SINCE**
+
+1.0. LVO -276.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `info` - the render pass, the framebuffer, the rectangle drawn in, and
+  the clear values: one for each attachment, in their order, up to the
+  last that is cleared.
+- `contents` - `inline`: the draws are recorded in this buffer.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, the rasterizer's frame begins over the render area of the
+framebuffer's colour attachment, cut to the framebuffer: cleared to the
+colour attachment's clear value where its load op is CLEAR, else kept,
+and with the depth cleared to the depth attachment's - 1.0 where it has
+none - as each tile starts. The draws until CmdEndRenderPass are
+gathered; the tiles are drawn and stored when it ends. A pass begun in
+another ends it first.
+
+A pass whose framebuffer's colour image is not bound draws nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The clear values are copied as the command is recorded. The render
+pass, the framebuffer and its views have to last until the work is
+done.
+
+**NOTES**
+
+Draws are recorded between CmdBeginRenderPass and CmdEndRenderPass; a
+draw recorded outside a pass draws nothing.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdEndRenderPass`, `CreateRenderPass`, `CreateFramebuffer`
+
+**EXAMPLES**
+
+```zig
+const clear = facet.ClearValue{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } };
+fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame.?, .render_area = .{ .extent = .{ .width = 800, .height = 600 } }, .clear_value_count = 1, .clear_values = @ptrCast(&clear) }, .@"inline");
+```
+
+## CmdBindDescriptorSets
+
+Recorded: descriptor sets bound, from set `first_set` on.
+
+**SYNOPSIS**
+
+```zig
+fn CmdBindDescriptorSets(base: *FacetBase, buffer: *facet.CommandBuffer, bind_point: facet.PipelineBindPoint, layout: *facet.PipelineLayout, first_set: u32, count: u32, sets: [*]const *facet.DescriptorSet, dynamic_offset_count: u32, dynamic_offsets: ?[*]const u32) void
+```
+
+**SINCE**
+
+1.0. LVO -296.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `bind_point` - `graphics`; nothing is recorded for another.
+- `layout` - the pipeline layout the sets are bound for.
+- `first_set`, `count`, `sets` - the sets, from set `first_set` on.
+- `dynamic_offset_count`, `dynamic_offsets` - none: facet.library has no
+  dynamic descriptors.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it read the sets as `Resources.sets`, as they hold them
+when the draws run. Sets past the fourth are not bound.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The sets have to last until the work is done.
+
+**NOTES**
+
+Every pipeline layout reads set `n` the same way, so a set stays bound
+across pipelines.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateDescriptorSets`, `UpdateDescriptorSets`, `CmdDraw`
+
+**EXAMPLES**
+
+```zig
+fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&set), 0, null);
+```
+
+## CmdBindIndexBuffer
+
+Recorded: the index buffer CmdDrawIndexed reads.
+
+**SYNOPSIS**
+
+```zig
+fn CmdBindIndexBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, index_buffer: *facet.Buffer, offset: u64, index_type: facet.IndexType) void
+```
+
+**SINCE**
+
+1.0. LVO -292.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `index_buffer` - the buffer.
+- `offset` - where the indices start in it.
+- `index_type` - `uint16` or `uint32`.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+An indexed draw reads its indices from here; one past the buffer's end
+names no vertex, and leaves its triangle out.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffer has to last until the work is done.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdDrawIndexed`, `CmdBindVertexBuffers`
+
+**EXAMPLES**
+
+```zig
+fb.CmdBindIndexBuffer(commands, indices.?, 0, .uint16);
+```
+
+## CmdBindPipeline
+
+Recorded: the pipeline the draws after it draw with.
+
+**SYNOPSIS**
+
+```zig
+fn CmdBindPipeline(base: *FacetBase, buffer: *facet.CommandBuffer, bind_point: facet.PipelineBindPoint, pipeline: *facet.Pipeline) void
+```
+
+**SINCE**
+
+1.0. LVO -284.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `bind_point` - `graphics`; nothing is recorded for another.
+- `pipeline` - a graphics pipeline.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The pipeline stays bound until another is, or the command buffer ends.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pipeline has to last until the work is done.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateGraphicsPipelines`, `CmdDraw`
+
+**EXAMPLES**
+
+```zig
+fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+```
+
+## CmdBindVertexBuffers
+
+Recorded: vertex buffers bound, from binding `first_binding` on.
+
+**SYNOPSIS**
+
+```zig
+fn CmdBindVertexBuffers(base: *FacetBase, buffer: *facet.CommandBuffer, first_binding: u32, count: u32, buffers: [*]const *facet.Buffer, offsets: [*]const u64) void
+```
+
+**SINCE**
+
+1.0. LVO -288.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `first_binding` - the first binding bound.
+- `count`, `buffers`, `offsets` - a buffer for each binding from it, and
+  where its vertices start in it.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+A draw reads each attribute from its binding's buffer: a vertex's from
+its offset, plus the binding's stride times the vertex, plus the
+attribute's own offset. A value past the buffer's end is (0, 0, 0, 1).
+Bindings past the fourth are not bound.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The arrays are copied as the command is recorded. The buffers have to
+last until the work is done.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdDraw`, `CmdBindIndexBuffer`
+
+**EXAMPLES**
+
+```zig
+const offset: u64 = 0;
+fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertices), @ptrCast(&offset));
+```
+
+## CmdCopyBuffer
+
+Recorded: bytes copied from one buffer to another.
+
+**SYNOPSIS**
+
+```zig
+fn CmdCopyBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferCopy) void
+```
+
+**SINCE**
+
+1.0. LVO -160.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `source` - the buffer copied from.
+- `destination` - the buffer copied into.
+- `region_count`, `regions` - where in each, and how many bytes.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, a region that lies past the end of either buffer is left out.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The regions are copied as the command is recorded. The buffers have to
+last until the work is done.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdCopyBufferToImage`
+
+**EXAMPLES**
+
+```zig
+const region = facet.BufferCopy{ .size = bytes };
+fb.CmdCopyBuffer(commands, staging.?, vertices.?, 1, @ptrCast(&region));
+```
+
+## CmdCopyBufferToImage
+
+Recorded: rectangles of texels copied from a buffer into an image.
+
+**SYNOPSIS**
+
+```zig
+fn CmdCopyBufferToImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, image: *facet.Image, layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.BufferImageCopy) void
+```
+
+**SINCE**
+
+1.0. LVO -156.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `source` - the buffer the texels are in, in rows, in the image's
+  format.
+- `image` - the image they go into: a texture, or rows.
+- `layout` - the image's layout: TRANSFER_DST_OPTIMAL or GENERAL.
+- `region_count`, `regions` - the rectangles: where each is in the
+  buffer, and which level of the image and where in it.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, each texel goes where the image keeps it: in a texture,
+converted to its layout - into blocks, an 8888 texel spread, an R8G8B8A8
+one put in the order the rasterizer keeps colours in - and in rows,
+copied as it is. What lies outside the level, or past the end of the
+buffer, is left out. A depth attachment takes nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The regions are copied as the command is recorded. The buffer and the
+image have to last until the work is done.
+
+**NOTES**
+
+Each level of a texture is a copy of its own: the library makes no levels.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdPipelineBarrier`, `CreateImage`
+
+**EXAMPLES**
+
+```zig
+const region = facet.BufferImageCopy{ .image_extent = .{ .width = 256, .height = 256 } };
+fb.CmdCopyBufferToImage(commands, staging.?, picture.?, .transfer_dst_optimal, 1, @ptrCast(&region));
+```
+
+## CmdDraw
+
+Recorded: vertices drawn, in the order they are in the vertex buffers.
+
+**SYNOPSIS**
+
+```zig
+fn CmdDraw(base: *FacetBase, buffer: *facet.CommandBuffer, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) void
+```
+
+**SINCE**
+
+1.0. LVO -312.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, inside a render pass.
+- `vertex_count` - how many vertices.
+- `instance_count` - how many times they are drawn.
+- `first_vertex` - the first: the vertices are it and those after it.
+- `first_instance` - the first instance's number.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played inside a render pass, the vertices the draw names - from the
+lowest to the highest - are read from the vertex buffers and given to
+the pipeline's vertex function, in one batch for each instance; the
+triangles are put together from them as the pipeline's topology says,
+clipped, culled and set up, and gathered on the tiles they touch. The
+fragment function colours them as the pass ends. A draw outside a render
+pass, or without a pipeline bound, draws nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+The vertex function is given each vertex's number and the instance's,
+as Vulkan's vertex and instance indices.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdDrawIndexed`, `CmdBindPipeline`, `CmdBindVertexBuffers`
+
+**EXAMPLES**
+
+```zig
+fb.CmdDraw(commands, 36, 1, 0, 0);
+```
+
+## CmdDrawIndexed
+
+Recorded: vertices drawn in the order the index buffer gives them.
+
+**SYNOPSIS**
+
+```zig
+fn CmdDrawIndexed(base: *FacetBase, buffer: *facet.CommandBuffer, index_count: u32, instance_count: u32, first_index: u32, vertex_offset: i32, first_instance: u32) void
+```
+
+**SINCE**
+
+1.0. LVO -316.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, inside a render pass.
+- `index_count` - how many indices.
+- `instance_count` - how many times they are drawn.
+- `first_index` - the first index read from the index buffer.
+- `vertex_offset` - added to each index for its vertex.
+- `first_instance` - the first instance's number.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played inside a render pass, the vertices the draw names - from the
+lowest to the highest - are read from the vertex buffers and given to
+the pipeline's vertex function, in one batch for each instance; the
+triangles are put together from them as the pipeline's topology says,
+clipped, culled and set up, and gathered on the tiles they touch. The
+fragment function colours them as the pass ends. A draw outside a render
+pass, or without a pipeline bound, draws nothing.
+
+An index past the index buffer's end, or naming a vertex below 0, leaves
+its triangle out.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+A shared vertex is worked once for each instance however many triangles
+name it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdDraw`, `CmdBindIndexBuffer`, `CmdBindPipeline`
+
+**EXAMPLES**
+
+```zig
+fb.CmdDrawIndexed(commands, 36, 1, 0, 0, 0);
+```
+
+## CmdEndRenderPass
+
+Recorded: the render pass ended, and what it drew stored.
+
+**SYNOPSIS**
+
+```zig
+fn CmdEndRenderPass(base: *FacetBase, buffer: *facet.CommandBuffer) void
+```
+
+**SINCE**
+
+1.0. LVO -280.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, inside a render pass.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, the tiles the draws touched are drawn - shared out between the
+cores - and stored into the colour attachment; with a CLEAR load op the
+whole render area is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+This is where the work of a frame is done: the draws only gather it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdBeginRenderPass`
+
+**EXAMPLES**
+
+```zig
+fb.CmdEndRenderPass(commands);
+```
+
+## CmdPipelineBarrier
+
+Recorded: a barrier between the work before it and the work after.
+
+**SYNOPSIS**
+
+```zig
+fn CmdPipelineBarrier(base: *FacetBase, buffer: *facet.CommandBuffer, src_stage_mask: u32, dst_stage_mask: u32, dependency_flags: u32, memory_barrier_count: u32, memory_barriers: ?[*]const facet.MemoryBarrier, buffer_barrier_count: u32, buffer_barriers: ?[*]const facet.BufferMemoryBarrier, image_barrier_count: u32, image_barriers: ?[*]const facet.ImageMemoryBarrier) void
+```
+
+**SINCE**
+
+1.0. LVO -152.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `src_stage_mask`, `dst_stage_mask` - the stages before and after
+  (PIPELINE_STAGE_*).
+- `dependency_flags` - 0.
+- `memory_barrier_count`, `memory_barriers` - what memory is written
+  before and read after.
+- `buffer_barrier_count`, `buffer_barriers` - the same for buffers.
+- `image_barrier_count`, `image_barriers` - the same for images, and
+  the layouts they go from and to.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+A queue plays its commands one after the other, each finished before
+the next starts, and a layout changes nothing in memory: the barrier
+is kept in its place in the recording, and has nothing to wait for
+when it is played. A program written for any device records it all
+the same.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The arrays are the caller's, read during the call.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdCopyBufferToImage`, `QueueSubmit`
+
+**EXAMPLES**
+
+```zig
+const barrier = facet.ImageMemoryBarrier{
+    .dst_access_mask = facet.ACCESS_TRANSFER_WRITE,
+    .old_layout = .undefined,
+    .new_layout = .transfer_dst_optimal,
+    .image = picture.?,
+};
+fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_TOP_OF_PIPE, facet.PIPELINE_STAGE_TRANSFER, 0, 0, null, 0, null, 1, @ptrCast(&barrier));
+```
+
+## CmdPushConstants
+
+Recorded: bytes of push constants set.
+
+**SYNOPSIS**
+
+```zig
+fn CmdPushConstants(base: *FacetBase, buffer: *facet.CommandBuffer, layout: *facet.PipelineLayout, stage_flags: u32, offset: u32, size: u32, values: *const anyopaque) void
+```
+
+**SINCE**
+
+1.0. LVO -300.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `layout` - the pipeline layout they are set for.
+- `stage_flags` - the stages that read them.
+- `offset`, `size` - which bytes, inside the first 128.
+- `values` - `size` bytes.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it read the push constants as `Resources.push`, every
+stage the same bytes. Bytes not set are 0 as each command buffer
+starts. A range past byte 128 is not recorded.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The bytes are copied as the command is recorded.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreatePipelineLayout`, `CmdDraw`
+
+**EXAMPLES**
+
+```zig
+fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_VERTEX, 0, @sizeOf(Matrix), &transform);
+```
+
+## CmdSetScissor
+
+Recorded: the scissor, for a pipeline that leaves it to commands.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetScissor(base: *FacetBase, buffer: *facet.CommandBuffer, first_scissor: u32, count: u32, scissors: [*]const facet.Rect2D) void
+```
+
+**SINCE**
+
+1.0. LVO -308.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `first_scissor`, `count`, `scissors` - scissor 0, the one there is,
+  and any after it, which are not looked at.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it with a pipeline whose scissor is dynamic draw only
+inside it, and inside the render area.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The scissor is copied as the command is recorded.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdSetViewport`, `CreateGraphicsPipelines`
+
+**EXAMPLES**
+
+```zig
+fb.CmdSetScissor(commands, 0, 1, @ptrCast(&facet.Rect2D{ .extent = .{ .width = 800, .height = 600 } }));
+```
+
+## CmdSetViewport
+
+Recorded: the viewport, for a pipeline that leaves it to commands.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetViewport(base: *FacetBase, buffer: *facet.CommandBuffer, first_viewport: u32, count: u32, viewports: [*]const facet.Viewport) void
+```
+
+**SINCE**
+
+1.0. LVO -304.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `first_viewport`, `count`, `viewports` - viewport 0, the one there is,
+  and any after it, which are not looked at.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it with a pipeline whose viewport is dynamic draw
+through it; a pipeline with a viewport of its own draws through that.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The viewport is copied as the command is recorded.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdSetScissor`, `CreateGraphicsPipelines`
+
+**EXAMPLES**
+
+```zig
+fb.CmdSetViewport(commands, 0, 1, @ptrCast(&facet.Viewport{ .width = 800, .height = 600 }));
+```
+
+## CreateBuffer
+
+A buffer of so many bytes, for what its usage says.
+
+**SYNOPSIS**
+
+```zig
+fn CreateBuffer(base: *FacetBase, device: *facet.Device, info: *const facet.BufferCreateInfo, buffer: *?*facet.Buffer) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -76.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - its size, and what it is for (BUFFER_USAGE_*).
+- `buffer` - where the buffer is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_out_of_device_memory` for a size of nothing;
+`error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The buffer has no memory until BindBufferMemory binds it into some;
+GetBufferMemoryRequirements says what it needs. The usage is what the
+program says it does with it, and is not checked.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffer is the caller's, until DestroyBuffer; the memory it is
+bound into stays the caller's to free.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyBuffer`, `GetBufferMemoryRequirements`, `BindBufferMemory`
+
+**EXAMPLES**
+
+```zig
+var vertices: ?*facet.Buffer = null;
+const info = facet.BufferCreateInfo{ .size = @sizeOf(@TypeOf(cube)), .usage = facet.BUFFER_USAGE_VERTEX_BUFFER };
+if (fb.CreateBuffer(device, &info, &vertices) != .success) return error.NoBuffer;
+```
+
+## CreateCommandPool
+
+A pool the device's command buffers are allocated from.
+
+**SYNOPSIS**
+
+```zig
+fn CreateCommandPool(base: *FacetBase, device: *facet.Device, info: *const facet.CommandPoolCreateInfo, pool: *?*facet.CommandPool) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -120.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - its queue family, 0, and its flags
+  (COMMAND_POOL_CREATE_*).
+- `pool` - where the pool is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_initialization_failed` for a queue family the device
+has not got; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The pool keeps its command buffers: DestroyCommandPool frees all of
+them, ResetCommandPool resets all of them. Each buffer may be reset on
+its own whatever the flags say.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool is the caller's, until DestroyCommandPool.
+
+**NOTES**
+
+A pool and its buffers are used by one task at a time: recording into
+two buffers of one pool from two tasks at once is the program's to
+keep apart.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyCommandPool`, `AllocateCommandBuffers`
+
+**EXAMPLES**
+
+```zig
+var pool: ?*facet.CommandPool = null;
+if (fb.CreateCommandPool(device, &.{ .flags = facet.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER }, &pool) != .success) return error.NoPool;
+```
+
+## CreateDescriptorPool
+
+A descriptor pool: the most sets it gives out at once.
+
+**SYNOPSIS**
+
+```zig
+fn CreateDescriptorPool(base: *FacetBase, device: *facet.Device, info: *const facet.DescriptorPoolCreateInfo, pool: *?*facet.DescriptorPool) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -244.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - the most sets, the descriptors of each kind, and whether its
+  sets may be freed one by one.
+- `pool` - where the pool is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_initialization_failed` for a pool of no sets;
+`error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The pool counts the sets it has given out against `max_sets`. The
+descriptors of each kind are not counted: a set takes what its layout
+needs, from the caller's memory, as it is allocated.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool is the caller's, until DestroyDescriptorPool, and the sets it
+gives out are the pool's.
+
+**NOTES**
+
+Sets may be freed one by one whether or not the pool was made with
+DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateDescriptorSets`, `ResetDescriptorPool`, `DestroyDescriptorPool`
+
+**EXAMPLES**
+
+```zig
+const size = facet.DescriptorPoolSize{ .type = .sampled_image, .descriptor_count = 4 };
+var pool: ?*facet.DescriptorPool = null;
+_ = fb.CreateDescriptorPool(device, &.{ .max_sets = 4, .pool_size_count = 1, .pool_sizes = @ptrCast(&size) }, &pool);
+```
+
+## CreateDescriptorSetLayout
+
+A descriptor set layout: a set's bindings, each of a kind, with its descriptors.
+
+**SYNOPSIS**
+
+```zig
+fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: *const facet.DescriptorSetLayoutCreateInfo, layout: *?*facet.DescriptorSetLayout) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -228.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - the bindings, in any order.
+- `layout` - where the layout is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_feature_not_present` for a kind of descriptor
+facet.library does not have, a binding numbered past 255, or more than
+65535 descriptors; `error_initialization_failed` for a binding given
+twice; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The kinds are sampled_image, uniform_buffer and storage_buffer. A
+binding not given has no descriptors, and neither has one given with a
+count of 0. A binding's descriptors are an array, read by a shader as
+element 0 on (shader.Resources).
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The layout is the caller's, until DestroyDescriptorSetLayout. The
+bindings are read during the call alone.
+
+**NOTES**
+
+There are no samplers: a fragment function samples as it was compiled
+to (sdk.facet.shader.textured), so a sampled image is all a set holds
+of a texture. Stage flags are not looked at: every stage reads every
+binding.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreatePipelineLayout`, `AllocateDescriptorSets`, `UpdateDescriptorSets`
+
+**EXAMPLES**
+
+```zig
+const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+var set_layout: ?*facet.DescriptorSetLayout = null;
+_ = fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout);
+```
+
+## CreateDevice
+
+A device of the program's own, with its queue.
+
+**SYNOPSIS**
+
+```zig
+fn CreateDevice(base: *FacetBase, physical: *facet.PhysicalDevice, info: *const facet.DeviceCreateInfo, device: *?*facet.Device) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -44.
+
+**INPUTS**
+
+- `physical` - the physical device it is made on.
+- `info` - its queues: none, or one of family 0.
+- `device` - where the device is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_initialization_failed` for queues the family has
+not got, and when the queue's task cannot be made;
+`error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The device's queue plays its command buffers on a task of its own,
+at the priority the queue was given: 0.5 the caller's own, 0.0 ten
+below it, 1.0 ten above.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The device is the caller's, until DestroyDevice; it has to go before
+the instance it was made from.
+
+**NOTES**
+
+A device has no features to switch on: what it does, it does.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyDevice`, `GetDeviceQueue`, `GetPhysicalDeviceQueueFamilyProperties`
+
+**EXAMPLES**
+
+```zig
+const queue_info = facet.DeviceQueueCreateInfo{ .queue_family_index = 0 };
+var device: ?*facet.Device = null;
+if (fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) }, &device) != .success) return error.NoDevice;
+defer fb.DestroyDevice(device);
+```
+
+## CreateFence
+
+A fence: signalled by a queue when the submission it came with is done.
+
+**SYNOPSIS**
+
+```zig
+fn CreateFence(base: *FacetBase, device: *facet.Device, info: *const facet.FenceCreateInfo, fence: *?*facet.Fence) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -176.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - FENCE_CREATE_SIGNALED for one that starts signalled.
+- `fence` - where the fence is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+A fence is an exec waitable (exec.Waitable): signalled, it stays so
+until ResetFences.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The fence is the caller's, until DestroyFence.
+
+**NOTES**
+
+A fence made signalled lets a frame loop wait for the frame before
+from its very first frame on.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`WaitForFences`, `ResetFences`, `QueueSubmit`
+
+**EXAMPLES**
+
+```zig
+var frame_done: ?*facet.Fence = null;
+if (fb.CreateFence(device, &.{ .flags = facet.FENCE_CREATE_SIGNALED }, &frame_done) != .success) return error.NoFence;
+```
+
+## CreateFramebuffer
+
+A framebuffer: an image view for each of a render pass's attachments.
+
+**SYNOPSIS**
+
+```zig
+fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const facet.FramebufferCreateInfo, framebuffer: *?*facet.Framebuffer) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -212.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - the render pass, a view for each of its attachments in their
+  order, and the size drawn in.
+- `framebuffer` - where the framebuffer is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_initialization_failed` for views that do not fit the
+pass - another number of them, a colour view of an image not made for a
+colour attachment or in another format, a depth view of an image not
+made for depth, an image smaller than the size, more than one layer;
+`error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The colour attachment's view is of its image's first level. The size
+may be smaller than the images: the framebuffer is their top left.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The framebuffer is the caller's, until DestroyFramebuffer. The views
+have to last as long as it does, and their images.
+
+**NOTES**
+
+The images have to be bound into memory before a pass draws into them.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateRenderPass`, `CmdBeginRenderPass`, `DestroyFramebuffer`
+
+**EXAMPLES**
+
+```zig
+var frame: ?*facet.Framebuffer = null;
+_ = fb.CreateFramebuffer(device, &.{ .render_pass = pass.?, .attachment_count = 1, .attachments = @ptrCast(&view), .width = 800, .height = 600 }, &frame);
+```
+
+## CreateGraphicsPipelines
+
+`count` graphics pipelines, one for each of `infos`, into `pipelines`.
+
+**SYNOPSIS**
+
+```zig
+fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache, count: u32, infos: [*]const facet.GraphicsPipelineCreateInfo, pipelines: [*]?*facet.Pipeline) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -268.
+
+**INPUTS**
+
+- `device` - the device.
+- `cache` - null: facet.library has no pipeline caches.
+- `count`, `infos` - each pipeline's stages and state.
+- `pipelines` - where each is written; null for one that could not be
+  made.
+
+**RESULT**
+
+`success`; else what the first that could not be made came to:
+`error_invalid_shader_nv` for stages that are not one vertex and one
+fragment function of the same varyings; `error_feature_not_present`
+for state facet.library does not draw (see BEHAVIOR);
+`error_format_not_supported` for an attribute in a format it does not
+read; `error_initialization_failed` for state that does not hold
+together - an attribute of a binding not given, no viewport where it is
+not set by commands; `error_out_of_host_memory`. Those made are made
+either way.
+
+**BEHAVIOR**
+
+A pipeline takes its vertex and fragment functions from the modules by
+stage and name, and settles its state as it is made: the rasterizer's
+code for its depth test and blend is chosen then, not as it draws.
+
+What it draws: triangle lists, strips and fans, a restart index ending a
+strip or a fan; filled, one sample a pixel, culled by facing as asked; a
+depth test of any compare, written or not, without stencil, bounds,
+bias or clamp; the colour written whole, replacing what is there, or
+laid over it by its alpha - SRC_ALPHA and ONE_MINUS_SRC_ALPHA, ADD - and
+no logic op; one viewport and one scissor, given here or set by
+CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
+the others are taken and do nothing). A pipeline with the rasterizer
+discarding, or culling front and back, draws nothing.
+
+Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
+as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
+each, up to four bindings and eight locations.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Each pipeline is the caller's, until DestroyPipeline. The modules, the
+layout and the render pass may go before it; the functions it took have
+to last as long as it does, as the program's code does.
+
+**NOTES**
+
+A depth test on a render pass without depth is no test, as Vulkan has
+it.
+
+**BUGS**
+
+Blending lays the alpha over the attachment's as it does the colour,
+whatever the alpha's blend factors say.
+
+**SEE ALSO**
+
+`CreateShaderModule`, `CreatePipelineLayout`, `CreateRenderPass`, `CmdBindPipeline`, `DestroyPipeline`
+
+**EXAMPLES**
+
+```zig
+const stages = [2]facet.PipelineShaderStageCreateInfo{
+    .{ .stage = facet.SHADER_STAGE_VERTEX, .module = module.? },
+    .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = module.? },
+};
+const raster_state = facet.PipelineRasterizationStateCreateInfo{ .cull_mode = facet.CULL_MODE_BACK, .front_face = .clockwise };
+const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true };
+const viewport_state = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
+var pipeline: ?*facet.Pipeline = null;
+_ = fb.CreateGraphicsPipelines(device, null, 1, @ptrCast(&facet.GraphicsPipelineCreateInfo{
+    .stage_count = 2,
+    .stages = &stages,
+    .viewport_state = &viewport_state,
+    .rasterization_state = &raster_state,
+    .depth_stencil_state = &depth,
+    .layout = layout.?,
+    .render_pass = pass.?,
+}), @ptrCast(&pipeline));
+```
+
+## CreateImage
+
+An image: a texture, an attachment, or what a copy moves.
+
+**SYNOPSIS**
+
+```zig
+fn CreateImage(base: *FacetBase, device: *facet.Device, info: *const facet.ImageCreateInfo, image: *?*facet.Image) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -92.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - its format, size, levels, tiling and usage.
+- `image` - where the image is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_format_not_supported` for an image facet.library
+does not make; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+What it is for decides how it lies in its memory:
+- SAMPLED, in optimal tiling, of B8G8R8A8, R8G8B8A8 or R5G6B5, its
+  sides powers of two, with up to as many levels as halving them
+  gives: a texture, in blocks of 4 x 4 texels, an 8888 texel kept in
+  64 bits (sdk.facet.texture). Its texels come in by
+  CmdCopyBufferToImage.
+- COLOR_ATTACHMENT, of B8G8R8A8 or R8G8B8A8, one level: rows, each on
+  a cache line, in either tiling.
+- D16_UNORM with DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth
+  that lives in the tiles alone, never stored, whose memory may be of
+  the lazily allocated type.
+- Anything else of a colour format, one level: rows.
+
+Images are two-dimensional, with one layer and one sample a pixel, up
+to 8192 wide and high. One both SAMPLED and COLOR_ATTACHMENT is not
+made: a texture and an attachment lie differently.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The image is the caller's, until DestroyImage.
+
+**NOTES**
+
+Layouts change nothing in facet.library's memory: `initial_layout` is
+taken as it is.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyImage`, `GetImageMemoryRequirements`, `BindImageMemory`, `GetPhysicalDeviceFormatProperties`
+
+**EXAMPLES**
+
+```zig
+var picture: ?*facet.Image = null;
+const info = facet.ImageCreateInfo{
+    .format = .b8g8r8a8_unorm,
+    .extent = .{ .width = 256, .height = 256 },
+    .mip_levels = 9,
+    .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST,
+};
+if (fb.CreateImage(device, &info, &picture) != .success) return error.NoImage;
+```
+
+## CreateImageView
+
+A view of an image: the levels of it a texture descriptor samples, or what a framebuffer draws into.
+
+**SYNOPSIS**
+
+```zig
+fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const facet.ImageViewCreateInfo, view: *?*facet.ImageView) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -112.
+
+**INPUTS**
+
+- `device` - the device the image was made on.
+- `info` - the image, bound already, its own format, and the levels
+  the view takes.
+- `view` - where the view is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_format_not_supported` for a view facet.library does
+not make - of another format than the image's, of another type than
+2D, with channels swizzled, of levels the image has not got, or of an
+image not yet bound into memory; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+A view of a texture samples its levels from `base_mip_level` on, as a
+texture of its own whose first level is that one. A view of an
+attachment is all of it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The view is the caller's, until DestroyImageView, which comes before
+the image's DestroyImage.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyImageView`, `CreateImage`, `CreateFramebuffer`
+
+**EXAMPLES**
+
+```zig
+var view: ?*facet.ImageView = null;
+const info = facet.ImageViewCreateInfo{ .image = picture.?, .format = .b8g8r8a8_unorm };
+if (fb.CreateImageView(device, &info, &view) != .success) return error.NoView;
+```
+
+## CreateInstance
+
+A program's hold on the library, through which it finds the devices.
+
+**SYNOPSIS**
+
+```zig
+fn CreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -20.
+
+**INPUTS**
+
+- `info` - what the program is, and the interface it was written for
+  (`api_version`).
+- `instance` - where the instance is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_initialization_failed` for an interface newer than
+the library's; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The instance's one physical device is described as it is made: the
+cores it draws on are counted, and its memory types made from the
+regions exec has (GetPhysicalDeviceMemoryProperties). A region added
+later is in the memory types of an instance made after it.
+
+While an instance lasts the library stays loaded, even after the
+program has closed it: its queues' tasks run the library's code.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: exec's memory list, for a moment.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The instance is the caller's, until DestroyInstance.
+
+**NOTES**
+
+A program has one instance, as a rule; it may have more, each with
+devices of its own.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyInstance`, `EnumeratePhysicalDevices`
+
+**EXAMPLES**
+
+```zig
+var instance: ?*facet.Instance = null;
+if (fb.CreateInstance(&.{ .application_name = "Cube" }, &instance) != .success) return error.NoInstance;
+defer fb.DestroyInstance(instance);
+```
+
+## CreatePipelineLayout
+
+A pipeline layout: the descriptor sets and the push constants a pipeline's shaders read.
+
+**SYNOPSIS**
+
+```zig
+fn CreatePipelineLayout(base: *FacetBase, device: *facet.Device, info: *const facet.PipelineLayoutCreateInfo, layout: *?*facet.PipelineLayout) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -236.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - a set layout for each set from 0, and the ranges of push
+  constants.
+- `layout` - where the layout is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_feature_not_present` for more than four sets, or
+push constants past 128 bytes; `error_initialization_failed` for a range
+not on 4 bytes; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+A shader reads set `n` as `Resources.sets[n]` and the push constants
+as `Resources.push`, from byte 0, whatever the stages.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The layout is the caller's, until DestroyPipelineLayout. The set
+layouts may go before it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateDescriptorSetLayout`, `CreateGraphicsPipelines`, `CmdBindDescriptorSets`, `CmdPushConstants`
+
+**EXAMPLES**
+
+```zig
+const push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_VERTEX, .size = 64 };
+var layout: ?*facet.PipelineLayout = null;
+_ = fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&push) }, &layout);
+```
+
+## CreateRenderPass
+
+A render pass: the attachments it draws into, what each starts with and what is kept of it.
+
+**SYNOPSIS**
+
+```zig
+fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const facet.RenderPassCreateInfo, render_pass: *?*facet.RenderPass) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -204.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - the attachments and the one subpass that draws into them.
+- `render_pass` - where the render pass is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_feature_not_present` for a pass facet.library does
+not draw (BEHAVIOR); `error_format_not_supported` for an attachment in
+a format it cannot draw into; `error_initialization_failed` for a
+subpass that names an attachment there is not; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The pass has one subpass, which draws into one colour attachment -
+b8g8r8a8_unorm or r8g8b8a8_unorm - and may test against a depth
+attachment, d16_unorm. No input, resolve or multisampled attachments.
+
+The colour attachment's load op CLEAR clears the render area; LOAD and
+DONT_CARE keep what the image holds. What is drawn is stored, whatever
+its store op. The depth attachment's load op is CLEAR or DONT_CARE -
+both clear it - and its store op DONT_CARE: the depth lives in the
+rasterizer's tiles alone and is never stored.
+
+Attachments the subpass does not name are left as they are. The
+dependencies are not looked at: a queue's commands are done one after
+the other.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The render pass is the caller's, until DestroyRenderPass. The arrays
+in `info` are read during the call alone.
+
+**NOTES**
+
+LOAD and DONT_CARE are the same: a tile nothing is drawn into is
+neither read nor written, so keeping costs nothing there, where clearing
+writes every tile.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateFramebuffer`, `CmdBeginRenderPass`, `DestroyRenderPass`
+
+**EXAMPLES**
+
+```zig
+const color = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .present_src };
+const color_ref = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color_ref) };
+var pass: ?*facet.RenderPass = null;
+_ = fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = @ptrCast(&color), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass);
+```
+
+## CreateScreenSurface
+
+A surface over a screen the program has opened, written to `surface`.
+
+**SYNOPSIS**
+
+```zig
+fn CreateScreenSurface(base: *FacetBase, instance: *facet.Instance, info: *const facet.ScreenSurfaceCreateInfo, surface: *?*facet.Surface) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -320.
+
+**INPUTS**
+
+- `instance` - the instance.
+- `info` - the screen, the whole of which the surface is.
+- `surface` - where the surface goes; null when none was made.
+
+**RESULT**
+
+`success`; `error_initialization_failed` without intuition.library, or
+without rtg.library 1.5 or newer; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+A swapchain made on the surface has the screen's buffers as its
+images: the first is the screen's own buffer, the one its bar and windows
+are drawn in, and the rest are made in the display's memory as
+AllocScreenBuffer makes them. Presenting an image is ChangeScreenBuffer:
+the display takes it up at the start of its next frame. The screen can be
+pulled down, put behind another and brought forward as before.
+
+intuition.library and rtg.library are opened for as long as the surface
+lasts.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The surface is the caller's, to give back with `DestroySurface` before
+the screen closes and before the instance goes. The screen stays the
+caller's.
+
+**NOTES**
+
+A screen that is not 32 bits a pixel has no format facet.library draws
+in: GetPhysicalDeviceSurfaceFormats lists none for it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroySurface`, `GetPhysicalDeviceSurfaceCapabilities`, `CreateSwapchain`
+
+**EXAMPLES**
+
+```zig
+var surface: ?*facet.Surface = null;
+if (fb.CreateScreenSurface(instance, &.{ .screen = screen }, &surface) != .success) return error.NoSurface;
+defer fb.DestroySurface(instance, surface);
+```
+
+## CreateSemaphore
+
+A semaphore: signalled by one submission, waited for by another.
+
+**SYNOPSIS**
+
+```zig
+fn CreateSemaphore(base: *FacetBase, device: *facet.Device, info: *const facet.SemaphoreCreateInfo, semaphore: *?*facet.Semaphore) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -196.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - 0 for its flags.
+- `semaphore` - where the semaphore is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+A semaphore is an exec waitable, unsignalled at first. A submission
+that waits for it takes the signal: each signal lets one go.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The semaphore is the caller's, until DestroySemaphore.
+
+**NOTES**
+
+What a swapchain's image becoming free signals, and a frame's drawing
+waits for before it starts.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroySemaphore`, `QueueSubmit`
+
+**EXAMPLES**
+
+```zig
+var drawn: ?*facet.Semaphore = null;
+if (fb.CreateSemaphore(device, &.{}, &drawn) != .success) return error.NoSemaphore;
+```
+
+## CreateShaderModule
+
+A shader module: the vertex and fragment functions a `shader.Code` names.
+
+**SYNOPSIS**
+
+```zig
+fn CreateShaderModule(base: *FacetBase, device: *facet.Device, info: *const facet.ShaderModuleCreateInfo, module: *?*facet.ShaderModule) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -220.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - `code`, a shader.Code, and its size.
+- `module` - where the module is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_invalid_shader_nv` for code that is not a
+shader.Code - SPIR-V among it - or an entry of a stage that is neither
+vertex nor fragment, or with more varyings than a vertex carries;
+`error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The entries are copied. The functions they name are the program's
+own, compiled into it: CreateGraphicsPipelines takes a pipeline's from
+them by stage and name.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The module is the caller's, until DestroyShaderModule. The code is
+read during the call alone; the functions, and the names, have to last
+as long as the module and the pipelines made from it - as the program's
+code does.
+
+**NOTES**
+
+A shader runs on every core at once and on the queue's task: see
+sdk.facet.shader for what it may do.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateGraphicsPipelines`, `DestroyShaderModule`
+
+**EXAMPLES**
+
+```zig
+const entries = [_]facet.shader.Entry{
+    facet.shader.vertex("main", &boxVertex, 2),
+    facet.shader.fragment("main", &boxFragment, 2),
+};
+const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+var module: ?*facet.ShaderModule = null;
+_ = fb.CreateShaderModule(device, &.{ .code = &code }, &module);
+```
+
+## CreateSwapchain
+
+A swapchain on a surface, written to `swapchain`.
+
+**SYNOPSIS**
+
+```zig
+fn CreateSwapchain(base: *FacetBase, device: *facet.Device, info: *const facet.SwapchainCreateInfo, swapchain: *?*facet.Swapchain) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -344.
+
+**INPUTS**
+
+- `device` - the device whose queue presents its images.
+- `info` - the surface, how many images at least, their format and size
+  - the surface's own, as GetPhysicalDeviceSurfaceFormats and
+  GetPhysicalDeviceSurfaceCapabilities give them - what they are used
+  for, the present mode, and the swapchain before it, if any.
+- `swapchain` - where the swapchain goes; null when none was made.
+
+**RESULT**
+
+`success`; `error_out_of_device_memory` when the display's memory has
+no room for that many pictures; `error_native_window_in_use` when the
+surface has a swapchain that is not `old_swapchain`;
+`error_initialization_failed` for a size that is not the surface's;
+`error_format_not_supported` for a format that is not its;
+`error_feature_not_present` for a use, a present mode or layers it does
+not have; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+`min_image_count` images are made, at least one and at most four. On a
+screen the first is the screen's own buffer, shown as the swapchain
+starts; the rest are new buffers, black, made as AllocScreenBuffer makes
+them. Each is an image of `rows`, bound already, its pixels the
+buffer's: what is drawn into it is handed on to the display tile by tile
+as the render pass ends.
+
+`old_swapchain` is handed on: it hands out no more images
+(AcquireNextImage answers `error_out_of_date`), and what it was given to
+present is still shown. It is destroyed with DestroySwapchain as before.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The swapchain is the caller's, to give back with `DestroySwapchain`
+before the surface goes. Its images are the swapchain's: they are not
+bound, and not destroyed, by the program.
+
+**NOTES**
+
+A display's memory holds a few pictures, and every screen open takes
+one: on a display with room for three - Workbench's, the program's screen
+and one more - two images is all there is. Make the new swapchain after
+destroying the old one where both would not fit.
+
+**BUGS**
+
+On a screen, a swapchain and the one it was handed on from share the
+screen's own buffer as their first image.
+
+**SEE ALSO**
+
+`DestroySwapchain`, `GetSwapchainImages`, `AcquireNextImage`, `QueuePresent`
+
+**EXAMPLES**
+
+```zig
+var swapchain: ?*facet.Swapchain = null;
+const result = fb.CreateSwapchain(device, &.{
+    .surface = surface.?,
+    .min_image_count = 2,
+    .image_format = format.format,
+    .image_extent = capabilities.current_extent,
+}, &swapchain);
+```
+
+## CreateWindowSurface
+
+A surface over the inside of a window the program has opened, written to `surface`.
+
+**SYNOPSIS**
+
+```zig
+fn CreateWindowSurface(base: *FacetBase, instance: *facet.Instance, info: *const facet.WindowSurfaceCreateInfo, surface: *?*facet.Surface) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -364.
+
+**INPUTS**
+
+- `instance` - the instance.
+- `info` - the window, whose inside - within its border - the surface is.
+- `surface` - where the surface goes; null when none was made.
+
+**RESULT**
+
+`success`; `error_initialization_failed` without intuition.library,
+graphics.library, layers.library or rtg.library;
+`error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+A swapchain made on the surface has pictures in memory as its images,
+the size of the window inside its border when the swapchain is made.
+Presenting one waits for the display's next frame and copies the picture
+into the window, through the window's layer, which is held meanwhile:
+what covers the window is left alone, and the board's engine does the
+copying. Copied as the frame starts, the picture is in place before the
+display reads that part of the screen, so the window never shows half of
+one picture and half of the next; a present is shown a frame at most
+after the one before. An image is free again as soon as it is copied, so
+a swapchain of one image is drawn, copied and drawn again, and one of two
+is drawn while the other waits for its frame.
+
+The window can be moved, put behind others and brought forward while
+the swapchain is in use: each picture lands where the window is then.
+Once it is made bigger or smaller, the swapchain is out of date:
+AcquireNextImage and QueuePresent answer `error_out_of_date`, and a new
+swapchain of the new size is made, the old one handed to it as
+`old_swapchain`. A picture presented after the window was made smaller
+and before that is cut to the window's inside.
+
+intuition.library, graphics.library, layers.library and rtg.library are
+opened for as long as the surface lasts.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The surface is the caller's, to give back with `DestroySurface` before
+the window closes and before the instance goes. The window stays the
+caller's: its IDCMP messages, its gadgets and its border too. What the
+program draws into the window's inside itself is drawn over by the next
+picture.
+
+**NOTES**
+
+A window on a screen that is not 32 bits a pixel has no format
+facet.library draws in: GetPhysicalDeviceSurfaceFormats lists none for
+it. A simple-refresh window with `WA_NoCareRefresh` keeps no copy of its
+covered parts, which the next picture draws anyway.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroySurface`, `CreateScreenSurface`, `CreateSwapchain`
+
+**EXAMPLES**
+
+```zig
+var surface: ?*facet.Surface = null;
+if (fb.CreateWindowSurface(instance, &.{ .window = window }, &surface) != .success) return error.NoSurface;
+defer fb.DestroySurface(instance, surface);
+```
+
+## DestroyBuffer
+
+The buffer given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyBuffer(base: *FacetBase, device: *facet.Device, buffer: ?*facet.Buffer) void
+```
+
+**SINCE**
+
+1.0. LVO -80.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `buffer` - the buffer, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No work the queue has not finished may use it: wait for its fence
+first. The memory it was bound into stays as it is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffer is gone; its memory is still the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateBuffer`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyBuffer(device, vertices);
+```
+
+## DestroyCommandPool
+
+The pool given back, and every command buffer allocated from it.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyCommandPool(base: *FacetBase, device: *facet.Device, pool: ?*facet.CommandPool) void
+```
+
+**SINCE**
+
+1.0. LVO -124.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `pool` - the pool, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No buffer of it may be pending: wait for the fences of the work it was
+submitted with first.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool and its command buffers are gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateCommandPool`, `FreeCommandBuffers`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyCommandPool(device, pool);
+```
+
+## DestroyDescriptorPool
+
+The descriptor pool given back, and every set allocated from it.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyDescriptorPool(base: *FacetBase, device: *facet.Device, pool: ?*facet.DescriptorPool) void
+```
+
+**SINCE**
+
+1.0. LVO -248.
+
+**INPUTS**
+
+- `device` - the device.
+- `pool` - a pool CreateDescriptorPool made, or null, which does
+  nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No command buffer still pending may have bound one of its sets.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool is gone, and its sets.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateDescriptorPool`, `ResetDescriptorPool`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyDescriptorPool(device, pool);
+```
+
+## DestroyDescriptorSetLayout
+
+The descriptor set layout given back; the sets allocated with it stay.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyDescriptorSetLayout(base: *FacetBase, device: *facet.Device, layout: ?*facet.DescriptorSetLayout) void
+```
+
+**SINCE**
+
+1.0. LVO -232.
+
+**INPUTS**
+
+- `device` - the device.
+- `layout` - a layout CreateDescriptorSetLayout made, or null, which
+  does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+A set keeps what it needs of its layout; so does a pipeline layout.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The layout is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateDescriptorSetLayout`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyDescriptorSetLayout(device, set_layout);
+```
+
+## DestroyDevice
+
+The device given back, and its queue's task ended.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyDevice(base: *FacetBase, device: ?*facet.Device) void
+```
+
+**SINCE**
+
+1.0. LVO -48.
+
+**INPUTS**
+
+- `device` - a device CreateDevice made, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Everything made from the device has to be destroyed or freed first,
+and its queue idle (DeviceWaitIdle). Memory not freed is left as it
+is, and said so on the debug output.
+
+**CONTEXT**
+
+- Waits: for the queue's task to end.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The device is gone, and its queue with it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateDevice`, `DestroyInstance`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyDevice(device);
+```
+
+## DestroyFence
+
+The fence given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyFence(base: *FacetBase, device: *facet.Device, fence: ?*facet.Fence) void
+```
+
+**SINCE**
+
+1.0. LVO -180.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `fence` - the fence, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No submission still to be done may signal it, and no task may be
+waiting on it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The fence is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateFence`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyFence(device, frame_done);
+```
+
+## DestroyFramebuffer
+
+The framebuffer given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyFramebuffer(base: *FacetBase, device: *facet.Device, framebuffer: ?*facet.Framebuffer) void
+```
+
+**SINCE**
+
+1.0. LVO -216.
+
+**INPUTS**
+
+- `device` - the device.
+- `framebuffer` - a framebuffer CreateFramebuffer made, or null, which
+  does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No command buffer still pending may draw into it. Its views stay.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The framebuffer is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateFramebuffer`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyFramebuffer(device, frame);
+```
+
+## DestroyImage
+
+The image given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyImage(base: *FacetBase, device: *facet.Device, image: ?*facet.Image) void
+```
+
+**SINCE**
+
+1.0. LVO -96.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `image` - the image, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No work the queue has not finished may use it, and its views go
+first. The memory it was bound into stays as it is. A swapchain's
+image is left alone: it goes with the swapchain.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The image is gone; its memory is still the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateImage`, `DestroyImageView`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyImage(device, picture);
+```
+
+## DestroyImageView
+
+The view given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyImageView(base: *FacetBase, device: *facet.Device, view: ?*facet.ImageView) void
+```
+
+**SINCE**
+
+1.0. LVO -116.
+
+**INPUTS**
+
+- `device` - the device its image was made on.
+- `view` - the view, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No work the queue has not finished may use it, nor a framebuffer or a
+descriptor set still in use. The image stays as it is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The view is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateImageView`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyImageView(device, view);
+```
+
+## DestroyInstance
+
+The instance given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyInstance(base: *FacetBase, instance: ?*facet.Instance) void
+```
+
+**SINCE**
+
+1.0. LVO -24.
+
+**INPUTS**
+
+- `instance` - an instance CreateInstance made, or null, which does
+  nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Every device and surface made from the instance has to be destroyed
+first. One that is not is left as it is, with the instance under it,
+and said so on the debug output: a device's queue's task may still be
+running.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The instance is gone; so are its physical devices.
+
+**NOTES**
+
+The library may go once its last instance has: an Expunge it refused
+while instances lasted is tried again when memory runs short.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateInstance`, `DestroyDevice`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyInstance(instance);
+```
+
+## DestroyPipeline
+
+The pipeline given back: no submission still drawing with it.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyPipeline(base: *FacetBase, device: *facet.Device, pipeline: ?*facet.Pipeline) void
+```
+
+**SINCE**
+
+1.0. LVO -272.
+
+**INPUTS**
+
+- `device` - the device.
+- `pipeline` - a pipeline CreateGraphicsPipelines made, or null, which
+  does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No command buffer still pending may have bound it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pipeline is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateGraphicsPipelines`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyPipeline(device, pipeline);
+```
+
+## DestroyPipelineLayout
+
+The pipeline layout given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyPipelineLayout(base: *FacetBase, device: *facet.Device, layout: ?*facet.PipelineLayout) void
+```
+
+**SINCE**
+
+1.0. LVO -240.
+
+**INPUTS**
+
+- `device` - the device.
+- `layout` - a layout CreatePipelineLayout made, or null, which does
+  nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The pipelines made with it stay.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The layout is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreatePipelineLayout`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyPipelineLayout(device, layout);
+```
+
+## DestroyRenderPass
+
+The render pass given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyRenderPass(base: *FacetBase, device: *facet.Device, render_pass: ?*facet.RenderPass) void
+```
+
+**SINCE**
+
+1.0. LVO -208.
+
+**INPUTS**
+
+- `device` - the device.
+- `render_pass` - a render pass CreateRenderPass made, or null, which does
+  nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No command buffer still pending may have recorded it. The framebuffers
+and pipelines made for it stay.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The render pass is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateRenderPass`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyRenderPass(device, pass);
+```
+
+## DestroySemaphore
+
+The semaphore given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroySemaphore(base: *FacetBase, device: *facet.Device, semaphore: ?*facet.Semaphore) void
+```
+
+**SINCE**
+
+1.0. LVO -200.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `semaphore` - the semaphore, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No submission still to be done may wait for it or signal it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The semaphore is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateSemaphore`
+
+**EXAMPLES**
+
+```zig
+fb.DestroySemaphore(device, drawn);
+```
+
+## DestroyShaderModule
+
+The shader module given back; the pipelines made from it stay.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyShaderModule(base: *FacetBase, device: *facet.Device, module: ?*facet.ShaderModule) void
+```
+
+**SINCE**
+
+1.0. LVO -224.
+
+**INPUTS**
+
+- `device` - the device.
+- `module` - a module CreateShaderModule made, or null, which does
+  nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+A pipeline keeps the functions it took from the module.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The module is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateShaderModule`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyShaderModule(device, module);
+```
+
+## DestroySurface
+
+The surface given back: every swapchain made on it destroyed first.
+
+**SYNOPSIS**
+
+```zig
+fn DestroySurface(base: *FacetBase, instance: *facet.Instance, surface: ?*facet.Surface) void
+```
+
+**SINCE**
+
+1.0. LVO -324.
+
+**INPUTS**
+
+- `instance` - the instance it was made from.
+- `surface` - the surface; null does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The libraries it opened are closed. A surface with a swapchain left is
+kept as it is, and said so on the debug output.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The screen or window it was over stays open: it is the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateScreenSurface`, `CreateWindowSurface`, `DestroySwapchain`
+
+**EXAMPLES**
+
+```zig
+fb.DestroySurface(instance, surface);
+```
+
+## DestroySwapchain
+
+The swapchain given back, and its images.
+
+**SYNOPSIS**
+
+```zig
+fn DestroySwapchain(base: *FacetBase, device: *facet.Device, swapchain: ?*facet.Swapchain) void
+```
+
+**SINCE**
+
+1.0. LVO -348.
+
+**INPUTS**
+
+- `device` - the device it was made with.
+- `swapchain` - the swapchain; null does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+What the device's queue still has to do is done first, the images it
+was given to present shown. On a screen the screen's own buffer is shown
+again, and the buffers made for the swapchain are freed.
+
+**CONTEXT**
+
+- Waits: for the queue's work, and for the display's next frame where
+  the screen's own buffer is shown again.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The framebuffers and views made of its images go first: the images go
+with it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateSwapchain`
+
+**EXAMPLES**
+
+```zig
+fb.DestroySwapchain(device, swapchain);
+```
+
+## DeviceWaitIdle
+
+Wait until every queue of the device has done all it was given.
+
+**SYNOPSIS**
+
+```zig
+fn DeviceWaitIdle(base: *FacetBase, device: *facet.Device) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -172.
+
+**INPUTS**
+
+- `device` - the device.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+QueueWaitIdle on its queue; at once for a device without one.
+
+**CONTEXT**
+
+- Waits: yes, on the queue's idle waitable.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+What a program does before it destroys what its work uses, and the device.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`QueueWaitIdle`, `DestroyDevice`
+
+**EXAMPLES**
+
+```zig
+_ = fb.DeviceWaitIdle(device);
+fb.DestroyDevice(device);
+```
+
+## EndCommandBuffer
+
+The command buffer's recording ended: it can be submitted.
+
+**SYNOPSIS**
+
+```zig
+fn EndCommandBuffer(base: *FacetBase, buffer: *facet.CommandBuffer) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -144.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+
+**RESULT**
+
+`success`; `error_out_of_host_memory` when memory ran out for a command
+while it recorded: it cannot be submitted, and is recorded again after
+a reset; `error_initialization_failed` for a buffer not recording.
+
+**BEHAVIOR**
+
+The buffer is executable: QueueSubmit plays it, as often as it is submitted.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffer stays its pool's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BeginCommandBuffer`, `QueueSubmit`
+
+**EXAMPLES**
+
+```zig
+if (fb.EndCommandBuffer(commands) != .success) return error.NoRecording;
+```
+
+## EnumeratePhysicalDevices
+
+The instance's physical devices.
+
+**SYNOPSIS**
+
+```zig
+fn EnumeratePhysicalDevices(base: *FacetBase, instance: *facet.Instance, count: *u32, devices: ?[*]*facet.PhysicalDevice) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -28.
+
+**INPUTS**
+
+- `instance` - the instance.
+- `count` - with `devices`, how many it has room for; written with
+  how many there are, or with how many it was given.
+- `devices` - where they go; null to count them alone.
+
+**RESULT**
+
+`success`, or `incomplete` when `devices` was too short for them all.
+
+**BEHAVIOR**
+
+There is one: the machine's cores, drawing through the rasterizer.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+A physical device is the instance's, and goes with it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetPhysicalDeviceProperties`, `CreateDevice`
+
+**EXAMPLES**
+
+```zig
+var count: u32 = 1;
+var physical: [1]*facet.PhysicalDevice = undefined;
+_ = fb.EnumeratePhysicalDevices(instance, &count, &physical);
+if (count == 0) return error.NoDevice;
+```
+
+## FreeCommandBuffers
+
+Command buffers given back to the pool they came from.
+
+**SYNOPSIS**
+
+```zig
+fn FreeCommandBuffers(base: *FacetBase, device: *facet.Device, pool: *facet.CommandPool, count: u32, buffers: [*]const ?*facet.CommandBuffer) void
+```
+
+**SINCE**
+
+1.0. LVO -136.
+
+**INPUTS**
+
+- `device` - the device.
+- `pool` - the pool they were allocated from.
+- `count` - how many.
+- `buffers` - the buffers; a null among them is passed over.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+None of them may be pending. What they recorded goes with them.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffers are gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateCommandBuffers`, `DestroyCommandPool`
+
+**EXAMPLES**
+
+```zig
+fb.FreeCommandBuffers(device, pool.?, 1, &commands);
+```
+
+## FreeDescriptorSets
+
+`count` descriptor sets given back to the pool they came from.
+
+**SYNOPSIS**
+
+```zig
+fn FreeDescriptorSets(base: *FacetBase, device: *facet.Device, pool: *facet.DescriptorPool, count: u32, sets: [*]const ?*facet.DescriptorSet) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -260.
+
+**INPUTS**
+
+- `device` - the device.
+- `pool` - the pool they were allocated from.
+- `count`, `sets` - the sets; a null among them is passed over.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+No command buffer still pending may have bound one of them.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The sets are gone, and the pool may give out as many again.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateDescriptorSets`, `ResetDescriptorPool`
+
+**EXAMPLES**
+
+```zig
+_ = fb.FreeDescriptorSets(device, pool.?, 1, @ptrCast(&set));
+```
+
+## FreeMemory
+
+The block given back.
+
+**SYNOPSIS**
+
+```zig
+fn FreeMemory(base: *FacetBase, device: *facet.Device, memory: ?*facet.DeviceMemory) void
+```
+
+**SINCE**
+
+1.0. LVO -60.
+
+**INPUTS**
+
+- `device` - the device it was allocated from.
+- `memory` - the block, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+A mapping of it ends with it. Nothing bound into it may be in use by
+work the queue has not finished: wait for its fence first.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: exec's memory list.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The block is gone. The buffers and images bound into it stay, and may
+only be destroyed.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateMemory`
+
+**EXAMPLES**
+
+```zig
+fb.FreeMemory(device, memory);
+```
+
+## GetBufferMemoryRequirements
+
+What the buffer needs of the memory it is bound into.
+
+**SYNOPSIS**
+
+```zig
+fn GetBufferMemoryRequirements(base: *FacetBase, device: *facet.Device, buffer: *facet.Buffer, requirements: *facet.MemoryRequirements) void
+```
+
+**SINCE**
+
+1.0. LVO -84.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `buffer` - the buffer.
+- `requirements` - where they are written.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Its size rounded up to 16 bytes, an offset aligned to 16, and any
+memory type with memory behind it: not the lazily allocated one.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`requirements` is the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BindBufferMemory`, `AllocateMemory`
+
+**EXAMPLES**
+
+```zig
+var needs: facet.MemoryRequirements = undefined;
+fb.GetBufferMemoryRequirements(device, vertices, &needs);
+```
+
+## GetDeviceQueue
+
+A queue the device was made with.
+
+**SYNOPSIS**
+
+```zig
+fn GetDeviceQueue(base: *FacetBase, device: *facet.Device, family: u32, index: u32, queue: *?*facet.Queue) void
+```
+
+**SINCE**
+
+1.0. LVO -52.
+
+**INPUTS**
+
+- `device` - the device.
+- `family` - the queue's family: 0.
+- `index` - which of the family's queues: 0.
+- `queue` - where the queue is written; null for one the device was
+  not made with.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The same queue each time it is asked for.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The queue is the device's, and goes with it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateDevice`, `QueueSubmit`
+
+**EXAMPLES**
+
+```zig
+var queue: ?*facet.Queue = null;
+fb.GetDeviceQueue(device, 0, 0, &queue);
+```
+
+## GetFenceStatus
+
+Whether a fence is signalled, without waiting.
+
+**SYNOPSIS**
+
+```zig
+fn GetFenceStatus(base: *FacetBase, device: *facet.Device, fence: *facet.Fence) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -188.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `fence` - the fence.
+
+**RESULT**
+
+`success` for a signalled fence, `not_ready` for one not yet.
+
+**BEHAVIOR**
+
+Nothing changes: the fence stays as it is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes: it only reads.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`WaitForFences`
+
+**EXAMPLES**
+
+```zig
+const ready = fb.GetFenceStatus(device, frame_done.?) == .success;
+```
+
+## GetImageMemoryRequirements
+
+What the image needs of the memory it is bound into.
+
+**SYNOPSIS**
+
+```zig
+fn GetImageMemoryRequirements(base: *FacetBase, device: *facet.Device, image: *facet.Image, requirements: *facet.MemoryRequirements) void
+```
+
+**SINCE**
+
+1.0. LVO -100.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `image` - the image.
+- `requirements` - where they are written.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+An offset aligned to a cache line, 64 bytes. A texture's size is its
+levels in blocks, an 8888 texel at 8 bytes; rows' are their pitch, the
+width rounded up to a cache line, times the height. A depth attachment
+may be in any memory type, the lazily allocated one too, and nothing
+of its memory is touched; every other image needs a type with memory
+behind it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`requirements` is the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BindImageMemory`, `AllocateMemory`
+
+**EXAMPLES**
+
+```zig
+var needs: facet.MemoryRequirements = undefined;
+fb.GetImageMemoryRequirements(device, picture, &needs);
+```
+
+## GetImageSubresourceLayout
+
+Where a level of an image lies in its memory, and how its rows do.
+
+**SYNOPSIS**
+
+```zig
+fn GetImageSubresourceLayout(base: *FacetBase, device: *facet.Device, image: *facet.Image, subresource: *const facet.ImageSubresource, layout: *facet.SubresourceLayout) void
+```
+
+**SINCE**
+
+1.0. LVO -108.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `image` - the image.
+- `subresource` - which level: 0 for an image in rows.
+- `layout` - where its layout is written.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+For an image in rows - a linear image, and an attachment - the offset
+is 0, `row_pitch` the bytes from one row to the next, `size` the pitch
+times the height: with its memory mapped, the program reads and writes
+the pixels there. For a texture it is where the level starts and how
+many bytes it takes, its rows not the program's to know (`row_pitch`
+0). A depth attachment has nothing to say: all 0.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`layout` is the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateImage`, `MapMemory`
+
+**EXAMPLES**
+
+```zig
+var layout: facet.SubresourceLayout = undefined;
+fb.GetImageSubresourceLayout(device, picture, &.{}, &layout);
+const row = pixels + y * layout.row_pitch;
+```
+
+## GetPhysicalDeviceFormatProperties
+
+What the device does with a format, in each tiling and in a buffer.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, properties: *facet.FormatProperties) void
+```
+
+**SINCE**
+
+1.0. LVO -72.
+
+**INPUTS**
+
+- `physical` - a physical device EnumeratePhysicalDevices listed.
+- `format` - the format.
+- `properties` - where its features are written: none for a format
+  facet.library does not know.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+- B8G8R8A8_UNORM and R8G8B8A8_UNORM: colour attachments, blended, in
+  either tiling; sampled, filtered, in optimal tiling; copied to and
+  from; a vertex's value.
+- R5G6B5_UNORM_PACK16: sampled, filtered, in optimal tiling; copied.
+- D16_UNORM: a depth attachment, in optimal tiling.
+- R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
+
+An image to be sampled has sides that are powers of two.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`properties` is the caller's.
+
+**NOTES**
+
+A colour attachment is not sampled as well: the two lie differently in
+memory (CreateImage).
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateImage`
+
+**EXAMPLES**
+
+```zig
+var properties: facet.FormatProperties = undefined;
+fb.GetPhysicalDeviceFormatProperties(physical, .r5g6b5_unorm_pack16, &properties);
+const can_sample = properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0;
+```
+
+## GetPhysicalDeviceMemoryProperties
+
+The physical device's memory types and heaps.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceMemoryProperties(base: *FacetBase, physical: *facet.PhysicalDevice, properties: *facet.PhysicalDeviceMemoryProperties) void
+```
+
+**SINCE**
+
+1.0. LVO -40.
+
+**INPUTS**
+
+- `physical` - a physical device EnumeratePhysicalDevices listed.
+- `properties` - where they are written.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The heaps are made from exec's memory regions as the instance was
+made, in the order exec prefers them: each set of MEMF_INTERNAL,
+MEMF_EXTERNAL and MEMF_DMA that a region has is a heap, as large as
+its regions together, its attributes in `MemoryHeap.attributes`, with
+a memory type of its own in the same place. Every one of those types
+is DEVICE_LOCAL, HOST_VISIBLE and HOST_COHERENT - the device is the
+processor - and HOST_CACHED where its regions are behind the data
+cache (MEMF_EXTERNAL), MEMORY_PROPERTY_DMA where a DMA engine reaches
+them (MEMF_DMA). The last type is DEVICE_LOCAL and LAZILY_ALLOCATED:
+memory with nothing behind it, for an attachment that lives only in
+the tiles, such as a depth a render pass clears and does not store.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`properties` is the caller's.
+
+**NOTES**
+
+On a RISC-V 64 machine the RAM below 4 GiB is MEMF_DMA and the RAM
+above it not, so RAM past 4 GiB is a heap of its own. An ESP32's
+internal SRAM and its PSRAM are two heaps.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateMemory`, `GetPhysicalDeviceProperties`
+
+**EXAMPLES**
+
+```zig
+fn typeFor(memory: *const facet.PhysicalDeviceMemoryProperties, bits: u32, wanted: u32) ?u32 {
+    for (memory.memory_types[0..memory.memory_type_count], 0..) |kind, index| {
+        if (bits >> @intCast(index) & 1 != 0 and kind.property_flags & wanted == wanted) return @intCast(index);
+    }
+    return null;
+}
+```
+
+## GetPhysicalDeviceProperties
+
+What a physical device is, and the most it does.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceProperties(base: *FacetBase, physical: *facet.PhysicalDevice, properties: *facet.PhysicalDeviceProperties) void
+```
+
+**SINCE**
+
+1.0. LVO -32.
+
+**INPUTS**
+
+- `physical` - a physical device EnumeratePhysicalDevices listed.
+- `properties` - where they are written.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The device is of type `cpu`, with no vendor or device ID; its name
+says how many cores it shares a frame's tiles between, and so do its
+limits (`cores`, with `tile_size`). `api_version` is the interface it
+has, `driver_version` the library's own version and revision.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`properties` is the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`EnumeratePhysicalDevices`, `GetPhysicalDeviceMemoryProperties`
+
+**EXAMPLES**
+
+```zig
+var properties: facet.PhysicalDeviceProperties = undefined;
+fb.GetPhysicalDeviceProperties(physical, &properties);
+```
+
+## GetPhysicalDeviceQueueFamilyProperties
+
+The physical device's queue families.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceQueueFamilyProperties(base: *FacetBase, physical: *facet.PhysicalDevice, count: *u32, properties: ?[*]facet.QueueFamilyProperties) void
+```
+
+**SINCE**
+
+1.0. LVO -36.
+
+**INPUTS**
+
+- `physical` - a physical device EnumeratePhysicalDevices listed.
+- `count` - with `properties`, how many it has room for; written with
+  how many there are, or with how many it was given.
+- `properties` - where they go; null to count them alone.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+There is one family, 0: QUEUE_GRAPHICS and QUEUE_TRANSFER, with one
+queue. Its queue plays command buffers on a task of its own and
+shares each frame's tiles between the cores.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`properties` is the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateDevice`, `GetDeviceQueue`
+
+**EXAMPLES**
+
+```zig
+var count: u32 = 1;
+var family: [1]facet.QueueFamilyProperties = undefined;
+fb.GetPhysicalDeviceQueueFamilyProperties(physical, &count, &family);
+```
+
+## GetPhysicalDeviceSurfaceCapabilities
+
+What a swapchain on the surface can be, into `capabilities`.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceSurfaceCapabilities(base: *FacetBase, physical: *facet.PhysicalDevice, surface: *facet.Surface, capabilities: *facet.SurfaceCapabilities) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -332.
+
+**INPUTS**
+
+- `physical` - the physical device.
+- `surface` - the surface.
+- `capabilities` - filled in.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+A swapchain on a screen is the screen's size, which is its display's,
+and has from one image to as many pictures as the display's memory
+holds, four at most. One on a window is the size inside the window's
+border now, and has from one image to four. Its images are drawn into,
+and shown as they are drawn: no transform, no alpha.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+The display's memory is shared with every other screen open, each of
+which takes a picture of it: max_image_count is the most there could be,
+and CreateSwapchain says whether there is room now.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateSwapchain`
+
+**EXAMPLES**
+
+```zig
+var capabilities: facet.SurfaceCapabilities = undefined;
+_ = fb.GetPhysicalDeviceSurfaceCapabilities(physical, surface.?, &capabilities);
+const extent = capabilities.current_extent;
+```
+
+## GetPhysicalDeviceSurfaceFormats
+
+The formats a swapchain on the surface can have into `formats`, at most `count.*` of them, and how many there are into `count`; null for `formats` counts alone.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceSurfaceFormats(base: *FacetBase, physical: *facet.PhysicalDevice, surface: *facet.Surface, count: *u32, formats: ?[*]facet.SurfaceFormat) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -336.
+
+**INPUTS**
+
+- `physical` - the physical device.
+- `surface` - the surface.
+- `count` - how many `formats` has room for; how many were written.
+- `formats` - where they go, or null.
+
+**RESULT**
+
+`success`, or `incomplete` when `formats` was too short for them all.
+
+**BEHAVIOR**
+
+A surface has one format, its display's: `b8g8r8a8_unorm` or
+`r8g8b8a8_unorm`, in sRGB. A display of another, such as the 16-bit
+panels, has none: facet.library draws 32 bits a pixel.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateSwapchain`
+
+**EXAMPLES**
+
+```zig
+var count: u32 = 1;
+var format: facet.SurfaceFormat = undefined;
+_ = fb.GetPhysicalDeviceSurfaceFormats(physical, surface.?, &count, @ptrCast(&format));
+if (count == 0) return error.NotThirtyTwoBits;
+```
+
+## GetPhysicalDeviceSurfacePresentModes
+
+The present modes of the surface into `modes`, at most `count.*` of them, and how many there are into `count`; null for `modes` counts alone.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceSurfacePresentModes(base: *FacetBase, physical: *facet.PhysicalDevice, surface: *facet.Surface, count: *u32, modes: ?[*]facet.PresentMode) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -340.
+
+**INPUTS**
+
+- `physical` - the physical device.
+- `surface` - the surface.
+- `count` - how many `modes` has room for; how many were written.
+- `modes` - where they go, or null.
+
+**RESULT**
+
+`success`, or `incomplete` when `modes` was too short.
+
+**BEHAVIOR**
+
+Every surface has `fifo`, and only that: each image presented is shown
+from the display's next frame on, in the order they were presented, and
+none is left out. A program drawing faster than the display shows is
+held to its rate.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`QueuePresent`
+
+**EXAMPLES**
+
+```zig
+var count: u32 = 1;
+var mode: facet.PresentMode = undefined;
+_ = fb.GetPhysicalDeviceSurfacePresentModes(physical, surface.?, &count, @ptrCast(&mode));
+```
+
+## GetPhysicalDeviceSurfaceSupport
+
+Whether queue family `family` can present to the surface, into `supported`.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceSurfaceSupport(base: *FacetBase, physical: *facet.PhysicalDevice, family: u32, surface: *facet.Surface, supported: *bool) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -328.
+
+**INPUTS**
+
+- `physical` - the physical device.
+- `family` - a queue family of it.
+- `surface` - the surface.
+- `supported` - true where the family's queues can present to it.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+The one queue family can present to a surface whose pixels
+facet.library draws in: 32 bits, in either order of red and blue.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetPhysicalDeviceSurfaceFormats`, `QueuePresent`
+
+**EXAMPLES**
+
+```zig
+var supported = false;
+_ = fb.GetPhysicalDeviceSurfaceSupport(physical, 0, surface.?, &supported);
+if (!supported) return error.CannotShow;
+```
+
+## GetSwapchainImages
+
+The swapchain's images into `images`, at most `count.*` of them, and how many there are into `count`; null for `images` counts alone.
+
+**SYNOPSIS**
+
+```zig
+fn GetSwapchainImages(base: *FacetBase, device: *facet.Device, swapchain: *facet.Swapchain, count: *u32, images: ?[*]*facet.Image) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -352.
+
+**INPUTS**
+
+- `device` - the device it was made with.
+- `swapchain` - the swapchain.
+- `count` - how many `images` has room for; how many were written.
+- `images` - where they go, or null.
+
+**RESULT**
+
+`success`, or `incomplete` when `images` was too short for them all.
+
+**BEHAVIOR**
+
+The images in the order AcquireNextImage and QueuePresent number them.
+Views and framebuffers are made of them as of any colour attachment.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The images are the swapchain's, and go with it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AcquireNextImage`, `CreateImageView`
+
+**EXAMPLES**
+
+```zig
+var count: u32 = 4;
+var images: [4]*facet.Image = undefined;
+_ = fb.GetSwapchainImages(device, swapchain.?, &count, &images);
+```
+
+## MapMemory
+
+The address of a block's memory, from an offset on.
+
+**SYNOPSIS**
+
+```zig
+fn MapMemory(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemory, offset: u64, size: u64, flags: u32, data: *?*anyopaque) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -64.
+
+**INPUTS**
+
+- `device` - the device it was allocated from.
+- `memory` - the block.
+- `offset` - where in it the mapping starts.
+- `size` - how many bytes, or WHOLE_SIZE for all of it from `offset`.
+- `flags` - 0.
+- `data` - where the address of the byte at `offset` is written;
+  null when it fails.
+
+**RESULT**
+
+`success`; `error_memory_map_failed` for lazily allocated memory, for
+a block mapped already, and for a range past its end.
+
+**BEHAVIOR**
+
+Mapping is handing out the address: the memory is the machine's RAM,
+and what the program writes there the queue sees, and the other way
+round, with nothing flushed (MEMORY_PROPERTY_HOST_COHERENT). The
+address is aligned as the block is, to a cache line, plus `offset`.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The address is good until UnmapMemory or FreeMemory.
+
+**NOTES**
+
+What the queue is reading or writing still has to be waited for, with
+a fence: the mapping is coherent, not synchronized.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UnmapMemory`, `AllocateMemory`
+
+**EXAMPLES**
+
+```zig
+var data: ?*anyopaque = null;
+if (fb.MapMemory(device, memory, 0, facet.WHOLE_SIZE, 0, &data) != .success) return error.NoMap;
+const vertices: [*]Vertex = @ptrCast(@alignCast(data.?));
+```
+
+## QueuePresent
+
+Images handed to the queue to be shown, once the semaphores are signalled.
+
+**SYNOPSIS**
+
+```zig
+fn QueuePresent(base: *FacetBase, queue: *facet.Queue, info: *const facet.PresentInfo) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -360.
+
+**INPUTS**
+
+- `queue` - the queue that shows them: the device's.
+- `info` - the semaphores waited for, and an image of each swapchain,
+  acquired, with a place for what came of each where `results` is not
+  null.
+
+**RESULT**
+
+`success`; `error_out_of_date` when a swapchain's surface has changed,
+or an image was not one the program held - that image is not shown;
+`error_out_of_host_memory`. The worst of them, and each in `results`.
+
+**BEHAVIOR**
+
+The images go on the queue after the work submitted before: when the
+queue's task comes to them it waits for the semaphores, then shows each,
+returning when the display has taken it up at the start of a frame. The
+image shown before it then comes free for AcquireNextImage. The call
+itself returns at once.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The images are the swapchain's again: the program has them no more.
+
+**NOTES**
+
+The queue's task waits for the display while it shows an image: work
+submitted after the present waits behind it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AcquireNextImage`, `QueueSubmit`
+
+**EXAMPLES**
+
+```zig
+const shown = fb.QueuePresent(queue.?, &.{
+    .wait_semaphore_count = 1,
+    .wait_semaphores = @ptrCast(&rendered),
+    .swapchains = @ptrCast(&swapchain),
+    .image_indices = @ptrCast(&index),
+});
+```
+
+## QueueSubmit
+
+Batches of work for the queue, played in order by its task.
+
+**SYNOPSIS**
+
+```zig
+fn QueueSubmit(base: *FacetBase, queue: *facet.Queue, count: u32, submits: ?[*]const facet.SubmitInfo, fence: ?*facet.Fence) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -164.
+
+**INPUTS**
+
+- `queue` - the queue.
+- `count`, `submits` - the batches: for each, the semaphores it waits
+  for, the command buffers it plays and the semaphores it signals.
+- `fence` - signalled when all of them are done; may be null. With no
+  batches, signalled when all submitted before is done.
+
+**RESULT**
+
+`success`; `error_out_of_host_memory`, and nothing submitted.
+
+**BEHAVIOR**
+
+The queue's task takes the batches in the order they were submitted,
+after everything submitted before: for each it waits until each of its
+semaphores is signalled, and takes the signal; plays its command
+buffers, one after the other, each command finished before the next
+starts; then signals its semaphores, and with the last batch the fence.
+A command buffer not executable - not ended, or spent by a one-time
+submission - is passed over.
+
+The call returns at once: the work is the task's.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: the queue's list, for a moment.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The arrays are copied as the call is made. The command buffers, and
+everything their commands name, have to last until the work is done:
+until the fence is signalled.
+
+**NOTES**
+
+A command buffer recorded with ONE_TIME_SUBMIT is spent once played;
+any other may be submitted again once its work is done, or while it is
+pending if it was recorded with SIMULTANEOUS_USE.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`WaitForFences`, `QueueWaitIdle`, `CreateSemaphore`
+
+**EXAMPLES**
+
+```zig
+const submit = facet.SubmitInfo{ .command_buffer_count = 1, .command_buffers = @ptrCast(&commands[0]) };
+if (fb.QueueSubmit(queue.?, 1, @ptrCast(&submit), frame_done) != .success) return error.NoSubmit;
+```
+
+## QueueWaitIdle
+
+Wait until the queue has done all it was given.
+
+**SYNOPSIS**
+
+```zig
+fn QueueWaitIdle(base: *FacetBase, queue: *facet.Queue) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -168.
+
+**INPUTS**
+
+- `queue` - the queue.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+Returns once every batch submitted before the call has been played and
+its fence and semaphores signalled.
+
+**CONTEXT**
+
+- Waits: yes, on the queue's idle waitable.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+A fence waits for one submission; this for all.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DeviceWaitIdle`, `WaitForFences`
+
+**EXAMPLES**
+
+```zig
+_ = fb.QueueWaitIdle(queue.?);
+```
+
+## ResetCommandBuffer
+
+The command buffer back to where it started.
+
+**SYNOPSIS**
+
+```zig
+fn ResetCommandBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, flags: u32) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -148.
+
+**INPUTS**
+
+- `buffer` - a command buffer that is not pending.
+- `flags` - COMMAND_BUFFER_RESET_RELEASE_RESOURCES to give back the
+  memory its recording took, or 0 to keep it for the next.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+Nothing is recorded in it, as when it was allocated.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffer stays its pool's.
+
+**NOTES**
+
+BeginCommandBuffer resets a buffer itself.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BeginCommandBuffer`, `ResetCommandPool`
+
+**EXAMPLES**
+
+```zig
+_ = fb.ResetCommandBuffer(commands, 0);
+```
+
+## ResetCommandPool
+
+Every command buffer of the pool back to where it started.
+
+**SYNOPSIS**
+
+```zig
+fn ResetCommandPool(base: *FacetBase, device: *facet.Device, pool: *facet.CommandPool, flags: u32) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -128.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `pool` - the pool.
+- `flags` - COMMAND_BUFFER_RESET_RELEASE_RESOURCES to give back the
+  memory the recordings took, or 0 to keep it for the next.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+Each buffer is as it was allocated, nothing recorded in it. None may
+be pending.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffers stay the pool's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ResetCommandBuffer`, `CreateCommandPool`
+
+**EXAMPLES**
+
+```zig
+_ = fb.ResetCommandPool(device, pool, 0);
+```
+
+## ResetDescriptorPool
+
+Every set allocated from the pool freed at once.
+
+**SYNOPSIS**
+
+```zig
+fn ResetDescriptorPool(base: *FacetBase, device: *facet.Device, pool: *facet.DescriptorPool, flags: u32) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -252.
+
+**INPUTS**
+
+- `device` - the device.
+- `pool` - the pool.
+- `flags` - 0.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+No command buffer still pending may have bound one of its sets.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The sets are gone; the pool is the caller's still.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateDescriptorSets`, `FreeDescriptorSets`
+
+**EXAMPLES**
+
+```zig
+_ = fb.ResetDescriptorPool(device, pool.?, 0);
+```
+
+## ResetFences
+
+Fences back to unsignalled.
+
+**SYNOPSIS**
+
+```zig
+fn ResetFences(base: *FacetBase, device: *facet.Device, count: u32, fences: [*]const *facet.Fence) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -184.
+
+**INPUTS**
+
+- `device` - the device they were made on.
+- `count`, `fences` - the fences.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+None of them may be waiting for a submission still to be done.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The array is the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`WaitForFences`, `CreateFence`
+
+**EXAMPLES**
+
+```zig
+_ = fb.WaitForFences(device, 1, @ptrCast(&frame_done), true, facet.WAIT_FOREVER_NS);
+_ = fb.ResetFences(device, 1, @ptrCast(&frame_done));
+```
+
+## UnmapMemory
+
+The block's mapping ended.
+
+**SYNOPSIS**
+
+```zig
+fn UnmapMemory(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemory) void
+```
+
+**SINCE**
+
+1.0. LVO -68.
+
+**INPUTS**
+
+- `device` - the device it was allocated from.
+- `memory` - a block MapMemory mapped.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The address MapMemory gave is no longer the program's to use; the
+block may be mapped again. Nothing is flushed: nothing needs to be.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The block stays the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`MapMemory`
+
+**EXAMPLES**
+
+```zig
+fb.UnmapMemory(device, memory);
+```
+
+## UpdateDescriptorSets
+
+Descriptors written into sets, and copied from one set to another.
+
+**SYNOPSIS**
+
+```zig
+fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count: u32, writes: ?[*]const facet.WriteDescriptorSet, copy_count: u32, copies: ?[*]const facet.CopyDescriptorSet) void
+```
+
+**SINCE**
+
+1.0. LVO -264.
+
+**INPUTS**
+
+- `device` - the device.
+- `write_count`, `writes` - descriptors written: a sampled image's view
+  from `image_info`, a buffer's range from `buffer_info`, one for each
+  descriptor.
+- `copy_count`, `copies` - descriptors copied, after the writes.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+A write or a copy of more descriptors than are left in its binding runs
+on into the bindings after it. A descriptor of another kind than the
+binding's, or past the set's last, is passed over.
+
+A sampled image's view has to be of an image made to be sampled; a
+buffer's range is what lies inside the buffer, which has to be bound.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The arrays are read during the call alone. What a set holds is the
+address of each buffer's range and of each view's texture: the buffers
+and views have to last as long as the set is used.
+
+**NOTES**
+
+A set is read as the draws that bound it run: written before the
+command buffer is submitted, it is drawn with as written then. It may
+not be written while a command buffer that bound it is pending.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateDescriptorSets`, `CmdBindDescriptorSets`
+
+**EXAMPLES**
+
+```zig
+const image = facet.DescriptorImageInfo{ .image_view = view };
+const write = facet.WriteDescriptorSet{ .dst_set = set.?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image) };
+fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+```
+
+## WaitForFences
+
+Wait until fences are signalled: all of them, or any.
+
+**SYNOPSIS**
+
+```zig
+fn WaitForFences(base: *FacetBase, device: *facet.Device, count: u32, fences: [*]const *facet.Fence, wait_all: bool, timeout: u64) facet.Result
+```
+
+**SINCE**
+
+1.0. LVO -192.
+
+**INPUTS**
+
+- `device` - the device they were made on.
+- `count`, `fences` - the fences: with `wait_all` false, at most
+  WAIT_MAX (32).
+- `wait_all` - true to wait for all, false for any one.
+- `timeout` - nanoseconds at most, rounded up to microseconds and kept
+  to the system tick; 0 only looks; WAIT_FOREVER_NS has no limit.
+
+**RESULT**
+
+`success` once they are; `timeout` when the time ran out first.
+
+**BEHAVIOR**
+
+WaitForAny on the fences' waitables: the task sleeps until a queue
+signals one.
+
+**CONTEXT**
+
+- Waits: yes.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The array is the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+With `wait_all` the limit is each fence's, not the whole wait's:
+waiting for N fences not yet signalled may take up to N times it.
+
+**SEE ALSO**
+
+`ResetFences`, `GetFenceStatus`, `QueueSubmit`
+
+**EXAMPLES**
+
+```zig
+if (fb.WaitForFences(device, 1, @ptrCast(&frame_done), true, facet.WAIT_FOREVER_NS) != .success) return error.Hung;
+```

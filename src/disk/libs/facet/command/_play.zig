@@ -1,0 +1,226 @@
+// SPDX-License-Identifier: MIT
+//! A command buffer played, on its queue's task: its commands done in the
+//! order they were recorded, each finished before the next starts - so a
+//! barrier has nothing left to wait for, and a layout nothing to change.
+//!
+//! A render pass is a frame of the rasterizer's: CmdBeginRenderPass moves
+//! the queue's target onto the framebuffer's colour attachment and begins
+//! it, each draw transforms its vertices and puts its triangles on the
+//! tiles' lists (_draw.zig), and CmdEndRenderPass draws the tiles, shared
+//! between the cores, and writes them into the attachment. What is bound
+//! - the pipeline, the buffers, the sets, the push constants - is kept
+//! from command to command, and starts again with each command buffer.
+//!
+//! A tile written into a swapchain's image is handed on to the display
+//! by the part that wrote it (rtg's RefreshRect), as C:test/Cube hands
+//! on its own; into any other image it is handed on to nothing.
+
+const std = @import("std");
+const sdk = @import("sdk");
+const exec = sdk.exec;
+const facet = sdk.facet;
+const shader = facet.shader;
+const raster = @import("raster");
+const Queue = @import("../queue/_queue.zig").Queue;
+const _command = @import("_command.zig");
+const CommandBuffer = _command.CommandBuffer;
+const _stream = @import("_stream.zig");
+const _buffer = @import("../buffer/_buffer.zig");
+const Buffer = _buffer.Buffer;
+const _image = @import("../image/_image.zig");
+const _render = @import("../render/_render.zig");
+const Pipeline = @import("../pipeline/_pipeline.zig").Pipeline;
+const DescriptorSet = @import("../descriptor/_descriptor.zig").Set;
+const max_vertex_input_bindings = @import("../instance/_instance.zig").max_vertex_input_bindings;
+const _draw = @import("_draw.zig");
+
+/// A vertex buffer bound.
+pub const VertexBuffer = struct {
+    buffer: ?*Buffer = null,
+    offset: u64 = 0,
+};
+
+/// What playing keeps from one command to the next, and from one command
+/// buffer to the next on its queue.
+pub const Player = struct {
+    /// The rasterizer's target: made at the first render pass, moved onto
+    /// each after it, and kept with its buffers and its frame's memory
+    /// until the device goes.
+    target: ?raster.Target = null,
+    /// Inside a render pass that could begin.
+    drawing: bool = false,
+    /// Where the pass's tiles are handed on to: the display's buffer the
+    /// colour attachment is, or null.
+    display: ?_image.Display = null,
+    /// What the draws are drawn with: bound, and set by commands.
+    pipeline: ?*Pipeline = null,
+    vertex_buffers: [max_vertex_input_bindings]VertexBuffer = @splat(.{}),
+    index_buffer: ?*Buffer = null,
+    index_offset: u64 = 0,
+    index_type: facet.IndexType = .uint16,
+    viewport: facet.Viewport = .{ .width = 0, .height = 0 },
+    scissor: facet.Rect2D = .{ .extent = .{} },
+    /// The sets and the push constants as bound, and the copy of them in
+    /// the frame's memory the draws since they last changed read; null
+    /// until a draw makes one.
+    resources: shader.Resources = .{},
+    drawn: ?*const shader.Resources = null,
+    /// Memory a draw's vertices are worked in, kept for the next.
+    scratch: ?[*]u8 = null,
+    scratch_bytes: usize = 0,
+};
+
+/// The commands of `buffer`, in order.
+pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
+    const player = &queue.player;
+    restart(player);
+    var commands = buffer.stream.commands();
+    while (commands.next()) |head| switch (head.op) {
+        .barrier => {},
+        .copy_buffer_to_image => copyBufferToImage(_stream.as(_command.CopyBufferToImage, head)),
+        .copy_buffer => copyBuffer(_stream.as(_command.CopyBuffer, head)),
+        .begin_render_pass => beginRenderPass(queue, _stream.as(_command.BeginRenderPass, head)),
+        .end_render_pass => endRenderPass(player),
+        .bind_pipeline => player.pipeline = _stream.as(_command.BindPipeline, head).pipeline,
+        .bind_vertex_buffers => bindVertexBuffers(player, _stream.as(_command.BindVertexBuffers, head)),
+        .bind_index_buffer => {
+            const command = _stream.as(_command.BindIndexBuffer, head);
+            player.index_buffer = command.buffer;
+            player.index_offset = command.offset;
+            player.index_type = command.index_type;
+        },
+        .bind_descriptor_sets => bindDescriptorSets(player, _stream.as(_command.BindDescriptorSets, head)),
+        .push_constants => pushConstants(player, _stream.as(_command.PushConstants, head)),
+        .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
+        .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
+        .draw => if (player.drawing) {
+            const command = _stream.as(_command.Draw, head);
+            _draw.draw(queue, command.first_vertex, command.vertex_count, null, command.first_instance, command.instance_count);
+        },
+        .draw_indexed => if (player.drawing) {
+            const command = _stream.as(_command.DrawIndexed, head);
+            _draw.draw(queue, command.first_index, command.index_count, command.vertex_offset, command.first_instance, command.instance_count);
+        },
+        _ => {},
+    };
+    // A command buffer that ends inside its render pass ends the pass.
+    endRenderPass(player);
+}
+
+/// What the queue's player kept given back, as its device goes.
+pub fn finish(queue: *Queue) void {
+    const player = &queue.player;
+    if (player.target) |*target| target.deinit();
+    if (player.scratch) |scratch| queue.device.sys.FreeVec(scratch);
+    player.* = .{};
+}
+
+/// Nothing bound, as each command buffer starts.
+fn restart(player: *Player) void {
+    player.drawing = false;
+    player.pipeline = null;
+    player.vertex_buffers = @splat(.{});
+    player.index_buffer = null;
+    player.resources = .{};
+    player.drawn = null;
+}
+
+fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void {
+    const player = &queue.player;
+    endRenderPass(player);
+    const framebuffer = command.framebuffer;
+    const surface = _render.surfaceOf(framebuffer) orelse return;
+    const render_pass = command.render_pass;
+    // The render area, cut to the framebuffer.
+    const offset = command.area.offset;
+    const left: u32 = @intCast(std.math.clamp(offset.x, 0, @as(i64, framebuffer.width)));
+    const top: u32 = @intCast(std.math.clamp(offset.y, 0, @as(i64, framebuffer.height)));
+    const right: u32 = @intCast(std.math.clamp(@as(i64, offset.x) + command.area.extent.width, left, framebuffer.width));
+    const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
+    const area = raster.Rect{ .x = left, .y = top, .width = right - left, .height = bottom - top };
+    const attachments = raster.Attachments{
+        .color = .{ .load = render_pass.color_load, .clear = command.clear_color },
+        .depth = .{ .used = render_pass.depth != null, .clear = @intCast(command.clear_depth) },
+    };
+    player.display = framebuffer.color.image.display;
+    if (player.target) |*target| {
+        target.moveTo(surface, area, attachments) catch return;
+    } else {
+        player.target = raster.Target.init(hostOf(queue), surface, area, attachments) catch return;
+    }
+    player.target.?.begin();
+    player.drawn = null;
+    player.drawing = true;
+}
+
+fn endRenderPass(player: *Player) void {
+    if (!player.drawing) return;
+    player.drawing = false;
+    player.drawn = null;
+    _ = player.target.?.finish();
+}
+
+fn bindVertexBuffers(player: *Player, command: *const _command.BindVertexBuffers) void {
+    for (_stream.items(_command.BindVertexBuffers, _command.VertexBuffer, command, command.count), command.first..) |bound, binding| {
+        if (binding >= player.vertex_buffers.len) break;
+        player.vertex_buffers[binding] = .{ .buffer = bound.buffer, .offset = bound.offset };
+    }
+}
+
+fn bindDescriptorSets(player: *Player, command: *const _command.BindDescriptorSets) void {
+    for (_stream.items(_command.BindDescriptorSets, *DescriptorSet, command, command.count), command.first..) |set, at| {
+        if (at >= shader.MAX_SETS) break;
+        player.resources.sets[at] = &set.view;
+    }
+    player.drawn = null;
+}
+
+fn pushConstants(player: *Player, command: *const _command.PushConstants) void {
+    const bytes = _stream.items(_command.PushConstants, u8, command, command.size);
+    @memcpy(player.resources.push[command.offset..][0..command.size], bytes);
+    player.drawn = null;
+}
+
+/// What the queue's target is given of the system: exec's workers and
+/// memory, and the display the pass draws into, if any.
+fn hostOf(queue: *Queue) raster.Host {
+    return .{ .context = queue, .share = &share, .hand_on = &handOn, .allocate = &allocate, .free = &free };
+}
+
+fn queueOf(context: ?*anyopaque) *Queue {
+    return @ptrCast(@alignCast(context.?));
+}
+
+fn share(context: ?*anyopaque, work: raster.Work, data: ?*anyopaque, parts: u32) u32 {
+    return queueOf(context).device.sys.ShareWork(work, data, parts);
+}
+
+fn handOn(context: ?*anyopaque, area: raster.Rect) void {
+    const display = queueOf(context).player.display orelse return;
+    display.handOn(area.x, area.y, area.width, area.height);
+}
+
+fn allocate(context: ?*anyopaque, bytes: usize) ?[*]u8 {
+    return @ptrCast(queueOf(context).device.sys.AllocVec(bytes, exec.MEMF_ANY));
+}
+
+fn free(context: ?*anyopaque, memory: [*]u8, bytes: usize) void {
+    _ = bytes;
+    queueOf(context).device.sys.FreeVec(memory);
+}
+
+fn copyBufferToImage(command: *const _command.CopyBufferToImage) void {
+    const from = _buffer.bytes(command.source, 0, facet.WHOLE_SIZE) orelse return;
+    for (_stream.items(_command.CopyBufferToImage, facet.BufferImageCopy, command, command.count)) |*region| {
+        _image.copyFromBuffer(command.image, from, region);
+    }
+}
+
+fn copyBuffer(command: *const _command.CopyBuffer) void {
+    for (_stream.items(_command.CopyBuffer, facet.BufferCopy, command, command.count)) |region| {
+        const from = _buffer.bytes(command.source, region.src_offset, region.size) orelse continue;
+        const into = _buffer.bytes(command.destination, region.dst_offset, region.size) orelse continue;
+        // Overlapping regions are the program's mistake; copied forwards.
+        std.mem.copyForwards(u8, into, from);
+    }
+}

@@ -18,8 +18,9 @@ pub const LIBRARY_VERSION = 1;
 /// 1: the pointer - SetBoardPointer, MoveBoardPointer, ShowBoardPointer.
 /// 4: pixels laid over a buffer by the engine - BlendPixels, BlendRect,
 /// ScalePixels.
-pub const LIBRARY_REVISION = 4;
-const BUILD_DATE = "10.10.2026";
+/// 5: RefreshRect - a rectangle handed on, not its whole rows.
+pub const LIBRARY_REVISION = 5;
+const BUILD_DATE = "19.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

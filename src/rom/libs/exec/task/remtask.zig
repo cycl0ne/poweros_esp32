@@ -9,6 +9,7 @@
 const sdk = @import("sdk");
 const _task = @import("_task.zig");
 const _locks = @import("../locks/_locks.zig");
+const _waitable = @import("../waitable/_waitable.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const Task = sdk.exec.Task;
@@ -102,6 +103,7 @@ pub fn RemTask(base: *ExecBase, task: ?*Task) void {
     if (ending != current) {
         _task.stopElsewhere(base, ending);
         _locks.withdraw(base, ending);
+        _waitable.withdraw(base, ending);
     }
     _task.releaseSemaphores(base, ending);
     _task.runEndHooks(base, ending);

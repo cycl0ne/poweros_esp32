@@ -1,37 +1,50 @@
 // SPDX-License-Identifier: MIT
 //! Engine: the display board's engine - FillRect, CopyRect, BlendPixels,
 //! BlendRect and ScalePixels - checked against what the CPU does, and
-//! timed beside it. Built against the SDK only.
+//! timed beside it, in each pixel format it may be given. Built against
+//! the SDK only.
 //!
 //!   Engine ROUNDS/K/N,LOAD/K/N,DRAG/K/N
 //!
-//! Two buffers the size of a screen are taken from the display board and
-//! filled with a pattern of their coordinates. Each case is then done by
-//! the board and checked: every pixel inside the rectangle has what it
-//! should, every pixel outside it what it had. The cases are rectangles
-//! that start and end anywhere in a cache line, a whole buffer, one too
-//! small for the engine, copies between the two buffers and within one,
-//! and a copy whose two rectangles overlap - which the board may refuse,
-//! and the caller then does in software; and a copy out of plain memory,
-//! described for the engine. Each case is timed over ROUNDS runs (5 if
-//! not given), and the same work done by the CPU beside it.
+//! The cases run first in the format the display runs in, then in RGB565
+//! and BGRA32 where that is neither: the formats boards' engines draw in.
+//! In each, two buffers the size of a screen are taken from the display
+//! board and filled with a pattern of their coordinates. Each case is
+//! then done by the board and checked: every pixel inside the rectangle
+//! has what it should, every pixel outside it what it had. The cases are
+//! rectangles that start and end anywhere in a cache line, a whole
+//! buffer, one too small for the engine, copies between the two buffers
+//! and within one, and a copy whose two rectangles overlap - which the
+//! board may refuse, and the caller then does in software; and a copy out
+//! of plain memory, described for the engine. Each case is timed over
+//! ROUNDS runs (5 if not given), and the same work done by the CPU beside
+//! it.
+//!
+//! Every case's line starts with who did it: `engine` when the board did,
+//! `SOFTWARE` when it would be left to software - the board has no engine
+//! for it, or refused it (too small, an overlap, a format it does not
+//! draw in). A refusal is checked too: the buffer has to be as it was, as
+//! the software that does the job then expects. Each format ends with how
+//! many cases the engine took. A board that says it has an engine but took
+//! none of the cases in the display's format ends the run with a warning.
 //!
 //! The blends and the scale are checked against graphics.library doing
-//! the same in software, on plain memory painted alike: a picture with
-//! coverage laid over the buffer, at full and at half strength, and in
-//! the order the engine refuses (`rgba32`); a translucent colour; a
-//! picture scaled smooth by ratios the engine reaches, and one it does
-//! not. Every pixel outside the rectangle has to be
-//! what it was. Inside, a blend may differ by one step of RGB565 where
-//! the engine rounds its own way; a scale is mixed by the engine's own
+//! the same in software, on plain memory of the same format painted
+//! alike: a picture with coverage laid over the buffer, at full and at
+//! half strength, and in the order the engine refuses (`rgba32`); a
+//! translucent colour; a picture scaled smooth by ratios the engine
+//! reaches, and one it does not. Every pixel outside the rectangle has to
+//! be what it was. Inside, a blend may differ by one step of the format -
+//! 1/31 of a channel of five bits, 1/255 of one of eight - where the
+//! engine rounds its own way; a scale is mixed by the engine's own
 //! sampling, so how far it lies from the CPU's is printed, and only a
 //! large difference is a fault. The CPU's time is graphics.library's.
 //! At the end, the frames the display starved of while all that ran.
 //!
 //! LOAD n instead does n fills of a whole buffer by the board, then n by
-//! the CPU, and prints the display's starved frames before and after
-//! each: whether the panel's stream holds up while the memory it streams
-//! out of is that busy.
+//! the CPU, in the display's format, and prints the display's starved
+//! frames before and after each: whether the panel's stream holds up
+//! while the memory it streams out of is that busy.
 //!
 //! DRAG n instead lays an overlay of 128 x 128 - a round icon - over the
 //! picture, following the pointer as a dragged icon does, and moves the
@@ -54,15 +67,13 @@ const RtgBase = sdk.interface.rtg.RtgBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
+const B = rtg.boards;
 
 pub const COMMAND_NAME = "Engine";
-const VERSION_STRING = "\x00$VER: Engine 1.2 (17.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Engine 1.3 (19.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/K/N,LOAD/K/N,DRAG/K/N";
-
-/// The colour the fills use.
-const fill_color: u16 = 0xF81F;
 
 /// A fill: where.
 const FillCase = struct { x: i32, y: i32, width: i32, height: i32 };
@@ -82,22 +93,402 @@ const copies = [_]CopyCase{
     .{ .sx = 10, .sy = 10, .width = 300, .height = 200, .dx = 40, .dy = 30, .same = true },
 };
 
-/// The pattern a buffer starts with.
-fn patternAt(x: u32, y: u32, seed: u32) u16 {
-    return @truncate(x *% 7 +% y *% 131 +% seed);
+/// The formats the test draws in, and those the cases also run in where
+/// the display runs in neither.
+const drawn = [_]rtg.PixelFormat{ .rgb565, .argb1555, .rgba32, .bgra32 };
+const also = [_]rtg.PixelFormat{ .rgb565, .bgra32 };
+
+/// What the whole run works with.
+const Test = struct {
+    sys: *ExecBase,
+    dl: *DosBase,
+    rb: *RtgBase,
+    gb: *GraphicsBase,
+    tb: *TimerBase,
+    board: *rtg.RtgBoard,
+    caps: u32,
+    rounds: u32,
+    width: u32,
+    height: u32,
+};
+
+/// What the cases in one format came to: done by the engine, refused,
+/// with no engine for them, and wrong.
+const Tally = struct { cases: u32 = 0, engine: u32 = 0, refused: u32 = 0, no_engine: u32 = 0, wrong: u32 = 0 };
+
+/// A blend or a scale: what the board did against what graphics.library
+/// did on plain memory, both from the same pattern. `outside` counts the
+/// pixels outside the rectangle that changed, `off` those inside more
+/// than one of the format's steps from the CPU's in a channel, `worst`
+/// the largest difference of a channel in eight-bit steps, `sum` all
+/// differences.
+const Compared = struct { outside: u32 = 0, off: u32 = 0, worst: u32 = 0, sum: u64 = 0, count: u32 = 0 };
+
+/// A channel of a pixel: where it starts, and how many bits it has.
+const Channel = struct { shift: u5, bits: u5 };
+
+/// Everything that depends on the pixel format: the type a pixel is, its
+/// channels, the bits that make it opaque, the colour the fills use, and
+/// the cases drawn and checked in it.
+fn Format(comptime format: rtg.PixelFormat) type {
+    return struct {
+        const Pixel = switch (format) {
+            .rgb565, .argb1555 => u16,
+            .rgba32, .bgra32 => u32,
+            else => @compileError("a format the test does not draw in"),
+        };
+        const channels: []const Channel = switch (format) {
+            .rgb565 => &.{ .{ .shift = 11, .bits = 5 }, .{ .shift = 5, .bits = 6 }, .{ .shift = 0, .bits = 5 } },
+            .argb1555 => &.{ .{ .shift = 15, .bits = 1 }, .{ .shift = 10, .bits = 5 }, .{ .shift = 5, .bits = 5 }, .{ .shift = 0, .bits = 5 } },
+            else => &.{ .{ .shift = 24, .bits = 8 }, .{ .shift = 16, .bits = 8 }, .{ .shift = 8, .bits = 8 }, .{ .shift = 0, .bits = 8 } },
+        };
+        const opaque_bits: Pixel = switch (format) {
+            .argb1555 => 0x8000,
+            .rgba32, .bgra32 => 0xFF00_0000,
+            else => 0,
+        };
+        /// Magenta, opaque, in either order of the channels.
+        const fill_color: Pixel = switch (format) {
+            .rgb565 => 0xF81F,
+            .argb1555 => 0xFC1F,
+            else => 0xFFFF_00FF,
+        };
+
+        fn at(surface: *const rtg.Surface, x: u32, y: u32) *Pixel {
+            const row: [*]Pixel = @ptrCast(@alignCast(surface.pixels.? + @as(usize, y) * surface.pitch));
+            return &row[x];
+        }
+
+        /// The pattern a buffer starts with: every channel different
+        /// from its neighbours', opaque.
+        fn patternAt(x: u32, y: u32, seed: u32) Pixel {
+            const h = (x *% 0x9E37_79B1) ^ (y *% 0x85EB_CA77) ^ (seed *% 0xC2B2_AE3D);
+            return @as(Pixel, @truncate(h ^ h >> 15)) | opaque_bits;
+        }
+
+        fn paint(surface: *const rtg.Surface, seed: u32) void {
+            var y: u32 = 0;
+            while (y < surface.height) : (y += 1) {
+                var x: u32 = 0;
+                while (x < surface.width) : (x += 1) at(surface, x, y).* = patternAt(x, y, seed);
+            }
+        }
+
+        /// `count` pixels of row `y` from `x` on, as the CPU fills them.
+        fn fillRow(surface: *const rtg.Surface, x: u32, y: u32, count: u32, color: Pixel) void {
+            const row: [*]Pixel = @ptrCast(at(surface, x, y));
+            @memset(row[0..count], color);
+        }
+
+        /// The pixels that are not the pattern any more.
+        fn changed(surface: *const rtg.Surface, seed: u32) u32 {
+            var wrong: u32 = 0;
+            var y: u32 = 0;
+            while (y < surface.height) : (y += 1) {
+                var x: u32 = 0;
+                while (x < surface.width) : (x += 1) {
+                    if (at(surface, x, y).* != patternAt(x, y, seed)) wrong += 1;
+                }
+            }
+            return wrong;
+        }
+
+        fn checkFill(surface: *const rtg.Surface, case: FillCase, seed: u32) u32 {
+            var wrong: u32 = 0;
+            var y: u32 = 0;
+            while (y < surface.height) : (y += 1) {
+                var x: u32 = 0;
+                while (x < surface.width) : (x += 1) {
+                    const want = if (inside(x, y, case.x, case.y, case.width, case.height)) fill_color else patternAt(x, y, seed);
+                    if (at(surface, x, y).* != want) wrong += 1;
+                }
+            }
+            return wrong;
+        }
+
+        fn checkCopy(dest: *const rtg.Surface, case: CopyCase, src_seed: u32, dest_seed: u32) u32 {
+            var wrong: u32 = 0;
+            var y: u32 = 0;
+            while (y < dest.height) : (y += 1) {
+                var x: u32 = 0;
+                while (x < dest.width) : (x += 1) {
+                    const want = if (inside(x, y, case.dx, case.dy, case.width, case.height))
+                        patternAt(@intCast(@as(i32, @intCast(x)) - case.dx + case.sx), @intCast(@as(i32, @intCast(y)) - case.dy + case.sy), src_seed)
+                    else
+                        patternAt(x, y, dest_seed);
+                    if (at(dest, x, y).* != want) wrong += 1;
+                }
+            }
+            return wrong;
+        }
+
+        /// A channel of a pixel, at its own width.
+        fn channelOf(pixel: Pixel, comptime channel: Channel) u32 {
+            return @as(u32, pixel) >> channel.shift & ((@as(u32, 1) << channel.bits) - 1);
+        }
+
+        /// A channel of a pixel, widened to eight bits.
+        fn widen(pixel: Pixel, comptime channel: Channel) u32 {
+            const value = channelOf(pixel, channel);
+            return switch (channel.bits) {
+                8 => value,
+                1 => value * 255,
+                else => value << (8 - channel.bits) | value >> (2 * channel.bits - 8),
+            };
+        }
+
+        /// The most of its own steps any one channel of two pixels is
+        /// apart.
+        fn stepsApart(got: Pixel, want: Pixel) u32 {
+            var most: u32 = 0;
+            inline for (channels) |channel| {
+                const one: i32 = @intCast(channelOf(got, channel));
+                const two: i32 = @intCast(channelOf(want, channel));
+                most = @max(most, @abs(one - two));
+            }
+            return most;
+        }
+
+        fn compare(board_surface: *const rtg.Surface, cpu: *const rtg.Surface, area: rtg.RtgRect, seed: u32) Compared {
+            var result = Compared{};
+            var y: u32 = 0;
+            while (y < board_surface.height) : (y += 1) {
+                var x: u32 = 0;
+                while (x < board_surface.width) : (x += 1) {
+                    const got = at(board_surface, x, y).*;
+                    if (!inside(x, y, area.x, area.y, area.width, area.height)) {
+                        if (got != patternAt(x, y, seed)) result.outside += 1;
+                        continue;
+                    }
+                    const want = at(cpu, x, y).*;
+                    inline for (channels) |channel| {
+                        const one = widen(got, channel);
+                        const two = widen(want, channel);
+                        const difference = if (one > two) one - two else two - one;
+                        result.worst = @max(result.worst, difference);
+                        result.sum += difference;
+                        result.count += 1;
+                    }
+                    if (stepsApart(got, want) > 1) result.off += 1;
+                }
+            }
+            return result;
+        }
+
+        /// Every case in this format, on two buffers of it from the
+        /// board. Null when the board has no memory for them.
+        fn run(t: *Test, display: bool) ?Tally {
+            const first = t.rb.AllocBitMap(t.board, t.width, t.height, @intFromEnum(format), 0) orelse return null;
+            defer t.rb.FreeBitMap(first);
+            const second = t.rb.AllocBitMap(t.board, t.width, t.height, @intFromEnum(format), 0) orelse return null;
+            defer t.rb.FreeBitMap(second);
+            _ = Printf(t.dl, "In %s%s: buffers %u x %u, pitch %u, at 0x%08lx and 0x%08lx\n", .{
+                nameOf(format),                         word(display, ", the display's format", ""),
+                t.width,                                t.height,
+                first.pitch,                            @as(u64, @intFromPtr(first.pixels.?)),
+                @as(u64, @intFromPtr(second.pixels.?)),
+            });
+            var tally = Tally{};
+            fillCases(t, &tally, first, second);
+            copyCases(t, &tally, first, second);
+            memoryCopy(t, &tally, first);
+            blendCases(t, &tally, first);
+            _ = Printf(t.dl, "  %s: the engine did %u of %u cases; %u refused, %u with no engine for them, %u wrong\n", .{
+                nameOf(format), tally.engine, tally.cases, tally.refused, tally.no_engine, tally.wrong,
+            });
+            return tally;
+        }
+
+        fn fillCases(t: *Test, tally: *Tally, first: *rtg.RtgBitMap, second: *rtg.RtgBitMap) void {
+            for (fills) |case| {
+                const area = rtg.RtgRect{ .x = case.x, .y = case.y, .width = case.width, .height = case.height };
+                var engine_us: u64 = 0;
+                var answer: i32 = err.RTGERR_OK;
+                var round: u32 = 0;
+                while (round < t.rounds) : (round += 1) {
+                    paint(surfaceOf(first), 1);
+                    const start = now(t.tb);
+                    answer = t.rb.FillRect(first, &area, fill_color);
+                    engine_us += now(t.tb) - start;
+                }
+                var cpu_us: u64 = 0;
+                round = 0;
+                while (round < t.rounds) : (round += 1) {
+                    paint(surfaceOf(second), 1);
+                    const start = now(t.tb);
+                    var y: i32 = case.y;
+                    while (y < case.y + case.height) : (y += 1) fillRow(surfaceOf(second), @intCast(case.x), @intCast(y), @intCast(case.width), fill_color);
+                    cpu_us += now(t.tb) - start;
+                }
+                const wrong = if (answer == err.RTGERR_OK) checkFill(surfaceOf(first), case, 1) else changed(surfaceOf(first), 1);
+                begin(t, answer);
+                _ = Printf(t.dl, "fill %ux%u at %d,%d", .{ @as(u32, @intCast(case.width)), @as(u32, @intCast(case.height)), case.x, case.y });
+                finish(t, tally, answer, B.RTGBC_FILL_RECT, engine_us / t.rounds, cpu_us / t.rounds, wrong);
+            }
+        }
+
+        fn copyCases(t: *Test, tally: *Tally, first: *rtg.RtgBitMap, second: *rtg.RtgBitMap) void {
+            for (copies) |case| {
+                const src = first;
+                const dest = if (case.same) first else second;
+                const dest_seed: u32 = if (case.same) 1 else 2;
+                const what = rtg.RtgCopy{ .src_x = case.sx, .src_y = case.sy, .width = case.width, .height = case.height, .dest_x = case.dx, .dest_y = case.dy };
+                var engine_us: u64 = 0;
+                var answer: i32 = err.RTGERR_OK;
+                var round: u32 = 0;
+                while (round < t.rounds) : (round += 1) {
+                    paint(surfaceOf(first), 1);
+                    if (!case.same) paint(surfaceOf(second), 2);
+                    const start = now(t.tb);
+                    answer = t.rb.CopyRect(src, dest, &what);
+                    engine_us += now(t.tb) - start;
+                }
+                const wrong = if (answer == err.RTGERR_OK) checkCopy(surfaceOf(dest), case, 1, dest_seed) else changed(surfaceOf(dest), dest_seed);
+                begin(t, answer);
+                _ = Printf(t.dl, "copy %ux%u %d,%d -> %d,%d%s", .{
+                    @as(u32, @intCast(case.width)),        @as(u32, @intCast(case.height)),
+                    case.sx,                               case.sy,
+                    case.dx,                               case.dy,
+                    word(case.same, " in one buffer", ""),
+                });
+                finish(t, tally, answer, B.RTGBC_COPY_RECT, engine_us / t.rounds, null, wrong);
+            }
+        }
+
+        /// A copy out of plain memory, described for the engine.
+        fn memoryCopy(t: *Test, tally: *Tally, dest: *rtg.RtgBitMap) void {
+            const bytes = dest.pitch * dest.height;
+            const memory = t.sys.AllocVec(bytes, exec.MEMF_ANY) orelse return;
+            defer t.sys.FreeVec(memory);
+            var plain = rtg.RtgBitMap{ .pixels = @ptrCast(memory), .width = dest.width, .height = dest.height, .pitch = dest.pitch, .format = format };
+            paint(surfaceOf(&plain), 2);
+            const case = CopyCase{ .sx = 5, .sy = 3, .width = 400, .height = 300, .dx = 17, .dy = 11, .same = false };
+            const what = rtg.RtgCopy{ .src_x = case.sx, .src_y = case.sy, .width = case.width, .height = case.height, .dest_x = case.dx, .dest_y = case.dy };
+            var engine_us: u64 = 0;
+            var answer: i32 = err.RTGERR_OK;
+            var round: u32 = 0;
+            while (round < t.rounds) : (round += 1) {
+                paint(surfaceOf(dest), 1);
+                const start = now(t.tb);
+                answer = t.rb.CopyRect(&plain, dest, &what);
+                engine_us += now(t.tb) - start;
+            }
+            const wrong = if (answer == err.RTGERR_OK) checkCopy(surfaceOf(dest), case, 2, 1) else changed(surfaceOf(dest), 1);
+            begin(t, answer);
+            _ = Printf(t.dl, "copy 400x300 from memory at 0x%08lx", .{@as(u64, @intFromPtr(memory))});
+            finish(t, tally, answer, B.RTGBC_COPY_RECT, engine_us / t.rounds, null, wrong);
+        }
+
+        /// Each blend and scale by the board on `first`, and by
+        /// graphics.library in software on plain memory painted alike.
+        fn blendCases(t: *Test, tally: *Tally, first: *rtg.RtgBitMap) void {
+            const bytes = first.pitch * first.height;
+            const memory = t.sys.AllocVec(bytes, exec.MEMF_ANY) orelse return;
+            defer t.sys.FreeVec(memory);
+            const plain = rtg.Surface{ .pixels = @ptrCast(memory), .width = first.width, .height = first.height, .pitch = first.pitch, .size_bytes = bytes, .format = format };
+            const picture_memory = t.sys.AllocVec(picture_width * picture_height * 4, exec.MEMF_ANY) orelse return;
+            defer t.sys.FreeVec(picture_memory);
+            const picture: [*]u32 = @ptrCast(@alignCast(picture_memory));
+            paintPicture(picture, picture_width, picture_height);
+
+            const cpu_tags = [_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&plain) }, .{} };
+            const cpu_rp = t.gb.CreateRastPortTagList(&cpu_tags) orelse return;
+            defer t.gb.FreeRastPort(cpu_rp);
+
+            for (blends) |case| {
+                const pixels = rtg.RtgPixels{ .pixels = @ptrCast(picture), .pitch = picture_width * 4, .format = case.format };
+                var engine_us: u64 = 0;
+                var answer: i32 = err.RTGERR_OK;
+                var round: u32 = 0;
+                while (round < t.rounds) : (round += 1) {
+                    paint(surfaceOf(first), 1);
+                    const start = now(t.tb);
+                    answer = switch (case.kind) {
+                        .pixels => t.rb.BlendPixels(first, &case.area, &pixels, case.alpha),
+                        .rect => t.rb.BlendRect(first, &case.area, case.color),
+                        .scale => t.rb.ScalePixels(first, &case.area, &pixels, case.from_width, case.from_height),
+                    };
+                    engine_us += now(t.tb) - start;
+                }
+                var cpu_us: u64 = 0;
+                round = 0;
+                while (round < t.rounds) : (round += 1) {
+                    paint(&plain, 1);
+                    const start = now(t.tb);
+                    cpuDoes(t.gb, cpu_rp, case, picture);
+                    cpu_us += now(t.tb) - start;
+                }
+                var result = Compared{};
+                var wrong: u32 = 0;
+                if (answer == err.RTGERR_OK) {
+                    result = compare(surfaceOf(first), &plain, case.area, 1);
+                    // A scale is the engine's own sampling: far off only
+                    // when broken.
+                    const mean = if (result.count == 0) 0 else result.sum / result.count;
+                    const off = if (case.kind == .scale) (if (mean > 12) @max(result.off, 1) else 0) else result.off;
+                    wrong = result.outside + off;
+                } else {
+                    wrong = changed(surfaceOf(first), 1);
+                }
+                const name: [*:0]const u8 = switch (case.kind) {
+                    .pixels => if (case.format == .rgba32) "blend rgba32" else "blend bgra32",
+                    .rect => "blend colour",
+                    .scale => "scale",
+                };
+                const cap = switch (case.kind) {
+                    .pixels => B.RTGBC_BLEND_PIXELS,
+                    .rect => B.RTGBC_BLEND_RECT,
+                    .scale => B.RTGBC_SCALE_PIXELS,
+                };
+                begin(t, answer);
+                _ = Printf(t.dl, "%s %ux%u at %d,%d", .{ name, @as(u32, @intCast(case.area.width)), @as(u32, @intCast(case.area.height)), case.area.x, case.area.y });
+                finish(t, tally, answer, cap, engine_us / t.rounds, cpu_us / t.rounds, wrong);
+                if (answer == err.RTGERR_OK) _ = Printf(t.dl, "      outside changed %u, off by more than a step %u, worst %u, mean %lu/100\n", .{
+                    result.outside, result.off, result.worst, if (result.count == 0) 0 else result.sum * 100 / result.count,
+                });
+            }
+        }
+
+        /// LOAD: `rounds` whole-buffer fills by the board, then by the
+        /// CPU, with the display's starved frames before and after each
+        /// run.
+        fn loadTest(t: *Test, rounds: u32) i32 {
+            const bm = t.rb.AllocBitMap(t.board, t.width, t.height, @intFromEnum(format), 0) orelse {
+                _ = Printf(t.dl, "No memory for the buffer\n", .{});
+                return dos.RETURN_FAIL;
+            };
+            defer t.rb.FreeBitMap(bm);
+            const whole = rtg.RtgRect{ .x = 0, .y = 0, .width = @intCast(bm.width), .height = @intCast(bm.height) };
+            var before = starved(t.rb, t.board);
+            var start = now(t.tb);
+            var round: u32 = 0;
+            var refused: u32 = 0;
+            while (round < rounds) : (round += 1) {
+                if (t.rb.FillRect(bm, &whole, @as(Pixel, @truncate(round)) | opaque_bits) != err.RTGERR_OK) refused += 1;
+            }
+            var took = now(t.tb) - start;
+            _ = Printf(t.dl, "board: %u fills of %ux%u in %s in %lu us (%u refused), starved frames %u -> %u\n", .{
+                rounds, bm.width, bm.height, nameOf(format), took, refused, before, starved(t.rb, t.board),
+            });
+            before = starved(t.rb, t.board);
+            start = now(t.tb);
+            round = 0;
+            while (round < rounds) : (round += 1) {
+                var y: u32 = 0;
+                while (y < bm.height) : (y += 1) fillRow(surfaceOf(bm), 0, y, bm.width, @as(Pixel, @truncate(round)) | opaque_bits);
+            }
+            took = now(t.tb) - start;
+            _ = Printf(t.dl, "CPU: %u fills of %ux%u in %s in %lu us, starved frames %u -> %u\n", .{
+                rounds, bm.width, bm.height, nameOf(format), took, before, starved(t.rb, t.board),
+            });
+            return dos.RETURN_OK;
+        }
+    };
 }
 
-fn pixelAt(bm: *const rtg.RtgBitMap, x: u32, y: u32) *u16 {
-    const row: [*]u16 = @ptrFromInt(@intFromPtr(bm.pixels.?) + @as(usize, y) * bm.pitch);
-    return &row[x];
-}
-
-fn paint(bm: *rtg.RtgBitMap, seed: u32) void {
-    var y: u32 = 0;
-    while (y < bm.height) : (y += 1) {
-        var x: u32 = 0;
-        while (x < bm.width) : (x += 1) pixelAt(bm, x, y).* = patternAt(x, y, seed);
-    }
+/// A board's buffer as a surface: an RtgBitMap is one by pointer.
+fn surfaceOf(bm: *rtg.RtgBitMap) *const rtg.Surface {
+    return @ptrCast(bm);
 }
 
 fn inside(x: u32, y: u32, left: i32, top: i32, width: i32, height: i32) bool {
@@ -106,85 +497,47 @@ fn inside(x: u32, y: u32, left: i32, top: i32, width: i32, height: i32) bool {
     return sx >= left and sx < left + width and sy >= top and sy < top + height;
 }
 
-fn checkFill(bm: *rtg.RtgBitMap, case: FillCase, seed: u32) u32 {
-    var wrong: u32 = 0;
-    var y: u32 = 0;
-    while (y < bm.height) : (y += 1) {
-        var x: u32 = 0;
-        while (x < bm.width) : (x += 1) {
-            const want = if (inside(x, y, case.x, case.y, case.width, case.height)) fill_color else patternAt(x, y, seed);
-            if (pixelAt(bm, x, y).* != want) wrong += 1;
-        }
-    }
-    return wrong;
+fn nameOf(format: rtg.PixelFormat) [*:0]const u8 {
+    return switch (format) {
+        .rgba32 => "rgba32",
+        .bgra32 => "bgra32",
+        .rgb24 => "rgb24",
+        .bgr24 => "bgr24",
+        .rgb565 => "rgb565",
+        .argb1555 => "argb1555",
+        .indexed8 => "indexed8",
+        .gray8 => "gray8",
+        .mono1 => "mono1",
+        _ => "an unknown format",
+    };
 }
 
-fn checkCopy(dest: *rtg.RtgBitMap, case: CopyCase, src_seed: u32, dest_seed: u32) u32 {
-    var wrong: u32 = 0;
-    var y: u32 = 0;
-    while (y < dest.height) : (y += 1) {
-        var x: u32 = 0;
-        while (x < dest.width) : (x += 1) {
-            const want = if (inside(x, y, case.dx, case.dy, case.width, case.height))
-                patternAt(@intCast(@as(i32, @intCast(x)) - case.dx + case.sx), @intCast(@as(i32, @intCast(y)) - case.dy + case.sy), src_seed)
-            else
-                patternAt(x, y, dest_seed);
-            if (pixelAt(dest, x, y).* != want) wrong += 1;
-        }
-    }
-    return wrong;
+/// The start of a case's line: who did it.
+fn begin(t: *Test, answer: i32) void {
+    _ = Printf(t.dl, "  %s  ", .{word(answer == err.RTGERR_OK, "engine  ", "SOFTWARE")});
 }
 
-/// A blend or a scale: what the board did against what graphics.library
-/// did on plain memory, both from the same pattern. `outside` counts the
-/// pixels outside the rectangle that changed, `off` those inside more
-/// than one RGB565 step from the CPU's in a channel, `worst` the largest
-/// difference of a channel in eight-bit steps, `sum` all differences.
-const Compared = struct { outside: u32 = 0, off: u32 = 0, worst: u32 = 0, sum: u64 = 0, count: u32 = 0 };
-
-fn widen(pixel: u16) [3]u32 {
-    const red: u32 = pixel >> 11 & 0x1F;
-    const green: u32 = pixel >> 5 & 0x3F;
-    const blue: u32 = pixel & 0x1F;
-    return .{ red << 3 | red >> 2, green << 2 | green >> 4, blue << 3 | blue >> 2 };
-}
-
-/// The most RGB565 steps two pixels are apart in any one channel.
-fn stepsApart(got: u16, want: u16) u32 {
-    var most: u32 = 0;
-    for ([3]u4{ 11, 5, 0 }, [3]u16{ 0x1F, 0x3F, 0x1F }) |shift, mask| {
-        const one: i32 = got >> shift & mask;
-        const two: i32 = want >> shift & mask;
-        most = @max(most, @abs(one - two));
+/// The rest of a case's line: why software would do it, if it would; the
+/// times; and what came of it - right, wrong, or for a refusal the buffer
+/// untouched. `cap` is the board's bit for the call.
+fn finish(t: *Test, tally: *Tally, answer: i32, cap: u32, engine_us: u64, cpu_us: ?u64, wrong: u32) void {
+    tally.cases += 1;
+    if (answer == err.RTGERR_OK) {
+        tally.engine += 1;
+        _ = Printf(t.dl, ": %lu us", .{engine_us});
+    } else if (t.caps & cap == 0) {
+        tally.no_engine += 1;
+        _ = Printf(t.dl, ": no engine for it", .{});
+    } else {
+        tally.refused += 1;
+        _ = Printf(t.dl, ": refused (%d)", .{answer});
     }
-    return most;
-}
-
-fn compare(board_bm: *rtg.RtgBitMap, cpu: *const rtg.Surface, area: rtg.RtgRect, seed: u32) Compared {
-    var result = Compared{};
-    var y: u32 = 0;
-    while (y < board_bm.height) : (y += 1) {
-        const cpu_row: [*]const u16 = @ptrFromInt(@intFromPtr(cpu.pixels.?) + @as(usize, y) * cpu.pitch);
-        var x: u32 = 0;
-        while (x < board_bm.width) : (x += 1) {
-            const got = pixelAt(board_bm, x, y).*;
-            if (!inside(x, y, area.x, area.y, area.width, area.height)) {
-                if (got != patternAt(x, y, seed)) result.outside += 1;
-                continue;
-            }
-            const want = cpu_row[x];
-            const a = widen(got);
-            const b = widen(want);
-            for (a, b) |one, two| {
-                const difference = if (one > two) one - two else two - one;
-                result.worst = @max(result.worst, difference);
-                result.sum += difference;
-            }
-            if (stepsApart(got, want) > 1) result.off += 1;
-            result.count += 3;
-        }
-    }
-    return result;
+    if (cpu_us) |us| _ = Printf(t.dl, ", CPU %lu us", .{us});
+    const outcome: [*:0]const u8 = if (wrong != 0) "WRONG" else if (answer == err.RTGERR_OK) "ok" else "untouched";
+    _ = Printf(t.dl, ": %s\n", .{outcome});
+    if (wrong == 0) return;
+    tally.wrong += 1;
+    _ = Printf(t.dl, "      %u pixels wrong\n", .{wrong});
 }
 
 /// A picture with coverage: colours from its coordinates, the coverage
@@ -200,62 +553,14 @@ fn paintPicture(picture: [*]u32, width: u32, height: u32) void {
     }
 }
 
-/// Plain memory painted as `paint` paints a buffer.
-fn paintSurface(surface: *const rtg.Surface, seed: u32) void {
-    var y: u32 = 0;
-    while (y < surface.height) : (y += 1) {
-        const row: [*]u16 = @ptrFromInt(@intFromPtr(surface.pixels.?) + @as(usize, y) * surface.pitch);
-        var x: u32 = 0;
-        while (x < surface.width) : (x += 1) row[x] = patternAt(x, y, seed);
-    }
-}
-
 fn word(which: bool, yes: [*:0]const u8, no: [*:0]const u8) [*:0]const u8 {
     return if (which) yes else no;
-}
-
-/// What a case came to: done right, done wrong, or left to software.
-fn verdict(answer: i32, wrong: u32) [*:0]const u8 {
-    if (answer != err.RTGERR_OK) return "software's";
-    return if (wrong == 0) "ok" else "WRONG";
 }
 
 fn starved(rb: *RtgBase, board: *rtg.RtgBoard) u32 {
     var counts: rtg.RtgBoardStats = .{};
     _ = rb.GetBoardStats(board, &counts, @sizeOf(rtg.RtgBoardStats));
     return counts.starved_frames;
-}
-
-/// LOAD: `rounds` whole-buffer fills by the board, then by the CPU, with
-/// the display's starved frames before and after each run.
-fn loadTest(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard, tb: *TimerBase, bm: *rtg.RtgBitMap, rounds: u32) i32 {
-    const whole = rtg.RtgRect{ .x = 0, .y = 0, .width = @intCast(bm.width), .height = @intCast(bm.height) };
-    var before = starved(rb, board);
-    var start = now(tb);
-    var round: u32 = 0;
-    var refused: u32 = 0;
-    while (round < rounds) : (round += 1) {
-        if (rb.FillRect(bm, &whole, @truncate(round)) != err.RTGERR_OK) refused += 1;
-    }
-    var took = now(tb) - start;
-    _ = Printf(dl, "board: %u fills of %ux%u in %lu us (%u refused), starved frames %u -> %u\n", .{
-        rounds, bm.width, bm.height, took, refused, before, starved(rb, board),
-    });
-    before = starved(rb, board);
-    start = now(tb);
-    round = 0;
-    while (round < rounds) : (round += 1) {
-        var y: u32 = 0;
-        while (y < bm.height) : (y += 1) {
-            const row: [*]u16 = @ptrFromInt(@intFromPtr(pixelAt(bm, 0, y)));
-            @memset(row[0..bm.width], @truncate(round));
-        }
-    }
-    took = now(tb) - start;
-    _ = Printf(dl, "CPU: %u fills of %ux%u in %lu us, starved frames %u -> %u\n", .{
-        rounds, bm.width, bm.height, took, before, starved(rb, board),
-    });
-    return dos.RETURN_OK;
 }
 
 /// The overlay DRAG moves: a disc in a square, opaque inside, colours
@@ -337,15 +642,26 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(rtg_lib);
     const rb: *RtgBase = @ptrCast(rtg_lib);
+    const graphics_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, 0) orelse {
+        _ = Printf(dl, "No %s\n", .{graphics.GRAPHICSNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(graphics_lib);
     const board = rb.FindBoard(sdk.graphics.DISPLAY_BOARD) orelse {
         _ = Printf(dl, "No display board\n", .{});
         return dos.RETURN_FAIL;
     };
     var info: rtg.RtgBoardInfo = .{};
     _ = rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
-    _ = Printf(dl, "Board: fill %s, copy %s\n", .{
-        word(info.caps & rtg.boards.RTGBC_FILL_RECT != 0, "yes", "no"),
-        word(info.caps & rtg.boards.RTGBC_COPY_RECT != 0, "yes", "no"),
+    _ = Printf(dl, "Board: %ux%u in %s; fill %s, copy %s, blend pixels %s, blend colour %s, scale %s\n", .{
+        info.width,
+        info.height,
+        nameOf(info.format),
+        word(info.caps & B.RTGBC_FILL_RECT != 0, "yes", "no"),
+        word(info.caps & B.RTGBC_COPY_RECT != 0, "yes", "no"),
+        word(info.caps & B.RTGBC_BLEND_PIXELS != 0, "yes", "no"),
+        word(info.caps & B.RTGBC_BLEND_RECT != 0, "yes", "no"),
+        word(info.caps & B.RTGBC_SCALE_PIXELS != 0, "yes", "no"),
     });
 
     var timer_req: timer.TimeRequest = .{};
@@ -358,120 +674,67 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dragTest(dl, rb, sys, board, tb, &info, steps);
     }
 
-    const width: u32 = @max(info.width, 480);
-    const height: u32 = @max(info.height, 400);
-    const first = rb.AllocBitMap(board, width, height, @intFromEnum(rtg.PixelFormat.rgb565), 0) orelse {
-        _ = Printf(dl, "No memory for the buffers\n", .{});
-        return dos.RETURN_FAIL;
+    var t = Test{
+        .sys = sys,
+        .dl = dl,
+        .rb = rb,
+        .gb = @ptrCast(graphics_lib),
+        .tb = tb,
+        .board = board,
+        .caps = info.caps,
+        .rounds = rounds,
+        .width = @max(info.width, 480),
+        .height = @max(info.height, 400),
     };
-    defer rb.FreeBitMap(first);
-    const second = rb.AllocBitMap(board, width, height, @intFromEnum(rtg.PixelFormat.rgb565), 0) orelse {
-        _ = Printf(dl, "No memory for the buffers\n", .{});
-        return dos.RETURN_FAIL;
-    };
-    defer rb.FreeBitMap(second);
-    _ = Printf(dl, "Buffers: %u x %u, pitch %u, at 0x%08lx and 0x%08lx\n", .{
-        width, height, first.pitch, @as(u64, @intFromPtr(first.pixels.?)), @as(u64, @intFromPtr(second.pixels.?)),
-    });
 
     if (argv[1] != 0) {
         const load: u32 = @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[1])).*));
-        return loadTest(dl, rb, board, tb, second, load);
+        inline for (drawn) |format| {
+            if (info.format == format) return Format(format).loadTest(&t, load);
+        }
+        _ = Printf(dl, "The display runs in %s, which LOAD does not fill\n", .{nameOf(info.format)});
+        return dos.RETURN_FAIL;
     }
 
     const starved_before = starved(rb, board);
     var failures: u32 = 0;
-    for (fills) |case| {
-        var engine_us: u64 = 0;
-        var answer: i32 = err.RTGERR_OK;
-        var round: u32 = 0;
-        while (round < rounds) : (round += 1) {
-            paint(first, 1);
-            const start = now(tb);
-            answer = rb.FillRect(first, &.{ .x = case.x, .y = case.y, .width = case.width, .height = case.height }, fill_color);
-            engine_us += now(tb) - start;
+    // What the engine did in the display's format; null when the test
+    // does not draw in it.
+    var display_engine: ?u32 = null;
+    inline for (drawn) |format| {
+        if (info.format == format) {
+            const tally = Format(format).run(&t, true) orelse {
+                _ = Printf(dl, "No memory for the buffers\n", .{});
+                return dos.RETURN_FAIL;
+            };
+            failures += tally.wrong;
+            display_engine = tally.engine;
         }
-        var cpu_us: u64 = 0;
-        round = 0;
-        while (round < rounds) : (round += 1) {
-            paint(second, 1);
-            const start = now(tb);
-            var y: i32 = case.y;
-            while (y < case.y + case.height) : (y += 1) {
-                const row: [*]u16 = @ptrFromInt(@intFromPtr(pixelAt(second, @intCast(case.x), @intCast(y))));
-                @memset(row[0..@intCast(case.width)], fill_color);
+    }
+    if (display_engine == null) _ = Printf(dl, "The display runs in %s, which the test does not draw in\n", .{nameOf(info.format)});
+    for (also) |wanted| {
+        if (wanted == info.format) continue;
+        inline for (drawn) |format| {
+            if (wanted == format) {
+                if (Format(format).run(&t, false)) |tally| {
+                    failures += tally.wrong;
+                } else {
+                    _ = Printf(dl, "In %s: no memory on the board for the buffers, left out\n", .{nameOf(format)});
+                }
             }
-            cpu_us += now(tb) - start;
         }
-        const wrong = if (answer == err.RTGERR_OK) checkFill(first, case, 1) else 0;
-        if (wrong != 0) failures += 1;
-        _ = Printf(dl, "fill %ux%u at %d,%d: board %s %lu us, CPU %lu us: %s\n", .{
-            @as(u32, @intCast(case.width)),                            @as(u32, @intCast(case.height)),
-            case.x,                                                    case.y,
-            word(answer == err.RTGERR_OK, "did it in", "refused it,"), engine_us / rounds,
-            cpu_us / rounds,                                           verdict(answer, wrong),
-        });
-        if (wrong != 0) _ = Printf(dl, "  %u pixels wrong\n", .{wrong});
     }
-
-    for (copies) |case| {
-        const src = first;
-        const dest = if (case.same) first else second;
-        const what = rtg.RtgCopy{ .src_x = case.sx, .src_y = case.sy, .width = case.width, .height = case.height, .dest_x = case.dx, .dest_y = case.dy };
-        var engine_us: u64 = 0;
-        var answer: i32 = err.RTGERR_OK;
-        var round: u32 = 0;
-        while (round < rounds) : (round += 1) {
-            paint(first, 1);
-            if (!case.same) paint(second, 2);
-            const start = now(tb);
-            answer = rb.CopyRect(src, dest, &what);
-            engine_us += now(tb) - start;
-        }
-        const wrong = if (answer == err.RTGERR_OK) checkCopy(dest, case, 1, if (case.same) 1 else 2) else 0;
-        if (wrong != 0) failures += 1;
-        _ = Printf(dl, "copy %ux%u %d,%d -> %d,%d%s: board %s %lu us: %s\n", .{
-            @as(u32, @intCast(case.width)),        @as(u32, @intCast(case.height)),
-            case.sx,                               case.sy,
-            case.dx,                               case.dy,
-            word(case.same, " in one buffer", ""), word(answer == err.RTGERR_OK, "did it in", "refused it,"),
-            engine_us / rounds,                    verdict(answer, wrong),
-        });
-        if (wrong != 0) _ = Printf(dl, "  %u pixels wrong\n", .{wrong});
-    }
-
-    failures += memoryCopy(dl, rb, sys, tb, first, rounds);
-    failures += blendCases(dl, rb, sys, tb, first, rounds);
     _ = Printf(dl, "Starved frames meanwhile: %u\n", .{starved(rb, board) - starved_before});
 
     if (failures != 0) return dos.RETURN_ERROR;
-    return dos.RETURN_OK;
-}
-
-/// A copy out of plain memory, described for the engine.
-fn memoryCopy(dl: *DosBase, rb: *RtgBase, sys: *ExecBase, tb: *TimerBase, dest: *rtg.RtgBitMap, rounds: u32) u32 {
-    const bytes = dest.pitch * dest.height;
-    const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return 0;
-    defer sys.FreeVec(memory);
-    var plain = rtg.RtgBitMap{ .pixels = @ptrCast(memory), .width = dest.width, .height = dest.height, .pitch = dest.pitch, .format = .rgb565 };
-    paint(&plain, 2);
-    const case = CopyCase{ .sx = 5, .sy = 3, .width = 400, .height = 300, .dx = 17, .dy = 11, .same = false };
-    const what = rtg.RtgCopy{ .src_x = case.sx, .src_y = case.sy, .width = case.width, .height = case.height, .dest_x = case.dx, .dest_y = case.dy };
-    var engine_us: u64 = 0;
-    var answer: i32 = err.RTGERR_OK;
-    var round: u32 = 0;
-    while (round < rounds) : (round += 1) {
-        paint(dest, 1);
-        const start = now(tb);
-        answer = rb.CopyRect(&plain, dest, &what);
-        engine_us += now(tb) - start;
+    const claimed = info.caps & (B.RTGBC_FILL_RECT | B.RTGBC_COPY_RECT | B.RTGBC_BLEND_PIXELS | B.RTGBC_BLEND_RECT | B.RTGBC_SCALE_PIXELS);
+    if (display_engine) |did| {
+        if (claimed != 0 and did == 0) {
+            _ = Printf(dl, "The board says it has an engine, but did none of the cases in %s, the display's format\n", .{nameOf(info.format)});
+            return dos.RETURN_WARN;
+        }
     }
-    const wrong = if (answer == err.RTGERR_OK) checkCopy(dest, case, 2, 1) else 0;
-    _ = Printf(dl, "copy 400x300 from memory at 0x%08lx: board %s %lu us: %s\n", .{
-        @as(u64, @intFromPtr(memory)), word(answer == err.RTGERR_OK, "did it in", "refused it,"), engine_us / rounds, verdict(answer, wrong),
-    });
-    if (wrong != 0) _ = Printf(dl, "  %u pixels wrong\n", .{wrong});
-    return @intFromBool(wrong != 0);
+    return dos.RETURN_OK;
 }
 
 const BlendKind = enum { pixels, rect, scale };
@@ -501,73 +764,6 @@ const blends = [_]BlendCase{
     .{ .kind = .scale, .area = .{ .x = 16, .y = 8, .width = 300, .height = 225 }, .from_width = 400, .from_height = 300 },
     .{ .kind = .scale, .area = .{ .x = 16, .y = 8, .width = 333, .height = 250 }, .from_width = 400, .from_height = 300 },
 };
-
-/// Each blend and scale by the board on `first`, and by graphics.library
-/// in software on plain memory painted alike.
-fn blendCases(dl: *DosBase, rb: *RtgBase, sys: *ExecBase, tb: *TimerBase, first: *rtg.RtgBitMap, rounds: u32) u32 {
-    const graphics_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, 0) orelse return 0;
-    defer sys.CloseLibrary(graphics_lib);
-    const gb: *GraphicsBase = @ptrCast(graphics_lib);
-    const bytes = first.pitch * first.height;
-    const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return 0;
-    defer sys.FreeVec(memory);
-    const plain = rtg.Surface{ .pixels = @ptrCast(memory), .width = first.width, .height = first.height, .pitch = first.pitch, .size_bytes = bytes, .format = .rgb565 };
-    const picture_memory = sys.AllocVec(picture_width * picture_height * 4, exec.MEMF_ANY) orelse return 0;
-    defer sys.FreeVec(picture_memory);
-    const picture: [*]u32 = @ptrCast(@alignCast(picture_memory));
-    paintPicture(picture, picture_width, picture_height);
-
-    const cpu_tags = [_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&plain) }, .{} };
-    const cpu_rp = gb.CreateRastPortTagList(&cpu_tags) orelse return 0;
-    defer gb.FreeRastPort(cpu_rp);
-
-    var failures: u32 = 0;
-    for (blends) |case| {
-        const pixels = rtg.RtgPixels{ .pixels = @ptrCast(picture), .pitch = picture_width * 4, .format = case.format };
-        var engine_us: u64 = 0;
-        var answer: i32 = err.RTGERR_OK;
-        var round: u32 = 0;
-        while (round < rounds) : (round += 1) {
-            paint(first, 1);
-            const start = now(tb);
-            answer = switch (case.kind) {
-                .pixels => rb.BlendPixels(first, &case.area, &pixels, case.alpha),
-                .rect => rb.BlendRect(first, &case.area, case.color),
-                .scale => rb.ScalePixels(first, &case.area, &pixels, case.from_width, case.from_height),
-            };
-            engine_us += now(tb) - start;
-        }
-        var cpu_us: u64 = 0;
-        round = 0;
-        while (round < rounds) : (round += 1) {
-            paintSurface(&plain, 1);
-            const start = now(tb);
-            cpuDoes(gb, cpu_rp, case, picture);
-            cpu_us += now(tb) - start;
-        }
-        const result = if (answer == err.RTGERR_OK) compare(first, &plain, case.area, 1) else Compared{};
-        // A scale is the engine's own sampling: far off only when broken.
-        const mean = if (result.count == 0) 0 else result.sum / result.count;
-        const wrong = result.outside != 0 or (if (case.kind == .scale) mean > 12 else result.off != 0);
-        if (wrong) failures += 1;
-        const name: [*:0]const u8 = switch (case.kind) {
-            .pixels => if (case.format == .rgba32) "blend rgba32" else "blend bgra32",
-            .rect => "blend colour",
-            .scale => "scale",
-        };
-        _ = Printf(dl, "%s %ux%u at %d,%d: board %s %lu us, CPU %lu us: %s\n", .{
-            name,                                                                        @as(u32, @intCast(case.area.width)),
-            @as(u32, @intCast(case.area.height)),                                        case.area.x,
-            case.area.y,                                                                 word(answer == err.RTGERR_OK, "did it in", "refused it,"),
-            engine_us / rounds,                                                          cpu_us / rounds,
-            if (answer != err.RTGERR_OK) "software's" else if (wrong) "WRONG" else "ok",
-        });
-        if (answer == err.RTGERR_OK) _ = Printf(dl, "  outside changed %u, off by more than a step %u, worst %u, mean %lu/100\n", .{
-            result.outside, result.off, result.worst, if (result.count == 0) 0 else result.sum * 100 / result.count,
-        });
-    }
-    return failures;
-}
 
 /// What graphics.library does in software for `case`.
 fn cpuDoes(gb: *GraphicsBase, rp: *graphics.RastPort, case: BlendCase, picture: [*]u32) void {

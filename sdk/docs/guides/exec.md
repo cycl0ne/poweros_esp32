@@ -115,11 +115,12 @@ program shows one figure of free memory rather than the same one twice.
 
 A buffer in PSRAM that a DMA engine reads or writes goes through
 `CachePreDMA` before the transfer and `CachePostDMA` after it. On the
-VisionFive 2 the devices do not see the cores' caches either: there the
-cache calls write each line of the range back and drop it through the L2
-cache controller's Flush64 register, which the board names
-(`SYSTAG_CacheFlush`). QEMU's virt names none, as its devices see the
-caches, and the calls do nothing there.
+VisionFive 2 the chip's own devices do not see the cores' caches either:
+there the cache calls write each line of the range back and drop it
+through the L2 cache controller's Flush64 register, which the board
+names (`SYSTAG_CacheFlush`). Its devices on PCI Express do see them, as
+pci.library's `dma_coherent` says. QEMU's virt names none, as its
+devices see the caches, and the calls do nothing there.
 
 **Two ways to allocate.** `AllocMem(size, flags)` answers a block that
 `FreeMem` takes back with the same size, which the caller remembers.

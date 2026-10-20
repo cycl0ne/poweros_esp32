@@ -63,6 +63,8 @@ pub const anvil = @import("libs/anvil/anvil.zig");
 pub const usb = @import("libs/usb/usb.zig");
 /// The machine's PCI functions, through pci.library.
 pub const pci = @import("libs/pci/pci.zig");
+/// Three-dimensional drawing on the machine's cores, through facet.library.
+pub const facet = @import("libs/facet/facet.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

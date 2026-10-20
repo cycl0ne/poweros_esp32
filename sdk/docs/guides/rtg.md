@@ -193,6 +193,13 @@ rows back out of the cache, whichever buffer they are in; a sending board
 sends them, and rows of a buffer it is not showing go nowhere and cost
 nothing.
 
+A writer that wrote only part of each row - a window on a wide display,
+or a picture drawn a tile at a time - says so with `RefreshRect(bitmap,
+&rect)` (rtg.library 1.5). The `fb` boards then write back only the
+rectangle's pixels; a board that has no way of its own is handed the
+rectangle's rows, as `RefreshBitMap` would hand them. Rectangles that do
+not overlap may be handed on by several tasks at once.
+
 **graphics.library does this for its RastPorts.** Every drawing call hands
 on the rows it touched. Between `BeginDraw` and `EndDraw` the rows are
 gathered instead, in the buffer's `dirty_top` and `dirty_end`, and the last

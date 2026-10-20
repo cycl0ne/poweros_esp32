@@ -49,7 +49,7 @@ const roothub = @import("roothub.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
+const DEVICE_REVISION = 3;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -349,6 +349,13 @@ fn functionOf(pb: *PCIBase, number: u32) ?*pci.PCIDevice {
     return null;
 }
 
+/// Whether the controller sees the caches: pci.library says so from 2.1
+/// on.
+fn coherent(pb: *PCIBase, function: *pci.PCIDevice) bool {
+    const lib: *exec.Library = @ptrCast(@alignCast(pb));
+    return lib.revision >= 1 and function.dma_coherent;
+}
+
 /// Unit `number`'s block and task, made and waited for until the task
 /// has its signals; it starts the controller on the opener's command.
 /// Its PCI function is claimed for the device.
@@ -365,7 +372,7 @@ fn makeHost(base: *XhciBase, number: u32) ?*Host {
         return null;
     };
     const host: *Host = @ptrCast(@alignCast(memory));
-    host.* = .{ .dev_base = base, .sys = sys, .number = number, .function = function };
+    host.* = .{ .dev_base = base, .sys = sys, .number = number, .function = function, .coherent = coherent(pb, function) };
     host.unit = .{ .msg_port = .{ .flags = exec.PA_IGNORE } };
     host.unit.msg_port.msg_list.init(.message);
     sys.NewList(&host.posted);

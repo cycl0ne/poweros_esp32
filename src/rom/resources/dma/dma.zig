@@ -20,6 +20,13 @@
 //! stops one given back; its owner drives it through `sdk.hardware.dma2d`,
 //! and the general calls refuse it.
 //!
+//! **The DesignWare AXI DMA's channels** (the JH7110's four,
+//! `jh7110/channels.zig`) are numbered after those, the same way: the
+//! resource finds the controller in the board's parts and brings it up
+//! when it is made, hands its channels out and stops one given back; its
+//! owner drives it through `sdk.hardware.dwdma`. A chip without general
+//! channels has the general calls refuse every channel.
+//!
 //! It builds against the SDK.
 
 const std = @import("std");
@@ -32,15 +39,23 @@ const types = sdk.resources.dma;
 const chip = switch (sdk.hardware.chip) {
     .esp32s3 => @import("esp32s3/channels.zig"),
     .esp32p4 => @import("esp32p4/channels.zig"),
-    .rv64sbi => @compileError("dma.resource: no DMA engine for this chip yet"),
+    .rv64sbi => @import("jh7110/channels.zig"),
 };
 const general = chip.general;
-const all_channels = general + chip.dma2d_channels;
+/// The DesignWare channels, numbered after the 2D-DMA's.
+const dw_channels = if (@hasDecl(chip, "dw_channels")) chip.dw_channels else 0;
+const dw_first = general + chip.dma2d_channels;
+const all_channels = dw_first + dw_channels;
+/// Which kinds of channel the chip has: the calls for a kind it has not
+/// are left out.
+const has_general = general != 0;
+const has_2d = chip.dma2d_channels != 0;
+const has_dw = dw_channels != 0;
 
 pub const RESOURCE_NAME = types.DMANAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 1;
-const BUILD_DATE = "10.10.2026";
+const RESOURCE_REVISION = 2;
+const BUILD_DATE = "19.10.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -64,7 +79,9 @@ comptime {
     }
     if (types.DMA_CHANNELS != general) @compileError("the SDK's DMA_CHANNELS isn't the chip's");
     if (types.DMA2D_CHANNELS != chip.dma2d_channels) @compileError("the SDK's DMA2D_CHANNELS isn't the chip's");
-    if (types.DMA_MAXPRI != chip.max_priority) @compileError("the SDK's DMA_MAXPRI isn't the chip's");
+    if (types.DWDMA_CHANNELS != dw_channels) @compileError("the SDK's DWDMA_CHANNELS isn't the chip's");
+    if (types.DWDMA_CHANNEL0 != dw_first) @compileError("the SDK's DWDMA_CHANNEL0 isn't the chip's");
+    if (has_general and types.DMA_MAXPRI != chip.max_priority) @compileError("the SDK's DMA_MAXPRI isn't the chip's");
 }
 
 /// The base.
@@ -72,8 +89,11 @@ const DmaBase = extern struct {
     lib: exec.Library,
     /// SysBase, to call exec through its jump table.
     sys_base: *ExecBase,
+    /// Where the DesignWare controller's registers are, or 0: the board
+    /// has none. Set when the resource is made.
+    dw_base: usize,
     /// Each channel's owner (the name given to AllocDMAChannel), or null:
-    /// the general ones, then the 2D-DMA's.
+    /// the general ones, then the 2D-DMA's, then the DesignWare ones.
     owner: [all_channels]?[*:0]const u8,
     /// The number each general channel is connected to on its engine, or
     /// no_peripheral.
@@ -97,6 +117,7 @@ fn sideOf(side: u32) ?chip.Side {
 
 fn lvoAllocDMAChannel(db: *DmaBase, channel: u32, name: [*:0]const u8) callconv(.c) ?[*:0]const u8 {
     if (channel >= all_channels) return "(no such channel)";
+    if (has_dw and channel >= dw_first and db.dw_base == 0) return "(no such channel)";
     db.sys_base.AcquireLock(&db.lock);
     defer db.sys_base.ReleaseLock(&db.lock);
     if (db.owner[channel]) |owner| return owner;
@@ -108,11 +129,13 @@ fn lvoFreeDMAChannel(db: *DmaBase, channel: u32) callconv(.c) void {
     if (channel >= all_channels) return;
     db.sys_base.AcquireLock(&db.lock);
     defer db.sys_base.ReleaseLock(&db.lock);
-    if (channel < general) {
+    if (has_general and channel < general) {
         chip.disconnect(channel);
         db.peri[channel] = chip.no_peripheral;
-    } else {
+    } else if (has_2d and channel < dw_first) {
         chip.stop2d(channel - general);
+    } else if (has_dw and db.dw_base != 0) {
+        chip.stopChannel(db.dw_base, channel - dw_first);
     }
     db.owner[channel] = null;
 }
@@ -143,6 +166,7 @@ fn freePeripheral(db: *DmaBase, channel: u32) ?u8 {
 }
 
 fn lvoConnectDMAChannel(db: *DmaBase, channel: u32, peripheral: u32, flags: u32) callconv(.c) bool {
+    if (comptime !has_general) return false;
     if (channel >= general) return false;
     const mem_to_mem = peripheral == types.DMAPERI_MEMORY;
     const wanted: ?u8 = if (mem_to_mem) null else chip.peripheralId(channel, peripheral) orelse return false;
@@ -156,6 +180,7 @@ fn lvoConnectDMAChannel(db: *DmaBase, channel: u32, peripheral: u32, flags: u32)
 }
 
 fn lvoStartDMA(_: *DmaBase, channel: u32, side: u32, list: *types.DMADescriptor) callconv(.c) bool {
+    if (comptime !has_general) return false;
     const s = sideOf(side) orelse return false;
     if (channel >= general) return false;
     const addr = @intFromPtr(list);
@@ -165,31 +190,37 @@ fn lvoStartDMA(_: *DmaBase, channel: u32, side: u32, list: *types.DMADescriptor)
 }
 
 fn lvoStopDMA(_: *DmaBase, channel: u32, side: u32) callconv(.c) void {
+    if (comptime !has_general) return;
     const s = sideOf(side) orelse return;
     if (channel < general) chip.stop(channel, s);
 }
 
 fn lvoResetDMA(_: *DmaBase, channel: u32, side: u32) callconv(.c) void {
+    if (comptime !has_general) return;
     const s = sideOf(side) orelse return;
     if (channel < general) chip.reset(channel, s);
 }
 
 fn lvoEnableDMAInts(_: *DmaBase, channel: u32, side: u32, mask: u32) callconv(.c) void {
+    if (comptime !has_general) return;
     const s = sideOf(side) orelse return;
     if (channel < general) chip.setIntEnable(channel, s, mask);
 }
 
 fn lvoDMAIntStatus(_: *DmaBase, channel: u32, side: u32) callconv(.c) u32 {
+    if (comptime !has_general) return 0;
     const s = sideOf(side) orelse return 0;
     return if (channel < general) chip.intStatus(channel, s) else 0;
 }
 
 fn lvoDMARawIntStatus(_: *DmaBase, channel: u32, side: u32) callconv(.c) u32 {
+    if (comptime !has_general) return 0;
     const s = sideOf(side) orelse return 0;
     return if (channel < general) chip.rawIntStatus(channel, s) else 0;
 }
 
 fn lvoClearDMAInts(_: *DmaBase, channel: u32, side: u32, mask: u32) callconv(.c) void {
+    if (comptime !has_general) return;
     const s = sideOf(side) orelse return;
     if (channel < general) chip.clearInts(channel, s, mask);
 }
@@ -199,6 +230,7 @@ fn within(addr: usize, length: u32, start: usize, end: usize) bool {
 }
 
 fn lvoAllocDMAChain(db: *DmaBase, side: u32, buffer: ?*anyopaque, length: u32, flags: u32) callconv(.c) ?*types.DMADescriptor {
+    if (comptime !has_general) return null;
     if (sideOf(side) == null or length == 0) return null;
     const addr = @intFromPtr(buffer orelse return null);
     const chunk: u32 = if (within(addr, length, chip.internal_start, chip.internal_end))
@@ -231,6 +263,7 @@ fn lvoFreeDMAChain(db: *DmaBase, chain: ?*types.DMADescriptor) callconv(.c) void
 }
 
 fn lvoDMAEOFDescriptor(_: *DmaBase, channel: u32, side: u32) callconv(.c) ?*types.DMADescriptor {
+    if (comptime !has_general) return null;
     const s = sideOf(side) orelse return null;
     if (channel >= general) return null;
     const addr = chip.eofDescriptor(channel, s);
@@ -238,6 +271,7 @@ fn lvoDMAEOFDescriptor(_: *DmaBase, channel: u32, side: u32) callconv(.c) ?*type
 }
 
 fn lvoSetDMAPriority(_: *DmaBase, channel: u32, side: u32, priority: u32) callconv(.c) bool {
+    if (comptime !has_general) return false;
     const s = sideOf(side) orelse return false;
     if (channel >= general or priority > chip.max_priority) return false;
     chip.setPriority(channel, s, priority);
@@ -252,8 +286,13 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     db.sys_base = sys_base;
     sys_base.InitLock(&db.lock, RESOURCE_NAME, exec.LOCKORDER_DRIVER, 0);
     db.owner = @splat(null);
-    db.peri = @splat(chip.no_peripheral);
-    chip.init();
+    // The chip's engines up: the general ones and the 2D-DMA, or the
+    // DesignWare controller.
+    if (comptime has_general) {
+        db.peri = @splat(chip.no_peripheral);
+        chip.init();
+    }
+    db.dw_base = if (comptime has_dw) chip.controller() else 0;
     return lib;
 }
 

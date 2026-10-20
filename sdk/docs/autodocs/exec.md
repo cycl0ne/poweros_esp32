@@ -123,6 +123,7 @@ Generated from the source by `./zig build autodoc`.
 - [ReplyIO](#replyio) - For a device: finishes a request and sends it back.
 - [ReplyMsg](#replymsg) - Sends a message back to whoever sent it.
 - [ResModules](#resmodules) - Hands back the table of resident modules.
+- [ResetWaitable](#resetwaitable) - Makes a waitable unsignalled again, for the next time it is waited on.
 - [SafePutToPort](#safeputtoport) - Puts a message to the public port of a name, if there is one.
 - [SendIO](#sendio) - Starts an I/O request and returns at once.
 - [SetExcept](#setexcept) - Chooses which of the calling task's signals raise its exception code.
@@ -137,10 +138,13 @@ Generated from the source by `./zig build autodoc`.
 - [SetTaskEndMsg](#settaskendmsg) - Has `msg` replied to its reply port once `task` is gone.
 - [SetTaskPri](#settaskpri) - Changes a task's priority, and reschedules if that changed who should run.
 - [SetTrapCode](#settrapcode) - Sets the running task's trap code, which takes its CPU exceptions.
+- [ShareWork](#sharework) - Does a job in parts, at once on several cores.
 - [Signal](#signal) - Sends signals to a task, waking it if it was waiting for one of them.
+- [SignalWaitable](#signalwaitable) - Signals a waitable: it stays signalled until it is reset, and every task waiting on it in WaitForAny is woken.
 - [UnlockExecList](#unlockexeclist) - Gives back the lock `LockExecList` took on list `which`.
 - [Vacate](#vacate) - Withdraws a bid, or gives back the semaphore it won.
 - [Wait](#wait) - Sleeps until one of a set of signals arrives.
+- [WaitForAny](#waitforany) - Waits until one of several waitables is signalled, or a time has gone by.
 - [WaitIO](#waitio) - Waits until a device is done with a request, and takes it back.
 - [WaitPort](#waitport) - Waits until a port has a message, and answers the first one without taking it.
 
@@ -1941,11 +1945,17 @@ given as a **data-bus** address the whole instruction cache is
 invalidated instead, because where that memory is executed from is not
 known here.
 
+Where each core drives the cache controller itself (the JH7110), a
+long range is shared between the cores, a run of whole lines each
+(`ShareWork`). Where the caller may not wait for them - an interrupt,
+Disable, a spinlock - or they are busy, it does the range alone.
+
 **CONTEXT**
 
-- Waits: no.
-- Interrupts: safe, though a partly covered line is handled with
-  interrupts off.
+- Waits: only for the other cores' parts of a long range, and never
+  where a task may not wait.
+- Interrupts: safe - the range is then done alone - though a partly
+  covered line is handled with interrupts off.
 - Locks: none needed.
 - Process: a Task will do.
 
@@ -1958,6 +1968,9 @@ Nothing is allocated.
 With `CACRF_ClearI` on a RISC-V chip each core also fences its
 instruction fetch: the one that calls this at once, every other one at
 its next exception exit, before it resumes a task.
+
+On the JH7110 writing a line back drops it as well, so the range is
+gone over once, not written back and then invalidated.
 
 **BUGS**
 
@@ -2069,7 +2082,8 @@ Nothing.
 
 The range is invalidated, so the next read comes from memory and not
 from a line the cache held from before the transfer. Without this a
-device's data is written and then read straight past.
+device's data is written and then read straight past. A long range is
+shared between the cores as `CacheClearE` shares it.
 
 **Nothing is done for `DMAF_ReadFromRAM` or `DMAF_NoModify`**: the
 engine only read, so nothing in memory changed and there is nothing
@@ -2077,8 +2091,9 @@ stale to drop.
 
 **CONTEXT**
 
-- Waits: no.
-- Interrupts: safe.
+- Waits: only for the other cores' parts of a long range, and never
+  where a task may not wait.
+- Interrupts: safe - the range is then done alone.
 - Locks: none needed.
 - Process: a Task will do.
 
@@ -2107,7 +2122,7 @@ Prepares memory for a DMA engine to read or write, and says where that engine sh
 **SYNOPSIS**
 
 ```zig
-fn CachePreDMA(_: *ExecBase, address: *anyopaque, length: *u32,
+fn CachePreDMA(base: *ExecBase, address: *anyopaque, length: *u32,
     flags: u32) *anyopaque
 ```
 
@@ -2135,12 +2150,14 @@ machine where it is not.
 **BEHAVIOR**
 
 Dirty lines over the range are written back, so what is in memory is
-what the CPU last wrote.
+what the CPU last wrote. A long range is shared between the cores as
+`CacheClearE` shares it.
 
 **CONTEXT**
 
-- Waits: no.
-- Interrupts: safe.
+- Waits: only for the other cores' parts of a long range, and never
+  where a task may not wait.
+- Interrupts: safe - the range is then done alone.
 - Locks: none needed.
 - Process: a Task will do.
 
@@ -7782,6 +7799,62 @@ var i: usize = 0;
 while (table[i]) |tag| : (i += 1) { ... }
 ```
 
+## ResetWaitable
+
+Makes a waitable unsignalled again, for the next time it is waited on.
+
+**SYNOPSIS**
+
+```zig
+fn ResetWaitable(base: *ExecBase, waitable: *Waitable) void
+```
+
+**SINCE**
+
+1.14. LVO -568.
+
+**INPUTS**
+
+- `waitable` - the waitable.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Only the state changes: a task waiting on it goes on waiting. A
+waitable is reset before the thing it stands for is started - the job
+handed out, the frame asked for - so that a signal from it cannot come
+before the reset and be lost.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes.
+- Locks: none.
+- Process: a Task or an interrupt.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SignalWaitable`, `WaitForAny`
+
+**EXAMPLES**
+
+```zig
+sys.ResetWaitable(&job.done);
+startJob(&job);
+_ = sys.WaitForAny(&.{&job.done}, 1, exec.WAIT_FOREVER);
+```
+
 ## SafePutToPort
 
 Puts a message to the public port of a name, if there is one.
@@ -8765,6 +8838,88 @@ const old = sys.SetTrapCode(&myTrap, self);
 defer _ = sys.SetTrapCode(old, null);
 ```
 
+## ShareWork
+
+Does a job in parts, at once on several cores.
+
+**SYNOPSIS**
+
+```zig
+fn ShareWork(base: *ExecBase, work: WorkFn, data: ?*anyopaque, parts: u32) u32
+```
+
+**SINCE**
+
+1.15. LVO -576.
+
+**INPUTS**
+
+- `work` - the job's code, called once for each part with `data`, the
+  part's number and how many parts there are.
+- `data` - what `work` is given.
+- `parts` - how many parts the job is worth at most.
+
+**RESULT**
+
+How many parts it was done in: 1 when the caller did the whole job
+itself.
+
+**BEHAVIOR**
+
+exec keeps a worker task on each core, pinned to it. The job is cut
+into as many parts as `parts` asks for and there are cores: the worker
+of each core but the caller's does one, at the caller's priority, and
+the caller does part 0. The call returns when every part is done.
+
+The parts run at the same time, so `work` must cut the job so that no
+two write the same memory - nor the same cache line, on a machine whose
+caches are not kept in step for it. A part runs on a worker's task,
+not the caller's: a semaphore the caller holds is not the part's, and
+a part that obtains one would wait for good.
+
+The caller does the whole job itself, as `work(data, 0, 1)`, when
+`parts` is 1 or less, the machine has one core, another job is under
+way, or the caller may not wait: in an interrupt, inside `Disable`,
+holding a spinlock, before multitasking, or as a core's idle task. A
+job shared from within a part is done by that part alone.
+
+**CONTEXT**
+
+- Waits: for the workers, where it shares; never where it may not.
+- Interrupts: yes - the job is then done in the interrupt, alone.
+- Locks: any; with a spinlock held the job is done alone.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. `data` stays the caller's; it is only used until
+the call returns.
+
+**NOTES**
+
+Handing a part out costs a few signals between the cores, some
+microseconds: a job worth sharing takes much longer than that.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetTaskAffinity`, `CacheClearE`
+
+**EXAMPLES**
+
+```zig
+fn clearRows(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
+    const picture: *Picture = @ptrCast(@alignCast(data.?));
+    const first = picture.height * part / parts;
+    const end = picture.height * (part + 1) / parts;
+    @memset(picture.rows(first, end), 0);
+}
+_ = sys.ShareWork(&clearRows, &picture, 4);
+```
+
 ## Signal
 
 Sends signals to a task, waking it if it was waiting for one of them.
@@ -8838,6 +8993,62 @@ None known.
 
 ```zig
 sys.Signal(waiting_task, @as(u32, 1) << @intCast(bit));
+```
+
+## SignalWaitable
+
+Signals a waitable: it stays signalled until it is reset, and every task waiting on it in WaitForAny is woken.
+
+**SYNOPSIS**
+
+```zig
+fn SignalWaitable(base: *ExecBase, waitable: *Waitable) void
+```
+
+**SINCE**
+
+1.14. LVO -564.
+
+**INPUTS**
+
+- `waitable` - the waitable.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+A waitable signalled while nobody waits stays signalled, so a task
+that comes to wait for it later returns at once: there is no moment
+between looking and waiting in which the signal could be lost.
+Signalling one that is signalled already changes nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes. This is how a driver's interrupt says that what a
+  task waits for has happened.
+- Locks: takes Disable.
+- Process: a Task or an interrupt.
+
+**OWNERSHIP**
+
+Nothing is allocated. The waitable stays its owner's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ResetWaitable`, `WaitForAny`, `Signal`
+
+**EXAMPLES**
+
+```zig
+// In the interrupt that ends a job:
+sys.SignalWaitable(&job.done);
 ```
 
 ## UnlockExecList
@@ -9040,6 +9251,74 @@ None known.
 const got = sys.Wait(port_mask | exec.SIGBREAKF_CTRL_C);
 if (got & exec.SIGBREAKF_CTRL_C != 0) return;
 while (sys.GetMsg(port)) |msg| { ... }
+```
+
+## WaitForAny
+
+Waits until one of several waitables is signalled, or a time has gone by.
+
+**SYNOPSIS**
+
+```zig
+fn WaitForAny(base: *ExecBase, waitables: [*]const *Waitable, count: u32, timeout_us: u64) i32
+```
+
+**SINCE**
+
+1.14. LVO -572.
+
+**INPUTS**
+
+- `waitables` - the waitables, one pointer each.
+- `count` - how many: 1 to `WAIT_MAX`.
+- `timeout_us` - how long to wait at most, in microseconds. 0 only
+  looks, and `WAIT_FOREVER` waits with no limit.
+
+**RESULT**
+
+The place in `waitables` of the first that is signalled, or
+`WAIT_TIMEOUT` when the time ran out first - and at once for a `count`
+of 0 or more than `WAIT_MAX`.
+
+**BEHAVIOR**
+
+One already signalled answers at once, without waiting: a waitable
+stays signalled until it is reset, so one signalled before the call is
+not missed. Nothing is reset here; that is the caller's, when it
+wants to wait for the same thing again.
+
+The time is kept by the system's tick, so the limit is met to within
+one tick - 10 ms at the usual 100 Hz - and never short of it. While it
+waits the task holds the processor no more than in `Wait`, and the
+task waits on `SIGF_SINGLE`, which exec uses for its own waits.
+
+**CONTEXT**
+
+- Waits: yes, unless one is signalled or `timeout_us` is 0.
+- Interrupts: no.
+- Locks: no spinlock may be held: it may wait.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The waitables stay their owners', and none may
+go while the call waits on it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SignalWaitable`, `ResetWaitable`, `Wait`
+
+**EXAMPLES**
+
+```zig
+const which = sys.WaitForAny(&.{ &frame, &job.done }, 2, 50_000);
+if (which == exec.WAIT_TIMEOUT) {
+    // neither within 50 ms
+}
 ```
 
 ## WaitIO

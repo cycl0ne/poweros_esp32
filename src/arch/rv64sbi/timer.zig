@@ -131,8 +131,8 @@ fn measureCpuHz() u32 {
 /// one period on or parked, and its interrupt raised; the tick if it is
 /// due - one period on from where it was, so it keeps its rate, or from
 /// now if the core fell more than a period behind - with the time slice
-/// and on core 0 the log; then the comparator set again, which lowers the
-/// interrupt.
+/// and on core 0 the log and the waiters' time limits (WaitForAny); then
+/// the comparator set again, which lowers the interrupt.
 fn onTick(_: u6) void {
     const core = cpu.coreId();
     const at = now();
@@ -149,7 +149,10 @@ fn onTick(_: u6) void {
         if (next_tick[core] <= at) next_tick[core] = at + period;
         ticks[core] +%= 1;
         exec.tickQuantum(exec.SysBase);
-        if (core == 0) exec.tickLog(exec.SysBase);
+        if (core == 0) {
+            exec.tickLog(exec.SysBase);
+            exec.tickWaitables(exec.SysBase);
+        }
     }
     program(core);
 }

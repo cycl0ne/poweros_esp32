@@ -157,17 +157,45 @@ const screen = struct {
 };
 
 /// The display controller behind the HDMI port, which reads its picture
-/// out of RAM: what the fb rtg driver is told comes with it.
+/// out of RAM and raises PLIC source 95 at each frame: what the fb rtg
+/// driver is told comes with it.
 const display = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_PANEL),
     .value(st.PART_Chip, st.CHIP_JH7110_DC8200),
     .pointer(st.PART_ChipName, "jh7110 dc8200 hdmi"),
     .value(st.PART_Bus, st.BUS_MEMORY),
     .value(st.PART_Address, 0x2940_0000),
+    .value(st.PART_Irq, 95),
     .value(tags.RTGA_Width, screen.width),
     .value(tags.RTGA_Height, screen.height),
     .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
     .value(tags.RTGA_Buffers, 3),
+    .done,
+};
+
+/// The DMA controller, DesignWare's AXI DMA: its four channels are
+/// dma.resource's, all on PLIC source 73.
+const dmac = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_DMA),
+    .value(st.PART_Chip, st.CHIP_JH7110_DMAC),
+    .pointer(st.PART_ChipName, "jh7110 dmac"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x1605_0000),
+    .value(st.PART_Irq, 73),
+    .done,
+};
+
+/// The HDMI port's sound: I2STX0 into the HDMI transmitter, fed by a
+/// channel of the DMA controller, its master clock the 12.288 MHz
+/// oscillator on GPIO4 (the device tree's mclk_ext).
+const hdmi_sound = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_CODEC),
+    .value(st.PART_Chip, st.CHIP_JH7110_HDMI),
+    .pointer(st.PART_ChipName, "jh7110 hdmi"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x2959_0000),
+    .value(st.PART_PinMCLK, pins.gpio(4)),
+    .pointer(st.PART_Label, "HDMI sound"),
     .done,
 };
 
@@ -196,7 +224,9 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &display),
+    .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &trng),
+    .pointer(st.SYSTAG_Part, &dmac),
     .pointer(st.SYSTAG_Part, &card_slot),
     .pointer(st.SYSTAG_Part, &pcie0),
     .pointer(st.SYSTAG_Part, &pcie1),

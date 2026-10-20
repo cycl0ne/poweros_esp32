@@ -15,8 +15,17 @@ const std = @import("std");
 const poweros_sdk = @import("poweros_sdk");
 
 /// Something built for the disk: its place there, its root source file,
-/// and the name its load file is known by.
-pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8 };
+/// the name its load file is known by, and the inner modules it is built
+/// with (`inner_modules`).
+pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, imports: []const []const u8 = &.{} };
+
+/// Code compiled into each program that imports it, by name, rather than
+/// loaded: a library's inner part that its test programs build in as well.
+/// The rasterizer core is facet.library's, and is called per triangle and
+/// per tile - too often to go through a jump table.
+const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
+    .{ .name = "raster", .source = "libs/facet/raster/raster.zig" },
+};
 
 /// Something copied onto the disk as it is.
 pub const File = struct { disk: []const u8, source: []const u8 };
@@ -51,6 +60,7 @@ const tests = [_][]const u8{
     "launch",      "drag",       "tap",         "app",       "engine",
     "jpeg",        "keysource",  "usbdevice",   "scsi",      "sound",
     "memowner",    "records",    "exall",       "disktest",  "filetest",
+    "speed2d",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
@@ -73,6 +83,14 @@ const window_programs = [_]Program{
     .{ .disk = "System/MemMap", .source = "system/memmap/memmap.zig", .name = "memmap" },
 };
 
+/// Test programs built with an inner module.
+const inner_tests = [_]Program{
+    .{ .disk = "c/test/raster", .source = "c/test/raster/raster.zig", .name = "raster", .imports = &.{"raster"} },
+    .{ .disk = "c/test/cube", .source = "c/test/raster/cube.zig", .name = "cube", .imports = &.{"raster"} },
+    .{ .disk = "c/test/facetcube", .source = "c/test/raster/facetcube.zig", .name = "facetcube", .imports = &.{"raster"} },
+    .{ .disk = "c/test/facetwindow", .source = "c/test/raster/facetwindow.zig", .name = "facetwindow", .imports = &.{"raster"} },
+};
+
 /// Modules on the disk: built exactly as a command is. What makes one a
 /// module is the ROM tag in it: ramlib finds a library's or a device's
 /// after LoadSeg and hands it to InitResident, dos finds a handler's when
@@ -86,6 +104,7 @@ const modules = [_]Program{
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
     .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library" },
     .{ .disk = "libs/pci.library", .source = "libs/pci/pci.zig", .name = "pci.library" },
+    .{ .disk = "libs/facet.library", .source = "libs/facet/facet.zig", .name = "facet.library", .imports = &.{"raster"} },
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/audiocodec.library", .source = "libs/audiocodec/audiocodec.zig", .name = "audiocodec.library" },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
@@ -197,7 +216,7 @@ pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
 }
 
 pub const programs: []const Program = blk: {
-    var list: [commands.len + tests.len + net_tools.len + window_programs.len + modules.len]Program = undefined;
+    var list: [commands.len + tests.len + inner_tests.len + net_tools.len + window_programs.len + modules.len]Program = undefined;
     var n: usize = 0;
     for (commands) |name| {
         list[n] = .{ .disk = "c/" ++ name, .source = "c/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
@@ -205,6 +224,10 @@ pub const programs: []const Program = blk: {
     }
     for (tests) |name| {
         list[n] = .{ .disk = "c/test/" ++ name, .source = "c/test/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
+        n += 1;
+    }
+    for (inner_tests) |program| {
+        list[n] = program;
         n += 1;
     }
     for (net_tools) |name| {
@@ -355,9 +378,30 @@ pub fn build(b: *std.Build) void {
         b.addNamedLazyPath(wifi_device.disk, seg);
         b.getInstallStep().dependOn(&b.addInstallBinFile(seg, "esp32s3wifi.device.seg").step);
     }
+    var inner: [inner_modules.len]std.Build.Module.Import = undefined;
+    for (inner_modules, &inner) |module, *import| {
+        const made = b.createModule(.{ .root_source_file = b.path(module.source) });
+        made.addImport("sdk", sdk.module("sdk"));
+        import.* = .{ .name = module.name, .module = made };
+    }
     for (programs) |program| {
         if (!builtFor(program, chip)) continue;
-        const seg = poweros_sdk.addProgram(b, sdk, .{ .name = program.name, .root = b.path(program.source), .optimize = optimize, .chip = chip });
+        var imports: [inner_modules.len]std.Build.Module.Import = undefined;
+        var count: usize = 0;
+        for (program.imports) |name| {
+            for (inner) |import| {
+                if (!std.mem.eql(u8, import.name, name)) continue;
+                imports[count] = import;
+                count += 1;
+            }
+        }
+        const seg = poweros_sdk.addProgram(b, sdk, .{
+            .name = program.name,
+            .root = b.path(program.source),
+            .optimize = optimize,
+            .chip = chip,
+            .imports = b.allocator.dupe(std.Build.Module.Import, imports[0..count]) catch @panic("OOM"),
+        });
         b.addNamedLazyPath(program.disk, seg);
         b.getInstallStep().dependOn(&b.addInstallBinFile(seg, b.fmt("{s}.seg", .{program.name})).step);
     }

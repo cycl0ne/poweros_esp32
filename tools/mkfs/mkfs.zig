@@ -3,7 +3,8 @@
 //! flash file system on it - so the board boots with a `C:` instead of the
 //! shell copying programs into RAM: at every start.
 //!
-//! usage: mkfs <out.bin> <volume> <partition> <sectors> <partition-sectors>
+//! usage: mkfs [--tree=<dir>] [--manifest=<file>]
+//!            <out.bin> <volume> <partition> <sectors> <partition-sectors>
 //!            <sector-size> <page-size> <rdb-sectors>
 //!            [<path-in-image>[=<host-file>] ...]
 //!
@@ -29,6 +30,14 @@
 //! The image holds only the blocks it touched - the RDB's, and the file
 //! system's - and stops there; the rest of the disk area is left as it is,
 //! which on flash means erased.
+//!
+//! **The same files outside the image**, for a volume that is not made
+//! from it - a card that is SYS:, brought up to date file by file
+//! (tools/vf2_update.py in the port's repository). `--tree` writes every
+//! file and directory the image gets under `<dir>` as well, and
+//! `--manifest` lists the image's files, one line each: the CRC-32 of its
+//! bytes in hex, its size, its path. A path given twice is the later
+//! file's, as on the image, and the list is sorted by path.
 //!
 //! An image has no clock, so a build from the same inputs gives the same
 //! image: every file is dated 1 Jan 1978.
@@ -174,7 +183,22 @@ fn putBlock(store: []u8, block: u32, sector: u32, value: anytype) void {
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
-    const args = try init.minimal.args.toSlice(arena);
+    const all_args = try init.minimal.args.toSlice(arena);
+    // The options taken out wherever they are: no path in an image starts
+    // with "--".
+    var tree_path: ?[]const u8 = null;
+    var manifest_path: ?[]const u8 = null;
+    var kept: std.ArrayList([:0]const u8) = .empty;
+    for (all_args, 0..) |arg, index| {
+        if (index == 0 or !mem.startsWith(u8, arg, "--")) {
+            try kept.append(arena, arg);
+        } else if (mem.startsWith(u8, arg, "--tree=")) {
+            tree_path = arg["--tree=".len..];
+        } else if (mem.startsWith(u8, arg, "--manifest=")) {
+            manifest_path = arg["--manifest=".len..];
+        } else fatal("{s}: no such option", .{arg});
+    }
+    const args = kept.items;
     if (args.len < 9) fatal("usage: mkfs <out.bin> <volume> <partition> <sectors> <partition-sectors> <sector-size> <page-size> <rdb-sectors> [<path>[=<file>] ...]", .{});
 
     const out_path = args[1];
@@ -202,6 +226,9 @@ pub fn main(init: std.process.Init) !void {
         const content: ?[]const u8 = if (split) |at| try cwd.readFileAlloc(io, entry[at + 1 ..], arena, .unlimited) else null;
         try entries.append(arena, .{ .path = path, .content = content });
     }
+
+    if (tree_path) |path| try writeTree(io, cwd, path, entries.items);
+    if (manifest_path) |path| try writeManifest(io, cwd, path, entries.items, arena);
 
     const store = try arena.alloc(u8, sectors * sector_size);
     @memset(store, 0xFF);
@@ -271,4 +298,44 @@ fn flashfsVolume(store: []u8, rdb_blocks: u32, part_sectors: u32, sector_size: u
         if (fs.vol.segs[sector].seq != 0) used = (rdb_blocks + @as(u32, @intCast(sector)) + 1) * sector_size;
     }
     return used;
+}
+
+/// Every directory and file of the image under `root` on the host, the
+/// later of two files at one path written last.
+fn writeTree(io: std.Io, cwd: std.Io.Dir, root: []const u8, entries: []const Entry) !void {
+    try cwd.createDirPath(io, root);
+    var dir = try cwd.openDir(io, root, .{});
+    defer dir.close(io);
+    for (entries) |entry| {
+        const content = entry.content orelse {
+            try dir.createDirPath(io, entry.path);
+            continue;
+        };
+        try dir.writeFile(io, .{ .sub_path = entry.path, .data = content });
+    }
+}
+
+/// The image's files, a line each - CRC-32, size, path - sorted by path.
+/// A path given twice is listed once, with the later file: case does not
+/// tell two paths apart, as on the volume.
+fn writeManifest(io: std.Io, cwd: std.Io.Dir, path: []const u8, entries: []const Entry, arena: mem.Allocator) !void {
+    var latest: std.StringArrayHashMapUnmanaged(Entry) = .empty;
+    for (entries) |entry| {
+        if (entry.content == null) continue;
+        const key = try std.ascii.allocLowerString(arena, entry.path);
+        try latest.put(arena, key, entry);
+    }
+    const Sort = struct {
+        keys: []const []const u8,
+        pub fn lessThan(sort: @This(), a: usize, b: usize) bool {
+            return mem.lessThan(u8, sort.keys[a], sort.keys[b]);
+        }
+    };
+    latest.sort(Sort{ .keys = latest.keys() });
+    var text: std.ArrayList(u8) = .empty;
+    for (latest.values()) |entry| {
+        const content = entry.content.?;
+        try text.print(arena, "{x:0>8} {d} {s}\n", .{ std.hash.Crc32.hash(content), content.len, entry.path });
+    }
+    try cwd.writeFile(io, .{ .sub_path = path, .data = text.items });
 }

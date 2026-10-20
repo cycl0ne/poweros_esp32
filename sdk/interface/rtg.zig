@@ -79,6 +79,7 @@ pub const LVO = struct {
     pub const BlendPixels = libraries.lvo(60);
     pub const BlendRect = libraries.lvo(61);
     pub const ScalePixels = libraries.lvo(62);
+    pub const RefreshRect = libraries.lvo(63);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -143,6 +144,7 @@ pub const Fn = struct {
     pub const BlendPixels = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPixels, u32) callconv(.c) i32;
     pub const BlendRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, u32) callconv(.c) i32;
     pub const ScalePixels = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPixels, u32, u32) callconv(.c) i32;
+    pub const RefreshRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -507,5 +509,12 @@ pub const RtgBase = opaque {
     /// any job the board's engine does not take.
     pub fn ScalePixels(self: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) i32 {
         return libraries.call(self, LVO.ScalePixels, Fn.ScalePixels, .{ dest, area, pixels, width, height });
+    }
+
+    /// A rectangle of a buffer was written: hand its pixels to the display,
+    /// as RefreshBitMap hands on rows - only those of the rectangle where the
+    /// board can, its rows where it cannot. Cut down to the buffer.
+    pub fn RefreshRect(self: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32 {
+        return libraries.call(self, LVO.RefreshRect, Fn.RefreshRect, .{ bitmap, area });
     }
 };

@@ -1,9 +1,11 @@
 # Sound
 
 `audio.device` plays sound out of the board: through an ES8311 codec
-and the speaker or jack behind it, or straight into I2S amplifiers - the
-CrowPanel's two speakers. It is in the ROM of every board that has one of
-these, and of both QEMUs, where the sound goes into nothing in time. A
+and the speaker or jack behind it, straight into I2S amplifiers - the
+CrowPanel's two speakers - or out of the VisionFive 2's HDMI port to the
+monitor's speakers, in stereo at 48000 Hz while the picture is up. It is
+in the ROM of every board that has one of these, and of both QEMUs, where
+the sound goes into nothing in time. A
 program opens a **stream**, says what its samples are, and writes buffers
 to it; the device mixes every stream into the output. Unit 1 is the way
 the other round: the **recording**, read from the codec's microphone
@@ -453,6 +455,7 @@ its ring of buffers. No name of a part or a chip is in the device.
 | `i2s` | line | a line on the chip's I2S controller, for a part fed over I2S: a DMA ring each way, an interrupt each, its pads, the buffers it played again and those it lost; clocked for the rate of the mode its sink or source starts in |
 | `es8311` | sink, source | the ES8311 codec, set up over i2c.device, on a line of its own; its amplifier's enable pad; where the board wires its data out, its microphone input as a source on the same line |
 | `i2samp` | sink | an amplifier that takes I2S itself - the CrowPanel's pair, one part with two sides - on a line of its own |
+| `hdmi` | sink | the VisionFive 2's HDMI port: the JH7110's I2STX0 into the HDMI transmitter, a line inside the chip that the sink drives itself, fed by a channel of the DesignWare DMA controller that dma.resource hands out; 48000 Hz stereo, once the display driver has the picture up |
 | `null` | sink, source | a stream into nothing, kept in time by timer.device's E-clock: the emulators' output, at the bottom of the list; and a source that hears what it played, two buffers late |
 | `file` | sink | a WAV file, written in time as a speaker would play it; none until a program makes one (below) |
 | `uac` | sink | a USB speaker, headset or sound adapter of the audio class, made as it is plugged in and deleted as it goes (`DEVS:usb/uac.device`) |

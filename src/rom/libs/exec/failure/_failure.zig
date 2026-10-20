@@ -9,7 +9,11 @@
 //! that task (`hold`): a CPU exception's task is put on the wait list,
 //! waiting for nothing, and the exception's exit switches to the next; a
 //! task that called Alert waits for nothing there and then. The helper, a
-//! task of exec's own started at boot, then puts up the requester:
+//! task of exec's own started at boot, then puts up the requester, on the
+//! default public screen, brought in front of the others first: a screen
+//! of the failed task's own - a game's, with no title bar to send it back
+//! with - would hide it, and the machine would look as if it had stopped.
+//! It stays in front once the task is answered for.
 //!
 //! - **Suspend** leaves the task held for good: it stops, everything else
 //!   runs on, and what it holds stays where it is.
@@ -172,8 +176,9 @@ pub fn hold(base: *ExecBase, alert_num: u32, guru: []const u8, detail: []const u
     unreachable;
 }
 
-/// The Software Failure requester for the held task, on the helper:
-/// Suspend leaves it held, Kill ends it, Reboot starts the machine again.
+/// The Software Failure requester for the held task, on the helper, its
+/// screen brought to the front: Suspend leaves the task held, Kill ends
+/// it, Reboot starts the machine again.
 fn askAbout(base: *ExecBase) void {
     const state = &base.failure;
     defer state.asking = false;
@@ -205,6 +210,10 @@ fn askAbout(base: *ExecBase) void {
         .gadget_format = "Suspend|Kill|Reboot",
     };
     const args = sdk.exec.fmtStream(.{@as([*:0]const u8, @ptrCast(&message))});
+    if (ib.LockPubScreen(null)) |screen| {
+        ib.ScreenToFront(screen);
+        ib.UnlockPubScreen(null, screen);
+    }
     // 1 is Suspend, 2 Kill, 0 the rightmost, Reboot - with the log's end
     // kept for the next boot to show.
     switch (ib.EasyRequestArgs(null, &easy, null, &args)) {

@@ -52,6 +52,10 @@ test {
     _ = @import("libs/rdb/tests/rdb.zig");
     _ = @import("libs/rdb/tests/gpt.zig");
     _ = @import("libs/pci/tests/pci.zig");
+    _ = @import("libs/facet/tests/facet.zig");
+    _ = @import("libs/facet/tests/draw.zig");
+    _ = @import("libs/facet/tests/present.zig");
+    _ = @import("libs/facet/facet_lvo.zig");
     _ = @import("libs/usb/tests/usb.zig");
     _ = @import("devs/xhci/tests/xhci.zig");
     _ = @import("devs/nvme/prp.zig");
@@ -81,6 +85,7 @@ test {
     _ = @import("libs/datatypes/tests/datatypes.zig");
     _ = @import("c/adddatatypes/tests/descriptor.zig");
     _ = @import("c/pciinfo/tests/pciinfo.zig");
+    _ = @import("c/test/raster/reference.zig");
     _ = @import("c/net/addnetinterface/config.zig");
     _ = @import("c/net/timesync/tests/zone.zig");
     _ = @import("c/net/httpget/http.zig");

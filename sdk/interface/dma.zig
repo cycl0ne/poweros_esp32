@@ -60,9 +60,9 @@ pub const DmaBase = opaque {
         return @ptrCast(@alignCast(self));
     }
 
-    /// Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1) or
-    /// a 2D one (DMA2D_CHANNEL0 on): null if it is now yours, else its
-    /// owner's name. Not from interrupts.
+    /// Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1), a
+    /// 2D one (DMA2D_CHANNEL0 on) or a DesignWare one (DWDMA_CHANNEL0 on):
+    /// null if it is now yours, else its owner's name. Not from interrupts.
     pub fn AllocDMAChannel(self: *DmaBase, channel: u32, name: [*:0]const u8) ?[*:0]const u8 {
         return libraries.call(self, LVO.AllocDMAChannel, Fn.AllocDMAChannel, .{ channel, name });
     }

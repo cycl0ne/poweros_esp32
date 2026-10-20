@@ -80,10 +80,6 @@ comptime {
     _ = rom_modules;
 }
 
-/// No display: exec's Software Failure has no intuition.library to ask
-/// on, and leaves it out of the ROM (exec/failure/_failure.zig).
-pub const rom_has_display = false;
-
 pub const panic = std.debug.FullPanic(exec.kernelPanic);
 
 /// The kernel prints with exec's kprintf; std.log isn't used, and says

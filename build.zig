@@ -403,6 +403,11 @@ pub fn build(b: *std.Build) void {
     const make_p4_disk = b.addRunArtifact(mkfs);
     const p4_disk_bin = make_p4_disk.addOutputFileArg("disk-esp32p4.bin");
     const make_rv64_disk = b.addRunArtifact(mkfs);
+    // The RISC-V 64 disk's files as a tree as well, and the list of them,
+    // for a card that is SYS: to be brought up to date from
+    // (zig-out/disk-rv64/, zig-out/bin/disk-rv64.manifest).
+    const rv64_tree = make_rv64_disk.addPrefixedOutputDirectoryArg("--tree=", "disk-rv64");
+    const rv64_manifest = make_rv64_disk.addPrefixedOutputFileArg("--manifest=", "disk-rv64.manifest");
     const rv64_disk_made = make_rv64_disk.addOutputFileArg("disk-rv64-made.bin");
     const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk, make_rv64_disk } };
     const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
@@ -563,7 +568,15 @@ pub fn build(b: *std.Build) void {
     pad_rv64_disk.addFileArg(rv64_disk_made);
     const rv64_disk_bin = pad_rv64_disk.addOutputFileArg("disk-rv64.bin");
     pad_rv64_disk.addArg(b.fmt("{d}", .{disk_size}));
-    if (chipOf(board) == .rv64sbi) b.getInstallStep().dependOn(&b.addInstallBinFile(rv64_disk_bin, "disk-rv64.bin").step);
+    if (chipOf(board) == .rv64sbi) {
+        b.getInstallStep().dependOn(&b.addInstallBinFile(rv64_disk_bin, "disk-rv64.bin").step);
+        b.getInstallStep().dependOn(&b.addInstallBinFile(rv64_manifest, "disk-rv64.manifest").step);
+        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+            .source_dir = rv64_tree,
+            .install_dir = .prefix,
+            .install_subdir = "disk-rv64",
+        }).step);
+    }
 
     // After linking: every ROM tag's module size into the kernel's
     // resident_sizes table (the shell's `residents` shows them).
@@ -685,6 +698,13 @@ pub fn build(b: *std.Build) void {
     });
     disk_test_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("host_rom", host_rom);
+    // The rasterizer core: its own tests, and the module its test programs
+    // import, for the scenes they draw (c/test/raster/reference.zig). A
+    // file belongs to one module, so the core is tested on its own.
+    const raster_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/facet/raster/raster.zig"), .target = b.graph.host });
+    raster_mod.addImport("sdk", sdk);
+    disk_test_mod.addImport("raster", raster_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = raster_mod })).step);
     disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);

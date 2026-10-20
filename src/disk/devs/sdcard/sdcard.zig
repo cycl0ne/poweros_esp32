@@ -86,11 +86,14 @@
 //! PowerOS container - to expansion.library as boot
 //! nodes (sdk/libs/expansion/bootdisk.zig), as flash.device does for its
 //! disk - so a bootable partition with a higher de_BootPri than the flash
-//! disk's is where dos starts from. Those are the card's drives then: dos
-//! is not up at cold start, so there is no process of the device's to
-//! make others. The card can still hold a PC's partition table in its
-//! first block: the RigidDiskBlock is looked for in the blocks after it
-//! too.
+//! disk's is where dos starts from. The card can still hold a PC's
+//! partition table in its first block: the RigidDiskBlock is looked for
+//! in the blocks after it too. dos is not up at cold start, so the
+//! device's DOS process is started by its first opener once dos is:
+//! C:BindDrivers in the startup-sequence, or a partition's handler. The
+//! process finds those drives as the card's, and makes `SD0:` for a card
+//! without a RigidDiskBlock, or the drives of the first card put into a
+//! slot that was empty at cold start.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -128,8 +131,8 @@ const DosBase = sdk.interface.dos.DosBase;
 
 pub const DEVICE_NAME = _sdcard.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 6;
-const BUILD_DATE = "19.10.2026";
+const DEVICE_REVISION = 7;
+const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -1065,8 +1068,8 @@ const CardDisk = struct {
 
 /// The partitions the card's RigidDiskBlock names, or the one in its
 /// GPT's PowerOS container, handed to expansion.library as boot nodes on
-/// unit 0. A card without one - a PC's, say - has none, and is SD0: when
-/// the startup sequence mounts it.
+/// unit 0. A card with neither - a PC's, say - has none, and gets its
+/// drives from the device's DOS process.
 fn bootPartitions(sb: *SdCardBase) void {
     const sys = sb.sys_base;
     const memory = sys.AllocVec(card.block_bytes, exec.MEMF_ANY) orelse return;
@@ -1314,6 +1317,9 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
     // The slot opens whether or not a card is in it: a handler that sits
     // on it has to be there before the card is, and finds out by asking.
     if (sb.controller_ready == 0) return exec.IOERR_OPENFAIL;
+    // The ROM's copy started before dos: its DOS process is started by
+    // the first opener that finds dos up.
+    if (in_rom and sb.dos_base == null) startMounter(sb);
     dev.open_cnt += 1;
     dev.flags &= ~exec.LIBF_DELEXP;
     sb.unit.open_cnt += 1;
@@ -1525,14 +1531,16 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         sys_base.FreeSignal(@intCast(signal));
     }
     // Last: nothing after this fails, so a process started here never runs
-    // on a base that is freed.
-    if (sb.controller_ready != 0) startMounter(sb);
+    // on a base that is freed. The ROM's copy has no dos to start it with
+    // yet: its first opener starts it (`open`).
+    if (!in_rom and sb.controller_ready != 0) startMounter(sb);
     return dev;
 }
 
 /// The DOS process that makes the card's drives, started and waited for.
 /// Without dos.library or the process the device serves all the same,
-/// and a card is mounted by hand (`Mount SD0:`).
+/// and a card is mounted by hand (`Mount SD0:`). Nothing is started while
+/// dos.library cannot be opened, and nothing again once it was.
 fn startMounter(sb: *SdCardBase) void {
     const sys = sb.sys_base;
     const dl: *DosBase = @ptrCast(sys.OpenLibrary(dos.DOSNAME, 0) orelse return);

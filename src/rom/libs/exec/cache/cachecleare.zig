@@ -38,10 +38,16 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// invalidated instead, because where that memory is executed from is not
 /// known here.
 ///
+/// Where each core drives the cache controller itself (the JH7110), a
+/// long range is shared between the cores, a run of whole lines each
+/// (`ShareWork`). Where the caller may not wait for them - an interrupt,
+/// Disable, a spinlock - or they are busy, it does the range alone.
+///
 /// CONTEXT:
-/// - Waits: no.
-/// - Interrupts: safe, though a partly covered line is handled with
-///   interrupts off.
+/// - Waits: only for the other cores' parts of a long range, and never
+///   where a task may not wait.
+/// - Interrupts: safe - the range is then done alone - though a partly
+///   covered line is handled with interrupts off.
 /// - Locks: none needed.
 /// - Process: a Task will do.
 ///
@@ -52,6 +58,9 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// With `CACRF_ClearI` on a RISC-V chip each core also fences its
 /// instruction fetch: the one that calls this at once, every other one at
 /// its next exception exit, before it resumes a task.
+///
+/// On the JH7110 writing a line back drops it as well, so the range is
+/// gone over once, not written back and then invalidated.
 ///
 /// BUGS:
 /// None known.
@@ -73,8 +82,8 @@ pub fn CacheClearE(base: *ExecBase, address: *anyopaque, length: u32, caches: u3
     const start = @intFromPtr(address);
     if (caches & sdk.exec.CACRF_ClearD != 0) {
         if (_cache.data_bus.clip(start, length)) |range| {
-            _cache.writeBack(range);
-            _cache.invalidateData(base, range);
+            _cache.writeBack(base, range);
+            if (!hardware.writeback_drops) _cache.invalidateData(base, range);
         }
     }
     if (caches & sdk.exec.CACRF_ClearI != 0) {

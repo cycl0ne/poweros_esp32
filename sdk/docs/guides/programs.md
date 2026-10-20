@@ -468,7 +468,7 @@ check is a Guru on the serial console that says what failed and where:
 
 **The machine runs on.** The task that failed is held where it is - it
 never runs another instruction - and a Software Failure requester on the
-display names it, on the ESP32s:
+display names it, on every board with a display:
 
 - **Suspend** leaves it held for good, with whatever it holds, while
   everything else goes on.
@@ -493,9 +493,9 @@ is a dead end the machine cannot run on from:
 it keeps the end of the system log over the restart (the last words,
 below), offers the ROM debugger for a few seconds, and restarts -
 `*** restarting` - unless the debugger is taken, after which it stays
-stopped (`*** system halted`). A RISC-V 64 machine asks nothing: every
-dead end prints its Guru and `*** system halted`, and the machine stays
-stopped.
+stopped (`*** system halted`). A RISC-V 64 machine has no ROM debugger
+and keeps no last words: such a dead end prints its Guru and
+`*** system halted`, and the machine stays stopped.
 
 `81000101` is `AN_ProgramPanic`. The fourth line names the loaded file and
 the offset into its code, which is the address in the program's linked ELF

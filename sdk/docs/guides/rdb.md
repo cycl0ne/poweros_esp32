@@ -633,12 +633,14 @@ start, before dos is up, and hands its partitions to expansion.library
 as boot nodes, as flash.device does (`sdk.expansion.bootdisk`). The
 bootable partition with the highest boot priority is where the system
 starts from: one above the flash disk's `DH0`, whose priority is 0,
-starts it from the card. Those nodes are the card's drives; a card with
-no RigidDiskBlock gets none at cold start, and is mounted by hand
-(`Mount SD0:`). A card with a GPT has the partitions of its container's
-table read the same way - only the GPT's copy in block 1, which needs
-the card's size for nothing - and its other GPT partitions get no node
-at cold start.
+starts it from the card. A card with a GPT has the partitions of its
+container's table read the same way - only the GPT's copy in block 1,
+which needs the card's size for nothing - and its other GPT partitions
+get no node. A card with neither gets none at cold start. Once dos is
+up, the device's first opener - `C:BindDrivers` in the startup-sequence
+- starts its DOS process. That process takes the nodes as the card's
+drives, makes those of a card that got none - `SD0:` for one without a
+table - and mounts the first card put into a slot that was empty.
 
 The card can be one that a PC and U-Boot read too: a PC partition table
 with one FAT32 partition over the card, the RigidDiskBlock in block 1,
