@@ -98,8 +98,8 @@ const mixer = @import("mixer.zig");
 const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
-const DEVICE_VERSION = 6;
-const DEVICE_REVISION = 0;
+const DEVICE_VERSION = 2;
+const DEVICE_REVISION = 9;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++

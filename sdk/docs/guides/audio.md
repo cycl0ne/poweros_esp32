@@ -115,9 +115,9 @@ since it was opened:
 | `has_input` | 1 when unit 1 records on this board: it has a way in |
 | `output` | the output played through: the part the sound comes out of, as the board names it, or `null` |
 | `underruns` | buffers the output played again because the next was not mixed in time - each a gap heard - since its driver made it |
-| `output_id` | the output's number (below), since version 3 |
-| `triggers`, `max_triggers` | sounds playing by trigger now, and how many may, since version 4 |
-| `input`, `input_id` | the way in recorded from - or that a recording would be - and its number, since version 5 |
+| `output_id` | the output's number (below), since 2.3 |
+| `triggers`, `max_triggers` | sounds playing by trigger now, and how many may, since 2.6 |
+| `input`, `input_id` | the way in recorded from - or that a recording would be - and its number, since 2.7 |
 | `input_channels` | the most sides it hears: 1 for one microphone |
 | `input_rate` | the rate it runs at while a recording runs, else 0 |
 | `overruns` | buffers of it lost - filled before the one before was taken, or heard while no read waited between two reads - each a gap in a recording |
@@ -159,7 +159,7 @@ a program picks another. Each output has a **number** that stays the
 same from one boot to the next, worked out from its driver's name and
 its own; it is what a program or a preference keeps to name it by.
 These commands read it from the request's `output` - the first three
-since version 3, the fourth since version 6:
+since 2.3, the fourth since 2.9:
 
 | Command | What |
 |---|---|
@@ -172,7 +172,7 @@ since version 3, the fourth since version 6:
 the first on the list, `AUDIOOF_CURRENT` for the one played through,
 `AUDIOOF_PREFERRED` for the preferred one - the most sides it plays,
 the rates it runs at (`rate_count` of `rates`, lowest first), its name
-and, since version 6, its `volume`. As with the query, as much of it is
+and, since 2.9, its `volume`. As with the query, as much of it is
 written as `std.length` holds; `AudioInfo.preferred_id` is the
 preferred output's number, whether it is there or not.
 
@@ -207,7 +207,7 @@ an output picked with `AUDIOCMD_SETOUTPUT` after it plays until the
 next one comes or goes. Since a preferred output may be named before it
 is there, a prefs file can name a speaker that is plugged in later.
 
-`output` is a field at the end of `IOAudio` that version 2 had not got.
+`output` is a field at the end of `IOAudio` that 2.2 had not got.
 A request of that size still opens and does everything else; only the
 output commands refuse it, with `IOERR_BADLENGTH`.
 
@@ -219,12 +219,12 @@ summed and the master goes over the sum; a sum past what the output
 holds is clipped, so many loud streams are better turned down here than
 left to clip.
 
-Since version 6 **each output has its own volume** - the headphones
+Since 2.9 **each output has its own volume** - the headphones
 quieter than the speaker - and the master is the volume of the output
 played through. With `output` naming an output, `AUDIOCMD_MASTER` sets
 that one's volume, kept for it while it is not there and in force
-whenever it plays; with `output` 0, or from a request of version 2,
-the one played through. An output no volume was set for plays at the
+whenever it plays; with `output` 0, or from a request of 2.2, the
+one played through. An output no volume was set for plays at the
 volume in force when it takes over. The device keeps
 `AUDIO_MAX_VOLUMES` (16) of them, forgetting the one set longest ago
 past that.
@@ -234,7 +234,7 @@ past that.
 A program that only chooses - a shell command, a preferences editor, a
 window with a volume slider - opens the device with `AUDIOF_TRIGGER`,
 which takes none of its streams. `audiocontrol.Control.open(sys)` does
-that on a port of its own, and refuses a device older than version 6;
+that on a port of its own, and refuses a device older than 2.9;
 its calls are a DoIO each:
 
 ```zig
