@@ -137,6 +137,7 @@ first time something opens it.
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces, packet hooks | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
 | crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines where it has them; X25519, P-256, P-384 and Ed25519; signatures checked and made; ML-KEM-768 | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
 | datatypes.library | `LIBS:` | a file opened by what is in it | [md](autodocs/datatypes.md) · [doc](autodocs/datatypes.doc) |
+| facet.library | `LIBS:` | three-dimensional drawing as Vulkan's model has it, on the machine's cores: memory, buffers and images, command buffers and a queue, render passes, pipelines with the program's own shaders, fences and semaphores, swapchains on a screen or in a window | [md](autodocs/facet.md) · [doc](autodocs/facet.doc) |
 | filter.library | `LIBS:` | a packet filter: rules on what comes in, on bsdsocket.library's packet hooks | [md](autodocs/filter.md) · [doc](autodocs/filter.doc) |
 | icon.library | `LIBS:` | icons: the picture a file is shown with and its fields; the default that fits a file without one | [md](autodocs/icon.md) · [doc](autodocs/icon.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |

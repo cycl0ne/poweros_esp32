@@ -6,8 +6,8 @@
 //!
 //! `Control.open` opens the device for triggers alone (`AUDIOF_TRIGGER`),
 //! which takes none of its streams, on a port of its own, and refuses a
-//! device older than version 6, which has no preferred output and one
-//! volume for every output. Each call is a DoIO on that request: it waits
+//! device older than 2.9, which has no preferred output and one volume
+//! for every output. Each call is a DoIO on that request: it waits
 //! for the device's task where the command is the task's to carry out (a
 //! change of output). `Outputs` is the list read once, with its names as a
 //! chooser gadget takes its labels.
@@ -20,8 +20,9 @@ const audio = @import("audio.zig");
 const ExecBase = @import("../interface/exec.zig").ExecBase;
 const IOAudio = audio.IOAudio;
 
-/// The oldest device that has every command here.
-pub const AUDIO_CONTROL_VERSION = 6;
+/// The oldest device that has every command here: 2.9.
+pub const AUDIO_CONTROL_VERSION = 2;
+pub const AUDIO_CONTROL_REVISION = 9;
 
 /// The most outputs `Outputs` holds.
 pub const max_outputs = 8;
@@ -50,7 +51,8 @@ pub const Control = struct {
     io: *IOAudio,
 
     /// The device opened for triggers alone: null when there is none, or
-    /// one older than `AUDIO_CONTROL_VERSION`, or no memory.
+    /// one older than `AUDIO_CONTROL_VERSION`.`AUDIO_CONTROL_REVISION`, or
+    /// no memory.
     pub fn open(sys: *ExecBase) ?Control {
         const port = sys.CreateMsgPort() orelse return null;
         const made = sys.CreateIORequest(port, @sizeOf(IOAudio)) orelse {
@@ -64,7 +66,10 @@ pub const Control = struct {
             sys.DeleteMsgPort(port);
             return null;
         }
-        if (io.std.req.device.?.version < AUDIO_CONTROL_VERSION) {
+        const device = io.std.req.device.?;
+        if (device.version < AUDIO_CONTROL_VERSION or
+            (device.version == AUDIO_CONTROL_VERSION and device.revision < AUDIO_CONTROL_REVISION))
+        {
             sys.CloseDevice(&io.std.req);
             sys.DeleteIORequest(&io.std.req);
             sys.DeleteMsgPort(port);

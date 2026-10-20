@@ -133,13 +133,13 @@
 //! **Each output has its own volume**, the master while it plays: the
 //! headphones quieter than the speaker. AUDIOCMD_MASTER with `output`
 //! naming one sets its volume, kept for it while it is not there; with
-//! `output` 0, or from a request of version 2, the one played through.
+//! `output` 0, or from a request of 2.2, the one played through.
 //! An output no volume was set for plays at the volume of the one before
 //! it. S:Startup-Sequence's C:SetPrefs hands the volumes and the preferred
 //! output to the device from ENV:Sys/audio.prefs (`sdk.prefs.audio`).
 //!
-//! The output commands read `output`, a field an IOAudio of version 2 had
-//! not got: a request smaller than the whole is refused them with
+//! The output commands read `output`, a field an IOAudio of 2.2 had not
+//! got: a request smaller than the whole is refused them with
 //! IOERR_BADLENGTH, and opens as before.
 
 const exec = @import("../libs/exec/exec.zig");
@@ -148,7 +148,7 @@ const IOStdReq = exec.IOStdReq;
 /// The device's name, for OpenDevice.
 pub const AUDIONAME = "audio.device";
 
-/// The units: what is played, and what is recorded (since version 5).
+/// The units: what is played, and what is recorded (since 2.7).
 pub const AUDIO_UNIT_PLAY: u32 = 0;
 pub const AUDIO_UNIT_RECORD: u32 = 1;
 
@@ -176,24 +176,24 @@ pub const AUDIO_PAN_FULL: i32 = 0x10000;
 pub const AUDIOCMD_SETPARAMS: u16 = exec.CMD_NONSTD + 0;
 pub const AUDIOCMD_QUERY: u16 = exec.CMD_NONSTD + 1;
 pub const AUDIOCMD_MASTER: u16 = exec.CMD_NONSTD + 2;
-/// Since version 3.
+/// Since 2.3.
 pub const AUDIOCMD_NEXTOUTPUT: u16 = exec.CMD_NONSTD + 3;
 pub const AUDIOCMD_SETOUTPUT: u16 = exec.CMD_NONSTD + 4;
 pub const AUDIOCMD_GETOUTPUT: u16 = exec.CMD_NONSTD + 5;
-/// Since version 4.
+/// Since 2.6.
 pub const AUDIOCMD_TRIGGER: u16 = exec.CMD_NONSTD + 6;
-/// Since version 6.
+/// Since 2.9.
 pub const AUDIOCMD_PREFEROUTPUT: u16 = exec.CMD_NONSTD + 7;
 
 /// OpenDevice's flags: an open for triggers alone, which takes no stream.
-/// Since version 4.
+/// Since 2.6.
 pub const AUDIOF_TRIGGER: u32 = 1 << 0;
 
 /// How many sounds play by trigger at once, beside the streams.
 pub const AUDIO_MAX_TRIGGERS: u32 = 8;
 
 /// How many outputs' volumes the device keeps: past that, the one set
-/// longest ago is forgotten. Since version 6.
+/// longest ago is forgotten. Since 2.9.
 pub const AUDIO_MAX_VOLUMES: u32 = 16;
 
 // --- errors -----------------------------------------------------------------------
@@ -237,13 +237,13 @@ pub const IOAudio = extern struct {
     /// recorded - since it was opened, counted round at 2^32.
     position: u32 = 0,
     /// The output commands: an output's number (`AudioOutputInfo.id`);
-    /// 0 for the first. Since version 3. AUDIOCMD_MASTER: the output whose
-    /// volume is set, 0 for the one played through. Since version 6.
+    /// 0 for the first. Since 2.3. AUDIOCMD_MASTER: the output whose
+    /// volume is set, 0 for the one played through. Since 2.9.
     output: u32 = 0,
 };
 
 /// The fewest bytes a request given to OpenDevice may have: an IOAudio up
-/// to `output`, as version 2 knew it.
+/// to `output`, as 2.2 knew it.
 pub const AUDIO_MIN_REQUEST: usize = @offsetOf(IOAudio, "output");
 
 /// What AUDIOCMD_QUERY writes about the device and the board.
@@ -270,14 +270,14 @@ pub const AudioInfo = extern struct {
     /// the next in time - each one a gap heard - since its driver made it.
     underruns: u32 = 0,
     /// The output's number (`AudioOutputInfo.id`), 0 for none. Since
-    /// version 3.
+    /// 2.3.
     output_id: u32 = 0,
-    /// Sounds playing by trigger now, and how many may. Since version 4.
+    /// Sounds playing by trigger now, and how many may. Since 2.6.
     triggers: u32 = 0,
     max_triggers: u32 = AUDIO_MAX_TRIGGERS,
     /// The way in recorded from - or that a recording would be - as the
     /// board names the part, and its number; null and 0 for none. Since
-    /// version 5.
+    /// 2.7.
     input: ?[*:0]const u8 = null,
     input_id: u32 = 0,
     /// The most sides any of its modes hears: 1 for one microphone, 2 for
@@ -290,7 +290,7 @@ pub const AudioInfo = extern struct {
     /// in a recording - since its driver made it.
     overruns: u32 = 0,
     /// The preferred output's number (AUDIOCMD_PREFEROUTPUT), there or
-    /// not; 0 for none. Since version 6.
+    /// not; 0 for none. Since 2.9.
     preferred_id: u32 = 0,
 };
 
@@ -313,7 +313,7 @@ pub const AudioOutputInfo = extern struct {
     /// Its name, as the board names the part, NUL-terminated.
     name: [AUDIO_NAME_LEN]u8 = @splat(0),
     /// Its volume: the master while it plays (AUDIOCMD_MASTER). Since
-    /// version 6.
+    /// 2.9.
     volume: u32 = 0,
 };
 
@@ -323,7 +323,7 @@ pub const AudioOutputInfo = extern struct {
 pub const AUDIOOF_DEFAULT: u32 = 1 << 0;
 /// The one the device plays through now.
 pub const AUDIOOF_CURRENT: u32 = 1 << 1;
-/// The preferred one (AUDIOCMD_PREFEROUTPUT). Since version 6.
+/// The preferred one (AUDIOCMD_PREFEROUTPUT). Since 2.9.
 pub const AUDIOOF_PREFERRED: u32 = 1 << 2;
 
 /// Bytes a frame takes in `format` with `channels` channels; 0 for a

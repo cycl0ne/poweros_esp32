@@ -76,135 +76,147 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
 
 ### What is in it
 
-- **Kernel (exec):** preemptive multitasking on every core of the chip -
-  two on the ESP32s, four on the VisionFive 2 -
-  signals, message ports, semaphores and checked spinlocks, every system
-  list under a lock of its own; libraries and devices opened by name,
-  loaded from disk when wanted and expunged when memory runs short;
-  internal SRAM and PSRAM - on a RISC-V machine all of its RAM, 8 GB on
-  the VisionFive 2 - as memory with attributes, every block marked
-  with the task that owns it, so a wrong or second free is refused and
-  `C:Avail OWNERS` and `SYS:System/MemMap` show who holds what. A
-  system log from the first byte of the boot (`C:Log` sends it to a
-  syslog server), a Guru with a ROM debugger on the serial ports, memory
-  debugging (a wall behind every block, patterns in new and freed
-  memory, wide stack guards) switched on from it, from `C:MemDebug`, or
-  for a whole run with `-Dmemdebug`, and a program that fails
-  held and asked about while the system runs on - Suspend, Kill or
-  Reboot. A task that ends, by itself or killed, gives back the
-  semaphores it held, the windows it left open and its private memory.
-  `C:Top` and `SYS:System/CPULoad` show what each task and core takes.
-- **DOS:** processes, handlers, assigns, patterns, `ReadArgs`; a
-  log-structured flash file system (`DH0:`); posfs, a journaling file
-  system of copy-on-write trees with UTF-8 names, soft and hard links,
-  checksummed data, LZ4 compression, a Recycled directory deletes go
-  to and come back from, and snapshots read under `.snapshots` that the
-  volume can be rolled back to, for a partition of the flash disk, an SD
-  card, a USB stick or an NVMe SSD, which a power cut at any moment
-  leaves whole and which mounts again at once, checked while in use
-  (`C:PosFS`) ([posfs guide](sdk/docs/guides/posfs.md));
-  FAT32 and exFAT on SD cards
-  (`SD0:`) and USB sticks (`DU0:`), written so a card pulled out
-  mid-write leaves a whole volume; `RAM:`, `PIPE:`, `NIL:`; any of the
-  disks formatted from the running system (`C:Format`: posfs, or FAT32
-  or exFAT by a card's size, or as asked, with the block or cluster size
-  asked for); partitions from a RigidDiskBlock on the flash disk, a card,
-  a stick or an SSD, each mounted as its own drive - a card's and a
-  stick's by their device when they come in - and laid out on any drive
-  by dragging them in `SYS:System/HDToolBox`; a disk with a GPT read and
-  written, its PowerOS partitions in a PowerOS container among the GPT's
-  and its FAT, exFAT and posfs partitions mounted beside them (`SD0:`,
-  `SD0P2:`); a file system's code kept in the
-  table, which its partitions run when the ROM has none or an older one
-  ([disks guide](sdk/docs/guides/rdb.md));
-  notification when a file changes; record locks on ranges of a file;
-  consoles with line editing, file name completion, and copy and paste;
-  a shell with scripts, a command's output and errors redirected apart
-  (`>`, `*>`: [dos guide](sdk/docs/guides/dos.md#files)), and 56
-  commands in `C:` - `ScreenDump` saves a
-  screen as a PNG - test programs in `C:test` and network tools in
-  `C:net`.
-- **Desktop and programs:** `LIBS:anvil.library` puts the disks, drawers
-  and icons on the Workbench screen, with drag and drop, icons snapped
-  to a grid or cleaned up by name, date or size, a trash, Information on
-  any file and an About that names the board, the processor and the
-  memory ([desktop guide](sdk/docs/guides/anvil.md));
-  `LIBS:icon.library` reads icons drawn as PNGs
-  ([icons guide](sdk/docs/guides/icons.md)). In `SYS:Programs`, each with
-  its readme in `SYS:Programs/Docs`: MultiView, Notepad, Sheet (a
-  spreadsheet with formulas, reading and writing CSV), Terminal (a VT100
-  on a serial line), Player (WAV, MP3, FLAC and Ogg Vorbis with their
-  cover, tags and chapters, and a plasma, the wave or the spectrum of
-  what is heard, through the output picked), FontView, Battery, Prefs
-  and Volume (the output played through and how loud). In `SYS:System`, beside
-  the Shell, with their readmes in `SYS:System/Docs`: HDToolBox (a
-  drive's partitions), CPULoad and MemMap (who holds the memory, as a
-  map).
-- **Graphics and windows:** rtg.library for the displays - on the
-  ESP32-P4 its 2D engine fills, copies, blends and scales, on the
-  VisionFive 2 its HDMI port at 1920×1080;
-  graphics.library with smooth curves, gradients, shadows and scaled
-  pictures; layers.library; intuition.library with screens, windows,
-  menus, requesters and gadget classes in layouts that fit any display,
-  everything drawn from a style a screen carries
-  ([styles guide](sdk/docs/guides/styles.md)). More gadgets in
-  `SYS:classes/gadgets/` - tabs, charts, dials, a calendar, rich text, QR
-  codes, a keyboard on the screen, text to edit with undo - the
-  requesters of `LIBS:asl.library`, and motion.library for whatever moves
-  ([motion guide](sdk/docs/guides/motion.md)).
-- **Datatypes and fonts:** `LIBS:datatypes.library` opens pictures (ILBM,
-  BMP, PNG, GIF, JPEG - on the ESP32-P4 by its codec), text (plain, FTXT,
-  Markdown), animations (GIF, Lottie) and sounds (WAV, MP3, FLAC, Ogg
-  Vorbis, 8SVX, played as they are read) by what is in them
-  ([datatypes guide](sdk/docs/guides/datatypes.md)); fonts bitmap and
-  TrueType, at any size ([fonts guide](sdk/docs/guides/fonts.md)).
-- **Sound:** `audio.device` mixes up to sixteen streams, each in its own
-  form, rate, volume and pan, into one of the outputs of rta.library's
-  drivers - an ES8311 codec, I2S amplifiers, USB speakers and headsets
-  (`DEVS:usb/uac.device`), a WAV file written in time, and in QEMU an
-  output into nothing that keeps time - picked by a number that stays
-  the same from boot to boot; the output preferred takes the sound over
-  when it is plugged in, and it or the first takes over when the one
-  playing is unplugged; each output keeps its own volume, and both are
-  set with `C:Audio`, on the Sound page of Prefs or in
-  `SYS:Programs/Volume` and given back at boot from `audio.prefs`; a
-  click or a beep plays at once as a trigger, on voices
-  of its own, with no process and nothing to feed, and `DisplayBeep`
-  plays one as `sound.prefs` says; unit 1 records from the codec's
-  microphone input - in QEMU, what was played - in any form and rate,
-  while sound plays (`C:Record`);
-  `LIBS:audiocodec.library` decodes WAV, MP3, FLAC and Ogg Vorbis as they
-  play and reads their tags, covers and chapters (`C:Play`,
-  [sound guide](sdk/docs/guides/audio.md)).
-- **Network:** a TCP/IP stack of its own (`LIBS:bsdsocket.library`: TCP,
-  UDP, IPv4 and IPv6, DHCP, DNS, multicast) on Ethernet - at 1000 Mbit/s
-  on the VisionFive 2 - USB Ethernet
-  adapters, the ESP32-S3's Wi-Fi, USB Wi-Fi sticks (AIC8800) and SLIP;
-  WPA2-Personal in `LIBS:wpa.library`; a shell over Telnet or SSH with
-  sftp and scp, an SSH client, a packet filter, and TLS 1.3 and 1.2 for
-  `C:net/HTTPGet` ([network guide](sdk/docs/guides/network.md)).
-- **USB:** a host stack on the chip's OTG controller - at high speed on
-  the ESP32-P4 - and on xHCI controllers on PCI Express (the VisionFive
-  2's VL805), through hubs, with class drivers loaded as their devices
-  are plugged in: keyboards, mice and tablets, sticks and card readers,
-  FTDI and CDC-ACM serial adapters, CDC Ethernet, AIC8800 Wi-Fi sticks,
-  and on xHCI, with its isochronous transfers, speakers and headsets of
-  the audio class ([USB guide](sdk/docs/guides/usb.md)).
-- **Modbus:** `LIBS:modbus.library` over RS-485 and TCP, asking and
-  answering; `C:Modbus` in the shell, and `SYS:Programs/Battery` for a
-  battery a Victron GX device reports
-  ([Modbus guide](sdk/docs/guides/modbus.md)).
-- **Devices and resources:** timer, serial, USB serial, RS-485, flash, SD
-  card, I2C, touch, keyboard and mouse from any source, console,
-  watchdog, DMA, GPIO, IO expander, the JPEG codec, the battery
-  (`C:Battery`), the date kept while the system is off
-  (`C:SetClock`), and `LIBS:crypto.library` on the ESP32s' SHA, AES and
-  RSA engines. On the RISC-V machines `LIBS:pci.library` - every function
-  behind every bridge of every PCI Express port, MSI, `C:PCIInfo` - and
-  `DEVS:nvme.device` for NVMe SSDs, with TRIM; the JH7110's random
-  number generator.
-- **Boards are data:** which parts are fitted and how they are wired is a
-  description in the ROM; drivers ask for their part at run time.
+```mermaid
+flowchart TB
+    subgraph m_programs ["Programs"]
+        m_shell["the shell<br/>56 commands in C:"]
+        m_desktop["the desktop<br/>anvil.library"]
+        m_apps["SYS:Programs<br/>SYS:System"]
+    end
+
+    subgraph m_modules ["Libraries and devices"]
+        m_intuition["intuition.library<br/>layers.library<br/>graphics.library"]
+        m_datatypes["datatypes.library<br/>asl, icon, diskfont"]
+        m_network["bsdsocket.library<br/>tls, usb, pci"]
+        m_audio["audio.device"]
+        m_rtg["<b>rtg.library</b><br/>the displays<br/>and their drivers"]
+        m_dos["dos.library<br/>posfs, FAT, flash, RAM:"]
+        m_devices["devices<br/>network, USB,<br/>disks, serial"]
+        m_rta["<b>rta.library</b><br/>the sound outputs<br/>and their drivers"]
+    end
+
+    subgraph m_kernel ["Kernel"]
+        m_exec["exec.library<br/>tasks on every core,<br/>ports, memory, libraries"]
+        m_expansion["expansion.library<br/>the board,<br/>described as data"]
+    end
+
+    subgraph m_hardware ["Hardware"]
+        m_s3["ESP32-S3"]
+        m_p4["ESP32-P4"]
+        m_rv64["RISC-V 64<br/>under SBI firmware"]
+    end
+
+    m_intuition --> m_rtg
+    m_datatypes --> m_dos
+    m_network --> m_devices
+    m_audio --> m_rta
+
+    m_shell ~~~ m_intuition
+    m_desktop ~~~ m_datatypes
+    m_desktop ~~~ m_network
+    m_apps ~~~ m_audio
+    m_rtg ~~~ m_exec
+    m_dos ~~~ m_exec
+    m_devices ~~~ m_expansion
+    m_rta ~~~ m_expansion
+    m_exec ~~~ m_s3
+    m_exec ~~~ m_p4
+    m_expansion ~~~ m_rv64
+
+    classDef prog fill:#ede9fe,stroke:#7c3aed,color:#111827
+    class m_shell,m_apps prog
+    classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
+    class m_desktop,m_intuition,m_datatypes,m_network,m_dos,m_exec,m_expansion lib
+    classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
+    class m_audio,m_devices dev
+    classDef key fill:#2563eb,stroke:#1e3a8a,stroke-width:3px,color:#ffffff
+    class m_rtg,m_rta key
+    classDef chip fill:#e5e7eb,stroke:#6b7280,color:#111827
+    class m_s3,m_p4,m_rv64 chip
+    style m_programs fill:none,stroke:#9ca3af
+    style m_modules fill:none,stroke:#9ca3af
+    style m_kernel fill:none,stroke:#9ca3af
+    style m_hardware fill:none,stroke:#9ca3af
+```
+
+Each layer uses the ones below it; libraries are blue, devices green.
+Two libraries stand between the hardware and everything a program shows
+and plays:
+
+**rtg.library** keeps the displays. Each is a board of a driver, and
+graphics.library, layers and intuition draw into its buffers without
+knowing what panel is behind them, so one program draws on a 3.5" SPI
+panel and on a 1080p monitor alike. A board's engine takes the fills,
+copies, blends and scales: the ESP32-P4's PPA and 2D-DMA, the
+VisionFive 2's four cores ([displays guide](sdk/docs/guides/rtg.md)).
+
+| Driver | Display |
+|---|---|
+| `rgb` | the Waveshare 7B's 1024×600 RGB panel |
+| `dcs` on `qspi` | the ES3C35P's 480×320 SPI panel |
+| `dsi` | the ESP32-P4's MIPI DSI panels, and HDMI through the Olimex's LT8912B |
+| `fb` | the VisionFive 2's HDMI at 1920×1080, QEMU virt's `ramfb` |
+| `qemu` | Espressif QEMU's display |
+
+**rta.library** keeps the sound outputs and ways in. Each is a sink or a
+source of a driver, made from the parts the board's description names,
+or when a USB speaker is plugged in. `audio.device` mixes up to sixteen
+streams, each in its own form, rate, volume and pan, into one sink; the
+output preferred takes over when it is plugged in, each keeps its own
+volume (`C:Audio`, Prefs, `SYS:Programs/Volume`), a click plays at once
+as a trigger, and unit 1 records (`C:Record`). `LIBS:audiocodec.library`
+decodes WAV, MP3, FLAC and Ogg Vorbis as they play
+([sound guide](sdk/docs/guides/audio.md)).
+
+| Driver | Output |
+|---|---|
+| `es8311` | the ES8311 codec, and its microphone input |
+| `i2samp` | I2S amplifiers, as the CrowPanel's two speakers |
+| `hdmi` | the VisionFive 2's HDMI port, 48000 Hz stereo |
+| `uac` | USB speakers and headsets (`DEVS:usb/uac.device`) |
+| `file` | a WAV file, written in time |
+| `null` | in the emulators, an output into nothing that keeps time |
+
+The libraries: exec, utility, expansion, dos, rtg, rta, graphics,
+layers, intuition, keymap and motion are in the ROM, the rest are loaded
+from `LIBS:` when first opened. Every module, with its reference, is in
+[the SDK's documentation](sdk/docs/README.md).
+
+| Area | Libraries |
+|---|---|
+| Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates; `expansion` the board's parts |
+| Files | `dos` processes, files, handlers, the shell's `ReadArgs`; `rdb` partitions on any drive |
+| Displays | **`rtg`**; `graphics` drawing; `layers`; `intuition` screens, windows, gadgets, styles; `keymap`; `motion` animations and timers |
+| Sound | **`rta`**; `audiocodec` WAV, MP3, FLAC, Ogg Vorbis |
+| Desktop | `anvil` the desktop; `asl` requesters; `icon`; `datatypes` pictures, text, animations and sounds by what is in them; `iffparse`; `diskfont` and `truetype` fonts; `facet` 3D in Vulkan's model, on the cores |
+| Network | `bsdsocket` TCP/IP, IPv4 and IPv6; `tls` 1.3 and 1.2; `crypto`; `wpa` WPA2; `filter` a packet filter |
+| Buses | `usb` the USB host stack; `pci` PCI Express; `modbus` RTU and TCP |
+
+Beside them:
+
+- **File systems:** posfs, journaling, copy-on-write, checksummed, with
+  snapshots ([posfs guide](sdk/docs/guides/posfs.md)); FAT32 and exFAT
+  on cards and sticks; the flash file system (`DH0:`), `RAM:`, `PIPE:`;
+  partitions from an RDB or a GPT on any drive, laid out in
+  `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)).
+- **Devices:** timer, serial, console, input from keyboards, mice and
+  touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
+  ESP32s' OTG and on xHCI, with class drivers for keyboards, mice,
+  sticks, serial and Ethernet adapters, Wi-Fi sticks, and on xHCI
+  speakers and headsets
+  ([USB guide](sdk/docs/guides/usb.md)); Ethernet up to 1000 Mbit/s, the
+  ESP32-S3's Wi-Fi and SLIP, and a shell over Telnet or SSH
+  ([network guide](sdk/docs/guides/network.md)).
+- **The shell:** 56 commands in `C:`, test programs in `C:test`, network
+  tools in `C:net`; scripts, output and errors redirected apart, line
+  editing and file name completion ([dos guide](sdk/docs/guides/dos.md)).
+- **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
+  Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
+  HDToolBox, CPULoad and MemMap.
+- **When something fails:** a Guru and a ROM debugger on the serial
+  port, memory debugging, the system log, and a program that fails held
+  for Suspend, Kill or Reboot
+  ([debugging guide](sdk/docs/guides/debugging.md)).
 
 ## Quick start
 
@@ -219,7 +231,7 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, playing into a file, the UART1 and UART3-IN connectors |
 | `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos on the disk image in RAM; with `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, with an `nvme` device an SSD; sound into an output that goes nowhere, and with `-device usb-audio` through QEMU's USB speaker, sample for sample, plugged in and out as it plays; no network |
-| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot; not yet tried on the board: sound through a USB speaker or headset; not driven yet: the second Ethernet port, USB 3, the eMMC socket, sound over HDMI |
+| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: sound through a USB speaker or headset; not driven yet: the second Ethernet port, USB 3, the eMMC socket |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network
