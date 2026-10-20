@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-//! usb/disk.device: USB sticks and card readers as block devices. A class
-//! driver (sdk/devices/usbclass.zig) for mass storage that speaks SCSI over
-//! Bulk-Only Transport, and the block device API
-//! (sdk/devices/trackdisk.zig) on its units: unit n is the drive `DU<n>:`.
+//! usb/disk.device: USB sticks, card readers and disks as block devices. A
+//! class driver (sdk/devices/usbclass.zig) for mass storage that speaks
+//! SCSI over USB Attached SCSI or Bulk-Only Transport, and the block
+//! device API (sdk/devices/trackdisk.zig) on its units: unit n is the
+//! drive `DU<n>:`.
 //!
 //!   CMD_READ         io_Length bytes from io_Offset into io_Data; both
 //!                    whole blocks of the medium, and on it.
@@ -47,7 +48,14 @@
 //! units' bring-up, and a look at every unit once a second that finds a
 //! card going into or out of a reader. BeginIO answers what it knows -
 //! the change count, whether a medium is in - and queues the rest, as
-//! sdcard.device does. The transport is bot.zig, the commands scsi.zig.
+//! sdcard.device does. The commands are scsi.zig's, the transports bot.zig
+//! and uas.zig.
+//!
+//! **UAS where the interface has it.** An interface with a UAS setting
+//! (protocol 0x62) is driven over UAS - that setting chosen, its four
+//! pipes found by their Pipe Usage descriptors, on streams at SuperSpeed
+//! - and is one drive, its logical unit 0; else it is driven over
+//! Bulk-Only, a drive for each logical unit GET MAX LUN gives.
 //!
 //! The device's own unit for usb.library is `USBCLASS_UNIT_BIND`, which
 //! opens nothing of the drives. It stays once loaded: a handler may sit
@@ -62,6 +70,7 @@ const d = usb.descriptors;
 const td = sdk.devices.trackdisk;
 const scsidisk = sdk.devices.scsidisk;
 const usbclass = sdk.devices.usbclass;
+const usbhc = sdk.devices.usbhc;
 const devices = sdk.expansion.devices;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _disk = @import("_disk.zig");
@@ -70,12 +79,13 @@ const Function = _disk.Function;
 const task_file = @import("task.zig");
 const mount = @import("mount.zig");
 const bot = @import("bot.zig");
+const uas = @import("uas.zig");
 const scsi = @import("scsi.zig");
 
 pub const DEVICE_NAME = _disk.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 6;
-const BUILD_DATE = "19.10.2026";
+const DEVICE_REVISION = 7;
+const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -228,10 +238,11 @@ fn expunge(_: *exec.Device) callconv(.c) ?*anyopaque {
 
 // --- the class driver's calls -------------------------------------------------------
 
-/// A mass storage interface of SCSI over Bulk-Only taken: its bulk pipes
-/// opened, the lowest free units given to its logical units, and the
-/// task handed it to bring up; anything else declined. The contract is
-/// usbclass's (sdk/fd/usbclass_lib.fd).
+/// A mass storage interface of SCSI taken - over UAS where it has a
+/// setting for it, else over Bulk-Only: its pipes opened, the lowest free
+/// units given to its logical units, and the task handed it to bring up;
+/// anything else declined. The contract is usbclass's
+/// (sdk/fd/usbclass_lib.fd).
 ///
 /// INPUTS:
 /// - `base` - the driver's base.
@@ -242,34 +253,25 @@ pub fn USBClassBind(base: *DiskBase, binding: *usb.USBBinding) bool {
     const device = binding.device.?;
     const interface = binding.interface.?;
     if (interface.interface_class != d.USB_CLASS_MASS_STORAGE or
-        interface.interface_subclass != d.MSC_SUBCLASS_SCSI or
-        interface.interface_protocol != d.MSC_PROTOCOL_BULK_ONLY) return false;
-    const in = ub.FindUSBEndpoint(device, interface, d.USB_DIR_IN, d.USB_ENDPOINT_XFER_BULK) orelse return false;
-    const out = ub.FindUSBEndpoint(device, interface, d.USB_DIR_OUT, d.USB_ENDPOINT_XFER_BULK) orelse return false;
+        interface.interface_subclass != d.MSC_SUBCLASS_SCSI) return false;
     const pipes = base.pipes orelse return false;
 
     const memory = sys.AllocMem(@sizeOf(Function), exec.MEMF_CLEAR) orelse return false;
     const function: *Function = @ptrCast(@alignCast(memory));
-    const bulk_in = ub.OpenUSBPipe(device, in.endpoint_address, pipes) orelse {
-        sys.FreeMem(memory, @sizeOf(Function));
-        return false;
-    };
-    const bulk_out = ub.OpenUSBPipe(device, out.endpoint_address, pipes) orelse {
-        ub.CloseUSBPipe(bulk_in);
-        sys.FreeMem(memory, @sizeOf(Function));
-        return false;
-    };
-    function.* = .{ .transport = .{
-        .sys = sys,
-        .ub = ub,
-        .device = device,
-        .interface_number = interface.interface_number,
-        .bulk_in = bulk_in,
-        .bulk_out = bulk_out,
-    } };
+    const transport = uasOf(sys, ub, device, interface.interface_number, pipes) orelse
+        (if (interface.interface_protocol == d.MSC_PROTOCOL_BULK_ONLY) botOf(sys, ub, device, interface, pipes) else null) orelse
+        {
+            sys.FreeMem(memory, @sizeOf(Function));
+            return false;
+        };
+    function.* = .{ .transport = transport };
 
-    // The lowest free units, one for each logical unit there is room for.
-    const luns = @min(maxLun(ub, device, interface.interface_number) + 1, _disk.max_luns);
+    // The lowest free units, one for each logical unit there is room for:
+    // a UAS interface's logical unit 0.
+    const luns: u8 = switch (transport) {
+        .bot => @min(maxLun(ub, device, interface.interface_number) + 1, _disk.max_luns),
+        .uas => 1,
+    };
     sys.ObtainSemaphore(&base.lock);
     var lun: u8 = 0;
     for (&base.units) |*unit| {
@@ -284,8 +286,7 @@ pub fn USBClassBind(base: *DiskBase, binding: *usb.USBBinding) bool {
     sys.ReleaseSemaphore(&base.lock);
     function.lun_count = lun;
     if (lun == 0) {
-        ub.CloseUSBPipe(bulk_in);
-        ub.CloseUSBPipe(bulk_out);
+        _disk.closePipes(ub, &function.transport);
         sys.FreeMem(memory, @sizeOf(Function));
         return false;
     }
@@ -295,6 +296,86 @@ pub fn USBClassBind(base: *DiskBase, binding: *usb.USBBinding) bool {
     function.bring_up.message.length = @sizeOf(_disk.Command);
     sys.PutMsg(base.commands.?, &function.bring_up.message);
     return true;
+}
+
+/// Bulk-Only to the interface: its bulk pair's pipes. Null without them.
+fn botOf(sys: *ExecBase, ub: *sdk.interface.usb.UsbBase, device: *usb.USBDevice, interface: *const usb.InterfaceDescriptor, port: *exec.MsgPort) ?_disk.Transport {
+    const in = ub.FindUSBEndpoint(device, interface, d.USB_DIR_IN, d.USB_ENDPOINT_XFER_BULK) orelse return null;
+    const out = ub.FindUSBEndpoint(device, interface, d.USB_DIR_OUT, d.USB_ENDPOINT_XFER_BULK) orelse return null;
+    const bulk_in = ub.OpenUSBPipe(device, in.endpoint_address, port) orelse return null;
+    const bulk_out = ub.OpenUSBPipe(device, out.endpoint_address, port) orelse {
+        ub.CloseUSBPipe(bulk_in);
+        return null;
+    };
+    return .{ .bot = .{
+        .sys = sys,
+        .ub = ub,
+        .device = device,
+        .interface_number = interface.interface_number,
+        .bulk_in = bulk_in,
+        .bulk_out = bulk_out,
+    } };
+}
+
+/// UAS to interface `interface_number`, if it has a UAS setting whose
+/// Pipe Usage descriptors name its four pipes: the pipes opened - the
+/// status and data pipes on streams at SuperSpeed, the status pipe's on
+/// the task management function's too - and the setting chosen
+/// (SET_INTERFACE) where it is not the first. Null without one, or when a
+/// pipe or the setting cannot be had.
+fn uasOf(sys: *ExecBase, ub: *sdk.interface.usb.UsbBase, device: *usb.USBDevice, interface_number: u8, port: *exec.MsgPort) ?_disk.Transport {
+    var previous: ?*const usb.InterfaceDescriptor = null;
+    const setting = while (ub.FindUSBInterface(device, previous, d.USB_CLASS_MASS_STORAGE, d.MSC_SUBCLASS_SCSI, d.MSC_PROTOCOL_UAS)) |found| : (previous = found) {
+        if (found.interface_number == interface_number) break found;
+    } else return null;
+    const config = device.config orelse return null;
+    const after = @intFromPtr(setting) - @intFromPtr(config) + setting.length;
+    if (after > device.config_length) return null;
+    const names = uas.pipesOf(config[after..device.config_length]);
+    if (!names.complete()) return null;
+
+    const streams = device.speed == usbhc.USB_SPEED_SUPER;
+    var opened: [5]?*usb.USBPipe = @splat(null);
+    opened[0] = ub.OpenUSBPipe(device, names.command, port);
+    if (streams) {
+        opened[1] = ub.OpenUSBStreamPipe(device, names.status, uas.command_tag, port);
+        opened[2] = ub.OpenUSBStreamPipe(device, names.status, uas.task_tag, port);
+        opened[3] = ub.OpenUSBStreamPipe(device, names.data_in, uas.command_tag, port);
+        opened[4] = ub.OpenUSBStreamPipe(device, names.data_out, uas.command_tag, port);
+    } else {
+        opened[1] = ub.OpenUSBPipe(device, names.status, port);
+        opened[3] = ub.OpenUSBPipe(device, names.data_in, port);
+        opened[4] = ub.OpenUSBPipe(device, names.data_out, port);
+    }
+    const missing = opened[0] == null or opened[1] == null or opened[3] == null or opened[4] == null or (streams and opened[2] == null);
+    if (!missing and setting.alternate_setting != 0) {
+        const setup = usb.SetupPacket{
+            .request_type = d.USB_DIR_OUT | d.USB_RECIP_INTERFACE,
+            .request = d.USB_REQ_SET_INTERFACE,
+            .value = setting.alternate_setting,
+            .index = interface_number,
+            .length = 0,
+        };
+        if (ub.DoUSBControl(device, &setup, null, null) == 0) return transportOf(sys, ub, device, opened, streams);
+    } else if (!missing) {
+        return transportOf(sys, ub, device, opened, streams);
+    }
+    for (opened) |pipe| ub.CloseUSBPipe(pipe);
+    return null;
+}
+
+fn transportOf(sys: *ExecBase, ub: *sdk.interface.usb.UsbBase, device: *usb.USBDevice, opened: [5]?*usb.USBPipe, streams: bool) _disk.Transport {
+    return .{ .uas = .{
+        .sys = sys,
+        .ub = ub,
+        .device = device,
+        .command = opened[0].?,
+        .status = opened[1].?,
+        .status_task = opened[2],
+        .data_in = opened[3].?,
+        .data_out = opened[4].?,
+        .streams = streams,
+    } };
 }
 
 /// The highest logical unit number (GET MAX LUN); 0 for a device that
@@ -326,9 +407,7 @@ pub fn USBClassUnbind(base: *DiskBase, binding: *usb.USBBinding) void {
     const function: *Function = @ptrCast(@alignCast(raw));
     // The device has gone, or the bus stops: a transfer the task waits on
     // is taken back now, and the task sends none after it.
-    @atomicStore(u8, &function.transport.leaving, 1, .release);
-    _ = sys.AbortIO(&function.transport.bulk_in.io.std.req);
-    _ = sys.AbortIO(&function.transport.bulk_out.io.std.req);
+    _disk.leave(sys, &function.transport);
     const reply = sys.CreateMsgPort() orelse return;
     defer sys.DeleteMsgPort(reply);
     var command = _disk.Command{ .kind = .let_go, .function = raw };
@@ -433,13 +512,20 @@ const speaks = [_]u32{ devices.DEVIF_BLOCK, devices.DEVIF_USBCLASS, 0 };
 
 const labels = [_][*:0]const u8{ "DU0:", "DU1:", "DU2:", "DU3:", "DU4:", "DU5:", "DU6:", "DU7:" };
 
-/// What it drives: mass storage, SCSI over Bulk-Only.
+/// What it drives: mass storage, SCSI over Bulk-Only or UAS - an
+/// interface whose first setting is either.
 const matches = [_]usbclass.USBMatch{
     .{
         .fields = usbclass.USBMATCH_CLASS | usbclass.USBMATCH_SUBCLASS | usbclass.USBMATCH_PROTOCOL,
         .interface_class = d.USB_CLASS_MASS_STORAGE,
         .interface_subclass = d.MSC_SUBCLASS_SCSI,
         .interface_protocol = d.MSC_PROTOCOL_BULK_ONLY,
+    },
+    .{
+        .fields = usbclass.USBMATCH_CLASS | usbclass.USBMATCH_SUBCLASS | usbclass.USBMATCH_PROTOCOL,
+        .interface_class = d.USB_CLASS_MASS_STORAGE,
+        .interface_subclass = d.MSC_SUBCLASS_SCSI,
+        .interface_protocol = d.MSC_PROTOCOL_UAS,
     },
     .{},
 };
@@ -478,5 +564,6 @@ export const version_tag: [DEVICE_VERSION_STRING.len:0]u8 linksection(".version"
 
 test {
     _ = bot;
+    _ = uas;
     _ = scsi;
 }

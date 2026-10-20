@@ -469,6 +469,18 @@ pub const MSC_PROTOCOL_BULK_ONLY: u8 = 0x50;
 /// logical unit number.
 pub const MSC_REQ_RESET: u8 = 0xFF;
 pub const MSC_REQ_GET_MAX_LUN: u8 = 0xFE;
+/// bInterfaceProtocol: USB Attached SCSI - commands, status and data
+/// each on a bulk pipe of their own, with streams at SuperSpeed.
+pub const MSC_PROTOCOL_UAS: u8 = 0x62;
+/// UAS's Pipe Usage descriptor, after each of its endpoints: bLength 4,
+/// this type, the pipe's ID, a reserved byte.
+pub const MSC_DT_PIPE_USAGE: u8 = 0x24;
+/// The Pipe Usage descriptor's IDs: the command pipe (out), the status
+/// pipe (in), the data-in and the data-out pipes.
+pub const MSC_PIPE_COMMAND: u8 = 1;
+pub const MSC_PIPE_STATUS: u8 = 2;
+pub const MSC_PIPE_DATA_IN: u8 = 3;
+pub const MSC_PIPE_DATA_OUT: u8 = 4;
 
 comptime {
     if (@sizeOf(SetupPacket) != 8 or @sizeOf(DeviceDescriptor) != 18 or

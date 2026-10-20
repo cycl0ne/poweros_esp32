@@ -43,7 +43,7 @@ and writing a controller.
 | `pci.library` | `LIBS:` | the machine's PCI functions, among which xhci.device finds its controllers ([pci](../autodocs/pci.md)); on the RISC-V 64 disk |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
 | `usb/hid.device` | `DEVS:usb/` | keyboards, mice and tablets, into keyboard.device and mouse.device |
-| `usb/disk.device` | `DEVS:usb/` | sticks and card readers (mass storage, SCSI over Bulk-Only) as block devices, a drive `DU<n>:` each |
+| `usb/disk.device` | `DEVS:usb/` | sticks, card readers and disks (mass storage, SCSI over Bulk-Only or USB Attached SCSI) as block devices, a drive `DU<n>:` each |
 | `usb/ftdi.device` | `DEVS:usb/` | FTDI's serial chips as serial lines, with serial.device's API |
 | `usb/acm.device` | `DEVS:usb/` | the communications class's serial lines (CDC-ACM), with serial.device's API |
 | `usb/ecm.device` | `DEVS:usb/` | Ethernet adapters of the communications class (CDC-ECM) as a network device |
@@ -392,7 +392,8 @@ the screen comes up only while there is none.
 ## Sticks and card readers
 
 `usb/disk.device` drives mass storage that speaks SCSI over Bulk-Only
-Transport - nearly every stick and card reader. Its units are drives:
+Transport - nearly every stick and card reader - or over USB Attached
+SCSI (UAS), as many USB 3 disks and enclosures do. Its units are drives:
 each logical unit of what is plugged in takes the lowest unit free, so
 a stick is `DU0:`, a second one `DU1:`, and a card reader's two slots
 are two drives. A stick pulled out frees its unit, and the next one
@@ -436,6 +437,18 @@ takes only its volumes, and the next one in the unit is read through the
 same drives - a stick with another table needs a restart to be mounted
 as that table says. Nothing in the MountList is needed, and nothing USB
 is loaded at boot where no stick is plugged in.
+
+**UAS** is taken where the interface has a setting for it, Bulk-Only
+otherwise. Its four pipes - command, status, data in, data out - are
+found by their pipe usage descriptors. At SuperSpeed a command's status
+and data go on a stream of their own, set out before the command; below,
+the disk says on the status pipe when it is ready for the data (Read
+Ready, Write Ready). The sense of a command that fails comes with its
+status, and the REQUEST SENSE after it is answered from that. A disk
+over UAS is one drive, its first logical unit, with one command out at
+a time. A status that does not fit the command, or does not come, resets
+the logical unit (a task management request) and clears every pipe's
+halt.
 
 **A card reader's slots** are looked at once a second (TEST UNIT
 READY): a card put in comes in as a stick does, one taken out goes.
@@ -729,7 +742,11 @@ qemu-xhci` has one, and `-device usb-kbd`, `-device usb-mouse` or a
 `usb-storage` device go on its bus; the machine's `USB AUTO` starts it at
 boot. QEMU puts a `usb-storage` on a USB 3 port, and the stick runs at
 SuperSpeed; `-device qemu-xhci,p3=0` gives the controller USB 2 ports
-only, and it comes in at high speed. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
+only, and it comes in at high speed. `-device usb-uas,id=uas -device
+scsi-hd,bus=uas.0,drive=d` is a disk over UAS, on streams at SuperSpeed
+and with Read Ready and Write Ready at high speed. One plugged in from
+the monitor (`device_add usb-uas,id=uas2`, then its `scsi-hd`) is
+attached only once the disk is on it: `qom-set uas2 attached true`. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
 pa,id=snd`, or `wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
 for a file) is a speaker for `usb/uac.device`; `device_del spk` pulls it
 out while it plays. QEMU's own mixing engine plays 0 dB at 240/255 of

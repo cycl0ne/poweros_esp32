@@ -28,6 +28,7 @@ const UsbBase = sdk.interface.usb.UsbBase;
 const DosBase = sdk.interface.dos.DosBase;
 const automount = sdk.devices.automount;
 const bot = @import("bot.zig");
+const uas = @import("uas.zig");
 
 pub const DEVICE_NAME = "disk.device";
 
@@ -75,10 +76,64 @@ pub const Unit = extern struct {
     medium: automount.MediumNode = .{},
 };
 
+/// How a bound interface reaches its device: Bulk-Only Transport, or USB
+/// Attached SCSI.
+pub const Transport = union(enum) {
+    bot: bot.Transport,
+    uas: uas.Transport,
+};
+
+/// A command run over whichever transport the interface speaks: `command`
+/// to logical unit `lun`, its data stage `length` bytes into `data` (`in`)
+/// or from it, given `ms` to come.
+pub fn runOn(transport: *Transport, lun: u8, command: []const u8, data: ?[*]u8, length: u32, in: bool, ms: u32) bot.Result {
+    return switch (transport.*) {
+        .bot => |*way| bot.run(way, lun, command, data, length, in, ms),
+        .uas => |*way| uas.run(way, lun, command, data, length, in, ms),
+    };
+}
+
+/// The device being let go of: the transport sends nothing after this,
+/// and what it waits on is taken back.
+pub fn leave(sys: *ExecBase, transport: *Transport) void {
+    switch (transport.*) {
+        .bot => |*way| {
+            @atomicStore(u8, &way.leaving, 1, .release);
+            _ = sys.AbortIO(&way.bulk_in.io.std.req);
+            _ = sys.AbortIO(&way.bulk_out.io.std.req);
+        },
+        .uas => |*way| {
+            @atomicStore(u8, &way.leaving, 1, .release);
+            _ = sys.AbortIO(&way.command.io.std.req);
+            _ = sys.AbortIO(&way.status.io.std.req);
+            if (way.status_task) |pipe| _ = sys.AbortIO(&pipe.io.std.req);
+            _ = sys.AbortIO(&way.data_in.io.std.req);
+            _ = sys.AbortIO(&way.data_out.io.std.req);
+        },
+    }
+}
+
+/// The transport's pipes closed.
+pub fn closePipes(ub: *UsbBase, transport: *Transport) void {
+    switch (transport.*) {
+        .bot => |*way| {
+            ub.CloseUSBPipe(way.bulk_in);
+            ub.CloseUSBPipe(way.bulk_out);
+        },
+        .uas => |*way| {
+            ub.CloseUSBPipe(way.command);
+            ub.CloseUSBPipe(way.status);
+            ub.CloseUSBPipe(way.status_task);
+            ub.CloseUSBPipe(way.data_in);
+            ub.CloseUSBPipe(way.data_out);
+        },
+    }
+}
+
 /// A bound interface: its way to the device, and its logical units'
 /// drives.
 pub const Function = struct {
-    transport: bot.Transport,
+    transport: Transport,
     units: [max_luns]?*Unit = @splat(null),
     lun_count: u8 = 0,
     /// The command that hands it to the task to bring up.
