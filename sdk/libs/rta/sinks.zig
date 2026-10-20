@@ -18,6 +18,7 @@ const lists = @import("../exec/lists.zig");
 const tasks = @import("../exec/tasks.zig");
 const tagitem = @import("../utility/tagitem.zig");
 const transport = @import("transport.zig");
+const sources = @import("sources.zig");
 
 const Node = nodes.Node;
 const List = lists.List;
@@ -130,6 +131,8 @@ pub const AUDIOCTRL_DRIVER: u32 = 0x1000;
 /// RtaDriver.type: what a driver makes.
 pub const RTADT_SINK: u32 = 1 << 0;
 pub const RTADT_TRANSPORT: u32 = 1 << 1;
+/// Since 1.3.
+pub const RTADT_SOURCE: u32 = 1 << 2;
 
 /// RtaDriver.flags
 /// The driver's instance is read from its interrupts: the library puts it
@@ -169,4 +172,6 @@ pub const RtaDriverOps = extern struct {
     create_sink: ?*const fn (*RtaDriver, *AudioSink, ?[*]const tagitem.TagItem) callconv(.c) i32 = null,
     /// The same for a line.
     create_transport: ?*const fn (*RtaDriver, *transport.AudioTransport, ?[*]const tagitem.TagItem) callconv(.c) i32 = null,
+    /// The same for a source. Since 1.3.
+    create_source: ?*const fn (*RtaDriver, *sources.AudioSource, ?[*]const tagitem.TagItem) callconv(.c) i32 = null,
 };

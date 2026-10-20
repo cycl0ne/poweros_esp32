@@ -40,9 +40,11 @@ pub const PERI_CLK_CTRL02: usize = map.HP_SYS_CLKRST + 0x038;
 pub const PERI_CLK_CTRL03: usize = map.HP_SYS_CLKRST + 0x03C;
 pub const PERI_CLK_CTRL10: usize = map.HP_SYS_CLKRST + 0x040;
 pub const PERI_CLK_CTRL11: usize = map.HP_SYS_CLKRST + 0x044;
-/// I2S1's receive and transmit clocks: PERI_CLK_CTRL15 its receiver's
+/// I2S1's receive and transmit clocks: PERI_CLK_CTRL14 the receiver's
+/// enable, source and whole divider, PERI_CLK_CTRL15 the rest of its
 /// divider and the transmitter's enable and source, PERI_CLK_CTRL16 and 17
 /// the transmitter's divider and the master clock's choice.
+pub const PERI_CLK_CTRL14: usize = map.HP_SYS_CLKRST + 0x050;
 pub const PERI_CLK_CTRL15: usize = map.HP_SYS_CLKRST + 0x054;
 pub const PERI_CLK_CTRL16: usize = map.HP_SYS_CLKRST + 0x058;
 pub const PERI_CLK_CTRL17: usize = map.HP_SYS_CLKRST + 0x05C;

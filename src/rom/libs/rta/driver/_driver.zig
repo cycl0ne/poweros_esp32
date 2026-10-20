@@ -25,14 +25,14 @@ pub fn driverOf(node: *exec.Node) *rta.RtaDriver {
     return @fieldParentPtr("node", node);
 }
 
-/// A driver of that name that makes the kind of thing asked for: the two
+/// A driver of that name that makes the kind of thing asked for: the
 /// creates are separate, so a name that is registered but cannot make
 /// what is being asked is not the driver wanted.
 ///
 /// INPUTS:
 /// - `rb` - the library.
 /// - `name` - the driver's name.
-/// - `kind` - `RTADT_SINK` or `RTADT_TRANSPORT`.
+/// - `kind` - `RTADT_SINK`, `RTADT_TRANSPORT` or `RTADT_SOURCE`.
 pub fn findDriverOfType(rb: *RtaBase, name: [*:0]const u8, kind: u32) ?*rta.RtaDriver {
     const rta_lib = rb.iface();
     const driver = rta_lib.FindRtaDriver(name) orelse return null;

@@ -45,6 +45,16 @@ const RtaErrorText = @import("errors/rtaerrortext.zig").RtaErrorText;
 const NextSinkMode = @import("sink/nextsinkmode.zig").NextSinkMode;
 const FindSinkMode = @import("sink/findsinkmode.zig").FindSinkMode;
 const SetSinkMode = @import("sink/setsinkmode.zig").SetSinkMode;
+const CreateSourceTagList = @import("source/createsourcetaglist.zig").CreateSourceTagList;
+const DeleteSource = @import("source/deletesource.zig").DeleteSource;
+const NextSource = @import("source/nextsource.zig").NextSource;
+const NextSourceMode = @import("source/nextsourcemode.zig").NextSourceMode;
+const StartSource = @import("source/startsource.zig").StartSource;
+const StopSource = @import("source/stopsource.zig").StopSource;
+const SourceBuffer = @import("source/sourcebuffer.zig").SourceBuffer;
+const StartAudioTransportInput = @import("transport/startaudiotransportinput.zig").StartAudioTransportInput;
+const StopAudioTransportInput = @import("transport/stopaudiotransportinput.zig").StopAudioTransportInput;
+const AudioTransportInput = @import("transport/audiotransportinput.zig").AudioTransportInput;
 
 /// rta.library's interface, as the SDK generates it from sdk/fd/rta_lib.fd.
 const interface = sdk.interface.rta;
@@ -102,6 +112,16 @@ const contract_files = [_][]const u8{
     @embedFile("sink/nextsinkmode.zig"),
     @embedFile("sink/findsinkmode.zig"),
     @embedFile("sink/setsinkmode.zig"),
+    @embedFile("source/createsourcetaglist.zig"),
+    @embedFile("source/deletesource.zig"),
+    @embedFile("source/nextsource.zig"),
+    @embedFile("source/nextsourcemode.zig"),
+    @embedFile("source/startsource.zig"),
+    @embedFile("source/stopsource.zig"),
+    @embedFile("source/sourcebuffer.zig"),
+    @embedFile("transport/startaudiotransportinput.zig"),
+    @embedFile("transport/stopaudiotransportinput.zig"),
+    @embedFile("transport/audiotransportinput.zig"),
 };
 
 fn lvoAddRtaDriver(rb: *RtaBase, driver: *rta.RtaDriver) callconv(.c) bool {
@@ -185,6 +205,36 @@ fn lvoFindSinkMode(rb: *RtaBase, sink: *rta.AudioSink, rate: u32, channels: u32)
 fn lvoSetSinkMode(rb: *RtaBase, sink: *rta.AudioSink, mode: ?*rta.AudioMode) callconv(.c) i32 {
     return SetSinkMode(rb, sink, mode);
 }
+fn lvoCreateSourceTagList(rb: *RtaBase, driver_name: [*:0]const u8, tag_list: ?[*]const TagItem) callconv(.c) ?*rta.AudioSource {
+    return CreateSourceTagList(rb, driver_name, tag_list);
+}
+fn lvoDeleteSource(rb: *RtaBase, source: ?*rta.AudioSource) callconv(.c) void {
+    DeleteSource(rb, source);
+}
+fn lvoNextSource(rb: *RtaBase, after: ?*rta.AudioSource) callconv(.c) ?*rta.AudioSource {
+    return NextSource(rb, after);
+}
+fn lvoNextSourceMode(rb: *RtaBase, source: *rta.AudioSource, after: ?*rta.AudioMode) callconv(.c) ?*rta.AudioMode {
+    return NextSourceMode(rb, source, after);
+}
+fn lvoStartSource(rb: *RtaBase, source: *rta.AudioSource, mode: ?*rta.AudioMode, task: *exec.Task, signal_mask: u32) callconv(.c) i32 {
+    return StartSource(rb, source, mode, task, signal_mask);
+}
+fn lvoStopSource(rb: *RtaBase, source: *rta.AudioSource) callconv(.c) void {
+    StopSource(rb, source);
+}
+fn lvoSourceBuffer(rb: *RtaBase, source: *rta.AudioSource) callconv(.c) ?[*]const i16 {
+    return SourceBuffer(rb, source);
+}
+fn lvoStartAudioTransportInput(rb: *RtaBase, io: *rta.AudioTransport, mode: *const rta.AudioMode, task: *exec.Task, signal_mask: u32) callconv(.c) i32 {
+    return StartAudioTransportInput(rb, io, mode, task, signal_mask);
+}
+fn lvoStopAudioTransportInput(rb: *RtaBase, io: *rta.AudioTransport) callconv(.c) void {
+    StopAudioTransportInput(rb, io);
+}
+fn lvoAudioTransportInput(rb: *RtaBase, io: *rta.AudioTransport) callconv(.c) ?[*]const i16 {
+    return AudioTransportInput(rb, io);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -220,6 +270,16 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoNextSinkMode),
     vec(lvoFindSinkMode),
     vec(lvoSetSinkMode),
+    vec(lvoCreateSourceTagList),
+    vec(lvoDeleteSource),
+    vec(lvoNextSource),
+    vec(lvoNextSourceMode),
+    vec(lvoStartSource),
+    vec(lvoStopSource),
+    vec(lvoSourceBuffer),
+    vec(lvoStartAudioTransportInput),
+    vec(lvoStopAudioTransportInput),
+    vec(lvoAudioTransportInput),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -227,7 +287,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 31), vectors.len);
+    try testing.expectEqual(@as(usize, 41), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

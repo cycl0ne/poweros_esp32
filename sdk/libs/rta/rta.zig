@@ -23,6 +23,12 @@
 //! takes I2S is a sink on a transport; a stream that makes its own way
 //! out needs none.
 //!
+//! Sound coming in is the same the other way round: a driver makes a
+//! **source** for each way in - a codec's microphone input - with modes and
+//! a ring of buffers of the same form, which the caller is signalled for
+//! each time one has been filled and takes with SourceBuffer. A part that
+//! is read over I2S is a source on the transport its sink plays over.
+//!
 //! audio.device is what plays through a sink; a program opens that, not
 //! this. Open it with OpenLibrary(RTANAME, 1); its functions are in
 //! sdk/interface/rta.zig.
@@ -33,6 +39,7 @@ pub const RTANAME = "rta.library";
 pub const RTA_VERSION = 1;
 
 pub const sinks = @import("sinks.zig");
+pub const sources = @import("sources.zig");
 pub const transport = @import("transport.zig");
 pub const errors = @import("errors.zig");
 pub const tags = @import("tags.zig");
@@ -47,6 +54,8 @@ pub const AudioSink = sinks.AudioSink;
 pub const AudioSinkOps = sinks.AudioSinkOps;
 pub const RtaDriver = sinks.RtaDriver;
 pub const RtaDriverOps = sinks.RtaDriverOps;
+pub const AudioSource = sources.AudioSource;
+pub const AudioSourceOps = sources.AudioSourceOps;
 pub const AudioTransport = transport.AudioTransport;
 pub const AudioTransportOps = transport.AudioTransportOps;
 

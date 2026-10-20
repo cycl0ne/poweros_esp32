@@ -58,6 +58,7 @@ pub fn RtaErrorText(_: *RtaBase, error_code: i32) [*:0]const u8 {
         err.RTAERR_NOT_RUNNING => "the output is not playing",
         err.RTAERR_BAD_MODE => "the output has no such mode",
         err.RTAERR_IO => "the part did not answer on its bus",
+        err.RTAERR_NO_INPUT => "the way in is not there",
         else => "unknown error",
     };
 }

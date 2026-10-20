@@ -7,8 +7,8 @@ const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 
-/// The base: the driver list, the sinks and lines made from it, and the
-/// two libraries it calls.
+/// The base: the driver list, the sinks, sources and lines made from it,
+/// and the two libraries it calls.
 pub const RtaBase = extern struct {
     lib: exec.Library,
     /// SysBase, to call exec through its jump table.
@@ -20,16 +20,19 @@ pub const RtaBase = extern struct {
     /// the list still while it is walked.
     drivers: exec.List,
     driver_lock: exec.SignalSemaphore,
-    /// The sinks alive, the most wanted first, and the lines.
+    /// The sinks alive, the most wanted first, the sources the same, and
+    /// the lines; one semaphore for the three.
     sinks: exec.List,
     transports: exec.List,
     sink_lock: exec.SignalSemaphore,
+    sources: exec.List,
     /// What the last call that answers with a pointer went wrong with. It
     /// is one word for the whole library, not one per task, so a caller
     /// that cannot be sure it was the last to fail passes RTAA_ErrorPtr
     /// and reads its own.
     last_error: i32,
-    /// How many sinks and lines have been made, for naming the next one.
+    /// How many sinks, sources and lines have been made, for naming the
+    /// next one.
     serial: u32,
 
     /// This library as a caller sees it, to call its own functions through

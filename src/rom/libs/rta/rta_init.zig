@@ -15,7 +15,7 @@ const RtaBase = @import("rta_base.zig").RtaBase;
 
 pub const LIBRARY_NAME = rta.RTANAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 2;
+pub const LIBRARY_REVISION = 3;
 const BUILD_DATE = "20.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -58,6 +58,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.NewList(&rb.drivers);
     sys_base.NewList(&rb.sinks);
     sys_base.NewList(&rb.transports);
+    sys_base.NewList(&rb.sources);
     sys_base.InitSemaphore(&rb.driver_lock);
     sys_base.InitSemaphore(&rb.sink_lock);
     return lib;
@@ -72,8 +73,8 @@ const init_table = exec.InitTable{
 
 /// Cold start at 33: after utility.library (103) and expansion.library
 /// (102), and before the sound drivers (31, 32), which join it at their
-/// own init and make their sinks there, and before audio.device (26),
-/// which plays through them.
+/// own init and make their sinks and sources there, and before
+/// audio.device (26), which plays through them and records from them.
 pub export const rta_library_tag: exec.Resident linksection(".resident") = .{
     .match_tag = &rta_library_tag,
     .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,

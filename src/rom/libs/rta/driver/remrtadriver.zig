@@ -19,8 +19,8 @@ const RtaBase = @import("../rta.zig").RtaBase;
 /// - `driver` - a driver `AddRtaDriver` took.
 ///
 /// RESULT:
-/// True if it came off. False while a sink or a line it made is still
-/// alive, and for a driver that is not on the list.
+/// True if it came off. False while a sink, a source or a line it made is
+/// still alive, and for a driver that is not on the list.
 ///
 /// BEHAVIOR:
 /// A driver whose handles are alive is still running code for them, so it
@@ -39,7 +39,7 @@ const RtaBase = @import("../rta.zig").RtaBase;
 /// None known.
 ///
 /// SEE ALSO:
-/// `AddRtaDriver`, `DeleteSink`, `DeleteAudioTransport`
+/// `AddRtaDriver`, `DeleteSink`, `DeleteSource`, `DeleteAudioTransport`
 ///
 /// EXAMPLES:
 /// ```zig

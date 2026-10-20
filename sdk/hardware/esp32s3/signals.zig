@@ -14,11 +14,12 @@ pub const U1TXD_OUT: u32 = 15;
 pub const U2RXD_IN: u32 = 18;
 pub const U2TXD_OUT: u32 = 18;
 
-// I2S0, as a transmitter.
+// I2S0, as a transmitter, and the receiver's data in.
 pub const I2S0O_BCK: u32 = 22;
 pub const I2S0_MCLK: u32 = 23;
 pub const I2S0O_WS: u32 = 24;
 pub const I2S0O_SD: u32 = 25;
+pub const I2S0I_SD: u32 = 25;
 
 // The two I2C controllers.
 pub const I2CEXT0_SCL: u32 = 89;

@@ -21,13 +21,13 @@ const RtaBase = @import("../rta.zig").RtaBase;
 ///
 /// RESULT:
 /// True if it went on. False for a driver with no name, no operations, or
-/// operations that fill in neither `create_sink` nor `create_transport`,
-/// and for a name already on the list.
+/// operations that fill in none of `create_sink`, `create_transport` and
+/// `create_source`, and for a name already on the list.
 ///
 /// BEHAVIOR:
 /// The list is kept by priority, so a caller walking it meets the most
-/// wanted driver first. A driver that can make neither a sink nor a line
-/// would sit on the list answering nothing, so it is refused.
+/// wanted driver first. A driver that can make no sink, no line and no
+/// source would sit on the list answering nothing, so it is refused.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the driver list.
@@ -52,7 +52,7 @@ const RtaBase = @import("../rta.zig").RtaBase;
 pub fn AddRtaDriver(rb: *RtaBase, driver: *rta.RtaDriver) bool {
     const name = driver.node.name orelse return false;
     const ops = driver.ops orelse return false;
-    if (ops.create_sink == null and ops.create_transport == null) return false;
+    if (ops.create_sink == null and ops.create_transport == null and ops.create_source == null) return false;
 
     rb.sys_base.ObtainSemaphore(&rb.driver_lock);
     defer rb.sys_base.ReleaseSemaphore(&rb.driver_lock);

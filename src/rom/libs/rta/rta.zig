@@ -1,31 +1,32 @@
 // SPDX-License-Identifier: MPL-2.0
-//! rta.library: the sound outputs of this machine, and the drivers that
-//! drive them.
+//! rta.library: the sound outputs and inputs of this machine, and the
+//! drivers that drive them.
 //!
 //! The library itself drives nothing. It holds a list of drivers and the
-//! sinks and lines they made, allocates the handles a driver fills in,
-//! keeps which mode a sink is in and whether it has been started, and
-//! passes the calls through. What is on the other side - a codec set up
+//! sinks, sources and lines they made, allocates the handles a driver
+//! fills in, keeps which mode a sink or a source is in and whether it has
+//! been started, and passes the calls through. What is on the other side - a codec set up
 //! over I2C, an amplifier on a pad, a stream that goes nowhere - is the
 //! driver's business and nobody else's.
 //!
 //! Every driver makes its own sinks, at its own init: it asks
 //! expansion.library for the board's parts it can drive, and makes a sink
-//! for each - over a line first, for a part fed over I2S. audio.device
-//! plays through the first sink on the list; nothing above the drivers
-//! knows a part's name.
+//! for each - over a line first, for a part fed over I2S - and a source
+//! for a part that has a way in, on the same line. audio.device plays
+//! through the first sink on the list and records from the first source;
+//! nothing above the drivers knows a part's name.
 //!
 //! The base is opened with OpenLibrary("rta.library", 1). Its functions
 //! are sdk/fd/rta_lib.fd, its types sdk/libs/rta/.
 //!
 //! Each call is a file of its own in the folder for its category -
-//! driver/, sink/, transport/ and errors/. The jump table is rta_lvo.zig,
+//! driver/, sink/, source/, transport/ and errors/. The jump table is rta_lvo.zig,
 //! the ROM tag and init rta_init.zig, the base rta_base.zig. This file
 //! holds the names the rest of the kernel reaches the library by, and the
 //! tests of calls working together. The drivers are in `../rta_driver/`:
 //! i2s/ (the chip's I2S controller, a line), es8311/ and i2samp/ (the
-//! parts on it), null/ (a stream that goes nowhere), and capture/ for the
-//! host tests.
+//! parts on it), null/ (a stream that goes nowhere, and one that hears
+//! it), and capture/ for the host tests.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -94,6 +95,17 @@ test {
     _ = @import("transport/stopaudiotransport.zig");
     _ = @import("transport/audiotransportbuffer.zig");
     _ = @import("transport/playaudiotransportbuffer.zig");
+    _ = @import("transport/startaudiotransportinput.zig");
+    _ = @import("transport/stopaudiotransportinput.zig");
+    _ = @import("transport/audiotransportinput.zig");
+    _ = @import("source/_source.zig");
+    _ = @import("source/createsourcetaglist.zig");
+    _ = @import("source/deletesource.zig");
+    _ = @import("source/nextsource.zig");
+    _ = @import("source/nextsourcemode.zig");
+    _ = @import("source/startsource.zig");
+    _ = @import("source/stopsource.zig");
+    _ = @import("source/sourcebuffer.zig");
     _ = @import("errors/rtalasterror.zig");
     _ = @import("errors/rtaerrortext.zig");
     _ = capture;
@@ -343,14 +355,18 @@ test "a started sink: a buffer when one has been played, what is handed back pla
     try tearDownForTests(rb);
 }
 
-/// A line's driver for the tests: a ring of one buffer that is always
-/// due, and a count of what it was asked.
+/// A line's driver for the tests: a ring of one buffer each way that is
+/// always due, and a count of what it was asked.
 const TestLine = struct {
     driver: rta.RtaDriver = .{},
     started: u32 = 0,
     stopped: u32 = 0,
     destroyed: u32 = 0,
+    inputs_started: u32 = 0,
+    inputs_stopped: u32 = 0,
+    input_rate: u32 = 0,
     ring: [8]i16 = @splat(0),
+    in_ring: [8]i16 = @splat(0),
 
     fn of(io: *rta.AudioTransport) *TestLine {
         return @fieldParentPtr("driver", io.driver.?);
@@ -374,11 +390,25 @@ const TestLine = struct {
     fn buffer(io: *rta.AudioTransport) callconv(.c) ?[*]i16 {
         return &of(io).ring;
     }
+    fn startInput(io: *rta.AudioTransport, mode: *const rta.AudioMode, _: *exec.Task, _: u32) callconv(.c) i32 {
+        of(io).inputs_started += 1;
+        of(io).input_rate = mode.rate;
+        return err.RTAERR_OK;
+    }
+    fn stopInput(io: *rta.AudioTransport) callconv(.c) void {
+        of(io).inputs_stopped += 1;
+    }
+    fn inputBuffer(io: *rta.AudioTransport) callconv(.c) ?[*]const i16 {
+        return &of(io).in_ring;
+    }
     const line_ops = rta.AudioTransportOps{
         .destroy = &destroy,
         .start = &start,
         .stop = &stop,
         .buffer = &buffer,
+        .start_input = &startInput,
+        .stop_input = &stopInput,
+        .input_buffer = &inputBuffer,
     };
     const driver_ops = rta.RtaDriverOps{ .create_transport = &create };
 };
@@ -424,5 +454,144 @@ test "a line: made by its own driver, held while a sink names it, started and st
     base(rb).DeleteAudioTransport(io);
     try testing.expectEqual(@as(u32, 1), line.destroyed);
     try testing.expect(base(rb).RemRtaDriver(&line.driver));
+    try tearDownForTests(rb);
+}
+
+test "a line's way in: started beside its way out or alone, its buffers the source driver's, deletion refused while it runs" {
+    const rb = try setUpForTests();
+    defer kexec.deinit();
+    var line: TestLine = .{};
+    line.driver = .{ .node = .{ .name = "testline" }, .type = rta.sinks.RTADT_TRANSPORT, .ops = &TestLine.driver_ops };
+    try testing.expect(base(rb).AddRtaDriver(&line.driver));
+    const io = base(rb).CreateAudioTransportTagList("testline", null).?;
+    const on_line = [_]TagItem{ .{ .tag = rta.tags.RTAA_Transport, .data = @intFromPtr(io) }, .{} };
+    const source = base(rb).CreateSourceTagList("capture", &on_line).?;
+    try testing.expectEqual(io, source.transport.?);
+    try testing.expectEqual(@as(u16, 1), io.open_cnt);
+
+    const me = kexec.SysBase.iface().FindTask(null).?;
+    const cd = base(rb).NextSourceMode(source, base(rb).NextSourceMode(source, null)).?;
+    try testing.expect(base(rb).AudioTransportInput(io) == null);
+    try testing.expectEqual(err.RTAERR_OK, base(rb).StartAudioTransportInput(io, cd, me, 2));
+    try testing.expectEqual(err.RTAERR_IN_USE, base(rb).StartAudioTransportInput(io, cd, me, 2));
+    try testing.expectEqual(capture.cd_rate, line.input_rate);
+    try testing.expectEqual(@as(?[*]const i16, &line.in_ring), base(rb).AudioTransportInput(io));
+    // The way out is a way of its own: started and stopped beside it.
+    try testing.expectEqual(err.RTAERR_OK, base(rb).StartAudioTransport(io, cd, me, 1));
+    base(rb).StopAudioTransport(io);
+    try testing.expectEqual(@as(?[*]const i16, &line.in_ring), base(rb).AudioTransportInput(io));
+
+    // A line whose way in runs stays.
+    base(rb).DeleteSource(source);
+    try testing.expectEqual(@as(u16, 0), io.open_cnt);
+    base(rb).DeleteAudioTransport(io);
+    try testing.expectEqual(err.RTAERR_IN_USE, base(rb).RtaLastError());
+    base(rb).StopAudioTransportInput(io);
+    base(rb).StopAudioTransportInput(io);
+    try testing.expectEqual(@as(u32, 1), line.inputs_started);
+    try testing.expectEqual(@as(u32, 1), line.inputs_stopped);
+    try testing.expect(base(rb).AudioTransportInput(io) == null);
+    base(rb).DeleteAudioTransport(io);
+    try testing.expectEqual(@as(u32, 1), line.destroyed);
+    try testing.expect(base(rb).RemRtaDriver(&line.driver));
+    try tearDownForTests(rb);
+}
+
+test "a source: named, on a list of its own by priority, numbered as a sink is, in its default mode" {
+    const rb = try setUpForTests();
+    defer kexec.deinit();
+    const state = captureOf(rb);
+
+    const low_tags = [_]TagItem{ .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -5)) }, .{} };
+    const low = base(rb).CreateSourceTagList("capture", &low_tags).?;
+    const high_tags = [_]TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("microphone") },
+        .{ .tag = rta.tags.RTAA_Priority, .data = 5 },
+        .{ .tag = capture.mono, .data = 1 },
+        .{},
+    };
+    const high = base(rb).CreateSourceTagList("capture", &high_tags).?;
+    try testing.expectEqualStrings("capture0", std.mem.span(low.node.name.?));
+    try testing.expectEqualStrings("microphone", std.mem.span(high.node.name.?));
+    // The most wanted first, and no sink among them.
+    try testing.expectEqual(high, base(rb).NextSource(null).?);
+    try testing.expectEqual(low, base(rb).NextSource(high).?);
+    try testing.expect(base(rb).NextSource(low) == null);
+    try testing.expect(base(rb).NextSink(null) == null);
+    // Numbered as a sink of that name would be, and never 0.
+    const sink_tags = [_]TagItem{ .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("microphone") }, .{} };
+    const sink = base(rb).CreateSinkTagList("capture", &sink_tags).?;
+    try testing.expect(high.id != 0);
+    try testing.expectEqual(sink.id, high.id);
+    try testing.expect(low.id != high.id);
+    base(rb).DeleteSink(sink);
+    // Its modes, the default the one it is in; the one-sided one says so.
+    const first = base(rb).NextSourceMode(high, null).?;
+    try testing.expectEqual(first, high.mode.?);
+    try testing.expect(first.flags & rta.sinks.AUDIOMF_CURRENT != 0);
+    try testing.expectEqual(rta.AUDIOSIDES_MONO, first.sides);
+    try testing.expectEqual(@as(u32, 1), first.channels);
+    try testing.expectEqual(rta.AUDIOSIDES_LEFT_FIRST, low.mode.?.sides);
+    try testing.expectEqual(@as(u16, 2), state.driver.open_cnt);
+    try testing.expect(base(rb).CreateSourceTagList("nothing", null) == null);
+    try testing.expectEqual(err.RTAERR_NO_DRIVER, base(rb).RtaLastError());
+
+    base(rb).DeleteSource(low);
+    base(rb).DeleteSource(high);
+    try testing.expectEqual(@as(u16, 0), state.driver.open_cnt);
+    try testing.expect(base(rb).NextSource(null) == null);
+    try tearDownForTests(rb);
+}
+
+test "a started source: in the mode asked for, its latest buffer when one is filled, the ones missed counted, deletion refused" {
+    const rb = try setUpForTests();
+    defer kexec.deinit();
+    const state = captureOf(rb);
+    const source = base(rb).CreateSourceTagList("capture", null).?;
+    const other = base(rb).CreateSourceTagList("capture", null).?;
+    const me = kexec.SysBase.iface().FindTask(null).?;
+
+    try testing.expect(base(rb).SourceBuffer(source) == null);
+    // Another source's mode is not this one's.
+    try testing.expectEqual(err.RTAERR_BAD_MODE, base(rb).StartSource(source, base(rb).NextSourceMode(other, null), me, 0x100));
+    const first = base(rb).NextSourceMode(source, null).?;
+    const cd = base(rb).NextSourceMode(source, first).?;
+    try testing.expectEqual(err.RTAERR_OK, base(rb).StartSource(source, cd, me, 0x100));
+    try testing.expectEqual(err.RTAERR_IN_USE, base(rb).StartSource(source, null, me, 0x100));
+    try testing.expectEqual(cd, source.mode.?);
+    try testing.expect(cd.flags & rta.sinks.AUDIOMF_CURRENT != 0);
+    try testing.expect(first.flags & rta.sinks.AUDIOMF_CURRENT == 0);
+    try testing.expectEqual(capture.cd_rate, capture.sourceInstanceOf(source).started_rate);
+    try testing.expect(base(rb).SourceBuffer(source) == null);
+
+    var heard: [capture.buffer_frames * 2]i16 = undefined;
+    for (&heard, 0..) |*sample, at| sample.* = @intCast(at);
+    capture.recorded(source, &heard);
+    const got = base(rb).SourceBuffer(source).?;
+    try testing.expectEqualSlices(i16, &heard, got[0 .. capture.buffer_frames * 2]);
+    try testing.expect(base(rb).SourceBuffer(source) == null);
+    // Three filled while nobody took one: the latest, and two lost.
+    capture.recorded(source, &heard);
+    @memset(&heard, 7);
+    capture.recorded(source, &heard);
+    @memset(&heard, -3);
+    capture.recorded(source, &heard);
+    try testing.expectEqual(@as(i16, -3), base(rb).SourceBuffer(source).?[0]);
+    try testing.expectEqual(@as(u32, 2), source.overruns);
+
+    // Something records from it: it stays.
+    base(rb).DeleteSource(source);
+    try testing.expectEqual(err.RTAERR_IN_USE, base(rb).RtaLastError());
+    base(rb).StopSource(source);
+    base(rb).StopSource(source);
+    try testing.expectEqual(@as(u32, 1), state.log.sources_started);
+    try testing.expectEqual(@as(u32, 1), state.log.sources_stopped);
+    // Null is its default again.
+    try testing.expectEqual(err.RTAERR_OK, base(rb).StartSource(source, null, me, 0x100));
+    try testing.expectEqual(first, source.mode.?);
+    base(rb).StopSource(source);
+
+    base(rb).DeleteSource(other);
+    base(rb).DeleteSource(source);
     try tearDownForTests(rb);
 }

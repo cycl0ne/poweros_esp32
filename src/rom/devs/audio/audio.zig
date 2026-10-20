@@ -35,6 +35,23 @@
 //! for triggers alone points its requests at a unit of the device's that
 //! is no stream.
 //!
+//! Unit 1 is the recording, one open at a time: what the first way in on
+//! rta.library's list of sources hears - a codec's microphone input, or
+//! the null source, which hears what the null sink played. Its reads
+//! (CMD_READ) wait in the order they came. The task starts the way in
+//! when the first comes - its driver brings the part up on the task that
+//! starts it - and every buffer it fills is converted (`recorder.zig`)
+//! into the read at the front: from the rate the way in runs at to the
+//! recording's, from its sides to the recording's channels, at the
+//! recording's volume. A read is replied when it is full. What is heard
+//! while no read waits is lost, and counted a buffer at a time. Once the
+//! recording is closed the task stops the way in.
+//!
+//! A way in and an output of one part - on one line, or of one driver -
+//! run at one rate: the way in is started at the rate the output runs at,
+//! and while it records, the output is started again only in a mode at
+//! its rate.
+//!
 //! Nothing is touched until the first OpenDevice. That starts the task,
 //! which starts the sink - its driver brings the part up - and from then
 //! on the sink raises the task's signal every time a buffer has been
@@ -42,7 +59,8 @@
 //! ahead of itself and nothing waits on a bus at the moment a sample is
 //! due.
 //!
-//! A machine with no sink has no output: every open fails. Only the ROM
+//! A machine with no sink has no output: every open fails. One with no
+//! source has no way in: an open of unit 1 fails. Only the ROM
 //! tags of a board that has sound - or an emulator, with the null sink -
 //! link the device.
 
@@ -56,9 +74,10 @@ const RtaBase = sdk.interface.rta.RtaBase;
 const IOAudio = audio.IOAudio;
 
 const mixer = @import("mixer.zig");
+const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
-const DEVICE_VERSION = 4;
+const DEVICE_VERSION = 5;
 const DEVICE_REVISION = 0;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
@@ -107,6 +126,30 @@ const Stream = extern struct {
     pan: i32 = 0,
 };
 
+/// The recording: what the open of unit 1 made, and what every request on
+/// it points at.
+const Recording = extern struct {
+    unit: exec.Unit = .{},
+    /// The reads, in the order they came; the first is the one filling.
+    reads: exec.List = .{},
+    /// The recording is someone's.
+    in_use: u8 = 0,
+    /// Held: what is heard is let go by (CMD_STOP).
+    stopped: u8 = 0,
+    /// The form the next read is in.
+    format: u8 = audio.AUDIO_S16,
+    channels: u8 = 2,
+    rate: u32 = 0,
+    volume: u32 = audio.AUDIO_VOLUME_UNITY,
+    /// Frames recorded since the open, counted round at 2^32.
+    position: u32 = 0,
+    /// Buffers heard since the last read was full with none waiting: a
+    /// gap, once a read comes after them.
+    starved: u32 = 0,
+    /// Where the conversion stands in what the way in hears.
+    recorder: recorder.Recorder = .{},
+};
+
 const AudioBase = extern struct {
     dev: exec.Device,
     sys_base: *ExecBase,
@@ -153,6 +196,15 @@ const AudioBase = extern struct {
     rate: u32 = usual_rate,
     sides: mixer.Sides = .left_first,
     pad2: [3]u8 = .{ 0, 0, 0 },
+    /// The recording, unit 1's.
+    record: Recording = .{},
+    /// The way in recorded from, once the task has started it, and the
+    /// signal a filled buffer of it raises on the task.
+    source: ?*rta.AudioSource = null,
+    record_mask: u32 = 0,
+    /// Buffers heard while no read waited, between two that did: each
+    /// one a gap in the recording.
+    dropped: u32 = 0,
 };
 
 fn audioBase(dev: *exec.Device) *AudioBase {
@@ -226,13 +278,18 @@ fn detachSink(ab: *AudioBase) void {
 }
 
 /// The mode of the sink the open streams play in with the least
-/// converting: the rule in the header.
+/// converting: the rule in the header. While a way in of its part
+/// records, only a mode at the rate that runs at; null when it has none.
 fn chooseMode(ab: *AudioBase, sink: *rta.AudioSink) ?*rta.AudioMode {
     const rb = ab.rta_base;
+    const held = heldRate(ab, sink);
     var best: ?*rta.AudioMode = null;
     var best_score: u32 = 0;
     var mode = rb.NextSinkMode(sink, null);
     while (mode) |m| : (mode = rb.NextSinkMode(sink, m)) {
+        if (held) |rate| {
+            if (m.rate != rate) continue;
+        }
         var score: u32 = 0;
         for (&ab.streams) |*stream| {
             if (stream.in_use != 0 and stream.rate == m.rate) score += 1;
@@ -262,7 +319,8 @@ fn preferred(mode: *const rta.AudioMode, over: *const rta.AudioMode) bool {
 /// the one it runs in.
 fn wantsOtherMode(ab: *AudioBase) bool {
     const sink = ab.sink orelse return false;
-    return chooseMode(ab, sink) != ab.rta_base.SinkMode(sink);
+    const chosen = chooseMode(ab, sink) orelse return false;
+    return chosen != ab.rta_base.SinkMode(sink);
 }
 
 /// Nothing plays: no stream has a write, and no trigger plays.
@@ -351,7 +409,8 @@ fn writeHandedOff(ab: *AudioBase) bool {
 
 /// The requests handed to the task, in order: a change of output replied
 /// when made; a write queued once the output is in the mode the streams
-/// want - if nothing else plays - and replied when it has played.
+/// want - if nothing else plays - and replied when it has played. Then
+/// the way in started or stopped as the recording now needs.
 fn serveCommands(ab: *AudioBase) void {
     const sys = ab.sys_base;
     sys.ObtainSemaphore(&ab.lock);
@@ -373,6 +432,7 @@ fn serveCommands(ab: *AudioBase) void {
         if (ab.sink) |sink| ioa.output = sink.id;
         sys.ReplyIO(io);
     }
+    followRecording(ab);
 }
 
 /// The output started again in the mode the streams want; the same sink,
@@ -594,6 +654,198 @@ fn triggersPlaying(ab: *AudioBase) u32 {
     return count;
 }
 
+// --- the recording --------------------------------------------------------
+
+/// Whether a request was opened on the recording.
+fn isRecording(ab: *AudioBase, io: *IOAudio) bool {
+    return io.std.req.unit == &ab.record.unit and ab.record.in_use != 0;
+}
+
+/// Whether a way in and an output are of one part - on one line, or of
+/// one driver - and so run at one rate.
+fn onePart(source: *rta.AudioSource, sink: *rta.AudioSink) bool {
+    if (source.transport) |line| {
+        if (sink.transport == line) return true;
+    }
+    return source.driver == sink.driver;
+}
+
+/// The rate a way in recording holds `sink` at: the one it runs at, when
+/// it is of the sink's part.
+fn heldRate(ab: *AudioBase, sink: *rta.AudioSink) ?u32 {
+    const source = ab.source orelse return null;
+    if (!onePart(source, sink)) return null;
+    return (source.mode orelse return null).rate;
+}
+
+/// The mode a way in is started in: the output's rate if it is of the
+/// output's part, else the recording's - each if it has a mode at it.
+/// Null for its default.
+fn sourceMode(ab: *AudioBase, source: *rta.AudioSource) ?*rta.AudioMode {
+    const rb = ab.rta_base;
+    const wanted = if (ab.sink) |sink| (if (onePart(source, sink)) ab.rate else ab.record.rate) else ab.record.rate;
+    var mode = rb.NextSourceMode(source, null);
+    while (mode) |m| : (mode = rb.NextSourceMode(source, m)) {
+        if (m.rate == wanted) return m;
+    }
+    return null;
+}
+
+/// On the task: the way in started for a recording with a read waiting,
+/// and stopped once the recording is closed. Under the device's lock.
+fn followRecording(ab: *AudioBase) void {
+    const record = &ab.record;
+    if (ab.source != null) {
+        if (record.in_use == 0) stopRecording(ab);
+        return;
+    }
+    if (record.in_use != 0 and record.reads.first() != null) startRecording(ab);
+}
+
+/// The first way in on the list started for the task, its next buffer
+/// the first recorded; the reads waiting answered AUDIOERR_NOINPUT if it
+/// will not start.
+fn startRecording(ab: *AudioBase) void {
+    const sys = ab.sys_base;
+    const rb = ab.rta_base;
+    const source = rb.NextSource(null) orelse {
+        endReads(ab, audio.AUDIOERR_NOINPUT);
+        return;
+    };
+    const code = rb.StartSource(source, sourceMode(ab, source), ab.feed_task.?, ab.record_mask);
+    if (code != rta.errors.RTAERR_OK) {
+        exec.kprintf(sys, "%s: %s: %s\n", .{ DEVICE_NAME, source.node.name orelse "?", rb.RtaErrorText(code) });
+        endReads(ab, audio.AUDIOERR_NOINPUT);
+        return;
+    }
+    const mode = source.mode.?;
+    ab.source = source;
+    const conversion = &ab.record.recorder;
+    conversion.step = mixer.stepFor(mode.rate, ab.record.rate);
+    conversion.heard = sidesOf(mode);
+    conversion.restart();
+    exec.kprintf(sys, "%s: recording from %s, %d Hz %s\n", .{
+        DEVICE_NAME,
+        source.node.name orelse "?",
+        mode.rate,
+        @as([*:0]const u8, if (mode.channels == 1) "mono" else "stereo"),
+    });
+}
+
+/// The way in stopped, and everything its driver took given back.
+fn stopRecording(ab: *AudioBase) void {
+    const source = ab.source orelse return;
+    ab.rta_base.StopSource(source);
+    ab.source = null;
+}
+
+/// The buffer the way in has just filled recorded into the reads, from
+/// the front, each replied once it is full. One heard while the recording
+/// is held, or closed, is let go by; one heard while no read waits is
+/// lost - a gap, counted once a read comes after it. A wake with no
+/// buffer filled records nothing. Under the device's lock.
+fn recordBuffer(ab: *AudioBase) void {
+    const source = ab.source orelse return;
+    const filled = ab.rta_base.SourceBuffer(source) orelse return;
+    const heard = filled[0 .. source.buffer_frames * 2];
+    const record = &ab.record;
+    const conversion = &record.recorder;
+    if (record.in_use == 0 or record.stopped != 0) {
+        recorder.skip(conversion, heard);
+        return;
+    }
+    while (!recorder.usedUp(conversion, source.buffer_frames)) {
+        const front = firstRead(record) orelse {
+            record.starved +%= 1;
+            recorder.skip(conversion, heard);
+            return;
+        };
+        conversion.format = front.format;
+        conversion.channels = front.channels;
+        const into: [*]u8 = @ptrCast(front.std.data.?);
+        const from: usize = @intCast(front.std.actual);
+        const length: usize = @intCast(front.std.length);
+        const got = recorder.take(conversion, heard, into[from..length]);
+        front.std.actual += got;
+        record.position +%= @intCast(got / audio.frameBytes(front.format, front.channels));
+        if (front.std.actual == front.std.length) {
+            _ = ab.sys_base.RemHead(&record.reads);
+            ab.sys_base.ReplyIO(&front.std.req);
+        }
+    }
+    recorder.passed(conversion, heard);
+}
+
+fn firstRead(record: *Recording) ?*IOAudio {
+    return ioOf(record.reads.first() orelse return null);
+}
+
+/// Every read waiting answered with `err`, each with the bytes it holds.
+fn endReads(ab: *AudioBase, err: i8) void {
+    while (ab.sys_base.RemHead(&ab.record.reads)) |node| {
+        const io = ioOf(node);
+        io.std.req.err = err;
+        ab.sys_base.ReplyIO(&io.std.req);
+    }
+}
+
+/// A command on the recording: true when the device keeps the request -
+/// a read queued - to reply it later; else its answer is in `io_Error`.
+/// Under the device's lock.
+fn recordCommand(ab: *AudioBase, ioa: *IOAudio) bool {
+    const io = &ioa.std.req;
+    const record = &ab.record;
+    switch (io.command) {
+        exec.CMD_READ => {
+            const frame = audio.frameBytes(record.format, record.channels);
+            if (ioa.std.data == null or ioa.std.length == 0 or ioa.std.length % frame != 0) {
+                io.err = exec.IOERR_BADLENGTH;
+                return false;
+            }
+            // The read keeps the form the recording has now; replied when
+            // it is full, not now.
+            ioa.format = record.format;
+            ioa.channels = record.channels;
+            ioa.std.actual = 0;
+            io.flags &= ~exec.IOF_QUICK;
+            // What was heard while none waited is a gap now: the
+            // recording goes on after it.
+            ab.dropped +%= record.starved;
+            record.starved = 0;
+            ab.sys_base.AddTail(&record.reads, &io.message.node);
+            // The way in is the task's to start.
+            if (ab.source == null) ab.sys_base.Signal(ab.feed_task.?, ab.command_mask);
+            return true;
+        },
+        // A held recording keeps its reads; what is heard meanwhile is not
+        // recorded.
+        exec.CMD_STOP => record.stopped = 1,
+        exec.CMD_START => record.stopped = 0,
+        exec.CMD_FLUSH => endReads(ab, exec.IOERR_ABORTED),
+        exec.CMD_RESET => {
+            endReads(ab, exec.IOERR_ABORTED);
+            record.stopped = 0;
+        },
+        audio.AUDIOCMD_SETPARAMS => {
+            if (paramsValid(ioa)) takeRecordParams(ab, ioa) else io.err = audio.AUDIOERR_BADFORMAT;
+        },
+        else => io.err = exec.IOERR_NOCMD,
+    }
+    return false;
+}
+
+/// The request's form, rate and volume made the recording's: the rate and
+/// the volume at once, the form for the reads that follow.
+fn takeRecordParams(ab: *AudioBase, io: *const IOAudio) void {
+    const record = &ab.record;
+    record.format = io.format;
+    record.channels = io.channels;
+    record.rate = io.rate;
+    record.volume = io.volume;
+    record.recorder.gain = mixer.masterGain(io.volume);
+    if (ab.source) |source| record.recorder.step = mixer.stepFor(source.mode.?.rate, io.rate);
+}
+
 fn firstWrite(stream: *Stream) ?*IOAudio {
     return ioOf(stream.writes.first() orelse return null);
 }
@@ -626,12 +878,14 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
     const signal = sys.AllocSignal(-1);
     const quit = sys.AllocSignal(-1);
     const carry = sys.AllocSignal(-1);
-    var ok = signal >= 0 and quit >= 0 and carry >= 0;
+    const heard = sys.AllocSignal(-1);
+    var ok = signal >= 0 and quit >= 0 and carry >= 0 and heard >= 0;
     if (ok) {
         ab.feed_task = &ab.task;
         ab.feed_mask = @as(u32, 1) << @intCast(signal);
         ab.quit_mask = @as(u32, 1) << @intCast(quit);
         ab.command_mask = @as(u32, 1) << @intCast(carry);
+        ab.record_mask = @as(u32, 1) << @intCast(heard);
         if (ab.rta_base.NextSink(null)) |sink| {
             ok = attachSink(ab, sink);
         } else {
@@ -647,16 +901,18 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
     if (!ok) return;
 
     while (true) {
-        const got = sys.Wait(ab.feed_mask | ab.quit_mask | ab.command_mask);
+        const got = sys.Wait(ab.feed_mask | ab.quit_mask | ab.command_mask | ab.record_mask);
         if (got & ab.quit_mask != 0) break;
         if (got & ab.command_mask != 0) serveCommands(ab);
-        if (got & ab.feed_mask != 0) {
+        if (got & (ab.feed_mask | ab.record_mask) != 0) {
             sys.ObtainSemaphore(&ab.lock);
-            mixBuffer(ab);
+            if (got & ab.feed_mask != 0) mixBuffer(ab);
+            if (got & ab.record_mask != 0) recordBuffer(ab);
             sys.ReleaseSemaphore(&ab.lock);
         }
     }
-    // Expunged: the output given back.
+    // Expunged: the way in and the output given back.
+    stopRecording(ab);
     detachSink(ab);
 }
 
@@ -734,14 +990,27 @@ fn openStreams(ab: *AudioBase) u32 {
 }
 
 /// What the device and its output are, for AUDIOCMD_QUERY: the output's
-/// mode, the ring it runs through, and its gaps.
+/// mode, the ring it runs through, and its gaps; the way in recorded from
+/// - or that a recording would be - and its.
 fn infoOf(ab: *AudioBase) audio.AudioInfo {
+    const rb = ab.rta_base;
     var info: audio.AudioInfo = .{
         .streams = openStreams(ab),
         .master = ab.master,
-        .has_input = 0,
         .triggers = triggersPlaying(ab),
     };
+    if (ab.source orelse rb.NextSource(null)) |source| {
+        info.has_input = 1;
+        info.input = source.node.name;
+        info.input_id = source.id;
+        info.overruns = source.overruns +% ab.dropped;
+        if (ab.source != null) info.input_rate = source.mode.?.rate;
+        var it = source.modes.iterator();
+        while (it.next()) |node| {
+            const mode: *rta.AudioMode = @fieldParentPtr("node", node);
+            info.input_channels = @max(info.input_channels, mode.channels);
+        }
+    }
     const sink = ab.sink orelse return info;
     const mode = ab.rta_base.SinkMode(sink).?;
     info.rate = mode.rate;
@@ -769,8 +1038,9 @@ fn answer(ioa: *IOAudio, bytes: []const u8) void {
 
 /// BeginIO: every command under the device's lock, which the mixer holds
 /// for each buffer, so a command lands between two buffers. A command acts
-/// on the stream the request was opened on; an open for triggers alone
-/// has none, and takes only the commands that need none.
+/// on the stream the request was opened on, or the recording; an open for
+/// triggers alone has neither, and takes only the commands that need
+/// none.
 fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     const ab = audioBase(dev);
     const ioa = ioAudio(io);
@@ -782,7 +1052,8 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     defer sys.ReleaseSemaphore(&ab.lock);
 
     const n = streamOf(ab, ioa);
-    if (n == null and io.unit != &ab.trigger_unit) {
+    const recording = isRecording(ab, ioa);
+    if (n == null and !recording and io.unit != &ab.trigger_unit) {
         io.err = exec.IOERR_OPENFAIL;
         sys.ReplyIO(io);
         return;
@@ -793,7 +1064,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
             io.err = startTrigger(ab, ioa) orelse return;
         },
         audio.AUDIOCMD_QUERY => {
-            ioa.position = if (n) |own| ab.voices[own].played else 0;
+            ioa.position = if (n) |own| ab.voices[own].played else if (recording) ab.record.position else 0;
             if (ioa.std.data != null) {
                 const info = infoOf(ab);
                 answer(ioa, std.mem.asBytes(&info));
@@ -825,12 +1096,16 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         // Nothing is cached and nothing is buffered anywhere else.
         exec.CMD_CLEAR, exec.CMD_UPDATE => {},
         else => {
-            const own = n orelse {
-                io.err = exec.IOERR_NOCMD;
-                sys.ReplyIO(io);
-                return;
-            };
-            if (streamCommand(ab, own, ioa)) return;
+            if (recording) {
+                if (recordCommand(ab, ioa)) return;
+            } else {
+                const own = n orelse {
+                    io.err = exec.IOERR_NOCMD;
+                    sys.ReplyIO(io);
+                    return;
+                };
+                if (streamCommand(ab, own, ioa)) return;
+            }
         },
     }
     sys.ReplyIO(io);
@@ -905,8 +1180,9 @@ fn nextOutput(ab: *AudioBase, id: u32) ?*rta.AudioSink {
 }
 
 /// AbortIO: a write answered IOERR_ABORTED - one waiting taken out, the
-/// one playing stopped and the one after it begun - or a trigger, stopped.
-/// -1 for a request the device does not hold.
+/// one playing stopped and the one after it begun - a trigger, stopped,
+/// or a read, with the bytes it holds. -1 for a request the device does
+/// not hold.
 fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     const ab = audioBase(dev);
     const ioa = ioAudio(io);
@@ -920,6 +1196,13 @@ fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
             return 0;
         }
         return -1;
+    }
+    if (io.command == exec.CMD_READ) {
+        if (!onList(&ab.record.reads, ioa)) return -1;
+        sys.Remove(&io.message.node);
+        io.err = exec.IOERR_ABORTED;
+        sys.ReplyIO(io);
+        return 0;
     }
     if (io.command != exec.CMD_WRITE) return -1;
     // One the task has not queued yet is simply taken back.
@@ -956,18 +1239,41 @@ fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
     return 0;
 }
 
-/// OpenDevice: the device's task and hardware the first time, then a
-/// stream of the request's form, rate, volume and pan - or, with
-/// AUDIOF_TRIGGER, an open for triggers alone. Unit 1, the way in, is not
-/// driven yet (AUDIOERR_NOINPUT).
+/// OpenDevice: the device's task and hardware the first time, then on
+/// unit 0 a stream of the request's form, rate, volume and pan - or, with
+/// AUDIOF_TRIGGER, an open for triggers alone - and on unit 1 the
+/// recording, if the machine has a way in.
 fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) callconv(.c) i32 {
     const ab = audioBase(dev);
-    if (unit_number == audio.AUDIO_UNIT_RECORD) return audio.AUDIOERR_NOINPUT;
-    if (unit_number != audio.AUDIO_UNIT_PLAY) return exec.IOERR_OPENFAIL;
+    if (unit_number != audio.AUDIO_UNIT_PLAY and unit_number != audio.AUDIO_UNIT_RECORD) return exec.IOERR_OPENFAIL;
     if (io.message.length < audio.AUDIO_MIN_REQUEST) return exec.IOERR_OPENFAIL;
+    // No way in is known before anything is started.
+    if (unit_number == audio.AUDIO_UNIT_RECORD and ab.rta_base.NextSource(null) == null) return audio.AUDIOERR_NOINPUT;
     if (!start(ab)) return exec.IOERR_OPENFAIL;
+    if (unit_number == audio.AUDIO_UNIT_RECORD) return openRecording(ab, ioAudio(io));
     if (flags & audio.AUDIOF_TRIGGER != 0) return openForTriggers(ab, ioAudio(io));
     return openStream(ab, ioAudio(io));
+}
+
+/// The recording for the request, if its parameters are good and no one
+/// records already. Its volume is a gain on what is heard; its pan is
+/// not used.
+fn openRecording(ab: *AudioBase, io: *IOAudio) i32 {
+    const sys = ab.sys_base;
+    if (!paramsValid(io)) return audio.AUDIOERR_BADFORMAT;
+    sys.ObtainSemaphore(&ab.lock);
+    defer sys.ReleaseSemaphore(&ab.lock);
+    const record = &ab.record;
+    if (record.in_use != 0) return audio.AUDIOERR_NOSTREAM;
+    record.in_use = 1;
+    record.stopped = 0;
+    record.position = 0;
+    record.starved = 0;
+    takeRecordParams(ab, io);
+    io.std.req.unit = &record.unit;
+    ab.dev.open_cnt += 1;
+    ab.dev.flags &= ~exec.LIBF_DELEXP;
+    return 0;
 }
 
 /// An open that takes no stream: its requests point at the device's unit
@@ -1003,9 +1309,10 @@ fn openStream(ab: *AudioBase, io: *IOAudio) i32 {
 }
 
 /// CloseDevice: the stream's writes that are left answered IOERR_ABORTED -
-/// a program that forgot them gets them back - and the stream free again.
-/// The triggers sent on it play on: their samples are the sender's until
-/// each is replied.
+/// a program that forgot them gets them back - and the stream free again;
+/// the recording's reads the same, with the bytes each holds, and the task
+/// told to stop the way in. The triggers sent on it play on: their
+/// samples are the sender's until each is replied.
 fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     const ab = audioBase(dev);
     const sys = ab.sys_base;
@@ -1014,6 +1321,10 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
         flushStream(ab, n, exec.IOERR_ABORTED);
         ab.voices[n] = .{};
         ab.streams[n].in_use = 0;
+    } else if (isRecording(ab, ioAudio(io))) {
+        endReads(ab, exec.IOERR_ABORTED);
+        ab.record.in_use = 0;
+        if (ab.source != null) sys.Signal(ab.feed_task.?, ab.command_mask);
     }
     sys.ReleaseSemaphore(&ab.lock);
     io.unit = null;
@@ -1022,9 +1333,9 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
 }
 
 /// Expunge: while it is open, or a trigger plays, only marked, to go at
-/// the last close. Then the task is told to end - it stops the output, whose driver gives back
-/// everything the part took - and once it has left its stack, the device
-/// goes. exec makes it again from its ROM tag when it is next opened.
+/// the last close. Then the task is told to end - it stops the way in and
+/// the output, whose drivers give back everything the parts took - and
+/// once it has left its stack, the device goes. exec makes it again from its ROM tag when it is next opened.
 fn expunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
     const ab = audioBase(dev);
     const sys = ab.sys_base;
@@ -1070,6 +1381,8 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         stream.writes.init(.message);
         stream.unit.msg_port.msg_list.init(.message);
     }
+    ab.record.reads.init(.message);
+    ab.record.unit.msg_port.msg_list.init(.message);
     return dev;
 }
 
@@ -1090,9 +1403,11 @@ const init_table = exec.InitTable{
 };
 
 /// What the device speaks, for ObtainDeviceUnits (expansion.library),
-/// and where its units come from: its one unit; it is in the ROM of a
-/// board with sound, and of an emulator's.
+/// and where its units come from: its two units, what is played and what
+/// is recorded; it is in the ROM of a board with sound, and of an
+/// emulator's.
 const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_AUDIO, 0 };
+const unit_labels = [_][*:0]const u8{ "Play", "Record" };
 
 /// Cold start at 26: after rta.library (33), which it opens, and the
 /// sound drivers (31, 32), whose sinks its first open plays through, and
@@ -1109,13 +1424,15 @@ export const audio_device_tag: exec.ResidentDevice linksection(".resident") = .{
         .init = &init_table,
     },
     .speaks = &device_speaks,
-    .units = 1,
+    .units = 2,
+    .unit_labels = &unit_labels,
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
 //
 // The device made from its ROM tag over rta.library, with the capture
-// sink attached as the output - no task. Opens go straight to the stream
+// sink attached as the output - no task. A test that records makes a
+// capture source, the machine's way in, and hands it buffers by hand. Opens go straight to the stream
 // an open makes, and the mix is driven by hand (`mixInto` stands in for
 // the output, or `mixBuffer` through the sink). The sink runs at 48 kHz
 // with the sides in order, so a stream at 48 kHz moves a frame an output
@@ -1145,24 +1462,30 @@ fn testDevice() !*AudioBase {
     const me = sys.FindTask(null).?;
     const feed = sys.AllocSignal(-1);
     const carry = sys.AllocSignal(-1);
+    const heard = sys.AllocSignal(-1);
     ab.feed_task = me;
     ab.feed_mask = @as(u32, 1) << @intCast(feed);
     ab.command_mask = @as(u32, 1) << @intCast(carry);
+    ab.record_mask = @as(u32, 1) << @intCast(heard);
     if (!attachSink(ab, iface.NextSink(null).?)) return error.NoOutput;
     return ab;
 }
 
-/// The test's ports deleted, the output stopped and its sink deleted, the
-/// device expunged - which frees it - and nothing left over.
+/// The test's ports deleted, the way in and the output stopped and every
+/// source and sink deleted, the device expunged - which frees it - and
+/// nothing left over.
 fn testDeviceGone(ab: *AudioBase, ports: []const *exec.MsgPort) !void {
     for (ports) |port| kexec.SysBase.iface().DeleteMsgPort(port);
     const iface = ab.rta_base;
     const sink = ab.sink.?;
+    stopRecording(ab);
     detachSink(ab);
     iface.DeleteSink(sink);
+    while (iface.NextSource(null)) |source| iface.DeleteSource(source);
     const sys = kexec.SysBase.iface();
     sys.FreeSignal(@intCast(@ctz(ab.feed_mask)));
     sys.FreeSignal(@intCast(@ctz(ab.command_mask)));
+    sys.FreeSignal(@intCast(@ctz(ab.record_mask)));
     _ = kexec.RemDevice(kexec.SysBase, &ab.dev);
     try rta_lib.tearDownForTests(@ptrCast(@alignCast(iface)));
 }
@@ -1245,7 +1568,7 @@ test "an open is a stream of its own, sixteen at most; what it cannot take is re
     bad.rate = 48_000;
     bad.pan = 2 * audio.AUDIO_PAN_FULL;
     try testing.expectEqual(@as(i32, audio.AUDIOERR_BADFORMAT), openStream(ab, &bad));
-    // Unit 1 is the way in, which is not driven yet.
+    // Unit 1 records: on a machine with no way in it is refused.
     try testing.expectEqual(@as(i32, audio.AUDIOERR_NOINPUT), open(&ab.dev, &bad.std.req, audio.AUDIO_UNIT_RECORD, 0));
 
     for (requests[0..max_streams]) |*io| _ = close(&ab.dev, &io.std.req);
@@ -1821,5 +2144,206 @@ test "with every trigger voice playing, the lowest priority gives way, the oldes
     try testing.expectEqual(max_triggers, count);
     try testing.expectEqual(@as(u32, 0), triggersPlaying(ab));
     _ = close(&ab.dev, &clicks.std.req);
+    try testDeviceGone(ab, &.{port});
+}
+
+/// A capture source, the machine's way in: two sides, or with `one_side`
+/// one.
+fn testSource(ab: *AudioBase, one_side: bool) !*rta.AudioSource {
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("Microphone") },
+        .{ .tag = capture.mono, .data = @intFromBool(one_side) },
+        .{},
+    };
+    return ab.rta_base.CreateSourceTagList(capture.DRIVER_NAME, &tags) orelse error.NoSource;
+}
+
+/// A read into `into` on the recording `from` was opened on.
+fn sendRead(io: *IOAudio, from: *const IOAudio, into: []u8) void {
+    io.std.req.unit = from.std.req.unit;
+    io.std.req.command = exec.CMD_READ;
+    io.std.req.flags = 0;
+    io.std.data = into.ptr;
+    io.std.length = into.len;
+    kexec.SysBase.iface().SendIO(&io.std.req);
+}
+
+/// A buffer of the way in's frames: frame k is `first + k` on the left
+/// and its negative on the right.
+fn heardFrom(first: i16) [capture.buffer_frames * 2]i16 {
+    var frames: [capture.buffer_frames * 2]i16 = undefined;
+    for (0..capture.buffer_frames) |k| {
+        const value = first + @as(i16, @intCast(k));
+        frames[k * 2] = value;
+        frames[k * 2 + 1] = -value;
+    }
+    return frames;
+}
+
+/// The 16-bit samples in `bytes`.
+fn samples16(comptime count: usize, bytes: []const u8) [count]i16 {
+    var out: [count]i16 = undefined;
+    for (&out, 0..) |*sample, n| sample.* = @bitCast(@as(u16, bytes[n * 2]) | @as(u16, bytes[n * 2 + 1]) << 8);
+    return out;
+}
+
+test "the recording is one open, on a machine with a way in; the way in starts with the first read; reads fill in order and come back full" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const port = sys.CreateMsgPort().?;
+    const source = try testSource(ab, false);
+
+    var rec = requestFor(ab, port);
+    rec.channels = 2;
+    try testing.expectEqual(@as(i32, 0), openRecording(ab, &rec));
+    var again = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_NOSTREAM), openRecording(ab, &again));
+    // Nothing started until a read comes.
+    serveCommands(ab);
+    try testing.expect(ab.source == null);
+
+    var a: [12 * 4]u8 = undefined;
+    var b: [12 * 4]u8 = undefined;
+    var first = requestFor(ab, port);
+    var second = requestFor(ab, port);
+    sendRead(&first, &rec, &a);
+    sendRead(&second, &rec, &b);
+    serveCommands(ab);
+    try testing.expectEqual(source, ab.source.?);
+    // Of the output's driver, so at the output's rate.
+    try testing.expectEqual(capture.rate, source.mode.?.rate);
+
+    capture.recorded(source, &heardFrom(1));
+    recordBuffer(ab);
+    try testing.expect(replied(port) == null);
+    capture.recorded(source, &heardFrom(9));
+    recordBuffer(ab);
+    try testing.expect(replied(port) == &first.std.req.message);
+    try testing.expectEqual(@as(u64, a.len), first.std.actual);
+    const got = samples16(24, &a);
+    for (0..12) |k| {
+        try testing.expectEqual(@as(i16, @intCast(k + 1)), got[k * 2]);
+        try testing.expectEqual(-@as(i16, @intCast(k + 1)), got[k * 2 + 1]);
+    }
+    capture.recorded(source, &heardFrom(17));
+    recordBuffer(ab);
+    try testing.expect(replied(port) == &second.std.req.message);
+    try testing.expectEqual(@as(i16, 13), samples16(2, &b)[0]);
+    // Heard with no read waiting: lost, and counted once the recording
+    // goes on after it.
+    capture.recorded(source, &heardFrom(25));
+    recordBuffer(ab);
+    try testing.expectEqual(@as(u32, 0), ab.dropped);
+    var c: [4]u8 = undefined;
+    var third = requestFor(ab, port);
+    sendRead(&third, &rec, &c);
+    try testing.expectEqual(@as(u32, 1), ab.dropped);
+    capture.recorded(source, &heardFrom(33));
+    recordBuffer(ab);
+    try testing.expect(replied(port) == &third.std.req.message);
+    try testing.expectEqual(@as(i16, 33), samples16(1, &c)[0]);
+
+    var info: audio.AudioInfo = .{};
+    var ask = requestFor(ab, port);
+    ask.std.data = &info;
+    ask.std.length = @sizeOf(audio.AudioInfo);
+    try testing.expectEqual(@as(i32, 0), command(&ask, &rec, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(@as(u32, 25), ask.position);
+    try testing.expectEqual(@as(u32, 1), info.has_input);
+    try testing.expectEqualStrings("Microphone", std.mem.span(info.input.?));
+    try testing.expectEqual(source.id, info.input_id);
+    try testing.expectEqual(capture.rate, info.input_rate);
+    try testing.expectEqual(@as(u32, 2), info.input_channels);
+    try testing.expectEqual(@as(u32, 1), info.overruns);
+
+    // A write is not for the recording, and a read is whole frames.
+    var wrong = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, exec.IOERR_NOCMD), command(&wrong, &rec, exec.CMD_WRITE));
+    wrong.std.data = &a;
+    wrong.std.length = 3;
+    try testing.expectEqual(@as(i32, exec.IOERR_BADLENGTH), command(&wrong, &rec, exec.CMD_READ));
+
+    // Closed: the task stops the way in.
+    _ = close(&ab.dev, &rec.std.req);
+    try testing.expect(ab.source != null);
+    serveCommands(ab);
+    try testing.expect(ab.source == null);
+    try testing.expectEqual(@as(u32, 0), source.flags & rta.sources.AUDIOSRCF_RUNNING);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "a recording is converted to its own rate and channels; a one-sided way in is heard on both; the output keeps the line's rate meanwhile" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const port = sys.CreateMsgPort().?;
+    const source = try testSource(ab, true);
+    const sink = ab.sink.?;
+
+    var rec = requestFor(ab, port);
+    rec.channels = 2;
+    rec.rate = capture.rate / 2;
+    try testing.expectEqual(@as(i32, 0), openRecording(ab, &rec));
+    var into: [4 * 4]u8 = undefined;
+    var read = requestFor(ab, port);
+    sendRead(&read, &rec, &into);
+    serveCommands(ab);
+    try testing.expectEqual(capture.rate, source.mode.?.rate);
+    // Every other frame of the one side, on both channels.
+    capture.recorded(source, &heardFrom(100));
+    recordBuffer(ab);
+    try testing.expect(replied(port) == &read.std.req.message);
+    try testing.expectEqualSlices(i16, &.{ 100, 100, 102, 102, 104, 104, 106, 106 }, &samples16(8, &into));
+
+    // A 44.1 kHz stream would have the output at its rate; the way in
+    // holds it at its own.
+    var cd = requestFor(ab, port);
+    cd.rate = capture.cd_rate;
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &cd));
+    try testing.expectEqual(capture.rate, chooseMode(ab, sink).?.rate);
+    try testing.expect(!wantsOtherMode(ab));
+
+    // One channel at the way in's rate, at half the volume, from now on.
+    var params = requestFor(ab, port);
+    params.channels = 1;
+    params.rate = capture.rate;
+    params.volume = audio.AUDIO_VOLUME_UNITY / 2;
+    try testing.expectEqual(@as(i32, 0), command(&params, &rec, audio.AUDIOCMD_SETPARAMS));
+    var mono: [2 * 2]u8 = undefined;
+    sendRead(&read, &rec, &mono);
+    // Held: what is heard is let go by, and not counted lost.
+    var control = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), command(&control, &rec, exec.CMD_STOP));
+    capture.recorded(source, &heardFrom(200));
+    recordBuffer(ab);
+    try testing.expectEqual(@as(u32, 0), ab.dropped);
+    try testing.expectEqual(@as(i32, 0), command(&control, &rec, exec.CMD_START));
+    capture.recorded(source, &heardFrom(1000));
+    recordBuffer(ab);
+    try testing.expect(replied(port) == &read.std.req.message);
+    try testing.expectEqualSlices(i16, &.{ 500, 501 }, &samples16(2, &mono));
+
+    // AbortIO and a flush give a read back with what it holds.
+    var big: [64]u8 = undefined;
+    var other: [64]u8 = undefined;
+    var held = requestFor(ab, port);
+    var flushed = requestFor(ab, port);
+    sendRead(&held, &rec, &big);
+    sendRead(&flushed, &rec, &other);
+    capture.recorded(source, &heardFrom(10));
+    recordBuffer(ab);
+    try testing.expectEqual(@as(i32, 0), abortIO(&ab.dev, &held.std.req));
+    try testing.expect(replied(port) == &held.std.req.message);
+    try testing.expectEqual(exec.IOERR_ABORTED, held.std.req.err);
+    try testing.expectEqual(@as(u64, capture.buffer_frames * 2), held.std.actual);
+    try testing.expectEqual(@as(i32, 0), command(&control, &rec, exec.CMD_FLUSH));
+    try testing.expect(replied(port) == &flushed.std.req.message);
+    try testing.expectEqual(@as(u64, 0), flushed.std.actual);
+    try testing.expectEqual(@as(i32, -1), abortIO(&ab.dev, &flushed.std.req));
+
+    _ = close(&ab.dev, &cd.std.req);
+    _ = close(&ab.dev, &rec.std.req);
+    serveCommands(ab);
     try testDeviceGone(ab, &.{port});
 }

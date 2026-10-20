@@ -2,11 +2,12 @@
 //! Lines: making one, and passing its stream to its driver.
 //!
 //! A line is made the way a sink is - a driver by name, a tag list, a
-//! handle the library allocates and the driver fills in - and a sink is
-//! given one at create. It is refused deletion while a sink still names
-//! it, since a sink whose line has gone would play into nothing. Its
-//! stream calls are the sink driver's: the sink starts its line from its
-//! own start, at the point its part wants the clocks.
+//! handle the library allocates and the driver fills in - and a sink or a
+//! source is given one at create. It is refused deletion while one still
+//! names it, since a sink whose line has gone would play into nothing. Its
+//! stream calls are the part driver's: the sink starts its line's way out
+//! from its own start, at the point its part wants the clocks, and the
+//! source its way in.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -26,10 +27,18 @@ pub fn privateOf(io: *rta.AudioTransport) *Private {
     return @fieldParentPtr("io", io);
 }
 
-/// Whether the line has been started and not stopped.
+/// Whether the line's way out has been started and not stopped.
 ///
 /// INPUTS:
 /// - `io` - the line.
 pub fn running(io: *const rta.AudioTransport) bool {
     return io.flags & rta.transport.AUDIOTF_RUNNING != 0;
+}
+
+/// Whether the line's way in has been started and not stopped.
+///
+/// INPUTS:
+/// - `io` - the line.
+pub fn inputRunning(io: *const rta.AudioTransport) bool {
+    return io.flags & rta.transport.AUDIOTF_INPUT != 0;
 }

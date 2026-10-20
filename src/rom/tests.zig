@@ -25,6 +25,7 @@ test {
     _ = @import("devs/touch/gt911.zig");
     _ = @import("devs/touch/st7123.zig");
     _ = @import("devs/audio/mixer.zig");
+    _ = @import("devs/audio/recorder.zig");
     _ = @import("libs/rta_driver/es8311/codec.zig");
     _ = @import("libs/rta_driver/i2s/divider.zig");
     _ = @import("devs/audio/golden.zig");

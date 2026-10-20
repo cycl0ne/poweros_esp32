@@ -1,7 +1,7 @@
 //! audio.device: sound out of the board, as streams mixed together.
 //!
-//! **A stream per open.** Each OpenDevice of unit 0 is a stream of its
-//! own, and up to `AUDIO_MAX_STREAMS` play at once, mixed by the device:
+//! **A stream per open.** Each OpenDevice of unit 0 (`AUDIO_UNIT_PLAY`)
+//! is a stream of its own, and up to `AUDIO_MAX_STREAMS` play at once, mixed by the device:
 //! a program that wants a tune and a click at the same time opens twice.
 //! Nothing is allocated or taken away from anyone.
 //!
@@ -74,9 +74,39 @@
 //! at, whether it is one speaker or a codec that plays one side
 //! (`channels` 1) or two speakers (2) - a stereo stream on one speaker is
 //! heard as its two sides together - and how many frames lie between a
-//! write and its being heard. Unit 1, the way in, is the number a
-//! recording stream will open; until a board's input is driven it is
-//! refused (`AUDIOERR_NOINPUT`).
+//! write and its being heard; whether the board has a way in, and which.
+//!
+//! **Unit 1 records** (`AUDIO_UNIT_RECORD`): the board's way in - a
+//! codec's microphone input - heard as one recording stream, one open at
+//! a time (a second is refused AUDIOERR_NOSTREAM, and an open on a board
+//! with no way in AUDIOERR_NOINPUT). The request at OpenDevice gives its
+//! form and rate, as a playing stream's, and its volume, a gain on what
+//! is heard; the device converts from the rate the way in runs at. A way
+//! in of the same part as the output - the two halves of one codec - runs
+//! at the output's rate.
+//!
+//! **CMD_READ records into a buffer**: `std.data` and `std.length` in
+//! bytes, whole frames. Reads queue without a limit and follow each other
+//! without a gap; each is replied when it is full, `std.actual` the bytes
+//! recorded. What is heard while no read waits is lost - a program keeps
+//! two or three reads out, sending each again as it comes back - and once
+//! a read comes after it, the query counts it in `overruns`. The way in starts with the first read
+//! and stops at the close. The memory is the program's again once the
+//! read is replied. On the recording:
+//!
+//!   CMD_STOP, CMD_START   hold the recording - what is heard meanwhile
+//!                         is not recorded - and go on
+//!   CMD_FLUSH             every read answered IOERR_ABORTED, with the
+//!                         bytes it holds in `std.actual`
+//!   CMD_RESET             as CMD_FLUSH, and the recording started again
+//!   AUDIOCMD_SETPARAMS    the form for the reads sent after it, the rate
+//!                         and volume at once
+//!   AUDIOCMD_QUERY        the `AudioInfo`, and `position`: the frames
+//!                         recorded since the open
+//!
+//! AbortIO takes a read back with the bytes it holds. The output and
+//! master commands and AUDIOCMD_TRIGGER work on the recording's request
+//! as on a stream's.
 //!
 //! **A machine may have several outputs** - a jack and a speaker, a DAC
 //! plugged in - and the device plays through one at a time: the first on
@@ -92,8 +122,7 @@ const IOStdReq = exec.IOStdReq;
 /// The device's name, for OpenDevice.
 pub const AUDIONAME = "audio.device";
 
-/// The units: what is played, and - once a board's input is driven -
-/// what is recorded.
+/// The units: what is played, and what is recorded (since version 5).
 pub const AUDIO_UNIT_PLAY: u32 = 0;
 pub const AUDIO_UNIT_RECORD: u32 = 1;
 
@@ -139,9 +168,9 @@ pub const AUDIO_MAX_TRIGGERS: u32 = 8;
 
 /// A format, a channel count or a rate the device does not take.
 pub const AUDIOERR_BADFORMAT: i8 = -10;
-/// Every stream is playing already.
+/// Every stream is playing already, or the recording is someone's.
 pub const AUDIOERR_NOSTREAM: i8 = -11;
-/// There is no way in on this board, or the device does not drive it yet.
+/// There is no way in on this board, or it would not start.
 pub const AUDIOERR_NOINPUT: i8 = -12;
 /// No output of that number, none after it, or one that would not start.
 pub const AUDIOERR_NOOUTPUT: i8 = -13;
@@ -152,7 +181,7 @@ pub const AUDIOERR_NOVOICE: i8 = -14;
 /// IOStdReq, so it is one.
 pub const IOAudio = extern struct {
     /// io_Data, io_Length (bytes, whole frames) and io_Actual (bytes
-    /// played).
+    /// played, or recorded).
     std: IOStdReq = .{},
     /// The stream's samples: AUDIO_S8, AUDIO_S16 or AUDIO_S32, and one
     /// channel or two. Read at OpenDevice and by AUDIOCMD_SETPARAMS.
@@ -171,8 +200,8 @@ pub const IOAudio = extern struct {
     /// CMD_WRITE and AUDIOCMD_TRIGGER: how many times the samples play; 0
     /// until stopped.
     loops: u32 = 1,
-    /// AUDIOCMD_QUERY: the frames this stream has played since it was
-    /// opened, counted round at 2^32.
+    /// AUDIOCMD_QUERY: the frames this stream has played - the recording
+    /// recorded - since it was opened, counted round at 2^32.
     position: u32 = 0,
     /// The output commands: an output's number (`AudioOutputInfo.id`);
     /// 0 for the first. Since version 3.
@@ -199,7 +228,7 @@ pub const AudioInfo = extern struct {
     max_streams: u32 = AUDIO_MAX_STREAMS,
     /// The device's volume (AUDIOCMD_MASTER).
     master: u32 = AUDIO_VOLUME_UNITY,
-    /// Whether unit 1 records on this board.
+    /// Whether unit 1 records on this board: 1 when it has a way in.
     has_input: u32 = 0,
     /// The part the sound comes out of, as the board names it.
     output: ?[*:0]const u8 = null,
@@ -212,6 +241,20 @@ pub const AudioInfo = extern struct {
     /// Sounds playing by trigger now, and how many may. Since version 4.
     triggers: u32 = 0,
     max_triggers: u32 = AUDIO_MAX_TRIGGERS,
+    /// The way in recorded from - or that a recording would be - as the
+    /// board names the part, and its number; null and 0 for none. Since
+    /// version 5.
+    input: ?[*:0]const u8 = null,
+    input_id: u32 = 0,
+    /// The most sides any of its modes hears: 1 for one microphone, 2 for
+    /// two.
+    input_channels: u32 = 0,
+    /// The rate it runs at while a recording runs, else 0.
+    input_rate: u32 = 0,
+    /// Buffers of it lost - filled while the one before had not been
+    /// taken, or heard while no read waited between two reads: each a gap
+    /// in a recording - since its driver made it.
+    overruns: u32 = 0,
 };
 
 /// How many of an output's rates `AudioOutputInfo` holds.

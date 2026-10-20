@@ -24,7 +24,8 @@ const _transport = @import("_transport.zig");
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// A line a sink is still given, or one that is started, is refused, with
+/// A line a sink or a source is still given, or one that is started either
+/// way, is refused, with
 /// `RTAERR_IN_USE` in `RtaLastError`. Otherwise the driver's `destroy` is
 /// called and the line leaves the list.
 ///
@@ -52,7 +53,7 @@ const _transport = @import("_transport.zig");
 pub fn DeleteAudioTransport(rb: *RtaBase, io: ?*rta.AudioTransport) void {
     const gone = io orelse return;
     const sys = rb.sys_base;
-    if (gone.open_cnt != 0 or _transport.running(gone)) {
+    if (gone.open_cnt != 0 or _transport.running(gone) or _transport.inputRunning(gone)) {
         rb.last_error = err.RTAERR_IN_USE;
         return;
     }

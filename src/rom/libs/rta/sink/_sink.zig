@@ -89,6 +89,18 @@ pub fn defaultMode(sink: *rta.AudioSink) ?*rta.AudioMode {
 /// - `driver_name` - the name of the driver that made it.
 /// - `name` - its own name.
 pub fn idFor(rb: *RtaBase, driver_name: [*:0]const u8, name: [*:0]const u8) u32 {
+    var hash = nameHash(driver_name, name);
+    while (hash == 0 or taken(rb, hash)) hash +%= 1;
+    return hash;
+}
+
+/// FNV-1a over a driver's name, a slash and a handle's name: what a sink's
+/// number, and a source's, starts from.
+///
+/// INPUTS:
+/// - `driver_name` - the name of the driver that made it.
+/// - `name` - its own name.
+pub fn nameHash(driver_name: [*:0]const u8, name: [*:0]const u8) u32 {
     var hash: u32 = 0x811C_9DC5;
     for ([_][*:0]const u8{ driver_name, "/", name }) |part| {
         var at: usize = 0;
@@ -97,7 +109,6 @@ pub fn idFor(rb: *RtaBase, driver_name: [*:0]const u8, name: [*:0]const u8) u32 
             hash *%= 0x0100_0193;
         }
     }
-    while (hash == 0 or taken(rb, hash)) hash +%= 1;
     return hash;
 }
 

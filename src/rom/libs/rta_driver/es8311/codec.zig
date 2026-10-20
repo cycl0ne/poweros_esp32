@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The ES8311 codec: the registers its driver writes over I2C to make it
-//! take a stereo stream and drive a speaker, and the bring-up as a run of
-//! writes. Nothing here touches a bus, so the host tests hold it.
+//! take a stereo stream and drive a speaker, and send what its microphone
+//! hears, and the bring-up as a run of writes. Nothing here touches a bus,
+//! so the host tests hold it.
 //!
 //! The part is told two things about timing: where its master clock comes
 //! from, and how that clock divides into the sample rate. The divisions
@@ -12,6 +13,8 @@
 //! It is a mono part with one speaker output. The stream it is given is
 //! still stereo, because that is what the I2S frame is; the part takes
 //! the left channel of it, so its mode asks for both sides in each half.
+//! Its microphone input is mono too, a differential pair into an amplifier
+//! and the ADC; what it sends is in the first half of each frame.
 
 const std = @import("std");
 const rta = @import("sdk").rta;
@@ -41,16 +44,26 @@ pub const reg_lrck_low: u8 = 0x08;
 /// The serial port in and out: the word length.
 pub const reg_sdp_in: u8 = 0x09;
 pub const reg_sdp_out: u8 = 0x0A;
-/// The analogue side: powered, the amplifiers, the DAC and the output.
+/// The analogue side: powered, the amplifiers, the DAC and the output,
+/// and the microphone's input and amplifier.
 pub const reg_system_power: u8 = 0x0D;
 pub const reg_system_pga: u8 = 0x0E;
 pub const reg_system_dac: u8 = 0x12;
 pub const reg_system_output: u8 = 0x13;
-/// The converters' own settings.
+pub const reg_system_input: u8 = 0x14;
+/// The converters' own settings: the ADC's ramp, its gain, its filters.
+pub const reg_adc_ramp: u8 = 0x15;
+pub const reg_adc_gain: u8 = 0x16;
+pub const reg_adc_filter: u8 = 0x1B;
 pub const reg_adc: u8 = 0x1C;
 pub const reg_dac_equalizer: u8 = 0x37;
+/// Which converter's data goes out on the serial port.
+pub const reg_data_select: u8 = 0x44;
 /// How loud the output is, 0 to 255.
 pub const reg_volume: u8 = 0x32;
+/// How loud what the ADC sends is: 0 silent, `adc_unity` as heard.
+pub const reg_adc_volume: u8 = 0x17;
+pub const adc_unity: u8 = 0xBF;
 
 /// How long the part is held in reset, in milliseconds.
 pub const reset_ms: u32 = 20;
@@ -65,8 +78,9 @@ pub const Step = struct {
 
 /// The bring-up, for a master clock on the part's own pin that is 256
 /// times the sample rate: the part reset and powered, its dividers set,
-/// its serial port told sixteen bits, and its DAC and output turned on.
-/// Silent until `volumeFor` says otherwise.
+/// its serial port told sixteen bits, its DAC and output turned on, and
+/// its microphone's amplifier and ADC. Silent both ways until
+/// `volumeFor` and `adc_unity` say otherwise.
 pub const bring_up = [_]Step{
     // Everything reset, then powered on, as a slave of the serial port.
     .{ .reg = reg_reset, .value = 0x1F, .delay_ms = reset_ms },
@@ -96,6 +110,15 @@ pub const bring_up = [_]Step{
     .{ .reg = reg_system_output, .value = 0x10 },
     .{ .reg = reg_adc, .value = 0x6A },
     .{ .reg = reg_dac_equalizer, .value = 0x08 },
+    // The way in, as the maker's driver sets it: the ADC's data on the
+    // serial port, the microphone's pair into the amplifier at +30 dB, the
+    // ADC's own gain at +24 dB, its ramp and its filters.
+    .{ .reg = reg_data_select, .value = 0x08 },
+    .{ .reg = reg_system_input, .value = 0x1A },
+    .{ .reg = reg_adc_gain, .value = 0x24 },
+    .{ .reg = reg_adc_ramp, .value = 0x40 },
+    .{ .reg = reg_adc_filter, .value = 0x0A },
+    .{ .reg = reg_adc_volume, .value = 0x00 },
     // Silent to start with: a speaker that comes up mid-note is a bang.
     .{ .reg = reg_volume, .value = 0x00 },
 };
@@ -112,16 +135,21 @@ pub fn volumeFor(percent: u32) u8 {
 
 const testing = std.testing;
 
-test "the bring-up: reset first, then silent, and nothing missing" {
+test "the bring-up: reset first, then silent both ways, and nothing missing" {
     try testing.expectEqual(reg_reset, bring_up[0].reg);
     try testing.expectEqual(@as(u8, 0x1F), bring_up[0].value);
     try testing.expectEqual(@as(u8, reset_ms), bring_up[0].delay_ms);
     const last = bring_up[bring_up.len - 1];
     try testing.expectEqual(reg_volume, last.reg);
     try testing.expectEqual(@as(u8, 0), last.value);
+    // The way in silent too, until a source is started.
+    for (bring_up) |step| {
+        if (step.reg == reg_adc_volume) try testing.expectEqual(@as(u8, 0), step.value);
+    }
 
-    // The registers that have to be written for a sound to come out.
-    const wanted = [_]u8{ reg_clock, reg_sdp_in, reg_system_power, reg_system_dac, reg_system_output };
+    // The registers that have to be written for a sound to come out, and
+    // to come in.
+    const wanted = [_]u8{ reg_clock, reg_sdp_in, reg_system_power, reg_system_dac, reg_system_output, reg_sdp_out, reg_system_input, reg_adc_gain };
     for (wanted) |want| {
         var found = false;
         for (bring_up) |step| {

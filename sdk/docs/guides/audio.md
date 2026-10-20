@@ -5,11 +5,14 @@ and the speaker or jack behind it, or straight into I2S amplifiers - the
 CrowPanel's two speakers. It is in the ROM of every board that has one of
 these, and of both QEMUs, where the sound goes into nothing in time. A
 program opens a **stream**, says what its samples are, and writes buffers
-to it; the device mixes every stream into the output.
+to it; the device mixes every stream into the output. Unit 1 is the way
+the other round: the **recording**, read from the codec's microphone
+input in the form the program asks for.
 
 This guide is a stream first, then writing to it as it plays, what the
 board has, the master volume, sound decoded from a file
-(audiocodec.library), and the outputs underneath (rta.library).
+(audiocodec.library), the outputs and ways in underneath (rta.library),
+and recording.
 
 ## A stream
 
@@ -107,10 +110,15 @@ since it was opened:
 | `latency` | frames between a write's first frame being mixed and its being heard |
 | `streams`, `max_streams` | streams open now, and how many may be |
 | `master` | the master volume |
-| `has_input` | whether unit 1 records on this board |
+| `has_input` | 1 when unit 1 records on this board: it has a way in |
 | `output` | the output played through: the part the sound comes out of, as the board names it, or `null` |
 | `underruns` | buffers the output played again because the next was not mixed in time - each a gap heard - since its driver made it |
 | `output_id` | the output's number (below), since version 3 |
+| `triggers`, `max_triggers` | sounds playing by trigger now, and how many may, since version 4 |
+| `input`, `input_id` | the way in recorded from - or that a recording would be - and its number, since version 5 |
+| `input_channels` | the most sides it hears: 1 for one microphone |
+| `input_rate` | the rate it runs at while a recording runs, else 0 |
+| `overruns` | buffers of it lost - filled before the one before was taken, or heard while no read waited between two reads - each a gap in a recording |
 
 A stereo stream on a board with one output is heard as its two sides
 together, so every program is heard whole on every board; the position
@@ -349,10 +357,10 @@ samples at `heard`. The request asked with is best kept on a reply port
 of its own: a `DoIO` that has to wait takes its port's signal, which
 would otherwise tell the program that one of its writes came back.
 
-## Outputs: rta.library
+## Outputs and ways in: rta.library
 
 The device plays through an **output** of rta.library, the ROM's list of
-the machine's sound outputs and the drivers behind them. A driver makes
+the machine's sound outputs and ways in, and the drivers behind them. A driver makes
 its outputs - sinks - at its own cold start, from the parts the board's
 system list names (expansion.library's `FindBoardPart`): one for each
 part it can drive. audio.device takes the first sink on the list when it
@@ -362,10 +370,10 @@ its ring of buffers. No name of a part or a chip is in the device.
 
 | Driver | Kind | What it makes |
 |---|---|---|
-| `i2s` | line | a line on the chip's I2S controller, for a part fed over I2S: its DMA ring, its interrupt, its pads, the buffers it played again; clocked for the rate of the mode its sink starts in |
-| `es8311` | sink | the ES8311 codec, set up over i2c.device, on a line of its own; its amplifier's enable pad |
+| `i2s` | line | a line on the chip's I2S controller, for a part fed over I2S: a DMA ring each way, an interrupt each, its pads, the buffers it played again and those it lost; clocked for the rate of the mode its sink or source starts in |
+| `es8311` | sink, source | the ES8311 codec, set up over i2c.device, on a line of its own; its amplifier's enable pad; where the board wires its data out, its microphone input as a source on the same line |
 | `i2samp` | sink | an amplifier that takes I2S itself - the CrowPanel's pair, one part with two sides - on a line of its own |
-| `null` | sink | a stream into nothing, kept in time by timer.device's E-clock: the emulators' output, at the bottom of the list |
+| `null` | sink, source | a stream into nothing, kept in time by timer.device's E-clock: the emulators' output, at the bottom of the list; and a source that hears what it played, two buffers late |
 
 A sink for a part on I2S is made over a line (`RTAA_Transport`): the
 sink's driver brings its part up and starts the line, and the line runs
@@ -399,10 +407,71 @@ the driver's `create_sink` to fill in its modes, its ops and its ring.
 The calls are in [rta's autodoc](../autodocs/rta.md); the types in
 `sdk/libs/rta/`.
 
+A **source** is a way in, on a list of its own: a driver of the source
+kind makes them with `CreateSourceTagList`, `NextSource` walks them,
+`NextSourceMode` their modes. `StartSource` starts one in a mode - its
+default for none - for a task and a signal, which is raised each time a
+buffer has been filled; `SourceBuffer` hands out the one filled last,
+and a buffer filled before the one before it was taken is counted in the
+source's `overruns`. Its buffers are 16-bit stereo, as a sink's; a part
+that hears one side (`AUDIOSIDES_MONO`) has it in the first half of each
+frame. A source's number is worked out as a sink's, so a codec's way in
+and its way out have the same one.
+
+A line carries both ways at once - `StartAudioTransportInput` and
+`AudioTransportInput` beside the output's calls - at one rate: the way
+started second has to be started at the rate the first runs at, or is
+refused `RTAERR_BAD_MODE`. A line with no data-in pad has no way in
+(`RTAERR_NO_INPUT`).
+
 ## Recording
 
-Unit 1 is the way in - the ES8311's input, the CrowPanel's microphones.
-It is not driven yet: opening it fails with `AUDIOERR_NOINPUT`.
+Unit 1 records: what the first way in on rta.library's list hears - the
+ES8311's microphone input, or in QEMU the null source, which hears what
+was played. One program records at a time; a second open is refused
+`AUDIOERR_NOSTREAM`, and on a board with no way in the open fails
+`AUDIOERR_NOINPUT`. The request at OpenDevice says what the program
+wants, as for a stream: the form, the channels, the rate - the device
+converts from the rate the way in runs at, the line between two heard
+frames to 32768ths, as the mixer does - and the volume, a gain on what
+is heard.
+
+```zig
+var rec: audio.IOAudio = .{ .format = audio.AUDIO_S16, .channels = 1, .rate = 48_000 };
+rec.std.req.message.reply_port = port;
+rec.std.req.message.length = @sizeOf(audio.IOAudio);
+if (sys.OpenDevice(audio.AUDIONAME, audio.AUDIO_UNIT_RECORD, &rec.std.req, 0) != 0) return;
+defer sys.CloseDevice(&rec.std.req);
+
+var samples: [4800]i16 = undefined; // a tenth of a second
+rec.std.req.command = sdk.exec.CMD_READ;
+rec.std.data = &samples;
+rec.std.length = @sizeOf(@TypeOf(samples));
+_ = sys.DoIO(&rec.std.req); // back when it is full
+```
+
+`CMD_READ` fills `std.length` bytes, whole frames, and is replied when
+they are, `std.actual` the bytes recorded. The way in starts with the
+first read and stops at the close. Reads queue and follow each other
+without a gap, so a program that records for longer keeps two or three
+out and sends each again as it comes back; what is heard while none
+waits is lost, and the query counts it in `overruns` once a read comes
+after it. `CMD_STOP` and `CMD_START` hold the recording and go on -
+nothing heard meanwhile is recorded - `CMD_FLUSH` and `AbortIO` give the
+reads back `IOERR_ABORTED` with the bytes each holds, and
+`AUDIOCMD_SETPARAMS` changes the rate and the volume at once and the
+form for the reads sent after it. The query's `position` is the frames
+recorded since the open.
+
+A way in of the output's own part - the two halves of one codec, on one
+line - runs at the rate the output runs at, and while it records, the
+output is only started again in a mode at that rate; recording at
+another rate is converted. A part with one microphone is recorded on
+both channels of a two-channel recording, and two sides into one channel
+are their middle.
+
+The CrowPanel's two PDM microphones are not a way in yet: the board's
+system list names no pads for them.
 
 ## From the shell
 
@@ -429,6 +498,20 @@ it would on a board, and `Audio BENCH` measures the mix.
 to a reference mix byte for byte by a host test
 (`src/rom/devs/audio/golden.zig`); a change to it that is meant to change
 what is heard writes the reference again with `./zig build audio-golden`.
+
+`C:Record FILE` records the way in into a WAV file until Ctrl-C, or for
+`SECONDS`; by default at the output's rate, with as many channels as the
+way in hears, in 16 bits:
+
+```
+Record RAM:take.wav SECONDS 10
+Record RAM:voice.wav RATE 16000 CHANNELS 1 VOLUME 200
+Run Play SYS:song.mp3
+Record RAM:loop.wav SECONDS 5     in QEMU: what Play plays, heard back
+```
+
+It says where it records from and, at the end, how long it recorded and
+how many buffers were lost; `Play` plays the file back.
 
 `C:test/Sound FILE` plays a file through datatypes.library with no
 window, waiting for the object's signal that it has played out:

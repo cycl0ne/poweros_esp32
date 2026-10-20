@@ -28,7 +28,10 @@ pub const RTAERR_NOT_RUNNING: i32 = -8;
 pub const RTAERR_BAD_MODE: i32 = -9;
 /// The bus a part is set up over did not answer.
 pub const RTAERR_IO: i32 = -10;
+/// The way in is not there: a part that does not answer, a line without a
+/// pad for the data in, no DMA channel left. Since 1.3.
+pub const RTAERR_NO_INPUT: i32 = -11;
 
 /// The lowest code that has a text. RtaErrorText answers "unknown error"
 /// below it.
-pub const RTAERR_LAST: i32 = RTAERR_IO;
+pub const RTAERR_LAST: i32 = RTAERR_NO_INPUT;

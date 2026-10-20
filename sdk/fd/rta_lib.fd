@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
-//! rta.library's functions: the sound outputs of this machine and the
-//! drivers that drive them. A driver registers itself and makes a sink
-//! for each output it finds; a sink has modes and, once started, a ring
-//! of buffers the caller fills one at a time as each is played. A part
-//! fed over I2S is a sink on a transport, the line. audio.device is what
-//! plays through a sink. Open it with OpenLibrary("rta.library", 1).
+//! rta.library's functions: the sound outputs and inputs of this machine
+//! and the drivers that drive them. A driver registers itself and makes a
+//! sink for each output it finds, and a source for each way in; a sink
+//! has modes and, once started, a ring of buffers the caller fills one at
+//! a time as each is played, a source a ring the caller takes one at a
+//! time as each is filled. A part fed over I2S is a sink on a transport,
+//! the line, and one read over it a source on the same. audio.device is
+//! what plays through a sink and records from a source. Open it with
+//! OpenLibrary("rta.library", 1).
 ##include libs/exec/exec as exec
 ##include libs/utility/utility as utility
 ##include libs/rta/rta as rta
@@ -80,4 +83,32 @@ i32 RtaLastError()
 ?*rta.AudioMode FindSinkMode(*rta.AudioSink sink, u32 rate, u32 channels)
 /// The mode a stopped sink starts in from now on; null for its default.
 i32 SetSinkMode(*rta.AudioSink sink, ?*rta.AudioMode mode)
+/// A source from that driver, set up by the tags (RTAA_* and its part's
+/// PART_*). It is in its default mode and not started. Null: RtaLastError
+/// says why.
+?*rta.AudioSource CreateSourceTagList([*:0]const u8 driver_name, ?[*]const utility.TagItem tag_list)
+/// Give a source back. Refused while it is started. Null does nothing.
+void DeleteSource(?*rta.AudioSource source)
+/// The next source after `after`, or the first for null: the most wanted
+/// way in first.
+?*rta.AudioSource NextSource(?*rta.AudioSource after)
+/// The next mode of a source, or its first for null.
+?*rta.AudioMode NextSourceMode(*rta.AudioSource source, ?*rta.AudioMode after)
+/// Bring the way in up in that mode - null for its default - and start its
+/// ring; from then on `signal_mask` is raised on `task` each time a buffer
+/// has been filled.
+i32 StartSource(*rta.AudioSource source, ?*rta.AudioMode mode, *exec.Task task, u32 signal_mask)
+/// Stop it and give back what it took. A source that is not started is
+/// left alone.
+void StopSource(*rta.AudioSource source)
+/// The buffer filled last, or null when none has been filled since the
+/// last was taken. Its frames are 16-bit stereo, `buffer_frames` of them.
+?[*]const i16 SourceBuffer(*rta.AudioSource source)
+/// Start a line's way in for that mode; a source's driver calls it from
+/// its own start.
+i32 StartAudioTransportInput(*rta.AudioTransport io, *const rta.AudioMode mode, *exec.Task task, u32 signal_mask)
+/// Stop the line's way in. The way out, if it runs, goes on.
+void StopAudioTransportInput(*rta.AudioTransport io)
+/// The way in's buffer filled last, or null when none is due.
+?[*]const i16 AudioTransportInput(*rta.AudioTransport io)
 ##end
