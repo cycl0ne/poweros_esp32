@@ -61,8 +61,8 @@ const mount = @import("mount.zig");
 
 pub const DEVICE_NAME = _nvme.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "18.10.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "19.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
