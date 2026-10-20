@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of usb.library's parts that need no bus: the jump table,
 //! walking a device's descriptors, the class drivers' match order,
-//! reading a ROM tag from a load file's bytes, and the pipe an endpoint
-//! is given.
+//! reading a ROM tag from a load file's bytes, the pipe an endpoint is
+//! given, and isochronous transfers on such a pipe against a host
+//! controller that plays a script (hc.zig).
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -20,6 +21,7 @@ const CloseUSBPipe = @import("../pipe/closeusbpipe.zig").CloseUSBPipe;
 const usbhc = sdk.devices.usbhc;
 const host_rom = @import("host_rom");
 const kexec = host_rom.exec;
+const standin = @import("hc.zig");
 
 const testing = std.testing;
 
@@ -180,4 +182,149 @@ test "a ROM tag is found in a load file's data segment, by its self-offset" {
     // A file for another CPU is refused.
     std.mem.writeInt(u16, file[10..12], 1, .little);
     try testing.expect(loadfile.findResident(source) == null);
+}
+
+/// A recording interface's streaming setting: an isochronous IN
+/// endpoint of 64-byte packets, every frame.
+const microphone_bytes = [_]u8{
+    9, d.USB_DT_CONFIG,    27,   0,    1, 1,    0, 0x80, 50,
+    9, d.USB_DT_INTERFACE, 1,    1,    1, 1,    2, 0,    0,
+    9, d.USB_DT_ENDPOINT,  0x81, 0x05, 64, 0, 1, 0,    0,
+};
+
+/// exec, the stand-in controller opened into a bus, and a device on that
+/// bus with `config`.
+const Rig = struct {
+    sys: *sdk.interface.exec.ExecBase,
+    base: UsbBase = undefined,
+    bus: _bus.Bus = undefined,
+    device: _bus.Device = undefined,
+    port: sdk.exec.MsgPort = .{},
+    hc: *standin.HC = undefined,
+
+    fn init(rig: *Rig, config: []const u8) !void {
+        try kexec.setUp();
+        rig.sys = kexec.SysBase.iface();
+        rig.base.sys_base = rig.sys;
+        const made = kexec.InitResident(kexec.SysBase, &standin.tag, null) orelse return error.NoDevice;
+        rig.hc = standin.hcOf(@ptrCast(@alignCast(made)));
+        rig.bus.hc_io = .{};
+        rig.bus.hc_io.std.req.message.length = @sizeOf(usbhc.IOUsbHC);
+        if (rig.sys.OpenDevice(standin.NAME, 0, &rig.bus.hc_io.std.req, 0) != 0) return error.NotOpened;
+        rig.port.msg_list.init(.message);
+        rig.device = _bus.Device{ .bus = &rig.bus };
+        rig.device.public.config = config.ptr;
+        rig.device.public.config_length = @intCast(config.len);
+        rig.device.public.speed = usbhc.USB_SPEED_FULL;
+    }
+
+    fn deinit(rig: *Rig) !void {
+        rig.sys.CloseDevice(&rig.bus.hc_io.std.req);
+        _ = rig.sys.RemDevice(&rig.hc.dev);
+        try kexec.expectNoLeaks();
+        kexec.deinit();
+    }
+};
+
+test "an isochronous transfer comes back with each packet's result, one lost and the transfer whole" {
+    var rig: Rig = .{ .sys = undefined };
+    try rig.init(&speaker_bytes);
+    const pipe = OpenUSBPipe(&rig.base, &rig.device.public, 0x01, &rig.port).?;
+
+    var data: [720]u8 = undefined;
+    for (&data, 0..) |*byte, at| byte.* = @truncate(at);
+    var list = [_]usbhc.UsbIsoPacket{ .{ .length = 192 }, .{ .length = 192 }, .{ .length = 96 }, .{ .length = 192 }, .{ .length = 48 } };
+    rig.hc.lost = 1 << 2;
+    pipe.io.std.data = &data;
+    pipe.io.std.length = data.len;
+    pipe.io.iso_list = &list;
+    pipe.io.iso_count = list.len;
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&pipe.io.std.req));
+    // The lost packet is a result: the transfer went, the rest whole.
+    try testing.expectEqual(@as(usize, 720 - 96), pipe.io.std.actual);
+    try testing.expectEqual(@as(u16, 1), pipe.io.iso_lost);
+    try testing.expectEqual(usbhc.UHIOERR_MISSED, list[2].status);
+    try testing.expectEqual(@as(u16, 0), list[2].actual);
+    for ([_]usize{ 0, 1, 3, 4 }) |n| {
+        try testing.expectEqual(@as(i8, 0), list[n].status);
+        try testing.expectEqual(list[n].length, list[n].actual);
+    }
+    // What went is every packet but the third, each from its place.
+    try testing.expectEqual(@as(u32, 720 - 96), rig.hc.sent_length);
+    try testing.expectEqualSlices(u8, data[0..384], rig.hc.sent[0..384]);
+    try testing.expectEqualSlices(u8, data[480..720], rig.hc.sent[384..624]);
+    try testing.expectEqual(@as(u16, 100), pipe.io.iso_frame);
+    try testing.expectEqual(@as(u16, 0), pipe.io.iso_gap);
+
+    CloseUSBPipe(&rig.base, pipe);
+    try rig.deinit();
+}
+
+test "a stream that ran dry says by how much in the next transfer's gap" {
+    var rig: Rig = .{ .sys = undefined };
+    try rig.init(&speaker_bytes);
+    const pipe = OpenUSBPipe(&rig.base, &rig.device.public, 0x01, &rig.port).?;
+    var data: [1920]u8 = @splat(0);
+    pipe.io.std.data = &data;
+    pipe.io.std.length = data.len;
+    rig.hc.gap_before = 1;
+    rig.hc.gap = 7;
+
+    // Ten packets of the endpoint's 192 bytes, a frame each.
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&pipe.io.std.req));
+    try testing.expectEqual(@as(u16, 100), pipe.io.iso_frame);
+    try testing.expectEqual(@as(u16, 0), pipe.io.iso_gap);
+    try testing.expectEqual(@as(usize, 1920), pipe.io.std.actual);
+    // The next comes seven frames after the last one ended.
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&pipe.io.std.req));
+    try testing.expectEqual(@as(u16, 117), pipe.io.iso_frame);
+    try testing.expectEqual(@as(u16, 7), pipe.io.iso_gap);
+    try testing.expectEqual(@as(u16, 0), pipe.io.iso_lost);
+
+    // One placed in a frame of its own, from the frame the controller is
+    // in: what it skipped is its gap.
+    var info: usbhc.USBHCInfo = .{};
+    var query = rig.bus.hc_io;
+    query.std.req.command = usbhc.UHCMD_QUERYDEVICE;
+    query.std.data = &info;
+    query.std.length = @sizeOf(usbhc.USBHCInfo);
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&query.std.req));
+    try testing.expectEqual(@as(u32, 127), info.frame);
+    pipe.io.flags |= usbhc.UHF_ISO_FRAME;
+    pipe.io.iso_frame = @truncate(info.frame + 20);
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&pipe.io.std.req));
+    try testing.expectEqual(@as(u16, 147), pipe.io.iso_frame);
+    try testing.expectEqual(@as(u16, 20), pipe.io.iso_gap);
+
+    CloseUSBPipe(&rig.base, pipe);
+    try rig.deinit();
+}
+
+test "an isochronous IN transfer's packets each at their place, a short one as long as it came" {
+    var rig: Rig = .{ .sys = undefined };
+    try rig.init(&microphone_bytes);
+    const pipe = OpenUSBPipe(&rig.base, &rig.device.public, 0x81, &rig.port).?;
+    try testing.expectEqual(usbhc.UHCMD_ISOXFER, pipe.io.std.req.command);
+
+    var data: [192]u8 = @splat(0xEE);
+    var list = [_]usbhc.UsbIsoPacket{ .{ .length = 64 }, .{ .length = 64 }, .{ .length = 64 } };
+    rig.hc.short_packet = 1;
+    rig.hc.short_bytes = 10;
+    pipe.io.std.data = &data;
+    pipe.io.std.length = data.len;
+    pipe.io.iso_list = &list;
+    pipe.io.iso_count = list.len;
+    try testing.expectEqual(@as(i8, 0), rig.sys.DoIO(&pipe.io.std.req));
+    try testing.expectEqual(@as(usize, 64 + 10 + 64), pipe.io.std.actual);
+    try testing.expectEqual(@as(u16, 10), list[1].actual);
+    try testing.expectEqual(@as(u16, 0), pipe.io.iso_lost);
+    // Each packet at its asked place; the short one leaves the rest of
+    // its room as it was.
+    for (data[0..64]) |byte| try testing.expectEqual(@as(u8, 0), byte);
+    for (data[64..74]) |byte| try testing.expectEqual(@as(u8, 1), byte);
+    for (data[74..128]) |byte| try testing.expectEqual(@as(u8, 0xEE), byte);
+    for (data[128..192]) |byte| try testing.expectEqual(@as(u8, 2), byte);
+
+    CloseUSBPipe(&rig.base, pipe);
+    try rig.deinit();
 }
