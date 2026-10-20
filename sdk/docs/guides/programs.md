@@ -242,8 +242,8 @@ template and carries a `$VER:` string.
 
 `s3>` is a task: it needs the scheduler, a console device and memory, so
 it is gone exactly when it is wanted most. The ROM debugger is the other
-half - it runs with interrupts masked, on no task, through no device,
-and allocates nothing:
+half - it runs with interrupts masked, on no task, through no device and
+on a stack of its own, and allocates nothing:
 
 ```
 dbg> bt
@@ -259,7 +259,13 @@ dbg> w 3fc9bbf8 8 w          a watchpoint: 8 bytes, on writing
 dbg> s                       one instruction
 dbg> g                       go on (q as well)
 dbg> reset                   the machine started again
+dbg> tasks                   what each core runs, the ready and the waiting
+dbg> locks                   which task holds which semaphore
 ```
+
+`tasks`, `libs`, `devs`, `resources`, `ports`, `sems` and `locks` show
+exec's lists as `s3>` does, without taking their locks - the stopped code
+may hold one - and with every node checked before it is followed.
 
 The breakpoints and watchpoints are the core's own - two of each on the
 ESP32-S3, two breakpoints and one watchpoint from the ESP32-P4's three

@@ -12,7 +12,7 @@ to reach for first.
 |---|---|---|---|
 | `C:Log`, `C:Top`, `C:Avail OWNERS`, `C:MemDebug`, `ShowInfo TASKS` | a shell, in a window or on the serial console | dos, a console, memory | the shell's console or dos is stuck |
 | `s3>` | the serial console | the scheduler, a console device, memory | the scheduler or memory is broken |
-| `dbg>`, the ROM debugger | both raw ports at once, on the ESP32s | nothing: no task, no device, no memory | never; only a blown stack stops it |
+| `dbg>`, the ROM debugger | both raw ports at once, on the ESP32s | nothing: no task, no device, no memory, no lock; a stack of its own | never |
 | the system log | `Log`, the raw port, a syslog server | nothing: exec writes it | never; on the ESP32s its last 4 KiB survive a dead end's restart |
 | JTAG | an ESP32's USB port, OpenOCD and gdb on the PC | the chip | never |
 
@@ -139,6 +139,15 @@ device, and allocates nothing, so it works when everything else has
 stopped. It reads and writes on both raw ports at once, UART0 and the
 chip's USB port, because a stopped machine cannot ask which cable is in.
 
+**It runs on a stack of its own**, 4 KiB, not on the one it was entered
+on: a task's stack that ran past its end, or one with little room left,
+carries none of its work. A stack that does not look sound - not
+aligned, or not memory - is said so as it starts (`*** the stack it was
+entered on does not look sound`), and the debugger goes on. A visit uses
+about 500 to 650 bytes of it; the stack is painted with exec's guard
+pattern (`53544B21`) as each visit starts, so `d` shows how deep the
+visit has gone, and a visit that ran past its end says so as it leaves.
+
 **Three ways in:**
 - `debug` at `s3>` stops a working machine; `g` sets it going again.
 - A dead end offers it for a few seconds.
@@ -159,7 +168,18 @@ A breakpoint or a watchpoint enters it too, saying what stopped where.
 | `s` | one instruction, after a breakpoint or a watchpoint |
 | `g`, `q` | go on |
 | `reset` | the machine started again |
+| `tasks` | the tasks: what each core runs, then the ready and the waiting ones |
+| `libs`, `devs`, `resources` | exec's libraries, devices and resources |
+| `ports`, `sems` | the public message ports and semaphores |
+| `locks` | which task holds which semaphore, and what each waits for |
 | `?` | the commands |
+
+**exec's lists** are the ones `s3>` shows, row for row, read with none of
+their locks taken - the code that was stopped may hold one - and every
+node checked before it is followed: a list that points at memory
+nothing answers, or runs in a circle, ends in `... the list breaks off
+at <address>` rather than in a second fault. `locks` is where a hang is:
+the task that holds what another waits for.
 
 **Breakpoints and watchpoints are the core's own.** The ESP32-S3 has two
 of each. The ESP32-P4 has three triggers, used as two breakpoints and
@@ -183,8 +203,11 @@ stopped.
 
 **The call chain.** On the ESP32-P4 `bt` follows the frame pointers the
 kernel is built with. On the ESP32-S3 it reads what the register windows
-have spilled to the stacks, so it can stop early: it says so rather than
-guess the rest.
+left on the stacks; the move to the debugger's own stack writes every
+window out first, so the chain is in memory. Entered from a call, the
+chain starts at the code that called the debugger: the `debug` command,
+the caller of `Debug`, or the Guru. Where a chain runs into something that is not code,
+it stops and says so rather than guess the rest.
 
 **A session.** A breakpoint on `AllocMem`'s vector, found with
 `llvm-nm zig-out/bin/kernel | grep lvoAllocMem`, and the shell made to

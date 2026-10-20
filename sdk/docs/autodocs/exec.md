@@ -3295,9 +3295,13 @@ It talks on both raw ports at once - UART0 and the chip's own USB
 port - and takes a character from whichever has one, because which
 cable is plugged in is not something a stopped machine can ask.
 
-It runs on the stack of whoever called it, and looks at that stack
-before it starts: a stack that is not sound is said so and the
-machine halts, rather than the debugger faulting in its turn.
+Once it has the machine it moves to a stack of its own, so a caller's
+stack that ran past its end, or has little room left, carries none of
+its work; one that does not look sound is said so. Among its commands
+are exec's lists - the tasks, libraries, devices, resources, public
+ports and semaphores, and which task holds which semaphore - read the
+way `s3>` reads them but with none of their locks taken, since the code
+it stopped may hold one, and every node checked before it is followed.
 
 **CONTEXT**
 
@@ -3309,8 +3313,8 @@ machine halts, rather than the debugger faulting in its turn.
 **NOTES**
 
 A dead-end alert offers the debugger for a few seconds before it
-halts, which is the other way in. `todo/exec/03-debug-shell.md` has
-breakpoints and the second core, which are not here.
+halts, and a breakpoint, a watchpoint or a step set in it comes back
+to it: the other ways in.
 
 **SEE ALSO**
 
