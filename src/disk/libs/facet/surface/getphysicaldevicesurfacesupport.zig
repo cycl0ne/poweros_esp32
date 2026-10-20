@@ -29,7 +29,8 @@ const Surface = _surface.Surface;
 ///
 /// BEHAVIOR:
 /// The one queue family can present to a surface whose pixels
-/// facet.library draws in: 32 bits, in either order of red and blue.
+/// facet.library draws in: 32 bits, in either order of red and blue, or
+/// 565.
 ///
 /// CONTEXT:
 /// - Waits: on a window's surface, for the screens' semaphore.

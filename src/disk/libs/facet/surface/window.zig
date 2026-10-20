@@ -153,8 +153,9 @@ fn most(_: *Surface) u32 {
 fn make(surface: *Surface, pictures: []Picture) bool {
     const kept = of(surface);
     const now = shape(surface) orelse return false;
-    // Rows a cache line apart, as the tiles write them back.
-    const pitch = std.mem.alignForward(u32, now.width * 4, _memory.alignment);
+    // In the screen's pixels, copied as they are; rows a cache line apart,
+    // as the tiles write them back.
+    const pitch = std.mem.alignForward(u32, now.width * rtg.bitmaps.formatBytes(kept.format), _memory.alignment);
     for (pictures, 0..) |*picture, k| {
         const offscreen = allocate(kept.sys, now.width, now.height, pitch, kept.format) orelse {
             unmake(surface, pictures[0..k], null);

@@ -226,7 +226,7 @@ Beside them:
 |---|---|---|
 | `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, the card slot; not yet tried on the board: RS-485, the battery's voltage, a USB host on its USB-C socket; CAN not driven |
 | `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; not yet tried on the board: audio.device 2's streams, recording from the microphone, playing into a file, the battery's voltage, a USB host |
-| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs, USB devices plugged in and out while it does (`-Dusb`, `-Dusb-disk`); sound into an output that goes nowhere |
+| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs, USB devices plugged in and out while it does (`-Dusb`, `-Dusb-disk`); facet.library's 3D on its 565 display, dithered; sound into an output that goes nowhere |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, playing into a file, the UART1 and UART3-IN connectors |
@@ -251,6 +251,7 @@ wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 ./zig build qemu-display     # the same with the display in a window
 ./zig build emu              # the ESP32-P4 kernel in esp-emulator (quit: Ctrl-C)
 ./zig build virt             # the RISC-V 64 kernel in QEMU's virt machine (quit: Ctrl-A X)
+./zig build virt-display     # the same with its display, a USB keyboard and a tablet
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
 ```
 
@@ -320,8 +321,14 @@ to it is gone when the machine stops. Nothing is flashed: the `flash*`
 steps are the ESP32 boards'.
 
 `./zig build virt` boots QEMU's virt machine on the serial console with
-four harts and 512 MB, the disk image as its initrd. QEMU run by hand
-adds the rest - a display, USB and an SSD:
+four harts and 512 MB, the disk image as its initrd. `./zig build
+virt-display` adds the display (`ramfb`, 1920×1080 as the VisionFive 2's
+HDMI) and USB with a keyboard and a tablet, the console still on the
+terminal: the desktop, and `C:test/FacetCube` drawn through facet.library
+as on the board. The window is QEMU's GTK or SDL one (Arch packages them
+apart, as `qemu-ui-gtk` and `qemu-ui-sdl`); without either QEMU serves
+the display over VNC on `localhost:5900`. QEMU run by hand adds the
+rest - an SSD, sound:
 
 ```sh
 ./zig build -Dboard=qemu_virt

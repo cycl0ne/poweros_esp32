@@ -38,7 +38,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetCube";
-const VERSION_STRING = "\x00$VER: FacetCube 1.1 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetCube 1.2 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FRAMES/N,NEAREST/S";
@@ -171,15 +171,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
 
-    var gpu = Gpu{ .fb = @ptrCast(facet_lib) };
+    var gpu = Gpu{ .fb = @ptrCast(facet_lib), .sys = sys };
     defer gpu.down();
-    gpu.up(COMMAND_NAME) catch |err| return failed(dl, err);
-    gpu.onScreen(screen) catch |err| return failed(dl, err);
-    gpu.prepare(nearest, &pattern) catch |err| return failed(dl, err);
-    gpu.chain(2) catch |err| return failed(dl, err);
+    gpu.up(COMMAND_NAME) catch |err| return failed(dl, &gpu, err);
+    gpu.onScreen(screen) catch |err| return failed(dl, &gpu, err);
+    gpu.prepare(nearest, &pattern) catch |err| return failed(dl, &gpu, err);
+    gpu.chain(2) catch |err| return failed(dl, &gpu, err);
 
     const began = now(tb);
-    const run = spin(&gpu, dl, tb, frames) catch |err| return failed(dl, err);
+    const run = spin(&gpu, dl, tb, frames) catch |err| return failed(dl, &gpu, err);
     const elapsed = now(tb) - began;
 
     const average = if (run.frames == 0) 0 else run.drawn_us / run.frames;
@@ -199,8 +199,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     return dos.RETURN_OK;
 }
 
-fn failed(dl: *DosBase, err: Failure) i32 {
-    return say(dl, facetgpu.explain(err));
+fn failed(dl: *DosBase, gpu: *const Gpu, err: Failure) i32 {
+    return say(dl, facetgpu.explain(gpu, err));
 }
 
 fn say(dl: *DosBase, text: [*:0]const u8) i32 {

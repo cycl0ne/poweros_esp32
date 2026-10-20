@@ -36,6 +36,12 @@ const _render = @import("../render/_render.zig");
 /// gathered; the tiles are drawn and stored when it ends. A pass begun in
 /// another ends it first.
 ///
+/// The tiles keep 8 bits a channel whatever the colour attachment's
+/// format, and are drawn and blended so. Stored into R5G6B5 they are
+/// dithered, 4 x 4 ordered over the image's pixels; kept from one, a pixel
+/// is read as the least colour that packs to it again, so that what no
+/// draw covers is stored as it was.
+///
 /// A pass whose framebuffer's colour image is not bound draws nothing.
 ///
 /// CONTEXT:

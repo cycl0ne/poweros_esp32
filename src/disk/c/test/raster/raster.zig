@@ -78,7 +78,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Raster";
-const VERSION_STRING = "\x00$VER: Raster 1.2 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Raster 1.3 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/K/N,HOLD/K/N";
@@ -862,7 +862,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .bgra32 => .bgra32,
         .rgba32 => .rgba32,
         else => {
-            _ = Printf(dl, "The display is not 32 bits a pixel\n", .{});
+            _ = Printf(dl, "The display's pixels are %s: C:test/Raster measures 32 bits a pixel, bgra32 or rgba32\n", .{board.pixelsNamed(bitmap.format)});
             return dos.RETURN_FAIL;
         },
     };

@@ -302,8 +302,8 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
         // The depth stored, or loaded: it lives in the tiles alone.
         .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .d16_unorm, .store_op = .store, .final_layout = .general } } },
         .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .d16_unorm, .load_op = .load, .final_layout = .general } } },
-        // A colour attachment of 16 bits, a depth one of 32.
-        .{ .error_format_not_supported, .{ .{ .format = .r5g6b5_unorm_pack16, .final_layout = .general }, .{ .format = .d16_unorm, .final_layout = .general } } },
+        // A colour attachment of a float, a depth one of 32 bits.
+        .{ .error_format_not_supported, .{ .{ .format = .r32_sfloat, .final_layout = .general }, .{ .format = .d16_unorm, .final_layout = .general } } },
         .{ .error_format_not_supported, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .r32_sfloat, .final_layout = .general } } },
         // Multisampled.
         .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .samples = 4, .final_layout = .general }, .{ .format = .d16_unorm, .final_layout = .general } } },

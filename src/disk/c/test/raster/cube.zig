@@ -2,7 +2,7 @@
 //! Cube: a textured cube turning in front of its backdrop, drawn by
 //! facet.library's rasterizer core into an 800 x 600 view in the middle of
 //! a screen of its own. Built against the SDK and the core itself, which
-//! is compiled in.
+//! is compiled in. A display of 32 bits a pixel or of 565, dithered into.
 //!
 //!   Cube FRAMES/N,NEAREST/S
 //!
@@ -40,7 +40,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Cube";
-const VERSION_STRING = "\x00$VER: Cube 1.1 (19.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Cube 1.2 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FRAMES/N,NEAREST/S";
@@ -131,6 +131,7 @@ fn formatOf(bitmap: *const rtg.RtgBitMap) ?raster.Format {
     return switch (bitmap.format) {
         .bgra32 => .bgra32,
         .rgba32 => .rgba32,
+        .rgb565 => .rgb565,
         else => null,
     };
 }
@@ -215,7 +216,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         const shown = maybe_shown.?;
         const bitmap = shown.bitmap;
         const format = formatOf(bitmap) orelse {
-            _ = Printf(dl, "The display is not 32 bits a pixel\n", .{});
+            _ = Printf(dl, "The display's pixels are %s: C:test/Cube draws in bgra32, rgba32 and rgb565\n", .{board.pixelsNamed(bitmap.format)});
             return dos.RETURN_FAIL;
         };
         // Black round the view, once.

@@ -12,6 +12,14 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const RtgBase = sdk.interface.rtg.RtgBase;
 const TimerBase = timer.TimerBase;
 
+/// A display's pixels by name, for saying what was found.
+pub fn pixelsNamed(format: rtg.bitmaps.PixelFormat) [*:0]const u8 {
+    return switch (format) {
+        inline .rgba32, .bgra32, .rgb24, .bgr24, .rgb565, .argb1555, .indexed8, .gray8, .mono1 => |named| @tagName(named),
+        _ => "of a format not known here",
+    };
+}
+
 pub const System = struct {
     sys: *ExecBase,
     rb: *RtgBase,

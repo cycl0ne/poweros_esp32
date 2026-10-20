@@ -2,8 +2,9 @@
 //! Host tests of facet.library's swapchains, over a surface of the
 //! test's own: what it says it can be given, images handed out in turn
 //! and shown in the order presented, drawn into where they are the
-//! surface's buffers, and what is refused - a surface that changed, a
-//! swapchain handed on, no room, a second swapchain, a surface lost.
+//! surface's buffers - a display's of 565 too - and what is refused - a
+//! surface that changed, a swapchain handed on, no room, a second
+//! swapchain, a surface lost.
 //!
 //! The tests' exec runs no task but theirs, so a present is shown as
 //! QueuePresent is called (`inline_queues`).
@@ -91,6 +92,10 @@ const Fake = struct {
     fn pixel(fake: *const Fake, buffer: u32, x: u32, y: u32) u32 {
         return std.mem.readInt(u32, fake.pixels[buffer][y * pitch + x * 4 ..][0..4], .little);
     }
+
+    fn pixel565(fake: *const Fake, buffer: u32, x: usize, y: usize) u16 {
+        return std.mem.readInt(u16, fake.pixels[buffer][y * pitch + x * 2 ..][0..2], .little);
+    }
 };
 
 /// A device, its queue, and a surface over the test's `Fake`.
@@ -125,11 +130,15 @@ const Bench = struct {
     }
 
     fn swapchain(bench: *Bench, images: u32, old: ?*facet.Swapchain) struct { facet.Result, ?*facet.Swapchain } {
+        return bench.swapchainOf(images, old, .b8g8r8a8_unorm);
+    }
+
+    fn swapchainOf(bench: *Bench, images: u32, old: ?*facet.Swapchain, format: facet.Format) struct { facet.Result, ?*facet.Swapchain } {
         var made: ?*facet.Swapchain = null;
         const result = bench.rig.fb.CreateSwapchain(bench.device, &.{
             .surface = bench.surface,
             .min_image_count = images,
-            .image_format = .b8g8r8a8_unorm,
+            .image_format = format,
             .image_extent = .{ .width = width, .height = height },
             .old_swapchain = old,
         }, &made);
@@ -181,7 +190,8 @@ test "a surface: its size, one format, fifo, and as many images as it has room f
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceSurfacePresentModes(bench.physical, bench.surface, &count, &mode));
     try testing.expectEqual(facet.PresentMode.fifo, mode[0]);
 
-    // A display of 16 bits a pixel: nothing facet.library draws in.
+    // A display of a format facet.library does not draw in - 24 bits, a
+    // palette's.
     fake.format = .undefined;
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceSurfaceFormats(bench.physical, bench.surface, &count, null));
     try testing.expectEqual(@as(u32, 0), count);
@@ -189,6 +199,49 @@ test "a surface: its size, one format, fifo, and as many images as it has room f
     try testing.expect(!supported);
     const result, _ = bench.swapchain(2, null);
     try testing.expectEqual(facet.Result.error_format_not_supported, result);
+}
+
+test "a display of 565: its format, a swapchain of it, what is drawn dithered into its pixels" {
+    var fake = Fake{ .format = .r5g6b5_unorm_pack16 };
+    var bench = try Bench.up(&fake);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    var count: u32 = 1;
+    var format: [1]facet.SurfaceFormat = undefined;
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceSurfaceFormats(bench.physical, bench.surface, &count, &format));
+    try testing.expectEqual(facet.Format.r5g6b5_unorm_pack16, format[0].format);
+    var made, var swapchain = bench.swapchainOf(2, null, .b8g8r8a8_unorm);
+    try testing.expectEqual(facet.Result.error_format_not_supported, made);
+    made, swapchain = bench.swapchainOf(2, null, .r5g6b5_unorm_pack16);
+    try testing.expectEqual(facet.Result.success, made);
+    defer fb.DestroySwapchain(bench.device, swapchain);
+    var images: [2]*facet.Image = undefined;
+    count = 2;
+    try testing.expectEqual(facet.Result.success, fb.GetSwapchainImages(bench.device, swapchain.?, &count, &images));
+    const acquired, const index = bench.acquire(swapchain.?, facet.WAIT_FOREVER_NS);
+    try testing.expectEqual(facet.Result.success, acquired);
+
+    // 128, 64 and 191 of 255, none of them a step of 565 as shown.
+    try drawCleared(&bench, images[index], .r5g6b5_unorm_pack16, .{ 0.5, 0.25, 0.75, 1 });
+    // Each channel of the four by four averages to the colour, as a
+    // display widens 565, to within one of 255.
+    const want = [3]i64{ 128, 64, 191 };
+    var sums: [3]i64 = @splat(0);
+    for (0..4) |y| for (0..4) |x| {
+        const pixel: u32 = fake.pixel565(index, x, y);
+        const red = pixel >> 11;
+        const green = pixel >> 5 & 0x3F;
+        const blue = pixel & 0x1F;
+        sums[0] += red << 3 | red >> 2;
+        sums[1] += green << 2 | green >> 4;
+        sums[2] += blue << 3 | blue >> 2;
+    };
+    for (sums, want) |sum, channel| try testing.expect(@abs(sum - channel * 16) <= 16);
+    try testing.expect(fake.pixel565(index, 0, 0) != fake.pixel565(index, 1, 0) or fake.pixel565(index, 0, 0) != fake.pixel565(index, 0, 1));
+    for (0..height) |y| for (0..width) |x| {
+        try testing.expectEqual(fake.pixel565(index, x % 4, y % 4), fake.pixel565(index, x, y));
+    };
+    try testing.expectEqual(facet.Result.success, bench.present(swapchain.?, index));
 }
 
 test "a swapchain: its images the surface's buffers, handed out in turn, shown in the order presented" {
@@ -411,12 +464,17 @@ test "a surface is kept while a swapchain on it is left" {
 
 /// `image` cleared to red by a render pass over the whole of it.
 fn drawRed(bench: *Bench, image: *facet.Image) !void {
+    return drawCleared(bench, image, .b8g8r8a8_unorm, .{ 1, 0, 0, 1 });
+}
+
+/// `image`, of `format`, cleared to `rgba` through a render pass.
+fn drawCleared(bench: *Bench, image: *facet.Image, format: facet.Format, rgba: [4]f32) !void {
     const fb = bench.rig.fb;
     const device = bench.device;
     var view: ?*facet.ImageView = null;
-    try testing.expectEqual(facet.Result.success, fb.CreateImageView(device, &.{ .image = image, .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &view));
+    try testing.expectEqual(facet.Result.success, fb.CreateImageView(device, &.{ .image = image, .format = format, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &view));
     defer fb.DestroyImageView(device, view);
-    const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .present_src };
+    const attachment = facet.AttachmentDescription{ .format = format, .load_op = .clear, .store_op = .store, .final_layout = .present_src };
     const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
     const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
     var pass: ?*facet.RenderPass = null;
@@ -431,8 +489,8 @@ fn drawRed(bench: *Bench, image: *facet.Image) !void {
     var commands: [1]?*facet.CommandBuffer = undefined;
     try testing.expectEqual(facet.Result.success, fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .command_buffer_count = 1 }, &commands));
     try testing.expectEqual(facet.Result.success, fb.BeginCommandBuffer(commands[0].?, &.{}));
-    const red = facet.ClearValue{ .color = .{ .float32 = .{ 1, 0, 0, 1 } } };
-    fb.CmdBeginRenderPass(commands[0].?, &.{ .render_pass = pass.?, .framebuffer = frame.?, .render_area = .{ .extent = .{ .width = width, .height = height } }, .clear_value_count = 1, .clear_values = @ptrCast(&red) }, .@"inline");
+    const clear = facet.ClearValue{ .color = .{ .float32 = rgba } };
+    fb.CmdBeginRenderPass(commands[0].?, &.{ .render_pass = pass.?, .framebuffer = frame.?, .render_area = .{ .extent = .{ .width = width, .height = height } }, .clear_value_count = 1, .clear_values = @ptrCast(&clear) }, .@"inline");
     fb.CmdEndRenderPass(commands[0].?);
     try testing.expectEqual(facet.Result.success, fb.EndCommandBuffer(commands[0].?));
     const submit = facet.SubmitInfo{ .command_buffer_count = 1, .command_buffers = @ptrCast(&commands) };

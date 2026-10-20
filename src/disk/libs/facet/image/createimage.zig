@@ -33,8 +33,9 @@ const _image = @import("_image.zig");
 ///   gives: a texture, in blocks of 4 x 4 texels, an 8888 texel kept in
 ///   64 bits (sdk.facet.texture). Its texels come in by
 ///   CmdCopyBufferToImage.
-/// - COLOR_ATTACHMENT, of B8G8R8A8 or R8G8B8A8, one level: rows, each on
-///   a cache line, in either tiling.
+/// - COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, one level: rows,
+///   each on a cache line, in either tiling. What is drawn into one of
+///   R5G6B5 is dithered into it (CmdBeginRenderPass).
 /// - D16_UNORM with DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth
 ///   that lives in the tiles alone, never stored, whose memory may be of
 ///   the lazily allocated type.

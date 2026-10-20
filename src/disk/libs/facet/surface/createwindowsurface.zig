@@ -79,9 +79,9 @@ const window = @import("window.zig");
 /// picture.
 ///
 /// NOTES:
-/// A window on a screen that is not 32 bits a pixel has no format
-/// facet.library draws in: GetPhysicalDeviceSurfaceFormats lists none for
-/// it. A simple-refresh window with `WA_NoCareRefresh` keeps no copy of its
+/// A window on a screen whose pixels are neither 32 bits nor 565 has no
+/// format facet.library draws in: GetPhysicalDeviceSurfaceFormats lists
+/// none for it. A simple-refresh window with `WA_NoCareRefresh` keeps no copy of its
 /// covered parts, which the next picture draws anyway.
 ///
 /// BUGS:

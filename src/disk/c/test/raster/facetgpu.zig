@@ -12,17 +12,28 @@ const sdk = @import("sdk");
 const scenes = @import("scenes.zig");
 const scene = @import("facetscene.zig");
 const facet = sdk.facet;
+const graphics = sdk.graphics;
 const intuition = sdk.intuition;
+const PixelFormat = sdk.rtg.bitmaps.PixelFormat;
+const TagItem = sdk.utility.TagItem;
+const ExecBase = sdk.interface.exec.ExecBase;
 const FacetBase = sdk.interface.facet.FacetBase;
+const GraphicsBase = sdk.interface.graphics.GraphicsBase;
+const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 
 pub const most_images = 4;
 
-pub const Failure = error{ NoMemory, NoDevice, NoSurface, NotThirtyTwoBits, NoSwapchain, Refused };
+pub const Failure = error{ NoMemory, NoDevice, NoSurface, Undrawable, NoSwapchain, Refused };
 
 /// Everything made through facet.library, given back by `down` in the
 /// order it goes.
 pub const Gpu = struct {
     fb: *FacetBase,
+    /// Where graphics.library is opened from, to name the display's pixels
+    /// facet.library does not draw in.
+    sys: *ExecBase,
+    /// Those pixels, with `error.Undrawable`.
+    found: PixelFormat = unknown,
     instance: ?*facet.Instance = null,
     physical: *facet.PhysicalDevice = undefined,
     memory: facet.PhysicalDeviceMemoryProperties = undefined,
@@ -112,24 +123,52 @@ pub const Gpu = struct {
     /// The surface over the whole of `screen`.
     pub fn onScreen(gpu: *Gpu, screen: *intuition.Screen) Failure!void {
         try expect(gpu.fb.CreateScreenSurface(gpu.instance.?, &.{ .screen = screen }, &gpu.surface), error.NoSurface);
-        try gpu.formatOfSurface();
+        if (gpu.formatOfSurface()) return;
+        gpu.found = gpu.pixelsOf(.{ .screen = screen });
+        return error.Undrawable;
     }
 
     /// The surface over the inside of `window`.
     pub fn onWindow(gpu: *Gpu, window: *intuition.Window) Failure!void {
         try expect(gpu.fb.CreateWindowSurface(gpu.instance.?, &.{ .window = window }, &gpu.surface), error.NoSurface);
-        try gpu.formatOfSurface();
+        if (gpu.formatOfSurface()) return;
+        gpu.found = gpu.pixelsOf(.{ .window = window });
+        return error.Undrawable;
     }
 
-    fn formatOfSurface(gpu: *Gpu) Failure!void {
+    /// The surface's format, if facet.library draws in it.
+    fn formatOfSurface(gpu: *Gpu) bool {
         const fb = gpu.fb;
         var supported = false;
         _ = fb.GetPhysicalDeviceSurfaceSupport(gpu.physical, 0, gpu.surface.?, &supported);
         var formats: [1]facet.SurfaceFormat = undefined;
         var count: u32 = 1;
         _ = fb.GetPhysicalDeviceSurfaceFormats(gpu.physical, gpu.surface.?, &count, &formats);
-        if (!supported or count == 0) return error.NotThirtyTwoBits;
+        if (!supported or count == 0) return false;
         gpu.format = formats[0].format;
+        return true;
+    }
+
+    /// What the screen's or the window's RastPort draws into is made of:
+    /// a surface facet.library does not draw in lists no format, so it is
+    /// asked of graphics.library.
+    fn pixelsOf(gpu: *Gpu, of: union(enum) { screen: *intuition.Screen, window: *intuition.Window }) PixelFormat {
+        const sys = gpu.sys;
+        const intuition_lib = sys.OpenLibrary(intuition.INTUITIONNAME, intuition.INTUITION_VERSION) orelse return unknown;
+        defer sys.CloseLibrary(intuition_lib);
+        const graphics_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, graphics.GRAPHICS_VERSION) orelse return unknown;
+        defer sys.CloseLibrary(graphics_lib);
+        const ib: *IntuitionBase = @ptrCast(intuition_lib);
+        const gb: *GraphicsBase = @ptrCast(graphics_lib);
+        var rastport: usize = 0;
+        switch (of) {
+            .screen => |screen| ib.GetScreenAttrs(screen, &[_]TagItem{ .{ .tag = intuition.screens.SA_RastPort, .data = @intFromPtr(&rastport) }, .{} }),
+            .window => |window| ib.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = intuition.windows.WA_RastPort, .data = @intFromPtr(&rastport) }, .{} }),
+        }
+        if (rastport == 0) return unknown;
+        var format: u32 = @intFromEnum(unknown);
+        gb.GetRPAttrs(@ptrFromInt(rastport), &[_]TagItem{ .{ .tag = graphics.RPTAG_Format, .data = @intFromPtr(&format) }, .{} });
+        return @enumFromInt(@as(u8, @truncate(format)));
     }
 
     /// A swapchain of `wanted` images on the surface at its size now - or
@@ -450,13 +489,25 @@ pub fn expect(result: facet.Result, failure: Failure) Failure!void {
 }
 
 /// What a failure says.
-pub fn explain(err: Failure) [*:0]const u8 {
+pub fn explain(gpu: *const Gpu, err: Failure) [*:0]const u8 {
     return switch (err) {
         error.NoMemory => "Not enough memory",
         error.NoDevice => "No device of facet.library's",
         error.NoSurface => "No surface over it",
-        error.NotThirtyTwoBits => "The display is not 32 bits a pixel",
+        error.Undrawable => undrawable(gpu.found),
         error.NoSwapchain => "No swapchain: no room for its images",
         error.Refused => "facet.library refused something",
+    };
+}
+
+/// A format graphics.library would not name.
+const unknown: PixelFormat = @enumFromInt(0xFF);
+
+/// The display's pixels named, and what facet.library draws in.
+fn undrawable(pixels: PixelFormat) [*:0]const u8 {
+    const draws = ": facet.library draws in bgra32, rgba32 and rgb565";
+    return switch (pixels) {
+        inline .rgba32, .bgra32, .rgb24, .bgr24, .rgb565, .argb1555, .indexed8, .gray8, .mono1 => |named| "The display's pixels are " ++ @tagName(named) ++ draws,
+        _ => "The display's pixels are of a format not known here" ++ draws,
     };
 }

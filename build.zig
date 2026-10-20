@@ -674,6 +674,26 @@ pub fn build(b: *std.Build) void {
     run_virt.stdio = .inherit;
     run_virt.has_side_effects = true;
     b.step("virt", "Boot the RISC-V 64 kernel in QEMU's virt machine (quit with Ctrl-A X)").dependOn(&run_virt.step);
+
+    // The same with what the board has around it: the ramfb, 1920x1080 as
+    // the VisionFive 2's HDMI, and USB with a keyboard and a tablet, whose
+    // pointer stays where the host's is. The window is QEMU's own choice -
+    // GTK or SDL, VNC on :5900 where it has neither - with the host's
+    // cursor hidden over the machine's pointer; the console stays on the
+    // terminal.
+    const run_virt_display = b.addSystemCommand(&.{
+        "qemu-system-riscv64",     "-M",        "virt",      "-m",      "512M",
+        "-smp",                    "4",         "-bios",     "default", "-display",
+        "default,show-cursor=off", "-serial",   "mon:stdio", "-device", "ramfb",
+        "-device",                 "qemu-xhci", "-device",   "usb-kbd", "-device",
+        "usb-tablet",              "-kernel",
+    });
+    run_virt_display.addArtifactArg(virt_kernel);
+    run_virt_display.addArg("-initrd");
+    run_virt_display.addFileArg(rv64_disk_bin);
+    run_virt_display.stdio = .inherit;
+    run_virt_display.has_side_effects = true;
+    b.step("virt-display", "Boot QEMU's virt machine with its display, keyboard and tablet").dependOn(&run_virt_display.step);
     // Target-independent code, tested on the host.
     const test_step = b.step("test", "Run the unit tests on the host");
     const test_options = b.addOptions();

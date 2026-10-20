@@ -44,7 +44,7 @@ const Gpu = facetgpu.Gpu;
 const Failure = facetgpu.Failure;
 
 pub const COMMAND_NAME = "FacetWindow";
-const VERSION_STRING = "\x00$VER: FacetWindow 1.1 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetWindow 1.2 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "WIDTH/N,HEIGHT/N,NEAREST/S,FRAMES/N,CLOSE/S";
@@ -187,24 +187,24 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var open = true;
     defer if (open) ib.CloseWindow(window);
 
-    var gpu = Gpu{ .fb = @ptrCast(facet_lib) };
+    var gpu = Gpu{ .fb = @ptrCast(facet_lib), .sys = sys };
     // Given back before the window closes: the surface is over it.
     defer gpu.down();
-    gpu.up(COMMAND_NAME) catch |err| return failed(dl, err);
-    gpu.onWindow(window) catch |err| return failed(dl, err);
-    gpu.prepare(nearest, &pattern) catch |err| return failed(dl, err);
-    gpu.chain(2) catch |err| return failed(dl, err);
+    gpu.up(COMMAND_NAME) catch |err| return failed(dl, &gpu, err);
+    gpu.onWindow(window) catch |err| return failed(dl, &gpu, err);
+    gpu.prepare(nearest, &pattern) catch |err| return failed(dl, &gpu, err);
+    gpu.chain(2) catch |err| return failed(dl, &gpu, err);
 
     if (close) {
         open = false;
-        const lost = closeInFlight(&gpu, ib, dl, window) catch |err| return failed(dl, err);
+        const lost = closeInFlight(&gpu, ib, dl, window) catch |err| return failed(dl, &gpu, err);
         if (!lost) return say(dl, "The window closed with a frame on its way, and the surface was not lost");
         _ = Printf(dl, "The window closed with a frame on its way: the surface is lost\n", .{});
         return dos.RETURN_OK;
     }
 
     const began = now(tb);
-    const run = spin(&gpu, ib, dl, window, frames) catch |err| return failed(dl, err);
+    const run = spin(&gpu, ib, dl, window, frames) catch |err| return failed(dl, &gpu, err);
     const elapsed = now(tb) - began;
 
     _ = Printf(dl, "%u frames through facet.library in a window of %ux%u, %s: %lu shown a second; the swapchain made anew %u times\n", .{
@@ -225,8 +225,8 @@ fn number(given: usize, otherwise: u32, least: u32) u32 {
     return @intCast(@max(@as(i32, @intCast(least)), @as(*const i32, @ptrFromInt(given)).*));
 }
 
-fn failed(dl: *DosBase, err: Failure) i32 {
-    return say(dl, facetgpu.explain(err));
+fn failed(dl: *DosBase, gpu: *const Gpu, err: Failure) i32 {
+    return say(dl, facetgpu.explain(gpu, err));
 }
 
 fn say(dl: *DosBase, text: [*:0]const u8) i32 {

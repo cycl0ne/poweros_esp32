@@ -28,7 +28,8 @@ const _image = @import("../image/_image.zig");
 /// - B8G8R8A8_UNORM and R8G8B8A8_UNORM: colour attachments, blended, in
 ///   either tiling; sampled, filtered, in optimal tiling; copied to and
 ///   from; a vertex's value.
-/// - R5G6B5_UNORM_PACK16: sampled, filtered, in optimal tiling; copied.
+/// - R5G6B5_UNORM_PACK16: colour attachments, blended, in either tiling;
+///   sampled, filtered, in optimal tiling; copied.
 /// - D16_UNORM: a depth attachment, in optimal tiling.
 /// - R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
 ///
