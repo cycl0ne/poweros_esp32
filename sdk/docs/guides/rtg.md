@@ -321,8 +321,12 @@ is one whole piece of a board's buffer. What the board refuses it does
 itself, with the same result.
 
 The ESP32-S3's boards have no engine: that chip has nothing that draws,
-so graphics.library draws everything with the CPU there, and so it does
-on the `fb` boards of the RISC-V 64 machines. The ESP32-P4's
+so graphics.library draws everything with the CPU there. The `fb` boards
+of the RISC-V 64 machines take the processor's cores as their engine: a
+job over much of a buffer of 32 bits a pixel is cut into bands of rows,
+which exec's workers draw at once (`ShareWork`), pixel for pixel as
+graphics.library would; a small job is drawn by the task that asks. The
+ESP32-P4's
 `dsi` board fills with the PPA and copies with the 2D-DMA, for RGB565
 buffers whose start and pitch are whole cache lines. The engine writes
 memory behind the cache's back, so it is given only the whole 64-byte
