@@ -47,6 +47,7 @@ pub const rom_modules = .{
     @import("rom/devs/console/console.zig"),
     @import("rom/libs/utility/utility.zig"),
     @import("rom/libs/expansion/expansion.zig"),
+    @import("rom/resources/battmem/battmem.zig"),
     @import("rom/libs/dos/dos.zig"),
     @import("rom/libs/ramlib/ramlib.zig"),
     @import("rom/handler/nil/nil.zig"),

@@ -884,9 +884,9 @@ test "a moment the kernel stored in UTC is shown in the system's zone" {
     try testing.expectEqual(dateOfClock(rig.ub, 2020, 5, 6, 5, 8, 10), fib.date);
     rig.unlock(held);
 
-    // Central Europe, in May: summer time, two hours east.
+    // Central Europe, in May: summer time, two hours east. The zone is
+    // asked each time, so it counts without the volume read again.
     rig.own_media.time_zone = dos.timezone.parse("CET-1CEST,M3.5.0,M10.5.0/3").?;
-    try rig.remount();
     held = rig.lock("hello.txt", dos.SHARED_LOCK);
     try testing.expectEqual(dos.DOSTRUE, rig.examine(held, &fib).res1);
     try testing.expectEqual(dateOfClock(rig.ub, 2020, 5, 6, 7, 8, 10), fib.date);

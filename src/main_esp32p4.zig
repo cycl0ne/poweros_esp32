@@ -50,6 +50,7 @@ pub const rom_modules = .{
     @import("rom/resources/usbport/usbport.zig"),
     @import("rom/resources/battery/battery.zig"),
     @import("rom/resources/battclock/battclock.zig"),
+    @import("rom/resources/battmem/battmem.zig"),
     @import("rom/resources/dma/dma.zig"),
     @import("rom/libs/dos/dos.zig"),
     @import("rom/libs/ramlib/ramlib.zig"),

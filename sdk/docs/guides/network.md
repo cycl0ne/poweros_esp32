@@ -322,7 +322,7 @@ link's speed unless the file says.
 | `ENVARC:Sys/net/id_ed25519` | the key `C:net/SSH` and `C:net/SCP` log in with, made by `SSH KEYGEN`; `.pub` beside it |
 | `ENVARC:Sys/net/known_hosts` | the host keys `C:net/SSH` and `C:net/SCP` have seen, OpenSSH's lines |
 | `ENVARC:Sys/net/filter` | the packet filter's rules: `S:Network-Startup` loads them before any interface comes up |
-| `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule |
+| `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule; `SetClock ZONE` in the startup sequence keeps it in battmem.resource for the file systems, so after changing it run that too |
 | `S:Network-Startup` | run by the Startup-Sequence in a shell of its own, once the desktop is up: `AddNetInterface ALL QUIET`, then `TimeSync` and, when a server answered, `SetClock SAVE`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
 
 An interface file is keywords, one to a line, and `/* */` comments:

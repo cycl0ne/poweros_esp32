@@ -66,3 +66,34 @@ test "rules that are not ones" {
         try testing.expectEqual(@as(?Zone, null), parse(text));
     }
 }
+
+test "a zone in 64 bits and back: what battmem.resource keeps" {
+    const rules = [_][]const u8{
+        "UTC0",
+        "CET-1CEST,M3.5.0,M10.5.0/3",
+        "EST5EDT",
+        "<+0530>-5:30",
+        "<+1345>-13:45<+1445>,M9.5.0/2:45,M4.1.0/3:45",
+        "AEST-10AEDT,M10.1.0,M4.1.0/3",
+        "XXX3YYY,J60/-2,300/167",
+        "<-03>3<-02>,M3.5.0/-2,M10.5.0/-1",
+    };
+    for (rules) |rule| {
+        const zone = parse(rule).?;
+        const bits = timezone.pack(&zone).?;
+        try testing.expectEqual(zone, timezone.unpack(bits).?);
+    }
+    // UTC is 0, and 0 - bits nobody wrote - is UTC.
+    try testing.expectEqual(@as(u64, 0), timezone.pack(&parse("UTC0").?).?);
+    try testing.expectEqual(@as(i32, 0), timezone.unpack(0).?.offsetAt(0));
+}
+
+test "a zone that is not in whole quarter hours is not kept; bits that hold no zone are none" {
+    try testing.expectEqual(@as(?u64, null), timezone.pack(&parse("LMT-0:17:30").?));
+    try testing.expectEqual(@as(?u64, null), timezone.pack(&parse("CET-1CEST,M3.5.0/2:10,M10.5.0/3").?));
+    // Bit 63, a fourth kind of change, a month 13, summer bits without summer.
+    try testing.expectEqual(@as(?Zone, null), timezone.unpack(1 << 63));
+    try testing.expectEqual(@as(?Zone, null), timezone.unpack(1 << 8 | 3 << 17));
+    try testing.expectEqual(@as(?Zone, null), timezone.unpack(1 << 8 | (13 | 1 << 4) << 19 | (3 | 1 << 4) << 42));
+    try testing.expectEqual(@as(?Zone, null), timezone.unpack(4 << 9));
+}

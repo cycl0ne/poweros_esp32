@@ -11,3 +11,5 @@ pub const jpeg = @import("jpeg.zig");
 pub const battery = @import("battery.zig");
 pub const usbport = @import("usbport.zig");
 pub const battclock = @import("battclock.zig");
+pub const battmem = @import("battmem.zig");
+pub const battmembits = @import("battmembits.zig");

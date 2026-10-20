@@ -19,6 +19,8 @@
 //!
 //! Times are seconds since 1 January 1970, UTC.
 
+const std = @import("std");
+
 /// Where the system's rule is kept: its first line that is not a `#`
 /// comment. The system clock keeps the local time this rule gives.
 pub const zone_file = "ENVARC:Sys/timezone";
@@ -76,6 +78,97 @@ pub fn parse(text: []const u8) ?Zone {
     zone.end = reader.change() orelse return null;
     if (reader.at != text.len) return null;
     return zone;
+}
+
+// --- in 64 bits ----------------------------------------------------------------
+
+/// A zone in 64 bits, as battmem.resource keeps it (BATTMEM_ZONE): its
+/// offsets and its times of change in quarter hours, so a rule with one
+/// that is not a whole quarter hour is not kept, and null is answered.
+/// UTC is 0.
+///
+///   bits 0-7    the standard offset east of UTC, signed
+///   bit  8      whether there is summer time
+///   bits 9-16   the summer offset, signed
+///   bits 17-39  the change to summer time
+///   bits 40-62  the change back
+///
+/// A change is its kind (bits 0-1: 0 `Mm.w.d`, 1 `Jn`, 2 `n`), its date
+/// (bits 2-11: the month, the week << 4 and the weekday << 7, or the day)
+/// and its time (bits 12-22, signed). Without summer time, only the
+/// standard offset is kept.
+pub fn pack(zone: *const Zone) ?u64 {
+    var bits = quarters(zone.standard, i8) orelse return null;
+    if (!zone.has_summer) return bits;
+    bits |= 1 << 8;
+    bits |= (quarters(zone.summer, i8) orelse return null) << 9;
+    bits |= (packChange(zone.start) orelse return null) << 17;
+    bits |= (packChange(zone.end) orelse return null) << 40;
+    return bits;
+}
+
+/// The zone `pack` kept in `bits`, as `parse` gives it from its rule;
+/// null when they hold none.
+pub fn unpack(bits: u64) ?Zone {
+    if (bits >> 63 != 0) return null;
+    var zone: Zone = .{ .standard = secondsIn(bits, i8) };
+    zone.summer = zone.standard + 3600;
+    if (bits & 1 << 8 == 0) return if (bits >> 9 == 0) zone else null;
+    zone.has_summer = true;
+    zone.summer = secondsIn(bits >> 9, i8);
+    zone.start = unpackChange(bits >> 17) orelse return null;
+    zone.end = unpackChange(bits >> 40) orelse return null;
+    return zone;
+}
+
+/// `whole` seconds as a count of quarter hours in a `T`, its bits; null
+/// when they are not whole quarter hours or do not fit.
+fn quarters(whole: i32, comptime T: type) ?u64 {
+    if (@rem(whole, 900) != 0) return null;
+    const count = @divExact(whole, 900);
+    if (count < std.math.minInt(T) or count > std.math.maxInt(T)) return null;
+    const Bits = std.meta.Int(.unsigned, @bitSizeOf(T));
+    return @as(Bits, @bitCast(@as(T, @intCast(count))));
+}
+
+/// The quarter hours in the low bits of `bits`, as a `T`, in seconds.
+fn secondsIn(bits: u64, comptime T: type) i32 {
+    const Bits = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const count: T = @bitCast(@as(Bits, @truncate(bits)));
+    return @as(i32, count) * 900;
+}
+
+fn packChange(change: Change) ?u64 {
+    const date: u64 = switch (change.kind) {
+        .month_week_day => change.month | @as(u64, change.week) << 4 | @as(u64, change.weekday) << 7,
+        .julian_no_leap, .julian => change.day,
+    };
+    return @intFromEnum(change.kind) | date << 2 | (quarters(change.seconds, i11) orelse return null) << 12;
+}
+
+fn unpackChange(bits: u64) ?Change {
+    const date: u16 = @truncate(bits >> 2 & 0x3FF);
+    var change: Change = .{ .seconds = secondsIn(bits >> 12, i11) };
+    switch (bits & 3) {
+        0 => {
+            change.month = @truncate(date & 0xF);
+            change.week = @truncate(date >> 4 & 7);
+            change.weekday = @truncate(date >> 7);
+            if (change.month == 0 or change.month > 12 or change.week == 0 or change.week > 5 or change.weekday > 6) return null;
+        },
+        1 => {
+            change.kind = .julian_no_leap;
+            change.day = date;
+            if (change.day == 0 or change.day > 365) return null;
+        },
+        2 => {
+            change.kind = .julian;
+            change.day = date;
+            if (change.day > 365) return null;
+        },
+        else => return null,
+    }
+    return change;
 }
 
 const Reader = struct {

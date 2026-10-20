@@ -40,7 +40,9 @@
 //! - **Names** are `names.zig`'s: a name dos can hold as it is, otherwise
 //!   its stand-in.
 //! - **Moments are local time, in the system's zone** (the medium's
-//!   `timeZone`, the rule the system clock is set by). A moment on the
+//!   `timeZone`, the rule the system clock is set by, asked each time a
+//!   moment is turned: battmem.resource's, not a file, so the zone is
+//!   there for a volume that holds the zone file itself). A moment on the
 //!   medium that says which zone it is in - its zone byte - is taken back
 //!   to UTC with that zone and on into the system's; one that does not is
 //!   shown as it is. What this writes is local time with the system's
@@ -258,8 +260,6 @@ pub fn FileSystem(comptime Media: type) type {
         found_dirty: bool = false,
         /// The medium's change count when the volume was read.
         change_num: u32 = 0,
-        /// The zone the system clock keeps, read when the volume is.
-        zone: timezone.Zone = .{},
         /// The volume's name, as the device list shows it.
         name_buf: [fat.exfat_label_max * 2]u8 = @splat(0),
         name_len: usize = 0,
@@ -324,7 +324,6 @@ pub fn FileSystem(comptime Media: type) type {
             fs.geo = try Geometry.of(fs.sector, volume.first, fs.media.blocks(), block_bytes);
             if (!layout.checksumHolds(fs.media, volume.first, fs.sector)) return error.MediumFailed;
             fs.found_dirty = fs.geo.flags & fat.exfat_volume_dirty != 0;
-            fs.zone = fs.media.timeZone();
             fs.dirty = false;
 
             // A size set while no card was in is tried only now; when its
@@ -994,8 +993,9 @@ pub fn FileSystem(comptime Media: type) type {
             const local = secondsOf(_fat.dateOf(fs.ub, dir_area.stampOf(moment)));
             // The offset is the zone's at that moment in UTC; the standard
             // offset is near enough to find which it is.
-            const utc = local - fs.zone.standard;
-            const offset = fs.zone.offsetAt(utc + timezone.datestamp_epoch);
+            const rule = fs.media.timeZone();
+            const utc = local - rule.standard;
+            const offset = rule.offsetAt(utc + timezone.datestamp_epoch);
             const quarters: i8 = @intCast(@divTrunc(offset, 900));
             return fat.exfat_utc_valid | (@as(u8, @bitCast(quarters)) & 0x7F);
         }
@@ -1008,7 +1008,8 @@ pub fn FileSystem(comptime Media: type) type {
             const raw: i32 = zone & 0x7F;
             const quarters: i32 = if (raw & 0x40 != 0) raw - 128 else raw;
             const utc = secondsOf(stored) - @as(i64, quarters) * 900;
-            return dateStampOf(utc + fs.zone.offsetAt(utc + timezone.datestamp_epoch));
+            const rule = fs.media.timeZone();
+            return dateStampOf(utc + rule.offsetAt(utc + timezone.datestamp_epoch));
         }
 
         /// What a key says - where its data is, how much, its attributes -

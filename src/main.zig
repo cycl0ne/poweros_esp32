@@ -43,6 +43,7 @@ pub const rom_modules = .{
     @import("rom/resources/usbport/usbport.zig"),
     @import("rom/resources/battery/battery.zig"),
     @import("rom/resources/battclock/battclock.zig"),
+    @import("rom/resources/battmem/battmem.zig"),
     // The drivers the board's parts want.
     @import("boards/boards.zig").romtags.modules,
     @import("rom/libs/dos/dos.zig"),
