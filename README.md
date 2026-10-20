@@ -76,27 +76,72 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
 
 ### What is in it
 
-```
- +-----------------------------------------------------------------------+
- | programs, commands and the shell, the desktop (anvil.library)         |
- +-----------------+-----------------+-----------------+-----------------+
- | intuition       | datatypes       | bsdsocket, tls  | audio.device    |
- | layers          | asl, icon       | usb.library     | audiocodec      |
- | graphics        | diskfont        | pci.library     |                 |
- ###################-----------------+-----------------###################
- # rtg.library     # dos.library     | devices         # rta.library     #
- # display drivers # posfs, FAT,     | network, USB,   # sound drivers   #
- #                 # flash, RAM:     | disks, serial   #                 #
- ###################-----------------+-----------------###################
- | exec.library: tasks on every core, ports, memory, libraries           |
- | expansion.library: the board, described as data                       |
- +-----------------------------------------------------------------------+
- | ESP32-S3, ESP32-P4, RISC-V 64 under SBI firmware                      |
- +-----------------------------------------------------------------------+
+```mermaid
+flowchart TB
+    subgraph m_programs ["Programs"]
+        m_shell["the shell<br/>56 commands in C:"]
+        m_desktop["the desktop<br/>anvil.library"]
+        m_apps["SYS:Programs<br/>SYS:System"]
+    end
+
+    subgraph m_modules ["Libraries and devices"]
+        m_intuition["intuition.library<br/>layers.library<br/>graphics.library"]
+        m_datatypes["datatypes.library<br/>asl, icon, diskfont"]
+        m_network["bsdsocket.library<br/>tls, usb, pci"]
+        m_audio["audio.device"]
+        m_rtg["<b>rtg.library</b><br/>the displays<br/>and their drivers"]
+        m_dos["dos.library<br/>posfs, FAT, flash, RAM:"]
+        m_devices["devices<br/>network, USB,<br/>disks, serial"]
+        m_rta["<b>rta.library</b><br/>the sound outputs<br/>and their drivers"]
+    end
+
+    subgraph m_kernel ["Kernel"]
+        m_exec["exec.library<br/>tasks on every core,<br/>ports, memory, libraries"]
+        m_expansion["expansion.library<br/>the board,<br/>described as data"]
+    end
+
+    subgraph m_hardware ["Hardware"]
+        m_s3["ESP32-S3"]
+        m_p4["ESP32-P4"]
+        m_rv64["RISC-V 64<br/>under SBI firmware"]
+    end
+
+    m_intuition --> m_rtg
+    m_datatypes --> m_dos
+    m_network --> m_devices
+    m_audio --> m_rta
+
+    m_shell ~~~ m_intuition
+    m_desktop ~~~ m_datatypes
+    m_desktop ~~~ m_network
+    m_apps ~~~ m_audio
+    m_rtg ~~~ m_exec
+    m_dos ~~~ m_exec
+    m_devices ~~~ m_expansion
+    m_rta ~~~ m_expansion
+    m_exec ~~~ m_s3
+    m_exec ~~~ m_p4
+    m_expansion ~~~ m_rv64
+
+    classDef prog fill:#ede9fe,stroke:#7c3aed,color:#111827
+    class m_shell,m_apps prog
+    classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
+    class m_desktop,m_intuition,m_datatypes,m_network,m_dos,m_exec,m_expansion lib
+    classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
+    class m_audio,m_devices dev
+    classDef key fill:#2563eb,stroke:#1e3a8a,stroke-width:3px,color:#ffffff
+    class m_rtg,m_rta key
+    classDef chip fill:#e5e7eb,stroke:#6b7280,color:#111827
+    class m_s3,m_p4,m_rv64 chip
+    style m_programs fill:none,stroke:#9ca3af
+    style m_modules fill:none,stroke:#9ca3af
+    style m_kernel fill:none,stroke:#9ca3af
+    style m_hardware fill:none,stroke:#9ca3af
 ```
 
-Each layer uses the ones below it. Two libraries stand between the
-hardware and everything a program shows and plays:
+Each layer uses the ones below it; libraries are blue, devices green.
+Two libraries stand between the hardware and everything a program shows
+and plays:
 
 **rtg.library** keeps the displays. Each is a board of a driver, and
 graphics.library, layers and intuition draw into its buffers without
