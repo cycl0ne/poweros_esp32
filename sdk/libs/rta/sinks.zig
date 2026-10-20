@@ -100,6 +100,10 @@ pub const AudioSink = extern struct {
 /// AudioSink.flags
 /// The sink has been started and not stopped. The library's.
 pub const AUDIOSF_RUNNING: u32 = 1 << 0;
+/// Deleted while it was started: off the list already, and given back
+/// once it is stopped. The task playing through it was signalled, and
+/// stops it. The library's; since 1.4.
+pub const AUDIOSF_GONE: u32 = 1 << 1;
 
 /// What a driver fills in. Every slot may be null; a null slot is an
 /// operation the sink has not got.

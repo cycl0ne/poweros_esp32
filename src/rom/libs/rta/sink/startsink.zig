@@ -63,6 +63,10 @@ pub fn StartSink(_: *RtaBase, sink: *rta.AudioSink, task: *exec.Task, signal_mas
     const mode = sink.mode orelse return err.RTAERR_BAD_MODE;
     const ops = sink.ops orelse return err.RTAERR_NOT_SUPPORTED;
     const start = ops.start orelse return err.RTAERR_NOT_SUPPORTED;
+    // Kept, to tell the task if the sink is deleted under it.
+    const private = _sink.privateOf(sink);
+    private.task = task;
+    private.signal_mask = signal_mask;
     const code = start(sink, mode, task, signal_mask);
     if (code == err.RTAERR_OK) sink.flags |= rta.sinks.AUDIOSF_RUNNING;
     return code;

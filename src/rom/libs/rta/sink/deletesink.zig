@@ -24,9 +24,12 @@ const _sink = @import("_sink.zig");
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// A sink that is started is refused, with `RTAERR_IN_USE` in
-/// `RtaLastError`: something is playing through it. Otherwise the
-/// driver's `destroy` is called and the sink leaves the list.
+/// The sink leaves the list, the driver's `destroy` is called, and the
+/// sink is freed. Since 1.4, one that is started - something plays
+/// through it - leaves the list at once and is marked `AUDIOSF_GONE`, and
+/// the task that started it is signalled with the signal it gave
+/// `StartSink`; the rest happens when that task stops it (`StopSink`).
+/// Until then the driver's operations are still called.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the sink list, and if the
@@ -36,8 +39,9 @@ const _sink = @import("_sink.zig");
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The sink is gone; its driver, and the line it named, are one handle
-/// less.
+/// The sink is the caller's no more: it may not be used after, though
+/// one that was started stays allocated until it is stopped. Its driver,
+/// and the line it named, are one handle less once it is freed.
 ///
 /// BUGS:
 /// None known.
@@ -52,16 +56,22 @@ const _sink = @import("_sink.zig");
 pub fn DeleteSink(rb: *RtaBase, sink: ?*rta.AudioSink) void {
     const gone = sink orelse return;
     const sys = rb.sys_base;
+    if (gone.flags & rta.sinks.AUDIOSF_GONE == 0) {
+        sys.ObtainSemaphore(&rb.sink_lock);
+        sys.Remove(&gone.node);
+        sys.ReleaseSemaphore(&rb.sink_lock);
+    }
     if (_sink.running(gone)) {
-        rb.last_error = err.RTAERR_IN_USE;
+        // Played through: it goes once its player stops it, and the
+        // player is told.
+        gone.flags |= rta.sinks.AUDIOSF_GONE;
+        const private = _sink.privateOf(gone);
+        if (private.task) |task| sys.Signal(task, private.signal_mask);
         return;
     }
     if (gone.ops) |ops| {
         if (ops.destroy) |destroy| destroy(gone);
     }
-    sys.ObtainSemaphore(&rb.sink_lock);
-    sys.Remove(&gone.node);
-    sys.ReleaseSemaphore(&rb.sink_lock);
 
     if (gone.transport) |io| {
         if (io.open_cnt != 0) io.open_cnt -= 1;

@@ -43,6 +43,7 @@ pub const sources = @import("sources.zig");
 pub const transport = @import("transport.zig");
 pub const errors = @import("errors.zig");
 pub const tags = @import("tags.zig");
+pub const filesink = @import("filesink.zig");
 
 pub const RtaBase = @import("../../interface/rta.zig").RtaBase;
 

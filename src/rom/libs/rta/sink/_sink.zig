@@ -11,7 +11,10 @@
 //!
 //! One task plays through a sink at a time - audio.device's - so the
 //! calls of a running sink take no lock of their own: the list's
-//! semaphore holds the list still, not the sinks on it.
+//! semaphore holds the list still, not the sinks on it. A sink deleted
+//! while that task plays through it - its part unplugged, or a program
+//! done with it - leaves the list at once and is marked gone, and the
+//! task is signalled; it is given back when the task stops it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -26,6 +29,10 @@ pub const Private = struct {
     sink: rta.AudioSink = .{},
     /// The sink's name, since the caller's string is the caller's.
     name_buf: [32]u8 = .{0} ** 32,
+    /// The task that started it and the signal it was given: told when the
+    /// sink is deleted under it.
+    task: ?*exec.Task = null,
+    signal_mask: u32 = 0,
 };
 
 /// The library's own record around a sink's handle.

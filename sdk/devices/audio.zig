@@ -110,7 +110,11 @@
 //!
 //! **A machine may have several outputs** - a jack and a speaker, a DAC
 //! plugged in - and the device plays through one at a time: the first on
-//! the list until it is told another. Each has a number that stays the
+//! the list until it is told another. One that goes - a DAC unplugged -
+//! leaves the device playing through the first on the list, every stream
+//! going on; when it was the last, writes and triggers are answered
+//! AUDIOERR_NOOUTPUT until one comes - as they are on a machine that
+//! starts with none, whose outputs USB brings. Each has a number that stays the
 //! same from one boot to the next, which is how a program or a
 //! preference names it. The output commands read `output`, a field an
 //! IOAudio of version 2 had not got: a request smaller than the whole is
@@ -172,7 +176,8 @@ pub const AUDIOERR_BADFORMAT: i8 = -10;
 pub const AUDIOERR_NOSTREAM: i8 = -11;
 /// There is no way in on this board, or it would not start.
 pub const AUDIOERR_NOINPUT: i8 = -12;
-/// No output of that number, none after it, or one that would not start.
+/// No output of that number, none after it, or one that would not start;
+/// for a write or a trigger, none at all: the last went (since 5.1).
 pub const AUDIOERR_NOOUTPUT: i8 = -13;
 /// Every trigger voice plays a sound of a higher priority.
 pub const AUDIOERR_NOVOICE: i8 = -14;

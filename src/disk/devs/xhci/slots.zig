@@ -21,7 +21,9 @@
 //! (Configure Endpoint), every interface's first setting, as the device
 //! sent its configuration the last time it was read whole; an endpoint
 //! a transfer names that is not among them - another setting's - is
-//! added when the transfer comes (`ensureEndpoint`).
+//! added when the transfer comes (`ensureEndpoint`). So is every
+//! isochronous one: a setting of its own, chosen with SET_INTERFACE
+//! before its first transfer.
 //!
 //! **A hub** is told the controller once its hub descriptor has been
 //! read: its ports and its TT think time (`hubUpdate`), before anything
@@ -63,7 +65,10 @@ pub fn kindOf(attributes: u8, in: bool) ?u32 {
 }
 
 fn isPeriodic(kind: u32) bool {
-    return kind == regs.EP_INTERRUPT_IN or kind == regs.EP_INTERRUPT_OUT;
+    return switch (kind) {
+        regs.EP_INTERRUPT_IN, regs.EP_INTERRUPT_OUT, regs.EP_ISOCH_IN, regs.EP_ISOCH_OUT => true,
+        else => false,
+    };
 }
 
 fn log2(value: u32) u32 {
@@ -133,12 +138,19 @@ pub fn endpointsOf(config: []const u8, value: u8, speed: u32, into: *[32]Spec) u
 }
 
 /// An endpoint's ring there and empty, its cycle state 1: what its
-/// context is pointed at when it is added.
+/// context is pointed at when it is added. An isochronous endpoint's is
+/// longer; one of the other length is made again.
 fn freshRing(host: *Host, ep: *Endpoint) bool {
-    if (ep.ring.count == 0) {
-        const memory = _xhci.allocDma(host, _xhci.ring_trbs * @sizeOf(Trb), _xhci.dma_align, null) orelse return false;
+    const count: u32 = if (_xhci.isIso(ep)) _xhci.iso_ring_trbs else _xhci.ring_trbs;
+    if (ep.ring.count != count) {
+        const bytes = count * @sizeOf(Trb);
+        var raw: ?*anyopaque = null;
+        const memory = _xhci.allocDma(host, bytes, if (_xhci.isIso(ep)) bytes else _xhci.dma_align, &raw) orelse return false;
+        if (ep.ring_raw) |old| host.sys.FreeMem(old, ep.ring_raw_size);
+        ep.ring_raw = raw;
+        ep.ring_raw_size = @intCast(_xhci.roundUp(bytes, _xhci.dma_align) + (if (_xhci.isIso(ep)) bytes else _xhci.dma_align));
         const trbs: [*]Trb = @ptrCast(@alignCast(memory));
-        ep.ring.init(trbs[0.._xhci.ring_trbs]);
+        ep.ring.init(trbs[0..count]);
     } else {
         ep.ring.reset();
     }
@@ -216,7 +228,10 @@ fn blockOf(host: *Host, id: u32) ?*Slot {
         return null;
     };
     slot.* = .{ .id = @intCast(id), .output = output, .input = input };
-    for (&slot.endpoints) |*ep| sys.NewList(&ep.queue);
+    for (&slot.endpoints) |*ep| {
+        sys.NewList(&ep.queue);
+        sys.NewList(&ep.flight);
+    }
     host.slots[id] = slot;
     return slot;
 }
@@ -227,6 +242,9 @@ fn clear(slot: *Slot) void {
     for (&slot.endpoints) |*ep| {
         ep.* = .{
             .ring = ep.ring,
+            .ring_raw = ep.ring_raw,
+            .ring_raw_size = ep.ring_raw_size,
+            .flight = ep.flight,
             .bounce = ep.bounce,
             .bounce_size = ep.bounce_size,
             .bounce_raw = ep.bounce_raw,
@@ -418,6 +436,7 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
     const in = req.endpoint & d.USB_DIR_IN != 0;
     const kind: u32 = switch (req.std.req.command) {
         usbhc.UHCMD_BULKXFER => if (in) regs.EP_BULK_IN else regs.EP_BULK_OUT,
+        usbhc.UHCMD_ISOXFER => if (in) regs.EP_ISOCH_IN else regs.EP_ISOCH_OUT,
         else => if (in) regs.EP_INTERRUPT_IN else regs.EP_INTERRUPT_OUT,
     };
     const packet: u32 = @max(req.max_packet & 0x7FF, 1);
@@ -427,6 +446,8 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
     ep.kind = kind;
     ep.max_packet = packet;
     ep.interval = if (isPeriodic(kind)) intervalOfMs(slot.speed, req.interval) else 0;
+    ep.stride = strideOf(packet);
+    ep.next_slice = 0;
     if (!freshRing(host, ep)) return false;
     ep.enabled = true;
     slot.entries = highestOf(slot);
@@ -435,6 +456,15 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
     ep.enabled = false;
     slot.entries = highestOf(slot);
     return false;
+}
+
+/// How far apart an isochronous endpoint's packets lie in its buffer: a
+/// power of two, at least a cache line, so a packet never crosses a
+/// 64 KiB boundary in a buffer aligned to its size.
+pub fn strideOf(max_packet: u32) u32 {
+    var stride: u32 = @intCast(_xhci.dma_align);
+    while (stride < max_packet) stride *= 2;
+    return stride;
 }
 
 /// A hub's descriptor read: the slot told it is a hub, its ports and, at

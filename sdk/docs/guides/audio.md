@@ -186,6 +186,13 @@ from the frame it had got to, on the new output at its own rate, and
 `position` goes on counting from where it was. One that will not start
 leaves the one before playing and answers `AUDIOERR_NOOUTPUT`.
 
+An output that goes while the device plays through it - a USB speaker
+unplugged, a file sink a program deletes - leaves the device playing
+through the first output on the list, every stream going on where it
+was. With none left, writes and triggers are answered
+`AUDIOERR_NOOUTPUT` until one comes, and the next write plays through
+it; a machine whose only outputs come over USB starts that way.
+
 `output` is a field at the end of `IOAudio` that version 2 had not got.
 A request of that size still opens and does everything else; only the
 output commands refuse it, with `IOERR_BADLENGTH`.
@@ -374,6 +381,8 @@ its ring of buffers. No name of a part or a chip is in the device.
 | `es8311` | sink, source | the ES8311 codec, set up over i2c.device, on a line of its own; its amplifier's enable pad; where the board wires its data out, its microphone input as a source on the same line |
 | `i2samp` | sink | an amplifier that takes I2S itself - the CrowPanel's pair, one part with two sides - on a line of its own |
 | `null` | sink, source | a stream into nothing, kept in time by timer.device's E-clock: the emulators' output, at the bottom of the list; and a source that hears what it played, two buffers late |
+| `file` | sink | a WAV file, written in time as a speaker would play it; none until a program makes one (below) |
+| `uac` | sink | a USB speaker, headset or sound adapter of the audio class, made as it is plugged in and deleted as it goes (`DEVS:usb/uac.device`) |
 
 A sink for a part on I2S is made over a line (`RTAA_Transport`): the
 sink's driver brings its part up and starts the line, and the line runs
@@ -406,6 +415,54 @@ library allocates the sink and its driver's instance beside it, and calls
 the driver's `create_sink` to fill in its modes, its ops and its ring.
 The calls are in [rta's autodoc](../autodocs/rta.md); the types in
 `sdk/libs/rta/`.
+
+A sink deleted while it plays is taken off the list at once and marked
+`AUDIOSF_GONE`, and the task playing through it is signalled with the
+mask it started it with; it is freed when that task stops it. A driver
+whose part goes - a USB speaker pulled out - deletes its sink and waits
+for its `destroy`.
+
+### Into a file
+
+The `file` driver makes a sink that plays into a WAV file
+(`sdk/libs/rta/filesink.zig`): `FILEA_Name` the file, 16-bit stereo at
+48 or 44.1 kHz, in time, as a real output would. Each start writes the
+file anew, from the first buffer that is not silent; a stop fills in the
+header's lengths. A program makes one, has the device play through it,
+and goes back:
+
+```zig
+const tags = [_]utility.TagItem{
+    .{ .tag = rta.filesink.FILEA_Name, .data = @intFromPtr(@as([*:0]const u8, "RAM:out.wav")) },
+    .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -120)) },
+    .{},
+};
+const sink = rb.CreateSinkTagList(rta.filesink.FILE_DRIVER_NAME, &tags) orelse return;
+io.std.req.command = audio.AUDIOCMD_SETOUTPUT;
+io.output = sink.id;
+_ = sys.DoIO(&io.std.req);
+// ... play ...
+io.output = before; // what AUDIOCMD_GETOUTPUT said
+_ = sys.DoIO(&io.std.req); // the file closed as its sink stops
+rb.DeleteSink(sink);
+```
+
+A low priority keeps it from ever being the default. The file is
+written by a process of the sink's own, so the task that plays never
+waits on a disk; a buffer the disk is too slow for is lost, and the
+count is in the console's log as the file is closed.
+
+### USB speakers and headsets
+
+`DEVS:usb/uac.device` drives the USB audio class: a streaming interface
+with an isochronous OUT endpoint, linear PCM, one or two channels of 16,
+24 or 32 bits, at 48 kHz. Each is a sink named as the device names its
+product, at the bottom of the board's own outputs. Started, its
+interface is put in its setting, its rate set where the endpoint has
+the control, its feature unit's mute lifted and its volume set to 0 dB
+(or its most below that); then three buffers of ten milliseconds go
+round as isochronous transfers. It needs a controller with isochronous
+transfers - xhci.device - and declines a device on any other.
 
 A **source** is a way in, on a list of its own: a driver of the source
 kind makes them with `CreateSourceTagList`, `NextSource` walks them,
@@ -487,11 +544,16 @@ Audio OUTPUTS                 every output: name, number, sides, rates
 Audio OUTPUT Headphones       play through that one from now on
 Audio TRIGGER 10              ten clicks as fast as they can be sent,
                               then what became of each, and the gaps
+Audio TOFILE RAM:note.wav     the note into a WAV file (a file sink)
 ```
 
 In QEMU the output is `null`: the sound is mixed as on a board, buffer
 for buffer at 48 kHz, and goes nowhere, so a program that plays runs as
-it would on a board, and `Audio BENCH` measures the mix.
+it would on a board, and `Audio BENCH` measures the mix. QEMU's virt
+machine with `-device qemu-xhci -device usb-audio,audiodev=snd` and an
+audiodev has a USB speaker, which uac.device plays through; with
+`-audiodev wav,id=snd,path=out.wav,out.mixing-engine=off` what it was
+sent lands in a WAV file on the host, sample for sample.
 
 `./zig build audio-bench` times the mixer on the host, for 1, 4, 8 and
 16 streams; the board's own figure is `Audio BENCH`'s. The mixer is held

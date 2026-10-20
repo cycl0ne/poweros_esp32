@@ -305,7 +305,7 @@ test "a sink's modes: walked, found by rate, set while it is stopped" {
     try tearDownForTests(rb);
 }
 
-test "a started sink: a buffer when one has been played, what is handed back played, deletion refused" {
+test "a started sink: a buffer when one has been played, what is handed back played; deleted, it goes once it is stopped" {
     const rb = try setUpForTests();
     defer kexec.deinit();
     const state = captureOf(rb);
@@ -343,15 +343,20 @@ test "a started sink: a buffer when one has been played, what is handed back pla
     try testing.expectEqual(@as(i16, 5), heard[5]);
     try testing.expectEqual(@as(i16, -1), heard[capture.buffer_frames * 2]);
 
-    // Something plays through it: it stays.
-    base(rb).DeleteSink(sink);
-    try testing.expectEqual(err.RTAERR_IN_USE, base(rb).RtaLastError());
-    try testing.expectEqual(sink, base(rb).NextSink(null).?);
-    base(rb).StopSink(sink);
-    base(rb).StopSink(sink);
-    try testing.expectEqual(@as(u32, 1), state.log.stopped);
+    // Something plays through it: it leaves the list at once, its player
+    // is told, and it goes when the player stops it.
+    const sys = kexec.SysBase.iface();
+    _ = sys.SetSignal(0, 0x100);
     base(rb).DeleteSink(sink);
     try testing.expect(base(rb).NextSink(null) == null);
+    try testing.expect(sink.flags & rta.sinks.AUDIOSF_GONE != 0);
+    try testing.expect(sys.SetSignal(0, 0x100) & 0x100 != 0);
+    try testing.expectEqual(@as(u32, 0), state.log.destroyed);
+    capture.played(sink);
+    try testing.expect(base(rb).SinkBuffer(sink) != null);
+    base(rb).StopSink(sink);
+    try testing.expectEqual(@as(u32, 1), state.log.stopped);
+    try testing.expectEqual(@as(u32, 1), state.log.destroyed);
     try tearDownForTests(rb);
 }
 

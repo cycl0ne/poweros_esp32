@@ -4,9 +4,15 @@
 //! machine can start from - sdcard.device, which hands the card's
 //! partitions to expansion.library at cold start, and FAT's handler for
 //! them. Both are the disk's own drivers, built into the ROM as they are.
+//! And sound with no part of the board's own to play through:
+//! rta.library, the file sink and audio.device, for the outputs USB
+//! brings (uac.device, from the disk).
 
 pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
     @import("../../disk/devs/sdcard/sdcard.zig"),
     @import("../../disk/devs/handlers/fat/fat.zig"),
+    @import("../../rom/libs/rta/rta.zig"),
+    @import("../../rom/libs/rta_driver/file/file.zig"),
+    @import("../../rom/devs/audio/audio.zig"),
 };

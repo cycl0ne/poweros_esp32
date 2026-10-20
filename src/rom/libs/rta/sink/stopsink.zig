@@ -25,7 +25,9 @@ const _sink = @import("_sink.zig");
 /// BEHAVIOR:
 /// The driver switches its part off - the amplifier first, so the speaker
 /// does not hear the clocks stop - stops the ring and gives back what
-/// `StartSink` took. A sink that is not started is left alone.
+/// `StartSink` took. A sink that is not started is left alone. Since 1.4,
+/// one deleted while it was started (`AUDIOSF_GONE`) is given back now,
+/// as `DeleteSink` gives back one that is stopped.
 ///
 /// CONTEXT:
 /// - Waits: yes, if the driver does.
@@ -35,7 +37,8 @@ const _sink = @import("_sink.zig");
 ///
 /// OWNERSHIP:
 /// The pads, the DMA channel and the memory are given back; the sink may
-/// be started again, or deleted.
+/// be started again, or deleted. A sink that was gone is gone: it may not
+/// be used after.
 ///
 /// BUGS:
 /// None known.
@@ -47,10 +50,12 @@ const _sink = @import("_sink.zig");
 /// ```zig
 /// rb.StopSink(sink);
 /// ```
-pub fn StopSink(_: *RtaBase, sink: *rta.AudioSink) void {
+pub fn StopSink(rb: *RtaBase, sink: *rta.AudioSink) void {
     if (!_sink.running(sink)) return;
     if (sink.ops) |ops| {
         if (ops.stop) |stop| stop(sink);
     }
     sink.flags &= ~rta.sinks.AUDIOSF_RUNNING;
+    _sink.privateOf(sink).task = null;
+    if (sink.flags & rta.sinks.AUDIOSF_GONE != 0) rb.iface().DeleteSink(sink);
 }

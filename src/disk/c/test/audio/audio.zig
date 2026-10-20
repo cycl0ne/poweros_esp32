@@ -3,7 +3,7 @@
 //! the SDK only.
 //!
 //!   Audio HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,
-//!         OUTPUTS/S,OUTPUT/K,TRIGGER/K/N
+//!         OUTPUTS/S,OUTPUT/K,TRIGGER/K/N,TOFILE/K
 //!
 //! It asks the device what the board has - the part the sound comes out
 //! of, the rate the output runs at, one side or two, how far behind a
@@ -42,20 +42,29 @@
 //! played to their end, how many gave way to a newer one when every
 //! trigger voice was taken, how many were refused, and how many buffers
 //! the output played again meanwhile.
+//!
+//! TOFILE name plays into a WAV file of that name instead: it makes a file
+//! sink (rta.library's "file" driver), has the device play through it for
+//! the note, the chord, the bench or the clicks, then goes back to the
+//! output played through before and deletes the sink. The file holds
+//! what the device mixed, from its first sound to the switch back.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const audio = sdk.devices.audio;
+const rta = sdk.rta;
+const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const RtaBase = sdk.interface.rta.RtaBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Audio";
-const VERSION_STRING = "\x00$VER: Audio 2.3 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Audio 2.4 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,OUTPUTS/S,OUTPUT/K,TRIGGER/K/N";
+const template = "HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,OUTPUTS/S,OUTPUT/K,TRIGGER/K/N,TOFILE/K";
 const arg_hz = 0;
 const arg_seconds = 1;
 const arg_volume = 2;
@@ -65,7 +74,8 @@ const arg_bench = 5;
 const arg_outputs = 6;
 const arg_output = 7;
 const arg_trigger = 8;
-const arg_count = 9;
+const arg_tofile = 9;
+const arg_count = 10;
 
 const MSG_NODEVICE = "No %s - this machine has no sound\n";
 const MSG_OUTPUT = "%s: %s, %u Hz, %s, %u frames behind, %u of %u streams in use, %u sounds triggered\n";
@@ -87,6 +97,9 @@ const MSG_NOOUTPUT = "%s: no output %s\n";
 const MSG_NOSWITCH = "%s: %s would not start\n";
 const MSG_BADTRIGGER = "%s: TRIGGER is 1 to %u clicks\n";
 const MSG_TRIGGERS = "%u clicks of %u Hz triggered: %u played, %u gave way, %u refused; %u buffers played again\n";
+const MSG_NORTA = "%s: no %s\n";
+const MSG_NOFILESINK = "%s: no file sink: %s\n";
+const MSG_TOFILE = "Into %s\n";
 
 /// One cycle of a sine, as 16-bit samples: long enough that the note is
 /// a clean one.
@@ -168,6 +181,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const port = sys.CreateMsgPort() orelse return dos.RETURN_FAIL;
     defer sys.DeleteMsgPort(port);
+
+    // Into a file: the file sink played through until the program ends.
+    var into_file: ?FileOutput = null;
+    if (argv[arg_tofile] != 0) {
+        into_file = FileOutput.begin(sys, dl, port, @ptrFromInt(argv[arg_tofile])) orelse return dos.RETURN_ERROR;
+    }
+    defer if (into_file) |*file_output| file_output.end(sys);
 
     if (clicks != 0) return triggerClicks(sys, dl, port, clicks, hz, percent, pan_percent);
 
@@ -334,6 +354,84 @@ fn triggerClicks(sys: *ExecBase, dl: *DosBase, port: *exec.MsgPort, count: u32, 
     _ = Printf(dl, MSG_TRIGGERS, .{ count, hz, played, gave_way, refused, after.underruns -% before.underruns });
     return if (refused == 0) dos.RETURN_OK else dos.RETURN_WARN;
 }
+
+/// The file sink TOFILE plays into: rta.library, the sink, an open of the
+/// device for the switch to it and back - for triggers, so it takes no
+/// stream - and the output played through before.
+const FileOutput = struct {
+    rta_lib: *RtaBase,
+    sink: *rta.AudioSink,
+    io: *audio.IOAudio,
+    before: u32,
+
+    /// The sink made for `name` and played through, or null, said why.
+    fn begin(sys: *ExecBase, dl: *DosBase, port: *exec.MsgPort, name: [*:0]const u8) ?FileOutput {
+        const library = sys.OpenLibrary(rta.RTANAME, rta.RTA_VERSION) orelse {
+            _ = Printf(dl, MSG_NORTA, .{ COMMAND_NAME, @as([*:0]const u8, rta.RTANAME) });
+            return null;
+        };
+        const rta_lib: *RtaBase = @ptrCast(library);
+        // At the bottom of the list: never what a program gets by default.
+        const sink_tags = [_]TagItem{
+            .{ .tag = rta.filesink.FILEA_Name, .data = @intFromPtr(name) },
+            .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr(@as([*:0]const u8, rta.filesink.FILE_DRIVER_NAME)) },
+            .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -120)) },
+            .{},
+        };
+        const sink = rta_lib.CreateSinkTagList(rta.filesink.FILE_DRIVER_NAME, &sink_tags) orelse {
+            _ = Printf(dl, MSG_NOFILESINK, .{ COMMAND_NAME, rta_lib.RtaErrorText(rta_lib.RtaLastError()) });
+            sys.CloseLibrary(library);
+            return null;
+        };
+        const io: *audio.IOAudio = @ptrCast(@alignCast(sys.CreateIORequest(port, @sizeOf(audio.IOAudio)) orelse {
+            rta_lib.DeleteSink(sink);
+            sys.CloseLibrary(library);
+            return null;
+        }));
+        if (sys.OpenDevice(audio.AUDIONAME, audio.AUDIO_UNIT_PLAY, &io.std.req, audio.AUDIOF_TRIGGER) != 0) {
+            _ = Printf(dl, MSG_NODEVICE, .{audio.AUDIONAME});
+            sys.DeleteIORequest(&io.std.req);
+            rta_lib.DeleteSink(sink);
+            sys.CloseLibrary(library);
+            return null;
+        }
+        var file_output: FileOutput = .{ .rta_lib = rta_lib, .sink = sink, .io = io, .before = 0 };
+        var info: audio.AudioOutputInfo = .{};
+        io.std.req.command = audio.AUDIOCMD_GETOUTPUT;
+        io.std.data = &info;
+        io.std.length = @sizeOf(audio.AudioOutputInfo);
+        if (sys.DoIO(&io.std.req) == 0) file_output.before = io.output;
+        if (!switchTo(sys, io, sink.id)) {
+            _ = Printf(dl, MSG_NOSWITCH, .{ COMMAND_NAME, @as([*:0]const u8, rta.filesink.FILE_DRIVER_NAME) });
+            file_output.close(sys);
+            return null;
+        }
+        _ = Printf(dl, MSG_TOFILE, .{name});
+        return file_output;
+    }
+
+    /// Back to the output played through before - the file closed as the
+    /// sink stops - and the sink deleted.
+    fn end(file_output: *FileOutput, sys: *ExecBase) void {
+        _ = switchTo(sys, file_output.io, file_output.before);
+        file_output.close(sys);
+    }
+
+    fn close(file_output: *FileOutput, sys: *ExecBase) void {
+        sys.CloseDevice(&file_output.io.std.req);
+        sys.DeleteIORequest(&file_output.io.std.req);
+        file_output.rta_lib.DeleteSink(file_output.sink);
+        sys.CloseLibrary(@ptrCast(@alignCast(file_output.rta_lib)));
+    }
+
+    fn switchTo(sys: *ExecBase, io: *audio.IOAudio, id: u32) bool {
+        io.std.req.command = audio.AUDIOCMD_SETOUTPUT;
+        io.std.data = null;
+        io.std.length = 0;
+        io.output = id;
+        return sys.DoIO(&io.std.req) == 0;
+    }
+};
 
 /// Every output the device can play through, a line each.
 fn listOutputs(sys: *ExecBase, dl: *DosBase, io: *audio.IOAudio) void {

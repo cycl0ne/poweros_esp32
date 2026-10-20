@@ -498,9 +498,12 @@ Nothing.
 
 **BEHAVIOR**
 
-A sink that is started is refused, with `RTAERR_IN_USE` in
-`RtaLastError`: something is playing through it. Otherwise the
-driver's `destroy` is called and the sink leaves the list.
+The sink leaves the list, the driver's `destroy` is called, and the
+sink is freed. Since 1.4, one that is started - something plays
+through it - leaves the list at once and is marked `AUDIOSF_GONE`, and
+the task that started it is signalled with the signal it gave
+`StartSink`; the rest happens when that task stops it (`StopSink`).
+Until then the driver's operations are still called.
 
 **CONTEXT**
 
@@ -512,8 +515,9 @@ driver's `destroy` is called and the sink leaves the list.
 
 **OWNERSHIP**
 
-The sink is gone; its driver, and the line it named, are one handle
-less.
+The sink is the caller's no more: it may not be used after, though
+one that was started stays allocated until it is stopped. Its driver,
+and the line it named, are one handle less once it is freed.
 
 **BUGS**
 
@@ -2027,7 +2031,9 @@ None.
 
 The driver switches its part off - the amplifier first, so the speaker
 does not hear the clocks stop - stops the ring and gives back what
-`StartSink` took. A sink that is not started is left alone.
+`StartSink` took. A sink that is not started is left alone. Since 1.4,
+one deleted while it was started (`AUDIOSF_GONE`) is given back now,
+as `DeleteSink` gives back one that is stopped.
 
 **CONTEXT**
 
@@ -2039,7 +2045,8 @@ does not hear the clocks stop - stops the ring and gives back what
 **OWNERSHIP**
 
 The pads, the DMA channel and the memory are given back; the sink may
-be started again, or deleted.
+be started again, or deleted. A sink that was gone is gone: it may not
+be used after.
 
 **BUGS**
 

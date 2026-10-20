@@ -17,6 +17,15 @@
 //! up on the task that starts it: the old sink stopped, every stream
 //! stepped for the new one's rate where it stood, the new one started.
 //!
+//! An output its driver deletes while the device plays through it - a
+//! DAC unplugged, a file a program is done with - leaves rta.library's
+//! list at once and is marked gone, and the task is woken. It stops it,
+//! which gives it back, and plays through the first output on the list
+//! from then on, every stream going on where it was. With none left, a
+//! write is answered AUDIOERR_NOOUTPUT, until an output comes: the next
+//! write plays through it. A machine whose only outputs come and go - a
+//! USB speaker - starts the same way, with none.
+//!
 //! A sink may run at more than one rate. The device runs it in the mode
 //! that the most open streams play in unconverted: the mode whose rate
 //! the most of them have; a tie goes to the sink's default mode, then to
@@ -59,10 +68,9 @@
 //! ahead of itself and nothing waits on a bus at the moment a sample is
 //! due.
 //!
-//! A machine with no sink has no output: every open fails. One with no
-//! source has no way in: an open of unit 1 fails. Only the ROM
-//! tags of a board that has sound - or an emulator, with the null sink -
-//! link the device.
+//! One with no source has no way in: an open of unit 1 fails. Only the
+//! ROM tags of a board that has sound - its own part, an output USB
+//! brings, or an emulator's null sink - link the device.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -78,7 +86,7 @@ const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 5;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -408,9 +416,11 @@ fn writeHandedOff(ab: *AudioBase) bool {
 }
 
 /// The requests handed to the task, in order: a change of output replied
-/// when made; a write queued once the output is in the mode the streams
-/// want - if nothing else plays - and replied when it has played. Then
-/// the way in started or stopped as the recording now needs.
+/// when made; a write queued once there is an output - the first on the
+/// list, when there was none - in the mode the streams want, if nothing
+/// else plays, and replied when it has played, or answered
+/// AUDIOERR_NOOUTPUT while there is none. Then the way in started or
+/// stopped as the recording now needs.
 fn serveCommands(ab: *AudioBase) void {
     const sys = ab.sys_base;
     sys.ObtainSemaphore(&ab.lock);
@@ -424,6 +434,15 @@ fn serveCommands(ab: *AudioBase) void {
                 sys.ReplyIO(io);
                 continue;
             };
+            if (ab.sink == null) {
+                if (ab.rta_base.NextSink(null)) |sink| _ = attachSink(ab, sink);
+            }
+            if (ab.sink == null) {
+                io.err = audio.AUDIOERR_NOOUTPUT;
+                ioa.std.actual = 0;
+                sys.ReplyIO(io);
+                continue;
+            }
             if (quiet(ab) and wantsOtherMode(ab)) remode(ab);
             queueWrite(ab, n, ioa);
             continue;
@@ -433,6 +452,14 @@ fn serveCommands(ab: *AudioBase) void {
         sys.ReplyIO(io);
     }
     followRecording(ab);
+}
+
+/// The output played through deleted by its driver: stopped, which gives
+/// it back, and the first on the list played through instead - none, if
+/// there is none.
+fn lostSink(ab: *AudioBase) void {
+    detachSink(ab);
+    if (ab.rta_base.NextSink(null)) |next| _ = attachSink(ab, next);
 }
 
 /// The output started again in the mode the streams want; the same sink,
@@ -447,9 +474,11 @@ fn remode(ab: *AudioBase) void {
 
 /// The buffer the output has just played mixed again, and whatever that
 /// finished replied. A wake with no buffer played - the output's signal
-/// raised for something else - mixes nothing.
+/// raised for something else - mixes nothing; one for an output deleted
+/// under the device moves it to the next.
 fn mixBuffer(ab: *AudioBase) void {
     const sink = ab.sink orelse return;
+    if (sink.flags & rta.sinks.AUDIOSF_GONE != 0) return lostSink(ab);
     const rb = ab.rta_base;
     const frames = rb.SinkBuffer(sink) orelse return;
     mixInto(ab, frames[0 .. sink.buffer_frames * 2]);
@@ -590,6 +619,7 @@ fn flushStream(ab: *AudioBase, n: usize, err: i8) void {
 /// when it has; else what is wrong with it.
 fn startTrigger(ab: *AudioBase, ioa: *IOAudio) ?i8 {
     if (!paramsValid(ioa)) return audio.AUDIOERR_BADFORMAT;
+    if (ab.sink == null) return audio.AUDIOERR_NOOUTPUT;
     const frame = audio.frameBytes(ioa.format, ioa.channels);
     if (ioa.std.data == null or ioa.std.length == 0 or ioa.std.length % frame != 0 or ioa.std.length / frame > std.math.maxInt(u32)) return exec.IOERR_BADLENGTH;
     const slot = triggerVoice(ab, ioa.std.req.message.node.pri) orelse return audio.AUDIOERR_NOVOICE;
@@ -886,12 +916,8 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
         ab.quit_mask = @as(u32, 1) << @intCast(quit);
         ab.command_mask = @as(u32, 1) << @intCast(carry);
         ab.record_mask = @as(u32, 1) << @intCast(heard);
-        if (ab.rta_base.NextSink(null)) |sink| {
-            ok = attachSink(ab, sink);
-        } else {
-            exec.kprintf(sys, "%s: the machine has no sound output\n", .{DEVICE_NAME});
-            ok = false;
-        }
+        // With no output yet, the first write looks for one.
+        if (ab.rta_base.NextSink(null)) |sink| ok = attachSink(ab, sink);
     }
     if (ok) ab.ready = 1;
     if (ab.starter) |starter| {
@@ -1129,8 +1155,9 @@ fn streamCommand(ab: *AudioBase, n: usize, ioa: *IOAudio) bool {
                 ioa.channels = stream.channels;
                 ioa.std.actual = 0;
                 // One that starts sound on a quiet device, in another mode
-                // than the output runs in, waits for the task to change it.
-                if (writeHandedOff(ab) or (quiet(ab) and wantsOtherMode(ab))) {
+                // than the output runs in, waits for the task to change it,
+                // as one does while there is no output.
+                if (writeHandedOff(ab) or ab.sink == null or (quiet(ab) and wantsOtherMode(ab))) {
                     handOff(ab, io);
                     return true;
                 }
@@ -1477,10 +1504,9 @@ fn testDevice() !*AudioBase {
 fn testDeviceGone(ab: *AudioBase, ports: []const *exec.MsgPort) !void {
     for (ports) |port| kexec.SysBase.iface().DeleteMsgPort(port);
     const iface = ab.rta_base;
-    const sink = ab.sink.?;
     stopRecording(ab);
     detachSink(ab);
-    iface.DeleteSink(sink);
+    while (iface.NextSink(null)) |sink| iface.DeleteSink(sink);
     while (iface.NextSource(null)) |source| iface.DeleteSource(source);
     const sys = kexec.SysBase.iface();
     sys.FreeSignal(@intCast(@ctz(ab.feed_mask)));
@@ -2345,5 +2371,66 @@ test "a recording is converted to its own rate and channels; a one-sided way in 
     _ = close(&ab.dev, &cd.std.req);
     _ = close(&ab.dev, &rec.std.req);
     serveCommands(ab);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "an output deleted while it plays leaves the device on the next; with none left a write is refused, until one comes" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const rb = ab.rta_base;
+    const port = sys.CreateMsgPort().?;
+    const head_tags = [_]sdk.utility.TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("Headphones") },
+        .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -1)) },
+        .{},
+    };
+    const headphones = rb.CreateSinkTagList(capture.DRIVER_NAME, &head_tags).?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+    const note = pcm16(&.{ 700, 700 });
+    var forever = requestFor(ab, port);
+    sendWrite(&forever, &io, &note, 0);
+
+    // The speaker is unplugged: the task is woken, and goes on with the
+    // headphones, the stream where it was.
+    const speaker = ab.sink.?;
+    rb.DeleteSink(speaker);
+    try testing.expect(sys.SetSignal(0, ab.feed_mask) & ab.feed_mask != 0);
+    mixBuffer(ab);
+    try testing.expectEqual(headphones, ab.sink.?);
+    capture.played(headphones);
+    mixBuffer(ab);
+    try testing.expectEqual(@as(i16, 700), capture.capturedOf(headphones)[0]);
+
+    // The last goes too: nothing plays, and a write is refused.
+    rb.DeleteSink(headphones);
+    mixBuffer(ab);
+    try testing.expect(ab.sink == null);
+    _ = command(&forever, &io, exec.CMD_FLUSH);
+    _ = replied(port);
+    var refused = requestFor(ab, port);
+    sendWrite(&refused, &io, &note, 1);
+    serveCommands(ab);
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_NOOUTPUT), sys.WaitIO(&refused.std.req));
+    var trigger = requestFor(ab, port);
+    trigger.std.data = @ptrCast(@constCast(&note));
+    trigger.std.length = note.len;
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_NOOUTPUT), command(&trigger, &io, audio.AUDIOCMD_TRIGGER));
+
+    // One plugged in again: the next write plays through it.
+    const again = rb.CreateSinkTagList(capture.DRIVER_NAME, &head_tags).?;
+    var later = requestFor(ab, port);
+    sendWrite(&later, &io, &note, 1);
+    serveCommands(ab);
+    try testing.expectEqual(again, ab.sink.?);
+    capture.played(again);
+    mixBuffer(ab);
+    try testing.expectEqual(@as(i16, 700), capture.capturedOf(again)[0]);
+    capture.played(again);
+    mixBuffer(ab);
+    try testing.expect(replied(port) == &later.std.req.message);
+
+    _ = close(&ab.dev, &io.std.req);
     try testDeviceGone(ab, &.{port});
 }

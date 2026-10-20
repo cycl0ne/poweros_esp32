@@ -124,6 +124,7 @@ flowchart TB
     m_serial_device --> m_gpio_resource
     m_serial_device -.-> m_timer_device
     m_sound_drivers --> m_dma_resource
+    m_sound_drivers --> m_dos_library
     m_sound_drivers --> m_gpio_resource
     m_sound_drivers --> m_i2c_device
     m_sound_drivers --> m_rta_library
@@ -214,6 +215,7 @@ flowchart TB
     m_posfs_handler["posfs-handler"]
     m_rdb_library["rdb.library"]
     m_rs485_device["rs485.device"]
+    m_rta_library["rta.library"]
     m_sdcard_device["sdcard.device"]
     m_serial_device["serial.device"]
     m_slip_device["slip.device"]
@@ -222,6 +224,7 @@ flowchart TB
     m_timer_device["timer.device"]
     m_tls_library["tls.library"]
     m_truetype_library["truetype.library"]
+    m_uac_device["uac.device"]
     m_usb_library["usb.library"]
     m_usbotg_device["usbotg.device"]
     m_usbport_resource["usbport.resource"]
@@ -332,6 +335,8 @@ flowchart TB
     m_tls_library -.-> m_bsdsocket_library
     m_tls_library --> m_crypto_library
     m_tls_library --> m_dos_library
+    m_uac_device --> m_rta_library
+    m_uac_device --> m_usb_library
     m_usb_library -.-> m_aic8800_device
     m_usb_library -.-> m_disk_device
     m_usb_library --> m_dos_library
@@ -350,13 +355,13 @@ flowchart TB
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
     class m_anvil_library,m_asl_library,m_audiocodec_library,m_bsdsocket_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_filter_library,m_icon_library,m_iffparse_library,m_modbus_library,m_pci_library,m_rdb_library,m_tls_library,m_truetype_library,m_usb_library,m_wpa_library lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
-    class m_acm_device,m_aic8800_device,m_clipboard_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_usbotg_device,m_xhci_device dev
+    class m_acm_device,m_aic8800_device,m_clipboard_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_uac_device,m_usbotg_device,m_xhci_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
     class m_fat_handler,m_posfs_handler hand
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_datatype_classes,m_gadget_classes cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151
-    class m_battery_resource,m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_keyboard_device,m_layers_library,m_mouse_device,m_platform_resource,m_serial_device,m_timer_device,m_usbport_resource,m_usbserial_device rom
+    class m_battery_resource,m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_keyboard_device,m_layers_library,m_mouse_device,m_platform_resource,m_rta_library,m_serial_device,m_timer_device,m_usbport_resource,m_usbserial_device rom
 ```
 <!-- modchart end -->
 

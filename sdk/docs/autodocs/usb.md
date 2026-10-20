@@ -642,19 +642,25 @@ fn OpenUSBPipe(base: *UsbBase, device: *usb.USBDevice, endpoint_address: u32, re
 
 **RESULT**
 
-The pipe, or null if the device has no such endpoint or there is no
-memory.
+The pipe, or null if the device has no such endpoint, it is an
+isochronous one asking for packets more often than once a
+millisecond, or there is no memory.
 
 **BEHAVIOR**
 
 The pipe's `io` is an `IOUsbHC` on the device's bus's controller, its
 command set by the endpoint's type (`UHCMD_CONTROLXFER`,
-`UHCMD_BULKXFER`, `UHCMD_INTXFER`), the device's address, speed and
-hub, the endpoint, its packet size and its interval in milliseconds,
-its data toggle at DATA0. The caller sets io_Data and io_Length - and
-a control pipe's setup packet - and sends it with SendIO or DoIO, as
-often as it likes; the toggle stays in it. An isochronous endpoint has
-no pipe yet.
+`UHCMD_BULKXFER`, `UHCMD_INTXFER`, `UHCMD_ISOXFER`), the device's
+address, speed and hub, the endpoint, its packet size and its interval
+in milliseconds, its data toggle at DATA0. The caller sets io_Data and
+io_Length - and a control pipe's setup packet, an isochronous pipe's
+`iso_packet` if its packets are smaller than the endpoint's - and
+sends it with SendIO or DoIO, as often as it likes; the toggle stays
+in it.
+
+An isochronous endpoint's interval is 2^(bInterval - 1) frames or, at
+high speed, microframes; it is taken only at a millisecond or more,
+which every endpoint of a full-speed device is.
 
 **CONTEXT**
 
@@ -673,7 +679,10 @@ in USBClassUnbind; a transfer outstanding meanwhile ends with
 **NOTES**
 
 One request per pipe: two transfers at once on one endpoint want two
-pipes, and then the toggle is not theirs to share.
+pipes, and then the toggle is not theirs to share. An isochronous
+stream wants two or more, so the next is with the controller before
+the last has played: each a pipe of its own on the endpoint (Since
+1.6).
 
 **BUGS**
 

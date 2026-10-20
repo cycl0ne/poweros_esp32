@@ -304,6 +304,41 @@ pub const CDC_NOTIFY_NETWORK_CONNECTION: u8 = 0x00;
 pub const CDC_NOTIFY_SERIAL_STATE: u8 = 0x20;
 pub const CDC_NOTIFY_SPEED_CHANGE: u8 = 0x2A;
 
+// --- audio ----------------------------------------------------------------------
+
+/// bInterfaceSubClass of an audio interface: the one that controls the
+/// function (its terminals and units), and one a stream goes over.
+pub const AUDIO_SUBCLASS_CONTROL: u8 = 0x01;
+pub const AUDIO_SUBCLASS_STREAMING: u8 = 0x02;
+/// A class-specific endpoint descriptor, after the endpoint it describes.
+pub const USB_DT_CS_ENDPOINT: u8 = 0x25;
+/// A control interface's descriptors' bDescriptorSubtype: its header, a
+/// terminal a stream comes in by or goes out by, a feature unit (mute,
+/// volume) between them.
+pub const UAC_HEADER: u8 = 0x01;
+pub const UAC_INPUT_TERMINAL: u8 = 0x02;
+pub const UAC_OUTPUT_TERMINAL: u8 = 0x03;
+pub const UAC_FEATURE_UNIT: u8 = 0x06;
+/// A streaming interface's: the terminal it is linked to and its format
+/// tag, then the format's own descriptor.
+pub const UAC_AS_GENERAL: u8 = 0x01;
+pub const UAC_FORMAT_TYPE: u8 = 0x02;
+/// A streaming endpoint's: which controls it has (UAC_EP_SAMPLING_FREQ).
+pub const UAC_EP_GENERAL: u8 = 0x01;
+/// wFormatTag: linear PCM, two's complement, little-endian; bFormatType:
+/// type I, a frame of samples a channel.
+pub const UAC_FORMAT_PCM: u16 = 0x0001;
+pub const UAC_FORMAT_TYPE_I: u8 = 0x01;
+/// Class requests: set a control's value, read its highest.
+pub const UAC_SET_CUR: u8 = 0x01;
+pub const UAC_GET_MAX: u8 = 0x83;
+/// A feature unit's controls (wValue's high byte, and bits of bmaControls
+/// from bit 0): mute, volume - in 1/256 dB, signed.
+pub const UAC_FU_MUTE: u8 = 0x01;
+pub const UAC_FU_VOLUME: u8 = 0x02;
+/// An endpoint's control: its sampling rate, three bytes.
+pub const UAC_EP_SAMPLING_FREQ: u8 = 0x01;
+
 // --- mass storage -----------------------------------------------------------------
 
 /// bInterfaceSubClass: the command set is SCSI's, transparent.
