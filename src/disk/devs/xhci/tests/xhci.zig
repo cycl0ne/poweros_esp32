@@ -175,15 +175,13 @@ test "a SuperSpeed bulk pair: each endpoint's burst from its companion" {
     try testing.expectEqual(@as(u32, 1024), specs[3].max_packet);
     try testing.expectEqual(@as(u32, 15), specs[3].burst);
     try testing.expectEqual(@as(u32, 3), specs[4].burst);
-    // Looked up by its address, as a pipe opened later is.
-    var spec = slots.Spec{ .kind = regs.EP_BULK_OUT };
-    slots.companionOf(&config, 0x02, &spec);
-    try testing.expectEqual(@as(u32, 3), spec.burst);
-    // Words 1 and 4 of the IN one's context.
+    // A bulk endpoint has no bytes an interval.
+    try testing.expectEqual(@as(u32, 0), specs[3].esit);
+    // Word 1 of the IN one's context.
     try testing.expectEqual(@as(u32, 15), (regs.endpointWord1(regs.EP_BULK_IN, specs[3].burst, specs[3].max_packet) >> 8) & 0xFF);
 }
 
-test "a SuperSpeed interrupt endpoint's bytes an interval; an isochronous one keeps one packet" {
+test "a SuperSpeed interrupt endpoint's bytes an interval; an isochronous one is not added with the configuration" {
     const config = [_]u8{
         9, d.USB_DT_CONFIG, 50, 0, 1, 1, 0, 0x80, 50,
         9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 0, 0, 0,
@@ -197,15 +195,46 @@ test "a SuperSpeed interrupt endpoint's bytes an interval; an isochronous one ke
     try testing.expectEqual(regs.addFlag(3), slots.endpointsOf(&config, 1, regs.SPEED_SUPER, &specs));
     try testing.expectEqual(@as(u32, 1), specs[3].burst);
     try testing.expectEqual(@as(u32, 2048), specs[3].esit);
-    // The isochronous one in setting 1, its companion found and left.
-    var spec = slots.Spec{ .kind = regs.EP_ISOCH_IN };
-    slots.companionOf(&config, 0x82, &spec);
-    try testing.expectEqual(@as(u32, 0), spec.burst);
-    try testing.expectEqual(@as(u32, 0), spec.esit);
-    // An endpoint with no companion, or none there at all.
-    spec = .{ .kind = regs.EP_BULK_IN };
-    slots.companionOf(&config, 0x83, &spec);
-    try testing.expectEqual(@as(u32, 0), spec.burst);
+}
+
+test "a high-speed interrupt endpoint with three transactions a microframe" {
+    const config = [_]u8{
+        9, d.USB_DT_CONFIG, 25, 0, 1, 1, 0, 0x80, 50,
+        9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 0, 0, 0,
+        // 1024 bytes, two more transactions (bits 12:11 = 2).
+        7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 0x00, 0x14, 1,
+    };
+    var specs: [32]slots.Spec = @splat(.{});
+    try testing.expectEqual(regs.addFlag(3), slots.endpointsOf(&config, 1, regs.SPEED_HIGH, &specs));
+    try testing.expectEqual(@as(u32, 1024), specs[3].max_packet);
+    try testing.expectEqual(@as(u32, 2), specs[3].burst);
+    try testing.expectEqual(@as(u32, 3072), specs[3].esit);
+    // At full speed the bits mean nothing.
+    try testing.expectEqual(@as(u32, 0), (blk: {
+        _ = slots.endpointsOf(&config, 1, regs.SPEED_FULL, &specs);
+        break :blk specs[3].burst;
+    }));
+}
+
+test "an isochronous TD's bursts" {
+    // SuperSpeed, bursts of 4 (bMaxBurst 3), 1024-byte packets: 10 packets
+    // are three bursts, the last of two.
+    const ten = regs.isochBurstFields(10 * 1024, 1024, 3, true);
+    try testing.expectEqual(@as(u32, 2), (ten >> 7) & 3);
+    try testing.expectEqual(@as(u32, 1), (ten >> 16) & 0xF);
+    // A whole number of bursts: the last is a whole burst.
+    const eight = regs.isochBurstFields(8 * 1024, 1024, 3, true);
+    try testing.expectEqual(@as(u32, 1), (eight >> 7) & 3);
+    try testing.expectEqual(@as(u32, 3), (eight >> 16) & 0xF);
+    // One short packet, and an empty one: a burst of one.
+    try testing.expectEqual(@as(u32, 0), regs.isochBurstFields(100, 1024, 3, true));
+    try testing.expectEqual(@as(u32, 0), regs.isochBurstFields(0, 1024, 3, true));
+    // High speed: one burst, TLBPC the transactions less one.
+    const high = regs.isochBurstFields(2500, 1024, 2, false);
+    try testing.expectEqual(@as(u32, 0), (high >> 7) & 3);
+    try testing.expectEqual(@as(u32, 2), (high >> 16) & 0xF);
+    // Mult in word 0.
+    try testing.expectEqual(@as(u32, 1 << 16 | 2 << 8), regs.endpointWord0(1, 2));
 }
 
 test "the root hub's ports: the USB 2 ones first, then the USB 3 ones" {
@@ -275,7 +304,7 @@ test "a slot context's words" {
     try testing.expectEqual(@as(u32, 1 << 16 | 4 << 24), regs.slotWord1(1, 4));
     // Endpoint 0 at 64 bytes; an interrupt IN at 8 bytes, every 8 ms.
     try testing.expectEqual(@as(u32, 3 << 1 | 4 << 3 | 64 << 16), regs.endpointWord1(regs.EP_CONTROL, 0, 64));
-    try testing.expectEqual(@as(u32, 6 << 16), regs.endpointWord0(6));
+    try testing.expectEqual(@as(u32, 6 << 16), regs.endpointWord0(6, 0));
     try testing.expectEqual(@as(u32, 8 | 8 << 16), regs.endpointWord4(8, 8));
 }
 

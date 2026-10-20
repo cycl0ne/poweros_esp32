@@ -28,13 +28,15 @@
 //! answered only after the task has told the controller (`posted`).
 //!
 //! **An isochronous transfer** is a TD a packet - an Isoch TRB with the
-//! frame it goes in - and up to `iso_in_flight` requests are on the ring
-//! at once, so the next is there before the last has played. Where a
-//! request starts is `isoPlan`'s: in the frame after the one before it
-//! while the stream runs, its packets too late for that marked missed
-//! without going on the ring; as soon as the controller can place it
-//! (`iso_lead` frames on) when the ring ran dry, the frames between
-//! counted as its gap; in the frame it names with UHF_ISO_FRAME. Every
+//! frame it goes in and, where a packet is an interval's bursts, the
+//! bursts it takes (`regs.isochBurstFields`) - and up to `iso_in_flight`
+//! requests are on the ring at once, so the next is there before the
+//! last has played. Where a request starts is `isoPlan`'s: in the frame
+//! after the one before it while the stream runs, its packets too late
+//! for that marked missed without going on the ring; as soon as the
+//! controller can place it (`iso_lead` frames on) when the ring ran dry,
+//! the frames between counted as its gap; in the frame it names with
+//! UHF_ISO_FRAME. Every
 //! TRB interrupts, and its event says what became of its packet; a run
 //! of missed TDs the controller tells once, at its end, so every TD the
 //! endpoint's `expect` passes on the way to an event's was missed. The
@@ -116,7 +118,7 @@ fn accept(host: *Host, req: *usbhc.IOUsbHC) void {
         if (req.std.req.command == usbhc.UHCMD_ISOXFER) {
             req.iso_lost = 0;
             req.iso_gap = 0;
-            if (!isoFits(req)) return _xhci.reply(host, req, exec.IOERR_BADLENGTH);
+            if (!isoFits(host, req)) return _xhci.reply(host, req, exec.IOERR_BADLENGTH);
         }
         if (dci < 2) return _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
         const refused = slots.ensureEndpoint(host, slot, dci, req);
@@ -149,14 +151,23 @@ pub fn schedule(host: *Host) void {
 }
 
 /// An isochronous request's packets: its list's, or its length cut into
-/// `iso_packet` bytes, none bigger than the endpoint's packet; 0 for
-/// none.
+/// `iso_packet` bytes; 0 for none.
 fn isoPackets(req: *const usbhc.IOUsbHC) u32 {
     if (req.iso_list != null) return req.iso_count;
     const packet = isoPacket(req);
-    if (packet == 0 or packet > @max(req.max_packet & 0x7FF, 1)) return 0;
+    if (packet == 0) return 0;
     const length: u32 = @intCast(req.std.length);
     return (length + packet - 1) / packet;
+}
+
+/// The most an isochronous packet carries: an interval's bytes where the
+/// endpoint moves more than a packet an interval - a TD of several wire
+/// packets, whose bursts its Isoch TRB says (from xHCI 1.0) - else a
+/// packet's.
+fn isoMost(host: *const Host, req: *const usbhc.IOUsbHC) u32 {
+    const packet: u32 = @max(req.max_packet & 0x7FF, 1);
+    if (host.version < 0x100 or req.interval_bytes <= packet) return packet;
+    return req.interval_bytes;
 }
 
 fn isoPacket(req: *const usbhc.IOUsbHC) u32 {
@@ -164,12 +175,12 @@ fn isoPacket(req: *const usbhc.IOUsbHC) u32 {
 }
 
 /// Whether a request's packets fit a transfer: one to UHC_ISO_PACKETS of
-/// them, none bigger than the endpoint's packet, all in its data.
-fn isoFits(req: *const usbhc.IOUsbHC) bool {
+/// them, none bigger than `isoMost`, all in its data.
+fn isoFits(host: *const Host, req: *const usbhc.IOUsbHC) bool {
     const packets = isoPackets(req);
     if (packets == 0 or packets > usbhc.UHC_ISO_PACKETS) return false;
-    const list = req.iso_list orelse return true;
-    const most: u32 = @max(req.max_packet & 0x7FF, 1);
+    const most = isoMost(host, req);
+    const list = req.iso_list orelse return isoPacket(req) <= most;
     var total: u32 = 0;
     for (list[0..packets]) |entry| {
         if (entry.length > most) return false;
@@ -270,11 +281,12 @@ fn startIso(host: *Host, slot: *Slot, dci: u32, ep: *Endpoint, req: *usbhc.IOUsb
         const into = area + n * ep.stride;
         if (!in) @memcpy(into[0..bytes], dataOf(req)[isoOffset(req, n)..][0..bytes]);
         const buffer: u64 = @intFromPtr(into);
+        const bursts = if (host.version < 0x100) 0 else regs.isochBurstFields(bytes, ep.max_packet, ep.burst, slot.speed >= regs.SPEED_SUPER);
         const at = ep.ring.push(.{
             .param_lo = ring.lo(buffer),
             .param_hi = ring.hi(buffer),
             .status = bytes,
-            .control = regs.typeField(regs.TRB_ISOCH) | regs.frameIdField(plan.start +% n * every) | regs.TRB_IOC,
+            .control = regs.typeField(regs.TRB_ISOCH) | regs.frameIdField(plan.start +% n * every) | bursts | regs.TRB_IOC,
         });
         last = indexOf(ep, at);
     }

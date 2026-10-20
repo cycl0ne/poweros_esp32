@@ -127,6 +127,76 @@ test "an isochronous endpoint gets a pipe at its interval, never one under a mil
     try kexec.expectNoLeaks();
 }
 
+/// A SuperSpeed camera's endpoints, each with its companion: a bulk IN
+/// in bursts of 8, an interrupt IN of 2 KiB an interval, an isochronous
+/// IN of two bursts of 3 an interval (6 KiB) - and, read at high speed, an
+/// interrupt IN of 3 x 1024 a microframe.
+const camera_bytes = [_]u8{ 9, d.USB_DT_CONFIG, 64, 0, 1, 1, 0, 0x80, 50 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 4, 0x0E, 2, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 7, 0, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x82, d.USB_ENDPOINT_XFER_INT, 0x00, 0x04, 4 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 1, 0, 0x00, 0x08 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x83, d.USB_ENDPOINT_XFER_ISOC, 0x00, 0x04, 4 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 2, 1, 0x00, 0x18 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x84, d.USB_ENDPOINT_XFER_INT, 0x00, 0x14, 4 };
+
+test "a pipe says what its endpoint moves besides a packet: bursts at SuperSpeed, transactions at high speed" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    var base: UsbBase = undefined;
+    base.sys_base = kexec.SysBase.iface();
+    var bus: _bus.Bus = undefined;
+    bus.hc_io = .{};
+    var port: sdk.exec.MsgPort = .{};
+    var bytes = camera_bytes;
+    var device = _bus.Device{ .bus = &bus };
+    device.public.config = &bytes;
+    device.public.config_length = bytes.len;
+    device.public.speed = usbhc.USB_SPEED_SUPER;
+
+    const bulk = OpenUSBPipe(&base, &device.public, 0x81, &port).?;
+    try testing.expectEqual(@as(u8, 7), bulk.io.burst);
+    try testing.expectEqual(@as(u16, 0), bulk.io.interval_bytes);
+    CloseUSBPipe(&base, bulk);
+    const interrupt = OpenUSBPipe(&base, &device.public, 0x82, &port).?;
+    try testing.expectEqual(@as(u8, 1), interrupt.io.burst);
+    try testing.expectEqual(@as(u8, 0), interrupt.io.mult);
+    try testing.expectEqual(@as(u16, 2048), interrupt.io.interval_bytes);
+    CloseUSBPipe(&base, interrupt);
+    const iso = OpenUSBPipe(&base, &device.public, 0x83, &port).?;
+    try testing.expectEqual(@as(u8, 2), iso.io.burst);
+    try testing.expectEqual(@as(u8, 1), iso.io.mult);
+    try testing.expectEqual(@as(u16, 6144), iso.io.interval_bytes);
+    // Its packets are a wire packet's until the caller says otherwise.
+    try testing.expectEqual(@as(u32, 1024), iso.io.iso_packet);
+    CloseUSBPipe(&base, iso);
+    // No companion after it: one packet at a time.
+    const bare = OpenUSBPipe(&base, &device.public, 0x84, &port).?;
+    try testing.expectEqual(@as(u8, 0), bare.io.burst);
+    try testing.expectEqual(@as(u16, 0), bare.io.interval_bytes);
+    CloseUSBPipe(&base, bare);
+
+    // At high speed the companions mean nothing, wMaxPacketSize's bits
+    // 12:11 do: two more transactions of 1024.
+    device.public.speed = usbhc.USB_SPEED_HIGH;
+    const high = OpenUSBPipe(&base, &device.public, 0x84, &port).?;
+    try testing.expectEqual(@as(u16, 1024), high.io.max_packet);
+    try testing.expectEqual(@as(u8, 2), high.io.burst);
+    try testing.expectEqual(@as(u16, 3072), high.io.interval_bytes);
+    CloseUSBPipe(&base, high);
+    const high_bulk = OpenUSBPipe(&base, &device.public, 0x81, &port).?;
+    try testing.expectEqual(@as(u8, 0), high_bulk.io.burst);
+    CloseUSBPipe(&base, high_bulk);
+    // At full speed nothing.
+    device.public.speed = usbhc.USB_SPEED_FULL;
+    const full = OpenUSBPipe(&base, &device.public, 0x84, &port).?;
+    try testing.expectEqual(@as(u8, 0), full.io.burst);
+    try testing.expectEqual(@as(u16, 0), full.io.interval_bytes);
+    CloseUSBPipe(&base, full);
+    try kexec.expectNoLeaks();
+}
+
 test "a configuration that lies about a length ends the walk" {
     var base: UsbBase = undefined;
     var bus: _bus.Bus = undefined;

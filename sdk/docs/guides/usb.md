@@ -138,11 +138,13 @@ SuperSpeed half, on a USB 3 port, has the USB 3 devices behind it, its
 USB 2 half, on the USB 2 port, the rest. A SuperSpeed link that failed
 (SS.Inactive, compliance mode) is warm reset, and what is on it comes in
 as if plugged in. Endpoint 0 of a SuperSpeed device takes 512 bytes, and
-a bulk or interrupt endpoint bursts as its companion descriptor says; an
-isochronous one sends a packet an interval, streams and the link's U1
-and U2 power states are not used. Behind a high-speed hub, xhci.device
-tells the controller which hub and port a full- or low-speed device
-hangs off, and the controller does the split transactions itself.
+an endpoint bursts as its companion descriptor says - an isochronous one
+up to its bytes an interval, in as many bursts as its Mult says; a
+high-speed interrupt or isochronous endpoint has its more transactions
+a microframe. Streams and the link's U1 and U2 power states are not
+used. Behind a high-speed hub, xhci.device tells the controller which
+hub and port a full- or low-speed device hangs off, and the controller
+does the split transactions itself.
 `USBInfo` shows each device's speed.
 
 ## What is on it
@@ -211,8 +213,14 @@ back.
 A **pipe** is a request already filled in for one endpoint:
 `OpenUSBPipe(device, endpoint_address, reply_port)` gives an `IOUsbHC`
 whose command, address, speed, endpoint, packet size, interval and hub
-are set. The program sets the data and sends it, as often as it likes;
-the endpoint's data toggle stays in the pipe.
+are set, and what the endpoint moves besides a packet at a time:
+`burst` (wire packets a burst less one - a SuperSpeed endpoint's from
+its companion descriptor, a high-speed interrupt or isochronous one's
+more transactions a microframe from wMaxPacketSize), `mult` (a
+SuperSpeed isochronous endpoint's bursts an interval less one) and
+`interval_bytes` (a periodic endpoint's bytes an interval). The program
+sets the data and sends it, as often as it likes; the endpoint's data
+toggle stays in the pipe.
 
 ```zig
 if (!ub.ClaimUSBInterface(device, 0, "MyTool")) return fail("interface 0 is taken");
@@ -239,9 +247,13 @@ if (sys.DoIO(&pipe.io.std.req) == 0) use(buffer[0..@intCast(pipe.io.std.actual)]
 - An **isochronous** transfer is a run of packets, one each
   `interval`, at most `UHC_ISO_PACKETS` of them, nothing resent:
   `std.length` bytes cut into packets of `iso_packet` (the endpoint's
-  packet size unless set smaller), or with `iso_list` and `iso_count` a
+  packet size unless set otherwise), or with `iso_list` and `iso_count` a
   `UsbIsoPacket` each, its own length, the packets one after the other
-  in the data. A stream keeps two or more on the controller, a pipe
+  in the data. A packet is an interval's: where `interval_bytes` is more
+  than the packet size, it may be up to that many, and xhci.device sends
+  it as the interval's bursts; usbotg.device moves a packet of the
+  endpoint's size an interval and refuses a bigger one
+  (`IOERR_BADLENGTH`). A stream keeps two or more on the controller, a pipe
   each on the endpoint: each starts in the interval after the one
   before ends, so one sent before the last has played leaves no gap.
   The endpoint is in a setting of its own, chosen with `SET_INTERFACE`

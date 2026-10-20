@@ -173,6 +173,22 @@ pub const TRB_SIA: u32 = 1 << 31;
 pub fn frameIdField(frame: u32) u32 {
     return (frame & 0x7FF) << 20;
 }
+/// An Isoch TRB's bursts, for a TD of `bytes` on an endpoint of packets
+/// of `max_packet` and bursts of `burst` + 1: TBC, the bursts it takes
+/// less one (bits 8:7), and TLBPC, the packets of its last burst less one
+/// (bits 19:16). Below SuperSpeed a TD is one burst, TLBPC its packets
+/// less one.
+pub fn isochBurstFields(bytes: u32, max_packet: u32, burst: u32, super: bool) u32 {
+    const packet: u32 = @max(max_packet, 1);
+    const packets: u32 = @max((bytes + packet - 1) / packet, 1);
+    const last_of_one: u32 = @min(packets - 1, 15);
+    if (!super) return last_of_one << 16;
+    const per_burst = burst + 1;
+    const bursts: u32 = @min((packets + per_burst - 1) / per_burst - 1, 3);
+    const residue = packets % per_burst;
+    const last: u32 = if (residue == 0) burst else residue - 1;
+    return bursts << 7 | (last & 0xF) << 16;
+}
 pub const TRB_TYPE_SHIFT = 10;
 
 pub fn trbType(control: u32) u32 {
@@ -288,13 +304,15 @@ pub const EP_ISOCH_IN: u32 = 5;
 pub const EP_BULK_IN: u32 = 6;
 pub const EP_INTERRUPT_IN: u32 = 7;
 
-/// Endpoint context, word 0: the interval, as an exponent of 125 µs.
-pub fn endpointWord0(interval: u32) u32 {
-    return interval << 16;
+/// Endpoint context, word 0: the interval, as an exponent of 125 µs, and
+/// a SuperSpeed isochronous endpoint's bursts an interval less one.
+pub fn endpointWord0(interval: u32, mult: u32) u32 {
+    return interval << 16 | (mult & 3) << 8;
 }
 /// Word 1: three tries on an error - none for an isochronous endpoint,
-/// whose packets have their time - the type, the packets a burst less
-/// one (a SuperSpeed endpoint's), the packet size.
+/// whose packets have their time - the type, the wire packets a burst
+/// less one (a SuperSpeed endpoint's, or a high-speed periodic one's
+/// more transactions a microframe), the packet size.
 pub fn endpointWord1(kind: u32, burst: u32, max_packet: u32) u32 {
     const tries: u32 = if (kind == EP_ISOCH_OUT or kind == EP_ISOCH_IN) 0 else 3;
     return tries << 1 | kind << 3 | burst << 8 | max_packet << 16;

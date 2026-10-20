@@ -103,10 +103,12 @@ pub const Endpoint = struct {
     kind: u32 = 0,
     max_packet: u32 = 0,
     interval: u32 = 0,
-    /// At SuperSpeed, from its companion descriptor: the packets of a
-    /// burst less one, and a periodic one's bytes an interval (0: one
-    /// packet's).
+    /// What it moves besides a packet at a time (sdk/devices/usbhc.zig):
+    /// the wire packets of a burst less one, a SuperSpeed isochronous
+    /// one's bursts an interval less one, a periodic one's bytes an
+    /// interval (0: one packet's).
     burst: u32 = 0,
+    mult: u32 = 0,
     esit: u32 = 0,
     ring: ring.Ring = .{},
     /// The ring's memory, for FreeMem when it is made again another size.
@@ -321,7 +323,11 @@ pub fn spanSlice(span: usize) u32 {
 /// Whether an endpoint is an isochronous one: several requests on its
 /// ring at once.
 pub fn isIso(ep: *const Endpoint) bool {
-    return ep.kind == regs.EP_ISOCH_OUT or ep.kind == regs.EP_ISOCH_IN;
+    return isIsoKind(ep.kind);
+}
+
+pub fn isIsoKind(kind: u32) bool {
+    return kind == regs.EP_ISOCH_OUT or kind == regs.EP_ISOCH_IN;
 }
 
 /// Whether the endpoint can have its next request on the ring now.

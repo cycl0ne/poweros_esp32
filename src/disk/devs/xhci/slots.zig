@@ -90,8 +90,9 @@ pub fn intervalOfMs(speed: u32, ms: u16) u32 {
     return @min(@max(exponent, 3), 10);
 }
 
-/// What an endpoint of a configuration is to be: its burst and bytes an
-/// interval from its SuperSpeed companion, if it has one.
+/// What an endpoint of a configuration is to be: its bursts as a
+/// request says them (sdk/devices/usbhc.zig) - from its SuperSpeed
+/// companion, or a high-speed periodic one's wMaxPacketSize.
 pub const Spec = struct {
     kind: u32 = 0,
     max_packet: u32 = 0,
@@ -100,13 +101,11 @@ pub const Spec = struct {
     esit: u32 = 0,
 };
 
-/// A SuperSpeed endpoint companion at `at` into `spec`. An isochronous
-/// endpoint keeps neither: it is served a packet an interval, as each
-/// of its transfer's packets is one TD.
+/// A SuperSpeed endpoint companion at `at` into `spec`: its burst, and a
+/// periodic endpoint's bytes an interval.
 fn takeCompanion(config: []const u8, at: usize, spec: *Spec) void {
-    if (spec.kind == regs.EP_ISOCH_OUT or spec.kind == regs.EP_ISOCH_IN) return;
     spec.burst = @min(config[at + 2], 15);
-    spec.esit = @as(u32, config[at + 4]) | @as(u32, config[at + 5]) << 8;
+    spec.esit = if (isPeriodic(spec.kind)) @as(u32, config[at + 4]) | @as(u32, config[at + 5]) << 8 else 0;
 }
 
 /// The endpoints of configuration `value` in `config` (a configuration
@@ -146,6 +145,13 @@ pub fn endpointsOf(config: []const u8, value: u8, speed: u32, into: *[32]Spec) u
                             .max_packet = packet & 0x7FF,
                             .interval = if (isPeriodic(kind)) intervalOf(speed, config[at + 6]) else 0,
                         };
+                        // A high-speed periodic endpoint's more
+                        // transactions a microframe.
+                        if (speed == regs.SPEED_HIGH and isPeriodic(kind)) {
+                            const more = @min((packet >> 11) & 3, 2);
+                            into[dci].burst = more;
+                            into[dci].esit = (packet & 0x7FF) * (more + 1);
+                        }
                         found |= regs.addFlag(dci);
                         last = dci;
                     }
@@ -202,7 +208,7 @@ fn buildInput(host: *Host, slot: *Slot, add: u32, drop: u32) void {
         // A periodic endpoint's bytes an interval: its companion's, else
         // a packet's.
         const esit = if (ep.esit != 0) ep.esit else ep.max_packet;
-        words[0] = regs.endpointWord0(ep.interval);
+        words[0] = regs.endpointWord0(ep.interval, ep.mult);
         words[1] = regs.endpointWord1(ep.kind, ep.burst, ep.max_packet);
         words[2] = ring.lo(pointer);
         words[3] = ring.hi(pointer);
@@ -441,6 +447,7 @@ pub fn configure(host: *Host, slot: *Slot, value: u8) bool {
         ep.max_packet = specs[dci].max_packet;
         ep.interval = specs[dci].interval;
         ep.burst = specs[dci].burst;
+        ep.mult = 0;
         ep.esit = specs[dci].esit;
         if (!freshRing(host, ep)) return false;
         ep.enabled = true;
@@ -469,17 +476,23 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
         else => if (in) regs.EP_INTERRUPT_IN else regs.EP_INTERRUPT_OUT,
     };
     const packet: u32 = @max(req.max_packet & 0x7FF, 1);
-    if (ep.enabled and ep.kind == kind and ep.max_packet == packet) return 0;
+    // Its bursts as the request says them: a high-speed endpoint's more
+    // transactions only on a periodic one, Mult only on an isochronous
+    // one at SuperSpeed, bytes an interval only on a periodic one.
+    const periodic = isPeriodic(kind);
+    const burst: u32 = if (slot.speed >= regs.SPEED_SUPER) @min(req.burst, 15) else if (slot.speed == regs.SPEED_HIGH and periodic) @min(req.burst, 2) else 0;
+    const mult: u32 = if (slot.speed >= regs.SPEED_SUPER and _xhci.isIsoKind(kind)) @min(req.mult, 2) else 0;
+    const esit: u32 = if (periodic and (slot.speed >= regs.SPEED_SUPER or burst != 0)) req.interval_bytes else 0;
+    if (ep.enabled and ep.kind == kind and ep.max_packet == packet and ep.burst == burst and ep.mult == mult and ep.esit == esit) return 0;
     const drop = if (ep.enabled) regs.addFlag(dci) else 0;
     ep.enabled = false;
     ep.kind = kind;
     ep.max_packet = packet;
-    ep.interval = if (isPeriodic(kind)) intervalOfMs(slot.speed, req.interval) else 0;
-    var spec = Spec{ .kind = kind };
-    if (slot.speed >= regs.SPEED_SUPER) companionOf(slot.config[0..slot.config_length], req.endpoint, &spec);
-    ep.burst = spec.burst;
-    ep.esit = spec.esit;
-    ep.stride = strideOf(packet);
+    ep.interval = if (periodic) intervalOfMs(slot.speed, req.interval) else 0;
+    ep.burst = burst;
+    ep.mult = mult;
+    ep.esit = esit;
+    ep.stride = strideOf(@max(packet, esit));
     ep.next_slice = 0;
     ep.expect = 0;
     ep.streaming = false;
@@ -492,25 +505,6 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
     ep.enabled = false;
     slot.entries = highestOf(slot);
     return if (code == regs.CC_BANDWIDTH) usbhc.UHIOERR_BANDWIDTH else usbhc.UHIOERR_HOSTERROR;
-}
-
-/// The SuperSpeed companion of the endpoint at `address` in `config`, in
-/// whichever setting it is first found, into `spec`; nothing if it has
-/// none.
-pub fn companionOf(config: []const u8, address: u8, spec: *Spec) void {
-    var at: usize = 0;
-    while (at + 2 <= config.len) {
-        const length = config[at];
-        if (length < 2 or at + length > config.len) return;
-        if (config[at + 1] == d.USB_DT_ENDPOINT and length >= 7 and config[at + 2] == address) {
-            const next = at + length;
-            if (next + 6 <= config.len and config[next] >= 6 and config[next + 1] == d.USB_DT_SS_ENDPOINT_COMP) {
-                takeCompanion(config, next, spec);
-            }
-            return;
-        }
-        at += length;
-    }
 }
 
 /// How far apart an isochronous endpoint's packets lie in its buffer: a

@@ -36,6 +36,13 @@
 //! and nothing waits for an answer - a packet has its time and is gone -
 //! and a request is replied once its last packet's time has passed.
 //!
+//! **A packet is an interval's bytes**: at most `max_packet`, or where
+//! the endpoint moves more in an interval - a high-speed one with more
+//! transactions a microframe, a SuperSpeed one with bursts (`burst`,
+//! `mult`) - at most its `interval_bytes`, which the controller sends as
+//! the wire's packets. A controller that moves one wire packet an
+//! interval (usbotg.device) answers a bigger packet IOERR_BADLENGTH.
+//!
 //! **A lost packet is a result, not an error.** The request is answered
 //! with io_Error 0 whatever became of its packets: `io_Actual` is the
 //! bytes that went or came, `iso_lost` the packets that did not, and a
@@ -144,7 +151,8 @@ pub const UHC_ISO_AHEAD: u16 = 895;
 /// One packet of an isochronous transfer, in its `iso_list`.
 pub const UsbIsoPacket = extern struct {
     /// Its bytes: those sent (OUT), the room for those that come (IN); at
-    /// most the endpoint's max packet size.
+    /// most the endpoint's bytes an interval (`interval_bytes`, else its
+    /// max packet size).
     length: u16 = 0,
     /// Written by the controller: the bytes that went or came.
     actual: u16 = 0,
@@ -192,7 +200,7 @@ pub const IOUsbHC = extern struct {
     /// ends with UHIOERR_NAKTIMEOUT; 0: no limit.
     nak_timeout: u32 = 0,
     /// An isochronous transfer's packets: the bytes of each but the
-    /// last, at most `max_packet`; 0 is `max_packet`.
+    /// last, at most the endpoint's bytes an interval; 0 is `max_packet`.
     iso_packet: u32 = 0,
     /// The controller's, while it has the request.
     hc_private: [4]usize = @splat(0),
@@ -210,6 +218,18 @@ pub const IOUsbHC = extern struct {
     /// one and this one - 0 when it followed on, or starts a stream.
     iso_lost: u16 = 0,
     iso_gap: u16 = 0,
+    /// The wire packets of a burst less one: at SuperSpeed the endpoint
+    /// companion's bMaxBurst, at high speed an interrupt or isochronous
+    /// endpoint's more transactions a microframe (wMaxPacketSize bits
+    /// 12:11); 0 elsewhere.
+    burst: u8 = 0,
+    /// A SuperSpeed isochronous endpoint's bursts an interval less one
+    /// (its companion's Mult); 0 elsewhere.
+    mult: u8 = 0,
+    /// An interrupt or isochronous endpoint's bytes an interval: its
+    /// companion's wBytesPerInterval at SuperSpeed, (burst + 1) packets
+    /// at high speed; 0 for one packet's.
+    interval_bytes: u16 = 0,
 };
 
 /// What `UHCMD_QUERYDEVICE` answers.
