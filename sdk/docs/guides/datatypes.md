@@ -300,6 +300,43 @@ only a descriptor naming `BASE=audiocodec`. `8svx.datatype` reads an
 IFF 8SVX sound whole - Fibonacci-delta coded or not, one channel or two
 - with its NAME, AUTH and ANNO.
 
+## Models
+
+Every model in three dimensions is a `model.datatype` object
+(`sdk.datatypes.modelclass`), whatever file it came out of, in the group
+`mode`. A program asking for pictures (`DTA_GroupID` of `GID_PICTURE`)
+is never handed one: a model has no pixels of its own to fetch or put on
+the clipboard, and no frames or rate either, so it is neither a picture
+nor an animation.
+
+The class draws it through facet.library on a process of the object's
+own, into three pictures in the screen's own pixels - one on show, one
+ready, one being drawn - and `GM_RENDER` copies the one last drawn into
+the window, so the object draws only where intuition says and with the
+layers intuition has locked. Dragging over the object turns the model
+and the wheel takes it nearer or further; each only moves the camera and
+wakes the process, which draws from wherever the camera is when it
+begins a frame, so a long drag is drawn as often as a frame can be, from
+its latest step. Nothing changing, nothing is drawn.
+
+The model takes whatever room it is given - `DTA_TotalVert` is
+`DTA_VisibleVert` and the room's height, and the same across - so a
+window shows no bars for it. `DTM_TRIGGER` with `STM_PLAY` turns it by
+itself, `STM_PAUSE` turns that over and `STM_STOP` takes it back to
+where it started; the three are its `DTA_TriggerMethods`, which is how
+MultiView knows to offer Space without knowing what it shows.
+`MDTA_Turning` says whether it turns. Without facet.library, or on a
+screen whose pixels it does not draw in, the object says so in its room
+rather than failing to be made.
+
+`obj.datatype` reads a Wavefront OBJ file and the MTL it names: its
+faces, cut into triangles, its normals - a face without them is lit
+flat - its places on a texture, and each material's colour (`Kd`) and
+picture (`map_Kd`), which is opened through the picture datatypes,
+whatever its format. Its recognise call reads only the bytes
+datatypes.library has already read, for OBJ's lines, since `.obj` is
+also what a compiler names its object files.
+
 ## Showing one
 
 `SYS:Programs/MultiView` is a window round any object:
@@ -310,6 +347,7 @@ MultiView                       asks with a file requester
 MultiView CLIP 0                what is on the clipboard
 MultiView <file> SCALE          a picture at the size of the window
 MultiView SYS:Tests/datatypes/Spinner.json    an animation, played
+MultiView SYS:Tests/datatypes/Torus.obj       a model, turned by the pointer
 ```
 
 It knows no formats. It opens the file through the library, puts the
@@ -343,9 +381,9 @@ about what a step does.
 
 A format is a class library in `SYS:classes/datatypes/`, a subclass of
 `datatypesclass` or of the superclass of its group - `picture.datatype`
-for anything in `pict` - and a descriptor in `DEVS:DataTypes` that
-names it. The class reads the source
-it is given in `OM_NEW` - `DTA_Handle` is a lock for a file, an open IFF
+for anything in `pict`, `model.datatype` for `mode` - and a descriptor
+in `DEVS:DataTypes` that names it. The class reads the source it is
+given in `OM_NEW` - `DTA_Handle` is a lock for a file, an open IFF
 handle for the clipboard - fills in the numbers above, and answers
 `DTM_ASYNCLAYOUT` to lay itself out and `GM_RENDER` to draw. The layout
 is asked for on a process of its own, so it may take as long as it
@@ -377,6 +415,18 @@ time, so the class keeps whatever it builds frames from without a lock.
 In `OM_DISPOSE` it copies its instance data, passes the message on,
 which stops that process and frees the object, and frees what it kept
 from the copy.
+
+A model class, in `mode`, is a subclass of `model.datatype`, and a reader
+only, like a picture class: it reads its file in `OM_NEW`, sets
+`MDTA_ModelHeader` - how many vertices, indices, materials and parts,
+and the box the model fills - which gives the object the memory for
+them, and reads it back, null when there was none. Then it hands them
+over: `MDTM_WRITEVERTICES` and `MDTM_WRITEINDICES` as runs from a first,
+three indices a triangle; `MDTM_WRITEMATERIAL` with a colour and a
+picture.datatype object, which is the model's from then on and is
+disposed of once it has been read into a texture; and `MDTM_WRITEPART`
+for each run of triangles of one material. A format the class does not
+know more of - STL, PLY, glTF - is a parser and nothing else.
 
 A format whose files cannot be told apart by name, mask or form type
 says `RECOGNISE` in its descriptor and exports one function at the first

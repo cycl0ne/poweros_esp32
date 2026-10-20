@@ -1,0 +1,4 @@
+# The crate's one material.
+newmtl Wood
+Kd 1.0 1.0 1.0
+map_Kd Crate.png

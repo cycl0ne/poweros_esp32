@@ -1,0 +1,6 @@
+# The torus's two halves.
+newmtl Copper
+Kd 0.85 0.45 0.20
+
+newmtl Jade
+Kd 0.25 0.70 0.45
