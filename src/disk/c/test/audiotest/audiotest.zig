@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
-//! Audio: a note out of the speaker, through audio.device. Built against
-//! the SDK only.
+//! AudioTest: a note out of the speaker, through audio.device. Built
+//! against the SDK only.
 //!
-//!   Audio HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,
-//!         OUTPUTS/S,OUTPUT/K,TRIGGER/K/N,TOFILE/K
+//!   AudioTest HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,
+//!             OUTPUTS/S,OUTPUT/K,TRIGGER/K/N,TOFILE/K
 //!
 //! It asks the device what the board has - the part the sound comes out
 //! of, the rate the output runs at, one side or two, how far behind a
@@ -60,8 +60,8 @@ const DosBase = sdk.interface.dos.DosBase;
 const RtaBase = sdk.interface.rta.RtaBase;
 const Printf = dos.stdio.Printf;
 
-pub const COMMAND_NAME = "Audio";
-const VERSION_STRING = "\x00$VER: Audio 2.4 (20.10.2026)\r\n";
+pub const COMMAND_NAME = "AudioTest";
+const VERSION_STRING = "\x00$VER: AudioTest 2.5 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "HZ/K/N,SECONDS/K/N,VOLUME/K/N,PAN/K/N,CHORD/S,BENCH/K/N,OUTPUTS/S,OUTPUT/K,TRIGGER/K/N,TOFILE/K";

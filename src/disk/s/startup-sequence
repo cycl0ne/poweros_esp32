@@ -57,12 +57,10 @@ C:AddDataTypes >NIL: QUIET
 ; console opened from here on.
 C:SetPrefs >NIL:
 
-; Where a command is looked for after the current directory. C:test holds
-; the programs that exercise a device or a library, C:net the network's
-; tools, so they are called by name like the rest; C: comes ahead of them,
-; so of a command and a test program of one name - Audio - the command
-; runs.
-Path >NIL: RAM: SYS: S: C: C:test C:net
+; Where a command is looked for, before C:. C:test holds the programs that
+; exercise a device or a library, C:net the network's tools, so they are
+; called by name like the rest.
+Path >NIL: RAM: SYS: S: C:test C:net
 
 SetEnv Kickstart $Kickstart
 UnSet Kickstart

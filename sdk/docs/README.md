@@ -98,7 +98,7 @@ tags and constants, each with its doc comment.
   writing buffers as they play, what the board has, choosing and
   preferring an output, a volume per output and `audio.prefs`, WAV and
   MP3 decoded by audiocodec.library, the outputs and their drivers
-  (rta.library), recording, `C:Audio`, `C:Play` and `C:test/Audio`.
+  (rta.library), recording, `C:Audio`, `C:Play` and `C:test/AudioTest`.
 - [USB](guides/usb.md) - a bus and starting it, what is on it, driving
   a device from a program (claims, pipes, control transfers), writing a
   class driver, keyboards and mice as sources, sticks, serial and

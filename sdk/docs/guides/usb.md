@@ -504,7 +504,7 @@ join - is `docs/aic8800.md`.
 setting it can play through - an isochronous OUT endpoint, linear PCM,
 one or two channels of 16, 24 or 32 bits, at 48 kHz - becomes a sink of
 rta.library, named as the device names its product, which audio.device
-plays through as it does a board's codec (`C:test/Audio OUTPUTS` lists
+plays through as it does a board's codec (`C:test/AudioTest OUTPUTS` lists
 it, `OUTPUT` picks it; the [sound guide](audio.md)). A function's
 microphone, another streaming interface, is declined, and so is every
 interface on a bus without isochronous transfers: a packet of silence

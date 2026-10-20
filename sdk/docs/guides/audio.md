@@ -623,34 +623,34 @@ An output is named by its name, any case, or by its number as `LIST`
 shows it; given anything to do, `Audio` prints nothing unless something
 goes wrong, so S:User-Startup can set the sound up.
 
-`C:test/Audio` says what the board has and plays a note:
+`C:test/AudioTest` says what the board has and plays a note:
 
 ```
-C:test/Audio                  440 Hz for two seconds
-C:test/Audio HZ 220 SECONDS 5 PAN -100
-C:test/Audio CHORD            a major chord, three streams at once
-C:test/Audio BENCH 16         sixteen streams for ten seconds, then the
+C:test/AudioTest              440 Hz for two seconds
+C:test/AudioTest HZ 220 SECONDS 5 PAN -100
+C:test/AudioTest CHORD        a major chord, three streams at once
+C:test/AudioTest BENCH 16     sixteen streams for ten seconds, then the
                               gaps and the device task's share of a core
-C:test/Audio OUTPUTS          every output: name, number, sides, rates
-C:test/Audio OUTPUT Headphones
+C:test/AudioTest OUTPUTS      every output: name, number, sides, rates
+C:test/AudioTest OUTPUT Headphones
                               play through that one from now on
-C:test/Audio TRIGGER 10       ten clicks as fast as they can be sent,
+C:test/AudioTest TRIGGER 10   ten clicks as fast as they can be sent,
                               then what became of each, and the gaps
-C:test/Audio TOFILE RAM:note.wav
+C:test/AudioTest TOFILE RAM:note.wav
                               the note into a WAV file (a file sink)
 ```
 
 In QEMU the output is `null`: the sound is mixed as on a board, buffer
 for buffer at 48 kHz, and goes nowhere, so a program that plays runs as
-it would on a board, and `C:test/Audio BENCH` measures the mix. QEMU's virt
+it would on a board, and `C:test/AudioTest BENCH` measures the mix. QEMU's virt
 machine with `-device qemu-xhci -device usb-audio,audiodev=snd` and an
 audiodev has a USB speaker, which uac.device plays through; with
 `-audiodev wav,id=snd,path=out.wav,out.mixing-engine=off` what it was
 sent lands in a WAV file on the host, sample for sample.
 
 `./zig build audio-bench` times the mixer on the host, for 1, 4, 8 and
-16 streams; the board's own figure is `C:test/Audio BENCH`'s. The mixer is held
-to a reference mix byte for byte by a host test
+16 streams; the board's own figure is `C:test/AudioTest BENCH`'s. The mixer
+is held to a reference mix byte for byte by a host test
 (`src/rom/devs/audio/golden.zig`); a change to it that is meant to change
 what is heard writes the reference again with `./zig build audio-golden`.
 

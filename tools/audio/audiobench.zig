@@ -8,7 +8,7 @@
 //! of the device's 256 frames. What it prints is a measure to compare one
 //! change of the mixer with the one before, on the same host: what one
 //! second of sound costs, and how many times faster than it plays. A
-//! board's own figure is `Audio BENCH`'s.
+//! board's own figure is `AudioTest BENCH`'s.
 
 const std = @import("std");
 const golden = @import("golden");
