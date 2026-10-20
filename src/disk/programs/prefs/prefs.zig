@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! Prefs: the system's settings in one window - the style every gadget,
 //! window and menu is drawn in, the system's fonts, and intuition's own
-//! settings, and the colours of the screens - changed, and saved. Built
-//! against the SDK only.
+//! settings, the colours of the screens, and the sound - changed, and
+//! saved. Built against the SDK only.
 //!
 //!   SYS:Programs/Prefs
 //!
-//! Six pages under tabs:
+//! Seven pages under tabs:
 //!
 //! - **Style**: the looks there are to pick from - a style file each in
 //!   SYS:Prefs/Presets/Styles, its first comment saying what it is - and a
@@ -38,6 +38,14 @@
 //!   it is given none, when the keyboard on the screen comes up, whether
 //!   a window may be moved partly past the screen's edges, and whether the
 //!   gadgets in the title bars are wide.
+//! - **Sound**: the output preferred - played through whenever it is
+//!   there, headphones that are plugged in taking the sound over - and
+//!   how loud each output plays, those on the machine now and those the
+//!   settings remember, which are marked as not there; both are heard at
+//!   once, and Cancel puts them back. And the beep: whether the display
+//!   flashes, and what is heard - nothing, a tone of a pitch, a loudness
+//!   and a length, or a sound file - with a button that plays it as the
+//!   page has it.
 //!
 //! **Save** writes the files to ENV:Sys and ENVARC:Sys, **Use** to
 //! ENV:Sys alone - in force until the machine starts again - and both then
@@ -67,6 +75,14 @@ const font_file = prefs.font;
 const intuition_file = prefs.intuition;
 const palette_file = prefs.palette;
 const anvil_file = prefs.anvil;
+const sound_file = prefs.sound;
+const audio_file = prefs.audio;
+const audio = sdk.devices.audio;
+const audiocontrol = sdk.devices.audiocontrol;
+const datatypes = sdk.datatypes;
+const dtc = datatypes.datatypesclass;
+const sdt = datatypes.soundclass;
+const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
@@ -99,8 +115,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.8";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (18.10.2026)\r\n";
+const VERSION = "1.9";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -139,6 +155,12 @@ const ID_PEN_PICK = 112;
 /// The desktop page's.
 const ID_GROUND = 128;
 const ID_GROUND_PICK = 129;
+/// The sound page's: the preferred output, an output's volume (this and
+/// its row), the beep's.
+const ID_PREFER = 130;
+const ID_OUT_VOLUME = 136;
+const ID_BEEP_SOUND = 145;
+const ID_TEST = 150;
 
 /// The colour wheel's window's gadgets.
 const ID_WHEEL = 1;
@@ -242,13 +264,19 @@ const joins_labels = [_:null]?[*:0]const u8{ "Default", "None", "Angled" };
 const keyboard_labels = [_:null]?[*:0]const u8{ "When the board has none", "Always", "Never" };
 const place_labels = [_:null]?[*:0]const u8{ "Tiled", "Centred", "Scaled to cover" };
 const view_labels = [_:null]?[*:0]const u8{ "Icons", "Names", "Dates", "Sizes" };
-const tab_names = [_:null]?[*:0]const u8{ "Style", "Advanced", "Colours", "Fonts", "Desktop", "System" };
+const tab_names = [_:null]?[*:0]const u8{ "Style", "Advanced", "Colours", "Fonts", "Desktop", "System", "Sound" };
 const page_style = 0;
 const page_advanced = 1;
 const page_colours = 2;
 const page_fonts = 3;
 const page_desktop = 4;
 const page_system = 5;
+const page_sound = 6;
+/// What a beep sounds like, in `sound_file.SOUND_`'s order.
+const beep_sound_labels = [_:null]?[*:0]const u8{ "Nothing", "A tone", "A sound file" };
+
+/// The most outputs the sound page shows a volume for.
+const max_rows = 6;
 
 /// The screen pens' names as the pages show them, in the pens' order.
 const pen_labels = [sc.NUMDRIPENS]?[*:0]const u8{
@@ -360,6 +388,39 @@ const Editor = struct {
     icon_size: *Object = undefined,
     snap: *Object = undefined,
     view: *Object = undefined,
+    /// The sound page: audio.device, when the machine has one; the
+    /// outputs as the page has them, and as they were when it opened, for
+    /// Cancel; a row each for up to `max_rows` of them - those on the
+    /// machine first - with its label and its slider.
+    control: ?audiocontrol.Control = null,
+    audio: audio_file.Settings = .{},
+    audio_before: audio_file.Settings = .{},
+    rows: [max_rows]usize = undefined,
+    row_count: usize = 0,
+    row_labels: [max_rows][audio.AUDIO_NAME_LEN + 16:0]u8 = @splat(@splat(0)),
+    volume_sliders: [max_rows]*Object = undefined,
+    /// The preferred output's chooser: "the first there is", then the
+    /// rows' outputs.
+    prefer: *Object = undefined,
+    prefer_labels: [max_rows + 1:null]?[*:0]const u8 = @splat(null),
+    /// The beep as the file had it, and the page's gadgets for it.
+    beep: sound_file.Settings = .{},
+    flash: *Object = undefined,
+    beep_sound: *Object = undefined,
+    beep_volume: *Object = undefined,
+    tone: *Object = undefined,
+    duration: *Object = undefined,
+    sample: *Object = undefined,
+    sound_status: *Object = undefined,
+    sound_status_text: [80:0]u8 = @splat(0),
+    /// What Test plays: a tone on a request of its own, sent, and its
+    /// samples; or a sound file's object. datatypes.library once a file
+    /// was played.
+    test_io: ?*audio.IOAudio = null,
+    test_sent: bool = false,
+    test_samples: ?*anyopaque = null,
+    test_object: ?*Object = null,
+    dt_lib: ?*exec.Library = null,
     /// The tags the preview is drawn with, and the fills they point to.
     tags: [max_lines * style_file.tags_per_line + 2]TagItem = undefined,
     fills: [max_lines]graphics.FillStyle = undefined,
@@ -781,6 +842,199 @@ const Editor = struct {
         return p;
     }
 
+    // --- the sound page ---------------------------------------------------
+
+    /// The outputs: the settings file's, then audio.device's over them -
+    /// what plays now; the rows, those on the machine first.
+    fn readAudio(e: *Editor, text: []u8) void {
+        if (prefs.load(e.dl, audio_file.ENV_FILE, text)) |read| _ = e.audio.load(read);
+        const control = if (e.control) |*opened| opened else return;
+        audio_file.gather(control, &e.audio);
+        e.audio_before = e.audio;
+        var outputs: audiocontrol.Outputs = .{};
+        outputs.read(control);
+        for (outputs.infos[0..outputs.count]) |*info| e.addRow(info.id, true);
+        for (e.audio.outputs[0..e.audio.count]) |*output| {
+            if (outputs.indexOf(output.id) == null) e.addRow(output.id, false);
+        }
+        e.prefer_labels[0] = "The first there is";
+        for (0..e.row_count) |row_at| e.prefer_labels[row_at + 1] = &e.row_labels[row_at];
+    }
+
+    /// A row for the output of that number: its name, or its number, and
+    /// whether it is there.
+    fn addRow(e: *Editor, id: u32, here: bool) void {
+        if (e.row_count == max_rows) return;
+        const output = e.audio.find(id) orelse return;
+        var at: usize = 0;
+        for (e.audio.outputs[0..e.audio.count], 0..) |*each, place| {
+            if (each.id == id) at = place;
+        }
+        const label = &e.row_labels[e.row_count];
+        var n: usize = 0;
+        const name = output.nameText();
+        if (name.len != 0) {
+            @memcpy(label[0..name.len], name);
+            n = name.len;
+        } else {
+            audio_file.hexText(label[0..8], id);
+            n = 8;
+        }
+        if (!here) {
+            const gone = " (not here)";
+            @memcpy(label[n..][0..gone.len], gone);
+            n += gone.len;
+        }
+        label[n] = 0;
+        e.rows[e.row_count] = at;
+        e.row_count += 1;
+    }
+
+    /// The preferred output as the chooser's place: 0 for none.
+    fn preferChoice(e: *Editor) usize {
+        const preferred = e.audio.preferred() orelse return 0;
+        for (e.rows[0..e.row_count], 0..) |at, row_at| {
+            if (e.audio.outputs[at].id == preferred.id) return row_at + 1;
+        }
+        return 0;
+    }
+
+    /// The chooser's choice made the preferred output, heard at once.
+    fn takePrefer(e: *Editor, choice: usize) void {
+        const id: u32 = if (choice >= 1 and choice <= e.row_count) e.audio.outputs[e.rows[choice - 1]].id else 0;
+        e.audio.prefer(id);
+        if (e.control) |*control| _ = control.prefer(id);
+    }
+
+    /// A row's slider at `level`: its output's volume, heard at once.
+    fn takeVolume(e: *Editor, row_at: usize, level: usize) void {
+        if (row_at >= e.row_count) return;
+        const output = &e.audio.outputs[e.rows[row_at]];
+        output.volume = @intCast(@min(level, 100));
+        if (e.control) |*control| control.setVolume(output.id, output.volume);
+    }
+
+    /// The volumes and the preferred output as they were when the window
+    /// opened.
+    fn restoreAudio(e: *Editor) void {
+        if (e.control) |*control| audio_file.apply(control, &e.audio_before);
+    }
+
+    fn saySound(e: *Editor, text: []const u8) void {
+        const n = @min(text.len, e.sound_status_text.len);
+        @memcpy(e.sound_status_text[0..n], text[0..n]);
+        e.sound_status_text[n] = 0;
+        e.set(page_sound, e.sound_status, &.{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&e.sound_status_text) }, .{} });
+    }
+
+    /// The beep as the page has it.
+    fn beepPrefs(e: *Editor) sound_file.Settings {
+        var p = e.beep;
+        var value: usize = 0;
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.flash, &value);
+        p.flash = @intFromBool(value != 0);
+        _ = e.ib.GetAttr(ch.CHOOSER_Active, e.beep_sound, &value);
+        p.sound = @intCast(@min(value, sound_file.SOUND_SAMPLE));
+        _ = e.ib.GetAttr(sl.SLIDER_Level, e.beep_volume, &value);
+        p.volume = @intCast(@min(@max(@as(isize, @bitCast(value)), 1), 100));
+        _ = e.ib.GetAttr(ig.INTEGER_Number, e.tone, &value);
+        p.tone = @intCast(@min(@max(@as(isize, @bitCast(value)), 100), 8000));
+        _ = e.ib.GetAttr(ig.INTEGER_Number, e.duration, &value);
+        p.duration = @intCast(@min(@max(@as(isize, @bitCast(value)), 10), 1000));
+        _ = e.ib.GetAttr(gf.GETFILE_FullFile, e.sample, &value);
+        const name: []const u8 = if (value != 0) std_span(@ptrFromInt(value)) else "";
+        if (name.len <= sound_file.sample_len) {
+            p.sample = @splat(0);
+            @memcpy(p.sample[0..name.len], name);
+        }
+        return p;
+    }
+
+    /// The beep as the page has it played - not waited for: the tone as a
+    /// trigger of audio.device's, a sound file through its sound
+    /// datatype. The one before is stopped first.
+    fn testBeep(e: *Editor) void {
+        e.endTest();
+        const settings = e.beepPrefs();
+        switch (settings.sound) {
+            sound_file.SOUND_BEEP => {
+                const control = if (e.control) |*opened| opened else return e.saySound("This machine has no sound");
+                const sys = e.sys;
+                const io = e.test_io orelse made: {
+                    const request = sys.CreateIORequest(control.port, @sizeOf(audio.IOAudio)) orelse return;
+                    const fresh: *audio.IOAudio = @ptrCast(@alignCast(request));
+                    fresh.* = control.io.*;
+                    e.test_io = fresh;
+                    break :made fresh;
+                };
+                const frames = sound_file.beepFrames(&settings);
+                const memory = sys.AllocVec(frames * @sizeOf(i16), exec.MEMF_ANY) orelse return;
+                e.test_samples = memory;
+                const samples: [*]i16 = @ptrCast(@alignCast(memory));
+                const beep = sound_file.makeBeep(&settings, samples[0..frames]);
+                io.std.req.command = audio.AUDIOCMD_TRIGGER;
+                io.std.req.flags = 0;
+                io.std.data = memory;
+                io.std.length = @as(usize, frames) * @sizeOf(i16);
+                io.format = audio.AUDIO_S16;
+                io.channels = 1;
+                io.rate = beep.rate;
+                io.volume = beep.volume;
+                io.pan = 0;
+                io.loops = 1;
+                sys.SendIO(&io.std.req);
+                e.test_sent = true;
+                e.saySound("");
+            },
+            sound_file.SOUND_SAMPLE => {
+                if (settings.sample[0] == 0) return e.saySound("Pick the sound file first");
+                const lib = e.dt_lib orelse e.sys.OpenLibrary(datatypes.DATATYPESNAME, 0) orelse return e.saySound("No datatypes.library");
+                e.dt_lib = lib;
+                const dt: *DataTypesBase = @ptrCast(lib);
+                const object = dt.NewDTObjectA(&settings.sample, &[_]TagItem{
+                    pair(dtc.DTA_GroupID, datatypes.GID_SOUND),
+                    pair(sdt.SDTA_Volume, sound_file.volumeOf(&settings)),
+                    .{},
+                }) orelse return e.saySound("The sound file cannot be read as a sound");
+                e.test_object = object;
+                var play = dtc.DtTrigger{ .function = dtc.STM_PLAY };
+                _ = dt.DoDTMethodA(object, null, null, @ptrCast(&play));
+                e.saySound("");
+            },
+            else => {},
+        }
+    }
+
+    /// What Test played stopped and given back.
+    fn endTest(e: *Editor) void {
+        const sys = e.sys;
+        if (e.test_sent) {
+            const io = e.test_io.?;
+            _ = sys.AbortIO(&io.std.req);
+            _ = sys.WaitIO(&io.std.req);
+            e.test_sent = false;
+        }
+        if (e.test_samples) |memory| sys.FreeVec(memory);
+        e.test_samples = null;
+        if (e.test_object) |object| {
+            const dt: *DataTypesBase = @ptrCast(e.dt_lib.?);
+            dt.DisposeDTObject(object);
+        }
+        e.test_object = null;
+    }
+
+    /// Everything the sound page holds given back: what Test plays, its
+    /// request, datatypes.library, audio.device.
+    fn closeSound(e: *Editor) void {
+        e.endTest();
+        if (e.test_io) |io| e.sys.DeleteIORequest(&io.std.req);
+        e.test_io = null;
+        if (e.dt_lib) |lib| e.sys.CloseLibrary(lib);
+        e.dt_lib = null;
+        if (e.control) |*control| control.close();
+        e.control = null;
+    }
+
     /// The files written to ENV:, and to ENVARC: too when kept, and
     /// handed to the system. Whether all were written.
     fn apply(e: *Editor, keep: bool) bool {
@@ -817,6 +1071,19 @@ const Editor = struct {
         text[n] = '\n';
         n += 1;
         ok = e.saveBoth(anvil_file.ENV_FILE, anvil_file.ENVARC_FILE, text[0..n], keep) and ok;
+
+        n = sound_file.header.len;
+        @memcpy(text[0..n], sound_file.header);
+        const beep = e.beepPrefs();
+        n += sound_file.write(&beep, text[n..room]);
+        text[n] = '\n';
+        n += 1;
+        ok = e.saveBoth(sound_file.ENV_FILE, sound_file.ENVARC_FILE, text[0..n], keep) and ok;
+
+        if (e.control != null) {
+            n = audio_file.write(&e.audio, text[0..room]);
+            ok = e.saveBoth(audio_file.ENV_FILE, audio_file.ENVARC_FILE, text[0..n], keep) and ok;
+        }
 
         if (e.pens_changed) {
             n = palette_file.header.len;
@@ -1374,6 +1641,116 @@ fn build(e: *Editor) ?*Object {
     }) orelse return null;
     pages[page_system] = column(ib, "intuition", &.{ e.double, e.height, e.keyboard, e.off_screen, e.wide_gadgets }, &.{ "_Double-click ms", "Screen _font rows", "_Keyboard on screen", "Windows past _edges", "Wide title bar gadgets" }) orelse return null;
 
+    // The sound page: the outputs beside the beep.
+    var output_gadgets: [max_rows + 1]?*Object = undefined;
+    var output_labels: [max_rows + 1]?[*:0]const u8 = undefined;
+    var output_count: usize = 0;
+    if (e.control == null or e.row_count == 0) {
+        output_gadgets[0] = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+            pair(tx.TEXT_Wrap, 1),
+            pair(gc.GA_Width, 160),
+            pair(tx.TEXT_Text, @intFromPtr(@as([*:0]const u8, if (e.control == null) "This machine has no sound." else "No output is plugged in."))),
+            .{},
+        }) orelse return null;
+        output_labels[0] = null;
+        output_count = 1;
+    } else {
+        e.prefer = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+            pair(gc.GA_ID, ID_PREFER),
+            pair(gc.GA_RelVerify, 1),
+            pair(ch.CHOOSER_Labels, @intFromPtr(&e.prefer_labels)),
+            pair(ch.CHOOSER_Active, e.preferChoice()),
+            .{},
+        }) orelse return null;
+        output_gadgets[0] = e.prefer;
+        output_labels[0] = "Preferred";
+        output_count = 1;
+        for (0..e.row_count) |row_at| {
+            e.volume_sliders[row_at] = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+                pair(gc.GA_ID, ID_OUT_VOLUME + row_at),
+                pair(gc.GA_RelVerify, 1),
+                pair(sl.SLIDER_Max, 100),
+                pair(sl.SLIDER_Level, e.audio.outputs[e.rows[row_at]].volume),
+                pair(sl.SLIDER_LevelFormat, @intFromPtr("%ld%%")),
+                pair(sl.SLIDER_MaxLevelLen, 4),
+                pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
+                pair(gc.GA_Width, 100),
+                .{},
+            }) orelse return null;
+            output_gadgets[output_count] = e.volume_sliders[row_at];
+            output_labels[output_count] = &e.row_labels[row_at];
+            output_count += 1;
+        }
+    }
+    const outputs_group = column(ib, "Outputs and their volumes", output_gadgets[0..output_count], output_labels[0..output_count]) orelse return null;
+    e.flash = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(cb.CHECKBOX_Checked, e.beep.flash),
+        .{},
+    }) orelse return null;
+    e.beep_sound = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_BEEP_SOUND),
+        pair(ch.CHOOSER_Labels, @intFromPtr(&beep_sound_labels)),
+        pair(ch.CHOOSER_Active, @min(e.beep.sound, sound_file.SOUND_SAMPLE)),
+        .{},
+    }) orelse return null;
+    e.beep_volume = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+        pair(sl.SLIDER_Min, 1),
+        pair(sl.SLIDER_Max, 100),
+        pair(sl.SLIDER_Level, e.beep.volume),
+        pair(sl.SLIDER_LevelFormat, @intFromPtr("%ld%%")),
+        pair(sl.SLIDER_MaxLevelLen, 4),
+        pair(gc.GA_Width, 100),
+        .{},
+    }) orelse return null;
+    e.tone = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
+        pair(ig.INTEGER_Min, 100),
+        pair(ig.INTEGER_Max, 8000),
+        pair(ig.INTEGER_Step, 10),
+        pair(ig.INTEGER_Number, e.beep.tone),
+        .{},
+    }) orelse return null;
+    e.duration = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
+        pair(ig.INTEGER_Min, 10),
+        pair(ig.INTEGER_Max, 1000),
+        pair(ig.INTEGER_Step, 10),
+        pair(ig.INTEGER_Number, e.beep.duration),
+        .{},
+    }) orelse return null;
+    // The sound file's name as the field shows it: its drawer and its own.
+    var sample_drawer: [sound_file.sample_len + 1]u8 = @splat(0);
+    var sample_own: [sound_file.sample_len + 1]u8 = @splat(0);
+    const sample_name = std_span(&e.beep.sample);
+    var sample_cut: usize = 0;
+    for (sample_name, 0..) |c, i| if (c == '/' or c == ':') {
+        sample_cut = i + 1;
+    };
+    @memcpy(sample_drawer[0..sample_cut], sample_name[0..sample_cut]);
+    if (sample_cut > 0 and sample_drawer[sample_cut - 1] == '/') sample_drawer[sample_cut - 1] = 0;
+    @memcpy(sample_own[0 .. sample_name.len - sample_cut], sample_name[sample_cut..]);
+    e.sample = ib.NewObjectTagList(null, gf.GETFILE_CLASS, &[_]TagItem{
+        pair(gf.GETFILE_TitleText, @intFromPtr("The beep's sound")),
+        pair(gf.GETFILE_Drawer, @intFromPtr(@as([*]const u8, if (sample_drawer[0] != 0) &sample_drawer else "SYS:"))),
+        pair(gf.GETFILE_File, @intFromPtr(&sample_own)),
+        .{},
+    }) orelse return null;
+    const test_row = row(ib, &.{button(ib, "Test", ID_TEST)}) orelse return null;
+    const beep_group = column(ib, "Beep", &.{ e.flash, e.beep_sound, e.beep_volume, e.tone, e.duration, e.sample, test_row }, &.{ "Flash the display", "Sound", "Volume", "Tone Hz", "Length ms", "Sound file", null }) orelse return null;
+    e.sound_status = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Text, @intFromPtr(&e.sound_status_text)),
+        pair(tx.TEXT_Clipped, 1),
+        .{},
+    }) orelse return null;
+    const sound_groups = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ),
+        pair(lg.LAYOUTA_Spacing, 6),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(outputs_group)),
+        pair(lg.CHILDA_Align, lg.CALIGN_TOP),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(beep_group)),
+        pair(lg.CHILDA_Align, lg.CALIGN_TOP),
+        .{},
+    }) orelse return null;
+    pages[page_sound] = column(ib, null, &.{ sound_groups, e.sound_status }, &.{}) orelse return null;
+
     const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{ pair(pgc.PAGE_Pages, @intFromPtr(&pages)), .{} }) orelse return null;
     e.tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_TABS),
@@ -1485,6 +1862,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         };
     }
 
+    if (prefs.load(dl, sound_file.ENV_FILE, file[0..max_file])) |text| {
+        var beep: sound_file.Settings = .{};
+        if (prefs.firstLine(text)) |line| if (sound_file.parse(line, &beep) == null) {
+            e.beep = beep;
+        };
+    }
+    e.control = audiocontrol.Control.open(sys);
+    defer e.closeSound();
+    e.readAudio(file[0..max_file]);
+
     e.readPresets();
     const layout = build(e) orelse {
         _ = Printf(dl, MSG_NOMEMORY, .{});
@@ -1530,7 +1917,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             const word = ib.SendMessage(object, @ptrCast(&handle));
             if (word == wc.WMHI_LASTMSG) break;
             switch (word & wc.WMHI_CLASSMASK) {
-                wc.WMHI_CLOSEWINDOW => return dos.RETURN_OK,
+                wc.WMHI_CLOSEWINDOW => {
+                    e.restoreAudio();
+                    return dos.RETURN_OK;
+                },
                 wc.WMHI_GADGETUP => {
                     const id = word & wc.WMHI_GADGETMASK;
                     switch (id) {
@@ -1545,10 +1935,20 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                         ID_BORDER => e.takeChoice(.border, &style_file.borders, code),
                         ID_JOINS => e.takeChoice(.joins, &style_file.joins, code),
                         ID_SAVE, ID_USE => {
+                            const beep = e.beepPrefs();
+                            if (beep.sound == sound_file.SOUND_SAMPLE and beep.sample[0] == 0) {
+                                e.saySound("A sound file for the beep: pick one, or another sound");
+                                continue;
+                            }
                             if (e.apply(id == ID_SAVE)) return dos.RETURN_OK;
                             e.say("A file could not be written: see the shell");
                         },
-                        ID_CANCEL => return dos.RETURN_OK,
+                        ID_CANCEL => {
+                            e.restoreAudio();
+                            return dos.RETURN_OK;
+                        },
+                        ID_PREFER => e.takePrefer(code),
+                        ID_TEST => e.testBeep(),
                         ID_PRESET => e.pickPreset(code & ~lv.LISTVIEW_DOUBLE),
                         ID_BUILTIN => e.builtInPens(),
                         ID_GROUND => e.takeGround(),
@@ -1561,19 +1961,32 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                             e.takePen(id - ID_PEN_FIELD);
                         } else if (id >= ID_PEN_PICK and id < ID_PEN_PICK + sc.NUMDRIPENS) {
                             e.pickPen(id - ID_PEN_PICK);
+                        } else if (id >= ID_OUT_VOLUME and id < ID_OUT_VOLUME + max_rows) {
+                            e.takeVolume(id - ID_OUT_VOLUME, code);
                         },
                     }
                 },
-                // A font picked in its requester.
-                wc.WMHI_IDCMPUPDATE => for (e.fonts, 0..) |o, i| {
-                    var name: usize = 0;
-                    _ = ib.GetAttr(gfo.GETFONT_Name, o, &name);
-                    var size: usize = 0;
-                    _ = ib.GetAttr(gfo.GETFONT_Size, o, &size);
-                    var was: [font_file.value_len:0]u8 = undefined;
-                    const before = if (e.font_line.get(@enumFromInt(i))) |text| font_file.attrOf(text, &was) else null;
-                    const same_font = if (before) |b| name != 0 and sameText(std_span(@ptrFromInt(name)), std_span(b.name)) and b.y_size == size else false;
-                    if (!same_font) e.font_picked[i] = true;
+                // An output's volume moved, or a font picked in its
+                // requester.
+                wc.WMHI_IDCMPUPDATE => {
+                    var updated: usize = 0;
+                    _ = ib.GetAttr(wc.WINDOWA_GadgetID, object, &updated);
+                    if (updated >= ID_OUT_VOLUME and updated < ID_OUT_VOLUME + max_rows) {
+                        var level: usize = 0;
+                        _ = ib.GetAttr(sl.SLIDER_Level, e.volume_sliders[updated - ID_OUT_VOLUME], &level);
+                        e.takeVolume(updated - ID_OUT_VOLUME, level);
+                        continue;
+                    }
+                    for (e.fonts, 0..) |o, i| {
+                        var name: usize = 0;
+                        _ = ib.GetAttr(gfo.GETFONT_Name, o, &name);
+                        var size: usize = 0;
+                        _ = ib.GetAttr(gfo.GETFONT_Size, o, &size);
+                        var was: [font_file.value_len:0]u8 = undefined;
+                        const before = if (e.font_line.get(@enumFromInt(i))) |text| font_file.attrOf(text, &was) else null;
+                        const same_font = if (before) |b| name != 0 and sameText(std_span(@ptrFromInt(name)), std_span(b.name)) and b.y_size == size else false;
+                        if (!same_font) e.font_picked[i] = true;
+                    }
                 },
                 else => {},
             }

@@ -120,7 +120,7 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   notification when a file changes; record locks on ranges of a file;
   consoles with line editing, file name completion, and copy and paste;
   a shell with scripts, a command's output and errors redirected apart
-  (`>`, `*>`: [dos guide](sdk/docs/guides/dos.md#files)), and 55
+  (`>`, `*>`: [dos guide](sdk/docs/guides/dos.md#files)), and 56
   commands in `C:` - `ScreenDump` saves a
   screen as a PNG - test programs in `C:test` and network tools in
   `C:net`.
@@ -135,7 +135,8 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   spreadsheet with formulas, reading and writing CSV), Terminal (a VT100
   on a serial line), Player (WAV, MP3, FLAC and Ogg Vorbis with their
   cover, tags and chapters, and a plasma, the wave or the spectrum of
-  what is heard), FontView, Battery and Prefs. In `SYS:System`, beside
+  what is heard, through the output picked), FontView, Battery, Prefs
+  and Volume (the output played through and how loud). In `SYS:System`, beside
   the Shell, with their readmes in `SYS:System/Docs`: HDToolBox (a
   drive's partitions), CPULoad and MemMap (who holds the memory, as a
   map).
@@ -162,8 +163,12 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   drivers - an ES8311 codec, I2S amplifiers, USB speakers and headsets
   (`DEVS:usb/uac.device`), a WAV file written in time, and in QEMU an
   output into nothing that keeps time - picked by a number that stays
-  the same from boot to boot, the next one taking over when the one
-  playing is unplugged; a click or a beep plays at once as a trigger, on voices
+  the same from boot to boot; the output preferred takes the sound over
+  when it is plugged in, and it or the first takes over when the one
+  playing is unplugged; each output keeps its own volume, and both are
+  set with `C:Audio`, on the Sound page of Prefs or in
+  `SYS:Programs/Volume` and given back at boot from `audio.prefs`; a
+  click or a beep plays at once as a trigger, on voices
   of its own, with no process and nothing to feed, and `DisplayBeep`
   plays one as `sound.prefs` says; unit 1 records from the codec's
   microphone input - in QEMU, what was played - in any form and rate,

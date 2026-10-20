@@ -95,9 +95,10 @@ tags and constants, each with its doc comment.
   call answers, a server from a program's tables, the commands, and
   the bus in QEMU.
 - [Sound](guides/audio.md) - audio.device: a stream and its form,
-  writing buffers as they play, what the board has, the master volume,
-  WAV and MP3 decoded by audiocodec.library, the outputs and their
-  drivers (rta.library), recording, `C:Play` and `C:test/Audio`.
+  writing buffers as they play, what the board has, choosing and
+  preferring an output, a volume per output and `audio.prefs`, WAV and
+  MP3 decoded by audiocodec.library, the outputs and their drivers
+  (rta.library), recording, `C:Audio`, `C:Play` and `C:test/Audio`.
 - [USB](guides/usb.md) - a bus and starting it, what is on it, driving
   a device from a program (claims, pipes, control transfers), writing a
   class driver, keyboards and mice as sources, sticks, serial and
@@ -168,7 +169,7 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | usbserial.device | ROM | the USB-Serial-JTAG port, with serial.device's API | [`usbserial.zig`](../devices/usbserial.zig) |
 | flash.device | ROM | the flash chip as a block device; unit 0 is the flash disk - on a RISC-V 64 machine the disk image the loader put in RAM | [`trackdisk.zig`](../devices/trackdisk.zig) |
 | i2c.device | ROM | the two I2C controllers | [`i2c.zig`](../devices/i2c.zig) |
-| audio.device | ROM | streams of sound, up to sixteen mixed into the machine's output | [`audio.zig`](../devices/audio.zig) |
+| audio.device | ROM | streams of sound, up to sixteen mixed into one of the machine's outputs; the output preferred, a volume each | [`audio.zig`](../devices/audio.zig), [`audiocontrol.zig`](../devices/audiocontrol.zig) |
 | sdcard.device | `DEVS:`; ROM on the VisionFive 2 | the card slot as a block device; in the ROM, the card's partitions as disks to start from | [`trackdisk.zig`](../devices/trackdisk.zig) |
 | nvme.device | `DEVS:` | NVMe SSDs on PCI Express as block devices, a unit a namespace, with TRIM; their drives mounted when it starts (RISC-V 64 disk) | [`trackdisk.zig`](../devices/trackdisk.zig) |
 | rs485.device | `DEVS:` | the RS-485 port, in frames | [`rs485.zig`](../devices/rs485.zig) |

@@ -2,7 +2,8 @@
 //! What the Icons menu and the file work of the Window menu do with the
 //! icons picked: open, copy, rename, snapshot, leave out and put away,
 //! delete, format, empty the trash; a new drawer, cleaning up - as the
-//! icons lie or sorted - snapping to the grid, and a window's snapshot.
+//! icons lie or sorted - snapping to the grid, and a window's snapshot;
+//! the Anvil menu's Execute Command and Volume.
 //!
 //! The work that takes long - copying, deleting, emptying - goes to a
 //! process of its own (`work.zig`); the rest is done at once. A file's
@@ -509,4 +510,14 @@ pub fn executeCommand(d: *Desktop) void {
     @memcpy(line[0..length], answer[0..length]);
     line[length] = '\n';
     run.command(d, &line, "Output");
+}
+
+/// Volume: SYS:Programs/Volume started as a double click on its icon
+/// starts it - with the tool icon's defaults when it has no icon of its
+/// own.
+pub fn openVolume(d: *Desktop) void {
+    const path = "SYS:Programs/Volume";
+    const object = d.icon_base.GetDiskObjectNew(path) orelse return;
+    defer d.icon_base.FreeDiskObject(object);
+    _ = run.runFile(d, path, object);
 }

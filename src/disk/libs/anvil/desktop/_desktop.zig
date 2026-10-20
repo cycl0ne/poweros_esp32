@@ -870,6 +870,7 @@ pub const Desktop = struct {
                     menus.ITEM_REDRAW_ALL => d.redrawAll(),
                     menus.ITEM_UPDATE_ALL => d.updateAll(),
                     menus.ITEM_LAST_MESSAGE => d.lastMessage(),
+                    menus.ITEM_VOLUME => commands.openVolume(d),
                     menus.ITEM_ABOUT => about_area.show(d),
                     menus.ITEM_QUIT => d.askQuit(),
                     else => {},

@@ -37,7 +37,10 @@
 //!                         `position`: the frames this stream has played
 //!                         since it was opened
 //!   AUDIOCMD_MASTER       how loud everything is, from `volume`: the
-//!                         device's, every stream's
+//!                         device's, over every stream, as the output
+//!                         played through has it - or, with `output`
+//!                         another's number, as that output has it
+//!                         whenever it plays
 //!   AUDIOCMD_NEXTOUTPUT   the output after the one `output` names (0:
 //!                         the first), its number in `output` and its
 //!                         `AudioOutputInfo` to `std.data`, as much as
@@ -48,6 +51,11 @@
 //!                         every stream goes on where it was
 //!   AUDIOCMD_GETOUTPUT    the output played through: its number in
 //!                         `output`, its `AudioOutputInfo` to `std.data`
+//!   AUDIOCMD_PREFEROUTPUT the output `output` names (0: none) played
+//!                         through whenever it is there - at once, if it
+//!                         is; the number of the one played through in
+//!                         `output`. The one preferred already changes
+//!                         nothing
 //!   AUDIOCMD_TRIGGER      a sound played at once, on a voice of its own:
 //!                         `std.data` and `std.length` in the request's
 //!                         own format, channels, rate, volume and pan,
@@ -109,16 +117,30 @@
 //! as on a stream's.
 //!
 //! **A machine may have several outputs** - a jack and a speaker, a DAC
-//! plugged in - and the device plays through one at a time: the first on
-//! the list until it is told another. One that goes - a DAC unplugged -
-//! leaves the device playing through the first on the list, every stream
-//! going on; when it was the last, writes and triggers are answered
-//! AUDIOERR_NOOUTPUT until one comes - as they are on a machine that
-//! starts with none, whose outputs USB brings. Each has a number that stays the
-//! same from one boot to the next, which is how a program or a
-//! preference names it. The output commands read `output`, a field an
-//! IOAudio of version 2 had not got: a request smaller than the whole is
-//! refused them with IOERR_BADLENGTH, and opens as before.
+//! plugged in - and the device plays through one at a time: the preferred
+//! one (AUDIOCMD_PREFEROUTPUT) when it is there, else the first on the
+//! list, until it is told another (AUDIOCMD_SETOUTPUT). One that goes - a
+//! DAC unplugged - leaves the device playing through the preferred one or
+//! the first on the list, every stream going on; when it was the last,
+//! writes and triggers are answered AUDIOERR_NOOUTPUT until one comes - as
+//! they are on a machine that starts with none, whose outputs USB brings.
+//! The preferred one coming - the headphones plugged in - takes the sound
+//! over within half a second, whatever plays; one told with SETOUTPUT
+//! stays until then. Each has a number that stays the same from one boot
+//! to the next, which is how a program or a preference names it: the
+//! preferred one may be named before it is there, at boot.
+//!
+//! **Each output has its own volume**, the master while it plays: the
+//! headphones quieter than the speaker. AUDIOCMD_MASTER with `output`
+//! naming one sets its volume, kept for it while it is not there; with
+//! `output` 0, or from a request of version 2, the one played through.
+//! An output no volume was set for plays at the volume of the one before
+//! it. S:Startup-Sequence's C:SetPrefs hands the volumes and the preferred
+//! output to the device from ENV:Sys/audio.prefs (`sdk.prefs.audio`).
+//!
+//! The output commands read `output`, a field an IOAudio of version 2 had
+//! not got: a request smaller than the whole is refused them with
+//! IOERR_BADLENGTH, and opens as before.
 
 const exec = @import("../libs/exec/exec.zig");
 const IOStdReq = exec.IOStdReq;
@@ -160,6 +182,8 @@ pub const AUDIOCMD_SETOUTPUT: u16 = exec.CMD_NONSTD + 4;
 pub const AUDIOCMD_GETOUTPUT: u16 = exec.CMD_NONSTD + 5;
 /// Since version 4.
 pub const AUDIOCMD_TRIGGER: u16 = exec.CMD_NONSTD + 6;
+/// Since version 6.
+pub const AUDIOCMD_PREFEROUTPUT: u16 = exec.CMD_NONSTD + 7;
 
 /// OpenDevice's flags: an open for triggers alone, which takes no stream.
 /// Since version 4.
@@ -167,6 +191,10 @@ pub const AUDIOF_TRIGGER: u32 = 1 << 0;
 
 /// How many sounds play by trigger at once, beside the streams.
 pub const AUDIO_MAX_TRIGGERS: u32 = 8;
+
+/// How many outputs' volumes the device keeps: past that, the one set
+/// longest ago is forgotten. Since version 6.
+pub const AUDIO_MAX_VOLUMES: u32 = 16;
 
 // --- errors -----------------------------------------------------------------------
 
@@ -209,7 +237,8 @@ pub const IOAudio = extern struct {
     /// recorded - since it was opened, counted round at 2^32.
     position: u32 = 0,
     /// The output commands: an output's number (`AudioOutputInfo.id`);
-    /// 0 for the first. Since version 3.
+    /// 0 for the first. Since version 3. AUDIOCMD_MASTER: the output whose
+    /// volume is set, 0 for the one played through. Since version 6.
     output: u32 = 0,
 };
 
@@ -260,6 +289,9 @@ pub const AudioInfo = extern struct {
     /// taken, or heard while no read waited between two reads: each a gap
     /// in a recording - since its driver made it.
     overruns: u32 = 0,
+    /// The preferred output's number (AUDIOCMD_PREFEROUTPUT), there or
+    /// not; 0 for none. Since version 6.
+    preferred_id: u32 = 0,
 };
 
 /// How many of an output's rates `AudioOutputInfo` holds.
@@ -280,14 +312,19 @@ pub const AudioOutputInfo = extern struct {
     rates: [AUDIO_MAX_RATES]u32 = @splat(0),
     /// Its name, as the board names the part, NUL-terminated.
     name: [AUDIO_NAME_LEN]u8 = @splat(0),
+    /// Its volume: the master while it plays (AUDIOCMD_MASTER). Since
+    /// version 6.
+    volume: u32 = 0,
 };
 
 /// AudioOutputInfo.flags
 /// The first on the list: what the device plays through until it is told
-/// another.
+/// another, when no preferred one is there.
 pub const AUDIOOF_DEFAULT: u32 = 1 << 0;
 /// The one the device plays through now.
 pub const AUDIOOF_CURRENT: u32 = 1 << 1;
+/// The preferred one (AUDIOCMD_PREFEROUTPUT). Since version 6.
+pub const AUDIOOF_PREFERRED: u32 = 1 << 2;
 
 /// Bytes a frame takes in `format` with `channels` channels; 0 for a
 /// format the device does not know.

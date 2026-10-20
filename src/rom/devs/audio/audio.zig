@@ -6,10 +6,11 @@
 //! once; a task mixes them into one stereo stream (`mixer.zig`) at the rate
 //! the output runs at.
 //!
-//! The output is a sink of rta.library's: the first on its list, the one
-//! its drivers made most wanted - a codec behind a speaker, an amplifier
-//! that takes I2S, a stream that plays into nothing on a machine without
-//! a sound part - until a program picks another (AUDIOCMD_SETOUTPUT). The
+//! The output is a sink of rta.library's: the preferred one when it is on
+//! the list (AUDIOCMD_PREFEROUTPUT), else the first, the one its drivers
+//! made most wanted - a codec behind a speaker, an amplifier that takes
+//! I2S, a stream that plays into nothing on a machine without a sound
+//! part - until a program picks another (AUDIOCMD_SETOUTPUT). The
 //! device knows none of them by name; what it reads of a sink is its
 //! number, its mode - the rate, how many sides are heard, what the halves
 //! of a frame carry - and the ring of buffers it runs on. A change of
@@ -20,11 +21,23 @@
 //! An output its driver deletes while the device plays through it - a
 //! DAC unplugged, a file a program is done with - leaves rta.library's
 //! list at once and is marked gone, and the task is woken. It stops it,
-//! which gives it back, and plays through the first output on the list
-//! from then on, every stream going on where it was. With none left, a
-//! write is answered AUDIOERR_NOOUTPUT, until an output comes: the next
-//! write plays through it. A machine whose only outputs come and go - a
-//! USB speaker - starts the same way, with none.
+//! which gives it back, and plays through the preferred output or the
+//! first on the list from then on, every stream going on where it was.
+//! With none left, a write is answered AUDIOERR_NOOUTPUT, until an output
+//! comes: the next write plays through it. A machine whose only outputs
+//! come and go - a USB speaker - starts the same way, with none.
+//!
+//! rta.library says nothing when a sink comes, so the task looks for the
+//! preferred output itself: every `look_every` buffers it plays, while the
+//! preferred one is not what it plays through. When it finds it newly on
+//! the list it moves to it - once, on its coming, so an output a program
+//! chose since stays chosen while the preferred one stays plugged in.
+//!
+//! The master is the output's: a table of numbers and volumes, the one
+//! played through's in force. Starting another output takes its volume
+//! from the table, or keeps the one in force when it has none there; a
+//! volume set for the output played through, or none, goes into the table
+//! too, and the table forgets the one set longest ago when it is full.
 //!
 //! A sink may run at more than one rate. The device runs it in the mode
 //! that the most open streams play in unconverted: the mode whose rate
@@ -85,8 +98,8 @@ const mixer = @import("mixer.zig");
 const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
-const DEVICE_VERSION = 5;
-const DEVICE_REVISION = 1;
+const DEVICE_VERSION = 6;
+const DEVICE_REVISION = 0;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -111,6 +124,18 @@ comptime {
 /// The rate a stream is stepped for until an output is there: what every
 /// output so far runs at. Attaching one steps every stream for its own.
 const usual_rate: u32 = 48_000;
+
+/// Buffers played between two looks for the preferred output: half a
+/// second of 512 frames at 48 kHz.
+const look_every: u32 = 47;
+
+/// An output's volume, as the table keeps it: its number (0 for an empty
+/// place), and when it was set, by the count of volumes set.
+const Volume = extern struct {
+    id: u32 = 0,
+    volume: u32 = audio.AUDIO_VOLUME_UNITY,
+    set: u32 = 0,
+};
 
 /// One stream: what an open made, and what every request on it points at
 /// (`io_Unit`).
@@ -177,8 +202,17 @@ const AudioBase = extern struct {
     triggered: u32 = 0,
     /// What an open for triggers alone points its requests at.
     trigger_unit: exec.Unit = .{},
-    /// The device's volume, over every stream (AUDIOCMD_MASTER).
+    /// The device's volume, over every stream (AUDIOCMD_MASTER): the
+    /// output's that plays, from `volumes`.
     master: u32 = audio.AUDIO_VOLUME_UNITY,
+    /// Each output's volume that was set, and the count of them set.
+    volumes: [audio.AUDIO_MAX_VOLUMES]Volume = @splat(.{}),
+    volumes_set: u32 = 0,
+    /// The preferred output's number (0: none), whether it was on the list
+    /// when the task last looked, and the buffers played since.
+    preferred: u32 = 0,
+    preferred_here: u32 = 0,
+    since_look: u32 = 0,
     task: exec.Task = .{},
     stack: ?*anyopaque = null,
     /// The task is running and its output started.
@@ -262,6 +296,7 @@ fn attachSink(ab: *AudioBase, sink: *rta.AudioSink) bool {
     ab.sink = sink;
     ab.rate = mode.rate;
     ab.sides = sidesOf(mode);
+    if (volumeOf(ab, sink.id)) |volume| ab.master = volume;
     for (0..max_streams) |n| {
         if (ab.streams[n].in_use != 0) ab.voices[n].step = mixer.stepFor(ab.streams[n].rate, ab.rate);
     }
@@ -350,6 +385,90 @@ fn sinkOf(ab: *AudioBase, id: u32) ?*rta.AudioSink {
     return null;
 }
 
+/// What the device plays through when it has to choose: the preferred
+/// output when it is on the list, else the first; null for none.
+fn firstChoice(ab: *AudioBase) ?*rta.AudioSink {
+    if (ab.preferred != 0) {
+        if (sinkOf(ab, ab.preferred)) |sink| return sink;
+    }
+    return ab.rta_base.NextSink(null);
+}
+
+/// The volume set for the output of that number, or null for none.
+fn volumeOf(ab: *const AudioBase, id: u32) ?u32 {
+    if (id == 0) return null;
+    for (&ab.volumes) |*kept| {
+        if (kept.id == id) return kept.volume;
+    }
+    return null;
+}
+
+/// The output of that number's volume kept: in its own place, else an
+/// empty one, else the place of the one set longest ago.
+fn keepVolume(ab: *AudioBase, id: u32, volume: u32) void {
+    if (id == 0) return;
+    var place: usize = 0;
+    var found = false;
+    for (&ab.volumes, 0..) |*kept, at| {
+        if (kept.id == id) {
+            place = at;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        for (&ab.volumes, 0..) |*kept, at| {
+            if (kept.id == 0) {
+                place = at;
+                found = true;
+                break;
+            }
+            if (ab.volumes_set -% kept.set > ab.volumes_set -% ab.volumes[place].set) place = at;
+        }
+    }
+    ab.volumes_set +%= 1;
+    ab.volumes[place] = .{ .id = id, .volume = volume, .set = ab.volumes_set };
+}
+
+/// AUDIOCMD_MASTER: the volume of the output `output` names, or of the one
+/// played through for 0 - in force at once when it is that one.
+fn setMaster(ab: *AudioBase, output: u32, volume: u32) void {
+    const playing: u32 = if (ab.sink) |sink| sink.id else 0;
+    const id = if (output != 0) output else playing;
+    keepVolume(ab, id, volume);
+    if (id == playing) ab.master = volume;
+}
+
+/// AUDIOCMD_PREFEROUTPUT, on the task: the output of that number
+/// preferred from now on, played through at once when it is on the list.
+/// The one preferred already changes nothing - settings handed over again
+/// leave an output chosen since where it is. Under the device's lock.
+fn preferOutput(ab: *AudioBase, id: u32) void {
+    if (id == ab.preferred) return;
+    ab.preferred = id;
+    ab.preferred_here = 0;
+    ab.since_look = 0;
+    if (id == 0) return;
+    if (sinkOf(ab, id) == null) return;
+    ab.preferred_here = 1;
+    _ = setOutput(ab, id);
+}
+
+/// A look for the preferred output, every `look_every` buffers: moved to
+/// once on its coming onto the list. Under the device's lock.
+fn lookForPreferred(ab: *AudioBase) void {
+    ab.since_look += 1;
+    if (ab.since_look < look_every) return;
+    ab.since_look = 0;
+    if (ab.preferred == 0) return;
+    const sink = ab.sink orelse return;
+    if (sink.id == ab.preferred) return;
+    const here = sinkOf(ab, ab.preferred) != null;
+    const came = here and ab.preferred_here == 0;
+    ab.preferred_here = @intFromBool(here);
+    if (came) _ = setOutput(ab, ab.preferred);
+}
+
 /// AUDIOCMD_SETOUTPUT, on the task: the output of that number played
 /// through from now on. The streams go on where they were, stepped for
 /// its rate; one that will not start leaves the one before playing.
@@ -365,12 +484,15 @@ fn setOutput(ab: *AudioBase, id: u32) i8 {
 }
 
 /// What a program is told of an output: its number, whether it is the
-/// default and the one played through, the most sides any of its modes
-/// plays, their rates and its name.
+/// default, the one played through and the preferred one, the most sides
+/// any of its modes plays, their rates, its name, and its volume - the
+/// one in force for one that has none of its own.
 fn outputInfoOf(ab: *AudioBase, sink: *rta.AudioSink) audio.AudioOutputInfo {
     var info: audio.AudioOutputInfo = .{ .id = sink.id };
     if (sink == ab.rta_base.NextSink(null)) info.flags |= audio.AUDIOOF_DEFAULT;
     if (sink == ab.sink) info.flags |= audio.AUDIOOF_CURRENT;
+    if (sink.id == ab.preferred) info.flags |= audio.AUDIOOF_PREFERRED;
+    info.volume = if (sink == ab.sink) ab.master else volumeOf(ab, sink.id) orelse ab.master;
     var it = sink.modes.iterator();
     while (it.next()) |node| {
         const mode: *rta.AudioMode = @fieldParentPtr("node", node);
@@ -415,12 +537,13 @@ fn writeHandedOff(ab: *AudioBase) bool {
     return false;
 }
 
-/// The requests handed to the task, in order: a change of output replied
-/// when made; a write queued once there is an output - the first on the
-/// list, when there was none - in the mode the streams want, if nothing
-/// else plays, and replied when it has played, or answered
-/// AUDIOERR_NOOUTPUT while there is none. Then the way in started or
-/// stopped as the recording now needs.
+/// The requests handed to the task, in order: a change of output, or of
+/// the preferred one, replied when made; a write queued once there is an
+/// output - the preferred one or the first on the list, when there was
+/// none - in the mode the streams want, if nothing else plays, and
+/// replied when it has played, or answered AUDIOERR_NOOUTPUT while there
+/// is none. Then the way in started or stopped as the recording now
+/// needs.
 fn serveCommands(ab: *AudioBase) void {
     const sys = ab.sys_base;
     sys.ObtainSemaphore(&ab.lock);
@@ -435,7 +558,7 @@ fn serveCommands(ab: *AudioBase) void {
                 continue;
             };
             if (ab.sink == null) {
-                if (ab.rta_base.NextSink(null)) |sink| _ = attachSink(ab, sink);
+                if (firstChoice(ab)) |sink| _ = attachSink(ab, sink);
             }
             if (ab.sink == null) {
                 io.err = audio.AUDIOERR_NOOUTPUT;
@@ -447,19 +570,24 @@ fn serveCommands(ab: *AudioBase) void {
             queueWrite(ab, n, ioa);
             continue;
         }
-        io.err = setOutput(ab, ioa.output);
-        if (ab.sink) |sink| ioa.output = sink.id;
+        if (io.command == audio.AUDIOCMD_PREFEROUTPUT) {
+            preferOutput(ab, ioa.output);
+        } else io.err = setOutput(ab, ioa.output);
+        ioa.output = if (ab.sink) |sink| sink.id else 0;
         sys.ReplyIO(io);
     }
     followRecording(ab);
 }
 
 /// The output played through deleted by its driver: stopped, which gives
-/// it back, and the first on the list played through instead - none, if
-/// there is none.
+/// it back, and the preferred one or the first on the list played through
+/// instead - none, if there is none.
 fn lostSink(ab: *AudioBase) void {
+    if (ab.sink) |sink| {
+        if (sink.id == ab.preferred) ab.preferred_here = 0;
+    }
     detachSink(ab);
-    if (ab.rta_base.NextSink(null)) |next| _ = attachSink(ab, next);
+    if (firstChoice(ab)) |next| _ = attachSink(ab, next);
 }
 
 /// The output started again in the mode the streams want; the same sink,
@@ -475,7 +603,8 @@ fn remode(ab: *AudioBase) void {
 /// The buffer the output has just played mixed again, and whatever that
 /// finished replied. A wake with no buffer played - the output's signal
 /// raised for something else - mixes nothing; one for an output deleted
-/// under the device moves it to the next.
+/// under the device moves it to the next. Now and then, a look for the
+/// preferred output.
 fn mixBuffer(ab: *AudioBase) void {
     const sink = ab.sink orelse return;
     if (sink.flags & rta.sinks.AUDIOSF_GONE != 0) return lostSink(ab);
@@ -483,6 +612,7 @@ fn mixBuffer(ab: *AudioBase) void {
     const frames = rb.SinkBuffer(sink) orelse return;
     mixInto(ab, frames[0 .. sink.buffer_frames * 2]);
     _ = rb.PlaySinkBuffer(sink, frames);
+    lookForPreferred(ab);
 }
 
 /// `out` mixed from the streams, and the writes that played out replied.
@@ -917,7 +1047,7 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
         ab.command_mask = @as(u32, 1) << @intCast(carry);
         ab.record_mask = @as(u32, 1) << @intCast(heard);
         // With no output yet, the first write looks for one.
-        if (ab.rta_base.NextSink(null)) |sink| ok = attachSink(ab, sink);
+        if (firstChoice(ab)) |sink| ok = attachSink(ab, sink);
     }
     if (ok) ab.ready = 1;
     if (ab.starter) |starter| {
@@ -1024,6 +1154,7 @@ fn infoOf(ab: *AudioBase) audio.AudioInfo {
         .streams = openStreams(ab),
         .master = ab.master,
         .triggers = triggersPlaying(ab),
+        .preferred_id = ab.preferred,
     };
     if (ab.source orelse rb.NextSource(null)) |source| {
         info.has_input = 1;
@@ -1096,11 +1227,11 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
                 answer(ioa, std.mem.asBytes(&info));
             }
         },
-        audio.AUDIOCMD_NEXTOUTPUT, audio.AUDIOCMD_GETOUTPUT, audio.AUDIOCMD_SETOUTPUT => {
+        audio.AUDIOCMD_NEXTOUTPUT, audio.AUDIOCMD_GETOUTPUT, audio.AUDIOCMD_SETOUTPUT, audio.AUDIOCMD_PREFEROUTPUT => {
             // A request from before the output commands has no `output`.
             if (io.message.length < @sizeOf(IOAudio)) {
                 io.err = exec.IOERR_BADLENGTH;
-            } else if (io.command == audio.AUDIOCMD_SETOUTPUT) {
+            } else if (io.command == audio.AUDIOCMD_SETOUTPUT or io.command == audio.AUDIOCMD_PREFEROUTPUT) {
                 // The task's to carry out, replied when it has.
                 handOff(ab, io);
                 return;
@@ -1117,7 +1248,10 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
             }
         },
         audio.AUDIOCMD_MASTER => {
-            if (ioa.volume <= audio.AUDIO_VOLUME_MAX) ab.master = ioa.volume else io.err = audio.AUDIOERR_BADFORMAT;
+            // A request from before the output commands sets the volume of
+            // the output played through.
+            const output = if (io.message.length < @sizeOf(IOAudio)) 0 else ioa.output;
+            if (ioa.volume <= audio.AUDIO_VOLUME_MAX) setMaster(ab, output, ioa.volume) else io.err = audio.AUDIOERR_BADFORMAT;
         },
         // Nothing is cached and nothing is buffered anywhere else.
         exec.CMD_CLEAR, exec.CMD_UPDATE => {},
@@ -1937,6 +2071,133 @@ test "the outputs are listed in order and one is chosen; the streams go on where
     _ = replied(port);
     rb.DeleteSink(headphones);
     try testDeviceGone(ab, &.{port});
+}
+
+/// Buffers played on the output, as many as between two looks for the
+/// preferred one.
+fn playLook(ab: *AudioBase) void {
+    for (0..look_every) |_| {
+        capture.played(ab.sink.?);
+        mixBuffer(ab);
+    }
+}
+
+test "the preferred output takes the sound when it comes, once; each output keeps its own volume" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const rb = ab.rta_base;
+    const head_tags = [_]sdk.utility.TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("Headphones") },
+        .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -1)) },
+        .{},
+    };
+    // The headphones' number, worked out from the names: the same each
+    // time they come.
+    const made = rb.CreateSinkTagList(capture.DRIVER_NAME, &head_tags).?;
+    const head_id = made.id;
+    rb.DeleteSink(made);
+    const speaker = ab.sink.?;
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+
+    // The speaker at half; the headphones, not there, at a quarter. Both
+    // are kept, the speaker's in force.
+    var master = requestFor(ab, port);
+    master.volume = audio.AUDIO_VOLUME_UNITY / 2;
+    try testing.expectEqual(@as(i32, 0), command(&master, &io, audio.AUDIOCMD_MASTER));
+    master.volume = audio.AUDIO_VOLUME_UNITY / 4;
+    master.output = head_id;
+    try testing.expectEqual(@as(i32, 0), command(&master, &io, audio.AUDIOCMD_MASTER));
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 2, ab.master);
+
+    // Preferred while not there: nothing changes, and the speaker plays on
+    // through a look.
+    var ask = requestFor(ab, port);
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_PREFEROUTPUT, head_id, null));
+    try testing.expectEqual(speaker.id, ask.output);
+    try testing.expectEqual(speaker, ab.sink.?);
+    playLook(ab);
+    try testing.expectEqual(speaker, ab.sink.?);
+
+    // Plugged in: the next look moves the sound over, at its volume.
+    const headphones = rb.CreateSinkTagList(capture.DRIVER_NAME, &head_tags).?;
+    try testing.expectEqual(head_id, headphones.id);
+    playLook(ab);
+    try testing.expectEqual(headphones, ab.sink.?);
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 4, ab.master);
+    var query = requestFor(ab, port);
+    var device_info: audio.AudioInfo = .{};
+    query.std.data = &device_info;
+    query.std.length = @sizeOf(audio.AudioInfo);
+    try testing.expectEqual(@as(i32, 0), command(&query, &io, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(head_id, device_info.preferred_id);
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 4, device_info.master);
+
+    // The speaker chosen by hand stays chosen while the headphones stay,
+    // at its own volume; the headphones are listed as preferred, at theirs.
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, speaker.id, null));
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 2, ab.master);
+    playLook(ab);
+    playLook(ab);
+    try testing.expectEqual(speaker, ab.sink.?);
+    var info: audio.AudioOutputInfo = .{};
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_NEXTOUTPUT, speaker.id, &info));
+    try testing.expectEqual(head_id, info.id);
+    try testing.expectEqual(audio.AUDIOOF_PREFERRED, info.flags);
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 4, info.volume);
+
+    // Back on them, unplugged as they play: the speaker; plugged in again:
+    // the headphones.
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, head_id, null));
+    rb.DeleteSink(headphones);
+    capture.played(headphones);
+    mixBuffer(ab);
+    try testing.expectEqual(speaker, ab.sink.?);
+    const again = rb.CreateSinkTagList(capture.DRIVER_NAME, &head_tags).?;
+    playLook(ab);
+    try testing.expectEqual(again, ab.sink.?);
+
+    // Preferred again while another plays: nothing changes.
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, speaker.id, null));
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_PREFEROUTPUT, head_id, null));
+    try testing.expectEqual(speaker, ab.sink.?);
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, head_id, null));
+
+    // None preferred: the device stays where it is.
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_PREFEROUTPUT, 0, null));
+    try testing.expectEqual(again.id, ask.output);
+    try testing.expectEqual(again, ab.sink.?);
+    try testing.expectEqual(@as(i32, 0), command(&query, &io, audio.AUDIOCMD_QUERY));
+    try testing.expectEqual(@as(u32, 0), device_info.preferred_id);
+
+    _ = close(&ab.dev, &io.std.req);
+    _ = replied(port);
+    detachSink(ab);
+    rb.DeleteSink(again);
+    try testDeviceGone(ab, &.{port});
+}
+
+test "a volume set for no output plays on the next; the table forgets the oldest when full" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    for (0..audio.AUDIO_MAX_VOLUMES + 1) |n| keepVolume(ab, @intCast(n + 100), @intCast(n));
+    // The first was set longest ago and gave its place to the last.
+    try testing.expectEqual(@as(?u32, null), volumeOf(ab, 100));
+    try testing.expectEqual(@as(?u32, 1), volumeOf(ab, 101));
+    try testing.expectEqual(@as(?u32, audio.AUDIO_MAX_VOLUMES), volumeOf(ab, 100 + audio.AUDIO_MAX_VOLUMES));
+    // Set again, a number keeps its place.
+    keepVolume(ab, 101, 7);
+    try testing.expectEqual(@as(?u32, 7), volumeOf(ab, 101));
+    try testing.expectEqual(@as(?u32, 2), volumeOf(ab, 102));
+    // An output with none kept starts at the volume in force.
+    const sink = ab.sink.?;
+    detachSink(ab);
+    ab.master = audio.AUDIO_VOLUME_UNITY / 3;
+    try testing.expect(attachSink(ab, sink));
+    try testing.expectEqual(audio.AUDIO_VOLUME_UNITY / 3, ab.master);
+    try testDeviceGone(ab, &.{});
 }
 
 test "the output runs at the rate the most open streams have; a tie keeps its default" {

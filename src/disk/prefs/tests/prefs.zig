@@ -160,6 +160,7 @@ test "the settings files of a fresh disk: the explanation the SDK writes" {
     try testing.expectEqualStrings(prefs.intuition.header, @embedFile("../env-archive/Sys/intuition.prefs"));
     try testing.expectEqualStrings(prefs.palette.header, @embedFile("../env-archive/Sys/palette.prefs"));
     try testing.expectEqualStrings(prefs.sound.header, @embedFile("../env-archive/Sys/sound.prefs"));
+    try testing.expectEqualStrings(prefs.audio.header, @embedFile("../env-archive/Sys/audio.prefs"));
     const fonts = @embedFile("../env-archive/Sys/font.prefs");
     try testing.expect(std.mem.startsWith(u8, fonts, prefs.font.header));
     // Every commented line of the style's default reads as a line.
@@ -217,6 +218,59 @@ test "sound.prefs: a line read, its file quoted, written back; the tone rises, s
     for (samples[samples.len - 24 ..]) |sample| try testing.expect(sample < 400 and sample > -400);
     tone.duration = 10;
     try testing.expectEqual(@as(u32, 480), prefs.sound.beepFrames(&tone));
+}
+
+test "audio.prefs: lines read, the preferred one alone, written back; volumes in percent" {
+    var settings: prefs.audio.Settings = .{};
+    const text =
+        \\# a comment
+        \\OUTPUT=24b61a00 VOLUME=80 NAME=es8311 PREFERRED=yes
+        \\output=ECD5FB99 NAME="QEMU USB Audio" PREFERRED=YES
+        \\OUTPUT=0 VOLUME=50
+        \\OUTPUT=12 VOLUME=101
+        \\VOLUME=20
+        \\OUTPUT=24B61A00 VOLUME=70 NAME=es8311
+    ;
+    try testing.expectEqual(@as(u32, 3), settings.load(text));
+    try testing.expectEqual(@as(usize, 2), settings.count);
+    // The second line of a number takes the first's place; the last line
+    // naming one preferred is the one.
+    try testing.expectEqual(@as(u32, 0x24B6_1A00), settings.outputs[0].id);
+    try testing.expectEqual(@as(u32, 70), settings.outputs[0].volume);
+    try testing.expect(!settings.outputs[0].preferred);
+    try testing.expectEqualStrings("QEMU USB Audio", settings.outputs[1].nameText());
+    try testing.expectEqual(@as(u32, 100), settings.outputs[1].volume);
+    try testing.expectEqual(@as(u32, 0xECD5_FB99), settings.preferred().?.id);
+
+    var output: prefs.audio.Output = .{};
+    try testing.expectEqualStrings("VOLUME is 0 to 100 percent", std.mem.span(prefs.audio.parseLine("OUTPUT=1 VOLUME=x", &output).?));
+    try testing.expectEqualStrings("a line names its OUTPUT", std.mem.span(prefs.audio.parseLine("VOLUME=1", &output).?));
+
+    var out: [prefs.audio.max_file]u8 = undefined;
+    const n = prefs.audio.write(&settings, &out);
+    try testing.expect(std.mem.startsWith(u8, out[0..n], prefs.audio.header));
+    try testing.expectEqualStrings(
+        \\OUTPUT=24B61A00 VOLUME=70 NAME=es8311
+        \\OUTPUT=ECD5FB99 VOLUME=100 NAME="QEMU USB Audio" PREFERRED=YES
+        \\
+    , out[prefs.audio.header.len..n]);
+    var again: prefs.audio.Settings = .{};
+    try testing.expectEqual(@as(u32, 0), again.load(out[0..n]));
+    try testing.expectEqual(@as(u32, 0xECD5_FB99), again.preferred().?.id);
+
+    // Preferring one the file does not name puts it at the end; none
+    // prefers none.
+    settings.prefer(0x1234);
+    try testing.expectEqual(@as(usize, 3), settings.count);
+    try testing.expectEqual(@as(u32, 0x1234), settings.preferred().?.id);
+    settings.prefer(0);
+    try testing.expect(settings.preferred() == null);
+
+    const ac = sdk.devices.audiocontrol;
+    try testing.expectEqual(sdk.devices.audio.AUDIO_VOLUME_UNITY, ac.volumeOf(100));
+    try testing.expectEqual(@as(u32, 0), ac.volumeOf(0));
+    for (0..101) |percent| try testing.expectEqual(@as(u32, @intCast(percent)), ac.percentOf(ac.volumeOf(@intCast(percent))));
+    try testing.expectEqual(@as(u32, 100), ac.percentOf(sdk.devices.audio.AUDIO_VOLUME_MAX));
 }
 
 test "the styles the editor offers: every line read" {

@@ -37,6 +37,7 @@ const commands = [_][]const u8{
     "loadanvil",     "iconx",      "usb",         "usbinfo",       "battery",
     "setclock",      "top",        "play",        "screendump",    "memdebug",
     "makelink",      "posfs",      "binddrivers", "pciinfo",       "record",
+    "audio",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",      "anim",
@@ -65,6 +66,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet" },
     .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal" },
     .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player" },
+    .{ .disk = "programs/Volume", .source = "programs/volume/volume.zig", .name = "volume" },
     .{ .disk = "System/Shell", .source = "system/shell/shell.zig", .name = "shell" },
     .{ .disk = "System/HDToolBox", .source = "system/hdtoolbox/hdtoolbox.zig", .name = "hdtoolbox" },
     .{ .disk = "System/CPULoad", .source = "system/cpuload/cpuload.zig", .name = "cpuload" },
@@ -282,6 +284,7 @@ pub const files = [_]File{
     .{ .disk = "prefs/env-archive/Sys/palette.prefs", .source = "prefs/env-archive/Sys/palette.prefs" },
     .{ .disk = "prefs/env-archive/Sys/anvil.prefs", .source = "prefs/env-archive/Sys/anvil.prefs" },
     .{ .disk = "prefs/env-archive/Sys/sound.prefs", .source = "prefs/env-archive/Sys/sound.prefs" },
+    .{ .disk = "prefs/env-archive/Sys/audio.prefs", .source = "prefs/env-archive/Sys/audio.prefs" },
     // The looks the preferences editor offers, a style file each.
     .{ .disk = "prefs/presets/styles/Classic.prefs", .source = "prefs/presets/styles/Classic.prefs" },
     .{ .disk = "prefs/presets/styles/Rounded.prefs", .source = "prefs/presets/styles/Rounded.prefs" },
@@ -323,6 +326,7 @@ pub const files = [_]File{
     .{ .disk = "programs/Docs/Prefs.md", .source = "programs/prefs/README.md" },
     .{ .disk = "programs/Docs/Sheet.md", .source = "programs/sheet/README.md" },
     .{ .disk = "programs/Docs/Terminal.md", .source = "programs/terminal/README.md" },
+    .{ .disk = "programs/Docs/Volume.md", .source = "programs/volume/README.md" },
     // SYS:System/Docs - the same for the system's tools.
     .{ .disk = "System/Docs/HDToolBox.md", .source = "system/hdtoolbox/README.md" },
     .{ .disk = "System/Docs/CPULoad.md", .source = "system/cpuload/README.md" },

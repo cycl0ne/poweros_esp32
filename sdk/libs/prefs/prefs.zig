@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! The system's settings as files in ENV:Sys and ENVARC:Sys: their forms
-//! (`style`, `font`, `intuition`, `palette`, `anvil`, `sound`) - each read, checked
+//! (`style`, `font`, `intuition`, `palette`, `anvil`, `sound`, `audio`) - each read, checked
 //! and written back by the one definition every command and editor uses -
 //! and reading and writing a whole file.
 //!
@@ -15,6 +15,7 @@ pub const intuition = @import("intuition.zig");
 pub const palette = @import("palette.zig");
 pub const anvil = @import("anvil.zig");
 pub const sound = @import("sound.zig");
+pub const audio = @import("audio.zig");
 
 const dos = @import("../dos/dos.zig");
 const DosBase = @import("../../interface/dos.zig").DosBase;

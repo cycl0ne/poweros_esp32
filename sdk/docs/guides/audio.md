@@ -152,23 +152,27 @@ pulled down by a fraction of a step.
 
 A machine may have more than one output - a jack and a speaker, a DAC
 plugged in - and the device plays through one of them at a time: the
-first on the list until a program picks another. Each output has a
-**number** that stays the same from one boot to the next, worked out
-from its driver's name and its own; it is what a program or a
-preference keeps to name it by. Three commands, since version 3, read
-it from the request's `output`:
+**preferred** one when it is there, else the first on the list, until
+a program picks another. Each output has a **number** that stays the
+same from one boot to the next, worked out from its driver's name and
+its own; it is what a program or a preference keeps to name it by.
+These commands read it from the request's `output` - the first three
+since version 3, the fourth since version 6:
 
 | Command | What |
 |---|---|
 | `AUDIOCMD_NEXTOUTPUT` | the output after the one `output` names - 0 for the first - its number back in `output` and its `AudioOutputInfo` to `std.data`; `AUDIOERR_NOOUTPUT` past the last |
 | `AUDIOCMD_SETOUTPUT` | the device plays through that output from now on, for every program; 0 is the first on the list again |
 | `AUDIOCMD_GETOUTPUT` | the output played through: its number in `output`, its `AudioOutputInfo` to `std.data` |
+| `AUDIOCMD_PREFEROUTPUT` | that output preferred, there or not (0: none) - played through at once when it is there; the number of the one played through after it in `output`. Preferring the one preferred already changes nothing |
 
 `AudioOutputInfo` holds the number, its flags - `AUDIOOF_DEFAULT` for
-the first on the list, `AUDIOOF_CURRENT` for the one played through -
-the most sides it plays, the rates it runs at (`rate_count` of
-`rates`, lowest first) and its name. As with the query, as much of it
-is written as `std.length` holds.
+the first on the list, `AUDIOOF_CURRENT` for the one played through,
+`AUDIOOF_PREFERRED` for the preferred one - the most sides it plays,
+the rates it runs at (`rate_count` of `rates`, lowest first), its name
+and, since version 6, its `volume`. As with the query, as much of it is
+written as `std.length` holds; `AudioInfo.preferred_id` is the
+preferred output's number, whether it is there or not.
 
 ```zig
 var info: audio.AudioOutputInfo = .{};
@@ -188,10 +192,18 @@ leaves the one before playing and answers `AUDIOERR_NOOUTPUT`.
 
 An output that goes while the device plays through it - a USB speaker
 unplugged, a file sink a program deletes - leaves the device playing
-through the first output on the list, every stream going on where it
-was. With none left, writes and triggers are answered
-`AUDIOERR_NOOUTPUT` until one comes, and the next write plays through
-it; a machine whose only outputs come over USB starts that way.
+through the preferred output, or the first on the list without it,
+every stream going on where it was. With none left, writes and
+triggers are answered `AUDIOERR_NOOUTPUT` until one comes, and the
+next write plays through it; a machine whose only outputs come over
+USB starts that way.
+
+The preferred output coming - headphones plugged in, the USB speaker
+the machine was told to prefer at boot - takes the sound over within
+half a second, whatever plays and whichever output a program picked;
+an output picked with `AUDIOCMD_SETOUTPUT` after it plays until the
+next one comes or goes. Since a preferred output may be named before it
+is there, a prefs file can name a speaker that is plugged in later.
 
 `output` is a field at the end of `IOAudio` that version 2 had not got.
 A request of that size still opens and does everything else; only the
@@ -204,6 +216,67 @@ stream: `AUDIO_VOLUME_UNITY` leaves them as they are. The streams are
 summed and the master goes over the sum; a sum past what the output
 holds is clipped, so many loud streams are better turned down here than
 left to clip.
+
+Since version 6 **each output has its own volume** - the headphones
+quieter than the speaker - and the master is the volume of the output
+played through. With `output` naming an output, `AUDIOCMD_MASTER` sets
+that one's volume, kept for it while it is not there and in force
+whenever it plays; with `output` 0, or from a request of version 2,
+the one played through. An output no volume was set for plays at the
+volume in force when it takes over. The device keeps
+`AUDIO_MAX_VOLUMES` (16) of them, forgetting the one set longest ago
+past that.
+
+## Choosing from a program: `sdk.devices.audiocontrol`
+
+A program that only chooses - a shell command, a preferences editor, a
+window with a volume slider - opens the device with `AUDIOF_TRIGGER`,
+which takes none of its streams. `audiocontrol.Control.open(sys)` does
+that on a port of its own, and refuses a device older than version 6;
+its calls are a DoIO each:
+
+```zig
+var control = audiocontrol.Control.open(sys) orelse return;
+defer control.close();
+var outputs: audiocontrol.Outputs = .{};
+outputs.read(&control);              // the list, with a chooser's labels
+_ = control.play(outputs.infos[1].id);
+control.setVolume(0, 60);            // the one played through, at 60%
+_ = control.prefer(0x24B61A00);      // there or not
+```
+
+A volume there is in percent of as recorded, 0 to 100, as a person sets
+it; `percentOf` and `volumeOf` turn it into the device's and back.
+
+## The settings kept: `audio.prefs`
+
+`ENVARC:Sys/audio.prefs` holds a line per output - its number, its
+volume in percent, its name for reading, and which one is preferred:
+
+```
+OUTPUT=24B61A00 VOLUME=80 NAME=es8311
+OUTPUT=ECD5FB99 VOLUME=40 NAME="QEMU USB Audio" PREFERRED=YES
+```
+
+S:Startup-Sequence's `C:SetPrefs` hands it to the device at boot,
+before the first sound, and `SetPrefs SHOW` lists what the device has
+then: every output there is with its volume, and the preferred one -
+by its number when it is not there. `sdk.prefs.audio` reads and writes it: `apply` hands
+settings to the device, `gather` reads what the device has into them,
+keeping the lines of outputs that are not plugged in.
+
+Three places set it:
+
+- `C:Audio` in the shell (below);
+- the **Sound** page of `SYS:Programs/Prefs`: the preferred output, a
+  volume per output, and the beep (what `sound.prefs` holds), with a
+  Test button; Use and Save keep them, Cancel puts back what was;
+- `SYS:Programs/Volume`, from its icon or the desktop's Anvil menu
+  (**Volume...**): the output played through and its volume, kept when
+  the window closes.
+
+Player has an Output chooser of its own, beside its file, which plays
+every sound through the output picked.
 
 ## Sounds for a moment: triggers
 
@@ -532,31 +605,51 @@ system list names no pads for them.
 
 ## From the shell
 
+`C:Audio` shows and sets the outputs:
+
+```
+Audio                         the output played through, its rate and
+                              volume; the preferred one; the streams
+Audio LIST                    every output: name, number, sides, rates,
+                              volume, which plays and which is preferred
+Audio OUTPUT es8311           play through that one from now on
+Audio PREFER ECD5FB99         prefer that one, there or not (NONE: none)
+Audio VOLUME 60               the one played through at 60%
+Audio OUTPUT es8311 VOLUME 80 SAVE
+                              and kept in ENV: and ENVARC:audio.prefs
+```
+
+An output is named by its name, any case, or by its number as `LIST`
+shows it; given anything to do, `Audio` prints nothing unless something
+goes wrong, so S:User-Startup can set the sound up.
+
 `C:test/Audio` says what the board has and plays a note:
 
 ```
-Audio                         440 Hz for two seconds
-Audio HZ 220 SECONDS 5 PAN -100
-Audio CHORD                   a major chord, three streams at once
-Audio BENCH 16                sixteen streams for ten seconds, then the
+C:test/Audio                  440 Hz for two seconds
+C:test/Audio HZ 220 SECONDS 5 PAN -100
+C:test/Audio CHORD            a major chord, three streams at once
+C:test/Audio BENCH 16         sixteen streams for ten seconds, then the
                               gaps and the device task's share of a core
-Audio OUTPUTS                 every output: name, number, sides, rates
-Audio OUTPUT Headphones       play through that one from now on
-Audio TRIGGER 10              ten clicks as fast as they can be sent,
+C:test/Audio OUTPUTS          every output: name, number, sides, rates
+C:test/Audio OUTPUT Headphones
+                              play through that one from now on
+C:test/Audio TRIGGER 10       ten clicks as fast as they can be sent,
                               then what became of each, and the gaps
-Audio TOFILE RAM:note.wav     the note into a WAV file (a file sink)
+C:test/Audio TOFILE RAM:note.wav
+                              the note into a WAV file (a file sink)
 ```
 
 In QEMU the output is `null`: the sound is mixed as on a board, buffer
 for buffer at 48 kHz, and goes nowhere, so a program that plays runs as
-it would on a board, and `Audio BENCH` measures the mix. QEMU's virt
+it would on a board, and `C:test/Audio BENCH` measures the mix. QEMU's virt
 machine with `-device qemu-xhci -device usb-audio,audiodev=snd` and an
 audiodev has a USB speaker, which uac.device plays through; with
 `-audiodev wav,id=snd,path=out.wav,out.mixing-engine=off` what it was
 sent lands in a WAV file on the host, sample for sample.
 
 `./zig build audio-bench` times the mixer on the host, for 1, 4, 8 and
-16 streams; the board's own figure is `Audio BENCH`'s. The mixer is held
+16 streams; the board's own figure is `C:test/Audio BENCH`'s. The mixer is held
 to a reference mix byte for byte by a host test
 (`src/rom/devs/audio/golden.zig`); a change to it that is meant to change
 what is heard writes the reference again with `./zig build audio-golden`.
