@@ -229,6 +229,14 @@ volume in force when it takes over. The device keeps
 `AUDIO_MAX_VOLUMES` (16) of them, forgetting the one set longest ago
 past that.
 
+Since 2.10 an output with a **volume of its own** - a USB speaker's
+feature unit - is set there: the device hands the master in force to
+the sink (`SinkControl` with `AUDIOCTRL_VOLUME`) whenever it changes and
+whenever the output starts, and the mix gives that output only what the
+part's range leaves over, so its sound leaves at full scale and its
+quiet end keeps every bit. Every other output has the master as a gain
+in the mix. The query's `master` is the master either way.
+
 ## Choosing from a program: `sdk.devices.audiocontrol`
 
 A program that only chooses - a shell command, a preferences editor, a
@@ -534,11 +542,22 @@ count is in the console's log as the file is closed.
 with an isochronous OUT endpoint, linear PCM, one or two channels of 16,
 24 or 32 bits, at 48 kHz. Each is a sink named as the device names its
 product, at the bottom of the board's own outputs. Started, its
-interface is put in its setting, its rate set where the endpoint has
-the control, its feature unit's mute lifted and its volume set to 0 dB
-(or its most below that); then three buffers of ten milliseconds go
-round as isochronous transfers. It needs a controller with isochronous
-transfers - xhci.device - and declines a device on any other.
+interface is put in its setting and its rate set where the endpoint has
+the control; then three buffers of ten milliseconds go round as
+isochronous transfers. A buffer with a packet the controller could not
+send, or with frames before it that went without - the ring ran dry -
+counts in `underruns`. It needs a controller with isochronous transfers
+- xhci.device - and declines a device on any other.
+
+Its volume is the feature unit's: `AUDIOCTRL_VOLUME` sets every channel
+with a volume, in 1/256 dB within the range the unit gives, mutes it for
+none at all, and leaves the mix only what that range does not reach - a
+volume above the unit's most, or below its least. A unit without a
+volume control is set to 0 dB and takes none; the mix carries it all.
+A device on its own clock - an asynchronous endpoint with a feedback
+endpoint - has the rate it tells measured while it plays: at the stop
+the debug output has its average and how far it is from 48 kHz, in
+parts a million. The stream is not paced by it.
 
 A **source** is a way in, on a list of its own: a driver of the source
 kind makes them with `CreateSourceTagList`, `NextSource` walks them,

@@ -137,6 +137,9 @@
 //! An output no volume was set for plays at the volume of the one before
 //! it. S:Startup-Sequence's C:SetPrefs hands the volumes and the preferred
 //! output to the device from ENV:Sys/audio.prefs (`sdk.prefs.audio`).
+//! Since 2.10 an output with a volume of its own - a USB speaker's - is
+//! set there, and the mix gives it only what its range does not reach;
+//! the master reads the same.
 //!
 //! The output commands read `output`, a field an IOAudio of 2.2 had not
 //! got: a request smaller than the whole is refused them with

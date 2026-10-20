@@ -528,13 +528,26 @@ interface on a bus without isochronous transfers: a packet of silence
 sent as the interface is offered comes back `IOERR_NOCMD` on
 usbotg.device.
 
-Started, the interface is put in its setting, its rate set where the
-endpoint has that control, and its feature unit's mute lifted and its
-volume set to 0 dB - or the most it has, below that. Three transfers of
-ten milliseconds go round, each refilled as it comes back; one that
-comes back with nothing else left on the bus is counted as a gap
-(`underruns`). Pulled out while it plays, its sink is deleted, and
-audio.device goes on through the next output on the list.
+Started, the interface is put in its setting and its rate set where
+the endpoint has that control. Three transfers of ten milliseconds go
+round, each refilled as it comes back. What became of each is the
+controller's to say: a transfer with a packet lost (`iso_lost`), or
+with frames before it that the endpoint went without (`iso_gap`, the
+ring ran dry), is counted as a gap (`underruns`) - all but the frames
+before the first transfer after a start. Pulled out while it plays, its
+sink is deleted, and audio.device goes on through the next output on
+the list.
+
+The volume audio.device plays the speaker at goes to its feature unit:
+every channel with a volume is set in 1/256 dB within the range the
+unit gives as it is bound (`GET_MIN`, `GET_MAX`), the mute is put on for
+none at all, and what the range does not reach is left to the mix. A
+device on its own clock - an asynchronous endpoint naming a feedback
+endpoint - has a transfer of a buffer's packets kept on that endpoint
+while it plays, an isochronous IN one; the rate its last whole packet
+tells (10.14 samples a frame in three bytes, 16.16 in four) is noted,
+and at the stop the average and its distance from 48 kHz go to the
+debug output, in parts a million.
 
 ## Writing a controller
 

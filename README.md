@@ -163,7 +163,8 @@ source of a driver, made from the parts the board's description names,
 or when a USB speaker is plugged in. `audio.device` mixes up to sixteen
 streams, each in its own form, rate, volume and pan, into one sink; the
 output preferred takes over when it is plugged in, each keeps its own
-volume (`C:Audio`, Prefs, `SYS:Programs/Volume`), a click plays at once
+volume (`C:Audio`, Prefs, `SYS:Programs/Volume`) - a USB speaker's at
+its own control - a click plays at once
 as a trigger, and unit 1 records (`C:Record`). `LIBS:audiocodec.library`
 decodes WAV, MP3, FLAC and Ogg Vorbis as they play
 ([sound guide](sdk/docs/guides/audio.md)).

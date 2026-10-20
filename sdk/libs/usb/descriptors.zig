@@ -175,6 +175,14 @@ pub const USB_ENDPOINT_XFER_CONTROL: u8 = 0;
 pub const USB_ENDPOINT_XFER_ISOC: u8 = 1;
 pub const USB_ENDPOINT_XFER_BULK: u8 = 2;
 pub const USB_ENDPOINT_XFER_INT: u8 = 3;
+/// bmAttributes' synchronisation of an isochronous endpoint: none, the
+/// device's own clock (an OUT endpoint's rate told back on a feedback
+/// endpoint), the device following the stream, the bus's frames.
+pub const USB_ENDPOINT_SYNCTYPE_MASK: u8 = 0x0C;
+pub const USB_ENDPOINT_SYNC_NONE: u8 = 0x00;
+pub const USB_ENDPOINT_SYNC_ASYNC: u8 = 0x04;
+pub const USB_ENDPOINT_SYNC_ADAPTIVE: u8 = 0x08;
+pub const USB_ENDPOINT_SYNC_SYNC: u8 = 0x0C;
 
 /// A string's descriptor: after these two bytes, UTF-16LE characters to
 /// `length`. String 0 is the list of languages, of which the first is
@@ -329,8 +337,9 @@ pub const UAC_EP_GENERAL: u8 = 0x01;
 /// type I, a frame of samples a channel.
 pub const UAC_FORMAT_PCM: u16 = 0x0001;
 pub const UAC_FORMAT_TYPE_I: u8 = 0x01;
-/// Class requests: set a control's value, read its highest.
+/// Class requests: set a control's value, read its lowest and highest.
 pub const UAC_SET_CUR: u8 = 0x01;
+pub const UAC_GET_MIN: u8 = 0x82;
 pub const UAC_GET_MAX: u8 = 0x83;
 /// A feature unit's controls (wValue's high byte, and bits of bmaControls
 /// from bit 0): mute, volume - in 1/256 dB, signed.
