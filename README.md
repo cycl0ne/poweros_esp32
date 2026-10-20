@@ -202,7 +202,8 @@ Beside them:
   `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)).
 - **Devices:** timer, serial, console, input from keyboards, mice and
   touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
-  ESP32s' OTG and on xHCI, with class drivers for keyboards, mice,
+  ESP32s' OTG and on xHCI, a device plugged in or pulled out told to the
+  windows that ask, with class drivers for keyboards, mice,
   sticks, serial and Ethernet adapters, Wi-Fi sticks, and on xHCI
   speakers and headsets
   ([USB guide](sdk/docs/guides/usb.md)); Ethernet up to 1000 Mbit/s, the
@@ -334,7 +335,9 @@ qemu-system-riscv64 -M virt -m 512M -smp 4 -bios default \
 
 `-device usb-audio,audiodev=snd -audiodev pa,id=snd` adds a USB speaker
 (`-audiodev wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
-plays into a file instead).
+plays into a file instead). A stick (`-device usb-storage,drive=...`)
+needs `-device qemu-xhci,p3=0`: QEMU puts it on a SuperSpeed port
+otherwise, and those are not driven yet.
 
 On the VisionFive 2, U-Boot loads `kernel.bin` and starts it with
 `booti`, with `disk-rv64.bin` as its ramdisk and U-Boot's device tree.

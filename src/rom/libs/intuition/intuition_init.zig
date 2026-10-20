@@ -118,7 +118,9 @@ pub const LIBRARY_VERSION = 0;
 /// plays a sound through audio.device (IPREFS_BeepSound) and flashes as
 /// IPREFS_BeepFlash says. 47: every window has a number no other window
 /// is given (WA_Number), and FindWindowNumber finds it while it is open.
-pub const LIBRARY_REVISION = 47;
+/// 48: a USB device plugged in or pulled out (IECLASS_USB) is told to
+/// every window that asks (IDCMP_USBCHANGE, WMHI_USBCHANGE).
+pub const LIBRARY_REVISION = 48;
 const BUILD_DATE = "20.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -173,6 +173,18 @@ ub.ReleaseUSBDeviceList();
 `AddUSBNotify(task, signals)` sends the signals whenever a device comes,
 goes or is bound; the program reads the list again.
 
+input.device hears of the same: usb.library writes an `IECLASS_USB`
+event for every device that comes, once its interfaces were offered to
+the class drivers (a hub before what is plugged into it), and for every
+one that goes, once it is off the list - `subclass`
+`IESUBCLASS_USB_ATTACHED` or `IESUBCLASS_USB_DETACHED`, `code` the bus
+and address (`bus << 8 | address`), `x` and `y` the vendor and product
+id. A device that could not be set up comes too: it is on the list,
+`USBDF_FAILED`. intuition tells every window that asks for
+`IDCMP_USBCHANGE`, the subclass in its `code` (`WMHI_USBCHANGE` for a
+windowclass window), so a window showing devices needs no task of its
+own to hear of them. `C:test/Input` prints the events as they pass.
+
 A device's descriptors are kept as they came, in its `config`.
 `FindUSBInterface` finds an interface by class, subclass and protocol,
 `FindUSBEndpoint` an interface's endpoint by direction and type, and
@@ -675,7 +687,9 @@ usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
 controller, so its bus does not start. A QEMU started with `-device
 qemu-xhci` has one, and `-device usb-kbd`, `-device usb-mouse` or a
 `usb-storage` device go on its bus; the machine's `USB AUTO` starts it at
-boot. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
+boot. QEMU puts a `usb-storage` on a SuperSpeed port, which xhci.device
+does not drive: `-device qemu-xhci,p3=0` gives the controller USB 2
+ports only, and the stick comes in at high speed. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
 pa,id=snd`, or `wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
 for a file) is a speaker for `usb/uac.device`; `device_del spk` pulls it
 out while it plays. QEMU's own mixing engine plays 0 dB at 240/255 of

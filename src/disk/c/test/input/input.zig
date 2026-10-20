@@ -5,8 +5,8 @@
 //!   Input TIMER/S,KEY/K/N
 //!
 //! With nothing asked for it puts a handler on the chain and prints every
-//! event that passes it - keys, fingers, the mouse, the pointer - until
-//! Ctrl-C; TIMER
+//! event that passes it - keys, fingers, the mouse, the pointer, USB
+//! devices plugged in and pulled out - until Ctrl-C; TIMER
 //! prints the ten-a-second ticks as well. KEY sends one rawkey down the
 //! chain, pressed and let go, through IND_WRITEEVENT, and stops.
 //!
@@ -29,7 +29,7 @@ const KeymapBase = sdk.interface.keymap.KeymapBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Input";
-const VERSION_STRING = "\x00$VER: Input 1.2 (11.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Input 1.3 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TIMER/S,KEY/K/N";
@@ -48,6 +48,7 @@ const MSG_TOUCH = "finger  #%-2d %-4s %4d,%-4d%s\n";
 const MSG_POINTER = "pointer %4d,%-4d %-14s%s\n";
 const MSG_MOUSE = "mouse   %4d,%-4d %-14s%s\n";
 const MSG_TIMER = "timer  %s\n";
+const MSG_USB = "usb     %-8s bus %u address %u, %04x:%04x\n";
 const MSG_OTHER = "class %02x code %02x%s\n";
 const MSG_LOST = "(%d events lost)\n";
 const MSG_DONE = "%d events\n";
@@ -177,6 +178,10 @@ fn show(dl: *DosBase, kb: ?*KeymapBase, e: *const InputEvent) void {
         ie.IECLASS_NEWPOINTERPOS => _ = Printf(dl, MSG_POINTER, .{ e.x, e.y, buttonText(e.code), q }),
         ie.IECLASS_RAWMOUSE => _ = Printf(dl, MSG_MOUSE, .{ e.x, e.y, buttonText(e.code), q }),
         ie.IECLASS_TIMER => _ = Printf(dl, MSG_TIMER, .{q}),
+        ie.IECLASS_USB => {
+            const what: [*:0]const u8 = if (e.subclass == ie.IESUBCLASS_USB_DETACHED) "detached" else "attached";
+            _ = Printf(dl, MSG_USB, .{ what, e.code >> 8, e.code & 0xFF, @as(u32, @bitCast(e.x)), @as(u32, @bitCast(e.y)) });
+        },
         else => _ = Printf(dl, MSG_OTHER, .{ e.class, e.code, q }),
     }
 }

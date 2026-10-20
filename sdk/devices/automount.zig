@@ -279,8 +279,8 @@ fn probe(sys: *ExecBase, unit: Unit) dos.filesystems.Choice {
     return dos.filesystems.wholeMediumChoice(@as([*]const u8, @ptrCast(memory))[0..unit.block_bytes]);
 }
 
-/// input.device, for telling it a disk came or went: opened the first
-/// time, and kept.
+/// input.device, for telling it a disk or a USB device came or went:
+/// opened the first time, and kept.
 pub const Input = struct {
     port: ?*exec.MsgPort = null,
     io: exec.IOStdReq = .{},
@@ -290,6 +290,11 @@ pub const Input = struct {
     /// An event of `class` (IECLASS_DISKINSERTED, IECLASS_DISKREMOVED)
     /// written to input.
     pub fn announce(input: *Input, sys: *ExecBase, class: u32) void {
+        input.write(sys, .{ .class = class });
+    }
+
+    /// `event` written to input, on the task that made the port.
+    pub fn write(input: *Input, sys: *ExecBase, event: ie.InputEvent) void {
         if (!input.open) {
             const port = input.port orelse sys.CreateMsgPort() orelse return;
             input.port = port;
@@ -299,7 +304,7 @@ pub const Input = struct {
             if (sys.OpenDevice(input_device.INPUTNAME, 0, &input.io.req, 0) != 0) return;
             input.open = true;
         }
-        input.event = .{ .class = class };
+        input.event = event;
         input.io.req.command = input_device.IND_WRITEEVENT;
         input.io.length = @sizeOf(ie.InputEvent);
         input.io.data = @ptrCast(&input.event);
