@@ -70,9 +70,10 @@ pub const Ops = struct {
     close: *const fn (surface: *Surface) void,
 };
 
-/// A format facet.library draws in: the two 32-bit orders a display has.
+/// A format facet.library draws in: the two 32-bit orders a display has,
+/// and 565.
 pub fn drawable(format: facet.Format) bool {
-    return format == .b8g8r8a8_unorm or format == .r8g8b8a8_unorm;
+    return format == .b8g8r8a8_unorm or format == .r8g8b8a8_unorm or format == .r5g6b5_unorm_pack16;
 }
 
 /// A display's pixels as a format: `undefined` for those facet.library
@@ -81,6 +82,7 @@ pub fn formatOf(pixels: PixelFormat) facet.Format {
     return switch (pixels) {
         .bgra32 => .b8g8r8a8_unorm,
         .rgba32 => .r8g8b8a8_unorm,
+        .rgb565 => .r5g6b5_unorm_pack16,
         else => .undefined,
     };
 }

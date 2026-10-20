@@ -159,6 +159,10 @@ pub const SA_BarHBorder = SA_Dummy + 0x010A;
 /// Read only: the title it shows when none of its windows is active,
 /// `SA_Title` as it was opened with.
 pub const SA_DefaultTitle = SA_Dummy + 0x010B;
+/// Read only: what its pixels are, an `rtg.bitmaps.PixelFormat` - its
+/// display's, the same for each of its buffers and for as long as it is
+/// open. For a program drawing into its buffers itself.
+pub const SA_PixelFormat = SA_Dummy + 0x010C;
 
 /// `SA_Type`: a screen of its program's own, or a public one.
 pub const PUBLICSCREEN: u32 = 0x0002;

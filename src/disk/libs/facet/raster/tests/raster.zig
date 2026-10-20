@@ -5,10 +5,12 @@
 const std = @import("std");
 const raster = @import("../raster.zig");
 const setup = @import("../setup.zig");
+const bins = @import("../bins.zig");
 const testing = std.testing;
 
 const Target = raster.Target;
 const Rect = raster.Rect;
+const Packing = @import("../target.zig").Packing;
 
 /// What the host was asked: the rectangles handed on.
 pub const Log = struct {
@@ -134,6 +136,91 @@ test "a colour in red, green, blue order" {
     target.begin();
     _ = target.finish();
     try expectFilled(&pixels, area, 0x8033_2211);
+}
+
+/// A pixel of 565 as a display shows it, 0 to 255 a channel: its bits
+/// repeated below themselves.
+pub fn shown565(pixel: u16) [3]u32 {
+    const red: u32 = pixel >> 11;
+    const green: u32 = pixel >> 5 & 0x3F;
+    const blue: u32 = pixel & 0x1F;
+    return .{ red << 3 | red >> 2, green << 2 | green >> 4, blue << 3 | blue >> 2 };
+}
+
+/// The pixels of 565 of a four by four, at `pixel` and `pitch` pixels a
+/// row, average as shown to `color`, 0xRRGGBB, to within one of 255.
+pub fn expectAverages565(pixels: [*]const u16, pitch: usize, color: u32) !void {
+    var sums: [3]u32 = @splat(0);
+    for (0..4) |y| for (0..4) |x| {
+        for (&sums, shown565(pixels[y * pitch + x])) |*sum, channel| sum.* += channel;
+    };
+    for (sums, 0..) |sum, k| {
+        const want: i64 = color >> @intCast(16 - 8 * k) & 0xFF;
+        if (@abs(@as(i64, sum) - want * 16) > 16) {
+            std.debug.print("channel {d}: {d}/16 shown, not {d}\n", .{ k, sum, want });
+            return error.TestExpectedEqual;
+        }
+    }
+}
+
+test "a colour dithered into 565: the four by four averages to it, nothing else written" {
+    const before: u16 = 0x5A5A;
+    var pixels: [width * height]u16 = @splat(before);
+    var log: Log = .{};
+    const area = Rect{ .x = 20, .y = 5, .width = 211, .height = 150 };
+    const surface = raster.Surface{ .pixels = @ptrCast(&pixels), .pitch = width * 2, .width = width, .height = height, .format = .rgb565 };
+    // Channels between the steps of 565 as a display shows them: 16 of
+    // red is 132, 15 is 123.
+    const red = 131;
+    const green = 65;
+    const blue = 45;
+    var target = try Target.init(host(&log, false), surface, area, .{ .color = .{ .clear = 0xFF00_0000 | red << 16 | green << 8 | blue } });
+    defer target.deinit();
+    // A cache line is 32 pixels.
+    try testing.expectEqual(@as(u32, 0), target.grid_x);
+    target.begin();
+    _ = target.finish();
+    try expectHandedOn(&log, area);
+    for (0..height) |y| for (0..width) |x| {
+        const pixel = pixels[y * width + x];
+        if (!inside(area, @intCast(x), @intCast(y))) {
+            try testing.expectEqual(before, pixel);
+            continue;
+        }
+        // The pattern repeats every four pixels, across and down.
+        if (inside(area, @intCast(x + 4), @intCast(y))) try testing.expectEqual(pixel, pixels[y * width + x + 4]);
+        if (inside(area, @intCast(x), @intCast(y + 4))) try testing.expectEqual(pixel, pixels[(y + 4) * width + x]);
+    };
+    // Not one colour: the four by four mixes two steps of each channel.
+    try testing.expect(pixels[area.y * width + area.x] != pixels[area.y * width + area.x + 1] or
+        pixels[area.y * width + area.x] != pixels[(area.y + 1) * width + area.x]);
+    const left = (area.x + 3) / 4 * 4;
+    const top = (area.y + 3) / 4 * 4;
+    try expectAverages565(pixels[top * width + left ..].ptr, width, red << 16 | green << 8 | blue);
+}
+
+test "565 read back and written again comes out as it was, wherever it lies: what 565 holds is not dithered" {
+    const packing = Packing.of(.rgb565);
+    var wide: [4]u32 = undefined;
+    var again: [4]u16 = undefined;
+    var pixel: u32 = 0;
+    while (pixel <= 0xFFFF) : (pixel += 1) {
+        const four: [4]u16 = @splat(@intCast(pixel));
+        packing.load(&wide, @ptrCast(&four), 4);
+        for (0..4) |y| {
+            packing.store(@ptrCast(&again), &wide, 4, 0, @intCast(y));
+            try testing.expectEqual(four, again);
+        }
+    }
+    // White and black whatever the dither adds.
+    const white: [4]u32 = @splat(0xFFFF_FFFF);
+    const black: [4]u32 = @splat(0xFF00_0000);
+    for (0..4) |y| {
+        packing.store(@ptrCast(&again), &white, 4, 1, @intCast(y));
+        try testing.expectEqual(@as([4]u16, @splat(0xFFFF)), again);
+        packing.store(@ptrCast(&again), &black, 4, 1, @intCast(y));
+        try testing.expectEqual(@as([4]u16, @splat(0)), again);
+    }
 }
 
 test "the tiles shared between parts on threads of their own" {
@@ -421,6 +508,23 @@ test "each row's run is the pixels inside all three edges, for triangles of ever
             }
         };
     }
+}
+
+test "a triangle's edges sorted as its rows are walked: those that come inside, those that go out, the one along the rows" {
+    const in = bins.Edge.of(256, 0, 0);
+    const in_too = bins.Edge.of(512, -256, 0);
+    const out = bins.Edge.of(-512, 0, 0);
+    const out_too = bins.Edge.of(-256, 256, 0);
+    const along = bins.Edge.of(0, 256, 0);
+    const kinds = [_][3]bins.Edge{ .{ in, in_too, out }, .{ in, out, out_too }, .{ in, out, along } };
+    const orders = [_][3]u2{ .{ 0, 1, 2 }, .{ 0, 2, 1 }, .{ 1, 0, 2 }, .{ 1, 2, 0 }, .{ 2, 0, 1 }, .{ 2, 1, 0 } };
+    for (kinds) |kind| for (orders) |order| {
+        var sorted = [3]bins.Edge{ kind[order[0]], kind[order[1]], kind[order[2]] };
+        bins.sortForWalk(&sorted);
+        const ways = [3]i64{ std.math.sign(sorted[0].a), std.math.sign(sorted[1].a), std.math.sign(sorted[2].a) };
+        const want = [3]i64{ std.math.sign(kind[0].a), std.math.sign(kind[1].a), std.math.sign(kind[2].a) };
+        try testing.expectEqual(want, ways);
+    };
 }
 
 /// Triangles with depth, one colour each: the pixels each has where it is

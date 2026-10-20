@@ -12,7 +12,9 @@
 //! picture at the size of the window rather than its own, and
 //! `PUBSCREEN` names a screen other than the default. A file dragged from
 //! the desktop and let go on the window is shown in place of the one
-//! there, in a window where the last one was.
+//! there, in a window where the last one was. Space pauses what the
+//! object holds, or goes on with it, when the object says it can be
+//! (`STM_PAUSE` among its trigger methods).
 //!
 //! **MultiView knows no formats.** Everything it shows it shows by
 //! opening the object and adding it to a window; a new kind of file is a
@@ -53,8 +55,8 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "MultiView";
-const VERSION = "1.3";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
+const VERSION = "1.4";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -460,7 +462,11 @@ const Shown = struct {
                     // its own: its numbers are right only now, and what is
                     // on the screen was drawn from the layout before it.
                     wc.WMHI_IDCMPUPDATE => draw = true,
-                    wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == 27) return .{ .done = dos.RETURN_OK },
+                    wc.WMHI_VANILLAKEY => switch (word & wc.WMHI_KEYMASK) {
+                        27 => return .{ .done = dos.RETURN_OK },
+                        ' ' => pause(dt, object, window),
+                        else => {},
+                    },
                     else => {},
                 }
             }
@@ -489,6 +495,20 @@ const Shown = struct {
         return next;
     }
 };
+
+/// What the object holds paused, or gone on with, if it lists `STM_PAUSE`
+/// among what it can be told to do: a program offers what the object
+/// says, not what it guesses from the kind of file.
+fn pause(dt: *DataTypesBase, object: *Object, window: *intuition.Window) void {
+    const methods = dt.GetDTTriggerMethods(object) orelse return;
+    var k: usize = 0;
+    while (methods[k].label != null) : (k += 1) {
+        if (methods[k].method != dtc.STM_PAUSE) continue;
+        var trigger = dtc.DtTrigger{ .function = dtc.STM_PAUSE };
+        _ = dt.DoDTMethodA(object, window, null, @ptrCast(&trigger));
+        return;
+    }
+}
 
 /// What went wrong, in words. The library answers its own numbers for
 /// what it could not do with a file, and dos's for everything else.

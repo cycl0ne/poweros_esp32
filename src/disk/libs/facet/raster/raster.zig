@@ -41,6 +41,7 @@ pub const Target = target.Target;
 pub const Attachments = target.Attachments;
 pub const Surface = target.Surface;
 pub const Format = target.Format;
+pub const Packing = target.Packing;
 pub const Rect = target.Rect;
 pub const Host = target.Host;
 pub const Work = target.Work;

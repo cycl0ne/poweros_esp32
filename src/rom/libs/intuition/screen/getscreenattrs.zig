@@ -31,8 +31,9 @@ const _window = @import("../window/_window.zig");
 ///   `SA_MouseY` (the pointer in the screen's own coordinates, wherever
 ///   on the display the screen is), `SA_WBorTop`, `SA_WBorLeft`,
 ///   `SA_WBorRight`, `SA_WBorBottom`, `SA_Top` (how far down its display
-///   the screen is now), `SA_Left` (0), `SA_Draggable`, `SA_Exclusive`.
-///   A tag it does not know, or a null data, is passed over.
+///   the screen is now), `SA_Left` (0), `SA_Draggable`, `SA_Exclusive`,
+///   `SA_PixelFormat` (since 0.49). A tag it does not know, or a null
+///   data, is passed over.
 ///
 /// RESULT:
 /// Nothing; the values are where the tags point.
@@ -80,6 +81,7 @@ pub fn GetScreenAttrs(ib: *IntuitionBase, screen: *Screen, tags: ?[*]const TagIt
             sc.SA_PubName => out.* = if (screen.public) @intFromPtr(&screen.pub_name) else 0,
             sc.SA_ShowTitle => out.* = @intFromBool(screen.bar != null),
             sc.SA_RastPort => out.* = @intFromPtr(screen.rp),
+            sc.SA_PixelFormat => out.* = @intFromEnum(screen.bitmap.format),
             sc.SA_LayerInfo => out.* = @intFromPtr(screen.layer_info),
             sc.SA_BarHeight => out.* = @intCast(screen.bar_height),
             sc.SA_Type => out.* = screen.screen_type,

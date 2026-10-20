@@ -808,6 +808,49 @@ test "RPTAG_FillStyle: radial from a centre, a tile anchored to the RastPort, an
     try tearDown(gb);
 }
 
+test "RPTAG_FillStyle dithered on 16 bits: a colour the surface holds comes out as it is, others average to themselves as shown" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [4 * 4 * 2]u8 = @splat(0);
+    var surface = sizedSurface(&pixels, .rgb565, 4, 4);
+    const rp = try onMemory(gb, &surface, &[_]TagItem{.{}});
+    var style = graphics.FillStyle{};
+
+    // Every step of each channel, widened as a display widens it: the
+    // same value in all sixteen pixels.
+    for (0..64) |step| {
+        const value: u16 = @intCast((step & 31) << 11 | step << 5 | (31 - (step & 31)));
+        const pen = rastport.unpackPen(.rgb565, value);
+        style.stops[0].pen = pen;
+        style.stops[1].pen = pen;
+        base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&style) }, .{} });
+        base(gb).RectFill(@ptrCast(rp), &.{ .max_x = 4, .max_y = 4 });
+        for (0..16) |i| try testing.expectEqual(value, pixelAt(&surface, @intCast(i % 4), @intCast(i / 4)));
+    }
+
+    // Colours between the steps: each channel of the four by four, widened,
+    // averages to the colour's to within one of 255.
+    for ([_]u32{ 0xFF44_7A2D, 0xFF0B_F3C1, 0xFF80_8080, 0xFFFE_0103, 0xFF01_02FD }) |pen| {
+        style.stops[0].pen = pen;
+        style.stops[1].pen = pen;
+        base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&style) }, .{} });
+        base(gb).RectFill(@ptrCast(rp), &.{ .max_x = 4, .max_y = 4 });
+        var sums: [3]i64 = @splat(0);
+        for (0..16) |i| {
+            const shown = rastport.unpackPen(.rgb565, pixelAt(&surface, @intCast(i % 4), @intCast(i / 4)));
+            for (&sums, 0..) |*sum, channel| sum.* += shown >> @intCast(16 - 8 * channel) & 0xFF;
+        }
+        for (sums, 0..) |sum, channel| {
+            const wanted: i64 = pen >> @intCast(16 - 8 * channel) & 0xFF;
+            try testing.expect(@abs(sum - wanted * 16) <= 16);
+        }
+    }
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
 test "RPTAG_LineWidth: an outline grows inward, a ring has no gaps, a line is a brush" {
     const gb = try setUp();
     defer kexec.deinit();

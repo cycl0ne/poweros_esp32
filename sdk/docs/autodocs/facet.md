@@ -589,6 +589,12 @@ none - as each tile starts. The draws until CmdEndRenderPass are
 gathered; the tiles are drawn and stored when it ends. A pass begun in
 another ends it first.
 
+The tiles keep 8 bits a channel whatever the colour attachment's
+format, and are drawn and blended so. Stored into R5G6B5 they are
+dithered, 4 x 4 ordered over the image's pixels; kept from one, a pixel
+is read as the least colour that packs to it again, so that what no
+draw covers is stored as it was.
+
 A pass whose framebuffer's colour image is not bound draws nothing.
 
 **CONTEXT**
@@ -2029,8 +2035,9 @@ What it is for decides how it lies in its memory:
   gives: a texture, in blocks of 4 x 4 texels, an 8888 texel kept in
   64 bits (sdk.facet.texture). Its texels come in by
   CmdCopyBufferToImage.
-- COLOR_ATTACHMENT, of B8G8R8A8 or R8G8B8A8, one level: rows, each on
-  a cache line, in either tiling.
+- COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, one level: rows,
+  each on a cache line, in either tiling. What is drawn into one of
+  R5G6B5 is dithered into it (CmdBeginRenderPass).
 - D16_UNORM with DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth
   that lives in the tiles alone, never stored, whose memory may be of
   the lazily allocated type.
@@ -2405,8 +2412,9 @@ caller's.
 
 **NOTES**
 
-A screen that is not 32 bits a pixel has no format facet.library draws
-in: GetPhysicalDeviceSurfaceFormats lists none for it.
+A screen whose pixels are neither 32 bits nor 565 has no format
+facet.library draws in: GetPhysicalDeviceSurfaceFormats lists none for
+it.
 
 **BUGS**
 
@@ -2724,9 +2732,9 @@ picture.
 
 **NOTES**
 
-A window on a screen that is not 32 bits a pixel has no format
-facet.library draws in: GetPhysicalDeviceSurfaceFormats lists none for
-it. A simple-refresh window with `WA_NoCareRefresh` keeps no copy of its
+A window on a screen whose pixels are neither 32 bits nor 565 has no
+format facet.library draws in: GetPhysicalDeviceSurfaceFormats lists
+none for it. A simple-refresh window with `WA_NoCareRefresh` keeps no copy of its
 covered parts, which the next picture draws anyway.
 
 **BUGS**
@@ -4401,7 +4409,8 @@ None.
 - B8G8R8A8_UNORM and R8G8B8A8_UNORM: colour attachments, blended, in
   either tiling; sampled, filtered, in optimal tiling; copied to and
   from; a vertex's value.
-- R5G6B5_UNORM_PACK16: sampled, filtered, in optimal tiling; copied.
+- R5G6B5_UNORM_PACK16: colour attachments, blended, in either tiling;
+  sampled, filtered, in optimal tiling; copied.
 - D16_UNORM: a depth attachment, in optimal tiling.
 - R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
 
@@ -4729,9 +4738,12 @@ closed.
 
 **BEHAVIOR**
 
-A surface has one format, its display's: `b8g8r8a8_unorm` or
-`r8g8b8a8_unorm`, in sRGB. A display of another, such as the 16-bit
-panels, has none: facet.library draws 32 bits a pixel.
+A surface has one format, its display's: `b8g8r8a8_unorm`,
+`r8g8b8a8_unorm` or `r5g6b5_unorm_pack16`, in sRGB. A display of
+another - 24 bits, 1555, a palette's - has none. In 565 what is drawn
+is drawn and blended in 8 bits a channel, as in the 32-bit formats,
+and dithered into the display's pixels as it is stored
+(CmdBeginRenderPass).
 
 **CONTEXT**
 
@@ -4857,7 +4869,8 @@ surface is over has closed.
 **BEHAVIOR**
 
 The one queue family can present to a surface whose pixels
-facet.library draws in: 32 bits, in either order of red and blue.
+facet.library draws in: 32 bits, in either order of red and blue, or
+565.
 
 **CONTEXT**
 

@@ -133,6 +133,9 @@ test {
     _ = @import("libs/modbus/protocol/pdu.zig");
     _ = @import("libs/modbus/protocol/rtu.zig");
     _ = @import("libs/modbus/protocol/mbap.zig");
+    _ = @import("classes/datatypes/obj/parse.zig");
+    _ = @import("classes/datatypes/model/levels.zig");
+    _ = @import("classes/datatypes/model/camera.zig");
     _ = @import("classes/datatypes/lottie/json.zig");
     _ = @import("classes/datatypes/lottie/property.zig");
     _ = @import("classes/datatypes/lottie/raster.zig");

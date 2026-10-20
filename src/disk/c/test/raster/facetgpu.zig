@@ -6,23 +6,32 @@
 //! its images, and the pipelines, buffers and texture of the scene. The
 //! pipelines take their viewport and scissor as each frame is recorded,
 //! so that a new swapchain - a window made bigger - needs only new
-//! framebuffers.
+//! framebuffers. A frame can be drawn as well into a picture the program
+//! reads back (`picture`), as C:test/FacetCube's CHECK and TO do.
 
 const sdk = @import("sdk");
 const scenes = @import("scenes.zig");
 const scene = @import("facetscene.zig");
 const facet = sdk.facet;
 const intuition = sdk.intuition;
+const PixelFormat = sdk.rtg.bitmaps.PixelFormat;
+const TagItem = sdk.utility.TagItem;
 const FacetBase = sdk.interface.facet.FacetBase;
+const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 
 pub const most_images = 4;
 
-pub const Failure = error{ NoMemory, NoDevice, NoSurface, NotThirtyTwoBits, NoSwapchain, Refused };
+pub const Failure = error{ NoMemory, NoDevice, NoSurface, Undrawable, NoSwapchain, Refused };
 
 /// Everything made through facet.library, given back by `down` in the
 /// order it goes.
 pub const Gpu = struct {
     fb: *FacetBase,
+    /// Asked what the display's pixels are where facet.library does not
+    /// draw in them.
+    ib: *IntuitionBase,
+    /// Those pixels, with `error.Undrawable`.
+    found: PixelFormat = unknown,
     instance: ?*facet.Instance = null,
     physical: *facet.PhysicalDevice = undefined,
     memory: facet.PhysicalDeviceMemoryProperties = undefined,
@@ -61,6 +70,13 @@ pub const Gpu = struct {
     fence: ?*facet.Fence = null,
     acquired: ?*facet.Semaphore = null,
     rendered: ?*facet.Semaphore = null,
+    /// What `picture` makes: the image read back, a depth image of its
+    /// size, and the framebuffer over the two.
+    picture_image: ?*facet.Image = null,
+    picture_view: ?*facet.ImageView = null,
+    picture_depth: ?*facet.Image = null,
+    picture_depth_view: ?*facet.ImageView = null,
+    picture_framebuffer: ?*facet.Framebuffer = null,
 
     pub fn down(gpu: *Gpu) void {
         const fb = gpu.fb;
@@ -68,6 +84,11 @@ pub const Gpu = struct {
             _ = fb.DeviceWaitIdle(device);
             gpu.unchain();
             fb.DestroySwapchain(device, gpu.swapchain);
+            fb.DestroyFramebuffer(device, gpu.picture_framebuffer);
+            fb.DestroyImageView(device, gpu.picture_depth_view);
+            fb.DestroyImage(device, gpu.picture_depth);
+            fb.DestroyImageView(device, gpu.picture_view);
+            fb.DestroyImage(device, gpu.picture_image);
             fb.DestroySemaphore(device, gpu.rendered);
             fb.DestroySemaphore(device, gpu.acquired);
             fb.DestroyFence(device, gpu.fence);
@@ -112,24 +133,42 @@ pub const Gpu = struct {
     /// The surface over the whole of `screen`.
     pub fn onScreen(gpu: *Gpu, screen: *intuition.Screen) Failure!void {
         try expect(gpu.fb.CreateScreenSurface(gpu.instance.?, &.{ .screen = screen }, &gpu.surface), error.NoSurface);
-        try gpu.formatOfSurface();
+        if (gpu.formatOfSurface()) return;
+        gpu.found = gpu.pixelsOf(.{ .screen = screen });
+        return error.Undrawable;
     }
 
     /// The surface over the inside of `window`.
     pub fn onWindow(gpu: *Gpu, window: *intuition.Window) Failure!void {
         try expect(gpu.fb.CreateWindowSurface(gpu.instance.?, &.{ .window = window }, &gpu.surface), error.NoSurface);
-        try gpu.formatOfSurface();
+        if (gpu.formatOfSurface()) return;
+        gpu.found = gpu.pixelsOf(.{ .window = window });
+        return error.Undrawable;
     }
 
-    fn formatOfSurface(gpu: *Gpu) Failure!void {
+    /// The surface's format, if facet.library draws in it.
+    fn formatOfSurface(gpu: *Gpu) bool {
         const fb = gpu.fb;
         var supported = false;
         _ = fb.GetPhysicalDeviceSurfaceSupport(gpu.physical, 0, gpu.surface.?, &supported);
         var formats: [1]facet.SurfaceFormat = undefined;
         var count: u32 = 1;
         _ = fb.GetPhysicalDeviceSurfaceFormats(gpu.physical, gpu.surface.?, &count, &formats);
-        if (!supported or count == 0) return error.NotThirtyTwoBits;
+        if (!supported or count == 0) return false;
         gpu.format = formats[0].format;
+        return true;
+    }
+
+    /// What the screen's or the window's pixels are (intuition 0.49's
+    /// `SA_PixelFormat`, `WA_PixelFormat`): a surface facet.library does
+    /// not draw in lists no format.
+    fn pixelsOf(gpu: *Gpu, of: union(enum) { screen: *intuition.Screen, window: *intuition.Window }) PixelFormat {
+        var format: usize = @intFromEnum(unknown);
+        switch (of) {
+            .screen => |screen| gpu.ib.GetScreenAttrs(screen, &[_]TagItem{ .{ .tag = intuition.screens.SA_PixelFormat, .data = @intFromPtr(&format) }, .{} }),
+            .window => |window| gpu.ib.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = intuition.windows.WA_PixelFormat, .data = @intFromPtr(&format) }, .{} }),
+        }
+        return @enumFromInt(@as(u8, @truncate(format)));
     }
 
     /// A swapchain of `wanted` images on the surface at its size now - or
@@ -221,12 +260,12 @@ pub const Gpu = struct {
         try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &gpu.pass), error.Refused);
 
         const levels = scenes.texture_levels;
-        gpu.texture = try gpu.image(.{
+        gpu.texture, _ = try gpu.image(.{
             .format = .b8g8r8a8_unorm,
             .extent = .{ .width = scenes.texture_side, .height = scenes.texture_side },
             .mip_levels = levels,
             .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST,
-        });
+        }, 0);
         gpu.texture_view = try gpu.view(gpu.texture.?, .b8g8r8a8_unorm, facet.IMAGE_ASPECT_COLOR, levels);
         gpu.staging, const staged = try gpu.buffer(scene.staged_bytes, facet.BUFFER_USAGE_TRANSFER_SRC);
         const regions = scene.stage(pattern, staged);
@@ -272,19 +311,20 @@ pub const Gpu = struct {
         try gpu.submitAndWait(null, null);
     }
 
-    /// An image as `info` says, bound into memory of its own.
-    fn image(gpu: *Gpu, info: facet.ImageCreateInfo) Failure!*facet.Image {
+    /// An image as `info` says, bound into memory of its own of a type
+    /// with `wanted`, and that memory.
+    fn image(gpu: *Gpu, info: facet.ImageCreateInfo, wanted: u32) Failure!struct { *facet.Image, *facet.DeviceMemory } {
         const fb = gpu.fb;
         var made: ?*facet.Image = null;
         try expect(fb.CreateImage(gpu.device.?, &info, &made), error.Refused);
         var needs: facet.MemoryRequirements = undefined;
         fb.GetImageMemoryRequirements(gpu.device.?, made.?, &needs);
-        const block = gpu.allocate(needs, 0) catch |err| {
+        const block = gpu.allocate(needs, wanted) catch |err| {
             fb.DestroyImage(gpu.device.?, made);
             return err;
         };
         try expect(fb.BindImageMemory(gpu.device.?, made.?, block, 0), error.Refused);
-        return made.?;
+        return .{ made.?, block };
     }
 
     fn view(gpu: *Gpu, of: *facet.Image, format: facet.Format, aspect: u32, levels: u32) Failure!*facet.ImageView {
@@ -410,10 +450,16 @@ pub const Gpu = struct {
     /// A frame recorded into `area` of image `index`: the area cleared,
     /// the backdrop over it and the box turned by `transform`.
     pub fn record(gpu: *Gpu, index: u32, area: facet.Rect2D, transform: *const [16]f32) Failure!void {
+        return gpu.recordInto(gpu.framebuffers[index].?, area, transform);
+    }
+
+    /// A frame recorded into `area` of `framebuffer`'s: a swapchain
+    /// image's, or the picture's.
+    pub fn recordInto(gpu: *Gpu, framebuffer: *facet.Framebuffer, area: facet.Rect2D, transform: *const [16]f32) Failure!void {
         const fb = gpu.fb;
         const recording = try gpu.begin();
         const black = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
-        fb.CmdBeginRenderPass(recording, &.{ .render_pass = gpu.pass.?, .framebuffer = gpu.framebuffers[index].?, .render_area = area, .clear_value_count = 2, .clear_values = &black }, .@"inline");
+        fb.CmdBeginRenderPass(recording, &.{ .render_pass = gpu.pass.?, .framebuffer = framebuffer, .render_area = area, .clear_value_count = 2, .clear_values = &black }, .@"inline");
         const viewport = facet.Viewport{
             .x = @floatFromInt(area.offset.x),
             .y = @floatFromInt(area.offset.y),
@@ -434,6 +480,35 @@ pub const Gpu = struct {
         fb.CmdEndRenderPass(recording);
     }
 
+    /// A picture of `width` x `height` in the surface's format, its rows
+    /// one after another in memory the program sees, with a depth image of
+    /// its own and a framebuffer over the two: drawn into as a swapchain's
+    /// image is (`recordInto`), and read once the frame's fence is
+    /// signalled. Made once; given back by `down`.
+    pub fn picture(gpu: *Gpu, width: u32, height: u32) Failure!Picture {
+        const fb = gpu.fb;
+        const device = gpu.device.?;
+        const extent = facet.Extent3D{ .width = width, .height = height };
+        gpu.picture_image, const memory = try gpu.image(.{ .format = gpu.format, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE);
+        gpu.picture_view = try gpu.view(gpu.picture_image.?, gpu.format, facet.IMAGE_ASPECT_COLOR, 1);
+        gpu.picture_depth, _ = try gpu.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, facet.MEMORY_PROPERTY_LAZILY_ALLOCATED);
+        gpu.picture_depth_view = try gpu.view(gpu.picture_depth.?, .d16_unorm, facet.IMAGE_ASPECT_DEPTH, 1);
+        const views = [2]*facet.ImageView{ gpu.picture_view.?, gpu.picture_depth_view.? };
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = gpu.pass.?, .attachment_count = 2, .attachments = &views, .width = width, .height = height }, &gpu.picture_framebuffer), error.Refused);
+        var data: ?*anyopaque = null;
+        try expect(fb.MapMemory(device, memory, 0, facet.WHOLE_SIZE, 0, &data), error.Refused);
+        var layout: facet.SubresourceLayout = undefined;
+        fb.GetImageSubresourceLayout(device, gpu.picture_image.?, &.{}, &layout);
+        return .{
+            .framebuffer = gpu.picture_framebuffer.?,
+            .pixels = @as([*]const u8, @ptrCast(data.?)) + @as(usize, @intCast(layout.offset)),
+            .pitch = @intCast(layout.row_pitch),
+            .width = width,
+            .height = height,
+            .format = gpu.format,
+        };
+    }
+
     /// Image `index` handed to the queue, shown once drawn.
     pub fn present(gpu: *Gpu, index: u32) facet.Result {
         return gpu.fb.QueuePresent(gpu.queue, &.{
@@ -445,18 +520,60 @@ pub const Gpu = struct {
     }
 };
 
+/// A frame drawn where the program reads it: `Gpu.picture`'s.
+pub const Picture = struct {
+    framebuffer: *facet.Framebuffer,
+    pixels: [*]const u8,
+    pitch: usize,
+    width: u32,
+    height: u32,
+    format: facet.Format,
+
+    /// Pixel (`x`, `y`) as 0xRRGGBB: 565 widened as a display widens it,
+    /// each channel's top bits repeated below.
+    pub fn color(picture: *const Picture, x: usize, y: usize) u32 {
+        const row = picture.pixels + y * picture.pitch;
+        switch (picture.format) {
+            .r5g6b5_unorm_pack16 => {
+                const pixel: u32 = @as(*align(1) const u16, @ptrCast(row + x * 2)).*;
+                const red = pixel >> 11;
+                const green = pixel >> 5 & 0x3F;
+                const blue = pixel & 0x1F;
+                return (red << 3 | red >> 2) << 16 | (green << 2 | green >> 4) << 8 | (blue << 3 | blue >> 2);
+            },
+            .r8g8b8a8_unorm => {
+                const pixel = @as(*align(1) const u32, @ptrCast(row + x * 4)).*;
+                return (pixel & 0xFF) << 16 | (pixel & 0xFF00) | (pixel >> 16 & 0xFF);
+            },
+            else => return @as(*align(1) const u32, @ptrCast(row + x * 4)).* & 0xFF_FFFF,
+        }
+    }
+};
+
 pub fn expect(result: facet.Result, failure: Failure) Failure!void {
     if (result != .success) return failure;
 }
 
 /// What a failure says.
-pub fn explain(err: Failure) [*:0]const u8 {
+pub fn explain(gpu: *const Gpu, err: Failure) [*:0]const u8 {
     return switch (err) {
         error.NoMemory => "Not enough memory",
         error.NoDevice => "No device of facet.library's",
         error.NoSurface => "No surface over it",
-        error.NotThirtyTwoBits => "The display is not 32 bits a pixel",
+        error.Undrawable => undrawable(gpu.found),
         error.NoSwapchain => "No swapchain: no room for its images",
         error.Refused => "facet.library refused something",
+    };
+}
+
+/// A format intuition would not name.
+const unknown: PixelFormat = @enumFromInt(0xFF);
+
+/// The display's pixels named, and what facet.library draws in.
+fn undrawable(pixels: PixelFormat) [*:0]const u8 {
+    const draws = ": facet.library draws in bgra32, rgba32 and rgb565";
+    return switch (pixels) {
+        inline .rgba32, .bgra32, .rgb24, .bgr24, .rgb565, .argb1555, .indexed8, .gray8, .mono1 => |named| "The display's pixels are " ++ @tagName(named) ++ draws,
+        _ => "The display's pixels are of a format not known here" ++ draws,
     };
 }

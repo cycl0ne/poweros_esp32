@@ -49,8 +49,11 @@ pub const Head = extern struct {
 /// The bytes of a chunk, its own head apart, unless a command needs more.
 const chunk_bytes = 4096 - @sizeOf(Chunk);
 
+/// Aligned to 8, so that its size is a multiple of 8 and the commands
+/// after it start on 8 - with 4-byte pointers too. AllocVec's blocks are
+/// aligned to MEM_BLOCKSIZE, 8 at least.
 const Chunk = struct {
-    next: ?*Chunk = null,
+    next: ?*Chunk align(8) = null,
     /// The bytes written, and the bytes there are room for.
     used: u32 = 0,
     size: u32,

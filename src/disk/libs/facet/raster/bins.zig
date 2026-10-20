@@ -26,8 +26,8 @@ pub const Header = struct {
     top: i32,
     right: i32,
     bottom: i32,
-    /// Its edges: `edges[i]` is the one opposite vertex i, and a pixel is
-    /// inside where all three are 0 or more (`Edge`).
+    /// Its edges, in the order the rows are walked in (`sortForWalk`); a
+    /// pixel is inside where all three are 0 or more (`Edge`).
     edges: [3]Edge,
     /// How it is drawn in the depth pre-pass (prepass.zig), for a
     /// triangle of a pipeline that asks for one; null for any other.
@@ -69,6 +69,27 @@ pub const Edge = struct {
         return edge.a * x + edge.b * y + edge.c;
     }
 };
+
+/// A triangle's edges put in the order walk.zig takes them: those that
+/// come inside going right first (`a` above 0), then those that go out
+/// (below 0), then the one along the rows (0) - two of one way and one of
+/// the other, or one of each and one along the rows. Sorted in place once
+/// a triangle, as it is set up, so that a tile it touches asks nothing of
+/// them.
+pub inline fn sortForWalk(edges: *[3]Edge) void {
+    inline for (.{ 0, 1, 0 }) |i| {
+        if (walkRank(edges[i]) > walkRank(edges[i + 1])) {
+            const first = edges[i];
+            edges[i] = edges[i + 1];
+            edges[i + 1] = first;
+        }
+    }
+}
+
+/// Where an edge goes in walk.zig's order.
+inline fn walkRank(edge: Edge) u2 {
+    return if (edge.a > 0) 0 else if (edge.a < 0) 1 else 2;
+}
 
 /// Triangles of a tile: a block of them, and the next when it filled up.
 pub const Block = struct {

@@ -9,10 +9,10 @@
 //! that comes inside does and ends where the first that goes outside does;
 //! an edge along the rows only takes rows off the top or the bottom, once.
 //! A triangle has two edges that come inside and one that goes out, or the
-//! other way round, or one of each and one along the rows; the edges are
-//! sorted into those once a tile, and the loop over the rows is made for
-//! each of the three, so that it holds its edges in registers and asks
-//! nothing of them while it runs.
+//! other way round, or one of each and one along the rows; setup sorts the
+//! edges into those once a triangle (`bins.sortForWalk`), and the loop over
+//! the rows is made for each of the three, so that it holds its edges in
+//! registers and asks nothing of them while it runs.
 //!
 //! Where an edge crosses a row is kept as the column it bounds the run at
 //! and what is left over: its value at the row's left over its step
@@ -69,48 +69,40 @@ pub inline fn quads(tile: *const Tile, triangle: *const Header, context: anytype
 
 inline fn walk(comptime paired: bool, tile: *const Tile, triangle: *const Header, context: anytype, comptime run: anytype) void {
     const span = tile.span(triangle) orelse return;
+    // In the order setup sorted them in: those that come inside, those
+    // that go out, the one along the rows.
     const edges = &triangle.edges;
+    const along = edges[2].a == 0;
     var top = span.top;
     var bottom = span.bottom;
-    var in: [2]u8 = undefined;
-    var out: [2]u8 = undefined;
-    var ins: u8 = 0;
-    var outs: u8 = 0;
-    inline for (edges, 0..) |edge, i| {
-        if (edge.a > 0) {
-            in[ins] = i;
-            ins += 1;
-        } else if (edge.a < 0) {
-            out[outs] = i;
-            outs += 1;
+    if (along) {
+        // Row k down from the top has the value `value + k * b`, and b is
+        // not 0 - the triangle has an area.
+        const edge = edges[2];
+        const value = edge.at(tile.x, tile.y + @as(i64, top));
+        const height: i64 = bottom - top;
+        if (edge.b > 0) {
+            // Inside from the row where it reaches 0 on.
+            const first = if (value >= 0) 0 else @divFloor(-value + edge.b - 1, edge.b);
+            if (first >= height) return;
+            top += @intCast(first);
         } else {
-            // Along the rows: row k down from the top has the value
-            // `value + k * b`, and b is not 0 - the triangle has an area.
-            const value = edge.at(tile.x, tile.y + @as(i64, top));
-            const height: i64 = bottom - top;
-            if (edge.b > 0) {
-                // Inside from the row where it reaches 0 on.
-                const first = if (value >= 0) 0 else @divFloor(-value + edge.b - 1, edge.b);
-                if (first >= height) return;
-                top += @intCast(first);
-            } else {
-                // Inside down to the row where it falls below 0.
-                if (value < 0) return;
-                const last = @divFloor(value, -edge.b);
-                if (last + 1 < height) bottom = top + @as(u32, @intCast(last + 1));
-            }
+            // Inside down to the row where it falls below 0.
+            if (value < 0) return;
+            const last = @divFloor(value, -edge.b);
+            if (last + 1 < height) bottom = top + @as(u32, @intCast(last + 1));
         }
     }
 
     const x: i64 = tile.x + span.left;
     const y: i64 = tile.y + top;
     const box = Box{ .left = span.left, .width = span.right - span.left, .top = top, .bottom = bottom };
-    if (ins == 2) {
-        rows(paired, 2, 1, .{ .of(edges[in[0]], x, y), .of(edges[in[1]], x, y) }, .{.of(edges[out[0]], x, y)}, box, context, run);
-    } else if (outs == 2) {
-        rows(paired, 1, 2, .{.of(edges[in[0]], x, y)}, .{ .of(edges[out[0]], x, y), .of(edges[out[1]], x, y) }, box, context, run);
-    } else if (ins == 1 and outs == 1) {
-        rows(paired, 1, 1, .{.of(edges[in[0]], x, y)}, .{.of(edges[out[0]], x, y)}, box, context, run);
+    if (along) {
+        rows(paired, 1, 1, .{.of(edges[0], x, y)}, .{.of(edges[1], x, y)}, box, context, run);
+    } else if (edges[1].a > 0) {
+        rows(paired, 2, 1, .{ .of(edges[0], x, y), .of(edges[1], x, y) }, .{.of(edges[2], x, y)}, box, context, run);
+    } else {
+        rows(paired, 1, 2, .{.of(edges[0], x, y)}, .{ .of(edges[1], x, y), .of(edges[2], x, y) }, box, context, run);
     }
 }
 

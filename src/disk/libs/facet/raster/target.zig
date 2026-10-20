@@ -12,10 +12,11 @@
 //! A tile is drawn in a buffer of the part's own - its colour and its
 //! depth, 24 KiB, which stays in the cache while the part works on it -
 //! then its colour is copied into the surface. The buffer keeps colours
-//! as 0xAARRGGBB, whatever the surface's order, which they are put in as
-//! they are copied. The depth lives only
-//! there: it starts cleared with each tile and is gone when the tile is
-//! written back, so it costs no memory traffic at all.
+//! as 0xAARRGGBB, whatever the surface's format: they are put in its order
+//! as they are copied, or dithered into its 16 bits (`Packing`), so that
+//! what is drawn, and how it is blended, is the same in every format. The
+//! depth lives only there: it starts cleared with each tile and is gone
+//! when the tile is written back, so it costs no memory traffic at all.
 //!
 //! The tiles are handed on once all of them are in the surface, in a
 //! second round shared out the same way. On the JH7110 handing on is the
@@ -84,21 +85,144 @@ pub const Host = struct {
     }
 };
 
-/// The order of a pixel's bytes in memory.
+/// What a pixel is in memory.
 pub const Format = enum {
     /// Blue, green, red, alpha: 0xAARRGGBB as a 32-bit word.
     bgra32,
     /// Red, green, blue, alpha: 0xAABBGGRR as a 32-bit word.
     rgba32,
+    /// Red, green and blue in 5, 6 and 5 bits, 0bRRRRRGGGGGGBBBBB as a
+    /// 16-bit word, and no alpha.
+    rgb565,
 
-    /// A colour, 0xAARRGGBB, as this format's pixel.
+    /// The bytes a pixel takes.
+    pub fn bytes(format: Format) u32 {
+        return switch (format) {
+            .bgra32, .rgba32 => 4,
+            .rgb565 => 2,
+        };
+    }
+
+    /// A colour, 0xAARRGGBB, as this format's pixel: in 565 the top bits
+    /// of its channels, undithered.
     pub fn pack(format: Format, color: u32) u32 {
         return switch (format) {
             .bgra32 => color,
             .rgba32 => color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16,
+            .rgb565 => color >> 8 & 0xF800 | color >> 5 & 0x07E0 | color >> 3 & 0x001F,
         };
     }
 };
+
+/// How a tile's colours are packed into a surface's pixels, row by row,
+/// and unpacked again: chosen once, as a target is laid on the surface, so
+/// that writing a tile back asks nothing of the format.
+pub const Packing = struct {
+    /// The bytes a pixel of the surface takes.
+    bytes: u32,
+    /// `count` colours of a tile's row, 0xAARRGGBB, into the surface's row
+    /// at `into`, which is column `x` of its row `y`.
+    store: *const fn (into: [*]u8, from: [*]const u32, count: u32, x: u32, y: u32) void,
+    /// `count` pixels of the surface's row at `from`, into a tile's row as
+    /// colours.
+    load: *const fn (into: [*]u32, from: [*]const u8, count: u32) void,
+
+    pub fn of(format: Format) *const Packing {
+        return switch (format) {
+            .bgra32 => &same,
+            .rgba32 => &swapped,
+            .rgb565 => &dithered,
+        };
+    }
+
+    /// bgra32: the tile's colours as they are.
+    const same = Packing{ .bytes = 4, .store = &storeSame, .load = &loadSame };
+
+    /// rgba32: red and blue swapped on the way, which is its own undoing.
+    const swapped = Packing{ .bytes = 4, .store = &storeSwapped, .load = &loadSwapped };
+
+    /// rgb565: each colour dithered as it is packed - a 4x4 ordered dither
+    /// over the surface's pixels - so that what packing drops of a channel
+    /// is dropped at a different threshold in each pixel of the four by
+    /// four, and a gradient or a blend comes out smooth instead of in
+    /// bands. A channel is scaled to the display's steps, not cut to its
+    /// top bits: a display shows 565 widened, a channel's bits repeated
+    /// below themselves (31 of red is 255, 16 is 132), and the pixels of
+    /// a four by four average to the colour as it shows them, to within
+    /// one of 255. The thresholds stay inside a step by as much as
+    /// widening lands off its middle, so a colour 565 holds exactly - a
+    /// 565 texel, 132 of red - comes out as it is in every pixel; read
+    /// back, a pixel is widened as the display widens it, so a tile read
+    /// and written back stays as it was where nothing is drawn over it.
+    const dithered = Packing{ .bytes = 2, .store = &storeDithered, .load = &loadWidened };
+};
+
+fn storeSame(into: [*]u8, from: [*]const u32, count: u32, _: u32, _: u32) void {
+    const pixels: [*]u32 = @ptrCast(@alignCast(into));
+    @memcpy(pixels[0..count], from[0..count]);
+}
+
+fn loadSame(into: [*]u32, from: [*]const u8, count: u32) void {
+    const pixels: [*]const u32 = @ptrCast(@alignCast(from));
+    @memcpy(into[0..count], pixels[0..count]);
+}
+
+fn storeSwapped(into: [*]u8, from: [*]const u32, count: u32, _: u32, _: u32) void {
+    const pixels: [*]u32 = @ptrCast(@alignCast(into));
+    for (pixels[0..count], from[0..count]) |*pixel, color| pixel.* = Format.rgba32.pack(color);
+}
+
+fn loadSwapped(into: [*]u32, from: [*]const u8, count: u32) void {
+    const pixels: [*]const u32 = @ptrCast(@alignCast(from));
+    for (into[0..count], pixels[0..count]) |*color, pixel| color.* = Format.rgba32.pack(pixel);
+}
+
+/// The dither's order of thresholds over a four by four, row by row.
+const bayer = [16]u8{ 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+
+/// A channel of 0 to 255 times these, in 16.16, is it in steps of 31 and
+/// of 63.
+const to_five = 7966;
+const to_six = 16190;
+
+/// What is added before the fraction is cut, at each place of the four by
+/// four: 16 thresholds spread evenly, in 16.16, over what every widened
+/// colour leaves room for - q * 65536 <= widened(q) * to_five + t <
+/// (q + 1) * 65536 for each step q - 7148 to 58673 of five bits, 84% of
+/// a step, and 12977 to 52877 of six, 65%.
+const Threshold = struct { five: u32, six: u32 };
+
+const thresholds = thresholds: {
+    var made: [16]Threshold = undefined;
+    for (&made, bayer) |*threshold, order| {
+        const wide: u32 = order;
+        threshold.* = .{ .five = 7148 + wide * 3435, .six = 12977 + wide * 2660 };
+    }
+    break :thresholds made;
+};
+
+fn storeDithered(into: [*]u8, from: [*]const u32, count: u32, x: u32, y: u32) void {
+    @setRuntimeSafety(false);
+    const pixels: [*]u16 = @ptrCast(@alignCast(into));
+    const row = thresholds[(y & 3) * 4 ..][0..4];
+    for (pixels[0..count], from[0..count], x..) |*pixel, color, column| {
+        const threshold = row[column & 3];
+        const red = ((color >> 16 & 0xFF) * to_five + threshold.five) >> 16;
+        const green = ((color >> 8 & 0xFF) * to_six + threshold.six) >> 16;
+        const blue = ((color & 0xFF) * to_five + threshold.five) >> 16;
+        pixel.* = @intCast(red << 11 | green << 5 | blue);
+    }
+}
+
+fn loadWidened(into: [*]u32, from: [*]const u8, count: u32) void {
+    const pixels: [*]const u16 = @ptrCast(@alignCast(from));
+    for (into[0..count], pixels[0..count]) |*color, pixel| {
+        const red: u32 = pixel >> 11;
+        const green: u32 = pixel >> 5 & 0x3F;
+        const blue: u32 = pixel & 0x1F;
+        color.* = 0xFF00_0000 | (red << 3 | red >> 2) << 16 | (green << 2 | green >> 4) << 8 | (blue << 3 | blue >> 2);
+    }
+}
 
 /// A rectangle of pixels.
 pub const Rect = struct {
@@ -109,7 +233,7 @@ pub const Rect = struct {
 };
 
 /// The memory drawn into: its first pixel's first byte, the bytes from
-/// one row to the next, its size, and the order of a pixel's bytes.
+/// one row to the next, its size, and what a pixel is.
 pub const Surface = struct {
     pixels: [*]u8,
     pitch: u32,
@@ -235,7 +359,7 @@ const Grid = struct {
     fn over(surface: Surface, area: Rect) error{OutOfBounds}!Grid {
         if (area.width == 0 or area.height == 0) return error.OutOfBounds;
         if (@as(u64, area.x) + area.width > surface.width or @as(u64, area.y) + area.height > surface.height) return error.OutOfBounds;
-        const across = line_bytes / 4;
+        const across = line_bytes / surface.format.bytes();
         const x = area.x / across * across;
         return .{
             .x = x,
@@ -253,6 +377,8 @@ const Grid = struct {
 pub const Target = struct {
     host: Host,
     surface: Surface,
+    /// How the tiles' colours are packed into the surface's pixels.
+    packing: *const Packing,
     area: Rect,
     attachments: Attachments,
     /// The grid: its top left on the surface, and its squares across and
@@ -270,7 +396,7 @@ pub const Target = struct {
     order: []u32,
     count: u32 = 0,
     next: u32 = 0,
-    /// The colour cleared to, in the surface's format.
+    /// The colour cleared to, 0xAARRGGBB as the tiles keep it.
     clear_pixel: u32 = 0,
     /// The frame's memory, and the triangles set up by the draw under way
     /// and not yet on the tiles' lists.
@@ -290,6 +416,7 @@ pub const Target = struct {
         var target = Target{
             .host = host,
             .surface = surface,
+            .packing = Packing.of(surface.format),
             .area = area,
             .attachments = attachments,
             .grid_x = grid.x,
@@ -316,6 +443,7 @@ pub const Target = struct {
         const grid = try Grid.over(surface, area);
         if (grid.squares() > target.room) try target.lay(grid.squares());
         target.surface = surface;
+        target.packing = Packing.of(surface.format);
         target.area = area;
         target.attachments = attachments;
         target.grid_x = grid.x;
@@ -504,37 +632,30 @@ pub const Target = struct {
 
     /// The surface under the tile, into its buffer.
     fn load(target: *Target, tile: *const Tile) void {
-        const surface = target.surface;
+        const packing = target.packing;
+        const column = tile.x + tile.left;
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
-            const from: [*]const u32 = @ptrCast(@alignCast(surface.pixels + @as(usize, tile.y + row) * surface.pitch));
-            const into = tile.buffer.color[row * tile_size ..];
-            copy(surface.format, into[tile.left..tile.right], from[tile.x + tile.left .. tile.x + tile.right]);
+            packing.load(tile.row(row) + tile.left, target.pixelAt(column, tile.y + row), tile.right - tile.left);
         }
     }
 
     /// The tile's buffer, into the surface.
     fn store(target: *Target, tile: *const Tile) void {
-        const surface = target.surface;
+        const packing = target.packing;
+        const column = tile.x + tile.left;
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
-            const into: [*]u32 = @ptrCast(@alignCast(surface.pixels + @as(usize, tile.y + row) * surface.pitch));
-            const from = tile.buffer.color[row * tile_size ..];
-            copy(surface.format, into[tile.x + tile.left .. tile.x + tile.right], from[tile.left..tile.right]);
+            packing.store(target.pixelAt(column, tile.y + row), tile.row(row) + tile.left, tile.right - tile.left, column, tile.y + row);
         }
     }
-};
 
-/// A row between a tile's buffer, 0xAARRGGBB, and a surface in `format`:
-/// red and blue swapped on the way for rgba32, which is its own undoing.
-fn copy(format: Format, into: []u32, from: []const u32) void {
-    switch (format) {
-        .bgra32 => @memcpy(into, from),
-        .rgba32 => for (into, from) |*pixel, color| {
-            pixel.* = format.pack(color);
-        },
+    /// The surface's pixel at column `x` of row `y`.
+    inline fn pixelAt(target: *const Target, x: u32, y: u32) [*]u8 {
+        const surface = target.surface;
+        return surface.pixels + @as(usize, y) * surface.pitch + @as(usize, x) * target.packing.bytes;
     }
-}
+};
 
 /// A part of the drawing: tiles taken one at a time, while there are any,
 /// and drawn in the part's own buffer.

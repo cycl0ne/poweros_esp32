@@ -23,7 +23,14 @@ pub const LIBRARY_VERSION = 1;
 /// and the surface answers `error_surface_lost` (intuition 0.47's
 /// window numbers); the depth pre-pass, a pipeline's own
 /// (`PIPELINE_CREATE_DEPTH_PREPASS`).
-pub const LIBRARY_REVISION = 1;
+/// 2: displays of 565 and colour attachments of R5G6B5: the tiles stay
+/// 8 bits a channel, dithered 4 x 4 into 16 bits as they are stored;
+/// command buffers recorded on the 32-bit chips too, whose chunks put
+/// the commands 4 bytes off the 8 they are aligned to.
+/// 3: a window's pixels read from intuition 0.49 (`WA_PixelFormat`).
+/// 4: a triangle's edges sorted the way its rows are walked once, as it
+/// is set up, not again in every tile it touches.
+pub const LIBRARY_REVISION = 4;
 const BUILD_DATE = "20.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

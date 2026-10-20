@@ -351,6 +351,7 @@ datatypes.library/SetDTAttrsA
    NOTES
 	A group's name is here as well as an error's, so that a program
 	listing what it can open says "picture" rather than four characters.
+	`GID_MODEL`'s, "model", since 1.1.
 
    SEE ALSO
 	`NewDTObjectA`, `ObtainDataTypeA`

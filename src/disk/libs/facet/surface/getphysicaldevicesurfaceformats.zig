@@ -31,9 +31,12 @@ const Surface = _surface.Surface;
 /// closed.
 ///
 /// BEHAVIOR:
-/// A surface has one format, its display's: `b8g8r8a8_unorm` or
-/// `r8g8b8a8_unorm`, in sRGB. A display of another, such as the 16-bit
-/// panels, has none: facet.library draws 32 bits a pixel.
+/// A surface has one format, its display's: `b8g8r8a8_unorm`,
+/// `r8g8b8a8_unorm` or `r5g6b5_unorm_pack16`, in sRGB. A display of
+/// another - 24 bits, 1555, a palette's - has none. In 565 what is drawn
+/// is drawn and blended in 8 bits a channel, as in the 32-bit formats,
+/// and dithered into the display's pixels as it is stored
+/// (CmdBeginRenderPass).
 ///
 /// CONTEXT:
 /// - Waits: on a window's surface, for the screens' semaphore.

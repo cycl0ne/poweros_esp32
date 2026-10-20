@@ -253,7 +253,8 @@ test "the formats: what each does in each tiling" {
     try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE == 0);
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .r5g6b5_unorm_pack16, &properties);
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
-    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT == 0);
+    try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND != 0);
+    try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE == 0);
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm, &properties);
     try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, properties.optimal_tiling_features);
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .r32g32b32_sfloat, &properties);
@@ -326,6 +327,10 @@ test "an image: a texture, rows or a depth, by what it is for" {
     rig.fb.GetImageSubresourceLayout(device, image.?, &.{}, &layout);
     try testing.expectEqual(@as(u64, 448), layout.row_pitch);
     rig.fb.DestroyImage(device, image);
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .r5g6b5_unorm_pack16, .extent = .{ .width = 100, .height = 30 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
+    rig.fb.GetImageSubresourceLayout(device, image.?, &.{}, &layout);
+    try testing.expectEqual(@as(u64, 256), layout.row_pitch);
+    rig.fb.DestroyImage(device, image);
 
     // A depth: any memory type, the lazily allocated one too.
     try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = .{ .width = 800, .height = 600 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &image));
@@ -346,7 +351,7 @@ test "an image: a texture, rows or a depth, by what it is for" {
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 100, .height = 64 }, .usage = sampled },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .tiling = .linear, .usage = sampled },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .mip_levels = 8, .usage = sampled },
-        .{ .format = .r5g6b5_unorm_pack16, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+        .{ .format = .r32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .d16_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_SAMPLED },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64, .depth = 2 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },

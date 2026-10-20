@@ -35,7 +35,7 @@ const Picture = _picture.Picture;
 pub const names = [_][]const u8{
     "disk",      "drawer", "tool",     "project", "trashcan",   "script",
     "picture",   "text",   "document", "sound",   "instrument", "music",
-    "animation", "movie",
+    "animation", "movie",    "model",
 };
 pub const count = names.len;
 
@@ -45,6 +45,7 @@ const FIRST_GROUP = 6;
 const groups = [_]u32{
     datatypes.GID_PICTURE,    datatypes.GID_TEXT,  datatypes.GID_DOCUMENT,  datatypes.GID_SOUND,
     datatypes.GID_INSTRUMENT, datatypes.GID_MUSIC, datatypes.GID_ANIMATION, datatypes.GID_MOVIE,
+    datatypes.GID_MODEL,
 };
 
 /// The pictures built in, by kind.

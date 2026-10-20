@@ -963,29 +963,68 @@ fn alongStops(fill: *const graphics.FillStyle, t: i64) Pen {
     return stops[count - 1].pen;
 }
 
-/// A 4x4 ordered dither: added to a colour before it is packed into 16
-/// bits, so the bits that packing drops are dropped at a different
-/// threshold in each pixel of the four by four, and a gradient comes out
-/// smooth instead of in bands.
+/// A 4x4 ordered dither for a surface of 16 bits a pixel: each channel
+/// scaled to the surface's steps and a threshold added that differs in
+/// each pixel of the four by four, so that what packing drops is dropped
+/// at a different point in each and a gradient comes out smooth instead
+/// of in bands. A channel is scaled to the steps a display shows, not cut
+/// to its top bits: a display widens 5 or 6 bits by repeating them below
+/// themselves (31 of red is 255, 16 is 132), and the pixels of a four by
+/// four average to the colour as it shows them, to within one of 255.
+/// The thresholds stay inside a step by as much as widening lands off its
+/// middle, so a colour the surface holds exactly - 132 of red - comes out
+/// as it is in every pixel. facet.library writes its 565 back the same
+/// way (raster/target.zig).
 const bayer = [16]u8{ 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
 
+/// A channel of 0 to 255 times these, in 16.16, is it in steps of 31 and
+/// of 63.
+const to_five = 7966;
+const to_six = 16190;
+
+/// What is added before the fraction is cut, at each place of the four by
+/// four: 16 thresholds spread evenly, in 16.16, over what every widened
+/// colour leaves room for - q * 65536 <= widened(q) * to_five + t <
+/// (q + 1) * 65536 for each step q - 7148 to 58673 of five bits, 84% of
+/// a step, and 12977 to 52877 of six, 65%.
+const Threshold = struct { five: u32, six: u32 };
+
+const thresholds = thresholds: {
+    var made: [16]Threshold = undefined;
+    for (&made, bayer) |*threshold, order| {
+        const wide: u32 = order;
+        threshold.* = .{ .five = 7148 + wide * 3435, .six = 12977 + wide * 2660 };
+    }
+    break :thresholds made;
+};
+
+/// `pen` dithered for pixel (x, y) of a surface in `format`: each channel
+/// the step it falls to there, widened again as the display widens it, so
+/// that packing (`packPen`, which keeps a channel's top bits) puts down
+/// that step. As it is on a surface of more bits a channel.
 fn dithered(pen: Pen, x: i32, y: i32, format: PixelFormat) Pen {
-    const step: u32 = bayer[@as(usize, @intCast(y & 3)) * 4 + @as(usize, @intCast(x & 3))];
-    // How much each channel loses: 3 bits of a five-bit one, 2 of six.
-    const red_green_blue: [3]u32 = switch (format) {
-        .rgb565 => .{ step >> 1, step >> 2, step >> 1 },
-        .argb1555 => .{ step >> 1, step >> 1, step >> 1 },
+    const threshold = thresholds[@as(usize, @intCast(y & 3)) * 4 + @as(usize, @intCast(x & 3))];
+    const green_six = switch (format) {
+        .rgb565 => true,
+        .argb1555 => false,
         else => return pen,
     };
-    var out: Pen = pen & 0xFF00_0000;
-    for (red_green_blue, 0..) |add, i| {
-        const shift: u5 = @intCast(16 - 8 * i);
-        // Bound to a u32 first: @min answers the narrowest type that holds
-        // its result, and a byte cannot be shifted to the red channel.
-        const channel: u32 = @min((pen >> shift & 0xFF) + add, 0xFF);
-        out |= channel << shift;
-    }
-    return out;
+    const red = five(pen >> 16 & 0xFF, threshold);
+    const green = if (green_six) six(pen >> 8 & 0xFF, threshold) else five(pen >> 8 & 0xFF, threshold);
+    const blue = five(pen & 0xFF, threshold);
+    return pen & 0xFF00_0000 | red << 16 | green << 8 | blue;
+}
+
+/// A channel's step of five bits at a threshold, widened to eight.
+fn five(channel: u32, threshold: Threshold) u32 {
+    const step = (channel * to_five + threshold.five) >> 16;
+    return step << 3 | step >> 2;
+}
+
+/// A channel's step of six bits at a threshold, widened to eight.
+fn six(channel: u32, threshold: Threshold) u32 {
+    const step = (channel * to_six + threshold.six) >> 16;
+    return step << 2 | step >> 4;
 }
 
 /// The colour a fill style gives a pixel of the shape being filled.

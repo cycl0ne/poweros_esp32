@@ -50,8 +50,9 @@ const screen = @import("screen.zig");
 /// caller's.
 ///
 /// NOTES:
-/// A screen that is not 32 bits a pixel has no format facet.library draws
-/// in: GetPhysicalDeviceSurfaceFormats lists none for it.
+/// A screen whose pixels are neither 32 bits nor 565 has no format
+/// facet.library draws in: GetPhysicalDeviceSurfaceFormats lists none for
+/// it.
 ///
 /// BUGS:
 /// None known.

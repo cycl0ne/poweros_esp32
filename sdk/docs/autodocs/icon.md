@@ -447,7 +447,7 @@ its script bit set is a project with the default `script` when there
 is one. Anything else is a project, and when datatypes.library is
 there and knows the file's group, it gets that group's default
 (`picture`, `text`, `document`, `sound`, `instrument`, `music`,
-`animation`, `movie`) when there is one. A name that is not there
+`animation`, `movie`, `model`) when there is one. A name that is not there
 but is `Disk` - a volume's own icon - is a disk. Defaults are as
 `GetDefDiskObject` gives them: from `ENV:Sys/def_<name>.info`, else
 built in, and without a place.

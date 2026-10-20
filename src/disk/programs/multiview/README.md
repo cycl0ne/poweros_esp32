@@ -1,8 +1,8 @@
 # MultiView
 
 MultiView shows a file in a window: a picture, an animation, a sound, a
-text, a Markdown document like this one - whatever kind of file the
-system knows.
+text, a Markdown document like this one, a model - whatever kind of file
+the system knows.
 
 ## Starting it
 
@@ -27,6 +27,10 @@ MultiView [FILE] [CLIP/K/N] [SCALE/S] [PUBSCREEN/K]
   place of the one there.
 - A picture too large to be held whole is kept smaller, and the window's
   title says so.
+- A model in three dimensions turns as it is dragged, and the mouse
+  wheel takes it nearer or further.
+- Space pauses what is shown, or goes on with it, when it is something
+  that can be: a model turns by itself until Space is pressed again.
 
 MultiView knows no formats itself. The datatypes classes in
 SYS:classes/datatypes read the files, and the descriptors in

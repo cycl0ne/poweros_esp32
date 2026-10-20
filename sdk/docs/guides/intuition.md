@@ -183,6 +183,14 @@ before each use finds it with `FindWindowNumber` under `LockIBase`, takes
 its layer, and lets the screens go: a window that has closed is not
 found, where a pointer kept would by then be another window's memory.
 
+What a screen's pixels are - 32 bits in either order, 565, ... - is read
+from it with `SA_PixelFormat`, or from a window on it with
+`WA_PixelFormat`: an `rtg.bitmaps.PixelFormat`, the same for each of the
+screen's buffers and for as long as it is open, as PowerOS changes no
+display's depth while it runs. A program or a library drawing into
+pictures of its own and copying them into a window as they are makes
+them in it.
+
 The gadgets in a title bar are as tall as the bar, which follows the
 screen's font, and narrow: the close gadget 15 columns for every 11 rows,
 the depth and zoom gadgets 18, a screen's depth gadget 17. With

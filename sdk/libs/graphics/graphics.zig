@@ -343,8 +343,10 @@ pub const FILL_TILE: u32 = 3;
 
 /// `FillStyle.flags`: no dithering. A gradient put down on a surface of 16
 /// bits a pixel is dithered unless this is set, because there it would
-/// otherwise come out in visible bands; set it where exact colours matter
-/// more than smooth ones.
+/// otherwise come out in visible bands: a four by four averages to the
+/// colour as the display shows it, and a colour the surface holds exactly
+/// comes out as it is either way. Set it where a flat colour matters more
+/// than a smooth one.
 pub const FILLF_NODITHER: u32 = 1 << 0;
 
 /// A colour at a place along a gradient: `at` from 0 to `FILL_ONE`.

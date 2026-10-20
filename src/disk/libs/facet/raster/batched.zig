@@ -276,6 +276,7 @@ const SetUp = struct {
         };
         const planes: [*]shader.Plane = @ptrFromInt(@intFromPtr(triangle) + @sizeOf(Triangle));
         planesOf(&made, &projected, carried, planes[0..plane_count]);
+        bins.sortForWalk(&triangle.header.edges);
         try target.addPending(&triangle.header);
     }
 };
