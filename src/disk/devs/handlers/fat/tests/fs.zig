@@ -143,6 +143,25 @@ const Rig = struct {
         return @intCast(count);
     }
 
+    /// The size `name`'s entry has on the medium itself, as another mount
+    /// of it reads it: what a card pulled now would show.
+    fn sizeOnMedium(rig: *Rig, name: [*:0]const u8) !u64 {
+        var other = TestFs.init(&rig.volume.media, rig.ub, null);
+        defer other.deinit();
+        try other.mount();
+        var locate = DosPacket.init(.locate_object, .{ .raw = .{ 0, @bitCast(@intFromPtr(name)), dos.SHARED_LOCK, 0, 0, 0, 0 } });
+        const held = other.answer(&locate).res1;
+        try testing.expect(held != 0);
+        defer {
+            var free = DosPacket.init(.free_lock, .{ .raw = .{ held, 0, 0, 0, 0, 0, 0 } });
+            _ = other.answer(&free);
+        }
+        var fib: FileInfoBlock = undefined;
+        var asked = DosPacket.init(.examine_object, .{ .raw = .{ held, @bitCast(@intFromPtr(&fib)), 0, 0, 0, 0, 0 } });
+        try testing.expectEqual(dos.DOSTRUE, other.answer(&asked).res1);
+        return fib.size;
+    }
+
     fn examine(rig: *Rig, held: ?*FileLock, fib: *FileInfoBlock) Answer {
         return rig.sendArgs(.examine_object, .{ .examine = .{ .lock = held, .fib = fib } });
     }
@@ -733,4 +752,52 @@ test "a power cut at any block of a directory growing leaves no stray entries in
 
 test "a power cut at any block of a directory made leaves the volume whole" {
     try cut_course.everywhere(Rig, cut_volume, .mkdir);
+}
+
+test "a write that only moves the size writes its sector alone, read no more; the entry follows at a new cluster, a FLUSH or the close" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    const media = &rig.volume.media;
+    var piece: [100]u8 = undefined;
+    pattern(&piece, 7);
+    var fh: FileHandle = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findoutput, "f").res1);
+    // The first write takes the file's first cluster: the entry goes down
+    // with it.
+    try testing.expectEqual(@as(isize, 100), rig.write(&fh, &piece));
+    try testing.expectEqual(@as(u64, 100), try rig.sizeOnMedium("f"));
+
+    // The next moves the size only: its sector, held from the first, is
+    // written and not read again, and the entry waits.
+    const written = media.blocks_written;
+    const read = media.blocks_read;
+    try testing.expectEqual(@as(isize, 100), rig.write(&fh, &piece));
+    try testing.expectEqual(written + 1, media.blocks_written);
+    try testing.expectEqual(read, media.blocks_read);
+    try testing.expectEqual(@as(u64, 100), try rig.sizeOnMedium("f"));
+    // Examined, it has its size all the same.
+    var fib: FileInfoBlock = undefined;
+    var asked = DosPacket.init(.examine_fh, .{ .raw = .{ @bitCast(@intFromPtr(&fh)), @bitCast(@intFromPtr(&fib)), 0, 0, 0, 0, 0 } });
+    try testing.expectEqual(dos.DOSTRUE, rig.fs.answer(&asked).res1);
+    try testing.expectEqual(@as(u64, 200), fib.size);
+
+    // A FLUSH catches the entry up.
+    try testing.expectEqual(dos.DOSTRUE, rig.send(.flush, .{ 0, 0, 0, 0 }).res1);
+    try testing.expectEqual(@as(u64, 200), try rig.sizeOnMedium("f"));
+    // So does a write that takes a cluster.
+    var cluster: [64 * 512]u8 = undefined;
+    pattern(&cluster, 3);
+    try testing.expectEqual(@as(isize, cluster.len), rig.write(&fh, &cluster));
+    try testing.expectEqual(@as(u64, 200 + cluster.len), try rig.sizeOnMedium("f"));
+    // And the close.
+    try testing.expectEqual(@as(isize, 100), rig.write(&fh, &piece));
+    try rig.close(&fh);
+    try testing.expectEqual(@as(u64, 300 + cluster.len), try rig.sizeOnMedium("f"));
+    var back: [300 + 64 * 512]u8 = undefined;
+    try testing.expectEqual(back.len, try rig.readFile("f", &back));
+    try testing.expectEqualSlices(u8, &piece, back[0..100]);
+    try testing.expectEqualSlices(u8, &piece, back[100..200]);
+    try testing.expectEqualSlices(u8, &cluster, back[200..][0..cluster.len]);
+    try testing.expectEqualSlices(u8, &piece, back[200 + cluster.len ..]);
 }

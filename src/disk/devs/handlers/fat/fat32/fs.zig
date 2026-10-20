@@ -19,14 +19,21 @@
 //! - **A file's bytes go around the block cache**, straight between the
 //!   caller's buffer and the medium, and whole sectors in a row that lie
 //!   in clusters next to each other go as one command. Only a sector that
-//!   is partly written is read first.
+//!   is partly written goes through the cache - read first if it holds
+//!   any of the file, and back on the medium at once - so that the next
+//!   small write to it finds it there instead of reading it again.
 //! - **What a packet changed is on the medium before it is answered**: the
-//!   table, the free count and the directory entries. A file's entry gets
-//!   its new size after every write, and its date and archive bit when it
-//!   is closed. What a change takes goes down before what names it - the
-//!   file's bytes, the table, then the entry - and what it gives back the
-//!   other way round (`fat.zig` says why). Clusters a write puts on the
-//!   end of a file are linked on last, after their own entries.
+//!   file's bytes, the table, the free count and the directory entries -
+//!   but for a file's size while it is written. A write that only moves
+//!   the size leaves it in the key, so that small writes cost the card
+//!   their own sectors and nothing more; the entry gets it when the chain
+//!   takes a cluster, at a FLUSH, and with its date and archive bit when
+//!   the file is closed. A card pulled in between has the file shorter by
+//!   at most the clusters' worth, and the volume marked dirty. What a
+//!   change takes goes down before what names it - the file's bytes, the
+//!   table, then the entry - and what it gives back the other way round
+//!   (`fat.zig` says why). Clusters a write puts on the end of a file are
+//!   linked on last, after their own entries.
 //! - **The volume is marked dirty on the medium** before the first change:
 //!   entry 1 of the table has its clean flag cleared in every copy. It is
 //!   marked clean again once a packet leaves nothing half done: no file
@@ -323,6 +330,7 @@ pub fn FileSystem(comptime Media: type) type {
             fs.forsakeAll();
             if (fs.mounted) {
                 if (write_back) {
+                    fs.syncKeys() catch {};
                     fs.table.flush() catch {};
                     _ = fs.media.update();
                     fs.clearDirty();
@@ -831,6 +839,13 @@ pub fn FileSystem(comptime Media: type) type {
             key.changed = false;
         }
 
+        /// Every key whose entry a write left behind its size, caught up:
+        /// at a FLUSH, and before the volume is let go.
+        fn syncKeys(fs: *Fs) Error!void {
+            var it = fs.keys;
+            while (it) |key| : (it = key.next) try fs.syncKey(key, null);
+        }
+
         /// A new file or directory, written down and locked.
         fn create(fs: *Fs, dir_arg: isize, path: [*:0]const u8, directory: bool, access: i32) Error!*FatLock {
             try fs.writable();
@@ -1075,13 +1090,16 @@ pub fn FileSystem(comptime Media: type) type {
 
         /// `len` bytes at `pos` of a key's file: from `from`, or zeroes
         /// when it is null. The chain grows as it has to and the size with
-        /// it; `place` is where in the chain the writing got to.
-        fn put(fs: *Fs, key: *Key, place: *Place, pos: u32, from: ?[*]const u8, len: u32) Error!void {
+        /// it; `place` is where in the chain the writing got to. Whether
+        /// the chain took clusters.
+        fn put(fs: *Fs, key: *Key, place: *Place, pos: u32, from: ?[*]const u8, len: u32) Error!bool {
             fs.putRun(key, place, pos, from, len) catch |err| {
                 fs.linkOn() catch {};
                 return err;
             };
+            const grew = fs.link_to != 0;
             try fs.linkOn();
+            return grew;
         }
 
         /// `put` but for the link onto the chain the medium holds.
@@ -1098,28 +1116,34 @@ pub fn FileSystem(comptime Media: type) type {
                 const block = fs.geo.clusterBlock(cluster) + sector;
                 const left = len - done;
                 var count: u32 = undefined;
-                if (in_sector == 0 and left >= sector_bytes and from != null) {
-                    // Whole sectors, to the end of this cluster at most.
-                    const sectors = @min(left / sector_bytes, fs.geo.sectors_per_cluster - sector);
-                    count = sectors * sector_bytes;
-                    fs.cache.writeRun(block, sectors, from.?[done..][0..count]) catch return error.MediumFailed;
+                if (in_sector == 0 and left >= sector_bytes) {
+                    if (from) |bytes| {
+                        // Whole sectors, to the end of this cluster at most.
+                        const sectors = @min(left / sector_bytes, fs.geo.sectors_per_cluster - sector);
+                        count = sectors * sector_bytes;
+                        fs.cache.writeRun(block, sectors, bytes[done..][0..count]) catch return error.MediumFailed;
+                    } else {
+                        // A sector of zeroes, through the one-sector buffer.
+                        count = sector_bytes;
+                        @memset(fs.sector, 0);
+                        fs.cache.writeRun(block, 1, fs.sector) catch return error.MediumFailed;
+                    }
                 } else {
-                    // Part of a sector, or zeroes: through the one-sector
-                    // buffer, with what is already there read first if the
-                    // sector holds any of the file.
+                    // Part of a sector: in the cache, what is already there
+                    // read first if the sector holds any of the file, and
+                    // the rest zeroes otherwise; back on the medium at once.
                     count = @min(left, sector_bytes - in_sector);
                     const sector_start = at - in_sector;
-                    if (sector_start < key.size and (in_sector != 0 or count != sector_bytes)) {
-                        fs.cache.readRun(block, 1, fs.sector) catch return error.MediumFailed;
-                    } else {
-                        @memset(fs.sector, 0);
-                    }
+                    const held = if (sector_start < key.size)
+                        fs.cache.getForWrite(block) catch return error.MediumFailed
+                    else
+                        fs.cache.fresh(block) catch return error.MediumFailed;
                     if (from) |bytes| {
-                        @memcpy(fs.sector[in_sector..][0..count], bytes[done..][0..count]);
+                        @memcpy(held[in_sector..][0..count], bytes[done..][0..count]);
                     } else {
-                        @memset(fs.sector[in_sector..][0..count], 0);
+                        @memset(held[in_sector..][0..count], 0);
                     }
-                    fs.cache.writeRun(block, 1, fs.sector) catch return error.MediumFailed;
+                    fs.cache.writeBackBlock(block) catch return error.MediumFailed;
                 }
                 done += count;
                 at += count;
@@ -1142,12 +1166,15 @@ pub fn FileSystem(comptime Media: type) type {
             defer lock.setPlace(place);
             try fs.changing();
             lock.modified = true;
-            try fs.put(key, &place, lock.pos, buffer, len);
+            const grew = try fs.put(key, &place, lock.pos, buffer, len);
             lock.pos += len;
-            // The bytes went straight to the medium; the table follows
-            // them there, and only then the entry that counts on both.
-            try fs.writeBack();
-            try fs.syncKey(key, null);
+            // The bytes went to the medium. When the chain took clusters
+            // the table follows them there, and then the entry that
+            // counts on both; a size alone waits in the key (`syncKeys`).
+            if (grew) {
+                try fs.writeBack();
+                try fs.syncKey(key, null);
+            }
             return len;
         }
 
@@ -1222,7 +1249,7 @@ pub fn FileSystem(comptime Media: type) type {
                 }
             } else if (size > key.size) {
                 var place: Place = .{};
-                try fs.put(key, &place, key.size, null, size - key.size);
+                _ = try fs.put(key, &place, key.size, null, size - key.size);
                 try fs.writeBack();
             }
             lock.modified = true;
@@ -1619,7 +1646,10 @@ pub fn FileSystem(comptime Media: type) type {
                     fs.info(@ptrFromInt(ptrArg(raw[0]))) catch |err| return no(err);
                     return yes();
                 },
-                .flush => return yes(),
+                .flush => {
+                    fs.syncKeys() catch |err| return no(err);
+                    return yes();
+                },
                 .add_notify => {
                     const request: ?*notify.NotifyRequest = @ptrFromInt(ptrArg(raw[0]));
                     fs.addNotify(request orelse return no(error.NotFound)) catch |err| return no(err);
