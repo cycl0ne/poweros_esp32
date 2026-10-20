@@ -32,6 +32,7 @@ const messages = [_]struct { id: u32, text: [*:0]const u8 }{
     .{ .id = datatypes.GID_PICTURE, .text = "picture" },
     .{ .id = datatypes.GID_ANIMATION, .text = "animation" },
     .{ .id = datatypes.GID_MOVIE, .text = "movie" },
+    .{ .id = datatypes.GID_MODEL, .text = "model" },
 };
 
 /// Answers the text of one of the library's messages.
@@ -65,6 +66,7 @@ const messages = [_]struct { id: u32, text: [*:0]const u8 }{
 /// NOTES:
 /// A group's name is here as well as an error's, so that a program
 /// listing what it can open says "picture" rather than four characters.
+/// `GID_MODEL`'s, "model", since 1.1.
 ///
 /// SEE ALSO:
 /// `NewDTObjectA`, `ObtainDataTypeA`

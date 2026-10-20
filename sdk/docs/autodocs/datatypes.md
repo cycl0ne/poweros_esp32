@@ -465,6 +465,7 @@ The text belongs to the library and lasts as long as it is open.
 
 A group's name is here as well as an error's, so that a program
 listing what it can open says "picture" rather than four characters.
+`GID_MODEL`'s, "model", since 1.1.
 
 **SEE ALSO**
 

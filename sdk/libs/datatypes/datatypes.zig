@@ -108,6 +108,11 @@ pub const GID_MUSIC = iffparse.MakeID("musi");
 pub const GID_PICTURE = iffparse.MakeID("pict");
 pub const GID_ANIMATION = iffparse.MakeID("anim");
 pub const GID_MOVIE = iffparse.MakeID("movi");
+/// A model in three dimensions, looked at from any side (datatypes.library
+/// 1.1): not a picture, which has pixels of its own to hand over and put
+/// on the clipboard, nor an animation, which has a time of its own. Its
+/// four letters are the first four of the word, as every group's are.
+pub const GID_MODEL = iffparse.MakeID("mode");
 
 /// struct DataType: a descriptor on the list, with everything it needs
 /// in one block of memory.

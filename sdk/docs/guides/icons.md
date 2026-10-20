@@ -99,11 +99,11 @@ replaces one, and `PutDefDiskObject` writes it there and to `ENVARC:`.
 A script (`def_script.info`) and each group of files
 (`def_picture.info`, `def_text.info`, `def_document.info`,
 `def_sound.info`, `def_instrument.info`, `def_music.info`,
-`def_animation.info`, `def_movie.info`) have a default only when such a
-file is there; without one they show a project's. A default is read
-once and kept until its file changes.
+`def_animation.info`, `def_movie.info`, `def_model.info`) have a
+default only when such a file is there; without one they show a
+project's. A default is read once and kept until its file changes.
 
-The disk carries all fourteen in `ENVARC:Sys`, which the startup
+The disk carries all fifteen in `ENVARC:Sys`, which the startup
 sequence copies to `ENV:`; `def_script.info` has `C:IconX` as its
 default tool, so a script without an icon of its own runs when it is
 opened.

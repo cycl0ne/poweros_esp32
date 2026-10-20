@@ -144,6 +144,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "prefs/env-archive/Sys/def_music.info", .picture = "multimedia-player", .fields = &.{ "KIND=PROJECT", icon_stack } },
     .{ .path = "prefs/env-archive/Sys/def_animation.info", .picture = "video-x-generic", .fields = &.{ "KIND=PROJECT", icon_stack } },
     .{ .path = "prefs/env-archive/Sys/def_movie.info", .picture = "video-x-generic", .fields = &.{ "KIND=PROJECT", icon_stack } },
+    .{ .path = "prefs/env-archive/Sys/def_model.info", .picture = "package-x-generic", .fields = &.{ "KIND=PROJECT", icon_stack } },
     // The volume itself: its window shows the drawers with icons, the
     // system's own (C:, S:, LIBS:, DEVS:, ...) left to the shell.
     .{ .path = "Disk.info", .picture = "drive-harddisk", .fields = &.{ "KIND=DISK", "SHOW=ICONS" } },

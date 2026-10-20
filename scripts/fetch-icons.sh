@@ -29,6 +29,7 @@ mimetypes/audio-x-generic
 devices/audio-card
 devices/multimedia-player
 mimetypes/video-x-generic
+mimetypes/package-x-generic
 apps/accessories-text-editor
 actions/system-search
 apps/preferences-desktop-font

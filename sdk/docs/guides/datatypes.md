@@ -47,8 +47,10 @@ NAME=ILBM BASE=ilbm GROUP=pict ID=ILBM TYPE=IFF PRI=5
   `SYS:classes/datatypes/ilbm.datatype`, opened as
   `datatypes/ilbm.datatype`.
 - `GROUP` is one of `syst`, `text`, `docu`, `soun`, `inst`, `musi`,
-  `pict`, `anim`, `movi`. A program that wants only pictures passes
-  `DTA_GroupID` and is refused anything else.
+  `pict`, `anim`, `movi`, `mode` - the first four letters of the word,
+  `mode` a model in three dimensions (`GID_MODEL`, datatypes.library
+  1.1). A program that wants only pictures passes `DTA_GroupID` and is
+  refused anything else.
 - `ID` is the IFF form's type, or the first four characters of the name.
 - `TYPE` is `IFF`, `ASCII`, `BINARY` or `MISC`.
 - `PATTERN` matches the file's name, `MASK` the bytes it starts with -
