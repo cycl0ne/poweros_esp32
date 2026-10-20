@@ -11,11 +11,15 @@
 //! pipeline and look nothing up while they run.
 //!
 //! Its edge is drawn as a library's would be, and nothing of the API above
-//! it shows through. It has three things:
+//! it shows through. It has four things:
 //! - `Target`: a surface cut into tiles, the depth that goes with them,
 //!   and what each frame starts with.
 //! - `Pipeline(cfg)`: a way of drawing triangles, made from `cfg`.
 //! - `draw(target, pipeline, vertices, indices)`: triangles drawn.
+//! - `batched.draw(target, state, vertices, stride, indices)`: triangles
+//!   drawn as facet.library's pipelines draw them, their vertices from a
+//!   vertex function and their pixels' colours from a fragment function,
+//!   both the program's, called with batches.
 //!
 //! A frame is `target.begin()`, any number of draws, and `target.finish()`.
 //! A draw transforms the triangles, clips them and sorts them into the
@@ -31,7 +35,7 @@
 
 const target = @import("target.zig");
 const pipeline = @import("pipeline.zig");
-const texture = @import("texture.zig");
+const texture = @import("sdk").facet.texture;
 
 pub const Target = target.Target;
 pub const Attachments = target.Attachments;
@@ -58,6 +62,7 @@ pub const Sampling = texture.Sampling;
 pub const Matrix = pipeline.Matrix;
 pub const identity = pipeline.identity;
 pub const draw = pipeline.draw;
+pub const batched = @import("batched.zig");
 pub const tile_size = target.tile_size;
 pub const most_parts = target.most_parts;
 

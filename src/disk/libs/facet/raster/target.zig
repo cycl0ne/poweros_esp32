@@ -221,6 +221,32 @@ pub const Tile = struct {
     }
 };
 
+/// The grid of tiles over an area: its top left on the surface - moved
+/// left to the start of a cache line - and its squares across and down.
+const Grid = struct {
+    x: u32,
+    y: u32,
+    columns: u32,
+    rows: u32,
+
+    fn over(surface: Surface, area: Rect) error{OutOfBounds}!Grid {
+        if (area.width == 0 or area.height == 0) return error.OutOfBounds;
+        if (@as(u64, area.x) + area.width > surface.width or @as(u64, area.y) + area.height > surface.height) return error.OutOfBounds;
+        const across = line_bytes / 4;
+        const x = area.x / across * across;
+        return .{
+            .x = x,
+            .y = area.y,
+            .columns = (area.x + area.width - x + tile_size - 1) / tile_size,
+            .rows = (area.height + tile_size - 1) / tile_size,
+        };
+    }
+
+    fn squares(grid: Grid) u32 {
+        return grid.columns * grid.rows;
+    }
+};
+
 pub const Target = struct {
     host: Host,
     surface: Surface,
@@ -249,50 +275,73 @@ pub const Target = struct {
     pending: []*const Header = &.{},
     pending_count: u32 = 0,
     stats: Stats = .{},
-    /// The block everything above lives in, as `allocate` gave it.
+    /// The block everything above lives in, as `allocate` gave it, and the
+    /// squares it has room for.
     memory: [*]u8,
     memory_bytes: usize,
+    room: u32,
 
     /// A target over `area` of `surface`, which has to lie inside it.
     pub fn init(host: Host, surface: Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!Target {
-        if (area.width == 0 or area.height == 0) return error.OutOfBounds;
-        if (@as(u64, area.x) + area.width > surface.width or @as(u64, area.y) + area.height > surface.height) return error.OutOfBounds;
-        const across = line_bytes / 4;
-        const grid_x = area.x / across * across;
-        const grid_y = area.y;
-        const columns = (area.x + area.width - grid_x + tile_size - 1) / tile_size;
-        const rows = (area.height + tile_size - 1) / tile_size;
-        const squares = columns * rows;
+        const grid = try Grid.over(surface, area);
+        var target = Target{
+            .host = host,
+            .surface = surface,
+            .area = area,
+            .attachments = attachments,
+            .grid_x = grid.x,
+            .grid_y = grid.y,
+            .columns = grid.columns,
+            .rows = grid.rows,
+            .tiles = &.{},
+            .buffers = undefined,
+            .order = &.{},
+            .arena = .{ .host = host },
+            .memory = undefined,
+            .memory_bytes = 0,
+            .room = 0,
+        };
+        try target.lay(grid.squares());
+        return target;
+    }
 
+    /// The target moved onto `area` of `surface`, which may be another, and
+    /// given `attachments`: its buffers and its frame's memory kept, its
+    /// grid laid again - in its block while that has room for the squares,
+    /// else in a larger one. Between frames.
+    pub fn moveTo(target: *Target, surface: Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!void {
+        const grid = try Grid.over(surface, area);
+        if (grid.squares() > target.room) try target.lay(grid.squares());
+        target.surface = surface;
+        target.area = area;
+        target.attachments = attachments;
+        target.grid_x = grid.x;
+        target.grid_y = grid.y;
+        target.columns = grid.columns;
+        target.rows = grid.rows;
+        target.tiles = target.tiles.ptr[0..grid.squares()];
+        target.order = target.order.ptr[0..grid.squares()];
+    }
+
+    /// A block for the buffers and `squares` squares, in place of the one
+    /// there was: the buffers, the squares and their order laid out in it.
+    fn lay(target: *Target, squares: u32) error{OutOfMemory}!void {
+        const host = target.host;
         const buffers_bytes = @sizeOf([most_parts]Buffer);
         const tiles_bytes = squares * @sizeOf(TileState);
         const order_bytes = squares * @sizeOf(u32);
         const bytes = line_bytes + buffers_bytes + tiles_bytes + order_bytes;
         const memory = host.allocate(host.context, bytes) orelse return error.OutOfMemory;
+        if (target.memory_bytes != 0) host.free(host.context, target.memory, target.memory_bytes);
         var at = (@intFromPtr(memory) + line_bytes - 1) / line_bytes * line_bytes;
-        const buffers: *[most_parts]Buffer = @ptrFromInt(at);
+        target.buffers = @ptrFromInt(at);
         at += buffers_bytes;
-        const tiles = @as([*]TileState, @ptrFromInt(at))[0..squares];
+        target.tiles = @as([*]TileState, @ptrFromInt(at))[0..squares];
         at += tiles_bytes;
-        const order = @as([*]u32, @ptrFromInt(at))[0..squares];
-        @memset(tiles, .{});
-
-        return .{
-            .host = host,
-            .surface = surface,
-            .area = area,
-            .attachments = attachments,
-            .grid_x = grid_x,
-            .grid_y = grid_y,
-            .columns = columns,
-            .rows = rows,
-            .tiles = tiles,
-            .buffers = buffers,
-            .order = order,
-            .arena = .{ .host = host },
-            .memory = memory,
-            .memory_bytes = bytes,
-        };
+        target.order = @as([*]u32, @ptrFromInt(at))[0..squares];
+        target.memory = memory;
+        target.memory_bytes = bytes;
+        target.room = squares;
     }
 
     pub fn deinit(target: *Target) void {

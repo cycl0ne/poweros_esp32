@@ -3,7 +3,7 @@
 //! them.
 
 const std = @import("std");
-const texture = @import("../texture.zig");
+const texture = @import("sdk").facet.texture;
 const testing = std.testing;
 
 const Texture = texture.Texture;

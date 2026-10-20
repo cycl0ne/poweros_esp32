@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0
+// SPDX-License-Identifier: MIT
 //! Textures: pictures a triangle is painted with, and how a pixel finds
 //! its colour in one.
 //!

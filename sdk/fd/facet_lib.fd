@@ -1,0 +1,203 @@
+//! facet.library's functions: three-dimensional drawing as Vulkan has
+//! it - an instance, the devices, their memory, buffers and images,
+//! render passes, pipelines whose shaders are the program's own
+//! functions, and command buffers played on a queue - on the machine's
+//! cores - and the swapchains that show what is drawn on a screen. Open
+//! it with OpenLibrary("facet.library", 1); the structures are in
+//! sdk.facet.
+##include libs/facet/facet as facet
+##basetype FacetBase
+##name facet.library
+##bias 4
+##public
+/// A program's hold on the library, written to `instance`.
+facet.Result CreateInstance(*const facet.InstanceCreateInfo info, *?*facet.Instance instance)
+/// The instance given back: every device made from it destroyed first.
+void DestroyInstance(?*facet.Instance instance)
+/// The physical devices into `devices`, at most `count.*` of them, and
+/// how many there are into `count`; null for `devices` counts alone.
+facet.Result EnumeratePhysicalDevices(*facet.Instance instance, *u32 count, ?[*]*facet.PhysicalDevice devices)
+/// What the physical device is, into `properties`.
+void GetPhysicalDeviceProperties(*facet.PhysicalDevice physical, *facet.PhysicalDeviceProperties properties)
+/// The device's queue families into `properties`, as
+/// EnumeratePhysicalDevices lists.
+void GetPhysicalDeviceQueueFamilyProperties(*facet.PhysicalDevice physical, *u32 count, ?[*]facet.QueueFamilyProperties properties)
+/// The device's memory types and heaps, into `properties`.
+void GetPhysicalDeviceMemoryProperties(*facet.PhysicalDevice physical, *facet.PhysicalDeviceMemoryProperties properties)
+/// A device of the program's own on `physical`, written to `device`, with
+/// a task for each queue.
+facet.Result CreateDevice(*facet.PhysicalDevice physical, *const facet.DeviceCreateInfo info, *?*facet.Device device)
+/// The device given back, its queues' tasks ended: everything made from
+/// it destroyed first.
+void DestroyDevice(?*facet.Device device)
+/// Queue `index` of family `family`, written to `queue`.
+void GetDeviceQueue(*facet.Device device, u32 family, u32 index, *?*facet.Queue queue)
+/// A block of the device's memory, written to `memory`.
+facet.Result AllocateMemory(*facet.Device device, *const facet.MemoryAllocateInfo info, *?*facet.DeviceMemory memory)
+/// The block given back: nothing bound to it in use any more.
+void FreeMemory(*facet.Device device, ?*facet.DeviceMemory memory)
+/// Where the memory is from `offset` on, `size` bytes of it (WHOLE_SIZE:
+/// to its end), written to `data`.
+facet.Result MapMemory(*facet.Device device, *facet.DeviceMemory memory, u64 offset, u64 size, u32 flags, *?*anyopaque data)
+/// The mapping ended.
+void UnmapMemory(*facet.Device device, *facet.DeviceMemory memory)
+/// What the device does with `format` in each tiling and in a buffer,
+/// into `properties`.
+void GetPhysicalDeviceFormatProperties(*facet.PhysicalDevice physical, facet.Format format, *facet.FormatProperties properties)
+/// A buffer, with no memory yet, written to `buffer`.
+facet.Result CreateBuffer(*facet.Device device, *const facet.BufferCreateInfo info, *?*facet.Buffer buffer)
+/// The buffer given back: no work the queue has not finished uses it.
+void DestroyBuffer(*facet.Device device, ?*facet.Buffer buffer)
+/// What the buffer needs of the memory it is bound into.
+void GetBufferMemoryRequirements(*facet.Device device, *facet.Buffer buffer, *facet.MemoryRequirements requirements)
+/// The buffer bound into `memory` at `offset`, for as long as it lasts.
+facet.Result BindBufferMemory(*facet.Device device, *facet.Buffer buffer, *facet.DeviceMemory memory, u64 offset)
+/// An image, with no memory yet, written to `image`.
+facet.Result CreateImage(*facet.Device device, *const facet.ImageCreateInfo info, *?*facet.Image image)
+/// The image given back: no work the queue has not finished uses it.
+void DestroyImage(*facet.Device device, ?*facet.Image image)
+/// What the image needs of the memory it is bound into.
+void GetImageMemoryRequirements(*facet.Device device, *facet.Image image, *facet.MemoryRequirements requirements)
+/// The image bound into `memory` at `offset`, for as long as it lasts.
+facet.Result BindImageMemory(*facet.Device device, *facet.Image image, *facet.DeviceMemory memory, u64 offset)
+/// Where a level of a linear image is in its memory, into `layout`.
+void GetImageSubresourceLayout(*facet.Device device, *facet.Image image, *const facet.ImageSubresource subresource, *facet.SubresourceLayout layout)
+/// A view of an image, written to `view`.
+facet.Result CreateImageView(*facet.Device device, *const facet.ImageViewCreateInfo info, *?*facet.ImageView view)
+/// The view given back: no work the queue has not finished uses it.
+void DestroyImageView(*facet.Device device, ?*facet.ImageView view)
+/// A pool for the device's command buffers, written to `pool`.
+facet.Result CreateCommandPool(*facet.Device device, *const facet.CommandPoolCreateInfo info, *?*facet.CommandPool pool)
+/// The pool given back, and every command buffer of it.
+void DestroyCommandPool(*facet.Device device, ?*facet.CommandPool pool)
+/// Every command buffer of the pool back to where it started.
+facet.Result ResetCommandPool(*facet.Device device, *facet.CommandPool pool, u32 flags)
+/// `info.command_buffer_count` command buffers of a pool, into `buffers`.
+facet.Result AllocateCommandBuffers(*facet.Device device, *const facet.CommandBufferAllocateInfo info, [*]?*facet.CommandBuffer buffers)
+/// `count` command buffers given back to their pool.
+void FreeCommandBuffers(*facet.Device device, *facet.CommandPool pool, u32 count, [*]const ?*facet.CommandBuffer buffers)
+/// The command buffer's recording begun, anything recorded before gone.
+facet.Result BeginCommandBuffer(*facet.CommandBuffer buffer, *const facet.CommandBufferBeginInfo info)
+/// The command buffer's recording ended: it can be submitted.
+facet.Result EndCommandBuffer(*facet.CommandBuffer buffer)
+/// The command buffer back to where it started.
+facet.Result ResetCommandBuffer(*facet.CommandBuffer buffer, u32 flags)
+/// Recorded: the work before ends before the work after starts, as the
+/// stage masks and the barriers say.
+void CmdPipelineBarrier(*facet.CommandBuffer buffer, u32 src_stage_mask, u32 dst_stage_mask, u32 dependency_flags, u32 memory_barrier_count, ?[*]const facet.MemoryBarrier memory_barriers, u32 buffer_barrier_count, ?[*]const facet.BufferMemoryBarrier buffer_barriers, u32 image_barrier_count, ?[*]const facet.ImageMemoryBarrier image_barriers)
+/// Recorded: rectangles of texels copied from a buffer into an image.
+void CmdCopyBufferToImage(*facet.CommandBuffer buffer, *facet.Buffer source, *facet.Image image, facet.ImageLayout layout, u32 region_count, [*]const facet.BufferImageCopy regions)
+/// Recorded: bytes copied from one buffer to another.
+void CmdCopyBuffer(*facet.CommandBuffer buffer, *facet.Buffer source, *facet.Buffer destination, u32 region_count, [*]const facet.BufferCopy regions)
+/// `count` batches of work for the queue, in order, and `fence` signalled
+/// when all are done.
+facet.Result QueueSubmit(*facet.Queue queue, u32 count, ?[*]const facet.SubmitInfo submits, ?*facet.Fence fence)
+/// Wait until the queue has done all it was given.
+facet.Result QueueWaitIdle(*facet.Queue queue)
+/// Wait until every queue of the device has done all it was given.
+facet.Result DeviceWaitIdle(*facet.Device device)
+/// A fence, written to `fence`.
+facet.Result CreateFence(*facet.Device device, *const facet.FenceCreateInfo info, *?*facet.Fence fence)
+/// The fence given back: no submission still to signal it.
+void DestroyFence(*facet.Device device, ?*facet.Fence fence)
+/// `count` fences back to unsignalled.
+facet.Result ResetFences(*facet.Device device, u32 count, [*]const *facet.Fence fences)
+/// `success` for a signalled fence, `not_ready` for one not yet.
+facet.Result GetFenceStatus(*facet.Device device, *facet.Fence fence)
+/// Wait until all `count` fences are signalled, or any of them, for no
+/// longer than `timeout` nanoseconds.
+facet.Result WaitForFences(*facet.Device device, u32 count, [*]const *facet.Fence fences, bool wait_all, u64 timeout)
+/// A semaphore, written to `semaphore`.
+facet.Result CreateSemaphore(*facet.Device device, *const facet.SemaphoreCreateInfo info, *?*facet.Semaphore semaphore)
+/// The semaphore given back: no submission still to wait for it or
+/// signal it.
+void DestroySemaphore(*facet.Device device, ?*facet.Semaphore semaphore)
+/// A render pass, written to `render_pass`.
+facet.Result CreateRenderPass(*facet.Device device, *const facet.RenderPassCreateInfo info, *?*facet.RenderPass render_pass)
+/// The render pass given back.
+void DestroyRenderPass(*facet.Device device, ?*facet.RenderPass render_pass)
+/// A framebuffer for a render pass, written to `framebuffer`.
+facet.Result CreateFramebuffer(*facet.Device device, *const facet.FramebufferCreateInfo info, *?*facet.Framebuffer framebuffer)
+/// The framebuffer given back: no submission still drawing into it.
+void DestroyFramebuffer(*facet.Device device, ?*facet.Framebuffer framebuffer)
+/// A shader module carrying the functions `info` points to, written to
+/// `module`.
+facet.Result CreateShaderModule(*facet.Device device, *const facet.ShaderModuleCreateInfo info, *?*facet.ShaderModule module)
+/// The shader module given back; the pipelines made from it stay.
+void DestroyShaderModule(*facet.Device device, ?*facet.ShaderModule module)
+/// A descriptor set layout, written to `layout`.
+facet.Result CreateDescriptorSetLayout(*facet.Device device, *const facet.DescriptorSetLayoutCreateInfo info, *?*facet.DescriptorSetLayout layout)
+/// The descriptor set layout given back; the sets made with it stay.
+void DestroyDescriptorSetLayout(*facet.Device device, ?*facet.DescriptorSetLayout layout)
+/// A pipeline layout, written to `layout`.
+facet.Result CreatePipelineLayout(*facet.Device device, *const facet.PipelineLayoutCreateInfo info, *?*facet.PipelineLayout layout)
+/// The pipeline layout given back.
+void DestroyPipelineLayout(*facet.Device device, ?*facet.PipelineLayout layout)
+/// A descriptor pool, written to `pool`.
+facet.Result CreateDescriptorPool(*facet.Device device, *const facet.DescriptorPoolCreateInfo info, *?*facet.DescriptorPool pool)
+/// The descriptor pool given back, and every set allocated from it.
+void DestroyDescriptorPool(*facet.Device device, ?*facet.DescriptorPool pool)
+/// Every set allocated from the pool freed at once.
+facet.Result ResetDescriptorPool(*facet.Device device, *facet.DescriptorPool pool, u32 flags)
+/// A descriptor set for each layout `info` names, into `sets`.
+facet.Result AllocateDescriptorSets(*facet.Device device, *const facet.DescriptorSetAllocateInfo info, [*]?*facet.DescriptorSet sets)
+/// `count` descriptor sets given back to their pool.
+facet.Result FreeDescriptorSets(*facet.Device device, *facet.DescriptorPool pool, u32 count, [*]const ?*facet.DescriptorSet sets)
+/// Descriptors written into sets, and copied from one to another.
+void UpdateDescriptorSets(*facet.Device device, u32 write_count, ?[*]const facet.WriteDescriptorSet writes, u32 copy_count, ?[*]const facet.CopyDescriptorSet copies)
+/// `count` graphics pipelines, one for each of `infos`, into `pipelines`.
+facet.Result CreateGraphicsPipelines(*facet.Device device, ?*facet.PipelineCache cache, u32 count, [*]const facet.GraphicsPipelineCreateInfo infos, [*]?*facet.Pipeline pipelines)
+/// The pipeline given back: no submission still drawing with it.
+void DestroyPipeline(*facet.Device device, ?*facet.Pipeline pipeline)
+/// Recorded: a render pass begun, into a framebuffer.
+void CmdBeginRenderPass(*facet.CommandBuffer buffer, *const facet.RenderPassBeginInfo info, facet.SubpassContents contents)
+/// Recorded: the render pass ended, and what it drew stored.
+void CmdEndRenderPass(*facet.CommandBuffer buffer)
+/// Recorded: the pipeline the draws after it draw with.
+void CmdBindPipeline(*facet.CommandBuffer buffer, facet.PipelineBindPoint bind_point, *facet.Pipeline pipeline)
+/// Recorded: vertex buffers bound, from binding `first_binding` on.
+void CmdBindVertexBuffers(*facet.CommandBuffer buffer, u32 first_binding, u32 count, [*]const *facet.Buffer buffers, [*]const u64 offsets)
+/// Recorded: the index buffer CmdDrawIndexed reads.
+void CmdBindIndexBuffer(*facet.CommandBuffer buffer, *facet.Buffer index_buffer, u64 offset, facet.IndexType index_type)
+/// Recorded: descriptor sets bound, from set `first_set` on.
+void CmdBindDescriptorSets(*facet.CommandBuffer buffer, facet.PipelineBindPoint bind_point, *facet.PipelineLayout layout, u32 first_set, u32 count, [*]const *facet.DescriptorSet sets, u32 dynamic_offset_count, ?[*]const u32 dynamic_offsets)
+/// Recorded: bytes of push constants set.
+void CmdPushConstants(*facet.CommandBuffer buffer, *facet.PipelineLayout layout, u32 stage_flags, u32 offset, u32 size, *const anyopaque values)
+/// Recorded: the viewport, for a pipeline that leaves it to commands.
+void CmdSetViewport(*facet.CommandBuffer buffer, u32 first_viewport, u32 count, [*]const facet.Viewport viewports)
+/// Recorded: the scissor, for a pipeline that leaves it to commands.
+void CmdSetScissor(*facet.CommandBuffer buffer, u32 first_scissor, u32 count, [*]const facet.Rect2D scissors)
+/// Recorded: vertices drawn, in the order they are in the vertex buffers.
+void CmdDraw(*facet.CommandBuffer buffer, u32 vertex_count, u32 instance_count, u32 first_vertex, u32 first_instance)
+/// Recorded: vertices drawn in the order the index buffer gives them.
+void CmdDrawIndexed(*facet.CommandBuffer buffer, u32 index_count, u32 instance_count, u32 first_index, i32 vertex_offset, u32 first_instance)
+/// A surface over a screen the program has opened, written to `surface`.
+facet.Result CreateScreenSurface(*facet.Instance instance, *const facet.ScreenSurfaceCreateInfo info, *?*facet.Surface surface)
+/// The surface given back: every swapchain made on it destroyed first.
+void DestroySurface(*facet.Instance instance, ?*facet.Surface surface)
+/// Whether queue family `family` can present to the surface, into
+/// `supported`.
+facet.Result GetPhysicalDeviceSurfaceSupport(*facet.PhysicalDevice physical, u32 family, *facet.Surface surface, *bool supported)
+/// What a swapchain on the surface can be, into `capabilities`.
+facet.Result GetPhysicalDeviceSurfaceCapabilities(*facet.PhysicalDevice physical, *facet.Surface surface, *facet.SurfaceCapabilities capabilities)
+/// The formats a swapchain on the surface can have, as
+/// EnumeratePhysicalDevices lists.
+facet.Result GetPhysicalDeviceSurfaceFormats(*facet.PhysicalDevice physical, *facet.Surface surface, *u32 count, ?[*]facet.SurfaceFormat formats)
+/// The surface's present modes, as EnumeratePhysicalDevices lists.
+facet.Result GetPhysicalDeviceSurfacePresentModes(*facet.PhysicalDevice physical, *facet.Surface surface, *u32 count, ?[*]facet.PresentMode modes)
+/// A swapchain on a surface, written to `swapchain`.
+facet.Result CreateSwapchain(*facet.Device device, *const facet.SwapchainCreateInfo info, *?*facet.Swapchain swapchain)
+/// The swapchain given back, and its images.
+void DestroySwapchain(*facet.Device device, ?*facet.Swapchain swapchain)
+/// The swapchain's images, as EnumeratePhysicalDevices lists.
+facet.Result GetSwapchainImages(*facet.Device device, *facet.Swapchain swapchain, *u32 count, ?[*]*facet.Image images)
+/// An image of the swapchain to draw into, its number written to
+/// `index`; `semaphore` and `fence` signalled when it can be.
+facet.Result AcquireNextImage(*facet.Device device, *facet.Swapchain swapchain, u64 timeout, ?*facet.Semaphore semaphore, ?*facet.Fence fence, *u32 index)
+/// Images handed to the queue to be shown, once the semaphores are
+/// signalled.
+facet.Result QueuePresent(*facet.Queue queue, *const facet.PresentInfo info)
+/// A surface over the inside of a window the program has opened, written
+/// to `surface`.
+facet.Result CreateWindowSurface(*facet.Instance instance, *const facet.WindowSurfaceCreateInfo info, *?*facet.Surface surface)
+##end

@@ -41,7 +41,7 @@ const std = @import("std");
 const bins = @import("bins.zig");
 const setup = @import("setup.zig");
 const target_zig = @import("target.zig");
-const texture_zig = @import("texture.zig");
+const texture_zig = @import("sdk").facet.texture;
 const Target = target_zig.Target;
 const Tile = target_zig.Tile;
 const Texture = texture_zig.Texture;
@@ -624,16 +624,21 @@ pub fn Pipeline(comptime config: Config) type {
 
         /// A pixel's colour put into the tile over `under`.
         inline fn blended(color: u32, under: u32) u32 {
-            @setRuntimeSafety(false);
-            return switch (config.blend) {
-                .off => color,
-                .alpha => blend: {
-                    const alpha = color >> 24;
-                    const weight = alpha + (alpha >> 7);
-                    break :blend texture_zig.gather(texture_zig.mix(texture_zig.spread(under), texture_zig.spread(color), weight));
-                },
-            };
+            return blendedBy(config.blend, color, under);
         }
+    };
+}
+
+/// A pixel's colour put into a tile over `under`, as `blend` says.
+pub inline fn blendedBy(comptime blend: Blend, color: u32, under: u32) u32 {
+    @setRuntimeSafety(false);
+    return switch (blend) {
+        .off => color,
+        .alpha => alpha: {
+            const alpha = color >> 24;
+            const weight = alpha + (alpha >> 7);
+            break :alpha texture_zig.gather(texture_zig.mix(texture_zig.spread(under), texture_zig.spread(color), weight));
+        },
     };
 }
 
@@ -641,7 +646,7 @@ pub fn Pipeline(comptime config: Config) type {
 /// of it, in a tile drawn with the quads' centres' divisions and a step of
 /// Newton's: a pixel is half that from its quad's centre, and the step
 /// leaves its w out by that squared, 1/4096 of it at most.
-const newton_change: f32 = 1.0 / 32.0;
+pub const newton_change: f32 = 1.0 / 32.0;
 
 /// A channel of 0xAARRGGBB, 0 to 255, and a half: what a smooth
 /// triangle's planes carry (`mixed`).

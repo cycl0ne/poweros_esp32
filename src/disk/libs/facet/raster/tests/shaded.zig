@@ -290,7 +290,7 @@ test "a texture's level follows how many of its texels a pixel steps over" {
             .{ .position = .{ left * 2 / width - 1, bottom * 2 / height - 1, 0.5 }, .uv = .{ 0, 1 } },
         };
         try drawOnce(&target, &pipeline, &vertices, &.{ 0, 1, 2, 0, 2, 3 });
-        const want = @import("../texture.zig").widen(shade);
+        const want = @import("sdk").facet.texture.widen(shade);
         var drawn: u32 = 0;
         for (pixels) |pixel| {
             if (pixel == 0) continue;
