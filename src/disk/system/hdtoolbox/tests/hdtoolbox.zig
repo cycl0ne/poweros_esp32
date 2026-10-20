@@ -239,6 +239,45 @@ test "HDToolBox: which drives a save leaves stale" {
     try testing.expect(!model.kept(table[0..1], &work));
 }
 
+test "HDToolBox: a GPT's partitions on the bar, and a container's table on the disk" {
+    // Cylinders of 2048 blocks: a partition reaches into every cylinder
+    // it has a block of.
+    try testing.expectEqual(span(0, 0), model.blockSpan(34, 2047, 2048));
+    try testing.expectEqual(span(1, 4), model.blockSpan(2048, 10239, 2048));
+    try testing.expectEqual(span(34, 99), model.blockSpan(34, 99, 0));
+
+    // A table in a container from block 8192, cylinders of 2048 blocks:
+    // four cylinders along on the disk.
+    const part: dos.DosEnvec = .{ .size_block = 512, .surfaces = 1, .blocks_per_track = 2048, .low_cyl = 1, .high_cyl = 9 };
+    const placed = model.onDisk(&part, 8192);
+    try testing.expectEqual(@as(u32, 5), placed.low_cyl);
+    try testing.expectEqual(@as(u32, 13), placed.high_cyl);
+    try testing.expectEqual(@as(u32, 1), model.onDisk(&part, 0).low_cyl);
+    // A container off the partition's cylinders: left as it is.
+    try testing.expectEqual(@as(u32, 1), model.onDisk(&part, 100).low_cyl);
+
+    // A drive mounted from a partition of the GPT, as MountGPTPartition
+    // lays it out: cylinders of one block.
+    const fat: dos.DosEnvec = .{ .size_block = 512, .surfaces = 1, .blocks_per_track = 1, .low_cyl = 2048, .high_cyl = 206847 };
+    try testing.expect(model.covers(&fat, 2048, 206847, 512));
+    try testing.expect(!model.covers(&fat, 2048, 206848, 512));
+    try testing.expect(!model.covers(&fat, 4096, 206847, 512));
+    try testing.expect(model.covers(&placed, 10240, 28671, 512));
+    const whole: dos.DosEnvec = .{};
+    try testing.expect(!model.covers(&whole, 0, 0, 512));
+}
+
+test "HDToolBox: which span a pixel of the bar is over" {
+    const bar: model.Bar = .{ .area = span(0, 99), .width = 100 };
+    const spans = [_]Span{ span(10, 19), span(50, 59) };
+    try testing.expectEqual(@as(?usize, 0), model.under(bar, &spans, 10));
+    try testing.expectEqual(@as(?usize, 0), model.under(bar, &spans, 19));
+    try testing.expectEqual(@as(?usize, 1), model.under(bar, &spans, 55));
+    try testing.expectEqual(@as(?usize, null), model.under(bar, &spans, 20));
+    try testing.expectEqual(@as(?usize, null), model.under(bar, &spans, -1));
+    try testing.expectEqual(@as(?usize, null), model.under(bar, &spans, 100));
+}
+
 // --- the drives on dos's list ---------------------------------------------------------
 
 const Rig = struct {

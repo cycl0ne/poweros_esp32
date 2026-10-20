@@ -5,7 +5,8 @@
 //! **One TD per ring at a time.** A request waits on its endpoint's list
 //! until the one before it is answered; the controller then has the
 //! endpoint's ring to itself, and a stop or a halt never leaves another
-//! TD behind it to be dealt with.
+//! TD behind it to be dealt with. An isochronous endpoint is the one
+//! that has more: see below.
 //!
 //! **A control transfer** is one TD: a Setup Stage TRB with the setup
 //! packet in it, a Data Stage TRB when there is data - interrupting on a
@@ -25,6 +26,19 @@
 //! configuration read whole, for SET_CONFIGURATION (slots.zig). A hub's
 //! descriptor, and a hub's port status that shows its device gone, are
 //! answered only after the task has told the controller (`posted`).
+//!
+//! **An isochronous transfer** is a TD a packet - an Isoch TRB, Start
+//! Isoch ASAP, so each goes in the interval after the one before, and an
+//! idle ring starts as soon as the controller can - and up to
+//! `iso_in_flight` requests are on the ring at once, so the next is
+//! there before the last has played. Only a request's last TRB
+//! interrupts; its event answers it and every one before it on the ring
+//! (the controller may report a run of missed TDs once, at their end).
+//! Each request's packets go in a slice of the endpoint's buffer, a
+//! stride apart (`strideOf`); the slices are taken round in turn, as the
+//! requests are answered in turn. Nothing halts and nothing is resent.
+//! Taking one back stops the endpoint and answers every one on it. IN
+//! endpoints are answered IOERR_NOCMD.
 //!
 //! **An error** halts the endpoint on the controller: the request is
 //! answered, and the endpoint reset - Reset Endpoint, its ring's dequeue
@@ -93,9 +107,13 @@ fn accept(host: *Host, req: *usbhc.IOUsbHC) void {
         }
     } else {
         dci = regs.dciOf(req.endpoint);
+        if (req.std.req.command == usbhc.UHCMD_ISOXFER) {
+            if (isIn(req)) return _xhci.reply(host, req, exec.IOERR_NOCMD);
+            if (!isoFits(req)) return _xhci.reply(host, req, exec.IOERR_BADLENGTH);
+        }
         if (dci < 2 or !slots.ensureEndpoint(host, slot, dci, req)) return _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
     }
-    if (req.nak_timeout != 0) {
+    if (req.nak_timeout != 0 and req.std.req.command != usbhc.UHCMD_ISOXFER) {
         req.hc_private[_xhci.PRIV_FLAGS] |= _xhci.PRIVF_DEADLINE;
         req.hc_private[_xhci.PRIV_DUE] = _xhci.now(host) +% req.nak_timeout;
     }
@@ -112,11 +130,74 @@ pub fn schedule(host: *Host) void {
         var dci: u32 = 1;
         while (dci <= slot.entries) : (dci += 1) {
             const ep = &slot.endpoints[dci];
-            if (!ep.enabled or ep.halted or ep.current != null) continue;
-            const node = host.sys.RemHead(&ep.queue) orelse continue;
-            start(host, slot, dci, _xhci.requestOfNode(node));
+            while (_xhci.hasRoom(ep)) {
+                const node = host.sys.RemHead(&ep.queue) orelse break;
+                const req = _xhci.requestOfNode(node);
+                if (_xhci.isIso(ep)) startIso(host, slot, dci, ep, req) else start(host, slot, dci, req);
+            }
         }
     }
+}
+
+/// An isochronous request's packets: its length cut into `iso_packet`
+/// bytes, none bigger than the endpoint's packet; 0 for none.
+fn isoPackets(req: *const usbhc.IOUsbHC) u32 {
+    const packet = if (req.iso_packet != 0) req.iso_packet else req.max_packet;
+    if (packet == 0 or packet > @max(req.max_packet & 0x7FF, 1)) return 0;
+    const length: u32 = @intCast(req.std.length);
+    return (length + packet - 1) / packet;
+}
+
+fn isoFits(req: *const usbhc.IOUsbHC) bool {
+    const packets = isoPackets(req);
+    return packets != 0 and packets <= usbhc.UHC_ISO_PACKETS;
+}
+
+/// An isochronous request's TDs: each packet copied to its place in the
+/// next slice of the buffer and an Isoch TRB put on the ring for it, the
+/// last one interrupting; the request on the endpoint's flight.
+fn startIso(host: *Host, slot: *Slot, dci: u32, ep: *Endpoint, req: *usbhc.IOUsbHC) void {
+    const slice_bytes = usbhc.UHC_ISO_PACKETS * ep.stride;
+    if (!ensureBounce(host, ep, _xhci.iso_in_flight * slice_bytes)) return _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
+    const packets = isoPackets(req);
+    const packet = if (req.iso_packet != 0) req.iso_packet else req.max_packet;
+    const length: u32 = @intCast(req.std.length);
+    const slice = ep.next_slice;
+    ep.next_slice = (slice + 1) % _xhci.iso_in_flight;
+    const area = ep.bounce.? + slice * slice_bytes;
+    const first = ep.ring.enqueue;
+    var last: u32 = first;
+    var n: u32 = 0;
+    while (n < packets) : (n += 1) {
+        const offset = n * packet;
+        const bytes = @min(packet, length - offset);
+        const into = area + n * ep.stride;
+        @memcpy(into[0..bytes], dataOf(req)[offset..][0..bytes]);
+        const buffer: u64 = @intFromPtr(into);
+        const at = ep.ring.push(.{
+            .param_lo = ring.lo(buffer),
+            .param_hi = ring.hi(buffer),
+            .status = bytes,
+            .control = regs.typeField(regs.TRB_ISOCH) | regs.TRB_SIA | (if (n + 1 == packets) regs.TRB_IOC else 0),
+        });
+        last = indexOf(ep, at);
+    }
+    _xhci.toDevice(host, @intFromPtr(area), slice_bytes);
+    req.hc_private[_xhci.PRIV_SPAN] = _xhci.spanOf(first, last, slice);
+    host.sys.AddTail(&ep.flight, _xhci.nodeOf(req));
+    ep.flying += 1;
+    _xhci.toDevice(host, @intFromPtr(ep.ring.trbs), ep.ring.bytes());
+    _xhci.ringDoorbell(host, slot.id, dci);
+}
+
+/// A TRB's place on its endpoint's ring, from its address.
+fn indexOf(ep: *const Endpoint, address: usize) u32 {
+    return @intCast((address - @intFromPtr(ep.ring.trbs)) / @sizeOf(Trb));
+}
+
+/// How far `index` is round the ring from `from`.
+pub fn ringDistance(from: u32, index: u32, count: u32) u32 {
+    return (index + count - from) % count;
 }
 
 fn isIn(req: *const usbhc.IOUsbHC) bool {
@@ -245,6 +326,7 @@ pub fn completed(host: *Host, event: Trb) void {
     const slot = host.slots[id] orelse return;
     if (!slot.enabled) return;
     const ep = &slot.endpoints[dci];
+    if (_xhci.isIso(ep)) return isoCompleted(host, ep, event);
     const req = ep.current orelse return;
     const code = regs.completionCode(event.status);
     // A stop's own event: `cancel` deals with its TD.
@@ -289,6 +371,53 @@ pub fn completed(host: *Host, event: Trb) void {
     }
     const runt = ep.short and ep.done < length and req.flags & usbhc.UHF_SHORT_NOT_OK != 0;
     finish(host, slot, ep, if (runt) usbhc.UHIOERR_RUNTPACKET else 0);
+}
+
+/// An isochronous endpoint's event: every request on the ring up to the
+/// TRB it names - its last at or before that TRB - answered. A ring run
+/// dry or full names none; an error on a packet within a request names
+/// that packet, and the request goes on.
+fn isoCompleted(host: *Host, ep: *Endpoint, event: Trb) void {
+    const code = regs.completionCode(event.status);
+    if (code == regs.CC_STOPPED or code == regs.CC_STOPPED_LENGTH_INVALID or code == regs.CC_STOPPED_SHORT_PACKET) return;
+    const pointer = event.param();
+    const start_address: u64 = @intFromPtr(ep.ring.trbs);
+    if (pointer < start_address or pointer >= start_address + ep.ring.bytes()) return;
+    const at = indexOf(ep, @intCast(pointer));
+    const head = ep.flight.first() orelse return;
+    const tail = ep.flight.last() orelse return;
+    const from = _xhci.spanFirst(_xhci.requestOfNode(head).hc_private[_xhci.PRIV_SPAN]);
+    const count = ep.ring.count;
+    // A TRB of no request on the ring.
+    if (ringDistance(from, at, count) > ringDistance(from, _xhci.spanLast(_xhci.requestOfNode(tail).hc_private[_xhci.PRIV_SPAN]), count)) return;
+    while (ep.flight.first()) |node| {
+        const req = _xhci.requestOfNode(node);
+        if (ringDistance(from, at, count) < ringDistance(from, _xhci.spanLast(req.hc_private[_xhci.PRIV_SPAN]), count)) break;
+        host.sys.Remove(node);
+        ep.flying -= 1;
+        req.std.actual = req.std.length;
+        _xhci.reply(host, req, 0);
+    }
+}
+
+/// An isochronous endpoint's requests taken back: the endpoint stopped,
+/// its ring moved past them, each answered `err` - those that ended
+/// meanwhile answered as they ended.
+fn cancelIso(host: *Host, slot: *Slot, dci: u32, err: i8) void {
+    const ep = &slot.endpoints[dci];
+    const code = controller.command(host, .{ .control = regs.typeField(regs.TRB_STOP_ENDPOINT) | regs.endpointField(dci) | regs.slotField(slot.id) });
+    if (code == regs.CC_SUCCESS) moveDequeue(host, slot, dci);
+    dropFlight(host, ep, err);
+}
+
+/// Every request on an isochronous endpoint's ring answered `err`.
+fn dropFlight(host: *Host, ep: *Endpoint, err: i8) void {
+    while (host.sys.RemHead(&ep.flight)) |node| {
+        const req = _xhci.requestOfNode(node);
+        req.std.actual = 0;
+        _xhci.reply(host, req, err);
+    }
+    ep.flying = 0;
 }
 
 /// The endpoint's TD ended: its request answered `err` - or posted, if
@@ -494,6 +623,15 @@ pub fn takeAborts(host: *Host) void {
                 host.sys.Remove(node);
                 _xhci.reply(host, req, exec.IOERR_ABORTED);
             }
+            if (_xhci.isIso(ep)) {
+                var flying = ep.flight.iterator();
+                while (flying.next()) |node| {
+                    if (_xhci.requestOfNode(node).hc_private[_xhci.PRIV_ABORT] == 0) continue;
+                    cancelIso(host, slot, dci, exec.IOERR_ABORTED);
+                    break;
+                }
+                continue;
+            }
             const req = ep.current orelse continue;
             if (req.hc_private[_xhci.PRIV_ABORT] != 0) cancel(host, slot, dci, exec.IOERR_ABORTED);
         }
@@ -512,7 +650,7 @@ pub fn pending(host: *Host) bool {
         while (dci <= slot.entries) : (dci += 1) {
             const ep = &slot.endpoints[dci];
             if (ep.halted) return true;
-            if (ep.enabled and ep.current == null and !ep.queue.isEmpty()) return true;
+            if (_xhci.hasRoom(ep) and !ep.queue.isEmpty()) return true;
         }
     }
     return false;
@@ -531,6 +669,7 @@ pub fn failSlot(host: *Host, slot: *Slot, err: i8) void {
             _xhci.reply(host, req, err);
         }
         ep.halted = false;
+        dropFlight(host, ep, err);
         while (host.sys.RemHead(&ep.queue)) |node| _xhci.reply(host, _xhci.requestOfNode(node), err);
     }
 }

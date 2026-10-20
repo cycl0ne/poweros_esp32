@@ -28,9 +28,11 @@ const _prefs = @import("_prefs.zig");
 /// double-click of 1500 milliseconds, a screen font 16 rows tall, the
 /// keyboard on the screen on a board with none, every window kept wholly
 /// on its screen, the title bars' gadgets narrow, pospaz from the ROM for
-/// all three fonts, the built-in pens. Written as `GetPrefs` writes them;
-/// what a settings editor's "use the defaults" hands to `SetPrefs`. The
-/// style is the default when none is set: `IPREFS_Style` with null.
+/// all three fonts, the built-in pens, a beep that flashes. Written as
+/// `GetPrefs` writes them; what a settings editor's "use the defaults"
+/// hands to `SetPrefs`. The style is the default when none is set:
+/// `IPREFS_Style` with null; and a beep has no sound: `IPREFS_BeepSound`
+/// with null.
 ///
 /// CONTEXT:
 /// - Waits: no.

@@ -4,13 +4,17 @@
 //! LIBS:rdb.library. Built against the SDK only.
 //!
 //!   RDB DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,
-//!       DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N
+//!       DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,
+//!       GPT/S
 //!
 //!   RDB                         flash.device unit 0
 //!   RDB sdcard.device UNIT 0    another disk
 //!   RDB FULL                    every field, and each partition's environment
 //!   RDB INIT                    a fresh table on a disk that has none
 //!   RDB INIT FORCE              ... or in place of the one it has
+//!   RDB nvme.device INIT GPT    a GPT for the whole disk, a PowerOS
+//!                               container over its free blocks, and a
+//!                               table in the container
 //!   RDB ADD DH1                 a partition over the largest free run
 //!   RDB ADD DH1 LOW 100 HIGH 199 DOSTYPE FLS BOOTABLE
 //!   RDB sdcard.device ADD SD0 LOW 8192 HIGH 62333951 DOSTYPE MSD
@@ -36,6 +40,18 @@
 //! A disk with no RigidDiskBlock is not an error: it says so and stops,
 //! since that is the normal state of a blank chip.
 //!
+//! **A disk with a GPT.** Its GPT is listed before the table: each used
+//! entry's number, first and last block, size, type and name, the
+//! PowerOS container among them. The table is the one in the container,
+//! and its blocks and cylinders count from the container's first block.
+//! INIT on such a disk makes the table in the container. INIT GPT makes a
+//! new GPT for the whole disk, with a container over its free blocks and
+//! a table in that; with FORCE it replaces any table the disk has. INIT
+//! FORCE on a disk with a GPT and no container replaces the GPT with a
+//! table over the whole disk. Either way every partition the disk had is
+//! lost. A changed GPT is written before the table, and a GPT read from
+//! its copy at the end is written whole with any change.
+//!
 //! **File systems kept in the table.** ADDFS reads a handler's load file
 //! and keeps it in the table for the partitions of DOSTYPE, in place of
 //! code kept for that DosType before; its version is the handler's own,
@@ -59,8 +75,8 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const rdb = sdk.rdb;
-const trackdisk = sdk.devices.trackdisk;
 const hardblocks = dos.hardblocks;
+const gpt = dos.gpt;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const RDBBase = sdk.interface.rdb.RDBBase;
@@ -68,9 +84,9 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "RDB";
-const VERSION_STRING = "\x00$VER: RDB 1.4 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: RDB 1.5 (19.10.2026)\r\n";
 
-const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N";
+const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,GPT/S";
 const arg_device = 0;
 const arg_unit = 1;
 const arg_full = 2;
@@ -86,7 +102,8 @@ const arg_change = 11;
 const arg_addfs = 12;
 const arg_remfs = 13;
 const arg_boot_pri = 14;
-const arg_count = 15;
+const arg_gpt = 15;
+const arg_count = 16;
 
 /// The disk this system boots from, when nothing else is named.
 const default_device = "flash.device";
@@ -94,8 +111,16 @@ const default_device = "flash.device";
 /// The rdb.library that keeps file systems in a table.
 const file_systems_revision = 3;
 
+/// The rdb.library that reads and writes a GPT.
+const gpt_revision = 4;
+
+/// The name INIT GPT gives the container.
+const container_name = "PowerOS";
+
 const MSG_NO_RDB = "%s unit %d has no RigidDiskBlock in its first %d blocks\n";
 const MSG_FOREIGN = "%s unit %d has a RigidDiskBlock for another block size\n";
+const MSG_NO_CONTAINER = "%s unit %d has a GPT and no PowerOS container in it\n";
+const MSG_EMPTY_CONTAINER = "%s unit %d has a PowerOS container with no RigidDiskBlock in it (INIT makes one)\n";
 const MSG_NO_PARTS = "  (no partitions)\n";
 
 /// One row of the partition table. The same format prints the heading and
@@ -104,6 +129,9 @@ const row = "  %-8s %5s %-16s %9s %7s %-16s %s\n";
 
 /// One row of the file systems the table keeps.
 const fs_row = "  %-16s %-14s %-7s %7s %5s %6s %s\n";
+
+/// One row of the GPT's partitions.
+const gpt_row = "  %3s %10s %10s %7s %-18s %-16s %s\n";
 
 const Run = struct {
     sys: *ExecBase,
@@ -145,7 +173,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer rb.CloseRDB(handle);
 
     var run: Run = .{ .sys = sys, .dl = dl, .rb = rb, .handle = handle, .full = argv[arg_full] != 0 };
-    showDrive(&run, device, unit, &handle.geometry);
+    showDrive(&run, device, unit);
 
     if (argv[arg_init] != 0 or argv[arg_add] != 0 or argv[arg_remove] != 0 or argv[arg_change] != 0 or
         argv[arg_addfs] != 0 or argv[arg_remfs] != 0)
@@ -154,9 +182,21 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         if (rc != dos.RETURN_OK) return rc;
     }
 
+    const gpt_disk = readsGpt(rb) and handle.flags & rdb.RDBF_GPT != 0;
+    if (gpt_disk) {
+        showGpt(&run);
+        if (handle.flags & rdb.RDBF_GPTDAMAGED != 0) {
+            _ = dl.PutStr("  (the disk says it has a GPT, but neither copy is sound: INIT GPT FORCE makes a new one)\n");
+            return dos.RETURN_ERROR;
+        }
+    }
     if (handle.flags & rdb.RDBF_FOUND == 0) {
         if (handle.flags & rdb.RDBF_FOREIGN != 0) {
             _ = Printf(dl, MSG_FOREIGN, .{ device, unit });
+        } else if (gpt_disk and handle.flags & rdb.RDBF_CONTAINER != 0) {
+            _ = Printf(dl, MSG_EMPTY_CONTAINER, .{ device, unit });
+        } else if (gpt_disk) {
+            _ = Printf(dl, MSG_NO_CONTAINER, .{ device, unit });
         } else {
             _ = Printf(dl, MSG_NO_RDB, .{ device, unit, hardblocks.RDB_LOCATION_LIMIT });
         }
@@ -178,12 +218,13 @@ fn change(run: *Run, argv: *const [arg_count]usize) i32 {
     const rb = run.rb;
     const handle = run.handle;
 
+    if (argv[arg_gpt] != 0 and argv[arg_init] == 0) {
+        _ = dl.PutStr("GPT goes with INIT: INIT GPT makes a GPT with a PowerOS container\n");
+        return dos.RETURN_ERROR;
+    }
     if (argv[arg_init] != 0) {
-        if (handle.flags & rdb.RDBF_FOUND != 0 and argv[arg_force] == 0) {
-            _ = dl.PutStr("The disk has a table already: INIT FORCE replaces it, and every partition with it\n");
-            return dos.RETURN_ERROR;
-        }
-        if (failed(run, "INIT", rb.InitRDB(handle))) return dos.RETURN_ERROR;
+        const rc = initTable(run, argv[arg_gpt] != 0, argv[arg_force] != 0);
+        if (rc != dos.RETURN_OK) return rc;
     }
     if (rdargs.string(argv[arg_remove])) |name| {
         const part = rb.FindPartition(handle, name) orelse {
@@ -265,8 +306,54 @@ fn change(run: *Run, argv: *const [arg_count]usize) i32 {
         if (failed(run, "ADDFS", rb.AddFileSystem(handle, dos_type, code, size))) return dos.RETURN_ERROR;
     }
 
+    // The GPT first: WriteRDB refuses a table in a container that is not
+    // on the disk yet.
+    const gpt_changed = rdb.RDBF_GPT | rdb.RDBF_GPTCHANGED;
+    if (readsGpt(rb) and handle.flags & gpt_changed == gpt_changed) {
+        if (failed(run, "Writing the GPT", rb.WriteGPT(handle))) return dos.RETURN_ERROR;
+    }
     if (failed(run, "Writing the table", rb.WriteRDB(handle))) return dos.RETURN_ERROR;
     _ = dl.PutStr("Table written: the partitions are mounted as it says at the next boot\n");
+    return dos.RETURN_OK;
+}
+
+/// INIT: a fresh table in the GPT's container where the disk has one,
+/// over the whole disk where it has none, or with GPT in the container
+/// of a new GPT. What the disk has is replaced only with FORCE.
+fn initTable(run: *Run, with_gpt: bool, force: bool) i32 {
+    const dl = run.dl;
+    const rb = run.rb;
+    const handle = run.handle;
+    const gpt_disk = readsGpt(rb) and handle.flags & rdb.RDBF_GPT != 0;
+    if (with_gpt) {
+        if (!readsGpt(rb)) {
+            _ = Printf(dl, "INIT GPT: %s 1.%d or later writes a GPT\n", .{ rdb.RDBNAME, @as(u32, gpt_revision) });
+            return dos.RETURN_ERROR;
+        }
+        if (!force and (gpt_disk or handle.flags & (rdb.RDBF_FOUND | rdb.RDBF_FOREIGN) != 0)) {
+            _ = dl.PutStr("The disk has a table already: INIT GPT FORCE replaces it, and every partition with it\n");
+            return dos.RETURN_ERROR;
+        }
+        if (failed(run, "INIT GPT", rb.InitGPT(handle))) return dos.RETURN_ERROR;
+        var entry: gpt.Entry = .{ .partition_type_guid = gpt.TYPE_CONTAINER };
+        gpt.setName(&entry, container_name);
+        var err: i32 = rdb.RDBERR_OK;
+        if (rb.AddGPTPartition(handle, &entry, &err) == null) {
+            _ = failed(run, "INIT GPT", err);
+            return dos.RETURN_ERROR;
+        }
+    } else if (gpt_disk and handle.flags & rdb.RDBF_CONTAINER == 0) {
+        if (!force) {
+            _ = dl.PutStr("The disk has a GPT and no PowerOS container: INIT FORCE replaces the GPT with a table over the whole disk,\n" ++
+                "and INIT GPT FORCE with a new GPT and a container; every partition on the disk is lost either way\n");
+            return dos.RETURN_ERROR;
+        }
+        rb.RemGPT(handle);
+    } else if (handle.flags & rdb.RDBF_FOUND != 0 and !force) {
+        _ = dl.PutStr("The disk has a table already: INIT FORCE replaces it, and every partition with it\n");
+        return dos.RETURN_ERROR;
+    }
+    if (failed(run, "INIT", rb.InitRDB(handle))) return dos.RETURN_ERROR;
     return dos.RETURN_OK;
 }
 
@@ -288,6 +375,9 @@ fn errorText(err: i32) [*:0]const u8 {
         rdb.RDBERR_RANGE => "cylinders outside the usable ones, the wrong way round, or taken",
         rdb.RDBERR_FULL => "no room in the table's blocks for another partition, or for the file systems' code",
         rdb.RDBERR_FILESYSTEM => "not a handler's load file for this machine",
+        rdb.RDBERR_CHANGED => "the medium in the unit is not the one the table was read from",
+        rdb.RDBERR_GPT => "the disk's GPT has no PowerOS container for it",
+        rdb.RDBERR_NOGPT => "the disk has no sound GPT (INIT GPT makes one)",
         else => "failed",
     };
 }
@@ -336,19 +426,24 @@ fn parseDosType(text: [*:0]const u8) ?u32 {
 
 // --- What it prints ---------------------------------------------------------
 
-fn showDrive(run: *Run, device: [*:0]const u8, unit: u32, geo: *const trackdisk.DriveGeometry) void {
+fn showDrive(run: *Run, device: [*:0]const u8, unit: u32) void {
     const dl = run.dl;
+    const geo = &run.handle.geometry;
+    // In a container `geometry` counts the container's blocks; the medium
+    // is the whole disk.
+    const blocks: u64 = if (readsGpt(run.rb)) run.handle.disk_blocks else geo.total_sectors;
+    const cylinders: u32 = if (blocks == geo.total_sectors) geo.cylinders else @intCast(@min(blocks / @max(geo.cyl_sectors, 1), 0xFFFF_FFFF));
     var size: [16:0]u8 = @splat(0);
-    bytesAsText(&size, geo.total_sectors * geo.sector_size);
+    bytesAsText(&size, blocks * geo.sector_size);
 
     _ = Printf(dl, "%s unit %d\n", .{ device, unit });
     _ = Printf(dl, "  Medium       %ld blocks of %d bytes (%s)\n", .{
-        geo.total_sectors,
+        blocks,
         geo.sector_size,
         @as([*:0]const u8, @ptrCast(&size)),
     });
     _ = Printf(dl, "  Geometry     %u cylinders, %u head(s), %u block(s) per track\n", .{
-        geo.cylinders,
+        cylinders,
         geo.heads,
         geo.track_sectors,
     });
@@ -366,7 +461,19 @@ fn showDrive(run: *Run, device: [*:0]const u8, unit: u32, geo: *const trackdisk.
 
 fn showRdb(run: *Run, at: u32, table: *const hardblocks.RigidDiskBlock) void {
     const dl = run.dl;
-    _ = Printf(dl, "\nRigidDiskBlock in block %d\n", .{at});
+    if (run.handle.flags & rdb.RDBF_CONTAINER != 0) {
+        const blocks = run.handle.geometry.total_sectors;
+        var size: [16:0]u8 = @splat(0);
+        bytesAsText(&size, blocks * run.handle.geometry.sector_size);
+        _ = Printf(dl, "\nRigidDiskBlock in block %d of the container\n", .{at});
+        _ = Printf(dl, "  Container    blocks %ld to %ld of the disk (%s)\n", .{
+            run.handle.container,
+            run.handle.container + blocks - 1,
+            @as([*:0]const u8, @ptrCast(&size)),
+        });
+    } else {
+        _ = Printf(dl, "\nRigidDiskBlock in block %d\n", .{at});
+    }
     _ = Printf(dl, "  Blocks       %d bytes\n", .{table.block_bytes});
     _ = Printf(dl, "  Drive        %u cylinders, %u head(s), %u sector(s) per track\n", .{
         table.cylinders,
@@ -496,6 +603,95 @@ fn showFileSystems(run: *Run) void {
 fn keepsFileSystems(rb: *RDBBase) bool {
     const lib = rb.lib();
     return lib.version > 1 or lib.revision >= file_systems_revision;
+}
+
+/// Whether the library reads and writes a GPT; an older one's handle has
+/// none of its fields.
+fn readsGpt(rb: *RDBBase) bool {
+    const lib = rb.lib();
+    return lib.version > 1 or lib.revision >= gpt_revision;
+}
+
+/// The GPT: where its blocks are, and each used entry.
+fn showGpt(run: *Run) void {
+    const dl = run.dl;
+    const handle = run.handle;
+    const header = &handle.gpt_header;
+    _ = dl.PutStr("\nGPT\n");
+    if (handle.flags & rdb.RDBF_GPTDAMAGED != 0) return;
+    var guid: [gpt.guid_text_len:0]u8 = @splat(0);
+    gpt.formatGuid(&header.disk_guid, &guid);
+    _ = Printf(dl, "  Disk         %s\n", .{@as([*:0]const u8, @ptrCast(&guid))});
+    _ = Printf(dl, "  Usable       blocks %ld to %ld\n", .{ header.first_usable_lba, header.last_usable_lba });
+    if (run.full) {
+        _ = Printf(dl, "  Entries      %d of %d bytes from block %ld; the copy's header in block %ld\n", .{
+            header.number_of_partition_entries,
+            header.size_of_partition_entry,
+            header.partition_entry_lba,
+            header.alternate_lba,
+        });
+    }
+    if (handle.flags & rdb.RDBF_GPTCHANGED != 0) {
+        _ = dl.PutStr("  (read from the copy at the end: the one in block 1 is not sound, and a change written mends it)\n");
+    }
+
+    _ = dl.PutStr("\n");
+    _ = Printf(dl, gpt_row, .{ "#", "First", "Last", "Size", "Type", "Name", "Flags" });
+    _ = Printf(dl, gpt_row, .{ "---", "----------", "----------", "-------", "------------------", "----------------", "-----" });
+    var part = run.rb.NextGPTPartition(handle, null);
+    if (part == null) _ = dl.PutStr(MSG_NO_PARTS);
+    while (part) |p| : (part = run.rb.NextGPTPartition(handle, p)) {
+        gptRow(run, p);
+    }
+}
+
+fn gptRow(run: *Run, part: *const rdb.GPTPartition) void {
+    const handle = run.handle;
+    const entry = &part.entry;
+    var number: [12:0]u8 = @splat(0);
+    _ = decimal(&number, part.number);
+    var first: [24:0]u8 = @splat(0);
+    _ = decimal(&first, entry.starting_lba);
+    var last: [24:0]u8 = @splat(0);
+    _ = decimal(&last, entry.ending_lba);
+    var size: [16:0]u8 = @splat(0);
+    bytesAsText(&size, (entry.ending_lba - entry.starting_lba + 1) * handle.geometry.sector_size);
+
+    // A type with no name is shown by its GUID.
+    var guid: [gpt.guid_text_len:0]u8 = @splat(0);
+    const kind: [*:0]const u8 = gpt.typeName(&entry.partition_type_guid) orelse kind: {
+        gpt.formatGuid(&entry.partition_type_guid, &guid);
+        break :kind @ptrCast(&guid);
+    };
+    var name: [gpt.name_units:0]u8 = @splat(0);
+    if (gpt.nameText(entry, &name).len == 0) _ = copy(&name, "-");
+
+    var flags: [48:0]u8 = @splat(0);
+    var at: usize = 0;
+    // The container the table shown is in.
+    const holds_table = handle.flags & (rdb.RDBF_CONTAINER | rdb.RDBF_FOUND) == rdb.RDBF_CONTAINER | rdb.RDBF_FOUND;
+    if (holds_table and gpt.isContainer(entry) and entry.starting_lba == handle.container) {
+        at += word(flags[at..], at, "table");
+    }
+    if (entry.attributes & gpt.ATTR_NO_AUTOMOUNT != 0) at += word(flags[at..], at, "nomount");
+    if (entry.attributes & gpt.ATTR_REQUIRED != 0) at += word(flags[at..], at, "required");
+    if (entry.attributes & gpt.ATTR_LEGACY_BOOTABLE != 0) at += word(flags[at..], at, "boot");
+    if (at == 0) at += copy(flags[at..], "-");
+    flags[at] = 0;
+
+    _ = Printf(run.dl, gpt_row, .{
+        @as([*:0]const u8, @ptrCast(&number)),
+        @as([*:0]const u8, @ptrCast(&first)),
+        @as([*:0]const u8, @ptrCast(&last)),
+        @as([*:0]const u8, @ptrCast(&size)),
+        kind,
+        @as([*:0]const u8, @ptrCast(&name)),
+        @as([*:0]const u8, @ptrCast(&flags)),
+    });
+    if (!run.full) return;
+    gpt.formatGuid(&entry.unique_partition_guid, &guid);
+    _ = Printf(run.dl, "      GUID         %s\n", .{@as([*:0]const u8, @ptrCast(&guid))});
+    _ = Printf(run.dl, "      Attributes   0x%016lx\n\n", .{entry.attributes});
 }
 
 /// The file system the table keeps for a DosType, or null.

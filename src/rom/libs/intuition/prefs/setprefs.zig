@@ -13,6 +13,7 @@ const _font = @import("../font/_font.zig");
 const _input = @import("../input/_input.zig");
 const _window = @import("../window/_window.zig");
 const _screen = @import("../screen/_screen.zig");
+const _misc = @import("../misc/_misc.zig");
 const Window = _window.Window;
 const Screen = _screen.Screen;
 const Object = intuition.Object;
@@ -35,8 +36,8 @@ const ic = intuition.imageclass;
 /// RESULT:
 /// True when every setting given was taken; false when one was not - a
 /// value that means nothing, a fixed font that is proportional, no memory
-/// for a style - and then that one keeps its value and the rest are
-/// taken all the same.
+/// for a style or a sound - and then that one keeps its value and the
+/// rest are taken all the same.
 ///
 /// BEHAVIOR:
 /// Each setting takes effect at once and a setting left out keeps its
@@ -63,6 +64,12 @@ const ic = intuition.imageclass;
 ///   sets them - every screen without pens of its own is painted again.
 /// - `IPREFS_Style`: the system's style, as `SetStyle` with no screen
 ///   sets it - every window it reaches is drawn again.
+/// - `IPREFS_BeepFlash`: whether `DisplayBeep` flashes the display, 0 or
+///   1; anything else is refused.
+/// - `IPREFS_BeepSound`: the sound `DisplayBeep` plays, copied, or none
+///   for null. One with no frames, a rate past `AUDIO_MAX_RATE`, other
+///   than one or two channels or a volume past `AUDIO_VOLUME_MAX` is
+///   refused. A beep still sounding is taken back first.
 ///
 /// Every window that asked for `IDCMP_NEWPREFS` is told, whichever
 /// screen it is on: a window that draws something the settings decide
@@ -77,7 +84,7 @@ const ic = intuition.imageclass;
 ///
 /// OWNERSHIP:
 /// The list and all it points to stay the caller's: intuition opens fonts
-/// of its own and copies the pens and the style.
+/// of its own and copies the pens, the style and the beep's sound.
 ///
 /// NOTES:
 /// - What `C:SetPrefs` calls at boot, from the files in `ENV:Sys`.
@@ -159,6 +166,16 @@ pub fn SetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) bool {
                 fonts[at] = @ptrFromInt(item.data);
                 given[at] = true;
                 fonts_given = true;
+            },
+            intuition.IPREFS_BeepFlash => {
+                if (item.data > 1) {
+                    taken = false;
+                    continue;
+                }
+                ib.beep_flash = @truncate(item.data);
+            },
+            intuition.IPREFS_BeepSound => {
+                if (!_misc.setBeepSound(ib, @ptrFromInt(item.data))) taken = false;
             },
             intuition.IPREFS_Pens => it.SetScreenPens(null, @ptrFromInt(item.data)),
             intuition.IPREFS_Style => {

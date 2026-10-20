@@ -5,7 +5,10 @@
 //! usage: posfsck [--data] [--offset <bytes> --length <bytes>] <image>
 //!
 //! Without --offset it finds the volumes itself: a volume that starts the
-//! image (its label first), the posfs partitions (DosType `POS\0`) of a
+//! image (its label first); on an image with a GPT, the posfs partitions
+//! of the RigidDiskBlock in its PowerOS container, counted from the
+//! container's first block, and every GPT partition that starts with a
+//! posfs label; the posfs partitions (DosType `POS\0`) of a
 //! RigidDiskBlock anywhere in the image at a 512-byte boundary - which
 //! finds the disk in a dump of the whole flash too - or the partition of
 //! type 0x7F of a partition table at the image's start, as a card
@@ -29,6 +32,7 @@ const dos = sdk.dos;
 const posfs = dos.posfs;
 const layout = posfs.layout;
 const hardblocks = dos.hardblocks;
+const gpt = dos.gpt;
 const posfs_fs = @import("posfs");
 
 /// The image as posfs's medium contract asks for it, read only: one
@@ -171,13 +175,15 @@ pub fn main(init: std.process.Init) !void {
     });
 }
 
-/// The volumes of an image: one that starts it, the posfs partitions of a
-/// RigidDiskBlock, or a partition table's partition of type 0x7F.
+/// The volumes of an image: one that starts it, those of a GPT, the posfs
+/// partitions of a RigidDiskBlock, or a partition table's partition of
+/// type 0x7F.
 fn findVolumes(arena: mem.Allocator, image: []const u8, into: *std.ArrayList(Place)) !void {
     if (image.len >= @sizeOf(layout.Label) and mem.readInt(u32, image[0..4], .little) == layout.label_magic) {
         try into.append(arena, .{ .offset = 0, .length = image.len, .name = "the volume" });
         return;
     }
+    if (try gptVolumes(arena, image, into)) return;
     var at: usize = 0;
     while (at + 512 <= image.len) : (at += 512) {
         var rdb: hardblocks.RigidDiskBlock = undefined;
@@ -185,24 +191,7 @@ fn findVolumes(arena: mem.Allocator, image: []const u8, into: *std.ArrayList(Pla
         if (!hardblocks.sound(&rdb, hardblocks.IDNAME_RIGIDDISK) or rdb.block_bytes < 256) continue;
         // The RigidDiskBlock is the disk's first block, and the
         // partition list counts in its blocks.
-        var next = rdb.partition_list;
-        var seen: u32 = 0;
-        while (next != hardblocks.end_of_list and seen < 64) : (seen += 1) {
-            const where = at + @as(u64, next) * rdb.block_bytes;
-            if (where + @sizeOf(hardblocks.PartitionBlock) > image.len) break;
-            var part: hardblocks.PartitionBlock = undefined;
-            @memcpy(layout.bytesOfMut(&part), image[@intCast(where)..][0..@sizeOf(hardblocks.PartitionBlock)]);
-            if (!hardblocks.sound(&part, hardblocks.IDNAME_PARTITION)) break;
-            const env = &part.environment;
-            if (env.dos_type == posfs.ID_POSFS_DISK and !env.wholeMedium()) {
-                try into.append(arena, .{
-                    .offset = at + env.byteOf(0),
-                    .length = env.blocks() * env.size_block,
-                    .name = try arena.dupe(u8, part.name()),
-                });
-            }
-            next = part.next;
-        }
+        try tableVolumes(arena, image, at, &rdb, into);
         return;
     }
     // A partition table: four entries from byte 446, its mark at 510.
@@ -215,6 +204,79 @@ fn findVolumes(arena: mem.Allocator, image: []const u8, into: *std.ArrayList(Pla
             try into.append(arena, .{ .offset = @as(u64, first) * 512, .length = @as(u64, count) * 512, .name = "the partition" });
         }
     }
+}
+
+/// The posfs partitions of a RigidDiskBlock, whose block numbers count
+/// from byte `start` of the image: the disk's start, or a container's.
+fn tableVolumes(arena: mem.Allocator, image: []const u8, start: u64, rdb: *const hardblocks.RigidDiskBlock, into: *std.ArrayList(Place)) !void {
+    var next = rdb.partition_list;
+    var seen: u32 = 0;
+    while (next != hardblocks.end_of_list and seen < 64) : (seen += 1) {
+        const where = start + @as(u64, next) * rdb.block_bytes;
+        if (where + @sizeOf(hardblocks.PartitionBlock) > image.len) break;
+        var part: hardblocks.PartitionBlock = undefined;
+        @memcpy(layout.bytesOfMut(&part), image[@intCast(where)..][0..@sizeOf(hardblocks.PartitionBlock)]);
+        if (!hardblocks.sound(&part, hardblocks.IDNAME_PARTITION)) break;
+        const env = &part.environment;
+        if (env.dos_type == posfs.ID_POSFS_DISK and !env.wholeMedium()) {
+            try into.append(arena, .{
+                .offset = start + env.byteOf(0),
+                .length = env.blocks() * env.size_block,
+                .name = try arena.dupe(u8, part.name()),
+            });
+        }
+        next = part.next;
+    }
+}
+
+/// The volumes of an image with a sound GPT, in 512-byte blocks: those of
+/// the table in its first container, and each partition that starts with
+/// a posfs label. Whether the image has one.
+fn gptVolumes(arena: mem.Allocator, image: []const u8, into: *std.ArrayList(Place)) !bool {
+    const bytes = 512;
+    const blocks: u64 = image.len / bytes;
+    if (blocks < 4) return false;
+    if (!gpt.protective(image[0..bytes]) and !gpt.signed(image[bytes..][0..bytes])) return false;
+    const header = soundGpt(image, 1) orelse soundGpt(image, blocks - 1) orelse return false;
+    const entries = image[@intCast(header.partition_entry_lba * bytes)..][0..@intCast(gpt.entriesLength(&header))];
+    var found_container = false;
+    var index: u32 = 0;
+    while (index < header.number_of_partition_entries) : (index += 1) {
+        const entry = gpt.entryAt(&header, entries, index);
+        if (!gpt.used(&entry)) continue;
+        const start = entry.starting_lba * bytes;
+        const length = (entry.ending_lba - entry.starting_lba + 1) * bytes;
+        if (gpt.isContainer(&entry) and !found_container) {
+            found_container = true;
+            var block: u64 = 0;
+            while (block < hardblocks.RDB_LOCATION_LIMIT) : (block += 1) {
+                var rdb: hardblocks.RigidDiskBlock = undefined;
+                @memcpy(layout.bytesOfMut(&rdb), image[@intCast(start + block * bytes)..][0..@sizeOf(hardblocks.RigidDiskBlock)]);
+                if (!hardblocks.sound(&rdb, hardblocks.IDNAME_RIGIDDISK)) continue;
+                if (rdb.block_bytes == bytes) try tableVolumes(arena, image, start, &rdb, into);
+                break;
+            }
+            continue;
+        }
+        if (mem.readInt(u32, image[@intCast(start)..][0..4], .little) != layout.label_magic) continue;
+        var name: [gpt.name_units:0]u8 = undefined;
+        const text = gpt.nameText(&entry, &name);
+        const shown = if (text.len != 0) try arena.dupe(u8, text) else try std.fmt.allocPrint(arena, "partition {d}", .{index + 1});
+        try into.append(arena, .{ .offset = start, .length = length, .name = shown });
+    }
+    return true;
+}
+
+/// The GPT header in block `at` of the image when it and its entries are
+/// sound.
+fn soundGpt(image: []const u8, at: u64) ?gpt.Header {
+    const bytes = 512;
+    const header = gpt.readHeader(image[@intCast(at * bytes)..][0..bytes], at, image.len / bytes) orelse return null;
+    const from = header.partition_entry_lba * bytes;
+    const length = gpt.entriesLength(&header);
+    if (from + length > image.len) return null;
+    if (!gpt.entriesSound(&header, image[@intCast(from)..][0..@intCast(length)])) return null;
+    return header;
 }
 
 /// Fault after fault, as the check finds them.

@@ -9,16 +9,23 @@ Generated from the source by `./zig build autodoc`.
 ## Index
 
 - [AddFileSystem](#addfilesystem) - Keeps a handler's load file in a handle's table, for the partitions of one DosType.
+- [AddGPTPartition](#addgptpartition) - Adds a partition to a handle's GPT, over blocks no other partition has.
 - [AddPartition](#addpartition) - Adds a partition to a handle's table, over cylinders no other partition has.
-- [CloseRDB](#closerdb) - Lets go of a handle: its partition nodes, its buffer and the unit it has open.
+- [CloseRDB](#closerdb) - Lets go of a handle: its partition nodes, its GPT's, its buffer and the unit it has open.
 - [FindPartition](#findpartition) - The partition of a handle that has a name, in any case.
+- [InitGPT](#initgpt) - Puts a fresh GPT for the whole medium in a handle, with no partitions.
 - [InitRDB](#initrdb) - Puts a fresh RigidDiskBlock for the whole medium in a handle, with no partitions.
+- [MountGPTPartition](#mountgptpartition) - Puts a partition of a disk's GPT on dos's list as a device node, so that the file system on it can be started.
 - [MountPartition](#mountpartition) - Puts a partition on dos's list as a device node, so that its file system can be started.
 - [NextFileSystem](#nextfilesystem) - The file system after another on a handle's list of the table's file systems, or the first.
+- [NextGPTPartition](#nextgptpartition) - Gives the GPT partition after another on a handle's list, or the first.
 - [NextPartition](#nextpartition) - The partition after another on a handle's list, or the first.
 - [OpenRDB](#openrdb) - Opens a unit of a block device and reads what the disk says about itself into a handle.
 - [RemFileSystem](#remfilesystem) - Takes a file system's code out of a handle's table and frees it.
+- [RemGPT](#remgpt) - Takes the GPT out of a handle, so that InitRDB makes a table over the whole disk, and WriteRDB wipes the disk's GPT once it has written it.
+- [RemGPTPartition](#remgptpartition) - Takes a partition off a handle's GPT and frees it.
 - [RemPartition](#rempartition) - Takes a partition off a handle's list and frees it.
+- [WriteGPT](#writegpt) - Checks a handle's GPT and writes it to the disk: the copy at the end, then the one at the start, then the protective MBR.
 - [WriteRDB](#writerdb) - Checks a handle's table and writes it to the disk: the code of its file systems, a FileSysHeaderBlock per file system, a PartitionBlock per partition, then the RigidDiskBlock.
 
 ## AddFileSystem
@@ -94,6 +101,80 @@ None known.
 // `code` holds HANDLERS:posfs-handler, read with Open and Read.
 const err = rb.AddFileSystem(handle, sdk.dos.posfs.ID_POSFS_DISK, code, size);
 if (err == rdb.RDBERR_OK) _ = rb.WriteRDB(handle);
+```
+
+## AddGPTPartition
+
+Adds a partition to a handle's GPT, over blocks no other partition has.
+
+**SYNOPSIS**
+
+```zig
+fn AddGPTPartition(base: *RDBBase, handle: *rdb.RDBHandle, entry: *const gpt.Entry, err: ?*i32) ?*rdb.GPTPartition
+```
+
+**SINCE**
+
+1.4. LVO -80.
+
+**INPUTS**
+
+- `handle`: from OpenRDB with a sound GPT, or after InitGPT.
+- `entry`: the partition: its type (`partition_type_guid`), its first
+  and last block (`starting_lba`, `ending_lba`; both 0 for the largest
+  free run), its attributes and its name. A `unique_partition_guid` of
+  all zeroes gets a new random one.
+- `err`: where the reason goes when the answer is null, or null.
+
+**RESULT**
+
+The new partition, on the handle's list; `err` is then RDBERR_OK.
+Null for RDBERR_NOGPT, a handle without a sound GPT; RDBERR_GPT, a
+type of all zeroes or a container where the GPT has one; RDBERR_RANGE,
+blocks outside the usable ones, the wrong way round, another
+partition's, or a first block not on a multiple of
+`gpt.alignment_bytes` - or, for 0 and 0, no aligned block free;
+RDBERR_FULL, every entry used; RDBERR_NOMEM.
+
+**BEHAVIOR**
+
+The partition gets the lowest entry number no partition has. A
+container (`gpt.TYPE_CONTAINER`) becomes the handle's window: RDBF_CONTAINER
+is set, `container` is its first block and `geometry` counts its
+blocks, and InitRDB makes a table in it. Only the handle changes, and
+RDBF_GPTCHANGED is set; WriteGPT puts the partition on the disk.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The partition is the handle's, freed by RemGPTPartition or CloseRDB.
+
+**NOTES**
+
+Nothing is written on the partition's blocks: what was there stays
+until a file system is formatted on it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InitGPT`, `RemGPTPartition`, `WriteGPT`, `MountGPTPartition`
+
+**EXAMPLES**
+
+```zig
+var entry: gpt.Entry = .{ .partition_type_guid = gpt.TYPE_BASIC_DATA };
+gpt.setName(&entry, "Shared");
+var err: i32 = 0;
+const part = rb.AddGPTPartition(handle, &entry, &err) orelse return err;
 ```
 
 ## AddPartition
@@ -177,7 +258,7 @@ const err = rb.WriteRDB(handle);
 
 ## CloseRDB
 
-Lets go of a handle: its partition nodes, its buffer and the unit it has open.
+Lets go of a handle: its partition nodes, its GPT's, its buffer and the unit it has open.
 
 **SYNOPSIS**
 
@@ -199,8 +280,9 @@ None.
 
 **BEHAVIOR**
 
-Nothing is written: a table changed and not written with WriteRDB is
-dropped, and the disk keeps the one it has. Null does nothing.
+Nothing is written: a table changed and not written with WriteRDB, or
+a GPT not written with WriteGPT, is dropped, and the disk keeps what
+it has. Null does nothing.
 
 **CONTEXT**
 
@@ -211,8 +293,8 @@ dropped, and the disk keeps the one it has. Null does nothing.
 
 **OWNERSHIP**
 
-The handle and every RDBPartition of it are freed; a pointer to any of
-them is no use afterwards.
+The handle and every RDBPartition, RDBFileSystem and GPTPartition of
+it are freed; a pointer to any of them is no use afterwards.
 
 **NOTES**
 
@@ -291,6 +373,80 @@ const part = rb.FindPartition(handle, "DH1") orelse return;
 part.block.flags |= hardblocks.PBFF_BOOTABLE;
 ```
 
+## InitGPT
+
+Puts a fresh GPT for the whole medium in a handle, with no partitions.
+
+**SYNOPSIS**
+
+```zig
+fn InitGPT(base: *RDBBase, handle: *rdb.RDBHandle) i32
+```
+
+**SINCE**
+
+1.4. LVO -76.
+
+**INPUTS**
+
+- `handle`: from OpenRDB, with any table or none.
+
+**RESULT**
+
+RDBERR_OK, or RDBERR_RANGE for a medium too small for the GPT's two
+copies and one partition aligned between them.
+
+**BEHAVIOR**
+
+The header is made for the medium as TD_GETGEOMETRY tells it: the
+medium's own block size, room for `gpt.entries_made` entries of
+`gpt.entry_bytes` after it in block 2 and before the copy in the last
+block, every block between them usable, and a new random disk GUID.
+Partitions AddGPTPartition makes start on a multiple of
+`gpt.alignment_bytes`.
+
+Whatever the handle held goes: the GPT partitions, a RigidDiskBlock
+table with its partitions and file systems, the window onto a
+container. The handle then has RDBF_GPT and RDBF_GPTCHANGED, and no
+table until a container is added and InitRDB makes one in it. Only the
+handle changes; WriteGPT puts the GPT on the disk, and until then the
+disk keeps what it had.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The partitions and file systems are freed; a pointer to any of them is
+no use afterwards.
+
+**NOTES**
+
+A GPT that replaces a RigidDiskBlock table over the whole disk has
+that table's blocks written over by WriteGPT.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddGPTPartition`, `WriteGPT`, `RemGPT`, `InitRDB`
+
+**EXAMPLES**
+
+```zig
+if (rb.InitGPT(handle) != rdb.RDBERR_OK) return;
+var entry: gpt.Entry = .{ .partition_type_guid = gpt.TYPE_CONTAINER };
+gpt.setName(&entry, "PowerOS");
+_ = rb.AddGPTPartition(handle, &entry, null) orelse return;
+_ = rb.InitRDB(handle);
+```
+
 ## InitRDB
 
 Puts a fresh RigidDiskBlock for the whole medium in a handle, with no partitions.
@@ -311,8 +467,11 @@ fn InitRDB(base: *RDBBase, handle: *rdb.RDBHandle) i32
 
 **RESULT**
 
-RDBERR_OK, or RDBERR_RANGE for a medium with too few blocks for the
-table and one partition (RDB_LOCATION_LIMIT and two more).
+RDBERR_OK; RDBERR_RANGE for a medium with too few blocks for the
+table and one partition (RDB_LOCATION_LIMIT and two more), or a
+container that does not start on a multiple of the table's cylinder;
+RDBERR_GPT for a disk with a GPT and no container in it, whose other
+partitions the table would be written over.
 
 **BEHAVIOR**
 
@@ -331,6 +490,12 @@ the table's area starts at the second, which is still among the blocks
 the RigidDiskBlock is looked for in, and the PC goes on seeing its
 partitions. A partition of the table may then name the same blocks as
 one of the PC's, so the one volume is the PC's and this system's.
+
+On a disk with a GPT the table is the container's (RDBF_CONTAINER):
+made for the container's blocks, which `geometry` counts, from its
+first block on. A disk with a GPT and no container gets no table:
+AddGPTPartition adds a container, or RemGPT takes the GPT out of the
+handle for a table over the whole disk.
 
 Every partition and every file system is taken off its list and
 freed, and the chains of bad blocks and drive init code the disk had
@@ -363,7 +528,7 @@ None known.
 
 **SEE ALSO**
 
-`OpenRDB`, `AddPartition`, `WriteRDB`
+`OpenRDB`, `AddPartition`, `WriteRDB`, `InitGPT`, `RemGPT`
 
 **EXAMPLES**
 
@@ -371,6 +536,100 @@ None known.
 if (rb.InitRDB(handle) != rdb.RDBERR_OK) return;
 _ = rb.AddPartition(handle, "SD0", 0, 0, dos_type);
 const err = rb.WriteRDB(handle);
+```
+
+## MountGPTPartition
+
+Puts a partition of a disk's GPT on dos's list as a device node, so that the file system on it can be started.
+
+**SYNOPSIS**
+
+```zig
+fn MountGPTPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.GPTPartition, name: [*:0]const u8, mounted: ?*rdb.MountName, flags: u32) i32
+```
+
+**SINCE**
+
+1.4. LVO -72.
+
+**INPUTS**
+
+- `handle`: from OpenRDB, with RDBF_GPT.
+- `partition`: one of the handle's GPT partitions, not the container.
+- `name`: what the drive is to be called, without the colon (`SD0`,
+  `SD0P3`).
+- `mounted`: where the name the node got goes, or null.
+- `flags`: RDBMF_START to start the handler before the call returns;
+  0 leaves it to the drive's first use.
+
+**RESULT**
+
+RDBERR_OK when the node is on the list, and `mounted` holds its name.
+RDBERR_NOGPT for a handle without a GPT; RDBERR_FILESYSTEM for the
+container, or a partition whose first block holds no file system this
+machine reads or one that cannot go on this medium; RDBERR_NAME for a
+name that is empty, too long, holds a colon or a slash, or is taken
+with every dot that fits; RDBERR_RANGE for a partition a cylinder
+cannot be found for (one that starts on an odd block of a disk of 2^32
+blocks or more); RDBERR_IO when its first block cannot be read;
+RDBERR_CHANGED when the medium in the unit is not the one the GPT was
+read from; RDBERR_MOUNTED when a device node on the list already opens
+some of its blocks; RDBERR_NOMEM. The list is unchanged by a failure.
+
+**BEHAVIOR**
+
+The partition's first block says what it holds: a posfs label gives
+posfs (`POS\0`), the boot sector of a FAT32 or exFAT volume FAT
+(`MSD\0`); the handler is the one that DosType asks for. The node opens
+the handle's device and unit, its environment names the partition's
+blocks and no more, with the medium's block size and memory, and it is
+called `name`, with a dot added while dos's list has a device or an
+assign of the name, as MountPartition does.
+
+A node of the same unit whose area shares a block with the partition's
+stops it, as it stops MountPartition: a drive over the whole medium,
+or the partition mounted already.
+
+**CONTEXT**
+
+- Waits: yes, on the device, for the dos list's lock, and with
+  RDBMF_START for the handler.
+- Interrupts: no.
+- Locks: no spinlock may be held, nor the dos list.
+- Process: a Task will do; a Process with RDBMF_START.
+
+**OWNERSHIP**
+
+The node is the list's, for the system's life; the handle and the
+partition stay the caller's.
+
+**NOTES**
+
+`gpt.ATTR_NO_AUTOMOUNT` is the caller's to honour, as PBFF_NOMOUNT is
+MountPartition's: a medium's partitions are mounted when it comes in
+without the ones that have it. The container's partitions are mounted
+with MountPartition.
+
+Once a partition is mounted the library stays in memory for the
+system's life.
+
+**BUGS**
+
+A FAT12 or FAT16 volume - a small EFI System partition is often one -
+is not one the FAT handler reads, and is not mounted.
+
+**SEE ALSO**
+
+`NextGPTPartition`, `MountPartition`, `OpenRDB`
+
+**EXAMPLES**
+
+```zig
+var name: rdb.MountName = undefined;
+const part = rb.NextGPTPartition(handle, null) orelse return;
+if (rb.MountGPTPartition(handle, part, "SD0", &name, rdb.RDBMF_START) == rdb.RDBERR_OK) {
+    _ = Printf(dl, "mounted as %s:\n", .{@as([*:0]const u8, &name)});
+}
 ```
 
 ## MountPartition
@@ -406,8 +665,10 @@ the table's code cannot be read; RDBERR_NAME for a partition name that is
 empty or too long, or one taken on the list with every dot that fits;
 RDBERR_CHANGED when the medium in the unit is not the one the table
 was read from; RDBERR_MOUNTED when a device node on the list already
-opens some of the partition's blocks; RDBERR_NOMEM for no memory. The
-list is unchanged by a failure.
+opens some of the partition's blocks; RDBERR_RANGE for a partition of
+a container that does not start on a multiple of the partition's
+cylinder, or that reaches past the cylinders 32 bits count;
+RDBERR_NOMEM for no memory. The list is unchanged by a failure.
 
 **BEHAVIOR**
 
@@ -417,7 +678,9 @@ an assign of that name, a dot is added and the name tried again - `DH0`,
 disk whose table names its partitions as the first's gets drives of
 its own. The node opens the handle's device and unit with the
 partition's device flags, its environment is a copy of the
-partition's, and its handler is the one its DosType asks for: the
+partition's - with the container's cylinders added for a table in a
+GPT's container (RDBF_CONTAINER), so it names the partition's blocks
+on the disk - and its handler is the one its DosType asks for: the
 flash file system's for `FLS\0`, posfs's for `POS\0`, fat-handler for
 `MSD\0`.
 
@@ -550,6 +813,70 @@ while (file_system) |fs| : (file_system = rb.NextFileSystem(handle, fs)) {
 }
 ```
 
+## NextGPTPartition
+
+Gives the GPT partition after another on a handle's list, or the first.
+
+**SYNOPSIS**
+
+```zig
+fn NextGPTPartition(base: *RDBBase, handle: *rdb.RDBHandle, previous: ?*rdb.GPTPartition) ?*rdb.GPTPartition
+```
+
+**SINCE**
+
+1.4. LVO -68.
+
+**INPUTS**
+
+- `handle`: from OpenRDB.
+- `previous`: a partition of the handle's GPT, or null for the first.
+
+**RESULT**
+
+The next partition, or null after the last, and on a handle without
+RDBF_GPT.
+
+**BEHAVIOR**
+
+The list is in the order of the GPT's entries, by `number`; unused
+entries have no node. The container is on it, as a partition of the
+type `gpt.TYPE_CONTAINER`.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The partition stays the handle's.
+
+**NOTES**
+
+Taking `previous` off the list in the walk ends it: hold on to the
+next one first.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenRDB`, `MountGPTPartition`, `AddGPTPartition`, `NextPartition`
+
+**EXAMPLES**
+
+```zig
+var name: [gpt.name_units:0]u8 = undefined;
+var part = rb.NextGPTPartition(handle, null);
+while (part) |p| : (part = rb.NextGPTPartition(handle, p)) {
+    _ = Printf(dl, "%u: %s\n", .{ p.number, gpt.nameText(&p.entry, &name).ptr });
+}
+```
+
 ## NextPartition
 
 The partition after another on a handle's list, or the first.
@@ -653,6 +980,22 @@ flags say what was found:
 - RDBF_FOREIGN: a RigidDiskBlock written for another block size,
   which is left as it is and counts as none.
 
+A disk with no RigidDiskBlock of its own whose first block is a
+protective MBR, or whose second begins with a GPT header, holds a GPT
+(`sdk.dos.gpt`):
+- RDBF_GPT: its partitions are on `gpt_partitions`, a GPTPartition per
+  used entry, and its header is `gpt_header` - the one in block 1 with
+  its entries where both are sound, the copy in the last block
+  otherwise, which also sets RDBF_GPTCHANGED.
+- RDBF_GPTDAMAGED: neither copy is sound, and the list is empty.
+- RDBF_CONTAINER: the first of its partitions of the type
+  `gpt.TYPE_CONTAINER` is where the table is looked for, as on a disk
+  of its own: `container` is its first block on the disk, every block
+  number and cylinder of the table counts from there, `geometry`
+  counts the container's blocks and `disk_blocks` the disk's.
+A RigidDiskBlock in the disk's own first blocks is the table even where
+the disk has a GPT too, and the GPT is not read.
+
 A disk with no table is not a failure - that is how a blank one looks -
 and InitRDB makes it one. The blocks of the file system headers, of
 their code and of the bad-block list are noted, so WriteRDB never puts
@@ -684,7 +1027,7 @@ WriteRDB uses none of them.
 
 **SEE ALSO**
 
-`CloseRDB`, `NextPartition`, `InitRDB`, `WriteRDB`
+`CloseRDB`, `NextPartition`, `InitRDB`, `WriteRDB`, `NextGPTPartition`
 
 **EXAMPLES**
 
@@ -757,6 +1100,137 @@ if (rb.NextFileSystem(handle, null)) |file_system| rb.RemFileSystem(handle, file
 _ = rb.WriteRDB(handle);
 ```
 
+## RemGPT
+
+Takes the GPT out of a handle, so that InitRDB makes a table over the whole disk, and WriteRDB wipes the disk's GPT once it has written it.
+
+**SYNOPSIS**
+
+```zig
+fn RemGPT(base: *RDBBase, handle: *rdb.RDBHandle) void
+```
+
+**SINCE**
+
+1.4. LVO -92.
+
+**INPUTS**
+
+- `handle`: from OpenRDB.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The GPT partitions are freed, and so is a table in the container with
+its partitions and file systems; the handle has no window, no table,
+and none of RDBF_GPT, RDBF_GPTDAMAGED, RDBF_GPTCHANGED and
+RDBF_CONTAINER. Where the disk holds a GPT, the next WriteRDB wipes it
+after its table is down: the header in block 1, the copy in the last
+block, and the protective MBR, where the new table does not use those
+blocks. A handle without a GPT is left as it is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The GPT partitions and the dropped table's nodes are freed; a pointer
+to any of them is no use afterwards.
+
+**NOTES**
+
+Every partition of the GPT is lost with it, the PC's and the
+container's, once WriteRDB has run.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InitRDB`, `WriteRDB`, `InitGPT`
+
+**EXAMPLES**
+
+```zig
+rb.RemGPT(handle);
+if (rb.InitRDB(handle) != rdb.RDBERR_OK) return;
+_ = rb.AddPartition(handle, "DH1", 0, 0, sdk.dos.posfs.ID_POSFS_DISK);
+_ = rb.WriteRDB(handle);
+```
+
+## RemGPTPartition
+
+Takes a partition off a handle's GPT and frees it.
+
+**SYNOPSIS**
+
+```zig
+fn RemGPTPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.GPTPartition) void
+```
+
+**SINCE**
+
+1.4. LVO -84.
+
+**INPUTS**
+
+- `handle`: from OpenRDB.
+- `partition`: one of the handle's GPT partitions.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The partition's entry is unused from now on, and RDBF_GPTCHANGED is
+set. Taking out the container the table is in takes the table with
+it, as InitGPT does: its partitions and file systems are freed, and
+the handle has no window and no table. A second container on the GPT
+stays a partition of the GPT to the handle. Only the handle changes;
+WriteGPT puts the change on the disk.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The partition is freed; a pointer to it is no use afterwards, and so
+are pointers to a dropped table's partitions.
+
+**NOTES**
+
+Nothing on the partition's blocks is touched, and a drive mounted from
+it stays until the system starts again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddGPTPartition`, `WriteGPT`, `RemGPT`
+
+**EXAMPLES**
+
+```zig
+const part = rb.NextGPTPartition(handle, null) orelse return;
+rb.RemGPTPartition(handle, part);
+_ = rb.WriteGPT(handle);
+```
+
 ## RemPartition
 
 Takes a partition off a handle's list and frees it.
@@ -817,6 +1291,95 @@ if (rb.FindPartition(handle, "DH1")) |part| rb.RemPartition(handle, part);
 _ = rb.WriteRDB(handle);
 ```
 
+## WriteGPT
+
+Checks a handle's GPT and writes it to the disk: the copy at the end, then the one at the start, then the protective MBR.
+
+**SYNOPSIS**
+
+```zig
+fn WriteGPT(base: *RDBBase, handle: *rdb.RDBHandle) i32
+```
+
+**SINCE**
+
+1.4. LVO -88.
+
+**INPUTS**
+
+- `handle`: from OpenRDB with a sound GPT, or after InitGPT.
+
+**RESULT**
+
+RDBERR_OK when both copies are on the disk. Before anything is
+written: RDBERR_NOGPT for a handle without a sound GPT;
+RDBERR_BLOCKSIZE for a medium whose erase unit is larger than its
+blocks; RDBERR_CHANGED when the medium in the unit is not the one the
+GPT was read from; RDBERR_RANGE for a partition whose blocks are
+outside the usable ones, the wrong way round or another's, or a GPT
+whose copy at the end does not fit before the disk's last block;
+RDBERR_NOMEM. RDBERR_IO when the device refused a write, part of the
+way through.
+
+**BEHAVIOR**
+
+The entries are made from the handle's list, each partition's in its
+place by `number`, every other entry zeroes; both headers carry their
+crc32 and the entries'. The header in block 1 names the copy in the
+disk's last block, its entries follow it from block 2, and the copy's
+entries follow the last usable block. The disk's GUID, its usable
+blocks, the entries' count and size are the handle's `gpt_header`'s,
+as read or as InitGPT made them; a disk that has grown since keeps its
+usable blocks, and the copy moves to its new last block.
+
+The copy at the end is written first, then the entries and the header
+at the start, so that the disk holds a whole GPT at every point of the
+write (see the top of the file). Block 0 is made a protective MBR
+where it is not one - a hybrid MBR is left as it is - and a
+RigidDiskBlock in the first RDB_LOCATION_LIMIT blocks that the GPT did
+not write over is wiped. A medium that wants erasing has each block
+erased before it is written. CMD_UPDATE ends it.
+
+Afterwards `gpt_header` is the header in block 1, and RDBF_GPTCHANGED
+is cleared.
+
+Nothing but the GPT's blocks and those wiped is written: what is on a
+partition's blocks stays.
+
+**CONTEXT**
+
+- Waits: yes, on the device.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: the task that opened the handle.
+
+**OWNERSHIP**
+
+The handle stays the caller's.
+
+**NOTES**
+
+Write the GPT before the table in its container: WriteRDB refuses a
+table in a container that is not on the disk yet (RDBERR_GPT).
+
+A drive mounted from a partition keeps its blocks until the system
+starts again.
+
+**BUGS**
+
+A cut after the protective MBR and before a RigidDiskBlock in the
+first blocks is wiped leaves the disk read as that table's.
+
+**SEE ALSO**
+
+`InitGPT`, `AddGPTPartition`, `RemGPTPartition`, `WriteRDB`
+
+**EXAMPLES**
+
+```zig
+if (rb.WriteGPT(handle) == rdb.RDBERR_OK) _ = rb.WriteRDB(handle);
+```
+
 ## WriteRDB
 
 Checks a handle's table and writes it to the disk: the code of its file systems, a FileSysHeaderBlock per file system, a PartitionBlock per partition, then the RigidDiskBlock.
@@ -848,8 +1411,9 @@ table's usable ones, the wrong way round or another's; RDBERR_FULL for
 more partitions than the table's own blocks hold, more than 16 file
 systems, or code that does not fit even with the area grown up to the
 first partition; RDBERR_NOMEM; RDBERR_IO when a block of the disk's
-chain of file systems cannot be read. RDBERR_IO when the device
-refused a write, part of the way through.
+chain of file systems cannot be read; RDBERR_GPT for a table in a
+container whose GPT the handle changed and WriteGPT has not written.
+RDBERR_IO when the device refused a write, part of the way through.
 
 **BEHAVIOR**
 
@@ -879,6 +1443,12 @@ wants erasing has each block erased before it is written, and a wiped
 block erased; on any other a wiped block is written with zeroes.
 CMD_UPDATE ends it, so a device that holds writes back has them on the
 medium when the call returns.
+
+A table in a GPT's container (RDBF_CONTAINER) is written inside the
+container, every block number counted from its first block. A table
+written after RemGPT on a disk that held a GPT wipes the GPT once the
+table is down: the header in block 1, its copy in the last block and
+the protective MBR, where the table does not use those blocks.
 
 Afterwards `block` is the RigidDiskBlock's, each partition's and each
 file system's `at` is its block, a file system's `blocks` counts its

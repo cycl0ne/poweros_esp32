@@ -393,7 +393,8 @@ Grid is on everywhere, its mark the prefs'.
 | Execute Command | a command asked for and run, its output in a window that opens if it prints |
 | Redraw All, Update All | every window drawn again; the disks looked at and every drawer read again |
 | Last Message | what the desktop last said in the screen's title, said again |
-| About | the desktop's version and what it runs on: the system's release, the board, the processor (the chip, how many cores, the clock), the memory - all of it and how much is free, then the internal memory and the PSRAM apart - and the screen's size and depth, each asked of the running system |
+| Volume | SYS:Programs/Volume: the output played through and how loud it is |
+| About | the desktop's version and what it runs on: the system's release, the board, the processor (the chip, how many cores, the clock), the memory - all of it and how much is free, then the internal memory and the PSRAM apart, or on a machine whose RAM is one kind the first line alone - and the screen's size and depth, each asked of the running system |
 | Quit | |
 
 ## Trying it

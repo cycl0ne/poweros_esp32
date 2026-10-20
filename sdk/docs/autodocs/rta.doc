@@ -1,0 +1,1636 @@
+TABLE OF CONTENTS
+
+rta.library/AddRtaDriver
+rta.library/AudioTransportBuffer
+rta.library/AudioTransportInput
+rta.library/CreateAudioTransportTagList
+rta.library/CreateSinkTagList
+rta.library/CreateSourceTagList
+rta.library/DeleteAudioTransport
+rta.library/DeleteSink
+rta.library/DeleteSource
+rta.library/FindRtaDriver
+rta.library/FindSink
+rta.library/FindSinkMode
+rta.library/LockRtaDrivers
+rta.library/NextRtaDriver
+rta.library/NextSink
+rta.library/NextSinkMode
+rta.library/NextSource
+rta.library/NextSourceMode
+rta.library/PlayAudioTransportBuffer
+rta.library/PlaySinkBuffer
+rta.library/RemRtaDriver
+rta.library/RtaErrorText
+rta.library/RtaLastError
+rta.library/SetSinkMode
+rta.library/SinkBuffer
+rta.library/SinkControl
+rta.library/SinkMode
+rta.library/SourceBuffer
+rta.library/StartAudioTransport
+rta.library/StartAudioTransportInput
+rta.library/StartSink
+rta.library/StartSource
+rta.library/StopAudioTransport
+rta.library/StopAudioTransportInput
+rta.library/StopSink
+rta.library/StopSource
+rta.library/UnlockRtaDrivers
+rta.library/AddRtaDriver                              rta.library/AddRtaDriver
+
+   NAME
+	AddRtaDriver -- Puts a driver on the library's list.
+
+   SYNOPSIS
+	    fn AddRtaDriver(rb: *RtaBase, driver: *rta.RtaDriver) bool
+
+   SINCE
+	1.0. LVO -20.
+
+   INPUTS
+	- `driver` - the driver, with its name in `node.name`, what it makes in
+	  `type` and its operations in `ops`. On no list yet.
+
+   RESULT
+	True if it went on. False for a driver with no name, no operations, or
+	operations that fill in none of `create_sink`, `create_transport` and
+	`create_source`, and for a name already on the list.
+
+   BEHAVIOR
+	The list is kept by priority, so a caller walking it meets the most
+	wanted driver first. A driver that can make no sink, no line and no
+	source would sit on the list answering nothing, so it is refused.
+
+   CONTEXT
+	- Waits: yes, while another task holds the driver list.
+	- Interrupts: no. It may wait.
+	- Locks: no spinlock may be held: it waits for a lock.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The driver stays its own module's. The list holds it until
+	`RemRtaDriver`.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`RemRtaDriver`, `FindRtaDriver`, `CreateSinkTagList`
+
+   EXAMPLES
+	    if (!rb.AddRtaDriver(&state.driver)) return error.DriverRefused;
+rta.library/AudioTransportBuffer              rta.library/AudioTransportBuffer
+
+   NAME
+	AudioTransportBuffer -- The next buffer of a running line to fill.
+
+   SYNOPSIS
+	    fn AudioTransportBuffer(rb: *RtaBase, io: *rta.AudioTransport) ?[*]i16
+
+   SINCE
+	1.0. LVO -100.
+
+   INPUTS
+	- `io` - a started line.
+
+   RESULT
+	The buffer just played, `buffer_frames` stereo frames of 16-bit
+	samples, or null when none has been played since the last one was
+	asked for, or the line is not started.
+
+   BEHAVIOR
+	As `SinkBuffer`, for a sink's driver: the buffers played again because
+	the caller came late are counted in the line's `underruns`.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The buffer is the caller's to write until `PlayAudioTransportBuffer`.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`PlayAudioTransportBuffer`, `SinkBuffer`
+
+   EXAMPLES
+	    const frames = rb.AudioTransportBuffer(io) orelse return null;
+rta.library/AudioTransportInput                rta.library/AudioTransportInput
+
+   NAME
+	AudioTransportInput -- The buffer a running way in has just filled.
+
+   SYNOPSIS
+	    fn AudioTransportInput(rb: *RtaBase, io: *rta.AudioTransport) ?[*]const i16
+
+   SINCE
+	1.3. LVO -164.
+
+   INPUTS
+	- `io` - a line whose way in is started.
+
+   RESULT
+	The buffer filled last, `buffer_frames` stereo frames of 16-bit
+	samples, or null when none has been filled since the last one was
+	taken, or the way in is not started.
+
+   BEHAVIOR
+	As `SourceBuffer`, for a source's driver: the buffers lost because the
+	caller came late are counted in the line's `overruns`. Where the data
+	cache covers the ring, the buffer comes back read from memory.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The buffer is the line's memory, the caller's to read until the ring
+	comes round to it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StartAudioTransportInput`, `SourceBuffer`
+
+   EXAMPLES
+	    const frames = rb.AudioTransportInput(io) orelse return null;
+rta.library/CreateAudioTransportTagList rta.library/CreateAudioTransportTagList
+
+   NAME
+	CreateAudioTransportTagList -- Makes a line from a driver, for a sink to play through.
+
+   SYNOPSIS
+	    fn CreateAudioTransportTagList(rb: *RtaBase, driver_name: [*:0]const u8, tag_list: ?[*]const TagItem) ?*rta.AudioTransport
+
+   SINCE
+	1.0. LVO -84.
+
+   INPUTS
+	- `driver_name` - the driver to make it with ("i2s").
+	- `tag_list` - the `RTAA_` options - its name, data for the caller,
+	  `RTAA_ErrorPtr` for the reason if it fails - and the part's `PART_`
+	  tags, whose pads the line drives.
+
+   RESULT
+	The line, or null. `RtaLastError` - and `RTAA_ErrorPtr`, if given -
+	then says why: `RTAERR_NO_DRIVER`, `RTAERR_NO_MEMORY`, or what the
+	driver answered - `RTAERR_BAD_TAGS` for a part whose lines are not
+	pads of the chip.
+
+   BEHAVIOR
+	A part fed over I2S is two drivers: one for the line and one for the
+	part, whose sink names the line with `RTAA_Transport` when it is made.
+	Nothing is touched until the sink starts it.
+
+   CONTEXT
+	- Waits: yes, while another task holds the sink list, and if the
+	  driver does.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller's until `DeleteAudioTransport`. The driver is held
+	meanwhile.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DeleteAudioTransport`, `CreateSinkTagList`, `StartAudioTransport`
+
+   EXAMPLES
+	    const io = rb.CreateAudioTransportTagList("i2s", part.tags) orelse return;
+rta.library/CreateSinkTagList                    rta.library/CreateSinkTagList
+
+   NAME
+	CreateSinkTagList -- Makes a sink from a driver.
+
+   SYNOPSIS
+	    fn CreateSinkTagList(rb: *RtaBase, driver_name: [*:0]const u8, tag_list: ?[*]const TagItem) ?*rta.AudioSink
+
+   SINCE
+	1.0. LVO -44.
+
+   INPUTS
+	- `driver_name` - the driver to make it with.
+	- `tag_list` - the `RTAA_` options - the sink's name, its priority, the
+	  line its part is fed over, data for the caller, and `RTAA_ErrorPtr`
+	  for the reason if it fails - and the part's own `PART_` tags, which
+	  the driver reads.
+
+   RESULT
+	The sink, or null. `RtaLastError` - and `RTAA_ErrorPtr`, if given -
+	then says why: `RTAERR_NO_DRIVER`, `RTAERR_NO_MEMORY`,
+	`RTAERR_BAD_MODE` for a driver that gave it no mode, or what the
+	driver answered.
+
+   BEHAVIOR
+	The sink's handle and the driver's instance come from memory the
+	driver can read from its interrupts when it asks for that. The driver
+	fills the handle in: its operations, its modes and the ring it runs
+	on. The sink comes up in the mode its driver marked the default and is
+	not started; nothing of the part is touched until `StartSink`. It goes
+	on the list by `RTAA_Priority`, so the first on the list is the output
+	most wanted. Without `RTAA_Name` it is named after the driver and a
+	number: null0. Since 1.1 it has a number (`AudioSink.id`) worked out
+	from its driver's name and its own: the same output has the same one
+	from one boot to the next, and no two sinks on the list share one.
+
+   CONTEXT
+	- Waits: yes, while another task holds the sink list, and if the
+	  driver does.
+	- Interrupts: no.
+	- Locks: no spinlock may be held: a driver may wait.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The sink is the caller's until `DeleteSink`. The driver and a line it
+	names are held meanwhile.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DeleteSink`, `StartSink`, `NextSink`
+
+   EXAMPLES
+	    const named = [_]TagItem{ .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -100)) }, .{} };
+	    const sink = rb.CreateSinkTagList("null", &named) orelse return null;
+rta.library/CreateSourceTagList                rta.library/CreateSourceTagList
+
+   NAME
+	CreateSourceTagList -- Makes a source from a driver.
+
+   SYNOPSIS
+	    fn CreateSourceTagList(rb: *RtaBase, driver_name: [*:0]const u8, tag_list: ?[*]const TagItem) ?*rta.AudioSource
+
+   SINCE
+	1.3. LVO -128.
+
+   INPUTS
+	- `driver_name` - the driver to make it with.
+	- `tag_list` - the `RTAA_` options - the source's name, its priority,
+	  the line its part is read over, data for the caller, and
+	  `RTAA_ErrorPtr` for the reason if it fails - and the part's own
+	  `PART_` tags, which the driver reads.
+
+   RESULT
+	The source, or null. `RtaLastError` - and `RTAA_ErrorPtr`, if given -
+	then says why: `RTAERR_NO_DRIVER`, `RTAERR_NO_MEMORY`,
+	`RTAERR_BAD_MODE` for a driver that gave it no mode, or what the
+	driver answered.
+
+   BEHAVIOR
+	As `CreateSinkTagList`, for a way in: the driver fills the handle in -
+	its operations, its modes and the ring it runs on - and nothing of the
+	part is touched until `StartSource`. Its `mode` is the one its driver
+	marked the default. It goes on the list of sources by `RTAA_Priority`,
+	so the first is the way in most wanted. Without `RTAA_Name` it is
+	named after the driver and a number. Its number (`AudioSource.id`) is
+	worked out from its driver's name and its own, the same from one boot
+	to the next, and no two sources share one.
+
+   CONTEXT
+	- Waits: yes, while another task holds the list, and if the driver
+	  does.
+	- Interrupts: no.
+	- Locks: no spinlock may be held: a driver may wait.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The source is the caller's until `DeleteSource`. The driver and a line
+	it names are held meanwhile.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DeleteSource`, `StartSource`, `NextSource`, `CreateSinkTagList`
+
+   EXAMPLES
+	    const on_line = [_]TagItem{ .{ .tag = rta.tags.RTAA_Transport, .data = @intFromPtr(io) }, .{} };
+	    const source = rb.CreateSourceTagList("es8311", &on_line) orelse return;
+rta.library/DeleteAudioTransport              rta.library/DeleteAudioTransport
+
+   NAME
+	DeleteAudioTransport -- Gives a line back.
+
+   SYNOPSIS
+	    fn DeleteAudioTransport(rb: *RtaBase, io: ?*rta.AudioTransport) void
+
+   SINCE
+	1.0. LVO -88.
+
+   INPUTS
+	- `io` - the line. Null does nothing.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	A line a sink or a source is still given, or one that is started either
+	way, is refused, with
+	`RTAERR_IN_USE` in `RtaLastError`. Otherwise the driver's `destroy` is
+	called and the line leaves the list.
+
+   CONTEXT
+	- Waits: yes, while another task holds the sink list, and if the
+	  driver does.
+	- Interrupts: no.
+	- Locks: no spinlock may be held: it waits for a lock.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The line is gone; its driver is one handle less.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateAudioTransportTagList`, `DeleteSink`
+
+   EXAMPLES
+	    rb.DeleteSink(sink);
+	    rb.DeleteAudioTransport(io);
+rta.library/DeleteSink                                  rta.library/DeleteSink
+
+   NAME
+	DeleteSink -- Gives a sink back.
+
+   SYNOPSIS
+	    fn DeleteSink(rb: *RtaBase, sink: ?*rta.AudioSink) void
+
+   SINCE
+	1.0. LVO -48.
+
+   INPUTS
+	- `sink` - the sink. Null does nothing.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The sink leaves the list, the driver's `destroy` is called, and the
+	sink is freed. Since 1.4, one that is started - something plays
+	through it - leaves the list at once and is marked `AUDIOSF_GONE`, and
+	the task that started it is signalled with the signal it gave
+	`StartSink`; the rest happens when that task stops it (`StopSink`).
+	Until then the driver's operations are still called.
+
+   CONTEXT
+	- Waits: yes, while another task holds the sink list, and if the
+	  driver does.
+	- Interrupts: no.
+	- Locks: no spinlock may be held: it waits for a lock.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The sink is the caller's no more: it may not be used after, though
+	one that was started stays allocated until it is stopped. Its driver,
+	and the line it named, are one handle less once it is freed.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateSinkTagList`, `StopSink`
+
+   EXAMPLES
+	    rb.DeleteSink(sink);
+rta.library/DeleteSource                              rta.library/DeleteSource
+
+   NAME
+	DeleteSource -- Gives a source back.
+
+   SYNOPSIS
+	    fn DeleteSource(rb: *RtaBase, source: ?*rta.AudioSource) void
+
+   SINCE
+	1.3. LVO -132.
+
+   INPUTS
+	- `source` - the source. Null does nothing.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	A source that is started is refused, with `RTAERR_IN_USE` in
+	`RtaLastError`: something is recording from it. Otherwise the driver's
+	`destroy` is called and the source leaves the list.
+
+   CONTEXT
+	- Waits: yes, while another task holds the list, and if the driver
+	  does.
+	- Interrupts: no.
+	- Locks: no spinlock may be held: it waits for a lock.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The source is gone; its driver, and the line it named, are one handle
+	less.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateSourceTagList`, `StopSource`
+
+   EXAMPLES
+	    rb.DeleteSource(source);
+rta.library/FindRtaDriver                            rta.library/FindRtaDriver
+
+   NAME
+	FindRtaDriver -- Finds a driver by its name.
+
+   SYNOPSIS
+	    fn FindRtaDriver(rb: *RtaBase, driver_name: [*:0]const u8) ?*rta.RtaDriver
+
+   SINCE
+	1.0. LVO -28.
+
+   INPUTS
+	- `driver_name` - the name it registered under ("es8311").
+
+   RESULT
+	The driver, or null if none of that name is on the list.
+
+   BEHAVIOR
+	The names are compared exactly, case and all.
+
+   CONTEXT
+	- Waits: yes, while another task holds the driver list.
+	- Interrupts: no.
+	- Locks: no spinlock may be held: it waits for a lock.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The driver is its module's. It may come off the list once the call has
+	let the list go; hold it with `LockRtaDrivers` to use the answer.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`LockRtaDrivers`, `NextRtaDriver`
+
+   EXAMPLES
+	    rb.LockRtaDrivers();
+	    defer rb.UnlockRtaDrivers();
+	    const driver = rb.FindRtaDriver("i2s") orelse return null;
+rta.library/FindSink                                      rta.library/FindSink
+
+   NAME
+	FindSink -- Finds a sink by its name.
+
+   SYNOPSIS
+	    fn FindSink(rb: *RtaBase, sink_name: [*:0]const u8) ?*rta.AudioSink
+
+   SINCE
+	1.0. LVO -56.
+
+   INPUTS
+	- `sink_name` - its name ("es8311", "null").
+
+   RESULT
+	The sink, or null if none of that name is alive.
+
+   BEHAVIOR
+	The names are compared exactly; the first of the name on the list is
+	the answer.
+
+   CONTEXT
+	- Waits: yes, while another task is changing the sink list.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The sink is whoever made it's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`NextSink`
+
+   EXAMPLES
+	    const sink = rb.FindSink("null") orelse return null;
+rta.library/FindSinkMode                              rta.library/FindSinkMode
+
+   NAME
+	FindSinkMode -- Finds a sink's mode by its rate and sides.
+
+   SYNOPSIS
+	    fn FindSinkMode(rb: *RtaBase, sink: *rta.AudioSink, rate: u32, channels: u32) ?*rta.AudioMode
+
+   SINCE
+	1.2. LVO -120.
+
+   INPUTS
+	- `sink` - the sink.
+	- `rate` - the frames a second wanted, or 0 for any.
+	- `channels` - the sides wanted, 1 or 2, or 0 for any.
+
+   RESULT
+	The first mode that matches, or null. With both 0, the sink's default
+	mode - the one marked `AUDIOMF_DEFAULT`, or else its first.
+
+   BEHAVIOR
+	Each 0 matches anything, so a caller can ask whether a sink runs at
+	44100 Hz at all, or for its default.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It calls through the jump table.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`NextSinkMode`, `SetSinkMode`
+
+   EXAMPLES
+	    const cd = rb.FindSinkMode(sink, 44_100, 0) orelse rb.FindSinkMode(sink, 0, 0).?;
+rta.library/LockRtaDrivers                          rta.library/LockRtaDrivers
+
+   NAME
+	LockRtaDrivers -- Holds the driver list still.
+
+   SYNOPSIS
+	    fn LockRtaDrivers(rb: *RtaBase) void
+
+   SINCE
+	1.0. LVO -32.
+
+   INPUTS
+	None.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	No driver goes on or comes off the list until `UnlockRtaDrivers`. It
+	nests: the same task may lock again, and unlocks as often.
+
+   CONTEXT
+	- Waits: yes, while another task holds the list.
+	- Interrupts: no.
+	- Locks: no spinlock may be held: it waits for a lock.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caller holds the list until it unlocks it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`UnlockRtaDrivers`, `NextRtaDriver`
+
+   EXAMPLES
+	    rb.LockRtaDrivers();
+	    defer rb.UnlockRtaDrivers();
+rta.library/NextRtaDriver                            rta.library/NextRtaDriver
+
+   NAME
+	NextRtaDriver -- Walks the driver list.
+
+   SYNOPSIS
+	    fn NextRtaDriver(rb: *RtaBase, after: ?*rta.RtaDriver) ?*rta.RtaDriver
+
+   SINCE
+	1.0. LVO -40.
+
+   INPUTS
+	- `after` - the driver to go on from, or null for the first.
+
+   RESULT
+	The next driver, or null at the end.
+
+   BEHAVIOR
+	The drivers by priority, highest first.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: the caller holds the list with `LockRtaDrivers`.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`LockRtaDrivers`, `FindRtaDriver`
+
+   EXAMPLES
+	    rb.LockRtaDrivers();
+	    defer rb.UnlockRtaDrivers();
+	    var driver = rb.NextRtaDriver(null);
+	    while (driver) |d| : (driver = rb.NextRtaDriver(d)) list(d);
+rta.library/NextSink                                      rta.library/NextSink
+
+   NAME
+	NextSink -- Walks the list of sinks.
+
+   SYNOPSIS
+	    fn NextSink(rb: *RtaBase, after: ?*rta.AudioSink) ?*rta.AudioSink
+
+   SINCE
+	1.0. LVO -52.
+
+   INPUTS
+	- `after` - the sink to go on from, or null for the first.
+
+   RESULT
+	The next sink, or null at the end.
+
+   BEHAVIOR
+	The sinks alive by their priority, highest first: the first is the
+	output most wanted, the one audio.device plays through.
+
+   CONTEXT
+	- Waits: yes, while another task is changing the sink list.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The list is held for each step, not between
+	them: `after` must still be a sink, which the caller agrees on with
+	any task that may delete one.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FindSink`, `CreateSinkTagList`
+
+   EXAMPLES
+	    var sink = rb.NextSink(null);
+	    while (sink) |s| : (sink = rb.NextSink(s)) list(s);
+rta.library/NextSinkMode                              rta.library/NextSinkMode
+
+   NAME
+	NextSinkMode -- Walks a sink's modes.
+
+   SYNOPSIS
+	    fn NextSinkMode(_: *RtaBase, sink: *rta.AudioSink, after: ?*rta.AudioMode) ?*rta.AudioMode
+
+   SINCE
+	1.2. LVO -116.
+
+   INPUTS
+	- `sink` - the sink.
+	- `after` - the mode to go on from, or null for the first.
+
+   RESULT
+	The next mode, or null at the end.
+
+   BEHAVIOR
+	The modes are the driver's, fixed when the sink was made, in the order
+	it gave them.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: safe: the modes do not change after the sink is made.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The modes are the sink's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FindSinkMode`, `SetSinkMode`, `SinkMode`
+
+   EXAMPLES
+	    var mode = rb.NextSinkMode(sink, null);
+	    while (mode) |m| : (mode = rb.NextSinkMode(sink, m)) list(m);
+rta.library/NextSource                                  rta.library/NextSource
+
+   NAME
+	NextSource -- Walks the list of sources.
+
+   SYNOPSIS
+	    fn NextSource(rb: *RtaBase, after: ?*rta.AudioSource) ?*rta.AudioSource
+
+   SINCE
+	1.3. LVO -136.
+
+   INPUTS
+	- `after` - the source to go on from, or null for the first.
+
+   RESULT
+	The next source, or null at the end.
+
+   BEHAVIOR
+	The sources alive by their priority, highest first: the first is the
+	way in most wanted, the one audio.device records from.
+
+   CONTEXT
+	- Waits: yes, while another task is changing the list.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The list is held for each step, not between
+	them: `after` must still be a source, which the caller agrees on with
+	any task that may delete one.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateSourceTagList`, `NextSink`
+
+   EXAMPLES
+	    var source = rb.NextSource(null);
+	    while (source) |s| : (source = rb.NextSource(s)) list(s);
+rta.library/NextSourceMode                          rta.library/NextSourceMode
+
+   NAME
+	NextSourceMode -- Walks a source's modes.
+
+   SYNOPSIS
+	    fn NextSourceMode(_: *RtaBase, source: *rta.AudioSource, after: ?*rta.AudioMode) ?*rta.AudioMode
+
+   SINCE
+	1.3. LVO -140.
+
+   INPUTS
+	- `source` - the source.
+	- `after` - the mode to go on from, or null for the first.
+
+   RESULT
+	The next mode, or null at the end.
+
+   BEHAVIOR
+	The modes are the driver's, fixed when the source was made, in the
+	order it gave them.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: safe: the modes do not change after the source is made.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The modes are the source's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StartSource`, `NextSinkMode`
+
+   EXAMPLES
+	    var mode = rb.NextSourceMode(source, null);
+	    while (mode) |m| : (mode = rb.NextSourceMode(source, m)) {
+	        if (m.rate == wanted) break;
+	    }
+rta.library/PlayAudioTransportBuffer      rta.library/PlayAudioTransportBuffer
+
+   NAME
+	PlayAudioTransportBuffer -- Hands a filled buffer to the line.
+
+   SYNOPSIS
+	    fn PlayAudioTransportBuffer(rb: *RtaBase, io: *rta.AudioTransport, buffer: [*]i16) i32
+
+   SINCE
+	1.0. LVO -104.
+
+   INPUTS
+	- `io` - a started line.
+	- `buffer` - what `AudioTransportBuffer` gave, filled.
+
+   RESULT
+	`RTAERR_OK`, or `RTAERR_NOT_RUNNING` for a line that is not started.
+
+   BEHAVIOR
+	The buffer is written back out of the cache, where the DMA reads it
+	from, and played when the ring comes round to it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The buffer is the line's again.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AudioTransportBuffer`, `PlaySinkBuffer`
+
+   EXAMPLES
+	    return rb.PlayAudioTransportBuffer(io, frames);
+rta.library/PlaySinkBuffer                          rta.library/PlaySinkBuffer
+
+   NAME
+	PlaySinkBuffer -- Hands a filled buffer on to the output.
+
+   SYNOPSIS
+	    fn PlaySinkBuffer(rb: *RtaBase, sink: *rta.AudioSink, buffer: [*]i16) i32
+
+   SINCE
+	1.0. LVO -76.
+
+   INPUTS
+	- `sink` - a started sink.
+	- `buffer` - what `SinkBuffer` gave, filled.
+
+   RESULT
+	`RTAERR_OK`; `RTAERR_NOT_RUNNING` for a sink that is not started;
+	`RTAERR_NOT_SUPPORTED` for one whose driver takes no buffers.
+
+   BEHAVIOR
+	The driver makes the buffer the part's to read: written back out of
+	the cache where the DMA reads round it, converted where the part
+	wants another width, sent where the output is somewhere else. It is
+	heard once the ring comes round to it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do: the one that started the sink.
+
+   OWNERSHIP
+	The buffer is the sink's again.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`SinkBuffer`
+
+   EXAMPLES
+	    _ = rb.PlaySinkBuffer(sink, frames);
+rta.library/RemRtaDriver                              rta.library/RemRtaDriver
+
+   NAME
+	RemRtaDriver -- Takes a driver off the library's list.
+
+   SYNOPSIS
+	    fn RemRtaDriver(rb: *RtaBase, driver: *rta.RtaDriver) bool
+
+   SINCE
+	1.0. LVO -24.
+
+   INPUTS
+	- `driver` - a driver `AddRtaDriver` took.
+
+   RESULT
+	True if it came off. False while a sink, a source or a line it made is
+	still alive, and for a driver that is not on the list.
+
+   BEHAVIOR
+	A driver whose handles are alive is still running code for them, so it
+	stays until the last of them has been deleted.
+
+   CONTEXT
+	- Waits: yes, while another task holds the driver list.
+	- Interrupts: no. It may wait.
+	- Locks: no spinlock may be held: it waits for a lock.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The driver is its module's again, to free or keep.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddRtaDriver`, `DeleteSink`, `DeleteSource`, `DeleteAudioTransport`
+
+   EXAMPLES
+	    if (!rb.RemRtaDriver(&state.driver)) return false; // still in use
+rta.library/RtaErrorText                              rta.library/RtaErrorText
+
+   NAME
+	RtaErrorText -- An error code in words.
+
+   SYNOPSIS
+	    fn RtaErrorText(rb: *RtaBase, error_code: i32) [*:0]const u8
+
+   SINCE
+	1.0. LVO -112.
+
+   INPUTS
+	- `error_code` - an `RTAERR_` code.
+
+   RESULT
+	A short sentence, lower case, with no full stop: "unknown error" for a
+	code the library does not have.
+
+   BEHAVIOR
+	A constant string for each code.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The string is the library's, never freed.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`RtaLastError`
+
+   EXAMPLES
+	    io.printf("no output: %s\n", .{rb.RtaErrorText(code)});
+rta.library/RtaLastError                              rta.library/RtaLastError
+
+   NAME
+	RtaLastError -- Why the last create failed.
+
+   SYNOPSIS
+	    fn RtaLastError(rb: *RtaBase) i32
+
+   SINCE
+	1.0. LVO -108.
+
+   INPUTS
+	None.
+
+   RESULT
+	The `RTAERR_` code the last call that answers with a pointer left, or
+	that `DeleteSink` or `DeleteAudioTransport` left when it refused.
+	`RTAERR_OK` after one that worked.
+
+   BEHAVIOR
+	It is one word for the whole library, not one per task.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing.
+
+   NOTES
+	A caller that cannot be sure it was the last to fail passes
+	`RTAA_ErrorPtr` and reads its own.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`RtaErrorText`, `CreateSinkTagList`
+
+   EXAMPLES
+	    const sink = rb.CreateSinkTagList("es8311", tags) orelse return rb.RtaLastError();
+rta.library/SetSinkMode                                rta.library/SetSinkMode
+
+   NAME
+	SetSinkMode -- Puts a sink in a mode.
+
+   SYNOPSIS
+	    fn SetSinkMode(rb: *RtaBase, sink: *rta.AudioSink, mode: ?*rta.AudioMode) i32
+
+   SINCE
+	1.2. LVO -124.
+
+   INPUTS
+	- `sink` - the sink.
+	- `mode` - one of its modes, or null for its default.
+
+   RESULT
+	`RTAERR_OK`, or: `RTAERR_IN_USE` while the sink is started,
+	`RTAERR_BAD_MODE` for a mode that is not the sink's.
+
+   BEHAVIOR
+	The mode is the one the sink starts in from now on: `StartSink` hands
+	it to the driver, which clocks its part for it, and `SinkMode` answers
+	it. A started sink keeps the mode it runs in; a caller that wants
+	another stops it, sets the mode and starts it again.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no. It calls through the jump table.
+	- Locks: none needed: one task plays through a sink.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FindSinkMode`, `SinkMode`, `StartSink`
+
+   EXAMPLES
+	    rb.StopSink(sink);
+	    _ = rb.SetSinkMode(sink, rb.FindSinkMode(sink, 44_100, 0));
+	    _ = rb.StartSink(sink, task, mask);
+rta.library/SinkBuffer                                  rta.library/SinkBuffer
+
+   NAME
+	SinkBuffer -- The next buffer of a running sink to fill.
+
+   SYNOPSIS
+	    fn SinkBuffer(rb: *RtaBase, sink: *rta.AudioSink) ?[*]i16
+
+   SINCE
+	1.0. LVO -72.
+
+   INPUTS
+	- `sink` - a started sink.
+
+   RESULT
+	The buffer: `buffer_frames` stereo frames of 16-bit samples, the two
+	halves of each as the mode's `sides` says. Null when no buffer has
+	been played since the last one was asked for, or the sink is not
+	started.
+
+   BEHAVIOR
+	What comes back is the buffer that has just been played, which is the
+	one the output is furthest from. A caller woken late - more than one
+	buffer played since it was last here - gets the latest; the ones it
+	missed were played again, and the sink counts them in `underruns`.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do: the one that started the sink.
+
+   OWNERSHIP
+	The buffer is the caller's to write until `PlaySinkBuffer`; it stays
+	the sink's memory.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`PlaySinkBuffer`, `StartSink`
+
+   EXAMPLES
+	    const frames = rb.SinkBuffer(sink) orelse return;
+	    mix(frames[0 .. sink.buffer_frames * 2]);
+	    _ = rb.PlaySinkBuffer(sink, frames);
+rta.library/SinkControl                                rta.library/SinkControl
+
+   NAME
+	SinkControl -- Asks a sink's driver for something of its own.
+
+   SYNOPSIS
+	    fn SinkControl(rb: *RtaBase, sink: *rta.AudioSink, what: u32, value: isize) isize
+
+   SINCE
+	1.0. LVO -80.
+
+   INPUTS
+	- `sink` - the sink.
+	- `what` - the driver's own code, `AUDIOCTRL_DRIVER` and up.
+	- `value` - what goes with it.
+
+   RESULT
+	What the driver answers, or `RTAERR_NOT_SUPPORTED` for a code it does
+	not know or a driver that takes none.
+
+   BEHAVIOR
+	Passed on to the driver unchanged.
+
+   CONTEXT
+	- Waits: yes, if the driver does.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	As the driver documents the code.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StartSink`
+
+   EXAMPLES
+	    const answer = rb.SinkControl(sink, rta.sinks.AUDIOCTRL_DRIVER, 0);
+rta.library/SinkMode                                      rta.library/SinkMode
+
+   NAME
+	SinkMode -- The mode a sink is in.
+
+   SYNOPSIS
+	    fn SinkMode(rb: *RtaBase, sink: *rta.AudioSink) ?*rta.AudioMode
+
+   SINCE
+	1.0. LVO -60.
+
+   INPUTS
+	- `sink` - the sink.
+
+   RESULT
+	Its mode: the rate it runs at, the bits a sample its part takes, how
+	many sides are heard and what the halves of a frame carry.
+
+   BEHAVIOR
+	A sink is made in the mode its driver marked the default, so every
+	sink is in one.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The mode is the sink's, alive as long as the sink is.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StartSink`, `CreateSinkTagList`
+
+   EXAMPLES
+	    const mode = rb.SinkMode(sink).?;
+	    const step = mixer.stepFor(stream_rate, mode.rate);
+rta.library/SourceBuffer                              rta.library/SourceBuffer
+
+   NAME
+	SourceBuffer -- The buffer of a running source that has just been filled.
+
+   SYNOPSIS
+	    fn SourceBuffer(rb: *RtaBase, source: *rta.AudioSource) ?[*]const i16
+
+   SINCE
+	1.3. LVO -152.
+
+   INPUTS
+	- `source` - a started source.
+
+   RESULT
+	The buffer: `buffer_frames` stereo frames of 16-bit samples, the two
+	halves of each as the mode's `sides` says. Null when no buffer has
+	been filled since the last one was taken, or the source is not
+	started.
+
+   BEHAVIOR
+	What comes back is the buffer filled last, which the part is furthest
+	from writing again. A caller woken late - more than one filled since it
+	was last here - gets the latest; the ones it missed are lost, and the
+	source counts them in `overruns`.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do: the one that started the source.
+
+   OWNERSHIP
+	The buffer is the source's memory, the caller's to read until the ring
+	comes round to it: `buffers - 1` buffers' time.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StartSource`, `SinkBuffer`
+
+   EXAMPLES
+	    const frames = rb.SourceBuffer(source) orelse return;
+	    keep(frames[0 .. source.buffer_frames * 2]);
+rta.library/StartAudioTransport                rta.library/StartAudioTransport
+
+   NAME
+	StartAudioTransport -- Starts a line for a sink.
+
+   SYNOPSIS
+	    fn StartAudioTransport(rb: *RtaBase, io: *rta.AudioTransport, mode: *const rta.AudioMode, task: *exec.Task, signal_mask: u32) i32
+
+   SINCE
+	1.0. LVO -92.
+
+   INPUTS
+	- `io` - the line.
+	- `mode` - the sink's mode: the rate and the bits a sample to clock
+	  the line for.
+	- `task` - the task that fills the buffers.
+	- `signal_mask` - the signal raised on it each time a buffer has been
+	  played.
+
+   RESULT
+	`RTAERR_OK`; `RTAERR_IN_USE` for a line already started, or one whose
+	pads another driver holds; `RTAERR_BAD_MODE` for a rate the line
+	cannot be clocked for; `RTAERR_NO_OUTPUT` when no DMA channel is free.
+
+   BEHAVIOR
+	The line's clocks run, its pads are taken from gpio.resource and
+	driven, and the ring starts on silence. A sink's driver calls it from
+	its own start, at the point its part wants the clocks: a codec after
+	it has been set up, before its volume goes up. Nothing is left taken
+	when it fails.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The pads, a DMA channel and the ring's memory are the line's until
+	`StopAudioTransport`.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StopAudioTransport`, `AudioTransportBuffer`, `StartSink`
+
+   EXAMPLES
+	    const code = rb.StartAudioTransport(io, mode, task, signal_mask);
+	    if (code != rta.errors.RTAERR_OK) return code;
+rta.library/StartAudioTransportInput      rta.library/StartAudioTransportInput
+
+   NAME
+	StartAudioTransportInput -- Starts a line's way in for a source.
+
+   SYNOPSIS
+	    fn StartAudioTransportInput(rb: *RtaBase, io: *rta.AudioTransport, mode: *const rta.AudioMode, task: *exec.Task, signal_mask: u32) i32
+
+   SINCE
+	1.3. LVO -156.
+
+   INPUTS
+	- `io` - the line.
+	- `mode` - the source's mode: the rate and the bits a sample to read
+	  the part at.
+	- `task` - the task that takes the buffers.
+	- `signal_mask` - the signal raised on it each time a buffer has been
+	  filled.
+
+   RESULT
+	`RTAERR_OK`; `RTAERR_IN_USE` for a way in already started, or pads
+	another driver holds; `RTAERR_BAD_MODE` for a rate the line cannot be
+	clocked for, or another than its way out runs at;
+	`RTAERR_NO_INPUT` for a line whose part has no data pad toward the
+	chip, or when no DMA channel is free; `RTAERR_NOT_SUPPORTED` for a
+	line that has no way in.
+
+   BEHAVIOR
+	The line's way in starts beside its way out, on the same clocks: the
+	part's data comes into a ring of its own, and `signal_mask` is raised
+	each time a buffer of it is full. A line whose way out is not playing
+	is started with its clocks - the part needs them to send - and its way
+	out plays silence. A source's driver calls it from its own start, once
+	its part is set up to send. Nothing is left taken when it fails.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The pads, a DMA channel and the ring's memory are the line's until both
+	its ways have stopped.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StopAudioTransportInput`, `AudioTransportInput`, `StartSource`
+
+   EXAMPLES
+	    const code = rb.StartAudioTransportInput(io, mode, task, signal_mask);
+	    if (code != rta.errors.RTAERR_OK) return code;
+rta.library/StartSink                                    rta.library/StartSink
+
+   NAME
+	StartSink -- Brings an output up and starts the ring it runs on.
+
+   SYNOPSIS
+	    fn StartSink(rb: *RtaBase, sink: *rta.AudioSink, task: *exec.Task, signal_mask: u32) i32
+
+   SINCE
+	1.0. LVO -64.
+
+   INPUTS
+	- `sink` - the sink.
+	- `task` - the task that fills its buffers.
+	- `signal_mask` - the signal to raise on it each time a buffer has
+	  been played.
+
+   RESULT
+	`RTAERR_OK`; `RTAERR_IN_USE` for a sink already started;
+	`RTAERR_NOT_SUPPORTED` for one whose driver cannot start it; or what
+	the driver answered - `RTAERR_NO_OUTPUT` for a part that is not
+	there, `RTAERR_IO` for one that does not answer on its bus.
+
+   BEHAVIOR
+	The driver brings its part up in the sink's mode - a codec set up over
+	its bus, an amplifier switched on - and starts the ring on silence.
+	From then on, every time a buffer has been played, `signal_mask` is
+	raised on `task`, which then takes the next buffer with `SinkBuffer`
+	and hands it back filled with `PlaySinkBuffer`. Nothing is left taken
+	when it fails.
+
+   CONTEXT
+	- Waits: yes. A codec is reset and set up over its bus.
+	- Interrupts: no.
+	- Locks: no spinlock may be held: the driver waits.
+	- Process: a Task will do. Call it on `task`: the driver may make
+	  ports and signals of that task's own.
+
+   OWNERSHIP
+	The sink is the caller's to play through until `StopSink`; what the
+	driver took - pads, a DMA channel, memory - is the sink's meanwhile.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StopSink`, `SinkBuffer`, `PlaySinkBuffer`
+
+   EXAMPLES
+	    if (rb.StartSink(sink, sys.FindTask(null).?, mask) != rta.errors.RTAERR_OK) return false;
+rta.library/StartSource                                rta.library/StartSource
+
+   NAME
+	StartSource -- Brings a way in up and starts the ring it runs on.
+
+   SYNOPSIS
+	    fn StartSource(rb: *RtaBase, source: *rta.AudioSource, mode: ?*rta.AudioMode, task: *exec.Task, signal_mask: u32) i32
+
+   SINCE
+	1.3. LVO -144.
+
+   INPUTS
+	- `source` - the source.
+	- `mode` - one of its modes to record in, or null for its default.
+	- `task` - the task that takes its buffers.
+	- `signal_mask` - the signal to raise on it each time a buffer has
+	  been filled.
+
+   RESULT
+	`RTAERR_OK`; `RTAERR_IN_USE` for a source already started;
+	`RTAERR_BAD_MODE` for a mode that is not the source's, or one at
+	another rate than its line already runs at; `RTAERR_NOT_SUPPORTED`
+	for a source whose driver cannot start it; or what the driver
+	answered - `RTAERR_NO_INPUT` for a part that is not there, `RTAERR_IO`
+	for one that does not answer on its bus.
+
+   BEHAVIOR
+	The driver brings its part up in that mode - a codec's converter
+	switched on over its bus - and starts the ring. From then on, every
+	time a buffer has been filled, `signal_mask` is raised on `task`, which
+	takes it with `SourceBuffer`. The mode is the source's `mode` from
+	then on. A source on a line whose way out is playing is started at the
+	rate it plays at, or refused: the caller picks the mode that has it.
+	Nothing is left taken when it fails.
+
+   CONTEXT
+	- Waits: yes. A codec is set up over its bus.
+	- Interrupts: no.
+	- Locks: no spinlock may be held: the driver waits.
+	- Process: a Task will do. Call it on `task`: the driver may make
+	  ports and signals of that task's own.
+
+   OWNERSHIP
+	The source is the caller's to record from until `StopSource`; what the
+	driver took - pads, a DMA channel, memory - is the source's meanwhile.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StopSource`, `SourceBuffer`, `NextSourceMode`, `StartSink`
+
+   EXAMPLES
+	    if (rb.StartSource(source, null, sys.FindTask(null).?, mask) != rta.errors.RTAERR_OK) return false;
+rta.library/StopAudioTransport                  rta.library/StopAudioTransport
+
+   NAME
+	StopAudioTransport -- Stops a line.
+
+   SYNOPSIS
+	    fn StopAudioTransport(rb: *RtaBase, io: *rta.AudioTransport) void
+
+   SINCE
+	1.0. LVO -96.
+
+   INPUTS
+	- `io` - the line.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The ring stops, its interrupt is taken out, and the DMA channel, the
+	memory and the pads are given back. A line that is not started is left
+	alone.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Everything `StartAudioTransport` took is given back.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StartAudioTransport`, `StopSink`
+
+   EXAMPLES
+	    rb.StopAudioTransport(io);
+rta.library/StopAudioTransportInput        rta.library/StopAudioTransportInput
+
+   NAME
+	StopAudioTransportInput -- Stops a line's way in.
+
+   SYNOPSIS
+	    fn StopAudioTransportInput(rb: *RtaBase, io: *rta.AudioTransport) void
+
+   SINCE
+	1.3. LVO -160.
+
+   INPUTS
+	- `io` - the line.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The way in's ring stops and its interrupt is taken out. A line whose
+	way out still plays goes on playing; one that ran only for the way in
+	stops, and its DMA channel, memory and pads are given back. A way in
+	that is not started is left alone.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	What `StartAudioTransportInput` took is given back once nothing else
+	runs on it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StartAudioTransportInput`, `StopSource`
+
+   EXAMPLES
+	    rb.StopAudioTransportInput(io);
+rta.library/StopSink                                      rta.library/StopSink
+
+   NAME
+	StopSink -- Stops an output.
+
+   SYNOPSIS
+	    fn StopSink(rb: *RtaBase, sink: *rta.AudioSink) void
+
+   SINCE
+	1.0. LVO -68.
+
+   INPUTS
+	- `sink` - the sink.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The driver switches its part off - the amplifier first, so the speaker
+	does not hear the clocks stop - stops the ring and gives back what
+	`StartSink` took. A sink that is not started is left alone. Since 1.4,
+	one deleted while it was started (`AUDIOSF_GONE`) is given back now,
+	as `DeleteSink` gives back one that is stopped.
+
+   CONTEXT
+	- Waits: yes, if the driver does.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do. Call it on the task that started the sink.
+
+   OWNERSHIP
+	The pads, the DMA channel and the memory are given back; the sink may
+	be started again, or deleted. A sink that was gone is gone: it may not
+	be used after.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StartSink`, `DeleteSink`
+
+   EXAMPLES
+	    rb.StopSink(sink);
+rta.library/StopSource                                  rta.library/StopSource
+
+   NAME
+	StopSource -- Stops a way in.
+
+   SYNOPSIS
+	    fn StopSource(rb: *RtaBase, source: *rta.AudioSource) void
+
+   SINCE
+	1.3. LVO -148.
+
+   INPUTS
+	- `source` - the source.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The driver stops the ring, switches its part's converter off and gives
+	back what `StartSource` took. A line whose way out still plays goes on
+	playing. A source that is not started is left alone.
+
+   CONTEXT
+	- Waits: yes, if the driver does.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do. Call it on the task that started the
+	  source.
+
+   OWNERSHIP
+	The pads, the DMA channel and the memory are given back; the source
+	may be started again, or deleted.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`StartSource`, `DeleteSource`
+
+   EXAMPLES
+	    rb.StopSource(source);
+rta.library/UnlockRtaDrivers                      rta.library/UnlockRtaDrivers
+
+   NAME
+	UnlockRtaDrivers -- Lets the driver list go.
+
+   SYNOPSIS
+	    fn UnlockRtaDrivers(rb: *RtaBase) void
+
+   SINCE
+	1.0. LVO -36.
+
+   INPUTS
+	None.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	Undoes one `LockRtaDrivers`.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: the caller holds the list.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	A driver found while the list was held may come off it from now on.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`LockRtaDrivers`
+
+   EXAMPLES
+	    rb.UnlockRtaDrivers();

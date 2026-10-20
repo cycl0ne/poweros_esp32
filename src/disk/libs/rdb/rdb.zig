@@ -12,13 +12,21 @@
 //! put over them. MountPartition puts a partition on dos's list as a
 //! device node, with the handler its DosType asks for.
 //!
+//! A disk with a GPT and no RigidDiskBlock of its own is read through its
+//! GPT: the GPT's partitions are nodes of the handle too, and the table
+//! is the one in the GPT's PowerOS container, read and written through a
+//! window that counts its blocks from the container's first. The GPT
+//! calls read, change, mount and write the GPT itself.
+//!
 //! A handle is its opener's: every allocation and the open unit are in it,
 //! so the base is shared by every opener and holds only exec's handle.
 //!
 //! The jump table is rdb_lvo.zig, the ROM tag, init and expunge
 //! rdb_init.zig, the base rdb_base.zig. Each call is a file under its
 //! area: `handle/` (open, close), `table/` (a fresh table, writing it),
-//! `partition/` (the list, and mounting a partition).
+//! `partition/` (the list, and mounting a partition), `filesystem/` (the
+//! file systems kept in the table), `gpt/` (the GPT: its partitions,
+//! mounting one, a fresh GPT, writing it).
 
 const sdk = @import("sdk");
 const ExecBase = sdk.interface.exec.ExecBase;

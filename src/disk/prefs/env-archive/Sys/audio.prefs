@@ -1,0 +1,16 @@
+# ENVARC:Sys/audio.prefs - the outputs audio.device plays through: a
+# line each, which C:SetPrefs hands to the device at boot.
+#
+# OUTPUT     the output's number, as Audio LIST shows it.
+# VOLUME     how loud everything plays through it, in percent of as
+#            recorded: 0 to 100.
+# NAME       its name - in double quotes when it has a space in it -
+#            for reading: the number is what counts.
+# PREFERRED  YES on the output played through whenever it is there,
+#            headphones that are plugged in taking the sound over.
+#
+# An output with no line plays at the volume of the one before it;
+# with none preferred, the device plays through the first its drivers
+# made. As:
+#
+# OUTPUT=24B61A00 VOLUME=80 NAME=es8311 PREFERRED=YES

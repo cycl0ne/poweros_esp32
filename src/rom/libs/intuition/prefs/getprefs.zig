@@ -21,7 +21,7 @@ const _prefs = @import("_prefs.zig");
 /// - `tags` - the settings wanted, each an `IPREFS_` tag whose data is
 ///   where its value is written: a `*u32` for `IPREFS_DoubleClick`
 ///   (milliseconds), `IPREFS_ScreenFontHeight` (rows), `IPREFS_Keyboard`,
-///   `IPREFS_OffScreen` and `IPREFS_WideGadgets`; a
+///   `IPREFS_OffScreen`, `IPREFS_WideGadgets` and `IPREFS_BeepFlash`; a
 ///   `*?*graphics.TextFont` for the three fonts; a
 ///   `*[NUMDRIPENS]graphics.Pen` for `IPREFS_Pens`.
 ///
@@ -30,8 +30,8 @@ const _prefs = @import("_prefs.zig");
 ///
 /// BEHAVIOR:
 /// Each tag asked is written; a data of 0, a tag that is not a setting,
-/// and `IPREFS_Style` - a style once read is intuition's own and has no
-/// list to give back - are passed over. A font is opened for the caller,
+/// and `IPREFS_Style` and `IPREFS_BeepSound` - each once read is
+/// intuition's own and has nothing to give back - are passed over. A font is opened for the caller,
 /// as `OpenSystemFont` opens it.
 ///
 /// CONTEXT:

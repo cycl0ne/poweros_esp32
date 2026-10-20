@@ -114,9 +114,11 @@ pub const LIBRARY_VERSION = 0;
 /// the front screen. 43: IntuiMessages are the system's memory, not the
 /// task's that set them off. 44: the windows a task leaves open are closed
 /// when it ends (an end hook per task with windows open). 45: the title
-/// bars' gadgets narrow, or wide with IPREFS_WideGadgets.
-pub const LIBRARY_REVISION = 45;
-const BUILD_DATE = "17.10.2026";
+/// bars' gadgets narrow, or wide with IPREFS_WideGadgets. 46: DisplayBeep
+/// plays a sound through audio.device (IPREFS_BeepSound) and flashes as
+/// IPREFS_BeepFlash says.
+pub const LIBRARY_REVISION = 46;
+const BUILD_DATE = "20.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -180,6 +182,15 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.pub_modes = 0;
     ib.timer_io = .{};
     ib.timer_open = false;
+    ib.beep_sound = null;
+    ib.beep_io = .{};
+    ib.beep_port = .{ .flags = exec.PA_IGNORE };
+    ib.beep_port.msg_list.init(.message);
+    ib.beep_open = false;
+    ib.beep_sent = false;
+    ib.beep_unheard = false;
+    ib.beep_flash = 1;
+    sys_base.InitSemaphore(&ib.beep_lock);
     ib.alert = .{};
     ib.banded = false;
     sys_base.InitSemaphore(&ib.alert_lock);

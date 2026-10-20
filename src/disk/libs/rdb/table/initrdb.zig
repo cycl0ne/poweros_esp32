@@ -32,8 +32,11 @@ const max_cyl_blocks: u32 = 1 << 31;
 /// - `handle`: from OpenRDB, with a table or without.
 ///
 /// RESULT:
-/// RDBERR_OK, or RDBERR_RANGE for a medium with too few blocks for the
-/// table and one partition (RDB_LOCATION_LIMIT and two more).
+/// RDBERR_OK; RDBERR_RANGE for a medium with too few blocks for the
+/// table and one partition (RDB_LOCATION_LIMIT and two more), or a
+/// container that does not start on a multiple of the table's cylinder;
+/// RDBERR_GPT for a disk with a GPT and no container in it, whose other
+/// partitions the table would be written over.
 ///
 /// BEHAVIOR:
 /// The table is made for the medium as TD_GETGEOMETRY tells it: blocks of
@@ -51,6 +54,12 @@ const max_cyl_blocks: u32 = 1 << 31;
 /// the RigidDiskBlock is looked for in, and the PC goes on seeing its
 /// partitions. A partition of the table may then name the same blocks as
 /// one of the PC's, so the one volume is the PC's and this system's.
+///
+/// On a disk with a GPT the table is the container's (RDBF_CONTAINER):
+/// made for the container's blocks, which `geometry` counts, from its
+/// first block on. A disk with a GPT and no container gets no table:
+/// AddGPTPartition adds a container, or RemGPT takes the GPT out of the
+/// handle for a table over the whole disk.
 ///
 /// Every partition and every file system is taken off its list and
 /// freed, and the chains of bad blocks and drive init code the disk had
@@ -78,7 +87,7 @@ const max_cyl_blocks: u32 = 1 << 31;
 /// None known.
 ///
 /// SEE ALSO:
-/// `OpenRDB`, `AddPartition`, `WriteRDB`
+/// `OpenRDB`, `AddPartition`, `WriteRDB`, `InitGPT`, `RemGPT`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -89,9 +98,12 @@ const max_cyl_blocks: u32 = 1 << 31;
 pub fn InitRDB(_: *RDBBase, handle: *rdb.RDBHandle) i32 {
     const private = _handle.handleOf(handle);
     const geometry = &handle.geometry;
+    if (handle.flags & rdb.RDBF_GPT != 0 and handle.flags & rdb.RDBF_CONTAINER == 0) return rdb.RDBERR_GPT;
     if (geometry.total_sectors < kept_blocks + 2) return rdb.RDBERR_RANGE;
     var cyl_blocks: u32 = 1;
     while (geometry.total_sectors / cyl_blocks > max_cylinders and cyl_blocks < max_cyl_blocks) cyl_blocks *= 2;
+    // Its partitions are put on the disk by whole cylinders.
+    if (handle.container % cyl_blocks != 0) return rdb.RDBERR_RANGE;
     const cylinders: u32 = @intCast(@min(geometry.total_sectors / cyl_blocks, max_cylinders));
 
     _handle.freePartitions(private);

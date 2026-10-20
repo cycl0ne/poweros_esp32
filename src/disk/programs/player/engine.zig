@@ -154,16 +154,22 @@ pub const Engine = struct {
             .ring = @ptrCast(@alignCast(ring)),
         };
         if (!opened) return engine;
-        // How far behind the device's position the sound is heard.
+        engine.readOutput();
+        return engine;
+    }
+
+    /// How far behind the device's position the sound is heard, and the
+    /// rate the output runs at: read again once the output changes.
+    pub fn readOutput(engine: *Engine) void {
+        if (!engine.opened) return;
         var device_info: audio.AudioInfo = .{};
         engine.control.std.req.command = audio.AUDIOCMD_QUERY;
         engine.control.std.data = &device_info;
         engine.control.std.length = @sizeOf(audio.AudioInfo);
-        if (sys.DoIO(&engine.control.std.req) == 0) {
+        if (engine.sys.DoIO(&engine.control.std.req) == 0 and device_info.rate != 0) {
             engine.latency = device_info.latency;
             engine.out_rate = device_info.rate;
         }
-        return engine;
     }
 
     /// Everything given back: the song, the device, the buffers.

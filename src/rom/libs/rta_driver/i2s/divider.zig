@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The I2S controllers' fractional divider: how a source clock is divided
 //! down to the master clock a codec counts in, worked out for every chip
-//! this device drives. Nothing here touches hardware, so the host tests
+//! the I2S line drives. Nothing here touches hardware, so the host tests
 //! hold it.
 //!
 //! The controller divides by a whole number and a fraction. It counts the
@@ -37,6 +37,15 @@ pub fn divide(from: u32, want: u32) Divider {
     };
 }
 
+/// Whether the controllers can count a divider: a whole number of 2 to
+/// 255, the fraction's fields in nine bits each.
+///
+/// INPUTS:
+/// - `divider` - what `divide` worked out.
+pub fn usable(divider: Divider) bool {
+    return divider.whole >= 2 and divider.whole <= 255 and divider.x < 512 and divider.y < 512 and divider.z < 512;
+}
+
 fn gcd(a: u32, b: u32) u32 {
     var x = a;
     var y = b;
@@ -70,6 +79,30 @@ test "12.288 MHz out of the 40 MHz crystal: 3 and 49/192" {
     try testing.expect(!d.yn1);
     // Every field fits the controller's nine bits.
     try testing.expect(d.x < 512 and d.y < 512 and d.z < 512);
+}
+
+test "11.2896 MHz, for 44.1 kHz: 14 and 76/441 out of 160 MHz, 3 and 479/882 out of 40 MHz" {
+    const s3 = divide(160_000_000, 11_289_600);
+    try testing.expectEqual(@as(u32, 14), s3.whole);
+    try testing.expectEqual(@as(u32, 76), s3.z);
+    try testing.expectEqual(@as(u32, 4), s3.x);
+    try testing.expectEqual(@as(u32, 61), s3.y);
+    try testing.expect(!s3.yn1);
+    try testing.expect(usable(s3));
+    // Past a half: 403 short periods counted instead of 479 long ones.
+    const p4 = divide(40_000_000, 11_289_600);
+    try testing.expectEqual(@as(u32, 3), p4.whole);
+    try testing.expect(p4.yn1);
+    try testing.expectEqual(@as(u32, 403), p4.z);
+    try testing.expectEqual(@as(u32, 1), p4.x);
+    try testing.expectEqual(@as(u32, 76), p4.y);
+    try testing.expect(usable(p4));
+}
+
+test "a master clock the source is too slow for is no use" {
+    // 96 kHz at 256 times: 24.576 MHz out of 40 MHz is a whole number of 1.
+    try testing.expect(!usable(divide(40_000_000, 96_000 * 256)));
+    try testing.expect(usable(divide(160_000_000, 96_000 * 256)));
 }
 
 test "a fraction past a half is counted from the other side" {

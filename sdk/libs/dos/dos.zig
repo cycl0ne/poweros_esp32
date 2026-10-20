@@ -22,6 +22,8 @@ pub const filehandler = @import("filehandler.zig");
 pub const hardblocks = @import("hardblocks.zig");
 pub const flashfs = @import("flashfs.zig");
 pub const fat = @import("fat.zig");
+/// The GUID partition table: read, checked and made.
+pub const gpt = @import("gpt.zig");
 /// The file systems there is a handler for: which a DosType asks for, and
 /// where each may go.
 pub const filesystems = @import("filesystems.zig");

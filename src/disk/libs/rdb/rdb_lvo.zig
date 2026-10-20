@@ -8,6 +8,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rdb = sdk.rdb;
+const gpt = sdk.dos.gpt;
 const vec = exec.vec;
 const RDBBase = @import("rdb_base.zig").RDBBase;
 const rdb_init = @import("rdb_init.zig");
@@ -24,6 +25,13 @@ const MountPartition = @import("partition/mountpartition.zig").MountPartition;
 const NextFileSystem = @import("filesystem/nextfilesystem.zig").NextFileSystem;
 const AddFileSystem = @import("filesystem/addfilesystem.zig").AddFileSystem;
 const RemFileSystem = @import("filesystem/remfilesystem.zig").RemFileSystem;
+const NextGPTPartition = @import("gpt/nextgptpartition.zig").NextGPTPartition;
+const MountGPTPartition = @import("gpt/mountgptpartition.zig").MountGPTPartition;
+const InitGPT = @import("gpt/initgpt.zig").InitGPT;
+const AddGPTPartition = @import("gpt/addgptpartition.zig").AddGPTPartition;
+const RemGPTPartition = @import("gpt/remgptpartition.zig").RemGPTPartition;
+const WriteGPT = @import("gpt/writegpt.zig").WriteGPT;
+const RemGPT = @import("gpt/remgpt.zig").RemGPT;
 
 /// rdb.library's interface, as the SDK generates it from
 /// sdk/fd/rdb_lib.fd.
@@ -61,6 +69,13 @@ const contract_files = [_][]const u8{
     @embedFile("filesystem/nextfilesystem.zig"),
     @embedFile("filesystem/addfilesystem.zig"),
     @embedFile("filesystem/remfilesystem.zig"),
+    @embedFile("gpt/nextgptpartition.zig"),
+    @embedFile("gpt/mountgptpartition.zig"),
+    @embedFile("gpt/initgpt.zig"),
+    @embedFile("gpt/addgptpartition.zig"),
+    @embedFile("gpt/remgptpartition.zig"),
+    @embedFile("gpt/writegpt.zig"),
+    @embedFile("gpt/remgpt.zig"),
 };
 
 fn lvoOpenRDB(base: *RDBBase, device: [*:0]const u8, unit: u32, err: ?*i32) callconv(.c) ?*rdb.RDBHandle {
@@ -99,6 +114,27 @@ fn lvoAddFileSystem(base: *RDBBase, handle: *rdb.RDBHandle, dos_type: u32, code:
 fn lvoRemFileSystem(base: *RDBBase, handle: *rdb.RDBHandle, file_system: *rdb.RDBFileSystem) callconv(.c) void {
     return RemFileSystem(base, handle, file_system);
 }
+fn lvoNextGPTPartition(base: *RDBBase, handle: *rdb.RDBHandle, previous: ?*rdb.GPTPartition) callconv(.c) ?*rdb.GPTPartition {
+    return NextGPTPartition(base, handle, previous);
+}
+fn lvoMountGPTPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.GPTPartition, name: [*:0]const u8, mounted: ?*rdb.MountName, flags: u32) callconv(.c) i32 {
+    return MountGPTPartition(base, handle, partition, name, mounted, flags);
+}
+fn lvoInitGPT(base: *RDBBase, handle: *rdb.RDBHandle) callconv(.c) i32 {
+    return InitGPT(base, handle);
+}
+fn lvoAddGPTPartition(base: *RDBBase, handle: *rdb.RDBHandle, entry: *const gpt.Entry, err: ?*i32) callconv(.c) ?*rdb.GPTPartition {
+    return AddGPTPartition(base, handle, entry, err);
+}
+fn lvoRemGPTPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.GPTPartition) callconv(.c) void {
+    return RemGPTPartition(base, handle, partition);
+}
+fn lvoWriteGPT(base: *RDBBase, handle: *rdb.RDBHandle) callconv(.c) i32 {
+    return WriteGPT(base, handle);
+}
+fn lvoRemGPT(base: *RDBBase, handle: *rdb.RDBHandle) callconv(.c) void {
+    return RemGPT(base, handle);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -119,6 +155,13 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoNextFileSystem),
     vec(lvoAddFileSystem),
     vec(lvoRemFileSystem),
+    vec(lvoNextGPTPartition),
+    vec(lvoMountGPTPartition),
+    vec(lvoInitGPT),
+    vec(lvoAddGPTPartition),
+    vec(lvoRemGPTPartition),
+    vec(lvoWriteGPT),
+    vec(lvoRemGPT),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

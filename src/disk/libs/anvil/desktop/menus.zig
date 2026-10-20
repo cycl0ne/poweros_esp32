@@ -20,8 +20,9 @@ pub const ITEM_EXECUTE = 1;
 pub const ITEM_REDRAW_ALL = 2;
 pub const ITEM_UPDATE_ALL = 3;
 pub const ITEM_LAST_MESSAGE = 4;
-pub const ITEM_ABOUT = 6;
-pub const ITEM_QUIT = 8;
+pub const ITEM_VOLUME = 6;
+pub const ITEM_ABOUT = 7;
+pub const ITEM_QUIT = 9;
 
 // Window
 pub const ITEM_NEW_DRAWER = 0;
@@ -83,6 +84,7 @@ pub const table = [_]mn.NewMenu{
     item("Update All", null, 0),
     item("Last Message", null, 0),
     bar,
+    item("Volume...", null, 0),
     item("About...", null, 0),
     bar,
     item("Quit...", "Q", 0),

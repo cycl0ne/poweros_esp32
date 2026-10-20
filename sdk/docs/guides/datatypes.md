@@ -251,6 +251,15 @@ never held whole. A sound already in memory is handed over whole
 instead (`SDTA_Sample`, `SDTA_SampleLength`, `SDTA_SampleType`) and
 played from there.
 
+A short sound that is not shown - a click, a chime, all of it within
+64 KB at 16 bits - gets no process. Its first play decodes it whole,
+on the task that plays it, into memory the object keeps, and every play
+sends it to audio.device as one trigger (`AUDIOCMD_TRIGGER`), which
+plays beside the streams on a voice of its own; the program's signal
+comes when it has played out. Played again while it sounds, it starts
+again from the top. A sound laid out in a window keeps the process, which
+its button and its bar follow.
+
 `DTA_Immediate` plays it as soon as it is laid out - what MultiView
 asks for - and `DTM_TRIGGER` drives it as it drives an animation:
 `STM_PLAY`, `STM_PAUSE` (which turns over), `STM_STOP`, `STM_LOCATE`

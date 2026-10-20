@@ -148,6 +148,9 @@ pub const TRB_BSR: u32 = 1 << 9;
 pub const TRB_DC: u32 = 1 << 9;
 /// A Data Stage TRB's direction: IN.
 pub const TRB_DIR_IN: u32 = 1 << 16;
+/// An Isoch TRB's Start Isoch ASAP: in the interval after the TD before
+/// it, or as soon as the controller can on an idle ring.
+pub const TRB_SIA: u32 = 1 << 31;
 pub const TRB_TYPE_SHIFT = 10;
 
 pub fn trbType(control: u32) u32 {
@@ -172,6 +175,7 @@ pub const TRB_NORMAL: u32 = 1;
 pub const TRB_SETUP: u32 = 2;
 pub const TRB_DATA: u32 = 3;
 pub const TRB_STATUS: u32 = 4;
+pub const TRB_ISOCH: u32 = 5;
 pub const TRB_LINK: u32 = 6;
 pub const TRB_NOOP: u32 = 8;
 pub const TRB_ENABLE_SLOT: u32 = 9;
@@ -216,8 +220,13 @@ pub const CC_RESOURCE: u32 = 7;
 pub const CC_BANDWIDTH: u32 = 8;
 pub const CC_NO_SLOTS: u32 = 9;
 pub const CC_SHORT_PACKET: u32 = 13;
+/// An isochronous ring ran dry (OUT) or full (IN): no TRB to say.
+pub const CC_RING_UNDERRUN: u32 = 14;
+pub const CC_RING_OVERRUN: u32 = 15;
 pub const CC_PARAMETER: u32 = 17;
 pub const CC_CONTEXT_STATE: u32 = 19;
+/// An isochronous TD whose interval had passed when it came: skipped.
+pub const CC_MISSED_SERVICE: u32 = 23;
 pub const CC_STOPPED: u32 = 26;
 pub const CC_STOPPED_LENGTH_INVALID: u32 = 27;
 pub const CC_STOPPED_SHORT_PACKET: u32 = 28;
@@ -261,9 +270,11 @@ pub const EP_INTERRUPT_IN: u32 = 7;
 pub fn endpointWord0(interval: u32) u32 {
     return interval << 16;
 }
-/// Word 1: three tries on an error, the type, the burst, the packet size.
+/// Word 1: three tries on an error - none for an isochronous endpoint,
+/// whose packets have their time - the type, the burst, the packet size.
 pub fn endpointWord1(kind: u32, burst: u32, max_packet: u32) u32 {
-    return 3 << 1 | kind << 3 | burst << 8 | max_packet << 16;
+    const tries: u32 = if (kind == EP_ISOCH_OUT or kind == EP_ISOCH_IN) 0 else 3;
+    return tries << 1 | kind << 3 | burst << 8 | max_packet << 16;
 }
 /// Word 4: the average TRB length and the largest payload per service
 /// interval.

@@ -18,8 +18,9 @@
 //! across that is where the song is, with the time beside it, which a drag
 //! moves; the buttons of a tape deck - rewind and fast forward jump ten
 //! seconds, pause holds the sound where it is, stop goes back to the
-//! start; the volume; which picture; the file. Under them, as big as the
-//! window lets it be, the picture:
+//! start; the volume; which picture; the file, and the output the sound
+//! comes out of. Under them, as big as the window lets it be, the
+//! picture:
 //!
 //! - **Plasma** - waves of colour, driven faster by the bass, turned by
 //!   the treble, lit by the loudness.
@@ -28,6 +29,13 @@
 //!
 //! A press on the picture, or the gadget above it, goes to the next. The
 //! space bar pauses and goes on.
+//!
+//! **The output** is audio.device's, for every sound of the machine: one
+//! picked moves them all over as they play. The list follows the device -
+//! read again every second while the picture moves and whenever the
+//! window is made active - so headphones plugged in show up, and when
+//! they are the preferred output and take the sound over, the chooser
+//! says so.
 //!
 //! **In step with the sound.** The picture is drawn 25 times a second
 //! from the samples being heard at that moment - audio.device says how far
@@ -77,6 +85,8 @@ const td = sdk.gadgets.tapedeck;
 const cy = sdk.gadgets.cycle;
 const gf = sdk.gadgets.getfile;
 const cv = sdk.gadgets.canvas;
+const ch = sdk.gadgets.chooser;
+const audiocontrol = sdk.devices.audiocontrol;
 
 const engine_file = @import("engine.zig");
 const Engine = engine_file.Engine;
@@ -85,8 +95,8 @@ const Visual = visual.Visual;
 const cover = @import("cover.zig");
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.2";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (14.10.2026)\r\n";
+const VERSION = "1.3";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -107,6 +117,7 @@ const ID_VOLUME = 3;
 const ID_LOOK = 4;
 const ID_FILE = 5;
 const ID_PICTURE = 6;
+const ID_OUTPUT = 7;
 
 /// A look every 40 ms; the time beside the slider every sixth.
 const look_period = 40;
@@ -116,6 +127,8 @@ const looks_per_time = 6;
 const settle_looks = 50;
 /// How far rewind and fast forward jump, in seconds.
 const jump_seconds = 10;
+/// Looks between two readings of the outputs: a second.
+const looks_per_outputs = 25;
 
 /// The lines beside the cover, and the cover's size.
 const line_title = 0;
@@ -218,6 +231,11 @@ const App = struct {
     look: *Object = undefined,
     file: *Object = undefined,
     picture: *Object = undefined,
+    /// audio.device's outputs, the chooser that shows them, and the
+    /// device opened to ask - none without sound.
+    output: *Object = undefined,
+    control: ?audiocontrol.Control = null,
+    outputs: audiocontrol.Outputs = .{},
 
     /// The picture as drawn, and the canvas it is put into.
     rast_port: ?*graphics.RastPort = null,
@@ -541,6 +559,38 @@ const App = struct {
         app.wake();
     }
 
+    // --- the output -----------------------------------------------------------
+
+    /// The outputs read again: the chooser shown anew when they, or the
+    /// one played through, changed.
+    fn readOutputs(app: *App) void {
+        const control = if (app.control) |*opened| opened else return;
+        var now: audiocontrol.Outputs = .{};
+        now.read(control);
+        if (now.same(&app.outputs)) return;
+        app.outputs = now;
+        for (app.outputs.labels[0..app.outputs.count], 0..) |*label, at| label.* = @ptrCast(&app.outputs.infos[at].name);
+        app.showOutputs();
+        app.engine.readOutput();
+    }
+
+    fn showOutputs(app: *App) void {
+        app.set(app.output, &.{
+            pair(ch.CHOOSER_Labels, @intFromPtr(&app.outputs.labels)),
+            pair(ch.CHOOSER_Active, app.outputs.currentIndex() orelse 0),
+            pair(gc.GA_Disabled, @intFromBool(app.outputs.count == 0)),
+            .{},
+        });
+    }
+
+    /// The output picked: every sound of the machine played through it.
+    fn pickOutput(app: *App, index: usize) void {
+        const control = if (app.control) |*opened| opened else return;
+        if (index < app.outputs.count) _ = control.play(app.outputs.infos[index].id);
+        app.outputs.count = 0;
+        app.readOutputs();
+    }
+
     fn cycleLook(app: *App) void {
         app.visual.cycle();
         app.set(app.look, &.{ pair(cy.CYCLE_Active, @intFromEnum(app.visual.mode)), .{} });
@@ -585,6 +635,7 @@ const App = struct {
                 app.wake();
             },
             ID_PICTURE => app.cycleLook(),
+            ID_OUTPUT => app.pickOutput(code),
             else => {},
         }
     }
@@ -631,6 +682,7 @@ const App = struct {
                     app.fitPicture();
                     app.wake();
                 },
+                wc.WMHI_ACTIVE => app.readOutputs(),
                 else => {},
             }
         }
@@ -703,6 +755,7 @@ const App = struct {
         }
         app.looks +%= 1;
         if (app.looks % looks_per_time == 0) app.showTime();
+        if (app.looks % looks_per_outputs == 0) app.readOutputs();
         if (engine.state == .playing) {
             app.settle = settle_looks;
         } else if (app.settle > 0) {
@@ -748,7 +801,7 @@ fn lookNamed(name: ?[*:0]const u8) visual.Mode {
 /// Gadgets made and not yet taken by a layout: given back together when
 /// the window cannot be made.
 const Loose = struct {
-    items: [24]?*Object = @splat(null),
+    items: [28]?*Object = @splat(null),
     count: usize = 0,
 
     /// What was made, kept loose; null when it was not.
@@ -843,12 +896,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
     const percent: u32 = @intCast(@min(@max(rdargs.number(argv[arg_volume]) orelse 100, 0), 200));
 
-    var libraries: [10]?*exec.Library = @splat(null);
+    var libraries: [11]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
     const wanted = [_][*:0]const u8{
-        intuition.INTUITIONNAME, graphics.GRAPHICSNAME, motion.MOTIONNAME, ac.AUDIOCODECNAME,
-        tx.TEXT_LIBRARY,         sl.SLIDER_LIBRARY,     td.TDECK_LIBRARY,  cy.CYCLE_LIBRARY,
-        gf.GETFILE_LIBRARY,      cv.CANVAS_LIBRARY,
+        intuition.INTUITIONNAME, graphics.GRAPHICSNAME, motion.MOTIONNAME,  ac.AUDIOCODECNAME,
+        tx.TEXT_LIBRARY,         sl.SLIDER_LIBRARY,     td.TDECK_LIBRARY,   cy.CYCLE_LIBRARY,
+        gf.GETFILE_LIBRARY,      cv.CANVAS_LIBRARY,     ch.CHOOSER_LIBRARY,
     };
     for (wanted, 0..) |name, i| {
         libraries[i] = sys.OpenLibrary(name, 0) orelse {
@@ -959,6 +1012,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
         .{},
     })) orelse return noWindow(dl);
+    app.control = audiocontrol.Control.open(sys);
+    defer if (app.control) |*control| control.close();
+    if (app.control) |*control| app.outputs.read(control);
+    app.output = loose.add(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_OUTPUT),
+        pair(gc.GA_RelVerify, 1),
+        pair(ch.CHOOSER_Labels, @intFromPtr(&app.outputs.labels)),
+        pair(ch.CHOOSER_Active, app.outputs.currentIndex() orelse 0),
+        pair(gc.GA_Disabled, @intFromBool(app.outputs.count == 0)),
+        .{},
+    })) orelse return noWindow(dl);
     app.picture = loose.add(ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_PICTURE),
         pair(gc.GA_RelVerify, 1),
@@ -986,11 +1050,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .object = app.volume, .label = "_Volume" },
         .{ .object = app.look, .weight_width = 0 },
     }) orelse return noWindow(dl);
+    const file_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 8) }, &.{
+        .{ .object = app.file },
+        .{ .object = app.output, .weight_width = 0, .label = "_Output" },
+    }) orelse return noWindow(dl);
     const layout = group(ib, &loose, &.{ pair(lg.LAYOUTA_Margin, 6), pair(lg.LAYOUTA_Spacing, 6) }, &.{
         .{ .object = info_row, .weight_height = 0 },
         .{ .object = seek_row, .weight_height = 0 },
         .{ .object = control_row, .weight_height = 0 },
-        .{ .object = app.file, .weight_height = 0 },
+        .{ .object = file_row, .weight_height = 0 },
         .{ .object = app.picture },
     }) orelse return noWindow(dl);
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
@@ -1001,7 +1069,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(wn.WA_DepthGadget, 1),
         pair(wn.WA_SizeGadget, 1),
         pair(wn.WA_Activate, 1),
-        pair(wn.WA_IDCMP, wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE),
+        pair(wn.WA_IDCMP, wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_ACTIVEWINDOW),
         pair(wc.WINDOWA_Layout, @intFromPtr(layout)),
         .{},
     }) orelse return noWindow(dl);

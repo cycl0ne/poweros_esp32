@@ -28,18 +28,24 @@ const _pipe = @import("_pipe.zig");
 /// - `reply_port` - where the request is replied.
 ///
 /// RESULT:
-/// The pipe, or null if the device has no such endpoint or there is no
-/// memory.
+/// The pipe, or null if the device has no such endpoint, it is an
+/// isochronous one asking for packets more often than once a
+/// millisecond, or there is no memory.
 ///
 /// BEHAVIOR:
 /// The pipe's `io` is an `IOUsbHC` on the device's bus's controller, its
 /// command set by the endpoint's type (`UHCMD_CONTROLXFER`,
-/// `UHCMD_BULKXFER`, `UHCMD_INTXFER`), the device's address, speed and
-/// hub, the endpoint, its packet size and its interval in milliseconds,
-/// its data toggle at DATA0. The caller sets io_Data and io_Length - and
-/// a control pipe's setup packet - and sends it with SendIO or DoIO, as
-/// often as it likes; the toggle stays in it. An isochronous endpoint has
-/// no pipe yet.
+/// `UHCMD_BULKXFER`, `UHCMD_INTXFER`, `UHCMD_ISOXFER`), the device's
+/// address, speed and hub, the endpoint, its packet size and its interval
+/// in milliseconds, its data toggle at DATA0. The caller sets io_Data and
+/// io_Length - and a control pipe's setup packet, an isochronous pipe's
+/// `iso_packet` if its packets are smaller than the endpoint's - and
+/// sends it with SendIO or DoIO, as often as it likes; the toggle stays
+/// in it.
+///
+/// An isochronous endpoint's interval is 2^(bInterval - 1) frames or, at
+/// high speed, microframes; it is taken only at a millisecond or more,
+/// which every endpoint of a full-speed device is.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -55,7 +61,10 @@ const _pipe = @import("_pipe.zig");
 ///
 /// NOTES:
 /// One request per pipe: two transfers at once on one endpoint want two
-/// pipes, and then the toggle is not theirs to share.
+/// pipes, and then the toggle is not theirs to share. An isochronous
+/// stream wants two or more, so the next is with the controller before
+/// the last has played: each a pipe of its own on the endpoint (Since
+/// 1.6).
 ///
 /// BUGS:
 /// None known.
@@ -79,18 +88,34 @@ pub fn OpenUSBPipe(base: *UsbBase, device: *usb.USBDevice, endpoint_address: u32
         const endpoint = _pipe.findEndpoint(kept, @truncate(endpoint_address)) orelse return null;
         io.endpoint = endpoint.endpoint_address;
         io.max_packet = @max(endpoint.max_packet_size & 0x7FF, 1);
-        io.std.req.command = switch (endpoint.attributes & d.USB_ENDPOINT_XFERTYPE_MASK) {
+        const kind = endpoint.attributes & d.USB_ENDPOINT_XFERTYPE_MASK;
+        io.std.req.command = switch (kind) {
             d.USB_ENDPOINT_XFER_BULK => usbhc.UHCMD_BULKXFER,
             d.USB_ENDPOINT_XFER_INT => usbhc.UHCMD_INTXFER,
             d.USB_ENDPOINT_XFER_CONTROL => usbhc.UHCMD_CONTROLXFER,
-            else => return null,
+            else => usbhc.UHCMD_ISOXFER,
         };
-        io.interval = intervalMs(device.speed, endpoint.interval);
+        if (kind == d.USB_ENDPOINT_XFER_ISOC) {
+            io.interval = isoIntervalMs(device.speed, endpoint.interval) orelse return null;
+            io.iso_packet = io.max_packet;
+        } else {
+            io.interval = intervalMs(device.speed, endpoint.interval);
+        }
     }
     const memory = sys.AllocMem(@sizeOf(usb.USBPipe), exec.MEMF_CLEAR) orelse return null;
     const pipe: *usb.USBPipe = @ptrCast(@alignCast(memory));
     pipe.* = .{ .io = io, .device = device };
     return pipe;
+}
+
+/// An isochronous endpoint's bInterval as milliseconds: 2^(n-1) frames,
+/// or at high speed microframes; null under a millisecond.
+fn isoIntervalMs(speed: u8, interval: u8) ?u16 {
+    const exponent: u5 = @intCast(@min(@max(interval, 1), 16) - 1);
+    const units = @as(u32, 1) << exponent;
+    if (speed != usbhc.USB_SPEED_HIGH) return @intCast(@min(units, 0x8000));
+    if (units < 8) return null;
+    return @intCast(units / 8);
 }
 
 /// bInterval as milliseconds: frames at full and low speed, 2^(n-1)

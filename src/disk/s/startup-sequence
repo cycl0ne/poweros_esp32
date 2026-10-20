@@ -50,9 +50,11 @@ C:AddDataTypes >NIL: QUIET
 
 ; The system's settings, from the files in ENV:Sys: intuition's own (the
 ; double-click time, the screens' font height, the keyboard on the
-; screen), the fonts, the pens and the style. Every screen takes the pens
-; and the style, those already open too; the fonts reach every screen,
-; window and console opened from here on.
+; screen), the fonts, the pens, the style and the beep; the outputs'
+; volumes and the one preferred, before anything is heard and before USB
+; brings a speaker that is preferred. Every screen takes the pens and the
+; style, those already open too; the fonts reach every screen, window and
+; console opened from here on.
 C:SetPrefs >NIL:
 
 ; Where a command is looked for, before C:. C:test holds the programs that

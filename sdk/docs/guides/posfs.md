@@ -339,9 +339,11 @@ DH1: volume "W", 752 blocks of 4096 bytes, checkpoint 36
   5 objects, 2 nodes, 2 data blocks: no damage found
 ```
 
-It finds the volumes itself - one that starts the image, the posfs
-partitions of a RigidDiskBlock anywhere in it, or the partition of type
-0x7F of a partition table - or takes `--offset` and `--length` in
+It finds the volumes itself - one that starts the image; on an image
+with a GPT, the posfs partitions of the RigidDiskBlock in its PowerOS
+container and every GPT partition that starts with a posfs label; the
+posfs partitions of a RigidDiskBlock anywhere in it; or the partition of
+type 0x7F of a partition table - or takes `--offset` and `--length` in
 bytes. The volume is mounted without being written; what its journal
 holds after the newest checkpoint is replayed in memory, then checked.
 Every fault is printed. The exit code is 0 for none, 1 for faults, 2 for
@@ -377,10 +379,13 @@ plugged in - and a posfs volume, or a partition table with a posfs
 partition, gives the drive (`SD0:`, `DU0:`) posfs-handler. The drive
 keeps it for the cards or sticks after. One that holds a RigidDiskBlock
 gets a drive per partition instead, each with the handler its DosType
-names - `POS\0` for posfs ([disks guide](rdb.md)). An SSD is read the
-same way by nvme.device: `NV<n>:` gets posfs-handler for a posfs volume
-or a table with a posfs partition, and a RigidDiskBlock a drive per
-partition. A card or a stick that holds anything else gives the drive
+names - `POS\0` for posfs ([disks guide](rdb.md)). One with a GPT gets
+the partitions of the RigidDiskBlock in its PowerOS container, and a
+drive for each other GPT partition that starts with a posfs label or a
+FAT volume (`SD0:`, then `SD0P2:` by the entry's number). An SSD is read
+the same way by nvme.device: `NV<n>:` gets posfs-handler for a posfs
+volume or a table with a posfs partition, and a RigidDiskBlock or a GPT
+a drive per partition. A card or a stick that holds anything else gives the drive
 fat-handler; for posfs on it,
 `DEVS:MountList` has a posfs `SD0:` entry, commented out, to copy into
 `DEVS:SD0` - with `DosType = 0x504F5301` (`POS\1`) the card keeps a

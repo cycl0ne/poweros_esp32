@@ -39,7 +39,9 @@ place of the files it was playing.
   seconds back or on.
 - The volume.
 - Which picture is shown.
-- The file.
+- The file, and beside it the output the machine plays through - its
+  speaker, headphones, a USB speaker. Picking another plays every sound
+  through it from then on; one plugged in or out shows in the list.
 
 Under them, as big as the window lets it be, the picture:
 

@@ -27,6 +27,20 @@
 //! until the device answers, and is replied only then: a read of a
 //! keyboard waits like any read. A controller may ask one that has had
 //! nothing for a while less often, a few milliseconds apart.
+//!
+//! **An isochronous transfer** is a run of packets at the endpoint's
+//! interval, one each interval: `io_Length` bytes cut into packets of
+//! `iso_packet`, the last taking what is left, at most
+//! `UHC_ISO_PACKETS` of them. Nothing is resent and nothing waits for an
+//! answer - a packet has its time and is gone - and a request is
+//! replied once its last packet's time has passed, `io_Actual` what went.
+//! Requests sent one after the other follow on with no gap: each starts
+//! in the interval after the last packet of the one before, so a
+//! controller with the next one before the last has ended plays an
+//! unbroken stream. One sent to an idle endpoint starts as soon as the
+//! controller can place it. A controller takes several at once on an
+//! endpoint; AbortIO of one on the wire takes back every one on that
+//! endpoint, each answered IOERR_ABORTED.
 
 const exec = @import("../libs/exec/exec.zig");
 const descriptors = @import("../libs/usb/descriptors.zig");
@@ -39,8 +53,9 @@ pub const UHCMD_CONTROLXFER: u16 = exec.CMD_NONSTD + 0;
 pub const UHCMD_BULKXFER: u16 = exec.CMD_NONSTD + 1;
 /// An interrupt transfer: asked every `interval` ms until answered.
 pub const UHCMD_INTXFER: u16 = exec.CMD_NONSTD + 2;
-/// An isochronous transfer. In the set so a controller can add it; one
-/// that does not answers IOERR_NOCMD.
+/// An isochronous transfer: packets of `iso_packet` bytes, one each
+/// interval, its direction the endpoint's. A controller that has none
+/// answers IOERR_NOCMD.
 pub const UHCMD_ISOXFER: u16 = exec.CMD_NONSTD + 3;
 /// The controller started afresh: every transfer answered
 /// UHIOERR_HOSTERROR, the root port powered and empty.
@@ -73,6 +88,9 @@ pub const UHIOERR_DETACHED: i8 = 7;
 /// A short packet ended the transfer, and `flags` said that is an error.
 pub const UHIOERR_RUNTPACKET: i8 = 8;
 
+/// The most packets an isochronous transfer carries.
+pub const UHC_ISO_PACKETS: u32 = 32;
+
 /// `speed`: how fast the device is.
 pub const USB_SPEED_LOW: u8 = 0;
 pub const USB_SPEED_FULL: u8 = 1;
@@ -102,7 +120,7 @@ pub const IOUsbHC = extern struct {
     flags: u8 = 0,
     /// The endpoint's max packet size.
     max_packet: u16 = 8,
-    /// An interrupt endpoint's interval, in milliseconds.
+    /// An interrupt or isochronous endpoint's interval, in milliseconds.
     interval: u16 = 10,
     /// The transaction translator a low- or full-speed device is reached
     /// through: the high-speed hub it hangs off - straight, or behind
@@ -120,6 +138,9 @@ pub const IOUsbHC = extern struct {
     /// Milliseconds a device may keep answering NAK before the transfer
     /// ends with UHIOERR_NAKTIMEOUT; 0: no limit.
     nak_timeout: u32 = 0,
+    /// An isochronous transfer's packets: the bytes of each but the
+    /// last, at most `max_packet`; 0 is `max_packet`.
+    iso_packet: u32 = 0,
     /// The controller's, while it has the request.
     hc_private: [4]usize = @splat(0),
 };

@@ -31,7 +31,8 @@ pub fn milliseconds(seconds: u32, micros: u32) u32 {
 /// Each tag of `tags` that asks for a setting answered: its data is where
 /// the value goes. `born` answers what the system starts with instead of
 /// what it has now. How many were written; a tag that is not a setting,
-/// or one that cannot be read back (`IPREFS_Style`), is passed over.
+/// or one that cannot be read back (`IPREFS_Style`, `IPREFS_BeepSound`),
+/// is passed over.
 pub fn answer(ib: *IntuitionBase, tags: ?[*]const TagItem, born: bool) u32 {
     const it = ib.iface();
     var count: u32 = 0;
@@ -47,6 +48,7 @@ pub fn answer(ib: *IntuitionBase, tags: ?[*]const TagItem, born: bool) u32 {
             intuition.IPREFS_Keyboard => @as(*u32, @ptrFromInt(item.data)).* = if (born) intuition.KEYBOARD_AUTO else ib.keyboard_mode,
             intuition.IPREFS_OffScreen => @as(*u32, @ptrFromInt(item.data)).* = if (born) 0 else ib.off_screen,
             intuition.IPREFS_WideGadgets => @as(*u32, @ptrFromInt(item.data)).* = if (born) 0 else ib.wide_gadgets,
+            intuition.IPREFS_BeepFlash => @as(*u32, @ptrFromInt(item.data)).* = if (born) 1 else ib.beep_flash,
             intuition.IPREFS_ScreenFont, intuition.IPREFS_DefaultFont, intuition.IPREFS_FixedFont => {
                 const into: *?*graphics.TextFont = @ptrFromInt(item.data);
                 into.* = if (born)

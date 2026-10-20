@@ -111,13 +111,16 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   asked for); partitions from a RigidDiskBlock on the flash disk, a card,
   a stick or an SSD, each mounted as its own drive - a card's and a
   stick's by their device when they come in - and laid out on any drive
-  by dragging them in `SYS:System/HDToolBox`; a file system's code kept in the
+  by dragging them in `SYS:System/HDToolBox`; a disk with a GPT read and
+  written, its PowerOS partitions in a PowerOS container among the GPT's
+  and its FAT, exFAT and posfs partitions mounted beside them (`SD0:`,
+  `SD0P2:`); a file system's code kept in the
   table, which its partitions run when the ROM has none or an older one
   ([disks guide](sdk/docs/guides/rdb.md));
   notification when a file changes; record locks on ranges of a file;
   consoles with line editing, file name completion, and copy and paste;
   a shell with scripts, a command's output and errors redirected apart
-  (`>`, `*>`: [dos guide](sdk/docs/guides/dos.md#files)), and 54
+  (`>`, `*>`: [dos guide](sdk/docs/guides/dos.md#files)), and 56
   commands in `C:` - `ScreenDump` saves a
   screen as a PNG - test programs in `C:test` and network tools in
   `C:net`.
@@ -132,7 +135,8 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   spreadsheet with formulas, reading and writing CSV), Terminal (a VT100
   on a serial line), Player (WAV, MP3, FLAC and Ogg Vorbis with their
   cover, tags and chapters, and a plasma, the wave or the spectrum of
-  what is heard), FontView, Battery and Prefs. In `SYS:System`, beside
+  what is heard, through the output picked), FontView, Battery, Prefs
+  and Volume (the output played through and how loud). In `SYS:System`, beside
   the Shell, with their readmes in `SYS:System/Docs`: HDToolBox (a
   drive's partitions), CPULoad and MemMap (who holds the memory, as a
   map).
@@ -155,7 +159,20 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   ([datatypes guide](sdk/docs/guides/datatypes.md)); fonts bitmap and
   TrueType, at any size ([fonts guide](sdk/docs/guides/fonts.md)).
 - **Sound:** `audio.device` mixes up to sixteen streams, each in its own
-  form, rate, volume and pan, out of an ES8311 codec or I2S amplifiers;
+  form, rate, volume and pan, into one of the outputs of rta.library's
+  drivers - an ES8311 codec, I2S amplifiers, USB speakers and headsets
+  (`DEVS:usb/uac.device`), a WAV file written in time, and in QEMU an
+  output into nothing that keeps time - picked by a number that stays
+  the same from boot to boot; the output preferred takes the sound over
+  when it is plugged in, and it or the first takes over when the one
+  playing is unplugged; each output keeps its own volume, and both are
+  set with `C:Audio`, on the Sound page of Prefs or in
+  `SYS:Programs/Volume` and given back at boot from `audio.prefs`; a
+  click or a beep plays at once as a trigger, on voices
+  of its own, with no process and nothing to feed, and `DisplayBeep`
+  plays one as `sound.prefs` says; unit 1 records from the codec's
+  microphone input - in QEMU, what was played - in any form and rate,
+  while sound plays (`C:Record`);
   `LIBS:audiocodec.library` decodes WAV, MP3, FLAC and Ogg Vorbis as they
   play and reads their tags, covers and chapters (`C:Play`,
   [sound guide](sdk/docs/guides/audio.md)).
@@ -170,8 +187,9 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   the ESP32-P4 - and on xHCI controllers on PCI Express (the VisionFive
   2's VL805), through hubs, with class drivers loaded as their devices
   are plugged in: keyboards, mice and tablets, sticks and card readers,
-  FTDI and CDC-ACM serial adapters, CDC Ethernet, AIC8800 Wi-Fi sticks
-  ([USB guide](sdk/docs/guides/usb.md)).
+  FTDI and CDC-ACM serial adapters, CDC Ethernet, AIC8800 Wi-Fi sticks,
+  and on xHCI, with its isochronous transfers, speakers and headsets of
+  the audio class ([USB guide](sdk/docs/guides/usb.md)).
 - **Modbus:** `LIBS:modbus.library` over RS-485 and TCP, asking and
   answering; `C:Modbus` in the shell, and `SYS:Programs/Battery` for a
   battery a Victron GX device reports
@@ -195,13 +213,13 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
 | `-Dboard=` | Board | State |
 |---|---|---|
 | `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, the card slot; not yet tried on the board: RS-485, the battery's voltage, a USB host on its USB-C socket; CAN not driven |
-| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; not yet tried on the board: audio.device 2's streams, the battery's voltage, a USB host |
-| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs, USB devices plugged in and out while it does (`-Dusb`, `-Dusb-disk`); no sound |
+| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; not yet tried on the board: audio.device 2's streams, recording from the microphone, playing into a file, the battery's voltage, a USB host |
+| `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs, USB devices plugged in and out while it does (`-Dusb`, `-Dusb-disk`); sound into an output that goes nowhere |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
-| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed |
-| `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, the UART1 and UART3-IN connectors |
-| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos on the disk image in RAM; with `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, with an `nvme` device an SSD; no network, no sound |
-| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot; not driven yet: the second Ethernet port, USB 3, the eMMC socket, sound |
+| `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file |
+| `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, playing into a file, the UART1 and UART3-IN connectors |
+| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos on the disk image in RAM; with `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, with an `nvme` device an SSD; sound into an output that goes nowhere, and with `-device usb-audio` through QEMU's USB speaker, sample for sample, plugged in and out as it plays; no network |
+| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot; not yet tried on the board: sound through a USB speaker or headset; not driven yet: the second Ethernet port, USB 3, the eMMC socket, sound over HDMI |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network
@@ -301,14 +319,19 @@ qemu-system-riscv64 -M virt -m 512M -smp 4 -bios default \
     -drive if=none,id=ssd,format=raw,file=ssd.img -device nvme,serial=1,drive=ssd
 ```
 
+`-device usb-audio,audiodev=snd -audiodev pa,id=snd` adds a USB speaker
+(`-audiodev wav,id=snd,path=out.wav,out.frequency=48000` plays into a
+file instead).
+
 On the VisionFive 2, U-Boot loads `kernel.bin` and starts it with
 `booti`, with `disk-rv64.bin` as its ramdisk and U-Boot's device tree.
 The console is the debug UART on pins 8 and 10 of the 40-pin header,
 115200 8N1 (a 3.3 V serial adapter). The ROM holds sdcard.device and the
 FAT handler, so the machine can also start from its microSD card: a
-partition in the card's RigidDiskBlock that is bootable at a higher
-priority than `DH0:` is `SYS:`, and a card sold with a PC partition
-table keeps it, so one FAT32 volume can be both U-Boot's and PowerOS's
+partition in the card's RigidDiskBlock, or in the one in the PowerOS
+container of its GPT, that is bootable at a higher priority than `DH0:`
+is `SYS:`, and a card sold with a PC partition table keeps it, so one
+FAT32 volume can be both U-Boot's and PowerOS's
 ([disks guide](sdk/docs/guides/rdb.md)).
 
 More build steps and options:

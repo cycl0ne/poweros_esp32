@@ -8,7 +8,9 @@
 //!   UHCMD_BULKXFER     a bulk transfer, in rounds of 16 KiB
 //!   UHCMD_INTXFER      an interrupt transfer, asked by the controller at
 //!                      the endpoint's interval until the device answers
-//!   UHCMD_ISOXFER      IOERR_NOCMD
+//!   UHCMD_ISOXFER      an isochronous transfer OUT: a TD a packet, up to
+//!                      four requests on the endpoint's ring at once;
+//!                      IN answered IOERR_NOCMD
 //!   UHCMD_USBRESET     every transfer answered, the controller started
 //!                      afresh
 //!   UHCMD_USBSUSPEND,
@@ -47,8 +49,8 @@ const roothub = @import("roothub.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "18.10.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -215,7 +217,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     io.err = 0;
     req.std.actual = 0;
     switch (io.command) {
-        usbhc.UHCMD_CONTROLXFER, usbhc.UHCMD_BULKXFER, usbhc.UHCMD_INTXFER => {
+        usbhc.UHCMD_CONTROLXFER, usbhc.UHCMD_BULKXFER, usbhc.UHCMD_INTXFER, usbhc.UHCMD_ISOXFER => {
             if (io.message.reply_port == null) {
                 io.err = exec.IOERR_NOREPLYPORT;
             } else if (req.std.length != 0 and req.std.data == null) {

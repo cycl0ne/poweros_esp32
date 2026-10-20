@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of usb.library's parts that need no bus: the jump table,
-//! walking a device's descriptors, the class drivers' match order, and
-//! reading a ROM tag from a load file's bytes.
+//! walking a device's descriptors, the class drivers' match order,
+//! reading a ROM tag from a load file's bytes, and the pipe an endpoint
+//! is given.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -14,6 +15,11 @@ const UsbBase = @import("../usb_base.zig").UsbBase;
 const FindUSBInterface = @import("../descriptor/findusbinterface.zig").FindUSBInterface;
 const FindUSBEndpoint = @import("../descriptor/findusbendpoint.zig").FindUSBEndpoint;
 const NextUSBDescriptor = @import("../descriptor/nextusbdescriptor.zig").NextUSBDescriptor;
+const OpenUSBPipe = @import("../pipe/openusbpipe.zig").OpenUSBPipe;
+const CloseUSBPipe = @import("../pipe/closeusbpipe.zig").CloseUSBPipe;
+const usbhc = sdk.devices.usbhc;
+const host_rom = @import("host_rom");
+const kexec = host_rom.exec;
 
 const testing = std.testing;
 
@@ -59,6 +65,48 @@ test "interfaces and endpoints are found in a configuration as it came" {
 
     const report = NextUSBDescriptor(&base, &device.public, null, d.USB_DT_HID).?;
     try testing.expectEqual(d.USB_DT_HID, report.descriptor_type);
+}
+
+/// A sound output's streaming interface: its empty first setting, and a
+/// second with an isochronous OUT endpoint of 192-byte packets, every
+/// frame - the interval at offset 33.
+const speaker_bytes = [_]u8{
+    9, d.USB_DT_CONFIG,    36,   0,    1, 1,    0, 0x80, 50,
+    9, d.USB_DT_INTERFACE, 1,    0,    0, 1,    2, 0,    0,
+    9, d.USB_DT_INTERFACE, 1,    1,    1, 1,    2, 0,    0,
+    9, d.USB_DT_ENDPOINT,  0x01, 0x09, 192, 0, 1, 0,    0,
+};
+
+test "an isochronous endpoint gets a pipe at its interval, never one under a millisecond" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    var base: UsbBase = undefined;
+    base.sys_base = kexec.SysBase.iface();
+    var bus: _bus.Bus = undefined;
+    bus.hc_io = .{};
+    var port: sdk.exec.MsgPort = .{};
+    var bytes = speaker_bytes;
+    var device = _bus.Device{ .bus = &bus };
+    device.public.config = &bytes;
+    device.public.config_length = bytes.len;
+    device.public.speed = usbhc.USB_SPEED_FULL;
+
+    const pipe = OpenUSBPipe(&base, &device.public, 0x01, &port).?;
+    try testing.expectEqual(usbhc.UHCMD_ISOXFER, pipe.io.std.req.command);
+    try testing.expectEqual(@as(u16, 1), pipe.io.interval);
+    try testing.expectEqual(@as(u16, 192), pipe.io.max_packet);
+    try testing.expectEqual(@as(u32, 192), pipe.io.iso_packet);
+    CloseUSBPipe(&base, pipe);
+
+    // At high speed bInterval 1 is a microframe: refused; 4 is a
+    // millisecond.
+    device.public.speed = usbhc.USB_SPEED_HIGH;
+    try testing.expect(OpenUSBPipe(&base, &device.public, 0x01, &port) == null);
+    bytes[33] = 4;
+    const fast = OpenUSBPipe(&base, &device.public, 0x01, &port).?;
+    try testing.expectEqual(@as(u16, 1), fast.io.interval);
+    CloseUSBPipe(&base, fast);
+    try kexec.expectNoLeaks();
 }
 
 test "a configuration that lies about a length ends the walk" {

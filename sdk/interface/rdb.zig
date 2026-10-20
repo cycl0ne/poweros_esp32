@@ -8,6 +8,7 @@
 
 const libraries = @import("../libs/exec/libraries.zig");
 const rdb = @import("../libs/rdb/rdb.zig");
+const gpt = @import("../libs/dos/gpt.zig");
 
 /// The name to open it by (OpenLibrary, OpenDevice).
 pub const NAME = "rdb.library";
@@ -26,6 +27,13 @@ pub const LVO = struct {
     pub const NextFileSystem = libraries.lvo(13);
     pub const AddFileSystem = libraries.lvo(14);
     pub const RemFileSystem = libraries.lvo(15);
+    pub const NextGPTPartition = libraries.lvo(16);
+    pub const MountGPTPartition = libraries.lvo(17);
+    pub const InitGPT = libraries.lvo(18);
+    pub const AddGPTPartition = libraries.lvo(19);
+    pub const RemGPTPartition = libraries.lvo(20);
+    pub const WriteGPT = libraries.lvo(21);
+    pub const RemGPT = libraries.lvo(22);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -43,6 +51,13 @@ pub const Fn = struct {
     pub const NextFileSystem = *const fn (*RDBBase, *rdb.RDBHandle, ?*rdb.RDBFileSystem) callconv(.c) ?*rdb.RDBFileSystem;
     pub const AddFileSystem = *const fn (*RDBBase, *rdb.RDBHandle, u32, [*]const u8, u32) callconv(.c) i32;
     pub const RemFileSystem = *const fn (*RDBBase, *rdb.RDBHandle, *rdb.RDBFileSystem) callconv(.c) void;
+    pub const NextGPTPartition = *const fn (*RDBBase, *rdb.RDBHandle, ?*rdb.GPTPartition) callconv(.c) ?*rdb.GPTPartition;
+    pub const MountGPTPartition = *const fn (*RDBBase, *rdb.RDBHandle, *rdb.GPTPartition, [*:0]const u8, ?*rdb.MountName, u32) callconv(.c) i32;
+    pub const InitGPT = *const fn (*RDBBase, *rdb.RDBHandle) callconv(.c) i32;
+    pub const AddGPTPartition = *const fn (*RDBBase, *rdb.RDBHandle, *const gpt.Entry, ?*i32) callconv(.c) ?*rdb.GPTPartition;
+    pub const RemGPTPartition = *const fn (*RDBBase, *rdb.RDBHandle, *rdb.GPTPartition) callconv(.c) void;
+    pub const WriteGPT = *const fn (*RDBBase, *rdb.RDBHandle) callconv(.c) i32;
+    pub const RemGPT = *const fn (*RDBBase, *rdb.RDBHandle) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -119,5 +134,46 @@ pub const RDBBase = opaque {
     /// A file system taken out of the handle's table and freed.
     pub fn RemFileSystem(self: *RDBBase, handle: *rdb.RDBHandle, file_system: *rdb.RDBFileSystem) void {
         return libraries.call(self, LVO.RemFileSystem, Fn.RemFileSystem, .{ handle, file_system });
+    }
+
+    /// The GPT partition after `previous` on the handle's list, or the first.
+    pub fn NextGPTPartition(self: *RDBBase, handle: *rdb.RDBHandle, previous: ?*rdb.GPTPartition) ?*rdb.GPTPartition {
+        return libraries.call(self, LVO.NextGPTPartition, Fn.NextGPTPartition, .{ handle, previous });
+    }
+
+    /// A device node for a GPT partition on dos's list, named `name` (with
+    /// dots added while the name is taken), for the file system its first
+    /// block holds; the name used goes where `mounted` points.
+    pub fn MountGPTPartition(self: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.GPTPartition, name: [*:0]const u8, mounted: ?*rdb.MountName, flags: u32) i32 {
+        return libraries.call(self, LVO.MountGPTPartition, Fn.MountGPTPartition, .{ handle, partition, name, mounted, flags });
+    }
+
+    /// A fresh GPT for the whole medium in the handle, with no partitions:
+    /// written by WriteGPT.
+    pub fn InitGPT(self: *RDBBase, handle: *rdb.RDBHandle) i32 {
+        return libraries.call(self, LVO.InitGPT, Fn.InitGPT, .{handle});
+    }
+
+    /// A new GPT partition, as `entry` gives its type, blocks (0 and 0: the
+    /// largest free run), attributes and name; null, and why in `err`, when
+    /// it cannot be one.
+    pub fn AddGPTPartition(self: *RDBBase, handle: *rdb.RDBHandle, entry: *const gpt.Entry, err: ?*i32) ?*rdb.GPTPartition {
+        return libraries.call(self, LVO.AddGPTPartition, Fn.AddGPTPartition, .{ handle, entry, err });
+    }
+
+    /// A GPT partition taken off the handle's list and freed.
+    pub fn RemGPTPartition(self: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.GPTPartition) void {
+        return libraries.call(self, LVO.RemGPTPartition, Fn.RemGPTPartition, .{ handle, partition });
+    }
+
+    /// The handle's GPT checked and written to the disk, both copies.
+    pub fn WriteGPT(self: *RDBBase, handle: *rdb.RDBHandle) i32 {
+        return libraries.call(self, LVO.WriteGPT, Fn.WriteGPT, .{handle});
+    }
+
+    /// The handle's GPT taken out of it, for a table over the whole disk,
+    /// which WriteRDB writes and then wipes the disk's GPT.
+    pub fn RemGPT(self: *RDBBase, handle: *rdb.RDBHandle) void {
+        return libraries.call(self, LVO.RemGPT, Fn.RemGPT, .{handle});
     }
 };

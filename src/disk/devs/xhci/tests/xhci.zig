@@ -2,7 +2,8 @@
 //! Host tests of xhci.device's parts that need no controller: the rings
 //! and their cycle bits (ring.zig), a configuration's endpoints and their
 //! intervals (slots.zig), a root port's PORTSC as a hub's port status
-//! (roothub.zig), and the contexts' words (regs.zig).
+//! (roothub.zig), the contexts' words (regs.zig), and where an
+//! isochronous request's packets lie (slots.zig, transfer.zig).
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -11,6 +12,8 @@ const regs = @import("../regs.zig");
 const ring = @import("../ring.zig");
 const slots = @import("../slots.zig");
 const roothub = @import("../roothub.zig");
+const transfer = @import("../transfer.zig");
+const _xhci = @import("../_xhci.zig");
 
 const testing = std.testing;
 const Trb = ring.Trb;
@@ -196,4 +199,30 @@ test "scratchpads are counted from both their fields" {
     try testing.expectEqual(@as(u32, 0), regs.scratchpads(0));
     try testing.expectEqual(@as(u32, 4), regs.scratchpads(4 << 27));
     try testing.expectEqual(@as(u32, 33), regs.scratchpads(1 << 21 | 1 << 27));
+}
+
+test "an isochronous endpoint's context: no tries, and its interval in frames" {
+    const word = regs.endpointWord1(regs.EP_ISOCH_OUT, 0, 192);
+    try testing.expectEqual(@as(u32, 0), (word >> 1) & 3);
+    try testing.expectEqual(regs.EP_ISOCH_OUT, (word >> 3) & 7);
+    try testing.expectEqual(@as(u32, 192), word >> 16);
+    try testing.expectEqual(@as(u32, 3), (regs.endpointWord1(regs.EP_BULK_OUT, 0, 512) >> 1) & 3);
+    // A packet every millisecond at full speed: 2^3 x 125 us.
+    try testing.expectEqual(@as(u32, 3), slots.intervalOfMs(regs.SPEED_FULL, 1));
+}
+
+test "isochronous packets lie a power of two apart, at least a cache line" {
+    try testing.expectEqual(@as(u32, 64), slots.strideOf(8));
+    try testing.expectEqual(@as(u32, 256), slots.strideOf(192));
+    try testing.expectEqual(@as(u32, 1024), slots.strideOf(1023));
+}
+
+test "an isochronous request's span on the ring, and how far round it lies" {
+    const span = _xhci.spanOf(250, 9, 3);
+    try testing.expectEqual(@as(u32, 250), _xhci.spanFirst(span));
+    try testing.expectEqual(@as(u32, 9), _xhci.spanLast(span));
+    // Past the end and round: a TD at 9 is 15 on from one at 250.
+    try testing.expectEqual(@as(u32, 15), transfer.ringDistance(250, 9, 256));
+    try testing.expectEqual(@as(u32, 0), transfer.ringDistance(250, 250, 256));
+    try testing.expect(transfer.ringDistance(250, 5, 256) < transfer.ringDistance(250, 9, 256));
 }

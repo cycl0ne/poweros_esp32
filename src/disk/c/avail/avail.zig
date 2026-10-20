@@ -18,17 +18,22 @@
 //! Internal memory is the chip's own SRAM, which a DMA engine addresses
 //! and no cache stands in front of; external memory is the PSRAM behind the
 //! data cache, which is the bulk of it. The table is exec's own, as the
-//! shell used to print it.
+//! shell used to print it. On a machine whose RAM is one kind (the board's
+//! SYSTAG_UnifiedMemory) every region is internal and external at once, so
+//! the table is the total alone, and INTERNAL and EXTERNAL answer all of
+//! it. A machine with 64-bit addresses has wider columns.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Avail";
-const VERSION_STRING = "\x00$VER: Avail 1.2 (15.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Avail 1.3 (18.10.2026)\r\n";
 
 const template = "INTERNAL/S,EXTERNAL/S,TOTAL/S,FLUSH/S,OWNERS/S";
 const MSG_NOTBOTH = "only one of INTERNAL, EXTERNAL, or TOTAL allowed\n";
@@ -39,6 +44,25 @@ const flush = 3;
 const owners = 4;
 /// How many owners are told apart; the rest are summed in one line.
 const max_owners = 64;
+
+/// The table's heading and its rows - the name and the width of the column
+/// after it in one literal each (RawDoFmt has no %*d), so all four line up
+/// under the heading - as wide as the figures of an address space get:
+/// nine digits for 32-bit addresses, twelve for 64.
+const wide = @sizeOf(usize) == 8;
+const heading = if (wide)
+    "Type          Available       In-Use      Maximum      Largest\n"
+else
+    "Type      Available    In-Use   Maximum   Largest\n";
+const rows = if (wide) .{
+    .{ "internal%15zd %12zd %12zd %12zd\n", exec.MEMF_INTERNAL },
+    .{ "external%15zd %12zd %12zd %12zd\n", exec.MEMF_EXTERNAL },
+    .{ "total%18zd %12zd %12zd %12zd\n", exec.MEMF_ANY },
+} else .{
+    .{ "internal%11zd %9zd %9zd %9zd\n", exec.MEMF_INTERNAL },
+    .{ "external%11zd %9zd %9zd %9zd\n", exec.MEMF_EXTERNAL },
+    .{ "total%14zd %9zd %9zd %9zd\n", exec.MEMF_ANY },
+};
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -83,21 +107,31 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_OK;
     }
 
-    _ = dl.PutStr("Type      Available    In-Use   Maximum   Largest\n");
-    // Three lines, the name and the width of the column after it in one
-    // literal each (RawDoFmt has no %*d), so all four line up under the
-    // heading.
-    inline for (.{
-        .{ "internal%11zd %9zd %9zd %9zd\n", exec.MEMF_INTERNAL },
-        .{ "external%11zd %9zd %9zd %9zd\n", exec.MEMF_EXTERNAL },
-        .{ "total%14zd %9zd %9zd %9zd\n", exec.MEMF_ANY },
-    }) |row| {
-        const available = sys.AvailMem(row[1]);
-        const maximum = sys.AvailMem(row[1] | exec.MEMF_TOTAL);
-        const largest = sys.AvailMem(row[1] | exec.MEMF_LARGEST);
-        _ = Printf(dl, row[0], .{ available, maximum - available, maximum, largest });
+    const unified = unifiedMemory(sys);
+    _ = dl.PutStr(heading);
+    inline for (rows) |row| {
+        // One kind of RAM: the internal and external rows would be the
+        // total again.
+        if (!unified or row[1] == exec.MEMF_ANY) {
+            const available = sys.AvailMem(row[1]);
+            const maximum = sys.AvailMem(row[1] | exec.MEMF_TOTAL);
+            const largest = sys.AvailMem(row[1] | exec.MEMF_LARGEST);
+            _ = Printf(dl, row[0], .{ available, maximum - available, maximum, largest });
+        }
     }
     return dos.RETURN_OK;
+}
+
+/// Whether the board says its RAM is one kind (SYSTAG_UnifiedMemory). No
+/// when expansion.library is not there to ask.
+fn unifiedMemory(sys: *ExecBase) bool {
+    const expansion = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return false;
+    defer sys.CloseLibrary(expansion);
+    const utility = sys.OpenLibrary(sdk.utility.UTILITYNAME, 0) orelse return false;
+    defer sys.CloseLibrary(utility);
+    const eb: *ExpansionBase = @ptrCast(expansion);
+    const ub: *UtilityBase = @ptrCast(utility);
+    return ub.GetTagData(sdk.expansion.systemtags.SYSTAG_UnifiedMemory, 0, eb.SystemTags()) != 0;
 }
 
 /// Who holds the memory, the most first: walked and named into a tally on
@@ -121,7 +155,7 @@ fn showOwners(sys: *ExecBase, dl: *DosBase) i32 {
     }
     _ = Printf(dl, "free   in %u chunks                       %10zu\n", .{ tally.free_chunks, tally.free_bytes });
     if (tally.damaged) |at| {
-        _ = Printf(dl, "damaged at 0x%08x: the rest of that region is not counted\n", .{@as(u32, @truncate(at))});
+        _ = Printf(dl, "damaged at 0x%08zx: the rest of that region is not counted\n", .{at});
         return dos.RETURN_WARN;
     }
     return dos.RETURN_OK;

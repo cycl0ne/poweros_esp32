@@ -904,8 +904,11 @@ it with `FreeSysRequest`. A requester can also be put up inside a
 window - a `Requester` with gadgets of its own, put up with `Request` and
 taken down by `EndRequest` or a gadget made with `GA_EndGadget`, the
 window's own gadgets not pressed while it is up (`C:test/Intuition
-REQUESTER`). `DisplayBeep(screen)` flashes a screen, for what needs no
-answer.
+REQUESTER`). `DisplayBeep(screen)` is for what needs noticing and no
+answer: it plays the system's beep sound through audio.device and
+flashes the screen - each as `IPREFS_BeepSound` and `IPREFS_BeepFlash`
+say, from `sound.prefs` - and flashes anyway when it has a sound that
+cannot be heard.
 
 ### Files and fonts
 

@@ -1,7 +1,7 @@
 //! audio.device: sound out of the board, as streams mixed together.
 //!
-//! **A stream per open.** Each OpenDevice of unit 0 is a stream of its
-//! own, and up to `AUDIO_MAX_STREAMS` play at once, mixed by the device:
+//! **A stream per open.** Each OpenDevice of unit 0 (`AUDIO_UNIT_PLAY`)
+//! is a stream of its own, and up to `AUDIO_MAX_STREAMS` play at once, mixed by the device:
 //! a program that wants a tune and a click at the same time opens twice.
 //! Nothing is allocated or taken away from anyone.
 //!
@@ -32,21 +32,115 @@
 //!                         the format for the writes sent after it - each
 //!                         write keeps the format it was sent in
 //!   AUDIOCMD_QUERY        an `AudioInfo` written to `std.data` (when it
-//!                         is not null), and `position`: the frames this
-//!                         stream has played since it was opened
+//!                         is not null) - as much of it as `std.length`
+//!                         holds, `std.actual` saying how much - and
+//!                         `position`: the frames this stream has played
+//!                         since it was opened
 //!   AUDIOCMD_MASTER       how loud everything is, from `volume`: the
-//!                         device's, every stream's
+//!                         device's, over every stream, as the output
+//!                         played through has it - or, with `output`
+//!                         another's number, as that output has it
+//!                         whenever it plays
+//!   AUDIOCMD_NEXTOUTPUT   the output after the one `output` names (0:
+//!                         the first), its number in `output` and its
+//!                         `AudioOutputInfo` to `std.data`, as much as
+//!                         `std.length` holds; AUDIOERR_NOOUTPUT past
+//!                         the last
+//!   AUDIOCMD_SETOUTPUT    the device plays through the output `output`
+//!                         names from now on (0: the first on the list);
+//!                         every stream goes on where it was
+//!   AUDIOCMD_GETOUTPUT    the output played through: its number in
+//!                         `output`, its `AudioOutputInfo` to `std.data`
+//!   AUDIOCMD_PREFEROUTPUT the output `output` names (0: none) played
+//!                         through whenever it is there - at once, if it
+//!                         is; the number of the one played through in
+//!                         `output`. The one preferred already changes
+//!                         nothing
+//!   AUDIOCMD_TRIGGER      a sound played at once, on a voice of its own:
+//!                         `std.data` and `std.length` in the request's
+//!                         own format, channels, rate, volume and pan,
+//!                         `loops` times over; replied when it has played
 //!
 //! AbortIO takes a write back: one that waits, or the one that plays,
-//! which stops, the next going on.
+//! which stops, the next going on. It takes a trigger back the same way.
+//!
+//! **A sound for a moment** - a click, a beep - is a trigger: no stream is
+//! fed for it and nothing waits on a timer for it. It plays on one of
+//! `AUDIO_MAX_TRIGGERS` voices of its own, beside the streams, so it never
+//! takes a stream's place and a stream is never cut for it. When every
+//! one is playing, a new trigger takes the voice of the one of lowest
+//! priority - the `pri` of the request's message node - and of those the
+//! one that has played longest, so long as that priority is not above its
+//! own; the one that gives way is answered IOERR_ABORTED, and a trigger no
+//! voice gives way to AUDIOERR_NOVOICE. The samples are the program's
+//! until the trigger is replied. An open with `AUDIOF_TRIGGER` in its
+//! flags is for triggers alone and takes no stream: of the commands it
+//! takes AUDIOCMD_TRIGGER, the query and the output and master commands.
+//! A trigger plays on when the open it was sent on is closed.
 //!
 //! **What the board has** is the query's answer: the rate the output runs
 //! at, whether it is one speaker or a codec that plays one side
 //! (`channels` 1) or two speakers (2) - a stereo stream on one speaker is
 //! heard as its two sides together - and how many frames lie between a
-//! write and its being heard. Unit 1, the way in, is the number a
-//! recording stream will open; until a board's input is driven it is
-//! refused (`AUDIOERR_NOINPUT`).
+//! write and its being heard; whether the board has a way in, and which.
+//!
+//! **Unit 1 records** (`AUDIO_UNIT_RECORD`): the board's way in - a
+//! codec's microphone input - heard as one recording stream, one open at
+//! a time (a second is refused AUDIOERR_NOSTREAM, and an open on a board
+//! with no way in AUDIOERR_NOINPUT). The request at OpenDevice gives its
+//! form and rate, as a playing stream's, and its volume, a gain on what
+//! is heard; the device converts from the rate the way in runs at. A way
+//! in of the same part as the output - the two halves of one codec - runs
+//! at the output's rate.
+//!
+//! **CMD_READ records into a buffer**: `std.data` and `std.length` in
+//! bytes, whole frames. Reads queue without a limit and follow each other
+//! without a gap; each is replied when it is full, `std.actual` the bytes
+//! recorded. What is heard while no read waits is lost - a program keeps
+//! two or three reads out, sending each again as it comes back - and once
+//! a read comes after it, the query counts it in `overruns`. The way in starts with the first read
+//! and stops at the close. The memory is the program's again once the
+//! read is replied. On the recording:
+//!
+//!   CMD_STOP, CMD_START   hold the recording - what is heard meanwhile
+//!                         is not recorded - and go on
+//!   CMD_FLUSH             every read answered IOERR_ABORTED, with the
+//!                         bytes it holds in `std.actual`
+//!   CMD_RESET             as CMD_FLUSH, and the recording started again
+//!   AUDIOCMD_SETPARAMS    the form for the reads sent after it, the rate
+//!                         and volume at once
+//!   AUDIOCMD_QUERY        the `AudioInfo`, and `position`: the frames
+//!                         recorded since the open
+//!
+//! AbortIO takes a read back with the bytes it holds. The output and
+//! master commands and AUDIOCMD_TRIGGER work on the recording's request
+//! as on a stream's.
+//!
+//! **A machine may have several outputs** - a jack and a speaker, a DAC
+//! plugged in - and the device plays through one at a time: the preferred
+//! one (AUDIOCMD_PREFEROUTPUT) when it is there, else the first on the
+//! list, until it is told another (AUDIOCMD_SETOUTPUT). One that goes - a
+//! DAC unplugged - leaves the device playing through the preferred one or
+//! the first on the list, every stream going on; when it was the last,
+//! writes and triggers are answered AUDIOERR_NOOUTPUT until one comes - as
+//! they are on a machine that starts with none, whose outputs USB brings.
+//! The preferred one coming - the headphones plugged in - takes the sound
+//! over within half a second, whatever plays; one told with SETOUTPUT
+//! stays until then. Each has a number that stays the same from one boot
+//! to the next, which is how a program or a preference names it: the
+//! preferred one may be named before it is there, at boot.
+//!
+//! **Each output has its own volume**, the master while it plays: the
+//! headphones quieter than the speaker. AUDIOCMD_MASTER with `output`
+//! naming one sets its volume, kept for it while it is not there; with
+//! `output` 0, or from a request of version 2, the one played through.
+//! An output no volume was set for plays at the volume of the one before
+//! it. S:Startup-Sequence's C:SetPrefs hands the volumes and the preferred
+//! output to the device from ENV:Sys/audio.prefs (`sdk.prefs.audio`).
+//!
+//! The output commands read `output`, a field an IOAudio of version 2 had
+//! not got: a request smaller than the whole is refused them with
+//! IOERR_BADLENGTH, and opens as before.
 
 const exec = @import("../libs/exec/exec.zig");
 const IOStdReq = exec.IOStdReq;
@@ -54,8 +148,7 @@ const IOStdReq = exec.IOStdReq;
 /// The device's name, for OpenDevice.
 pub const AUDIONAME = "audio.device";
 
-/// The units: what is played, and - once a board's input is driven -
-/// what is recorded.
+/// The units: what is played, and what is recorded (since version 5).
 pub const AUDIO_UNIT_PLAY: u32 = 0;
 pub const AUDIO_UNIT_RECORD: u32 = 1;
 
@@ -83,21 +176,45 @@ pub const AUDIO_PAN_FULL: i32 = 0x10000;
 pub const AUDIOCMD_SETPARAMS: u16 = exec.CMD_NONSTD + 0;
 pub const AUDIOCMD_QUERY: u16 = exec.CMD_NONSTD + 1;
 pub const AUDIOCMD_MASTER: u16 = exec.CMD_NONSTD + 2;
+/// Since version 3.
+pub const AUDIOCMD_NEXTOUTPUT: u16 = exec.CMD_NONSTD + 3;
+pub const AUDIOCMD_SETOUTPUT: u16 = exec.CMD_NONSTD + 4;
+pub const AUDIOCMD_GETOUTPUT: u16 = exec.CMD_NONSTD + 5;
+/// Since version 4.
+pub const AUDIOCMD_TRIGGER: u16 = exec.CMD_NONSTD + 6;
+/// Since version 6.
+pub const AUDIOCMD_PREFEROUTPUT: u16 = exec.CMD_NONSTD + 7;
+
+/// OpenDevice's flags: an open for triggers alone, which takes no stream.
+/// Since version 4.
+pub const AUDIOF_TRIGGER: u32 = 1 << 0;
+
+/// How many sounds play by trigger at once, beside the streams.
+pub const AUDIO_MAX_TRIGGERS: u32 = 8;
+
+/// How many outputs' volumes the device keeps: past that, the one set
+/// longest ago is forgotten. Since version 6.
+pub const AUDIO_MAX_VOLUMES: u32 = 16;
 
 // --- errors -----------------------------------------------------------------------
 
 /// A format, a channel count or a rate the device does not take.
 pub const AUDIOERR_BADFORMAT: i8 = -10;
-/// Every stream is playing already.
+/// Every stream is playing already, or the recording is someone's.
 pub const AUDIOERR_NOSTREAM: i8 = -11;
-/// There is no way in on this board, or the device does not drive it yet.
+/// There is no way in on this board, or it would not start.
 pub const AUDIOERR_NOINPUT: i8 = -12;
+/// No output of that number, none after it, or one that would not start;
+/// for a write or a trigger, none at all: the last went (since 5.1).
+pub const AUDIOERR_NOOUTPUT: i8 = -13;
+/// Every trigger voice plays a sound of a higher priority.
+pub const AUDIOERR_NOVOICE: i8 = -14;
 
 /// What a command to audio.device is written in. The first fields are an
 /// IOStdReq, so it is one.
 pub const IOAudio = extern struct {
     /// io_Data, io_Length (bytes, whole frames) and io_Actual (bytes
-    /// played).
+    /// played, or recorded).
     std: IOStdReq = .{},
     /// The stream's samples: AUDIO_S8, AUDIO_S16 or AUDIO_S32, and one
     /// channel or two. Read at OpenDevice and by AUDIOCMD_SETPARAMS.
@@ -113,12 +230,21 @@ pub const IOAudio = extern struct {
     /// alike, AUDIO_PAN_FULL right only. On a stereo stream it weighs the
     /// two sides against each other.
     pan: i32 = 0,
-    /// CMD_WRITE: how many times the buffer plays; 0 until stopped.
+    /// CMD_WRITE and AUDIOCMD_TRIGGER: how many times the samples play; 0
+    /// until stopped.
     loops: u32 = 1,
-    /// AUDIOCMD_QUERY: the frames this stream has played since it was
-    /// opened, counted round at 2^32.
+    /// AUDIOCMD_QUERY: the frames this stream has played - the recording
+    /// recorded - since it was opened, counted round at 2^32.
     position: u32 = 0,
+    /// The output commands: an output's number (`AudioOutputInfo.id`);
+    /// 0 for the first. Since version 3. AUDIOCMD_MASTER: the output whose
+    /// volume is set, 0 for the one played through. Since version 6.
+    output: u32 = 0,
 };
+
+/// The fewest bytes a request given to OpenDevice may have: an IOAudio up
+/// to `output`, as version 2 knew it.
+pub const AUDIO_MIN_REQUEST: usize = @offsetOf(IOAudio, "output");
 
 /// What AUDIOCMD_QUERY writes about the device and the board.
 pub const AudioInfo = extern struct {
@@ -136,11 +262,69 @@ pub const AudioInfo = extern struct {
     max_streams: u32 = AUDIO_MAX_STREAMS,
     /// The device's volume (AUDIOCMD_MASTER).
     master: u32 = AUDIO_VOLUME_UNITY,
-    /// Whether unit 1 records on this board.
+    /// Whether unit 1 records on this board: 1 when it has a way in.
     has_input: u32 = 0,
     /// The part the sound comes out of, as the board names it.
     output: ?[*:0]const u8 = null,
+    /// Buffers the output played again because the device had not mixed
+    /// the next in time - each one a gap heard - since its driver made it.
+    underruns: u32 = 0,
+    /// The output's number (`AudioOutputInfo.id`), 0 for none. Since
+    /// version 3.
+    output_id: u32 = 0,
+    /// Sounds playing by trigger now, and how many may. Since version 4.
+    triggers: u32 = 0,
+    max_triggers: u32 = AUDIO_MAX_TRIGGERS,
+    /// The way in recorded from - or that a recording would be - as the
+    /// board names the part, and its number; null and 0 for none. Since
+    /// version 5.
+    input: ?[*:0]const u8 = null,
+    input_id: u32 = 0,
+    /// The most sides any of its modes hears: 1 for one microphone, 2 for
+    /// two.
+    input_channels: u32 = 0,
+    /// The rate it runs at while a recording runs, else 0.
+    input_rate: u32 = 0,
+    /// Buffers of it lost - filled while the one before had not been
+    /// taken, or heard while no read waited between two reads: each a gap
+    /// in a recording - since its driver made it.
+    overruns: u32 = 0,
+    /// The preferred output's number (AUDIOCMD_PREFEROUTPUT), there or
+    /// not; 0 for none. Since version 6.
+    preferred_id: u32 = 0,
 };
+
+/// How many of an output's rates `AudioOutputInfo` holds.
+pub const AUDIO_MAX_RATES = 8;
+/// How long an output's name may be, its NUL included.
+pub const AUDIO_NAME_LEN = 32;
+
+/// What AUDIOCMD_NEXTOUTPUT and AUDIOCMD_GETOUTPUT write about an output.
+pub const AudioOutputInfo = extern struct {
+    /// Its number: the same from one boot to the next, never 0.
+    id: u32 = 0,
+    /// AUDIOOF_*
+    flags: u32 = 0,
+    /// The most sides any of its modes plays: 1 or 2.
+    channels: u32 = 0,
+    /// The rates it runs at, `rate_count` of them, lowest first.
+    rate_count: u32 = 0,
+    rates: [AUDIO_MAX_RATES]u32 = @splat(0),
+    /// Its name, as the board names the part, NUL-terminated.
+    name: [AUDIO_NAME_LEN]u8 = @splat(0),
+    /// Its volume: the master while it plays (AUDIOCMD_MASTER). Since
+    /// version 6.
+    volume: u32 = 0,
+};
+
+/// AudioOutputInfo.flags
+/// The first on the list: what the device plays through until it is told
+/// another, when no preferred one is there.
+pub const AUDIOOF_DEFAULT: u32 = 1 << 0;
+/// The one the device plays through now.
+pub const AUDIOOF_CURRENT: u32 = 1 << 1;
+/// The preferred one (AUDIOCMD_PREFEROUTPUT). Since version 6.
+pub const AUDIOOF_PREFERRED: u32 = 1 << 2;
 
 /// Bytes a frame takes in `format` with `channels` channels; 0 for a
 /// format the device does not know.

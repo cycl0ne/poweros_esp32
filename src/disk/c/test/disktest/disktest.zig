@@ -34,15 +34,17 @@
 //!                                     **what was there is gone**
 //!
 //! Only reads are sent without WRITE or TRIM; COMPARE reads only too. A GPT is read where block 0 holds
-//! the protective MBR's partition (type 0xEE): its header in block 1,
-//! and its partitions where the header says, each with its type named
-//! where it is one of the usual.
+//! the protective MBR's partition (type 0xEE): its header in block 1, or
+//! the copy in the last block where that one is not sound, and its
+//! partitions where the header says, each with its type named where it is
+//! one of the usual, and the entries' crc32 checked.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
 const td = sdk.devices.trackdisk;
+const gpt = dos.gpt;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -50,7 +52,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "DiskTest";
-const VERSION_STRING = "\x00$VER: DiskTest 1.1 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: DiskTest 1.2 (19.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICE/A,UNIT/N,SPEED/K/N,BUFFER/K/N,ALIGN/K/N,AT/K/N,WRITE/S,COMPARE/S,TRIM/S";
@@ -335,78 +337,72 @@ fn showPartitions(disk: *Disk, buffer: [*]u8) void {
     if (protective) showGpt(disk, buffer);
 }
 
-const known_types = [_]struct { guid: [16]u8, name: [*:0]const u8 }{
-    .{ .guid = .{ 0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11, 0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B }, .name = "EFI System" },
-    .{ .guid = .{ 0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47, 0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4 }, .name = "Linux filesystem" },
-    .{ .guid = .{ 0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44, 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7 }, .name = "Microsoft basic data" },
-    .{ .guid = .{ 0x6D, 0xFD, 0x57, 0x06, 0xAB, 0xA4, 0xC4, 0x43, 0x84, 0xE5, 0x09, 0x33, 0xC8, 0x4B, 0x4F, 0x4F }, .name = "Linux swap" },
-};
-
+/// The GPT: its header, and every used entry.
 fn showGpt(disk: *Disk, buffer: [*]u8) void {
     const dl = disk.dl;
-    if (disk.send(exec.CMD_READ, disk.block, disk.block, buffer) != 0) {
-        _ = Printf(dl, "GPT: block 1 does not read (error %d)\n", .{@as(i32, disk.io.req.err)});
-        return;
-    }
-    const header = buffer[0..92];
-    if (!std.mem.eql(u8, header[0..8], "EFI PART")) {
-        _ = Printf(dl, "GPT: no header in block 1\n", .{});
-        return;
-    }
-    const first_usable = std.mem.readInt(u64, header[40..48], .little);
-    const last_usable = std.mem.readInt(u64, header[48..56], .little);
-    const entries_at = std.mem.readInt(u64, header[72..80], .little);
-    const count = std.mem.readInt(u32, header[80..84], .little);
-    const size = std.mem.readInt(u32, header[84..88], .little);
-    var guid: [37]u8 = undefined;
-    formatGuid(header[56..72], &guid);
-    _ = Printf(dl, "GPT: disk %s, blocks %lu to %lu usable, %u entries of %u bytes from block %lu\n", .{ @as([*:0]const u8, @ptrCast(&guid)), first_usable, last_usable, count, size, entries_at });
-    if (size < 128 or size > disk.block or count > 1024) return;
-    const per_block = disk.block / size;
-    var block: u64 = entries_at;
-    var n: u32 = 0;
-    while (n < count) : (block += 1) {
-        if (disk.send(exec.CMD_READ, block * disk.block, disk.block, buffer) != 0) return;
-        var i: u32 = 0;
-        while (i < per_block and n < count) : ({
-            i += 1;
-            n += 1;
-        }) {
-            const entry = buffer[i * size ..][0..128];
-            if (std.mem.allEqual(u8, entry[0..16], 0)) continue;
-            const start = std.mem.readInt(u64, entry[32..40], .little);
-            const end = std.mem.readInt(u64, entry[40..48], .little);
-            var name: [37:0]u8 = @splat(0);
-            for (0..36) |c| {
-                const unit = std.mem.readInt(u16, entry[56 + c * 2 ..][0..2], .little);
-                if (unit == 0) break;
-                name[c] = if (unit >= 0x20 and unit < 0x7F) @intCast(unit) else '?';
-            }
-            formatGuid(entry[0..16], &guid);
-            var kind: [*:0]const u8 = @ptrCast(&guid);
-            for (known_types) |known| {
-                if (std.mem.eql(u8, &known.guid, entry[0..16])) kind = known.name;
-            }
-            const mib = ((end - start + 1) * disk.block) >> 20;
-            _ = Printf(dl, "  %u: blocks %lu to %lu, %lu MiB, %s \"%s\"\n", .{ n + 1, start, end, mib, kind, @as([*:0]const u8, &name) });
+    const block = buffer[0..disk.block];
+    var at: u64 = gpt.header_block;
+    const header = gptHeader(disk, block, at) orelse backup: {
+        _ = Printf(dl, "GPT: no sound header in block 1\n", .{});
+        at = disk.blocks - 1;
+        break :backup gptHeader(disk, block, at) orelse {
+            _ = Printf(dl, "GPT: no sound header in the last block either\n", .{});
+            return;
+        };
+    };
+    var guid: [gpt.guid_text_len:0]u8 = @splat(0);
+    gpt.formatGuid(&header.disk_guid, &guid);
+    _ = Printf(dl, "GPT in block %lu: disk %s, blocks %lu to %lu usable, %u entries of %u bytes from block %lu\n", .{
+        at,
+        @as([*:0]const u8, &guid),
+        header.first_usable_lba,
+        header.last_usable_lba,
+        header.number_of_partition_entries,
+        header.size_of_partition_entry,
+        header.partition_entry_lba,
+    });
+    const per_block = gpt.entriesPerBlock(&header, disk.block);
+    var crc = gpt.EntriesCrc.of(&header);
+    var entry_index: u32 = 0;
+    var index: u64 = 0;
+    while (index < gpt.entriesBlocks(&header, disk.block)) : (index += 1) {
+        const entries_at = header.partition_entry_lba + index;
+        if (disk.send(exec.CMD_READ, entries_at * disk.block, disk.block, buffer) != 0) {
+            _ = Printf(dl, "GPT: block %lu of the entries does not read (error %d)\n", .{ entries_at, @as(i32, disk.io.req.err) });
+            return;
         }
+        crc.add(block);
+        var slot: u32 = 0;
+        while (slot < per_block and entry_index < header.number_of_partition_entries) : ({
+            slot += 1;
+            entry_index += 1;
+        }) {
+            const entry = gpt.entryAt(&header, block, slot);
+            if (!gpt.used(&entry)) continue;
+            var name: [gpt.name_units:0]u8 = @splat(0);
+            _ = gpt.nameText(&entry, &name);
+            const kind: [*:0]const u8 = gpt.typeName(&entry.partition_type_guid) orelse kind: {
+                gpt.formatGuid(&entry.partition_type_guid, &guid);
+                break :kind &guid;
+            };
+            const mib = ((entry.ending_lba - entry.starting_lba + 1) * disk.block) >> 20;
+            _ = Printf(dl, "  %u: blocks %lu to %lu, %lu MiB, %s \"%s\"\n", .{
+                entry_index + 1,
+                entry.starting_lba,
+                entry.ending_lba,
+                mib,
+                kind,
+                @as([*:0]const u8, &name),
+            });
+        }
+    }
+    if (crc.end() != header.partition_entry_array_crc32) {
+        _ = Printf(dl, "GPT: the entries' crc32 is not the header's\n", .{});
     }
 }
 
-/// A GUID as it is written: its first three fields stored little-endian.
-fn formatGuid(bytes: *const [16]u8, into: *[37]u8) void {
-    const digits = "0123456789ABCDEF";
-    const order = [_]u8{ 3, 2, 1, 0, 0xFF, 5, 4, 0xFF, 7, 6, 0xFF, 8, 9, 0xFF, 10, 11, 12, 13, 14, 15 };
-    var at: usize = 0;
-    for (order) |index| {
-        if (index == 0xFF) {
-            into[at] = '-';
-            at += 1;
-            continue;
-        }
-        into[at] = digits[bytes[index] >> 4];
-        into[at + 1] = digits[bytes[index] & 0xF];
-        at += 2;
-    }
-    into[at] = 0;
+/// The GPT header in block `at`, read into `block`, when it is sound.
+fn gptHeader(disk: *Disk, block: []u8, at: u64) ?gpt.Header {
+    if (disk.send(exec.CMD_READ, at * disk.block, disk.block, block.ptr) != 0) return null;
+    return gpt.readHeader(block, at, disk.blocks);
 }

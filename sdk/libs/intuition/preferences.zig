@@ -72,6 +72,26 @@ pub const IPREFS_OffScreen = IPREFS_Dummy + 9;
 /// either way. Every screen and window open takes it at once. Got: a
 /// `*u32`.
 pub const IPREFS_WideGadgets = IPREFS_Dummy + 10;
+/// Whether `DisplayBeep` flashes the display: 1, as the system starts,
+/// or 0. Without the flash a beep is its sound alone - and where there
+/// is no sound to be had it flashes all the same. Got: a `*u32`.
+pub const IPREFS_BeepFlash = IPREFS_Dummy + 11;
+/// The sound `DisplayBeep` plays: a `*const BeepSound`, copied, so the
+/// caller's may go as soon as `SetPrefs` returns; null for none, as the
+/// system starts. Set only: the copy is intuition's own.
+pub const IPREFS_BeepSound = IPREFS_Dummy + 12;
+
+/// A sound for `IPREFS_BeepSound`: `frames` frames of 16-bit samples in
+/// the machine's byte order, `channels` (1 or 2) interleaved, left first,
+/// at `rate` frames a second, played at `volume` - audio.device's
+/// `AUDIO_VOLUME_UNITY` is as recorded, up to four times that.
+pub const BeepSound = extern struct {
+    samples: [*]const i16,
+    frames: u32,
+    rate: u32,
+    channels: u32,
+    volume: u32,
+};
 
 /// `IPREFS_Keyboard`: on a board with no keyboard of its own.
 pub const KEYBOARD_AUTO: u32 = 0;

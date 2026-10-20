@@ -35,6 +35,19 @@
 //! and so do the fields: what is typed into Start and End is taken as
 //! typed, as far as the neighbours let it.
 //!
+//! **A drive with a GPT.** The bar is then the whole disk: the GPT's
+//! partitions lie on it where they are, fixed, each named by its own
+//! name or its type, and the PowerOS container's table is worked on in
+//! the container's cylinders (counted from the container's first block,
+//! as the fields show them), drawn where the container is. A partition
+//! of the GPT is picked and deleted, never moved. New and Whole disk on
+//! a GPT with no container make one over the GPT's largest free run, and
+//! a table in it (`AddGPTPartition`, `InitRDB`). New table asks which
+//! kind: a RigidDiskBlock over the whole drive (`RemGPT`, `InitRDB`), or
+//! a GPT for the whole drive with a container over it (`InitGPT`). Save
+//! writes the GPT first (`WriteGPT`) and the table after it, and a GPT
+//! read from its copy at the end is offered to be saved, which mends it.
+//!
 //! **What may be changed.** Everything stays in memory, in the table
 //! rdb.library read (`OpenRDB`), until Save. A table read for another
 //! block size, or a damaged one, is shown, and can only be replaced (New
@@ -74,6 +87,7 @@ const graphics = sdk.graphics;
 const intuition = sdk.intuition;
 const hardblocks = dos.hardblocks;
 const filesystems = dos.filesystems;
+const gpt = dos.gpt;
 const td = sdk.devices.trackdisk;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -108,20 +122,23 @@ const drives = @import("drives.zig");
 const Span = model.Span;
 
 pub const COMMAND_NAME = "HDToolBox";
-const VERSION = "1.1";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (18.10.2026)\r\n";
+const VERSION = "1.2";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
 const MSG_NOLIBRARY = "No %s\n";
-const MSG_OLDLIBRARY = "%s is too old: 1.3 or later is needed\n";
+const MSG_OLDLIBRARY = "%s is too old: 1.4 or later is needed\n";
 const MSG_NOSCREEN = "No screen\n";
 const MSG_NOMEMORY = "No memory for the window\n";
 
-/// The rdb.library that mounts partitions.
+/// The rdb.library that reads and writes a GPT.
 const rdb_version = 1;
-const rdb_revision = 3;
+const rdb_revision = 4;
+
+/// The name a container HDToolBox makes is given in the GPT.
+const container_name = "PowerOS";
 
 // --- the gadgets' IDs ----------------------------------------------------------------
 
@@ -250,12 +267,28 @@ const Before = struct {
     name: rdb.MountName,
 };
 
+/// A partition of the GPT as it was read: what a save names as lost
+/// once it is deleted.
+const GptBefore = struct {
+    /// The partition on the handle's list; null once it is removed.
+    part: ?*rdb.GPTPartition,
+    name: [gpt.name_units:0]u8,
+};
+
 /// What is picked on the bar.
 const Picked = union(enum) {
     none,
     part: *rdb.RDBPartition,
     gap: Span,
+    /// A partition of the GPT's, not the container.
+    gpt: *rdb.GPTPartition,
 };
+
+/// The two tables New table makes.
+const TableKind = enum { rdb, gpt };
+
+/// Which of the two a save was writing when it stopped.
+const Written = enum { gpt, table };
 
 /// What a press on the bar holds.
 const Drag = enum { none, move, low, high };
@@ -270,6 +303,8 @@ const Pens = struct {
     picked_ink: graphics.Pen = 0,
     edge: graphics.Pen = 0,
     system: graphics.Pen = 0,
+    /// A partition of the GPT's.
+    foreign: graphics.Pen = 0,
 };
 
 const App = struct {
@@ -337,6 +372,27 @@ const App = struct {
     spans: [max_parts]Span = undefined,
     count: usize = 0,
     picked: Picked = .none,
+
+    // The GPT, on a drive that has one.
+    /// Its partitions but the container, in the order of their blocks,
+    /// and their spans on the bar.
+    gpt_parts: [max_parts]*rdb.GPTPartition = undefined,
+    gpt_spans: [max_parts]Span = undefined,
+    gpt_count: usize = 0,
+    gpt_before: [max_parts]GptBefore = undefined,
+    gpt_before_count: usize = 0,
+    /// The GPT was read from its copy at the end: a save mends it.
+    gpt_repair: bool = false,
+    /// The bar's cylinders, in blocks: the table's, or a whole MiB on a
+    /// GPT with no table.
+    bar_unit: u64 = 1,
+    /// The bar's cylinder the table's first is drawn at: the container's.
+    shift: u32 = 0,
+    /// The table's spans as the bar has them.
+    bar_spans: [max_parts]Span = undefined,
+    /// The type of the GPT's partition picked, as the file systems'
+    /// chooser shows it.
+    gpt_kind: [gpt.guid_text_len:0]u8 = @splat(0),
 
     // The bar.
     rp: *graphics.RastPort = undefined,
@@ -409,7 +465,76 @@ const App = struct {
     }
 
     fn barGeometry(app: *const App) model.Bar {
-        return .{ .area = app.area(), .width = @intCast(@max(app.bar_w, 1)) };
+        return .{ .area = app.barArea(), .width = @intCast(@max(app.bar_w, 1)) };
+    }
+
+    /// Whether the drive has a sound GPT.
+    fn isGpt(app: *const App) bool {
+        const handle = app.handle orelse return false;
+        return handle.flags & rdb.RDBF_GPT != 0 and handle.flags & rdb.RDBF_GPTDAMAGED == 0;
+    }
+
+    /// Whether the table is the one in the GPT's container.
+    fn inContainer(app: *const App) bool {
+        const handle = app.handle orelse return false;
+        return handle.flags & rdb.RDBF_CONTAINER != 0;
+    }
+
+    /// Whether a partition of the GPT is the container the table is in.
+    fn isWindow(app: *const App, part: *const rdb.GPTPartition) bool {
+        const handle = app.handle orelse return false;
+        return app.inContainer() and gpt.isContainer(&part.entry) and part.entry.starting_lba == handle.container;
+    }
+
+    /// The bar's cylinders: the table's usable ones, or on a GPT every
+    /// usable block of the disk, counted from its first block.
+    fn barArea(app: *const App) Span {
+        const handle = app.handle orelse return .{ .low = 0, .high = 0 };
+        if (!app.isGpt()) return app.area();
+        const header = &handle.gpt_header;
+        return model.blockSpan(header.first_usable_lba, header.last_usable_lba, app.bar_unit);
+    }
+
+    /// The container's cylinders on the bar.
+    fn containerSpan(app: *const App) Span {
+        const handle = app.handle orelse return .{ .low = 0, .high = 0 };
+        const blocks = @max(handle.geometry.total_sectors, 1);
+        return model.blockSpan(handle.container, handle.container + blocks - 1, app.bar_unit);
+    }
+
+    /// A span of the table's cylinders as the bar has it.
+    fn toBar(app: *const App, span: Span) Span {
+        return .{ .low = span.low +| app.shift, .high = span.high +| app.shift };
+    }
+
+    /// The table's spans as the bar has them.
+    fn barSpans(app: *App) []const Span {
+        for (app.spans[0..app.count], app.bar_spans[0..app.count]) |span, *on_bar| on_bar.* = app.toBar(span);
+        return app.bar_spans[0..app.count];
+    }
+
+    /// A partition's environment as it lies on the disk: the container's
+    /// first cylinder added, for a table in a container.
+    fn onDisk(app: *const App, env: *const dos.DosEnvec) dos.DosEnvec {
+        const handle = app.handle orelse return env.*;
+        if (!app.inContainer()) return env.*;
+        return model.onDisk(env, handle.container);
+    }
+
+    /// The GPT has no container, and free blocks enough for one.
+    fn containerRoom(app: *const App) bool {
+        if (!app.isGpt() or app.inContainer()) return false;
+        var runs: [max_parts + 1]Span = undefined;
+        for (model.gaps(app.barArea(), app.gpt_spans[0..app.gpt_count], &runs)) |gap| {
+            // A run of two whole MiB holds one aligned MiB at least.
+            if (gap.cylinders() >= 2) return true;
+        }
+        return false;
+    }
+
+    fn blockBytes(app: *const App) u32 {
+        const handle = app.handle orelse return 512;
+        return handle.geometry.sector_size;
     }
 
     /// The drive mounted with SYS: on it, of the drive shown.
@@ -433,10 +558,35 @@ const App = struct {
 
     /// The drive a partition is mounted as now: one laid out as it is.
     fn mountedAs(app: *const App, part: *const rdb.RDBPartition) ?*const drives.Mounted {
+        const env = app.onDisk(&part.block.environment);
         for (app.mounted[0..app.mounted_count]) |*mounted| {
-            if (model.sameLayout(&mounted.env, &part.block.environment)) return mounted;
+            if (model.sameLayout(&mounted.env, &env)) return mounted;
         }
         return null;
+    }
+
+    /// The drive a partition of the GPT is mounted as now: one over its
+    /// blocks.
+    fn gptMountedAs(app: *const App, part: *const rdb.GPTPartition) ?*const drives.Mounted {
+        for (app.mounted[0..app.mounted_count]) |*mounted| {
+            if (model.covers(&mounted.env, part.entry.starting_lba, part.entry.ending_lba, app.blockBytes())) return mounted;
+        }
+        return null;
+    }
+
+    /// Whether SYS: is on a partition of the GPT.
+    fn gptIsSystem(app: *const App, part: *const rdb.GPTPartition) bool {
+        const mounted = app.gptMountedAs(part) orelse return false;
+        return mounted.system;
+    }
+
+    /// Whether a drive over `env` goes on reading its blocks: a partition
+    /// of the GPT still has them.
+    fn keptByGpt(app: *const App, env: *const dos.DosEnvec) bool {
+        for (app.gpt_parts[0..app.gpt_count]) |part| {
+            if (model.covers(env, part.entry.starting_lba, part.entry.ending_lba, app.blockBytes())) return true;
+        }
+        return false;
     }
 
     fn pickedPart(app: *const App) ?*rdb.RDBPartition {
@@ -444,6 +594,24 @@ const App = struct {
             .part => |part| part,
             else => null,
         };
+    }
+
+    fn pickedGpt(app: *const App) ?*rdb.GPTPartition {
+        return switch (app.picked) {
+            .gpt => |part| part,
+            else => null,
+        };
+    }
+
+    /// The partition a list row stands for, the table's or the GPT's.
+    fn pickOf(app: *const App, user_data: usize) ?Picked {
+        for (app.parts[0..app.count]) |part| {
+            if (@intFromPtr(part) == user_data) return .{ .part = part };
+        }
+        for (app.gpt_parts[0..app.gpt_count]) |part| {
+            if (@intFromPtr(part) == user_data) return .{ .gpt = part };
+        }
+        return null;
     }
 
     /// The handle's partitions gathered in the order of their cylinders.
@@ -467,6 +635,29 @@ const App = struct {
             app.spans[index] = spans[from];
         }
         app.count = total;
+
+        // The bar's cylinders: the table's, or whole MiB on a GPT with no
+        // table; a container's first block is on one of them.
+        app.bar_unit = if (app.hasTable()) @max(handle.rdb.cyl_blocks, 1) else gpt.alignmentBlocks(handle.geometry.sector_size);
+        app.shift = if (app.inContainer()) @intCast(@min(handle.container / app.bar_unit, 0xFFFF_FFFF)) else 0;
+        app.gpt_count = 0;
+        if (!app.isGpt()) return;
+        var gpt_unsorted: [max_parts]*rdb.GPTPartition = undefined;
+        total = 0;
+        var walk_gpt = app.rb.NextGPTPartition(handle, null);
+        while (walk_gpt) |part| : (walk_gpt = app.rb.NextGPTPartition(handle, part)) {
+            if (total == max_parts) break;
+            if (app.isWindow(part)) continue;
+            gpt_unsorted[total] = part;
+            spans[total] = model.blockSpan(part.entry.starting_lba, part.entry.ending_lba, app.bar_unit);
+            total += 1;
+        }
+        model.order(spans[0..total], &order);
+        for (order[0..total], 0..) |from, index| {
+            app.gpt_parts[index] = gpt_unsorted[from];
+            app.gpt_spans[index] = spans[from];
+        }
+        app.gpt_count = total;
     }
 
     fn indexOf(app: *const App, part: *const rdb.RDBPartition) ?usize {
@@ -492,18 +683,32 @@ const App = struct {
         app.handle = app.rb.OpenRDB(shown.device, shown.number, &err);
         app.problem = err;
         if (app.handle) |handle| {
+            const gpt_flags = rdb.RDBF_GPT | rdb.RDBF_GPTCHANGED | rdb.RDBF_GPTDAMAGED;
+            app.gpt_repair = handle.flags & gpt_flags == rdb.RDBF_GPT | rdb.RDBF_GPTCHANGED;
             app.grid = model.Grid.of(app.cylinderBytes(), handle.geometry.erase_size);
             app.gather();
             if (handle.flags & rdb.RDBF_FOUND != 0) {
                 for (app.parts[0..app.count]) |part| {
+                    // Where it lies on the disk, which a container that
+                    // goes with a new table does not move.
                     const before = &app.before[app.before_count];
-                    before.* = .{ .part = part, .env = part.block.environment, .name = @splat(0) };
+                    before.* = .{ .part = part, .env = app.onDisk(&part.block.environment), .name = @splat(0) };
                     const name = part.block.name();
                     @memcpy(before.name[0..name.len], name);
                     app.before_count += 1;
                 }
             }
-            if (app.count != 0) app.picked = .{ .part = app.parts[0] };
+            for (app.gpt_parts[0..app.gpt_count]) |part| {
+                const before = &app.gpt_before[app.gpt_before_count];
+                before.* = .{ .part = part, .name = @splat(0) };
+                _ = gptLabel(part, &before.name);
+                app.gpt_before_count += 1;
+            }
+            if (app.count != 0) {
+                app.picked = .{ .part = app.parts[0] };
+            } else if (app.gpt_count != 0) {
+                app.picked = .{ .gpt = app.gpt_parts[0] };
+            }
         }
         app.refresh();
     }
@@ -519,6 +724,10 @@ const App = struct {
         app.before_count = 0;
         app.mounted_count = 0;
         app.count = 0;
+        app.gpt_count = 0;
+        app.gpt_before_count = 0;
+        app.gpt_repair = false;
+        app.shift = 0;
         app.picked = .none;
         app.problem = rdb.RDBERR_OK;
     }
@@ -607,7 +816,17 @@ const App = struct {
             });
         } else if (!app.hasTable()) {
             const handle = app.handle.?;
-            if (handle.flags & rdb.RDBF_FOREIGN != 0) {
+            if (handle.flags & rdb.RDBF_GPTDAMAGED != 0) {
+                line.add("The GPT is damaged: New table replaces it");
+            } else if (app.inContainer()) {
+                line.add("The PowerOS container has no table: New or Whole disk makes one");
+            } else if (app.isGpt()) {
+                line.add("A GPT with ");
+                line.number(app.gpt_count);
+                line.add(if (app.gpt_count == 1) " partition" else " partitions");
+                line.add(if (app.containerRoom()) " and no PowerOS container: New makes one" else ", and no room for a PowerOS container");
+                if (app.changed) line.add(", not saved");
+            } else if (handle.flags & rdb.RDBF_FOREIGN != 0) {
                 line.add("The table is for another block size: New table replaces it");
             } else if (app.wholeDrive()) |whole| {
                 line.add("No partitions: ");
@@ -632,9 +851,16 @@ const App = struct {
             var size: [model.size_room]u8 = undefined;
             line.add(model.sizeText(free * app.cylinderBytes(), &size));
             line.add(" free");
+            if (app.inContainer()) line.add(" in the PowerOS container");
+            if (app.gpt_count != 0) {
+                line.add(", ");
+                line.number(app.gpt_count);
+                line.add(" more on the GPT");
+            }
             if (app.changed) line.add(", not saved");
             if (app.restart_wanted) line.add("; a restart puts the table in force");
         }
+        if (app.gpt_repair and !app.changed) line.add("; the GPT's first copy is damaged, and Save mends it");
         app.status_text = line;
         app.set(null, app.status, &.{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(app.status_text.ptr()) }, .{} });
     }
@@ -679,6 +905,30 @@ const App = struct {
             app.sys.AddTail(&app.rows, &list_row.node);
             if (app.pickedPart() == part) selected = @intCast(index);
         }
+        // The GPT's partitions after the table's: no cylinders, and their
+        // type for a file system.
+        for (app.gpt_parts[0..app.gpt_count], 0..) |part, index| {
+            var name: [gpt.name_units:0]u8 = @splat(0);
+            _ = gptLabel(part, &name);
+            var size: [model.size_room + 1]u8 = @splat(0);
+            const size_text = model.sizeText(gptBytes(part, app.blockBytes()), size[0..model.size_room]);
+            size[size_text.len] = 0;
+            var guid: [gpt.guid_text_len:0]u8 = @splat(0);
+            const kind: [*:0]const u8 = gpt.typeName(&part.entry.partition_type_guid) orelse blk: {
+                gpt.formatGuid(&part.entry.partition_type_guid, &guid);
+                break :blk &guid;
+            };
+            var mounted: Line(dos.MAX_DEVICE_NAME + 1) = .{};
+            if (app.gptMountedAs(part)) |drive| {
+                mounted.add(drive.nameText());
+                mounted.add(":");
+            }
+            const texts = [_][*:0]const u8{ &name, "-", @ptrCast(&size), kind, mounted.ptr() };
+            const list_row = lb.allocRow(app.sys, &texts, 0) orelse break;
+            list_row.user_data = @intFromPtr(part);
+            app.sys.AddTail(&app.rows, &list_row.node);
+            if (app.pickedGpt() == part) selected = @intCast(app.count + index);
+        }
         app.set(null, app.list, &.{
             .{ .tag = lb.LISTBROWSER_Rows, .data = @intFromPtr(&app.rows) },
             .{ .tag = lb.LISTBROWSER_Selected, .data = selected },
@@ -694,6 +944,7 @@ const App = struct {
         const rom = if (app.unit()) |shown| shown.rom else false;
 
         const empty: [1:0]u8 = @splat(0);
+        var gpt_name: [gpt.name_units:0]u8 = @splat(0);
         var start: Line(12) = .{};
         var end: Line(12) = .{};
         app.size_text.clear();
@@ -715,8 +966,29 @@ const App = struct {
             buffers = @intCast(@min(env.num_buffers, 0x7FFF_FFFF));
             transfer = @intCast(@min(env.max_transfer, 0x7FFF_FFFF));
             boot_pri = env.boot_pri;
+        } else if (app.pickedGpt()) |picked| {
+            // Only shown: a partition of the GPT is not changed here.
+            _ = gptLabel(picked, &gpt_name);
+            name_text = &gpt_name;
+            var size: [model.size_room]u8 = undefined;
+            app.size_text.add(model.sizeText(gptBytes(picked, app.blockBytes()), &size));
         }
-        const active = app.fileSystems(part);
+        var active = app.fileSystems(part);
+        if (app.pickedGpt()) |picked| {
+            // What the partition is for, in place of a file system.
+            var count: usize = 0;
+            while (app.fs_labels[count] != null) count += 1;
+            app.gpt_kind = @splat(0);
+            if (gpt.typeName(&picked.entry.partition_type_guid)) |kind| {
+                var length: usize = 0;
+                while (kind[length] != 0 and length < app.gpt_kind.len) : (length += 1) app.gpt_kind[length] = kind[length];
+            } else {
+                gpt.formatGuid(&picked.entry.partition_type_guid, &app.gpt_kind);
+            }
+            app.fs_labels[count] = &app.gpt_kind;
+            app.fs_labels[count + 1] = null;
+            active = count;
+        }
 
         app.set(page_partition, app.name, &.{
             .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(name_text) },
@@ -819,12 +1091,22 @@ const App = struct {
         const part = app.pickedPart();
         const system_here = app.systemDrive() != null;
         var runs: [1]Span = undefined;
-        const room = may_edit and model.gaps(app.area(), app.spans[0..app.count], &runs).len != 0;
+        // A GPT with no table: New makes the container and the table.
+        const needs_table = app.inContainer() or app.containerRoom();
+        const room = if (may_edit)
+            model.gaps(app.area(), app.spans[0..app.count], &runs).len != 0
+        else
+            !app.hasTable() and needs_table;
         app.enable(null, app.new, room);
-        app.enable(null, app.delete, may_edit and part != null and app.count > 1 and !app.isSystem(part.?));
-        app.enable(null, app.whole, app.handle != null and !system_here);
+        const may_delete = if (app.pickedGpt()) |picked|
+            !app.gptIsSystem(picked)
+        else
+            may_edit and part != null and app.count > 1 and !app.isSystem(part.?);
+        app.enable(null, app.delete, may_delete);
+        const may_whole = !app.isGpt() or app.hasTable() or needs_table;
+        app.enable(null, app.whole, app.handle != null and !system_here and may_whole);
         app.enable(null, app.new_table, app.handle != null and !system_here);
-        app.enable(null, app.save, app.handle != null and app.changed);
+        app.enable(null, app.save, app.handle != null and (app.changed or app.gpt_repair));
         app.enable(page_files, app.fs_add, may_edit and app.for_labels[0] != null);
         app.enable(page_files, app.fs_remove, may_edit and app.fs_picked != null);
     }
@@ -927,6 +1209,7 @@ const App = struct {
             .picked_ink = pens[sc.FILLTEXTPEN],
             .edge = pens[sc.SHADOWPEN],
             .system = mix(paper, pens[sc.SHADOWPEN], 2),
+            .foreign = mix(paper, ink, 3),
         };
     }
 
@@ -977,14 +1260,36 @@ const App = struct {
         const width = app.bar_w;
         const height = app.bar_h;
         if (width <= 0 or height <= 0) return;
-        if (!app.hasTable()) {
+        if (!app.hasTable() and !app.isGpt()) {
             app.fill(0, 0, width, height, app.pens.free);
             app.ib.QueueGadgetRefresh(app.bar);
             return;
         }
         const bar = app.barGeometry();
-        app.fill(0, 0, width, height, app.pens.free);
-        for (app.spans[0..app.count], app.parts[0..app.count]) |span, part| {
+        if (app.isGpt()) {
+            // The disk's blocks no partition has, framed; the container's
+            // free cylinders as free.
+            app.fill(0, 0, width, height, app.pens.paper);
+            app.outline(0, width, app.pens.edge, 1);
+            if (app.inContainer()) {
+                const drawn = bar.pixels(app.containerSpan());
+                app.fill(@intCast(drawn.left), 0, @intCast(drawn.right), height, app.pens.free);
+            }
+            for (app.gpt_spans[0..app.gpt_count], app.gpt_parts[0..app.gpt_count]) |span, part| {
+                const drawn = bar.pixels(span);
+                const left: i32 = @intCast(drawn.left);
+                const right: i32 = @intCast(drawn.right);
+                const picked = app.pickedGpt() == part;
+                app.fill(left, 0, right, height, if (picked) app.pens.picked else app.pens.foreign);
+                app.fill(left, 0, left + 1, height, app.pens.edge);
+                app.fill(right - 1, 0, right, height, app.pens.edge);
+                var name: [gpt.name_units:0]u8 = @splat(0);
+                app.label(gptLabel(part, &name), left, right, if (picked) app.pens.picked_ink else app.pens.ink);
+            }
+        } else {
+            app.fill(0, 0, width, height, app.pens.free);
+        }
+        for (app.barSpans(), app.parts[0..app.count]) |span, part| {
             const drawn = bar.pixels(span);
             const left: i32 = @intCast(drawn.left);
             const right: i32 = @intCast(drawn.right);
@@ -997,18 +1302,22 @@ const App = struct {
         }
         switch (app.picked) {
             .gap => |gap| {
-                const drawn = bar.pixels(gap);
-                const left: i32 = @intCast(drawn.left);
-                const right: i32 = @intCast(drawn.right);
-                const pen = app.pens.picked;
-                app.fill(left, 0, right, 2, pen);
-                app.fill(left, height - 2, right, height, pen);
-                app.fill(left, 0, left + 2, height, pen);
-                app.fill(right - 2, 0, right, height, pen);
+                const drawn = bar.pixels(app.toBar(gap));
+                app.outline(@intCast(drawn.left), @intCast(drawn.right), app.pens.picked, 2);
             },
             else => {},
         }
         app.ib.QueueGadgetRefresh(app.bar);
+    }
+
+    /// A frame `thickness` pixels wide round the bar from `left` to
+    /// `right`.
+    fn outline(app: *App, left: i32, right: i32, pen: graphics.Pen, thickness: i32) void {
+        const height = app.bar_h;
+        app.fill(left, 0, right, thickness, pen);
+        app.fill(left, height - thickness, right, height, pen);
+        app.fill(left, 0, left + thickness, height, pen);
+        app.fill(right - thickness, 0, right, height, pen);
     }
 
     fn pointer(app: *App) i32 {
@@ -1021,11 +1330,26 @@ const App = struct {
     /// partition taken hold of where it may be changed.
     fn press(app: *App) void {
         app.drag = .none;
-        if (!app.hasTable()) return;
+        if (!app.hasTable() and !app.isGpt()) return;
         const x = app.pointer();
-        switch (model.hit(app.barGeometry(), app.spans[0..app.count], x, grip_pixels)) {
+        const bar = app.barGeometry();
+        // A partition of the GPT's is only picked.
+        if (model.under(bar, app.gpt_spans[0..app.gpt_count], x)) |index| {
+            app.picked = .{ .gpt = app.gpt_parts[index] };
+            return app.showPick();
+        }
+        if (!app.hasTable()) return;
+        switch (model.hit(bar, app.barSpans(), x, grip_pixels)) {
             .none => return,
-            .gap => |gap| app.picked = .{ .gap = gap },
+            .gap => |gap| {
+                // Only a run of the table's own cylinders.
+                const table = app.toBar(app.area());
+                const at = bar.cylinderAt(x);
+                if (at < table.low or at > table.high) return;
+                const low = @max(gap.low, table.low) - app.shift;
+                const high = @min(gap.high, table.high) - app.shift;
+                app.picked = .{ .gap = .{ .low = low, .high = high } };
+            },
             .part => |held| {
                 const part = app.parts[held.index];
                 app.picked = .{ .part = part };
@@ -1041,6 +1365,11 @@ const App = struct {
                 }
             },
         }
+        app.showPick();
+    }
+
+    /// The pick shown everywhere.
+    fn showPick(app: *App) void {
         app.showRows();
         app.showFields();
         app.showButtons();
@@ -1058,8 +1387,8 @@ const App = struct {
                 const by = @as(i64, @intCast(bar.boundaryAt(x))) - @as(i64, @intCast(bar.boundaryAt(app.drag_from)));
                 break :blk model.moved(app.drag_room, app.drag_span, @as(i64, app.drag_span.low) + by, app.grid);
             },
-            .low => model.resized(app.drag_room, app.drag_span, .low, bar.boundaryAt(x), app.grid),
-            .high => model.resized(app.drag_room, app.drag_span, .high, bar.boundaryAt(x), app.grid),
+            .low => model.resized(app.drag_room, app.drag_span, .low, bar.boundaryAt(x) -| app.shift, app.grid),
+            .high => model.resized(app.drag_room, app.drag_span, .high, bar.boundaryAt(x) -| app.shift, app.grid),
         };
         app.place(part, span);
     }
@@ -1196,9 +1525,15 @@ const App = struct {
     /// An easy requester over the window; whether its first button was
     /// pressed.
     fn ask(app: *App, text: [*:0]const u8, buttons: [*:0]const u8) bool {
+        return app.choose(text, buttons) == 1;
+    }
+
+    /// An easy requester over the window; the button pressed, from 1 on
+    /// the left, 0 for the last.
+    fn choose(app: *App, text: [*:0]const u8, buttons: [*:0]const u8) i32 {
         const easy = requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = "%s", .gadget_format = buttons };
         const stream = exec.fmtStream(.{text});
-        return app.ib.EasyRequestArgs(app.window, &easy, null, &stream) == 1;
+        return app.ib.EasyRequestArgs(app.window, &easy, null, &stream);
     }
 
     /// The names a new partition is not offered: the table's and those
@@ -1244,6 +1579,10 @@ const App = struct {
 
     /// New: a partition of the free run picked, or of the largest.
     fn newPartition(app: *App) void {
+        if (!app.hasTable() and app.isGpt()) {
+            if (!app.makeContainer()) return;
+            return app.addPartition(model.fresh(app.area(), app.grid));
+        }
         if (!app.editable()) return;
         const gap = switch (app.picked) {
             .gap => |gap| gap,
@@ -1261,6 +1600,16 @@ const App = struct {
 
     fn deletePartition(app: *App) void {
         const handle = app.handle orelse return;
+        if (app.pickedGpt()) |picked| {
+            if (app.gptIsSystem(picked)) return;
+            for (app.gpt_before[0..app.gpt_before_count]) |*before| {
+                if (before.part == picked) before.part = null;
+            }
+            app.rb.RemGPTPartition(handle, picked);
+            app.changed = true;
+            app.picked = .none;
+            return app.refresh();
+        }
         const part = app.pickedPart() orelse return;
         if (app.isSystem(part) or app.count < 2) return;
         const freed = Span.of(&part.block.environment);
@@ -1292,7 +1641,8 @@ const App = struct {
         if (app.systemDrive() != null) return;
         if (app.count != 0 and !app.ask("Every partition of the drive goes, and one takes its place.\nWhat they hold is lost once the table is saved.", "Go on|Cancel")) return;
         if (!app.hasTable() or !app.editable()) {
-            if (!app.initTable()) return;
+            const made = if (app.isGpt()) app.makeContainer() else app.initTable(.rdb);
+            if (!made) return;
         }
         while (app.rb.NextPartition(handle, null)) |part| {
             app.forget(part);
@@ -1303,27 +1653,91 @@ const App = struct {
         app.addPartition(model.fresh(app.area(), app.grid));
     }
 
-    /// New table: an empty one in place of what the drive holds.
+    /// New table: an empty one in place of what the drive holds - a
+    /// RigidDiskBlock over the whole drive, or a GPT for it with a
+    /// PowerOS container and a table in that.
     fn newTable(app: *App) void {
         if (app.handle == null or app.systemDrive() != null) return;
-        if (!app.ask("A new, empty table for the drive.\nEverything on it is lost once the table is saved.", "Go on|Cancel")) return;
-        if (!app.initTable()) return;
-        app.refresh();
+        const kind: TableKind = switch (app.choose(
+            "A new, empty table for the drive: a RigidDiskBlock over all of it,\n" ++
+                "or a GPT, which other systems read too, with a PowerOS container.\n" ++
+                "Everything on the drive is lost once the table is saved.",
+            "RDB|GPT|Cancel",
+        )) {
+            1 => .rdb,
+            2 => .gpt,
+            else => return,
+        };
+        if (app.initTable(kind)) app.refresh();
     }
 
-    fn initTable(app: *App) bool {
+    /// An empty table of `kind` in place of everything the handle holds.
+    /// A table that cannot be made leaves the drive read again, as it is
+    /// on the disk.
+    fn initTable(app: *App, kind: TableKind) bool {
         const handle = app.handle orelse return false;
         for (app.parts[0..app.count]) |part| app.forget(part);
+        for (app.gpt_before[0..app.gpt_before_count]) |*before| before.part = null;
+        switch (kind) {
+            .rdb => app.rb.RemGPT(handle),
+            .gpt => if (app.rb.InitGPT(handle) != rdb.RDBERR_OK or !app.addContainer()) {
+                app.openDrive(app.current);
+                app.say("The medium is too small for a GPT with a container");
+                return false;
+            },
+        }
         if (app.rb.InitRDB(handle) != rdb.RDBERR_OK) {
+            app.openDrive(app.current);
             app.say("The medium is too small for a table");
             return false;
         }
+        app.tableMade();
+        return true;
+    }
+
+    /// A table in the GPT's container, the container made first over the
+    /// GPT's largest free run where there is none. Why not, on the status
+    /// line.
+    fn makeContainer(app: *App) bool {
+        const handle = app.handle orelse return false;
+        if (!app.inContainer() and !app.addContainer()) return false;
+        if (app.rb.InitRDB(handle) != rdb.RDBERR_OK) {
+            // The container stays, without a table.
+            app.refresh();
+            app.say("The container is too small for a table");
+            return false;
+        }
+        app.tableMade();
+        return true;
+    }
+
+    /// A PowerOS container added to the GPT over its largest free run.
+    fn addContainer(app: *App) bool {
+        const handle = app.handle orelse return false;
+        var entry: gpt.Entry = .{ .partition_type_guid = gpt.TYPE_CONTAINER };
+        gpt.setName(&entry, container_name);
+        var err: i32 = rdb.RDBERR_OK;
+        if (app.rb.AddGPTPartition(handle, &entry, &err) != null) {
+            app.changed = true;
+            return true;
+        }
+        app.say(switch (err) {
+            rdb.RDBERR_RANGE => "The GPT has no free space for a PowerOS container",
+            rdb.RDBERR_FULL => "The GPT has no free entry for a PowerOS container",
+            rdb.RDBERR_NOMEM => "No memory for the container",
+            else => "The container cannot be made",
+        });
+        return false;
+    }
+
+    /// InitRDB has made the handle's table: shown, nothing picked.
+    fn tableMade(app: *App) void {
+        const handle = app.handle orelse return;
         app.made_table = true;
         app.changed = true;
-        app.grid = model.Grid.of(app.cylinderBytes(), handle.geometry.erase_size);
         app.picked = .none;
         app.gather();
-        return true;
+        app.grid = model.Grid.of(app.cylinderBytes(), handle.geometry.erase_size);
     }
 
     /// Whether the window may close: nothing changed, or the requester
@@ -1340,8 +1754,9 @@ const App = struct {
     /// restart offered.
     fn saveTable(app: *App) void {
         const handle = app.handle orelse return;
-        // What the new table is laid out as, and what it leaves stale.
-        for (app.parts[0..app.count], 0..) |part, index| app.after[index] = part.block.environment;
+        // What the new table is laid out as on the disk, and what it
+        // leaves stale.
+        for (app.parts[0..app.count], 0..) |part, index| app.after[index] = app.onDisk(&part.block.environment);
         const table = app.after[0..app.count];
 
         var question: Line(400) = .{};
@@ -1355,10 +1770,16 @@ const App = struct {
             lost = true;
             question.add(nameText(&before.name));
         }
+        for (app.gpt_before[0..app.gpt_before_count]) |*before| {
+            if (before.part != null) continue;
+            question.add(if (lost) " " else "\nWhat these partitions hold is lost: ");
+            lost = true;
+            question.add(fieldText(&before.name));
+        }
         var stale: [drives.max_mounted]bool = @splat(false);
         var any_stale = false;
         for (app.mounted[0..app.mounted_count], 0..) |*mounted, index| {
-            if (!model.stale(&mounted.env, table)) continue;
+            if (!model.stale(&mounted.env, table) or app.keptByGpt(&mounted.env)) continue;
             question.add(if (any_stale) " " else "\nThese drives stop until the system starts again: ");
             any_stale = true;
             stale[index] = true;
@@ -1384,21 +1805,17 @@ const App = struct {
             return;
         }
 
-        const written = app.rb.WriteRDB(handle);
-        if (written != rdb.RDBERR_OK) {
-            // A refused write left the disk as it was; one that failed
-            // on the way may have written part, and the drives stay held.
-            if (written != rdb.RDBERR_IO) app.letGo(&held);
-            app.say(switch (written) {
-                rdb.RDBERR_CHANGED => "The medium has changed: it is read again",
-                rdb.RDBERR_NAME => "Two partitions have one name, or a name is wrong",
-                rdb.RDBERR_RANGE => "A partition's cylinders are wrong",
-                rdb.RDBERR_FULL => "The table has no room for so many partitions, or for the file systems' code",
-                rdb.RDBERR_IO => "The table could not be written",
-                else => "The table was not written",
-            });
-            if (written == rdb.RDBERR_CHANGED) app.openDrive(app.current);
-            return;
+        // The GPT first: WriteRDB refuses a table whose container is
+        // not on the disk yet.
+        const gpt_changed = rdb.RDBF_GPT | rdb.RDBF_GPTCHANGED;
+        const gpt_written = handle.flags & gpt_changed == gpt_changed;
+        if (gpt_written) {
+            const err = app.rb.WriteGPT(handle);
+            if (err != rdb.RDBERR_OK) return app.notWritten(err, .gpt, false, &held);
+        }
+        if (app.hasTable()) {
+            const err = app.rb.WriteRDB(handle);
+            if (err != rdb.RDBERR_OK) return app.notWritten(err, .table, gpt_written, &held);
         }
 
         // The partitions no drive has yet, mounted.
@@ -1436,6 +1853,31 @@ const App = struct {
         else
             "The table is written. Drives mounted from the old one stop until the system starts again.\nRestart now?";
         if (restart and app.ask(why, "Restart|Later")) app.restartSystem();
+    }
+
+    /// A write that stopped: why, on the status line. One refused before
+    /// anything was written left the disk as it was, and the drives held
+    /// go again; one that failed on the way may have written part, and
+    /// they stay held. A medium changed since it was read is read again.
+    fn notWritten(app: *App, err: i32, what: Written, gpt_written: bool, held: *[drives.max_mounted]bool) void {
+        if (err != rdb.RDBERR_IO and !gpt_written) app.letGo(held);
+        app.say(switch (what) {
+            .gpt => switch (err) {
+                rdb.RDBERR_CHANGED => "The medium has changed: it is read again",
+                rdb.RDBERR_RANGE => "The GPT's partitions overlap, or do not fit the disk",
+                rdb.RDBERR_IO => "The GPT could not be written",
+                else => "The GPT was not written",
+            },
+            .table => switch (err) {
+                rdb.RDBERR_CHANGED => "The medium has changed: it is read again",
+                rdb.RDBERR_NAME => "Two partitions have one name, or a name is wrong",
+                rdb.RDBERR_RANGE => "A partition's cylinders are wrong",
+                rdb.RDBERR_FULL => "The table has no room for so many partitions, or for the file systems' code",
+                rdb.RDBERR_IO => "The table could not be written",
+                else => "The table was not written",
+            },
+        });
+        if (err == rdb.RDBERR_CHANGED) app.openDrive(app.current);
     }
 
     /// Whether a drive mounted from the drive shown is of a DosType whose
@@ -1658,9 +2100,7 @@ const App = struct {
         _ = app.ib.GetAttr(lb.LISTBROWSER_SelectedRow, app.list, &value);
         if (value == 0) return;
         const list_row: *lb.Row = @ptrFromInt(value);
-        const part: *rdb.RDBPartition = @ptrFromInt(list_row.user_data);
-        if (app.indexOf(part) == null) return;
-        app.picked = .{ .part = part };
+        app.picked = app.pickOf(list_row.user_data) orelse return;
         app.showFields();
         app.showButtons();
         app.drawBar();
@@ -1922,6 +2362,32 @@ fn nameText(name: *const rdb.MountName) []const u8 {
     var length: usize = 0;
     while (length < name.len and name[length] != 0) length += 1;
     return name[0..length];
+}
+
+/// The text of a fixed field, up to its first NUL.
+fn fieldText(field: []const u8) []const u8 {
+    var length: usize = 0;
+    while (length < field.len and field[length] != 0) length += 1;
+    return field[0..length];
+}
+
+/// What a partition of the GPT is called on the bar and in the list: its
+/// own name, or its type's where it has none, into `into`.
+fn gptLabel(part: *const rdb.GPTPartition, into: *[gpt.name_units:0]u8) []const u8 {
+    const own = gpt.nameText(&part.entry, into);
+    if (own.len != 0) return own;
+    const kind = gpt.typeName(&part.entry.partition_type_guid) orelse "Partition";
+    into.* = @splat(0);
+    var length: usize = 0;
+    while (kind[length] != 0 and length < into.len) : (length += 1) into[length] = kind[length];
+    return into[0..length];
+}
+
+/// The bytes of a partition of the GPT.
+fn gptBytes(part: *const rdb.GPTPartition, block_bytes: u32) u64 {
+    const entry = &part.entry;
+    if (entry.ending_lba < entry.starting_lba) return 0;
+    return (entry.ending_lba - entry.starting_lba + 1) * block_bytes;
 }
 
 /// A drive's name with its colon, as dos takes it.

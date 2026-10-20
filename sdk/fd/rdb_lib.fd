@@ -2,6 +2,7 @@
 //! into memory, changed there and written back. Open it with
 //! OpenLibrary("rdb.library", 1); the structures are in sdk.rdb.
 ##include libs/rdb/rdb as rdb
+##include libs/dos/gpt as gpt
 ##basetype RDBBase
 ##name rdb.library
 ##bias 4
@@ -38,4 +39,24 @@ i32 MountPartition(*rdb.RDBHandle handle, *rdb.RDBPartition partition, ?*rdb.Mou
 i32 AddFileSystem(*rdb.RDBHandle handle, u32 dos_type, [*]const u8 code, u32 size)
 /// A file system taken out of the handle's table and freed.
 void RemFileSystem(*rdb.RDBHandle handle, *rdb.RDBFileSystem file_system)
+/// The GPT partition after `previous` on the handle's list, or the first.
+?*rdb.GPTPartition NextGPTPartition(*rdb.RDBHandle handle, ?*rdb.GPTPartition previous)
+/// A device node for a GPT partition on dos's list, named `name` (with
+/// dots added while the name is taken), for the file system its first
+/// block holds; the name used goes where `mounted` points.
+i32 MountGPTPartition(*rdb.RDBHandle handle, *rdb.GPTPartition partition, [*:0]const u8 name, ?*rdb.MountName mounted, u32 flags)
+/// A fresh GPT for the whole medium in the handle, with no partitions:
+/// written by WriteGPT.
+i32 InitGPT(*rdb.RDBHandle handle)
+/// A new GPT partition, as `entry` gives its type, blocks (0 and 0: the
+/// largest free run), attributes and name; null, and why in `err`, when
+/// it cannot be one.
+?*rdb.GPTPartition AddGPTPartition(*rdb.RDBHandle handle, *const gpt.Entry entry, ?*i32 err)
+/// A GPT partition taken off the handle's list and freed.
+void RemGPTPartition(*rdb.RDBHandle handle, *rdb.GPTPartition partition)
+/// The handle's GPT checked and written to the disk, both copies.
+i32 WriteGPT(*rdb.RDBHandle handle)
+/// The handle's GPT taken out of it, for a table over the whole disk,
+/// which WriteRDB writes and then wipes the disk's GPT.
+void RemGPT(*rdb.RDBHandle handle)
 ##end

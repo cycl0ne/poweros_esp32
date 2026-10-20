@@ -16,6 +16,8 @@ pub const mouse = @import("mouse.zig");
 pub const inputevent = @import("inputevent.zig");
 pub const input = @import("input.zig");
 pub const audio = @import("audio.zig");
+/// audio.device's outputs and volumes, from a program.
+pub const audiocontrol = @import("audiocontrol.zig");
 pub const network = @import("network.zig");
 pub const wireless = @import("wireless.zig");
 pub const slip = @import("slip.zig");

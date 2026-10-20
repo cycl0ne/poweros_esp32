@@ -17,10 +17,10 @@ and writing a controller.
 ## The pieces
 
 ```
- above them             keyboard.device,   fat-handler      con-handler       bsdsocket.library
-                        mouse.device       on DU<n>:        on AUX2:, AUX3:   on usb0
-                             ^                  ^                ^                 ^
- class drivers,         usb/hid.device     usb/disk.device  usb/ftdi.device   usb/ecm.device
+ above them             keyboard.device,   fat-handler      con-handler       bsdsocket.library  audio.device
+                        mouse.device       on DU<n>:        on AUX2:, AUX3:   on usb0            (rta.library)
+                             ^                  ^                ^                 ^                  ^
+ class drivers,         usb/hid.device     usb/disk.device  usb/ftdi.device   usb/ecm.device     usb/uac.device
  DEVS:usb/                                                  usb/acm.device    usb/aic8800.device
                              |  USBClassBind, USBClassUnbind (DEVIF_USBCLASS)
  the bus                usb.library: a process per bus, hubs, pipes
@@ -48,6 +48,7 @@ and writing a controller.
 | `usb/acm.device` | `DEVS:usb/` | the communications class's serial lines (CDC-ACM), with serial.device's API |
 | `usb/ecm.device` | `DEVS:usb/` | Ethernet adapters of the communications class (CDC-ECM) as a network device |
 | `usb/aic8800.device` | `DEVS:usb/` | AIC8800 Wi-Fi sticks as a wireless network device, their firmware loaded from `DEVS:usb/firmware/aic8800/` |
+| `usb/uac.device` | `DEVS:usb/` | speakers, headsets and sound adapters of the audio class as sound outputs, a sink of rta.library each, on a controller with isochronous transfers |
 | `C:USB` | | starts and stops a bus |
 | `C:USBInfo` | | lists what is on the buses, and who holds the ports |
 
@@ -214,6 +215,16 @@ if (sys.DoIO(&pipe.io.std.req) == 0) use(buffer[0..@intCast(pipe.io.std.actual)]
   every 8 ms until the device answers, so an idle keyboard or mouse
   costs little, and the first report after a pause is at most 8 ms
   late. Read one packet at a time: a device sends a report a packet.
+- An **isochronous** write is a run of packets, one each `interval`:
+  `std.length` bytes cut into packets of `iso_packet` (the endpoint's
+  packet size unless set smaller), at most `UHC_ISO_PACKETS` of them,
+  nothing resent. A stream keeps two or more on the controller, a pipe
+  each on the endpoint: each starts in the interval after the one
+  before ends, so one sent before the last has played leaves no gap.
+  The endpoint is in a setting of its own, chosen with
+  `SET_INTERFACE` first. xhci.device has them, OUT only; usbotg.device
+  answers `IOERR_NOCMD`. A high-speed endpoint asking more often than
+  once a millisecond gets no pipe.
 - A **stall** ends a transfer with `UHIOERR_STALL`; `ClearUSBStall`
   clears the endpoint's halt and its toggle.
 - A device that goes ends its transfers with `UHIOERR_DETACHED`.
@@ -332,6 +343,12 @@ drives:
   its DosType asks for. The unit gets no drive of its own. A partition
   whose file system cannot go on a stick - the flash file system, or
   `MSH`/`POS\1` inside a partition - is passed over.
+- **A GPT**, as a PC partitions a stick: a drive per partition of the
+  RigidDiskBlock in its PowerOS container, as above, and one for each
+  other GPT partition that holds a FAT32, exFAT or posfs volume and is
+  not marked to be left alone (attribute bit 63) - the first `DU<n>`,
+  every later one `DU<n>P<entry>`, `DU0P3:`. The unit gets no drive of
+  its own.
 - **No table**: `DU<n>` over the whole stick, with the handler its
   first block asks for. A posfs volume (`POS\0`) or a partition table
   with a posfs partition (`POS\1`) gives posfs-handler
@@ -481,6 +498,27 @@ HomeNet                          02:11:22:33:44:55   36  -62   WPA2
 How it is built - the firmware's load, its messages, the frames, the
 join - is `docs/aic8800.md`.
 
+## Speakers and headsets
+
+`usb/uac.device` drives the audio class: a streaming interface with a
+setting it can play through - an isochronous OUT endpoint, linear PCM,
+one or two channels of 16, 24 or 32 bits, at 48 kHz - becomes a sink of
+rta.library, named as the device names its product, which audio.device
+plays through as it does a board's codec (`C:test/AudioTest OUTPUTS` lists
+it, `OUTPUT` picks it; the [sound guide](audio.md)). A function's
+microphone, another streaming interface, is declined, and so is every
+interface on a bus without isochronous transfers: a packet of silence
+sent as the interface is offered comes back `IOERR_NOCMD` on
+usbotg.device.
+
+Started, the interface is put in its setting, its rate set where the
+endpoint has that control, and its feature unit's mute lifted and its
+volume set to 0 dB - or the most it has, below that. Three transfers of
+ten milliseconds go round, each refilled as it comes back; one that
+comes back with nothing else left on the bus is counted as a gap
+(`underruns`). Pulled out while it plays, its sink is deleted, and
+audio.device goes on through the next output on the list.
+
 ## Writing a controller
 
 A host controller is a device that speaks `DEVIF_USBHC`
@@ -515,8 +553,14 @@ and xhci.device follows the bus:
 - A device its hub's port shows gone has its slot let go, and every slot
   below it.
 
-- `UHCMD_CONTROLXFER`, `UHCMD_BULKXFER`, `UHCMD_INTXFER`;
-  `UHCMD_ISOXFER` is in the set, `IOERR_NOCMD` until a controller does it.
+- `UHCMD_CONTROLXFER`, `UHCMD_BULKXFER`, `UHCMD_INTXFER`, and on
+  xhci.device `UHCMD_ISOXFER`, OUT only: a TD a packet - an Isoch TRB,
+  Start Isoch ASAP - and up to four requests on the endpoint's ring at
+  once, each request's packets in a slice of the endpoint's buffer.
+  Only a request's last TRB interrupts, and its event answers it and
+  any before it the controller reported missed. Nothing halts;
+  AbortIO of one on the ring stops the endpoint and answers every one
+  on it. usbotg.device answers `IOERR_NOCMD`.
 - An interrupt endpoint is asked once per interval: one with nothing
   to say is asked again when its interval has passed, and a request's
   next transfer after an answer waits out the interval too, so a device
@@ -601,4 +645,7 @@ usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
 controller, so its bus does not start. A QEMU started with `-device
 qemu-xhci` has one, and `-device usb-kbd`, `-device usb-mouse` or a
 `usb-storage` device go on its bus; the machine's `USB AUTO` starts it at
-boot.
+boot. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
+pa,id=snd`, or `wav,id=snd,path=out.wav,out.frequency=48000` for a file)
+is a speaker for `usb/uac.device`; `device_del spk` pulls it out while it
+plays. QEMU's own mixing engine plays 0 dB at 240/255 of full scale.

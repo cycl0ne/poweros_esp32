@@ -3,7 +3,9 @@
 //!
 //! **A unit's drives** are made the first time a medium comes into the
 //! unit, by `sdk.devices.automount`: a drive per partition when the stick
-//! holds a RigidDiskBlock, named as its table says; otherwise `DU<n>`
+//! holds a RigidDiskBlock, named as its table says; with a GPT, those of
+//! the table in its PowerOS container and one for each other GPT
+//! partition with a FAT or posfs volume (`DU0`, then `DU0P2`); otherwise `DU<n>`
 //! over the whole stick, with the handler its first block asks for - a
 //! posfs label posfs-handler with `POS\0`, a partition table with a posfs
 //! partition (type 0x7F) posfs-handler with `POS\1`, anything else

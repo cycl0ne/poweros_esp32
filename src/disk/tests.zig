@@ -9,6 +9,7 @@ test {
     _ = @import("classes/gadgets/textedit/undo.zig");
     _ = @import("programs/sheet/tests/sheet.zig");
     _ = @import("system/hdtoolbox/tests/hdtoolbox.zig");
+    _ = @import("system/memmap/tests/memmap.zig");
     _ = @import("programs/terminal/tests/terminal.zig");
     _ = @import("programs/player/spectrum.zig");
     _ = @import("programs/player/visual.zig");
@@ -49,6 +50,7 @@ test {
     _ = @import("libs/wpa/tests/library.zig");
     _ = @import("libs/wpa/wpa_lvo.zig");
     _ = @import("libs/rdb/tests/rdb.zig");
+    _ = @import("libs/rdb/tests/gpt.zig");
     _ = @import("libs/pci/tests/pci.zig");
     _ = @import("libs/facet/tests/facet.zig");
     _ = @import("libs/facet/tests/draw.zig");
@@ -60,6 +62,7 @@ test {
     _ = @import("devs/nvme/dsm.zig");
     _ = @import("devs/nvme/tests/nvme.zig");
     _ = @import("devs/usb/hid/report.zig");
+    _ = @import("devs/usb/audio/stream.zig");
     _ = @import("devs/usb/disk/scsi.zig");
     _ = @import("devs/usb/disk/bot.zig");
     _ = @import("devs/usb/serial/ftdi_rates.zig");

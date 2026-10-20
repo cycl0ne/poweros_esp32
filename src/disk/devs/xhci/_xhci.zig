@@ -46,6 +46,7 @@ const pci = sdk.pci;
 const ExecBase = sdk.interface.exec.ExecBase;
 const PCIBase = sdk.interface.pci.PCIBase;
 const ring = @import("ring.zig");
+const regs = @import("regs.zig");
 
 pub const DEVICE_NAME = "xhci.device";
 
@@ -59,6 +60,12 @@ pub const max_root_ports = 15;
 /// TRBs on a transfer ring and on the command ring: a TD is three at most
 /// - a control transfer's stages - and one TD is on a ring at a time.
 pub const ring_trbs = 32;
+/// An isochronous endpoint's: a TD a packet, and `iso_in_flight`
+/// requests of up to UHC_ISO_PACKETS packets on it at once, with room to
+/// spare. Its 4 KiB are aligned to their size, so the ring never crosses
+/// a 64 KiB boundary.
+pub const iso_ring_trbs = 256;
+pub const iso_in_flight = 4;
 /// TRBs on the event ring: a page.
 pub const event_trbs = 256;
 /// The bytes of a device's configuration the device keeps, from the
@@ -96,6 +103,9 @@ pub const Endpoint = struct {
     max_packet: u32 = 0,
     interval: u32 = 0,
     ring: ring.Ring = .{},
+    /// The ring's memory, for FreeMem when it is made again another size.
+    ring_raw: ?*anyopaque = null,
+    ring_raw_size: u32 = 0,
     /// Its buffer: what a transfer's data passes through.
     bounce: ?[*]u8 = null,
     bounce_size: u32 = 0,
@@ -116,6 +126,13 @@ pub const Endpoint = struct {
     zero: bool = false,
     /// The controller halted it: it is reset before the next TD.
     halted: bool = false,
+    /// An isochronous endpoint's requests on the ring, oldest first,
+    /// `flying` of them; the slice of its buffer the next one's packets
+    /// go in, and how far apart they are there.
+    flight: exec.List = .{},
+    flying: u32 = 0,
+    next_slice: u32 = 0,
+    stride: u32 = 0,
 };
 
 /// A device slot, and the device in it: where it is in the tree, what
@@ -251,10 +268,38 @@ pub const PRIV_FLAGS = 0;
 /// hc_private[1]: its deadline, in the task's milliseconds, with
 /// PRIVF_DEADLINE.
 pub const PRIV_DUE = 1;
+/// hc_private[2]: an isochronous request's TDs on the ring - the index
+/// of its first TRB and its last - and the slice of the buffer it uses
+/// (`spanOf`).
+pub const PRIV_SPAN = 2;
 /// hc_private[3]: AbortIO asked for it - written by BeginIO and AbortIO
 /// only.
 pub const PRIV_ABORT = 3;
 pub const PRIVF_DEADLINE: usize = 1 << 0;
+
+/// An isochronous request's PRIV_SPAN, and its parts.
+pub fn spanOf(first: u32, last: u32, slice: u32) usize {
+    return first | last << 12 | slice << 24;
+}
+pub fn spanFirst(span: usize) u32 {
+    return @intCast(span & 0xFFF);
+}
+pub fn spanLast(span: usize) u32 {
+    return @intCast((span >> 12) & 0xFFF);
+}
+
+/// Whether an endpoint is an isochronous one: several requests on its
+/// ring at once.
+pub fn isIso(ep: *const Endpoint) bool {
+    return ep.kind == regs.EP_ISOCH_OUT or ep.kind == regs.EP_ISOCH_IN;
+}
+
+/// Whether the endpoint can have its next request on the ring now.
+pub fn hasRoom(ep: *const Endpoint) bool {
+    if (!ep.enabled or ep.halted) return false;
+    if (isIso(ep)) return ep.flying < iso_in_flight;
+    return ep.current == null;
+}
 
 pub fn baseOf(dev: *exec.Device) *XhciBase {
     return @alignCast(@fieldParentPtr("dev", dev));

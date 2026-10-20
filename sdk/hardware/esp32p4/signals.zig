@@ -33,11 +33,12 @@ pub const I2S0_MCLK: u32 = 26;
 pub const I2S0_O_WS: u32 = 27;
 pub const I2S0_O_SD: u32 = 28;
 
-// I2S1, as a transmitter.
+// I2S1, as a transmitter, and the receiver's data in.
 pub const I2S1_O_BCK: u32 = 31;
 pub const I2S1_MCLK: u32 = 32;
 pub const I2S1_O_WS: u32 = 33;
 pub const I2S1_O_SD: u32 = 34;
+pub const I2S1_I_SD: u32 = 34;
 
 // SPI3, which has no more data lines than these.
 pub const SPI3_CK: u32 = 47;

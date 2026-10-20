@@ -3,7 +3,9 @@
 //!
 //! **The first card identified** in the slot gets the drives
 //! `sdk.devices.automount` makes: a drive per partition when it holds a
-//! RigidDiskBlock, named as its table says; otherwise `SD0` over the whole
+//! RigidDiskBlock, named as its table says; with a GPT, those of the
+//! table in its PowerOS container and one for each other GPT partition
+//! with a FAT or posfs volume (`SD0`, then `SD0P2`); otherwise `SD0` over the whole
 //! card, with the handler its first block asks for - posfs-handler for a
 //! posfs label (`POS\0`) or a partition table with a posfs partition
 //! (`POS\1`), fat-handler with `MSH\0` for anything else, a partition

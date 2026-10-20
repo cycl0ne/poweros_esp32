@@ -5,7 +5,7 @@
 //!   Sound FILE/A,VOLUME/K/N,CYCLES/K/N
 //!
 //! The file is opened as a `sound.datatype` object - whatever kind it is,
-//! WAV, MP3, 8SVX - and played with `STM_PLAY`; the object's player says
+//! WAV, MP3, 8SVX - and played with `STM_PLAY`; the object says
 //! when it has played out, by the signal `SDTA_SignalTask` and
 //! `SDTA_SignalBit` name, and the command ends. VOLUME is in percent of
 //! as recorded (100), CYCLES how many times it plays (1). Ctrl-C stops

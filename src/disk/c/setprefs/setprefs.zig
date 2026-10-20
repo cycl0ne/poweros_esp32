@@ -4,9 +4,10 @@
 //!
 //!   SetPrefs FROM/K,RESET/S,SHOW/S
 //!
-//! Reads the four settings files from FROM, a directory - ENV:Sys unless
-//! named; ENVARC:Sys for the ones kept over a restart - and hands them to
-//! intuition.library in one `SetPrefs`:
+//! Reads the six settings files from FROM, a directory - ENV:Sys unless
+//! named; ENVARC:Sys for the ones kept over a restart - and hands five of
+//! them to intuition.library in one `SetPrefs`, and the sixth to
+//! audio.device:
 //!
 //! - intuition.prefs: the double-click time, the height of a screen's
 //!   font when it is given none, when the keyboard on the screen comes up,
@@ -20,6 +21,14 @@
 //!   colour.
 //! - style.prefs: the system's style, a line per part in a state; a line
 //!   that cannot be read is reported with its number and passed over.
+//! - sound.prefs: what a beep does - whether the display flashes, and the
+//!   sound: none, a tone made from the line, or a sound file decoded
+//!   whole through datatypes.library (four seconds of it at most). A file
+//!   that cannot be read is reported, and the tone is played instead.
+//! - audio.prefs: each output's volume, those not plugged in too, and the
+//!   output preferred - played through whenever it is there. A line that
+//!   cannot be read is reported with its number and passed over; a
+//!   machine without audio.device takes none of it.
 //!
 //! A file that is not there changes nothing of its own. Every screen and
 //! window takes the pens, the style and the title bars' gadgets at once,
@@ -29,9 +38,10 @@
 //! S:Startup-Sequence runs this once at boot.
 //!
 //! RESET puts every setting back to what the system starts with, and the
-//! style to the default; the files are not read. SHOW prints the settings
-//! in force - after setting them when FROM or RESET is given, and on its
-//! own changes nothing:
+//! style to the default - no output preferred, every output listed at
+//! full volume; the files are not read. SHOW prints the settings in force
+//! - after setting them when FROM or RESET is given, and on its own
+//! changes nothing:
 //!
 //!   DOUBLECLICK  1500 ms
 //!   SCREENFONT   16 rows
@@ -42,6 +52,13 @@
 //!   DEFAULT      go.font 21 rows
 //!   FIXED        pospaz.font 16 rows (ROM)
 //!   PENS         DETAIL=#AAAAAA BLOCK=#000000 ...
+//!   BEEPFLASH    YES
+//!   OUTPUT       es8311 80%
+//!   OUTPUT       QEMU USB Audio 40%
+//!   PREFERRED    QEMU USB Audio
+//!
+//! An OUTPUT line for each output there is, with its volume; PREFERRED
+//! names the one preferred, by its number when it is not there.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -55,6 +72,13 @@ const style_file = prefs.style;
 const font_file = prefs.font;
 const intuition_file = prefs.intuition;
 const palette_file = prefs.palette;
+const sound_file = prefs.sound;
+const audio_file = prefs.audio;
+const audiocontrol = sdk.devices.audiocontrol;
+const datatypes = sdk.datatypes;
+const dtc = datatypes.datatypesclass;
+const sdt = datatypes.soundclass;
+const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const sc = intuition.screens;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -66,7 +90,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.1 (17.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.3 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";
@@ -90,6 +114,13 @@ const MSG_NOTTAKEN = "Not every setting was taken\n";
 const MSG_NUMBER = "%-12s %ld %s\n";
 const MSG_WORD = "%-12s %s\n";
 const MSG_FONT = "%-12s %s %ld rows%s\n";
+const MSG_NOSAMPLE = "%s: cannot be read as a sound - the tone plays instead\n";
+const MSG_OUTPUT = "%-12s %s %u%%\n";
+const MSG_PREFERRED = "%-12s %s\n";
+const MSG_PREFERRED_GONE = "%-12s %s, not there\n";
+
+/// The most of a beep's sound file read, in seconds.
+const max_sample_seconds = 4;
 
 /// The font lines' three, in their order in the file, and the tag each is.
 const font_tags = [3]utility.Tag{ intuition.IPREFS_ScreenFont, intuition.IPREFS_DefaultFont, intuition.IPREFS_FixedFont };
@@ -103,6 +134,9 @@ const Gathered = struct {
     pens: [sc.NUMDRIPENS]graphics.Pen = undefined,
     /// The style's tags and fills, allocated.
     style_memory: ?*anyopaque = null,
+    /// The beep's sound and its samples, allocated.
+    beep: intuition.BeepSound = undefined,
+    beep_memory: ?*anyopaque = null,
 
     fn add(g: *Gathered, tag: utility.Tag, data: usize) void {
         g.tags[g.count] = .{ .tag = tag, .data = data };
@@ -276,6 +310,153 @@ fn readStyle(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     return result;
 }
 
+/// sound.prefs: whether a beep flashes, and its sound.
+fn readSound(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
+    var path: [128:0]u8 = undefined;
+    const from = pathOf(&path, dir, "sound.prefs");
+    var text: [1024]u8 = undefined;
+    const read = prefs.load(l.dl, from, &text) orelse return dos.RETURN_OK;
+    const words = prefs.firstLine(read) orelse return dos.RETURN_OK;
+    var settings: sound_file.Settings = .{};
+    if (sound_file.parse(words, &settings)) |wrong| {
+        _ = Printf(l.dl, MSG_BAD, .{ from, wrong });
+        return dos.RETURN_WARN;
+    }
+    g.add(intuition.IPREFS_BeepFlash, settings.flash);
+    var result: i32 = dos.RETURN_OK;
+    if (settings.sound == sound_file.SOUND_SAMPLE) {
+        if (readSample(l, &settings, g)) {
+            g.add(intuition.IPREFS_BeepSound, @intFromPtr(&g.beep));
+            return result;
+        }
+        _ = Printf(l.dl, MSG_NOSAMPLE, .{@as([*:0]const u8, &settings.sample)});
+        result = dos.RETURN_WARN;
+    }
+    if (settings.sound == sound_file.SOUND_NONE) {
+        g.add(intuition.IPREFS_BeepSound, 0);
+        return result;
+    }
+    const frames = sound_file.beepFrames(&settings);
+    const memory = l.sys.AllocVec(frames * @sizeOf(i16), exec.MEMF_ANY) orelse {
+        _ = Printf(l.dl, MSG_NOMEMORY, .{});
+        return dos.RETURN_FAIL;
+    };
+    g.beep_memory = memory;
+    const samples: [*]i16 = @ptrCast(@alignCast(memory));
+    g.beep = sound_file.makeBeep(&settings, samples[0..frames]);
+    g.add(intuition.IPREFS_BeepSound, @intFromPtr(&g.beep));
+    return result;
+}
+
+/// audio.prefs: every line that can be read, handed to audio.device - the
+/// volumes, then the preferred output.
+fn readAudio(l: Libs, dir: [*:0]const u8, _: *Gathered) i32 {
+    var path: [128:0]u8 = undefined;
+    const from = pathOf(&path, dir, "audio.prefs");
+    var text: [audio_file.max_file]u8 = undefined;
+    const read = prefs.load(l.dl, from, &text) orelse return dos.RETURN_OK;
+    var settings: audio_file.Settings = .{};
+    var result: i32 = dos.RETURN_OK;
+    var lines = prefs.Lines{ .text = read };
+    while (lines.next()) |line| {
+        if (!style_file.hasWords(line.text)) continue;
+        var output: audio_file.Output = .{};
+        if (audio_file.parseLine(line.text, &output)) |wrong| {
+            _ = Printf(l.dl, MSG_BADLINE, .{ from, @as(u64, line.number), wrong });
+            result = dos.RETURN_WARN;
+            continue;
+        }
+        settings.put(&output);
+    }
+    var control = audiocontrol.Control.open(l.sys) orelse return result;
+    defer control.close();
+    audio_file.apply(&control, &settings);
+    return result;
+}
+
+/// What the system starts with, for audio.device: no output preferred,
+/// and every output listed at full volume.
+fn resetAudio(l: Libs) void {
+    var control = audiocontrol.Control.open(l.sys) orelse return;
+    defer control.close();
+    _ = control.prefer(0);
+    var outputs: audiocontrol.Outputs = .{};
+    outputs.read(&control);
+    for (outputs.infos[0..outputs.count]) |*info| control.setVolume(info.id, 100);
+}
+
+/// Every output there is and its volume, and the one preferred: by its
+/// name when it is there, by its number when it is not.
+fn showAudio(l: Libs) void {
+    var control = audiocontrol.Control.open(l.sys) orelse return;
+    defer control.close();
+    var outputs: audiocontrol.Outputs = .{};
+    outputs.read(&control);
+    for (outputs.infos[0..outputs.count], 0..) |*info, at| {
+        _ = Printf(l.dl, MSG_OUTPUT, .{ @as([*:0]const u8, "OUTPUT"), outputs.labels[at].?, audiocontrol.percentOf(info.volume) });
+    }
+    var device: sdk.devices.audio.AudioInfo = .{};
+    if (!control.query(&device) or device.preferred_id == 0) return;
+    if (outputs.indexOf(device.preferred_id)) |at| {
+        _ = Printf(l.dl, MSG_PREFERRED, .{ @as([*:0]const u8, "PREFERRED"), outputs.labels[at].? });
+    } else {
+        var number: [8:0]u8 = @splat(0);
+        audio_file.hexText(number[0..8], device.preferred_id);
+        _ = Printf(l.dl, MSG_PREFERRED_GONE, .{ @as([*:0]const u8, "PREFERRED"), @as([*:0]const u8, &number) });
+    }
+}
+
+/// The line's SAMPLE file decoded whole into memory as the beep's sound,
+/// through its sound datatype: false when it cannot be.
+fn readSample(l: Libs, settings: *const sound_file.Settings, g: *Gathered) bool {
+    const sys = l.sys;
+    const dt_lib = sys.OpenLibrary(datatypes.DATATYPESNAME, 0) orelse return false;
+    defer sys.CloseLibrary(dt_lib);
+    const dt: *DataTypesBase = @ptrCast(dt_lib);
+    const object = dt.NewDTObjectA(&settings.sample, &[_]TagItem{
+        .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_SOUND },
+        .{},
+    }) orelse return false;
+    defer dt.DisposeDTObject(object);
+    var rate: usize = 0;
+    var channels: usize = 0;
+    var frames: usize = 0;
+    _ = dt.GetDTAttrsA(object, &[_]TagItem{
+        .{ .tag = sdt.SDTA_SampleRate, .data = @intFromPtr(&rate) },
+        .{ .tag = sdt.SDTA_Channels, .data = @intFromPtr(&channels) },
+        .{ .tag = sdt.SDTA_Frames, .data = @intFromPtr(&frames) },
+        .{},
+    });
+    if (rate == 0 or rate > sdk.devices.audio.AUDIO_MAX_RATE or (channels != 1 and channels != 2)) return false;
+    // A length not known is read up to the most there is room for.
+    const most = rate * max_sample_seconds;
+    const room: u32 = @intCast(if (frames == 0 or frames > most) most else frames);
+    const memory = sys.AllocVec(room * channels * @sizeOf(i16), exec.MEMF_ANY) orelse return false;
+    const samples: [*]i16 = @ptrCast(@alignCast(memory));
+    var got: u32 = 0;
+    while (got < room) {
+        var decode = sdt.SdtDecode{ .samples = samples + got * channels, .frames = room - got };
+        // Sent straight to the object: DoDTMethodA would write a window's
+        // GadgetInfo where the message keeps its samples.
+        const more: u32 = @intCast(@min(l.ib.SendMessage(object, @ptrCast(&decode)), room - got));
+        if (more == 0) break;
+        got += more;
+    }
+    if (got == 0) {
+        sys.FreeVec(memory);
+        return false;
+    }
+    g.beep_memory = memory;
+    g.beep = .{
+        .samples = samples,
+        .frames = got,
+        .rate = @intCast(rate),
+        .channels = @intCast(channels),
+        .volume = sound_file.volumeOf(settings),
+    };
+    return true;
+}
+
 /// What the system starts with, every setting, and the default style.
 fn gatherReset(l: Libs, g: *Gathered) void {
     var ms: u32 = 0;
@@ -283,12 +464,14 @@ fn gatherReset(l: Libs, g: *Gathered) void {
     var keys: u32 = 0;
     var off_screen: u32 = 0;
     var wide_gadgets: u32 = 0;
+    var beep_flash: u32 = 0;
     _ = l.ib.GetDefPrefs(&[_]TagItem{
         .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) },
         .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = @intFromPtr(&rows) },
         .{ .tag = intuition.IPREFS_Keyboard, .data = @intFromPtr(&keys) },
         .{ .tag = intuition.IPREFS_OffScreen, .data = @intFromPtr(&off_screen) },
         .{ .tag = intuition.IPREFS_WideGadgets, .data = @intFromPtr(&wide_gadgets) },
+        .{ .tag = intuition.IPREFS_BeepFlash, .data = @intFromPtr(&beep_flash) },
         .{},
     });
     g.add(intuition.IPREFS_DoubleClick, ms);
@@ -299,6 +482,8 @@ fn gatherReset(l: Libs, g: *Gathered) void {
     for (font_tags) |tag| g.add(tag, 0);
     g.add(intuition.IPREFS_Pens, 0);
     g.add(intuition.IPREFS_Style, 0);
+    g.add(intuition.IPREFS_BeepFlash, beep_flash);
+    g.add(intuition.IPREFS_BeepSound, 0);
 }
 
 /// The settings in force, a line each.
@@ -310,7 +495,9 @@ fn show(l: Libs) void {
     var wide_gadgets: u32 = 0;
     var fonts: [3]?*graphics.TextFont = @splat(null);
     var pens: [sc.NUMDRIPENS]graphics.Pen = undefined;
+    var beep_flash: u32 = 0;
     _ = l.ib.GetPrefs(&[_]TagItem{
+        .{ .tag = intuition.IPREFS_BeepFlash, .data = @intFromPtr(&beep_flash) },
         .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) },
         .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = @intFromPtr(&rows) },
         .{ .tag = intuition.IPREFS_Keyboard, .data = @intFromPtr(&keys) },
@@ -346,6 +533,11 @@ fn show(l: Libs) void {
     var line: [256:0]u8 = @splat(0);
     _ = palette_file.write(&pens, &line);
     _ = Printf(l.dl, MSG_WORD, .{ @as([*:0]const u8, "PENS"), @as([*:0]const u8, &line) });
+    var flashes: [4:0]u8 = @splat(0);
+    const flash_word = sound_file.flash_names[@min(beep_flash, 1)];
+    @memcpy(flashes[0..flash_word.len], flash_word);
+    _ = Printf(l.dl, MSG_WORD, .{ @as([*:0]const u8, "BEEPFLASH"), @as([*:0]const u8, &flashes) });
+    showAudio(l);
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -384,13 +576,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer {
         for (g.fonts) |font| if (font) |f| l.gb.CloseFont(f);
         if (g.style_memory) |memory| sys.FreeVec(memory);
+        if (g.beep_memory) |memory| sys.FreeVec(memory);
     }
     var result: i32 = dos.RETURN_OK;
     if (reset) {
         gatherReset(l, &g);
+        resetAudio(l);
     } else {
         const dir = from orelse default_dir;
-        const steps = [_]*const fn (Libs, [*:0]const u8, *Gathered) i32{ readSettings, readFonts, readPens, readStyle };
+        const steps = [_]*const fn (Libs, [*:0]const u8, *Gathered) i32{ readAudio, readSettings, readFonts, readPens, readStyle, readSound };
         for (steps) |step| result = @max(result, step(l, dir, &g));
         if (result == dos.RETURN_FAIL) return result;
     }

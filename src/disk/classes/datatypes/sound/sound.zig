@@ -10,8 +10,8 @@
 //! itself.
 //!
 //! **A player of the object's own.** The sound plays on a process that
-//! lives as long as the object, made when it is first laid out or
-//! played: it
+//! lives as long as the object, made when it is first laid out or played
+//! - unless it is short and not shown (below): it
 //! opens a stream of audio.device in the sound's own form and keeps three
 //! buffers going round - one heard, one queued, one being filled - asking
 //! the object for each as the last comes back. Decoding takes as long as
@@ -30,6 +30,17 @@
 //! **Where the sound is** is the stream's position less what is still on
 //! its way out (audio.device's latency): the frame being heard, not the
 //! last one decoded.
+//!
+//! **A short sound that is not shown is a trigger.** A click or a chime
+//! a program plays - one no window shows, all of it at 16 bits within
+//! `short_bytes` - gets no player: the first play decodes it whole, on
+//! the playing task, into memory the object keeps (a sound in memory is
+//! played where it is), opens audio.device for triggers alone, and sends
+//! it as one AUDIOCMD_TRIGGER. The request is replied to a port of the
+//! object's that raises the program's signal (`SDTA_SignalTask`) when it
+//! has played out; playing again takes the last back, quietly, and sends
+//! it anew. A sound laid out in a window has the player, which the button
+//! and the bar follow.
 //!
 //! In a window the object is a button - play, or pause while it plays -
 //! beside the sound's names, its rate and channels, and a bar of how far
@@ -68,7 +79,8 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = sdt.SOUNDDTCLASS,
     .version = 1,
-    .date = "13.10.2026",
+    .revision = 1,
+    .date = "20.10.2026",
     .super = dtc.DATATYPESCLASS,
     .opens = &.{ datatypes.DATATYPESNAME, dos.DOSNAME },
     .Instance = Data,
@@ -88,6 +100,11 @@ const player_stack = 32768;
 const tick_us = 250_000;
 /// How far STM_FASTFORWARD and STM_REWIND move, in seconds.
 const jump_seconds = 10;
+/// The most a sound may take, decoded to 16 bits, to be played as a
+/// trigger when it is not shown: a third of a second of stereo at 48 kHz,
+/// a click or a chime. Anything longer has the player, which decodes as
+/// it goes.
+const short_bytes = 64 * 1024;
 /// The size the object asks for.
 const nominal_width = 360;
 const nominal_height = 64;
@@ -138,6 +155,21 @@ pub const Data = extern struct {
     pad2: [3]u8 = @splat(0),
     object: ?*Object = null,
     base: ?*Base = null,
+    /// A short sound not shown, played as a trigger: the request on its
+    /// open for triggers alone, the port it is replied to, and the sound
+    /// decoded whole when it is not in memory already. Sent and taken
+    /// back under `shot_lock`.
+    shot_lock: exec.SignalSemaphore = .{},
+    shot_port: exec.MsgPort = .{ .flags = exec.PA_IGNORE },
+    shot: audio.IOAudio = .{},
+    decoded: ?[*]i16 = null,
+    decoded_frames: u32 = 0,
+    shot_open: bool = false,
+    shot_sent: bool = false,
+    /// It would not decode, or the device would not open for triggers:
+    /// the player plays it.
+    shot_failed: bool = false,
+    pad3: u8 = 0,
 };
 
 fn dataOf(cl: *Class, o: *Object) *Data {
@@ -576,6 +608,12 @@ fn ask(base: *Base, own: *Data, bits: u32) void {
 }
 
 fn setPlaying(base: *Base, own: *Data, playing: bool) void {
+    // A short sound not shown is a trigger, with no player made for it;
+    // one that cannot be triggered has the player after all.
+    if (!own.started and isShort(own)) {
+        if (!playing) return stopShot(base, own);
+        if (shoot(base, own)) return;
+    }
     if (playing and !begin(base, own)) return;
     const sys = base.sys_base;
     sys.AcquireLock(&own.lock);
@@ -598,7 +636,7 @@ fn trigger(base: *Base, own: *Data, function: u32, data: ?*anyopaque) void {
     const jump = own.rate * jump_seconds;
     switch (function) {
         dtc.STM_PLAY, dtc.STM_RESUME => setPlaying(base, own, true),
-        dtc.STM_PAUSE => setPlaying(base, own, !own.playing),
+        dtc.STM_PAUSE => setPlaying(base, own, !isPlaying(base.sys_base, own)),
         dtc.STM_STOP => {
             setPlaying(base, own, false);
             const sys = base.sys_base;
@@ -612,6 +650,138 @@ fn trigger(base: *Base, own: *Data, function: u32, data: ?*anyopaque) void {
         dtc.STM_REWIND => locate(base, own, own.position -| jump),
         else => {},
     }
+}
+
+// --- a short sound, triggered -------------------------------------------------
+
+/// Whether the sound is short enough to be triggered: its length known,
+/// and all of it at 16 bits within `short_bytes`.
+fn isShort(own: *const Data) bool {
+    if (own.frames == 0 or own.rate == 0 or own.rate > audio.AUDIO_MAX_RATE) return false;
+    if (own.channels != 1 and own.channels != 2) return false;
+    return @as(u64, own.frames) * own.channels * @sizeOf(i16) <= short_bytes;
+}
+
+/// Whether the sound plays: as the player says, or a trigger sent and not
+/// yet back.
+fn isPlaying(sys: *ExecBase, own: *Data) bool {
+    if (own.playing) return true;
+    return own.shot_sent and sys.CheckIO(&own.shot.std.req) == null;
+}
+
+/// The sound played as a trigger from its start, one still sounding taken
+/// back first. False when it cannot be: the player plays it then.
+fn shoot(base: *Base, own: *Data) bool {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&own.shot_lock);
+    defer sys.ReleaseSemaphore(&own.shot_lock);
+    if (!own.shot_open and !openShot(base, own)) return false;
+    takeBack(sys, own);
+    const shot = &own.shot;
+    shot.std.req.command = audio.AUDIOCMD_TRIGGER;
+    shot.std.req.flags = 0;
+    shot.std.req.message.node.pri = 0;
+    shot.channels = @intCast(own.channels);
+    if (own.decoded) |samples| {
+        shot.format = audio.AUDIO_S16;
+        shot.std.data = samples;
+        shot.std.length = @as(u64, own.decoded_frames) * own.channels * @sizeOf(i16);
+    } else {
+        shot.format = @intCast(own.sample_type);
+        shot.std.data = @constCast(own.sample.?);
+        shot.std.length = @as(u64, own.sample_frames) * audio.frameBytes(shot.format, shot.channels);
+    }
+    // As the object says now: how fast, loud and where, how many times,
+    // and whom to tell when it has played out.
+    shot.rate = own.rate;
+    shot.volume = own.volume;
+    shot.pan = own.pan;
+    shot.loops = if (superBool(base.intuition_base, own, dtc.DTA_Repeat)) 0 else own.cycles;
+    const port = &own.shot_port;
+    port.flags = exec.PA_IGNORE;
+    if (own.signal_task) |task| {
+        if (own.signal_bit >= 0 and own.signal_bit < 32) {
+            port.sig_task = task;
+            port.sig_bit = @intCast(own.signal_bit);
+            port.flags = exec.PA_SIGNAL;
+        }
+    }
+    sys.SendIO(&shot.std.req);
+    own.shot_sent = true;
+    return true;
+}
+
+/// The open for triggers made, and the sound decoded whole when it is not
+/// in memory, the subclass left at the start again. False - for good -
+/// when either cannot be.
+fn openShot(base: *Base, own: *Data) bool {
+    if (own.shot_failed) return false;
+    const sys = base.sys_base;
+    own.shot_failed = true;
+    if (own.sample == null) {
+        const ib = base.intuition_base;
+        const object = own.object.?;
+        const memory = sys.AllocVec(@as(usize, own.frames) * own.channels * @sizeOf(i16), exec.MEMF_ANY) orelse return false;
+        const samples: [*]i16 = @ptrCast(@alignCast(memory));
+        var seek = sdt.SdtSeek{ .frame = 0 };
+        _ = ib.SendMessage(object, @ptrCast(&seek));
+        var got: u32 = 0;
+        while (got < own.frames) {
+            var msg = sdt.SdtDecode{ .samples = samples + @as(usize, got) * own.channels, .frames = own.frames - got };
+            const more: u32 = @intCast(@min(ib.SendMessage(object, @ptrCast(&msg)), own.frames - got));
+            if (more == 0) break;
+            got += more;
+        }
+        _ = ib.SendMessage(object, @ptrCast(&seek));
+        if (got == 0) {
+            sys.FreeVec(memory);
+            return false;
+        }
+        own.decoded = samples;
+        own.decoded_frames = got;
+    }
+    own.shot = .{};
+    own.shot.std.req.message.reply_port = &own.shot_port;
+    own.shot.std.req.message.length = @sizeOf(audio.IOAudio);
+    if (sys.OpenDevice(audio.AUDIONAME, audio.AUDIO_UNIT_PLAY, &own.shot.std.req, audio.AUDIOF_TRIGGER) != 0) {
+        if (own.decoded) |samples| sys.FreeVec(samples);
+        own.decoded = null;
+        return false;
+    }
+    own.shot_open = true;
+    own.shot_failed = false;
+    return true;
+}
+
+/// The trigger sent last, sounding or come back, taken back - and nobody
+/// told, since it did not play out. Under `shot_lock`.
+fn takeBack(sys: *ExecBase, own: *Data) void {
+    if (!own.shot_sent) return;
+    own.shot_port.flags = exec.PA_IGNORE;
+    // audio.device answers an abort at once, so the wait finds it back.
+    _ = sys.AbortIO(&own.shot.std.req);
+    _ = sys.WaitIO(&own.shot.std.req);
+    own.shot_sent = false;
+}
+
+fn stopShot(base: *Base, own: *Data) void {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&own.shot_lock);
+    defer sys.ReleaseSemaphore(&own.shot_lock);
+    takeBack(sys, own);
+}
+
+/// The trigger's part given back with the object: a sound sounding taken
+/// back, the device closed, the decoded sound freed.
+fn closeShot(base: *Base, own: *Data) void {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&own.shot_lock);
+    defer sys.ReleaseSemaphore(&own.shot_lock);
+    takeBack(sys, own);
+    if (own.shot_open) sys.CloseDevice(&own.shot.std.req);
+    own.shot_open = false;
+    if (own.decoded) |samples| sys.FreeVec(samples);
+    own.decoded = null;
 }
 
 // --- a sound in memory --------------------------------------------------------
@@ -844,7 +1014,7 @@ fn setAttrs(base: *Base, own: *Data, tags: ?[*]const TagItem) void {
     if (params) ask(base, own, ASK_PARAMS);
 }
 
-fn getAttr(own: *Data, attr: utility.Tag, storage: *usize) bool {
+fn getAttr(sys: *ExecBase, own: *Data, attr: utility.Tag, storage: *usize) bool {
     storage.* = switch (attr) {
         sdt.SDTA_Sample => @intFromPtr(own.sample),
         sdt.SDTA_SampleLength => own.sample_frames,
@@ -858,7 +1028,7 @@ fn getAttr(own: *Data, attr: utility.Tag, storage: *usize) bool {
         sdt.SDTA_Cycles => own.cycles,
         sdt.SDTA_SignalTask => @intFromPtr(own.signal_task),
         sdt.SDTA_SignalBit => @bitCast(@as(isize, own.signal_bit)),
-        sdt.SDTA_Playing => @intFromBool(own.playing),
+        sdt.SDTA_Playing => @intFromBool(isPlaying(sys, own)),
         dtc.DTA_Immediate => @intFromBool(own.immediate),
         else => return false,
     };
@@ -896,6 +1066,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             own.object = obj;
             own.base = base;
             base.sys_base.InitLock(&own.lock, "sound", exec.LOCKORDER_DRIVER, 0);
+            base.sys_base.InitSemaphore(&own.shot_lock);
+            own.shot_port.msg_list.init(.message);
             tellSuper(base, cl, obj, &[_]TagItem{
                 .{ .tag = dtc.DTA_NominalHoriz, .data = nominal_width },
                 .{ .tag = dtc.DTA_NominalVert, .data = nominal_height },
@@ -907,6 +1079,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         classusr.OM_DISPOSE => {
             end(base, dataOf(cl, o.?));
+            closeShot(base, dataOf(cl, o.?));
             return ib.SendSuperMessage(cl, o, msg);
         },
         classusr.OM_SET, classusr.OM_UPDATE => {
@@ -917,7 +1090,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         classusr.OM_GET => {
             const get: *classusr.OpGet = @ptrCast(@alignCast(msg));
-            if (getAttr(dataOf(cl, o.?), get.attr_id, get.storage)) return 1;
+            if (getAttr(base.sys_base, dataOf(cl, o.?), get.attr_id, get.storage)) return 1;
             return ib.SendSuperMessage(cl, o, msg);
         },
         gc.GM_RENDER => {

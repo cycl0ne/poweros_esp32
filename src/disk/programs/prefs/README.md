@@ -2,7 +2,7 @@
 
 Prefs holds the system's settings in one window: the style that gadgets,
 windows and menus are drawn in, the colours of the screens, the fonts,
-the desktop and a few of the system's own settings.
+the desktop, the sound and a few of the system's own settings.
 
 ## Starting it
 
@@ -10,7 +10,7 @@ Double-click its icon, or type `SYS:Programs/Prefs` in a shell.
 
 ## The pages
 
-The settings are on six pages, under tabs:
+The settings are on seven pages, under tabs:
 
 - **Style:** the looks there are to choose from - one style file each in
   SYS:Prefs/Presets/Styles - and a few gadgets drawn in the one chosen.
@@ -39,6 +39,14 @@ The settings are on six pages, under tabs:
   it is given none, when the keyboard on the screen comes up, whether a
   window may be moved partly past the screen's edges, and whether the
   close, depth and zoom gadgets in the title bars are wide.
+- **Sound:** the outputs and their volumes on the left - which one is
+  preferred, played through whenever it is there and taking the sound
+  over when it is plugged in, and a slider for each output that is
+  there or that the settings name, heard at once while it moves - and
+  the beep on the right: whether the screen flashes, and the sound
+  played with it - none, a tone of a pitch and a length, or a sound
+  file - at what volume. Test plays the beep as it is set; a line at
+  the bottom says what came of it.
 
 The colour wheel opens in a window of its own over the editor: the wheel,
 its brightness beside it, the colour shown on a button and typed in a
@@ -50,7 +58,9 @@ field, and OK and Cancel. Until it is closed the editor takes no input.
   ENVARC:Sys.
 - **Use** keeps them until the machine starts again: they are written to
   ENV:Sys alone.
-- **Cancel** leaves everything as it was.
+- **Cancel** leaves everything as it was; the volumes and the preferred
+  output, which change while they are set, go back to what they were,
+  as they do when the window is closed.
 
 Save and Use hand the settings to the system at once. Every open window
 takes the style, the colours and the title bars' gadgets straight away;

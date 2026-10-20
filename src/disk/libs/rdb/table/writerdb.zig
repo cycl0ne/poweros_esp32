@@ -20,11 +20,18 @@
 //! new every time, since each one points at the next. Code that does not
 //! fit in the table's area goes after it, up to the first partition, and
 //! the area grows over it.
+//!
+//! **After RemGPT** the disk's GPT goes once the new table is down: its
+//! header in block 1, its copy in the last block and its protective MBR,
+//! where the new table does not use those blocks. A reader takes the
+//! RigidDiskBlock before a GPT, so the disk holds the new table from the
+//! moment it is written.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rdb = sdk.rdb;
 const hardblocks = sdk.dos.hardblocks;
+const gpt = sdk.dos.gpt;
 const RDBBase = @import("../rdb_base.zig").RDBBase;
 const _handle = @import("../handle/_handle.zig");
 const _partition = @import("../partition/_partition.zig");
@@ -59,8 +66,9 @@ const no_block = _handle.no_block;
 /// more partitions than the table's own blocks hold, more than 16 file
 /// systems, or code that does not fit even with the area grown up to the
 /// first partition; RDBERR_NOMEM; RDBERR_IO when a block of the disk's
-/// chain of file systems cannot be read. RDBERR_IO when the device
-/// refused a write, part of the way through.
+/// chain of file systems cannot be read; RDBERR_GPT for a table in a
+/// container whose GPT the handle changed and WriteGPT has not written.
+/// RDBERR_IO when the device refused a write, part of the way through.
 ///
 /// BEHAVIOR:
 /// Every partition is checked first, as AddPartition checks a new one,
@@ -89,6 +97,12 @@ const no_block = _handle.no_block;
 /// block erased; on any other a wiped block is written with zeroes.
 /// CMD_UPDATE ends it, so a device that holds writes back has them on the
 /// medium when the call returns.
+///
+/// A table in a GPT's container (RDBF_CONTAINER) is written inside the
+/// container, every block number counted from its first block. A table
+/// written after RemGPT on a disk that held a GPT wipes the GPT once the
+/// table is down: the header in block 1, its copy in the last block and
+/// the protective MBR, where the table does not use those blocks.
 ///
 /// Afterwards `block` is the RigidDiskBlock's, each partition's and each
 /// file system's `at` is its block, a file system's `blocks` counts its
@@ -140,6 +154,7 @@ pub fn WriteRDB(_: *RDBBase, handle: *rdb.RDBHandle) i32 {
     const geometry = &handle.geometry;
     if (geometry.erase_size != 0 and geometry.sector_size % geometry.erase_size != 0) return rdb.RDBERR_BLOCKSIZE;
     if (_handle.changed(private)) return rdb.RDBERR_CHANGED;
+    if (handle.flags & rdb.RDBF_CONTAINER != 0 and handle.flags & rdb.RDBF_GPTCHANGED != 0) return rdb.RDBERR_GPT;
 
     var walk = _partition.Partitions.of(handle);
     var partitions: u32 = 0;
@@ -227,6 +242,7 @@ pub fn WriteRDB(_: *RDBBase, handle: *rdb.RDBHandle) i32 {
         if (!_handle.clearBlock(private, other)) return rdb.RDBERR_IO;
     }
     if (current != no_block and current != layout.table_block and !_handle.clearBlock(private, current)) return rdb.RDBERR_IO;
+    if (private.wipe_gpt and !wipeGpt(private, &map)) return rdb.RDBERR_IO;
     if (!_handle.update(private)) return rdb.RDBERR_IO;
 
     // What the handle says of the disk, now the disk holds the new table.
@@ -257,6 +273,29 @@ pub fn WriteRDB(_: *RDBBase, handle: *rdb.RDBHandle) i32 {
     handle.flags |= rdb.RDBF_FOUND;
     handle.flags &= ~(rdb.RDBF_CHANGED | rdb.RDBF_DAMAGED | rdb.RDBF_FOREIGN);
     return rdb.RDBERR_OK;
+}
+
+/// The disk's GPT wiped, now a table over the whole disk is down: the
+/// header in block 1 and the protective MBR where the table did not take
+/// their blocks, and the copy in the last block. Whether it was.
+fn wipeGpt(handle: *Handle, map: *const Area) bool {
+    const last = handle.public.disk_blocks - 1;
+    if (!map.taken(@intCast(gpt.header_block))) {
+        if (_handle.readAt(handle, gpt.header_block)) |block| {
+            if (gpt.signed(block) and !_handle.clearAt(handle, gpt.header_block)) return false;
+        }
+    }
+    if (_handle.readAt(handle, last)) |block| {
+        if (gpt.signed(block) and !_handle.clearAt(handle, last)) return false;
+    }
+    if (!map.taken(0)) {
+        if (_handle.readAt(handle, 0)) |block| {
+            if (gpt.protective(block) and !_handle.clearAt(handle, 0)) return false;
+        }
+    }
+    handle.wipe_gpt = false;
+    handle.gpt_on_disk = false;
+    return true;
 }
 
 /// Where each block of the new table goes.

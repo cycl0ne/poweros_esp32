@@ -125,8 +125,18 @@ fn processor(d: *Desktop, text: *Text) void {
 
 /// "Memory: 8,703K, 5,685K free" - all there is, and how much of it is
 /// free - then the internal memory and the PSRAM apart, the PSRAM only
-/// where the board has some.
+/// where the board has some. On a machine whose RAM is one kind
+/// (`Desktop.unified`) every region is both, so the line of all of it is
+/// the whole story.
 fn memory(d: *Desktop, text: *Text) void {
+    if (d.unified) {
+        text.add("\nMemory: ");
+        text.amount(d.sys.AvailMem(exec.MEMF_ANY | exec.MEMF_TOTAL));
+        text.add(", ");
+        text.amount(d.sys.AvailMem(exec.MEMF_ANY));
+        text.add(" free");
+        return;
+    }
     const internal_total = d.sys.AvailMem(exec.MEMF_INTERNAL | exec.MEMF_TOTAL);
     const internal_free = d.sys.AvailMem(exec.MEMF_INTERNAL);
     const external_total = d.sys.AvailMem(exec.MEMF_EXTERNAL | exec.MEMF_TOTAL);
