@@ -342,6 +342,10 @@ pub const WA_NoActivate = WA_Dummy + 0x10D;
 /// (`FindWindowNumber`) where a pointer kept might by then be another
 /// window's. `GetWindowAttrs` only.
 pub const WA_Number = WA_Dummy + 0x10E;
+/// What the pixels of the window's screen are, an `rtg.bitmaps.PixelFormat`
+/// (`SA_PixelFormat`): what is drawn into the window, or copied into it
+/// as it is, is in them. `GetWindowAttrs` only.
+pub const WA_PixelFormat = WA_Dummy + 0x10F;
 
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;

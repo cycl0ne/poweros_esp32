@@ -12,13 +12,10 @@ const sdk = @import("sdk");
 const scenes = @import("scenes.zig");
 const scene = @import("facetscene.zig");
 const facet = sdk.facet;
-const graphics = sdk.graphics;
 const intuition = sdk.intuition;
 const PixelFormat = sdk.rtg.bitmaps.PixelFormat;
 const TagItem = sdk.utility.TagItem;
-const ExecBase = sdk.interface.exec.ExecBase;
 const FacetBase = sdk.interface.facet.FacetBase;
-const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 
 pub const most_images = 4;
@@ -29,9 +26,9 @@ pub const Failure = error{ NoMemory, NoDevice, NoSurface, Undrawable, NoSwapchai
 /// order it goes.
 pub const Gpu = struct {
     fb: *FacetBase,
-    /// Where graphics.library is opened from, to name the display's pixels
-    /// facet.library does not draw in.
-    sys: *ExecBase,
+    /// Asked what the display's pixels are where facet.library does not
+    /// draw in them.
+    ib: *IntuitionBase,
     /// Those pixels, with `error.Undrawable`.
     found: PixelFormat = unknown,
     instance: ?*facet.Instance = null,
@@ -149,25 +146,15 @@ pub const Gpu = struct {
         return true;
     }
 
-    /// What the screen's or the window's RastPort draws into is made of:
-    /// a surface facet.library does not draw in lists no format, so it is
-    /// asked of graphics.library.
+    /// What the screen's or the window's pixels are (intuition 0.48's
+    /// `SA_PixelFormat`, `WA_PixelFormat`): a surface facet.library does
+    /// not draw in lists no format.
     fn pixelsOf(gpu: *Gpu, of: union(enum) { screen: *intuition.Screen, window: *intuition.Window }) PixelFormat {
-        const sys = gpu.sys;
-        const intuition_lib = sys.OpenLibrary(intuition.INTUITIONNAME, intuition.INTUITION_VERSION) orelse return unknown;
-        defer sys.CloseLibrary(intuition_lib);
-        const graphics_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, graphics.GRAPHICS_VERSION) orelse return unknown;
-        defer sys.CloseLibrary(graphics_lib);
-        const ib: *IntuitionBase = @ptrCast(intuition_lib);
-        const gb: *GraphicsBase = @ptrCast(graphics_lib);
-        var rastport: usize = 0;
+        var format: usize = @intFromEnum(unknown);
         switch (of) {
-            .screen => |screen| ib.GetScreenAttrs(screen, &[_]TagItem{ .{ .tag = intuition.screens.SA_RastPort, .data = @intFromPtr(&rastport) }, .{} }),
-            .window => |window| ib.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = intuition.windows.WA_RastPort, .data = @intFromPtr(&rastport) }, .{} }),
+            .screen => |screen| gpu.ib.GetScreenAttrs(screen, &[_]TagItem{ .{ .tag = intuition.screens.SA_PixelFormat, .data = @intFromPtr(&format) }, .{} }),
+            .window => |window| gpu.ib.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = intuition.windows.WA_PixelFormat, .data = @intFromPtr(&format) }, .{} }),
         }
-        if (rastport == 0) return unknown;
-        var format: u32 = @intFromEnum(unknown);
-        gb.GetRPAttrs(@ptrFromInt(rastport), &[_]TagItem{ .{ .tag = graphics.RPTAG_Format, .data = @intFromPtr(&format) }, .{} });
         return @enumFromInt(@as(u8, @truncate(format)));
     }
 
@@ -500,7 +487,7 @@ pub fn explain(gpu: *const Gpu, err: Failure) [*:0]const u8 {
     };
 }
 
-/// A format graphics.library would not name.
+/// A format intuition would not name.
 const unknown: PixelFormat = @enumFromInt(0xFF);
 
 /// The display's pixels named, and what facet.library draws in.

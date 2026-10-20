@@ -106,13 +106,8 @@ pub fn open(sys: *ExecBase, surface: *Surface, window: *intuition.Window) facet.
     const ib: *IntuitionBase = @ptrCast(libraries[0].?);
     const gb: *GraphicsBase = @ptrCast(libraries[1].?);
     const rastport: *graphics.RastPort = @ptrFromInt(attr(ib, window, wn.WA_RastPort));
-    var format: u32 = 0;
     var bitmap: usize = 0;
-    gb.GetRPAttrs(rastport, &[_]TagItem{
-        .{ .tag = graphics.RPTAG_Format, .data = @intFromPtr(&format) },
-        .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(&bitmap) },
-        .{},
-    });
+    gb.GetRPAttrs(rastport, &[_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(&bitmap) }, .{} });
     const shown: ?*const rtg.RtgBitMap = @ptrFromInt(bitmap);
     kept.* = .{
         .sys = sys,
@@ -123,7 +118,7 @@ pub fn open(sys: *ExecBase, surface: *Surface, window: *intuition.Window) facet.
         .number = @intCast(number),
         .rastport = rastport,
         .layer = @ptrFromInt(attr(ib, window, wn.WA_Layer)),
-        .format = @enumFromInt(@as(u8, @intCast(format))),
+        .format = pixelsOf(ib, window),
         .board = if (shown) |screen_bitmap| @ptrCast(@alignCast(screen_bitmap.board)) else null,
     };
     surface.ops = &ops;
@@ -255,6 +250,15 @@ fn insideOf(ib: *IntuitionBase, window: *intuition.Window) Inside {
         .width = @intCast(width),
         .height = @intCast(height),
     };
+}
+
+/// What the pixels of the window's screen are (`WA_PixelFormat`): none
+/// facet.library draws in from an intuition older than 0.48, which cannot
+/// say.
+fn pixelsOf(ib: *IntuitionBase, window: *intuition.Window) PixelFormat {
+    var value: usize = 0xFF;
+    ib.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = wn.WA_PixelFormat, .data = @intFromPtr(&value) }, .{} });
+    return @enumFromInt(@as(u8, @truncate(value)));
 }
 
 fn attr(ib: *IntuitionBase, window: *intuition.Window, tag: sdk.utility.Tag) usize {

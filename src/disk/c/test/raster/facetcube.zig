@@ -38,7 +38,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetCube";
-const VERSION_STRING = "\x00$VER: FacetCube 1.2 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetCube 1.3 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FRAMES/N,NEAREST/S";
@@ -171,7 +171,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
 
-    var gpu = Gpu{ .fb = @ptrCast(facet_lib), .sys = sys };
+    var gpu = Gpu{ .fb = @ptrCast(facet_lib), .ib = ib };
     defer gpu.down();
     gpu.up(COMMAND_NAME) catch |err| return failed(dl, &gpu, err);
     gpu.onScreen(screen) catch |err| return failed(dl, &gpu, err);

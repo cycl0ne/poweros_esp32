@@ -2149,6 +2149,27 @@ test "windows: a task's end closes what it left open; a window of the system's i
     try tearDown(ib);
 }
 
+test "pixels: a screen's format, read from it and from a window on it" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const display = try Display.up(ib);
+    const it = ib.iface();
+    const window = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{},
+    }).?;
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, window, wn.WA_Screen));
+    const rgb565: usize = @intFromEnum(sdk.rtg.bitmaps.PixelFormat.rgb565);
+    try testing.expectEqual(rgb565, screenAttr(ib, screen, intuition.screens.SA_PixelFormat));
+    try testing.expectEqual(rgb565, windowAttr(ib, window, wn.WA_PixelFormat));
+    it.CloseWindow(window);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windows: a number each, never given again, found while the window is open" {
     const ib = try setUp();
     defer kexec.deinit();

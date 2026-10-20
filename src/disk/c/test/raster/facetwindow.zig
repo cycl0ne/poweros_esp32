@@ -44,7 +44,7 @@ const Gpu = facetgpu.Gpu;
 const Failure = facetgpu.Failure;
 
 pub const COMMAND_NAME = "FacetWindow";
-const VERSION_STRING = "\x00$VER: FacetWindow 1.2 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetWindow 1.3 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "WIDTH/N,HEIGHT/N,NEAREST/S,FRAMES/N,CLOSE/S";
@@ -187,7 +187,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var open = true;
     defer if (open) ib.CloseWindow(window);
 
-    var gpu = Gpu{ .fb = @ptrCast(facet_lib), .sys = sys };
+    var gpu = Gpu{ .fb = @ptrCast(facet_lib), .ib = ib };
     // Given back before the window closes: the surface is over it.
     defer gpu.down();
     gpu.up(COMMAND_NAME) catch |err| return failed(dl, &gpu, err);
