@@ -77,7 +77,7 @@ fn log2(value: u32) u32 {
 
 /// An interrupt endpoint's interval as its context has it - an exponent
 /// of 125 µs - from its descriptor's bInterval: microframes as a power
-/// of two at high speed, frames at full and low speed.
+/// of two at high speed and SuperSpeed, frames at full and low speed.
 pub fn intervalOf(speed: u32, b_interval: u8) u32 {
     if (speed >= regs.SPEED_HIGH) return @min(@max(b_interval, 1), 16) - 1;
     return @min(@max(log2(b_interval) + 3, 3), 10);
@@ -90,26 +90,46 @@ pub fn intervalOfMs(speed: u32, ms: u16) u32 {
     return @min(@max(exponent, 3), 10);
 }
 
-/// What an endpoint of a configuration is to be.
+/// What an endpoint of a configuration is to be: its burst and bytes an
+/// interval from its SuperSpeed companion, if it has one.
 pub const Spec = struct {
     kind: u32 = 0,
     max_packet: u32 = 0,
     interval: u32 = 0,
+    burst: u32 = 0,
+    esit: u32 = 0,
 };
+
+/// A SuperSpeed endpoint companion at `at` into `spec`. An isochronous
+/// endpoint keeps neither: it is served a packet an interval, as each
+/// of its transfer's packets is one TD.
+fn takeCompanion(config: []const u8, at: usize, spec: *Spec) void {
+    if (spec.kind == regs.EP_ISOCH_OUT or spec.kind == regs.EP_ISOCH_IN) return;
+    spec.burst = @min(config[at + 2], 15);
+    spec.esit = @as(u32, config[at + 4]) | @as(u32, config[at + 5]) << 8;
+}
 
 /// The endpoints of configuration `value` in `config` (a configuration
 /// descriptor and what follows it): every interface's first setting's,
-/// by device context index, isochronous ones left out. A bit per index
-/// found; 0 if `config` is not that configuration.
+/// by device context index, isochronous ones left out, each with its
+/// SuperSpeed companion if one follows it. A bit per index found; 0 if
+/// `config` is not that configuration.
 pub fn endpointsOf(config: []const u8, value: u8, speed: u32, into: *[32]Spec) u32 {
     if (config.len < 9 or config[1] != d.USB_DT_CONFIG or config[5] != value) return 0;
     var found: u32 = 0;
     var alternate: u8 = 0;
+    // The endpoint just taken, whose companion may come next.
+    var last: u32 = 0;
     var at: usize = 0;
     while (at + 2 <= config.len) {
         const length = config[at];
         if (length < 2 or at + length > config.len) break;
+        const previous = last;
+        last = 0;
         switch (config[at + 1]) {
+            d.USB_DT_SS_ENDPOINT_COMP => if (previous != 0 and length >= 6) {
+                takeCompanion(config, at, &into[previous]);
+            },
             d.USB_DT_INTERFACE => if (length >= 9) {
                 alternate = config[at + 3];
             },
@@ -127,6 +147,7 @@ pub fn endpointsOf(config: []const u8, value: u8, speed: u32, into: *[32]Spec) u
                             .interval = if (isPeriodic(kind)) intervalOf(speed, config[at + 6]) else 0,
                         };
                         found |= regs.addFlag(dci);
+                        last = dci;
                     }
                 }
             },
@@ -178,14 +199,17 @@ fn buildInput(host: *Host, slot: *Slot, add: u32, drop: u32) void {
         const words = _xhci.inputContext(host, slot, 1 + dci);
         const pointer = ep.ring.dequeuePointer();
         const periodic = isPeriodic(ep.kind);
+        // A periodic endpoint's bytes an interval: its companion's, else
+        // a packet's.
+        const esit = if (ep.esit != 0) ep.esit else ep.max_packet;
         words[0] = regs.endpointWord0(ep.interval);
-        words[1] = regs.endpointWord1(ep.kind, 0, ep.max_packet);
+        words[1] = regs.endpointWord1(ep.kind, ep.burst, ep.max_packet);
         words[2] = ring.lo(pointer);
         words[3] = ring.hi(pointer);
         words[4] = if (ep.kind == regs.EP_CONTROL)
             regs.endpointWord4(8, 0)
         else if (periodic)
-            regs.endpointWord4(ep.max_packet, ep.max_packet)
+            regs.endpointWord4(esit, esit)
         else
             regs.endpointWord4(3072, 0);
     }
@@ -287,6 +311,7 @@ fn speedOf(speed: u8) u32 {
     return switch (speed) {
         usbhc.USB_SPEED_LOW => regs.SPEED_LOW,
         usbhc.USB_SPEED_HIGH => regs.SPEED_HIGH,
+        usbhc.USB_SPEED_SUPER => regs.SPEED_SUPER,
         else => regs.SPEED_FULL,
     };
 }
@@ -302,7 +327,8 @@ pub fn defaultSlot(host: *Host, req: *const usbhc.IOUsbHC) ?*Slot {
     var route: u32 = 0;
     var depth: u8 = 0;
     if (host.reset_hub == 0) {
-        root_port = host.first_port + port - 1;
+        if (port > host.ports) return null;
+        root_port = host.port_map[port - 1];
     } else {
         const hub = host.slots[host.reset_hub] orelse return null;
         if (!hub.enabled or hub.depth + 1 > max_depth) return null;
@@ -326,7 +352,7 @@ pub fn defaultSlot(host: *Host, req: *const usbhc.IOUsbHC) ?*Slot {
     slot.root_port = @intCast(root_port);
     slot.route = route;
     slot.depth = depth;
-    if (req.hub_address != 0 and slot.speed != regs.SPEED_HIGH) {
+    if (req.hub_address != 0 and (slot.speed == regs.SPEED_FULL or slot.speed == regs.SPEED_LOW)) {
         slot.tt_slot = host.by_address[req.hub_address & 0x7F];
         slot.tt_port = req.hub_port;
     }
@@ -414,6 +440,8 @@ pub fn configure(host: *Host, slot: *Slot, value: u8) bool {
         ep.kind = specs[dci].kind;
         ep.max_packet = specs[dci].max_packet;
         ep.interval = specs[dci].interval;
+        ep.burst = specs[dci].burst;
+        ep.esit = specs[dci].esit;
         if (!freshRing(host, ep)) return false;
         ep.enabled = true;
     }
@@ -447,6 +475,10 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
     ep.kind = kind;
     ep.max_packet = packet;
     ep.interval = if (isPeriodic(kind)) intervalOfMs(slot.speed, req.interval) else 0;
+    var spec = Spec{ .kind = kind };
+    if (slot.speed >= regs.SPEED_SUPER) companionOf(slot.config[0..slot.config_length], req.endpoint, &spec);
+    ep.burst = spec.burst;
+    ep.esit = spec.esit;
     ep.stride = strideOf(packet);
     ep.next_slice = 0;
     ep.expect = 0;
@@ -460,6 +492,25 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
     ep.enabled = false;
     slot.entries = highestOf(slot);
     return if (code == regs.CC_BANDWIDTH) usbhc.UHIOERR_BANDWIDTH else usbhc.UHIOERR_HOSTERROR;
+}
+
+/// The SuperSpeed companion of the endpoint at `address` in `config`, in
+/// whichever setting it is first found, into `spec`; nothing if it has
+/// none.
+pub fn companionOf(config: []const u8, address: u8, spec: *Spec) void {
+    var at: usize = 0;
+    while (at + 2 <= config.len) {
+        const length = config[at];
+        if (length < 2 or at + length > config.len) return;
+        if (config[at + 1] == d.USB_DT_ENDPOINT and length >= 7 and config[at + 2] == address) {
+            const next = at + length;
+            if (next + 6 <= config.len and config[next] >= 6 and config[next + 1] == d.USB_DT_SS_ENDPOINT_COMP) {
+                takeCompanion(config, next, spec);
+            }
+            return;
+        }
+        at += length;
+    }
 }
 
 /// How far apart an isochronous endpoint's packets lie in its buffer: a

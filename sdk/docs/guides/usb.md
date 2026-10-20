@@ -39,7 +39,7 @@ and writing a controller.
 |---|---|---|
 | `usbport.resource` | ROM | who holds each of the chip's USB ports, and which controller it is given to |
 | `usbotg.device` | `DEVS:` | the chip's USB OTG controller as a host controller: transfers to devices on its bus, its root port answered as a hub; on the ESP32s' disks |
-| `xhci.device` | `DEVS:` | xHCI controllers on PCI as host controllers - the VisionFive 2's VL805, QEMU's qemu-xhci - a unit per controller, its USB 2 root ports answered as a hub; on the RISC-V 64 disk |
+| `xhci.device` | `DEVS:` | xHCI controllers on PCI as host controllers - the VisionFive 2's VL805, QEMU's qemu-xhci - a unit per controller, its USB 2 and USB 3 root ports answered as one hub; on the RISC-V 64 disk |
 | `pci.library` | `LIBS:` | the machine's PCI functions, among which xhci.device finds its controllers ([pci](../autodocs/pci.md)); on the RISC-V 64 disk |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
 | `usb/hid.device` | `DEVS:usb/` | keyboards, mice and tablets, into keyboard.device and mouse.device |
@@ -119,7 +119,7 @@ and its address is free again.
 | CrowPanel | USB-C, wired as a device | - |
 | 7B, ES3C35P | the console's USB-C | by hand (`USB START`), the console giving up the port; not yet tried on the boards |
 | QEMU | the emulator's DWC2, with what `-Dusb` plugs in | started at boot |
-| VisionFive 2 | four USB-A on the VL805, an xHCI controller on PCI Express port 0, their USB 2 lines through the VL805's own hub | started at boot; the hub, keyboards and mice work; USB 2 only, so a USB 3 device is reached at high speed |
+| VisionFive 2 | four USB-A on the VL805, an xHCI controller on PCI Express port 0, their USB 2 lines through the VL805's own hub, their USB 3 lines on its USB 3 root ports | started at boot; the hub, keyboards and mice work; a USB 3 device at SuperSpeed: not yet tried on the board |
 | QEMU's RISC-V virt | qemu-xhci, with `-device qemu-xhci` on QEMU's command line | started at boot when the controller is there |
 
 **Speeds.** The ESP32-S3's port and the P4's full-speed controller run
@@ -129,12 +129,21 @@ plugged in has it. Behind a high-speed hub - the ESP32-P4-PC's - a full-
 or low-speed device, most keyboards and mice, is reached through the
 hub's transaction translator: the controller sends it split
 transactions, a packet at a time, and the hub talks to it at its own
-speed. An xHCI controller's USB 2 root ports run at high, full or low
-speed, as what is plugged in has it; its USB 3 ports are not driven, and
-a USB 3 device is reached on its USB 2 half. Behind a high-speed hub,
-xhci.device tells the controller which hub and port a full- or
-low-speed device hangs off, and the controller does the split
-transactions itself. `USBInfo` shows each device's speed.
+speed. An xHCI controller's root ports are one hub, its USB 2 ports
+first, then its USB 3 ports; a socket has one of each. A USB 3 device
+trains its link on the USB 3 port and runs at SuperSpeed, 5 Gbit/s - a
+SuperSpeedPlus one at SuperSpeed too - and anything else is on the USB 2
+port, at high, full or low speed. A USB 3 hub is two hubs: its
+SuperSpeed half, on a USB 3 port, has the USB 3 devices behind it, its
+USB 2 half, on the USB 2 port, the rest. A SuperSpeed link that failed
+(SS.Inactive, compliance mode) is warm reset, and what is on it comes in
+as if plugged in. Endpoint 0 of a SuperSpeed device takes 512 bytes, and
+a bulk or interrupt endpoint bursts as its companion descriptor says; an
+isochronous one sends a packet an interval, streams and the link's U1
+and U2 power states are not used. Behind a high-speed hub, xhci.device
+tells the controller which hub and port a full- or low-speed device
+hangs off, and the controller does the split transactions itself.
+`USBInfo` shows each device's speed.
 
 ## What is on it
 
@@ -676,8 +685,11 @@ is 10.0.3.2 - beside the machine's Ethernet on 10.0.2.0/24. In the
 monitor, `netdev_add user,id=n1,net=10.0.3.0/24` and `device_add
 usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
 
-`-Dusb-disk=<image>` plugs in a stick whose blocks are a raw image file
-- one made with `mkfs.fat` will do; `qemu` leaves the file as it was,
+`-Dusb-disk=<image>` plugs in a stick whose blocks are a raw image file.
+The volume is in a partition table's first FAT partition, as a stick is
+sold, so `mkfs.fat` on a bare image is not enough: `truncate -s 64M
+stick.img`, `echo 'start=2048, type=c' | sfdisk stick.img` and `mkfs.fat
+-F 32 --offset 2048 stick.img` make one. `qemu` leaves the file as it was,
 `qemu-disk` writes to it. The stick is `usbstick` in the monitor:
 `device_del usbstick` pulls it out, and another goes in with
 `drive_add 0 if=none,id=s2,format=raw,file=<image>` and
@@ -687,9 +699,9 @@ usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
 controller, so its bus does not start. A QEMU started with `-device
 qemu-xhci` has one, and `-device usb-kbd`, `-device usb-mouse` or a
 `usb-storage` device go on its bus; the machine's `USB AUTO` starts it at
-boot. QEMU puts a `usb-storage` on a SuperSpeed port, which xhci.device
-does not drive: `-device qemu-xhci,p3=0` gives the controller USB 2
-ports only, and the stick comes in at high speed. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
+boot. QEMU puts a `usb-storage` on a USB 3 port, and the stick runs at
+SuperSpeed; `-device qemu-xhci,p3=0` gives the controller USB 2 ports
+only, and it comes in at high speed. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
 pa,id=snd`, or `wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
 for a file) is a speaker for `usb/uac.device`; `device_del spk` pulls it
 out while it plays. QEMU's own mixing engine plays 0 dB at 240/255 of

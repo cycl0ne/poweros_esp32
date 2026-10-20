@@ -106,7 +106,9 @@ fn accept(host: *Host, req: *usbhc.IOUsbHC) void {
         const setup = req.setup;
         if (isRequest(setup, d.USB_DIR_OUT, d.USB_REQ_SET_CONFIGURATION)) {
             if (!slots.configure(host, slot, @truncate(setup.value))) return _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
-        } else if (isRequest(setup, d.USB_DIR_OUT | d.USB_RT_PORT, d.USB_REQ_SET_FEATURE) and setup.value == d.USB_PORT_FEAT_RESET) {
+        } else if (isRequest(setup, d.USB_DIR_OUT | d.USB_RT_PORT, d.USB_REQ_SET_FEATURE) and
+            (setup.value == d.USB_PORT_FEAT_RESET or setup.value == d.USB_PORT_FEAT_BH_PORT_RESET))
+        {
             slots.noteReset(host, slot.id, @truncate(setup.index));
         }
     } else {
@@ -600,7 +602,10 @@ fn kept(slot: *Slot, req: *usbhc.IOUsbHC) bool {
         }
         return false;
     }
-    if (isRequest(setup, d.USB_DIR_IN | d.USB_RT_HUB, d.USB_REQ_GET_DESCRIPTOR)) return setup.value >> 8 == d.USB_DT_HUB;
+    if (isRequest(setup, d.USB_DIR_IN | d.USB_RT_HUB, d.USB_REQ_GET_DESCRIPTOR)) {
+        const kind = setup.value >> 8;
+        return kind == d.USB_DT_HUB or kind == d.USB_DT_SS_HUB;
+    }
     if (isRequest(setup, d.USB_DIR_IN | d.USB_RT_PORT, d.USB_REQ_GET_STATUS) and got >= 4) {
         const status = @as(u16, data[0]) | @as(u16, data[1]) << 8;
         const change = @as(u16, data[2]) | @as(u16, data[3]) << 8;

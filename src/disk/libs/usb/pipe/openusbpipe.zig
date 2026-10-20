@@ -111,20 +111,26 @@ pub fn OpenUSBPipe(base: *UsbBase, device: *usb.USBDevice, endpoint_address: u32
     return pipe;
 }
 
+/// Whether a speed counts its intervals in microframes: high speed and
+/// SuperSpeed.
+fn inMicroframes(speed: u8) bool {
+    return speed == usbhc.USB_SPEED_HIGH or speed == usbhc.USB_SPEED_SUPER;
+}
+
 /// An isochronous endpoint's bInterval as milliseconds: 2^(n-1) frames,
-/// or at high speed microframes; null under a millisecond.
+/// or at high speed and SuperSpeed microframes; null under a millisecond.
 fn isoIntervalMs(speed: u8, interval: u8) ?u16 {
     const exponent: u5 = @intCast(@min(@max(interval, 1), 16) - 1);
     const units = @as(u32, 1) << exponent;
-    if (speed != usbhc.USB_SPEED_HIGH) return @intCast(@min(units, 0x8000));
+    if (!inMicroframes(speed)) return @intCast(@min(units, 0x8000));
     if (units < 8) return null;
     return @intCast(units / 8);
 }
 
 /// bInterval as milliseconds: frames at full and low speed, 2^(n-1)
-/// microframes at high speed; never less than one.
+/// microframes at high speed and SuperSpeed; never less than one.
 fn intervalMs(speed: u8, interval: u8) u16 {
-    if (speed != usbhc.USB_SPEED_HIGH) return @max(interval, 1);
+    if (!inMicroframes(speed)) return @max(interval, 1);
     const exponent: u5 = @intCast(@min(@max(interval, 1), 16) - 1);
     const microframes = @as(u32, 1) << exponent;
     return @intCast(@max(microframes / 8, 1));

@@ -66,6 +66,11 @@ pub const USB_DT_INTERFACE_ASSOCIATION: u8 = 0x0B;
 pub const USB_DT_HID: u8 = 0x21;
 pub const USB_DT_REPORT: u8 = 0x22;
 pub const USB_DT_HUB: u8 = 0x29;
+/// A SuperSpeed hub's descriptor (`SSHubDescriptor`).
+pub const USB_DT_SS_HUB: u8 = 0x2A;
+/// A SuperSpeed endpoint's companion, right after its endpoint's
+/// descriptor (`SSEndpointCompanion`).
+pub const USB_DT_SS_ENDPOINT_COMP: u8 = 0x30;
 
 /// What every descriptor starts with: its length, which is how the next
 /// one is found, and its type.
@@ -89,7 +94,8 @@ pub const DeviceDescriptor = extern struct {
     device_class: u8 = 0,
     device_subclass: u8 = 0,
     device_protocol: u8 = 0,
-    /// bMaxPacketSize0: endpoint 0's packet size, 8, 16, 32 or 64.
+    /// bMaxPacketSize0: endpoint 0's packet size, 8, 16, 32 or 64; at
+    /// SuperSpeed its exponent, 9 for 512.
     max_packet_size0: u8 = 0,
     /// idVendor, idProduct, bcdDevice.
     vendor_id: u16 align(1) = 0,
@@ -160,11 +166,30 @@ pub const EndpointDescriptor = extern struct {
     /// (USB_ENDPOINT_XFER_*).
     attributes: u8 = 0,
     /// wMaxPacketSize: the low 11 bits; at high speed the two above say
-    /// how many more transactions a microframe takes.
+    /// how many more transactions a microframe takes. At SuperSpeed a
+    /// companion descriptor follows (`SSEndpointCompanion`).
     max_packet_size: u16 align(1) = 0,
     /// bInterval: how often a periodic endpoint is asked, in frames at
     /// full and low speed.
     interval: u8 = 0,
+};
+
+/// What a SuperSpeed endpoint's descriptor has after it: how many
+/// packets it takes in a burst, and for a periodic one how much it moves
+/// each interval.
+pub const SSEndpointCompanion = extern struct {
+    /// bLength: 6.
+    length: u8 = 6,
+    /// bDescriptorType: USB_DT_SS_ENDPOINT_COMP.
+    descriptor_type: u8 = USB_DT_SS_ENDPOINT_COMP,
+    /// bMaxBurst: the packets of a burst less one, 0 to 15.
+    max_burst: u8 = 0,
+    /// bmAttributes: a bulk endpoint's streams as a power of two; an
+    /// isochronous one's bursts an interval less one (Mult), in the low
+    /// two bits.
+    attributes: u8 = 0,
+    /// wBytesPerInterval: a periodic endpoint's bytes an interval.
+    bytes_per_interval: u16 align(1) = 0,
 };
 
 /// An endpoint address's number.
@@ -223,6 +248,36 @@ pub const HubDescriptor = extern struct {
     power_mask: u8 = 0xFF,
 };
 
+/// A SuperSpeed hub's descriptor: the same first fields, then its
+/// latencies. Its ports carry only SuperSpeed; the hub's USB 2 half is a
+/// hub of its own, on the USB 2 side of the same connector.
+pub const SSHubDescriptor = extern struct {
+    /// bDescLength: 12.
+    length: u8 = 12,
+    /// bDescriptorType: USB_DT_SS_HUB.
+    descriptor_type: u8 = USB_DT_SS_HUB,
+    /// bNbrPorts
+    num_ports: u8 = 0,
+    /// wHubCharacteristics: USB_HUB_CHAR_*.
+    characteristics: u16 align(1) = 0,
+    /// bPwrOn2PwrGood: in 2 ms.
+    power_on_to_good: u8 = 0,
+    /// bHubContrCurrent: in mA.
+    controller_current: u8 = 0,
+    /// bHubHdrDecLat, wHubDelay: its header decode latency and its delay
+    /// in ns.
+    header_latency: u8 = 0,
+    hub_delay: u16 align(1) = 0,
+    /// DeviceRemovable, a bit per port.
+    removable: u16 align(1) = 0,
+};
+
+/// bDeviceProtocol of a hub: a SuperSpeed one.
+pub const USB_HUB_PROTOCOL_SUPER: u8 = 3;
+/// A SuperSpeed hub's class request: how many hubs are above it, 0 for
+/// one on a root port - where its ports' devices' route strings go.
+pub const USB_REQ_SET_HUB_DEPTH: u8 = 12;
+
 /// wHubCharacteristics: each port powered on its own, each port's
 /// over-current reported on its own.
 pub const USB_HUB_CHAR_INDIVIDUAL_POWER: u16 = 0x0001;
@@ -246,6 +301,13 @@ pub const USB_PORT_FEAT_C_ENABLE: u16 = 17;
 pub const USB_PORT_FEAT_C_SUSPEND: u16 = 18;
 pub const USB_PORT_FEAT_C_OVER_CURRENT: u16 = 19;
 pub const USB_PORT_FEAT_C_RESET: u16 = 20;
+/// A SuperSpeed hub's own: its link state, a link's change, a link that
+/// could not be set up, the warm reset and its end.
+pub const USB_PORT_FEAT_LINK_STATE: u16 = 5;
+pub const USB_PORT_FEAT_C_PORT_LINK_STATE: u16 = 25;
+pub const USB_PORT_FEAT_C_PORT_CONFIG_ERROR: u16 = 26;
+pub const USB_PORT_FEAT_BH_PORT_RESET: u16 = 28;
+pub const USB_PORT_FEAT_C_BH_PORT_RESET: u16 = 29;
 
 /// GET_STATUS of a port: wPortStatus, then wPortChange.
 pub const PortStatus = extern struct {
@@ -264,12 +326,60 @@ pub const USB_PORT_STAT_RESET: u16 = 1 << 4;
 pub const USB_PORT_STAT_POWER: u16 = 1 << 8;
 pub const USB_PORT_STAT_LOW_SPEED: u16 = 1 << 9;
 pub const USB_PORT_STAT_HIGH_SPEED: u16 = 1 << 10;
+/// What is on the port runs at SuperSpeed. Not a USB 2 hub's: the root
+/// hubs say it so, and usb.library turns a SuperSpeed hub's status into
+/// this form (`superPortStatus`).
+pub const USB_PORT_STAT_SUPER_SPEED: u16 = 1 << 13;
 // wPortChange
 pub const USB_PORT_STAT_C_CONNECTION: u16 = 1 << 0;
 pub const USB_PORT_STAT_C_ENABLE: u16 = 1 << 1;
 pub const USB_PORT_STAT_C_SUSPEND: u16 = 1 << 2;
 pub const USB_PORT_STAT_C_OVERCURRENT: u16 = 1 << 3;
 pub const USB_PORT_STAT_C_RESET: u16 = 1 << 4;
+
+// A SuperSpeed hub's wPortStatus: connection, enable, over-current and
+// reset as above; the link's state, power and speed its own.
+pub const USB_SS_PORT_STAT_LINK_STATE_SHIFT = 5;
+pub const USB_SS_PORT_STAT_LINK_STATE: u16 = 0xF << USB_SS_PORT_STAT_LINK_STATE_SHIFT;
+pub const USB_SS_PORT_STAT_POWER: u16 = 1 << 9;
+// Its wPortChange: connection, over-current and reset as above; then a
+// warm reset's end, a link's change, and a link that could not be set up.
+pub const USB_SS_PORT_STAT_C_BH_RESET: u16 = 1 << 5;
+pub const USB_SS_PORT_STAT_C_LINK_STATE: u16 = 1 << 6;
+pub const USB_SS_PORT_STAT_C_CONFIG_ERROR: u16 = 1 << 7;
+/// A SuperSpeed link's states: working, suspended, off, looking for a
+/// device, failed, training, held in compliance mode. A port in
+/// SS.Inactive or compliance mode takes a warm reset.
+pub const USB_SS_LINK_U0: u16 = 0;
+pub const USB_SS_LINK_U3: u16 = 3;
+pub const USB_SS_LINK_DISABLED: u16 = 4;
+pub const USB_SS_LINK_RX_DETECT: u16 = 5;
+pub const USB_SS_LINK_INACTIVE: u16 = 6;
+pub const USB_SS_LINK_POLLING: u16 = 7;
+pub const USB_SS_LINK_COMPLIANCE: u16 = 10;
+
+/// A SuperSpeed hub's port status in the USB 2 form the library works
+/// with: its speed USB_PORT_STAT_SUPER_SPEED, a suspended link
+/// USB_PORT_STAT_SUSPEND; a link's change as C_SUSPEND, a link that could
+/// not be set up as C_ENABLE, a warm reset's end as C_RESET.
+pub fn superPortStatus(raw: PortStatus) PortStatus {
+    const kept_status = USB_PORT_STAT_CONNECTION | USB_PORT_STAT_ENABLE | USB_PORT_STAT_OVERCURRENT | USB_PORT_STAT_RESET;
+    var status: u16 = raw.status & kept_status;
+    if (raw.status & USB_SS_PORT_STAT_POWER != 0) status |= USB_PORT_STAT_POWER;
+    if (superLinkState(raw.status) == USB_SS_LINK_U3) status |= USB_PORT_STAT_SUSPEND;
+    if (raw.status & USB_PORT_STAT_CONNECTION != 0) status |= USB_PORT_STAT_SUPER_SPEED;
+    const kept_change = USB_PORT_STAT_C_CONNECTION | USB_PORT_STAT_C_OVERCURRENT | USB_PORT_STAT_C_RESET;
+    var change: u16 = raw.change & kept_change;
+    if (raw.change & USB_SS_PORT_STAT_C_BH_RESET != 0) change |= USB_PORT_STAT_C_RESET;
+    if (raw.change & USB_SS_PORT_STAT_C_LINK_STATE != 0) change |= USB_PORT_STAT_C_SUSPEND;
+    if (raw.change & USB_SS_PORT_STAT_C_CONFIG_ERROR != 0) change |= USB_PORT_STAT_C_ENABLE;
+    return .{ .status = status, .change = change };
+}
+
+/// A SuperSpeed hub's port's link state, from its wPortStatus.
+pub fn superLinkState(status: u16) u16 {
+    return (status & USB_SS_PORT_STAT_LINK_STATE) >> USB_SS_PORT_STAT_LINK_STATE_SHIFT;
+}
 
 // --- HID -------------------------------------------------------------------------
 

@@ -658,3 +658,71 @@ test "a device pulled in the middle of its enumeration goes at its hub's next ch
     try testing.expectEqual(@as(u32, 1), rig.driver.binds);
     try rig.deinit();
 }
+
+test "a SuperSpeed hub: its own descriptor and depth, devices at 512 bytes, a failed link warm reset" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = standin.addRoot(hc, 2);
+    const hub = standin.addHub(hc, standin.root, 1, usbhc.USB_SPEED_SUPER, 4);
+    const stick = standin.addDevice(hc, hub, 1, usbhc.USB_SPEED_SUPER, 0x0781, 0x5581, d.USB_CLASS_MASS_STORAGE, .{ "", "Stick", "" });
+    const late = standin.addDevice(hc, hub, 2, usbhc.USB_SPEED_SUPER, 0x1234, 0x0030, d.USB_CLASS_HID, .{ "", "Late", "" });
+    hc.functions[late].inactive = true;
+    const below = standin.addHub(hc, hub, 3, usbhc.USB_SPEED_SUPER, 2);
+    const direct = standin.addDevice(hc, standin.root, 2, usbhc.USB_SPEED_SUPER, 0x0781, 0x5582, d.USB_CLASS_MASS_STORAGE, .{ "", "Direct", "" });
+    for ([_]u8{ hub, stick, late, below, direct }) |index| standin.plug(hc, index);
+
+    const root = rig.start();
+    const hub_device = childOf(root, 1).?;
+    try testing.expectEqual(usbhc.USB_SPEED_SUPER, hub_device.public.speed);
+    try testing.expect(hub_device.hub.?.super);
+    try testing.expectEqual(@as(u8, 4), hub_device.hub.?.ports);
+    // Its depth before anything below it was reset: 0 on a root port, 1
+    // below it.
+    try testing.expectEqual(@as(u16, 0), hc.functions[hub].hub_depth);
+    try testing.expectEqual(@as(u16, 1), hc.functions[below].hub_depth);
+    try testing.expect(childOf(hub_device, 3).?.hub.?.super);
+    // Endpoint 0 at 512 bytes from the first transfer on, the descriptor
+    // saying so as an exponent; no translator in the way.
+    const stick_device = childOf(hub_device, 1).?;
+    try testing.expectEqual(usbhc.USB_SPEED_SUPER, stick_device.public.speed);
+    try testing.expectEqual(@as(u8, 9), stick_device.public.descriptor.max_packet_size0);
+    try testing.expectEqual(@as(u16, 512), hc.functions[stick].max_packet0);
+    try testing.expect(stick_device.public.flags & usb.USBDF_CONFIGURED != 0);
+    try testing.expectEqual(@as(u8, 0), stick_device.hub_address);
+    // The root port says SuperSpeed in the USB 2 form.
+    const direct_device = childOf(root, 2).?;
+    try testing.expectEqual(usbhc.USB_SPEED_SUPER, direct_device.public.speed);
+    try testing.expectEqual(@as(u16, 512), hc.functions[direct].max_packet0);
+
+    // The failed link was warm reset; what is on it comes at the hub's
+    // next change.
+    try testing.expectEqual(@as(u32, 1), hc.functions[hub].warm_resets);
+    try testing.expect(childOf(hub_device, 2) == null);
+    _bus.hubsChanged(&rig.bus);
+    const late_device = childOf(hub_device, 2).?;
+    try testing.expect(late_device.public.flags & usb.USBDF_CONFIGURED != 0);
+    try testing.expectEqual(@as(u32, 1), rig.driver.binds);
+    // Every change was cleared by the hub's own features.
+    for (hc.functions[hub].port_change) |change| try testing.expectEqual(@as(u16, 0), change);
+    try testing.expectEqual(@as(u32, 6), rig.count());
+
+    standin.pull(hc, hub);
+    _bus.hubsChanged(&rig.bus);
+    try testing.expectEqual(@as(u32, 2), rig.count());
+    try testing.expectEqual(@as(u32, 0), rig.driver.holding);
+    try rig.deinit();
+}
+
+test "a SuperSpeed hub's port status in the USB 2 form" {
+    const status = d.superPortStatus(.{
+        .status = d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE | d.USB_SS_PORT_STAT_POWER | d.USB_SS_LINK_U3 << d.USB_SS_PORT_STAT_LINK_STATE_SHIFT,
+        .change = d.USB_PORT_STAT_C_CONNECTION | d.USB_SS_PORT_STAT_C_BH_RESET | d.USB_SS_PORT_STAT_C_LINK_STATE | d.USB_SS_PORT_STAT_C_CONFIG_ERROR,
+    });
+    try testing.expectEqual(d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE | d.USB_PORT_STAT_POWER | d.USB_PORT_STAT_SUSPEND | d.USB_PORT_STAT_SUPER_SPEED, status.status);
+    try testing.expectEqual(d.USB_PORT_STAT_C_CONNECTION | d.USB_PORT_STAT_C_RESET | d.USB_PORT_STAT_C_SUSPEND | d.USB_PORT_STAT_C_ENABLE, status.change);
+    // Nothing on it: no speed, and the link state alone.
+    const empty_port: u16 = d.USB_SS_PORT_STAT_POWER | d.USB_SS_LINK_INACTIVE << d.USB_SS_PORT_STAT_LINK_STATE_SHIFT;
+    try testing.expectEqual(d.USB_PORT_STAT_POWER, d.superPortStatus(.{ .status = empty_port }).status);
+    try testing.expectEqual(d.USB_SS_LINK_INACTIVE, d.superLinkState(empty_port));
+}

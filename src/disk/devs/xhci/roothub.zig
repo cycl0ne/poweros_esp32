@@ -1,20 +1,28 @@
 // SPDX-License-Identifier: MIT
-//! The controller's USB 2 root ports as a hub: the device answers its
-//! root hub's control transfers itself - a high-speed hub's descriptors,
-//! each port's status, the ports' features set and cleared - and holds
-//! an interrupt transfer on endpoint 1 until a port changes. usb.library
+//! The controller's root ports as a hub: the device answers its root
+//! hub's control transfers itself - a high-speed hub's descriptors, each
+//! port's status, the ports' features set and cleared - and holds an
+//! interrupt transfer on endpoint 1 until a port changes. usb.library
 //! drives it with the same hub code as any hub plugged in.
 //!
-//! **A port's status** is its PORTSC as a hub's wPortStatus, and its
-//! changes are PORTSC's change bits, cleared as the hub's are. A Port
-//! Status Change Event wakes the held transfer. The USB 3 ports are not
-//! the root hub's: a USB 3 device has its USB 2 half on a USB 2 port.
+//! **Its ports** are every root port the controller has, the USB 2 ones
+//! first, then the USB 3 ones (`Host.port_map`). A connector has one of
+//! each: a USB 3 device trains its link on the USB 3 port and runs at
+//! SuperSpeed, anything else is on the USB 2 port.
+//!
+//! **A port's status** is its PORTSC as a hub's wPortStatus, a device at
+//! SuperSpeed with USB_PORT_STAT_SUPER_SPEED, and its changes are PORTSC's
+//! change bits, cleared as the hub's are: a USB 3 link's change as
+//! C_SUSPEND, a link that could not be set up (CEC) as C_ENABLE. A Port
+//! Status Change Event wakes the held transfer.
 //!
 //! **A reset** is the controller's: PR is written and the port resets
 //! itself, saying so in PRC; the bus asks the port's status until it has.
-//! The port is noted as where the next device at address 0 is, and what
-//! was there let go (slots.zig). A port that shows its device gone has
-//! its slot let go when the bus asks its status.
+//! A USB 3 link that failed - SS.Inactive, compliance mode - takes a warm
+//! reset (WPR) instead, when it is asked to reset and when its status is
+//! asked. The port is noted as where the next device at address 0 is,
+//! and what was there let go (slots.zig). A port that shows its device
+//! gone has its slot let go when the bus asks its status.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -99,7 +107,18 @@ fn asBytes(pointer: anytype) []const u8 {
 
 /// The hub's port `port` (from 1) as the controller numbers it.
 fn portsc(host: *Host, port: u32) *volatile u32 {
-    return op(host, regs.portsc(host.first_port + port - 1));
+    return op(host, regs.portsc(host.port_map[port - 1]));
+}
+
+/// Whether the hub's port `port` is a USB 3 one.
+fn isSuper(host: *const Host, port: u32) bool {
+    return host.super_ports & (@as(u32, 1) << @intCast(port)) != 0;
+}
+
+/// A USB 3 port whose link failed: only a warm reset brings it back.
+fn needsWarmReset(value: u32) bool {
+    const state = (value & regs.PORT_PLS_MASK) >> regs.PORT_PLS_SHIFT;
+    return state == regs.PLS_INACTIVE or state == regs.PLS_COMPLIANCE;
 }
 
 fn control(host: *Host, req: *usbhc.IOUsbHC) void {
@@ -154,7 +173,11 @@ fn control(host: *Host, req: *usbhc.IOUsbHC) void {
             if (setup.request != d.USB_REQ_GET_STATUS or port == 0 or port > host.ports) {
                 err = usbhc.UHIOERR_STALL;
             } else {
-                const status = statusOf(portsc(host, port).*);
+                const port_value = portsc(host, port).*;
+                if (isSuper(host, port) and needsWarmReset(port_value) and port_value & regs.PORT_PR == 0) {
+                    portWrite(host, port, regs.PORT_WPR, 0);
+                }
+                const status = statusOf(port_value);
                 // A device gone: its slot with it.
                 if (status.status & d.USB_PORT_STAT_CONNECTION == 0 or status.change & d.USB_PORT_STAT_C_CONNECTION != 0) {
                     slots.portGone(host, 0, @intCast(port));
@@ -191,7 +214,8 @@ fn setFeature(host: *Host, port: u32, feature: u16) i8 {
         d.USB_PORT_FEAT_POWER => portWrite(host, port, regs.PORT_PP, 0),
         d.USB_PORT_FEAT_RESET => {
             slots.noteReset(host, 0, @intCast(port));
-            portWrite(host, port, regs.PORT_PR, 0);
+            const warm = isSuper(host, port) and needsWarmReset(portsc(host, port).*);
+            portWrite(host, port, if (warm) regs.PORT_WPR else regs.PORT_PR, 0);
         },
         // Suspend is left to a hub that needs it.
         d.USB_PORT_FEAT_SUSPEND => {},
@@ -207,7 +231,7 @@ fn clearFeature(host: *Host, port: u32, feature: u16) i8 {
         d.USB_PORT_FEAT_POWER => portWrite(host, port, 0, regs.PORT_PP),
         d.USB_PORT_FEAT_SUSPEND => {},
         d.USB_PORT_FEAT_C_CONNECTION => portWrite(host, port, regs.PORT_CSC, 0),
-        d.USB_PORT_FEAT_C_ENABLE => portWrite(host, port, regs.PORT_PEC, 0),
+        d.USB_PORT_FEAT_C_ENABLE => portWrite(host, port, regs.PORT_PEC | regs.PORT_CEC, 0),
         d.USB_PORT_FEAT_C_SUSPEND => portWrite(host, port, regs.PORT_PLC, 0),
         d.USB_PORT_FEAT_C_OVER_CURRENT => portWrite(host, port, regs.PORT_OCC, 0),
         d.USB_PORT_FEAT_C_RESET => portWrite(host, port, regs.PORT_PRC | regs.PORT_WRC, 0),
@@ -229,10 +253,11 @@ pub fn statusOf(value: u32) d.PortStatus {
         const speed = (value & regs.PORT_SPEED_MASK) >> regs.PORT_SPEED_SHIFT;
         if (speed == regs.SPEED_LOW) status |= d.USB_PORT_STAT_LOW_SPEED;
         if (speed == regs.SPEED_HIGH) status |= d.USB_PORT_STAT_HIGH_SPEED;
+        if (speed >= regs.SPEED_SUPER) status |= d.USB_PORT_STAT_SUPER_SPEED;
     }
     var change: u16 = 0;
     if (value & regs.PORT_CSC != 0) change |= d.USB_PORT_STAT_C_CONNECTION;
-    if (value & regs.PORT_PEC != 0) change |= d.USB_PORT_STAT_C_ENABLE;
+    if (value & (regs.PORT_PEC | regs.PORT_CEC) != 0) change |= d.USB_PORT_STAT_C_ENABLE;
     if (value & regs.PORT_PLC != 0) change |= d.USB_PORT_STAT_C_SUSPEND;
     if (value & regs.PORT_OCC != 0) change |= d.USB_PORT_STAT_C_OVERCURRENT;
     if (value & (regs.PORT_PRC | regs.PORT_WRC) != 0) change |= d.USB_PORT_STAT_C_RESET;

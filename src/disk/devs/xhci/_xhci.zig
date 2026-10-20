@@ -55,7 +55,8 @@ pub const max_units = 2;
 /// The device slots a controller is given at most: devices on its bus,
 /// hubs among them.
 pub const max_slots = 32;
-/// The root hub's ports at most: a hub's bitmap holds fifteen.
+/// The root hub's ports at most: a hub's bitmap holds fifteen, and the
+/// USB 2 ones come first.
 pub const max_root_ports = 15;
 /// TRBs on a transfer ring and on the command ring: a TD is three at most
 /// - a control transfer's stages - and one TD is on a ring at a time.
@@ -102,6 +103,11 @@ pub const Endpoint = struct {
     kind: u32 = 0,
     max_packet: u32 = 0,
     interval: u32 = 0,
+    /// At SuperSpeed, from its companion descriptor: the packets of a
+    /// burst less one, and a periodic one's bytes an interval (0: one
+    /// packet's).
+    burst: u32 = 0,
+    esit: u32 = 0,
     ring: ring.Ring = .{},
     /// The ring's memory, for FreeMem when it is made again another size.
     ring_raw: ?*anyopaque = null,
@@ -213,10 +219,12 @@ pub const Host = struct {
     page_size: u32 = 4096,
     scratchpads: u32 = 0,
     power_switched: bool = false,
-    /// The root hub's ports: the controller's USB 2 ports, the first of
-    /// them `first_port`.
-    first_port: u32 = 1,
+    /// The root hub's ports: the controller's root ports, the USB 2 ones
+    /// first. Each one's PORTSC number, and a bit per USB 3 one (from bit
+    /// 1, as the hub numbers them).
     ports: u32 = 0,
+    port_map: [max_root_ports]u8 = @splat(0),
+    super_ports: u32 = 0,
     unit: exec.Unit = .{},
     task: exec.Task = .{},
     stack: ?*anyopaque = null,

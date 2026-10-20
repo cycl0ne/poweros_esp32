@@ -51,7 +51,7 @@ const regs = @import("regs.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 4;
+const DEVICE_REVISION = 5;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -236,7 +236,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         usbhc.UHCMD_QUERYDEVICE => {
             const info = usbhc.USBHCInfo{
                 .name = "xhci",
-                .speed = usbhc.USB_SPEED_HIGH,
+                .speed = if (host.super_ports != 0) usbhc.USB_SPEED_SUPER else usbhc.USB_SPEED_HIGH,
                 .channels = host.max_slots,
                 .ports = host.ports,
                 .frame = if (host.ready != 0) (_xhci.rt(host, regs.MFINDEX).* & 0x3FFF) >> 3 else 0,

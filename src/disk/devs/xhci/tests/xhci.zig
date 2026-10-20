@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of xhci.device's parts that need no controller: the rings
-//! and their cycle bits (ring.zig), a configuration's endpoints and their
-//! intervals (slots.zig), a root port's PORTSC as a hub's port status
-//! (roothub.zig), the contexts' words (regs.zig), where an isochronous
+//! and their cycle bits (ring.zig), a configuration's endpoints, their
+//! intervals and SuperSpeed companions (slots.zig), the root ports the
+//! root hub has (controller.zig), a root port's PORTSC as a hub's port
+//! status (roothub.zig), the contexts' words (regs.zig), where an isochronous
 //! request's packets lie and in which frames they go, and what becomes
 //! of each (slots.zig, transfer.zig, _xhci.zig).
 
@@ -13,6 +14,7 @@ const regs = @import("../regs.zig");
 const ring = @import("../ring.zig");
 const slots = @import("../slots.zig");
 const roothub = @import("../roothub.zig");
+const controller = @import("../controller.zig");
 const transfer = @import("../transfer.zig");
 const _xhci = @import("../_xhci.zig");
 
@@ -157,6 +159,87 @@ test "a bulk pair at high speed" {
     try testing.expectEqual(regs.EP_BULK_OUT, specs[4].kind);
     try testing.expectEqual(@as(u32, 512), specs[4].max_packet);
     try testing.expectEqual(@as(u32, 0), specs[3].interval);
+}
+
+test "a SuperSpeed bulk pair: each endpoint's burst from its companion" {
+    const config = [_]u8{
+        9, d.USB_DT_CONFIG, 44, 0, 1, 1, 0, 0x80, 50,
+        9, d.USB_DT_INTERFACE, 0, 0, 2, 8, 6, 0x50, 0,
+        7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0,
+        6, d.USB_DT_SS_ENDPOINT_COMP, 15, 0, 0, 0,
+        7, d.USB_DT_ENDPOINT, 0x02, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0,
+        6, d.USB_DT_SS_ENDPOINT_COMP, 3, 0, 0, 0,
+    };
+    var specs: [32]slots.Spec = @splat(.{});
+    try testing.expectEqual(regs.addFlag(3) | regs.addFlag(4), slots.endpointsOf(&config, 1, regs.SPEED_SUPER, &specs));
+    try testing.expectEqual(@as(u32, 1024), specs[3].max_packet);
+    try testing.expectEqual(@as(u32, 15), specs[3].burst);
+    try testing.expectEqual(@as(u32, 3), specs[4].burst);
+    // Looked up by its address, as a pipe opened later is.
+    var spec = slots.Spec{ .kind = regs.EP_BULK_OUT };
+    slots.companionOf(&config, 0x02, &spec);
+    try testing.expectEqual(@as(u32, 3), spec.burst);
+    // Words 1 and 4 of the IN one's context.
+    try testing.expectEqual(@as(u32, 15), (regs.endpointWord1(regs.EP_BULK_IN, specs[3].burst, specs[3].max_packet) >> 8) & 0xFF);
+}
+
+test "a SuperSpeed interrupt endpoint's bytes an interval; an isochronous one keeps one packet" {
+    const config = [_]u8{
+        9, d.USB_DT_CONFIG, 50, 0, 1, 1, 0, 0x80, 50,
+        9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 0, 0, 0,
+        7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 0x00, 0x04, 4,
+        6, d.USB_DT_SS_ENDPOINT_COMP, 1, 0, 0x00, 0x08,
+        9, d.USB_DT_INTERFACE, 1, 1, 1, 1, 2, 0, 0,
+        7, d.USB_DT_ENDPOINT, 0x82, d.USB_ENDPOINT_XFER_ISOC, 0x00, 0x04, 1,
+        6, d.USB_DT_SS_ENDPOINT_COMP, 2, 1, 0x00, 0x30,
+    };
+    var specs: [32]slots.Spec = @splat(.{});
+    try testing.expectEqual(regs.addFlag(3), slots.endpointsOf(&config, 1, regs.SPEED_SUPER, &specs));
+    try testing.expectEqual(@as(u32, 1), specs[3].burst);
+    try testing.expectEqual(@as(u32, 2048), specs[3].esit);
+    // The isochronous one in setting 1, its companion found and left.
+    var spec = slots.Spec{ .kind = regs.EP_ISOCH_IN };
+    slots.companionOf(&config, 0x82, &spec);
+    try testing.expectEqual(@as(u32, 0), spec.burst);
+    try testing.expectEqual(@as(u32, 0), spec.esit);
+    // An endpoint with no companion, or none there at all.
+    spec = .{ .kind = regs.EP_BULK_IN };
+    slots.companionOf(&config, 0x83, &spec);
+    try testing.expectEqual(@as(u32, 0), spec.burst);
+}
+
+test "the root hub's ports: the USB 2 ones first, then the USB 3 ones" {
+    var map: [_xhci.max_root_ports]u8 = undefined;
+    var super: u32 = undefined;
+    // QEMU's qemu-xhci: four USB 2 ports, then four USB 3 ones.
+    try testing.expectEqual(@as(u32, 8), controller.mapPorts(.{ .usb2_first = 1, .usb2_count = 4, .usb3_first = 5, .usb3_count = 4 }, 8, &map, &super));
+    try testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8 }, map[0..8]);
+    try testing.expectEqual(@as(u32, 0b1_1110_0000), super);
+    // The USB 3 ones first in the controller: still last on the hub.
+    try testing.expectEqual(@as(u32, 5), controller.mapPorts(.{ .usb2_first = 5, .usb2_count = 1, .usb3_first = 1, .usb3_count = 4 }, 5, &map, &super));
+    try testing.expectEqualSlices(u8, &.{ 5, 1, 2, 3, 4 }, map[0..5]);
+    try testing.expectEqual(@as(u32, 0b11_1100), super);
+    // No capability says: every port, as USB 2.
+    try testing.expectEqual(@as(u32, 3), controller.mapPorts(.{}, 3, &map, &super));
+    try testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, map[0..3]);
+    try testing.expectEqual(@as(u32, 0), super);
+    // More than a hub's bitmap holds: the first fifteen.
+    try testing.expectEqual(@as(u32, 15), controller.mapPorts(.{ .usb2_first = 1, .usb2_count = 10, .usb3_first = 11, .usb3_count = 10 }, 20, &map, &super));
+    try testing.expectEqual(@as(u8, 15), map[14]);
+    // A capability naming ports the controller does not have: left out.
+    try testing.expectEqual(@as(u32, 2), controller.mapPorts(.{ .usb2_first = 1, .usb2_count = 2, .usb3_first = 3, .usb3_count = 2 }, 2, &map, &super));
+    try testing.expectEqual(@as(u32, 0), super);
+}
+
+test "a USB 3 root port's PORTSC: SuperSpeed, and a link that failed as C_ENABLE" {
+    const super = roothub.statusOf(regs.PORT_CCS | regs.PORT_PED | regs.PORT_PP | regs.SPEED_SUPER << regs.PORT_SPEED_SHIFT | regs.PORT_CSC);
+    try testing.expectEqual(d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE | d.USB_PORT_STAT_POWER | d.USB_PORT_STAT_SUPER_SPEED, super.status);
+    try testing.expectEqual(d.USB_PORT_STAT_C_CONNECTION, super.change);
+    // SuperSpeedPlus runs as SuperSpeed.
+    try testing.expect(roothub.statusOf(regs.PORT_CCS | 5 << regs.PORT_SPEED_SHIFT).status & d.USB_PORT_STAT_SUPER_SPEED != 0);
+    try testing.expectEqual(d.USB_PORT_STAT_C_ENABLE, roothub.statusOf(regs.PORT_PP | regs.PORT_CEC).change);
+    try testing.expectEqual(d.USB_PORT_STAT_C_RESET, roothub.statusOf(regs.PORT_PP | regs.PORT_WRC).change);
+    try testing.expect(regs.PORT_NEUTRAL & regs.PORT_WPR == 0);
 }
 
 test "a root port's PORTSC as a hub's port status" {

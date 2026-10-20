@@ -99,6 +99,8 @@ pub const PORT_PLC: u32 = 1 << 22;
 pub const PORT_CEC: u32 = 1 << 23;
 pub const PORT_WAKE_MASK: u32 = 7 << 25;
 pub const PORT_DR: u32 = 1 << 30;
+/// A USB 3 port's warm reset: the link trained again from the start.
+pub const PORT_WPR: u32 = 1 << 31;
 /// Every change bit: written 1 to clear.
 pub const PORT_CHANGES: u32 = PORT_CSC | PORT_PEC | PORT_WRC | PORT_OCC | PORT_PRC | PORT_PLC | PORT_CEC;
 /// What a write keeps as it is: the read-only bits and the ones that
@@ -106,11 +108,15 @@ pub const PORT_CHANGES: u32 = PORT_CSC | PORT_PEC | PORT_WRC | PORT_OCC | PORT_P
 /// port - nor any change bit, nor PR.
 pub const PORT_NEUTRAL: u32 = PORT_CCS | PORT_OCA | PORT_SPEED_MASK | PORT_DR |
     PORT_PLS_MASK | PORT_PP | PORT_PIC_MASK | PORT_WAKE_MASK;
-/// PLS's U3: the port suspended.
+/// PLS's U3: the port suspended. A USB 3 link's SS.Inactive and
+/// compliance mode: it failed, and only a warm reset brings it back.
 pub const PLS_U3: u32 = 3;
+pub const PLS_INACTIVE: u32 = 6;
+pub const PLS_COMPLIANCE: u32 = 10;
 
 /// A port's speed (PORTSC's, and a slot context's): the protocol's
-/// default speed IDs.
+/// default speed IDs. What is above SPEED_SUPER is SuperSpeedPlus, run
+/// here as SuperSpeed.
 pub const SPEED_FULL: u32 = 1;
 pub const SPEED_LOW: u32 = 2;
 pub const SPEED_HIGH: u32 = 3;
@@ -287,7 +293,8 @@ pub fn endpointWord0(interval: u32) u32 {
     return interval << 16;
 }
 /// Word 1: three tries on an error - none for an isochronous endpoint,
-/// whose packets have their time - the type, the burst, the packet size.
+/// whose packets have their time - the type, the packets a burst less
+/// one (a SuperSpeed endpoint's), the packet size.
 pub fn endpointWord1(kind: u32, burst: u32, max_packet: u32) u32 {
     const tries: u32 = if (kind == EP_ISOCH_OUT or kind == EP_ISOCH_IN) 0 else 3;
     return tries << 1 | kind << 3 | burst << 8 | max_packet << 16;

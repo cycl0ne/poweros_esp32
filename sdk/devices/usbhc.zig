@@ -121,10 +121,12 @@ pub const UHC_ISO_PACKETS: u32 = 32;
 /// USB frame numbers run 0 to 2047, a millisecond each, and start again.
 pub const UHC_FRAMES: u16 = 2048;
 
-/// `speed`: how fast the device is.
+/// `speed`: how fast the device is. At SuperSpeed (5 Gbit/s and above)
+/// endpoint 0's packet is 512 bytes, bMaxPacketSize0 its exponent (9).
 pub const USB_SPEED_LOW: u8 = 0;
 pub const USB_SPEED_FULL: u8 = 1;
 pub const USB_SPEED_HIGH: u8 = 2;
+pub const USB_SPEED_SUPER: u8 = 3;
 
 /// `flags`: a short packet is an error (UHIOERR_RUNTPACKET).
 pub const UHF_SHORT_NOT_OK: u8 = 1 << 0;

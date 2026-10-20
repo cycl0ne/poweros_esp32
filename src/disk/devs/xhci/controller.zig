@@ -10,9 +10,10 @@
 //! array, when the controller wants a scratchpad - where the command
 //! ring is, and where its event ring's one segment is; its interrupter
 //! 0 enabled, moderated to 4000 interrupts a second; then run. The
-//! Supported Protocol capabilities say which root ports are USB 2's:
-//! those are the root hub's (roothub.zig). The memory is made the first
-//! time and kept, rings emptied each time.
+//! Supported Protocol capabilities say which root ports are USB 2's and
+//! which USB 3's: all are the root hub's, the USB 2 ones first
+//! (roothub.zig). The memory is made the first time and kept, rings
+//! emptied each time.
 //!
 //! **The interrupt** clears what the controller raised - USBSTS's EINT,
 //! the interrupter's IP - and wakes the task, which takes the events
@@ -91,11 +92,9 @@ pub fn bringUp(host: *Host) bool {
     host.iso_lead = regs.istFrames(params2) + 1;
     host.context_size = if (cparams1 & regs.HCC_CSZ != 0) 64 else 32;
     host.power_switched = cparams1 & regs.HCC_PPC != 0;
-    host.first_port = 1;
-    host.ports = 0;
-    walkCapabilities(host, regs.extendedCaps(cparams1));
-    if (host.ports == 0) host.ports = host.max_ports;
-    host.ports = @min(host.ports, _xhci.max_root_ports);
+    var protocols: Protocols = .{};
+    walkCapabilities(host, regs.extendedCaps(cparams1), &protocols);
+    host.ports = mapPorts(protocols, host.max_ports, &host.port_map, &host.super_ports);
 
     // Halted, then reset.
     if (op(host, regs.USBSTS).* & regs.USBSTS_HCH == 0) {
@@ -127,9 +126,44 @@ pub fn bringUp(host: *Host) bool {
     return true;
 }
 
+/// The root ports each Supported Protocol capability names: the USB 2
+/// ones and the USB 3 ones, a run of each.
+pub const Protocols = struct {
+    usb2_first: u32 = 0,
+    usb2_count: u32 = 0,
+    usb3_first: u32 = 0,
+    usb3_count: u32 = 0,
+};
+
+/// The root hub's ports from the controller's: the USB 2 run, then the
+/// USB 3 run, `max_root_ports` at most - every port as USB 2 when no
+/// capability named any. Their PORTSC numbers into `map`, a bit per USB 3
+/// one into `super`; how many there are.
+pub fn mapPorts(protocols: Protocols, max_ports: u32, map: *[_xhci.max_root_ports]u8, super: *u32) u32 {
+    map.* = @splat(0);
+    super.* = 0;
+    var count: u32 = 0;
+    if (protocols.usb2_count == 0 and protocols.usb3_count == 0) {
+        while (count < @min(max_ports, _xhci.max_root_ports)) : (count += 1) map[count] = @intCast(count + 1);
+        return count;
+    }
+    const ranges = [2][2]u32{ .{ protocols.usb2_first, protocols.usb2_count }, .{ protocols.usb3_first, protocols.usb3_count } };
+    for (ranges, 0..) |range, usb3| {
+        var offset: u32 = 0;
+        while (offset < range[1] and count < _xhci.max_root_ports) : (offset += 1) {
+            const port = range[0] + offset;
+            if (port == 0 or port > max_ports) continue;
+            map[count] = @intCast(port);
+            count += 1;
+            if (usb3 == 1) super.* |= @as(u32, 1) << @intCast(count);
+        }
+    }
+    return count;
+}
+
 /// The extended capabilities from `start` (words from BAR0): the
-/// controller taken from the firmware, the USB 2 ports found.
-fn walkCapabilities(host: *Host, start: u32) void {
+/// controller taken from the firmware, the USB 2 and USB 3 ports found.
+fn walkCapabilities(host: *Host, start: u32, protocols: *Protocols) void {
     var offset: usize = @as(usize, start) * 4;
     var seen: u32 = 0;
     while (offset != 0 and seen < 64) : (seen += 1) {
@@ -140,9 +174,13 @@ fn walkCapabilities(host: *Host, start: u32) void {
             regs.EXT_PROTOCOL => {
                 const ports = reg(at + 8).*;
                 const count = (ports >> 8) & 0xFF;
-                if (word >> 24 == 2 and count != 0 and host.ports == 0) {
-                    host.first_port = ports & 0xFF;
-                    host.ports = count;
+                const major = word >> 24;
+                if (major == 2 and count != 0 and protocols.usb2_count == 0) {
+                    protocols.usb2_first = ports & 0xFF;
+                    protocols.usb2_count = count;
+                } else if (major == 3 and count != 0 and protocols.usb3_count == 0) {
+                    protocols.usb3_first = ports & 0xFF;
+                    protocols.usb3_count = count;
                 }
             },
             else => {},

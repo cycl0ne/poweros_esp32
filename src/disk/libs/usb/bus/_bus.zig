@@ -17,6 +17,14 @@
 //! here); every other interface is offered to the class drivers
 //! (`bind/_bind.zig`).
 //!
+//! **A SuperSpeed hub** has a descriptor and a port status of its own:
+//! its descriptor is read as USB_DT_SS_HUB, its depth set before its ports
+//! are powered, and its ports' status turned into the USB 2 form the rest
+//! of the code reads (`superPortStatus`), the change features named its
+//! way. A link of it that failed - SS.Inactive, compliance mode - comes
+//! back by a warm reset. Its ports carry SuperSpeed only: its USB 2 half
+//! is a hub of its own, found on the USB 2 side.
+//!
 //! **A device that goes** takes what hangs off it: a hub's children
 //! first, then each driver told (USBClassUnbind), then it leaves the list
 //! and its address is free again. Addresses are handed out round, so one
@@ -73,6 +81,8 @@ pub const Device = struct {
 pub const Hub = struct {
     device: *Device,
     ports: u8 = 0,
+    /// A SuperSpeed hub: its port status and features are USB 3's.
+    super: bool = false,
     /// From a port's power to its being good, in ms.
     power_ms: u32 = 100,
     /// The interrupt transfer on its status endpoint, and its bitmap.
@@ -205,11 +215,19 @@ pub fn controlRequest(device: *const Device, port: *exec.MsgPort) usbhc.IOUsbHC 
     io.std.req.command = usbhc.UHCMD_CONTROLXFER;
     io.address = device.public.address;
     io.speed = device.public.speed;
-    io.max_packet = if (device.public.descriptor.max_packet_size0 != 0) device.public.descriptor.max_packet_size0 else 8;
+    io.max_packet = packetSize0(device);
     io.hub_address = device.hub_address;
     io.hub_port = device.hub_port;
     io.nak_timeout = control_timeout_ms;
     return io;
+}
+
+/// Endpoint 0's packet size: 512 at SuperSpeed, whose bMaxPacketSize0 is
+/// its exponent; else as the device said, 8 until it has.
+pub fn packetSize0(device: *const Device) u16 {
+    if (device.public.speed == usbhc.USB_SPEED_SUPER) return 512;
+    const size = device.public.descriptor.max_packet_size0;
+    return if (size != 0) size else 8;
 }
 
 /// A control transfer to `device`, replied to `port`: io_Error, and the
@@ -271,11 +289,11 @@ const first_retry_ms = 100;
 /// The transaction translator `device`, plugged into `hub`'s `port`, is
 /// reached through: a low- or full-speed device behind a high-speed hub
 /// is reached through that hub's, at the port it is on; behind a hub of
-/// its own speed, through the one that hub is reached through. A
-/// high-speed device needs none, and neither does one on the root hub,
-/// whose port talks to it at its own speed.
+/// its own speed, through the one that hub is reached through. A high-
+/// or SuperSpeed device needs none, and neither does one on the root
+/// hub, whose port talks to it at its own speed.
 fn translatorOf(device: *Device, hub: *Hub, port: u8) void {
-    if (device.public.speed == usbhc.USB_SPEED_HIGH) return;
+    if (device.public.speed == usbhc.USB_SPEED_HIGH or device.public.speed == usbhc.USB_SPEED_SUPER) return;
     const upstream = hub.device;
     // The root hub hangs off nothing.
     if (upstream.public.hub == null) return;
@@ -305,7 +323,11 @@ pub fn attach(bus: *Bus, parent: ?*Hub, port: u8, speed: u8) ?*Device {
         device.public.depth = hub.device.public.depth + 1;
         translatorOf(device, hub, port);
     }
-    device.public.descriptor.max_packet_size0 = if (speed == usbhc.USB_SPEED_LOW) 8 else 64;
+    device.public.descriptor.max_packet_size0 = switch (speed) {
+        usbhc.USB_SPEED_LOW => 8,
+        usbhc.USB_SPEED_SUPER => 9,
+        else => 64,
+    };
 
     // Endpoint 0's packet size, at address 0: eight bytes are enough,
     // and every device sends them. A device may not answer yet in the
@@ -580,18 +602,45 @@ fn hubRequest(bus: *Bus, hub: *Hub, request_type: u8, request: u8, value: u16, p
     return control(bus, hub.device, setupPacket(request_type, request, value, port, length), data, null);
 }
 
+/// A port's status in the USB 2 form, and a SuperSpeed hub's port's
+/// link state.
+const PortState = struct {
+    status: d.PortStatus,
+    link: u16 = d.USB_SS_LINK_U0,
+
+    /// A SuperSpeed link that failed: only a warm reset brings it back.
+    fn needsWarmReset(state: PortState) bool {
+        return state.link == d.USB_SS_LINK_INACTIVE or state.link == d.USB_SS_LINK_COMPLIANCE;
+    }
+};
+
+fn portState(bus: *Bus, hub: *Hub, port: u8) ?PortState {
+    var raw: d.PortStatus = .{};
+    if (hubRequest(bus, hub, d.USB_DIR_IN | d.USB_RT_PORT, d.USB_REQ_GET_STATUS, 0, port, &raw, 4) != 0) return null;
+    if (!hub.super) return .{ .status = raw };
+    return .{ .status = d.superPortStatus(raw), .link = d.superLinkState(raw.status) };
+}
+
 fn portStatus(bus: *Bus, hub: *Hub, port: u8) ?d.PortStatus {
-    var status: d.PortStatus = .{};
-    if (hubRequest(bus, hub, d.USB_DIR_IN | d.USB_RT_PORT, d.USB_REQ_GET_STATUS, 0, port, &status, 4) != 0) return null;
-    return status;
+    return (portState(bus, hub, port) orelse return null).status;
 }
 
 fn setPortFeature(bus: *Bus, hub: *Hub, port: u8, feature: u16) i8 {
     return hubRequest(bus, hub, d.USB_DIR_OUT | d.USB_RT_PORT, d.USB_REQ_SET_FEATURE, feature, port, null, 0);
 }
 
+/// A change cleared, by the name its hub gives it: a SuperSpeed hub's
+/// link change and config error are features of their own, and its warm
+/// reset's end is cleared with the reset's.
 fn clearPortFeature(bus: *Bus, hub: *Hub, port: u8, feature: u16) i8 {
-    return hubRequest(bus, hub, d.USB_DIR_OUT | d.USB_RT_PORT, d.USB_REQ_CLEAR_FEATURE, feature, port, null, 0);
+    var named = feature;
+    if (hub.super) switch (feature) {
+        d.USB_PORT_FEAT_C_ENABLE => named = d.USB_PORT_FEAT_C_PORT_CONFIG_ERROR,
+        d.USB_PORT_FEAT_C_SUSPEND => named = d.USB_PORT_FEAT_C_PORT_LINK_STATE,
+        d.USB_PORT_FEAT_C_RESET => _ = hubRequest(bus, hub, d.USB_DIR_OUT | d.USB_RT_PORT, d.USB_REQ_CLEAR_FEATURE, d.USB_PORT_FEAT_C_BH_PORT_RESET, port, null, 0),
+        else => {},
+    };
+    return hubRequest(bus, hub, d.USB_DIR_OUT | d.USB_RT_PORT, d.USB_REQ_CLEAR_FEATURE, named, port, null, 0);
 }
 
 /// A hub made the library's: its descriptor read, its ports powered,
@@ -605,11 +654,24 @@ fn hubSetUp(bus: *Bus, device: *Device) void {
     device.public.flags |= usb.USBDF_HUB;
     device.public.drivers[0] = "usb.library";
 
-    var descriptor: d.HubDescriptor = .{};
-    const descriptor_bytes: *[@sizeOf(d.HubDescriptor)]u8 = @ptrCast(&descriptor);
-    if (hubRequest(bus, hub, d.USB_DIR_IN | d.USB_RT_HUB, d.USB_REQ_GET_DESCRIPTOR, @as(u16, d.USB_DT_HUB) << 8, 0, descriptor_bytes, @sizeOf(d.HubDescriptor)) != 0) return;
-    hub.ports = @min(descriptor.num_ports, max_ports);
-    hub.power_ms = @max(@as(u32, descriptor.power_on_to_good) * 2, 20);
+    if (device.public.speed == usbhc.USB_SPEED_SUPER) {
+        hub.super = true;
+        var descriptor: d.SSHubDescriptor = .{};
+        const descriptor_bytes: *[@sizeOf(d.SSHubDescriptor)]u8 = @ptrCast(&descriptor);
+        if (hubRequest(bus, hub, d.USB_DIR_IN | d.USB_RT_HUB, d.USB_REQ_GET_DESCRIPTOR, @as(u16, d.USB_DT_SS_HUB) << 8, 0, descriptor_bytes, @sizeOf(d.SSHubDescriptor)) != 0) return;
+        hub.ports = @min(descriptor.num_ports, max_ports);
+        hub.power_ms = @max(@as(u32, descriptor.power_on_to_good) * 2, 20);
+        // Its depth, before anything below it is reset: the hubs above it,
+        // 0 on a root port.
+        const depth: u16 = device.public.depth -| 1;
+        if (hubRequest(bus, hub, d.USB_DIR_OUT | d.USB_RT_HUB, d.USB_REQ_SET_HUB_DEPTH, depth, 0, null, 0) != 0) return;
+    } else {
+        var descriptor: d.HubDescriptor = .{};
+        const descriptor_bytes: *[@sizeOf(d.HubDescriptor)]u8 = @ptrCast(&descriptor);
+        if (hubRequest(bus, hub, d.USB_DIR_IN | d.USB_RT_HUB, d.USB_REQ_GET_DESCRIPTOR, @as(u16, d.USB_DT_HUB) << 8, 0, descriptor_bytes, @sizeOf(d.HubDescriptor)) != 0) return;
+        hub.ports = @min(descriptor.num_ports, max_ports);
+        hub.power_ms = @max(@as(u32, descriptor.power_on_to_good) * 2, 20);
+    }
 
     var port: u8 = 1;
     while (port <= hub.ports) : (port += 1) _ = setPortFeature(bus, hub, port, d.USB_PORT_FEAT_POWER);
@@ -678,7 +740,8 @@ fn hubChanged(bus: *Bus, hub: *Hub) void {
 /// One port of a hub looked at: its changes cleared, and what was plugged
 /// in or pulled out dealt with.
 fn portChanged(bus: *Bus, hub: *Hub, port: u8) void {
-    const status = portStatus(bus, hub, port) orelse return;
+    const state = portState(bus, hub, port) orelse return;
+    const status = state.status;
     const change = status.change;
     if (change & d.USB_PORT_STAT_C_ENABLE != 0) _ = clearPortFeature(bus, hub, port, d.USB_PORT_FEAT_C_ENABLE);
     if (change & d.USB_PORT_STAT_C_SUSPEND != 0) _ = clearPortFeature(bus, hub, port, d.USB_PORT_FEAT_C_SUSPEND);
@@ -691,7 +754,11 @@ fn portChanged(bus: *Bus, hub: *Hub, port: u8) void {
         detach(bus, child.?);
         hub.children[port - 1] = null;
     }
-    if (hub.children[port - 1] == null and status.status & d.USB_PORT_STAT_CONNECTION != 0) {
+    if (hub.children[port - 1] != null) return;
+    if (hub.super and state.needsWarmReset()) {
+        // What is on the link shows as a connection once it is back.
+        _ = setPortFeature(bus, hub, port, d.USB_PORT_FEAT_BH_PORT_RESET);
+    } else if (status.status & d.USB_PORT_STAT_CONNECTION != 0) {
         connect(bus, hub, port);
     }
 }
@@ -699,9 +766,11 @@ fn portChanged(bus: *Bus, hub: *Hub, port: u8) void {
 /// Something plugged into a port: debounced, reset, set up.
 fn connect(bus: *Bus, hub: *Hub, port: u8) void {
     delay(bus, 100);
-    var status = portStatus(bus, hub, port) orelse return;
+    const state = portState(bus, hub, port) orelse return;
+    var status = state.status;
     if (status.status & d.USB_PORT_STAT_CONNECTION == 0) return;
-    if (setPortFeature(bus, hub, port, d.USB_PORT_FEAT_RESET) != 0) return;
+    const reset = if (hub.super and state.needsWarmReset()) d.USB_PORT_FEAT_BH_PORT_RESET else d.USB_PORT_FEAT_RESET;
+    if (setPortFeature(bus, hub, port, reset) != 0) return;
     var waited: u32 = 0;
     while (waited < 500) : (waited += 10) {
         delay(bus, 10);
@@ -710,7 +779,9 @@ fn connect(bus: *Bus, hub: *Hub, port: u8) void {
     }
     _ = clearPortFeature(bus, hub, port, d.USB_PORT_FEAT_C_RESET);
     if (status.status & d.USB_PORT_STAT_ENABLE == 0) return;
-    const speed: u8 = if (status.status & d.USB_PORT_STAT_LOW_SPEED != 0)
+    const speed: u8 = if (status.status & d.USB_PORT_STAT_SUPER_SPEED != 0)
+        usbhc.USB_SPEED_SUPER
+    else if (status.status & d.USB_PORT_STAT_LOW_SPEED != 0)
         usbhc.USB_SPEED_LOW
     else if (status.status & d.USB_PORT_STAT_HIGH_SPEED != 0)
         usbhc.USB_SPEED_HIGH

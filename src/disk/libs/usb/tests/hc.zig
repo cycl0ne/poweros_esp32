@@ -10,13 +10,20 @@
 //! off a hub's port, plugged in and pulled out by the test (`plug`,
 //! `pull`). A control transfer goes to the function with its address that
 //! can be reached - plugged in, below hubs whose ports are enabled -
-//! address 0 to the one not yet given one; nothing there is
-//! UHIOERR_TIMEOUT. A function answers the standard descriptors, its
+//! address 0 to the one on the port reset last, as a controller has it;
+//! nothing there is UHIOERR_TIMEOUT. A function answers the standard descriptors, its
 //! address and its configuration, and a hub its own descriptor and its
 //! ports' status and features - a reset is done at once, the port enabled
 //! at the function's speed. Anything else stalls, as does the one request
 //! the script names, and a function the script says goes in the middle is
 //! pulled after that many control transfers.
+//!
+//! **A SuperSpeed hub** speaks as one: its descriptor is the SuperSpeed
+//! hub descriptor and only that, it takes SET_HUB_DEPTH, and its ports'
+//! status is in the USB 3 layout - a link state, its own power bit, the
+//! link's changes and a warm reset's end - cleared by the USB 3 change
+//! features alone. A function the script brings up in SS.Inactive shows
+//! no connection until its port is warm reset.
 //!
 //! **A hub's status transfer** (UHCMD_INTXFER) is answered when a port of
 //! it has a change, at once or when one comes, its bitmap a bit per such
@@ -56,8 +63,9 @@ pub const none = std.math.maxInt(u32);
 /// The most functions a script has, and ports a hub of it has.
 pub const max_functions = 8;
 pub const max_ports = 4;
-/// The root hub's index.
+/// The root hub's index, and no function's.
 pub const root: u8 = 0;
+pub const no_function: u8 = 0xFF;
 /// No request stalled.
 pub const no_request: u8 = 0xFF;
 
@@ -90,9 +98,20 @@ pub const Function = extern struct {
     stall_request: u8 = no_request,
     stall_kind: u8 = 0,
     pull_after: u32 = none,
-    /// The control transfers it answered.
+    /// The control transfers it answered, and endpoint 0's packet size
+    /// the last one was sent with.
     transfers: u32 = 0,
+    max_packet0: u16 = 0,
+    /// A SuperSpeed hub's depth as SET_HUB_DEPTH gave it, `no_depth`
+    /// before; its ports warm reset.
+    hub_depth: u16 = no_depth,
+    warm_resets: u32 = 0,
+    /// The script: a SuperSpeed link that comes up in SS.Inactive.
+    inactive: bool = false,
 };
+
+/// No SET_HUB_DEPTH yet.
+pub const no_depth: u16 = 0xFFFF;
 
 pub const HC = extern struct {
     dev: exec.Device,
@@ -118,6 +137,8 @@ pub const HC = extern struct {
     clock_unit: exec.Unit = .{},
     clock: u64 = 0,
     functions: [max_functions]Function = @splat(.{}),
+    /// The function on the port reset last: the one address 0 reaches.
+    at_zero: u8 = no_function,
 };
 
 pub fn hcOf(dev: *exec.Device) *HC {
@@ -257,11 +278,26 @@ fn transfer(hc: *HC, req: *usbhc.IOUsbHC) i8 {
 
 // --- the script --------------------------------------------------------------
 
+/// Whether function `index` is a SuperSpeed hub: its ports in the USB 3
+/// layout.
+pub fn isSuperHub(hc: *const HC, index: u8) bool {
+    const function = &hc.functions[index];
+    return function.ports != 0 and function.speed == usbhc.USB_SPEED_SUPER;
+}
+
+/// A USB 3 port's link state set.
+fn setLink(hc: *HC, index: u8, port: u8, link: u16) void {
+    const hub = &hc.functions[index];
+    hub.port_status[port - 1] = (hub.port_status[port - 1] & ~d.USB_SS_PORT_STAT_LINK_STATE) | link << d.USB_SS_PORT_STAT_LINK_STATE_SHIFT;
+}
+
 /// The root hub, with `ports` ports, plugged in.
 pub fn addRoot(hc: *HC, ports: u8) u8 {
     const index = add(hc, root, 0, usbhc.USB_SPEED_FULL, 0, 0, d.USB_CLASS_HUB, .{ "", "", "" });
     hc.functions[index].ports = ports;
     hc.functions[index].present = true;
+    // Answering at address 0 until it has one, as a root hub does.
+    hc.at_zero = index;
     return index;
 }
 
@@ -284,10 +320,13 @@ fn add(hc: *HC, parent: u8, port: u8, speed: u8, vendor: u16, product: u16, clas
     const function = &hc.functions[index];
     function.* = .{ .used = true, .parent = parent, .port = port, .speed = speed };
     const hub = class == d.USB_CLASS_HUB;
+    const super = speed == usbhc.USB_SPEED_SUPER;
     function.descriptor = .{
-        .bcd_usb = 0x0200,
+        .bcd_usb = if (super) 0x0300 else 0x0200,
         .device_class = if (hub) d.USB_CLASS_HUB else 0,
-        .max_packet_size0 = if (speed == usbhc.USB_SPEED_LOW) 8 else 64,
+        .device_protocol = if (hub and super) d.USB_HUB_PROTOCOL_SUPER else 0,
+        // At SuperSpeed an exponent: 512 bytes.
+        .max_packet_size0 = if (speed == usbhc.USB_SPEED_LOW) 8 else if (super) 9 else 64,
         .vendor_id = vendor,
         .product_id = product,
         .num_configurations = 1,
@@ -298,14 +337,21 @@ fn add(hc: *HC, parent: u8, port: u8, speed: u8, vendor: u16, product: u16, clas
     if (strings[0].len != 0) function.descriptor.manufacturer_string = 1;
     if (strings[1].len != 0) function.descriptor.product_string = 2;
     if (strings[2].len != 0) function.descriptor.serial_string = 3;
-    // A configuration, an interface of the class, its interrupt IN.
+    // A configuration, an interface of the class, its interrupt IN - at
+    // SuperSpeed with the endpoint's companion.
     const config = [_]u8{
         9, d.USB_DT_CONFIG,    25,   0,                       1,                 1,     0,                   0x80, 50,
         9, d.USB_DT_INTERFACE, 0,    0,                       1,                 class, 0,                   0,    0,
-        7, d.USB_DT_ENDPOINT,  0x81, d.USB_ENDPOINT_XFER_INT, if (hub) 1 else 8, 0,     if (hub) 12 else 10,
+        7, d.USB_DT_ENDPOINT,  0x81, d.USB_ENDPOINT_XFER_INT, if (hub) 2 else 8, 0,     if (hub) 12 else 10,
     };
     @memcpy(function.config[0..config.len], &config);
     function.config_length = config.len;
+    if (super) {
+        const companion = [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 0, 0, if (hub) 2 else 8, 0 };
+        @memcpy(function.config[config.len..][0..companion.len], &companion);
+        function.config_length += companion.len;
+        function.config[2] = function.config_length;
+    }
     return index;
 }
 
@@ -317,8 +363,14 @@ pub fn plug(hc: *HC, index: u8) void {
     function.configuration = 0;
     function.transfers = 0;
     const hub = &hc.functions[function.parent];
-    hub.port_status[function.port - 1] |= d.USB_PORT_STAT_CONNECTION;
-    hub.port_change[function.port - 1] |= d.USB_PORT_STAT_C_CONNECTION;
+    if (isSuperHub(hc, function.parent) and function.inactive) {
+        setLink(hc, function.parent, function.port, d.USB_SS_LINK_INACTIVE);
+        hub.port_change[function.port - 1] |= d.USB_SS_PORT_STAT_C_LINK_STATE;
+    } else {
+        if (isSuperHub(hc, function.parent)) setLink(hc, function.parent, function.port, d.USB_SS_LINK_U0);
+        hub.port_status[function.port - 1] |= d.USB_PORT_STAT_CONNECTION;
+        hub.port_change[function.port - 1] |= d.USB_PORT_STAT_C_CONNECTION;
+    }
     changed(hc, function.parent);
 }
 
@@ -327,7 +379,12 @@ pub fn pull(hc: *HC, index: u8) void {
     const function = &hc.functions[index];
     function.present = false;
     const hub = &hc.functions[function.parent];
-    hub.port_status[function.port - 1] &= ~(d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE | d.USB_PORT_STAT_LOW_SPEED | d.USB_PORT_STAT_HIGH_SPEED);
+    if (isSuperHub(hc, function.parent)) {
+        hub.port_status[function.port - 1] &= ~(d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE);
+        setLink(hc, function.parent, function.port, d.USB_SS_LINK_RX_DETECT);
+    } else {
+        hub.port_status[function.port - 1] &= ~(d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE | d.USB_PORT_STAT_LOW_SPEED | d.USB_PORT_STAT_HIGH_SPEED | d.USB_PORT_STAT_SUPER_SPEED);
+    }
     hub.port_change[function.port - 1] |= d.USB_PORT_STAT_C_CONNECTION;
     changed(hc, function.parent);
     // The status transfers of the hubs gone with it end, after the change
@@ -357,6 +414,11 @@ pub fn reachable(hc: *const HC, index: u8) bool {
 
 /// The function at `address` that can be spoken to.
 fn reached(hc: *HC, address: u8) ?u8 {
+    if (address == 0) {
+        const index = hc.at_zero;
+        if (index == no_function or !reachable(hc, index) or hc.functions[index].address != 0) return null;
+        return index;
+    }
     var index: u8 = 0;
     while (index < max_functions) : (index += 1) {
         if (reachable(hc, index) and hc.functions[index].address == address) return index;
@@ -406,6 +468,7 @@ fn control(hc: *HC, req: *usbhc.IOUsbHC) i8 {
     const index = reached(hc, req.address) orelse return usbhc.UHIOERR_TIMEOUT;
     const function = &hc.functions[index];
     function.transfers += 1;
+    function.max_packet0 = req.max_packet;
     defer if (function.transfers == function.pull_after) pull(hc, index);
     const setup = req.setup;
     if (setup.request == function.stall_request and (setup.request != d.USB_REQ_GET_DESCRIPTOR or setup.value >> 8 == function.stall_kind)) return usbhc.UHIOERR_STALL;
@@ -423,8 +486,19 @@ fn control(hc: *HC, req: *usbhc.IOUsbHC) i8 {
         },
         d.USB_DIR_IN | d.USB_RT_HUB => {
             if (function.ports == 0 or setup.request != d.USB_REQ_GET_DESCRIPTOR) return usbhc.UHIOERR_STALL;
+            const kind = setup.value >> 8;
+            if (isSuperHub(hc, index)) {
+                if (kind != d.USB_DT_SS_HUB) return usbhc.UHIOERR_STALL;
+                const hub = d.SSHubDescriptor{ .num_ports = function.ports, .power_on_to_good = 50 };
+                return answer(req, std.mem.asBytes(&hub));
+            }
+            if (kind != d.USB_DT_HUB) return usbhc.UHIOERR_STALL;
             const hub = d.HubDescriptor{ .num_ports = function.ports, .power_on_to_good = 50 };
             return answer(req, std.mem.asBytes(&hub));
+        },
+        d.USB_DIR_OUT | d.USB_RT_HUB => {
+            if (!isSuperHub(hc, index) or setup.request != d.USB_REQ_SET_HUB_DEPTH) return usbhc.UHIOERR_STALL;
+            function.hub_depth = setup.value;
         },
         d.USB_DIR_IN | d.USB_RT_PORT => {
             if (!is_port or setup.request != d.USB_REQ_GET_STATUS) return usbhc.UHIOERR_STALL;
@@ -435,7 +509,9 @@ fn control(hc: *HC, req: *usbhc.IOUsbHC) i8 {
             if (!is_port) return usbhc.UHIOERR_STALL;
             switch (setup.request) {
                 d.USB_REQ_SET_FEATURE => setFeature(hc, index, port, setup.value),
-                d.USB_REQ_CLEAR_FEATURE => if (setup.value >= d.USB_PORT_FEAT_C_CONNECTION) {
+                d.USB_REQ_CLEAR_FEATURE => if (isSuperHub(hc, index)) {
+                    function.port_change[port - 1] &= ~(superChange(setup.value) orelse return usbhc.UHIOERR_STALL);
+                } else if (setup.value >= d.USB_PORT_FEAT_C_CONNECTION) {
                     function.port_change[port - 1] &= ~(@as(u16, 1) << @intCast(setup.value - d.USB_PORT_FEAT_C_CONNECTION));
                 } else if (setup.value == d.USB_PORT_FEAT_ENABLE) {
                     function.port_status[port - 1] &= ~d.USB_PORT_STAT_ENABLE;
@@ -448,25 +524,68 @@ fn control(hc: *HC, req: *usbhc.IOUsbHC) i8 {
     return 0;
 }
 
+/// A SuperSpeed hub's change feature's bit in wPortChange; null for one
+/// its ports do not have.
+fn superChange(feature: u16) ?u16 {
+    return switch (feature) {
+        d.USB_PORT_FEAT_C_CONNECTION => d.USB_PORT_STAT_C_CONNECTION,
+        d.USB_PORT_FEAT_C_OVER_CURRENT => d.USB_PORT_STAT_C_OVERCURRENT,
+        d.USB_PORT_FEAT_C_RESET => d.USB_PORT_STAT_C_RESET,
+        d.USB_PORT_FEAT_C_BH_PORT_RESET => d.USB_SS_PORT_STAT_C_BH_RESET,
+        d.USB_PORT_FEAT_C_PORT_LINK_STATE => d.USB_SS_PORT_STAT_C_LINK_STATE,
+        d.USB_PORT_FEAT_C_PORT_CONFIG_ERROR => d.USB_SS_PORT_STAT_C_CONFIG_ERROR,
+        else => null,
+    };
+}
+
+/// What is plugged into a hub's port.
+fn childAt(hc: *HC, index: u8, port: u8) ?u8 {
+    for (&hc.functions, 0..) |*child, at| {
+        if (child.used and child.present and child.parent == index and child.port == port) return @intCast(at);
+    }
+    return null;
+}
+
 /// A hub's port powered or reset: a reset is done at once, the port
-/// enabled at the speed of what is in it, and that at address 0 again.
+/// enabled at the speed of what is in it, and that at address 0 again. A
+/// warm reset brings a SuperSpeed link back: what is on it shows as
+/// connected.
 fn setFeature(hc: *HC, index: u8, port: u8, feature: u16) void {
     const hub = &hc.functions[index];
+    const super = isSuperHub(hc, index);
     switch (feature) {
-        d.USB_PORT_FEAT_POWER => hub.port_status[port - 1] |= d.USB_PORT_STAT_POWER,
+        d.USB_PORT_FEAT_POWER => hub.port_status[port - 1] |= if (super) d.USB_SS_PORT_STAT_POWER else d.USB_PORT_STAT_POWER,
         d.USB_PORT_FEAT_RESET => {
             if (hub.port_status[port - 1] & d.USB_PORT_STAT_CONNECTION == 0) return;
-            for (&hc.functions) |*child| {
-                if (!child.used or !child.present or child.parent != index or child.port != port) continue;
-                child.address = 0;
-                child.configuration = 0;
-                hub.port_status[port - 1] |= d.USB_PORT_STAT_ENABLE | switch (child.speed) {
-                    usbhc.USB_SPEED_LOW => d.USB_PORT_STAT_LOW_SPEED,
-                    usbhc.USB_SPEED_HIGH => d.USB_PORT_STAT_HIGH_SPEED,
-                    else => 0,
-                };
-                hub.port_change[port - 1] |= d.USB_PORT_STAT_C_RESET;
-            }
+            const at = childAt(hc, index, port) orelse return;
+            const child = &hc.functions[at];
+            hc.at_zero = at;
+            child.address = 0;
+            child.configuration = 0;
+            hub.port_status[port - 1] |= d.USB_PORT_STAT_ENABLE | if (super) 0 else switch (child.speed) {
+                usbhc.USB_SPEED_LOW => d.USB_PORT_STAT_LOW_SPEED,
+                usbhc.USB_SPEED_HIGH => d.USB_PORT_STAT_HIGH_SPEED,
+                usbhc.USB_SPEED_SUPER => d.USB_PORT_STAT_SUPER_SPEED,
+                else => 0,
+            };
+            hub.port_change[port - 1] |= d.USB_PORT_STAT_C_RESET;
+        },
+        d.USB_PORT_FEAT_BH_PORT_RESET => {
+            if (!super) return;
+            hub.warm_resets += 1;
+            hub.port_change[port - 1] |= d.USB_SS_PORT_STAT_C_BH_RESET;
+            const at = childAt(hc, index, port) orelse {
+                setLink(hc, index, port, d.USB_SS_LINK_RX_DETECT);
+                return;
+            };
+            const child = &hc.functions[at];
+            hc.at_zero = at;
+            child.inactive = false;
+            child.address = 0;
+            child.configuration = 0;
+            setLink(hc, index, port, d.USB_SS_LINK_U0);
+            hub.port_status[port - 1] |= d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE;
+            hub.port_change[port - 1] |= d.USB_PORT_STAT_C_CONNECTION;
         },
         else => {},
     }
@@ -528,6 +647,6 @@ pub const tag: exec.Resident = .{
     .type = .device,
     .pri = 0,
     .name = NAME,
-    .id_string = "hcstandin.device 1.1",
+    .id_string = "hcstandin.device 1.2",
     .init = &hc_table,
 };

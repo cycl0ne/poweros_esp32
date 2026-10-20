@@ -21,11 +21,12 @@ const d = usb.descriptors;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const UsbBase = sdk.interface.usb.UsbBase;
+const usbhc = sdk.devices.usbhc;
 const usbport = sdk.resources.usbport;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "USBInfo";
-const VERSION_STRING = "\x00$VER: USBInfo 1.1 (12.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: USBInfo 1.2 (20.10.2026)\r\n";
 
 const template = "DEVICE/K/N,FULL/S,PORTS/S";
 const arg_device = 0;
@@ -146,8 +147,9 @@ fn printPorts(sys: *ExecBase, dl: *DosBase) i32 {
 
 fn speedName(speed: u8) [*:0]const u8 {
     return switch (speed) {
-        0 => "low ",
-        2 => "high",
+        usbhc.USB_SPEED_LOW => "low",
+        usbhc.USB_SPEED_HIGH => "high",
+        usbhc.USB_SPEED_SUPER => "super",
         else => "full",
     };
 }
@@ -169,7 +171,7 @@ fn className(class: u8) [*:0]const u8 {
 
 fn printDevice(dl: *DosBase, copy: *const Copy) void {
     const desc = copy.descriptor;
-    _ = Printf(dl, "%3d %4d %3d %4d %s   %04x:%04x  %-6s ", .{
+    _ = Printf(dl, "%3d %4d %3d %4d %-5s  %04x:%04x  %-6s ", .{
         copy.bus,              @as(u32, copy.address),   @as(u32, copy.hub_address), @as(u32, copy.port),
         speedName(copy.speed), @as(u32, desc.vendor_id), @as(u32, desc.product_id),  className(desc.device_class),
     });
