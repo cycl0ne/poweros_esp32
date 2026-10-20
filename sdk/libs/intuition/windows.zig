@@ -336,6 +336,12 @@ pub const WA_SysFont = WA_Dummy + 0x10C;
 /// keyboard is. It has no menus and hears no keys. `OpenWindowTagList`
 /// only.
 pub const WA_NoActivate = WA_Dummy + 0x10D;
+/// The window's number: given to it as it opens and to no other window
+/// while the machine runs, never 0. A program that keeps it rather than
+/// the window can ask whether the window is still open
+/// (`FindWindowNumber`) where a pointer kept might by then be another
+/// window's. `GetWindowAttrs` only.
+pub const WA_Number = WA_Dummy + 0x10E;
 
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;

@@ -136,6 +136,9 @@ pub const IntuitionBase = extern struct {
     /// number goes into the window, so the one active before a closing
     /// window is the highest number left on its screen.
     activations: u32,
+    /// The number the newest window was given (`Window.number`): each one
+    /// opened takes the next, and 0 is never one.
+    window_numbers: u32,
     /// The handler on input.device's chain, its task, and what the pointer
     /// is doing.
     input: _input.State,

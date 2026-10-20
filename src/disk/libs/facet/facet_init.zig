@@ -19,8 +19,12 @@ const facet_lvo = @import("facet_lvo.zig");
 
 pub const LIBRARY_NAME = facet.FACETNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 0;
-const BUILD_DATE = "19.10.2026";
+/// 1: a window closed under its surface is found gone, never drawn into,
+/// and the surface answers `error_surface_lost` (intuition 0.47's
+/// window numbers); the depth pre-pass, a pipeline's own
+/// (`PIPELINE_CREATE_DEPTH_PREPASS`).
+pub const LIBRARY_REVISION = 1;
+const BUILD_DATE = "20.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

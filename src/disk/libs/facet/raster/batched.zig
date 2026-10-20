@@ -21,6 +21,11 @@
 //! about for each pixel. A batch costs the fragment function's call and
 //! its quads a few loads and stores each more than Pipeline's quads,
 //! which are coloured where they are found.
+//!
+//! A draw may ask for the depth pre-pass (prepass.zig), and has it when
+//! its depth is tested less or less or equal and written, and it is not
+//! blended: then a pixel is shaded once, by the nearest, whatever order
+//! the triangles come in.
 
 const std = @import("std");
 const shader = @import("sdk").facet.shader;
@@ -29,6 +34,7 @@ const setup = @import("setup.zig");
 const target_zig = @import("target.zig");
 const pipeline = @import("pipeline.zig");
 const walk = @import("walk.zig");
+const prepass = @import("prepass.zig");
 const Target = target_zig.Target;
 const Tile = target_zig.Tile;
 const Rect = target_zig.Rect;
@@ -71,6 +77,9 @@ pub const State = struct {
     depth_test: ?Compare = null,
     depth_write: bool = false,
     blend: pipeline.Blend = .off,
+    /// The depth pre-pass, where the depth test is less or less or equal,
+    /// the depth written and nothing blended; else no pre-pass.
+    prepass: bool = false,
     /// Floats past the position a vertex carries.
     varyings: u32 = 0,
     fragment: shader.FragmentFn,
@@ -120,8 +129,18 @@ const Triangle = struct {
 
 const Clip = setup.ClipVertex(most_varyings);
 
-/// How the depth is tested in a tile.
-const Test = enum { off, less, less_or_equal, masked };
+/// How the depth is tested in a tile: by the draw's test, or - `second`
+/// and `second_or_equal` - as the pre-pass's second pass does after a
+/// test of less or of less or equal (`prepass.keep`).
+const Test = enum { off, less, less_or_equal, masked, second, second_or_equal };
+
+/// A triangle in the pre-pass: its depth alone, then its quads tested as
+/// `second` says.
+fn TwoPasses(comptime second: Test) type {
+    return struct {
+        const passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle).raster, .shade = &Rasterize(second).raster };
+    };
+}
 
 /// Every triangle of the draw set up and put on the pending list.
 fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride: u32, indices: []const u32) error{OutOfMemory}!void {
@@ -145,13 +164,20 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         else => .masked,
     };
     const raster = switch (test_kind) {
-        inline else => |kind| &Rasterize(kind).raster,
+        inline .off, .less, .less_or_equal, .masked => |kind| &Rasterize(kind).raster,
+        .second, .second_or_equal => unreachable,
+    };
+    const two = state.prepass and shading.depth_write and state.blend == .off;
+    const passes: ?*const bins.Prepass = if (!two) null else switch (test_kind) {
+        .less => &TwoPasses(.second).passes,
+        .less_or_equal => &TwoPasses(.second_or_equal).passes,
+        else => null,
     };
     const codes = target.arena.alloc(u8, count) orelse return error.OutOfMemory;
     const guard = setup.Guard.of(state.viewport);
     for (codes, 0..) |*code, k| code.* = setup.outcode(position(vertices, stride, k).*, guard);
 
-    const set: SetUp = .{ .target = target, .state = state, .shading = shading, .raster = raster, .area = area, .depth = depth };
+    const set: SetUp = .{ .target = target, .state = state, .shading = shading, .raster = raster, .prepass = passes, .area = area, .depth = depth };
     var at: usize = 0;
     while (at + 3 <= indices.len) : (at += 3) {
         target.stats.triangles += 1;
@@ -211,6 +237,7 @@ const SetUp = struct {
     state: *const State,
     shading: *const Shading,
     raster: *const fn (tile: *const Tile, header: *const Header) void,
+    prepass: ?*const bins.Prepass,
     area: [4]i32,
     depth: bool,
 
@@ -241,6 +268,7 @@ const SetUp = struct {
                 .right = made.right,
                 .bottom = made.bottom,
                 .edges = made.edges,
+                .prepass = set.prepass,
             },
             .shading = set.shading,
             .depth = if (set.depth) depthOf(&made, projected, state) else undefined,
@@ -321,7 +349,8 @@ fn Rasterize(comptime kind: Test) type {
                 var z_upper: i64 = if (tested) walker.rowDepth(upper, x, y) else 0;
                 var z_lower: i64 = if (tested) walker.rowDepth(lower, x, y + 1) else 0;
                 const depths = walker.tile.depthRow(y);
-                const write = tested and walker.shading.depth_write;
+                const second = kind == .second or kind == .second_or_equal;
+                const write = tested and !second and walker.shading.depth_write;
                 // The batch's count held here while the row is walked:
                 // in memory it would be read again after every quad
                 // stored.
@@ -338,7 +367,9 @@ fn Rasterize(comptime kind: Test) type {
                     var kept = covered;
                     if (tested) {
                         const near = [4]u64{ units(z_upper), units(z_upper +% step), units(z_lower), units(z_lower +% step) };
-                        inline for (0..4) |i| {
+                        if (second) {
+                            kept = prepass.keep(walker.tile, kind == .second_or_equal, x, y, covered, near, depths);
+                        } else inline for (0..4) |i| {
                             if (kept >> i & 1 != 0 and !walker.passes(near[i], depths[offset(i) + x])) kept &= ~(@as(u4, 1) << i);
                         }
                         if (write) inline for (0..4) |i| {
@@ -369,6 +400,7 @@ fn Rasterize(comptime kind: Test) type {
                     .off => true,
                     .less => near < kept,
                     .less_or_equal => near <= kept,
+                    .second, .second_or_equal => unreachable,
                     .masked => mask: {
                         // 0 less, 1 equal, 2 greater.
                         const order: u3 = @as(u3, @intFromBool(near >= kept)) + @intFromBool(near > kept);

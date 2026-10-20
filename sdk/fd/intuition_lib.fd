@@ -416,4 +416,7 @@ bool BeginDrag(*intuition.Window window, *const rtg.Surface image, u32 hot_x, u3
 /// Whether two presses are a double click by place as well as time: within
 /// the double-click time and within DOUBLETAP_DISTANCE pixels each way.
 bool DoubleTap(*const intuition.Tap first, *const intuition.Tap second)
+/// The open window with a number (WA_Number), or null once it has closed.
+/// The caller holds LockIBase to keep the window open while it uses it.
+?*intuition.Window FindWindowNumber(u32 number)
 ##end

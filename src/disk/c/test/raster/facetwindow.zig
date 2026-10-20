@@ -5,7 +5,7 @@
 //! others and brought forward while it turns, the desktop beside it used
 //! as ever.
 //!
-//!   FacetWindow WIDTH/N,HEIGHT/N,NEAREST/S,FRAMES/N
+//!   FacetWindow WIDTH/N,HEIGHT/N,NEAREST/S,FRAMES/N,CLOSE/S
 //!
 //! The window is WIDTH x HEIGHT inside its border (480 x 360 if not
 //! given). Its surface (CreateWindowSurface) hands out pictures in memory
@@ -17,8 +17,13 @@
 //! turns until the window's close gadget is pressed, Ctrl-C, or FRAMES
 //! frames; then how many frames it showed, how many a second, and how
 //! often the swapchain was made anew are printed. With NEAREST the box
-//! takes the nearest texel instead of four. What is made through
-//! facet.library is facetgpu.zig's, which C:test/FacetCube shares.
+//! takes the nearest texel instead of four. With CLOSE the window is
+//! closed as soon as the first frame is presented, while that frame is
+//! still on its way - as intuition closes the windows of a program that
+//! ends with them open - and the surface must then say it is lost
+//! (`error_surface_lost`) rather than have the frame drawn into a window
+//! that has gone. What is made through facet.library is facetgpu.zig's,
+//! which C:test/FacetCube shares.
 
 const sdk = @import("sdk");
 const scenes = @import("scenes.zig");
@@ -39,10 +44,10 @@ const Gpu = facetgpu.Gpu;
 const Failure = facetgpu.Failure;
 
 pub const COMMAND_NAME = "FacetWindow";
-const VERSION_STRING = "\x00$VER: FacetWindow 1.0 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetWindow 1.1 (20.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "WIDTH/N,HEIGHT/N,NEAREST/S,FRAMES/N";
+const template = "WIDTH/N,HEIGHT/N,NEAREST/S,FRAMES/N,CLOSE/S";
 
 /// What a run came to.
 const Run = struct {
@@ -90,6 +95,15 @@ fn spin(gpu: *Gpu, ib: *IntuitionBase, dl: *DosBase, window: *intuition.Window, 
     return run;
 }
 
+/// One frame presented, and the window closed while it is on its way:
+/// true when the surface then says it is lost.
+fn closeInFlight(gpu: *Gpu, ib: *IntuitionBase, dl: *DosBase, window: *intuition.Window) Failure!bool {
+    _ = try spin(gpu, ib, dl, window, 1);
+    ib.CloseWindow(window);
+    var index: u32 = 0;
+    return gpu.fb.AcquireNextImage(gpu.device.?, gpu.swapchain.?, facet.WAIT_FOREVER_NS, gpu.acquired, null, &index) == .error_surface_lost;
+}
+
 /// The window's messages answered: true once its close gadget was
 /// pressed. A new size needs nothing here - the swapchain says it is out
 /// of date.
@@ -115,7 +129,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [4]usize = @splat(0);
+    var argv: [5]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -125,6 +139,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const height = number(argv[1], 360, 48);
     const nearest = argv[2] != 0;
     const frames = number(argv[3], 0, 1);
+    const close = argv[4] != 0;
 
     const facet_lib = sys.OpenLibrary(facet.FACETNAME, 1) orelse {
         _ = Printf(dl, "No %s\n", .{facet.FACETNAME});
@@ -169,7 +184,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW | wn.IDCMP_NEWSIZE },
         .{},
     }) orelse return say(dl, "No window");
-    defer ib.CloseWindow(window);
+    var open = true;
+    defer if (open) ib.CloseWindow(window);
 
     var gpu = Gpu{ .fb = @ptrCast(facet_lib) };
     // Given back before the window closes: the surface is over it.
@@ -178,6 +194,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     gpu.onWindow(window) catch |err| return failed(dl, err);
     gpu.prepare(nearest, &pattern) catch |err| return failed(dl, err);
     gpu.chain(2) catch |err| return failed(dl, err);
+
+    if (close) {
+        open = false;
+        const lost = closeInFlight(&gpu, ib, dl, window) catch |err| return failed(dl, err);
+        if (!lost) return say(dl, "The window closed with a frame on its way, and the surface was not lost");
+        _ = Printf(dl, "The window closed with a frame on its way: the surface is lost\n", .{});
+        return dos.RETURN_OK;
+    }
 
     const began = now(tb);
     const run = spin(&gpu, ib, dl, window, frames) catch |err| return failed(dl, err);

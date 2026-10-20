@@ -35,9 +35,9 @@ const interior = _window.interior;
 ///   the limits, `WA_Title`, `WA_IDCMP`, `WA_RastPort`, `WA_UserPort`,
 ///   `WA_Screen`, `WA_Layer`, `WA_BorderLeft`/`Top`/`Right`/`Bottom`,
 ///   `WA_Active`, `WA_SimpleRefresh`, `WA_Backdrop`, `WA_Checkmark`,
-///   `WA_AmigaKey`, `WA_MenuHelp`. `WA_Left` and `WA_Top` are signed,
-///   written by their bits: a window past the screen's left edge
-///   (`IPREFS_OffScreen`) has a negative left.
+///   `WA_AmigaKey`, `WA_MenuHelp`, `WA_Number`. `WA_Left` and `WA_Top`
+///   are signed, written by their bits: a window past the screen's left
+///   edge (`IPREFS_OffScreen`) has a negative left.
 ///
 /// RESULT:
 /// Nothing; the values are where the tags point.
@@ -117,6 +117,7 @@ pub fn GetWindowAttrs(ib: *IntuitionBase, window: *Window, tags: ?[*]const TagIt
             wn.WA_Checkmark => out.* = @intFromPtr(window.check_mark),
             wn.WA_AmigaKey => out.* = @intFromPtr(window.amiga_key),
             wn.WA_MenuHelp => out.* = @intFromBool(window.more_flags & _window.WMF_MENUHELP != 0),
+            wn.WA_Number => out.* = window.number,
             else => {},
         }
     }

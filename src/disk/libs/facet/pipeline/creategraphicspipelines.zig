@@ -54,6 +54,13 @@ const _instance = @import("../instance/_instance.zig");
 /// the others are taken and do nothing). A pipeline with the rasterizer
 /// discarding, or culling front and back, draws nothing.
 ///
+/// `PIPELINE_CREATE_DEPTH_PREPASS` in `flags`, facet.library's own, has the
+/// pipeline's triangles' depth drawn first in each tile and each pixel then
+/// shaded once, by the nearest: a scene drawn back to front costs little
+/// more than one drawn front to back, which costs a little more than
+/// without it. For a depth test of LESS or LESS_OR_EQUAL, written, and no
+/// blending; ignored otherwise. Other flags are taken and do nothing.
+///
 /// Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
 /// as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
 /// each, up to four bindings and eight locations.
@@ -156,6 +163,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .front = .counter_clockwise,
         .depth_test = null,
         .depth_write = false,
+        .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0,
         .blend = .off,
         .viewport = null,
         .scissor = null,

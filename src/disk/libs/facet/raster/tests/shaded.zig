@@ -393,3 +393,101 @@ test "with a texture, early and late depth, on one part or on threads, draw the 
     for (first) |pixel| drawn += @intFromBool(pixel != 0);
     try testing.expect(drawn > 20000);
 }
+
+/// A vertex of the pre-pass's test, made into any smooth pipeline's.
+const Corner = struct { position: [3]f32, color: u32 };
+
+fn verticesOf(comptime Kind: type, corners: []const Corner, into: []Kind.Vertex) void {
+    for (into, corners) |*vertex, corner| vertex.* = .{ .position = corner.position, .color = corner.color };
+}
+
+/// One frame of `draws`, each a pipeline, its vertices and its indices.
+fn frameOf(target: *Target, draws: anytype) !void {
+    const log: *common.Log = @ptrCast(@alignCast(target.host.context.?));
+    log.count = 0;
+    target.begin();
+    inline for (draws) |each| try raster.draw(target, each[0], each[1], each[2]);
+    _ = target.finish();
+}
+
+test "the depth pre-pass draws what drawing in order does: either test, equal depths, and what is drawn without it after" {
+    const Less = raster.Pipeline(.{ .color = .smooth, .cull = .none, .depth = .less });
+    const LessFirst = raster.Pipeline(.{ .color = .smooth, .cull = .none, .depth = .less, .prepass = true });
+    const Equal = raster.Pipeline(.{ .color = .smooth, .cull = .none, .depth = .less_equal });
+    const EqualFirst = raster.Pipeline(.{ .color = .smooth, .cull = .none, .depth = .less_equal, .prepass = true });
+    const Over = raster.Pipeline(.{ .color = .smooth, .cull = .none, .depth = .less, .blend = .alpha });
+
+    // Triangles over the surface at a few depths, two in three flat at one
+    // of them - so that many pixels are as near in several - the rest
+    // sloping; the last five half covering.
+    const count = 90;
+    var corners: [count * 3]Corner = undefined;
+    var prng = std.Random.DefaultPrng.init(0x5EED);
+    const r = prng.random();
+    const depths = [_]f32{ 0.25, 0.5, 0.5, 0.75 };
+    for (0..count) |t| {
+        const flat = t % 3 != 0;
+        const z = depths[r.uintLessThan(usize, depths.len)];
+        const alpha: u32 = if (t >= count - 5) 0x8000_0000 else 0xFF00_0000;
+        for (corners[t * 3 ..][0..3]) |*corner| corner.* = .{
+            .position = .{ r.float(f32) * 2.4 - 1.2, r.float(f32) * 2.4 - 1.2, if (flat) z else r.float(f32) },
+            .color = alpha | r.int(u24),
+        };
+    }
+    var indices: [count * 3]u16 = undefined;
+    for (&indices, 0..) |*index, k| index.* = @intCast(k);
+    var less: [count * 3]Less.Vertex = undefined;
+    var less_first: [count * 3]LessFirst.Vertex = undefined;
+    var equal: [count * 3]Equal.Vertex = undefined;
+    var equal_first: [count * 3]EqualFirst.Vertex = undefined;
+    var over: [count * 3]Over.Vertex = undefined;
+    verticesOf(Less, &corners, &less);
+    verticesOf(LessFirst, &corners, &less_first);
+    verticesOf(Equal, &corners, &equal);
+    verticesOf(EqualFirst, &corners, &equal_first);
+    verticesOf(Over, &corners, &over);
+
+    const reference = try testing.allocator.alloc(u32, width * height);
+    defer testing.allocator.free(reference);
+    const pixels = try testing.allocator.alloc(u32, width * height);
+    defer testing.allocator.free(pixels);
+    var log: common.Log = .{};
+    const attachments = raster.Attachments{ .color = .{ .clear = 0xFF00_0000 }, .depth = .{ .used = true } };
+    var plain = try targetOn(reference, &log, false, attachments);
+    defer plain.deinit();
+    // The pre-pass on threads: each part's buffer keeps its own marks.
+    var first = try targetOn(pixels, &log, true, attachments);
+    defer first.deinit();
+    const n = count * 3;
+
+    // Every triangle, tested less and then less or equal.
+    try frameOf(&plain, .{.{ &Less{ .viewport = whole }, &less, &indices }});
+    try frameOf(&first, .{.{ &LessFirst{ .viewport = whole }, &less_first, &indices }});
+    try testing.expectEqualSlices(u32, reference, pixels);
+    try frameOf(&plain, .{.{ &Equal{ .viewport = whole }, &equal, &indices }});
+    try frameOf(&first, .{.{ &EqualFirst{ .viewport = whole }, &equal_first, &indices }});
+    try testing.expectEqualSlices(u32, reference, pixels);
+
+    // Both tests in the pre-pass, then triangles without it - and with it
+    // again, which are drawn without it after those - and the blended
+    // last.
+    const parts = [_]usize{ 0, 30 * 3, 60 * 3, 75 * 3, 85 * 3, n };
+    try frameOf(&plain, .{
+        .{ &Less{ .viewport = whole }, less[parts[0]..parts[1]], indices[0 .. parts[1] - parts[0]] },
+        .{ &Equal{ .viewport = whole }, equal[parts[1]..parts[2]], indices[0 .. parts[2] - parts[1]] },
+        .{ &Less{ .viewport = whole }, less[parts[2]..parts[3]], indices[0 .. parts[3] - parts[2]] },
+        .{ &Less{ .viewport = whole }, less[parts[3]..parts[4]], indices[0 .. parts[4] - parts[3]] },
+        .{ &Over{ .viewport = whole }, over[parts[4]..parts[5]], indices[0 .. parts[5] - parts[4]] },
+    });
+    try frameOf(&first, .{
+        .{ &LessFirst{ .viewport = whole }, less_first[parts[0]..parts[1]], indices[0 .. parts[1] - parts[0]] },
+        .{ &EqualFirst{ .viewport = whole }, equal_first[parts[1]..parts[2]], indices[0 .. parts[2] - parts[1]] },
+        .{ &Less{ .viewport = whole }, less[parts[2]..parts[3]], indices[0 .. parts[3] - parts[2]] },
+        .{ &LessFirst{ .viewport = whole }, less_first[parts[3]..parts[4]], indices[0 .. parts[4] - parts[3]] },
+        .{ &Over{ .viewport = whole }, over[parts[4]..parts[5]], indices[0 .. parts[5] - parts[4]] },
+    });
+    try testing.expectEqualSlices(u32, reference, pixels);
+    var drawn: u32 = 0;
+    for (reference) |pixel| drawn += @intFromBool(pixel != 0xFF00_0000);
+    try testing.expect(drawn > 40000);
+}

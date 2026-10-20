@@ -65,6 +65,8 @@ pub const Pipeline = struct {
     front: raster.Winding,
     depth_test: ?raster.batched.Compare,
     depth_write: bool,
+    /// PIPELINE_CREATE_DEPTH_PREPASS.
+    prepass: bool,
     blend: raster.Blend,
     /// The viewport and the scissor, or null where commands set them.
     viewport: ?facet.Viewport,

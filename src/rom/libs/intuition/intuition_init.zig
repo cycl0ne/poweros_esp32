@@ -116,8 +116,9 @@ pub const LIBRARY_VERSION = 0;
 /// when it ends (an end hook per task with windows open). 45: the title
 /// bars' gadgets narrow, or wide with IPREFS_WideGadgets. 46: DisplayBeep
 /// plays a sound through audio.device (IPREFS_BeepSound) and flashes as
-/// IPREFS_BeepFlash says.
-pub const LIBRARY_REVISION = 46;
+/// IPREFS_BeepFlash says. 47: every window has a number no other window
+/// is given (WA_Number), and FindWindowNumber finds it while it is open.
+pub const LIBRARY_REVISION = 47;
 const BUILD_DATE = "20.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -222,6 +223,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.pointer_class = if (ib.window_class != null) pointerclass.make(ib) else null;
     ib.active_window = null;
     ib.activations = 0;
+    ib.window_numbers = 0;
     ib.input = .{};
     ib.pointer = .{};
     ib.pointer_mover = .{};

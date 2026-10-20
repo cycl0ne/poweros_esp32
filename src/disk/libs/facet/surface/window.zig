@@ -11,6 +11,14 @@
 //! picture is copied, as layers.library asks of a task drawing into one:
 //! the window cannot be moved or sized part way through.
 //!
+//! The window itself is not kept, its number is (`WA_Number`): each time
+//! it is read or drawn into it is found by the number under the screens'
+//! semaphore (`FindWindowNumber`), and its layer taken before that is let
+//! go. A window closed under the surface - its program ended, and its
+//! windows closed with it, while the queue's task still had a picture to
+//! copy - is found gone, never another window opened since in its memory:
+//! nothing is copied, and the surface is lost.
+//!
 //! intuition.library, graphics.library, layers.library and rtg.library
 //! are opened as the surface is made, by the task that makes it, and
 //! closed as it goes.
@@ -46,7 +54,8 @@ const Window = struct {
     gb: *GraphicsBase,
     lb: *LayersBase,
     rb: *RtgBase,
-    window: *intuition.Window,
+    /// The window's number, which finds it while it is open.
+    number: u32,
     /// The program's RastPort of the window and the layer it draws in:
     /// the inside's, for a GimmeZeroZero window.
     rastport: *graphics.RastPort,
@@ -87,9 +96,12 @@ pub fn open(sys: *ExecBase, surface: *Surface, window: *intuition.Window) facet.
     const missing = for (libraries) |library| {
         if (library == null) break true;
     } else false;
-    const kept = (if (missing) null else _objects.create(sys, Window)) orelse {
+    // An intuition too old to number its windows could not say when this
+    // one closes.
+    const number: usize = if (missing) 0 else attr(@ptrCast(libraries[0].?), window, wn.WA_Number);
+    const kept = (if (number == 0) null else _objects.create(sys, Window)) orelse {
         for (libraries) |library| if (library) |opened| sys.CloseLibrary(opened);
-        return if (missing) .error_initialization_failed else .error_out_of_host_memory;
+        return if (number == 0) .error_initialization_failed else .error_out_of_host_memory;
     };
     const ib: *IntuitionBase = @ptrCast(libraries[0].?);
     const gb: *GraphicsBase = @ptrCast(libraries[1].?);
@@ -108,7 +120,7 @@ pub fn open(sys: *ExecBase, surface: *Surface, window: *intuition.Window) facet.
         .gb = gb,
         .lb = @ptrCast(libraries[2].?),
         .rb = @ptrCast(libraries[3].?),
-        .window = window,
+        .number = @intCast(number),
         .rastport = rastport,
         .layer = @ptrFromInt(attr(ib, window, wn.WA_Layer)),
         .format = @enumFromInt(@as(u8, @intCast(format))),
@@ -123,9 +135,13 @@ fn of(surface: *Surface) *Window {
     return @ptrCast(@alignCast(surface.context.?));
 }
 
-fn shape(surface: *Surface) Shape {
+/// Null once the window has closed.
+fn shape(surface: *Surface) ?Shape {
     const kept = of(surface);
-    const inside = insideOf(kept);
+    const held = kept.ib.LockIBase(0);
+    defer kept.ib.UnlockIBase(held);
+    const window = kept.ib.FindWindowNumber(kept.number) orelse return null;
+    const inside = insideOf(kept.ib, window);
     return .{ .width = inside.width, .height = inside.height, .format = _surface.formatOf(kept.format) };
 }
 
@@ -136,7 +152,7 @@ fn most(_: *Surface) u32 {
 
 fn make(surface: *Surface, pictures: []Picture) bool {
     const kept = of(surface);
-    const now = shape(surface);
+    const now = shape(surface) orelse return false;
     // Rows a cache line apart, as the tiles write them back.
     const pitch = std.mem.alignForward(u32, now.width * 4, _memory.alignment);
     for (pictures, 0..) |*picture, k| {
@@ -182,16 +198,26 @@ fn unmake(surface: *Surface, pictures: []Picture, _: ?u32) void {
 /// The display's next frame waited for, and the picture copied into the
 /// window with its layer held - as much of it as fits inside the border
 /// now, where the window has been made smaller since the swapchain was.
-fn show(surface: *Surface, picture: *Picture) void {
+/// False once the window has closed. The layer is taken while the window
+/// is held open by the screens' semaphore, which is then let go: a close
+/// waits for the layer, and the screens are not held through the copy.
+fn show(surface: *Surface, picture: *Picture) bool {
     const kept = of(surface);
     const offscreen = offscreenOf(picture);
     if (kept.board) |board| _ = kept.rb.WaitVBlank(board, 0);
+    const held = kept.ib.LockIBase(0);
+    const window = kept.ib.FindWindowNumber(kept.number) orelse {
+        kept.ib.UnlockIBase(held);
+        return false;
+    };
     kept.lb.LockLayer(kept.layer);
     defer kept.lb.UnlockLayer(kept.layer);
-    const inside = insideOf(kept);
+    const inside = insideOf(kept.ib, window);
+    kept.ib.UnlockIBase(held);
     const width = @min(offscreen.surface.width, inside.width);
     const height = @min(offscreen.surface.height, inside.height);
     kept.gb.BltBitMapRastPort(&offscreen.surface, 0, 0, kept.rastport, inside.left, inside.top, @intCast(width), @intCast(height));
+    return true;
 }
 
 fn close(surface: *Surface) void {
@@ -207,13 +233,13 @@ fn close(surface: *Surface) void {
 
 /// Where the inside of the window is in its RastPort, and its size: a
 /// GimmeZeroZero window's RastPort is the inside's own.
-fn insideOf(kept: *const Window) Inside {
+fn insideOf(ib: *IntuitionBase, window: *intuition.Window) Inside {
     var width: usize = 0;
     var height: usize = 0;
     var left: usize = 0;
     var top: usize = 0;
     var flags: usize = 0;
-    kept.ib.GetWindowAttrs(kept.window, &[_]TagItem{
+    ib.GetWindowAttrs(window, &[_]TagItem{
         .{ .tag = wn.WA_InnerWidth, .data = @intFromPtr(&width) },
         .{ .tag = wn.WA_InnerHeight, .data = @intFromPtr(&height) },
         .{ .tag = wn.WA_BorderLeft, .data = @intFromPtr(&left) },
