@@ -121,20 +121,6 @@ pub fn readExtension(bus: I2c, first: *const Edid, into: *Edid) bool {
     return bus.read(edid_address, 128, into);
 }
 
-/// The monitor's name from its EDID (descriptor 0xFC), up to 13
-/// characters and NUL-terminated in `into`; empty if it gives none.
-pub fn monitorName(edid: *const Edid, into: *[14]u8) void {
-    into.* = @splat(0);
-    var at: usize = 54;
-    while (at + 18 <= 126) : (at += 18) {
-        const d = edid[at..][0..18];
-        if (d[0] != 0 or d[1] != 0 or d[3] != 0xFC) continue;
-        var n: usize = 0;
-        while (n < 13 and d[5 + n] != 0x0A) : (n += 1) into[n] = d[5 + n];
-        return;
-    }
-}
-
 /// What the bridge sends the monitor: the picture's size, its timings in
 /// pixel clocks and lines, the sync pulses' polarity, the pixel clock.
 pub const Mode = struct {

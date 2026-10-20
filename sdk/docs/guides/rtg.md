@@ -111,9 +111,12 @@ volatile buffer agreed to lose its memory: it keeps its handle and loses
 its pixels.
 
 The panels of this machine have one mode each - the 3.5" board has two,
-upright and on its side. A display that reads its picture out of RAM
-(the `fb` driver, below) has the one its board names: on the VisionFive 2
-1920 x 1080 at 60 Hz, 32 bits a pixel, with no monitor's EDID read.
+upright and on its side. The emulator's RAM display (the `fb` driver,
+below) has the one its board names. The VisionFive 2's HDMI port has the
+modes the monitor names in its EDID that the port can send - any whose
+pixel clock the transmitter's PLL makes, up to 297 MHz, 32 bits a pixel -
+and starts in the one the monitor prefers; `Rtg MODES` lists them. A
+monitor without an EDID gets 1920 x 1080 at 60 Hz.
 
 ## Buffers
 
@@ -591,7 +594,7 @@ older SDK keeps its layout.
 | CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | as the ESP32-P4-PC's |
 | Olimex ESP32-P4-PC on HDMI, 1360 x 768, 1280 x 720, 1024 x 768 or 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; rows drawn are converted into it by the 2D-DMA | the bands converted into the copy, the chain built over it |
 | QEMU | `qemu` | the emulator's display reads memory of its own | the bands composed into one picture |
-| VisionFive 2 on HDMI, 1920 x 1080 | `fb` | the JH7110's display controller reads the shown buffer out of RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, and sets the transmitter's PHY for 1080p at 60 Hz | the bands composed into one picture, which the controller then reads |
+| VisionFive 2 on HDMI, the monitor's mode | `fb` | the JH7110's display controller reads the shown buffer out of RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | the bands composed into one picture, which the controller then reads |
 | QEMU's RISC-V virt with `-device ramfb`, 1920 x 1080 | `fb` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | as the VisionFive 2's |
 
 graphics.library hands a panel in the memory map to the `qemu` driver

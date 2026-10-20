@@ -75,13 +75,14 @@ const link_file = @import("link.zig");
 const pointer_file = @import("pointer.zig");
 const lt8912b = @import("lt8912b.zig");
 const monitor = @import("monitor.zig");
+const edid = @import("../edid.zig");
 const st = sdk.expansion.systemtags;
 
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 3;
-const BUILD_DATE = "17.10.2026";
+const REVISION = 4;
+const BUILD_DATE = "20.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -554,7 +555,7 @@ fn monitorFor(sys: *ExecBase, wanted: *config.Config) ?lt8912b.I2c {
     var name: [14]u8 = undefined;
     name[0] = 0;
     if (lt8912b.readEdid(bus_to_bridge, &first)) {
-        lt8912b.monitorName(&first, &name);
+        edid.name(&first, &name);
         const cea: ?*const lt8912b.Edid = if (lt8912b.readExtension(bus_to_bridge, &first, &extension)) &extension else null;
         if (monitor.best(&first, cea)) |mode| take(wanted, mode);
     }

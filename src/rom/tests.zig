@@ -35,6 +35,9 @@ test {
     _ = @import("libs/utility/date/datejoin.zig");
     _ = @import("libs/rtg_driver/dcsboard/sequence.zig");
     _ = @import("libs/rtg_driver/dsiboard/monitor.zig");
+    _ = @import("libs/rtg_driver/edid.zig");
+    _ = @import("libs/rtg_driver/fbboard/phy.zig");
+    _ = @import("libs/rtg_driver/fbboard/monitor.zig");
     _ = @import("devs/keyboard/rawkey.zig");
     _ = @import("devs/mouse/events.zig");
     _ = @import("devs/input/events.zig");

@@ -37,7 +37,9 @@ pub const SYSTAG_Console = SYSTAG_Dummy + 5;
 /// One part: `ti_Data` is its tag list. Given once per part.
 pub const SYSTAG_Part = SYSTAG_Dummy + 6;
 /// The screen the machine runs, in pixels: the panel's own size, or the
-/// two exchanged for a panel mounted on its side.
+/// two exchanged for a panel mounted on its side. Left out where the
+/// monitor says (a port whose board reads its EDID): the screen is then
+/// the board's default mode.
 pub const SYSTAG_ScreenWidth = SYSTAG_Dummy + 7;
 pub const SYSTAG_ScreenHeight = SYSTAG_Dummy + 8;
 /// Where the flash disk starts on the chip, in bytes: flash.device's unit

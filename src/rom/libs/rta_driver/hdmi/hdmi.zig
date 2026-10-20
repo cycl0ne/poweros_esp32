@@ -45,7 +45,7 @@ const transmitter = @import("transmitter.zig");
 const MODULE_NAME = "rta-hdmi";
 const DRIVER_NAME = "hdmi";
 const VERSION = 1;
-const REVISION = 0;
+const REVISION = 1;
 const BUILD_DATE = "20.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++

@@ -150,7 +150,10 @@ const ethernet0 = [_]Tag{
     .done,
 };
 
-/// The HDMI port's picture: the one mode the display path is set up for.
+/// The HDMI port's picture when the monitor gives no EDID: 1920x1080 at
+/// 60 Hz. With one, the monitor's modes are the board's, and the screen
+/// is the one it prefers (`rtg_driver/fbboard/monitor.zig`) - so the
+/// system list names no screen size.
 const screen = struct {
     pub const width: u32 = 1920;
     pub const height: u32 = 1080;
@@ -221,8 +224,6 @@ pub const root = [_]Tag{
     // The four U74s; the S7 has no supervisor mode and stays the
     // firmware's.
     .value(st.SYSTAG_Cores, 4),
-    .value(st.SYSTAG_ScreenWidth, screen.width),
-    .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &trng),
