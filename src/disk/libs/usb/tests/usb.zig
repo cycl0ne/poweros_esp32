@@ -197,6 +197,73 @@ test "a pipe says what its endpoint moves besides a packet: bursts at SuperSpeed
     try kexec.expectNoLeaks();
 }
 
+/// A SuperSpeed disk's interface: its Bulk-Only first setting, a bulk IN
+/// at 0x82 in bursts of 4 without streams; and its UAS setting, a
+/// command OUT without streams, a status IN and a data IN with 2^4
+/// streams, a data OUT with 2^2 - each in bursts of 16.
+const uas_bytes = [_]u8{ 9, d.USB_DT_CONFIG, 92, 0, 1, 1, 0, 0x80, 50 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 1, d.USB_CLASS_MASS_STORAGE, 0x06, 0x50, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x82, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 3, 0, 0, 0 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 0, 1, 4, d.USB_CLASS_MASS_STORAGE, 0x06, 0x62, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x01, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 15, 0, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x82, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 15, 4, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x83, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 15, 4, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x04, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 15, 2, 0, 0 };
+
+test "a stream pipe: one of the streams a SuperSpeed bulk endpoint's companion offers" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    const made = kexec.InitResident(kexec.SysBase, &usb_init.usb_library_tag, null) orelse return error.NoLibrary;
+    const lib: *sdk.exec.Library = @ptrCast(@alignCast(made));
+    const library: *UsbLibrary = @ptrCast(lib);
+    var bus: _bus.Bus = undefined;
+    bus.hc_io = .{};
+    var port: sdk.exec.MsgPort = .{};
+    var bytes = uas_bytes;
+    var device = _bus.Device{ .bus = &bus };
+    device.public.config = &bytes;
+    device.public.config_length = bytes.len;
+    device.public.speed = usbhc.USB_SPEED_SUPER;
+
+    // The status pipe on its first stream and on its last: a bulk pipe
+    // as OpenUSBPipe opens it, its streams named.
+    const status = library.OpenUSBStreamPipe(&device.public, 0x82, 1, &port).?;
+    try testing.expectEqual(usbhc.UHCMD_BULKXFER, status.io.std.req.command);
+    try testing.expectEqual(@as(u8, 15), status.io.burst);
+    try testing.expectEqual(@as(u16, 16), status.io.streams);
+    try testing.expectEqual(@as(u16, 1), status.io.stream);
+    library.CloseUSBPipe(status);
+    const last = library.OpenUSBStreamPipe(&device.public, 0x83, 16, &port).?;
+    try testing.expectEqual(@as(u16, 16), last.io.stream);
+    library.CloseUSBPipe(last);
+    try testing.expect(library.OpenUSBStreamPipe(&device.public, 0x82, 17, &port) == null);
+    try testing.expect(library.OpenUSBStreamPipe(&device.public, 0x82, 0, &port) == null);
+    // Four streams on the data OUT.
+    const out = library.OpenUSBStreamPipe(&device.public, 0x04, 4, &port).?;
+    try testing.expectEqual(@as(u16, 4), out.io.streams);
+    library.CloseUSBPipe(out);
+    try testing.expect(library.OpenUSBStreamPipe(&device.public, 0x04, 5, &port) == null);
+    // The command pipe has none; a plain pipe names none - and finds the
+    // first setting's endpoint, the stream pipe the UAS setting's.
+    try testing.expect(library.OpenUSBStreamPipe(&device.public, 0x01, 1, &port) == null);
+    const plain = library.OpenUSBPipe(&device.public, 0x82, &port).?;
+    try testing.expectEqual(@as(u16, 0), plain.io.streams);
+    try testing.expectEqual(@as(u16, 0), plain.io.stream);
+    try testing.expectEqual(@as(u8, 3), plain.io.burst);
+    library.CloseUSBPipe(plain);
+    // Below SuperSpeed no endpoint has streams.
+    device.public.speed = usbhc.USB_SPEED_HIGH;
+    try testing.expect(library.OpenUSBStreamPipe(&device.public, 0x82, 1, &port) == null);
+
+    _ = kexec.SysBase.iface().RemLibrary(lib);
+    try kexec.expectNoLeaks();
+}
+
 test "a configuration that lies about a length ends the walk" {
     var base: UsbBase = undefined;
     var bus: _bus.Bus = undefined;

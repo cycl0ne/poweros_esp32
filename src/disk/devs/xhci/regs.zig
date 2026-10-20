@@ -50,6 +50,11 @@ pub const HCC_PPC: u32 = 1 << 3;
 pub fn extendedCaps(params1: u32) u32 {
     return params1 >> 16;
 }
+/// HCCPARAMS1's MaxPSASize: the largest Primary Stream Array an endpoint
+/// may have is 2^(n + 1) entries; 0, no streams.
+pub fn maxPsaSize(params1: u32) u32 {
+    return (params1 >> 12) & 0xF;
+}
 
 // --- operational registers --------------------------------------------------------
 
@@ -203,6 +208,11 @@ pub fn slotField(slot: u32) u32 {
 pub fn endpointField(dci: u32) u32 {
     return dci << 16;
 }
+/// A stream ID where a doorbell and a Set TR Dequeue Pointer command
+/// carry it, in their top half.
+pub fn streamField(stream: u32) u32 {
+    return stream << 16;
+}
 
 /// A Setup Stage TRB's transfer type: no data, OUT, IN.
 pub const TRT_NONE: u32 = 0 << 16;
@@ -304,10 +314,14 @@ pub const EP_ISOCH_IN: u32 = 5;
 pub const EP_BULK_IN: u32 = 6;
 pub const EP_INTERRUPT_IN: u32 = 7;
 
-/// Endpoint context, word 0: the interval, as an exponent of 125 µs, and
-/// a SuperSpeed isochronous endpoint's bursts an interval less one.
-pub fn endpointWord0(interval: u32, mult: u32) u32 {
-    return interval << 16 | (mult & 3) << 8;
+/// Endpoint context, word 0: the interval, as an exponent of 125 µs, a
+/// SuperSpeed isochronous endpoint's bursts an interval less one, and a
+/// bulk endpoint's streams - MaxPStreams, its Primary Stream Array
+/// 2^(n + 1) entries, and with it LSA: the array linear, a stream ID its
+/// index.
+pub fn endpointWord0(interval: u32, mult: u32, max_pstreams: u32) u32 {
+    const linear: u32 = @intFromBool(max_pstreams != 0);
+    return interval << 16 | linear << 15 | (max_pstreams & 0x1F) << 10 | (mult & 3) << 8;
 }
 /// Word 1: three tries on an error - none for an isochronous endpoint,
 /// whose packets have their time - the type, the wire packets a burst
@@ -321,6 +335,32 @@ pub fn endpointWord1(kind: u32, burst: u32, max_packet: u32) u32 {
 /// interval.
 pub fn endpointWord4(average: u32, esit: u32) u32 {
     return average | (esit & 0xFFFF) << 16;
+}
+
+/// A Stream Context's Stream Context Type: a primary stream's own
+/// transfer ring.
+pub const SCT_PRIMARY_RING: u32 = 1;
+/// A Stream Context's first two words, and the parameter of a Set TR
+/// Dequeue Pointer command for a stream: the ring's dequeue pointer -
+/// its cycle state in bit 0 - with the stream's context type.
+pub fn streamPointer(dequeue: u64) u64 {
+    return dequeue | SCT_PRIMARY_RING << 1;
+}
+/// The entries of a linear Primary Stream Array for streams 1 to
+/// `streams` - entry 0 is the controller's - as a power of two, at least
+/// 4, and at most the controller's 2^(MaxPSASize + 1); 0 when it has no
+/// streams. The streams the array then holds are its entries less one.
+pub fn streamEntries(streams: u32, max_psa_size: u32) u32 {
+    if (max_psa_size == 0 or streams == 0) return 0;
+    const most = @as(u32, 2) << @intCast(@min(max_psa_size, 15));
+    var entries: u32 = 4;
+    while (entries < streams + 1 and entries < most) entries *= 2;
+    return @min(entries, most);
+}
+/// MaxPStreams for an array of `entries`: 2^(n + 1) of them.
+pub fn maxPStreams(entries: u32) u32 {
+    if (entries < 4) return 0;
+    return 31 - @clz(entries) - 1;
 }
 
 /// A device context index: endpoint 0 is 1; endpoint n's OUT 2n, its IN

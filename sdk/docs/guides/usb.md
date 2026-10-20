@@ -141,8 +141,10 @@ as if plugged in. Endpoint 0 of a SuperSpeed device takes 512 bytes, and
 an endpoint bursts as its companion descriptor says - an isochronous one
 up to its bytes an interval, in as many bursts as its Mult says; a
 high-speed interrupt or isochronous endpoint has its more transactions
-a microframe. Streams and the link's U1 and U2 power states are not
-used. Behind a high-speed hub, xhci.device tells the controller which
+a microframe. A SuperSpeed bulk endpoint may have streams, queues of
+its own each with a transfer out at once, the device choosing which it
+moves next (`OpenUSBStreamPipe`). The link's U1 and U2 power states are
+not used. Behind a high-speed hub, xhci.device tells the controller which
 hub and port a full- or low-speed device hangs off, and the controller
 does the split transactions itself.
 `USBInfo` shows each device's speed.
@@ -235,6 +237,20 @@ pipe.io.std.data = &buffer;
 pipe.io.std.length = buffer.len;
 if (sys.DoIO(&pipe.io.std.req) == 0) use(buffer[0..@intCast(pipe.io.std.actual)]);
 ```
+
+A SuperSpeed bulk endpoint whose companion descriptor offers streams
+takes its transfers on them: `OpenUSBStreamPipe(device,
+endpoint_address, stream, reply_port)` gives the pipe of one stream,
+from 1 to the endpoint's streams (2^MaxStreams, at most 16), and null
+below SuperSpeed or for an endpoint without them. Each stream is a
+queue of its own: a transfer on one waits only for those before it on
+the same, so a pipe per stream can each have one out, and the device
+says which it moves next. Every transfer on such an endpoint goes on a
+stream: a plain pipe on it has the controller add the endpoint afresh
+without them, and what was on its streams ends with `UHIOERR_HOSTERROR`.
+xhci.device has 16 an endpoint where the controller has room for them;
+a controller without streams answers the first transfer
+`UHIOERR_HOSTERROR`.
 
 - A **bulk** read waits until the device sends; a short packet ends it.
   `nak_timeout` (milliseconds) gives up on a device that never does.

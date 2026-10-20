@@ -42,3 +42,9 @@ pub const UsbBase = extern struct {
 pub fn usbBase(lib: *exec.Library) *UsbBase {
     return @fieldParentPtr("lib", lib);
 }
+
+/// The library as its own callers see it: its calls through its jump
+/// table.
+pub fn interface(base: *UsbBase) *sdk.interface.usb.UsbBase {
+    return @ptrCast(base);
+}

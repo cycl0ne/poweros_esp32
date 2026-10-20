@@ -92,6 +92,7 @@ pub fn bringUp(host: *Host) bool {
     host.iso_lead = regs.istFrames(params2) + 1;
     host.context_size = if (cparams1 & regs.HCC_CSZ != 0) 64 else 32;
     host.power_switched = cparams1 & regs.HCC_PPC != 0;
+    host.max_psa_size = regs.maxPsaSize(cparams1);
     var protocols: Protocols = .{};
     walkCapabilities(host, regs.extendedCaps(cparams1), &protocols);
     host.ports = mapPorts(protocols, host.max_ports, &host.port_map, &host.super_ports);

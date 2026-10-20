@@ -27,6 +27,12 @@
 //! is, the first request to address 0 after it makes its slot, and the
 //! SET_ADDRESS that follows binds the address to it (slots.zig).
 //!
+//! **A bulk endpoint with streams** has a ring per stream: its context
+//! points at a Stream Context Array, an entry per stream, each naming the
+//! ring of a lane - an `Endpoint` of its own, with its ring, its buffer,
+//! its request and its queue - so a transfer on one stream waits only
+//! for those on the same; the endpoint itself carries no TD.
+//!
 //! **Memory the controller reads or writes** is DMA memory, below 4 GiB,
 //! in blocks of whole cache lines. What the driver writes there is out
 //! before the controller is told, and what the controller wrote is read
@@ -67,6 +73,10 @@ pub const ring_trbs = 32;
 /// a 64 KiB boundary.
 pub const iso_ring_trbs = 256;
 pub const iso_in_flight = 4;
+/// The streams a bulk endpoint is given at most, and its Primary Stream
+/// Array's entries for them: stream 0 is the controller's.
+pub const max_streams = 16;
+pub const stream_entries = 32;
 /// TRBs on the event ring: a page.
 pub const event_trbs = 256;
 /// The bytes of a device's configuration the device keeps, from the
@@ -149,6 +159,16 @@ pub const Endpoint = struct {
     /// count).
     streaming: bool = false,
     next_frame: u32 = 0,
+    /// A bulk endpoint's streams, IDs 1 to `streams` (0: it has none):
+    /// its Primary Stream Array, `stream_entries` of them, and a lane per
+    /// stream, each the `Endpoint` its TDs go on - its `stream` the ID.
+    /// Made the first time and kept, as its ring is.
+    streams: u32 = 0,
+    stream: u32 = 0,
+    contexts: ?[*]volatile u32 = null,
+    contexts_raw: ?*anyopaque = null,
+    contexts_raw_size: u32 = 0,
+    lanes: ?[*]Endpoint = null,
 };
 
 /// A device slot, and the device in it: where it is in the tree, what
@@ -221,6 +241,8 @@ pub const Host = struct {
     page_size: u32 = 4096,
     scratchpads: u32 = 0,
     power_switched: bool = false,
+    /// HCCPARAMS1's MaxPSASize: 0, no streams.
+    max_psa_size: u32 = 0,
     /// The root hub's ports: the controller's root ports, the USB 2 ones
     /// first. Each one's PORTSC number, and a bit per USB 3 one (from bit
     /// 1, as the hub numbers them).
@@ -328,6 +350,32 @@ pub fn isIso(ep: *const Endpoint) bool {
 
 pub fn isIsoKind(kind: u32) bool {
     return kind == regs.EP_ISOCH_OUT or kind == regs.EP_ISOCH_IN;
+}
+
+/// The endpoints an endpoint's TDs go on: each of its streams' lanes, or
+/// the endpoint itself.
+pub fn ringsOf(ep: *Endpoint) []Endpoint {
+    if (ep.streams != 0) return ep.lanes.?[0..ep.streams];
+    return ep[0..1];
+}
+
+/// The lane of stream `stream` (0: the endpoint itself), or null for a
+/// stream the endpoint does not have.
+pub fn laneOf(ep: *Endpoint, stream: u32) ?*Endpoint {
+    if (ep.streams == 0) return if (stream == 0) ep else null;
+    if (stream == 0 or stream > ep.streams) return null;
+    return &ep.lanes.?[stream - 1];
+}
+
+/// The lane whose ring the TRB at `pointer` is on: the endpoint itself
+/// when it has no streams.
+pub fn laneAt(ep: *Endpoint, pointer: u64) ?*Endpoint {
+    if (ep.streams == 0) return ep;
+    for (ringsOf(ep)) |*lane| {
+        const start: u64 = @intFromPtr(lane.ring.trbs);
+        if (pointer >= start and pointer < start + lane.ring.bytes()) return lane;
+    }
+    return null;
 }
 
 /// Whether the endpoint can have its next request on the ring now.

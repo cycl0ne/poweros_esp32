@@ -43,6 +43,14 @@
 //! the wire's packets. A controller that moves one wire packet an
 //! interval (usbotg.device) answers a bigger packet IOERR_BADLENGTH.
 //!
+//! **A SuperSpeed bulk endpoint may have streams**: `streams` says how
+//! many - IDs 1 to that - and `stream` which one a transfer goes on. Each
+//! stream is a queue of its own on the endpoint, a transfer on one
+//! waiting only for those before it on the same, and the device picks
+//! the stream it moves data on next. A controller without streams, or
+//! whose stream arrays are too small for the one named, answers
+//! UHIOERR_HOSTERROR.
+//!
 //! **A lost packet is a result, not an error.** The request is answered
 //! with io_Error 0 whatever became of its packets: `io_Actual` is the
 //! bytes that went or came, `iso_lost` the packets that did not, and a
@@ -109,7 +117,8 @@ pub const UHIOERR_TIMEOUT: i8 = 4;
 /// The device sent more than was asked for.
 pub const UHIOERR_OVERFLOW: i8 = 5;
 /// The controller could not do it: its DMA could not reach the memory,
-/// or it was reset under the transfer.
+/// it has no such stream, it was reset under the transfer, or the
+/// transfer's endpoint was added afresh or dropped under it.
 pub const UHIOERR_HOSTERROR: i8 = 6;
 /// The device is gone.
 pub const UHIOERR_DETACHED: i8 = 7;
@@ -230,6 +239,11 @@ pub const IOUsbHC = extern struct {
     /// companion's wBytesPerInterval at SuperSpeed, (burst + 1) packets
     /// at high speed; 0 for one packet's.
     interval_bytes: u16 = 0,
+    /// A SuperSpeed bulk endpoint's streams, IDs 1 to `streams` (0: it
+    /// has none, or the transfer does not use them), and the one the
+    /// transfer goes on.
+    streams: u16 = 0,
+    stream: u16 = 0,
 };
 
 /// What `UHCMD_QUERYDEVICE` answers.

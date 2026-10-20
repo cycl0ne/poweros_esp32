@@ -234,7 +234,7 @@ test "an isochronous TD's bursts" {
     try testing.expectEqual(@as(u32, 0), (high >> 7) & 3);
     try testing.expectEqual(@as(u32, 2), (high >> 16) & 0xF);
     // Mult in word 0.
-    try testing.expectEqual(@as(u32, 1 << 16 | 2 << 8), regs.endpointWord0(1, 2));
+    try testing.expectEqual(@as(u32, 1 << 16 | 2 << 8), regs.endpointWord0(1, 2, 0));
 }
 
 test "the root hub's ports: the USB 2 ones first, then the USB 3 ones" {
@@ -304,8 +304,64 @@ test "a slot context's words" {
     try testing.expectEqual(@as(u32, 1 << 16 | 4 << 24), regs.slotWord1(1, 4));
     // Endpoint 0 at 64 bytes; an interrupt IN at 8 bytes, every 8 ms.
     try testing.expectEqual(@as(u32, 3 << 1 | 4 << 3 | 64 << 16), regs.endpointWord1(regs.EP_CONTROL, 0, 64));
-    try testing.expectEqual(@as(u32, 6 << 16), regs.endpointWord0(6, 0));
+    try testing.expectEqual(@as(u32, 6 << 16), regs.endpointWord0(6, 0, 0));
     try testing.expectEqual(@as(u32, 8 | 8 << 16), regs.endpointWord4(8, 8));
+}
+
+test "a stream array: a power of two of entries for the streams and stream 0, within the controller's" {
+    // QEMU's HCCPARAMS1: 64-bit, MaxPSASize 7 (256 entries).
+    try testing.expectEqual(@as(u32, 7), regs.maxPsaSize(0x0008_7001));
+    try testing.expectEqual(@as(u32, 0), regs.maxPsaSize(0x0008_0001));
+    // Sixteen streams and stream 0: 32 entries, MaxPStreams 4.
+    try testing.expectEqual(@as(u32, 32), regs.streamEntries(16, 7));
+    try testing.expectEqual(@as(u32, 4), regs.maxPStreams(32));
+    // Never fewer than four entries; three streams fill them.
+    try testing.expectEqual(@as(u32, 4), regs.streamEntries(1, 7));
+    try testing.expectEqual(@as(u32, 4), regs.streamEntries(3, 7));
+    try testing.expectEqual(@as(u32, 8), regs.streamEntries(4, 7));
+    try testing.expectEqual(@as(u32, 1), regs.maxPStreams(4));
+    // A controller whose arrays hold four entries; one with none.
+    try testing.expectEqual(@as(u32, 4), regs.streamEntries(16, 1));
+    try testing.expectEqual(@as(u32, 0), regs.streamEntries(16, 0));
+    try testing.expectEqual(@as(u32, 0), regs.streamEntries(0, 7));
+    // The streams an endpoint is given of those asked.
+    try testing.expectEqual(@as(u32, 16), slots.streamsOf(7, 16));
+    try testing.expectEqual(@as(u32, 16), slots.streamsOf(7, 1 << 15));
+    try testing.expectEqual(@as(u32, 3), slots.streamsOf(1, 16));
+    try testing.expectEqual(@as(u32, 0), slots.streamsOf(0, 16));
+    try testing.expectEqual(@as(u32, 0), slots.streamsOf(7, 0));
+}
+
+test "a stream's context and its Set TR Dequeue words, its doorbell, its endpoint's context" {
+    // A primary stream's ring at 0x1000, cycle state 1.
+    try testing.expectEqual(@as(u64, 0x1000 | 1 | 1 << 1), regs.streamPointer(0x1000 | 1));
+    try testing.expectEqual(@as(u32, 5 << 16), regs.streamField(5));
+    try testing.expectEqual(@as(u32, 3 | 5 << 16), 3 | regs.streamField(5));
+    // MaxPStreams 4 with a linear array.
+    try testing.expectEqual(@as(u32, 1 << 15 | 4 << 10), regs.endpointWord0(0, 0, 4));
+}
+
+test "an endpoint's lanes: one per stream, each found by its ID and by its ring" {
+    var trbs: [3][_xhci.ring_trbs]Trb = undefined;
+    var lanes: [3]_xhci.Endpoint = @splat(.{});
+    for (&lanes, &trbs, 1..) |*lane, *memory, stream| {
+        lane.ring.init(memory);
+        lane.stream = @intCast(stream);
+    }
+    var endpoint: _xhci.Endpoint = .{ .lanes = &lanes };
+    // Without streams the endpoint is its own lane.
+    try testing.expectEqual(@as(usize, 1), _xhci.ringsOf(&endpoint).len);
+    try testing.expectEqual(&endpoint, _xhci.laneOf(&endpoint, 0).?);
+    try testing.expectEqual(@as(?*_xhci.Endpoint, null), _xhci.laneOf(&endpoint, 1));
+    try testing.expectEqual(&endpoint, _xhci.laneAt(&endpoint, 0x1234).?);
+    endpoint.streams = 3;
+    try testing.expectEqual(@as(usize, 3), _xhci.ringsOf(&endpoint).len);
+    try testing.expectEqual(&lanes[1], _xhci.laneOf(&endpoint, 2).?);
+    try testing.expectEqual(@as(?*_xhci.Endpoint, null), _xhci.laneOf(&endpoint, 0));
+    try testing.expectEqual(@as(?*_xhci.Endpoint, null), _xhci.laneOf(&endpoint, 4));
+    const third: u64 = @intFromPtr(&trbs[2][5]);
+    try testing.expectEqual(&lanes[2], _xhci.laneAt(&endpoint, third).?);
+    try testing.expectEqual(@as(?*_xhci.Endpoint, null), _xhci.laneAt(&endpoint, 0x10));
 }
 
 test "scratchpads are counted from both their fields" {

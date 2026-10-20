@@ -8,6 +8,14 @@
 //! TD behind it to be dealt with. An isochronous endpoint is the one
 //! that has more: see below.
 //!
+//! **An endpoint with streams** has a ring per stream - its lanes - each
+//! with a TD of its own at a time, the streams side by side: a request
+//! waits on its stream's lane, the doorbell names the stream, and an
+//! event finds its lane by the ring its TRB is on. A stop or a halt holds
+//! every stream: the stream whose TD ended has its ring moved on alone
+//! (Set TR Dequeue Pointer with its stream ID), and every lane with a TD
+//! is rung again (`moveOn`).
+//!
 //! **A control transfer** is one TD: a Setup Stage TRB with the setup
 //! packet in it, a Data Stage TRB when there is data - interrupting on a
 //! short packet, which says how much came - and a Status Stage TRB that
@@ -51,6 +59,8 @@
 //! pointer set past the TD - before the next one (`recover`). A request
 //! whose NAK timeout passes, or that AbortIO asks for, has its endpoint
 //! stopped (Stop Endpoint) and its ring moved on the same way (`cancel`).
+//! An endpoint added afresh, or dropped, has what was on it answered
+//! (`failEndpoint`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -93,7 +103,7 @@ fn isRequest(setup: d.SetupPacket, request_type: u8, request: u8) bool {
 }
 
 /// A request for a device: its slot found - made, for address 0 - and
-/// queued on its endpoint.
+/// queued on its endpoint, or on its stream's lane.
 fn accept(host: *Host, req: *usbhc.IOUsbHC) void {
     const control = req.std.req.command == usbhc.UHCMD_CONTROLXFER;
     if (req.address == 0 and control and isRequest(req.setup, d.USB_DIR_OUT, d.USB_REQ_SET_ADDRESS)) {
@@ -124,27 +134,30 @@ fn accept(host: *Host, req: *usbhc.IOUsbHC) void {
         const refused = slots.ensureEndpoint(host, slot, dci, req);
         if (refused != 0) return _xhci.reply(host, req, refused);
     }
+    const lane = _xhci.laneOf(&slot.endpoints[dci], req.stream) orelse return _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
     if (req.nak_timeout != 0 and req.std.req.command != usbhc.UHCMD_ISOXFER) {
         req.hc_private[_xhci.PRIV_FLAGS] |= _xhci.PRIVF_DEADLINE;
         req.hc_private[_xhci.PRIV_DUE] = _xhci.now(host) +% req.nak_timeout;
     }
-    host.sys.AddTail(&slot.endpoints[dci].queue, _xhci.nodeOf(req));
+    host.sys.AddTail(&lane.queue, _xhci.nodeOf(req));
 }
 
 // --- TDs onto the rings -----------------------------------------------------------
 
-/// Every endpoint with nothing on its ring given its next request.
+/// Every endpoint - every lane of one with streams - with nothing on its
+/// ring given its next request.
 pub fn schedule(host: *Host) void {
     for (host.slots[1..]) |entry| {
         const slot = entry orelse continue;
         if (!slot.enabled) continue;
         var dci: u32 = 1;
         while (dci <= slot.entries) : (dci += 1) {
-            const ep = &slot.endpoints[dci];
-            while (_xhci.hasRoom(ep)) {
-                const node = host.sys.RemHead(&ep.queue) orelse break;
-                const req = _xhci.requestOfNode(node);
-                if (_xhci.isIso(ep)) startIso(host, slot, dci, ep, req) else start(host, slot, dci, req);
+            for (_xhci.ringsOf(&slot.endpoints[dci])) |*ep| {
+                while (_xhci.hasRoom(ep)) {
+                    const node = host.sys.RemHead(&ep.queue) orelse break;
+                    const req = _xhci.requestOfNode(node);
+                    if (_xhci.isIso(ep)) startIso(host, slot, dci, ep, req) else start(host, slot, dci, ep, req);
+                }
             }
         }
     }
@@ -360,8 +373,9 @@ fn ensureBounce(host: *Host, ep: *Endpoint, bytes: u32) bool {
     return true;
 }
 
-fn start(host: *Host, slot: *Slot, dci: u32, req: *usbhc.IOUsbHC) void {
-    const ep = &slot.endpoints[dci];
+/// A request's TD on its endpoint's ring - its lane's, on one with
+/// streams.
+fn start(host: *Host, slot: *Slot, dci: u32, ep: *Endpoint, req: *usbhc.IOUsbHC) void {
     ep.current = req;
     ep.done = 0;
     ep.short = false;
@@ -415,7 +429,8 @@ fn startControl(host: *Host, slot: *Slot, ep: *Endpoint, req: *usbhc.IOUsbHC) bo
 }
 
 /// A bulk or interrupt transfer's next round: as much as is left, up to
-/// the round's size - an empty one for the packet that ends an OUT.
+/// the round's size - an empty one for the packet that ends an OUT - the
+/// doorbell naming its stream.
 fn startRound(host: *Host, slot: *Slot, dci: u32, ep: *Endpoint, req: *usbhc.IOUsbHC) bool {
     const length: u32 = @intCast(req.std.length);
     const most: u32 = if (ep.kind == regs.EP_BULK_IN or ep.kind == regs.EP_BULK_OUT) _xhci.bulk_round else 64 * 1024;
@@ -435,7 +450,7 @@ fn startRound(host: *Host, slot: *Slot, dci: u32, ep: *Endpoint, req: *usbhc.IOU
     });
     ep.round = round;
     _xhci.toDevice(host, @intFromPtr(ep.ring.trbs), ep.ring.bytes());
-    _xhci.ringDoorbell(host, slot.id, dci);
+    _xhci.ringDoorbell(host, slot.id, dci | regs.streamField(ep.stream));
     return true;
 }
 
@@ -452,21 +467,23 @@ fn errorOf(code: u32) i8 {
 }
 
 /// A transfer event: the TD it ends answered, or its next round put on
-/// the ring. Taken while the task may be waiting for a command, so it
-/// asks none: a halt is noted for `recover`.
+/// the ring - on an endpoint with streams, the lane whose ring it names.
+/// Taken while the task may be waiting for a command, so it asks none: a
+/// halt is noted for `recover`, on the endpoint and on the lane.
 pub fn completed(host: *Host, event: Trb) void {
     const id = regs.eventSlot(event.control);
     const dci = regs.eventEndpoint(event.control);
     if (id == 0 or id > _xhci.max_slots or dci == 0) return;
     const slot = host.slots[id] orelse return;
     if (!slot.enabled) return;
-    const ep = &slot.endpoints[dci];
-    if (_xhci.isIso(ep)) return isoCompleted(host, ep, event);
+    const endpoint = &slot.endpoints[dci];
+    if (_xhci.isIso(endpoint)) return isoCompleted(host, endpoint, event);
+    const pointer = event.param();
+    const ep = _xhci.laneAt(endpoint, pointer) orelse return;
     const req = ep.current orelse return;
     const code = regs.completionCode(event.status);
     // A stop's own event: `cancel` deals with its TD.
     if (code == regs.CC_STOPPED or code == regs.CC_STOPPED_LENGTH_INVALID or code == regs.CC_STOPPED_SHORT_PACKET) return;
-    const pointer = event.param();
     const ok = code == regs.CC_SUCCESS or code == regs.CC_SHORT_PACKET;
 
     if (pointer != ep.last_trb) {
@@ -479,10 +496,12 @@ pub fn completed(host: *Host, event: Trb) void {
         }
         if (ok) return;
         ep.halted = true;
+        endpoint.halted = true;
         return finish(host, slot, ep, errorOf(code));
     }
     if (!ok) {
         ep.halted = true;
+        endpoint.halted = true;
         return finish(host, slot, ep, errorOf(code));
     }
 
@@ -565,7 +584,7 @@ fn isoCompleted(host: *Host, ep: *Endpoint, event: Trb) void {
 fn cancelIso(host: *Host, slot: *Slot, dci: u32, err: i8) void {
     const ep = &slot.endpoints[dci];
     const code = controller.command(host, .{ .control = regs.typeField(regs.TRB_STOP_ENDPOINT) | regs.endpointField(dci) | regs.slotField(slot.id) });
-    if (code == regs.CC_SUCCESS) moveDequeue(host, slot, dci);
+    if (code == regs.CC_SUCCESS) moveDequeue(host, slot, dci, ep);
     dropFlight(host, ep, err);
 }
 
@@ -646,16 +665,34 @@ pub fn finishPosted(host: *Host) void {
 
 // --- halts, stops, deadlines ------------------------------------------------------
 
-/// A stopped or halted endpoint's ring moved past what was on it: the
-/// next TD starts where the next TRB goes.
-fn moveDequeue(host: *Host, slot: *Slot, dci: u32) void {
-    const ep = &slot.endpoints[dci];
-    const pointer = ep.ring.dequeuePointer();
+/// A stopped or halted endpoint's ring - a lane's, its stream named -
+/// moved past what was on it: the next TD starts where the next TRB goes.
+fn moveDequeue(host: *Host, slot: *Slot, dci: u32, ep: *Endpoint) void {
+    const pointer = if (ep.stream != 0) regs.streamPointer(ep.ring.dequeuePointer()) else ep.ring.dequeuePointer();
     _ = controller.command(host, .{
         .param_lo = ring.lo(pointer),
         .param_hi = ring.hi(pointer),
+        .status = regs.streamField(ep.stream),
         .control = regs.typeField(regs.TRB_SET_TR_DEQUEUE) | regs.endpointField(dci) | regs.slotField(slot.id),
     });
+}
+
+/// A halted or stopped endpoint moved on, `ready` once the controller has
+/// it stopped: each lane marked halted - its TD answered or taken back -
+/// has its ring set past what was on it; on an endpoint with streams,
+/// whose halt or stop held every stream, each lane with a TD is rung
+/// again.
+fn moveOn(host: *Host, slot: *Slot, dci: u32, endpoint: *Endpoint, ready: bool) void {
+    for (_xhci.ringsOf(endpoint)) |*ep| {
+        if (!ep.halted) continue;
+        ep.halted = false;
+        if (ready) moveDequeue(host, slot, dci, ep);
+    }
+    endpoint.halted = false;
+    if (!ready or endpoint.streams == 0) return;
+    for (_xhci.ringsOf(endpoint)) |*ep| {
+        if (ep.current != null) _xhci.ringDoorbell(host, slot.id, dci | regs.streamField(ep.stream));
+    }
 }
 
 fn resetEndpoint(host: *Host, slot: *Slot, dci: u32) u32 {
@@ -669,28 +706,27 @@ pub fn recover(host: *Host) void {
         if (!slot.enabled) continue;
         var dci: u32 = 1;
         while (dci <= slot.entries) : (dci += 1) {
-            const ep = &slot.endpoints[dci];
-            if (!ep.halted) continue;
-            ep.halted = false;
-            if (resetEndpoint(host, slot, dci) == regs.CC_SUCCESS) moveDequeue(host, slot, dci);
+            const endpoint = &slot.endpoints[dci];
+            if (!endpoint.halted) continue;
+            moveOn(host, slot, dci, endpoint, resetEndpoint(host, slot, dci) == regs.CC_SUCCESS);
         }
     }
 }
 
-/// The TD on an endpoint taken back: the endpoint stopped, its ring moved
-/// on, its request answered `err` - unless it ended meanwhile.
-fn cancel(host: *Host, slot: *Slot, dci: u32, err: i8) void {
-    const ep = &slot.endpoints[dci];
+/// The TD on an endpoint - on a lane of one with streams - taken back:
+/// the endpoint stopped, the ring moved on, its request answered `err` -
+/// unless it ended meanwhile.
+fn cancel(host: *Host, slot: *Slot, dci: u32, ep: *Endpoint, err: i8) void {
     const req = ep.current orelse return;
     var code = controller.command(host, .{ .control = regs.typeField(regs.TRB_STOP_ENDPOINT) | regs.endpointField(dci) | regs.slotField(slot.id) });
     if (ep.current != req) return;
     // A halted endpoint does not stop; it is reset instead.
     if (code == regs.CC_CONTEXT_STATE) code = resetEndpoint(host, slot, dci);
-    if (code == regs.CC_SUCCESS) moveDequeue(host, slot, dci);
-    ep.halted = false;
     ep.current = null;
     ep.data_trb = 0;
     ep.last_trb = 0;
+    ep.halted = true;
+    moveOn(host, slot, dci, &slot.endpoints[dci], code == regs.CC_SUCCESS);
     req.std.actual = ep.done;
     _xhci.reply(host, req, err);
 }
@@ -713,16 +749,17 @@ pub fn tick(host: *Host) void {
         if (!slot.enabled) continue;
         var dci: u32 = 1;
         while (dci <= slot.entries) : (dci += 1) {
-            const ep = &slot.endpoints[dci];
-            var it = ep.queue.iterator();
-            while (it.next()) |node| {
-                const req = _xhci.requestOfNode(node);
-                if (!pastDeadline(req, time)) continue;
-                host.sys.Remove(node);
-                _xhci.reply(host, req, usbhc.UHIOERR_NAKTIMEOUT);
+            for (_xhci.ringsOf(&slot.endpoints[dci])) |*ep| {
+                var it = ep.queue.iterator();
+                while (it.next()) |node| {
+                    const req = _xhci.requestOfNode(node);
+                    if (!pastDeadline(req, time)) continue;
+                    host.sys.Remove(node);
+                    _xhci.reply(host, req, usbhc.UHIOERR_NAKTIMEOUT);
+                }
+                const req = ep.current orelse continue;
+                if (pastDeadline(req, time)) cancel(host, slot, dci, ep, usbhc.UHIOERR_NAKTIMEOUT);
             }
-            const req = ep.current orelse continue;
-            if (pastDeadline(req, time)) cancel(host, slot, dci, usbhc.UHIOERR_NAKTIMEOUT);
         }
     }
 }
@@ -738,10 +775,11 @@ pub fn armTick(host: *Host) void {
         if (!slot.enabled) continue;
         var dci: u32 = 1;
         while (dci <= slot.entries) : (dci += 1) {
-            const ep = &slot.endpoints[dci];
-            var it = ep.queue.iterator();
-            while (it.next()) |node| earliest(&due, _xhci.requestOfNode(node));
-            if (ep.current) |req| earliest(&due, req);
+            for (_xhci.ringsOf(&slot.endpoints[dci])) |*ep| {
+                var it = ep.queue.iterator();
+                while (it.next()) |node| earliest(&due, _xhci.requestOfNode(node));
+                if (ep.current) |req| earliest(&due, req);
+            }
         }
     }
     const when = due orelse return;
@@ -778,25 +816,26 @@ pub fn takeAborts(host: *Host) void {
         if (!slot.enabled) continue;
         var dci: u32 = 1;
         while (dci <= slot.entries) : (dci += 1) {
-            const ep = &slot.endpoints[dci];
-            var it = ep.queue.iterator();
-            while (it.next()) |node| {
-                const req = _xhci.requestOfNode(node);
-                if (req.hc_private[_xhci.PRIV_ABORT] == 0) continue;
-                host.sys.Remove(node);
-                _xhci.reply(host, req, exec.IOERR_ABORTED);
-            }
-            if (_xhci.isIso(ep)) {
-                var flying = ep.flight.iterator();
-                while (flying.next()) |node| {
-                    if (_xhci.requestOfNode(node).hc_private[_xhci.PRIV_ABORT] == 0) continue;
-                    cancelIso(host, slot, dci, exec.IOERR_ABORTED);
-                    break;
+            for (_xhci.ringsOf(&slot.endpoints[dci])) |*ep| {
+                var it = ep.queue.iterator();
+                while (it.next()) |node| {
+                    const req = _xhci.requestOfNode(node);
+                    if (req.hc_private[_xhci.PRIV_ABORT] == 0) continue;
+                    host.sys.Remove(node);
+                    _xhci.reply(host, req, exec.IOERR_ABORTED);
                 }
-                continue;
+                if (_xhci.isIso(ep)) {
+                    var flying = ep.flight.iterator();
+                    while (flying.next()) |node| {
+                        if (_xhci.requestOfNode(node).hc_private[_xhci.PRIV_ABORT] == 0) continue;
+                        cancelIso(host, slot, dci, exec.IOERR_ABORTED);
+                        break;
+                    }
+                    continue;
+                }
+                const req = ep.current orelse continue;
+                if (req.hc_private[_xhci.PRIV_ABORT] != 0) cancel(host, slot, dci, ep, exec.IOERR_ABORTED);
             }
-            const req = ep.current orelse continue;
-            if (req.hc_private[_xhci.PRIV_ABORT] != 0) cancel(host, slot, dci, exec.IOERR_ABORTED);
         }
     }
     roothub.takeAbort(host);
@@ -811,19 +850,21 @@ pub fn pending(host: *Host) bool {
         if (!slot.enabled) continue;
         var dci: u32 = 1;
         while (dci <= slot.entries) : (dci += 1) {
-            const ep = &slot.endpoints[dci];
-            if (ep.halted) return true;
-            if (_xhci.hasRoom(ep) and !ep.queue.isEmpty()) return true;
+            const endpoint = &slot.endpoints[dci];
+            if (endpoint.halted) return true;
+            for (_xhci.ringsOf(endpoint)) |*ep| {
+                if (_xhci.hasRoom(ep) and !ep.queue.isEmpty()) return true;
+            }
         }
     }
     return false;
 }
 
-/// Every request of a slot answered `err`: what is on its rings and what
-/// waits. The controller is not told: the slot goes, or the controller
-/// stops.
-pub fn failSlot(host: *Host, slot: *Slot, err: i8) void {
-    for (&slot.endpoints) |*ep| {
+/// Every request of an endpoint answered `err`: what is on its rings and
+/// what waits, on each of its streams. The controller is not told: the
+/// endpoint is dropped, its slot goes, or the controller stops.
+pub fn failEndpoint(host: *Host, endpoint: *Endpoint, err: i8) void {
+    for (_xhci.ringsOf(endpoint)) |*ep| {
         if (ep.current) |req| {
             ep.current = null;
             ep.data_trb = 0;
@@ -835,6 +876,14 @@ pub fn failSlot(host: *Host, slot: *Slot, err: i8) void {
         dropFlight(host, ep, err);
         while (host.sys.RemHead(&ep.queue)) |node| _xhci.reply(host, _xhci.requestOfNode(node), err);
     }
+    endpoint.halted = false;
+}
+
+/// Every request of a slot answered `err`: what is on its rings and what
+/// waits. The controller is not told: the slot goes, or the controller
+/// stops.
+pub fn failSlot(host: *Host, slot: *Slot, err: i8) void {
+    for (&slot.endpoints) |*ep| failEndpoint(host, ep, err);
 }
 
 /// Every request answered `err`, as the controller stops.
