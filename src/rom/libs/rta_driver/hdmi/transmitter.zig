@@ -14,7 +14,7 @@
 
 const sdk = @import("sdk");
 const reg = sdk.hardware.mmio.reg;
-const display = @import("../../../libs/rtg_driver/fbboard/jh7110.zig");
+const display = @import("../../rtg_driver/fbboard/jh7110.zig");
 
 /// The power management unit and the VOUT domain's reset generator, to
 /// tell whether the transmitter is up: its domain on (bit 4), its reset
@@ -74,7 +74,7 @@ pub fn present() bool {
 /// The transmitter set up for the stream at `rate` (`i2s.sample_rate`),
 /// and its sound on. Only once `present`.
 pub fn start(comptime rate: u32) void {
-    if (rate != 48_000) @compileError("hdmi.zig is set up for 48000 Hz");
+    if (rate != 48_000) @compileError("transmitter.zig is set up for 48000 Hz");
     // starfive_hdmi_audio_init: I2S, MCLK at 256 times the rate, the
     // standard format, each input to its own pair.
     modify(AUDIO_CTRL1, CTS_EXTERNAL | SOURCE_MASK | MCLK_RATIO_MASK, CTS_EXTERNAL | MCLK_256FS);

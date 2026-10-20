@@ -2,7 +2,7 @@
 //! The JH7110's first I2S transmitter (I2STX0), Synopsys's DesignWare
 //! I2S, as the source of the HDMI port's sound: a stereo stream of 16-bit
 //! samples at 48000 a second, which the HDMI transmitter takes inside the
-//! chip (`hdmi.zig`).
+//! chip (`transmitter.zig`).
 //!
 //! The clocks are the system clock generator's; the controller only
 //! shifts the samples out on them. The master clock (MCLK) is the board's
