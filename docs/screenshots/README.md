@@ -1,11 +1,23 @@
 # Screenshots
 
-PowerOS 0.2 on the boards, and in Espressif's QEMU. Most screenshots
+PowerOS 0.2 on the boards, in Espressif's QEMU and in QEMU's AArch64
+machine. Most screenshots
 are QEMU's (`./zig build qemu-display`, with the QEMU from
 `scripts/build-qemu.sh`), on the 1024×600 display the Waveshare 7" board
 has; the Player's were taken on the Olimex with `C:ScreenDump`, and the
 photos are the boards'. Every program shown is on the flash disk and
 runs from there.
+
+## Four cores: the desktop on AArch64
+
+![PowerOS in QEMU's AArch64 machine: a textured cube turning in a window, CPU Load with four cores at work, Memory Map and the desktop's About](desktop-a64.gif)
+
+PowerOS in QEMU's AArch64 `virt` machine (`-Dboard=qemu_virt_a64`),
+four Cortex-A76 cores at 1920×1080. `C:test/FacetWindow` turns its
+textured cube in a window on the desktop, drawn through facet.library;
+CPU Load shows each of the four cores about half busy, Memory Map what
+holds the 494 MB, and the desktop's About names the machine. The same
+as a video: [desktop-a64.mp4](desktop-a64.mp4).
 
 ## Music: `SYS:Programs/Player`
 

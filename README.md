@@ -12,6 +12,8 @@ run time and built against a separate SDK.
 ESP32-P4 boards, on StarFive's VisionFive 2 (RISC-V 64), in Espressif's
 QEMU and in QEMU's RISC-V 64 `virt` machine.
 
+[![PowerOS in QEMU's AArch64 machine: a textured cube turning in a window, CPU Load with four cores at work, Memory Map and the desktop's About](docs/screenshots/desktop-a64.gif)](docs/screenshots/README.md#four-cores-the-desktop-on-aarch64)
+
 [![PowerOS multitasking on the 7" Waveshare board](docs/screenshots/board-waveshare-7b.jpg)](docs/screenshots/README.md#on-the-board)
 
 <p>
@@ -31,7 +33,7 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
 
 | | |
 |---|---|
-| [Screenshots](docs/screenshots/README.md) | the Player, the shell, Notepad, HDToolBox, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
+| [Screenshots](docs/screenshots/README.md) | four cores on AArch64, the Player, the shell, Notepad, HDToolBox, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
 | [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
 | [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing, [the RISC-V machines](#the-risc-v-machines) |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
