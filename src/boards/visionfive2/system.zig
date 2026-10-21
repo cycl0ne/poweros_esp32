@@ -36,6 +36,17 @@ const trng = [_]Tag{
     .done,
 };
 
+/// The JH7110's own temperature sensor, beside its cores.
+const temperature = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_THERMAL),
+    .value(st.PART_Chip, st.CHIP_JH7110_TEMP),
+    .pointer(st.PART_ChipName, "jh7110 temp"),
+    .pointer(st.PART_Label, "SoC"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x120E_0000),
+    .done,
+};
+
 /// The microSD slot: SDIO1, on GPIO7 to 12 as the board wires them, its
 /// interrupt PLIC source 75. No card-detect or write-protect line.
 const card_slot = [_]Tag{
@@ -230,6 +241,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &trng),
+    .pointer(st.SYSTAG_Part, &temperature),
     .pointer(st.SYSTAG_Part, &dmac),
     .pointer(st.SYSTAG_Part, &card_slot),
     .pointer(st.SYSTAG_Part, &pcie0),

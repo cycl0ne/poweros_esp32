@@ -344,6 +344,11 @@ pub const PARTKIND_PCI: u32 = 21;
 /// PART_Chip which, PART_Address its registers (BUS_MEMORY), PART_Irq the
 /// interrupt its channels share.
 pub const PARTKIND_DMA: u32 = 22;
+/// A temperature sensor, which thermal.resource reads: PART_Chip which,
+/// PART_Address its registers (BUS_MEMORY), PART_Label what it measures
+/// ("SoC"). The board's sensors are thermal.resource's units in the order
+/// the board lists them.
+pub const PARTKIND_THERMAL: u32 = 23;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -432,6 +437,10 @@ pub const CHIP_JH7110_HDMI: u32 = 30;
 /// channels (PARTKIND_DMA on BUS_MEMORY), which dma.resource clocks and
 /// hands out as its DWDMA channels.
 pub const CHIP_JH7110_DMAC: u32 = 31;
+/// The JH7110's own temperature sensor (PARTKIND_THERMAL on BUS_MEMORY),
+/// beside its cores: one reading, 12 bits, which thermal.resource clocks
+/// and turns into degrees.
+pub const CHIP_JH7110_TEMP: u32 = 32;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

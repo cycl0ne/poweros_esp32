@@ -46,7 +46,7 @@ const commands = [_][]const u8{
     "loadanvil",     "iconx",      "usb",         "usbinfo",       "battery",
     "setclock",      "top",        "play",        "screendump",    "memdebug",
     "makelink",      "posfs",      "binddrivers", "pciinfo",       "record",
-    "audio",
+    "audio",         "temperature",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",       "anim",

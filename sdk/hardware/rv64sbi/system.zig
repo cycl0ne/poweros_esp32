@@ -95,6 +95,8 @@ pub const SYSCLK_GMAC1_GTXCLK = 100;
 pub const SYSCLK_GMAC0_GTXCLK = 108;
 pub const SYSCLK_GMAC0_PTP = 109;
 pub const SYSCLK_GMAC0_GTXC = 111;
+pub const SYSCLK_TEMP_APB = 129;
+pub const SYSCLK_TEMP_CORE = 130;
 pub const SYSCLK_I2C5_APB = 143;
 pub const SYSCLK_I2STX0_APB = 161;
 pub const SYSCLK_I2STX0_BCLK_MST = 162;
@@ -134,6 +136,8 @@ pub const SYSRST_SDIO1_AHB = 65;
 pub const SYSRST_I2C5_APB = 81;
 pub const SYSRST_I2STX0_APB = 101;
 pub const SYSRST_I2STX0_BCLK = 102;
+pub const SYSRST_TEMP_APB = 123;
+pub const SYSRST_TEMP_CORE = 124;
 
 /// The STG generator's: a PCIe port's six are its AXI master's, its two
 /// AXI slaves', its bridge's, its core's and its APB's, port 1's six
