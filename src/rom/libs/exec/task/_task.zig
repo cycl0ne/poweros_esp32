@@ -157,7 +157,7 @@ fn checkStack(task: *const Task, context: *anyopaque) void {
     if (task.flags & sdk.exec.TF_GUARDED == 0) return;
     var over = !guardIntact(task.sp_lower, guardWords(task));
     // The host tests hand the dispatcher contexts that are not addresses.
-    if (@import("builtin").cpu.arch == .xtensa or @import("builtin").cpu.arch.isRISCV()) {
+    if (@import("builtin").os.tag == .freestanding) {
         const at = @intFromPtr(context);
         if (at < task.sp_lower or at > task.sp_upper) over = true;
     }
@@ -926,6 +926,10 @@ pub fn interruptExit(base: *ExecBase, context: *anyopaque) *anyopaque {
     var resumed = context;
     if (cpu.int_depth == 1) {
         if (cpu.reap != null or cpu.stopped != null) reap(base);
+        // A slice spent with nothing to take over: no switch, but the
+        // task's stack checked as a switch would check it - a task alone
+        // on its core would otherwise run off its stack unseen.
+        if (cpu.sys_flags & (SFF_SAR | SFF_TQE) == SFF_TQE) checkStack(cpu.this_task, context);
         if (cpu.sys_flags & SFF_SAR != 0) resumed = reschedule(base, context);
     }
     cpu.int_depth -= 1;

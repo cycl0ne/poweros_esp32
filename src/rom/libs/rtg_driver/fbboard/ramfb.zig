@@ -96,10 +96,10 @@ fn transfer(base: usize, control: u32, address: usize, length: u32) bool {
     };
     const at = @intFromPtr(&request);
     // The request is in memory before the device is told where it is.
-    asm volatile ("fence w, o" ::: .{ .memory = true });
+    sdk.hardware.barrier.toDevice();
     reg(base + DMA_ADDRESS).* = @byteSwap(@as(u32, @truncate(at >> 32)));
     reg(base + DMA_ADDRESS + 4).* = @byteSwap(@as(u32, @truncate(at)));
-    asm volatile ("fence io, rw" ::: .{ .memory = true });
+    sdk.hardware.barrier.full();
     const word: *volatile u32 = &request.control;
     var tries: u32 = 0;
     while (tries < patience) : (tries += 1) {

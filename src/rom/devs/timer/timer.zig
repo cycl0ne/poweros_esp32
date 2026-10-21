@@ -18,8 +18,9 @@
 //!
 //! The alarms and the E-clock are the chip's (`alarms`): on the ESP32s
 //! SYSTIMER's alarms 0 and 1 on its unit 0, 16 MHz from boot
-//! (systimer_alarms.zig); under SBI firmware the kernel's two alarms on
-//! the SBI timer, with the E-clock in microseconds (sbi_alarms.zig). The
+//! (systimer_alarms.zig); under SBI or PSCI firmware the kernel's two
+//! alarms on the core's comparator - the SBI timer, the generic timer -
+//! with the E-clock in microseconds (comparator_alarms.zig). The
 //! device builds against the SDK: it keeps the SysBase its init gets and
 //! calls exec through the SDK's interface to exec's jump table.
 
@@ -57,7 +58,7 @@ const unit_count = 5;
 /// The chip's alarms and E-clock.
 const alarms = switch (sdk.hardware.chip) {
     .esp32s3, .esp32p4 => @import("systimer_alarms.zig"),
-    .rv64sbi => @import("sbi_alarms.zig"),
+    .rv64sbi, .a64psci => @import("comparator_alarms.zig"),
 };
 
 /// The E-clock's rate.

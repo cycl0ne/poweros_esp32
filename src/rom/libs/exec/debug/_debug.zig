@@ -372,7 +372,7 @@ noinline fn spillWindows(depth: u32) u32 {
 /// the rest.
 fn backtrace() void {
     const chip = debug_hardware orelse return;
-    if (builtin.cpu.arch.isRISCV()) return backtraceByFramePointers(chip);
+    if (builtin.cpu.arch.isRISCV() or builtin.cpu.arch == .aarch64) return backtraceByFramePointers(chip);
     if (!moved and reason == .asked) @as(*volatile u32, &spill_sink).* = spillWindows(18);
     var pc: usize = 0;
     var sp: usize = 0;
@@ -426,10 +426,13 @@ fn backtrace() void {
 
 /// The call chain by frame pointers, as RISC-V code keeps them: each
 /// frame's return address one word below fp and the frame before it two
-/// words below - 4 and 8 bytes on RV32, 8 and 16 on RV64. From a trap the
-/// chain starts at the stopped code's frame pointer; from a call, at
-/// `enter`'s own, on the stack it was entered on.
+/// words below - 4 and 8 bytes on RV32, 8 and 16 on RV64. AArch64 code
+/// keeps its frame record at fp: the frame before it there, the return
+/// address a word above. From a trap the chain starts at the stopped
+/// code's frame pointer; from a call, at `enter`'s own, on the stack it
+/// was entered on.
 fn backtraceByFramePointers(chip: *const DebugHardware) void {
+    const record_up = builtin.cpu.arch == .aarch64;
     var fp: usize = entered_at;
     var depth: u32 = 1;
     if (frame) |f| {
@@ -443,11 +446,12 @@ fn backtraceByFramePointers(chip: *const DebugHardware) void {
         fp = at(f);
     }
     while (depth < max_frames) : (depth += 1) {
-        const ret = wordAt(fp -% @sizeOf(usize)) orelse break;
-        const before = wordAt(fp -% 2 * @sizeOf(usize)) orelse break;
+        const ret = wordAt(if (record_up) fp +% @sizeOf(usize) else fp -% @sizeOf(usize)) orelse break;
+        const before = wordAt(if (record_up) fp else fp -% 2 * @sizeOf(usize)) orelse break;
         if (ret == 0 or !inCode(ret)) break;
-        // Two back: inside the call, whether it took two bytes or four.
-        printFrame(depth, ret - 2);
+        // Back into the call: two bytes on RISC-V, whether it took two
+        // or four; the four of the call on AArch64.
+        printFrame(depth, ret - if (record_up) 4 else 2);
         if (before <= fp) break;
         fp = before;
     }

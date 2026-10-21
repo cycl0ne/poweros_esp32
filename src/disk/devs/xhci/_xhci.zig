@@ -38,7 +38,8 @@
 //! before the controller is told, and what the controller wrote is read
 //! afresh once the driver hears of it (`toDevice`, `fromDevice`). For a
 //! controller that sees the processors' caches (PCIDevice.dma_coherent),
-//! as the VisionFive 2's VL805 and QEMU's do, that is a fence each way,
+//! as the VisionFive 2's VL805 and QEMU's do, that is a barrier each way
+//! (sdk.hardware.barrier),
 //! which keeps the compiler from holding on to memory too: without the
 //! one in `fromDevice` the VL805's root hub found no device behind it.
 //! For one that does not, the lines are written back to memory, and
@@ -46,6 +47,7 @@
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const barrier = sdk.hardware.barrier;
 const usbhc = sdk.devices.usbhc;
 const timer = sdk.devices.timer;
 const pci = sdk.pci;
@@ -459,17 +461,17 @@ pub fn write64(address: usize, value: u64) void {
 /// the command ring's). What was written for the controller is out to
 /// memory before it hears.
 pub fn ringDoorbell(host: *const Host, slot: u32, target: u32) void {
-    asm volatile ("fence iorw, iorw" ::: .{ .memory = true });
+    barrier.full();
     reg(host.db + 4 * @as(usize, slot)).* = target;
 }
 
 /// What the driver wrote at [address, address + bytes) out to memory,
 /// for the controller to read. Where it sees the caches the writes are
 /// only ordered before the register write that tells it, as Linux's
-/// writel orders them (`fence w, o`).
+/// writel orders them (`barrier.toDevice`).
 pub fn toDevice(host: *const Host, address: usize, bytes: usize) void {
     if (host.coherent) {
-        asm volatile ("fence w, o" ::: .{ .memory = true });
+        barrier.toDevice();
         return;
     }
     if (bytes == 0) return;
@@ -480,11 +482,11 @@ pub fn toDevice(host: *const Host, address: usize, bytes: usize) void {
 /// The caches' copy of [address, address + bytes) dropped, so what the
 /// controller wrote there is read. Where it sees the caches the reads are
 /// only ordered after the register read that said it was written, as
-/// Linux's readl orders them (`fence i, r`), and the compiler keeps
-/// nothing of that memory from before.
+/// Linux's readl orders them (`barrier.fromDevice`), and the compiler
+/// keeps nothing of that memory from before.
 pub fn fromDevice(host: *const Host, address: usize, bytes: usize) void {
     if (host.coherent) {
-        asm volatile ("fence i, r" ::: .{ .memory = true });
+        barrier.fromDevice();
         return;
     }
     if (bytes == 0) return;

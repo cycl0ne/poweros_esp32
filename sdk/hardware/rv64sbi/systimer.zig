@@ -28,6 +28,11 @@ pub inline fn uptimeUs() u64 {
     return read() / (timebase_hz / 1_000_000);
 }
 
+/// `us` microseconds in the timebase's units.
+pub inline fn fromUs(us: u64) u64 {
+    return us * (timebase_hz / 1_000_000);
+}
+
 /// Wait `us` microseconds without giving the CPU away: the wait for code
 /// that may not Wait - holding a spinlock, before timer.device, in the
 /// boot.

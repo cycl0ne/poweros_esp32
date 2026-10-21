@@ -52,7 +52,7 @@ const GpioBase = gpio_resource.GpioBase;
 const controller = switch (sdk.hardware.chip) {
     .esp32s3 => @import("esp32s3/i2s.zig"),
     .esp32p4 => @import("esp32p4/i2s.zig"),
-    .rv64sbi => @compileError("rta i2s: this chip has no I2S controller driven yet"),
+    .rv64sbi, .a64psci => @compileError("rta i2s: this chip has no I2S controller driven yet"),
 };
 
 const MODULE_NAME = "rta-i2s";

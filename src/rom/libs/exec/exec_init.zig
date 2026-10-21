@@ -64,9 +64,12 @@ pub const LIBRARY_VERSION = 1;
 /// since its write-back drops the lines as well. 16: the Software Failure
 /// requester's screen is brought in front of the others. 17: the ROM
 /// debugger runs on a stack of its own and lists exec's lists - the rows
-/// `s3>` shows, read with no lock and every node checked.
-pub const LIBRARY_REVISION = 17;
-const BUILD_DATE = "20.10.2026";
+/// `s3>` shows, read with no lock and every node checked. 18: a released
+/// semaphore's grant is the last thing the releaser touches of the
+/// waiter's request, which is on the waiter's stack; a task alone on its
+/// core has its stack checked as each slice ends, as a switch would.
+pub const LIBRARY_REVISION = 18;
+const BUILD_DATE = "21.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

@@ -140,13 +140,17 @@ const engine_piece = 2 * 1024;
 pub var fetch_stale: u32 = 0;
 
 /// This core's instruction fetch fenced, if another core has invalidated
-/// instruction-cache lines since it last did: what the RISC-V kernel's
-/// exception exit calls before it resumes a task.
+/// instruction-cache lines since it last did: what the RISC-V and AArch64
+/// kernels' exception exit calls before it resumes a task. On AArch64 an
+/// `isb`, which the eret after it would be as well.
 pub fn syncFetch(core: u32) void {
     const mine = @as(u32, 1) << @intCast(core);
     if (@atomicLoad(u32, &fetch_stale, .acquire) & mine == 0) return;
     _ = @atomicRmw(u32, &fetch_stale, .And, ~mine, .acq_rel);
-    asm volatile ("fence.i" ::: .{ .memory = true });
+    switch (builtin.cpu.arch) {
+        .aarch64 => asm volatile ("isb" ::: .{ .memory = true }),
+        else => asm volatile ("fence.i" ::: .{ .memory = true }),
+    }
 }
 
 /// What the calls drive. Ranges are whole lines, except writeback_line's.
@@ -207,6 +211,7 @@ pub const chip_cache: CacheHardware = switch (sdk.hardware.chip) {
     },
     .esp32p4 => p4.hardware,
     .rv64sbi => rv64.hardware,
+    .a64psci => a64.hardware,
 };
 
 /// A DCache line, in bytes.
@@ -232,13 +237,13 @@ pub const Range = struct {
 pub const data_bus: Range = switch (sdk.hardware.chip) {
     .esp32s3 => .{ .start = 0x3C00_0000, .end = 0x3E00_0000 },
     .esp32p4 => .{ .start = sdk.hardware.cache.CACHED_START, .end = sdk.hardware.cache.CACHED_END },
-    .rv64sbi => .{ .start = sdk.hardware.map.DRAM_START, .end = sdk.hardware.map.DRAM_END },
+    .rv64sbi, .a64psci => .{ .start = sdk.hardware.map.DRAM_START, .end = sdk.hardware.map.DRAM_END },
 };
 /// The instruction bus, through the ICache: on the P4 the same addresses.
 pub const instruction_bus: Range = switch (sdk.hardware.chip) {
     .esp32s3 => .{ .start = 0x4200_0000, .end = 0x4400_0000 },
     .esp32p4 => data_bus,
-    .rv64sbi => data_bus,
+    .rv64sbi, .a64psci => data_bus,
 };
 
 /// The start of the line holding `address`.
@@ -388,7 +393,7 @@ pub const chip_code_map: CodeMap = switch (sdk.hardware.chip) {
         .instruction_start = sdk.hardware.map.PSRAM_START,
         .size = sdk.hardware.map.DRAM_END - sdk.hardware.map.PSRAM_START,
     },
-    .rv64sbi => .{
+    .rv64sbi, .a64psci => .{
         .data_start = sdk.hardware.map.DRAM_START,
         .instruction_start = sdk.hardware.map.DRAM_START,
         .size = sdk.hardware.map.DRAM_END - sdk.hardware.map.DRAM_START,
@@ -600,6 +605,103 @@ const rv64 = struct {
 
     fn fenceFetch() void {
         asm volatile ("fence.i" ::: .{ .memory = true });
+        const mine = @as(u32, 1) << @intCast(exec_base.coreId());
+        _ = @atomicRmw(u32, &fetch_stale, .Or, ~mine, .release);
+    }
+};
+
+// --- an AArch64 machine under PSCI firmware ----------------------------------
+
+/// The cores' caches by address, with the instructions every core has at
+/// EL1: `dc cvac` writes a line back to the point of coherency (memory, as
+/// a device sees it), `dc civac` writes it back and drops it, each on
+/// every core that holds it, and a `dsb` waits for them. Dropping is
+/// always with a write-back first, so a line a DMA range shares at one of
+/// its ends loses nothing written beside it. There is no whole-cache
+/// write-back by address: CacheClearU leaves the data where it is, and a
+/// driver names its range.
+///
+/// Code and data share one address space, but an A76's instruction fetch
+/// does not see its own data cache (CTR_EL0.IDC 0): code written to
+/// memory is cleaned to the point of unification (`dc cvau`), its
+/// instruction lines dropped on every core (`ic ivau`), and this core's
+/// fetch synchronised (`isb`); every other core does that at its next
+/// exception exit (`syncFetch`), which an eret is in any case. LoadSeg
+/// names the range; CacheClearU's whole instruction cache (`ic ialluis`)
+/// is for code whose data lines have gone already. Each core does its
+/// lines itself, so a long range is shared between the cores.
+const a64 = struct {
+    const hardware: CacheHardware = .{
+        .writeback_all = nothing,
+        .invalidate_icache_all = dropICache,
+        .writeback = cleanRange,
+        .writeback_line = cleanLine,
+        .invalidate = cleanInvalidateRange,
+        .invalidate_icache = invalidateICacheRange,
+        .writeback_drops = false,
+        .cores_share = always,
+    };
+
+    fn nothing() void {}
+
+    fn always() bool {
+        return true;
+    }
+
+    fn cleanRange(addr: usize, size: usize) void {
+        var line = addr;
+        while (line < addr + size) : (line += line_size) {
+            asm volatile ("dc cvac, %[at]"
+                :
+                : [at] "r" (line),
+                : .{ .memory = true });
+        }
+        asm volatile ("dsb sy" ::: .{ .memory = true });
+    }
+
+    fn cleanLine(addr: usize) void {
+        cleanRange(lineOf(addr), line_size);
+    }
+
+    fn cleanInvalidateRange(addr: usize, size: usize) void {
+        var line = addr;
+        while (line < addr + size) : (line += line_size) {
+            asm volatile ("dc civac, %[at]"
+                :
+                : [at] "r" (line),
+                : .{ .memory = true });
+        }
+        asm volatile ("dsb sy" ::: .{ .memory = true });
+    }
+
+    fn invalidateICacheRange(addr: usize, size: usize) void {
+        var line = addr;
+        while (line < addr + size) : (line += line_size) {
+            asm volatile ("dc cvau, %[at]"
+                :
+                : [at] "r" (line),
+                : .{ .memory = true });
+        }
+        asm volatile ("dsb ish" ::: .{ .memory = true });
+        line = addr;
+        while (line < addr + size) : (line += line_size) {
+            asm volatile ("ic ivau, %[at]"
+                :
+                : [at] "r" (line),
+                : .{ .memory = true });
+        }
+        synchronise();
+    }
+
+    fn dropICache() void {
+        asm volatile ("ic ialluis" ::: .{ .memory = true });
+        synchronise();
+    }
+
+    /// The instruction-cache maintenance done everywhere, this core's
+    /// fetch synchronised, and every other core marked to do its own.
+    fn synchronise() void {
+        asm volatile ("dsb ish; isb" ::: .{ .memory = true });
         const mine = @as(u32, 1) << @intCast(exec_base.coreId());
         _ = @atomicRmw(u32, &fetch_stale, .Or, ~mine, .release);
     }

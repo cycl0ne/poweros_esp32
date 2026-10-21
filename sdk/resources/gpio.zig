@@ -25,15 +25,16 @@ const hardware = @import("../hardware/hardware.zig");
 pub const GPIO_PADS: u32 = switch (hardware.chip) {
     .esp32s3 => 49,
     .esp32p4 => 55,
-    // None handed out yet: the JH7110's pads come with its GPIO driver.
-    .rv64sbi => 0,
+    // None handed out yet: the JH7110's pads come with its GPIO driver,
+    // the CM5's with the RP1's.
+    .rv64sbi, .a64psci => 0,
 };
 
 /// Whether `pad` is one the chip has.
 pub fn padExists(pad: u32) bool {
     return switch (hardware.chip) {
         .esp32s3 => pad < GPIO_PADS and (pad < 22 or pad > 25),
-        .esp32p4, .rv64sbi => pad < GPIO_PADS,
+        .esp32p4, .rv64sbi, .a64psci => pad < GPIO_PADS,
     };
 }
 

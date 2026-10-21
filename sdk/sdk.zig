@@ -133,8 +133,10 @@ fn isFixed(comptime T: type) bool {
 // holds such a structure at such an offset is refused.
 
 comptime {
-    const arch = @import("builtin").cpu.arch;
-    if (arch == .xtensa or arch == .riscv32 or arch == .riscv64) {
+    const builtin = @import("builtin");
+    const arch = builtin.cpu.arch;
+    const machine = arch == .aarch64 and builtin.os.tag == .freestanding;
+    if (arch == .xtensa or arch == .riscv32 or arch == .riscv64 or machine) {
         @setEvalBranchQuota(20_000_000);
         checkConstants(@This(), 0);
         checkConstants(@import("root"), 0);

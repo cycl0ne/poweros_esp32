@@ -33,6 +33,7 @@ const chip_host = switch (hardware.chip) {
     .esp32s3 => @import("esp32s3/sdhost.zig"),
     .esp32p4 => @import("esp32p4/sdhost.zig"),
     .rv64sbi => @import("jh7110/sdhost.zig"),
+    .a64psci => @compileError("sdcard.device: the AArch64 machines' SD host is not driven yet"),
 };
 
 const base = chip_host.base;

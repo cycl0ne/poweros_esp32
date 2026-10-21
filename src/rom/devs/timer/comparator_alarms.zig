@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
-//! timer.device's alarms on a machine under SBI firmware: the kernel's
-//! alarms 0 (the micro timer, one shot) and 1 (VBLANK, periodic), which
-//! it keeps beside its tick on the hart's one comparator and raises as
-//! interrupts of their own (sdk.hardware.systimer). The E-clock is the
-//! `time` counter in microseconds, whatever the timebase.
+//! timer.device's alarms on a machine under SBI or PSCI firmware: the
+//! kernel's alarms 0 (the micro timer, one shot) and 1 (VBLANK, periodic),
+//! which it keeps beside its tick on the core's one comparator and raises
+//! as interrupts of their own (sdk.hardware.systimer). The E-clock is the
+//! counter in microseconds, whatever its rate - which need not be a whole
+//! number of MHz.
 
 const sdk = @import("sdk");
 const systimer = sdk.hardware.systimer;
@@ -32,7 +33,7 @@ pub fn uptimeUs() u64 {
 /// E-clock ticks, microseconds, in the timebase's units.
 fn toTime(ticks: u64) u64 {
     if (ticks == parked) return systimer.never;
-    return ticks * (systimer.timebase_hz / 1_000_000);
+    return systimer.fromUs(ticks);
 }
 
 /// The micro timer set to `ticks`; one already past comes due at once.
