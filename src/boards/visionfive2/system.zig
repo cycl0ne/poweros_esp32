@@ -224,6 +224,9 @@ pub const root = [_]Tag{
     // The four U74s; the S7 has no supervisor mode and stays the
     // firmware's.
     .value(st.SYSTAG_Cores, 4),
+    // The U74s at 1.5 GHz, as Linux runs them, their supply raised to
+    // 1.04 V first (power.zig); the firmware leaves them at 1 GHz.
+    .value(st.SYSTAG_CpuSpeed, 1500),
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &trng),

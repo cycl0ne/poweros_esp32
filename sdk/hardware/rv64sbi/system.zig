@@ -15,7 +15,8 @@
 //! STG domain's every block, the display, the sound, the Ethernet MAC -
 //! and each driver turns on, sets and lets go what it uses. What the
 //! firmware needs for itself it sets up before the kernel and leaves
-//! running: the PLLs, the buses, UART0 and I2C5.
+//! running: the PLLs, the buses, UART0 and I2C5's pads. PLL0, the cores'
+//! clock, the kernel sets again as it starts (`cpuclock.zig`).
 //!
 //! **Every change is a read-modify-write of a register other drivers
 //! share** - a reset word, the pin controller's (`gpio.zig`), a syscon's
@@ -72,15 +73,25 @@ pub const CLK_MUX: u32 = 0xF << CLK_MUX_SHIFT;
 pub const CLK_DIVIDER: u32 = 0x00FF_FFFF;
 
 /// The system generator's clocks.
+pub const SYSCLK_CPU_ROOT = 0;
+pub const SYSCLK_CPU_CORE = 1;
+pub const SYSCLK_PERH_ROOT = 4;
+pub const SYSCLK_PLL0_DIV2 = 13;
 pub const SYSCLK_MCLK = 18;
+pub const SYSCLK_GCLK0 = 22;
 pub const SYSCLK_VOUT_SRC = 58;
 pub const SYSCLK_NOC_BUS_DISP_AXI = 60;
 pub const SYSCLK_VOUT_TOP_AHB = 61;
 pub const SYSCLK_VOUT_TOP_AXI = 62;
 pub const SYSCLK_VOUT_TOP_HDMITX0_MCLK = 63;
+pub const SYSCLK_WAVE511_VCE = 72;
+pub const SYSCLK_QSPI_REF_SRC = 89;
 pub const SYSCLK_SDIO1_AHB = 92;
 pub const SYSCLK_SDIO1_SDCARD = 94;
+pub const SYSCLK_USB_125M = 95;
 pub const SYSCLK_NOC_BUS_STG_AXI = 96;
+pub const SYSCLK_GMAC_SRC = 99;
+pub const SYSCLK_GMAC1_GTXCLK = 100;
 pub const SYSCLK_GMAC0_GTXCLK = 108;
 pub const SYSCLK_GMAC0_PTP = 109;
 pub const SYSCLK_GMAC0_GTXC = 111;

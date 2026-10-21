@@ -100,6 +100,12 @@ pub const SYSTAG_CacheFlush = SYSTAG_Dummy + 26;
 /// is one figure of free memory to show, not two. Absent, 0: internal
 /// memory and PSRAM apart, as on the ESP32s.
 pub const SYSTAG_UnifiedMemory = SYSTAG_Dummy + 27;
+/// The cores' clock the board wants, in MHz: a speed its chip has an
+/// operating point for, which the kernel sets as it starts - before
+/// anything else runs - with the supply the point wants, through the
+/// board's own code. The JH7110: 1000, as its firmware leaves it, or
+/// 1500. Absent, 0: the clock is left as the firmware left it.
+pub const SYSTAG_CpuSpeed = SYSTAG_Dummy + 28;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

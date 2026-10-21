@@ -170,6 +170,10 @@ export fn kmain(hartid: usize, fdt: usize) callconv(.c) noreturn {
     cpu.hartids[0] = hartid;
     // Read before exec has the memory it is in.
     takeBoard(device_tree.read(fdt));
+    // The cores' clock, before anything else runs on them and before it
+    // is measured.
+    const cpu_speed = comptime boards.fact(st.SYSTAG_CpuSpeed, 0);
+    const cpu_speed_set: hardware.cpuclock.Error!void = if (cpu_speed != 0) hardware.cpuclock.set(cpu_speed, boards.cpu_supply) else {};
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;
     exec.interrupt_hardware.* = plic.interrupt_hardware;
@@ -231,6 +235,7 @@ export fn kmain(hartid: usize, fdt: usize) callconv(.c) noreturn {
         hardware.systimer.timebase_hz / 1_000_000,
         timer.tick_hz,
     });
+    if (cpu_speed_set) |_| {} else |err| note("cpu clock not set to %ld MHz: %s", .{ @as(u64, cpu_speed), @errorName(err).ptr });
     cpu.enableInterrupts();
 
     // Multitasking starts. The exec task runs first: it starts the
