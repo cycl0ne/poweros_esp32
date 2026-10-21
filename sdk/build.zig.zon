@@ -14,6 +14,7 @@
         "program.ld",
         "program_esp32p4.ld",
         "program_rv64sbi.ld",
+        "program_a64psci.ld",
         "devices",
         "fd",
         "hardware",

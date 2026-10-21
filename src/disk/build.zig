@@ -200,16 +200,19 @@ const mac_only = [_][]const u8{"emac.device"};
 /// Drivers of hardware both ESP32s have and a RISC-V 64 machine under SBI
 /// does not: the DWC2 USB controller, the SD host.
 const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device" };
-/// What a RISC-V 64 machine under SBI has and the ESP32s do not: PCI,
-/// the command that lists it, and the USB controllers and SSDs on it.
+/// What a RISC-V 64 machine under SBI and an AArch64 machine under PSCI
+/// have and the ESP32s do not: PCI, the command that lists it, and the
+/// USB controllers and SSDs on it.
 const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device" };
 
-/// Whether `program` is built for `chip`.
+/// Whether `program` is built for `chip`. The AArch64 machines have no
+/// Ethernet MAC driven yet.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     const others = switch (chip) {
         .esp32s3 => &(mac_only ++ rv64_only),
         .esp32p4 => &(s3_only ++ rv64_only),
         .rv64sbi => &(s3_only ++ esp_only),
+        .a64psci => &(s3_only ++ esp_only ++ mac_only),
     };
     for (others) |name| {
         if (std.mem.eql(u8, program.name, name)) return false;

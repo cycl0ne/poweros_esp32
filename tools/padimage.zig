@@ -2,9 +2,9 @@
 //! padimage <in.bin> <out.bin> <bytes>: a disk image made as large as its
 //! disk, the rest erased (0xFF). mkfs writes only the blocks it touched
 //! and stops there, which on flash leaves the rest as the chip has it -
-//! erased. A disk image the loader puts in RAM (a RISC-V 64 machine's,
-//! src/rom/devs/flash/rv64sbi/ramflash.zig) is the whole disk, so it has
-//! to have every byte of it.
+//! erased. A disk image the loader puts in RAM (a RISC-V 64 or AArch64
+//! machine's, src/rom/devs/flash/ramdisk/ramflash.zig) is the whole disk,
+//! so it has to have every byte of it.
 
 const std = @import("std");
 

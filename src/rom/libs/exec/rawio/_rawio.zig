@@ -121,12 +121,12 @@ pub const chip_raw_io: RawIOHardware = .{ .init = uart.consoleInit, .put = uart.
 /// It is not what `RawPutChar` writes to. usbserial.device drives the
 /// same registers while the system runs, and two writers on one FIFO
 /// would tear each other's packets; the debugger takes it only with the
-/// machine stopped, when nothing else is running. A machine under SBI
-/// firmware has no such port, and nothing there.
-pub const usb_jtag_raw_io: RawIOHardware = if (sdk.hardware.chip == .rv64sbi)
-    no_raw_io
-else
-    .{ .init = usbJtagInit, .put = usbJtagPut, .get = usbJtagGet };
+/// machine stopped, when nothing else is running. A machine under SBI or
+/// PSCI firmware has no such port, and nothing there.
+pub const usb_jtag_raw_io: RawIOHardware = switch (sdk.hardware.chip) {
+    .esp32s3, .esp32p4 => .{ .init = usbJtagInit, .put = usbJtagPut, .get = usbJtagGet },
+    .rv64sbi, .a64psci => no_raw_io,
+};
 
 fn noInit() void {}
 fn noPut(_: u8) void {}

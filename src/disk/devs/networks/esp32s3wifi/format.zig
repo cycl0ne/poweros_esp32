@@ -250,6 +250,15 @@ pub fn formatFrom(sink: *Sink, format_string: [*:0]const u8, source: anytype) vo
     }
 }
 
+/// Whether Zig makes a C variadic function on the host the tests run on:
+/// not on ARM64 Linux, nor on x86-64 Windows, where its LLVM backend has
+/// them switched off.
+const host_has_c_variadics = switch (@import("builtin").cpu.arch) {
+    .aarch64 => @import("builtin").os.tag.isDarwin() or @import("builtin").os.tag == .windows,
+    .x86_64 => @import("builtin").os.tag != .windows and @import("builtin").os.tag != .uefi,
+    else => true,
+};
+
 fn testFormat(buffer: [*]u8, size: usize, format_string: [*:0]const u8, ...) callconv(.c) usize {
     var args = @cVaStart();
     defer @cVaEnd(&args);
@@ -260,6 +269,7 @@ fn testFormat(buffer: [*]u8, size: usize, format_string: [*:0]const u8, ...) cal
 }
 
 test format {
+    if (comptime !host_has_c_variadics) return error.SkipZigTest;
     const testing = std.testing;
     var buffer: [64]u8 = undefined;
     _ = testFormat(&buffer, buffer.len, "%d|%5u|%-4x|%04X|%s|%c", @as(c_int, -42), @as(c_uint, 7), @as(c_uint, 0xab), @as(c_uint, 0xbe), "ok", @as(c_int, 'z'));

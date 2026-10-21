@@ -3,19 +3,25 @@
 //! `esp32s3/`, `esp32p4/` - each with its peripherals' base addresses,
 //! registers and bits by the manual's names, picked by what the code is
 //! built for: 32-bit RISC-V is the ESP32-P4, 64-bit RISC-V a machine under
-//! SBI firmware (`rv64sbi/`: QEMU's virt, the JH7110), Xtensa the
-//! ESP32-S3, and the host tests see the S3's. The names below are the same on every chip; one a
-//! chip does not have yet is an error only where it is used.
+//! SBI firmware (`rv64sbi/`: QEMU's virt, the JH7110), freestanding
+//! AArch64 a machine under PSCI firmware (`a64psci/`: QEMU's virt, the
+//! Raspberry Pi CM5's BCM2712), Xtensa the ESP32-S3, and the host tests
+//! see the S3's - an AArch64 host as well as any other. The names below
+//! are the same on every chip; one a chip does not have yet is an error
+//! only where it is used.
 
 const builtin = @import("builtin");
 
 /// The chips there are.
-pub const Chip = enum { esp32s3, esp32p4, rv64sbi };
+pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci };
 
-/// The chip this code is built for.
+/// The chip this code is built for. AArch64 is the PSCI machine only
+/// where nothing runs below the code: a test built for an ARM host is a
+/// host build like any other.
 pub const chip: Chip = switch (builtin.cpu.arch) {
     .riscv32 => .esp32p4,
     .riscv64 => .rv64sbi,
+    .aarch64 => if (builtin.os.tag == .freestanding) .a64psci else .esp32s3,
     else => .esp32s3,
 };
 
@@ -24,6 +30,7 @@ const own = switch (chip) {
     .esp32s3 => @import("esp32s3/hardware.zig"),
     .esp32p4 => @import("esp32p4/hardware.zig"),
     .rv64sbi => @import("rv64sbi/hardware.zig"),
+    .a64psci => @import("a64psci/hardware.zig"),
 };
 
 /// The interrupt sources, by number.
@@ -85,9 +92,9 @@ pub const ldo = if (chip == .esp32p4) own.ldo else struct {};
 pub const sbi = if (chip == .rv64sbi) own.sbi else struct {};
 pub const plic = if (chip == .rv64sbi) own.plic else struct {};
 /// The disk image the loader put in RAM, which flash.device serves on a
-/// machine under SBI firmware. The ESP32s have flash, so there it is
-/// empty.
-pub const ramdisk = if (chip == .rv64sbi) own.ramdisk else struct {};
+/// machine under SBI or PSCI firmware. The ESP32s have flash, so there it
+/// is empty.
+pub const ramdisk = if (chip == .rv64sbi or chip == .a64psci) own.ramdisk else struct {};
 pub const trng = if (chip == .rv64sbi) own.trng else struct {};
 /// The L2 cache controller's flush, on a machine under SBI firmware whose
 /// devices do not see the caches (the JH7110). The ESP32s' caches are
@@ -97,6 +104,15 @@ pub const ccache = if (chip == .rv64sbi) own.ccache else struct {};
 /// them (the JH7110's; dma.resource hands them out). The ESP32s' DMA is
 /// `gdma`'s and `dma2d`'s, so there it is empty.
 pub const dwdma = if (chip == .rv64sbi) own.dwdma else struct {};
+/// The PSCI firmware's calls (the cores' start and stop, reset) and the
+/// generic interrupt controller (GICv2): the AArch64 machines'. The
+/// others have neither, so there they are empty.
+pub const psci = if (chip == .a64psci) own.psci else struct {};
+pub const gic = if (chip == .a64psci) own.gic else struct {};
+
+/// The barriers between the processor and a device that reads or writes
+/// memory itself, the same calls on every chip.
+pub const barrier = @import("barrier.zig");
 
 /// The crystal: the clock the chip starts on, and the UARTs' clock.
 pub const XTAL_HZ = own.XTAL_HZ;

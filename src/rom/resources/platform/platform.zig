@@ -50,11 +50,13 @@ const CHIP_NAME = switch (sdk.hardware.chip) {
     .esp32s3 => "ESP32-S3",
     .esp32p4 => "ESP32-P4",
     .rv64sbi => "RISC-V 64 under SBI",
+    .a64psci => "AArch64 under PSCI",
 };
 const CORE_NAME = switch (sdk.hardware.chip) {
     .esp32s3 => "Xtensa LX7",
     .esp32p4 => "RISC-V RV32IMAFC",
     .rv64sbi => "RISC-V RV64GC",
+    .a64psci => "ARMv8.2-A Cortex-A76",
 };
 /// What the kernel was built with, as `Version` and `Platform` print it.
 const BUILT_WITH = "zig " ++ builtin.zig_version_string ++ ", " ++ @tagName(builtin.mode);

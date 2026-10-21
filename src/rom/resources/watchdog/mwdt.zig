@@ -18,7 +18,7 @@ const prescale: u32 = wdt.TIMG_WDT_CLOCK_HZ / (1000 * ticks_per_ms);
 const conf_update: u32 = switch (hardware.chip) {
     .esp32s3 => 0,
     .esp32p4 => wdt.WDT_CONF_UPDATE_EN,
-    .rv64sbi => @compileError("watchdog.resource: no timer group watchdog on this chip"),
+    .rv64sbi, .a64psci => @compileError("watchdog.resource: no timer group watchdog on this chip"),
 };
 
 /// What stage 0 does when its time is up.

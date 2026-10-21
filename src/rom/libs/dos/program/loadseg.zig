@@ -133,6 +133,14 @@ pub fn loadFrom(db: *DosBase, fh: *dos.FileHandle, name: [*:0]const u8) ?*dos.Se
     }
     first.?.entry = @ptrCast(entry_seg.run_address.? + header.entry_offset);
     db.sys_base.CacheClearU(); // the code was written through the data bus
+    // And each code segment's instruction lines dropped by its range: an
+    // AArch64 core cleans its data cache to where the instruction fetch
+    // reads only for addresses it is given (CTR_EL0.IDC 0, the A76's),
+    // which CacheClearU has none of.
+    var code = first;
+    while (code) |seg| : (code = seg.next) {
+        if (seg.kind == .code) db.sys_base.CacheClearE(@ptrCast(seg.data.?), seg.mem_size, sdk.exec.CACRF_ClearI);
+    }
     // On the list of loaded files, for a Guru to name.
     db.sys_base.AcquireLock(&db.code_lock);
     db.sys_base.AddTail(&db.loaded, &first.?.file);

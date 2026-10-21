@@ -27,7 +27,7 @@ pub const target_query: std.Target.Query = .{
 };
 
 /// The chips code is built for.
-pub const Chip = enum { esp32s3, esp32p4, rv64sbi };
+pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci };
 
 /// The ESP32-P4's HP cores: RV32IMAFC with the CSR and fence.i
 /// instructions, and none of the chip's own extensions (PIE, hardware
@@ -51,6 +51,18 @@ pub const rv64_target_query: std.Target.Query = .{
     .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .f, .d, .c, .zicsr, .zifencei }),
 };
 
+/// An AArch64 machine at EL1 under PSCI firmware: QEMU's virt with a
+/// Cortex-A76, and the Raspberry Pi CM5's BCM2712, whose cores are A76s.
+/// ARMv8.2-A with the LSE atomics, NEON and the AES and SHA instructions
+/// (the BCM2712 has the crypto extension): a task carries the 32 vector
+/// registers.
+pub const a64_target_query: std.Target.Query = .{
+    .cpu_arch = .aarch64,
+    .os_tag = .freestanding,
+    .abi = .none,
+    .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.cortex_a76 },
+};
+
 /// What a program for `chip` is built for. On the P4 without the linker's
 /// relaxation: it may turn a PC-relative sequence into one that holds an
 /// address, which would not survive the move to where the loader puts it.
@@ -67,6 +79,7 @@ pub fn programTargetQuery(chip: Chip) std.Target.Query {
             query.cpu_features_sub = std.Target.riscv.featureSet(&.{.relax});
             break :blk query;
         },
+        .a64psci => a64_target_query,
     };
 }
 
@@ -130,16 +143,19 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(addends_tests).step);
     test_step.dependOn(&b.addRunArtifact(romld_tests).step);
 
-    // elf2seg refuses what a loaded RISC-V program could not survive:
-    // absolute addresses in its code, and a direct call to a fixed address.
-    const refused = [_]struct { name: []const u8, root: []const u8, code_model: std.builtin.CodeModel, says: []const u8 }{
-        .{ .name = "absolute", .root = "tools/elf2seg/tests/absolute.zig", .code_model = .medlow, .says = "an absolute address in the code" },
-        .{ .name = "romcall", .root = "tools/elf2seg/tests/romcall.zig", .code_model = .medany, .says = "a fixed address, PC-relatively" },
+    // elf2seg refuses what a loaded RISC-V or AArch64 program could not
+    // survive: absolute addresses in its code, and a direct call to a fixed
+    // address.
+    const refused = [_]struct { name: []const u8, root: []const u8, chip: Chip, code_model: std.builtin.CodeModel, says: []const u8 }{
+        .{ .name = "absolute", .root = "tools/elf2seg/tests/absolute.zig", .chip = .esp32p4, .code_model = .medlow, .says = "an absolute address in the code" },
+        .{ .name = "romcall", .root = "tools/elf2seg/tests/romcall.zig", .chip = .esp32p4, .code_model = .medany, .says = "a fixed address, PC-relatively" },
+        .{ .name = "absolute_a64", .root = "tools/elf2seg/tests/absolute.zig", .chip = .a64psci, .code_model = .large, .says = "an absolute address in the code" },
+        .{ .name = "romcall_a64", .root = "tools/elf2seg/tests/romcall.zig", .chip = .a64psci, .code_model = .small, .says = "a fixed address, PC-relatively" },
     };
     for (refused) |case| {
         const exe = b.addExecutable(.{ .name = case.name, .root_module = b.createModule(.{
             .root_source_file = b.path(case.root),
-            .target = b.resolveTargetQuery(programTargetQuery(.esp32p4)),
+            .target = b.resolveTargetQuery(programTargetQuery(case.chip)),
             .optimize = .ReleaseSmall,
             .strip = false,
             .single_threaded = true,
@@ -148,7 +164,7 @@ pub fn build(b: *std.Build) void {
         }) });
         exe.entry = .{ .symbol_name = "_program_entry" };
         exe.link_emit_relocs = true;
-        exe.setLinkerScript(b.path("program_esp32p4.ld"));
+        exe.setLinkerScript(b.path(if (case.chip == .a64psci) "program_a64psci.ld" else "program_esp32p4.ld"));
         const convert = b.addRunArtifact(elf2seg);
         convert.addArtifactArg(exe);
         _ = convert.addOutputFileArg(b.fmt("{s}.seg", .{case.name}));
@@ -204,7 +220,9 @@ pub const Program = struct {
 ///
 /// It is linked with the SDK's `program.ld` (`program_esp32p4.ld` on the
 /// P4 and `program_rv64sbi.ld` on RV64, where the code is PC-relative,
-/// -mcmodel=medany) and with the
+/// -mcmodel=medany; `program_a64psci.ld` on AArch64, where it is too, by
+/// ADRP pairs - the small code model - and the loader keeps its 4 KiB
+/// pages where they were) and with the
 /// linker's relocations kept (`--emit-relocs`); `elf2seg` keeps the ones
 /// that hold an address and makes the load file from them. The entry is
 /// `_program_entry`, which a command exports; a module's ROM tag is what
@@ -214,6 +232,7 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
     const code_model: std.builtin.CodeModel = switch (program.chip) {
         .esp32s3 => .default,
         .esp32p4, .rv64sbi => .medany,
+        .a64psci => .small,
     };
     const own = b.createModule(.{
         .root_source_file = program.root,
@@ -246,6 +265,7 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
         .esp32s3 => "program.ld",
         .esp32p4 => "program_esp32p4.ld",
         .rv64sbi => "program_rv64sbi.ld",
+        .a64psci => "program_a64psci.ld",
     };
     if (program.rom_scripts.len == 0) {
         exe.setLinkerScript(dep.path(script_name));

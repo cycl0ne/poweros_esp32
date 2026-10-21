@@ -417,7 +417,7 @@ pub fn pollSend(next: *const Descriptor) void {
 /// What was written for the engine reaches it before the register that
 /// tells it to look.
 fn fence() void {
-    asm volatile ("fence iorw, iorw" ::: .{ .memory = true });
+    sdk.hardware.barrier.full();
 }
 
 // --- the management bus ---------------------------------------------------

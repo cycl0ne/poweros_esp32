@@ -46,7 +46,7 @@ const system_pads = switch (sdk.hardware.chip) {
         const uart0 = [_]u32{ 37, 38 };
     },
     // No pads handed out yet (sdk.resources.gpio.GPIO_PADS is 0).
-    .rv64sbi => struct {
+    .rv64sbi, .a64psci => struct {
         const flash = [_]u32{};
         const psram_select = [_]u32{};
         const octal_psram = [_]u32{};

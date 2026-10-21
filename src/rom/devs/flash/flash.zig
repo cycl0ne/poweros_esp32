@@ -35,9 +35,10 @@
 //! The caller's buffer may be in PSRAM too, so every write goes through the
 //! 256-byte buffer the chip's flash layer keeps in internal SRAM:
 //! esp32s3/spiflash.zig on the ESP32-S3, esp32p4/spiflash.zig on the ESP32-P4,
-//! the same calls on each. A RISC-V 64 machine under SBI has no flash for
-//! it: its chip is the disk image the loader put in RAM, which behaves as
-//! flash does (rv64sbi/ramflash.zig), and is all disk.
+//! the same calls on each. A RISC-V 64 machine under SBI and an AArch64
+//! machine under PSCI have no flash for it: their chip is the disk image
+//! the loader put in RAM, which behaves as flash does
+//! (ramdisk/ramflash.zig), and is all disk.
 //!
 //! io_Offset and io_Length are bytes, 64-bit; there is no motor, no
 //! seeking, no removal and no ETD_*; TDCMD_ERASE exists since flash must be
@@ -59,7 +60,7 @@ const st = expansion.systemtags;
 const spiflash = switch (sdk.hardware.chip) {
     .esp32s3 => @import("esp32s3/spiflash.zig"),
     .esp32p4 => @import("esp32p4/spiflash.zig"),
-    .rv64sbi => @import("rv64sbi/ramflash.zig"),
+    .rv64sbi, .a64psci => @import("ramdisk/ramflash.zig"),
 };
 const mount = @import("mount.zig");
 

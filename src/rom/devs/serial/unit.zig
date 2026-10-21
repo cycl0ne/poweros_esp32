@@ -31,8 +31,12 @@ const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const uart = sdk.hardware.uart;
 /// The USB-Serial-JTAG port, on the chips that have one: the ESP32s. A
-/// machine under SBI firmware has none, and its stand-in never has input.
-const usbjtag = if (sdk.hardware.chip == .rv64sbi) no_usbjtag else @import("usbjtag.zig");
+/// machine under SBI or PSCI firmware has none, and its stand-in never has
+/// input.
+const usbjtag = switch (sdk.hardware.chip) {
+    .esp32s3, .esp32p4 => @import("usbjtag.zig"),
+    .rv64sbi, .a64psci => no_usbjtag,
+};
 const no_usbjtag = struct {
     pub const source: u32 = 0;
     pub fn put(_: u8) void {}
