@@ -926,6 +926,10 @@ pub fn interruptExit(base: *ExecBase, context: *anyopaque) *anyopaque {
     var resumed = context;
     if (cpu.int_depth == 1) {
         if (cpu.reap != null or cpu.stopped != null) reap(base);
+        // A slice spent with nothing to take over: no switch, but the
+        // task's stack checked as a switch would check it - a task alone
+        // on its core would otherwise run off its stack unseen.
+        if (cpu.sys_flags & (SFF_SAR | SFF_TQE) == SFF_TQE) checkStack(cpu.this_task, context);
         if (cpu.sys_flags & SFF_SAR != 0) resumed = reschedule(base, context);
     }
     cpu.int_depth -= 1;
