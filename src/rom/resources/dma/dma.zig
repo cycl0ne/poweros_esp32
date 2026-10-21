@@ -54,8 +54,8 @@ const has_dw = dw_channels != 0;
 
 pub const RESOURCE_NAME = types.DMANAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 2;
-const BUILD_DATE = "19.10.2026";
+const RESOURCE_REVISION = 3;
+const BUILD_DATE = "20.10.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -292,7 +292,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         db.peri = @splat(chip.no_peripheral);
         chip.init();
     }
-    db.dw_base = if (comptime has_dw) chip.controller() else 0;
+    db.dw_base = if (comptime has_dw) chip.controller(sys_base) else 0;
     return lib;
 }
 

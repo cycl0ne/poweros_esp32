@@ -4,23 +4,26 @@
 //! needs before its registers can be reached - RGMII chosen, its clocks
 //! on, its resets let go.
 //!
-//! **What the firmware leaves.** U-Boot runs GMAC0 for its TFTP and stops
-//! it before it boots the kernel, its resets asserted: every register
-//! reads 0 and holds nothing. Its clocks' sources and dividers stay as the
-//! firmware set them up. On the VisionFive 2 v1.3B the send clock comes
-//! from the RGMII clock the PHY sends, which follows the link's speed by
-//! itself, so nothing changes with the speed (`setSpeed`). The PHY keeps
-//! what U-Boot told it; the device sets it up again anyway, from the
-//! board's part.
+//! **What the firmware leaves** is not counted on. U-Boot runs GMAC0 for
+//! its TFTP and stops it before it boots the kernel, its clocks off and
+//! its resets asserted: every register reads 0 and holds nothing. The
+//! send clock's source is set here: on the VisionFive 2 v1.3B the RGMII
+//! clock the PHY sends (its device tree's assigned parent, which U-Boot
+//! sets as it probes the MAC), which follows the link's speed by itself,
+//! so nothing changes with the speed (`setSpeed`). The dividers are the
+//! chip's own; neither U-Boot nor Linux sets them. The PHY keeps what
+//! U-Boot told it; the device sets it up again anyway, from the board's
+//! part.
 //!
 //! **Which MACs.** GMAC0, whose clocks are in the always-on domain. GMAC1
 //! (0x1604_0000) is not here yet: a part on it is refused.
 //!
-//! The clock, reset and syscon registers are shared with other drivers,
-//! so every change is a masked read-modify-write inside exec's Disable.
+//! The clocks and resets are `sdk.hardware.system`'s. The reset and
+//! syscon registers are shared with other drivers, so every change is a
+//! masked read-modify-write inside exec's Disable.
 
 const sdk = @import("sdk");
-const reg = sdk.hardware.mmio.reg;
+const system = sdk.hardware.system;
 const st = sdk.expansion.systemtags;
 const TagItem = sdk.utility.TagItem;
 const UtilityBase = sdk.interface.utility.UtilityBase;
@@ -30,27 +33,26 @@ const EmacBase = @import("_emac.zig").EmacBase;
 /// The parts on this kind of bus.
 pub const bus = st.BUS_RGMII;
 
-const aon_crg: usize = 0x1700_0000;
-const sys_crg: usize = 0x1302_0000;
 const aon_syscon: usize = 0x1701_0000;
 
-/// A clock's register: bit 31 turns it on.
-const clock_on: u32 = 1 << 31;
 /// The interface a MAC speaks, in its syscon field: RGMII.
 const mode_rgmii: u32 = 1;
 const mode_mask: u32 = 0x7;
 
-/// One of the chip's MACs.
+/// One of the chip's MACs. GMAC0's clocks and resets are the always-on
+/// domain's, but for the gigabit and time-stamp clocks the system domain
+/// makes for it.
 const Mac = struct {
     registers: usize,
-    /// Its clocks: the bus's, the engine's, the send clock, and the
-    /// gigabit and time-stamp clocks the system domain makes for it.
-    clocks: []const usize,
-    /// Where its resets are asserted, where they read as let go, and its
-    /// bits in both.
-    reset_assert: usize,
-    reset_status: usize,
-    resets: u32,
+    /// Its clocks in the always-on generator - the bus's and the engine's
+    /// - and in the system generator.
+    aon_clocks: []const u32,
+    sys_clocks: []const u32,
+    /// The send clock, and its source: the RGMII clock the PHY sends.
+    tx_clock: u32,
+    tx_from_phy: u32,
+    /// Its resets, in the always-on generator.
+    resets: []const u32,
     /// The syscon register and the place in it of its interface field.
     mode: usize,
     mode_shift: u5,
@@ -59,17 +61,12 @@ const Mac = struct {
 const macs = [_]Mac{
     .{
         .registers = 0x1603_0000,
-        .clocks = &.{
-            aon_crg + 0x08, // GMAC0_AHB
-            aon_crg + 0x0C, // GMAC0_AXI
-            aon_crg + 0x14, // GMAC0_TX
-            sys_crg + 0x1B0, // GMAC0_GTXCLK
-            sys_crg + 0x1B4, // GMAC0_PTP
-            sys_crg + 0x1BC, // GMAC0_GTXC
-        },
-        .reset_assert = aon_crg + 0x38,
-        .reset_status = aon_crg + 0x3C,
-        .resets = 0x3, // AXI, AHB
+        .aon_clocks = &.{ system.AONCLK_GMAC0_AHB, system.AONCLK_GMAC0_AXI },
+        .sys_clocks = &.{ system.SYSCLK_GMAC0_GTXCLK, system.SYSCLK_GMAC0_PTP, system.SYSCLK_GMAC0_GTXC },
+        .tx_clock = system.AONCLK_GMAC0_TX,
+        // Its sources: 0 the gigabit clock, 1 RMII_RTX - the PHY's.
+        .tx_from_phy = 1,
+        .resets = &.{ system.AONRST_GMAC0_AXI, system.AONRST_GMAC0_AHB },
         .mode = aon_syscon + 0x0C,
         .mode_shift = 18,
     },
@@ -92,29 +89,34 @@ pub fn portOf(utility: *UtilityBase, tags: ?[*]const TagItem) ?Port {
     return .{ .unit = @intCast(unit) };
 }
 
-/// Bits `mask` of the register at `address` set to `value`.
-fn update(address: usize, value: u32, mask: u32) void {
-    const register = reg(address);
-    register.* = register.* & ~mask | value;
+/// Whether every one of the MAC's resets reads as let go.
+fn outOfReset(mac: *const Mac) bool {
+    for (mac.resets) |reset| {
+        if (!system.outOfReset(.aon, reset)) return false;
+    }
+    return true;
 }
 
-/// The MAC ready for its own reset: RGMII chosen, its clocks on, its
-/// resets held and let go. False if they never read as let go.
+/// The MAC ready for its own reset: RGMII chosen, its clocks on - the
+/// send clock from the PHY's - its resets held and let go. False if they
+/// never read as let go.
 pub fn powerUp(port: *const Port, base: *EmacBase) bool {
     const mac = &macs[port.unit];
     const sys = base.sys_base;
     eqos.registers = mac.registers;
     sys.Disable();
-    update(mac.mode, mode_rgmii << mac.mode_shift, mode_mask << mac.mode_shift);
-    for (mac.clocks) |clock| update(clock, clock_on, clock_on);
-    update(mac.reset_assert, mac.resets, mac.resets);
+    system.update(mac.mode, mode_rgmii << mac.mode_shift, mode_mask << mac.mode_shift);
+    for (mac.aon_clocks) |clock| system.clockOn(.aon, clock);
+    system.setClock(.aon, mac.tx_clock, system.CLK_ENABLE | system.CLK_MUX, system.CLK_ENABLE | mac.tx_from_phy << system.CLK_MUX_SHIFT);
+    for (mac.sys_clocks) |clock| system.clockOn(.sys, clock);
+    for (mac.resets) |reset| system.holdInReset(.aon, reset);
     sys.Enable();
     base.delay(reset_us);
     sys.Disable();
-    update(mac.reset_assert, 0, mac.resets);
+    for (mac.resets) |reset| system.releaseReset(.aon, reset);
     sys.Enable();
     const until = sdk.hardware.systimer.uptimeUs() + reset_wait_us;
-    while (reg(mac.reset_status).* & mac.resets != mac.resets) {
+    while (!outOfReset(mac)) {
         if (sdk.hardware.systimer.uptimeUs() > until) return false;
     }
     return true;

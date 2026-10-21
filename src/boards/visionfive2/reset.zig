@@ -14,18 +14,9 @@
 //! released and the controller set up as U-Boot had it (its registers as
 //! read on the board): standard mode, 100 kHz.
 
-const reg = @import("sdk").hardware.mmio.reg;
-
-/// The system clock and reset generator (SYS CRG).
-const SYS_CRG: usize = 0x1302_0000;
-/// I2C5's bus clock (clock 143): bit 31 lets it through.
-const CLK_I2C5_APB = SYS_CRG + 0x23C;
-const CLK_ENABLE: u32 = 1 << 31;
-/// The third of the reset words, which holds I2C5's bus reset (reset 81):
-/// set in ASSERT holds it, set in STATUS it is released.
-const RESET_ASSERT2 = SYS_CRG + 0x300;
-const RESET_STATUS2 = SYS_CRG + 0x310;
-const RESET_I2C5_APB: u32 = 1 << (81 - 64);
+const hardware = @import("sdk").hardware;
+const reg = hardware.mmio.reg;
+const system = hardware.system;
 
 /// I2C5, a DesignWare I2C controller.
 const I2C5: usize = 0x1205_0000;
@@ -38,16 +29,12 @@ const IC_SDA_HOLD = I2C5 + 0x7C;
 /// Master, standard mode, 7-bit addresses, restarts on, slave off.
 const CON_U_BOOT: u32 = 0x63;
 
-/// How long the reset is waited on to come off: far more than it takes.
-const release_spins: u32 = 100_000;
-
 /// I2C5 made ready for OpenSBI's reset. Run with interrupts off, as the
 /// last thing before the SBI call.
 pub fn prepare() void {
-    reg(CLK_I2C5_APB).* |= CLK_ENABLE;
-    reg(RESET_ASSERT2).* &= ~RESET_I2C5_APB;
-    var spins: u32 = 0;
-    while (reg(RESET_STATUS2).* & RESET_I2C5_APB == 0 and spins < release_spins) : (spins += 1) {}
+    system.clockOn(.sys, system.SYSCLK_I2C5_APB);
+    system.releaseReset(.sys, system.SYSRST_I2C5_APB);
+    _ = system.waitOutOfReset(.sys, system.SYSRST_I2C5_APB);
     // The controller takes its settings only while it is off.
     reg(IC_ENABLE).* = 0;
     reg(IC_CON).* = CON_U_BOOT;

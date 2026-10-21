@@ -78,7 +78,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 4;
+const REVISION = 5;
 const BUILD_DATE = "20.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -751,7 +751,7 @@ fn take(screen: *Screen, index: u32) void {
 /// on the port (which `begin` says), or its EDID does not read.
 fn hdmiModes(screen: *Screen, own: edid.Timing) monitor.List {
     const waiter = Waiter{ .screen = screen };
-    if (jh7110.wake(waiter) != .none or !jh7110.monitor()) return monitor.modesOf(null, null, own, jh7110.sends);
+    if (jh7110.wake(screen.sys, waiter) != .none or !jh7110.monitor()) return monitor.modesOf(null, null, own, jh7110.sends);
     var first: edid.Block = undefined;
     var extension: edid.Block = undefined;
     var name: [14]u8 = @splat(0);
@@ -815,7 +815,7 @@ fn begin(screen: *Screen, address: usize) bool {
     switch (screen.scanout) {
         .ramfb => scanFrom(screen, address),
         .jh7110 => {
-            const failure = jh7110.start(&screen.timings.modes[screen.current], address, screen.pitch, Waiter{ .screen = screen });
+            const failure = jh7110.start(screen.sys, &screen.timings.modes[screen.current], address, screen.pitch, Waiter{ .screen = screen });
             switch (failure) {
                 .none => screen.scanning = address,
                 .power => exec.kprintf(screen.sys, "%s: the display's power domain did not come on\n", .{MODULE_NAME}),

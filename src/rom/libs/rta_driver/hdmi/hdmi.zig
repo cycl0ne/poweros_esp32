@@ -45,7 +45,7 @@ const transmitter = @import("transmitter.zig");
 const MODULE_NAME = "rta-hdmi";
 const DRIVER_NAME = "hdmi";
 const VERSION = 1;
-const REVISION = 1;
+const REVISION = 2;
 const BUILD_DATE = "20.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -185,7 +185,7 @@ fn streamUp(instance: *Instance) i32 {
     instance.ended = 0;
     instance.taken = 0;
 
-    i2s.init(instance.mclk_pin);
+    i2s.init(sys, instance.mclk_pin);
     i2s.reset();
     sys.AddIntServer(dmares.dmaIntNumber(channel, dmares.DMA_OUT), &instance.int);
     instance.int_added = true;

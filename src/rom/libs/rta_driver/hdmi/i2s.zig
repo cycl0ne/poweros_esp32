@@ -4,8 +4,8 @@
 //! samples at 48000 a second, which the HDMI transmitter takes inside the
 //! chip (`transmitter.zig`).
 //!
-//! The clocks are the system clock generator's; the controller only
-//! shifts the samples out on them. The master clock (MCLK) is the board's
+//! The clocks are the system clock generator's (`sdk.hardware.system`);
+//! the controller only shifts the samples out on them. The master clock (MCLK) is the board's
 //! 12.288 MHz oscillator, which comes in on a pad and is 256 times the
 //! rate. The bit clock is a quarter of it, 64 times the rate - two slots
 //! of 32 bits, each sample in the top 16 of its slot - and the word clock
@@ -19,10 +19,16 @@
 //!
 //! After Linux's dwc-i2s.c (jh7110_i2s_crg_master_init, the i2stx0's
 //! data) and the JH7110's clock driver, clk-starfive-jh7110-sys.c. It
-//! keeps no state: every call is register writes.
+//! keeps no state: every call is register writes. The reset word and the
+//! pin controller's words are shared with other drivers, so they change
+//! under Disable.
 
 const sdk = @import("sdk");
 const reg = sdk.hardware.mmio.reg;
+const system = sdk.hardware.system;
+const gpio = sdk.hardware.gpio;
+const signals = sdk.hardware.signals;
+const ExecBase = sdk.interface.exec.ExecBase;
 
 /// The controller.
 const base: usize = 0x120B_0000;
@@ -54,38 +60,15 @@ const FIFO_TRIGGER: u32 = 7;
 /// How many channel pairs the controller has.
 const pairs = 4;
 
-/// The system clock generator: a clock's register is its number times
-/// four, bit 31 lets it through, bits 24 to 27 choose its source and the
-/// bits below divide; a reset is held while its bit is set in ASSERT and
-/// is out once it is set in STATUS.
-const SYS_CRG: usize = 0x1302_0000;
-/// Its sources: 0 the chip's own divider, 1 the board's oscillator.
-const SYSCLK_MCLK = SYS_CRG + 18 * 4;
-const SYSCLK_I2STX0_APB = SYS_CRG + 161 * 4;
-const SYSCLK_I2STX0_BCLK_MST = SYS_CRG + 162 * 4;
-/// Its sources: 0 the bit clock inverted, so the word clock changes on
-/// the bit clock's falling edge, as I2S has it.
-const SYSCLK_I2STX0_LRCK_MST = SYS_CRG + 164 * 4;
-/// The clocks the controller takes; source 0 is the master's above.
-const SYSCLK_I2STX0_BCLK = SYS_CRG + 165 * 4;
-const SYSCLK_I2STX0_LRCK = SYS_CRG + 167 * 4;
-const SYS_RESET_ASSERT3 = SYS_CRG + 0x304;
-const SYS_RESET_STATUS3 = SYS_CRG + 0x314;
-/// The controller's bus side and its bit-clock side (resets 101 and 102).
-const SYSRST_I2STX0: u32 = 1 << 5 | 1 << 6;
-const CLK_ENABLE: u32 = 1 << 31;
-const MCLK_FROM_PAD: u32 = 1 << 24;
-
-/// The pin controller: an input of the chip is fed by the pad in its
-/// byte of GPI (the pad's number plus two), and a pad's own settings are
-/// a word each from PADCFG.
-const SYS_IOMUX: usize = 0x1304_0000;
-const IOMUX_DOEN = SYS_IOMUX + 0x00;
-const IOMUX_GPI = SYS_IOMUX + 0x80;
-const IOMUX_PADCFG = SYS_IOMUX + 0x120;
-/// The master clock's input from the board.
-const GPI_SYS_MCLK_EXT: u32 = 30;
-const PAD_INPUT_ENABLE: u32 = 1 << 0;
+/// MCLK's sources: the chip's own divider, the board's oscillator.
+const MCLK_INNER: u32 = 0 << system.CLK_MUX_SHIFT;
+const MCLK_FROM_PAD: u32 = 1 << system.CLK_MUX_SHIFT;
+/// The word clock's source: 0 the bit clock inverted, so the word clock
+/// changes on the bit clock's falling edge, as I2S has it. The clocks the
+/// controller takes have source 0 too: the masters'.
+const FROM_MASTER: u32 = 0;
+/// The controller's bus side and its bit-clock side.
+const controller_resets = [_]u32{ system.SYSRST_I2STX0_APB, system.SYSRST_I2STX0_BCLK };
 
 /// What this file is set up for.
 pub const sample_rate: u32 = 48_000;
@@ -98,44 +81,29 @@ const LRCK_DIVIDER: u32 = bclk_hz / sample_rate;
 /// device tree's `dmas = <&dma 47>`).
 pub const dma_handshake: u32 = 47;
 
-/// How many times a wait reads its register before it gives up.
-const patience: u32 = 1_000_000;
-
-/// The byte of `cell`'s word that is number `index` of four, set to
-/// `value`.
-fn setByte(cell: usize, index: u32, value: u32) void {
-    const word = reg(cell + index / 4 * 4);
-    const shift: u5 = @intCast(index % 4 * 8);
-    word.* = word.* & ~(@as(u32, 0xFF) << shift) | value << shift;
-}
-
-/// The board's oscillator taken in on `pad`: an input, not driven, and
-/// the clock generator's MCLK input fed from it. The pin controller is the
-/// device tree's mclk_ext_pins.
-fn takeMclk(pad: u8) void {
-    setByte(IOMUX_DOEN, pad, 1);
-    reg(IOMUX_PADCFG + @as(usize, pad) * 4).* |= PAD_INPUT_ENABLE;
-    setByte(IOMUX_GPI, GPI_SYS_MCLK_EXT, @as(u32, pad) + 2);
-}
-
 /// The controller clocked, out of reset and set up for a stereo stream
 /// of 16-bit samples at `sample_rate`, its master clock the oscillator on
-/// `mclk_pad`. Nothing comes out until `start`.
-pub fn init(mclk_pad: u8) void {
-    takeMclk(mclk_pad);
-    reg(SYSCLK_I2STX0_APB).* |= CLK_ENABLE;
+/// `mclk_pad`: an input, not driven, which the clock generator's MCLK
+/// input listens to - the device tree's mclk_ext_pins. Nothing comes out
+/// until `start`.
+pub fn init(sys: *ExecBase, mclk_pad: u8) void {
+    gpio.configure(mclk_pad, gpio.PAD_INPUT_ENABLE);
+    sys.Disable();
+    gpio.outputEnable(mclk_pad, false);
+    gpio.connectIn(signals.GPI_SYS_MCLK_EXT, mclk_pad);
+    system.clockOn(.sys, system.SYSCLK_I2STX0_APB);
     // The bit-clock side comes out of reset only with a clock running, so
     // the resets are let go on the chip's own MCLK and the oscillator is
     // taken after, as Linux does it.
-    reg(SYSCLK_MCLK).* &= ~MCLK_FROM_PAD;
-    reg(SYSCLK_I2STX0_BCLK_MST).* = CLK_ENABLE | BCLK_DIVIDER;
-    reg(SYSCLK_I2STX0_LRCK_MST).* = LRCK_DIVIDER;
-    reg(SYSCLK_I2STX0_BCLK).* = 0;
-    reg(SYSCLK_I2STX0_LRCK).* = 0;
-    reg(SYS_RESET_ASSERT3).* &= ~SYSRST_I2STX0;
-    var tries: u32 = 0;
-    while (reg(SYS_RESET_STATUS3).* & SYSRST_I2STX0 != SYSRST_I2STX0 and tries < patience) : (tries += 1) {}
-    reg(SYSCLK_MCLK).* |= MCLK_FROM_PAD;
+    system.setClock(.sys, system.SYSCLK_MCLK, system.CLK_MUX, MCLK_INNER);
+    system.setClock(.sys, system.SYSCLK_I2STX0_BCLK_MST, system.CLK_ENABLE | system.CLK_DIVIDER, system.CLK_ENABLE | BCLK_DIVIDER);
+    system.setClock(.sys, system.SYSCLK_I2STX0_LRCK_MST, system.CLK_MUX | system.CLK_DIVIDER, FROM_MASTER | LRCK_DIVIDER);
+    system.setClock(.sys, system.SYSCLK_I2STX0_BCLK, system.CLK_MUX, FROM_MASTER);
+    system.setClock(.sys, system.SYSCLK_I2STX0_LRCK, system.CLK_MUX, FROM_MASTER);
+    for (controller_resets) |held| system.releaseReset(.sys, held);
+    sys.Enable();
+    for (controller_resets) |held| _ = system.waitOutOfReset(.sys, held);
+    system.setClock(.sys, system.SYSCLK_MCLK, system.CLK_MUX, MCLK_FROM_PAD);
 
     // The stream on pair 0 alone, sixteen bits a sample (dw_i2s_hw_params).
     for (0..pairs) |pair| reg(ter(pair)).* = 0;

@@ -36,7 +36,7 @@ const trng = [_]Tag{
     .done,
 };
 
-/// The microSD slot: SDIO1, on GPIO7 to 12 as U-Boot connects them, its
+/// The microSD slot: SDIO1, on GPIO7 to 12 as the board wires them, its
 /// interrupt PLIC source 75. No card-detect or write-protect line.
 const card_slot = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_SDSLOT),
