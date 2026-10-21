@@ -28,6 +28,7 @@ pub const system = switch (build_options.board) {
     .crowpanel_p4 => @import("crowpanel_p4/system.zig"),
     .qemu_virt => @import("qemu_virt/system.zig"),
     .visionfive2 => @import("visionfive2/system.zig"),
+    .qemu_virt_a64 => @import("qemu_virt_a64/system.zig"),
 };
 
 pub const romtags = switch (build_options.board) {
@@ -39,6 +40,7 @@ pub const romtags = switch (build_options.board) {
     .crowpanel_p4 => @import("crowpanel_p4/romtags.zig"),
     .qemu_virt => @import("qemu_virt/romtags.zig"),
     .visionfive2 => @import("visionfive2/romtags.zig"),
+    .qemu_virt_a64 => @import("qemu_virt_a64/romtags.zig"),
 };
 
 /// What the board does before the firmware resets the machine, or null.

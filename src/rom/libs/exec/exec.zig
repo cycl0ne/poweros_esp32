@@ -564,6 +564,7 @@ test {
     _ = @import("list/findname.zig");
     _ = @import("list/lockexeclist.zig");
     _ = @import("list/unlockexeclist.zig");
+    _ = @import("debug/_lists.zig");
     _ = @import("library/detachlibrary.zig");
     _ = @import("task/settaskendmsg.zig");
     _ = @import("ports/removemsg.zig");

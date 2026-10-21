@@ -14,7 +14,6 @@
 //! its number is its command's identifier.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const pci = sdk.pci;
@@ -214,13 +213,13 @@ pub fn inside(unit: *const Unit, offset: u64, length: u64) bool {
 /// controller before what is written after: a queue's entry before its
 /// doorbell.
 pub fn barrier() void {
-    if (comptime builtin.cpu.arch.isRISCV()) asm volatile ("fence iorw, iorw" ::: .{ .memory = true });
+    sdk.hardware.barrier.full();
 }
 
 /// What the controller wrote read in order: a completion's phase before
 /// the rest of it.
 pub fn readBarrier() void {
-    if (comptime builtin.cpu.arch.isRISCV()) asm volatile ("fence r, r" ::: .{ .memory = true });
+    sdk.hardware.barrier.reads();
 }
 
 pub fn reg(c: *const Controller, offset: usize) *volatile u32 {

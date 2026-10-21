@@ -51,4 +51,8 @@ void ReleaseUSBInterface(*usb.USBDevice device, u32 interface_number)
 ?*usb.USBNotify AddUSBNotify(*exec.Task task, u32 signals)
 /// No more of that.
 void RemUSBNotify(?*usb.USBNotify notify)
+/// A pipe to stream `stream` of the device's SuperSpeed bulk endpoint
+/// `endpoint_address`, replying to `reply_port`; null if the endpoint has
+/// no such stream.
+?*usb.USBPipe OpenUSBStreamPipe(*usb.USBDevice device, u32 endpoint_address, u32 stream, *exec.MsgPort reply_port)
 ##end

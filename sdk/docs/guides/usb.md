@@ -39,11 +39,11 @@ and writing a controller.
 |---|---|---|
 | `usbport.resource` | ROM | who holds each of the chip's USB ports, and which controller it is given to |
 | `usbotg.device` | `DEVS:` | the chip's USB OTG controller as a host controller: transfers to devices on its bus, its root port answered as a hub; on the ESP32s' disks |
-| `xhci.device` | `DEVS:` | xHCI controllers on PCI as host controllers - the VisionFive 2's VL805, QEMU's qemu-xhci - a unit per controller, its USB 2 root ports answered as a hub; on the RISC-V 64 disk |
+| `xhci.device` | `DEVS:` | xHCI controllers on PCI as host controllers - the VisionFive 2's VL805, QEMU's qemu-xhci - a unit per controller, its USB 2 and USB 3 root ports answered as one hub; on the RISC-V 64 disk |
 | `pci.library` | `LIBS:` | the machine's PCI functions, among which xhci.device finds its controllers ([pci](../autodocs/pci.md)); on the RISC-V 64 disk |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
 | `usb/hid.device` | `DEVS:usb/` | keyboards, mice and tablets, into keyboard.device and mouse.device |
-| `usb/disk.device` | `DEVS:usb/` | sticks and card readers (mass storage, SCSI over Bulk-Only) as block devices, a drive `DU<n>:` each |
+| `usb/disk.device` | `DEVS:usb/` | sticks, card readers and disks (mass storage, SCSI over Bulk-Only or USB Attached SCSI) as block devices, a drive `DU<n>:` each |
 | `usb/ftdi.device` | `DEVS:usb/` | FTDI's serial chips as serial lines, with serial.device's API |
 | `usb/acm.device` | `DEVS:usb/` | the communications class's serial lines (CDC-ACM), with serial.device's API |
 | `usb/ecm.device` | `DEVS:usb/` | Ethernet adapters of the communications class (CDC-ECM) as a network device |
@@ -119,7 +119,7 @@ and its address is free again.
 | CrowPanel | USB-C, wired as a device | - |
 | 7B, ES3C35P | the console's USB-C | by hand (`USB START`), the console giving up the port; not yet tried on the boards |
 | QEMU | the emulator's DWC2, with what `-Dusb` plugs in | started at boot |
-| VisionFive 2 | four USB-A on the VL805, an xHCI controller on PCI Express port 0, their USB 2 lines through the VL805's own hub | started at boot; the hub, keyboards and mice work; USB 2 only, so a USB 3 device is reached at high speed |
+| VisionFive 2 | four USB-A on the VL805, an xHCI controller on PCI Express port 0, their USB 2 lines through the VL805's own hub, their USB 3 lines on its USB 3 root ports | started at boot; the hub, keyboards and mice work; a USB 3 device at SuperSpeed: not yet tried on the board |
 | QEMU's RISC-V virt | qemu-xhci, with `-device qemu-xhci` on QEMU's command line | started at boot when the controller is there |
 
 **Speeds.** The ESP32-S3's port and the P4's full-speed controller run
@@ -129,19 +129,48 @@ plugged in has it. Behind a high-speed hub - the ESP32-P4-PC's - a full-
 or low-speed device, most keyboards and mice, is reached through the
 hub's transaction translator: the controller sends it split
 transactions, a packet at a time, and the hub talks to it at its own
-speed. An xHCI controller's USB 2 root ports run at high, full or low
-speed, as what is plugged in has it; its USB 3 ports are not driven, and
-a USB 3 device is reached on its USB 2 half. Behind a high-speed hub,
-xhci.device tells the controller which hub and port a full- or
-low-speed device hangs off, and the controller does the split
-transactions itself. `USBInfo` shows each device's speed.
+speed. An xHCI controller's root ports are one hub, its USB 2 ports
+first, then its USB 3 ports; a socket has one of each. A USB 3 device
+trains its link on the USB 3 port and runs at SuperSpeed, 5 Gbit/s - a
+SuperSpeedPlus one at SuperSpeed too - and anything else is on the USB 2
+port, at high, full or low speed. A USB 3 hub is two hubs: its
+SuperSpeed half, on a USB 3 port, has the USB 3 devices behind it, its
+USB 2 half, on the USB 2 port, the rest. A SuperSpeed link that failed
+(SS.Inactive, compliance mode) is warm reset, and what is on it comes in
+as if plugged in. Endpoint 0 of a SuperSpeed device takes 512 bytes, and
+an endpoint bursts as its companion descriptor says - an isochronous one
+up to its bytes an interval, in as many bursts as its Mult says; a
+high-speed interrupt or isochronous endpoint has its more transactions
+a microframe. A SuperSpeed bulk endpoint may have streams, queues of
+its own each with a transfer out at once, the device choosing which it
+moves next (`OpenUSBStreamPipe`).
+
+**A SuperSpeed link rests** in U1 and U2 while it has nothing to move,
+where the device's BOS offers them. usb.library works out how long the
+way back from each takes, over every link between the controller and
+the device, and tells the device with SET_SEL - xhci.device takes the
+longest into the slot's Max Exit Latency, and a controller that cannot
+allow for it refuses the SET_SEL, which leaves the link in U0. The
+port then takes the link down after it has been idle three times that
+long (its U1 and U2 timeouts; U1's at most 127 µs, else the port leaves
+it to the device), and the device is let take it down itself
+(U1_ENABLE, U2_ENABLE). A state the device refuses has its port's
+timeout back at 0. A hub's own link stays in U0, and so does a
+device's whose configuration has an isochronous endpoint: its data
+cannot wait for the link to come back. What was set at a port is taken
+back as its device goes.
+
+Behind a high-speed hub, xhci.device tells the controller which
+hub and port a full- or low-speed device hangs off, and the controller
+does the split transactions itself.
+`USBInfo` shows each device's speed.
 
 ## What is on it
 
 `USBInfo` lists every device: its bus and address, the hub and port it
 is plugged into, its speed, vendor and product, its name, and who drives
 each of its interfaces. `USBInfo FULL` adds the interfaces and
-endpoints.
+endpoints, and the states a SuperSpeed device's link rests in.
 
 ```
 bus addr hub port speed  id         class  device
@@ -202,8 +231,14 @@ back.
 A **pipe** is a request already filled in for one endpoint:
 `OpenUSBPipe(device, endpoint_address, reply_port)` gives an `IOUsbHC`
 whose command, address, speed, endpoint, packet size, interval and hub
-are set. The program sets the data and sends it, as often as it likes;
-the endpoint's data toggle stays in the pipe.
+are set, and what the endpoint moves besides a packet at a time:
+`burst` (wire packets a burst less one - a SuperSpeed endpoint's from
+its companion descriptor, a high-speed interrupt or isochronous one's
+more transactions a microframe from wMaxPacketSize), `mult` (a
+SuperSpeed isochronous endpoint's bursts an interval less one) and
+`interval_bytes` (a periodic endpoint's bytes an interval). The program
+sets the data and sends it, as often as it likes; the endpoint's data
+toggle stays in the pipe.
 
 ```zig
 if (!ub.ClaimUSBInterface(device, 0, "MyTool")) return fail("interface 0 is taken");
@@ -219,6 +254,20 @@ pipe.io.std.length = buffer.len;
 if (sys.DoIO(&pipe.io.std.req) == 0) use(buffer[0..@intCast(pipe.io.std.actual)]);
 ```
 
+A SuperSpeed bulk endpoint whose companion descriptor offers streams
+takes its transfers on them: `OpenUSBStreamPipe(device,
+endpoint_address, stream, reply_port)` gives the pipe of one stream,
+from 1 to the endpoint's streams (2^MaxStreams, at most 16), and null
+below SuperSpeed or for an endpoint without them. Each stream is a
+queue of its own: a transfer on one waits only for those before it on
+the same, so a pipe per stream can each have one out, and the device
+says which it moves next. Every transfer on such an endpoint goes on a
+stream: a plain pipe on it has the controller add the endpoint afresh
+without them, and what was on its streams ends with `UHIOERR_HOSTERROR`.
+xhci.device has 16 an endpoint where the controller has room for them;
+a controller without streams answers the first transfer
+`UHIOERR_HOSTERROR`.
+
 - A **bulk** read waits until the device sends; a short packet ends it.
   `nak_timeout` (milliseconds) gives up on a device that never does.
 - An **interrupt** read is asked for every `interval` milliseconds until
@@ -230,9 +279,13 @@ if (sys.DoIO(&pipe.io.std.req) == 0) use(buffer[0..@intCast(pipe.io.std.actual)]
 - An **isochronous** transfer is a run of packets, one each
   `interval`, at most `UHC_ISO_PACKETS` of them, nothing resent:
   `std.length` bytes cut into packets of `iso_packet` (the endpoint's
-  packet size unless set smaller), or with `iso_list` and `iso_count` a
+  packet size unless set otherwise), or with `iso_list` and `iso_count` a
   `UsbIsoPacket` each, its own length, the packets one after the other
-  in the data. A stream keeps two or more on the controller, a pipe
+  in the data. A packet is an interval's: where `interval_bytes` is more
+  than the packet size, it may be up to that many, and xhci.device sends
+  it as the interval's bursts; usbotg.device moves a packet of the
+  endpoint's size an interval and refuses a bigger one
+  (`IOERR_BADLENGTH`). A stream keeps two or more on the controller, a pipe
   each on the endpoint: each starts in the interval after the one
   before ends, so one sent before the last has played leaves no gap.
   The endpoint is in a setting of its own, chosen with `SET_INTERFACE`
@@ -355,7 +408,8 @@ the screen comes up only while there is none.
 ## Sticks and card readers
 
 `usb/disk.device` drives mass storage that speaks SCSI over Bulk-Only
-Transport - nearly every stick and card reader. Its units are drives:
+Transport - nearly every stick and card reader - or over USB Attached
+SCSI (UAS), as many USB 3 disks and enclosures do. Its units are drives:
 each logical unit of what is plugged in takes the lowest unit free, so
 a stick is `DU0:`, a second one `DU1:`, and a card reader's two slots
 are two drives. A stick pulled out frees its unit, and the next one
@@ -399,6 +453,18 @@ takes only its volumes, and the next one in the unit is read through the
 same drives - a stick with another table needs a restart to be mounted
 as that table says. Nothing in the MountList is needed, and nothing USB
 is loaded at boot where no stick is plugged in.
+
+**UAS** is taken where the interface has a setting for it, Bulk-Only
+otherwise. Its four pipes - command, status, data in, data out - are
+found by their pipe usage descriptors. At SuperSpeed a command's status
+and data go on a stream of their own, set out before the command; below,
+the disk says on the status pipe when it is ready for the data (Read
+Ready, Write Ready). The sense of a command that fails comes with its
+status, and the REQUEST SENSE after it is answered from that. A disk
+over UAS is one drive, its first logical unit, with one command out at
+a time. A status that does not fit the command, or does not come, resets
+the logical unit (a task management request) and clears every pipe's
+halt.
 
 **A card reader's slots** are looked at once a second (TEST UNIT
 READY): a card put in comes in as a stick does, one taken out goes.
@@ -676,8 +742,11 @@ is 10.0.3.2 - beside the machine's Ethernet on 10.0.2.0/24. In the
 monitor, `netdev_add user,id=n1,net=10.0.3.0/24` and `device_add
 usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
 
-`-Dusb-disk=<image>` plugs in a stick whose blocks are a raw image file
-- one made with `mkfs.fat` will do; `qemu` leaves the file as it was,
+`-Dusb-disk=<image>` plugs in a stick whose blocks are a raw image file.
+The volume is in a partition table's first FAT partition, as a stick is
+sold, so `mkfs.fat` on a bare image is not enough: `truncate -s 64M
+stick.img`, `echo 'start=2048, type=c' | sfdisk stick.img` and `mkfs.fat
+-F 32 --offset 2048 stick.img` make one. `qemu` leaves the file as it was,
 `qemu-disk` writes to it. The stick is `usbstick` in the monitor:
 `device_del usbstick` pulls it out, and another goes in with
 `drive_add 0 if=none,id=s2,format=raw,file=<image>` and
@@ -687,9 +756,13 @@ usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
 controller, so its bus does not start. A QEMU started with `-device
 qemu-xhci` has one, and `-device usb-kbd`, `-device usb-mouse` or a
 `usb-storage` device go on its bus; the machine's `USB AUTO` starts it at
-boot. QEMU puts a `usb-storage` on a SuperSpeed port, which xhci.device
-does not drive: `-device qemu-xhci,p3=0` gives the controller USB 2
-ports only, and the stick comes in at high speed. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
+boot. QEMU puts a `usb-storage` on a USB 3 port, and the stick runs at
+SuperSpeed; `-device qemu-xhci,p3=0` gives the controller USB 2 ports
+only, and it comes in at high speed. `-device usb-uas,id=uas -device
+scsi-hd,bus=uas.0,drive=d` is a disk over UAS, on streams at SuperSpeed
+and with Read Ready and Write Ready at high speed. One plugged in from
+the monitor (`device_add usb-uas,id=uas2`, then its `scsi-hd`) is
+attached only once the disk is on it: `qom-set uas2 attached true`. `-device usb-audio,audiodev=snd,id=spk` with an audiodev (`-audiodev
 pa,id=snd`, or `wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
 for a file) is a speaker for `usb/uac.device`; `device_del spk` pulls it
 out while it plays. QEMU's own mixing engine plays 0 dB at 240/255 of

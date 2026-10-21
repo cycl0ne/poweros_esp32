@@ -14,12 +14,19 @@
 //! So every character goes to both and a character is taken from
 //! whichever has one. Nothing else is running to fight over either port.
 //!
-//! **It runs on the stack it was entered on.** Switching stacks under
-//! compiled code needs the register windows spilled, which is exec's
-//! `NewStackRun` - a call that allocates and waits, neither of which is
-//! available here. What it does instead is look at the stack pointer
-//! before it starts: a debugger that crashes on a blown stack is worse
-//! than one that says the stack is blown.
+//! **It runs on a stack of its own.** The stack it was entered on may be
+//! what broke - a task's stack run past its end, or one with too little
+//! left for the debugger's printing - so once it has the machine it moves
+//! to its own (`own_stack`), through the CPU's part of `NewStackRun`
+//! (`call_on_stack`: no allocation, no wait), and the stack it came from
+//! keeps only the frames that brought it in. On the S3 the move writes the
+//! register windows out to the stacks they belong to first, which is also
+//! what puts a whole call chain in memory for `bt`. One stack does for
+//! every core: they take the debugger in turn.
+//!
+//! **It lists exec's lists** as `s3>` does, the same rows and lines
+//! (`_lists.zig`), but takes none of their locks - the code it stopped may
+//! hold one - and asks the chip about every node before it follows it.
 //!
 //! **Nothing here calls through a jump table.** The code that reports a
 //! broken machine must not depend on anything that may be what broke, so
@@ -32,6 +39,8 @@ const sdk = @import("sdk");
 const exec = @import("../exec.zig");
 const exec_base = @import("../exec_base.zig");
 const _rawio = @import("../rawio/_rawio.zig");
+const _task = @import("../task/_task.zig");
+const _lists = @import("_lists.zig");
 
 /// What the chip's part of the debugger is, as `RawIOHardware` is what
 /// the raw port's part is. The kernel fills it in at boot; without it
@@ -120,6 +129,12 @@ var frame: ?*const anyopaque = null;
 var cause: u32 = 0;
 var line: [line_length]u8 = undefined;
 var going = false;
+/// `enter`'s own frame, on the stack it was entered on: where a call
+/// chain from a call starts.
+var entered_at: usize = 0;
+/// Whether the visit moved to the debugger's own stack; not when it was
+/// entered from inside a visit.
+var moved = false;
 
 // --- the two ports ----------------------------------------------------------
 //
@@ -350,15 +365,15 @@ noinline fn spillWindows(depth: u32) u32 {
 ///
 /// A windowed call leaves the caller's return address and stack pointer
 /// in the four words below the callee's stack pointer, so the chain is
-/// read from memory - as long as the window that held them has been
-/// spilled. The registers still in the window file are not in memory at
-/// all, so a chain may stop early; it says so rather than inventing the
-/// rest. Nothing is spilled on purpose here: forcing a spill writes to a
-/// stack that may be what broke.
+/// read from memory - all of it once the move to the debugger's own stack
+/// has written every window out. A visit entered from inside another
+/// never moved: then only one entered from working code spills on
+/// purpose, and a chain may stop early; it says so rather than inventing
+/// the rest.
 fn backtrace() void {
     const chip = debug_hardware orelse return;
-    if (builtin.cpu.arch.isRISCV()) return backtraceByFramePointers(chip);
-    if (reason == .asked) @as(*volatile u32, &spill_sink).* = spillWindows(18);
+    if (builtin.cpu.arch.isRISCV() or builtin.cpu.arch == .aarch64) return backtraceByFramePointers(chip);
+    if (!moved and reason == .asked) @as(*volatile u32, &spill_sink).* = spillWindows(18);
     var pc: usize = 0;
     var sp: usize = 0;
     if (frame) |f| {
@@ -367,6 +382,22 @@ fn backtrace() void {
         printFrame(0, pc);
         // The caller of the stopped function is in a0, not in memory.
         pc = returnTo(ret, pc);
+    } else if (moved) {
+        // No trap frame, and the visit moved: the move copied the four
+        // words below its own stack pointer - its caller's return address
+        // and stack pointer - to below the own stack's top, so the chain
+        // is followed from there up to `enter`'s own frame; `enter`'s
+        // caller is where it starts.
+        sp = @intFromPtr(&own_stack) + own_stack.len;
+        const here = @intFromPtr(&backtrace);
+        var hops: u32 = 0;
+        while (hops < 4) : (hops += 1) {
+            const next_pc = word32(sp -% 16) orelse break;
+            const next_sp = word32(sp -% 12) orelse break;
+            pc = returnTo(next_pc, here);
+            sp = next_sp;
+            if (next_sp == entered_at) break;
+        }
     } else {
         // No trap frame: entered from a call. The four words below this
         // function's own stack pointer hold the return address and
@@ -395,12 +426,15 @@ fn backtrace() void {
 
 /// The call chain by frame pointers, as RISC-V code keeps them: each
 /// frame's return address one word below fp and the frame before it two
-/// words below - 4 and 8 bytes on RV32, 8 and 16 on RV64. From a trap the
-/// chain starts at the stopped code's frame pointer; from a call, at this
-/// function's own.
+/// words below - 4 and 8 bytes on RV32, 8 and 16 on RV64. AArch64 code
+/// keeps its frame record at fp: the frame before it there, the return
+/// address a word above. From a trap the chain starts at the stopped
+/// code's frame pointer; from a call, at `enter`'s own, on the stack it
+/// was entered on.
 fn backtraceByFramePointers(chip: *const DebugHardware) void {
-    var fp: usize = @frameAddress();
-    var depth: u32 = 0;
+    const record_up = builtin.cpu.arch == .aarch64;
+    var fp: usize = entered_at;
+    var depth: u32 = 1;
     if (frame) |f| {
         var pc: usize = 0;
         var sp: usize = 0;
@@ -412,11 +446,12 @@ fn backtraceByFramePointers(chip: *const DebugHardware) void {
         fp = at(f);
     }
     while (depth < max_frames) : (depth += 1) {
-        const ret = wordAt(fp -% @sizeOf(usize)) orelse break;
-        const before = wordAt(fp -% 2 * @sizeOf(usize)) orelse break;
+        const ret = wordAt(if (record_up) fp +% @sizeOf(usize) else fp -% @sizeOf(usize)) orelse break;
+        const before = wordAt(if (record_up) fp else fp -% 2 * @sizeOf(usize)) orelse break;
         if (ret == 0 or !inCode(ret)) break;
-        // Two back: inside the call, whether it took two bytes or four.
-        printFrame(depth, ret - 2);
+        // Back into the call: two bytes on RISC-V, whether it took two
+        // or four; the four of the call on AArch64.
+        printFrame(depth, ret - if (record_up) 4 else 2);
         if (before <= fp) break;
         fp = before;
     }
@@ -527,6 +562,13 @@ fn help() void {
         \\  w addr [n] [r|w|rw]  a watchpoint; w off
         \\  s            one instruction
         \\  g            go on
+        \\  tasks        the tasks, and what each core runs
+        \\  libs         the libraries
+        \\  devs         the devices
+        \\  resources    the resources
+        \\  ports        the public message ports
+        \\  sems         the public semaphores
+        \\  locks        which task holds which semaphore
         \\  reset        restart the machine
         \\  q            the same as g
         \\
@@ -537,12 +579,72 @@ fn same(word: []const u8, name: []const u8) bool {
     return std.mem.eql(u8, word, name);
 }
 
+// --- exec's lists -----------------------------------------------------------
+
+/// The debugger's way of printing a listing's lines: `printf`'s.
+const Out = struct {
+    pub fn print(_: Out, comptime format: [:0]const u8, args: anytype) void {
+        comptime sdk.exec.checkFormat(format, @TypeOf(args));
+        printf(format, args);
+    }
+};
+
+/// A listing's rows printed as they are read, its header before the first.
+fn Printed(comptime Listing: type) type {
+    return struct {
+        const Self = @This();
+
+        count: u32 = 0,
+
+        pub fn add(printed: *Self, row: *const Listing.Row) void {
+            const out: Out = .{};
+            if (printed.count == 0) out.print(Listing.header, .{});
+            printed.count += 1;
+            Listing.print(out, row);
+        }
+
+        pub fn brokenOff(_: *Self, address: usize) void {
+            _lists.printBrokenOff(Out{}, address);
+        }
+    };
+}
+
+/// One of exec's lists, read with nothing locked and every node checked.
+fn listing(comptime Listing: type) void {
+    const chip = debug_hardware orelse return;
+    if (!exec.initialized) {
+        printf("exec has no lists yet\n", .{});
+        return;
+    }
+    var printed: Printed(Listing) = .{};
+    Listing.each(.{ .readable = chip.readable }, exec.SysBase, &printed);
+    if (printed.count == 0) printf(if (@hasDecl(Listing, "none")) Listing.none else Listing.header, .{});
+    if (@hasDecl(Listing, "printTotals")) Listing.printTotals(Out{}, Listing.totals(exec.SysBase));
+}
+
+// --- its own stack ----------------------------------------------------------
+
+/// The debugger's own stack, painted with exec's stack guard before every
+/// visit: its bottom words are checked after, and how deep a visit went
+/// can be read off it with `d`.
+const own_stack_size = if (@sizeOf(usize) == 8) 8192 else 4096;
+var own_stack: [own_stack_size]u8 align(16) = undefined;
+
+fn onOwnStack(address: usize) bool {
+    const lower = @intFromPtr(&own_stack);
+    return address >= lower and address < lower + own_stack.len;
+}
+
+/// What `call_on_stack` runs there.
+fn visitOnOwnStack(_: ?*anyopaque) callconv(.c) i32 {
+    visit(debug_hardware.?);
+    return 0;
+}
+
 // --- the prompt -------------------------------------------------------------
 
-/// Whether the stack looks like one. A debugger that crashes on a blown
-/// stack tells nobody anything.
-fn stackLooksSound() bool {
-    const sp = @frameAddress();
+/// Whether a stack looks like one: aligned, and readable around it.
+fn stackLooksSound(sp: usize) bool {
     return sp & 15 == 0 and readable(sp) and readable(sp + 256);
 }
 
@@ -557,20 +659,33 @@ pub fn enter(why: Reason, trap_frame: ?*const anyopaque, why_stopped: u32) void 
     // level the caller was at is put back when it goes on. Two cores that
     // stop at once both come here: the one that holds the other first has
     // it, and the other waits in `stop` for its turn - so the state of the
-    // visit is written only once this core has the machine.
+    // visit, and the own stack, are taken only once this core has the
+    // machine.
     const saved = chip.stop();
     defer chip.go(saved);
     reason = why;
     frame = trap_frame;
     cause = why_stopped;
     going = false;
+    entered_at = @frameAddress();
+    // Entered again from inside a visit - a command that faulted: the
+    // stack is its own already, and starting again at its top would write
+    // over the visit below.
+    moved = !onOwnStack(entered_at);
+    if (!moved) return visit(chip);
+    const lower = @intFromPtr(&own_stack);
+    _task.writeGuard(lower, own_stack.len / @sizeOf(u32));
+    _ = _task.task_hardware.call_on_stack(lower + own_stack.len, @ptrCast(&visitOnOwnStack), null);
+    if (!_task.guardIntact(lower, _task.guard_words)) printf("*** the debugger's own stack ran past its end\n", .{});
+}
 
-    if (!stackLooksSound()) {
-        printf("\n*** the stack is not sound (sp 0x%08x): halted\n", .{@as(u32, @truncate(@frameAddress()))});
-        chip.halt();
-    }
-
+/// A visit: what stopped the machine, then the prompt until it is told to
+/// go on.
+fn visit(chip: *const DebugHardware) void {
     printf("\nROM debugger. ? for the commands.\n", .{});
+    if (!stackLooksSound(entered_at)) {
+        printf("*** the stack it was entered on does not look sound (0x%08zx)\n", .{entered_at});
+    }
     if (reason == .stopped) {
         var pc: usize = 0;
         var sp: usize = 0;
@@ -632,6 +747,20 @@ pub fn enter(why: Reason, trap_frame: ?*const anyopaque, why_stopped: u32) void 
                 chip.resumeFrom(pc);
             }
             going = true;
+        } else if (same(word, "tasks")) {
+            listing(_lists.tasks);
+        } else if (same(word, "libs")) {
+            listing(_lists.libraries);
+        } else if (same(word, "devs")) {
+            listing(_lists.devices);
+        } else if (same(word, "resources")) {
+            listing(_lists.resources);
+        } else if (same(word, "ports")) {
+            listing(_lists.ports);
+        } else if (same(word, "sems")) {
+            listing(_lists.semaphores);
+        } else if (same(word, "locks")) {
+            listing(_lists.locks);
         } else if (same(word, "reset")) {
             chip.reboot();
         } else {

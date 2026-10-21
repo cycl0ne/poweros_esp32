@@ -194,9 +194,7 @@ fn letGo(base: *DiskBase, function: *Function) void {
         if (unit.present) depart(base, unit);
         release(base, function, lun);
     }
-    const ub = base.usb_base.?;
-    ub.CloseUSBPipe(function.transport.bulk_in);
-    ub.CloseUSBPipe(function.transport.bulk_out);
+    _disk.closePipes(base.usb_base.?, &function.transport);
     sys.FreeMem(function, @sizeOf(Function));
 }
 
@@ -321,8 +319,8 @@ fn senseOf(function: *Function, unit: *Unit) ?scsi.Sense {
 }
 
 fn run(function: *Function, unit: *Unit, command: []const u8, data: ?[]u8, in: bool, ms: u32) bot.Result {
-    const bytes = data orelse return bot.run(&function.transport, unit.lun, command, null, 0, in, ms);
-    return bot.run(&function.transport, unit.lun, command, bytes.ptr, @intCast(bytes.len), in, ms);
+    const bytes = data orelse return _disk.runOn(&function.transport, unit.lun, command, null, 0, in, ms);
+    return _disk.runOn(&function.transport, unit.lun, command, bytes.ptr, @intCast(bytes.len), in, ms);
 }
 
 // --- the requests -------------------------------------------------------------------
@@ -389,7 +387,7 @@ fn readWrite(base: *DiskBase, function: *Function, unit: *Unit, io: *exec.IORequ
         const piece: u32 = @intCast(@min(req.length - done, piece_most));
         const block = (req.offset + done) / block_bytes;
         const command = scsi.readWrite(write, block, piece / block_bytes);
-        const result = bot.run(&function.transport, unit.lun, command.slice(), bytes + @as(usize, @intCast(done)), piece, !write, data_ms);
+        const result = _disk.runOn(&function.transport, unit.lun, command.slice(), bytes + @as(usize, @intCast(done)), piece, !write, data_ms);
         switch (result.outcome) {
             .passed => if (result.moved != piece) {
                 io.err = td.TDERR_NotSpecified;
@@ -484,7 +482,7 @@ fn scsiCommand(function: *Function, unit: *Unit, io: *exec.IORequest) void {
     }
     const in = cmd.flags & scsidisk.SCSIF_READ != 0;
     const length: u32 = if (cmd.data == null) 0 else cmd.length;
-    const result = bot.run(&function.transport, unit.lun, block[0..cmd.cmd_length], cmd.data, length, in, data_ms);
+    const result = _disk.runOn(&function.transport, unit.lun, block[0..cmd.cmd_length], cmd.data, length, in, data_ms);
     cmd.cmd_actual = cmd.cmd_length;
     cmd.actual = result.moved;
     cmd.sense_actual = 0;

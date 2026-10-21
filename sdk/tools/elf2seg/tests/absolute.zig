@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! A RISC-V program built with absolute addresses in its code (medlow):
-//! its global is reached by lui and an offset, which holds only at the
-//! address it was linked at. elf2seg must refuse it.
+//! A program built with absolute addresses in its code - RISC-V's medlow,
+//! AArch64's large code model: its global is reached by lui and an
+//! offset, or by a movz and movk, which hold only at the address it was
+//! linked at. elf2seg must refuse it.
 
 var counter: u32 = 0;
 

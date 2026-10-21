@@ -85,6 +85,10 @@ pub const USBDF_HUB: u32 = 1 << 0;
 pub const USBDF_CONFIGURED: u32 = 1 << 1;
 /// It did not answer as it was being set up, and is left as it is.
 pub const USBDF_FAILED: u32 = 1 << 2;
+/// Its SuperSpeed link rests in U1, in U2, while it has nothing to move:
+/// its port takes it down after a while idle, and the device may itself.
+pub const USBDF_U1: u32 = 1 << 3;
+pub const USBDF_U2: u32 = 1 << 4;
 
 /// A pipe to one endpoint (OpenUSBPipe).
 pub const USBPipe = extern struct {

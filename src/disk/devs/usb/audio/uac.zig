@@ -452,7 +452,7 @@ fn sendFeedback(speaker: *Speaker) void {
 fn heardFeedback(speaker: *Speaker, pipe: *usb.USBPipe) void {
     @atomicStore(u8, &speaker.feedback_out, 0, .release);
     if (pipe.io.std.req.err != 0 or @atomicLoad(u8, &speaker.leaving, .acquire) != 0) return;
-    const high_speed = speaker.device.speed == usbhc.USB_SPEED_HIGH;
+    const high_speed = speaker.device.speed == usbhc.USB_SPEED_HIGH or speaker.device.speed == usbhc.USB_SPEED_SUPER;
     var n = speaker.feedback_packets;
     while (n > 0) {
         n -= 1;

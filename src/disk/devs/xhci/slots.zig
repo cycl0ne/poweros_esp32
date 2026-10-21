@@ -23,7 +23,20 @@
 //! a transfer names that is not among them - another setting's - is
 //! added when the transfer comes (`ensureEndpoint`). So is every
 //! isochronous one: a setting of its own, chosen with SET_INTERFACE
-//! before its first transfer.
+//! before its first transfer. A transfer that says its endpoint is other
+//! than it was added as - other bursts, other streams - has it added
+//! afresh, and what was on it answered.
+//!
+//! **A bulk endpoint with streams** - a transfer that names them - is
+//! added with a Stream Context Array: as many of the streams asked for
+//! as the controller's arrays hold, at most `max_streams`, each entry
+//! pointing at its lane's ring (`freshStreams`).
+//!
+//! **SET_SEL** has the slot's Max Exit Latency set first, from the
+//! request's `exit_latency` (Evaluate Context): the controller allows
+//! that long for the links on the way to come back from U1 or U2. One
+//! that cannot answers the request UHIOERR_HOSTERROR, and it goes nowhere
+//! (`setExitLatency`).
 //!
 //! **A hub** is told the controller once its hub descriptor has been
 //! read: its ports and its TT think time (`hubUpdate`), before anything
@@ -77,7 +90,7 @@ fn log2(value: u32) u32 {
 
 /// An interrupt endpoint's interval as its context has it - an exponent
 /// of 125 µs - from its descriptor's bInterval: microframes as a power
-/// of two at high speed, frames at full and low speed.
+/// of two at high speed and SuperSpeed, frames at full and low speed.
 pub fn intervalOf(speed: u32, b_interval: u8) u32 {
     if (speed >= regs.SPEED_HIGH) return @min(@max(b_interval, 1), 16) - 1;
     return @min(@max(log2(b_interval) + 3, 3), 10);
@@ -90,26 +103,45 @@ pub fn intervalOfMs(speed: u32, ms: u16) u32 {
     return @min(@max(exponent, 3), 10);
 }
 
-/// What an endpoint of a configuration is to be.
+/// What an endpoint of a configuration is to be: its bursts as a
+/// request says them (sdk/devices/usbhc.zig) - from its SuperSpeed
+/// companion, or a high-speed periodic one's wMaxPacketSize.
 pub const Spec = struct {
     kind: u32 = 0,
     max_packet: u32 = 0,
     interval: u32 = 0,
+    burst: u32 = 0,
+    esit: u32 = 0,
 };
+
+/// A SuperSpeed endpoint companion at `at` into `spec`: its burst, and a
+/// periodic endpoint's bytes an interval.
+fn takeCompanion(config: []const u8, at: usize, spec: *Spec) void {
+    spec.burst = @min(config[at + 2], 15);
+    spec.esit = if (isPeriodic(spec.kind)) @as(u32, config[at + 4]) | @as(u32, config[at + 5]) << 8 else 0;
+}
 
 /// The endpoints of configuration `value` in `config` (a configuration
 /// descriptor and what follows it): every interface's first setting's,
-/// by device context index, isochronous ones left out. A bit per index
-/// found; 0 if `config` is not that configuration.
+/// by device context index, isochronous ones left out, each with its
+/// SuperSpeed companion if one follows it. A bit per index found; 0 if
+/// `config` is not that configuration.
 pub fn endpointsOf(config: []const u8, value: u8, speed: u32, into: *[32]Spec) u32 {
     if (config.len < 9 or config[1] != d.USB_DT_CONFIG or config[5] != value) return 0;
     var found: u32 = 0;
     var alternate: u8 = 0;
+    // The endpoint just taken, whose companion may come next.
+    var last: u32 = 0;
     var at: usize = 0;
     while (at + 2 <= config.len) {
         const length = config[at];
         if (length < 2 or at + length > config.len) break;
+        const previous = last;
+        last = 0;
         switch (config[at + 1]) {
+            d.USB_DT_SS_ENDPOINT_COMP => if (previous != 0 and length >= 6) {
+                takeCompanion(config, at, &into[previous]);
+            },
             d.USB_DT_INTERFACE => if (length >= 9) {
                 alternate = config[at + 3];
             },
@@ -126,7 +158,15 @@ pub fn endpointsOf(config: []const u8, value: u8, speed: u32, into: *[32]Spec) u
                             .max_packet = packet & 0x7FF,
                             .interval = if (isPeriodic(kind)) intervalOf(speed, config[at + 6]) else 0,
                         };
+                        // A high-speed periodic endpoint's more
+                        // transactions a microframe.
+                        if (speed == regs.SPEED_HIGH and isPeriodic(kind)) {
+                            const more = @min((packet >> 11) & 3, 2);
+                            into[dci].burst = more;
+                            into[dci].esit = (packet & 0x7FF) * (more + 1);
+                        }
                         found |= regs.addFlag(dci);
+                        last = dci;
                     }
                 }
             },
@@ -135,6 +175,87 @@ pub fn endpointsOf(config: []const u8, value: u8, speed: u32, into: *[32]Spec) u
         at += length;
     }
     return found;
+}
+
+/// An endpoint's state cleared, what it was given of memory kept: its
+/// ring, its buffer, its lists, its streams' array and lanes.
+fn emptied(ep: *const Endpoint) Endpoint {
+    return .{
+        .ring = ep.ring,
+        .ring_raw = ep.ring_raw,
+        .ring_raw_size = ep.ring_raw_size,
+        .flight = ep.flight,
+        .bounce = ep.bounce,
+        .bounce_size = ep.bounce_size,
+        .bounce_raw = ep.bounce_raw,
+        .bounce_raw_size = ep.bounce_raw_size,
+        .queue = ep.queue,
+        .contexts = ep.contexts,
+        .contexts_raw = ep.contexts_raw,
+        .contexts_raw_size = ep.contexts_raw_size,
+        .lanes = ep.lanes,
+    };
+}
+
+/// The streams of those `asked` for that the controller's arrays hold, at
+/// most `max_streams`; 0 when it has none.
+pub fn streamsOf(max_psa_size: u32, asked: u32) u32 {
+    const wanted: u32 = @min(asked, _xhci.max_streams);
+    const entries = regs.streamEntries(wanted, max_psa_size);
+    if (entries == 0) return 0;
+    return @min(wanted, entries - 1);
+}
+
+/// A bulk endpoint's streams made ready, its `streams` set: its lanes and
+/// its Primary Stream Array there - made the first time - each lane
+/// emptied, made what the endpoint is and given a fresh ring, and its
+/// entry in the array pointing at that ring. False without the memory.
+fn freshStreams(host: *Host, ep: *Endpoint) bool {
+    const sys = host.sys;
+    if (ep.lanes == null) {
+        const bytes = _xhci.max_streams * @sizeOf(Endpoint);
+        const memory = sys.AllocMem(bytes, exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return false;
+        const lanes: [*]Endpoint = @ptrCast(@alignCast(memory));
+        for (lanes[0.._xhci.max_streams]) |*lane| {
+            lane.* = .{};
+            sys.NewList(&lane.queue);
+            sys.NewList(&lane.flight);
+        }
+        ep.lanes = lanes;
+    }
+    if (ep.contexts == null) {
+        const bytes = _xhci.stream_entries * 16;
+        var raw: ?*anyopaque = null;
+        const memory = _xhci.allocDma(host, bytes, _xhci.dma_align, &raw) orelse return false;
+        ep.contexts = @ptrCast(@alignCast(memory));
+        ep.contexts_raw = raw;
+        ep.contexts_raw_size = @intCast(_xhci.roundUp(bytes, _xhci.dma_align) + _xhci.dma_align);
+    }
+    const contexts = ep.contexts.?;
+    for (contexts[0 .. _xhci.stream_entries * 4]) |*word| word.* = 0;
+    for (ep.lanes.?[0..ep.streams], 1..) |*lane, stream| {
+        const fresh = emptied(lane);
+        lane.* = fresh;
+        lane.enabled = true;
+        lane.kind = ep.kind;
+        lane.max_packet = ep.max_packet;
+        lane.burst = ep.burst;
+        lane.stream = @intCast(stream);
+        if (!freshRing(host, lane)) return false;
+        const pointer = regs.streamPointer(lane.ring.dequeuePointer());
+        contexts[4 * stream] = ring.lo(pointer);
+        contexts[4 * stream + 1] = ring.hi(pointer);
+    }
+    _xhci.toDevice(host, @intFromPtr(contexts), _xhci.stream_entries * 16);
+    return true;
+}
+
+/// An endpoint the controller is to drop: whatever is on it or waits for
+/// it answered UHIOERR_HOSTERROR, its streams gone.
+fn letGo(host: *Host, ep: *Endpoint) void {
+    transfer.failEndpoint(host, ep, usbhc.UHIOERR_HOSTERROR);
+    ep.enabled = false;
+    ep.streams = 0;
 }
 
 /// An endpoint's ring there and empty, its cycle state 1: what its
@@ -169,23 +290,29 @@ fn buildInput(host: *Host, slot: *Slot, add: u32, drop: u32) void {
     control[regs.ICC_ADD] = add;
     const context = _xhci.inputContext(host, slot, 1);
     context[0] = regs.slotWord0(slot.route, slot.speed, slot.hub, slot.entries);
-    context[1] = regs.slotWord1(slot.root_port, if (slot.hub) slot.hub_ports else 0);
+    context[1] = regs.slotWord1(slot.exit_latency, slot.root_port, if (slot.hub) slot.hub_ports else 0);
     context[2] = regs.slotWord2(slot.tt_slot, slot.tt_port, slot.ttt);
     var dci: u32 = 1;
     while (dci < 32) : (dci += 1) {
         if (add & regs.addFlag(dci) == 0) continue;
         const ep = &slot.endpoints[dci];
         const words = _xhci.inputContext(host, slot, 1 + dci);
-        const pointer = ep.ring.dequeuePointer();
+        // An endpoint with streams is pointed at its array, without a
+        // cycle state.
+        const pointer: u64 = if (ep.streams != 0) @intFromPtr(ep.contexts.?) else ep.ring.dequeuePointer();
+        const max_pstreams = if (ep.streams != 0) regs.maxPStreams(regs.streamEntries(ep.streams, host.max_psa_size)) else 0;
         const periodic = isPeriodic(ep.kind);
-        words[0] = regs.endpointWord0(ep.interval);
-        words[1] = regs.endpointWord1(ep.kind, 0, ep.max_packet);
+        // A periodic endpoint's bytes an interval: its companion's, else
+        // a packet's.
+        const esit = if (ep.esit != 0) ep.esit else ep.max_packet;
+        words[0] = regs.endpointWord0(ep.interval, ep.mult, max_pstreams);
+        words[1] = regs.endpointWord1(ep.kind, ep.burst, ep.max_packet);
         words[2] = ring.lo(pointer);
         words[3] = ring.hi(pointer);
         words[4] = if (ep.kind == regs.EP_CONTROL)
             regs.endpointWord4(8, 0)
         else if (periodic)
-            regs.endpointWord4(ep.max_packet, ep.max_packet)
+            regs.endpointWord4(esit, esit)
         else
             regs.endpointWord4(3072, 0);
     }
@@ -240,17 +367,8 @@ fn blockOf(host: *Host, id: u32) ?*Slot {
 /// contexts, the rings, the buffers - kept.
 fn clear(slot: *Slot) void {
     for (&slot.endpoints) |*ep| {
-        ep.* = .{
-            .ring = ep.ring,
-            .ring_raw = ep.ring_raw,
-            .ring_raw_size = ep.ring_raw_size,
-            .flight = ep.flight,
-            .bounce = ep.bounce,
-            .bounce_size = ep.bounce_size,
-            .bounce_raw = ep.bounce_raw,
-            .bounce_raw_size = ep.bounce_raw_size,
-            .queue = ep.queue,
-        };
+        const fresh = emptied(ep);
+        ep.* = fresh;
     }
     slot.enabled = false;
     slot.address = 0;
@@ -266,6 +384,7 @@ fn clear(slot: *Slot) void {
     slot.hub = false;
     slot.hub_ports = 0;
     slot.ttt = 0;
+    slot.exit_latency = 0;
     slot.entries = 1;
     slot.config_length = 0;
 }
@@ -287,6 +406,7 @@ fn speedOf(speed: u8) u32 {
     return switch (speed) {
         usbhc.USB_SPEED_LOW => regs.SPEED_LOW,
         usbhc.USB_SPEED_HIGH => regs.SPEED_HIGH,
+        usbhc.USB_SPEED_SUPER => regs.SPEED_SUPER,
         else => regs.SPEED_FULL,
     };
 }
@@ -302,7 +422,8 @@ pub fn defaultSlot(host: *Host, req: *const usbhc.IOUsbHC) ?*Slot {
     var route: u32 = 0;
     var depth: u8 = 0;
     if (host.reset_hub == 0) {
-        root_port = host.first_port + port - 1;
+        if (port > host.ports) return null;
+        root_port = host.port_map[port - 1];
     } else {
         const hub = host.slots[host.reset_hub] orelse return null;
         if (!hub.enabled or hub.depth + 1 > max_depth) return null;
@@ -326,7 +447,7 @@ pub fn defaultSlot(host: *Host, req: *const usbhc.IOUsbHC) ?*Slot {
     slot.root_port = @intCast(root_port);
     slot.route = route;
     slot.depth = depth;
-    if (req.hub_address != 0 and slot.speed != regs.SPEED_HIGH) {
+    if (req.hub_address != 0 and (slot.speed == regs.SPEED_FULL or slot.speed == regs.SPEED_LOW)) {
         slot.tt_slot = host.by_address[req.hub_address & 0x7F];
         slot.tt_port = req.hub_port;
     }
@@ -394,9 +515,25 @@ pub fn checkPacketSize(host: *Host, slot: *Slot, req: *const usbhc.IOUsbHC) bool
     return contextCommand(host, slot, regs.TRB_EVALUATE_CONTEXT, 0) == regs.CC_SUCCESS;
 }
 
+/// SET_SEL about to go: the request's exit latency into the slot's Max
+/// Exit Latency (Evaluate Context), so the controller allows for the
+/// links on the way coming back. False if it cannot, the slot's left as
+/// it was.
+pub fn setExitLatency(host: *Host, slot: *Slot, exit_latency: u16) bool {
+    if (slot.exit_latency == exit_latency) return true;
+    const before = slot.exit_latency;
+    slot.exit_latency = exit_latency;
+    buildInput(host, slot, regs.ADD_SLOT, 0);
+    const code = contextCommand(host, slot, regs.TRB_EVALUATE_CONTEXT, 0);
+    if (code == regs.CC_SUCCESS) return true;
+    sdk.exec.kprintf(host.sys, "%s: unit %d: a device's exit latency of %d us was not taken (%d)\n", .{ _xhci.DEVICE_NAME, host.number, @as(u32, exit_latency), code });
+    slot.exit_latency = before;
+    return false;
+}
+
 /// SET_CONFIGURATION(`value`) about to go: every endpoint there was
-/// dropped, the configuration's added. False if the controller would not
-/// have them.
+/// dropped - what was on it answered - the configuration's added. False
+/// if the controller would not have them.
 pub fn configure(host: *Host, slot: *Slot, value: u8) bool {
     var drop: u32 = 0;
     var dci: u32 = 2;
@@ -409,11 +546,15 @@ pub fn configure(host: *Host, slot: *Slot, value: u8) bool {
     dci = 2;
     while (dci < 32) : (dci += 1) {
         const ep = &slot.endpoints[dci];
-        if (drop & regs.addFlag(dci) != 0) ep.enabled = false;
+        if (drop & regs.addFlag(dci) != 0) letGo(host, ep);
         if (add & regs.addFlag(dci) == 0) continue;
+        ep.streams = 0;
         ep.kind = specs[dci].kind;
         ep.max_packet = specs[dci].max_packet;
         ep.interval = specs[dci].interval;
+        ep.burst = specs[dci].burst;
+        ep.mult = 0;
+        ep.esit = specs[dci].esit;
         if (!freshRing(host, ep)) return false;
         ep.enabled = true;
     }
@@ -429,9 +570,11 @@ pub fn configure(host: *Host, slot: *Slot, value: u8) bool {
 }
 
 /// The endpoint a transfer is for there as the transfer says it is: added
-/// if it is not in the slot's context, added afresh if it is there as
-/// something else. 0, or why the controller would not have it:
-/// UHIOERR_BANDWIDTH when its frames have no room for it.
+/// if it is not in the slot's context, added afresh - what was on it
+/// answered UHIOERR_HOSTERROR - if it is there as something else. 0, or
+/// why the controller would not have it: UHIOERR_BANDWIDTH when its
+/// frames have no room for it, UHIOERR_HOSTERROR for streams it does not
+/// have - none at all, or not the stream the transfer names.
 pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUsbHC) i8 {
     const ep = &slot.endpoints[dci];
     const in = req.endpoint & d.USB_DIR_IN != 0;
@@ -441,23 +584,45 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
         else => if (in) regs.EP_INTERRUPT_IN else regs.EP_INTERRUPT_OUT,
     };
     const packet: u32 = @max(req.max_packet & 0x7FF, 1);
-    if (ep.enabled and ep.kind == kind and ep.max_packet == packet) return 0;
+    // Its bursts as the request says them: a high-speed endpoint's more
+    // transactions only on a periodic one, Mult only on an isochronous
+    // one at SuperSpeed, bytes an interval only on a periodic one.
+    const periodic = isPeriodic(kind);
+    const burst: u32 = if (slot.speed >= regs.SPEED_SUPER) @min(req.burst, 15) else if (slot.speed == regs.SPEED_HIGH and periodic) @min(req.burst, 2) else 0;
+    const mult: u32 = if (slot.speed >= regs.SPEED_SUPER and _xhci.isIsoKind(kind)) @min(req.mult, 2) else 0;
+    const esit: u32 = if (periodic and (slot.speed >= regs.SPEED_SUPER or burst != 0)) req.interval_bytes else 0;
+    // Streams only on a SuperSpeed bulk endpoint, and the transfer's
+    // among them.
+    const bulk = kind == regs.EP_BULK_IN or kind == regs.EP_BULK_OUT;
+    const streams: u32 = if (bulk and slot.speed >= regs.SPEED_SUPER) streamsOf(host.max_psa_size, req.streams) else 0;
+    if (req.streams != 0 and streams == 0) return usbhc.UHIOERR_HOSTERROR;
+    if (req.stream > streams or (streams != 0 and req.stream == 0)) return usbhc.UHIOERR_HOSTERROR;
+    if (ep.enabled and ep.kind == kind and ep.max_packet == packet and ep.burst == burst and ep.mult == mult and ep.esit == esit and ep.streams == streams) return 0;
     const drop = if (ep.enabled) regs.addFlag(dci) else 0;
-    ep.enabled = false;
+    if (ep.enabled) letGo(host, ep);
     ep.kind = kind;
     ep.max_packet = packet;
-    ep.interval = if (isPeriodic(kind)) intervalOfMs(slot.speed, req.interval) else 0;
-    ep.stride = strideOf(packet);
+    ep.interval = if (periodic) intervalOfMs(slot.speed, req.interval) else 0;
+    ep.burst = burst;
+    ep.mult = mult;
+    ep.esit = esit;
+    ep.stride = strideOf(@max(packet, esit));
     ep.next_slice = 0;
     ep.expect = 0;
     ep.streaming = false;
-    if (!freshRing(host, ep)) return usbhc.UHIOERR_HOSTERROR;
+    ep.streams = streams;
+    const made = if (streams != 0) freshStreams(host, ep) else freshRing(host, ep);
+    if (!made) {
+        ep.streams = 0;
+        return usbhc.UHIOERR_HOSTERROR;
+    }
     ep.enabled = true;
     slot.entries = highestOf(slot);
     buildInput(host, slot, regs.ADD_SLOT | regs.addFlag(dci), drop);
     const code = contextCommand(host, slot, regs.TRB_CONFIGURE_ENDPOINT, 0);
     if (code == regs.CC_SUCCESS) return 0;
     ep.enabled = false;
+    ep.streams = 0;
     slot.entries = highestOf(slot);
     return if (code == regs.CC_BANDWIDTH) usbhc.UHIOERR_BANDWIDTH else usbhc.UHIOERR_HOSTERROR;
 }

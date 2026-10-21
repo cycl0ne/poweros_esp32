@@ -36,6 +36,30 @@
 //! and nothing waits for an answer - a packet has its time and is gone -
 //! and a request is replied once its last packet's time has passed.
 //!
+//! **A packet is an interval's bytes**: at most `max_packet`, or where
+//! the endpoint moves more in an interval - a high-speed one with more
+//! transactions a microframe, a SuperSpeed one with bursts (`burst`,
+//! `mult`) - at most its `interval_bytes`, which the controller sends as
+//! the wire's packets. A controller that moves one wire packet an
+//! interval (usbotg.device) answers a bigger packet IOERR_BADLENGTH.
+//!
+//! **A SuperSpeed bulk endpoint may have streams**: `streams` says how
+//! many - IDs 1 to that - and `stream` which one a transfer goes on. Each
+//! stream is a queue of its own on the endpoint, a transfer on one
+//! waiting only for those before it on the same, and the device picks
+//! the stream it moves data on next. A controller without streams, or
+//! whose stream arrays are too small for the one named, answers
+//! UHIOERR_HOSTERROR.
+//!
+//! **A SuperSpeed link may rest** in U1 or U2 while it has nothing to
+//! move, as usb.library sets it up. The SET_SEL it sends such a device
+//! carries `exit_latency`, the longest the links on the way to it take to
+//! come back: a controller that schedules by it takes it first, and one
+//! that cannot allow for that much answers the SET_SEL UHIOERR_HOSTERROR
+//! without sending it on. A root hub of USB 3 ports answers a BOS with
+//! its ports' own exit latencies, and takes PORT_U1_TIMEOUT and
+//! PORT_U2_TIMEOUT on them as a SuperSpeed hub does.
+//!
 //! **A lost packet is a result, not an error.** The request is answered
 //! with io_Error 0 whatever became of its packets: `io_Actual` is the
 //! bytes that went or came, `iso_lost` the packets that did not, and a
@@ -102,7 +126,9 @@ pub const UHIOERR_TIMEOUT: i8 = 4;
 /// The device sent more than was asked for.
 pub const UHIOERR_OVERFLOW: i8 = 5;
 /// The controller could not do it: its DMA could not reach the memory,
-/// or it was reset under the transfer.
+/// it has no such stream, it cannot allow for a SET_SEL's exit latency,
+/// it was reset under the transfer, or the transfer's endpoint was added
+/// afresh or dropped under it.
 pub const UHIOERR_HOSTERROR: i8 = 6;
 /// The device is gone.
 pub const UHIOERR_DETACHED: i8 = 7;
@@ -121,10 +147,12 @@ pub const UHC_ISO_PACKETS: u32 = 32;
 /// USB frame numbers run 0 to 2047, a millisecond each, and start again.
 pub const UHC_FRAMES: u16 = 2048;
 
-/// `speed`: how fast the device is.
+/// `speed`: how fast the device is. At SuperSpeed (5 Gbit/s and above)
+/// endpoint 0's packet is 512 bytes, bMaxPacketSize0 its exponent (9).
 pub const USB_SPEED_LOW: u8 = 0;
 pub const USB_SPEED_FULL: u8 = 1;
 pub const USB_SPEED_HIGH: u8 = 2;
+pub const USB_SPEED_SUPER: u8 = 3;
 
 /// `flags`: a short packet is an error (UHIOERR_RUNTPACKET).
 pub const UHF_SHORT_NOT_OK: u8 = 1 << 0;
@@ -142,7 +170,8 @@ pub const UHC_ISO_AHEAD: u16 = 895;
 /// One packet of an isochronous transfer, in its `iso_list`.
 pub const UsbIsoPacket = extern struct {
     /// Its bytes: those sent (OUT), the room for those that come (IN); at
-    /// most the endpoint's max packet size.
+    /// most the endpoint's bytes an interval (`interval_bytes`, else its
+    /// max packet size).
     length: u16 = 0,
     /// Written by the controller: the bytes that went or came.
     actual: u16 = 0,
@@ -190,7 +219,7 @@ pub const IOUsbHC = extern struct {
     /// ends with UHIOERR_NAKTIMEOUT; 0: no limit.
     nak_timeout: u32 = 0,
     /// An isochronous transfer's packets: the bytes of each but the
-    /// last, at most `max_packet`; 0 is `max_packet`.
+    /// last, at most the endpoint's bytes an interval; 0 is `max_packet`.
     iso_packet: u32 = 0,
     /// The controller's, while it has the request.
     hc_private: [4]usize = @splat(0),
@@ -208,6 +237,27 @@ pub const IOUsbHC = extern struct {
     /// one and this one - 0 when it followed on, or starts a stream.
     iso_lost: u16 = 0,
     iso_gap: u16 = 0,
+    /// The wire packets of a burst less one: at SuperSpeed the endpoint
+    /// companion's bMaxBurst, at high speed an interrupt or isochronous
+    /// endpoint's more transactions a microframe (wMaxPacketSize bits
+    /// 12:11); 0 elsewhere.
+    burst: u8 = 0,
+    /// A SuperSpeed isochronous endpoint's bursts an interval less one
+    /// (its companion's Mult); 0 elsewhere.
+    mult: u8 = 0,
+    /// An interrupt or isochronous endpoint's bytes an interval: its
+    /// companion's wBytesPerInterval at SuperSpeed, (burst + 1) packets
+    /// at high speed; 0 for one packet's.
+    interval_bytes: u16 = 0,
+    /// A SuperSpeed bulk endpoint's streams, IDs 1 to `streams` (0: it
+    /// has none, or the transfer does not use them), and the one the
+    /// transfer goes on.
+    streams: u16 = 0,
+    stream: u16 = 0,
+    /// On a SET_SEL: the longest the links from the controller to the
+    /// device take to come back from U1 or U2, in µs (its MEL); 0
+    /// elsewhere.
+    exit_latency: u16 = 0,
 };
 
 /// What `UHCMD_QUERYDEVICE` answers.

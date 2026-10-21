@@ -209,19 +209,27 @@ fn grant(base: *ExecBase, sem: *SignalSemaphore) void {
 /// Tells a waiter it has been granted the semaphore - by replying its bid
 /// if it procured one, and otherwise by signalling the task.
 ///
+/// **The grant is the last thing read or written of the request.** A
+/// sleeper's request is on its own stack, and the sleeper - on another
+/// core, looking at `granted` without the lock - may see it set at once,
+/// return from its obtain and use that stack for anything: the waiter
+/// and the bid are taken out first, and the signal or the reply goes by
+/// what was taken.
+///
 /// INPUTS:
 /// - `base` - exec: the jump table `Signal` goes through.
 /// - `sem` - the semaphore.
 /// - `request` - the request that won it.
 fn wake(base: *ExecBase, sem: *SignalSemaphore, request: *SemaphoreRequest) void {
-    request.granted = true;
     const waiter = request.waiter.?;
+    const bid = request.bid;
     if (waiter.waiting == request) {
         waiter.waiting = null;
         waiter.waiting_for = null;
     }
-    if (request.bid) |bid| return reply(base, sem, bid);
-    base.iface().Signal(request.waiter.?, sdk.exec.tasks.SIGF_SINGLE);
+    @atomicStore(bool, &request.granted, true, .release);
+    if (bid) |procured| return reply(base, sem, procured);
+    base.iface().Signal(waiter, sdk.exec.tasks.SIGF_SINGLE);
 }
 
 /// Sends a granted bid back to its reply port, with the semaphore it won
@@ -238,17 +246,17 @@ pub fn reply(base: *ExecBase, sem: *SignalSemaphore, bid: *SemaphoreMessage) voi
 
 /// Sleeps until a request is granted.
 ///
-/// The flag is read through a volatile pointer because it is written by
-/// another task - the one releasing the semaphore - and nothing in the
-/// loop would otherwise make the compiler read it again. The caller holds
-/// no spinlock: `Wait` with one held is a dead end.
+/// The flag is read atomically because it is written by another task -
+/// the one releasing the semaphore, maybe on another core - and nothing
+/// in the loop would otherwise make the compiler read it again; with
+/// acquire, so what the releaser did before the grant is seen after it.
+/// The caller holds no spinlock: `Wait` with one held is a dead end.
 ///
 /// INPUTS:
 /// - `base` - exec: the jump table `Wait` goes through.
 /// - `request` - the request to watch.
 pub fn waitGranted(base: *ExecBase, request: *SemaphoreRequest) void {
-    const granted: *volatile bool = &request.granted;
-    while (!granted.*) _ = base.iface().Wait(sdk.exec.tasks.SIGF_SINGLE);
+    while (!@atomicLoad(bool, &request.granted, .acquire)) _ = base.iface().Wait(sdk.exec.tasks.SIGF_SINGLE);
 }
 
 // --- what a task holds ----------------------------------------------------------

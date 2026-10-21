@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of xhci.device's parts that need no controller: the rings
-//! and their cycle bits (ring.zig), a configuration's endpoints and their
-//! intervals (slots.zig), a root port's PORTSC as a hub's port status
-//! (roothub.zig), the contexts' words (regs.zig), where an isochronous
+//! and their cycle bits (ring.zig), a configuration's endpoints, their
+//! intervals and SuperSpeed companions (slots.zig), the root ports the
+//! root hub has (controller.zig), a root port's PORTSC as a hub's port
+//! status and the root hub's BOS (roothub.zig), the contexts' words
+//! (regs.zig), where an isochronous
 //! request's packets lie and in which frames they go, and what becomes
 //! of each (slots.zig, transfer.zig, _xhci.zig).
 
@@ -13,6 +15,7 @@ const regs = @import("../regs.zig");
 const ring = @import("../ring.zig");
 const slots = @import("../slots.zig");
 const roothub = @import("../roothub.zig");
+const controller = @import("../controller.zig");
 const transfer = @import("../transfer.zig");
 const _xhci = @import("../_xhci.zig");
 
@@ -159,6 +162,116 @@ test "a bulk pair at high speed" {
     try testing.expectEqual(@as(u32, 0), specs[3].interval);
 }
 
+test "a SuperSpeed bulk pair: each endpoint's burst from its companion" {
+    const config = [_]u8{
+        9, d.USB_DT_CONFIG, 44, 0, 1, 1, 0, 0x80, 50,
+        9, d.USB_DT_INTERFACE, 0, 0, 2, 8, 6, 0x50, 0,
+        7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0,
+        6, d.USB_DT_SS_ENDPOINT_COMP, 15, 0, 0, 0,
+        7, d.USB_DT_ENDPOINT, 0x02, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0,
+        6, d.USB_DT_SS_ENDPOINT_COMP, 3, 0, 0, 0,
+    };
+    var specs: [32]slots.Spec = @splat(.{});
+    try testing.expectEqual(regs.addFlag(3) | regs.addFlag(4), slots.endpointsOf(&config, 1, regs.SPEED_SUPER, &specs));
+    try testing.expectEqual(@as(u32, 1024), specs[3].max_packet);
+    try testing.expectEqual(@as(u32, 15), specs[3].burst);
+    try testing.expectEqual(@as(u32, 3), specs[4].burst);
+    // A bulk endpoint has no bytes an interval.
+    try testing.expectEqual(@as(u32, 0), specs[3].esit);
+    // Word 1 of the IN one's context.
+    try testing.expectEqual(@as(u32, 15), (regs.endpointWord1(regs.EP_BULK_IN, specs[3].burst, specs[3].max_packet) >> 8) & 0xFF);
+}
+
+test "a SuperSpeed interrupt endpoint's bytes an interval; an isochronous one is not added with the configuration" {
+    const config = [_]u8{
+        9, d.USB_DT_CONFIG, 50, 0, 1, 1, 0, 0x80, 50,
+        9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 0, 0, 0,
+        7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 0x00, 0x04, 4,
+        6, d.USB_DT_SS_ENDPOINT_COMP, 1, 0, 0x00, 0x08,
+        9, d.USB_DT_INTERFACE, 1, 1, 1, 1, 2, 0, 0,
+        7, d.USB_DT_ENDPOINT, 0x82, d.USB_ENDPOINT_XFER_ISOC, 0x00, 0x04, 1,
+        6, d.USB_DT_SS_ENDPOINT_COMP, 2, 1, 0x00, 0x30,
+    };
+    var specs: [32]slots.Spec = @splat(.{});
+    try testing.expectEqual(regs.addFlag(3), slots.endpointsOf(&config, 1, regs.SPEED_SUPER, &specs));
+    try testing.expectEqual(@as(u32, 1), specs[3].burst);
+    try testing.expectEqual(@as(u32, 2048), specs[3].esit);
+}
+
+test "a high-speed interrupt endpoint with three transactions a microframe" {
+    const config = [_]u8{
+        9, d.USB_DT_CONFIG, 25, 0, 1, 1, 0, 0x80, 50,
+        9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 0, 0, 0,
+        // 1024 bytes, two more transactions (bits 12:11 = 2).
+        7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 0x00, 0x14, 1,
+    };
+    var specs: [32]slots.Spec = @splat(.{});
+    try testing.expectEqual(regs.addFlag(3), slots.endpointsOf(&config, 1, regs.SPEED_HIGH, &specs));
+    try testing.expectEqual(@as(u32, 1024), specs[3].max_packet);
+    try testing.expectEqual(@as(u32, 2), specs[3].burst);
+    try testing.expectEqual(@as(u32, 3072), specs[3].esit);
+    // At full speed the bits mean nothing.
+    try testing.expectEqual(@as(u32, 0), (blk: {
+        _ = slots.endpointsOf(&config, 1, regs.SPEED_FULL, &specs);
+        break :blk specs[3].burst;
+    }));
+}
+
+test "an isochronous TD's bursts" {
+    // SuperSpeed, bursts of 4 (bMaxBurst 3), 1024-byte packets: 10 packets
+    // are three bursts, the last of two.
+    const ten = regs.isochBurstFields(10 * 1024, 1024, 3, true);
+    try testing.expectEqual(@as(u32, 2), (ten >> 7) & 3);
+    try testing.expectEqual(@as(u32, 1), (ten >> 16) & 0xF);
+    // A whole number of bursts: the last is a whole burst.
+    const eight = regs.isochBurstFields(8 * 1024, 1024, 3, true);
+    try testing.expectEqual(@as(u32, 1), (eight >> 7) & 3);
+    try testing.expectEqual(@as(u32, 3), (eight >> 16) & 0xF);
+    // One short packet, and an empty one: a burst of one.
+    try testing.expectEqual(@as(u32, 0), regs.isochBurstFields(100, 1024, 3, true));
+    try testing.expectEqual(@as(u32, 0), regs.isochBurstFields(0, 1024, 3, true));
+    // High speed: one burst, TLBPC the transactions less one.
+    const high = regs.isochBurstFields(2500, 1024, 2, false);
+    try testing.expectEqual(@as(u32, 0), (high >> 7) & 3);
+    try testing.expectEqual(@as(u32, 2), (high >> 16) & 0xF);
+    // Mult in word 0.
+    try testing.expectEqual(@as(u32, 1 << 16 | 2 << 8), regs.endpointWord0(1, 2, 0));
+}
+
+test "the root hub's ports: the USB 2 ones first, then the USB 3 ones" {
+    var map: [_xhci.max_root_ports]u8 = undefined;
+    var super: u32 = undefined;
+    // QEMU's qemu-xhci: four USB 2 ports, then four USB 3 ones.
+    try testing.expectEqual(@as(u32, 8), controller.mapPorts(.{ .usb2_first = 1, .usb2_count = 4, .usb3_first = 5, .usb3_count = 4 }, 8, &map, &super));
+    try testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8 }, map[0..8]);
+    try testing.expectEqual(@as(u32, 0b1_1110_0000), super);
+    // The USB 3 ones first in the controller: still last on the hub.
+    try testing.expectEqual(@as(u32, 5), controller.mapPorts(.{ .usb2_first = 5, .usb2_count = 1, .usb3_first = 1, .usb3_count = 4 }, 5, &map, &super));
+    try testing.expectEqualSlices(u8, &.{ 5, 1, 2, 3, 4 }, map[0..5]);
+    try testing.expectEqual(@as(u32, 0b11_1100), super);
+    // No capability says: every port, as USB 2.
+    try testing.expectEqual(@as(u32, 3), controller.mapPorts(.{}, 3, &map, &super));
+    try testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, map[0..3]);
+    try testing.expectEqual(@as(u32, 0), super);
+    // More than a hub's bitmap holds: the first fifteen.
+    try testing.expectEqual(@as(u32, 15), controller.mapPorts(.{ .usb2_first = 1, .usb2_count = 10, .usb3_first = 11, .usb3_count = 10 }, 20, &map, &super));
+    try testing.expectEqual(@as(u8, 15), map[14]);
+    // A capability naming ports the controller does not have: left out.
+    try testing.expectEqual(@as(u32, 2), controller.mapPorts(.{ .usb2_first = 1, .usb2_count = 2, .usb3_first = 3, .usb3_count = 2 }, 2, &map, &super));
+    try testing.expectEqual(@as(u32, 0), super);
+}
+
+test "a USB 3 root port's PORTSC: SuperSpeed, and a link that failed as C_ENABLE" {
+    const super = roothub.statusOf(regs.PORT_CCS | regs.PORT_PED | regs.PORT_PP | regs.SPEED_SUPER << regs.PORT_SPEED_SHIFT | regs.PORT_CSC);
+    try testing.expectEqual(d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE | d.USB_PORT_STAT_POWER | d.USB_PORT_STAT_SUPER_SPEED, super.status);
+    try testing.expectEqual(d.USB_PORT_STAT_C_CONNECTION, super.change);
+    // SuperSpeedPlus runs as SuperSpeed.
+    try testing.expect(roothub.statusOf(regs.PORT_CCS | 5 << regs.PORT_SPEED_SHIFT).status & d.USB_PORT_STAT_SUPER_SPEED != 0);
+    try testing.expectEqual(d.USB_PORT_STAT_C_ENABLE, roothub.statusOf(regs.PORT_PP | regs.PORT_CEC).change);
+    try testing.expectEqual(d.USB_PORT_STAT_C_RESET, roothub.statusOf(regs.PORT_PP | regs.PORT_WRC).change);
+    try testing.expect(regs.PORT_NEUTRAL & regs.PORT_WPR == 0);
+}
+
 test "a root port's PORTSC as a hub's port status" {
     // A low-speed device, connected and enabled after its reset.
     const low = regs.PORT_CCS | regs.PORT_PED | regs.PORT_PP | regs.SPEED_LOW << regs.PORT_SPEED_SHIFT | regs.PORT_CSC | regs.PORT_PRC;
@@ -174,6 +287,22 @@ test "a root port's PORTSC as a hub's port status" {
     try testing.expectEqual(d.USB_PORT_STAT_C_CONNECTION, gone.change);
 }
 
+test "the root ports' exit latencies, their timeouts' register, and the root hub's BOS" {
+    // HCSPARAMS3: U1 in its low byte, U2 in its top half.
+    try testing.expectEqual(@as(u8, 4), regs.u1ExitOf(0x0200_0004));
+    try testing.expectEqual(@as(u16, 0x200), regs.u2ExitOf(0x0200_0004));
+    try testing.expectEqual(@as(usize, 0x424), regs.portpmsc(3));
+    var host: _xhci.Host = undefined;
+    host.u1_exit = 4;
+    host.u2_exit = 0x200;
+    const bos = roothub.bosOf(&host);
+    const bytes = std.mem.asBytes(&bos);
+    try testing.expectEqual(@as(usize, 15), bytes.len);
+    const capability = d.superSpeedCapabilityOf(bytes).?;
+    try testing.expectEqual(@as(u8, 4), capability.u1_exit);
+    try testing.expectEqual(@as(u16, 0x200), capability.u2_exit);
+}
+
 test "PORTSC's neutral write keeps no change bit, PED or PR" {
     try testing.expect(regs.PORT_NEUTRAL & regs.PORT_CHANGES == 0);
     try testing.expect(regs.PORT_NEUTRAL & regs.PORT_PED == 0);
@@ -185,15 +314,73 @@ test "a slot context's words" {
     // Behind a hub on root port 3, port 2 of it, a low-speed device
     // through hub slot 5's TT on port 2.
     try testing.expectEqual(@as(u32, 0x2 | 2 << 20 | 1 << 27), regs.slotWord0(2, regs.SPEED_LOW, false, 1));
-    try testing.expectEqual(@as(u32, 3 << 16), regs.slotWord1(3, 0));
+    try testing.expectEqual(@as(u32, 3 << 16), regs.slotWord1(0, 3, 0));
     try testing.expectEqual(@as(u32, 5 | 2 << 8), regs.slotWord2(5, 2, 0));
     // A high-speed hub with four ports.
     try testing.expectEqual(@as(u32, 3 << 20 | 1 << 26 | 3 << 27), regs.slotWord0(0, regs.SPEED_HIGH, true, 3));
-    try testing.expectEqual(@as(u32, 1 << 16 | 4 << 24), regs.slotWord1(1, 4));
+    try testing.expectEqual(@as(u32, 1 << 16 | 4 << 24), regs.slotWord1(0, 1, 4));
+    // A device whose links take 204 us to come back, on root port 2.
+    try testing.expectEqual(@as(u32, 204 | 2 << 16), regs.slotWord1(204, 2, 0));
     // Endpoint 0 at 64 bytes; an interrupt IN at 8 bytes, every 8 ms.
     try testing.expectEqual(@as(u32, 3 << 1 | 4 << 3 | 64 << 16), regs.endpointWord1(regs.EP_CONTROL, 0, 64));
-    try testing.expectEqual(@as(u32, 6 << 16), regs.endpointWord0(6));
+    try testing.expectEqual(@as(u32, 6 << 16), regs.endpointWord0(6, 0, 0));
     try testing.expectEqual(@as(u32, 8 | 8 << 16), regs.endpointWord4(8, 8));
+}
+
+test "a stream array: a power of two of entries for the streams and stream 0, within the controller's" {
+    // QEMU's HCCPARAMS1: 64-bit, MaxPSASize 7 (256 entries).
+    try testing.expectEqual(@as(u32, 7), regs.maxPsaSize(0x0008_7001));
+    try testing.expectEqual(@as(u32, 0), regs.maxPsaSize(0x0008_0001));
+    // Sixteen streams and stream 0: 32 entries, MaxPStreams 4.
+    try testing.expectEqual(@as(u32, 32), regs.streamEntries(16, 7));
+    try testing.expectEqual(@as(u32, 4), regs.maxPStreams(32));
+    // Never fewer than four entries; three streams fill them.
+    try testing.expectEqual(@as(u32, 4), regs.streamEntries(1, 7));
+    try testing.expectEqual(@as(u32, 4), regs.streamEntries(3, 7));
+    try testing.expectEqual(@as(u32, 8), regs.streamEntries(4, 7));
+    try testing.expectEqual(@as(u32, 1), regs.maxPStreams(4));
+    // A controller whose arrays hold four entries; one with none.
+    try testing.expectEqual(@as(u32, 4), regs.streamEntries(16, 1));
+    try testing.expectEqual(@as(u32, 0), regs.streamEntries(16, 0));
+    try testing.expectEqual(@as(u32, 0), regs.streamEntries(0, 7));
+    // The streams an endpoint is given of those asked.
+    try testing.expectEqual(@as(u32, 16), slots.streamsOf(7, 16));
+    try testing.expectEqual(@as(u32, 16), slots.streamsOf(7, 1 << 15));
+    try testing.expectEqual(@as(u32, 3), slots.streamsOf(1, 16));
+    try testing.expectEqual(@as(u32, 0), slots.streamsOf(0, 16));
+    try testing.expectEqual(@as(u32, 0), slots.streamsOf(7, 0));
+}
+
+test "a stream's context and its Set TR Dequeue words, its doorbell, its endpoint's context" {
+    // A primary stream's ring at 0x1000, cycle state 1.
+    try testing.expectEqual(@as(u64, 0x1000 | 1 | 1 << 1), regs.streamPointer(0x1000 | 1));
+    try testing.expectEqual(@as(u32, 5 << 16), regs.streamField(5));
+    try testing.expectEqual(@as(u32, 3 | 5 << 16), 3 | regs.streamField(5));
+    // MaxPStreams 4 with a linear array.
+    try testing.expectEqual(@as(u32, 1 << 15 | 4 << 10), regs.endpointWord0(0, 0, 4));
+}
+
+test "an endpoint's lanes: one per stream, each found by its ID and by its ring" {
+    var trbs: [3][_xhci.ring_trbs]Trb = undefined;
+    var lanes: [3]_xhci.Endpoint = @splat(.{});
+    for (&lanes, &trbs, 1..) |*lane, *memory, stream| {
+        lane.ring.init(memory);
+        lane.stream = @intCast(stream);
+    }
+    var endpoint: _xhci.Endpoint = .{ .lanes = &lanes };
+    // Without streams the endpoint is its own lane.
+    try testing.expectEqual(@as(usize, 1), _xhci.ringsOf(&endpoint).len);
+    try testing.expectEqual(&endpoint, _xhci.laneOf(&endpoint, 0).?);
+    try testing.expectEqual(@as(?*_xhci.Endpoint, null), _xhci.laneOf(&endpoint, 1));
+    try testing.expectEqual(&endpoint, _xhci.laneAt(&endpoint, 0x1234).?);
+    endpoint.streams = 3;
+    try testing.expectEqual(@as(usize, 3), _xhci.ringsOf(&endpoint).len);
+    try testing.expectEqual(&lanes[1], _xhci.laneOf(&endpoint, 2).?);
+    try testing.expectEqual(@as(?*_xhci.Endpoint, null), _xhci.laneOf(&endpoint, 0));
+    try testing.expectEqual(@as(?*_xhci.Endpoint, null), _xhci.laneOf(&endpoint, 4));
+    const third: u64 = @intFromPtr(&trbs[2][5]);
+    try testing.expectEqual(&lanes[2], _xhci.laneAt(&endpoint, third).?);
+    try testing.expectEqual(@as(?*_xhci.Endpoint, null), _xhci.laneAt(&endpoint, 0x10));
 }
 
 test "scratchpads are counted from both their fields" {

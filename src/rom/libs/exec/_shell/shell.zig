@@ -24,6 +24,7 @@
 
 const sdk = @import("sdk");
 const exec = @import("../exec.zig");
+const _lists = @import("../debug/_lists.zig");
 const serial = sdk.devices.serial;
 const usbserial = sdk.devices.usbserial;
 const timer = sdk.devices.timer;
@@ -119,10 +120,7 @@ pub fn same(a: []const u8, b: []const u8) bool {
 
 /// A value of enum `E` by its name, "?" for one the enum does not name.
 pub fn enumName(comptime E: type, value: E) [*:0]const u8 {
-    inline for (@typeInfo(E).@"enum".fields) |field| {
-        if (@intFromEnum(value) == field.value) return field.name;
-    }
-    return "?";
+    return _lists.enumName(E, value);
 }
 
 /// A node's name, "?" for one without.
@@ -138,11 +136,7 @@ pub const max_rows = 32;
 /// listing keeps of a node while it holds the list's lock, to print once it
 /// has let go - printing waits, and under a spinlock nothing may.
 pub fn copyName(into: []u8, from: ?[*:0]const u8) [*:0]const u8 {
-    const text = from orelse "?";
-    var length: usize = 0;
-    while (length + 1 < into.len and text[length] != 0) : (length += 1) into[length] = text[length];
-    into[length] = 0;
-    return @ptrCast(into.ptr);
+    return _lists.nameInto(.trusted, into, from);
 }
 
 /// The commands, in the order `help` lists them. Each is a file in

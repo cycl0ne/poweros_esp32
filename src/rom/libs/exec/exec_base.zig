@@ -33,23 +33,27 @@ const Resident = sdk.exec.Resident;
 const Task = sdk.exec.Task;
 
 /// How many cores exec keeps state for: the ESP32s' two, the four of a
-/// 64-bit RISC-V machine (and the host's tests). A one-core ROM uses the
-/// first.
+/// 64-bit RISC-V or AArch64 machine (and the host's tests). A one-core
+/// ROM uses the first.
 pub const max_cores = switch (builtin.cpu.arch) {
     .xtensa, .riscv32 => 2,
     else => 4,
 };
 
+/// Whether this is the system's own code rather than a host build (the
+/// tests): an ARM host is AArch64 too.
+const on_machine = builtin.os.tag == .freestanding;
+
 /// The core's cycle counter; none on the host.
 pub inline fn cycles() u32 {
-    if (comptime builtin.cpu.arch != .xtensa and !builtin.cpu.arch.isRISCV()) return 0;
+    if (comptime !on_machine) return 0;
     return sdk.hardware.cpu.ccount();
 }
 
 /// The core this code runs on: 0 or 1. On the Xtensa from PRID (0xCDCD
 /// for core 0, 0xABAB for core 1 - bit 13 tells them apart), on the
-/// ESP32-P4 from mhartid, under SBI firmware from tp. The host tests have
-/// one.
+/// ESP32-P4 from mhartid, under SBI firmware from tp, under PSCI firmware
+/// from TPIDR_EL1. The host tests have one.
 pub inline fn coreId() u32 {
     switch (comptime builtin.cpu.arch) {
         .xtensa => {
@@ -66,6 +70,14 @@ pub inline fn coreId() u32 {
         .riscv64 => return @truncate(asm volatile ("mv %[id], tp"
             : [id] "=r" (-> u64),
         )),
+        // An AArch64 core keeps its number in TPIDR_EL1, which nothing
+        // else uses at EL1 (src/arch/a64psci/cpu.zig).
+        .aarch64 => {
+            if (comptime !on_machine) return 0;
+            return @truncate(asm volatile ("mrs %[id], tpidr_el1"
+                : [id] "=r" (-> u64),
+            ));
+        },
         else => return 0,
     }
 }

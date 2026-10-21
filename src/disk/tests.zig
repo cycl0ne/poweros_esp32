@@ -65,6 +65,7 @@ test {
     _ = @import("devs/usb/audio/stream.zig");
     _ = @import("devs/usb/disk/scsi.zig");
     _ = @import("devs/usb/disk/bot.zig");
+    _ = @import("devs/usb/disk/uas.zig");
     _ = @import("devs/usb/serial/ftdi_rates.zig");
     _ = @import("devs/usb/ecm/cdc.zig");
     _ = @import("devs/usb/aic8800/msg.zig");

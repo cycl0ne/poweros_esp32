@@ -40,6 +40,7 @@ const chip = switch (sdk.hardware.chip) {
     .esp32s3 => @import("esp32s3/channels.zig"),
     .esp32p4 => @import("esp32p4/channels.zig"),
     .rv64sbi => @import("jh7110/channels.zig"),
+    .a64psci => @compileError("dma.resource: no DMA engine driven on this chip yet"),
 };
 const general = chip.general;
 /// The DesignWare channels, numbered after the 2D-DMA's.

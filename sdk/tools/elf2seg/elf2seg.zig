@@ -11,7 +11,12 @@
 //! are ignored here); on RISC-V the code is built PC-relative (medany), and
 //! its auipc pairs, branches and calls are resolved the same way. What is
 //! left are the words that hold an address: R_XTENSA_32, R_RISCV_32, and
-//! in a 64-bit RISC-V program (ELF64) R_RISCV_64, a doubleword. For each
+//! in a 64-bit RISC-V program (ELF64) R_RISCV_64, a doubleword, and in an
+//! AArch64 program R_AARCH64_ABS64. AArch64 code is built with the small
+//! code model: an ADRP takes the 4 KiB page of what it reaches relative to
+//! its own page, and the low twelve bits come from the instruction after
+//! it, so the pair is right wherever the program goes as long as it moves
+//! by whole pages - which the loader sees to (loadfile.segmentAlign). For each
 //! one this writes down which segment the word is in, its offset there,
 //! and which segment it points into; the loader adds that segment's base
 //! to the word, which is as wide as the header's `word_size` says.
@@ -28,8 +33,8 @@
 //!
 //! Sections become segments. On Xtensa an executable one (SHF_EXECINSTR)
 //! is code, a NOBITS one is bss, any other allocatable one is data; code
-//! comes first, since the entry is in it. On RISC-V all of them make one
-//! segment, code first and bss last (program_esp32p4.ld), because
+//! comes first, since the entry is in it. On RISC-V and AArch64 all of them
+//! make one segment, code first and bss last (program_esp32p4.ld), because
 //! PC-relative code reaches its data at a fixed distance: they have to be
 //! loaded together.
 //!
@@ -124,6 +129,7 @@ const SHF_EXECINSTR = 4;
 const SHN_ABS = 0xFFF1;
 
 const EM_XTENSA = 94;
+const EM_AARCH64 = 183;
 const EM_RISCV = 243;
 const ET_EXEC = 2;
 
@@ -158,6 +164,30 @@ const R_RISCV_32_PCREL = 57;
 const R_RISCV_PLT32 = 59;
 const R_RISCV_SET_ULEB128 = 60;
 const R_RISCV_SUB_ULEB128 = 61;
+
+const R_AARCH64_NONE = 0;
+const R_AARCH64_ABS64 = 257;
+const R_AARCH64_ABS32 = 258;
+const R_AARCH64_ABS16 = 259;
+const R_AARCH64_PREL64 = 260;
+const R_AARCH64_PREL32 = 261;
+const R_AARCH64_PREL16 = 262;
+const R_AARCH64_MOVW_UABS_G0 = 263;
+const R_AARCH64_MOVW_SABS_G2 = 272;
+const R_AARCH64_LD_PREL_LO19 = 273;
+const R_AARCH64_ADR_PREL_LO21 = 274;
+const R_AARCH64_ADR_PREL_PG_HI21 = 275;
+const R_AARCH64_ADR_PREL_PG_HI21_NC = 276;
+const R_AARCH64_ADD_ABS_LO12_NC = 277;
+const R_AARCH64_LDST8_ABS_LO12_NC = 278;
+const R_AARCH64_TSTBR14 = 279;
+const R_AARCH64_CONDBR19 = 280;
+const R_AARCH64_JUMP26 = 282;
+const R_AARCH64_CALL26 = 283;
+const R_AARCH64_LDST16_ABS_LO12_NC = 284;
+const R_AARCH64_LDST32_ABS_LO12_NC = 285;
+const R_AARCH64_LDST64_ABS_LO12_NC = 286;
+const R_AARCH64_LDST128_ABS_LO12_NC = 299;
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("elf2seg: " ++ fmt ++ "\n", args);
@@ -219,8 +249,12 @@ pub fn main(init: std.process.Init) !void {
         fatal("{s}: not a little-endian ELF file", .{args[1]});
     const layout: *const Layout = if (elf[4] == 2) &elf64 else &elf32;
     const machine = u16At(elf, e_machine);
-    if (machine != EM_XTENSA and machine != EM_RISCV) fatal("{s}: neither an Xtensa nor a RISC-V file", .{args[1]});
+    if (machine != EM_XTENSA and machine != EM_RISCV and machine != EM_AARCH64) fatal("{s}: neither an Xtensa, a RISC-V nor an AArch64 file", .{args[1]});
     if (machine == EM_XTENSA and layout.word != 4) fatal("{s}: a 64-bit Xtensa file", .{args[1]});
+    if (machine == EM_AARCH64 and layout.word != 8) fatal("{s}: a 32-bit Arm file", .{args[1]});
+    // RISC-V and AArch64 code reaches its data PC-relatively: one segment.
+    const one_segment = machine != EM_XTENSA;
+    const segment_align = loadfile.segmentAlign(loadMachine(machine));
     if (u16At(elf, e_type) != ET_EXEC) fatal("{s}: not a linked executable", .{args[1]});
 
     const sections = try readSections(layout, elf, arena);
@@ -234,15 +268,15 @@ pub fn main(init: std.process.Init) !void {
 
     // Each allocatable section joins its segment, which must be contiguous:
     // program.ld lays them out in order, so a gap would mean a stray section.
-    // On RISC-V there is one segment, its bss last.
+    // On RISC-V and AArch64 there is one segment, its bss last.
     var bss_seen = false;
     for (sections) |*s| {
         if (s.flags & SHF_ALLOC == 0 or s.size == 0) continue;
-        // The loader starts a segment on a SEGMENT_ALIGN boundary, no
+        // The loader starts a segment on a segmentAlign boundary, no
         // coarser: a section that needs more would lose it.
-        if (s.addralign > loadfile.SEGMENT_ALIGN)
-            fatal("section {s} wants {d}-byte alignment; a loaded segment has {d}", .{ s.name, s.addralign, loadfile.SEGMENT_ALIGN });
-        const index: u16 = if (machine == EM_RISCV)
+        if (s.addralign > segment_align)
+            fatal("section {s} wants {d}-byte alignment; a loaded segment has {d}", .{ s.name, s.addralign, segment_align });
+        const index: u16 = if (one_segment)
             0
         else if (s.flags & SHF_EXECINSTR != 0)
             0
@@ -250,7 +284,7 @@ pub fn main(init: std.process.Init) !void {
             2
         else
             1;
-        if (machine == EM_RISCV) {
+        if (one_segment) {
             if (s.type == SHT_NOBITS) {
                 bss_seen = true;
             } else if (bss_seen) {
@@ -312,7 +346,7 @@ fn readSections(layout: *const Layout, elf: []const u8, arena: mem.Allocator) ![
     return sections;
 }
 
-/// Every R_XTENSA_32, R_RISCV_32 or (64-bit) R_RISCV_64 of an allocatable
+/// Every R_XTENSA_32, R_RISCV_32, (64-bit) R_RISCV_64 or R_AARCH64_ABS64 of an allocatable
 /// section: the word at its offset holds an address, so the target's
 /// segment and the site's segment are written down. The relocations the
 /// linker already applied are skipped; anything else fails the build,
@@ -338,8 +372,9 @@ fn collectRelocs(layout: *const Layout, elf: []const u8, machine: u16, sections:
                 .{ u32At(elf, e + 4) & 0xFF, u32At(elf, e + 4) >> 8, u32At(elf, e + 8) }
             else
                 .{ u32At(elf, e + 8), u32At(elf, e + 12), u32At(elf, e + 16) };
-            if (machine == EM_RISCV) {
-                switch (riscvKind(kind, word)) {
+            if (machine == EM_RISCV or machine == EM_AARCH64) {
+                const what = if (machine == EM_RISCV) riscvKind(kind, word) else aarch64Kind(kind);
+                switch (what) {
                     .address => {},
                     .done => continue,
                     // PC-relative: resolved by the linker, and right
@@ -352,7 +387,7 @@ fn collectRelocs(layout: *const Layout, elf: []const u8, machine: u16, sections:
                             fatal("{s}: the code at 0x{x} reaches 0x{x}, a fixed address, PC-relatively (a direct call into the ROM?): reach it through a pointer", .{ rela.name, r_offset, reached });
                         continue;
                     },
-                    .absolute_code => fatal("{s}: an absolute address in the code at 0x{x}: build with -mcmodel=medany", .{ rela.name, r_offset }),
+                    .absolute_code => fatal("{s}: an absolute address in the code at 0x{x}: build with -mcmodel={s}", .{ rela.name, r_offset, if (machine == EM_RISCV) "medany" else "small" }),
                     .narrow_address => fatal("{s}: a 32-bit address word at 0x{x} in a 64-bit program: the loader relocates doublewords", .{ rela.name, r_offset }),
                     .unsupported => fatal("{s}: relocation type {d} at 0x{x} is not supported (GOT, TLS?)", .{ rela.name, kind, r_offset }),
                 }
@@ -385,7 +420,7 @@ fn collectRelocs(layout: *const Layout, elf: []const u8, machine: u16, sections:
     }
 }
 
-/// What a RISC-V relocation asks of the loader.
+/// What a RISC-V or AArch64 relocation asks of the loader.
 const RiscvKind = enum {
     /// A word holding an address: the loader adds its segment's base.
     address,
@@ -416,6 +451,33 @@ fn riscvKind(kind: u32, word: usize) RiscvKind {
         R_RISCV_RVC_BRANCH, R_RISCV_RVC_JUMP, R_RISCV_32_PCREL, R_RISCV_PLT32 => .pc_relative,
         R_RISCV_HI20, R_RISCV_LO12_I, R_RISCV_LO12_S => .absolute_code,
         else => .unsupported,
+    };
+}
+
+/// What an AArch64 relocation of type `kind` is. The low twelve bits of
+/// an ADRP pair (ADD_ABS_LO12_NC, LDSTn_ABS_LO12_NC) are an offset in a
+/// page, which a move by whole pages keeps: done. The ADRP itself is
+/// PC-relative, by pages.
+fn aarch64Kind(kind: u32) RiscvKind {
+    return switch (kind) {
+        R_AARCH64_ABS64 => .address,
+        R_AARCH64_ABS32, R_AARCH64_ABS16 => .narrow_address,
+        R_AARCH64_NONE, R_AARCH64_ADD_ABS_LO12_NC, R_AARCH64_LDST8_ABS_LO12_NC => .done,
+        R_AARCH64_LDST16_ABS_LO12_NC, R_AARCH64_LDST32_ABS_LO12_NC, R_AARCH64_LDST64_ABS_LO12_NC, R_AARCH64_LDST128_ABS_LO12_NC => .done,
+        R_AARCH64_PREL64, R_AARCH64_PREL32, R_AARCH64_PREL16 => .pc_relative,
+        R_AARCH64_LD_PREL_LO19, R_AARCH64_ADR_PREL_LO21, R_AARCH64_ADR_PREL_PG_HI21, R_AARCH64_ADR_PREL_PG_HI21_NC => .pc_relative,
+        R_AARCH64_TSTBR14, R_AARCH64_CONDBR19, R_AARCH64_JUMP26, R_AARCH64_CALL26 => .pc_relative,
+        R_AARCH64_MOVW_UABS_G0...R_AARCH64_MOVW_SABS_G2 => .absolute_code,
+        else => .unsupported,
+    };
+}
+
+/// The load file's name for an ELF machine.
+fn loadMachine(machine: u16) u16 {
+    return switch (machine) {
+        EM_RISCV => loadfile.MACHINE_RISCV,
+        EM_AARCH64 => loadfile.MACHINE_AARCH64,
+        else => loadfile.MACHINE_XTENSA,
     };
 }
 
@@ -464,7 +526,7 @@ fn write(segments: *[3]Segment, machine: u16, word_size: u8, entry_offset: u32, 
     try append(&out, arena, loadfile.Header{
         .segments = count,
         .entry_segment = 0,
-        .machine = if (machine == EM_RISCV) loadfile.MACHINE_RISCV else loadfile.MACHINE_XTENSA,
+        .machine = loadMachine(machine),
         .entry_offset = entry_offset,
         .word_size = word_size,
     });

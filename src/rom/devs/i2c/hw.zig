@@ -31,19 +31,19 @@ pub const Port = enum(u1) { i2c0 = 0, i2c1 = 1 };
 const scl_signal = switch (hardware.chip) {
     .esp32s3 => [_]u32{ signals.I2CEXT0_SCL, signals.I2CEXT1_SCL },
     .esp32p4 => [_]u32{ signals.I2C0_SCL, signals.I2C1_SCL },
-    .rv64sbi => @compileError("i2c.device: no I2C for this chip yet"),
+    .rv64sbi, .a64psci => @compileError("i2c.device: no I2C for this chip yet"),
 };
 const sda_signal = switch (hardware.chip) {
     .esp32s3 => [_]u32{ signals.I2CEXT0_SDA, signals.I2CEXT1_SDA },
     .esp32p4 => [_]u32{ signals.I2C0_SDA, signals.I2C1_SDA },
-    .rv64sbi => @compileError("i2c.device: no I2C for this chip yet"),
+    .rv64sbi, .a64psci => @compileError("i2c.device: no I2C for this chip yet"),
 };
 
 /// The first controller's interrupt; the second's is the next.
 pub const int_first = switch (hardware.chip) {
     .esp32s3 => hardware.intbits.INTB_I2C_EXT0,
     .esp32p4 => hardware.intbits.INTB_I2C0,
-    .rv64sbi => @compileError("i2c.device: no I2C for this chip yet"),
+    .rv64sbi, .a64psci => @compileError("i2c.device: no I2C for this chip yet"),
 };
 
 /// The interrupts a master wants to hear about.
@@ -230,7 +230,7 @@ pub fn setUp(port: Port, speed: u32, scl_pin: u8, sda_pin: u8) bool {
             .i2c0 => system.setFunctionClock(.i2c0, .{ .divider = t.clkm_div }),
             .i2c1 => system.setFunctionClock(.i2c1, .{ .divider = t.clkm_div }),
         },
-        .rv64sbi => @compileError("i2c.device: no I2C for this chip yet"),
+        .rv64sbi, .a64psci => @compileError("i2c.device: no I2C for this chip yet"),
     }
 
     // Master, open-drain pins, no arbitration (one master on this bus),

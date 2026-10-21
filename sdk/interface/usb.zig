@@ -31,6 +31,7 @@ pub const LVO = struct {
     pub const ReleaseUSBInterface = libraries.lvo(17);
     pub const AddUSBNotify = libraries.lvo(18);
     pub const RemUSBNotify = libraries.lvo(19);
+    pub const OpenUSBStreamPipe = libraries.lvo(20);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -52,6 +53,7 @@ pub const Fn = struct {
     pub const ReleaseUSBInterface = *const fn (*UsbBase, *usb.USBDevice, u32) callconv(.c) void;
     pub const AddUSBNotify = *const fn (*UsbBase, *exec.Task, u32) callconv(.c) ?*usb.USBNotify;
     pub const RemUSBNotify = *const fn (*UsbBase, ?*usb.USBNotify) callconv(.c) void;
+    pub const OpenUSBStreamPipe = *const fn (*UsbBase, *usb.USBDevice, u32, u32, *exec.MsgPort) callconv(.c) ?*usb.USBPipe;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -151,5 +153,12 @@ pub const UsbBase = opaque {
     /// No more of that.
     pub fn RemUSBNotify(self: *UsbBase, notify: ?*usb.USBNotify) void {
         return libraries.call(self, LVO.RemUSBNotify, Fn.RemUSBNotify, .{notify});
+    }
+
+    /// A pipe to stream `stream` of the device's SuperSpeed bulk endpoint
+    /// `endpoint_address`, replying to `reply_port`; null if the endpoint has
+    /// no such stream.
+    pub fn OpenUSBStreamPipe(self: *UsbBase, device: *usb.USBDevice, endpoint_address: u32, stream: u32, reply_port: *exec.MsgPort) ?*usb.USBPipe {
+        return libraries.call(self, LVO.OpenUSBStreamPipe, Fn.OpenUSBStreamPipe, .{ device, endpoint_address, stream, reply_port });
     }
 };

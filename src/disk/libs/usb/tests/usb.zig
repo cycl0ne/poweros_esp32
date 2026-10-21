@@ -2,7 +2,8 @@
 //! Host tests of usb.library: the jump table, walking a device's
 //! descriptors, the class drivers' match order, reading a ROM tag from a
 //! load file's bytes, the pipe an endpoint is given, isochronous
-//! transfers on such a pipe, and a bus's devices coming and going - all
+//! transfers on such a pipe, a bus's devices coming and going, and a
+//! SuperSpeed link's U1 and U2 - all
 //! against a host controller that plays a script (hc.zig), a class
 //! driver that counts (driver.zig) and an input.device that keeps what it
 //! is told (input.zig).
@@ -36,6 +37,7 @@ const ie = sdk.devices.inputevent;
 const usb_init = @import("../usb_init.zig");
 const usbBase = @import("../usb_base.zig").usbBase;
 const _bind = @import("../bind/_bind.zig");
+const _linkpower = @import("../bus/_linkpower.zig");
 const timer = sdk.devices.timer;
 const UsbLibrary = sdk.interface.usb.UsbBase;
 
@@ -124,6 +126,143 @@ test "an isochronous endpoint gets a pipe at its interval, never one under a mil
     const fast = OpenUSBPipe(&base, &device.public, 0x01, &port).?;
     try testing.expectEqual(@as(u16, 1), fast.io.interval);
     CloseUSBPipe(&base, fast);
+    try kexec.expectNoLeaks();
+}
+
+/// A SuperSpeed camera's endpoints, each with its companion: a bulk IN
+/// in bursts of 8, an interrupt IN of 2 KiB an interval, an isochronous
+/// IN of two bursts of 3 an interval (6 KiB) - and, read at high speed, an
+/// interrupt IN of 3 x 1024 a microframe.
+const camera_bytes = [_]u8{ 9, d.USB_DT_CONFIG, 64, 0, 1, 1, 0, 0x80, 50 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 4, 0x0E, 2, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 7, 0, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x82, d.USB_ENDPOINT_XFER_INT, 0x00, 0x04, 4 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 1, 0, 0x00, 0x08 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x83, d.USB_ENDPOINT_XFER_ISOC, 0x00, 0x04, 4 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 2, 1, 0x00, 0x18 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x84, d.USB_ENDPOINT_XFER_INT, 0x00, 0x14, 4 };
+
+test "a pipe says what its endpoint moves besides a packet: bursts at SuperSpeed, transactions at high speed" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    var base: UsbBase = undefined;
+    base.sys_base = kexec.SysBase.iface();
+    var bus: _bus.Bus = undefined;
+    bus.hc_io = .{};
+    var port: sdk.exec.MsgPort = .{};
+    var bytes = camera_bytes;
+    var device = _bus.Device{ .bus = &bus };
+    device.public.config = &bytes;
+    device.public.config_length = bytes.len;
+    device.public.speed = usbhc.USB_SPEED_SUPER;
+
+    const bulk = OpenUSBPipe(&base, &device.public, 0x81, &port).?;
+    try testing.expectEqual(@as(u8, 7), bulk.io.burst);
+    try testing.expectEqual(@as(u16, 0), bulk.io.interval_bytes);
+    CloseUSBPipe(&base, bulk);
+    const interrupt = OpenUSBPipe(&base, &device.public, 0x82, &port).?;
+    try testing.expectEqual(@as(u8, 1), interrupt.io.burst);
+    try testing.expectEqual(@as(u8, 0), interrupt.io.mult);
+    try testing.expectEqual(@as(u16, 2048), interrupt.io.interval_bytes);
+    CloseUSBPipe(&base, interrupt);
+    const iso = OpenUSBPipe(&base, &device.public, 0x83, &port).?;
+    try testing.expectEqual(@as(u8, 2), iso.io.burst);
+    try testing.expectEqual(@as(u8, 1), iso.io.mult);
+    try testing.expectEqual(@as(u16, 6144), iso.io.interval_bytes);
+    // Its packets are a wire packet's until the caller says otherwise.
+    try testing.expectEqual(@as(u32, 1024), iso.io.iso_packet);
+    CloseUSBPipe(&base, iso);
+    // No companion after it: one packet at a time.
+    const bare = OpenUSBPipe(&base, &device.public, 0x84, &port).?;
+    try testing.expectEqual(@as(u8, 0), bare.io.burst);
+    try testing.expectEqual(@as(u16, 0), bare.io.interval_bytes);
+    CloseUSBPipe(&base, bare);
+
+    // At high speed the companions mean nothing, wMaxPacketSize's bits
+    // 12:11 do: two more transactions of 1024.
+    device.public.speed = usbhc.USB_SPEED_HIGH;
+    const high = OpenUSBPipe(&base, &device.public, 0x84, &port).?;
+    try testing.expectEqual(@as(u16, 1024), high.io.max_packet);
+    try testing.expectEqual(@as(u8, 2), high.io.burst);
+    try testing.expectEqual(@as(u16, 3072), high.io.interval_bytes);
+    CloseUSBPipe(&base, high);
+    const high_bulk = OpenUSBPipe(&base, &device.public, 0x81, &port).?;
+    try testing.expectEqual(@as(u8, 0), high_bulk.io.burst);
+    CloseUSBPipe(&base, high_bulk);
+    // At full speed nothing.
+    device.public.speed = usbhc.USB_SPEED_FULL;
+    const full = OpenUSBPipe(&base, &device.public, 0x84, &port).?;
+    try testing.expectEqual(@as(u8, 0), full.io.burst);
+    try testing.expectEqual(@as(u16, 0), full.io.interval_bytes);
+    CloseUSBPipe(&base, full);
+    try kexec.expectNoLeaks();
+}
+
+/// A SuperSpeed disk's interface: its Bulk-Only first setting, a bulk IN
+/// at 0x82 in bursts of 4 without streams; and its UAS setting, a
+/// command OUT without streams, a status IN and a data IN with 2^4
+/// streams, a data OUT with 2^2 - each in bursts of 16.
+const uas_bytes = [_]u8{ 9, d.USB_DT_CONFIG, 92, 0, 1, 1, 0, 0x80, 50 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 1, d.USB_CLASS_MASS_STORAGE, 0x06, 0x50, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x82, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 3, 0, 0, 0 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 0, 1, 4, d.USB_CLASS_MASS_STORAGE, 0x06, 0x62, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x01, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 15, 0, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x82, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 15, 4, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x83, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 15, 4, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x04, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+    [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 15, 2, 0, 0 };
+
+test "a stream pipe: one of the streams a SuperSpeed bulk endpoint's companion offers" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    const made = kexec.InitResident(kexec.SysBase, &usb_init.usb_library_tag, null) orelse return error.NoLibrary;
+    const lib: *sdk.exec.Library = @ptrCast(@alignCast(made));
+    const library: *UsbLibrary = @ptrCast(lib);
+    var bus: _bus.Bus = undefined;
+    bus.hc_io = .{};
+    var port: sdk.exec.MsgPort = .{};
+    var bytes = uas_bytes;
+    var device = _bus.Device{ .bus = &bus };
+    device.public.config = &bytes;
+    device.public.config_length = bytes.len;
+    device.public.speed = usbhc.USB_SPEED_SUPER;
+
+    // The status pipe on its first stream and on its last: a bulk pipe
+    // as OpenUSBPipe opens it, its streams named.
+    const status = library.OpenUSBStreamPipe(&device.public, 0x82, 1, &port).?;
+    try testing.expectEqual(usbhc.UHCMD_BULKXFER, status.io.std.req.command);
+    try testing.expectEqual(@as(u8, 15), status.io.burst);
+    try testing.expectEqual(@as(u16, 16), status.io.streams);
+    try testing.expectEqual(@as(u16, 1), status.io.stream);
+    library.CloseUSBPipe(status);
+    const last = library.OpenUSBStreamPipe(&device.public, 0x83, 16, &port).?;
+    try testing.expectEqual(@as(u16, 16), last.io.stream);
+    library.CloseUSBPipe(last);
+    try testing.expect(library.OpenUSBStreamPipe(&device.public, 0x82, 17, &port) == null);
+    try testing.expect(library.OpenUSBStreamPipe(&device.public, 0x82, 0, &port) == null);
+    // Four streams on the data OUT.
+    const out = library.OpenUSBStreamPipe(&device.public, 0x04, 4, &port).?;
+    try testing.expectEqual(@as(u16, 4), out.io.streams);
+    library.CloseUSBPipe(out);
+    try testing.expect(library.OpenUSBStreamPipe(&device.public, 0x04, 5, &port) == null);
+    // The command pipe has none; a plain pipe names none - and finds the
+    // first setting's endpoint, the stream pipe the UAS setting's.
+    try testing.expect(library.OpenUSBStreamPipe(&device.public, 0x01, 1, &port) == null);
+    const plain = library.OpenUSBPipe(&device.public, 0x82, &port).?;
+    try testing.expectEqual(@as(u16, 0), plain.io.streams);
+    try testing.expectEqual(@as(u16, 0), plain.io.stream);
+    try testing.expectEqual(@as(u8, 3), plain.io.burst);
+    library.CloseUSBPipe(plain);
+    // Below SuperSpeed no endpoint has streams.
+    device.public.speed = usbhc.USB_SPEED_HIGH;
+    try testing.expect(library.OpenUSBStreamPipe(&device.public, 0x82, 1, &port) == null);
+
+    _ = kexec.SysBase.iface().RemLibrary(lib);
     try kexec.expectNoLeaks();
 }
 
@@ -656,5 +795,175 @@ test "a device pulled in the middle of its enumeration goes at its hub's next ch
     try testing.expect(whole.public.flags & usb.USBDF_CONFIGURED != 0);
     try testing.expectEqual(@as(u8, 3), whole.public.address);
     try testing.expectEqual(@as(u32, 1), rig.driver.binds);
+    try rig.deinit();
+}
+
+test "a SuperSpeed hub: its own descriptor and depth, devices at 512 bytes, a failed link warm reset" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = standin.addRoot(hc, 2);
+    const hub = standin.addHub(hc, standin.root, 1, usbhc.USB_SPEED_SUPER, 4);
+    const stick = standin.addDevice(hc, hub, 1, usbhc.USB_SPEED_SUPER, 0x0781, 0x5581, d.USB_CLASS_MASS_STORAGE, .{ "", "Stick", "" });
+    const late = standin.addDevice(hc, hub, 2, usbhc.USB_SPEED_SUPER, 0x1234, 0x0030, d.USB_CLASS_HID, .{ "", "Late", "" });
+    hc.functions[late].inactive = true;
+    const below = standin.addHub(hc, hub, 3, usbhc.USB_SPEED_SUPER, 2);
+    const direct = standin.addDevice(hc, standin.root, 2, usbhc.USB_SPEED_SUPER, 0x0781, 0x5582, d.USB_CLASS_MASS_STORAGE, .{ "", "Direct", "" });
+    for ([_]u8{ hub, stick, late, below, direct }) |index| standin.plug(hc, index);
+
+    const root = rig.start();
+    const hub_device = childOf(root, 1).?;
+    try testing.expectEqual(usbhc.USB_SPEED_SUPER, hub_device.public.speed);
+    try testing.expect(hub_device.hub.?.super);
+    try testing.expectEqual(@as(u8, 4), hub_device.hub.?.ports);
+    // Its depth before anything below it was reset: 0 on a root port, 1
+    // below it.
+    try testing.expectEqual(@as(u16, 0), hc.functions[hub].hub_depth);
+    try testing.expectEqual(@as(u16, 1), hc.functions[below].hub_depth);
+    try testing.expect(childOf(hub_device, 3).?.hub.?.super);
+    // Endpoint 0 at 512 bytes from the first transfer on, the descriptor
+    // saying so as an exponent; no translator in the way.
+    const stick_device = childOf(hub_device, 1).?;
+    try testing.expectEqual(usbhc.USB_SPEED_SUPER, stick_device.public.speed);
+    try testing.expectEqual(@as(u8, 9), stick_device.public.descriptor.max_packet_size0);
+    try testing.expectEqual(@as(u16, 512), hc.functions[stick].max_packet0);
+    try testing.expect(stick_device.public.flags & usb.USBDF_CONFIGURED != 0);
+    try testing.expectEqual(@as(u8, 0), stick_device.hub_address);
+    // The root port says SuperSpeed in the USB 2 form.
+    const direct_device = childOf(root, 2).?;
+    try testing.expectEqual(usbhc.USB_SPEED_SUPER, direct_device.public.speed);
+    try testing.expectEqual(@as(u16, 512), hc.functions[direct].max_packet0);
+
+    // The failed link was warm reset; what is on it comes at the hub's
+    // next change.
+    try testing.expectEqual(@as(u32, 1), hc.functions[hub].warm_resets);
+    try testing.expect(childOf(hub_device, 2) == null);
+    _bus.hubsChanged(&rig.bus);
+    const late_device = childOf(hub_device, 2).?;
+    try testing.expect(late_device.public.flags & usb.USBDF_CONFIGURED != 0);
+    try testing.expectEqual(@as(u32, 1), rig.driver.binds);
+    // Every change was cleared by the hub's own features.
+    for (hc.functions[hub].port_change) |change| try testing.expectEqual(@as(u16, 0), change);
+    try testing.expectEqual(@as(u32, 6), rig.count());
+
+    standin.pull(hc, hub);
+    _bus.hubsChanged(&rig.bus);
+    try testing.expectEqual(@as(u32, 2), rig.count());
+    try testing.expectEqual(@as(u32, 0), rig.driver.holding);
+    try rig.deinit();
+}
+
+test "a SuperSpeed hub's port status in the USB 2 form" {
+    const status = d.superPortStatus(.{
+        .status = d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE | d.USB_SS_PORT_STAT_POWER | d.USB_SS_LINK_U3 << d.USB_SS_PORT_STAT_LINK_STATE_SHIFT,
+        .change = d.USB_PORT_STAT_C_CONNECTION | d.USB_SS_PORT_STAT_C_BH_RESET | d.USB_SS_PORT_STAT_C_LINK_STATE | d.USB_SS_PORT_STAT_C_CONFIG_ERROR,
+    });
+    try testing.expectEqual(d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE | d.USB_PORT_STAT_POWER | d.USB_PORT_STAT_SUSPEND | d.USB_PORT_STAT_SUPER_SPEED, status.status);
+    try testing.expectEqual(d.USB_PORT_STAT_C_CONNECTION | d.USB_PORT_STAT_C_RESET | d.USB_PORT_STAT_C_SUSPEND | d.USB_PORT_STAT_C_ENABLE, status.change);
+    // Nothing on it: no speed, and the link state alone.
+    const empty_port: u16 = d.USB_SS_PORT_STAT_POWER | d.USB_SS_LINK_INACTIVE << d.USB_SS_PORT_STAT_LINK_STATE_SHIFT;
+    try testing.expectEqual(d.USB_PORT_STAT_POWER, d.superPortStatus(.{ .status = empty_port }).status);
+    try testing.expectEqual(d.USB_SS_LINK_INACTIVE, d.superLinkState(empty_port));
+}
+
+test "a BOS's SuperSpeed capability, after another, and none in one cut short" {
+    const bos = [_]u8{ 5, d.USB_DT_BOS, 22, 0, 2 } ++
+        [_]u8{ 7, d.USB_DT_DEVICE_CAPABILITY, 2, 2, 0, 0, 0 } ++
+        [_]u8{ 10, d.USB_DT_DEVICE_CAPABILITY, d.USB_CAP_SUPERSPEED, 0, 0x0E, 0, 1, 10, 0x20, 0x01 };
+    const capability = d.superSpeedCapabilityOf(&bos).?;
+    try testing.expectEqual(@as(u8, 10), capability.u1_exit);
+    try testing.expectEqual(@as(u16, 0x120), capability.u2_exit);
+    try testing.expect(d.superSpeedCapabilityOf(bos[0..15]) == null);
+    try testing.expect(d.superSpeedCapabilityOf(bos[0..12]) == null);
+}
+
+test "the way back from U1 and U2: on a root port, behind a hub, and timeouts past their fields" {
+    // The root hub's ports: 2 and 20 µs; a hub on one, 4 and 100 µs, its
+    // header decode 0.4 µs and delay 400 ns; a device of 10 and 32 µs.
+    const root: _linkpower.Upstream = .{ .exits = .{ 2, 20 }, .root = true };
+    const direct = _linkpower.pathOf(.{ 10, 32 }, root, 0);
+    try testing.expectEqual([2]u32{ 12580, 34580 }, direct.mel);
+    try testing.expectEqual([2]u32{ 10000, 32000 }, direct.pel);
+    try testing.expectEqual([2]u32{ 10000, 32000 }, direct.sel);
+    try testing.expectEqual(d.SelData{ .u1_sel = 10, .u1_pel = 10, .u2_sel = 32, .u2_pel = 32 }, _linkpower.selOf(direct));
+    try testing.expectEqual(@as(u16, 35), _linkpower.exitLatencyOf(direct, .{ 10, 32 }));
+    // Without U2 only U1's way counts.
+    try testing.expectEqual(@as(u16, 13), _linkpower.exitLatencyOf(direct, .{ 10, 0 }));
+    try testing.expectEqual(@as(u8, 30), _linkpower.timeoutOf(_linkpower.U1, direct));
+    try testing.expectEqual(@as(u8, 1), _linkpower.timeoutOf(_linkpower.U2, direct));
+
+    const hub_path = _linkpower.pathOf(.{ 4, 100 }, root, 0);
+    const hub: _linkpower.Upstream = .{ .path = hub_path, .exits = .{ 4, 100 }, .header_latency = 4, .hub_delay = 400 };
+    const behind = _linkpower.pathOf(.{ 10, 32 }, hub, 1);
+    try testing.expectEqual([2]u32{ 17860, 203860 }, behind.mel);
+    // U2's wake passed up through the hub takes longer than the last
+    // link's own.
+    try testing.expectEqual([2]u32{ 10000, 197000 }, behind.pel);
+    try testing.expectEqual([2]u32{ 12350, 199350 }, behind.sel);
+    try testing.expectEqual(d.SelData{ .u1_sel = 13, .u1_pel = 10, .u2_sel = 200, .u2_pel = 197 }, _linkpower.selOf(behind));
+    try testing.expectEqual(@as(u16, 204), _linkpower.exitLatencyOf(behind, .{ 10, 32 }));
+    try testing.expectEqual(@as(u8, 38), _linkpower.timeoutOf(_linkpower.U1, behind));
+    try testing.expectEqual(@as(u8, 3), _linkpower.timeoutOf(_linkpower.U2, behind));
+
+    // Past 127 µs, past 254 x 256 µs: the port leaves the link to the
+    // device.
+    const long: _linkpower.Latencies = .{ .sel = .{ 50_000, 30_000_000 } };
+    try testing.expectEqual(d.USB_LPM_TIMEOUT_ACCEPT, _linkpower.timeoutOf(_linkpower.U1, long));
+    try testing.expectEqual(d.USB_LPM_TIMEOUT_ACCEPT, _linkpower.timeoutOf(_linkpower.U2, long));
+    // SET_SEL's U1 fields hold at most 255 µs.
+    try testing.expectEqual(@as(u8, 0xFF), _linkpower.selOf(.{ .sel = .{ 300_000, 0 } }).u1_sel);
+}
+
+test "a SuperSpeed device's link rests in U1 and U2: not a hub's, not one with isochronous data, and not a state refused" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    const root_index = standin.addRoot(hc, 2);
+    hc.functions[root_index].descriptor.bcd_usb = 0x0210;
+    hc.functions[root_index].exits = .{ 2, 20 };
+    const hub = standin.addHub(hc, standin.root, 1, usbhc.USB_SPEED_SUPER, 2);
+    hc.functions[hub].exits = .{ 4, 100 };
+    const stick = standin.addDevice(hc, hub, 1, usbhc.USB_SPEED_SUPER, 0x0781, 0x5581, d.USB_CLASS_MASS_STORAGE, .{ "", "Stick", "" });
+    hc.functions[stick].exits = .{ 10, 32 };
+    const speaker = standin.addDevice(hc, hub, 2, usbhc.USB_SPEED_SUPER, 0x1234, 0x0040, d.USB_CLASS_AUDIO, .{ "", "Speaker", "" });
+    hc.functions[speaker].exits = .{ 10, 32 };
+    standin.makeIsochronous(hc, speaker);
+    const direct = standin.addDevice(hc, standin.root, 2, usbhc.USB_SPEED_SUPER, 0x0781, 0x5582, d.USB_CLASS_MASS_STORAGE, .{ "", "Direct", "" });
+    hc.functions[direct].exits = .{ 10, 32 };
+    hc.functions[direct].refused_feature = d.USB_DEVICE_U2_ENABLE;
+    for ([_]u8{ hub, stick, speaker, direct }) |index| standin.plug(hc, index);
+
+    const root = rig.start();
+    try testing.expectEqual([2]u16{ 2, 20 }, root.exits);
+    const hub_device = childOf(root, 1).?;
+    try testing.expectEqual(@as(u8, standin.hub_header_latency), hub_device.hub.?.header_latency);
+
+    // Behind the hub: the way back as worked out above, both states.
+    const stick_device = childOf(hub_device, 1).?;
+    try testing.expectEqual(d.SelData{ .u1_sel = 13, .u1_pel = 10, .u2_sel = 200, .u2_pel = 197 }, hc.functions[stick].sel);
+    try testing.expectEqual(@as(u16, 204), hc.functions[stick].sel_latency);
+    try testing.expectEqual(@as(u32, 3), hc.functions[stick].features);
+    try testing.expectEqual([2]u8{ 38, 3 }, hc.functions[hub].timeouts[0]);
+    try testing.expectEqual(usb.USBDF_U1 | usb.USBDF_U2, stick_device.public.flags & (usb.USBDF_U1 | usb.USBDF_U2));
+    // The speaker's data cannot wait: nothing sent it, nothing at its port.
+    try testing.expectEqual(@as(u16, 0), hc.functions[speaker].sel_latency);
+    try testing.expectEqual(@as(u32, 0), hc.functions[speaker].features);
+    try testing.expectEqual([2]u8{ 0, 0 }, hc.functions[hub].timeouts[1]);
+    // The hub's own link stays in U0.
+    try testing.expectEqual([2]u8{ 0, 0 }, hc.functions[root_index].timeouts[0]);
+    try testing.expectEqual(@as(u32, 0), hc.functions[hub].features);
+    try testing.expect(hub_device.public.flags & (usb.USBDF_U1 | usb.USBDF_U2) == 0);
+    // On the root port: U2 refused, its timeout back at 0, U1 kept.
+    const direct_device = childOf(root, 2).?;
+    try testing.expectEqual(d.SelData{ .u1_sel = 10, .u1_pel = 10, .u2_sel = 32, .u2_pel = 32 }, hc.functions[direct].sel);
+    try testing.expectEqual(@as(u32, 1), hc.functions[direct].features);
+    try testing.expectEqual([2]u8{ 30, 0 }, hc.functions[root_index].timeouts[1]);
+    try testing.expectEqual(usb.USBDF_U1, direct_device.public.flags & (usb.USBDF_U1 | usb.USBDF_U2));
+
+    // The stick pulled: its port's timeouts taken back.
+    standin.pull(hc, stick);
+    _bus.hubsChanged(&rig.bus);
+    try testing.expect(childOf(hub_device, 1) == null);
+    try testing.expectEqual([2]u8{ 0, 0 }, hc.functions[hub].timeouts[0]);
     try rig.deinit();
 }

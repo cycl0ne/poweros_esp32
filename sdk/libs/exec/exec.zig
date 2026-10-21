@@ -32,11 +32,13 @@ pub const ExecBase = @import("../../interface/exec.zig").ExecBase;
 /// memory right below the chip ROM's reserved area: on the ESP32-S3 just
 /// above the kernel's stack, on the ESP32-P4 at the top of the low part of
 /// L2MEM; on a machine under SBI firmware in the page right below the
-/// kernel, which every one of them links at 0x8020_0000.
+/// kernel, which every one of them links at 0x8020_0000, and the same on
+/// an AArch64 machine under PSCI firmware, whose kernel is at 0x4020_0000.
 pub const AbsExecBase: *const *ExecBase = @ptrFromInt(switch (@import("../../hardware/hardware.zig").chip) {
     .esp32s3 => 0x3FCE_9700,
     .esp32p4 => 0x4FF3_ABC0,
     .rv64sbi => 0x801F_F000,
+    .a64psci => 0x401F_F000,
 });
 
 pub const NodeType = nodes.NodeType;

@@ -19,6 +19,7 @@ Generated from the source by `./zig build autodoc`.
 - [NextUSBDescriptor](#nextusbdescriptor) - Finds the next descriptor of a kind in a device's configuration.
 - [ObtainUSBDeviceList](#obtainusbdevicelist) - Takes the list of every device on every bus, for reading.
 - [OpenUSBPipe](#openusbpipe) - Opens a pipe to one endpoint of a device: a request already filled in for it.
+- [OpenUSBStreamPipe](#openusbstreampipe) - Opens a pipe to one stream of a SuperSpeed bulk endpoint.
 - [ReleaseUSBDeviceList](#releaseusbdevicelist) - Lets go of the list ObtainUSBDeviceList took.
 - [ReleaseUSBInterface](#releaseusbinterface) - Gives back an interface ClaimUSBInterface took.
 - [RemUSBNotify](#remusbnotify) - Ends what AddUSBNotify asked for.
@@ -655,10 +656,14 @@ The pipe's `io` is an `IOUsbHC` on the device's bus's controller, its
 command set by the endpoint's type (`UHCMD_CONTROLXFER`,
 `UHCMD_BULKXFER`, `UHCMD_INTXFER`, `UHCMD_ISOXFER`), the device's
 address, speed and hub, the endpoint, its packet size and its interval
-in milliseconds, its data toggle at DATA0. The caller sets io_Data and
-io_Length - and a control pipe's setup packet, an isochronous pipe's
-`iso_packet` if its packets are smaller than the endpoint's, or its
-`iso_list` for packets of their own lengths - and sends it with
+in milliseconds, its data toggle at DATA0; and what it moves besides a
+packet at a time (`burst`, `mult`, `interval_bytes`, Since 1.9): at
+SuperSpeed from its companion descriptor, at high speed a periodic
+endpoint's more transactions a microframe from wMaxPacketSize. The
+caller sets io_Data and io_Length - and a control pipe's setup packet,
+an isochronous pipe's `iso_packet` if its packets are other than the
+endpoint's packet size, or its `iso_list` for packets of their own
+lengths - and sends it with
 SendIO or DoIO, as often as it likes; the toggle stays in it. An
 isochronous transfer comes back with what became of its packets
 (`iso_lost`, the list's `status`), the frame it started in and its
@@ -666,7 +671,10 @@ gap behind the one before (sdk/devices/usbhc.zig).
 
 An isochronous endpoint's interval is 2^(bInterval - 1) frames or, at
 high speed, microframes; it is taken only at a millisecond or more,
-which every endpoint of a full-speed device is.
+which every endpoint of a full-speed device is. Its packets are the
+endpoint's packet size to begin with; where `interval_bytes` is more,
+a packet of up to that many is an interval's bursts, which
+xhci.device sends and usbotg.device refuses (IOERR_BADLENGTH).
 
 **CONTEXT**
 
@@ -705,6 +713,90 @@ const pipe = ub.OpenUSBPipe(device, in.endpoint_address, port) orelse return fal
 pipe.io.std.data = &report;
 pipe.io.std.length = report.len;
 sys.SendIO(&pipe.io.std.req);
+```
+
+## OpenUSBStreamPipe
+
+Opens a pipe to one stream of a SuperSpeed bulk endpoint.
+
+**SYNOPSIS**
+
+```zig
+fn OpenUSBStreamPipe(base: *UsbBase, device: *usb.USBDevice, endpoint_address: u32, stream: u32, reply_port: *exec.MsgPort) ?*usb.USBPipe
+```
+
+**SINCE**
+
+1.10. LVO -84.
+
+**INPUTS**
+
+- `device` - the device, which the caller drives (a binding, or a
+  claimed interface).
+- `endpoint_address` - the bulk endpoint's bEndpointAddress, with
+  `USB_DIR_IN` for one that sends.
+- `stream` - the stream's ID, from 1 to the endpoint's streams.
+- `reply_port` - where the request is replied.
+
+**RESULT**
+
+The pipe, or null if the device is not at SuperSpeed, it has no such
+endpoint, the endpoint is not a bulk one with streams, the stream is
+not among them, or there is no memory.
+
+**BEHAVIOR**
+
+The pipe is the one `OpenUSBPipe` opens for the endpoint, its request
+naming the endpoint's streams (`streams`: the 2^MaxStreams its
+companion descriptor offers, at most 16) and the one it goes on
+(`stream`). Where settings of the device have bulk endpoints at the
+same address - one without streams, one with, as a disk's Bulk-Only
+and UAS settings may - the pipe is the one with streams, its packet
+size and bursts that endpoint's.
+
+Each stream is a queue of its own on the endpoint: a transfer on one
+waits only for those before it on the same, and the device says which
+stream it moves data on next - so a pipe per stream can each have a
+transfer out at once.
+
+A controller without streams answers the pipe's first transfer
+UHIOERR_HOSTERROR, as does one whose stream arrays hold fewer than
+the stream named; xhci.device's hold 16 where the controller does.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pipe is the caller's until CloseUSBPipe; nothing of it may be
+outstanding then.
+
+**NOTES**
+
+Every transfer on an endpoint with streams goes on a stream: a pipe
+from `OpenUSBPipe` on the same endpoint has the controller add the
+endpoint afresh without them, and what was on its streams ends with
+UHIOERR_HOSTERROR. ClearUSBStall takes any of the endpoint's pipes.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenUSBPipe`, `CloseUSBPipe`, `ClearUSBStall`
+
+**EXAMPLES**
+
+```zig
+const status = ub.OpenUSBStreamPipe(device, status_in, tag, port) orelse return false;
+status.io.std.data = &sense;
+status.io.std.length = sense.len;
+sys.SendIO(&status.io.std.req);
 ```
 
 ## ReleaseUSBDeviceList

@@ -27,12 +27,19 @@
 //! is, the first request to address 0 after it makes its slot, and the
 //! SET_ADDRESS that follows binds the address to it (slots.zig).
 //!
+//! **A bulk endpoint with streams** has a ring per stream: its context
+//! points at a Stream Context Array, an entry per stream, each naming the
+//! ring of a lane - an `Endpoint` of its own, with its ring, its buffer,
+//! its request and its queue - so a transfer on one stream waits only
+//! for those on the same; the endpoint itself carries no TD.
+//!
 //! **Memory the controller reads or writes** is DMA memory, below 4 GiB,
 //! in blocks of whole cache lines. What the driver writes there is out
 //! before the controller is told, and what the controller wrote is read
 //! afresh once the driver hears of it (`toDevice`, `fromDevice`). For a
 //! controller that sees the processors' caches (PCIDevice.dma_coherent),
-//! as the VisionFive 2's VL805 and QEMU's do, that is a fence each way,
+//! as the VisionFive 2's VL805 and QEMU's do, that is a barrier each way
+//! (sdk.hardware.barrier),
 //! which keeps the compiler from holding on to memory too: without the
 //! one in `fromDevice` the VL805's root hub found no device behind it.
 //! For one that does not, the lines are written back to memory, and
@@ -40,6 +47,7 @@
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const barrier = sdk.hardware.barrier;
 const usbhc = sdk.devices.usbhc;
 const timer = sdk.devices.timer;
 const pci = sdk.pci;
@@ -55,7 +63,8 @@ pub const max_units = 2;
 /// The device slots a controller is given at most: devices on its bus,
 /// hubs among them.
 pub const max_slots = 32;
-/// The root hub's ports at most: a hub's bitmap holds fifteen.
+/// The root hub's ports at most: a hub's bitmap holds fifteen, and the
+/// USB 2 ones come first.
 pub const max_root_ports = 15;
 /// TRBs on a transfer ring and on the command ring: a TD is three at most
 /// - a control transfer's stages - and one TD is on a ring at a time.
@@ -66,6 +75,10 @@ pub const ring_trbs = 32;
 /// a 64 KiB boundary.
 pub const iso_ring_trbs = 256;
 pub const iso_in_flight = 4;
+/// The streams a bulk endpoint is given at most, and its Primary Stream
+/// Array's entries for them: stream 0 is the controller's.
+pub const max_streams = 16;
+pub const stream_entries = 32;
 /// TRBs on the event ring: a page.
 pub const event_trbs = 256;
 /// The bytes of a device's configuration the device keeps, from the
@@ -102,6 +115,13 @@ pub const Endpoint = struct {
     kind: u32 = 0,
     max_packet: u32 = 0,
     interval: u32 = 0,
+    /// What it moves besides a packet at a time (sdk/devices/usbhc.zig):
+    /// the wire packets of a burst less one, a SuperSpeed isochronous
+    /// one's bursts an interval less one, a periodic one's bytes an
+    /// interval (0: one packet's).
+    burst: u32 = 0,
+    mult: u32 = 0,
+    esit: u32 = 0,
     ring: ring.Ring = .{},
     /// The ring's memory, for FreeMem when it is made again another size.
     ring_raw: ?*anyopaque = null,
@@ -141,6 +161,16 @@ pub const Endpoint = struct {
     /// count).
     streaming: bool = false,
     next_frame: u32 = 0,
+    /// A bulk endpoint's streams, IDs 1 to `streams` (0: it has none):
+    /// its Primary Stream Array, `stream_entries` of them, and a lane per
+    /// stream, each the `Endpoint` its TDs go on - its `stream` the ID.
+    /// Made the first time and kept, as its ring is.
+    streams: u32 = 0,
+    stream: u32 = 0,
+    contexts: ?[*]volatile u32 = null,
+    contexts_raw: ?*anyopaque = null,
+    contexts_raw_size: u32 = 0,
+    lanes: ?[*]Endpoint = null,
 };
 
 /// A device slot, and the device in it: where it is in the tree, what
@@ -168,6 +198,8 @@ pub const Slot = struct {
     hub: bool = false,
     hub_ports: u8 = 0,
     ttt: u8 = 0,
+    /// Its Max Exit Latency in µs, from the SET_SEL it was sent.
+    exit_latency: u16 = 0,
     /// The highest endpoint in its context.
     entries: u32 = 1,
     /// Its device context, which the controller writes, and the input
@@ -213,10 +245,17 @@ pub const Host = struct {
     page_size: u32 = 4096,
     scratchpads: u32 = 0,
     power_switched: bool = false,
-    /// The root hub's ports: the controller's USB 2 ports, the first of
-    /// them `first_port`.
-    first_port: u32 = 1,
+    /// HCCPARAMS1's MaxPSASize: 0, no streams.
+    max_psa_size: u32 = 0,
+    /// HCSPARAMS3: its root ports' exit latencies from U1 and U2, in µs.
+    u1_exit: u8 = 0,
+    u2_exit: u16 = 0,
+    /// The root hub's ports: the controller's root ports, the USB 2 ones
+    /// first. Each one's PORTSC number, and a bit per USB 3 one (from bit
+    /// 1, as the hub numbers them).
     ports: u32 = 0,
+    port_map: [max_root_ports]u8 = @splat(0),
+    super_ports: u32 = 0,
     unit: exec.Unit = .{},
     task: exec.Task = .{},
     stack: ?*anyopaque = null,
@@ -313,7 +352,37 @@ pub fn spanSlice(span: usize) u32 {
 /// Whether an endpoint is an isochronous one: several requests on its
 /// ring at once.
 pub fn isIso(ep: *const Endpoint) bool {
-    return ep.kind == regs.EP_ISOCH_OUT or ep.kind == regs.EP_ISOCH_IN;
+    return isIsoKind(ep.kind);
+}
+
+pub fn isIsoKind(kind: u32) bool {
+    return kind == regs.EP_ISOCH_OUT or kind == regs.EP_ISOCH_IN;
+}
+
+/// The endpoints an endpoint's TDs go on: each of its streams' lanes, or
+/// the endpoint itself.
+pub fn ringsOf(ep: *Endpoint) []Endpoint {
+    if (ep.streams != 0) return ep.lanes.?[0..ep.streams];
+    return ep[0..1];
+}
+
+/// The lane of stream `stream` (0: the endpoint itself), or null for a
+/// stream the endpoint does not have.
+pub fn laneOf(ep: *Endpoint, stream: u32) ?*Endpoint {
+    if (ep.streams == 0) return if (stream == 0) ep else null;
+    if (stream == 0 or stream > ep.streams) return null;
+    return &ep.lanes.?[stream - 1];
+}
+
+/// The lane whose ring the TRB at `pointer` is on: the endpoint itself
+/// when it has no streams.
+pub fn laneAt(ep: *Endpoint, pointer: u64) ?*Endpoint {
+    if (ep.streams == 0) return ep;
+    for (ringsOf(ep)) |*lane| {
+        const start: u64 = @intFromPtr(lane.ring.trbs);
+        if (pointer >= start and pointer < start + lane.ring.bytes()) return lane;
+    }
+    return null;
 }
 
 /// Whether the endpoint can have its next request on the ring now.
@@ -392,17 +461,17 @@ pub fn write64(address: usize, value: u64) void {
 /// the command ring's). What was written for the controller is out to
 /// memory before it hears.
 pub fn ringDoorbell(host: *const Host, slot: u32, target: u32) void {
-    asm volatile ("fence iorw, iorw" ::: .{ .memory = true });
+    barrier.full();
     reg(host.db + 4 * @as(usize, slot)).* = target;
 }
 
 /// What the driver wrote at [address, address + bytes) out to memory,
 /// for the controller to read. Where it sees the caches the writes are
 /// only ordered before the register write that tells it, as Linux's
-/// writel orders them (`fence w, o`).
+/// writel orders them (`barrier.toDevice`).
 pub fn toDevice(host: *const Host, address: usize, bytes: usize) void {
     if (host.coherent) {
-        asm volatile ("fence w, o" ::: .{ .memory = true });
+        barrier.toDevice();
         return;
     }
     if (bytes == 0) return;
@@ -413,11 +482,11 @@ pub fn toDevice(host: *const Host, address: usize, bytes: usize) void {
 /// The caches' copy of [address, address + bytes) dropped, so what the
 /// controller wrote there is read. Where it sees the caches the reads are
 /// only ordered after the register read that said it was written, as
-/// Linux's readl orders them (`fence i, r`), and the compiler keeps
-/// nothing of that memory from before.
+/// Linux's readl orders them (`barrier.fromDevice`), and the compiler
+/// keeps nothing of that memory from before.
 pub fn fromDevice(host: *const Host, address: usize, bytes: usize) void {
     if (host.coherent) {
-        asm volatile ("fence i, r" ::: .{ .memory = true });
+        barrier.fromDevice();
         return;
     }
     if (bytes == 0) return;

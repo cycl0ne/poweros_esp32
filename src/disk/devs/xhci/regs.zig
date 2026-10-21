@@ -15,6 +15,7 @@
 pub const CAPLENGTH: usize = 0x00;
 pub const HCSPARAMS1: usize = 0x04;
 pub const HCSPARAMS2: usize = 0x08;
+pub const HCSPARAMS3: usize = 0x0C;
 pub const HCCPARAMS1: usize = 0x10;
 pub const DBOFF: usize = 0x14;
 pub const RTSOFF: usize = 0x18;
@@ -42,6 +43,15 @@ pub fn istFrames(params2: u32) u32 {
     return (count + 7) / 8;
 }
 
+/// HCSPARAMS3: how long a root port's link takes to come back from U1
+/// (at most 10) and from U2 (at most 2047), in µs.
+pub fn u1ExitOf(params3: u32) u8 {
+    return @truncate(params3);
+}
+pub fn u2ExitOf(params3: u32) u16 {
+    return @truncate(params3 >> 16);
+}
+
 /// HCCPARAMS1: 64-bit addresses, 64-byte contexts, port power switches,
 /// and where the extended capabilities start, in words.
 pub const HCC_AC64: u32 = 1 << 0;
@@ -49,6 +59,11 @@ pub const HCC_CSZ: u32 = 1 << 2;
 pub const HCC_PPC: u32 = 1 << 3;
 pub fn extendedCaps(params1: u32) u32 {
     return params1 >> 16;
+}
+/// HCCPARAMS1's MaxPSASize: the largest Primary Stream Array an endpoint
+/// may have is 2^(n + 1) entries; 0, no streams.
+pub fn maxPsaSize(params1: u32) u32 {
+    return (params1 >> 12) & 0xF;
 }
 
 // --- operational registers --------------------------------------------------------
@@ -62,6 +77,10 @@ pub const CONFIG: usize = 0x38;
 /// Root port n's PORTSC (n from 1).
 pub fn portsc(port: u32) usize {
     return 0x400 + 0x10 * @as(usize, port - 1);
+}
+/// Its PORTPMSC, after it.
+pub fn portpmsc(port: u32) usize {
+    return portsc(port) + 4;
 }
 
 pub const USBCMD_RS: u32 = 1 << 0;
@@ -99,6 +118,8 @@ pub const PORT_PLC: u32 = 1 << 22;
 pub const PORT_CEC: u32 = 1 << 23;
 pub const PORT_WAKE_MASK: u32 = 7 << 25;
 pub const PORT_DR: u32 = 1 << 30;
+/// A USB 3 port's warm reset: the link trained again from the start.
+pub const PORT_WPR: u32 = 1 << 31;
 /// Every change bit: written 1 to clear.
 pub const PORT_CHANGES: u32 = PORT_CSC | PORT_PEC | PORT_WRC | PORT_OCC | PORT_PRC | PORT_PLC | PORT_CEC;
 /// What a write keeps as it is: the read-only bits and the ones that
@@ -106,11 +127,20 @@ pub const PORT_CHANGES: u32 = PORT_CSC | PORT_PEC | PORT_WRC | PORT_OCC | PORT_P
 /// port - nor any change bit, nor PR.
 pub const PORT_NEUTRAL: u32 = PORT_CCS | PORT_OCA | PORT_SPEED_MASK | PORT_DR |
     PORT_PLS_MASK | PORT_PP | PORT_PIC_MASK | PORT_WAKE_MASK;
-/// PLS's U3: the port suspended.
+/// A USB 3 port's PORTPMSC: its U1 timeout (bits 7:0) and U2 timeout
+/// (15:8), as a SuperSpeed hub's port takes them.
+pub const PMSC_U1_TIMEOUT_SHIFT = 0;
+pub const PMSC_U2_TIMEOUT_SHIFT = 8;
+pub const PMSC_TIMEOUTS: u32 = 0xFFFF;
+/// PLS's U3: the port suspended. A USB 3 link's SS.Inactive and
+/// compliance mode: it failed, and only a warm reset brings it back.
 pub const PLS_U3: u32 = 3;
+pub const PLS_INACTIVE: u32 = 6;
+pub const PLS_COMPLIANCE: u32 = 10;
 
 /// A port's speed (PORTSC's, and a slot context's): the protocol's
-/// default speed IDs.
+/// default speed IDs. What is above SPEED_SUPER is SuperSpeedPlus, run
+/// here as SuperSpeed.
 pub const SPEED_FULL: u32 = 1;
 pub const SPEED_LOW: u32 = 2;
 pub const SPEED_HIGH: u32 = 3;
@@ -167,6 +197,22 @@ pub const TRB_SIA: u32 = 1 << 31;
 pub fn frameIdField(frame: u32) u32 {
     return (frame & 0x7FF) << 20;
 }
+/// An Isoch TRB's bursts, for a TD of `bytes` on an endpoint of packets
+/// of `max_packet` and bursts of `burst` + 1: TBC, the bursts it takes
+/// less one (bits 8:7), and TLBPC, the packets of its last burst less one
+/// (bits 19:16). Below SuperSpeed a TD is one burst, TLBPC its packets
+/// less one.
+pub fn isochBurstFields(bytes: u32, max_packet: u32, burst: u32, super: bool) u32 {
+    const packet: u32 = @max(max_packet, 1);
+    const packets: u32 = @max((bytes + packet - 1) / packet, 1);
+    const last_of_one: u32 = @min(packets - 1, 15);
+    if (!super) return last_of_one << 16;
+    const per_burst = burst + 1;
+    const bursts: u32 = @min((packets + per_burst - 1) / per_burst - 1, 3);
+    const residue = packets % per_burst;
+    const last: u32 = if (residue == 0) burst else residue - 1;
+    return bursts << 7 | (last & 0xF) << 16;
+}
 pub const TRB_TYPE_SHIFT = 10;
 
 pub fn trbType(control: u32) u32 {
@@ -180,6 +226,11 @@ pub fn slotField(slot: u32) u32 {
 }
 pub fn endpointField(dci: u32) u32 {
     return dci << 16;
+}
+/// A stream ID where a doorbell and a Set TR Dequeue Pointer command
+/// carry it, in their top half.
+pub fn streamField(stream: u32) u32 {
+    return stream << 16;
 }
 
 /// A Setup Stage TRB's transfer type: no data, OUT, IN.
@@ -246,6 +297,9 @@ pub const CC_MISSED_SERVICE: u32 = 23;
 pub const CC_STOPPED: u32 = 26;
 pub const CC_STOPPED_LENGTH_INVALID: u32 = 27;
 pub const CC_STOPPED_SHORT_PACKET: u32 = 28;
+/// Evaluate Context: the controller cannot allow for the slot's Max Exit
+/// Latency.
+pub const CC_MAX_EXIT_LATENCY: u32 = 29;
 pub const CC_SPLIT_TRANSACTION: u32 = 36;
 
 // --- contexts ---------------------------------------------------------------------
@@ -263,9 +317,9 @@ pub fn addFlag(dci: u32) u32 {
 pub fn slotWord0(route: u32, speed: u32, hub: bool, entries: u32) u32 {
     return (route & 0xF_FFFF) | speed << 20 | @as(u32, @intFromBool(hub)) << 26 | entries << 27;
 }
-/// Word 1: the root port, and a hub's ports.
-pub fn slotWord1(root_port: u32, ports: u32) u32 {
-    return root_port << 16 | ports << 24;
+/// Word 1: the Max Exit Latency in µs, the root port, and a hub's ports.
+pub fn slotWord1(exit_latency: u32, root_port: u32, ports: u32) u32 {
+    return (exit_latency & 0xFFFF) | root_port << 16 | ports << 24;
 }
 /// Word 2: the transaction translator - its hub's slot and port - and a
 /// high-speed hub's think time.
@@ -282,12 +336,19 @@ pub const EP_ISOCH_IN: u32 = 5;
 pub const EP_BULK_IN: u32 = 6;
 pub const EP_INTERRUPT_IN: u32 = 7;
 
-/// Endpoint context, word 0: the interval, as an exponent of 125 µs.
-pub fn endpointWord0(interval: u32) u32 {
-    return interval << 16;
+/// Endpoint context, word 0: the interval, as an exponent of 125 µs, a
+/// SuperSpeed isochronous endpoint's bursts an interval less one, and a
+/// bulk endpoint's streams - MaxPStreams, its Primary Stream Array
+/// 2^(n + 1) entries, and with it LSA: the array linear, a stream ID its
+/// index.
+pub fn endpointWord0(interval: u32, mult: u32, max_pstreams: u32) u32 {
+    const linear: u32 = @intFromBool(max_pstreams != 0);
+    return interval << 16 | linear << 15 | (max_pstreams & 0x1F) << 10 | (mult & 3) << 8;
 }
 /// Word 1: three tries on an error - none for an isochronous endpoint,
-/// whose packets have their time - the type, the burst, the packet size.
+/// whose packets have their time - the type, the wire packets a burst
+/// less one (a SuperSpeed endpoint's, or a high-speed periodic one's
+/// more transactions a microframe), the packet size.
 pub fn endpointWord1(kind: u32, burst: u32, max_packet: u32) u32 {
     const tries: u32 = if (kind == EP_ISOCH_OUT or kind == EP_ISOCH_IN) 0 else 3;
     return tries << 1 | kind << 3 | burst << 8 | max_packet << 16;
@@ -296,6 +357,32 @@ pub fn endpointWord1(kind: u32, burst: u32, max_packet: u32) u32 {
 /// interval.
 pub fn endpointWord4(average: u32, esit: u32) u32 {
     return average | (esit & 0xFFFF) << 16;
+}
+
+/// A Stream Context's Stream Context Type: a primary stream's own
+/// transfer ring.
+pub const SCT_PRIMARY_RING: u32 = 1;
+/// A Stream Context's first two words, and the parameter of a Set TR
+/// Dequeue Pointer command for a stream: the ring's dequeue pointer -
+/// its cycle state in bit 0 - with the stream's context type.
+pub fn streamPointer(dequeue: u64) u64 {
+    return dequeue | SCT_PRIMARY_RING << 1;
+}
+/// The entries of a linear Primary Stream Array for streams 1 to
+/// `streams` - entry 0 is the controller's - as a power of two, at least
+/// 4, and at most the controller's 2^(MaxPSASize + 1); 0 when it has no
+/// streams. The streams the array then holds are its entries less one.
+pub fn streamEntries(streams: u32, max_psa_size: u32) u32 {
+    if (max_psa_size == 0 or streams == 0) return 0;
+    const most = @as(u32, 2) << @intCast(@min(max_psa_size, 15));
+    var entries: u32 = 4;
+    while (entries < streams + 1 and entries < most) entries *= 2;
+    return @min(entries, most);
+}
+/// MaxPStreams for an array of `entries`: 2^(n + 1) of them.
+pub fn maxPStreams(entries: u32) u32 {
+    if (entries < 4) return 0;
+    return 31 - @clz(entries) - 1;
 }
 
 /// A device context index: endpoint 0 is 1; endpoint n's OUT 2n, its IN

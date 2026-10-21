@@ -37,6 +37,12 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const edid = @import("../edid.zig");
 const phy = @import("phy.zig");
 
+/// Whether this is built for the JH7110, whose clocks and pads waking the
+/// display drives (`sdk.hardware.system`, `gpio`). The driver is built
+/// for every chip, which picks its display at run time; elsewhere the
+/// display does not wake, and none of that is built.
+const on_jh7110 = sdk.hardware.chip == .rv64sbi;
+
 /// The power management unit: a domain is switched by writing its bit to
 /// the switch register and the "encourage" sequence after it.
 const PMU: usize = 0x1703_0000;
@@ -244,6 +250,7 @@ fn takePins() void {
 /// changes nothing. `sys` is exec's; `waiter.wait(micros)` waits that
 /// long.
 pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
+    if (!on_jh7110) return .power;
     if (reg(PMU_CURR_POWER_MODE).* & DOMAIN_VOUT == 0) {
         if (!powerOn()) return .power;
         waiter.wait(50_000);
@@ -406,6 +413,7 @@ fn infoframe(mode: *const edid.Timing) void {
 /// out of the caches. With the display up, it changes to `mode`.
 /// `waiter.wait(micros)` waits that long.
 pub fn start(sys: *ExecBase, mode: *const edid.Timing, address: usize, pitch: u32, waiter: anytype) Failure {
+    if (!on_jh7110) return .power;
     const pll = phy.find(mode.pixel_khz) orelse return .clock;
     const woken = wake(sys, waiter);
     if (woken != .none) return woken;
@@ -499,6 +507,7 @@ pub fn start(sys: *ExecBase, mode: *const edid.Timing, address: usize, pitch: u3
 /// transmitter is not up, or set to none of `phy.zig`'s. What the HDMI
 /// port's sound gives the monitor its rate by.
 pub fn pixelClockKhz() u32 {
+    if (!on_jh7110) return 0;
     if (reg(PMU_CURR_POWER_MODE).* & DOMAIN_VOUT == 0) return 0;
     if (!system.outOfReset(.vout, system.VOUTRST_HDMI_TX_HDMI)) return 0;
     var regs: [6]u8 = undefined;

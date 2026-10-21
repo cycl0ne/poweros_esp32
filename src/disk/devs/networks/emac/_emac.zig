@@ -45,11 +45,13 @@ pub const mac = switch (sdk.hardware.chip) {
     .esp32p4 => @import("gmac.zig"),
     .rv64sbi => @import("eqos.zig"),
     .esp32s3 => @compileError("the ESP32-S3 has no Ethernet MAC"),
+    .a64psci => @compileError("emac.device: the AArch64 machines' MAC is not driven yet"),
 };
 pub const port = switch (sdk.hardware.chip) {
     .esp32p4 => @import("rmii.zig"),
     .rv64sbi => @import("rgmii.zig"),
     .esp32s3 => @compileError("the ESP32-S3 has no Ethernet MAC"),
+    .a64psci => @compileError("emac.device: the AArch64 machines' MAC is not driven yet"),
 };
 
 pub const DEVICE_NAME = "emac.device";

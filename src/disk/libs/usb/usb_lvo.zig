@@ -28,6 +28,7 @@ const ClaimUSBInterface = @import("claim/claimusbinterface.zig").ClaimUSBInterfa
 const ReleaseUSBInterface = @import("claim/releaseusbinterface.zig").ReleaseUSBInterface;
 const AddUSBNotify = @import("notify/addusbnotify.zig").AddUSBNotify;
 const RemUSBNotify = @import("notify/remusbnotify.zig").RemUSBNotify;
+const OpenUSBStreamPipe = @import("pipe/openusbstreampipe.zig").OpenUSBStreamPipe;
 
 /// usb.library's interface, as the SDK generates it from
 /// sdk/fd/usb_lib.fd.
@@ -69,6 +70,7 @@ const contract_files = [_][]const u8{
     @embedFile("claim/releaseusbinterface.zig"),
     @embedFile("notify/addusbnotify.zig"),
     @embedFile("notify/remusbnotify.zig"),
+    @embedFile("pipe/openusbstreampipe.zig"),
 };
 
 fn lvoStartUSB(base: *UsbBase, bus: u32) callconv(.c) i32 {
@@ -119,6 +121,9 @@ fn lvoAddUSBNotify(base: *UsbBase, task: *exec.Task, signals: u32) callconv(.c) 
 fn lvoRemUSBNotify(base: *UsbBase, notify: ?*usb.USBNotify) callconv(.c) void {
     return RemUSBNotify(base, notify);
 }
+fn lvoOpenUSBStreamPipe(base: *UsbBase, device: *usb.USBDevice, endpoint_address: u32, stream: u32, reply_port: *exec.MsgPort) callconv(.c) ?*usb.USBPipe {
+    return OpenUSBStreamPipe(base, device, endpoint_address, stream, reply_port);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -143,6 +148,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoReleaseUSBInterface),
     vec(lvoAddUSBNotify),
     vec(lvoRemUSBNotify),
+    vec(lvoOpenUSBStreamPipe),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -202,10 +202,11 @@ Beside them:
   `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)).
 - **Devices:** timer, serial, console, input from keyboards, mice and
   touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
-  ESP32s' OTG and on xHCI, a device plugged in or pulled out told to the
-  windows that ask, with class drivers for keyboards, mice,
-  sticks, serial and Ethernet adapters, Wi-Fi sticks, and on xHCI
-  speakers and headsets
+  ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), bulk
+  streams and links resting in U1 and U2, a device plugged in or pulled
+  out told to the windows that ask, with class drivers for keyboards,
+  mice, sticks and disks (Bulk-Only and UAS), serial and Ethernet
+  adapters, Wi-Fi sticks, and on xHCI speakers and headsets
   ([USB guide](sdk/docs/guides/usb.md)); Ethernet up to 1000 Mbit/s, the
   ESP32-S3's Wi-Fi and SLIP, and a shell over Telnet or SSH
   ([network guide](sdk/docs/guides/network.md)).
@@ -232,8 +233,9 @@ Beside them:
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, playing into a file, the UART1 and UART3-IN connectors |
-| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos on the disk image in RAM; with `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, with an `nvme` device an SSD; sound into an output that goes nowhere, and with `-device usb-audio` through QEMU's USB speaker, sample for sample, plugged in and out as it plays; no network |
-| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: sound through a USB speaker or headset; not driven yet: the second Ethernet port, USB 3, the eMMC socket |
+| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos on the disk image in RAM; with `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with an `nvme` device an SSD; sound into an output that goes nowhere, and with `-device usb-audio` through QEMU's USB speaker, sample for sample, plugged in and out as it plays; no network |
+| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: sound through a USB speaker or headset, USB 3 devices at SuperSpeed, a disk over UAS; not driven yet: the second Ethernet port, the eMMC socket |
+| `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos on the disk image in RAM, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with an `nvme` device an SSD; sound into an output that goes nowhere; no network. The CM5 itself is to be the next board of this chip |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network
@@ -254,6 +256,8 @@ wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 ./zig build emu              # the ESP32-P4 kernel in esp-emulator (quit: Ctrl-C)
 ./zig build virt             # the RISC-V 64 kernel in QEMU's virt machine (quit: Ctrl-A X)
 ./zig build virt-display     # the same with its display, a USB keyboard and a tablet
+./zig build virt64           # the AArch64 kernel in QEMU's virt machine (quit: Ctrl-A X)
+./zig build virt64-display   # the same with its display, a USB keyboard and a tablet
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
 ```
 
@@ -343,8 +347,10 @@ qemu-system-riscv64 -M virt -m 512M -smp 4 -bios default \
 `-device usb-audio,audiodev=snd -audiodev pa,id=snd` adds a USB speaker
 (`-audiodev wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
 plays into a file instead). A stick (`-device usb-storage,drive=...`)
-needs `-device qemu-xhci,p3=0`: QEMU puts it on a SuperSpeed port
-otherwise, and those are not driven yet.
+goes on a USB 3 port and runs at SuperSpeed; its image holds a partition
+table with a FAT32 or exFAT partition, as a stick is sold
+([USB guide](sdk/docs/guides/usb.md)). `-device usb-uas,id=uas -device
+scsi-hd,bus=uas.0,drive=...` is a disk over UAS, on streams.
 
 On the VisionFive 2, U-Boot loads `kernel.bin` and starts it with
 `booti`, with `disk-rv64.bin` as its ramdisk and U-Boot's device tree.
@@ -356,6 +362,35 @@ container of its GPT, that is bootable at a higher priority than `DH0:`
 is `SYS:`, and a card sold with a PC partition table keeps it, so one
 FAT32 volume can be both U-Boot's and PowerOS's
 ([disks guide](sdk/docs/guides/rdb.md)).
+
+### The AArch64 machine
+
+`-Dboard=qemu_virt_a64` builds a kernel for an AArch64 machine under
+PSCI firmware (chip `a64psci`): `zig-out/bin/kernel` (the ELF, for a
+debugger), `kernel.bin` (the same from its first address, 0x40200000,
+with the arm64 `Image` header QEMU and the Pi's firmware read) and
+`disk-a64.bin`, the disk as an image of its whole 14 MB, which the
+loader puts in RAM as on the RISC-V machines. The kernel runs at EL1
+with its MMU on: an identity map, RAM normal cacheable memory, page 0
+left out so a null pointer faults, the kernel's code read-only. A core
+that comes in at EL2 drops to EL1 first.
+
+`./zig build virt64` boots QEMU's virt machine with four Cortex-A76
+cores, a GICv2 and 512 MB, all below 4 GiB, on the serial console;
+`./zig build virt64-display` adds the display and USB with a keyboard
+and a tablet, and `./zig build virt64-el2` enters the kernel at EL2,
+PSCI by SMC, as the CM5's firmware does. QEMU run by hand adds an SSD:
+
+```sh
+./zig build -Dboard=qemu_virt_a64
+qemu-system-aarch64 -M virt,gic-version=2,highmem=off -cpu cortex-a76 -m 512M -smp 4 \
+    -kernel zig-out/bin/kernel.bin -initrd zig-out/bin/disk-a64.bin \
+    -device ramfb -device qemu-xhci -device usb-kbd -device usb-tablet \
+    -drive if=none,id=ssd,format=raw,file=ssd.img -device nvme,serial=1,drive=ssd
+```
+
+QEMU loads `kernel.bin`, not the ELF: only for an `Image` does it pass
+the device tree and name the initrd in it.
 
 More build steps and options:
 
@@ -380,7 +415,7 @@ More build steps and options:
 | `-Dslip=tcp::5021,server,nowait` | the `qemu*` steps' UART1 (`serial.device` unit 1, a SLIP line) on that QEMU serial backend; not with `-Drs485` |
 | `-Dusb=usb-hub,usb-kbd,usb-mouse` | the `qemu*` steps' USB devices, QEMU's names (`usb-tablet`, `usb-serial` on a pty, `usb-net` on a network of its own, 10.0.3.0/24, too); an item with `=` is a property of the one before (`usb-kbd,id=kb1`, for `device_del kb1` in the monitor) |
 | `-Dusb-disk=stick.img` | a USB stick in the `qemu*` steps, its contents that image |
-| `-Dcores=1` | the cores the kernel runs on: 1 or 2, up to 4 on a RISC-V board (default: what the board says - two on the ESP32 boards and in `qemu`, four on the RISC-V boards) |
+| `-Dcores=1` | the cores the kernel runs on: 1 or 2, up to 4 on a RISC-V or AArch64 board (default: what the board says - two on the ESP32 boards and in `qemu`, four on the RISC-V and AArch64 boards) |
 | `-Dselftest` | the ESP32-P4's boot task checks the chip (its blocks, DMA, PSRAM, the flash) and runs test tasks on both cores, rather than the shell |
 | `-Dmemdebug=true` | memory debugging on from exec's start, so the blocks the system makes as it comes up are walled too (`C:MemDebug` and `s3> memdebug` switch it while running) |
 

@@ -35,19 +35,28 @@ pub const VERSION: u16 = 2;
 
 /// `machine`: ELF's e_machine for the CPU the code is for.
 pub const MACHINE_XTENSA: u16 = 94;
+pub const MACHINE_AARCH64: u16 = 183;
 pub const MACHINE_RISCV: u16 = 243;
+
+const builtin = @import("builtin");
+
+/// Whether this is the system's own code rather than a host build: an
+/// AArch64 host (an ARM Mac, ARM64 Linux) is a host all the same.
+const freestanding = builtin.os.tag == .freestanding;
 
 /// The CPU this code is built for, as a load file names it: a host build
 /// (the tests) counts as Xtensa, as it sees the ESP32-S3's hardware.
-pub const native_machine: u16 = switch (@import("builtin").cpu.arch) {
+pub const native_machine: u16 = switch (builtin.cpu.arch) {
     .riscv32, .riscv64 => MACHINE_RISCV,
+    .aarch64 => if (freestanding) MACHINE_AARCH64 else MACHINE_XTENSA,
     else => MACHINE_XTENSA,
 };
 
 /// The bytes of an address word on that CPU: 4 on the ESP32s, and on a
 /// host build, which stands in for the S3.
-pub const native_word_size: u8 = switch (@import("builtin").cpu.arch) {
+pub const native_word_size: u8 = switch (builtin.cpu.arch) {
     .riscv64 => 8,
+    .aarch64 => if (freestanding) 8 else 4,
     else => 4,
 };
 
@@ -111,8 +120,16 @@ pub const ALIGN = 4;
 
 /// Where a loaded segment starts: on this boundary, the coarsest a
 /// program's section may ask for (elf2seg refuses a coarser one). A cache
-/// line, so a DMA buffer a program aligns to one keeps it.
-pub const SEGMENT_ALIGN = 64;
+/// line, so a DMA buffer a program aligns to one keeps it - and on
+/// AArch64 a page: an ADRP reaches its data by the 4 KiB page it is in,
+/// relative to the page of its own code, so the segment moves by whole
+/// pages or the pair points at the wrong one.
+pub fn segmentAlign(machine: u16) u32 {
+    return if (machine == MACHINE_AARCH64) 4096 else 64;
+}
+
+/// The boundary a segment of this CPU's is loaded on.
+pub const SEGMENT_ALIGN: u32 = segmentAlign(native_machine);
 
 pub fn alignUp(n: u32) u32 {
     return (n + (ALIGN - 1)) & ~@as(u32, ALIGN - 1);

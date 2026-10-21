@@ -70,17 +70,20 @@ pub const SYSTAG_PsramSpeed = SYSTAG_Dummy + 14;
 /// absent, 0, and the channel is left as the ROM left it.
 pub const SYSTAG_Ldo4Voltage = SYSTAG_Dummy + 15;
 /// The machine's RAM, where it starts and how many bytes: a machine under
-/// SBI firmware, whose RAM is one block. The firmware's own part at its
-/// start is left out by the kernel, which links above it.
+/// SBI or PSCI firmware, whose device tree says more where it has more
+/// than one block. The firmware's own part at its start is left out by
+/// the kernel, which links above it.
 pub const SYSTAG_RamBase = SYSTAG_Dummy + 16;
 pub const SYSTAG_RamSize = SYSTAG_Dummy + 17;
 /// The rate of RISC-V's `time` counter, in Hz: what the SBI timer counts
-/// in. A whole number of MHz.
+/// in. A whole number of MHz. On AArch64 the generic timer's, which the
+/// kernel reads from CNTFRQ_EL0 and checks against this.
 pub const SYSTAG_Timebase = SYSTAG_Dummy + 18;
-/// The console UART, a 16550, as the machine has it: its address; its
-/// registers' spacing, as a shift (register n at base + n << shift); 1
-/// when its registers want 32-bit accesses; the clock its divisor
-/// divides, in Hz; and its interrupt source on the PLIC.
+/// The console UART, a 16550 (a PL011 on AArch64), as the machine has
+/// it: its address; its registers' spacing, as a shift (register n at
+/// base + n << shift); 1 when its registers want 32-bit accesses; the
+/// clock its divisor divides, in Hz; and its interrupt source on the PLIC
+/// (its interrupt ID on the GIC).
 pub const SYSTAG_ConsoleBase = SYSTAG_Dummy + 19;
 pub const SYSTAG_ConsoleShift = SYSTAG_Dummy + 20;
 pub const SYSTAG_ConsoleWide = SYSTAG_Dummy + 21;
@@ -100,12 +103,25 @@ pub const SYSTAG_CacheFlush = SYSTAG_Dummy + 26;
 /// is one figure of free memory to show, not two. Absent, 0: internal
 /// memory and PSRAM apart, as on the ESP32s.
 pub const SYSTAG_UnifiedMemory = SYSTAG_Dummy + 27;
+/// The generic interrupt controller of an AArch64 machine (a GICv2):
+/// where its distributor and its CPU interface are.
+pub const SYSTAG_GicDist = SYSTAG_Dummy + 28;
+pub const SYSTAG_GicCpu = SYSTAG_Dummy + 29;
+/// Where the devices' DMA stops reaching: one past the highest address
+/// a descriptor may name, on a machine whose RAM goes beyond it. Absent,
+/// 4 GiB.
+pub const SYSTAG_DmaLimit = SYSTAG_Dummy + 30;
+/// One past RAM's last byte at most, on a machine whose RAM the device
+/// tree describes: the window the kernel's boot maps as normal memory
+/// from SYSTAG_RamBase, before it has read the tree. Absent,
+/// SYSTAG_RamBase + SYSTAG_RamSize.
+pub const SYSTAG_RamEnd = SYSTAG_Dummy + 31;
 /// The cores' clock the board wants, in MHz: a speed its chip has an
 /// operating point for, which the kernel sets as it starts - before
 /// anything else runs - with the supply the point wants, through the
 /// board's own code. The JH7110: 1000, as its firmware leaves it, or
 /// 1500. Absent, 0: the clock is left as the firmware left it.
-pub const SYSTAG_CpuSpeed = SYSTAG_Dummy + 28;
+pub const SYSTAG_CpuSpeed = SYSTAG_Dummy + 32;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;
