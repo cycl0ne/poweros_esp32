@@ -2,7 +2,8 @@
 //! Host tests of anvil.library's parts that need no window: pictures
 //! shrunk to the icon size, icons placed in the first free cell, the
 //! ground's geometry, the title's figures, the tool types as Information
-//! writes them, the startup drawer's order and waits, and the jump table.
+//! writes them, the startup drawer's order and waits, how far the wheel
+//! scrolls a drawer, and the jump table.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -13,6 +14,7 @@ const ground = @import("../desktop/ground.zig");
 const title = @import("../desktop/title.zig");
 const drawer_path = @import("../drawer/path.zig");
 const textview = @import("../drawer/textview.zig");
+const drawer = @import("../drawer/_drawer.zig");
 const leaveout = @import("../desktop/leaveout.zig");
 const information = @import("../info/information.zig");
 const startup = @import("../desktop/startup.zig");
@@ -195,6 +197,21 @@ test "a drawer's cells: one after another along the rows, past what lies where i
     const own = [_]Rect{.{ .min_x = 220, .min_y = 10, .max_x = 260, .max_y = 50 }};
     found = place.nextFree(area, cell, &own, found.index + 1);
     try testing.expectEqual(place.Point{ .x = 8, .y = 68 }, found.at);
+}
+
+test "the wheel in a drawer: an eighth of the view a notch, at least a step, never past either end" {
+    // 20 steps show of 100: 2 a notch, down and back.
+    try testing.expectEqual(@as(i32, 2), drawer.wheelTop(0, 1, 20, 100));
+    try testing.expectEqual(@as(i32, 16), drawer.wheelTop(10, 3, 20, 100));
+    try testing.expectEqual(@as(i32, 6), drawer.wheelTop(10, -2, 20, 100));
+    try testing.expectEqual(@as(i32, 0), drawer.wheelTop(1, -1, 20, 100));
+    // The last top shows the end: 80, and no further.
+    try testing.expectEqual(@as(i32, 80), drawer.wheelTop(79, 1, 20, 100));
+    try testing.expectEqual(@as(i32, 80), drawer.wheelTop(80, 5, 20, 100));
+    // Fewer than 8 steps show: still one a notch.
+    try testing.expectEqual(@as(i32, 2), drawer.wheelTop(0, 2, 5, 100));
+    // All of it shows: nowhere to go.
+    try testing.expectEqual(@as(i32, 0), drawer.wheelTop(0, 3, 20, 12));
 }
 
 test ".backdrop: a line per file left out, from the volume's root after a colon" {

@@ -59,13 +59,23 @@ pub const Held = struct {
     icon: *Icon,
     x: i32,
     y: i32,
+    /// Where the drawer's view was at the press: the wheel may move it
+    /// before the icons are let go.
+    origin: icons.Origin = .{},
     dragging: bool = false,
 };
 
 /// A press on an icon: held, and the pointer's moves heard.
 pub fn hold(d: *Desktop, said: Said, where: ?*Drawer, ic: *Icon) void {
     const window = said.window orelse return;
-    d.held = .{ .window = window, .drawer = where, .icon = ic, .x = said.x, .y = said.y };
+    d.held = .{
+        .window = window,
+        .drawer = where,
+        .icon = ic,
+        .x = said.x,
+        .y = said.y,
+        .origin = if (where) |dr| dr.origin else .{},
+    };
     d.ib.ReportMouse(window, true);
 }
 
@@ -203,7 +213,9 @@ fn drop(d: *Desktop, held: *const Held, window: *intuition.Window, screen_x: i32
     // The window the drag came from: the icons move on its ground.
     if (window == held.window) {
         if (held.drawer) |dr| if (dr.view != .icon) return false;
-        moveIcons(d, held, x - held.x, y - held.y);
+        // A view the wheel moved since the press moves the icons as far.
+        const moved_by: icons.Origin = if (held.drawer) |dr| .{ .x = dr.origin.x - held.origin.x, .y = dr.origin.y - held.origin.y } else .{};
+        moveIcons(d, held, x - held.x + moved_by.x, y - held.y + moved_by.y);
         return true;
     }
     // Another drawer's window: into that drawer.

@@ -116,7 +116,11 @@ rows from the top left.
 Viewed by name, date or size, the drawer is rows of text - the name, the
 size or "Drawer", the date and the protection bits - drawers first, then
 by the name, the newest or the largest. Bars in the right and bottom
-borders scroll it, a step at a time. A disk's window says in its title
+borders scroll it, a step at a time, and the wheel anywhere over the
+window scrolls it as far a notch as over the bar - across with Shift
+held. A box being drawn keeps its first corner on the icons it started
+at, and icons dragged in the window land where they are let go in the
+view as it is then. A disk's window says in its title
 how full the disk is - `Work  45% full, 1,234K free, 980K in use` - in
 K, or past 9,999 of one unit in the next: M, G, T, P. The drawer is watched (StartNotify) and read again
 when anything changes it.

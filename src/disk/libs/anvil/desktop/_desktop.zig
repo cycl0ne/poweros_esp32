@@ -729,6 +729,7 @@ pub const Desktop = struct {
                 d.drawWhole();
             },
             wn.IDCMP_IDCMPUPDATE => if (in_drawer) |dr| drawer.scrolled(d, dr, said.gadget, said.top),
+            wn.IDCMP_MOUSEWHEEL => if (in_drawer) |dr| drawer.wheeled(d, dr, wn.wheelAcross(said.code), wn.wheelDown(said.code)),
             wn.IDCMP_ACTIVEWINDOW => d.active_window = said.window,
             wn.IDCMP_MOUSEBUTTONS => switch (said.code) {
                 wn.SELECTDOWN => select.press(d, said, in_drawer),

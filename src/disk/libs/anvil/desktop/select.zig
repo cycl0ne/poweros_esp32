@@ -51,6 +51,18 @@ pub fn set(d: *Desktop, where: ?*Drawer, ic: *Icon, on: bool) void {
     d.drawArea(.{ .min_x = b.min_x - 4, .min_y = b.min_y - 4, .max_x = b.max_x + 4, .max_y = b.max_y + 4 });
 }
 
+/// The drawer's view moved by (`dx`, `dy`) - the wheel turned - while a
+/// box is being drawn in it: the box's first corner kept where it was on
+/// the ground, so the box takes in what came into view, and drawn again
+/// over the inside the move drew.
+pub fn scrolled(d: *Desktop, dr: *Drawer, dx: i32, dy: i32) void {
+    const band = &(d.band orelse return);
+    if (band.drawer != dr) return;
+    band.from.x -= dx;
+    band.from.y -= dy;
+    drawBand(d, band);
+}
+
 /// Every icon let go of, on the desktop and in every drawer.
 pub fn clearAll(d: *Desktop) void {
     var on_ground = d.volumes.iterator();

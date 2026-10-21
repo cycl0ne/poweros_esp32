@@ -8,7 +8,8 @@
 //! icon keeps (`DrawerData`), or else half the screen, a little further
 //! down and across for each drawer open - and the whole screen under its
 //! bar when the screen is narrower than 640. Bars in the right and bottom
-//! borders scroll it.
+//! borders scroll it, and so does the wheel anywhere over the inside, as
+//! far a notch as over the bar.
 //!
 //! **Reading** is a piece at a time: `ExAll` a bufferful in each round of
 //! the desktop's loop, so a drawer of thousands of files on a card does
@@ -52,6 +53,7 @@ const Icon = icons.Icon;
 const path = @import("path.zig");
 const textview = @import("textview.zig");
 const Desktop = @import("../desktop/_desktop.zig").Desktop;
+const select = @import("../desktop/select.zig");
 
 pub const View = anvil_prefs.View;
 
@@ -68,7 +70,7 @@ const margin = 8;
 /// The IDCMP classes a drawer window takes.
 const drawer_idcmp = wn.IDCMP_MOUSEBUTTONS | wn.IDCMP_MOUSEMOVE | wn.IDCMP_MENUPICK | wn.IDCMP_REFRESHWINDOW |
     wn.IDCMP_CLOSEWINDOW | wn.IDCMP_NEWSIZE | wn.IDCMP_IDCMPUPDATE | wn.IDCMP_ACTIVEWINDOW |
-    wn.IDCMP_DISKINSERTED | wn.IDCMP_DISKREMOVED | wn.IDCMP_NEWPREFS;
+    wn.IDCMP_DISKINSERTED | wn.IDCMP_DISKREMOVED | wn.IDCMP_NEWPREFS | wn.IDCMP_MOUSEWHEEL;
 
 /// The longest title: the name and how full its disk is.
 const title_max = 160;
@@ -721,6 +723,42 @@ pub fn scrolled(d: *Desktop, dr: *Drawer, id: u32, top: i32) void {
         else => return,
     }
     drawInside(d, dr);
+}
+
+/// The wheel turned over the inside: the view moves as far as the bars
+/// move for it over themselves - down, and across - and the bars follow.
+/// A box being drawn keeps its first corner where it was on the ground.
+pub fn wheeled(d: *Desktop, dr: *Drawer, across: i32, down: i32) void {
+    const reach = extent(d, dr);
+    const unit = step(d, dr);
+    const was = dr.origin;
+    dr.origin.y = wheelTo(dr.origin.y, down, unit, dr.inner_height, reach.max_y);
+    dr.origin.x = wheelTo(dr.origin.x, across, unit, dr.inner_width, reach.max_x);
+    if (dr.origin.x == was.x and dr.origin.y == was.y) return;
+    setBars(d, dr);
+    drawInside(d, dr);
+    select.scrolled(d, dr, dr.origin.x - was.x, dr.origin.y - was.y);
+}
+
+/// Where one direction of the view goes for `notches` of the wheel, in
+/// the steps its bar counts (`setBars`): where it was when the bar's top
+/// stays.
+fn wheelTo(at: i32, notches: i32, unit: i32, shown: i32, reach: i32) i32 {
+    if (notches == 0) return at;
+    const visible = @divTrunc(shown, unit);
+    const total = @max(@divTrunc(reach + unit - 1, unit), visible);
+    const top = @divTrunc(at, unit);
+    const to = wheelTop(top, notches, visible, total);
+    return if (to == top) at else to * unit;
+}
+
+/// A bar's top after `notches` of the wheel, as scroller.gadget moves it:
+/// an eighth of what shows a notch, at least a step, and never past
+/// either end.
+pub fn wheelTop(top: i32, notches: i32, visible: i32, total: i32) i32 {
+    const per_notch = @max(@divTrunc(visible, 8), 1);
+    const last = @max(total - visible, 0);
+    return @max(0, @min(top + notches * per_notch, last));
 }
 
 /// The view changed - by icon, name, date or size - or what is shown:
