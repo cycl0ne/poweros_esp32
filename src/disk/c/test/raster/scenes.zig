@@ -66,10 +66,12 @@ pub fn turned(angle: f32, tilt: f32) Matrix {
 // --- the texture -------------------------------------------------------------
 
 /// The pattern: squares of 32 texels, light and dark in turn, shading
-/// across and down, each with a dark border - plain to see how it lies on
-/// a face, and where it is bent.
+/// across and down, each framed by a dark texel on every side - plain to
+/// see how it lies on a face, and where it is bent. The lines lie on the
+/// squares' bounds, so where two faces meet their lines meet too,
+/// whichever way each runs the texture.
 pub fn patternAt(x: u32, y: u32) u32 {
-    if (x % 32 < 2 or y % 32 < 2) return 0xFF20_2020;
+    if (x % 32 == 0 or x % 32 == 31 or y % 32 == 0 or y % 32 == 31) return 0xFF20_2020;
     const light = ((x / 32) ^ (y / 32)) & 1 != 0;
     const red = 0x40 + x % 256 / 2;
     const green = 0x40 + y % 256 / 2;

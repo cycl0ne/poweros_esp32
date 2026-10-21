@@ -52,7 +52,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetCube";
-const VERSION_STRING = "\x00$VER: FacetCube 1.4 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetCube 1.5 (21.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FRAMES/N,NEAREST/S,SIZE/K,CHECK/S,TO/K";

@@ -40,7 +40,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Cube";
-const VERSION_STRING = "\x00$VER: Cube 1.2 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Cube 1.3 (21.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FRAMES/N,NEAREST/S";
