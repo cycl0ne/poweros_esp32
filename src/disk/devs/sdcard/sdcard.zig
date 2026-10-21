@@ -116,9 +116,9 @@ const spi = sdk.hardware.gpspi.spi3;
 /// talks over, as both ESP32s do. On a machine under SBI firmware it has
 /// not, and nothing of the SPI half is built.
 const spi_slots = sdk.hardware.chip != .rv64sbi;
-/// Whether the chip's pads are driven from here, which a card's supply
-/// switch needs: the ESP32s' are, a machine under SBI firmware leaves its
-/// pads where the firmware put them.
+/// Whether a card's supply switch on a pad is driven from here: the
+/// ESP32s'. No board under SBI firmware has one; its slot's pads are its
+/// SD host's (`jh7110/sdhost.zig`).
 const own_pads = sdk.hardware.chip != .rv64sbi;
 const expander_resource = sdk.resources.expander;
 const ExpanderBase = sdk.interface.expander.ExpanderBase;
@@ -131,7 +131,7 @@ const DosBase = sdk.interface.dos.DosBase;
 
 pub const DEVICE_NAME = _sdcard.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 7;
+const DEVICE_REVISION = 8;
 const BUILD_DATE = "20.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -1112,7 +1112,7 @@ fn setUp(sb: *SdCardBase) bool {
 
     const slot = sb.slot;
     powerOn(sb);
-    switch (sdmmc.init(.{
+    switch (sdmmc.init(sys, .{
         .clock = slot.clock,
         .command = slot.command,
         .data = slot.data,
@@ -1461,7 +1461,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         sdk.exec.klog(sys_base, exec.LOG_DEBUG, "%s: no card slot on this board\n", .{DEVICE_NAME});
         return null;
     }
-    if (!onSpi(sb) and !sdmmc.present()) {
+    if (!onSpi(sb) and !sdmmc.present(sys_base)) {
         sdk.exec.kprintf(sys_base, "%s: no SD host controller on this machine\n", .{DEVICE_NAME});
         return null;
     }

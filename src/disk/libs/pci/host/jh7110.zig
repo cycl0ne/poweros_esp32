@@ -7,7 +7,8 @@
 //! pcie-plda-host.c, phy-jh7110-pcie.c), and as U-Boot's driver leaves
 //! the bridge's registers after `pci enum`:
 //!
-//! 1. the PHY's PLL tuned;
+//! 1. port 0's PHY, which the USB 3 controller may have instead, given
+//!    to PCIe; the PHY's PLL tuned;
 //! 2. in the STG block's syscon, the port made a root port and given its
 //!    reference clock and CLKREQ;
 //! 3. the STG bus's NoC clock and the port's three clocks on - AXI master,
@@ -45,17 +46,20 @@
 //! its status register. Each vector's bit is cleared before its servers
 //! run, as an edge is: a message that comes while they run is seen again.
 //!
-//! The clock, reset and syscon numbers are the JH7110's as Linux and
-//! U-Boot have them (jh7110-crg.h, the VisionFive 2's device tree);
-//! PERST# is on a GPIO the board names (PART_PinReset), driven through
-//! the pin controller's output registers as U-Boot's pin controller
-//! drives it.
+//! The clocks and resets are `sdk.hardware.system`'s, the syscon offsets
+//! the JH7110's as Linux and U-Boot have them (the VisionFive 2's device
+//! tree); PERST# is on a GPIO the board names (PART_PinReset), driven by
+//! the pin controller (`sdk.hardware.gpio`). What other drivers share -
+//! the STG domain's reset word, the PHY's mode, the pin controller's
+//! words - changes under Disable.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const boardpin = sdk.expansion.boardpin;
 const BoardPin = sdk.expansion.BoardPin;
+const system = sdk.hardware.system;
+const gpio = sdk.hardware.gpio;
 const _host = @import("_host.zig");
 const Host = _host.Host;
 const Address = _host.Address;
@@ -72,25 +76,16 @@ fn update(address: usize, bits: u32, value: u32) void {
 
 // --- the clock and reset generators -------------------------------------------------
 
-const SYS_CRG: usize = 0x1302_0000;
-const SYSCLK_NOC_BUS_STG_AXI = SYS_CRG + 96 * 4;
-const STG_CRG: usize = 0x1023_0000;
-/// A reset is held while its bit is set in ASSERT, and is out once it is
-/// set in STATUS.
-const STG_RESET_ASSERT = STG_CRG + 0x74;
-const STG_RESET_STATUS = STG_CRG + 0x78;
-const CLK_ENABLE: u32 = 1 << 31;
-
 /// Clock `n` of a port's three in the STG generator: AXI master, APB,
-/// transaction layer - 8 to 10 for port 0, 11 to 13 for port 1.
-fn stgClock(unit: u32, n: u32) usize {
-    return STG_CRG + (8 + 3 * @as(usize, unit) + n) * 4;
+/// transaction layer.
+fn stgClock(unit: u32, n: u32) u32 {
+    return system.STGCLK_PCIE0_AXI_MST0 + 3 * unit + n;
 }
 
-/// A port's six resets in the STG generator: AXI master, AXI slave 0,
-/// AXI slave, bridge, core, APB - 11 to 16 for port 0, 17 to 22 for 1.
-fn resetBits(unit: u32) u32 {
-    return @as(u32, 0x3F) << @intCast(11 + 6 * unit);
+/// Reset `n` of a port's six in the STG generator: AXI master, AXI slave
+/// 0, AXI slave, bridge, core, APB.
+fn stgReset(unit: u32, n: u32) u32 {
+    return system.STGRST_PCIE0_AXI_MST0 + 6 * unit + n;
 }
 
 // --- the STG syscon -------------------------------------------------------------------
@@ -116,6 +111,18 @@ const K_RP_NEP: u32 = 1 << 8;
 /// The link's state: the data link layer is up.
 const SYSCON_LNKSTA = 0x170;
 const DATA_LINK_ACTIVE: u32 = 1 << 5;
+/// Port 0's PHY, shared with the USB 3 controller: which of the two it
+/// serves, and USB 3's bus width and PHY enable, in the STG syscon; in
+/// the system syscon, the USB controller's reset kept apart from the
+/// PHY's while PCIe has it.
+const STG_PHY0_MODE = STG_SYSCON + 0x148;
+const PHY_MODE_MASK: u32 = 3 << 20;
+const STG_PHY0_USB = STG_SYSCON + 0x1F4;
+const USB3_BUS_WIDTH_MASK: u32 = 3 << 2;
+const USB3_PHY_ENABLE: u32 = 1 << 4;
+const SYS_SYSCON: usize = 0x1303_0000;
+const SYS_PHY_CONNECT = SYS_SYSCON + 0x18;
+const USB_PDRSTN_SPLIT: u32 = 1 << 17;
 
 // --- the PHY ---------------------------------------------------------------------------
 
@@ -125,14 +132,6 @@ const PHY_KVCO_LEVEL = 0x28;
 const PHY_KVCO_TUNE_SIGNAL = 0x80;
 const KVCO_FINE_TUNE_LEVEL: u32 = 0x91;
 const KVCO_FINE_TUNE_SIGNALS: u32 = 0x0C;
-
-// --- the pin controller ----------------------------------------------------------------
-
-/// A GPIO's output enable and output, a byte each, four GPIOs to a word:
-/// 0 in its enable byte drives the pad, its output byte 0 low and 1 high.
-const SYS_IOMUX: usize = 0x1304_0000;
-const IOMUX_DOEN = SYS_IOMUX + 0x00;
-const IOMUX_DOUT = SYS_IOMUX + 0x40;
 
 // --- the bridge ------------------------------------------------------------------------
 
@@ -186,15 +185,31 @@ const TRSL_MEMORY: u32 = 0;
 /// The configuration space's window: 256 buses.
 const config_bytes: u64 = 1 << 28;
 
+/// Whether this is built for the JH7110, whose clocks and pads bringing a
+/// port up drives (`sdk.hardware.system`, `gpio`). The library is built
+/// for every chip; elsewhere no port is started, and none of that is
+/// built.
+const on_jh7110 = sdk.hardware.chip == .rv64sbi;
+
 /// The port up as far as PERST#, which is held (`_host.start`). False
 /// for a port the chip does not have, or a part that does not say where
 /// its registers are.
 pub fn start(host: *Host) bool {
+    return if (on_jh7110) bringUp(host) else false;
+}
+
+fn bringUp(host: *Host) bool {
     if (host.unit >= syscon_block.len or host.registers == 0 or host.config == 0) return false;
     const unit = host.unit;
     const syscon = STG_SYSCON + syscon_block[unit];
     const bridge = host.registers;
+    const sys = host.sys;
 
+    if (unit == 0) {
+        sys.Disable();
+        pcieMode();
+        sys.Enable();
+    }
     reg(phy_base[unit] + PHY_KVCO_LEVEL).* = KVCO_FINE_TUNE_LEVEL;
     reg(phy_base[unit] + PHY_KVCO_TUNE_SIGNAL).* = KVCO_FINE_TUNE_SIGNALS;
 
@@ -202,11 +217,12 @@ pub fn start(host: *Host) bool {
     update(syscon + SYSCON_AW, AW_CKREF_SRC_MASK, AW_CKREF_SRC);
     update(syscon + SYSCON_AW, AW_CLKREQ, AW_CLKREQ);
 
-    reg(SYSCLK_NOC_BUS_STG_AXI).* |= CLK_ENABLE;
-    for (0..3) |n| reg(stgClock(unit, @intCast(n))).* |= CLK_ENABLE;
-    reg(STG_RESET_ASSERT).* &= ~resetBits(unit);
-    var tries: u32 = 0;
-    while (reg(STG_RESET_STATUS).* & resetBits(unit) != resetBits(unit) and tries < 100_000) : (tries += 1) {}
+    sys.Disable();
+    system.clockOn(.sys, system.SYSCLK_NOC_BUS_STG_AXI);
+    for (0..3) |n| system.clockOn(.stg, stgClock(unit, @intCast(n)));
+    for (0..6) |n| system.releaseReset(.stg, stgReset(unit, @intCast(n)));
+    sys.Enable();
+    for (0..6) |n| _ = system.waitOutOfReset(.stg, stgReset(unit, @intCast(n)));
 
     holdPerst(host, true);
 
@@ -252,7 +268,7 @@ pub fn start(host: *Host) bool {
 
 /// PERST# let go (`_host.release`).
 pub fn release(host: *Host) void {
-    holdPerst(host, false);
+    if (on_jh7110) holdPerst(host, false);
 }
 
 /// Whether the port's data link layer is up (`_host.linkUp`).
@@ -273,15 +289,23 @@ fn translate(bridge: usize, index: u32, axi: u64, bus: u64, bytes: u64, param: u
     reg(entry + ATR_TRSL_ADDR_UDW).* = @truncate(bus >> 32);
 }
 
-/// PERST# held, or let go.
+/// Port 0's PHY given to PCIe, as Linux's PHY driver sets it
+/// (phy_pcie_mode_set). Under Disable.
+fn pcieMode() void {
+    system.update(STG_PHY0_MODE, 0, PHY_MODE_MASK);
+    system.update(STG_PHY0_USB, 0, USB3_BUS_WIDTH_MASK | USB3_PHY_ENABLE);
+    system.update(SYS_PHY_CONNECT, USB_PDRSTN_SPLIT, 0);
+}
+
+/// PERST# held, or let go: the pad driven by the pin controller.
 fn holdPerst(host: *const Host, held: bool) void {
     const line = BoardPin.of(host.perst);
-    if (line.kind != boardpin.BPIN_GPIO) return;
+    if (line.kind != boardpin.BPIN_GPIO or line.number > gpio.max_pin) return;
     const high = if (line.active_low != 0) !held else held;
-    const shift: u5 = @intCast((line.number % 4) * 8);
-    const word = @as(usize, line.number / 4) * 4;
-    update(IOMUX_DOUT + word, @as(u32, 0xFF) << shift, @as(u32, @intFromBool(high)) << shift);
-    update(IOMUX_DOEN + word, @as(u32, 0xFF) << shift, 0);
+    host.sys.Disable();
+    gpio.setLevel(line.number, high);
+    gpio.outputEnable(line.number, true);
+    host.sys.Enable();
 }
 
 /// The root port's BAR0 and BAR1.

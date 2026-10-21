@@ -2,23 +2,46 @@
 //! The JH7110's way to its HDMI port (CHIP_JH7110_DC8200): the VOUT power
 //! domain, its clocks and resets, Innosilicon's HDMI transmitter and its
 //! PHY, and Verisilicon's DC8200 display controller, which reads the
-//! picture out of RAM. One mode - 1920x1080 at 60 Hz, 32 bits a pixel -
-//! as the board's own firmware sets it up: the transmitter's PLL is set
-//! for that pixel clock, and nothing reads the monitor's EDID.
+//! picture out of RAM, 32 bits a pixel. The transmitter reads the
+//! monitor's EDID over its own DDC (`readEdid`), so the board can tell
+//! which modes the monitor takes before it picks one (`monitor.zig`).
 //!
-//! The steps and the values are U-Boot's (StarFive's sf_vop.c and
-//! sf_hdmi.c), which takes all of it down again before it starts the
-//! kernel, the power domain included. The controller's registers are
-//! written as U-Boot writes them, a list of values with no names behind
-//! most of them; the ones that matter here are named: where the picture
-//! is (FRAMEBUFFER_ADDRESS), how far apart its rows are, and what starts
-//! the display.
+//! A mode is the pixel clock the transmitter's PLL makes for it
+//! (`phy.zig`) and its timing, which goes to the transmitter and to the
+//! controller. The controller takes its pixel clock from that PLL too, as
+//! StarFive's Linux driver has it, so any clock the PLL makes is a clock
+//! the display runs at - not only the VOUT source's PLL2 divided down.
+//!
+//! The steps are U-Boot's (StarFive's sf_vop.c and sf_hdmi.c), which
+//! takes all of it down again before it starts the kernel, the power
+//! domain included, and the transmitter's per-mode steps Linux's
+//! (inno_hdmi.c). The controller's registers are written as U-Boot
+//! writes them, a list of values with no names behind most of them; the
+//! ones that matter here are named: the picture's size and timing, where
+//! it is (FRAMEBUFFER_ADDRESS), how far apart its rows are, and what
+//! starts the display.
 //!
 //! Nothing here is read before its domain is on: a register of a block
-//! that is off does not answer, and the bus waits for it.
+//! that is off does not answer, and the bus waits for it. U-Boot leaves
+//! the domain off and the bus to it in reset; the clocks and resets are
+//! `sdk.hardware.system`'s, the pads - the DDC's and the hot-plug line's -
+//! the pin controller's (`sdk.hardware.gpio`), and what other drivers
+//! share of them changes under Disable.
 
 const sdk = @import("sdk");
 const reg = sdk.hardware.mmio.reg;
+const system = sdk.hardware.system;
+const gpio = sdk.hardware.gpio;
+const signals = sdk.hardware.signals;
+const ExecBase = sdk.interface.exec.ExecBase;
+const edid = @import("../edid.zig");
+const phy = @import("phy.zig");
+
+/// Whether this is built for the JH7110, whose clocks and pads waking the
+/// display drives (`sdk.hardware.system`, `gpio`). The driver is built
+/// for every chip, which picks its display at run time; elsewhere the
+/// display does not wake, and none of that is built.
+const on_jh7110 = sdk.hardware.chip == .rv64sbi;
 
 /// The power management unit: a domain is switched by writing its bit to
 /// the switch register and the "encourage" sequence after it.
@@ -29,62 +52,96 @@ const PMU_CURR_POWER_MODE = PMU + 0x80;
 const DOMAIN_VOUT: u32 = 1 << 4;
 const ENCOURAGE = [_]u32{ 0xFF, 0x05, 0x50 };
 
-/// The system clock and reset generator: a clock's register is its
-/// number times four, bit 31 lets it through; a reset is held while its
-/// bit is set in ASSERT and is out once it is set in STATUS.
-const SYS_CRG: usize = 0x1302_0000;
-const SYSCLK_VOUT_SRC = SYS_CRG + 58 * 4;
-const SYSCLK_NOC_BUS_DISP_AXI = SYS_CRG + 60 * 4;
-const SYSCLK_VOUT_TOP_AHB = SYS_CRG + 61 * 4;
-const SYSCLK_VOUT_TOP_AXI = SYS_CRG + 62 * 4;
-const SYSCLK_VOUT_TOP_HDMITX0_MCLK = SYS_CRG + 63 * 4;
-const SYS_RESET_ASSERT0 = SYS_CRG + 0x2F8;
-const SYS_RESET_ASSERT1 = SYS_CRG + 0x2FC;
-const SYS_RESET_STATUS0 = SYS_CRG + 0x308;
-const SYS_RESET_STATUS1 = SYS_CRG + 0x30C;
-const SYSRST_NOC_BUS_DISP_AXI: u32 = 1 << 26;
-const SYSRST_VOUT_TOP_SRC: u32 = 1 << (43 - 32);
-const CLK_ENABLE: u32 = 1 << 31;
+/// The bus to the VOUT domain and the domain's top: their clocks and
+/// resets in the system generator.
+const sys_clocks = [_]u32{ system.SYSCLK_NOC_BUS_DISP_AXI, system.SYSCLK_VOUT_SRC, system.SYSCLK_VOUT_TOP_AXI, system.SYSCLK_VOUT_TOP_AHB };
 
-/// The VOUT domain's own clock and reset generator, laid out the same
-/// way. The controller's pixel clock is the VOUT source (PLL2, 1188 MHz)
-/// divided by 8: 148.5 MHz.
-const VOUT_CRG: usize = 0x295C_0000;
-const VOUTCLK_DC8200_PIX = VOUT_CRG + 1 * 4;
-const VOUTCLK_DC8200_AXI = VOUT_CRG + 4 * 4;
-const VOUTCLK_DC8200_CORE = VOUT_CRG + 5 * 4;
-const VOUTCLK_DC8200_AHB = VOUT_CRG + 6 * 4;
-const VOUTCLK_DC8200_PIX0 = VOUT_CRG + 7 * 4;
-const VOUTCLK_DC8200_PIX1 = VOUT_CRG + 8 * 4;
-const VOUTCLK_HDMI_TX_MCLK = VOUT_CRG + 15 * 4;
-const VOUTCLK_HDMI_TX_BCLK = VOUT_CRG + 16 * 4;
-const VOUTCLK_HDMI_TX_SYS = VOUT_CRG + 17 * 4;
-const VOUT_RESET_ASSERT = VOUT_CRG + 0x48;
-const VOUT_RESET_STATUS = VOUT_CRG + 0x4C;
-const VOUTRST_DC8200: u32 = 1 << 0 | 1 << 1 | 1 << 2;
-const VOUTRST_HDMI_TX: u32 = 1 << 9;
+/// The controller's pixel clock is the VOUT source (PLL2, 1188 MHz, as
+/// the firmware sets it) divided by 8 while the domain comes up, and the
+/// transmitter's PLL once a mode is set: the source of its gate picks
+/// that.
 const PIXEL_DIVIDER: u32 = 8;
+const PIX_FROM_DIVIDER: u32 = 0 << system.CLK_MUX_SHIFT;
+const PIX_FROM_HDMI: u32 = 1 << system.CLK_MUX_SHIFT;
+/// The controller's bus, core and register clocks, and its resets; the
+/// transmitter's clocks.
+const dc_clocks = [_]u32{ system.VOUTCLK_DC8200_AXI, system.VOUTCLK_DC8200_CORE, system.VOUTCLK_DC8200_AHB };
+const dc_resets = [_]u32{ system.VOUTRST_DC8200_AXI, system.VOUTRST_DC8200_AHB, system.VOUTRST_DC8200_CORE };
+const hdmi_clocks = [_]u32{ system.VOUTCLK_HDMI_TX_SYS, system.VOUTCLK_HDMI_TX_MCLK, system.VOUTCLK_HDMI_TX_BCLK };
+
+/// The transmitter's pads, as the board's device tree has them: the DDC
+/// on pads 0 (SCL) and 1 (SDA) - the transmitter's signal that drives
+/// the pad, the one that enables it, and the input the pad feeds - pulled
+/// up, and the hot-plug line on pad 15, only read.
+const DdcPin = struct { pad: u8, out: u8, enable: u8, input: u8 };
+const ddc_pins = [_]DdcPin{
+    .{ .pad = 0, .out = signals.GPOUT_SYS_HDMI_DDC_SCL, .enable = signals.GPOEN_SYS_HDMI_DDC_SCL, .input = signals.GPI_SYS_HDMI_DDC_SCL },
+    .{ .pad = 1, .out = signals.GPOUT_SYS_HDMI_DDC_SDA, .enable = signals.GPOEN_SYS_HDMI_DDC_SDA, .input = signals.GPI_SYS_HDMI_DDC_SDA },
+};
+const ddc_pad = gpio.PAD_INPUT_ENABLE | gpio.PAD_PULL_UP;
+const hotplug_pin: u8 = 15;
 
 /// The HDMI transmitter: register n is at n times four.
 const HDMI: usize = 0x2959_0000;
 const HDMI_STATUS = 0xC8;
 const STATUS_HOTPLUG: u32 = 1 << 7;
+/// Its DDC master, which reads the monitor's EDID 128 bytes at a time
+/// into a FIFO: the bus clock's divider, where the read starts, and the
+/// FIFO. Writing the segment starts the read; EDID_READY in STATUS1 says
+/// it is done.
+const DDC_BUS_FREQ_L = 0x4B;
+const DDC_BUS_FREQ_H = 0x4C;
+const EDID_SEGMENT_POINTER = 0x4D;
+const EDID_WORD_ADDR = 0x4E;
+const EDID_FIFO_OFFSET = 0x4F;
+const EDID_FIFO_ADDR = 0x50;
+const INTERRUPT_MASK1 = 0xC0;
+const INTERRUPT_STATUS1 = 0xC1;
+const EDID_READY: u32 = 1 << 2;
+/// The DDC's clock, 100 kHz: its 51.2 MHz register clock over four, over
+/// that - as StarFive's Linux driver sets it.
+const DDC_DIVIDER: u32 = 51_200_000 / 4 / 100_000;
+/// Its power and reset: the PHY powered down while a mode is set, up
+/// again after.
+const SYS_CTRL = 0x00;
+const PHY_POWER_DOWN: u32 = 0x63;
+const PHY_POWER_ON: u32 = 0x61;
+/// The mode's timing as the transmitter takes it, given rather than
+/// measured from the controller's sync: the totals, the blanking, where
+/// the sync starts counted back from the end and how long it is, and the
+/// sync's polarity.
+const VIDEO_TIMING_CTL = 0x08;
+const TIMING_EXTERNAL: u32 = 1 << 0;
+const TIMING_HSYNC_HIGH: u32 = 1 << 2;
+const TIMING_VSYNC_HIGH: u32 = 1 << 3;
+const VIDEO_EXT_HTOTAL = 0x09;
+const VIDEO_EXT_HBLANK = 0x0B;
+const VIDEO_EXT_HDELAY = 0x0D;
+const VIDEO_EXT_HDURATION = 0x0F;
+const VIDEO_EXT_VTOTAL = 0x11;
+const VIDEO_EXT_VBLANK = 0x13;
+const VIDEO_EXT_VDELAY = 0x14;
+const VIDEO_EXT_VDURATION = 0x15;
+/// The packet buffers it sends with each frame: buffer 6 is the AVI
+/// infoframe, its header, checksum and data bytes from PACKET_ADDR on.
+const PACKET_BUF_INDEX = 0x9F;
+const PACKET_AVI: u32 = 0x06;
+const PACKET_ADDR = 0xA0;
+const PACKET_BYTES = 17;
+const PHY_SYNC = 0xCE;
+/// The PHY's PLLs (`phy.zig`): the pre-PLL's power (bit 0 off) and its
+/// settings from 0x1A1, its fraction from 0x1D1; the post-PLL's power
+/// and settings; each one's lock bit.
 const PLL_PRE = 0x1A0;
+const PLL_PRE_SETTINGS = 0x1A1;
+const PLL_PRE_FRACTION = 0x1D1;
 const PLL_PRE_LOCKED = 0x1A9;
 const PLL_POST = 0x1AA;
+const PLL_POST_SETTINGS = 0x1AB;
 const PLL_POST_LOCKED = 0x1AF;
 const PLL_OFF: u32 = 1 << 0;
-
-/// The transmitter's PLLs set for 148.5 MHz from its 24 MHz reference:
-/// U-Boot's table for 1080p at 60 Hz.
-const pll_1080p60 = [_][2]u32{
-    .{ 0x1A0, 0x01 }, .{ 0x1AA, 0x0F }, .{ 0x1A1, 0x01 }, .{ 0x1A2, 0xF0 },
-    .{ 0x1A3, 0x63 }, .{ 0x1A4, 0x15 }, .{ 0x1A5, 0x41 }, .{ 0x1A6, 0x42 },
-    .{ 0x1AB, 0x01 }, .{ 0x1AC, 0x14 }, .{ 0x1AD, 0x01 }, .{ 0x1AA, 0x0E },
-    .{ 0x1A0, 0x00 },
-};
-/// CEA-861's number for 1920x1080p at 60 Hz, which the transmitter sends.
-const VIC_1080P60: u32 = 16;
+/// The post-PLL off, with its post divider on and the TMDS clock in.
+const PLL_POST_OFF: u32 = 0x0F;
 
 /// The display controller.
 const DC: usize = 0x2940_0000;
@@ -96,6 +153,18 @@ const INTERRUPT_ENABLE = 0x0014;
 const FRAMEBUFFER_ADDRESS = 0x1400;
 const FRAMEBUFFER_STRIDE = 0x1408;
 const PANEL_START = 0x1CCC;
+/// The picture's size, the primary plane's and its bottom right corner's
+/// (width, and height from bit 15), and the panel's timing: each way the
+/// total and the picture (from bit 16), and the sync's start and end (from
+/// bit 15), on (bit 30), low (bit 31).
+const FRAMEBUFFER_SIZE = 0x1810;
+const FRAMEBUFFER_BOTTOM_RIGHT = 0x24E0;
+const DISPLAY_H = 0x1430;
+const DISPLAY_H_SYNC = 0x1438;
+const DISPLAY_V = 0x1440;
+const DISPLAY_V_SYNC = 0x1448;
+const SYNC_ON: u32 = 1 << 30;
+const SYNC_LOW: u32 = 1 << 31;
 /// The primary plane's extra configuration, with its shadow bit, and the
 /// panel's, whose bit 0 holds the shadow registers while it is set: what
 /// is written meanwhile is taken together once both are let go.
@@ -114,17 +183,12 @@ const CURSOR_VALID: u32 = 1 << 2;
 const CURSOR_UPDATE: u32 = 1 << 3;
 const CURSOR_SIZE_64: u32 = 1 << 5;
 
-/// One mode.
-pub const width = 1920;
-pub const height = 1080;
-pub const pixel_clock_hz = 148_500_000;
-pub const refresh_mhz = 60_000;
-
 /// How many times a wait reads its register before it gives up.
 const patience: u32 = 1_000_000;
 
-/// Why the display did not come up.
-pub const Failure = enum { none, power, pll };
+/// Why the display did not come up: its domain stayed off, the
+/// transmitter's PLL makes no such clock, or it did not lock.
+pub const Failure = enum { none, power, clock, pll };
 
 fn hdmi(index: usize) *volatile u32 {
     return reg(HDMI + index * 4);
@@ -134,15 +198,9 @@ fn dc(offset: usize) *volatile u32 {
     return reg(DC + offset);
 }
 
-fn on(clock: usize) void {
-    reg(clock).* |= CLK_ENABLE;
-}
-
-/// Resets `bits` of ASSERT let go, and waited for in STATUS.
-fn release(assert: usize, status: usize, bits: u32) void {
-    reg(assert).* &= ~bits;
-    var tries: u32 = 0;
-    while (reg(status).* & bits != bits and tries < patience) : (tries += 1) {}
+/// One of the controller's pixel clocks on, from `source` (PIX_FROM_*).
+fn pixelClock(clock: u32, source: u32) void {
+    system.setClock(.vout, clock, system.CLK_ENABLE | system.CLK_MUX, system.CLK_ENABLE | source);
 }
 
 /// Whether `index` came to have bit 0 set.
@@ -167,77 +225,239 @@ fn powerOn() bool {
 }
 
 /// Whether a monitor is on the port: the transmitter's hot-plug line.
-/// Only once `start` has the transmitter out of reset.
+/// Only once `wake` has the transmitter out of reset.
 pub fn monitor() bool {
     return hdmi(HDMI_STATUS).* & STATUS_HOTPLUG != 0;
 }
 
-/// The display brought up, showing the picture at `address` - 1920x1080,
-/// 32 bits a pixel, rows `pitch` bytes apart, below 4 GiB and out of the
-/// caches. `waiter.wait(micros)` waits that long.
-pub fn start(address: usize, pitch: u32, waiter: anytype) Failure {
-    if (!powerOn()) return .power;
-    waiter.wait(50_000);
+/// The transmitter's pads taken: the DDC's, and the hot-plug line, which
+/// the transmitter reads (`monitor`). Under Disable.
+fn takePins() void {
+    for (ddc_pins) |pin| {
+        gpio.configure(pin.pad, ddc_pad);
+        gpio.connectOut(pin.pad, pin.out, pin.enable);
+        gpio.connectIn(pin.input, pin.pad);
+    }
+    gpio.configure(hotplug_pin, gpio.PAD_INPUT_ENABLE);
+    gpio.outputEnable(hotplug_pin, false);
+    gpio.connectIn(signals.GPI_SYS_HDMI_HPD, hotplug_pin);
+}
+
+/// The domain on, the controller's and the transmitter's clocks running
+/// and their resets let go, and the transmitter's DDC ready to read the
+/// monitor's EDID (`readEdid`): what `start` needs first, and what tells
+/// which modes the monitor takes before one is picked. Done again it
+/// changes nothing. `sys` is exec's; `waiter.wait(micros)` waits that
+/// long.
+pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
+    if (!on_jh7110) return .power;
+    if (reg(PMU_CURR_POWER_MODE).* & DOMAIN_VOUT == 0) {
+        if (!powerOn()) return .power;
+        waiter.wait(50_000);
+    }
 
     // The bus to the domain and the domain's own clocks, as U-Boot's
-    // vout_probe_resources_jh7110 has them.
-    on(SYSCLK_NOC_BUS_DISP_AXI);
-    release(SYS_RESET_ASSERT0, SYS_RESET_STATUS0, SYSRST_NOC_BUS_DISP_AXI);
-    on(SYSCLK_VOUT_SRC);
-    on(SYSCLK_VOUT_TOP_AXI);
-    on(SYSCLK_VOUT_TOP_AHB);
-    release(SYS_RESET_ASSERT1, SYS_RESET_STATUS1, SYSRST_VOUT_TOP_SRC);
-    // The pixel clock from the divider, not the transmitter's PLL.
-    reg(VOUTCLK_DC8200_PIX).* = PIXEL_DIVIDER;
-    reg(VOUTCLK_DC8200_PIX0).* = CLK_ENABLE;
-    reg(VOUTCLK_DC8200_PIX1).* = CLK_ENABLE;
-    on(VOUTCLK_DC8200_AXI);
-    on(VOUTCLK_DC8200_CORE);
-    on(VOUTCLK_DC8200_AHB);
-    release(VOUT_RESET_ASSERT, VOUT_RESET_STATUS, VOUTRST_DC8200);
+    // vout_probe_resources_jh7110 has them, and the transmitter's pads.
+    sys.Disable();
+    for (sys_clocks) |clock| system.clockOn(.sys, clock);
+    system.clockOn(.sys, system.SYSCLK_VOUT_TOP_HDMITX0_MCLK);
+    system.releaseReset(.sys, system.SYSRST_NOC_BUS_DISP_AXI);
+    system.releaseReset(.sys, system.SYSRST_VOUT_TOP_SRC);
+    takePins();
+    sys.Enable();
+    _ = system.waitOutOfReset(.sys, system.SYSRST_NOC_BUS_DISP_AXI);
+    _ = system.waitOutOfReset(.sys, system.SYSRST_VOUT_TOP_SRC);
 
-    // The transmitter: its clocks, out of reset (inno_hdmi_probe).
-    on(SYSCLK_VOUT_TOP_HDMITX0_MCLK);
-    on(VOUTCLK_HDMI_TX_SYS);
-    on(VOUTCLK_HDMI_TX_MCLK);
-    on(VOUTCLK_HDMI_TX_BCLK);
-    release(VOUT_RESET_ASSERT, VOUT_RESET_STATUS, VOUTRST_HDMI_TX);
+    // The controller, its pixel clock from the divider, not the
+    // transmitter's PLL; then the transmitter, its clocks, out of reset
+    // (inno_hdmi_probe). The VOUT generator is this driver's alone.
+    system.setClock(.vout, system.VOUTCLK_DC8200_PIX, system.CLK_DIVIDER, PIXEL_DIVIDER);
+    pixelClock(system.VOUTCLK_DC8200_PIX0, PIX_FROM_DIVIDER);
+    pixelClock(system.VOUTCLK_DC8200_PIX1, PIX_FROM_DIVIDER);
+    for (dc_clocks) |clock| system.clockOn(.vout, clock);
+    for (dc_resets) |reset| system.releaseReset(.vout, reset);
+    for (dc_resets) |reset| _ = system.waitOutOfReset(.vout, reset);
+    for (hdmi_clocks) |clock| system.clockOn(.vout, clock);
+    system.releaseReset(.vout, system.VOUTRST_HDMI_TX_HDMI);
+    _ = system.waitOutOfReset(.vout, system.VOUTRST_HDMI_TX_HDMI);
 
-    // Its PHY (inno_hdmi_enable): the PLLs on and locked, the LDO and the
-    // serializer on; powered down while the PLLs are set for the mode and
-    // the mode is set, up again with its drivers on.
+    // Its DDC (inno_hdmi_i2c_init): the bus clock, the EDID's interrupt
+    // off and cleared.
+    hdmi(DDC_BUS_FREQ_L).* = DDC_DIVIDER & 0xFF;
+    hdmi(DDC_BUS_FREQ_H).* = DDC_DIVIDER >> 8;
+    hdmi(INTERRUPT_MASK1).* = 0;
+    hdmi(INTERRUPT_STATUS1).* = EDID_READY;
+    return .none;
+}
+
+/// Block `number` of the monitor's EDID into `block`: block n is word
+/// address (n % 2) * 128 of segment n / 2. False when the monitor did
+/// not answer within 100 ms. Only once `wake` has the transmitter up.
+pub fn readEdid(number: u8, block: *[128]u8, waiter: anytype) bool {
+    // inno_hdmi_i2c_xfer: the interrupt let through to its status bit and
+    // cleared, the read set up and started, the FIFO read out.
+    hdmi(INTERRUPT_MASK1).* = EDID_READY;
+    hdmi(INTERRUPT_STATUS1).* = EDID_READY;
+    defer hdmi(INTERRUPT_MASK1).* = 0;
+    hdmi(EDID_FIFO_OFFSET).* = 0;
+    hdmi(EDID_WORD_ADDR).* = @as(u32, number % 2) * 128;
+    hdmi(EDID_SEGMENT_POINTER).* = number / 2;
+    var waited: u32 = 0;
+    while (hdmi(INTERRUPT_STATUS1).* & EDID_READY == 0) : (waited += 1) {
+        if (waited == 100) return false;
+        waiter.wait(1000);
+    }
+    hdmi(INTERRUPT_STATUS1).* = EDID_READY;
+    for (block) |*byte| byte.* = @truncate(hdmi(EDID_FIFO_ADDR).*);
+    return true;
+}
+
+/// A 16-bit value into two of the transmitter's registers, low first.
+fn hdmi16(index: usize, value: u32) void {
+    hdmi(index).* = value & 0xFF;
+    hdmi(index + 1).* = (value >> 8) & 0xFF;
+}
+
+/// The PHY's PLLs set for `pll` (inno_hdmi_config_pll): both off while
+/// they are set, then on. Their lock is waited for after.
+fn setPll(pll: *const phy.Pll) void {
+    const set = phy.image(pll);
+    const post = phy.post(pll.pixel_khz);
+    hdmi(PLL_PRE).* = PLL_OFF;
+    hdmi(PLL_POST).* = PLL_POST_OFF;
+    for (set.regs, 0..) |value, i| hdmi(PLL_PRE_SETTINGS + i).* = value;
+    if (pll.frac != 0) {
+        for (set.frac, 0..) |value, i| hdmi(PLL_PRE_FRACTION + i).* = value;
+    }
+    for (post[0..3], 0..) |value, i| hdmi(PLL_POST_SETTINGS + i).* = value;
+    hdmi(PLL_POST).* = post[3];
+    hdmi(PLL_PRE).* = 0;
+}
+
+/// The drivers' swing and pre-emphasis for the faster modes, as StarFive's
+/// Linux driver tunes them by CEA's number (its improve_eye_diagram); any
+/// other mode keeps the chip's own.
+fn tuneDrivers(vic: u8) void {
+    switch (vic) {
+        93, 94, 95 => {
+            hdmi(0x100).* = 0x00;
+            hdmi(0x1BB).* = 0x40;
+            hdmi(0x1BC).* = 0x40;
+            hdmi(0x1BD).* = 0x40;
+            hdmi(0x1BF).* = 0x02;
+            hdmi(0x1C0).* = 0x22;
+        },
+        16, 31 => {
+            hdmi(0x1BF).* = 0x02;
+            hdmi(0x1C0).* = 0x22;
+        },
+        1, 3, 4 => {
+            hdmi(0x1BF).* = 0x00;
+            hdmi(0x1C0).* = 0x00;
+        },
+        else => {},
+    }
+}
+
+/// The mode's timing given to the transmitter (inno_hdmi_config_video_timing).
+fn videoTiming(mode: *const edid.Timing) void {
+    const htotal = mode.htotal();
+    const vtotal = mode.vtotal();
+    hdmi16(VIDEO_EXT_HTOTAL, htotal);
+    hdmi16(VIDEO_EXT_HBLANK, htotal - mode.width);
+    hdmi16(VIDEO_EXT_HDELAY, mode.h_sync + mode.h_back);
+    hdmi16(VIDEO_EXT_HDURATION, mode.h_sync);
+    hdmi16(VIDEO_EXT_VTOTAL, vtotal);
+    hdmi(VIDEO_EXT_VBLANK).* = (vtotal - mode.height) & 0xFF;
+    hdmi(VIDEO_EXT_VDELAY).* = (mode.v_sync + mode.v_back) & 0xFF;
+    hdmi(VIDEO_EXT_VDURATION).* = mode.v_sync & 0xFF;
+    var control = TIMING_EXTERNAL;
+    if (mode.hsync_high) control |= TIMING_HSYNC_HIGH;
+    if (mode.vsync_high) control |= TIMING_VSYNC_HIGH;
+    hdmi(VIDEO_TIMING_CTL).* = control;
+}
+
+/// The AVI infoframe the transmitter sends with each frame, as the P4's
+/// HDMI bridge sends it: RGB, its active format the picture, underscanned;
+/// the picture's aspect; IT content in full-range RGB - a computer's
+/// picture, which a television may then show without cropping its edges
+/// or treating it as video - and CEA's number for the mode, 0 for one
+/// that has none. U-Boot's left the version and the checksum 0, so a
+/// monitor threw it away.
+fn infoframe(mode: *const edid.Timing) void {
+    // The aspect a numbered mode is named with (720x480 and 720x576 are
+    // each 4:3 under one number, 16:9 under another), else the picture's.
+    const aspect: u8 = switch (mode.vic) {
+        1, 2, 17 => 1,
+        3, 18 => 2,
+        else => if (mode.width * 3 == mode.height * 4) 1 else if (mode.width * 9 == mode.height * 16) 2 else 0,
+    };
+    var frame: [PACKET_BYTES]u8 = @splat(0);
+    frame[0] = 0x82; // AVI, version 2, 13 bytes
+    frame[1] = 0x02;
+    frame[2] = 0x0D;
+    frame[4] = 0x10 | 0x02;
+    frame[5] = aspect << 4 | 0x08;
+    frame[6] = 0x80 | 2 << 2;
+    frame[7] = mode.vic;
+    var sum: u8 = 0;
+    for (frame) |byte| sum +%= byte;
+    frame[3] = 0 -% sum;
+    hdmi(PACKET_BUF_INDEX).* = PACKET_AVI;
+    for (frame, 0..) |byte, i| hdmi(PACKET_ADDR + i).* = byte;
+}
+
+/// The display brought up in `mode` - its pixel clock one the
+/// transmitter's PLL makes (`phy.sends`) - showing the picture at
+/// `address`, 32 bits a pixel, rows `pitch` bytes apart, below 4 GiB and
+/// out of the caches. With the display up, it changes to `mode`.
+/// `waiter.wait(micros)` waits that long.
+pub fn start(sys: *ExecBase, mode: *const edid.Timing, address: usize, pitch: u32, waiter: anytype) Failure {
+    if (!on_jh7110) return .power;
+    const pll = phy.find(mode.pixel_khz) orelse return .clock;
+    const woken = wake(sys, waiter);
+    if (woken != .none) return woken;
+
+    // The panel stopped, and the controller on the divider's clock while
+    // the PLL changes.
+    dc(PANEL_START).* = 0;
+    pixelClock(system.VOUTCLK_DC8200_PIX0, PIX_FROM_DIVIDER);
+
+    // The transmitter's PHY (inno_hdmi_setup): the PLLs set for the clock
+    // and locked, the LDO and the serializer on, the drivers tuned;
+    // powered down while the mode's timing and infoframe are set, up again
+    // with its drivers on.
     hdmi(0x1B0).* |= 0x4;
     hdmi(0x1CC).* = 0xF;
-    hdmi(PLL_PRE).* &= ~PLL_OFF;
-    hdmi(PLL_POST).* &= ~PLL_OFF;
+    setPll(pll);
     if (!locked(PLL_PRE_LOCKED) or !locked(PLL_POST_LOCKED)) return .pll;
     hdmi(0x1B4).* = 0x7;
-    hdmi(0x1BE).* = 0x70;
-    hdmi(0x00).* = 0x63;
-    for (pll_1080p60) |pair| hdmi(pair[0]).* = pair[1];
-    hdmi(0x9F).* = 0x06;
-    hdmi(0xA0).* = 0x82;
-    hdmi(0xA2).* = 0x0D;
-    hdmi(0xA3).* = 0x00;
-    hdmi(0xA4).* = 0x00;
-    hdmi(0xA5).* = 0x08;
-    hdmi(0xA6).* = 0x70;
-    hdmi(0xA7).* = VIC_1080P60;
+    hdmi(0x1BE).* = 0x71;
+    tuneDrivers(mode.vic);
+    hdmi(SYS_CTRL).* = PHY_POWER_DOWN;
+    videoTiming(mode);
+    infoframe(mode);
     hdmi(0xC9).* = 0x10;
-    hdmi(0x00).* = 0x61;
+    hdmi(SYS_CTRL).* = PHY_POWER_ON;
     hdmi(0x1B2).* = 0x8F;
     waiter.wait(50_000);
-    hdmi(0xCE).* = 0x00;
-    hdmi(0xCE).* = 0x01;
+    hdmi(PHY_SYNC).* = 0x00;
+    hdmi(PHY_SYNC).* = 0x01;
 
-    // The controller: 1920x1080 at 60 Hz from the picture at `address`,
-    // to the transmitter (sf_display_init).
+    // The controller's pixel clock from the PLL: the mode's own.
+    pixelClock(system.VOUTCLK_DC8200_PIX0, PIX_FROM_HDMI);
+
+    // The controller: the mode from the picture at `address`, to the
+    // transmitter (sf_display_init).
+    const size = mode.width | mode.height << 15;
+    const hsync_start = mode.width + mode.h_front;
+    const vsync_start = mode.height + mode.v_front;
     dc(INTERRUPT_ENABLE).* = 0xC000_1FFF;
     dc(0x1CC0).* = 0x0000_2000;
     dc(0x1800).* = 0x0000_0000;
     dc(0x24D8).* = 0x0000_0000;
-    dc(0x24E0).* = 0x021C_0780;
-    dc(0x1810).* = 0x021C_0780;
+    dc(FRAMEBUFFER_BOTTOM_RIGHT).* = size;
+    dc(FRAMEBUFFER_SIZE).* = size;
     dc(FRAMEBUFFER_ADDRESS).* = @truncate(address);
     dc(FRAMEBUFFER_STRIDE).* = pitch;
     dc(0x1CE8).* = 0x0000_0F61;
@@ -260,10 +480,10 @@ pub fn start(address: usize, pitch: u32, waiter: anytype) Failure {
     dc(0x154C).* = 0x8006_0000;
     dc(0x2518).* = 0x0000_0001;
     dc(0x1A28).* = 0x0000_0000;
-    dc(0x1430).* = 0x0898_0780;
-    dc(0x1438).* = 0x4402_07D8;
-    dc(0x1440).* = 0x0465_0438;
-    dc(0x1448).* = 0x4220_843C;
+    dc(DISPLAY_H).* = mode.htotal() << 16 | mode.width;
+    dc(DISPLAY_H_SYNC).* = hsync_start | (hsync_start + mode.h_sync) << 15 | SYNC_ON | (if (mode.hsync_high) 0 else SYNC_LOW);
+    dc(DISPLAY_V).* = mode.vtotal() << 16 | mode.height;
+    dc(DISPLAY_V_SYNC).* = vsync_start | (vsync_start + mode.v_sync) << 15 | SYNC_ON | (if (mode.vsync_high) 0 else SYNC_LOW);
     dc(0x14B0).* = 0x0000_0000;
     dc(0x1CD0).* = 0x0000_00D2;
     dc(0x14B8).* = 0x0000_0005;
@@ -281,6 +501,24 @@ pub fn start(address: usize, pitch: u32, waiter: anytype) Failure {
     dc(PANEL_START).* = 0x0000_0001;
     return .none;
 }
+
+/// The pixel clock - the TMDS clock, with eight bits a colour - the
+/// transmitter's PLL is set to, in kHz, read back from it; 0 while the
+/// transmitter is not up, or set to none of `phy.zig`'s. What the HDMI
+/// port's sound gives the monitor its rate by.
+pub fn pixelClockKhz() u32 {
+    if (!on_jh7110) return 0;
+    if (reg(PMU_CURR_POWER_MODE).* & DOMAIN_VOUT == 0) return 0;
+    if (!system.outOfReset(.vout, system.VOUTRST_HDMI_TX_HDMI)) return 0;
+    var regs: [6]u8 = undefined;
+    for (&regs, 0..) |*value, i| value.* = @truncate(hdmi(PLL_PRE_SETTINGS + i).*);
+    var frac: [3]u8 = undefined;
+    for (&frac, 0..) |*value, i| value.* = @truncate(hdmi(PLL_PRE_FRACTION + i).*);
+    return phy.clockOf(regs, frac);
+}
+
+/// Whether the port can send a mode of that pixel clock.
+pub const sends = phy.sends;
 
 /// The shadow registers held, for writes that are to be taken together
 /// (`let go`), as Linux's driver writes a plane.

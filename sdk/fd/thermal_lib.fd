@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT
+//! thermal.resource's functions: the board's temperatures, as its sensors
+//! last read them, and who is told when one runs hot. A resource: no Open
+//! or Close, its first function in the first slot. The base comes from
+//! OpenResource("thermal.resource").
+##include libs/exec/exec as exec
+##include resources/thermal as thermal
+##basetype ThermalBase
+##name thermal.resource
+##bias 0
+##public
+/// Sensor `unit` as last read, into `state`: unit 0 is the board's first.
+/// False if the board has no such sensor, or it has given no reading yet.
+bool ReadTemperature(u32 unit, *thermal.ThermalState state)
+/// `signals` sent to `task` whenever a sensor's reading passes its hot or
+/// its critical temperature, either way; null without memory.
+?*thermal.ThermalNotify AddThermalNotify(*exec.Task task, u32 signals)
+/// No more of that.
+void RemThermalNotify(?*thermal.ThermalNotify notify)
+##end

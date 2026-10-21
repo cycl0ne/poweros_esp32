@@ -60,6 +60,7 @@ flowchart TB
     m_rtg_library["rtg.library"]
     m_serial_device["serial.device"]
     m_sound_drivers["sound drivers"]
+    m_thermal_resource["thermal.resource"]
     m_timer_device["timer.device"]
     m_touch_device["touch.device"]
     m_usbport_resource["usbport.resource"]
@@ -129,6 +130,7 @@ flowchart TB
     m_sound_drivers --> m_i2c_device
     m_sound_drivers --> m_rta_library
     m_sound_drivers --> m_timer_device
+    m_thermal_resource --> m_timer_device
     m_touch_device --> m_expander_resource
     m_touch_device --> m_gpio_resource
     m_touch_device --> m_i2c_device
@@ -140,7 +142,7 @@ flowchart TB
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_audio_device,m_console_device,m_flash_device,m_i2c_device,m_input_device,m_keyboard_device,m_mouse_device,m_serial_device,m_timer_device,m_touch_device,m_usbserial_device dev
     classDef res fill:#fef3c7,stroke:#d97706,color:#111827
-    class m_battclock_resource,m_battery_resource,m_dma_resource,m_expander_resource,m_gpio_resource,m_jpeg_resource,m_usbport_resource res
+    class m_battclock_resource,m_battery_resource,m_dma_resource,m_expander_resource,m_gpio_resource,m_jpeg_resource,m_thermal_resource,m_usbport_resource res
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
     class m_Shell,m_con_handler,m_flashfs_handler,m_nil_handler,m_pipe_handler,m_ram_handler hand
 ```
@@ -179,6 +181,7 @@ flowchart TB
     m_asl_library["asl.library"]
     m_audiocodec_library["audiocodec.library"]
     m_battery_resource["battery.resource"]
+    m_battmem_resource["battmem.resource"]
     m_bsdsocket_library["bsdsocket.library"]
     m_clipboard_device["clipboard.device"]
     m_crypto_library["crypto.library"]
@@ -290,6 +293,7 @@ flowchart TB
     m_facet_library --> m_intuition_library
     m_facet_library --> m_layers_library
     m_facet_library --> m_rtg_library
+    m_fat_handler --> m_battmem_resource
     m_fat_handler --> m_dos_library
     m_fat_handler --> m_input_device
     m_fat_handler -.-> m_sdcard_device
@@ -367,7 +371,7 @@ flowchart TB
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_datatype_classes,m_gadget_classes cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151
-    class m_battery_resource,m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_keyboard_device,m_layers_library,m_mouse_device,m_platform_resource,m_rta_library,m_rtg_library,m_serial_device,m_timer_device,m_usbport_resource,m_usbserial_device rom
+    class m_battery_resource,m_battmem_resource,m_dma_resource,m_dos_library,m_expander_resource,m_flash_device,m_gpio_resource,m_graphics_library,m_input_device,m_intuition_library,m_keyboard_device,m_layers_library,m_mouse_device,m_platform_resource,m_rta_library,m_rtg_library,m_serial_device,m_timer_device,m_usbport_resource,m_usbserial_device rom
 ```
 <!-- modchart end -->
 

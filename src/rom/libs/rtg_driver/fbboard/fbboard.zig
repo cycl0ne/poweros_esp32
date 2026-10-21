@@ -15,9 +15,14 @@
 //! whose display does not see them (`RTGRF_CPU_CACHED`: a refresh writes
 //! the rows back, with exec's CacheClearE).
 //!
+//! The emulator's display has one mode, the size the board names. The
+//! JH7110's has the modes the monitor on its HDMI port names in its EDID
+//! and the port can send, read when the board is made (`monitor.zig`):
+//! the one the monitor prefers is the default, and any of them can be set.
+//!
 //! The buffers are one block of RAM below 4 GiB, taken when the board is
-//! made: as many pictures as the board asks for, and one more. The library
-//! cuts the buffers from it.
+//! made: as many pictures of its largest mode as the board asks for, and
+//! one more. The library cuts the buffers from it.
 //!
 //! The pointer is laid over the picture in that last frame, as the qemu
 //! board does it: while a pointer or the overlay is shown, or the picture
@@ -64,6 +69,8 @@ const st = sdk.expansion.systemtags;
 
 const ramfb = @import("ramfb.zig");
 const jh7110 = @import("jh7110.zig");
+const monitor = @import("monitor.zig");
+const edid = @import("../edid.zig");
 const engine = @import("engine.zig");
 const tags = rtg.tags;
 const timer = sdk.devices.timer;
@@ -71,8 +78,8 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 3;
-const BUILD_DATE = "19.10.2026";
+const REVISION = 5;
+const BUILD_DATE = "20.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -117,7 +124,15 @@ const Screen = struct {
     format: rtg.PixelFormat = .bgra32,
     bytes: u32 = 4,
     pitch: u32 = 0,
-    mode: rtg.RtgMode = .{},
+    /// The modes: the board's own, or on the JH7110 those the monitor
+    /// takes (`monitor.zig`), with their timings; their names; which one
+    /// the display is in; how long a frame of it takes.
+    modes: [monitor.max_modes]rtg.RtgMode = undefined,
+    timings: monitor.List = .{},
+    names: [monitor.max_modes][16]u8 = undefined,
+    mode_count: u32 = 0,
+    current: u32 = 0,
+    frame_us: u32 = 16_667,
     /// The block the buffers are cut from, as AllocMem gave it.
     memory: ?*anyopaque = null,
     memory_size: usize = 0,
@@ -173,9 +188,6 @@ const Screen = struct {
     frames_come: bool = false,
 };
 
-/// A frame at 60 a second.
-const frame_us = 16_667;
-
 /// Wait for `frames` frames: for the display's frame interrupt to come
 /// that many times, where it comes, so that a flip is waited out to the
 /// frame the new picture starts in; else for as long as they take, which
@@ -184,7 +196,7 @@ const frame_us = 16_667;
 /// frame begins. The CPU is given away meanwhile, either way.
 fn pace(screen: *Screen, frames: u32) void {
     if (@atomicLoad(bool, &screen.frames_come, .acquire) and waitFrames(screen, frames)) return;
-    sleep(screen, @as(u64, frame_us) * frames);
+    sleep(screen, @as(u64, screen.frame_us) * frames);
 }
 
 /// A task waiting for frames, on its own stack: the count of frames it
@@ -206,7 +218,7 @@ fn waitFrames(screen: *Screen, frames: u32) bool {
     waiter.next = screen.frame_waiters;
     screen.frame_waiters = &waiter;
     sys.Enable();
-    const answer = sys.WaitForAny(&[_]*exec.Waitable{&waiter.reached}, 1, @as(u64, frame_us) * (frames + 2));
+    const answer = sys.WaitForAny(&[_]*exec.Waitable{&waiter.reached}, 1, @as(u64, screen.frame_us) * (frames + 2));
     sys.Disable();
     var link = &screen.frame_waiters;
     while (link.*) |at| : (link = &at.next) {
@@ -613,36 +625,33 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     };
     if (screen.width == 0 or screen.height == 0) return err.RTGERR_BAD_ARG;
     if (screen.width > 0x3FFF or screen.height > 0x3FFF) return err.RTGERR_BAD_ARG;
-    screen.pitch = std.mem.alignForward(u32, screen.width * bytes, row_alignment);
-    // The JH7110's one mode, a display that does not see the caches, and
-    // its frame interrupt.
     if (scanout == .jh7110) {
-        if (screen.width != jh7110.width or screen.height != jh7110.height) return err.RTGERR_BAD_ARG;
+        // The modes the monitor takes, the part's size at 60 Hz without
+        // one; a display that does not see the caches, and its frame
+        // interrupt.
         if (format != .bgra32) return err.RTGERR_BAD_FORMAT;
+        const own = edid.knownMode(screen.width, screen.height, 60) orelse return err.RTGERR_BAD_ARG;
+        screen.timings = hdmiModes(screen, own);
         screen.cached = true;
         screen.frame_irq = @truncate(rb.GetRtgTagData(st.PART_Irq, 0, tag_list));
+        for (screen.timings.modes[0..screen.timings.count], 0..) |*timing, i| {
+            addMode(screen, board, @intCast(i), timing.width, timing.height);
+            screen.modes[i].pixel_clock_hz = timing.pixel_khz * 1000;
+            screen.modes[i].refresh_mhz = timing.milliHz();
+        }
+        screen.current = screen.timings.default;
+    } else {
+        // One mode: the picture the board was built for.
+        addMode(screen, board, 0, screen.width, screen.height);
     }
+    screen.modes[screen.current].flags = rtg.boards.RTGMF_DEFAULT;
+    take(screen, screen.current);
 
-    // One mode: the picture the board was built for.
-    screen.mode = .{
-        .node = .{ .name = "native", .pri = 0 },
-        .id = 1,
-        .width = screen.width,
-        .height = screen.height,
-        .format = format,
-        .pitch = screen.pitch,
-        .flags = rtg.boards.RTGMF_DEFAULT,
-    };
-    if (scanout == .jh7110) {
-        screen.mode.pixel_clock_hz = jh7110.pixel_clock_hz;
-        screen.mode.refresh_mhz = jh7110.refresh_mhz;
-    }
-    sys.AddTail(&board.modes, &screen.mode.node);
-
-    // As many pictures as the board asks for, and one to compose in, in
-    // memory every DMA engine reaches. Not cleared: each is cleared before
-    // it is first shown.
-    const frame: usize = @as(usize, screen.pitch) * screen.height;
+    // As many pictures of the largest mode as the board asks for, and one
+    // to compose in, in memory every DMA engine reaches. Not cleared: each
+    // is cleared before it is first shown.
+    var frame: usize = 0;
+    for (screen.modes[0..screen.mode_count]) |*mode| frame = @max(frame, @as(usize, mode.pitch) * mode.height);
     const frames: u32 = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
     // The cursor plane's two buffers after the composed frame.
     const cursors: usize = if (scanout == .jh7110) 2 * cursor_bytes else 0;
@@ -662,8 +671,8 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     };
     board.ops = &ops;
     board.info.buffers = frames;
-    board.info.pixel_clock_hz = screen.mode.pixel_clock_hz;
-    board.info.refresh_mhz = screen.mode.refresh_mhz;
+    board.info.pixel_clock_hz = screen.modes[screen.current].pixel_clock_hz;
+    board.info.refresh_mhz = screen.modes[screen.current].refresh_mhz;
     engine.setUp(&screen.engine, sys);
     state.board = board;
     return err.RTGERR_OK;
@@ -680,23 +689,114 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     if (board.driver) |driver| stateOf(driver).board = null;
 }
 
-/// One mode, so this checks it is that one - and brings the display up
-/// the first time, black: the block's first frame, which the library has
-/// not handed out yet.
+/// Mode `index` added to the board's list, `width` by `height` in the
+/// screen's format, its name the size - and the refresh, when another
+/// mode has the same size.
+fn addMode(screen: *Screen, board: *rtg.RtgBoard, index: u32, width: u32, height: u32) void {
+    const name = &screen.names[index];
+    var at = writeNumber(name, 0, width);
+    name[at] = 'x';
+    at = writeNumber(name, at + 1, height);
+    if (screen.timings.count > 1) {
+        const rate = screen.timings.modes[index].hz();
+        for (screen.timings.modes[0..screen.timings.count], 0..) |*other, i| {
+            if (i == index or other.width != width or other.height != height) continue;
+            name[at] = '@';
+            at = writeNumber(name, at + 1, rate);
+            break;
+        }
+    }
+    name[at] = 0;
+    screen.modes[index] = .{
+        .node = .{ .name = @ptrCast(name), .pri = 0 },
+        .id = index + 1,
+        .width = width,
+        .height = height,
+        .format = screen.format,
+        .pitch = std.mem.alignForward(u32, width * screen.bytes, row_alignment),
+    };
+    screen.mode_count = index + 1;
+    screen.sys.AddTail(&board.modes, &screen.modes[index].node);
+}
+
+/// `value` in decimal into `into` from `at`; where it ends.
+fn writeNumber(into: []u8, at: usize, value: u32) usize {
+    var digits: [10]u8 = undefined;
+    var count: usize = 0;
+    var rest = value;
+    while (true) {
+        digits[count] = @intCast('0' + rest % 10);
+        count += 1;
+        rest /= 10;
+        if (rest == 0) break;
+    }
+    for (0..count) |i| into[at + i] = digits[count - 1 - i];
+    return at + count;
+}
+
+/// Mode `index` taken as the screen's: its picture, its rows, a frame's
+/// time.
+fn take(screen: *Screen, index: u32) void {
+    const mode = &screen.modes[index];
+    screen.current = index;
+    screen.width = mode.width;
+    screen.height = mode.height;
+    screen.pitch = mode.pitch;
+    screen.frame_us = if (mode.refresh_mhz != 0) 1_000_000_000 / mode.refresh_mhz else 16_667;
+}
+
+/// The modes of the monitor on the JH7110's HDMI port (`monitor.zig`),
+/// from its EDID; the monitor's name, how many modes it has and the one
+/// it gets said on the raw port. The board's own alone when no monitor is
+/// on the port (which `begin` says), or its EDID does not read.
+fn hdmiModes(screen: *Screen, own: edid.Timing) monitor.List {
+    const waiter = Waiter{ .screen = screen };
+    if (jh7110.wake(screen.sys, waiter) != .none or !jh7110.monitor()) return monitor.modesOf(null, null, own, jh7110.sends);
+    var first: edid.Block = undefined;
+    var extension: edid.Block = undefined;
+    var name: [14]u8 = @splat(0);
+    var base: ?*const edid.Block = null;
+    var cea: ?*const edid.Block = null;
+    if (jh7110.readEdid(0, &first, waiter) and edid.isFirst(&first) and edid.valid(&first)) {
+        base = &first;
+        edid.name(&first, &name);
+        if (first[126] != 0 and jh7110.readEdid(1, &extension, waiter) and edid.valid(&extension)) cea = &extension;
+    }
+    const found = monitor.modesOf(base, cea, own, jh7110.sends);
+    const shown = &found.modes[found.default];
+    if (base == null) {
+        exec.kprintf(screen.sys, "%s: HDMI to a monitor whose EDID did not read, %dx%d at %d Hz\n", .{ MODULE_NAME, shown.width, shown.height, shown.hz() });
+    } else {
+        const who: [*:0]const u8 = if (name[0] != 0) @ptrCast(&name) else "a monitor";
+        exec.kprintf(screen.sys, "%s: HDMI to %s, %dx%d at %d Hz of %d modes\n", .{ MODULE_NAME, who, shown.width, shown.height, shown.hz(), found.count });
+    }
+    return found;
+}
+
+/// The display brought up the first time in `mode` - or changed to it -
+/// black: the block's first frame, which the library has not handed out
+/// yet.
 fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
     const screen = screenOf(board);
-    if (mode.width != screen.width or mode.height != screen.height or mode.format != screen.format) return err.RTGERR_BAD_MODE;
-    if (screen.scanning == 0) {
+    const index = mode.id -% 1;
+    if (index >= screen.mode_count or mode.format != screen.format) return err.RTGERR_BAD_MODE;
+    const changed = index != screen.current;
+    take(screen, index);
+    if (screen.scanning == 0 or changed) {
         const first = board.region.base.?;
         const bytes = @as(usize, screen.pitch) * screen.height;
         @memset(first[0..bytes], 0);
         handOn(screen, first, bytes);
+        // What it read until now says nothing about the new mode.
+        screen.scanning = 0;
         if (!begin(screen, @intFromPtr(first))) return err.RTGERR_NO_DISPLAY;
     }
     board.info.width = screen.width;
     board.info.height = screen.height;
     board.info.format = screen.format;
     board.info.pitch = screen.pitch;
+    board.info.pixel_clock_hz = screen.modes[index].pixel_clock_hz;
+    board.info.refresh_mhz = screen.modes[index].refresh_mhz;
     return err.RTGERR_OK;
 }
 
@@ -715,10 +815,11 @@ fn begin(screen: *Screen, address: usize) bool {
     switch (screen.scanout) {
         .ramfb => scanFrom(screen, address),
         .jh7110 => {
-            const failure = jh7110.start(address, screen.pitch, Waiter{ .screen = screen });
+            const failure = jh7110.start(screen.sys, &screen.timings.modes[screen.current], address, screen.pitch, Waiter{ .screen = screen });
             switch (failure) {
                 .none => screen.scanning = address,
                 .power => exec.kprintf(screen.sys, "%s: the display's power domain did not come on\n", .{MODULE_NAME}),
+                .clock => exec.kprintf(screen.sys, "%s: the HDMI transmitter's PLL makes no such pixel clock\n", .{MODULE_NAME}),
                 .pll => exec.kprintf(screen.sys, "%s: the HDMI transmitter's PLL did not lock\n", .{MODULE_NAME}),
             }
             if (failure == .none and !jh7110.monitor()) {

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 //! The JH7110's true random number generator, in its security block
 //! (CHIP_JH7110_TRNG): a noise source that seeds a generator, which gives
-//! 256 bits a request. The kernel starts it once (`start`): its two bus
-//! clocks on and its reset released in the STG clock and reset generator,
+//! 256 bits a request. The kernel starts it once (`start`), before exec
+//! runs and before the other harts take tasks: its two bus clocks on and
+//! its reset released in the STG clock and reset generator (`system`),
 //! 256-bit mode, a first seeding. After that `rng` asks it for numbers
 //! (`generate`). It is polled; its interrupt, PLIC source 30, stays off.
 //! The registers by the names of Linux's driver (jh7110-trng.c).
 
 const reg = @import("mmio.zig").reg;
+const system = @import("system.zig");
 
 const CTRL = 0x00;
 const STAT = 0x04;
@@ -30,17 +32,6 @@ const IE_ALL: u32 = 1 << 31 | 1 << 4 | 1 << 1 | 1 << 0;
 const ISTAT_RAND_RDY: u32 = 1 << 0;
 const ISTAT_SEED_DONE: u32 = 1 << 1;
 const ISTAT_LFSR_LOCKUP: u32 = 1 << 4;
-
-/// The STG clock and reset generator: the security block's AHB clocks
-/// (15 and 16; bit 31 lets one through) and its reset (3; set in ASSERT
-/// holds it, set in STATUS it is released).
-const STG_CRG: usize = 0x1023_0000;
-const CLK_SEC_AHB = STG_CRG + 15 * 4;
-const CLK_SEC_MISC_AHB = STG_CRG + 16 * 4;
-const CLK_ENABLE: u32 = 1 << 31;
-const RESET_ASSERT = STG_CRG + 0x74;
-const RESET_STATUS = STG_CRG + 0x78;
-const RESET_SEC_AHB: u32 = 1 << 3;
 
 /// The words one request gives.
 pub const words = 8;
@@ -83,11 +74,10 @@ fn reseed(base: usize) bool {
 /// The generator at `base` started: clocked, out of reset, in 256-bit
 /// mode and seeded. False if it did not seed.
 pub fn start(base: usize) bool {
-    reg(CLK_SEC_AHB).* |= CLK_ENABLE;
-    reg(CLK_SEC_MISC_AHB).* |= CLK_ENABLE;
-    reg(RESET_ASSERT).* &= ~RESET_SEC_AHB;
-    var tries: u32 = 0;
-    while (reg(RESET_STATUS).* & RESET_SEC_AHB == 0 and tries < patience) : (tries += 1) {}
+    system.clockOn(.stg, system.STGCLK_SEC_AHB);
+    system.clockOn(.stg, system.STGCLK_SEC_MISC_AHB);
+    system.releaseReset(.stg, system.STGRST_SEC_AHB);
+    _ = system.waitOutOfReset(.stg, system.STGRST_SEC_AHB);
     // No reseeding of its own: it reseeds when asked, here.
     at(base, AUTO_AGE).* = 0;
     at(base, AUTO_RQSTS).* = 0;

@@ -10,6 +10,7 @@ const reg = hardware.mmio.reg;
 const gpio = hardware.gpio;
 const system = hardware.system;
 const signals = hardware.signals;
+const ExecBase = @import("sdk").interface.exec.ExecBase;
 const Pins = @import("../sdmmc.zig").Pins;
 
 /// The controller's registers.
@@ -33,9 +34,12 @@ const signal_data = [4]u32{ signals.SDHOST_CDATA_10, signals.SDHOST_CDATA_11, si
 const signal_detect: u32 = signals.SDHOST_CARD_DETECT_N_1;
 const signal_write_protect: u32 = signals.SDHOST_CARD_WRITE_PRT_1;
 
-/// The controller clocked and through a reset.
-pub fn clockOn() void {
+/// The controller clocked and through a reset, under Disable: the system
+/// registers are shared with the other core's drivers.
+pub fn clockOn(sys: *ExecBase) void {
+    sys.Disable();
     system.enable(.sdio_host);
+    sys.Enable();
 }
 
 /// The controller's own clock: the 160 MHz source divided by `divider`,
@@ -55,8 +59,11 @@ pub fn controllerClock(divider: u32) void {
 /// goes both ways and keeps a pull-up, which is what an SD bus idles at;
 /// the clock is ours alone. A slot without a detect or a write-protect
 /// line tells the controller what it would have said: a card is in, and
-/// it may be written. Every set of pads will do.
-pub fn connect(pins: Pins) bool {
+/// it may be written. Every set of pads will do. Under Disable, as the
+/// matrix's registers are shared.
+pub fn connect(sys: *ExecBase, pins: Pins) bool {
+    sys.Disable();
+    defer sys.Enable();
     gpio.toMatrix(pins.clock);
     gpio.outputEnable(pins.clock, true);
     gpio.connectOut(pins.clock, signal_clock_out, false);

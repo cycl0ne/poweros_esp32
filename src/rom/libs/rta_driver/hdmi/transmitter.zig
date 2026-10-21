@@ -8,22 +8,15 @@
 //! with two channels, and the master clock with it at 256 times the rate.
 //! The monitor rebuilds the rate from the TMDS clock and two numbers sent
 //! with it, so that 128 times the rate is the TMDS clock times N over CTS.
-//! N is HDMI's own for 48000 Hz, 6144; CTS is the TMDS clock in kHz.
+//! N is HDMI's own for 48000 Hz, 6144; CTS is the TMDS clock in kHz -
+//! the mode's pixel clock, which the display driver's PLL is read back
+//! for, since the mode is the monitor's.
 //!
 //! After StarFive's starfive_hdmi_audio.c.
 
 const sdk = @import("sdk");
 const reg = sdk.hardware.mmio.reg;
 const display = @import("../../rtg_driver/fbboard/jh7110.zig");
-
-/// The power management unit and the VOUT domain's reset generator, to
-/// tell whether the transmitter is up: its domain on (bit 4), its reset
-/// let go (bit 9). Nothing in the domain answers while it is off, so the
-/// domain is asked first.
-const PMU_CURR_POWER_MODE: usize = 0x1703_0080;
-const DOMAIN_VOUT: u32 = 1 << 4;
-const VOUT_RESET_STATUS: usize = 0x295C_004C;
-const VOUTRST_HDMI_TX: u32 = 1 << 9;
 
 /// The transmitter: register n is at n times four.
 const HDMI: usize = 0x2959_0000;
@@ -47,8 +40,6 @@ const AUDIO_CTS = [3]usize{ 0x45, 0x46, 0x47 };
 /// The rates the transmitter names: 48000 Hz.
 const RATE_48K: u32 = 0x2;
 const N_48K: u32 = 6144;
-/// The TMDS clock of the one mode the display path has, in kHz.
-const CTS: u32 = display.pixel_clock_hz / 1000;
 
 fn hdmi(index: usize) *volatile u32 {
     return reg(HDMI + index * 4);
@@ -65,10 +56,10 @@ fn write20(registers: [3]usize, value: u32) void {
     hdmi(registers[2]).* = value & 0xFF;
 }
 
-/// Whether the display driver has the transmitter up.
+/// Whether the display driver has the transmitter up and sending a
+/// mode: its PLL set for a pixel clock.
 pub fn present() bool {
-    if (reg(PMU_CURR_POWER_MODE).* & DOMAIN_VOUT == 0) return false;
-    return reg(VOUT_RESET_STATUS).* & VOUTRST_HDMI_TX != 0;
+    return display.pixelClockKhz() != 0;
 }
 
 /// The transmitter set up for the stream at `rate` (`i2s.sample_rate`),
@@ -85,7 +76,7 @@ pub fn start(comptime rate: u32) void {
     hdmi(AUDIO_SAMPLE_RATE).* = RATE_48K;
     modify(AUDIO_I2S_MODE, I2S_INPUTS_MASK, I2S_INPUT0);
     write20(AUDIO_N, N_48K);
-    write20(AUDIO_CTS, CTS);
+    write20(AUDIO_CTS, display.pixelClockKhz());
     modify(AV_MUTE, AUDIO_MUTE, 0);
 }
 

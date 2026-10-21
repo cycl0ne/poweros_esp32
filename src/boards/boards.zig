@@ -4,7 +4,8 @@
 //! its system tag list (a ROM tag of its own, which expansion.library
 //! reads), and `romtags.zig`, the drivers its parts want in the image. A
 //! board whose firmware needs something done before it resets the machine
-//! has `reset.zig` too (`before_reset`).
+//! has `reset.zig` too (`before_reset`), and one that sets its cores'
+//! supply itself `power.zig` (`cpu_supply`).
 //!
 //! The kernel's own code reads the same list at compile time, through
 //! `fact` and `partFact`, so a fact is written once whoever reads it.
@@ -45,6 +46,14 @@ pub const romtags = switch (build_options.board) {
 /// What the board does before the firmware resets the machine, or null.
 pub const before_reset: ?*const fn () void = switch (build_options.board) {
     .visionfive2 => @import("visionfive2/reset.zig").prepare,
+    else => null,
+};
+
+/// How the board sets its cores' supply, in microvolts, for the clock it
+/// asks for (SYSTAG_CpuSpeed): true once the supply is there. Null where
+/// the board has no say in it.
+pub const cpu_supply: ?*const fn (microvolts: u32) bool = switch (build_options.board) {
+    .visionfive2 => @import("visionfive2/power.zig").setCpuSupply,
     else => null,
 };
 

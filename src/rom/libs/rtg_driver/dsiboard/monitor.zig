@@ -27,6 +27,8 @@
 //! The largest mode the monitor takes is the one shown; one that names
 //! none of them gets the board's own, 800x600 on VESA's timings.
 
+const edid = @import("../edid.zig");
+
 /// A mode as the DSI board drives it: the picture, its timings in pixel
 /// clocks and lines, the sync polarity, the pixel clock, and the lane rate
 /// on two lanes.
@@ -63,93 +65,12 @@ pub const modes = [_]Mode{
     .{ .width = 1024, .height = 768, .pixel_hz = 60_000_000, .hsync = 136, .hbp = 56, .hfp = 24, .vsync = 6, .vbp = 29, .vfp = 3, .hsync_high = false, .vsync_high = false, .lane_mbps = 960 },
 };
 
-pub const Edid = [128]u8;
+pub const Edid = edid.Block;
 
 /// Whether the monitor's EDID - its first block, and the extension when
-/// it has one - names `mode`.
+/// it has one - names `mode`, at 60 Hz (`edid.takes`).
 pub fn takes(first: *const Edid, extension: ?*const Edid, mode: *const Mode) bool {
-    if (established(first, mode)) return true;
-    if (standard(first, mode)) return true;
-    if (detailedIn(first, 54, mode)) return true;
-    if (extension) |cea| {
-        if (cea[0] == 0x02) {
-            if (mode.vic != 0 and videoCodes(cea, mode.vic)) return true;
-            if (detailedIn(cea, cea[2], mode)) return true;
-        }
-    }
-    return false;
-}
-
-/// The established timings: bytes 35-37, a bit a mode.
-fn established(edid: *const Edid, mode: *const Mode) bool {
-    if (mode.width == 800 and mode.height == 600) return edid[35] & 0x01 != 0;
-    if (mode.width == 1024 and mode.height == 768) return edid[36] & 0x08 != 0;
-    return false;
-}
-
-/// The standard timings: bytes 38-53, two bytes each - the width as
-/// (pixels / 8) - 31, then the aspect (16:10, 4:3, 5:4, 16:9) and the
-/// refresh less 60. The form cannot say 1360x768: 1360 at 16:9 is 765
-/// lines, and a monitor naming 765 means 768.
-fn standard(edid: *const Edid, mode: *const Mode) bool {
-    var at: usize = 38;
-    while (at < 54) : (at += 2) {
-        const first = edid[at];
-        const second = edid[at + 1];
-        if (first == 0x01 and second == 0x01) continue;
-        const width = (@as(u32, first) + 31) * 8;
-        const by_aspect: u32 = switch (second >> 6) {
-            0 => width * 10 / 16,
-            1 => width * 3 / 4,
-            2 => width * 4 / 5,
-            else => width * 9 / 16,
-        };
-        const height: u32 = if (width == 1360 and by_aspect == 765) 768 else by_aspect;
-        if (width == mode.width and height == mode.height and second & 0x3F == 0) return true;
-    }
-    return false;
-}
-
-/// The detailed timings in `block` from byte `start` on, 18 bytes each, up
-/// to the block's checksum; a descriptor whose clock is 0 is something
-/// else and is passed over. Taken at 60 Hz, give or take a hertz.
-fn detailedIn(block: *const Edid, start: usize, mode: *const Mode) bool {
-    if (start < 4) return false;
-    var at = start;
-    while (at + 18 <= 127) : (at += 18) {
-        const timing = block[at..][0..18];
-        const clock_10khz = @as(u32, timing[1]) << 8 | timing[0];
-        if (clock_10khz == 0) continue;
-        const h_active = @as(u32, timing[4] >> 4) << 8 | timing[2];
-        const h_blank = @as(u32, timing[4] & 0xF) << 8 | timing[3];
-        const v_active = @as(u32, timing[7] >> 4) << 8 | timing[5];
-        const v_blank = @as(u32, timing[7] & 0xF) << 8 | timing[6];
-        if (h_active != mode.width or v_active != mode.height) continue;
-        const total = (h_active + h_blank) * (v_active + v_blank);
-        if (total == 0) continue;
-        const millihertz = @as(u64, clock_10khz) * 10_000 * 1000 / total;
-        if (millihertz >= 59_000 and millihertz <= 61_000) return true;
-    }
-    return false;
-}
-
-/// The extension's short video descriptors: in its data block collection
-/// (from byte 4 to the byte its third names), the blocks of tag 2, a
-/// byte a mode, the code in its low seven bits.
-fn videoCodes(cea: *const Edid, vic: u8) bool {
-    const end = @min(@as(usize, cea[2]), 127);
-    var at: usize = 4;
-    while (at < end) {
-        const tag = cea[at] >> 5;
-        const length = cea[at] & 0x1F;
-        if (tag == 2) {
-            for (cea[at + 1 ..][0..length]) |code| {
-                if (code & 0x7F == vic) return true;
-            }
-        }
-        at += 1 + length;
-    }
-    return false;
+    return edid.takes(first, extension, .{ .width = mode.width, .height = mode.height, .vic = mode.vic });
 }
 
 /// The largest of `modes` the monitor takes; null for none of them.

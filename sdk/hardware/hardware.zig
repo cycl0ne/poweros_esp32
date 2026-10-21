@@ -104,6 +104,14 @@ pub const ccache = if (chip == .rv64sbi) own.ccache else struct {};
 /// them (the JH7110's; dma.resource hands them out). The ESP32s' DMA is
 /// `gdma`'s and `dma2d`'s, so there it is empty.
 pub const dwdma = if (chip == .rv64sbi) own.dwdma else struct {};
+/// The DesignWare I2C controller as a bus master that waits for its own
+/// transfers (the JH7110's; its power controller is on one). The ESP32s'
+/// I2C is `i2c`'s, so there it is empty.
+pub const dwi2c = if (chip == .rv64sbi) own.dwi2c else struct {};
+/// The cores' clock set to one of the chip's operating points, with the
+/// board's supply for it (the JH7110's). The ESP32s' CPU clock is the
+/// boot's, so there it is empty.
+pub const cpuclock = if (chip == .rv64sbi) own.cpuclock else struct {};
 /// The PSCI firmware's calls (the cores' start and stop, reset) and the
 /// generic interrupt controller (GICv2): the AArch64 machines'. The
 /// others have neither, so there they are empty.

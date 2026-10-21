@@ -7,7 +7,8 @@
 //!
 //! RTC slow memory - 8 KiB at 0x5000_0000 - keeps through the same resets;
 //! `clock_memory` is the part of it a clock that runs on this count keeps
-//! its reckoning in.
+//! its reckoning in, `batt_memory` the part battmem.resource keeps its
+//! bits in.
 //!
 //! From ESP-IDF v6.1's hal/rtc_timer_ll.h and soc/rtc_cntl_reg.h.
 
@@ -34,3 +35,7 @@ pub fn count() u64 {
 /// Guru keep: 64 bytes for the clock's reckoning.
 pub const clock_memory: usize = 0x5000_1000;
 pub const clock_memory_size: usize = 64;
+
+/// The 64 bytes after the clock's: battmem.resource's bits.
+pub const batt_memory: usize = 0x5000_1040;
+pub const batt_memory_size: usize = 64;

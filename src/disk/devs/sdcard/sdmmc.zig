@@ -29,6 +29,7 @@
 
 const hardware = @import("sdk").hardware;
 const reg = hardware.mmio.reg;
+const ExecBase = @import("sdk").interface.exec.ExecBase;
 const chip_host = switch (hardware.chip) {
     .esp32s3 => @import("esp32s3/sdhost.zig"),
     .esp32p4 => @import("esp32p4/sdhost.zig"),
@@ -227,12 +228,14 @@ pub const Started = enum { ready, no_controller, pads_refused };
 ///
 /// The controller's own clock and the phases it works to are the chip's
 /// (`controllerClock`). Without a detect line, whether a card is really
-/// there is found out by trying to identify one.
-pub fn init(pins: Pins) Started {
-    if (!present()) return .no_controller;
+/// there is found out by trying to identify one. `sys` is exec's: what
+/// the chip shares with other drivers - its clock and reset words, its
+/// pads' - changes under Disable.
+pub fn init(sys: *ExecBase, pins: Pins) Started {
+    if (!present(sys)) return .no_controller;
     chip_host.controllerClock(clock_div);
     reset();
-    if (!chip_host.connect(pins)) return .pads_refused;
+    if (!chip_host.connect(sys, pins)) return .pads_refused;
 
     // Power on, one card, nothing in eight-bit mode, and the longest
     // timeouts there are: a card may take a while over a write, and a
@@ -252,8 +255,8 @@ pub fn init(pins: Pins) Started {
 /// Whether the machine has the controller: its clock on, out of reset,
 /// and asked for its version, which a machine without one - the emulator
 /// - answers with nothing.
-pub fn present() bool {
-    chip_host.clockOn();
+pub fn present(sys: *ExecBase) bool {
+    chip_host.clockOn(sys);
     const id = reg(verid).*;
     return id != 0 and id != 0xFFFF_FFFF;
 }

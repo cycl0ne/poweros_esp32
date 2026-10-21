@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT
+//! battmem.resource's functions: a few hundred bits of settings kept where
+//! no file has to be read to get them - memory that a reset leaves alone,
+//! where the chip has some, and plain memory where it has none. A
+//! resource: no Open or Close, its first function in the first slot. The
+//! base comes from OpenResource("battmem.resource").
+##include resources/battmem as battmem
+##basetype BattMemBase
+##name battmem.resource
+##bias 0
+##public
+/// The bits to this task alone, for a read and the write that depends on
+/// it; held again by the same task, it is released as often.
+void ObtainBattSemaphore()
+/// Give the bits back.
+void ReleaseBattSemaphore()
+/// `length` bits from bit `offset` into `buffer`, from its first byte's
+/// bit 0 up; 0, or BATTMEMERR_RANGE when they run past the end.
+u32 ReadBattMem([*]u8 buffer, u32 offset, u32 length)
+/// `length` bits from `buffer` to bit `offset` on; 0, or BATTMEMERR_RANGE
+/// when they run past the end.
+u32 WriteBattMem([*]const u8 buffer, u32 offset, u32 length)
+##end

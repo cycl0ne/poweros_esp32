@@ -117,6 +117,8 @@ const dos = sdk.dos;
 const exec = sdk.exec;
 const trackdisk = sdk.devices.trackdisk;
 const inputevent = sdk.devices.inputevent;
+const battmem = sdk.resources.battmem;
+const battmembits = sdk.resources.battmembits;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
@@ -131,8 +133,8 @@ const cache_area = @import("cache.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 10;
-const BUILD_DATE = "18.10.2026";
+const HANDLER_REVISION = 11;
+const BUILD_DATE = "20.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -167,6 +169,8 @@ pub const DeviceMedia = struct {
     dos_type: u32 = dos.ID_MSDOS_DISK,
     /// The most bytes one command may move (de_MaxTransfer).
     max_transfer: u64 = std.math.maxInt(u32),
+    /// battmem.resource, where the time zone is, once it has been found.
+    batt_mem: ?*battmem.BattMemBase = null,
 
     pub const Area = struct { first: u64, bytes: u64 };
 
@@ -289,27 +293,20 @@ pub const DeviceMedia = struct {
         media.sys.FreeVec(block.ptr);
     }
 
-    /// The zone the system clock keeps: the rule in the zone file, the
-    /// one C:net/TimeSync sets the clock by. UTC with no file, or with one
-    /// that holds no rule.
+    /// The zone the system clock keeps, as battmem.resource holds it
+    /// (BATTMEM_ZONE, which `C:SetClock ZONE` writes from the zone file):
+    /// a call, not a file, since the zone file may be on this very
+    /// volume, and reading it would wait on the handler itself. UTC while
+    /// nobody wrote it.
     pub fn timeZone(media: *DeviceMedia) dos.timezone.Zone {
-        const file = media.dl.Open(dos.timezone.zone_file, dos.MODE_OLDFILE) orelse return .{};
-        defer _ = media.dl.Close(file);
-        var text: [256]u8 = undefined;
-        const got = media.dl.Read(file, &text, text.len);
-        if (got <= 0) return .{};
-        var rest: []const u8 = text[0..@intCast(got)];
-        while (rest.len > 0) {
-            var end: usize = 0;
-            while (end < rest.len and rest[end] != '\n') end += 1;
-            var line = rest[0..end];
-            rest = if (end < rest.len) rest[end + 1 ..] else rest[rest.len..];
-            while (line.len > 0 and (line[line.len - 1] == '\r' or line[line.len - 1] == ' ' or line[line.len - 1] == '\t')) line = line[0 .. line.len - 1];
-            while (line.len > 0 and (line[0] == ' ' or line[0] == '\t')) line = line[1..];
-            if (line.len == 0 or line[0] == '#') continue;
-            return dos.timezone.parse(line) orelse .{};
-        }
-        return .{};
+        const mb = media.batt_mem orelse found: {
+            const base: *battmem.BattMemBase = @ptrCast(media.sys.OpenResource(battmem.BATTMEMNAME) orelse return .{});
+            media.batt_mem = base;
+            break :found base;
+        };
+        var bits: u64 = 0;
+        if (mb.ReadBattMem(@ptrCast(&bits), battmembits.BATTMEM_ZONE_ADDR, battmembits.BATTMEM_ZONE_LEN) != 0) return .{};
+        return dos.timezone.unpack(bits) orelse .{};
     }
 
     pub fn now(media: *DeviceMedia) dos.DateStamp {

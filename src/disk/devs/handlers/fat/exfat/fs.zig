@@ -29,10 +29,17 @@
 //!   up to its size it reads as zeroes.** Growing a file with
 //!   SET_FILE_SIZE only moves the size; writing past the valid length
 //!   writes the zeroes in between first.
-//! - **What a packet changed is on the medium before it is answered**, and
-//!   what a change takes goes down before what names it - the file's
-//!   bytes, the bitmap and the table, then the entry set - and what it
-//!   gives back the other way round (`fat.zig` says why).
+//! - **What a packet changed is on the medium before it is answered** -
+//!   but for a file's lengths while it is written: a write that only
+//!   moves them leaves them in the key, and the entry set gets them when
+//!   the chain takes a cluster, at a FLUSH, and with the date when the
+//!   file is closed. A card pulled in between has the file shorter by at
+//!   most the clusters' worth, and the volume marked dirty. What a change
+//!   takes goes down before what names it - the file's bytes, the bitmap
+//!   and the table, then the entry set - and what it gives back the other
+//!   way round (`fat.zig` says why). A sector a write covers only part of
+//!   goes through the cache and back to the medium at once, so the next
+//!   small write to it does not read it again.
 //! - **The volume is marked dirty on the medium** before the first change
 //!   and clean again once a packet leaves nothing half done - no file open
 //!   that has been written to. A volume that was dirty when it was mounted
@@ -40,7 +47,9 @@
 //! - **Names** are `names.zig`'s: a name dos can hold as it is, otherwise
 //!   its stand-in.
 //! - **Moments are local time, in the system's zone** (the medium's
-//!   `timeZone`, the rule the system clock is set by). A moment on the
+//!   `timeZone`, the rule the system clock is set by, asked each time a
+//!   moment is turned: battmem.resource's, not a file, so the zone is
+//!   there for a volume that holds the zone file itself). A moment on the
 //!   medium that says which zone it is in - its zone byte - is taken back
 //!   to UTC with that zone and on into the system's; one that does not is
 //!   shown as it is. What this writes is local time with the system's
@@ -258,8 +267,6 @@ pub fn FileSystem(comptime Media: type) type {
         found_dirty: bool = false,
         /// The medium's change count when the volume was read.
         change_num: u32 = 0,
-        /// The zone the system clock keeps, read when the volume is.
-        zone: timezone.Zone = .{},
         /// The volume's name, as the device list shows it.
         name_buf: [fat.exfat_label_max * 2]u8 = @splat(0),
         name_len: usize = 0,
@@ -324,7 +331,6 @@ pub fn FileSystem(comptime Media: type) type {
             fs.geo = try Geometry.of(fs.sector, volume.first, fs.media.blocks(), block_bytes);
             if (!layout.checksumHolds(fs.media, volume.first, fs.sector)) return error.MediumFailed;
             fs.found_dirty = fs.geo.flags & fat.exfat_volume_dirty != 0;
-            fs.zone = fs.media.timeZone();
             fs.dirty = false;
 
             // A size set while no card was in is tried only now; when its
@@ -384,6 +390,7 @@ pub fn FileSystem(comptime Media: type) type {
             fs.forsakeAll();
             if (fs.mounted) {
                 if (write_back) {
+                    fs.syncKeys() catch {};
                     _ = fs.cache.flush() catch {};
                     _ = fs.media.update();
                     fs.clearDirty();
@@ -994,8 +1001,9 @@ pub fn FileSystem(comptime Media: type) type {
             const local = secondsOf(_fat.dateOf(fs.ub, dir_area.stampOf(moment)));
             // The offset is the zone's at that moment in UTC; the standard
             // offset is near enough to find which it is.
-            const utc = local - fs.zone.standard;
-            const offset = fs.zone.offsetAt(utc + timezone.datestamp_epoch);
+            const rule = fs.media.timeZone();
+            const utc = local - rule.standard;
+            const offset = rule.offsetAt(utc + timezone.datestamp_epoch);
             const quarters: i8 = @intCast(@divTrunc(offset, 900));
             return fat.exfat_utc_valid | (@as(u8, @bitCast(quarters)) & 0x7F);
         }
@@ -1008,7 +1016,8 @@ pub fn FileSystem(comptime Media: type) type {
             const raw: i32 = zone & 0x7F;
             const quarters: i32 = if (raw & 0x40 != 0) raw - 128 else raw;
             const utc = secondsOf(stored) - @as(i64, quarters) * 900;
-            return dateStampOf(utc + fs.zone.offsetAt(utc + timezone.datestamp_epoch));
+            const rule = fs.media.timeZone();
+            return dateStampOf(utc + rule.offsetAt(utc + timezone.datestamp_epoch));
         }
 
         /// What a key says - where its data is, how much, its attributes -
@@ -1027,6 +1036,13 @@ pub fn FileSystem(comptime Media: type) type {
             set.setAttributes(key.attr);
             try fs.dirs.writeSet(parent.dir(), key.index, &set);
             key.changed = false;
+        }
+
+        /// Every key whose entry set a write left behind its lengths,
+        /// caught up: at a FLUSH, and before the volume is let go.
+        fn syncKeys(fs: *Fs) Error!void {
+            var it = fs.keys;
+            while (it) |key| : (it = key.next) try fs.syncKey(key, null);
         }
 
         /// A directory one cluster longer: taken, cleared, and its length
@@ -1284,30 +1300,37 @@ pub fn FileSystem(comptime Media: type) type {
                 const block = fs.geo.clusterBlock(cluster) + sector;
                 const left = len - done;
                 var count: u64 = undefined;
-                if (in_sector == 0 and left >= sector_bytes and from != null) {
-                    // Whole sectors, to the end of this cluster at most.
-                    const sectors: u64 = @min(@min(left / sector_bytes, fs.geo.sectors_per_cluster - sector), max_run_sectors);
-                    count = sectors * sector_bytes;
-                    const start: usize = @intCast(done);
-                    fs.cache.writeRun(block, @intCast(sectors), from.?[start..][0..@intCast(count)]) catch return error.MediumFailed;
+                if (in_sector == 0 and left >= sector_bytes) {
+                    if (from) |bytes| {
+                        // Whole sectors, to the end of this cluster at most.
+                        const sectors: u64 = @min(@min(left / sector_bytes, fs.geo.sectors_per_cluster - sector), max_run_sectors);
+                        count = sectors * sector_bytes;
+                        const start: usize = @intCast(done);
+                        fs.cache.writeRun(block, @intCast(sectors), bytes[start..][0..@intCast(count)]) catch return error.MediumFailed;
+                    } else {
+                        // A sector of zeroes, through the one-sector buffer.
+                        count = sector_bytes;
+                        @memset(fs.sector, 0);
+                        fs.cache.writeRun(block, 1, fs.sector) catch return error.MediumFailed;
+                    }
                 } else {
-                    // Part of a sector, or zeroes: through the one-sector
-                    // buffer, with what is there read first if the sector
-                    // holds any of what has been written.
+                    // Part of a sector: in the cache, what is there read
+                    // first if the sector holds any of what has been
+                    // written, and the rest zeroes otherwise; back on the
+                    // medium at once.
                     count = @min(left, sector_bytes - in_sector);
                     const sector_start = at - in_sector;
-                    if (sector_start < key.valid and (in_sector != 0 or count != sector_bytes)) {
-                        fs.cache.readRun(block, 1, fs.sector) catch return error.MediumFailed;
-                    } else {
-                        @memset(fs.sector, 0);
-                    }
+                    const held = if (sector_start < key.valid)
+                        fs.cache.getForWrite(block) catch return error.MediumFailed
+                    else
+                        fs.cache.fresh(block) catch return error.MediumFailed;
                     const n: usize = @intCast(count);
                     if (from) |bytes| {
-                        @memcpy(fs.sector[in_sector..][0..n], bytes[@intCast(done)..][0..n]);
+                        @memcpy(held[in_sector..][0..n], bytes[@intCast(done)..][0..n]);
                     } else {
-                        @memset(fs.sector[in_sector..][0..n], 0);
+                        @memset(held[in_sector..][0..n], 0);
                     }
-                    fs.cache.writeRun(block, 1, fs.sector) catch return error.MediumFailed;
+                    fs.cache.writeBackBlock(block) catch return error.MediumFailed;
                 }
                 done += count;
                 at += count;
@@ -1327,6 +1350,7 @@ pub fn FileSystem(comptime Media: type) type {
             var place = lock.place();
             defer lock.setPlace(place);
             lock.modified = true;
+            const clusters = key.clusters;
             // What lies between what has been written and where this goes
             // has to read as zeroes once the valid length passes it.
             if (lock.pos > key.valid) {
@@ -1335,11 +1359,14 @@ pub fn FileSystem(comptime Media: type) type {
             }
             try fs.put(key, &place, lock.pos, buffer, len);
             lock.pos += len;
-            // The bytes went straight to the medium; the bitmap and the
-            // table follow them there, and only then the entry set that
-            // counts on all of it.
-            try fs.writeBack();
-            try fs.syncKey(key, null);
+            // The bytes went to the medium. When the chain took clusters
+            // the bitmap and the table follow them there, and then the
+            // entry set that counts on all of it; lengths alone wait in
+            // the key (`syncKeys`).
+            if (key.clusters != clusters) {
+                try fs.writeBack();
+                try fs.syncKey(key, null);
+            }
             return @intCast(len);
         }
 
@@ -1821,7 +1848,10 @@ pub fn FileSystem(comptime Media: type) type {
                     fs.info(@ptrFromInt(ptrArg(raw[0]))) catch |err| return no(err);
                     return yes();
                 },
-                .flush => return yes(),
+                .flush => {
+                    fs.syncKeys() catch |err| return no(err);
+                    return yes();
+                },
                 .add_notify => {
                     const request: ?*notify.NotifyRequest = @ptrFromInt(ptrArg(raw[0]));
                     fs.addNotify(request orelse return no(error.NotFound)) catch |err| return no(err);

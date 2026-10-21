@@ -32,6 +32,9 @@ Assign >NIL: FONTS: SYS:fonts
 ; running system reads live in RAM:, and start as a copy of them.
 Assign >NIL: ENVARC: SYS:Prefs/Env-Archive
 C:Copy >NIL: ENVARC: RAM:ENV ALL QUIET NOREQ
+; The time zone where a file system reads it without a file: exFAT writes
+; each moment with its offset from UTC.
+C:SetClock >NIL: ZONE
 
 Assign >NIL: ENV: RAM:ENV
 Assign >NIL: T: RAM:T

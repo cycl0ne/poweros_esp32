@@ -17,7 +17,8 @@
 //! own. So those two go different ways: a table or directory block
 //! through `get`, which keeps it, and a file's bytes through `readRun`,
 //! which does not. A cache that held file data would be flushed out by
-//! every large copy and hold nothing worth holding.
+//! every large copy and hold nothing worth holding - but for a sector a
+//! write covers only part of, which the next small write goes back to.
 //!
 //! **The two ways it can go wrong** are both about the runs that bypass
 //! it, and both are handled here rather than left to the callers:
@@ -235,8 +236,11 @@ pub fn BlockCache(comptime Media: type) type {
         /// `lba`'s bytes for a caller that is going to write all of them:
         /// the block is claimed and zeroed rather than read in, because
         /// reading what is about to be overwritten is a wasted block read.
+        /// A block held already is zeroed too: it may be a file's sector
+        /// whose cluster has since become a directory's.
         pub fn fresh(self: *Self, lba: u64) Error![]u8 {
             const bytes = try self.load(lba, false);
+            @memset(bytes, 0);
             const at = self.find(lba).?;
             self.slots[at].dirty = true;
             return @constCast(bytes);
@@ -261,6 +265,13 @@ pub fn BlockCache(comptime Media: type) type {
             }
             self.touch(at);
             return bytes;
+        }
+
+        /// `lba` back on the medium now if it is held and changed: a
+        /// block that must be there before the packet goes on, while the
+        /// others wait.
+        pub fn writeBackBlock(self: *Self, lba: u64) Error!void {
+            if (self.find(lba)) |at| try self.writeBack(at);
         }
 
         /// Every changed block back on the medium.
@@ -371,6 +382,28 @@ test "a changed block goes back, and only when it has to" {
     try testing.expectEqual(@as(u8, 0xAB), back[0]);
 }
 
+test "one block written back alone, the others left changed" {
+    var media: TestMedia = undefined;
+    var cache = try setUp(&media);
+    defer media.deinit();
+    defer cache.deinit();
+
+    (try cache.getForWrite(20))[0] = 1;
+    (try cache.getForWrite(21))[0] = 2;
+    try cache.writeBackBlock(21);
+    try testing.expectEqual(@as(u64, 1), media.blocks_written);
+    // Once more, or for a block not held, nothing.
+    try cache.writeBackBlock(21);
+    try cache.writeBackBlock(99);
+    try testing.expectEqual(@as(u64, 1), media.blocks_written);
+    // Still held: the next change to it is not a read.
+    const reads = media.reads;
+    (try cache.getForWrite(21))[1] = 3;
+    try testing.expectEqual(reads, media.reads);
+    _ = try cache.flush();
+    try testing.expectEqual(@as(u64, 3), media.blocks_written);
+}
+
 test "the block used longest ago is the one pushed out, and it is written back" {
     var media: TestMedia = undefined;
     var cache = try setUp(&media);
@@ -448,6 +481,11 @@ test "a fresh block is not read from the medium first" {
     try testing.expectEqual(@as(u64, 0), media.blocks_read);
     // Zeroed, not what was there.
     try testing.expectEqual(@as(u8, 0), bytes[0]);
+
+    // Held already, and changed: zeroed all the same.
+    (try cache.getForWrite(81))[5] = 0x55;
+    const again = try cache.fresh(81);
+    for (again) |byte| try testing.expectEqual(@as(u8, 0), byte);
 }
 
 test "what a card that has gone holds is dropped, not written to its replacement" {

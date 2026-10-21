@@ -37,7 +37,9 @@ pub const SYSTAG_Console = SYSTAG_Dummy + 5;
 /// One part: `ti_Data` is its tag list. Given once per part.
 pub const SYSTAG_Part = SYSTAG_Dummy + 6;
 /// The screen the machine runs, in pixels: the panel's own size, or the
-/// two exchanged for a panel mounted on its side.
+/// two exchanged for a panel mounted on its side. Left out where the
+/// monitor says (a port whose board reads its EDID): the screen is then
+/// the board's default mode.
 pub const SYSTAG_ScreenWidth = SYSTAG_Dummy + 7;
 pub const SYSTAG_ScreenHeight = SYSTAG_Dummy + 8;
 /// Where the flash disk starts on the chip, in bytes: flash.device's unit
@@ -114,6 +116,12 @@ pub const SYSTAG_DmaLimit = SYSTAG_Dummy + 30;
 /// from SYSTAG_RamBase, before it has read the tree. Absent,
 /// SYSTAG_RamBase + SYSTAG_RamSize.
 pub const SYSTAG_RamEnd = SYSTAG_Dummy + 31;
+/// The cores' clock the board wants, in MHz: a speed its chip has an
+/// operating point for, which the kernel sets as it starts - before
+/// anything else runs - with the supply the point wants, through the
+/// board's own code. The JH7110: 1000, as its firmware leaves it, or
+/// 1500. Absent, 0: the clock is left as the firmware left it.
+pub const SYSTAG_CpuSpeed = SYSTAG_Dummy + 32;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;
@@ -352,6 +360,11 @@ pub const PARTKIND_PCI: u32 = 21;
 /// PART_Chip which, PART_Address its registers (BUS_MEMORY), PART_Irq the
 /// interrupt its channels share.
 pub const PARTKIND_DMA: u32 = 22;
+/// A temperature sensor, which thermal.resource reads: PART_Chip which,
+/// PART_Address its registers (BUS_MEMORY), PART_Label what it measures
+/// ("SoC"). The board's sensors are thermal.resource's units in the order
+/// the board lists them.
+pub const PARTKIND_THERMAL: u32 = 23;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -440,6 +453,10 @@ pub const CHIP_JH7110_HDMI: u32 = 30;
 /// channels (PARTKIND_DMA on BUS_MEMORY), which dma.resource clocks and
 /// hands out as its DWDMA channels.
 pub const CHIP_JH7110_DMAC: u32 = 31;
+/// The JH7110's own temperature sensor (PARTKIND_THERMAL on BUS_MEMORY),
+/// beside its cores: one reading, 12 bits, which thermal.resource clocks
+/// and turns into degrees.
+pub const CHIP_JH7110_TEMP: u32 = 32;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

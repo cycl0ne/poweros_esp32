@@ -16,6 +16,8 @@ pub const intbits = @import("intbits.zig");
 pub const mmio = @import("mmio.zig");
 pub const map = @import("map.zig");
 pub const system = @import("system.zig");
+pub const gpio = @import("gpio.zig");
+pub const signals = @import("signals.zig");
 pub const uart = @import("uart.zig");
 pub const cpu = @import("cpu.zig");
 pub const sbi = @import("sbi.zig");
@@ -26,6 +28,8 @@ pub const rng = @import("rng.zig");
 pub const trng = @import("trng.zig");
 pub const ccache = @import("ccache.zig");
 pub const dwdma = @import("dwdma.zig");
+pub const dwi2c = @import("dwi2c.zig");
+pub const cpuclock = @import("cpuclock.zig");
 
 /// A data cache line, in bytes: the U74's, and QEMU's as it reports one.
 pub const DCACHE_LINE_SIZE = 64;

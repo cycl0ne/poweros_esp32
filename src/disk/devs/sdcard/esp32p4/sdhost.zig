@@ -22,6 +22,7 @@ const hardware = @import("sdk").hardware;
 const gpio = hardware.gpio;
 const system = hardware.system;
 const signals = hardware.signals;
+const ExecBase = @import("sdk").interface.exec.ExecBase;
 const Pins = @import("../sdmmc.zig").Pins;
 
 /// The controller's registers.
@@ -58,9 +59,12 @@ const slot_data = [4]u8{ 39, 40, 41, 42 };
 /// Their IO_MUX function: the controller's.
 const slot_function: u3 = 0;
 
-/// The controller clocked and through a reset.
-pub fn clockOn() void {
+/// The controller clocked and through a reset, under Disable: the clock
+/// and reset registers are shared with the other core's drivers.
+pub fn clockOn(sys: *ExecBase) void {
+    sys.Disable();
     system.enable(.sdmmc);
+    sys.Enable();
 }
 
 /// The controller's own clock: the 160 MHz PLL divided by `divider`, and
@@ -91,12 +95,15 @@ fn pulseUpdate() void {
 /// pull-up, which is what an SD bus idles at. Every line drives at full
 /// strength, as the controller's lines want at speed. A slot without a
 /// detect or a write-protect line tells the controller what it would
-/// have said: a card is in, and it may be written.
-pub fn connect(pins: Pins) bool {
+/// have said: a card is in, and it may be written. Under Disable, as the
+/// matrix's registers are shared.
+pub fn connect(sys: *ExecBase, pins: Pins) bool {
     if (pins.clock != slot_clock or pins.command != slot_command) return false;
     for (pins.data, slot_data) |pin, wanted| {
         if (pin != wanted) return false;
     }
+    sys.Disable();
+    defer sys.Enable();
     toController(pins.clock, false);
     toController(pins.command, true);
     for (pins.data) |pin| toController(pin, true);
