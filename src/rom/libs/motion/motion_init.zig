@@ -18,9 +18,10 @@ pub const LIBRARY_VERSION = 1;
 /// 1: easing (Ease, EaseBezier). 2: animations (CreateAnimationTagList
 /// and the calls on one), MixColour and MixRect. 3: timers
 /// (CreateTimerTagList and the calls on one). 4: timelines
-/// (CreateTimelineTagList and the calls on one).
-pub const LIBRARY_REVISION = 4;
-const BUILD_DATE = "02.10.2026";
+/// (CreateTimelineTagList and the calls on one). 5: the clock task's
+/// stack is the system's, not the first caller's.
+pub const LIBRARY_REVISION = 5;
+const BUILD_DATE = "22.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

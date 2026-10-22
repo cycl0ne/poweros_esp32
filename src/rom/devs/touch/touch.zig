@@ -58,8 +58,8 @@ const BoardPin = expansion.BoardPin;
 
 pub const DEVICE_NAME = touch.TOUCHNAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
-const BUILD_DATE = "19.9.2026";
+const DEVICE_REVISION = 1;
+const BUILD_DATE = "22.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -678,8 +678,9 @@ fn armTick(tb: *TouchBase) void {
 fn start(tb: *TouchBase) bool {
     const sys = tb.sys_base;
     if (tb.started != 0) return tb.ready != 0;
+    // The task's stack is the system's, not the first opener's.
     const stack = tb.stack orelse blk: {
-        const s = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return false;
+        const s = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return false;
         tb.stack = s;
         break :blk s;
     };

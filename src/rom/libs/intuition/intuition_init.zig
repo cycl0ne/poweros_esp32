@@ -122,8 +122,10 @@ pub const LIBRARY_VERSION = 0;
 /// every window that asks (IDCMP_USBCHANGE, WMHI_USBCHANGE).
 /// 49: what a screen's pixels are, read from it (SA_PixelFormat) or from
 /// a window on it (WA_PixelFormat).
-pub const LIBRARY_REVISION = 49;
-const BUILD_DATE = "20.10.2026";
+/// 50: input.device and the input and pointer tasks' stacks, started with
+/// the first screen, are the system's, not that screen's opener's.
+pub const LIBRARY_REVISION = 50;
+const BUILD_DATE = "22.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

@@ -45,9 +45,10 @@ const qemu_rgb = if (emulated) sdk.hardware.qemu_rgb else struct {};
 pub const DEVICE_NAME = kb.KEYBOARDNAME;
 const DEVICE_VERSION = 1;
 /// 1: sources (KBDF_SOURCE, KBD_ADDEVENT, KBD_READSOURCES), and on every
-/// board.
-const DEVICE_REVISION = 1;
-const BUILD_DATE = "11.10.2026";
+/// board. 2: the emulator's stack is the system's, not the first
+/// opener's.
+const DEVICE_REVISION = 2;
+const BUILD_DATE = "22.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -225,7 +226,8 @@ fn startEmulator(kbb: *KeyboardBase) void {
     if (kbb.started != 0) return;
     kbb.started = 1;
     if (!emulated or !boardHasIt(sys)) return;
-    const stack = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return;
+    // The system's, not the first opener's.
+    const stack = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return;
     const signal = sys.AllocSignal(-1);
     if (signal < 0) {
         sys.FreeMem(stack, stack_size);

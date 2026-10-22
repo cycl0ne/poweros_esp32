@@ -104,8 +104,8 @@ const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 10;
-const BUILD_DATE = "20.10.2026";
+const DEVICE_REVISION = 11;
+const BUILD_DATE = "22.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -1099,9 +1099,10 @@ fn start(ab: *AudioBase) bool {
     const sys = ab.sys_base;
     if (ab.started != 0) return ab.ready != 0;
     // A task cannot free the stack it is ending on, so a failed bring-up
-    // keeps it for the next attempt.
+    // keeps it for the next attempt. The stack is the system's, not the
+    // first opener's, which may end long before: the boot shell's SetPrefs.
     const stack = ab.stack orelse blk: {
-        const s = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return false;
+        const s = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return false;
         ab.stack = s;
         break :blk s;
     };

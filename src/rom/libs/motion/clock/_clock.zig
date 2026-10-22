@@ -267,7 +267,8 @@ fn start(mb: *MotionBase) void {
     mb.started = 2;
     sys.ReleaseSemaphore(&mb.lock);
     if (mb.tick.node.device == null) return;
-    const stack = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return;
+    // The system's, not the first caller's, which may end long before.
+    const stack = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return;
     const signal = sys.AllocSignal(-1);
     if (signal < 0) {
         sys.FreeMem(stack, stack_size);

@@ -393,6 +393,10 @@ pub fn start(ib: *IntuitionBase) void {
     if (st.started != 0) return;
     st.started = 2;
     const sys = ib.sys_base;
+    // What starts here once - input.device opened, the two tasks' stacks -
+    // is the system's, not the first screen's opener's.
+    sys.BeginSystemMemory();
+    defer sys.EndSystemMemory();
     // The port is this call's; the request outlives it, and what is kept
     // of it afterwards is the device and the unit that `windowEvent`
     // copies. Nothing does I/O with `st.io` itself again.

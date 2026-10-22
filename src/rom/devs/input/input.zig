@@ -52,8 +52,8 @@ const events = @import("events.zig");
 
 pub const DEVICE_NAME = input.INPUTNAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "12.10.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "22.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -369,8 +369,9 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
 fn start(id: *InputData) bool {
     const sys = id.sys_base;
     if (id.started != 0) return id.ready != 0;
+    // The task's stack is the system's, not the first opener's.
     const stack = id.stack orelse blk: {
-        const s = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return false;
+        const s = sys.AllocMem(stack_size, exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return false;
         id.stack = s;
         break :blk s;
     };
