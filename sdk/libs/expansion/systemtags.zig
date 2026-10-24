@@ -122,6 +122,15 @@ pub const SYSTAG_RamEnd = SYSTAG_Dummy + 31;
 /// board's own code. The JH7110: 1000, as its firmware leaves it, or
 /// 1500. Absent, 0: the clock is left as the firmware left it.
 pub const SYSTAG_CpuSpeed = SYSTAG_Dummy + 32;
+/// 1: the machine's devices see the cores' data caches - QEMU's virt,
+/// whose devices read and write the machine's RAM through the host's
+/// caches - so what a DMA engine or a display reads is what a core wrote,
+/// with nothing written back first, and what it writes a core reads.
+/// Absent, 0: they go past the caches, and a range a device reads or
+/// writes is written back or dropped (CacheClearE, CachePreDMA,
+/// CachePostDMA). Read on an AArch64 machine; a RISC-V one names its
+/// cache controller instead (SYSTAG_CacheFlush).
+pub const SYSTAG_DmaCoherent = SYSTAG_Dummy + 33;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

@@ -27,6 +27,13 @@
 //! always did, and nothing is copied. The overlay - a dragged icon - is
 //! laid the same way, under the pointer.
 //!
+//! A refresh comes from whichever task drew, a pointer move from
+//! intuition's pointer task, each on either core: everything that writes
+//! the composed frame or changes what is laid in it holds the board's
+//! `compose_lock`, so that rows copied in on one core never cover a
+//! pointer just laid on the other, nor a restore cut a hole into rows just
+//! copied.
+//!
 //! Several buffers shown at once, in bands of lines - a screen pulled down
 //! over the one behind - are composed the same way: each row of the
 //! composed frame copied from the band that covers it, the buffer's row
@@ -57,8 +64,8 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-qemu";
 const DRIVER_NAME = "qemu";
 const VERSION = 1;
-const REVISION = 2;
-const BUILD_DATE = "08.10.2026";
+const REVISION = 3;
+const BUILD_DATE = "24.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -101,6 +108,9 @@ const Screen = struct {
     /// the board's buffers in VRAM; null when there was no room, and the
     /// board then has no pointer.
     composed: ?[*]u8 = null,
+    /// Held while the composed frame, or what is laid in it and what it
+    /// is composed from, changes.
+    compose_lock: exec.SignalSemaphore = .{},
     /// The pointer: its image (the library's), where the image's top left
     /// is, and whether it is shown.
     pointer: ?*const rtg.RtgPointerImage = null,
@@ -180,6 +190,15 @@ fn present(screen: *Screen) void {
 }
 
 // --- the pointer, in the composed frame -----------------------------------
+
+/// The composed frame held by this task (`compose_lock`), until `letGo`.
+fn hold(screen: *Screen) void {
+    screen.sys.ObtainSemaphore(&screen.compose_lock);
+}
+
+fn letGo(screen: *Screen) void {
+    screen.sys.ReleaseSemaphore(&screen.compose_lock);
+}
 
 /// Whether the window is fed from the composed frame: a pointer with an
 /// image is shown over a picture, there is an overlay, or the picture is
@@ -289,11 +308,16 @@ fn rebuild(screen: *Screen) void {
 /// A change to either image: both rectangles put back, the change made,
 /// both laid again - they may overlap, and the one under must not be
 /// left with a hole the other's restore cut. The frame is rebuilt when
-/// composing starts or stops with it.
+/// composing starts or stops with it, and nothing is shown anew when the
+/// window is fed from the shown buffer before and after. Made holding the
+/// composed frame.
 fn change(screen: *Screen, comptime apply: fn (*Screen, anytype) void, arg: anytype) void {
+    hold(screen);
+    defer letGo(screen);
     const was = composing(screen);
     if (was) restore(screen);
     apply(screen, arg);
+    if (!was and !composing(screen)) return;
     if (!was) {
         rebuild(screen);
     } else if (composing(screen)) {
@@ -317,11 +341,6 @@ fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
 
 fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     const screen = screenOf(board);
-    if (!composing(screen)) {
-        screen.pointer_left = left;
-        screen.pointer_top = top;
-        return;
-    }
     change(screen, struct {
         fn apply(on: *Screen, place: anytype) void {
             on.pointer_left = place[0];
@@ -332,6 +351,8 @@ fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
 
 fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
     const screen = screenOf(board);
+    hold(screen);
+    defer letGo(screen);
     screen.pointer_shown = show;
     rebuild(screen);
     present(screen);
@@ -353,11 +374,6 @@ fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
 
 fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     const screen = screenOf(board);
-    if (!composing(screen)) {
-        screen.overlay_left = left;
-        screen.overlay_top = top;
-        return;
-    }
     change(screen, struct {
         fn apply(on: *Screen, place: anytype) void {
             on.overlay_left = place[0];
@@ -376,6 +392,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .width = @truncate(state.rtg_base.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
         .height = @truncate(state.rtg_base.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
     };
+    state.sys.InitSemaphore(&screen.compose_lock);
     // The device takes each side as 16 bits.
     if (screen.width == 0 or screen.height == 0) return err.RTGERR_BAD_ARG;
     if (screen.width > 0xFFFF or screen.height > 0xFFFF) return err.RTGERR_BAD_ARG;
@@ -459,15 +476,21 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     // A flip from one picture to another takes a frame, as on the glass.
     // The first picture shown is not waited for: it comes up at cold
     // start.
-    const flip = screen.showing != null and bitmap != null and (screen.showing != bitmap or screen.band_count > 1);
-    screen.showing = bitmap;
-    screen.band_count = 0;
-    if (bitmap) |bm| {
-        screen.bands[0] = .{ .bitmap = bm };
-        screen.band_count = 1;
-    }
-    rebuild(screen);
-    if (bitmap != null) present(screen);
+    const flip = flip: {
+        hold(screen);
+        defer letGo(screen);
+        const another = screen.showing != null and bitmap != null and (screen.showing != bitmap or screen.band_count > 1);
+        screen.showing = bitmap;
+        screen.band_count = 0;
+        if (bitmap) |bm| {
+            screen.bands[0] = .{ .bitmap = bm };
+            screen.band_count = 1;
+        }
+        rebuild(screen);
+        if (bitmap != null) present(screen);
+        break :flip another;
+    };
+    // Waited out with the frame let go: the pointer moves meanwhile.
     if (flip) pace(screen, 1);
     return err.RTGERR_OK;
 }
@@ -476,6 +499,8 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
 /// so this is the doorbell and nothing more.
 fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
     const screen = screenOf(board);
+    hold(screen);
+    defer letGo(screen);
     // With the composed frame the rows go into it first - those of them
     // the bands show - and the pointer back over them where they cross it.
     if (composing(screen)) {
@@ -511,12 +536,17 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
         const bm = band.bitmap;
         if (bm.pixels == null or bm.pitch != screen.width * bytes_per_pixel) return err.RTGERR_NOT_DISPLAYABLE;
     }
-    const was_shown = screen.showing != null;
-    @memcpy(screen.bands[0..count], bands[0..count]);
-    screen.band_count = count;
-    screen.showing = bands[count - 1].bitmap;
-    rebuild(screen);
-    present(screen);
+    const was_shown = shown: {
+        hold(screen);
+        defer letGo(screen);
+        const before = screen.showing != null;
+        @memcpy(screen.bands[0..count], bands[0..count]);
+        screen.band_count = count;
+        screen.showing = bands[count - 1].bitmap;
+        rebuild(screen);
+        present(screen);
+        break :shown before;
+    };
     if (was_shown) pace(screen, 1);
     return err.RTGERR_OK;
 }

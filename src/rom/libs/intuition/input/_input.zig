@@ -17,8 +17,9 @@
 //!     IDCMP_CLOSEWINDOW, depth sends the window to the back if it is in
 //!     front and to the front if it is not); the drag bar moves the window
 //!     and the size gadget sizes it for as long as the button is held - a
-//!     step at a time, each when the program has answered the last
-//!     (`pace`); the inside is IDCMP_MOUSEBUTTONS. A move with nothing held
+//!     step at a time, a frame apart at least, and a sizing's each when the
+//!     program has answered the last (`pace`); the inside is
+//!     IDCMP_MOUSEBUTTONS. A move with nothing held
 //!     is IDCMP_MOUSEMOVE to the active window.
 //!   - a key: IDCMP_RAWKEY to the active window, unless it is a
 //!     right-Amiga shortcut of one of its menu items.
@@ -177,17 +178,18 @@ pub const State = extern struct {
     side_window: ?*Window = null,
     side_release: u8 = 0,
     pad3: [3]u8 = .{ 0, 0, 0 },
-    /// A sizing, paced (`pace`): a step is owed - the pointer has moved
-    /// since the last - and the ticks left for the window's program to
-    /// answer the last step's IDCMP_NEWSIZE, `size_message` until it comes
-    /// back to `size_port`; null with none out.
-    size_owed: u8 = 0,
+    /// A drag or a sizing, paced (`pace`): a step is owed - the pointer
+    /// has moved since the last - and, for a sizing, the ticks left for
+    /// the window's program to answer the last step's IDCMP_NEWSIZE,
+    /// `size_message` until it comes back to `size_port`; null with none
+    /// out.
+    step_owed: u8 = 0,
     size_ticks: u8 = 0,
     pad4: [2]u8 = .{ 0, 0 },
     size_message: ?*wn.IntuiMessage = null,
     /// When the last step began: the next waits until a frame has passed
     /// since.
-    size_began: timer.TimeVal = .{},
+    step_began: timer.TimeVal = .{},
     /// Where a step's IDCMP_NEWSIZE comes back: it signals the input task
     /// once that runs.
     size_port: exec.MsgPort = .{ .flags = exec.PA_IGNORE },
@@ -1155,17 +1157,14 @@ fn moved(ib: *IntuitionBase, last: bool) void {
         else => {},
     };
     switch (st.mode) {
-        .drag => if (st.window) |w| ib.iface().ChangeWindowBox(
-            @ptrCast(w),
-            st.box_left + st.x - st.grab_x,
-            st.box_top + st.y - st.grab_y,
-            w.width,
-            w.height,
-        ),
-        // A step of the sizing is owed, and taken from the input task's
-        // loop when its time has come (`pace`); the last one at once.
+        // A step of the drag or the sizing is owed, and taken from the
+        // input task's loop when its time has come (`pace`); the last one
+        // at once.
+        .drag => if (pacing(ib) and !last) {
+            st.step_owed = 1;
+        } else dragStep(ib),
         .size => if (pacing(ib) and !last) {
-            st.size_owed = 1;
+            st.step_owed = 1;
         } else sizeStep(ib),
         .screen_drag => if (st.screen) |s| _kscreen.moveTo(ib, s, st.box_top + st.disp_y - st.grab_y),
         .screen_depth => if (st.screen) |s| {
@@ -1195,7 +1194,7 @@ fn moved(ib: *IntuitionBase, last: bool) void {
     }
 }
 
-// --- a sizing, a step at a time -------------------------------------------------
+// --- a drag and a sizing, a step at a time --------------------------------------
 //
 // The user sizes a window faster than most programs draw it. Each step of
 // the sizing tells the program IDCMP_NEWSIZE; a step taken before the
@@ -1210,11 +1209,18 @@ fn moved(ib: *IntuitionBase, last: bool) void {
 // class is not waited for, and letting go of the size gadget takes the
 // last step at once.
 //
+// A drag is paced the same way, with no answer to wait for. Each step has
+// layers carry the window and fill what it uncovers, holding every layer
+// of the screen, and the pointer moves far more often than the display
+// shows a picture: a step for every move only shows the window at places
+// nobody sees, and holds the screen's drawing up meanwhile. A frame apart,
+// the window moves as often as the glass can show it.
+//
 // Only the input task's loop paces: a host test drives `handle` directly
-// and every move sizes the window at once.
+// and every move drags or sizes the window at once.
 
-/// Whether the steps of a sizing are paced: the input task runs, with a
-/// port of its own for the answers.
+/// Whether the steps of a drag or a sizing are paced: the input task runs,
+/// with a port of its own for the answers.
 fn pacing(ib: *IntuitionBase) bool {
     const st = stateOf(ib);
     return st.started == 1 and st.size_port.flags == exec.PA_SIGNAL;
@@ -1224,8 +1230,22 @@ fn pacing(ib: *IntuitionBase) bool {
 /// no answer awaited.
 fn sizeBegins(ib: *IntuitionBase) void {
     const st = stateOf(ib);
-    st.size_owed = 0;
+    st.step_owed = 0;
     st.size_message = null;
+}
+
+/// One step of a drag: the window to where the pointer has carried it.
+fn dragStep(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    const w = st.window orelse return;
+    st.step_owed = 0;
+    ib.iface().ChangeWindowBox(
+        @ptrCast(w),
+        st.box_left + st.x - st.grab_x,
+        st.box_top + st.y - st.grab_y,
+        w.width,
+        w.height,
+    );
 }
 
 /// One step of a sizing: the window to the size the pointer gives it.
@@ -1234,7 +1254,7 @@ fn sizeBegins(ib: *IntuitionBase) void {
 fn sizeStep(ib: *IntuitionBase) void {
     const st = stateOf(ib);
     const w = st.window orelse return;
-    st.size_owed = 0;
+    st.step_owed = 0;
     ib.iface().SizeWindow(
         @ptrCast(w),
         st.box_width + st.x - st.grab_x - w.width,
@@ -1268,10 +1288,11 @@ fn paceTick(ib: *IntuitionBase) void {
 }
 
 /// From the input task's loop: the answers that have come back taken in,
-/// and the step owed taken once its program has answered the last and a
-/// frame has passed since that one began. Only the step is taken under the
-/// screen semaphore: the state it is decided on is this task's own, and a
-/// window closed meanwhile is found when the semaphore is held.
+/// and the step owed taken once a frame has passed since the last one
+/// began - a sizing's once its program has answered the last, too. Only
+/// the step is taken under the screen semaphore: the state it is decided
+/// on is this task's own, and a window closed meanwhile is found when the
+/// semaphore is held.
 fn pace(ib: *IntuitionBase) void {
     const st = stateOf(ib);
     const sys = ib.sys_base;
@@ -1281,19 +1302,20 @@ fn pace(ib: *IntuitionBase) void {
         }
         _window.freeMessage(ib, m);
     }
-    if (st.mode != .size or st.size_owed == 0 or st.size_message != null) return;
+    const stepping = st.mode == .drag or (st.mode == .size and st.size_message == null);
+    if (!stepping or st.step_owed == 0) return;
 
     const _misc = @import("../misc/_misc.zig");
     if (_misc.now(ib)) |now| {
-        const since = now -% st.size_began.toMicros();
+        const since = now -% st.step_began.toMicros();
         if (since < _misc.frame_us) _misc.wait(ib, _misc.frame_us - since);
     }
     _window.lock(ib);
     defer _window.unlock(ib);
     // The window may have closed meanwhile.
-    if (st.mode != .size or st.size_owed == 0) return;
-    if (_misc.now(ib)) |now| st.size_began = timer.TimeVal.fromMicros(now);
-    sizeStep(ib);
+    if ((st.mode != .size and st.mode != .drag) or st.step_owed == 0) return;
+    if (_misc.now(ib)) |now| st.step_began = timer.TimeVal.fromMicros(now);
+    if (st.mode == .size) sizeStep(ib) else dragStep(ib);
 }
 
 // --- gadgets drawn at another task's asking ----------------------------------------

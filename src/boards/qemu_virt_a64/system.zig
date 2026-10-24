@@ -95,6 +95,8 @@ pub const root = [_]Tag{
     // What -m may give it below the 4 GiB line, with highmem=off.
     .value(st.SYSTAG_RamEnd, 0x1_0000_0000),
     .value(st.SYSTAG_UnifiedMemory, 1),
+    // QEMU's devices reach RAM through the host's caches.
+    .value(st.SYSTAG_DmaCoherent, 1),
     .value(st.SYSTAG_Timebase, 62_500_000),
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
     .value(st.SYSTAG_ConsoleBase, 0x0900_0000),

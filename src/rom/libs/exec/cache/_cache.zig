@@ -619,7 +619,9 @@ const rv64 = struct {
 /// always with a write-back first, so a line a DMA range shares at one of
 /// its ends loses nothing written beside it. There is no whole-cache
 /// write-back by address: CacheClearU leaves the data where it is, and a
-/// driver names its range.
+/// driver names its range. On a machine whose devices see the caches -
+/// QEMU's virt, whose board says so (`dma_coherent`) - a range wants
+/// neither, and nothing is done.
 ///
 /// Code and data share one address space, but an A76's instruction fetch
 /// does not see its own data cache (CTR_EL0.IDC 0): code written to
@@ -639,16 +641,19 @@ const a64 = struct {
         .invalidate = cleanInvalidateRange,
         .invalidate_icache = invalidateICacheRange,
         .writeback_drops = false,
-        .cores_share = always,
+        .cores_share = cleaning,
     };
 
     fn nothing() void {}
 
-    fn always() bool {
-        return true;
+    /// Whether a range is written back at all: not where the devices see
+    /// the caches.
+    fn cleaning() bool {
+        return !sdk.hardware.system.dma_coherent;
     }
 
     fn cleanRange(addr: usize, size: usize) void {
+        if (!cleaning()) return;
         var line = addr;
         while (line < addr + size) : (line += line_size) {
             asm volatile ("dc cvac, %[at]"
@@ -664,6 +669,7 @@ const a64 = struct {
     }
 
     fn cleanInvalidateRange(addr: usize, size: usize) void {
+        if (!cleaning()) return;
         var line = addr;
         while (line < addr + size) : (line += line_size) {
             asm volatile ("dc civac, %[at]"

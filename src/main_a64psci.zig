@@ -139,6 +139,7 @@ fn takeBoard(tree: device_tree.Facts) void {
     else
         @intCast(boards.fact(st.SYSTAG_Timebase, 62_500_000));
     hardware.system.before_reset = boards.before_reset;
+    hardware.system.dma_coherent = boards.fact(st.SYSTAG_DmaCoherent, 0) != 0;
     for (tree.memoryRanges(), 0..) |range, index| ram.memory[index] = range;
     ram.memory_count = tree.memory_count;
     if (ram.memory_count == 0) {
