@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! smb-handler: a share on an SMB 2/3 server - Windows, Samba, a NAS -
-//! as a DOS device, its files listed and read as a disk's. It is
+//! as a DOS device, its files listed, read and written as a disk's. It is
 //! `HANDLERS:smb-handler`, which dos loads the first time the device is
 //! used; C:net/MountShare makes the device and starts it.
 //!
@@ -20,9 +20,18 @@
 //! built on speak SMB.
 //!
 //! **The volume** is named after the share, or as the startup says,
-//! dated at the logon, with the DosType `SMB\0`. INFO and DISK_INFO
-//! answer from the share's size as last asked, so Info, which holds the
-//! device list while it asks, never waits on the network.
+//! dated at the logon, with the DosType `SMB\0`; it is write-protected
+//! when the startup says so (SMBF_READONLY) or the share's MaximalAccess
+//! does not let the user write. INFO and DISK_INFO answer from the
+//! share's size as last asked, so Info, which holds the device list while
+//! it asks, never waits on the network; once the share is written to, the
+//! size is asked again between packets, no more often than every few
+//! seconds.
+//!
+//! **Record locks and watches** are kept by the process: their timers
+//! and the watchers' replies come back on ports of their own, which it
+//! waits on beside its packets. A record lock that waits keeps its packet
+//! unanswered until it is granted or its time runs out.
 //!
 //! **Staying connected.** A connection that is lost is made again when
 //! it is next needed (`fs.zig` says how), through `reconnect`: the
@@ -34,8 +43,8 @@
 //! ECHO goes, so a connection that died is found and made again before a
 //! program next asks.
 //!
-//! **Dismounting** (ACTION_DIE) is refused while anything is locked or
-//! open on the volume. Otherwise the handler disconnects from the share,
+//! **Dismounting** (ACTION_DIE) is refused while anything is locked,
+//! open or watched on the volume. Otherwise the handler disconnects from the share,
 //! logs off, takes its volume off the device list and ends; the device
 //! node is the tool's to remove.
 
@@ -56,6 +65,8 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const DosPacket = dos.DosPacket;
 const Process = dos.Process;
 const timer = sdk.devices.timer;
+const record = dos.record;
+const notify = dos.notify;
 const TimerBase = sdk.interface.timer.TimerBase;
 const connection_area = @import("connection.zig");
 const session_area = @import("session.zig");
@@ -64,12 +75,13 @@ const logon_area = @import("logon.zig");
 const ntlm = @import("ntlm.zig");
 const names = @import("names.zig");
 const fs_area = @import("fs.zig");
+const commands = @import("commands.zig");
 const Session = session_area.Session;
 const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 1;
+const HANDLER_REVISION = 2;
 const BUILD_DATE = "25.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -112,6 +124,9 @@ const State = struct {
     busy: bool = false,
     /// When a reconnection may be tried again, in seconds on the E-clock.
     retry_after: u64 = 0,
+    /// The volume's record locks and watchers.
+    records: record.Records = undefined,
+    watchers: notify.Watchers = undefined,
 };
 
 /// The handler process: ACTION_STARTUP - the connection, the logon and
@@ -169,7 +184,16 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
         },
         .fs = undefined,
     };
-    st.fs = .{ .sys = sys, .session = &st.session, .port = &me.msg_port, .zone = timeZone(sys), .reconnect = &reconnect };
+    st.fs = .{
+        .sys = sys,
+        .dl = dl,
+        .session = &st.session,
+        .port = &me.msg_port,
+        .zone = timeZone(sys),
+        .reconnect = &reconnect,
+        .now = &clockSeconds,
+    };
+    if (node) |device| st.fs.device_name = cString(std.mem.span(device.name));
     cb.RandomBytes(&st.session.client_guid, 16);
 
     // The share's size, for Info; a server that will not say is shown
@@ -180,14 +204,19 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
         st.session.connection.close();
         return dl.ReplyPkt(startup_packet, dos.DOSFALSE, dos.ERROR_DEVICE_NOT_MOUNTED);
     }
+    st.fs.read_only = readOnly(st);
     addVolume(st);
     openClock(st);
+    if (st.records.init(sys, dl)) st.fs.records = &st.records;
+    if (st.watchers.init(sys)) st.fs.watchers = &st.watchers;
     if (node) |device| device.task = &me.msg_port;
     dl.ReplyPkt(startup_packet, dos.DOSTRUE, 0);
 
-    // Packets on the process's port, the idle timer on its own.
+    // Packets on the process's port; the idle timer, the record locks'
+    // timers and the watchers' replies on their own.
     const packets = &me.msg_port;
     const clock_mask: u32 = if (st.clock_port) |port| port.sigMask() else 0;
+    const mask = packets.sigMask() | clock_mask | st.records.signals() | st.watchers.signals();
     startClock(st);
     while (true) {
         if (st.clock_port) |port| {
@@ -198,6 +227,8 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
                 startClock(st);
             }
         }
+        st.records.collect();
+        st.watchers.collect();
         while (sys.GetMsg(packets)) |message| {
             const pkt = DosPacket.fromMessage(message);
             st.busy = true;
@@ -208,6 +239,8 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
                 }
                 closeClock(st);
                 st.fs.releaseAll();
+                st.records.deinit();
+                st.watchers.deinit();
                 if (!st.fs.lost) logon_area.logoff(&st.session);
                 st.session.connection.close();
                 if (node) |device| device.task = null;
@@ -216,9 +249,10 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
                 return;
             }
             const reply = st.fs.answer(pkt);
-            dl.ReplyPkt(pkt, reply.res1, reply.res2);
+            if (!reply.held) dl.ReplyPkt(pkt, reply.res1, reply.res2);
         }
-        _ = sys.Wait(packets.sigMask() | clock_mask);
+        st.fs.refresh();
+        _ = sys.Wait(mask);
     }
 }
 
@@ -326,11 +360,26 @@ fn reconnect(fs: *FileSystem) bool {
     st.session.reset();
     if (connect(st)) {
         st.retry_after = 0;
+        st.fs.read_only = readOnly(st);
         return true;
     }
     st.session.reset();
     if (now) |at| st.retry_after = at + retry_seconds;
     return false;
+}
+
+/// Whether nothing is to be written: the startup says so, or the share's
+/// MaximalAccess does not let the user write - when the server says it.
+fn readOnly(st: *State) bool {
+    if (st.startup.flags & smb.SMBF_READONLY != 0) return true;
+    const access = st.session.maximal_access;
+    return access != 0 and access & (commands.FILE_WRITE_DATA | commands.FILE_APPEND_DATA) == 0;
+}
+
+/// The file system's clock: seconds on the E-clock.
+fn clockSeconds(fs: *FileSystem) ?u64 {
+    const st: *State = @alignCast(@fieldParentPtr("fs", fs));
+    return seconds(st);
 }
 
 /// Seconds on the E-clock, which only ever counts up - whatever the

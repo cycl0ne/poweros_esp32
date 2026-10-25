@@ -133,6 +133,7 @@ test {
     _ = @import("devs/handlers/smb/wire.zig");
     _ = @import("devs/handlers/smb/spnego.zig");
     _ = @import("devs/handlers/smb/names.zig");
+    _ = @import("devs/handlers/smb/commands.zig");
     _ = @import("devs/handlers/smb/fs.zig");
     _ = @import("devs/handlers/smb/smb.zig");
     _ = @import("devs/handlers/smb/tests/smb.zig");

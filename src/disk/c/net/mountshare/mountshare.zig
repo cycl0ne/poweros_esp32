@@ -40,8 +40,8 @@
 //! all the logon needs.
 //!
 //! DISMOUNT asks each NAME's handler to log off and end, and takes the
-//! device off the list - not while anything on it is locked or open;
-//! with ALL, every share's.
+//! device off the list - not while anything on it is locked, open or
+//! watched; with ALL, every share's.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
