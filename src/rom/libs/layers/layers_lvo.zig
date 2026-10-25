@@ -48,6 +48,7 @@ const DoHookClipRects = @import("backfill/dohookcliprects.zig").DoHookClipRects;
 const LayersErrorText = @import("errors/layerserrortext.zig").LayersErrorText;
 const DamageLayer = @import("damage/damagelayer.zig").DamageLayer;
 const ShowLayerPicture = @import("compose/showlayerpicture.zig").ShowLayerPicture;
+const SetLayerAttrsTagList = @import("compose/setlayerattrstaglist.zig").SetLayerAttrsTagList;
 
 /// Its functions, as the SDK has them (sdk/fd/layers_lib.fd).
 const interface = sdk.interface.layers;
@@ -190,6 +191,9 @@ fn lvoNewLayerInfoTagList(lb: *LayersBase, rp: *graphics.RastPort, tags: ?[*]con
 fn lvoShowLayerPicture(lb: *LayersBase, layer: *layers.Layer, picture: ?*const rtg.Surface, area: ?*const graphics.Rect) callconv(.c) bool {
     return ShowLayerPicture(lb, @ptrCast(@alignCast(layer)), picture, area);
 }
+fn lvoSetLayerAttrsTagList(lb: *LayersBase, layer: *layers.Layer, tags: ?[*]const TagItem) callconv(.c) bool {
+    return SetLayerAttrsTagList(lb, @ptrCast(@alignCast(layer)), tags);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -226,6 +230,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoDamageLayer),
     vec(lvoNewLayerInfoTagList),
     vec(lvoShowLayerPicture),
+    vec(lvoSetLayerAttrsTagList),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -233,7 +238,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the standard four, then this library's own" {
-    try testing.expectEqual(@as(usize, 32), vectors.len);
+    try testing.expectEqual(@as(usize, 33), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

@@ -185,6 +185,8 @@ pub const Window = extern struct {
     /// The task that opened it, closing it when it ends; null for one
     /// opened inside `BeginSystemMemory`, or with no memory to note it.
     opener: ?*Opener = null,
+    /// Its way in while it fades in (window/_fade.zig), else null.
+    fade: ?*@import("_fade.zig").Fade = null,
 };
 
 /// A task with windows open: how many, and the end hook that closes them
@@ -699,6 +701,54 @@ pub fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void 
     if (w.size_image) |image| {
         const box = sizeBoxOf(w);
         it.DrawImageState(rp, image, w.width - box.width, w.height - box.height, state, dri);
+    }
+    roundCorners(ib, w, rp);
+}
+
+/// The frame's outline along a window's round corners, over whatever the
+/// border and its gadgets drew there: the pixels of each row next to the
+/// ones the layer cuts away (`layers.cornerCut`), in the outline's pens -
+/// a corner's upper rows in its top or bottom edge's, the rest in its
+/// side's. Nothing inside the border is drawn.
+fn roundCorners(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void {
+    const radius = @import("_fade.zig").radiusOf(ib, w);
+    if (radius == 0) return;
+    const gb = ib.graphics_base;
+    const it = ib.iface();
+    const dri = &w.screen.draw_info;
+    const st = sdk.intuition.style;
+    const kind = it.GetStyleAttr(dri, null, ic.PART_WINDOW_BORDER, st.STATE_NORMAL, st.STYLE_Border);
+    if (kind == st.BORDER_NONE) return;
+    const flat = kind == st.BORDER_FLAT;
+    const light: Pen = @truncate(it.GetStyleAttr(dri, null, ic.PART_WINDOW_BORDER, st.STATE_NORMAL, if (flat) st.STYLE_BorderPen else st.STYLE_ShinePen));
+    const dark: Pen = @truncate(it.GetStyleAttr(dri, null, ic.PART_WINDOW_BORDER, st.STATE_NORMAL, if (flat) st.STYLE_BorderPen else st.STYLE_ShadowPen));
+    const shine, const shade = if (kind == st.BORDER_RECESSED) .{ dark, light } else .{ light, dark };
+    const inside = graphics.Rect{
+        .min_x = w.border_left,
+        .min_y = w.border_top,
+        .max_x = w.width - w.border_right,
+        .max_y = w.height - w.border_bottom,
+    };
+    var row: u32 = 1;
+    while (row < radius) : (row += 1) {
+        const before: i32 = @intCast(layers.cornerCut(radius, row - 1));
+        if (before == 0) break;
+        const from: i32 = @intCast(layers.cornerCut(radius, row));
+        const to = @max(before, from + 1);
+        const along = row * 2 < radius;
+        const y: i32 = @intCast(row);
+        // Top left, top right, bottom left, bottom right.
+        const runs = [4]struct { x: i32, y: i32, pen: Pen }{
+            .{ .x = from, .y = y, .pen = shine },
+            .{ .x = w.width - to, .y = y, .pen = if (along) shine else shade },
+            .{ .x = from, .y = w.height - 1 - y, .pen = if (along) shade else shine },
+            .{ .x = w.width - to, .y = w.height - 1 - y, .pen = shade },
+        };
+        for (runs) |run| {
+            const piece = graphics.Rect{ .min_x = run.x, .min_y = run.y, .max_x = run.x + (to - from), .max_y = run.y + 1 };
+            if (!graphics.Rect.intersect(piece, inside).isEmpty()) continue;
+            d.box(gb, rp, piece.min_x, piece.min_y, piece.width(), 1, run.pen);
+        }
     }
 }
 

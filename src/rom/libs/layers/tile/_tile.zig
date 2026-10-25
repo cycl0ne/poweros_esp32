@@ -40,6 +40,7 @@ const smart = @import("../smart/_smart.zig");
 const backfill = @import("../backfill/_backfill.zig");
 const super = @import("../super/_super.zig");
 const compose = @import("../compose/_compose.zig");
+const effects = @import("../compose/_effects.zig");
 
 /// What a layer can see, in the layer's own coordinates and narrowed by
 /// whatever else is asked for. The caller disposes of it. In a composed
@@ -328,10 +329,31 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
         // what is off it is not somewhere its pixels may go.
         const on_screen = Rect.intersect(layer.bounds, info.bounds);
         if (!gb.OrRectRegion(seen, &on_screen) or !gb.SubRegionRegion(covered, seen)) ok = false;
-        if (!gb.OrRectRegion(covered, &layer.bounds)) ok = false;
 
         if (composed) {
-            // Its buffer keeps all of it already.
+            // Its buffer keeps all of it already. What it looks like is
+            // the tiling's: its shape is its rectangle less its corners,
+            // its shadow falls on what is not in front of it, and a layer
+            // seen through covers nothing - but its own inner layer, seen
+            // through with it, covers it.
+            if (effects.radiusOf(layer) != 0 and !effects.cutCorners(gb, seen, layer)) ok = false;
+            if (!effects.castShade(lb, layer, covered)) ok = false;
+            if (layer.opacity == 255) {
+                if (!effects.addShape(gb, covered, layer)) ok = false;
+            } else {
+                var front = info.layers.iterator();
+                while (front.next()) |other_node| {
+                    const other: *Layer = @fieldParentPtr("node", other_node);
+                    if (other == layer) break;
+                    if (other.moves_with == layer and !gb.ClearRectRegion(seen, &other.bounds)) ok = false;
+                }
+            }
+        } else if (!gb.OrRectRegion(covered, &layer.bounds)) {
+            ok = false;
+        }
+
+        if (composed) {
+            // Nothing to keep.
         } else if (layer.flags & layers.LAYERSUPER != 0) {
             // Its own bitmap is its keeping: what has just been covered
             // goes into it now; what has just been uncovered comes back in
@@ -401,6 +423,34 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
             backfill.fillRegion(lb, layer, area);
             gb.DisposeRegion(area);
         }
+    }
+    if (composed and !behindPass(lb, info)) ok = false;
+    return ok;
+}
+
+/// The third pass of a composed retile, back to front: each shadow cut to
+/// the layers behind it that cover - a shadow falls on something, and
+/// darkening what nothing is copied to would darken it again at every
+/// showing - and whether anything is seen through, or shaded, at all.
+fn behindPass(lb: *LayersBase, info: *LayerInfo) bool {
+    const gb = lb.graphics_base;
+    info.veiled = false;
+    info.shaded = false;
+    const behind = lb.newRegion() orelse {
+        var it = info.layers.iterator();
+        while (it.next()) |node| effects.dropShade(gb, @fieldParentPtr("node", node));
+        return false;
+    };
+    defer gb.DisposeRegion(behind);
+    var ok = true;
+    var at = info.layers.last();
+    while (at) |node| {
+        const layer: *Layer = @fieldParentPtr("node", node);
+        at = if (node.pred.?.pred == null) null else node.pred;
+        if (layer.opacity != 255) info.veiled = true;
+        if (!effects.keepOver(lb, layer, behind)) ok = false;
+        if (layer.shade != null) info.shaded = true;
+        if (layer.opacity == 255 and !effects.addShape(gb, behind, layer)) ok = false;
     }
     return ok;
 }

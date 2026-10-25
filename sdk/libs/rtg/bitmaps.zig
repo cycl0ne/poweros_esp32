@@ -203,10 +203,18 @@ pub const RtgPixels = extern struct {
     pixels: ?[*]const u8 = null,
     pitch: u32 = 0,
     format: PixelFormat = .bgra32,
-    pad: [3]u8 = .{ 0, 0, 0 },
+    /// `RTGPIXF_`.
+    flags: u8 = 0,
+    pad: [2]u8 = .{ 0, 0 },
     x: i32 = 0,
     y: i32 = 0,
 };
+
+/// `RtgPixels.flags`: the picture's own coverage is not read, and every
+/// pixel covers fully - a window's buffer, whose top byte is whatever was
+/// drawn, laid over the display at BlendPixels' `alpha` alone. Since rtg
+/// 1.8; a driver from before reads the coverage.
+pub const RTGPIXF_OPAQUE: u8 = 1;
 
 /// A colour taken apart, eight bits a channel.
 pub const RtgRGB = extern struct {

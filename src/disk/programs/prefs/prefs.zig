@@ -140,6 +140,10 @@ const ID_USE = 41;
 const ID_CANCEL = 42;
 /// A font field's ID: this and which.
 const ID_FONT = 48;
+/// The system page's window looks.
+const ID_CORNERS = 52;
+const ID_SHADOW = 53;
+const ID_FADE = 54;
 const ID_DOUBLE = 56;
 const ID_HEIGHT = 57;
 const ID_KEYBOARD = 58;
@@ -362,6 +366,13 @@ const Editor = struct {
     keyboard: *Object = undefined,
     off_screen: *Object = undefined,
     wide_gadgets: *Object = undefined,
+    /// A window's corners, shadow and fade, on or off; and what each is
+    /// when on - intuition's own value as the page opened, or the
+    /// system's where that was off.
+    corners: *Object = undefined,
+    shadow: *Object = undefined,
+    fade: *Object = undefined,
+    looks: [3]u32 = .{ 6, 12, 160 },
     /// The system's pens as the colours page has them, and whether one
     /// was changed.
     pens: [sc.NUMDRIPENS]Pen = palette_file.defaults,
@@ -770,6 +781,12 @@ const Editor = struct {
         p.off_screen = @intFromBool(value != 0);
         _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.wide_gadgets, &value);
         p.wide_gadgets = @intFromBool(value != 0);
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.corners, &value);
+        p.corners = if (value != 0) e.looks[0] else 0;
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.shadow, &value);
+        p.shadow = if (value != 0) e.looks[1] else 0;
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.fade, &value);
+        p.fade = if (value != 0) e.looks[2] else 0;
         return p;
     }
 
@@ -1606,8 +1623,18 @@ fn build(e: *Editor) ?*Object {
         pair(intuition.IPREFS_Keyboard, @intFromPtr(&now.keyboard)),
         pair(intuition.IPREFS_OffScreen, @intFromPtr(&now.off_screen)),
         pair(intuition.IPREFS_WideGadgets, @intFromPtr(&now.wide_gadgets)),
+        pair(intuition.IPREFS_WindowCorners, @intFromPtr(&now.corners)),
+        pair(intuition.IPREFS_WindowShadow, @intFromPtr(&now.shadow)),
+        pair(intuition.IPREFS_WindowFade, @intFromPtr(&now.fade)),
         .{},
     });
+    // A look switched off is switched on again at the system's own value.
+    const born: intuition_file.Settings = .{};
+    e.looks = .{
+        if (now.corners != 0) now.corners else born.corners,
+        if (now.shadow != 0) now.shadow else born.shadow,
+        if (now.fade != 0) now.fade else born.fade,
+    };
     e.double = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_DOUBLE),
         pair(ig.INTEGER_Min, 100),
@@ -1639,7 +1666,22 @@ fn build(e: *Editor) ?*Object {
         pair(cb.CHECKBOX_Checked, now.wide_gadgets),
         .{},
     }) orelse return null;
-    pages[page_system] = column(ib, "intuition", &.{ e.double, e.height, e.keyboard, e.off_screen, e.wide_gadgets }, &.{ "_Double-click ms", "Screen _font rows", "_Keyboard on screen", "Windows past _edges", "Wide title bar gadgets" }) orelse return null;
+    e.corners = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_CORNERS),
+        pair(cb.CHECKBOX_Checked, @intFromBool(now.corners != 0)),
+        .{},
+    }) orelse return null;
+    e.shadow = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_SHADOW),
+        pair(cb.CHECKBOX_Checked, @intFromBool(now.shadow != 0)),
+        .{},
+    }) orelse return null;
+    e.fade = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_FADE),
+        pair(cb.CHECKBOX_Checked, @intFromBool(now.fade != 0)),
+        .{},
+    }) orelse return null;
+    pages[page_system] = column(ib, "intuition", &.{ e.double, e.height, e.keyboard, e.off_screen, e.wide_gadgets, e.corners, e.shadow, e.fade }, &.{ "_Double-click ms", "Screen _font rows", "_Keyboard on screen", "Windows past _edges", "Wide title bar gadgets", "Round window co_rners", "Window _shadows", "Windows fade _in and out" }) orelse return null;
 
     // The sound page: the outputs beside the beep.
     var output_gadgets: [max_rows + 1]?*Object = undefined;

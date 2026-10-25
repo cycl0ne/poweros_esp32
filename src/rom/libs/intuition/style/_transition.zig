@@ -51,7 +51,7 @@ fn of(g: *const gc.Gadget) ?*Transition {
 }
 
 /// motion.library, opened the first time it is wanted.
-fn motionOf(ib: *IntuitionBase) ?*MotionBase {
+pub fn motionOf(ib: *IntuitionBase) ?*MotionBase {
     if (ib.motion_base) |mb| return mb;
     const sys = ib.sys_base;
     const opened = sys.OpenLibrary(motion.MOTIONNAME, 1) orelse return null;

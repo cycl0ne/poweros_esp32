@@ -46,6 +46,7 @@ pub const RtgBitMap = bitmaps.RtgBitMap;
 pub const RtgRect = bitmaps.RtgRect;
 pub const RtgCopy = bitmaps.RtgCopy;
 pub const RtgPixels = bitmaps.RtgPixels;
+pub const RTGPIXF_OPAQUE = bitmaps.RTGPIXF_OPAQUE;
 pub const RtgRGB = bitmaps.RtgRGB;
 pub const RtgTemplate = bitmaps.RtgTemplate;
 pub const RtgPattern = bitmaps.RtgPattern;

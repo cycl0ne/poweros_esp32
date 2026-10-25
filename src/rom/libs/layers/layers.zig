@@ -80,6 +80,8 @@ test {
     _ = @import("backfill/dohookcliprects.zig");
     _ = @import("backfill/installlayerhook.zig");
     _ = @import("compose/_compose.zig");
+    _ = @import("compose/_effects.zig");
+    _ = @import("compose/setlayerattrstaglist.zig");
     _ = @import("damage/beginupdate.zig");
     _ = @import("damage/damagelayer.zig");
     _ = @import("damage/endupdate.zig");
@@ -1528,6 +1530,189 @@ test "composed: a picture shown in a layer is copied from where it is, and left 
     const other = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 4, .height = 4, .pitch = 8 * 2, .size_bytes = @sizeOf(@TypeOf(pixels)), .format = .bgra32 };
     try testing.expect(!base(lb).ShowLayerPicture(back, &other, &area));
 
+    base(lb).DeleteLayer(back);
+    c.done(lb);
+    try tearDown(lb);
+}
+
+/// A layer of a composed LayerInfo, with what it looks like.
+fn lookingLayer(lb: *LayersBase, info: *layers.LayerInfo, where: *const Rect, corners: usize, shadow: usize, opacity: usize) !*layers.Layer {
+    const tags = [_]TagItem{
+        .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(where) },
+        .{ .tag = layers.LATAG_Corners, .data = corners },
+        .{ .tag = layers.LATAG_Shadow, .data = shadow },
+        .{ .tag = layers.LATAG_Opacity, .data = opacity },
+        .{},
+    };
+    return base(lb).CreateLayerTagList(info, &tags) orelse error.NoLayer;
+}
+
+fn setLook(lb: *LayersBase, layer: *layers.Layer, tag: utility.Tag, value: usize) bool {
+    const tags = [_]TagItem{ .{ .tag = tag, .data = value }, .{} };
+    return base(lb).SetLayerAttrsTagList(layer, &tags);
+}
+
+/// An RGB565 pixel's red, green and blue, eight bits each.
+fn channels(pixel: u16) [3]u32 {
+    const r: u32 = pixel >> 11;
+    const g: u32 = pixel >> 5 & 0x3F;
+    const b: u32 = pixel & 0x1F;
+    return .{ r << 3 | r >> 2, g << 2 | g >> 4, b << 3 | b >> 2 };
+}
+
+test "cornerCut: a corner of six is cut 4, 2, 1, 1 deep, and none past it" {
+    const want = [_]u32{ 4, 2, 1, 1, 0, 0, 0 };
+    for (want, 0..) |cut, row| try testing.expectEqual(cut, layers.cornerCut(6, @intCast(row)));
+    try testing.expectEqual(@as(u32, 0), layers.cornerCut(0, 0));
+    try testing.expectEqual(@as(u32, 0), layers.cornerCut(1, 0));
+    try testing.expectEqual(@as(u32, 3), layers.cornerRadius(6, 20, 6));
+}
+
+test "composed: round corners show what is behind, and a point there is the layer's behind" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+    if (!compose.built) {
+        c.done(lb);
+        return tearDown(lb);
+    }
+    const all = Rect{ .max_x = 32, .max_y = 16 };
+    const back = try layerAt(lb, c.info, &all, layers.LAYERSIMPLE);
+    fill(lb, back, graphics.penRGB(255, 0, 0), all);
+    const front_where = Rect{ .min_x = 4, .min_y = 2, .max_x = 28, .max_y = 14 };
+    const front = try lookingLayer(lb, c.info, &front_where, 6, 0, 255);
+    fill(lb, front, graphics.penRGB(0, 255, 0), .{ .max_x = 24, .max_y = 12 });
+
+    // Row 0 of each corner loses four pixels, row 1 two, rows 2 and 3 one.
+    try testing.expectEqual(red, c.at(4, 2));
+    try testing.expectEqual(red, c.at(7, 2));
+    try testing.expectEqual(green, c.at(8, 2));
+    try testing.expectEqual(red, c.at(5, 3));
+    try testing.expectEqual(green, c.at(6, 3));
+    try testing.expectEqual(red, c.at(4, 5));
+    try testing.expectEqual(green, c.at(4, 6));
+    try testing.expectEqual(red, c.at(27, 13));
+    try testing.expectEqual(green, c.at(23, 13));
+    try testing.expect(base(lb).WhichLayer(c.info, 4, 2) == back);
+    try testing.expect(base(lb).WhichLayer(c.info, 8, 2) == front);
+
+    // Drawn into the back one there, it shows; moved, the corners go with
+    // the layer; squared, they are the layer's again.
+    fill(lb, back, graphics.penRGB(0, 0, 255), all);
+    try testing.expectEqual(blue, c.at(4, 2));
+    try testing.expectEqual(green, c.at(8, 2));
+    try testing.expect(base(lb).MoveLayer(front, 2, 1));
+    try testing.expectEqual(blue, c.at(6, 3));
+    try testing.expectEqual(green, c.at(10, 3));
+    try testing.expectEqual(blue, c.at(4, 6));
+    try testing.expect(setLook(lb, front, layers.LATAG_Corners, 0));
+    try testing.expectEqual(green, c.at(6, 3));
+
+    base(lb).DeleteLayer(front);
+    base(lb).DeleteLayer(back);
+    c.done(lb);
+    try tearDown(lb);
+}
+
+test "composed: a shadow darkens what is behind, once, and goes with the layer" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+    if (!compose.built) {
+        c.done(lb);
+        return tearDown(lb);
+    }
+    const white: u16 = 0xFFFF;
+    const all = Rect{ .max_x = 32, .max_y = 16 };
+    const back = try layerAt(lb, c.info, &all, layers.LAYERSIMPLE);
+    fill(lb, back, graphics.penRGB(255, 255, 255), all);
+    const front_where = Rect{ .min_x = 8, .min_y = 2, .max_x = 20, .max_y = 8 };
+    const front = try lookingLayer(lb, c.info, &front_where, 0, 3, 255);
+    fill(lb, front, graphics.penRGB(0, 255, 0), .{ .max_x = 12, .max_y = 6 });
+
+    // Just below the layer it is darker than further out, and nothing out
+    // of its reach is touched; the layer itself is not darkened.
+    const near = channels(c.at(14, 8))[0];
+    const far = channels(c.at(14, 10))[0];
+    try testing.expect(near < 255);
+    try testing.expect(near < far);
+    try testing.expectEqual(white, c.at(0, 15));
+    try testing.expectEqual(white, c.at(30, 1));
+    try testing.expectEqual(green, c.at(8, 2));
+
+    // Shown again, it is the same: darkened once, not twice.
+    try testing.expect(setLook(lb, front, layers.LATAG_Shadow, 3));
+    try testing.expectEqual(near, channels(c.at(14, 8))[0]);
+    // Drawn into behind it, the shadow is on what was drawn.
+    fill(lb, back, graphics.penRGB(255, 255, 255), all);
+    try testing.expectEqual(near, channels(c.at(14, 8))[0]);
+    try testing.expectEqual(white, c.at(0, 15));
+
+    // Moved, it leaves white behind and darkens where it goes.
+    try testing.expect(base(lb).MoveLayer(front, 0, 6));
+    try testing.expectEqual(white, c.at(14, 3));
+    try testing.expectEqual(white, c.at(7, 4));
+    try testing.expectEqual(near, channels(c.at(14, 14))[0]);
+    // Taken off, it leaves no shadow.
+    try testing.expect(setLook(lb, front, layers.LATAG_Shadow, 0));
+    try testing.expectEqual(white, c.at(14, 14));
+
+    base(lb).DeleteLayer(front);
+    base(lb).DeleteLayer(back);
+    c.done(lb);
+    try tearDown(lb);
+}
+
+test "composed: a layer seen through is laid over what is behind, and a ghost is not pointed at" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+    if (!compose.built) {
+        c.done(lb);
+        return tearDown(lb);
+    }
+    const all = Rect{ .max_x = 32, .max_y = 16 };
+    const back = try layerAt(lb, c.info, &all, layers.LAYERSIMPLE);
+    fill(lb, back, graphics.penRGB(255, 0, 0), all);
+    const front_where = Rect{ .min_x = 8, .min_y = 4, .max_x = 24, .max_y = 12 };
+    const front = try lookingLayer(lb, c.info, &front_where, 0, 0, 0);
+
+    // Unseen, then drawn: still unseen until it is shown again.
+    fill(lb, front, graphics.penRGB(0, 255, 0), .{ .max_x = 16, .max_y = 8 });
+    try testing.expectEqual(red, c.at(10, 6));
+    try testing.expect(base(lb).WhichLayer(c.info, 10, 6) == front);
+
+    // Half way: half of each.
+    try testing.expect(setLook(lb, front, layers.LATAG_Opacity, 128));
+    const half = channels(c.at(10, 6));
+    try testing.expect(half[0] > 96 and half[0] < 160);
+    try testing.expect(half[1] > 96 and half[1] < 160);
+    // Drawn into behind it, that waits for the next step, and outside
+    // it shows at once.
+    fill(lb, back, graphics.penRGB(0, 0, 255), all);
+    try testing.expectEqual(blue, c.at(2, 2));
+    try testing.expectEqual(half, channels(c.at(10, 6)));
+    try testing.expect(setLook(lb, front, layers.LATAG_Opacity, 128));
+    const over_blue = channels(c.at(10, 6));
+    try testing.expect(over_blue[0] < 32 and over_blue[2] > 96);
+
+    // All the way, it is itself, and covers.
+    try testing.expect(setLook(lb, front, layers.LATAG_Opacity, 255));
+    try testing.expectEqual(green, c.at(10, 6));
+    fill(lb, front, graphics.penRGB(255, 255, 255), .{ .max_x = 16, .max_y = 8 });
+    try testing.expectEqual(@as(u16, 0xFFFF), c.at(10, 6));
+
+    // A ghost is seen, and a point on it is the layer's behind.
+    try testing.expect(setLook(lb, front, layers.LATAG_Ghost, 1));
+    try testing.expect(base(lb).WhichLayer(c.info, 10, 6) == back);
+    var in_front: usize = 1;
+    base(lb).GetLayerAttrs(back, &[_]TagItem{ .{ .tag = layers.LATAG_GetInFront, .data = @intFromPtr(&in_front) }, .{} });
+    try testing.expectEqual(@as(usize, 0), in_front);
+    try testing.expectEqual(@as(u16, 0xFFFF), c.at(10, 6));
+
+    // Not composed, there is nothing to set.
+    base(lb).DeleteLayer(front);
+    try testing.expectEqual(blue, c.at(10, 6));
     base(lb).DeleteLayer(back);
     c.done(lb);
     try tearDown(lb);

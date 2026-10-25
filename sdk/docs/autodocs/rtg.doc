@@ -271,7 +271,10 @@ rtg.library/WaitVBlank
    BEHAVIOR
 	Each pixel is mixed with the one under it by its coverage: fully
 	covered goes down as it is, uncovered leaves the buffer alone. A
-	format without coverage - `rgb565`, `rgb24` - covers by `alpha` alone.
+	format without coverage - `rgb565`, `rgb24` - covers by `alpha` alone,
+	and so does a picture with `RTGPIXF_OPAQUE` in its flags, whatever its
+	pixels' top byte holds (since 1.8): a window's buffer laid over the
+	display as it fades.
 	The rectangle is cut to the buffer here, and the picture's corner
 	moves with whatever was cut off its top and left, so a cut picture is
 	cut rather than slid. Which formats and sizes the engine takes is the

@@ -33,6 +33,7 @@ Generated from the source by `./zig build autodoc`.
 - [NewLayerInfo](#newlayerinfo) - Makes the LayerInfo of one display, with no layers on it yet.
 - [NewLayerInfoTagList](#newlayerinfotaglist) - Makes the LayerInfo of one display, with no layers on it yet, the way the tags say.
 - [ScrollLayer](#scrolllayer) - Moves the window a `LAYERSUPER` layer shows of its own bitmap.
+- [SetLayerAttrsTagList](#setlayerattrstaglist) - Changes what a composed layer looks like.
 - [ShowLayerPicture](#showlayerpicture) - Shows a picture over part of a composed layer, in place of what the layer holds there.
 - [SizeLayer](#sizelayer) - Changes a layer's size, its top-left staying where it is.
 - [UnlockLayer](#unlocklayer) - Lets a layer go again.
@@ -593,7 +594,8 @@ Nothing; the values are where the tags point.
 
 A tag with a null pointer is passed over, and one the library does not
 know is ignored, so a program built against a later SDK still works.
-`LATAG_GetInFront` answers 0 for the frontmost layer.
+`LATAG_GetInFront` answers 0 for the frontmost layer, and passes over
+a ghost (`LATAG_Ghost`).
 
 **CONTEXT**
 
@@ -1347,6 +1349,74 @@ None known.
 _ = lb.ScrollLayer(layer, 0, 16);
 ```
 
+## SetLayerAttrsTagList
+
+Changes what a composed layer looks like.
+
+**SYNOPSIS**
+
+```zig
+fn SetLayerAttrsTagList(lb: *LayersBase, layer: *Layer, tags: ?[*]const TagItem) bool
+```
+
+**SINCE**
+
+0.8. LVO -132.
+
+**INPUTS**
+
+- `layer` - the layer.
+- `tags` - any of `LATAG_Corners`, `LATAG_Shadow`, `LATAG_Opacity` and
+  `LATAG_Ghost`, as `CreateLayerTagList` takes them. The last two are
+  set on the layers that move with it (`LATAG_MovesWith`) too: a
+  window's inside comes and goes with its border.
+
+**RESULT**
+
+True when the layer is as asked. False for a layer that is not
+composed, which has none of them, and without the memory for a
+shadow's picture or the tiling: then the layer has no shadow, and
+`LERR_NO_MEMORY` in it.
+
+**BEHAVIOR**
+
+The display is shown again wherever the layer and its shadow were and
+are: a layer seen through laid over what is behind it at its new
+opacity, what it uncovers or covers anew copied. A tag not given
+leaves that as it was, and one this library does not know is ignored.
+Set once a frame, it is how a layer fades in or out: from 0 to 255 as
+it comes, the other way round as it goes, a ghost (`LATAG_Ghost`) so
+that nothing is meant for it meanwhile, then deleted.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds any of the display's layers.
+- Interrupts: no. It may wait, and it allocates.
+- Locks: every layer of the display, taken here; no spinlock may be
+  held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+A shadow's picture is the LayerInfo's, kept for every layer that has
+a shadow of that size until the LayerInfo goes.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateLayerTagList`, `GetLayerAttrs`
+
+**EXAMPLES**
+
+```zig
+// One step of a window fading in.
+const step = [_]TagItem{ .{ .tag = layers.LATAG_Opacity, .data = value }, .{} };
+_ = lb.SetLayerAttrsTagList(layer, &step);
+```
+
 ## ShowLayerPicture
 
 Shows a picture over part of a composed layer, in place of what the layer holds there.
@@ -1359,7 +1429,7 @@ fn ShowLayerPicture(lb: *LayersBase, layer: *Layer, picture: ?*const rtg.Surface
 
 **SINCE**
 
-0.7. LVO -130.
+0.7. LVO -128.
 
 **INPUTS**
 
@@ -1722,7 +1792,10 @@ The frontmost layer that can be seen at the point, or null if none can.
 Front to back, by what each layer can **see** rather than by what its
 rectangle covers - so the answer is the layer that would be drawn on
 there. A point no layer can see is nobody's, which is not the same as
-the rectangles' answer for a layer hanging off the display.
+the rectangles' answer for a layer hanging off the display. A ghost
+(`LATAG_Ghost`) is passed over: a point on it is the first layer's
+behind it whose shape holds it. A round corner (`LATAG_Corners`) is
+not the layer's.
 
 **CONTEXT**
 

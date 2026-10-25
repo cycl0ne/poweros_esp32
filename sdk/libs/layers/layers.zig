@@ -22,6 +22,14 @@
 //! also show a picture of the caller's over part of itself, copied from
 //! where it is rather than into the layer first (`ShowLayerPicture`).
 //!
+//! **A composed layer can have round corners, cast a shadow and be seen
+//! through** (`LATAG_Corners`, `LATAG_Shadow`, `LATAG_Opacity`), set as it
+//! is made or later (`SetLayerAttrsTagList`). None of it costs the
+//! layer's program anything: the corners are where the layer is not, the
+//! shadow is what is behind darkened as it is copied, and a layer seen
+//! through is laid over what is behind it rather than copied. A layer
+//! that is not composed has none of them.
+//!
 //! **A layer draws in its own coordinates.** `(0,0)` is the layer's
 //! top-left wherever the layer happens to be, because the offset on to the
 //! display rides in the clip targets rather than in anything the caller
@@ -30,6 +38,7 @@
 //! Open it with OpenLibrary(LAYERSNAME, 0); its functions are in
 //! sdk/interface/layers.zig.
 
+const std = @import("std");
 const TAG_USER = @import("../utility/tagitem.zig").TAG_USER;
 const graphics = @import("../graphics/graphics.zig");
 const Rect = @import("../graphics/graphics.zig").Rect;
@@ -118,10 +127,60 @@ pub const LATAG_MovesWith = LATAG_Dummy + 8;
 /// board's buffer can be composed, and only on the 64-bit machines; asked
 /// for anywhere else, the LayerInfo is made as without it.
 pub const LATAG_Compose = LATAG_Dummy + 9;
+/// The radius of a composed layer's corners, in pixels (0, square): its
+/// four corners are cut round. What is behind shows there, a point there
+/// is not the layer's (`WhichLayer`), and what is drawn there goes into
+/// the layer's buffer and is never shown. `cornerCut` says which pixels
+/// go, for whoever draws an outline along them.
+pub const LATAG_Corners = LATAG_Dummy + 10;
+/// The size of the shadow a composed layer casts on what is behind it, in
+/// pixels (0, none): soft, from as far out as the size all round, and a
+/// third of it lower than the layer. What is behind is darkened as it is
+/// copied on to the display; nothing is drawn, and the layer's program
+/// sees none of it. Up to 32.
+pub const LATAG_Shadow = LATAG_Dummy + 11;
+/// How much a composed layer covers what is behind it: 255, all of it
+/// (the default), down to 0, none - it is not seen. Below 255 the layer
+/// and its shadow are laid over what is behind them, and **what is drawn
+/// in it, or behind it, shows when they are next shown**: when the
+/// opacity is set again, or the layer moved. It is for a layer coming or
+/// going, set at every step of the way, not for one that stays so.
+pub const LATAG_Opacity = LATAG_Dummy + 12;
+/// True: the layer is seen and does not count: a point on it is the
+/// layer's behind (`WhichLayer`), and the layer behind it has none in
+/// front of it there (`LATAG_GetInFront`). What a window that has gone
+/// leaves while it fades. False, the default, makes it count again.
+pub const LATAG_Ghost = LATAG_Dummy + 13;
 /// Where to write the error if the call fails, as an `*i32`. The layer
 /// that would have carried it does not exist yet, which is why this is
 /// here at all.
 pub const LATAG_ErrorPtr = LATAG_Dummy + 5;
+
+/// The radius the corners of a layer `width` by `height` are cut at when
+/// `radius` is asked for (`LATAG_Corners`): no more than half the layer's
+/// width or height.
+pub fn cornerRadius(radius: u32, width: u32, height: u32) u32 {
+    return @min(radius, @min(width, height) / 2);
+}
+
+/// How many pixels of one row of a corner of `radius` are cut away
+/// (`LATAG_Corners`), counted from the layer's edge, row 0 being the
+/// outermost: those whose middle is outside the circle. The same for all
+/// four corners, mirrored; 0 for a row at or past the radius. The pixel
+/// after them is the first of the layer, which is where an outline goes.
+///
+/// INPUTS:
+/// - `radius` - the corners' radius, in pixels.
+/// - `row` - the row, from the layer's top or bottom edge.
+pub fn cornerCut(radius: u32, row: u32) u32 {
+    if (row >= radius) return 0;
+    // In halves of a pixel: the circle's middle is (r, r), a pixel's is
+    // (x + 1/2, y + 1/2), and a pixel is kept when its middle is inside.
+    const twice: u64 = 2 * @as(u64, radius);
+    const down = twice - 2 * @as(u64, row) - 1;
+    const across = std.math.sqrt(twice * twice - down * down);
+    return if (across >= twice) 0 else @intCast((twice - across) / 2);
+}
 
 /// `LATAG_BackFill` with this instead of a hook: leave the area as it is.
 /// It is a value and not a hook, so that "do nothing" costs no code and no

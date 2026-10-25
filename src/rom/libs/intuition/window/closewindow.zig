@@ -92,10 +92,14 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     // The gadgets' RastPort goes before the layer whose pixels it names.
     if (w.gi_rp) |gi_rp| ib.graphics_base.FreeRastPort(gi_rp);
     w.gi_rp = null;
-    if (w.inner_layer) |inner| ib.layers_base.DeleteLayer(inner);
+    // Its layers fade out, a ghost's, and the input task deletes them
+    // then; or they go now.
+    if (!@import("_fade.zig").fadeOut(ib, w)) {
+        if (w.inner_layer) |inner| ib.layers_base.DeleteLayer(inner);
+        ib.layers_base.DeleteLayer(w.layer);
+    }
     w.inner_layer = null;
     w.inner_rp = null;
-    ib.layers_base.DeleteLayer(w.layer);
     if (w.text_font) |font| ib.graphics_base.CloseFont(font);
     disposeParts(ib, w);
     const visitor = w.more_flags & _window.WMF_VISITOR != 0;

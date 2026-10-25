@@ -66,6 +66,9 @@ pub const Picture = struct {
     column: u32,
     source: Source,
     alpha: u32,
+    /// Its coverage is not read: every pixel covers fully
+    /// (`RTGPIXF_OPAQUE`).
+    whole: bool = false,
 };
 
 /// The picture `pixels` describes, for a rectangle `rows` high: null for
@@ -82,13 +85,13 @@ pub fn pictureOf(pixels: *const rtg.RtgPixels, width: u32, rows: u32, alpha: u32
     const first_row: u64 = @intFromPtr(pixels.pixels.?) + @as(u64, @intCast(pixels.y)) * pixels.pitch;
     const end = first_row + @as(u64, rows - 1) * pixels.pitch + @as(u64, column + width) * source.bytes;
     if (first_row % 4 != 0 or !engine_file.reachable(first_row, end)) return null;
-    return .{ .first_row = @intCast(first_row), .pitch = pixels.pitch, .width = picture_width, .column = column, .source = source, .alpha = alpha };
+    return .{ .first_row = @intCast(first_row), .pitch = pixels.pitch, .width = picture_width, .column = column, .source = source, .alpha = alpha, .whole = pixels.flags & rtg.RTGPIXF_OPAQUE != 0 };
 }
 
 /// What becomes of a picture's coverage in the unit.
 fn overOf(picture: Picture) ppa.Over {
     var over = ppa.Over{ .cm = picture.source.cm, .swap = picture.source.swap };
-    if (!picture.source.covered) {
+    if (!picture.source.covered or picture.whole) {
         over.coverage = .replace;
         over.fixed = picture.alpha;
     } else if (picture.alpha < 255) {
@@ -256,7 +259,7 @@ fn layByCpu(dest: *const rtg.RtgBitMap, from: u32, to: u32, y: u32, rows: u32, p
             @as(usize, picture.column + (from - left)) * picture.source.bytes);
         for (0..to - from) |index| {
             const pen = penAt(in + index * picture.source.bytes, picture.source);
-            const coverage = if (!picture.source.covered) picture.alpha else if (picture.alpha < 255) (pen >> 24) * picture.alpha >> 8 else pen >> 24;
+            const coverage = if (!picture.source.covered or picture.whole) picture.alpha else if (picture.alpha < 255) (pen >> 24) * picture.alpha >> 8 else pen >> 24;
             out[index] = mix(out[index], pen, coverage);
         }
     }

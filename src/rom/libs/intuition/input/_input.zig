@@ -171,6 +171,10 @@ pub const State = extern struct {
     /// The signal another task wakes the input task with when gadgets wait
     /// to be drawn again (`QueueGadgetRefresh`).
     refresh_mask: u32 = 0,
+    /// The signal a window's fade wakes it with: a window to fade in or
+    /// out, or a step of one (window/_fade.zig); its number, for motion.
+    fade_mask: u32 = 0,
+    fade_signal: u32 = 0,
     /// A gadget of a window that never takes the activation, pressed
     /// beside whatever has the input, and its window; and whether the
     /// release of a press it was done with at once is still to come.
@@ -353,6 +357,11 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
     if (signal >= 0) st.mask = @as(u32, 1) << @intCast(signal);
     const refresh_signal = sys.AllocSignal(-1);
     if (refresh_signal >= 0) st.refresh_mask = @as(u32, 1) << @intCast(refresh_signal);
+    const fade_signal = sys.AllocSignal(-1);
+    if (fade_signal >= 0) {
+        st.fade_signal = @intCast(fade_signal);
+        st.fade_mask = @as(u32, 1) << @intCast(fade_signal);
+    }
     if (st.starter) |starter| {
         st.starter = null;
         sys.Signal(starter, @as(u32, 1) << @intCast(st.start_signal));
@@ -379,13 +388,14 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
     const head: *volatile u32 = &st.head;
     const tail: *volatile u32 = &st.tail;
     while (true) {
-        const got = sys.Wait(st.mask | verify_mask | st.refresh_mask | size_mask);
+        const got = sys.Wait(st.mask | verify_mask | st.refresh_mask | size_mask | st.fade_mask);
         if (got & verify_mask != 0) {
             _window.lock(ib);
             verify.poll(ib);
             _window.unlock(ib);
         }
         if (got & st.refresh_mask != 0) refreshQueued(ib);
+        if (got & st.fade_mask != 0) @import("../window/_fade.zig").step(ib);
         while (tail.* != head.*) {
             const e = st.events[tail.* % ring_size];
             tail.* +%= 1;
@@ -1329,6 +1339,22 @@ fn pace(ib: *IntuitionBase) void {
     if ((st.mode != .size and st.mode != .drag) or st.step_owed == 0) return;
     if (_misc.now(ib)) |now| st.step_began = timer.TimeVal.fromMicros(now);
     if (st.mode == .size) sizeStep(ib) else dragStep(ib);
+}
+
+// --- windows fading ------------------------------------------------------------------
+
+/// The signal number the input task is woken with for a window's fade,
+/// or null when there is no input task to fade one.
+pub fn fadeSignal(ib: *IntuitionBase) ?u32 {
+    const st = stateOf(ib);
+    if (st.started != 1 or st.fade_mask == 0) return null;
+    return st.fade_signal;
+}
+
+/// The input task woken to see to the windows fading.
+pub fn wakeFades(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    if (st.started == 1 and st.fade_mask != 0) ib.sys_base.Signal(&st.task, st.fade_mask);
 }
 
 // --- gadgets drawn at another task's asking ----------------------------------------

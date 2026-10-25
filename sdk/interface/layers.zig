@@ -50,6 +50,7 @@ pub const LVO = struct {
     pub const DamageLayer = libraries.lvo(29);
     pub const NewLayerInfoTagList = libraries.lvo(30);
     pub const ShowLayerPicture = libraries.lvo(31);
+    pub const SetLayerAttrsTagList = libraries.lvo(32);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -83,6 +84,7 @@ pub const Fn = struct {
     pub const DamageLayer = *const fn (*LayersBase, *layers.Layer, *const graphics.Rect) callconv(.c) bool;
     pub const NewLayerInfoTagList = *const fn (*LayersBase, *graphics.RastPort, ?[*]const utility.TagItem) callconv(.c) ?*layers.LayerInfo;
     pub const ShowLayerPicture = *const fn (*LayersBase, *layers.Layer, ?*const rtg.Surface, ?*const graphics.Rect) callconv(.c) bool;
+    pub const SetLayerAttrsTagList = *const fn (*LayersBase, *layers.Layer, ?[*]const utility.TagItem) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -275,5 +277,13 @@ pub const LayersBase = opaque {
     /// a super layer, or a picture not in the display's pixels.
     pub fn ShowLayerPicture(self: *LayersBase, layer: *layers.Layer, picture: ?*const rtg.Surface, area: ?*const graphics.Rect) bool {
         return libraries.call(self, LVO.ShowLayerPicture, Fn.ShowLayerPicture, .{ layer, picture, area });
+    }
+
+    /// Change what a composed layer looks like: LATAG_Corners, LATAG_Shadow,
+    /// LATAG_Opacity, LATAG_Ghost, as CreateLayerTagList takes them. The
+    /// display is shown again where the layer and its shadow were and are.
+    /// False for a layer that is not composed, or without memory.
+    pub fn SetLayerAttrsTagList(self: *LayersBase, layer: *layers.Layer, tags: ?[*]const utility.TagItem) bool {
+        return libraries.call(self, LVO.SetLayerAttrsTagList, Fn.SetLayerAttrsTagList, .{ layer, tags });
     }
 };

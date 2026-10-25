@@ -21,7 +21,9 @@ const _prefs = @import("_prefs.zig");
 /// - `tags` - the settings wanted, each an `IPREFS_` tag whose data is
 ///   where its value is written: a `*u32` for `IPREFS_DoubleClick`
 ///   (milliseconds), `IPREFS_ScreenFontHeight` (rows), `IPREFS_Keyboard`,
-///   `IPREFS_OffScreen`, `IPREFS_WideGadgets` and `IPREFS_BeepFlash`; a
+///   `IPREFS_OffScreen`, `IPREFS_WideGadgets`, `IPREFS_BeepFlash`,
+///   `IPREFS_WindowCorners`, `IPREFS_WindowShadow` (pixels) and
+///   `IPREFS_WindowFade` (milliseconds); a
 ///   `*?*graphics.TextFont` for the three fonts; a
 ///   `*[NUMDRIPENS]graphics.Pen` for `IPREFS_Pens`.
 ///

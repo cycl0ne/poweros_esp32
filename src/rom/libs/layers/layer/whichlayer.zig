@@ -10,6 +10,7 @@ const _layerinfo = @import("../layerinfo/_layerinfo.zig");
 const LayerInfo = _layerinfo.LayerInfo;
 const Layer = _layerinfo.Layer;
 const LayersBase = @import("../layers.zig").LayersBase;
+const effects = @import("../compose/_effects.zig");
 
 /// Tells which layer a point of the display is in.
 ///
@@ -32,7 +33,10 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// Front to back, by what each layer can **see** rather than by what its
 /// rectangle covers - so the answer is the layer that would be drawn on
 /// there. A point no layer can see is nobody's, which is not the same as
-/// the rectangles' answer for a layer hanging off the display.
+/// the rectangles' answer for a layer hanging off the display. A ghost
+/// (`LATAG_Ghost`) is passed over: a point on it is the first layer's
+/// behind it whose shape holds it. A round corner (`LATAG_Corners`) is
+/// not the layer's.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -58,15 +62,25 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// ```
 pub fn WhichLayer(lb: *LayersBase, info: *LayerInfo, x: i32, y: i32) ?*Layer {
     const gb = lb.graphics_base;
+    const on_display = x >= info.bounds.min_x and x < info.bounds.max_x and y >= info.bounds.min_y and y < info.bounds.max_y;
+    // Under a ghost - a window gone, fading - which is seen and does not
+    // count: the layers behind it cannot see the point, and the first
+    // whose shape holds it is the one.
+    var through = false;
     var it = info.layers.iterator();
     while (it.next()) |node| {
         const layer: *Layer = @fieldParentPtr("node", node);
+        if (layer.ghost) {
+            if (on_display and effects.holds(layer, x, y)) through = true;
+            continue;
+        }
         // What the layer can **see** there, not merely what its rectangle
         // covers. Front to back the two agree about which layer owns a
         // point that some layer owns - but a point no layer can see, off
         // the display or behind one hanging over the edge, is nobody's,
         // and the rectangles would have said otherwise.
         if (gb.PointInRegion(layer.visible, x, y)) return layer;
+        if (through and effects.holds(layer, x, y)) return layer;
     }
     return null;
 }

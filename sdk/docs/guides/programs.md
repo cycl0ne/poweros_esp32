@@ -400,11 +400,15 @@ keyboard too. `IPREFS_Keyboard` says when - `KEYBOARD_AUTO` (no keyboard on
 the board, the default), `KEYBOARD_ALWAYS` or `KEYBOARD_NEVER`.
 `C:test/Keyboard` turns it on and opens a field to try it with.
 The setting is kept in `ENVARC:Sys/intuition.prefs` with intuition's
-other four - `DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO
-WIDEGADGETS=NO` - which `C:SetPrefs` hands to intuition at boot and
-`SYS:Programs/Prefs` edits. `OFFSCREEN` (`IPREFS_OffScreen`) lets a
-window be moved partly past the screen's edges, and `WIDEGADGETS`
-(`IPREFS_WideGadgets`) makes the gadgets in the title bars wide; see
+other seven - `DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO
+WIDEGADGETS=NO CORNERS=6 SHADOW=12 FADE=160` - which `C:SetPrefs` hands
+to intuition at boot and `SYS:Programs/Prefs` edits. `OFFSCREEN`
+(`IPREFS_OffScreen`) lets a window be moved partly past the screen's
+edges, `WIDEGADGETS` (`IPREFS_WideGadgets`) makes the gadgets in the
+title bars wide, and `CORNERS`, `SHADOW` and `FADE`
+(`IPREFS_WindowCorners`, `IPREFS_WindowShadow`, `IPREFS_WindowFade`) are
+how round a window's corners are, how far its shadow reaches and how long
+it fades, where windows are composed - 0 for none; see
 [A window from tags](intuition.md#a-window-from-tags).
 
 Every setting the system keeps is a tag: `SetPrefs` changes those

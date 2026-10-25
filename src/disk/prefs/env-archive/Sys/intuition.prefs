@@ -14,8 +14,17 @@
 # WIDEGADGETS  whether the close, depth and zoom gadgets in the
 #              title bars are wide: YES or NO. YES makes them a
 #              third wider.
+# CORNERS      on a screen whose windows are composed (the 64-bit
+#              machines), the radius of a window's round corners in
+#              pixels, up to 16; 0 for square ones.
+# SHADOW       there, how far the shadow a window casts reaches, in
+#              pixels, up to 32; 0 for none.
+# FADE         there, how long a window takes to fade in as it opens
+#              and out as it closes, in milliseconds, up to 1000; 0
+#              for at once.
 #
 # One left out keeps the value intuition has. These are the system's
 # own:
 #
 # DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO WIDEGADGETS=NO
+# CORNERS=6 SHADOW=12 FADE=160

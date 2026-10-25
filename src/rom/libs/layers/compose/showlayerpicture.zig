@@ -22,7 +22,7 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// fn ShowLayerPicture(lb: *LayersBase, layer: *Layer, picture: ?*const rtg.Surface, area: ?*const graphics.Rect) bool
 /// ```
 ///
-/// SINCE: 0.7. LVO -130.
+/// SINCE: 0.7. LVO -128.
 ///
 /// INPUTS:
 /// - `layer` - the layer.
