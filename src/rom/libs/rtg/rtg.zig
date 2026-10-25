@@ -338,7 +338,7 @@ test "display memory from the system: taken as asked for, aligned, held to its l
     defer kexec.deinit();
     const sys = rb.sys_base;
     var arena: memory.Arena = .{};
-    arena.initSystem(sys, 3 * 2560, 64);
+    arena.initSystem(sys, 3 * 2560, 64, 0);
     try testing.expect(arena.usable());
     try testing.expectEqual(@as(usize, 3 * 2560), arena.free_bytes);
     var pieces: [3]memory.Piece = undefined;
@@ -352,6 +352,27 @@ test "display memory from the system: taken as asked for, aligned, held to its l
     try testing.expectEqual(@as(usize, 0), arena.largest(sys));
     for (pieces) |piece| arena.give(sys, piece.offset, piece.taken);
     try testing.expectEqual(@as(usize, 3 * 2560), arena.free_bytes);
+    arena.deinit(sys);
+    try tearDown(rb);
+}
+
+test "display memory a DMA engine reaches: taken from there and nowhere else" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const sys = rb.sys_base;
+    var arena: memory.Arena = .{};
+    arena.initSystem(sys, 2 * 2560, 64, memory.attributesOf(rtg.boards.RTGRF_SYSTEM_MEMORY | rtg.boards.RTGRF_DMA_MEMORY));
+    // The test RAM says nothing of DMA, so it is no answer.
+    try testing.expect(arena.take(sys, 2560) == null);
+    try testing.expectEqual(@as(usize, 0), arena.largest(sys));
+    var dma_ram: [8192]u8 align(64) = undefined;
+    _ = kexec.AddMemList(kexec.SysBase, dma_ram.len, exec.MEMF_DMA, -20, &dma_ram, "dma") orelse return error.NoRegion;
+    const piece = arena.take(sys, 2560) orelse return error.NoMemory;
+    try testing.expectEqual(@as(usize, 0), piece.pixels % 64);
+    try testing.expect(piece.offset >= @intFromPtr(&dma_ram) and piece.offset + piece.taken <= @intFromPtr(&dma_ram) + dma_ram.len);
+    try testing.expect(arena.largest(sys) != 0);
+    arena.give(sys, piece.offset, piece.taken);
+    try testing.expectEqual(@as(usize, 2 * 2560), arena.free_bytes);
     arena.deinit(sys);
     try tearDown(rb);
 }

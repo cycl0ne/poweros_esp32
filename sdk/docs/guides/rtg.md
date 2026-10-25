@@ -138,14 +138,18 @@ driver describes as a region:
   from exec's memory (external first) when it is allocated and given back
   when it is freed, and the region's size is the most the buffers may
   hold together. The ESP32s' panels work this way, so memory is spent
-  only on the pictures that exist.
+  only on the pictures that exist. With `RTGRF_DMA_MEMORY` as well, the
+  buffers come only from memory a DMA engine reaches (`MEMF_DMA`), for a
+  display that reads nothing else.
 
-The `fb` driver has a stretch: one block of DMA memory, below 4 GiB, which
-it takes as the board is made - as many pictures as the board's
-`RTGA_Buffers` asks for, and one more, the frame it lays the pointer into
-(below). On the VisionFive 2 the display does not see the processor's
-caches, so the region is `RTGRF_CPU_CACHED`: a buffer from it is
-`RTGBMF_CACHED`, and every refresh writes the rows it names back out of
+The `fb` driver works that way too, from `MEMF_DMA` memory - on the 64-bit
+machines what is below 4 GiB: at most as many pictures as the board's
+`RTGA_Buffers` asks for, 16 on those machines, each taken when it is
+allocated. Its own frame, the one it lays the pointer into (below), it
+takes when it first needs one and gives back when the display reads a
+buffer again. On the VisionFive 2 the display does not see the
+processor's caches, so the region is `RTGRF_CPU_CACHED`: a buffer from it
+is `RTGBMF_CACHED`, and every refresh writes the rows it names back out of
 the caches with `CacheClearE`.
 
 `RTGBMF_DISPLAYABLE` asks for a buffer the board can show: memory it can

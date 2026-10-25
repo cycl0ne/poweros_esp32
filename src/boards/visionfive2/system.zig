@@ -184,7 +184,10 @@ const display = [_]Tag{
     .value(tags.RTGA_Width, screen.width),
     .value(tags.RTGA_Height, screen.height),
     .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
-    .value(tags.RTGA_Buffers, 3),
+    // At most sixteen pictures at once - screens, and the buffers behind
+    // them - each taken from memory as it is opened: a ceiling, not memory
+    // set aside.
+    .value(tags.RTGA_Buffers, 16),
     .done,
 };
 

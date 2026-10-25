@@ -635,6 +635,21 @@ pub fn update(gpu: *Gpu, picture: Picture, rect: Rect, waiter: anytype) void {
     kick(gpu, 0);
 }
 
+/// The emulator's copy of the picture at `pixels` let go of, as its
+/// memory is given back: a picture made there later starts afresh and is
+/// copied whole. The one shown is kept.
+pub fn forget(gpu: *Gpu, pixels: usize, waiter: anytype) void {
+    gpu.sys.ObtainSemaphore(&gpu.lock);
+    defer gpu.sys.ReleaseSemaphore(&gpu.lock);
+    for (&gpu.resources) |*one| {
+        if (one.pixels != pixels or one.id == 0 or one.id == gpu.shown) continue;
+        const gone = Unref{ .resource_id = one.id };
+        _ = send(gpu, &gone, null, waiter) orelse return;
+        kick(gpu, 0);
+        one.* = .{};
+    }
+}
+
 /// `picture` shown, `width` by `height` of it from its top left: its
 /// resource made the first time - and copied whole - and what was written
 /// into it while another was shown copied first.
