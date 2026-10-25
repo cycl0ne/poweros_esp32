@@ -131,6 +131,10 @@ pub const SYSTAG_CpuSpeed = SYSTAG_Dummy + 32;
 /// CachePostDMA). Read on an AArch64 machine; a RISC-V one names its
 /// cache controller instead (SYSTAG_CacheFlush).
 pub const SYSTAG_DmaCoherent = SYSTAG_Dummy + 33;
+/// How many sources the PLIC has after source 0, as its device tree node
+/// says (`riscv,ndev`): QEMU's virt 95, the JH7110 136. Only those are
+/// set up and taken. Absent, the most any machine here has.
+pub const SYSTAG_PlicSources = SYSTAG_Dummy + 34;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

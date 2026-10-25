@@ -3,7 +3,8 @@
 //! (`./zig build virt`): 512 MiB of RAM at 0x80000000, a 16550 console
 //! at 0x10000000 with byte-wide registers one after the other (QEMU
 //! gives its divisor a 3.6864 MHz clock) on PLIC source 10, a 10 MHz
-//! timebase, and the PLIC's contexts two per hart, machine mode first.
+//! timebase, and the PLIC's 95 sources and its contexts two per hart,
+//! machine mode first.
 //! With `-device virtio-gpu-device` or `-device ramfb` a display too,
 //! 1920x1080 as the VisionFive 2's.
 //!
@@ -126,6 +127,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ConsoleIrq, 10),
     .value(st.SYSTAG_PlicFirst, 1),
     .value(st.SYSTAG_PlicStride, 2),
+    .value(st.SYSTAG_PlicSources, 95),
     // As many as `-smp` gives the machine, up to four.
     .value(st.SYSTAG_Cores, 4),
     .value(st.SYSTAG_ScreenWidth, screen.width),

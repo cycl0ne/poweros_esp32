@@ -113,6 +113,9 @@ fn takeBoard(tree: device_tree.Facts) void {
         .first = @intCast(boards.fact(st.SYSTAG_PlicFirst, 1)),
         .stride = @intCast(boards.fact(st.SYSTAG_PlicStride, 2)),
     };
+    // No more than exec numbers: what is kept per source has room for those.
+    const most_sources = hardware.intbits.INTB_PLIC_COUNT - 1;
+    hardware.plic.sources = @intCast(@min(boards.fact(st.SYSTAG_PlicSources, most_sources), most_sources));
     hardware.systimer.timebase_hz = @intCast(boards.fact(st.SYSTAG_Timebase, 10_000_000));
     hardware.system.before_reset = boards.before_reset;
     hardware.ccache.flush64 = boards.fact(st.SYSTAG_CacheFlush, 0);

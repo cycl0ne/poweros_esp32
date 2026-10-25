@@ -5,10 +5,11 @@
 //! and U-Boot, whose `booti` enters the kernel in supervisor mode on the
 //! hart OpenSBI picked. UART0, the debug console on header pins 8 and 10,
 //! is a DesignWare APB UART: 32-bit registers four bytes apart, a 24 MHz
-//! clock, PLIC source 32. The timebase is 4 MHz. The PLIC's contexts are
-//! two per hart, machine mode first, hart 0's machine context alone at 0:
-//! hart n's supervisor context is 2n. (docs/memory-map.md in the port's
-//! repository has the board as read from it.)
+//! clock, PLIC source 32. The timebase is 4 MHz. The PLIC has 136
+//! sources and its contexts are two per hart, machine mode first, hart
+//! 0's machine context alone at 0: hart n's supervisor context is 2n.
+//! (docs/memory-map.md in the port's repository has the board as read
+//! from it.)
 //!
 //! What is true of the board is written down here once, as the system tag
 //! list the ROM carries for expansion.library (a part per SYSTAG_Part). The
@@ -229,6 +230,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ConsoleIrq, 32),
     .value(st.SYSTAG_PlicFirst, 0),
     .value(st.SYSTAG_PlicStride, 2),
+    .value(st.SYSTAG_PlicSources, 136),
     // The L2 cache controller's Flush64: the JH7110's devices do not see
     // the U74s' caches.
     .value(st.SYSTAG_CacheFlush, 0x0201_0200),
