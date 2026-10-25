@@ -6,9 +6,9 @@
 //! the card's partitions to expansion.library at cold start, and FAT's
 //! handler for them. Both are the disk's own
 //! drivers, built into the ROM as they are. And sound: rta.library, the
-//! HDMI port's sink (rta-hdmi), the file sink and audio.device, which
-//! plays through them and through the outputs USB brings (uac.device,
-//! from the disk).
+//! HDMI port's sink (rta-hdmi), the audio jack's (rta-pwmdac), the file
+//! sink and audio.device, which plays through them and through the
+//! outputs USB brings (uac.device, from the disk).
 //!
 //! And the SSD on the M.2 slot: pci.library for the PCI Express ports,
 //! nvme.device and posfs-handler, the disk's own too - what starting from
@@ -28,6 +28,7 @@ pub const modules = .{
     @import("../../disk/devs/handlers/posfs/posfs.zig"),
     @import("../../rom/libs/rta/rta.zig"),
     @import("../../rom/libs/rta_driver/hdmi/hdmi.zig"),
+    @import("../../rom/libs/rta_driver/pwmdac/pwmdac.zig"),
     @import("../../rom/libs/rta_driver/file/file.zig"),
     @import("../../rom/devs/audio/audio.zig"),
 };

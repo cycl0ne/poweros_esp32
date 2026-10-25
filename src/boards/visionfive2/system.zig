@@ -222,6 +222,21 @@ const hdmi_sound = [_]Tag{
     .done,
 };
 
+/// The audio jack: the chip's PWM-DAC, fed by a channel of the DMA
+/// controller, its left and right lines on GPIO33 and GPIO34 (the device
+/// tree's pwmdac_pins) through the board's filter.
+const jack = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_CODEC),
+    .value(st.PART_Chip, st.CHIP_JH7110_PWMDAC),
+    .pointer(st.PART_ChipName, "jh7110 pwmdac"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x100B_0000),
+    .value(st.PART_PinLeft, pins.gpio(33)),
+    .value(st.PART_PinRight, pins.gpio(34)),
+    .pointer(st.PART_Label, "Audio jack"),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -250,6 +265,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_CpuSpeed, 1500),
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &hdmi_sound),
+    .pointer(st.SYSTAG_Part, &jack),
     .pointer(st.SYSTAG_Part, &trng),
     .pointer(st.SYSTAG_Part, &temperature),
     .pointer(st.SYSTAG_Part, &dmac),

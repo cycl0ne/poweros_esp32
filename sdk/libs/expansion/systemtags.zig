@@ -282,6 +282,10 @@ pub const PART_PinCharging = PART_Dummy + 0x41;
 /// divided down from, in thousandths: 2000 behind a divider that
 /// halves it, 3000 behind one that leaves a third.
 pub const PART_SenseScale = PART_Dummy + 0x42;
+/// A stereo output's two lines, each a side of its own: a PWM DAC's
+/// pulses, which the board filters into its jack.
+pub const PART_PinLeft = PART_Dummy + 0x43;
+pub const PART_PinRight = PART_Dummy + 0x44;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -321,6 +325,8 @@ pub fn lineName(tag: u32) ?[*:0]const u8 {
         PART_PinMDIO => "MDIO",
         PART_PinExternal => "EXT",
         PART_PinCharging => "CHRG",
+        PART_PinLeft => "LEFT",
+        PART_PinRight => "RIGHT",
         else => null,
     };
 }
@@ -481,6 +487,12 @@ pub const CHIP_JH7110_TEMP: u32 = 32;
 /// PART_WindowSize): a picture in RAM copied into the emulator's window a
 /// rectangle at a time, and a pointer of its own.
 pub const CHIP_VIRTIO_GPU: u32 = 33;
+/// The JH7110's PWM-DAC as the machine's sound (PARTKIND_CODEC on
+/// BUS_MEMORY, PART_Address the DAC): a stereo stream of 16-bit samples,
+/// which a channel of the chip's DMA controller (CHIP_JH7110_DMAC) feeds,
+/// turned into pulses on PART_PinLeft and PART_PinRight - the VisionFive
+/// 2's audio jack.
+pub const CHIP_JH7110_PWMDAC: u32 = 34;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

@@ -10,6 +10,8 @@ pub const GPOUT_LOW: u8 = 0;
 pub const GPOUT_HIGH: u8 = 1;
 pub const GPOUT_SYS_HDMI_DDC_SCL: u8 = 11;
 pub const GPOUT_SYS_HDMI_DDC_SDA: u8 = 12;
+pub const GPOUT_SYS_PWMDAC_LEFT: u8 = 28;
+pub const GPOUT_SYS_PWMDAC_RIGHT: u8 = 29;
 pub const GPOUT_SYS_SDIO1_CLK: u8 = 55;
 pub const GPOUT_SYS_SDIO1_CMD: u8 = 57;
 /// DATA0 to DATA3 follow one another.
