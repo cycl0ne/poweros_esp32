@@ -27,7 +27,7 @@ device requests are described in `sdk/devices/network.zig`,
   and scp, the client (`C:net/SSH`), copying (`C:net/SCP`), the device
 - [A share as a volume: smb-handler](#a-share-as-a-volume-smb-handler) -
   `C:net/MountShare`, share files, the logon, signing and encryption,
-  staying connected, names
+  writing, record locks and notification, staying connected, names
 - [A packet filter](#a-packet-filter) - its rules, `C:net/Filter`, and
   the packet hooks it is built on
 - [Commands](#commands)
@@ -809,10 +809,10 @@ from inside: `SSH user@10.0.2.2` reaches the PC's own sshd.
 ## A share as a volume: smb-handler
 
 `HANDLERS:smb-handler` serves a share on an SMB 2 or 3 server - Windows,
-Samba, a NAS - as a device: `List`, `Type`, `Copy`, `CD` and `Info` work
-on its files as on a disk's. It reads; anything that would write is
-answered as a write-protected disk answers. `C:net/MountShare` mounts a
-share:
+Samba, a NAS - as a device: `List`, `Type`, `Copy`, `MakeDir`, `Rename`,
+`Delete`, `Protect`, `SetDate`, `CD` and `Info` work on its files as on
+a disk's, and so do record locks and notification. `C:net/MountShare`
+mounts a share:
 
 ```
 MountShare NAS SHARE=//nas/public USER=me PASSWORD=secret
@@ -833,7 +833,7 @@ MountShare NAS DISMOUNT
 | `ENCRYPT/S` | every message encrypted, or no mount |
 | `SAVE/S` | once mounted, what it was mounted with written into its share file, and a PASSWORD's NT hash into its password file |
 | `QUIET/S` | nothing said when it mounts, or is mounted already |
-| `DISMOUNT/S` | logs off and takes the device away; not while a lock or a file is open on it |
+| `DISMOUNT/S` | logs off and takes the device away; not while a lock, an open file or a watch is on it |
 
 MountShare starts the handler at once, and the handler connects, logs on
 and connects to the share before MountShare goes on. A share that cannot
@@ -903,17 +903,38 @@ boot; one whose server cannot be had then is mounted by hand later.
   `日本語.txt` is `___=0206.txt`. The stand-in opens the file. ReadArgs
   ends an unquoted argument at `=`, so on a command line a stand-in goes
   in quotes: `Type "NAS:___=0206.txt"`.
+- **Writing**: a file opened to be read is opened again with write access
+  at its first write, so a file that is only read never asks for more.
+  A new file (`MODE_NEWFILE`) is exclusive, and refused while anything
+  here has it open or locked; a delete is refused while it is locked, a
+  rename while it is locked exclusively. A rename never replaces what is
+  at the new name ("object already exists"), and a directory with a file
+  open below it is not renamed ("object in use"). A share the user may
+  not write to, as the server says when it is connected, is mounted
+  read-only, as READONLY mounts it: `Info` says "Read Only", and every
+  change is refused with "disk is write-protected".
 - **Protection and dates**: a read-only file has neither `w` nor `d`; `a`
-  is set while the server's ARCHIVE attribute is clear, as on FAT. A
-  file's date is its last write, in local time by the time zone.
-- **Info** answers from the share's size as read at the mount, never from
-  the network while it holds the device list.
+  is set while the server's ARCHIVE attribute is clear, as on FAT.
+  `Protect` without `w` or without `d` makes the file read-only, with
+  both makes it writable again, and `a` sets the ARCHIVE attribute. A
+  file's date is its last write, in local time by the time zone, and
+  `SetDate` sets it.
+- **Record locks and notification** are kept by the handler: a record
+  lock keeps out the record locks of other programs on this machine, and
+  a program watching a file or a directory hears of what changes through
+  this handler - not of another client's changes on the server.
+- **Info** answers from the share's size as last read, never from the
+  network while it holds the device list. Once the share is written to,
+  the size is read again between packets, at most every five seconds.
 - **Staying connected**: a connection that is lost - the server
   restarted, the network away for a while - is made again when it is
   next needed: the negotiation, the logon and the share as at the mount.
   The packet that found it lost is served again on the new connection,
-  and a `Copy` under way goes on from where it was; every open file is
-  opened again by its path and keeps its position. A file that is no
+  and a `Copy` under way goes on from where it was, reading or writing;
+  every open file is opened again by its path and keeps its position. A
+  `MakeDir`, a `Delete` or a `Rename` that loses the connection on the
+  way answers "not mounted" and is not tried again: the server may have
+  done it before the connection went. A file that is no
   longer there answers "object not found" from then on, and a directory
   being listed starts over from the entries it had handed out. While the
   server cannot be had, each packet that needs it answers "not mounted"

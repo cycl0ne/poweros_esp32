@@ -201,6 +201,13 @@ pub const Path = struct {
         }
     }
 
+    /// UTF-16LE bytes added at the end, as they are.
+    pub fn append(path: *Path, bytes: []const u8) Error!void {
+        if (path.len + bytes.len > path.bytes.len) return error.InvalidName;
+        @memcpy(path.bytes[path.len..][0..bytes.len], bytes);
+        path.len += bytes.len;
+    }
+
     /// The last name taken off; up from the root is an error.
     pub fn pop(path: *Path) Error!void {
         if (path.len == 0) return error.NotFound;
@@ -305,17 +312,12 @@ pub fn samePath(one: []const u8, other: []const u8) bool {
     return true;
 }
 
-/// A path's key for its locks: a hash of it, case aside, which dos
-/// compares two locks by when the handler cannot be asked.
-pub fn keyOf(path: []const u8) usize {
-    var hash: u32 = 2166136261;
-    var at: usize = 0;
-    while (at + 1 < path.len) : (at += 2) {
-        const low = if (path[at + 1] == 0) upper(path[at]) else path[at];
-        hash = (hash ^ low) *% 16777619;
-        hash = (hash ^ path[at + 1]) *% 16777619;
-    }
-    return hash;
+/// Whether `path` is `dir` or below it, case aside; everything is below
+/// the root.
+pub fn within(path: []const u8, dir: []const u8) bool {
+    if (dir.len == 0) return true;
+    if (path.len < dir.len or !samePath(path[0..dir.len], dir)) return false;
+    return path.len == dir.len or (path[dir.len] == '\\' and path[dir.len + 1] == 0);
 }
 
 // --- tests ------------------------------------------------------------------------
@@ -393,6 +395,17 @@ test "a name in a path replaced, longer and shorter; parents and last names" {
     try testing.expectEqualSlices(u8, utf16("three"), lastName(path.slice()));
     try testing.expectEqualSlices(u8, utf16("x"), lastName(utf16("x")));
     try testing.expect(samePath(utf16("Ab\\ä"), utf16("aB\\Ä")));
-    try testing.expectEqual(keyOf(utf16("Ab\\ä")), keyOf(utf16("aB\\Ä")));
     try testing.expect(!samePath(utf16("ab"), utf16("abc")));
+}
+
+test "a path within a directory, and one added to" {
+    try testing.expect(within(utf16("a\\b\\c"), utf16("A\\b")));
+    try testing.expect(within(utf16("a\\b"), utf16("a\\B")));
+    try testing.expect(within(utf16("a"), utf16("")));
+    try testing.expect(!within(utf16("a\\bc"), utf16("a\\b")));
+    try testing.expect(!within(utf16("a"), utf16("a\\b")));
+    var path: Path = .{};
+    try path.set(utf16("x"));
+    try path.append(utf16("\\y"));
+    try testing.expectEqualSlices(u8, utf16("x\\y"), path.slice());
 }

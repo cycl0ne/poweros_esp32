@@ -214,6 +214,8 @@ pub fn connectTree(session: *Session, server: []const u8, share: []const u8) ses
     const share_type = fields.byte();
     _ = fields.byte();
     session.share_flags = fields.uint32();
+    _ = fields.uint32(); // Capabilities
+    session.maximal_access = fields.uint32();
     session.tree_id = reply.header.tree_id;
     // A disk: not a pipe, not a printer.
     if (share_type != 1) return .{ .status = smb.STATUS_BAD_NETWORK_NAME };

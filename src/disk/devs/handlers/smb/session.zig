@@ -170,9 +170,12 @@ pub const Session = struct {
     /// connection starts from.
     preauth: signing.Preauth = .{},
 
-    /// What the logon and the tree connection found.
+    /// What the logon and the tree connection found: the share's flags,
+    /// and what the user may do on it (MaximalAccess, a CREATE's access
+    /// bits).
     session_flags: u16 = 0,
     share_flags: u32 = 0,
+    maximal_access: u32 = 0,
 
     /// Requests begun: the send buffer's message room.
     pub fn begin(session: *Session, command: Command) Request {
