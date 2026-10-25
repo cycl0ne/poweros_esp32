@@ -12,6 +12,8 @@ const _text = @import("_text.zig");
 const RastPort = rastport.RastPort;
 const drawing = @import("../draw/_draw.zig");
 const blits = @import("../blit/_blit.zig");
+const BeginDraw = @import("../draw/begindraw.zig").BeginDraw;
+const EndDraw = @import("../draw/enddraw.zig").EndDraw;
 const fontimage = graphics.fontimage;
 const Glyph = _text.Glyph;
 const TextFont = _text.TextFont;
@@ -101,6 +103,10 @@ pub fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) v
         return;
     };
     if (count == 0) return;
+    // A string is drawn in runs and bands of rows; it is handed on to the
+    // board once, as the box it was drawn in, not once for each.
+    BeginDraw(gb, rp);
+    defer EndDraw(gb, rp);
 
     const style = rp.text_style & softStyles(font);
     const look = Look{

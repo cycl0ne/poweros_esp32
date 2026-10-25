@@ -1312,6 +1312,49 @@ test "BeginDraw, EndDraw: nothing drawn sends nothing, and plain memory is untou
     try tearDown(gb);
 }
 
+test "Text: a string drawn in several runs is handed on once, as the box it was drawn in" {
+    const gb = try setUp();
+    // Wider than one run of a string, 1024 columns.
+    const width = 1800;
+    var pixels: [width * 8 * 2]u8 = @splat(0);
+    var bm = boardBitMap(&pixels, width, 8);
+    const Told = struct {
+        calls: u32 = 0,
+        rect: rtg.RtgRect = .{},
+
+        fn hear(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+            _ = object;
+            const told: *@This() = @ptrCast(@alignCast(hook.data.?));
+            told.calls += 1;
+            told.rect = @as(*const rtg.RtgRect, @ptrCast(@alignCast(message.?))).*;
+            return 0;
+        }
+    };
+    var told = Told{};
+    var hook = sdk.utility.Hook{ .entry = &Told.hear, .data = &told };
+    bm.watch = &hook;
+    const font = base(gb).OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }) orelse return error.NoFont;
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) },
+        .{},
+    };
+    const rp = try onBitMap(gb, &bm, &tags);
+    const gfx = base(gb);
+
+    const letters = "W" ** 200;
+    gfx.Move(@ptrCast(rp), 0, 6);
+    gfx.Text(@ptrCast(rp), letters, letters.len);
+    try testing.expectEqual(@as(u32, 1), told.calls);
+    try testing.expectEqual(@as(i32, 0), told.rect.x);
+    try testing.expect(told.rect.width > 1024);
+    try testing.expectEqual(@as(u32, 0), bm.held);
+
+    gfx.FreeRastPort(@ptrCast(rp));
+    base(gb).CloseFont(font);
+    try tearDown(gb);
+}
+
 test "RectFill: a pen that is not opaque is composed with what is under it" {
     const gb = try setUp();
     defer kexec.deinit();

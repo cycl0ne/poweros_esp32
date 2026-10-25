@@ -1760,6 +1760,52 @@ test "composed: a layer with its own bitmap draws in it, and scrolling only move
     try tearDown(lb);
 }
 
+test "composed: a drawing is handed on to the board once, in however many pieces it is seen" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+    if (!compose.built) {
+        c.done(lb);
+        return tearDown(lb);
+    }
+    const all = Rect{ .max_x = 32, .max_y = 16 };
+    const back = try layerAt(lb, c.info, &all, layers.LAYERSIMPLE);
+    const log = &c.state.log;
+
+    // Round corners make a layer a stack of rows of pieces.
+    const round = try lookingLayer(lb, c.info, &all, 6, 0, 255);
+    var before = log.refreshed;
+    fill(lb, round, graphics.penRGB(255, 0, 0), all);
+    try testing.expectEqual(@as(u32, 1), log.refreshed - before);
+    try testing.expectEqual(red, c.at(16, 8));
+    base(lb).DeleteLayer(round);
+
+    // A layer in the middle, with a shadow, leaves the back one a frame
+    // of four pieces, some of them darkened.
+    const middle_where = Rect{ .min_x = 8, .min_y = 4, .max_x = 20, .max_y = 10 };
+    const middle = try lookingLayer(lb, c.info, &middle_where, 0, 3, 255);
+    before = log.refreshed;
+    fill(lb, back, graphics.penRGB(0, 0, 255), all);
+    try testing.expectEqual(@as(u32, 1), log.refreshed - before);
+    try testing.expectEqual(blue, c.at(0, 0));
+    try testing.expectEqual(blue, c.at(31, 15));
+    base(lb).DeleteLayer(middle);
+
+    // Two strips far apart are two, not the whole display between them.
+    const wide_where = Rect{ .min_x = 2, .max_x = 30, .max_y = 16 };
+    const wide = try layerAt(lb, c.info, &wide_where, layers.LAYERSIMPLE);
+    before = log.refreshed;
+    fill(lb, back, graphics.penRGB(0, 255, 0), all);
+    try testing.expectEqual(@as(u32, 2), log.refreshed - before);
+    try testing.expectEqual(green, c.at(0, 8));
+    try testing.expectEqual(green, c.at(31, 8));
+    base(lb).DeleteLayer(wide);
+
+    base(lb).DeleteLayer(back);
+    c.done(lb);
+    try tearDown(lb);
+}
+
 test "composed: asked for on plain memory, the layers share the display as without it" {
     const lb = try setUp();
     defer kexec.deinit();

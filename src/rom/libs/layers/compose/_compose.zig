@@ -287,25 +287,57 @@ fn watched(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callc
 /// exec for room: a window under one or two others is a handful.
 const pieces_at_hand = 16;
 
-/// How a piece of a layer reaches the display: through the LayerInfo's
-/// RastPort, handed on at once (or at the end of the batch it is in);
-/// copied on to the display's buffer, handed on by the caller; or laid
-/// over what is there at the layer's opacity, the same.
-const How = enum { through, copied, laid };
+/// How a piece of a layer reaches the display's buffer: copied, or laid
+/// over what is there at the layer's opacity. Either way it is handed on
+/// to the board by the caller, through a `Gather`.
+const How = enum { copied, laid };
+
+/// What has been copied on to the display and not yet handed on to the
+/// board. Each handing on is a command to the board - on virtio a trip
+/// out of the machine - so the pieces of a drawing go as one box around
+/// them while that box is mostly what was copied, and a new box is begun
+/// where it would be mostly what was not. Handing on pixels that did not
+/// change is only a little more to send: they are what the display holds.
+const Gather = struct {
+    box: Rect = .{},
+    /// How many of the box's pixels were copied.
+    copied: u64 = 0,
+
+    fn add(g: *Gather, lb: *LayersBase, info: *const LayerInfo, piece: Rect) void {
+        const size = pixels(piece);
+        if (!g.box.isEmpty()) {
+            const joined = Rect.unionWith(g.box, piece);
+            if (pixels(joined) <= 2 * (g.copied + size)) {
+                g.box = joined;
+                g.copied += size;
+                return;
+            }
+            g.handOn(lb, info);
+        }
+        g.box = piece;
+        g.copied = size;
+    }
+
+    fn handOn(g: *Gather, lb: *LayersBase, info: *const LayerInfo) void {
+        if (g.box.isEmpty()) return;
+        const box = g.box;
+        g.* = .{};
+        const display = info.bitmap orelse return;
+        _ = lb.rtg_base.RefreshRect(display, &.{ .x = box.min_x, .y = box.min_y, .width = box.width(), .height = box.height() });
+    }
+
+    fn pixels(r: Rect) u64 {
+        return @as(u64, @intCast(r.width())) * @as(u64, @intCast(r.height()));
+    }
+};
 
 /// A rectangle of `from` - `x`, `y` its corner there - on to `piece` of
 /// the display, `how` says how. `bitmap` is `from` as a board's buffer,
-/// for the engine's copy, or null.
+/// or null for a picture in memory of the caller's.
 fn put(lb: *LayersBase, layer: *const Layer, from: *const rtg.Surface, bitmap: ?*rtg.RtgBitMap, x: i32, y: i32, piece: Rect, how: How) void {
     const gb = lb.graphics_base;
     const rb = lb.rtg_base;
-    const info = layer.info;
-    if (how == .through) {
-        const dest = info.display_rp orelse return;
-        gb.BltBitMapRastPort(from, x, y, dest, piece.min_x, piece.min_y, piece.width(), piece.height());
-        return;
-    }
-    const display = info.bitmap orelse return;
+    const display = layer.info.bitmap orelse return;
     const rect = rtg.RtgRect{ .x = piece.min_x, .y = piece.min_y, .width = piece.width(), .height = piece.height() };
     if (how == .laid) {
         const pixels = rtg.RtgPixels{
@@ -320,10 +352,19 @@ fn put(lb: *LayersBase, layer: *const Layer, from: *const rtg.Surface, bitmap: ?
         // moment early, rather than not at all.
         if (rb.BlendPixels(display, &rect, &pixels, layer.opacity) == rtg.errors.RTGERR_OK) return;
     }
-    if (bitmap) |source| {
-        const copy = rtg.RtgCopy{ .src_x = x, .src_y = y, .width = piece.width(), .height = piece.height(), .dest_x = piece.min_x, .dest_y = piece.min_y };
-        if (rb.CopyRect(source, display, &copy) == rtg.errors.RTGERR_OK) return;
-    }
+    // The engine reads only a source's surface, so a picture in plain
+    // memory is described to it as a bitmap, as graphics.library does.
+    var described = rtg.RtgBitMap{
+        .pixels = from.pixels,
+        .width = from.width,
+        .height = from.height,
+        .pitch = from.pitch,
+        .size_bytes = from.size_bytes,
+        .format = from.format,
+        .flags = from.flags,
+    };
+    const copy = rtg.RtgCopy{ .src_x = x, .src_y = y, .width = piece.width(), .height = piece.height(), .dest_x = piece.min_x, .dest_y = piece.min_y };
+    if (rb.CopyRect(bitmap orelse &described, display, &copy) == rtg.errors.RTGERR_OK) return;
     _ = gb.BltBitMap(from, x, y, @ptrCast(display), piece.min_x, piece.min_y, piece.width(), piece.height());
 }
 
@@ -359,18 +400,13 @@ fn putLayer(lb: *LayersBase, layer: *const Layer, piece: Rect, how: How) void {
     }
 }
 
-/// A piece of a layer copied on to the display at once, with the shadows
-/// of the layers in front of it that fall there: those are laid over it
-/// before it is handed on, so it is never seen without them.
-fn putShaded(lb: *LayersBase, layer: *const Layer, piece: Rect) void {
-    if (!layer.info.shaded or !effects.shadedFront(layer, piece)) {
-        putLayer(lb, layer, piece, .through);
-        return;
-    }
+/// A piece of a layer copied on to the display, with the shadows of the
+/// layers in front of it that fall there: those are laid over it before
+/// it is handed on, so it is never seen without them.
+fn putShaded(lb: *LayersBase, layer: *const Layer, piece: Rect, gather: *Gather) void {
     putLayer(lb, layer, piece, .copied);
-    effects.darkenFront(lb, layer, piece);
-    const display = layer.info.bitmap orelse return;
-    _ = lb.rtg_base.RefreshRect(display, &.{ .x = piece.min_x, .y = piece.min_y, .width = piece.width(), .height = piece.height() });
+    if (layer.info.shaded and effects.shadedFront(layer, piece)) effects.darkenFront(lb, layer, piece);
+    gather.add(lb, layer.info, piece);
 }
 
 /// The pieces of a layer's visible region, `at_hand` or from exec, for
@@ -404,10 +440,10 @@ fn eachPiece(lb: *LayersBase, layer: *const Layer, cut: Rect, context: anytype, 
 /// touches only what the layer's lock keeps still - its place and what it
 /// can see, and every other layer's, which change only while all are
 /// held - and no pool of the LayerInfo's, which the other layers' tasks
-/// share. A piece is copied through the LayerInfo's own RastPort on the
-/// display and handed on from there, by the engine where the board has
-/// one; where a shadow falls on it, on to the display's buffer, darkened,
-/// and handed on after.
+/// share; nor the LayerInfo's RastPort, whose batch is not for two tasks
+/// at once. Each piece is copied on to the display's buffer, by the
+/// engine where the board has one, darkened where a shadow falls on it,
+/// and the pieces are handed on to the board together after.
 ///
 /// What is seen through, or under something seen through, waits: laying
 /// it over what is behind it is for `show`, which copies that first.
@@ -417,22 +453,30 @@ fn eachPiece(lb: *LayersBase, layer: *const Layer, cut: Rect, context: anytype, 
 /// - `layer` - the layer.
 /// - `area` - where, in the display's coordinates.
 pub fn showLayer(lb: *LayersBase, layer: *Layer, area: Rect) void {
-    if (layer.own == null or layer.info.display_rp == null) return;
+    var gather = Gather{};
+    copyLayer(lb, layer, area, &gather);
+    gather.handOn(lb, layer.info);
+}
+
+/// `showLayer`, its pieces gathered for the caller to hand on.
+fn copyLayer(lb: *LayersBase, layer: *Layer, area: Rect, gather: *Gather) void {
+    if (layer.own == null) return;
     if (layer.opacity != 255) return;
     const cut = Rect.intersect(area, layer.bounds);
     if (cut.isEmpty()) return;
     const Each = struct {
         lb: *LayersBase,
         layer: *Layer,
+        gather: *Gather,
 
         fn piece(each: @This(), r: Rect) void {
-            if (!each.layer.info.veiled) return putShaded(each.lb, each.layer, r);
+            if (!each.layer.info.veiled) return putShaded(each.lb, each.layer, r, each.gather);
             var parts: [effects.most_unveiled]Rect = undefined;
             const n = effects.unveiled(each.layer, r, &parts);
-            for (parts[0..n]) |part| putShaded(each.lb, each.layer, part);
+            for (parts[0..n]) |part| putShaded(each.lb, each.layer, part, each.gather);
         }
     };
-    eachPiece(lb, layer, cut, Each{ .lb = lb, .layer = layer }, Each.piece);
+    eachPiece(lb, layer, cut, Each{ .lb = lb, .layer = layer, .gather = gather }, Each.piece);
 }
 
 /// Everything inside `area` copied on to the display again, each pixel
@@ -450,22 +494,24 @@ pub fn showLayer(lb: *LayersBase, layer: *Layer, area: Rect) void {
 /// - `info` - the display.
 /// - `area` - where, in the display's coordinates.
 pub fn show(lb: *LayersBase, info: *LayerInfo, area: Rect) void {
+    var gather = Gather{};
+    showInto(lb, info, area, &gather);
+    gather.handOn(lb, info);
+}
+
+/// `show`, what it copies gathered for the caller to hand on.
+fn showInto(lb: *LayersBase, info: *LayerInfo, area: Rect, gather: *Gather) void {
     if (!on(info)) return;
     const cut = Rect.intersect(area, info.bounds);
     if (cut.isEmpty()) return;
-    const gb = lb.graphics_base;
-    const dest = info.display_rp orelse return;
     if (!info.veiled and !info.shaded) {
-        gb.BeginDraw(dest);
-        defer gb.EndDraw(dest);
         var it = info.layers.iterator();
         while (it.next()) |node| {
             const layer: *Layer = @fieldParentPtr("node", node);
-            showLayer(lb, layer, cut);
+            copyLayer(lb, layer, cut, gather);
         }
         return;
     }
-    const display = info.bitmap orelse return;
     const Each = struct {
         lb: *LayersBase,
         layer: *Layer,
@@ -481,7 +527,7 @@ pub fn show(lb: *LayersBase, info: *LayerInfo, area: Rect) void {
         effects.darken(lb, layer, cut);
         if (layer.own != null) eachPiece(lb, layer, cut, Each{ .lb = lb, .layer = layer }, Each.piece);
     }
-    _ = lb.rtg_base.RefreshRect(display, &.{ .x = cut.min_x, .y = cut.min_y, .width = cut.width(), .height = cut.height() });
+    gather.add(lb, info, cut);
 }
 
 /// `show` for every rectangle of a region, handed on to the board at
@@ -496,11 +542,8 @@ pub fn showRegion(lb: *LayersBase, info: *LayerInfo, region: *graphics.Region) v
     if (!on(info)) return;
     const gb = lb.graphics_base;
     const sys = lb.sys_base;
-    const dest = info.display_rp orelse return;
     const n = gb.RegionRectangles(region, null, 0);
     if (n == 0) return;
-    gb.BeginDraw(dest);
-    defer gb.EndDraw(dest);
     const bytes = n * @sizeOf(Rect);
     const memory = sys.AllocPooled(info.pool, bytes) orelse {
         show(lb, info, info.bounds);
@@ -509,7 +552,9 @@ pub fn showRegion(lb: *LayersBase, info: *LayerInfo, region: *graphics.Region) v
     defer sys.FreePooled(info.pool, memory, bytes);
     const rects: [*]Rect = @ptrCast(@alignCast(memory));
     _ = gb.RegionRectangles(region, rects, n);
-    for (rects[0..n]) |r| show(lb, info, r);
+    var gather = Gather{};
+    for (rects[0..n]) |r| showInto(lb, info, r, &gather);
+    gather.handOn(lb, info);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -44,9 +44,10 @@ pub const LIBRARY_VERSION = 0;
 /// is not dithered. 27 hands on rectangles rather than rows: a drawing
 /// tells the display the columns it wrote as well (`RefreshRect`), and a
 /// batch gathers a rectangle. 28 is `RPTAG_Lock`: a RastPort carries a
-/// lock that every drawing call through it holds while it draws. The
-/// version stays 0 until there is something to demand of it.
-pub const LIBRARY_REVISION = 28;
+/// lock that every drawing call through it holds while it draws. 29:
+/// `Text` hands a string on once, however many runs and bands it is drawn
+/// in. The version stays 0 until there is something to demand of it.
+pub const LIBRARY_REVISION = 29;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

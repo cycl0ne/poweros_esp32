@@ -60,7 +60,7 @@ const tests = [_][]const u8{
     "launch",      "drag",       "tap",         "app",       "engine",
     "jpeg",        "keysource",  "usbdevice",   "scsi",      "sound",
     "memowner",    "records",    "exall",       "disktest",  "filetest",
-    "speed2d",
+    "speed2d",     "windraw",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
 
