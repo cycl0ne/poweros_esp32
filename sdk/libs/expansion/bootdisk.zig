@@ -12,14 +12,15 @@
 //! once - before dos.library is up - and makes a device node for each
 //! partition not marked PBFF_NOMOUNT with MakeDosNode: named as the
 //! partition says (pb_DriveName), with the handler its de_DosType asks
-//! for (`dos.filesystems`), and the partition's DosEnvec as the
-//! environment its handler is started with. A partition whose file system
-//! cannot go on the medium - the flash file system on a card, FAT on
-//! flash, a DosType whose area begins with a partition table of its own -
-//! or that there is no handler for is passed over. AddBootNode keeps the
-//! nodes until dos takes them in. A bootable partition stands at its
-//! de_BootPri, the others at -128, which is never booted from; dos starts
-//! from the highest.
+//! for (`dos.filesystems`) - and the handler's code where the ROM has it,
+//! which dos starts (`filesystems.romEntry`) - and the partition's
+//! DosEnvec as the environment its handler is started with. A partition
+//! whose file system cannot go on the medium - the flash file system on a
+//! card, FAT on flash, a DosType whose area begins with a partition table
+//! of its own - or that there is no handler for is passed over.
+//! AddBootNode keeps the nodes until dos takes them in. A bootable
+//! partition stands at its de_BootPri, the others at -128, which is never
+//! booted from; dos starts from the highest.
 //!
 //! **A disk with a GPT** and no RigidDiskBlock of its own has its
 //! partitions in the GPT's PowerOS container (`dos.gpt`): the
@@ -239,6 +240,7 @@ pub fn mountPartitions(sys: *ExecBase, device: [*:0]const u8, unit: u32, disk: a
         @memcpy(name[0..drive.len], drive);
         const node = eb.MakeDosNode(&name, device, unit, pb.dev_flags, &pb.environment) orelse continue;
         node.misc.handler.handler = handler;
+        node.misc.handler.entry = filesystems.romEntry(sys, handler);
         const boot_pri: i32 = if (pb.flags & hardblocks.PBFF_BOOTABLE != 0) pb.environment.boot_pri else -128;
         if (!eb.AddBootNode(boot_pri, node)) sys.FreeVec(node);
     }

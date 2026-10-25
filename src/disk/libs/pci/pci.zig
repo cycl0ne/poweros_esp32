@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! pci.library: the machine's PCI and PCI Express functions, on the disk
-//! in LIBS:. As it is first opened it brings up the board's host bridges
+//! in LIBS:, and in the ROM of a board that carries it (the VisionFive
+//! 2's, for its SSD: `src/boards/visionfive2/romtags.zig`).
+//! As it is first opened it brings up the board's host bridges
 //! (PARTKIND_PCI), walks the buses behind them, numbers them, places the
 //! functions' memory and I/O and keeps a PCIDevice for each function; a
 //! driver finds its function, claims it, reads and writes its
@@ -28,7 +30,7 @@ pub const pci_library_tag = pci_init.pci_library_tag;
 
 /// A library is not a command. Whoever runs this file gets nothing done
 /// and a return code that says so.
-export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
+fn programEntry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
     sdk.exec.kprintf(sys, "%s is a library, not a command\n", .{pci_init.LIBRARY_NAME});
@@ -36,4 +38,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 }
 
 /// The "$VER:" string, which `Version <file>` looks for.
-export const version_tag: [pci_init.LIBRARY_VERSION_STRING.len:0]u8 linksection(".version") = pci_init.LIBRARY_VERSION_STRING.*;
+const version_tag: [pci_init.LIBRARY_VERSION_STRING.len:0]u8 linksection(".version") = pci_init.LIBRARY_VERSION_STRING.*;
+
+/// Whether this is the ROM's copy: the kernel's root lists the ROM's
+/// modules, a program's does not.
+const in_rom = @hasDecl(@import("root"), "rom_modules");
+
+// The file's entry and its version string, which only the file has: in
+// the ROM there is no file, and every module the ROM takes from the disk
+// would bring its own by the same names.
+comptime {
+    if (!in_rom) {
+        @export(&programEntry, .{ .name = "_program_entry" });
+        @export(&version_tag, .{ .name = "version_tag" });
+    }
+}

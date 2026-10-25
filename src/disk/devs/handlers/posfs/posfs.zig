@@ -93,8 +93,8 @@ const fs_core = @import("fs.zig");
 
 pub const HANDLER_NAME = posfs.HANDLER_NAME;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 3;
-const BUILD_DATE = "18.10.2026";
+const HANDLER_REVISION = 4;
+const BUILD_DATE = "25.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -921,7 +921,8 @@ fn sameName(one: []const u8, other: []const u8) bool {
 }
 
 /// It is in `.resident`, which program.ld KEEPs: nothing in the file
-/// refers to the tag, dos finds it by looking.
+/// refers to the tag, dos finds it by looking - in the loaded file, or in
+/// the ROM, whose handlers dos puts on its segment list by name.
 export const posfs_handler_tag: exec.ResidentHandler linksection(".resident") = .{
     .resident = .{
         .match_tag = &posfs_handler_tag.resident,
@@ -949,11 +950,17 @@ fn programEntry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 
 /// KEEPs.
 const version_tag: [HANDLER_VERSION_STRING.len:0]u8 linksection(".version") = HANDLER_VERSION_STRING.*;
 
+/// Whether this is the ROM's copy: the kernel's root lists the ROM's
+/// modules, a program's does not.
+const in_rom = @hasDecl(@import("root"), "rom_modules");
+
 // The file's entry and its version string, under the names the loader and
 // `Version` look for. The host tests build this file beside fat-handler,
-// whose names are the same, so there they are left out.
+// whose names are the same, so there they are left out; so does the ROM,
+// which has no file, and whose other modules from the disk bring the same
+// names.
 comptime {
-    if (!builtin.is_test) {
+    if (!builtin.is_test and !in_rom) {
         @export(&programEntry, .{ .name = "_program_entry" });
         @export(&version_tag, .{ .name = "version_tag" });
     }

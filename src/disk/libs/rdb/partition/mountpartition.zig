@@ -80,7 +80,9 @@ const list_lock = dos.LDF_DEVICES | dos.LDF_WRITE;
 /// GPT's container (RDBF_CONTAINER), so it names the partition's blocks
 /// on the disk - and its handler is the one its DosType asks for: the
 /// flash file system's for `FLS\0`, posfs's for `POS\0`, fat-handler for
-/// `MSD\0`.
+/// `MSD\0`. Where the ROM has that handler, the node gets its code as the
+/// entry dos starts (`sdk.dos.filesystems.romEntry`), so the drive runs
+/// the ROM's, not a file of that name in HANDLERS:.
 ///
 /// Where the handle's table keeps a file system for the DosType, its
 /// code is what the node runs when the ROM has no handler for the DosType
@@ -88,7 +90,8 @@ const list_lock = dos.LDF_DEVICES | dos.LDF_WRITE;
 /// no part in it. The code is copied into memory for the node, or the
 /// copy a node of the same unit got for the same DosType and version is
 /// shared; dos loads it when the handler is first started, and starts the
-/// handler its DosType names when the code does not load. A DosType that
+/// handler its DosType names when the code does not load - by name then,
+/// the ROM's code is not put in such a node. A DosType that
 /// names no handler is mounted when the table brings its code.
 ///
 /// A node of the same unit whose area shares a block with the
@@ -225,6 +228,10 @@ pub fn add(
         const node = eb.MakeDosNode(text, device, handle.unit, dev_flags, env) orelse return rdb.RDBERR_NOMEM;
         node.misc.handler.handler = handler;
         node.misc.handler.file_sys = entry;
+        // Where the table's code does not win, the ROM's handler, as the
+        // code dos starts - the name alone would be looked for among
+        // dos's segments and in HANDLERS:.
+        if (entry == null) node.misc.handler.entry = dos.filesystems.romEntry(handle.sys, handler);
         if (dl.AddDosEntry(node)) return rdb.RDBERR_OK;
         handle.sys.FreeVec(node);
         if (length == dos.MAX_DEVICE_NAME) return rdb.RDBERR_NAME;

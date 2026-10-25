@@ -35,8 +35,8 @@ const _state = @import("host/_state.zig");
 
 pub const LIBRARY_NAME = pci.PCINAME;
 pub const LIBRARY_VERSION = 2;
-pub const LIBRARY_REVISION = 2;
-const BUILD_DATE = "20.10.2026";
+pub const LIBRARY_REVISION = 3;
+const BUILD_DATE = "25.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -220,7 +220,9 @@ const init_table = exec.InitTable{
 
 /// AUTOINIT: the library is on the disk, in LIBS:, and is made when
 /// something opens it - ramlib loads the file and hands this tag to
-/// InitResident. In `.resident`, which program.ld KEEPs.
+/// InitResident. In the ROM the same: ramlib makes it from the tag when
+/// it is first opened, so the ports' links are trained when a driver
+/// first asks, not at cold start. In `.resident`, which program.ld KEEPs.
 pub export const pci_library_tag: exec.Resident linksection(".resident") = .{
     .match_tag = &pci_library_tag,
     .flags = exec.RTF_AUTOINIT,

@@ -23,7 +23,9 @@
 //!    its entry's number (`SD0P3`). The unit gets no drive of its own.
 //! 3. **The unit's own drive** otherwise (`DU0`, `SD0`), over the whole
 //!    medium, with the file system its first block says
-//!    (`sdk.dos.filesystems.wholeMediumChoice`), dotted the same way.
+//!    (`sdk.dos.filesystems.wholeMediumChoice`), dotted the same way - its
+//!    handler's code the ROM's, where the ROM has it
+//!    (`sdk.dos.filesystems.romEntry`).
 //!    It carries no geometry, so its handler asks the device how large
 //!    each medium is.
 //!
@@ -248,6 +250,7 @@ fn ownDrive(sys: *ExecBase, dl: *DosBase, unit: Unit, drives: *Drives) void {
     while (true) {
         const node = dl.MakeDosEntry(&text, dos.DLT_DEVICE) orelse return;
         node.misc.handler.handler = choice.handler;
+        node.misc.handler.entry = dos.filesystems.romEntry(sys, choice.handler);
         node.misc.handler.stack_size = handler_stack;
         node.misc.handler.priority = handler_pri;
         node.misc.handler.startup = @intFromPtr(&medium.startup);

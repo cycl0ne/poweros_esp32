@@ -65,7 +65,7 @@ const mount = @import("mount.zig");
 
 pub const DEVICE_NAME = _nvme.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 4;
+const DEVICE_REVISION = 5;
 const BUILD_DATE = "25.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -246,7 +246,9 @@ const speaks = [_]u32{ devices.DEVIF_BLOCK, 0 };
 const labels = [_][*:0]const u8{ "NV0:", "NV1:", "NV2:", "NV3:", "NV4:", "NV5:", "NV6:", "NV7:" };
 
 /// AUTOINIT and DEVICEINFO: made when something opens it - ramlib loads
-/// the file from DEVS: and hands this tag to InitResident.
+/// the file from DEVS: and hands this tag to InitResident, or makes it
+/// from the tag where the device is in the ROM (the VisionFive 2's); in
+/// both, BindDrivers opens it, as ObtainDeviceUnits lists it.
 export const nvme_device_tag: exec.ResidentDevice linksection(".resident") = .{
     .resident = .{
         .match_tag = @ptrCast(&nvme_device_tag),
@@ -264,7 +266,7 @@ export const nvme_device_tag: exec.ResidentDevice linksection(".resident") = .{
 };
 
 /// A device is not a command.
-export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
+fn programEntry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
     sdk.exec.kprintf(sys, "%s is a device, not a command\n", .{DEVICE_NAME});
@@ -272,7 +274,21 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 }
 
 /// The "$VER:" string, which `Version <file>` looks for.
-export const version_tag: [DEVICE_VERSION_STRING.len:0]u8 linksection(".version") = DEVICE_VERSION_STRING.*;
+const version_tag: [DEVICE_VERSION_STRING.len:0]u8 linksection(".version") = DEVICE_VERSION_STRING.*;
+
+/// Whether this is the ROM's copy: the kernel's root lists the ROM's
+/// modules, a program's does not.
+const in_rom = @hasDecl(@import("root"), "rom_modules");
+
+// The file's entry and its version string, which only the file has: in
+// the ROM there is no file, and every module the ROM takes from the disk
+// would bring its own by the same names.
+comptime {
+    if (!in_rom) {
+        @export(&programEntry, .{ .name = "_program_entry" });
+        @export(&version_tag, .{ .name = "version_tag" });
+    }
+}
 
 test {
     _ = @import("prp.zig");

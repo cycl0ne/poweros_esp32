@@ -34,6 +34,7 @@
 const dos = @import("dos.zig");
 const posfs = @import("posfs/posfs.zig");
 const resident = @import("../exec/resident.zig");
+const TaskFn = @import("../exec/tasks.zig").TaskFn;
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 
 /// The handlers' names, as dos finds them: among its segments for the
@@ -115,6 +116,22 @@ pub fn romVersion(sys: *ExecBase, dos_type: u32) ?u32 {
     const name = handlerFor(dos_type) orelse return null;
     const tag = sys.FindResident(name) orelse return null;
     return versionOf(tag);
+}
+
+/// The code of the ROM's handler of that name, or null when the ROM has
+/// none. A node that names the handler gets it as its entry
+/// (DosListHandler.entry), which dos starts ahead of looking for the name
+/// among its segments and in HANDLERS:, so a drive runs the ROM's
+/// handler whatever dos lists.
+///
+/// INPUTS:
+/// - `sys` - exec, for FindResident.
+/// - `handler` - the handler's name (`handlerFor`), or null.
+pub fn romEntry(sys: *ExecBase, handler: ?[*:0]const u8) ?TaskFn {
+    const tag = sys.FindResident(handler orelse return null) orelse return null;
+    if (tag.type != .handler) return null;
+    const rh: *const resident.ResidentHandler = @fieldParentPtr("resident", tag);
+    return rh.handler;
 }
 
 /// Whether the file system a partition table brings for a DosType is the
