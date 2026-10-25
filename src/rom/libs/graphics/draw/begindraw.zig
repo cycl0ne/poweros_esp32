@@ -31,7 +31,11 @@ const rastport = @import("../rastport/_rastport.zig");
 /// again - can be seen half done: the display is given the picture
 /// between the two. Between `BeginDraw` and `EndDraw` what is written is
 /// gathered instead, into one rectangle, and `EndDraw` hands the lot on
-/// at once, so no half-finished state is ever shown.
+/// at once, so no half-finished state is ever shown. Pieces so far apart
+/// that the box around them would be mostly untouched go on one after
+/// the other instead - rows apart, or, on a board told rectangles, the
+/// sides of a window's frame; what is rubbed out and drawn again in one
+/// place always goes together.
 ///
 /// The batch is held on the **buffer**, not on this RastPort, so drawing
 /// through another RastPort onto the same buffer is gathered into it

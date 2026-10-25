@@ -46,8 +46,11 @@ pub const LIBRARY_VERSION = 0;
 /// batch gathers a rectangle. 28 is `RPTAG_Lock`: a RastPort carries a
 /// lock that every drawing call through it holds while it draws. 29:
 /// `Text` hands a string on once, however many runs and bands it is drawn
-/// in. The version stays 0 until there is something to demand of it.
-pub const LIBRARY_REVISION = 29;
+/// in. 30: a batch on a buffer handed on as rectangles weighs the pixels
+/// between two pieces, not the rows, so the sides of a frame go each by
+/// itself rather than as the whole window. The version stays 0 until
+/// there is something to demand of it.
+pub const LIBRARY_REVISION = 30;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

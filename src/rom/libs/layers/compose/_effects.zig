@@ -138,8 +138,9 @@ pub fn reach(layer: *const Layer) Rect {
 
 /// The picture of a shadow of one size, kept on the LayerInfo for as long
 /// as it lives: `4 * size` pixels square, the four corners of a shadow -
-/// each a quarter of it - and one row more, its sides. Black, in bgra32,
-/// its darkness in the top byte.
+/// each a quarter of it - and one row more, its sides; then the same row
+/// turned on its side, `strip` columns wide, for its top and bottom.
+/// Black, in bgra32, its darkness in the top byte.
 pub const Shadow = struct {
     next: ?*Shadow = null,
     size: u32,
@@ -155,6 +156,11 @@ pub const Shadow = struct {
 
 /// Where a Shadow's pixels start in its memory.
 const header = (@sizeOf(Shadow) + 15) & ~@as(usize, 15);
+
+/// How many columns of a shadow's top or bottom one call darkens: the
+/// picture of it is this wide, and laid along the edge this far at a
+/// time - not a call for every row of it.
+const strip = 64;
 
 /// How dark a shadow of `size` is `depth` pixels in from its edge: soft
 /// over the first two sizes, a smooth step, then as dark as it gets.
@@ -186,7 +192,7 @@ pub fn shadowOf(info: *const LayerInfo, size: u32) ?*const Shadow {
 pub fn makeShadow(lb: *LayersBase, info: *LayerInfo, size: u32) bool {
     if (shadowOf(info, size) != null) return true;
     const side = 4 * size;
-    const bytes = header + @as(usize, side) * (side + 1) * 4;
+    const bytes = header + @as(usize, side) * (side + 1 + strip) * 4;
     const sys = lb.sys_base;
     const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return false;
     _ = sys.SetMemOwner(memory, null);
@@ -204,6 +210,9 @@ pub fn makeShadow(lb: *LayersBase, info: *LayerInfo, size: u32) bool {
     }
     var x: u32 = 0;
     while (x < side) : (x += 1) out[side * side + x] = falloff(size, @min(x, side - 1 - x)) << 24;
+    const turned = out + side * (side + 1);
+    y = 0;
+    while (y < side) : (y += 1) @memset(turned[y * strip ..][0..strip], falloff(size, @min(y, side - 1 - y)) << 24);
     info.shadows = shadow;
     return true;
 }
@@ -301,11 +310,6 @@ fn indexIn(span: Span, lo: i32, hi: i32, side: i32, at: i32) i32 {
     return if (span.edge == .start) at - lo else side - (hi - at);
 }
 
-/// How far `at` is in from the nearer end of `lo` to `hi`.
-fn depthIn(span: Span, lo: i32, hi: i32, at: i32) u32 {
-    return @intCast(if (span.edge == .start) at - lo else hi - 1 - at);
-}
-
 /// `area` of the display darkened by `caster`'s shadow, at its opacity -
 /// on the display's buffer as it is, nothing handed on: the caller does
 /// that. `area` is inside the shadow's rectangle.
@@ -343,13 +347,19 @@ fn darkenRect(lb: *LayersBase, caster: *const Layer, shadow: *const Shadow, area
                 };
                 _ = rb.BlendPixels(display, &rect, &picture, opacity);
             } else if (down.edge != .middle) {
-                // The top or the bottom: one darkness a row.
-                var y = part.min_y;
-                while (y < part.max_y) : (y += 1) {
-                    const dark = falloff(size, depthIn(down, box.min_y, box.max_y, y)) * opacity / 255;
-                    if (dark == 0) continue;
-                    const row = rtg.RtgRect{ .x = part.min_x, .y = y, .width = part.width(), .height = 1 };
-                    _ = rb.BlendRect(display, &row, dark << 24);
+                // The top or the bottom: the sides' row turned on its
+                // side, laid a strip at a time.
+                const turned = pixels + @as(usize, @intCast(side * (side + 1)));
+                var x = part.min_x;
+                while (x < part.max_x) : (x += strip) {
+                    const run = rtg.RtgRect{ .x = x, .y = part.min_y, .width = @min(strip, part.max_x - x), .height = part.height() };
+                    const picture = rtg.RtgPixels{
+                        .pixels = @ptrCast(turned),
+                        .pitch = strip * 4,
+                        .format = .bgra32,
+                        .y = indexIn(down, box.min_y, box.max_y, side, part.min_y),
+                    };
+                    _ = rb.BlendPixels(display, &run, &picture, opacity);
                 }
             } else {
                 const dark = strength * opacity / 255;
@@ -484,8 +494,8 @@ test "a shadow's spans: edges, a middle, and edges that meet" {
     try testing.expectEqual(@as(i32, 15), narrow[0].hi);
     try testing.expect(narrow[1].hi <= narrow[1].lo);
     try testing.expectEqual(@as(i32, 15), narrow[2].lo);
-    // The end's first column is as far in from the end as the start's last is from the start.
-    try testing.expectEqual(@as(u32, 14), depthIn(narrow[0], 0, 30, 14));
-    try testing.expectEqual(@as(u32, 14), depthIn(narrow[2], 0, 30, 15));
+    // The end's first column is as far in from the end as the start's
+    // last is from the start: the picture's column as far from its end.
+    try testing.expectEqual(@as(i32, 14), indexIn(narrow[0], 0, 30, 80, 14));
     try testing.expectEqual(@as(i32, 80 - 14 - 1), indexIn(narrow[2], 0, 30, 80, 15));
 }

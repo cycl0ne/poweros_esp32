@@ -1663,6 +1663,42 @@ test "composed: a shadow darkens what is behind, once, and goes with the layer" 
     try tearDown(lb);
 }
 
+test "composed: drawn under a shadow, it is darkened again in a call for each part of the shadow, not for each row" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+    if (!compose.built) {
+        c.done(lb);
+        return tearDown(lb);
+    }
+    const all = Rect{ .max_x = 32, .max_y = 16 };
+    const back = try layerAt(lb, c.info, &all, layers.LAYERSIMPLE);
+    const front_where = Rect{ .min_x = 8, .min_y = 2, .max_x = 20, .max_y = 8 };
+    const front = try lookingLayer(lb, c.info, &front_where, 0, 3, 255);
+    fill(lb, back, graphics.penRGB(255, 255, 255), all);
+    const near = channels(c.at(14, 8))[0];
+    try testing.expect(near < 255);
+
+    // The shadow reaches from 5,0 to 23,12. What of it the back one shows
+    // is above the front one - two corners and the top between them -
+    // beside it, two corners a side, and below it - two corners and the
+    // bottom: ten parts, each laid in one call.
+    const log = &c.state.log;
+    const blends = log.blends;
+    const rects = log.blend_rects;
+    fill(lb, back, graphics.penRGB(255, 255, 255), all);
+    try testing.expectEqual(@as(u32, 10), log.blends - blends);
+    try testing.expectEqual(@as(u32, 0), log.blend_rects - rects);
+    try testing.expectEqual(near, channels(c.at(14, 8))[0]);
+    // The bottom is darker nearer the layer.
+    try testing.expect(channels(c.at(14, 8))[0] < channels(c.at(14, 11))[0]);
+
+    base(lb).DeleteLayer(front);
+    base(lb).DeleteLayer(back);
+    c.done(lb);
+    try tearDown(lb);
+}
+
 test "composed: a layer seen through is laid over what is behind, and a ghost is not pointed at" {
     const lb = try setUp();
     defer kexec.deinit();

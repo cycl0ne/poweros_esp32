@@ -883,18 +883,11 @@ fn tell(gb: *GraphicsBase, bm: *RtgBitMap, area: Rect) void {
         }
         // What lies between two gathered pieces is sent with them, because
         // a display is told one rectangle and not a set of them. Welding a
-        // piece on across a gap therefore sends every untouched row in the
-        // gap as well, and a send's own cost is about one row's worth of
-        // pixels - so anything past a handful of them is dearer than
-        // sending what is gathered and starting again. Side by side, the
-        // pieces are taken together across whatever lies between.
-        const gap = if (given.top >= bm.dirty_end)
-            given.top - bm.dirty_end
-        else if (given.end <= bm.dirty_top)
-            bm.dirty_top - given.end
-        else
-            0;
-        if (gap > merge_gap) {
+        // piece on across a gap therefore sends what is in the gap as
+        // well, and a send's own cost is about one row's worth of pixels -
+        // so anything past a handful of rows of them is dearer than
+        // sending what is gathered and starting again.
+        if (apart(bm, given)) {
             const old = takeArea(bm).?;
             gather(bm, given);
             break :gathered old;
@@ -907,6 +900,50 @@ fn tell(gb: *GraphicsBase, bm: *RtgBitMap, area: Rect) void {
     };
     // Sent with the lock let go: a driver may wait on its bus.
     if (flushed) |area_now| refresh(gb, bm, area_now);
+}
+
+/// Whether `given` is too far from what is gathered on `bm` to be sent
+/// with it. The caller holds the batches' lock, and something is
+/// gathered.
+///
+/// A board told only rows is sent whole rows, side by side or not, so
+/// only the rows between the two count. One told rectangles - and a
+/// watched buffer, whose hook copies what it is told - is sent the box
+/// around both, so what counts is the pixels in that box that neither
+/// covers: the sides of a window's frame, gathered into one box, would be
+/// the whole window.
+fn apart(bm: *const RtgBitMap, given: Area) bool {
+    if (!byRect(bm)) {
+        const gap = if (given.top >= bm.dirty_end)
+            given.top - bm.dirty_end
+        else if (given.end <= bm.dirty_top)
+            bm.dirty_top - given.end
+        else
+            0;
+        return gap > merge_gap;
+    }
+    const held: Area = .{ .left = bm.dirty_left, .top = bm.dirty_top, .right = bm.dirty_right, .end = bm.dirty_end };
+    const box: Area = .{
+        .left = @min(held.left, given.left),
+        .top = @min(held.top, given.top),
+        .right = @max(held.right, given.right),
+        .end = @max(held.end, given.end),
+    };
+    const between = pixelsIn(box) -| (pixelsIn(held) + pixelsIn(given));
+    return between > @as(u64, merge_gap) * bm.width;
+}
+
+/// Whether what is handed on from `bm` is a rectangle rather than rows:
+/// its hook is told one, or its board takes one.
+fn byRect(bm: *const RtgBitMap) bool {
+    if (bm.watch != null) return true;
+    const board: *const rtg.RtgBoard = @ptrCast(@alignCast(bm.board orelse return false));
+    const ops = board.ops orelse return false;
+    return ops.refresh_rect != null;
+}
+
+fn pixelsIn(area: Area) u64 {
+    return @as(u64, area.right - area.left) * (area.end - area.top);
 }
 
 /// A rectangle of a buffer, `right` and `end` one past its last column
@@ -948,7 +985,8 @@ pub fn refresh(gb: *GraphicsBase, bm: *RtgBitMap, area: Area) void {
 }
 
 /// The untouched rows a batch will carry rather than send what it has
-/// and begin again. Small, because a row costs about what a send does:
+/// and begin again - for a board told rectangles, as many rows' worth of
+/// untouched pixels. Small, because a row costs about what a send does:
 /// what this buys is that the pieces of one small thing - something
 /// rubbed out and drawn a few rows off - still go together.
 const merge_gap: u32 = 8;

@@ -1204,6 +1204,54 @@ test "BeginDraw, EndDraw: pieces far apart are not welded together" {
     try tearDown(gb);
 }
 
+/// A watch hook that counts what it is told, and keeps the last of it.
+const Told = struct {
+    calls: u32 = 0,
+    rect: rtg.RtgRect = .{},
+
+    fn hear(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        _ = object;
+        const told: *Told = @ptrCast(@alignCast(hook.data.?));
+        told.calls += 1;
+        told.rect = @as(*const rtg.RtgRect, @ptrCast(@alignCast(message.?))).*;
+        return 0;
+    }
+};
+
+test "BeginDraw, EndDraw: told rectangles, the sides of a frame go each by itself, and pieces side by side together" {
+    const gb = try setUp();
+    var pixels: [64 * 64 * 2]u8 = @splat(0);
+    var bm = boardBitMap(&pixels, 64, 64);
+    var told = Told{};
+    var hook = sdk.utility.Hook{ .entry = &Told.hear, .data = &told };
+    bm.watch = &hook;
+    const white = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) }, .{} };
+    const rp = try onBitMap(gb, &bm, &white);
+    const gfx = base(gb);
+
+    // Gathered as one box, the four sides would be the whole of it.
+    gfx.BeginDraw(@ptrCast(rp));
+    gfx.RectFill(@ptrCast(rp), &.{ .max_x = 64, .max_y = 2 });
+    gfx.RectFill(@ptrCast(rp), &.{ .min_y = 2, .max_x = 2, .max_y = 62 });
+    gfx.RectFill(@ptrCast(rp), &.{ .min_x = 62, .min_y = 2, .max_x = 64, .max_y = 62 });
+    gfx.RectFill(@ptrCast(rp), &.{ .min_y = 62, .max_x = 64, .max_y = 64 });
+    gfx.EndDraw(@ptrCast(rp));
+    try testing.expectEqual(@as(u32, 4), told.calls);
+    try testing.expectEqual(rtg.RtgRect{ .x = 0, .y = 62, .width = 64, .height = 2 }, told.rect);
+
+    // Two letters' worth with a few columns between are one box.
+    told = .{};
+    gfx.BeginDraw(@ptrCast(rp));
+    gfx.RectFill(@ptrCast(rp), &.{ .min_x = 4, .min_y = 10, .max_x = 12, .max_y = 26 });
+    gfx.RectFill(@ptrCast(rp), &.{ .min_x = 20, .min_y = 10, .max_x = 28, .max_y = 26 });
+    gfx.EndDraw(@ptrCast(rp));
+    try testing.expectEqual(@as(u32, 1), told.calls);
+    try testing.expectEqual(rtg.RtgRect{ .x = 4, .y = 10, .width = 24, .height = 16 }, told.rect);
+
+    gfx.FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
 test "BeginDraw, EndDraw: they nest, and nothing goes until the last" {
     const gb = try setUp();
     var pixels: [8 * 8 * 2]u8 = @splat(0);
@@ -1318,18 +1366,6 @@ test "Text: a string drawn in several runs is handed on once, as the box it was 
     const width = 1800;
     var pixels: [width * 8 * 2]u8 = @splat(0);
     var bm = boardBitMap(&pixels, width, 8);
-    const Told = struct {
-        calls: u32 = 0,
-        rect: rtg.RtgRect = .{},
-
-        fn hear(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
-            _ = object;
-            const told: *@This() = @ptrCast(@alignCast(hook.data.?));
-            told.calls += 1;
-            told.rect = @as(*const rtg.RtgRect, @ptrCast(@alignCast(message.?))).*;
-            return 0;
-        }
-    };
     var told = Told{};
     var hook = sdk.utility.Hook{ .entry = &Told.hear, .data = &told };
     bm.watch = &hook;
