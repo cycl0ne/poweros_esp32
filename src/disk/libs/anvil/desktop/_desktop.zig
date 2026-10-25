@@ -470,7 +470,8 @@ pub const Desktop = struct {
         if (d.own_font) |font| d.gb.CloseFont(font);
         d.own_font = null;
         const df = d.df orelse return;
-        var text: [512]u8 = undefined;
+        var text: [2048]u8 = undefined;
+        comptime if (font_prefs.header.len + 448 > text.len) @compileError("font.prefs' explanation has outgrown readFont's buffer");
         const read = sdk.prefs.load(d.dl, font_prefs.ENV_FILE, &text) orelse return;
         const words = sdk.prefs.firstLine(read) orelse return;
         var line: font_prefs.Line = .{};

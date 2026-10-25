@@ -29,7 +29,9 @@ The settings are on seven pages, under tabs:
   of its own is drawn in, each typed as `#RRGGBB` or picked on the colour
   wheel, and a button for the built-in ones.
 - **Fonts:** the fonts of the screens, the windows, the consoles and the
-  desktop's icons.
+  desktop's icons, and under them the two a document is read in - its
+  text, and the code in it, which is also what a plain text file is
+  shown in. MultiView reads a Markdown file in them.
 - **Desktop:** the desktop's ground - one colour, or two shaded from top
   to bottom - a picture over it and how it is placed, how large icons are
   shown, whether an icon that is moved snaps into the nearest free cell

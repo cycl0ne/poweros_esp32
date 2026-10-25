@@ -188,15 +188,31 @@ was last let go on, for a program that follows links, and `DTM_COPY`
 puts what is marked on the clipboard.
 
 A format's class reads its file and hands the text and the runs over
-with `TDTM_SETTEXT`; both blocks come from `AllocVec` and are the
-object's from then on.
+with `TDTM_SETTEXT`; they come from `AllocVec` and are the object's
+from then on. A document can hand over blocks too (`tdc.Block`): each
+a paragraph, a heading, a listing, a rule or a cell of a table, its
+runs, the lists and quotes it is inside, and its item's mark - a disc,
+a circle, a square, a number, a Roman numeral, a letter, or a task's
+box. With blocks the class lays the text out as GitHub lays out a
+README: the spaces between blocks, a rule under the first two levels of
+heading, a bar beside a quote, a ground round a listing and round code
+in a sentence (`TDSTYLE_CODE`), a table's lines and shaded rows, a
+link in its own colour, all on a page of GitHub's light colours or, on
+a dark screen, its dark ones. Without blocks it is lines as they stand.
 
-`markdown.datatype` is that and nothing more: it reads the document,
-drops the marks and says how each stretch is drawn - a heading in a
-larger font where the family has one and in bold where it has not,
-emphasis in italic, a listing in the fixed font, a list item under its
-mark and indented, a link underlined with the name it leads to kept for
-the program to follow.
+The fonts are the ones `font.prefs` names for documents: `DOCUMENT`
+for the text and `CODE` for `TDFONT_FIXED` (see the fonts guide).
+`DTA_TextAttr` given to the object takes the place of `DOCUMENT`. The
+other `TDFONT_` sizes are steps of it, as a heading needs them.
+
+`markdown.datatype` is that and nothing more: it reads the document as
+GitHub does - CommonMark's blocks, lists inside lists and quotes, tight
+and loose lists, fenced and indented listings, tables with their
+columns' alignment, task lists, emphasis, `~~struck~~` text, code,
+links, autolinks, entities and the HTML tags that say how text looks -
+and hands over the text, the runs and the blocks. A picture is not
+fetched: what its text says it is stands in its place. `ascii.datatype`
+sets a plain file in `CODE`'s font, one run, no blocks.
 
 ## Animations
 

@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: MIT
 //! font.prefs: the system's fonts as a file - one line,
 //! `SCREEN=family/size DEFAULT=family/size FIXED=family/size
-//! ICON=family/size`, each family/size a font's name and its size in rows,
-//! or in points with a P after it: `spleen.font/16`, `spleen.font/10P`.
-//! One of the first three left out is pospaz from the ROM; ICON, the
-//! names under the desktop's icons, left out is DEFAULT's.
+//! ICON=family/size DOCUMENT=family/size CODE=family/size`, each
+//! family/size a font's name and its size in rows, or in points with a P
+//! after it: `spleen.font/16`, `spleen.font/10P`. One of the first three
+//! left out is pospaz from the ROM; ICON, the names under the desktop's
+//! icons, left out is DEFAULT's. DOCUMENT is what a document is read in -
+//! Markdown in MultiView - and CODE its listings and plain text; left
+//! out, they are DEFAULT's and FIXED's. text.datatype reads the two
+//! itself as it opens a document, and finds a face of the family for
+//! bold and italic by its name: `go-bold.font` beside `go.font`.
 //!
 //! `parse` reads the line into a `Line`, `attrOf` turns one of its fonts
-//! into the `TextAttr` that asks for it, `write` writes the line back, and
-//! `header` is the explanation a program that writes the file puts before
-//! it.
+//! into the `TextAttr` that asks for it, `standIn` names the font that
+//! stands in for one left out, `write` writes the line back, and `header`
+//! is the explanation a program that writes the file puts before it.
 
 const graphics = @import("../graphics/graphics.zig");
 const style = @import("style.zig");
@@ -17,9 +22,9 @@ const style = @import("style.zig");
 pub const ENV_FILE = "ENV:Sys/font.prefs";
 pub const ENVARC_FILE = "ENVARC:Sys/font.prefs";
 
-/// The four, in the line's order.
-pub const Which = enum(u8) { screen, default, fixed, icon };
-pub const which_names = [4][]const u8{ "SCREEN", "DEFAULT", "FIXED", "ICON" };
+/// The six, in the line's order.
+pub const Which = enum(u8) { screen, default, fixed, icon, document, code };
+pub const which_names = [6][]const u8{ "SCREEN", "DEFAULT", "FIXED", "ICON", "DOCUMENT", "CODE" };
 
 pub const value_len = 64;
 
@@ -42,6 +47,17 @@ pub const Line = struct {
         return true;
     }
 };
+
+/// The font that stands in for one left out: DEFAULT's for the icons and
+/// for documents, FIXED's for code; null for the first three, which are
+/// pospaz.
+pub fn standIn(which: Which) ?Which {
+    return switch (which) {
+        .icon, .document => .default,
+        .code => .fixed,
+        else => null,
+    };
+}
 
 /// `family/size[P]` split: the family's name into `name`, NUL-terminated,
 /// and the TextAttr asking for it. Null for text not in that form.
@@ -82,7 +98,7 @@ pub fn parse(text: []const u8, line: *Line) ?[*:0]const u8 {
         const word = text[i..end];
         const which: Which = for (which_names, 0..) |name, k| {
             if (style.same(word, name)) break @enumFromInt(k);
-        } else return "not in the form SCREEN=family/size DEFAULT=... FIXED=... ICON=...";
+        } else return "not in the form SCREEN=family/size DEFAULT=... FIXED=... ICON=... DOCUMENT=... CODE=...";
         i = end;
         if (i < text.len and text[i] == '=') i += 1 else {
             while (i < text.len and (text[i] == ' ' or text[i] == '\t')) i += 1;
@@ -124,12 +140,14 @@ pub const header =
     \\# ENVARC:Sys/font.prefs - the system's fonts, which C:SetPrefs hands to
     \\# intuition.library at boot. SCREEN is screens' title bars and menus,
     \\# DEFAULT the text in windows and gadgets, FIXED the consoles' (it must be
-    \\# fixed-width), ICON the names under the desktop's icons. Each is
-    \\# family/size, the size in rows, or in points with a P after it:
-    \\# spleen.font/16, spleen.font/10P. One of the first three left out, or no
-    \\# line at all, is pospaz from the ROM; ICON left out is DEFAULT's. The
-    \\# first line that is not a comment is read; take the # off the one below
-    \\# to use it.
+    \\# fixed-width), ICON the names under the desktop's icons, DOCUMENT what
+    \\# a document - Markdown in MultiView - is read in, and CODE its listings
+    \\# and plain text. Each is family/size, the size in rows, or in points
+    \\# with a P after it: spleen.font/16, spleen.font/10P. One of the first
+    \\# three left out, or no line at all, is pospaz from the ROM; ICON left
+    \\# out is DEFAULT's, DOCUMENT DEFAULT's and CODE FIXED's. The first line
+    \\# that is not a comment is read; take the # off the one below to use
+    \\# it.
     \\#
     \\# SCREEN=spleen.font/16 DEFAULT=spleen.font/16 FIXED=spleen.font/16
     \\

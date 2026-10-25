@@ -65,6 +65,13 @@ test "font.prefs and intuition.prefs: a line read and written back" {
     try testing.expect(prefs.font.parse("ICON=go.font/12 FIXED=go-mono.font/16", &fonts) == null);
     try testing.expectEqualStrings("go.font/12", fonts.get(.icon).?);
     try testing.expectEqualStrings("FIXED=go-mono.font/16 ICON=go.font/12", out[0..prefs.font.write(&fonts, &out)]);
+    // So have documents and the code in them, written after the icons'.
+    try testing.expect(prefs.font.parse("CODE=go-mono.font/15 DOCUMENT=go.font/18 ICON=go.font/12", &fonts) == null);
+    try testing.expectEqualStrings("go.font/18", fonts.get(.document).?);
+    try testing.expectEqualStrings("ICON=go.font/12 DOCUMENT=go.font/18 CODE=go-mono.font/15", out[0..prefs.font.write(&fonts, &out)]);
+    try testing.expectEqual(prefs.font.Which.fixed, prefs.font.standIn(.code).?);
+    try testing.expectEqual(prefs.font.Which.default, prefs.font.standIn(.document).?);
+    try testing.expect(prefs.font.standIn(.screen) == null);
 
     var settings: prefs.intuition.Settings = .{};
     try testing.expect(prefs.intuition.parse("DOUBLECLICK=400 KEYBOARD=always", &settings) == null);

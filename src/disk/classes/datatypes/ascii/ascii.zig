@@ -8,14 +8,15 @@
 //! **Both kinds come out as one stretch of text.** A plain file is its
 //! bytes; an `FTXT` is its `CHRS` chunks one after another, which is
 //! what that form means. Neither says anything about how it is drawn, so
-//! the whole of it is one run in the screen's own font, and a document
-//! whose looks matter is a format of its own.
+//! the whole of it is one run in the fixed-width font of documents
+//! (`font.prefs`'s CODE), where columns line up as they were typed, and
+//! a document whose looks matter is a format of its own.
 //!
 //! What the file holds is tidied as it is read: a carriage return before
 //! a newline is dropped, so that a file written on another machine does
 //! not show a stray character at the end of every line, and a tab is
-//! spread to the next multiple of eight, because the text is laid out in
-//! a proportional font where a tab has nowhere to stop.
+//! spread to the next multiple of eight, because a font has no tab stops
+//! of its own.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -40,7 +41,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "ascii.datatype",
     .version = 1,
-    .date = "29.09.2026",
+    .revision = 1,
+    .date = "25.10.2026",
     .super = tdc.TEXTDTCLASS,
     .opens = &.{ tdc.TEXT_LIBRARY, iffparse.IFFPARSENAME },
     .Instance = Data,
@@ -145,7 +147,7 @@ fn takeText(base: *Base, cl: *Class, o: *Object, from: []const u8) i32 {
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     };
     const pieces: [*]tdc.Piece = @ptrCast(@alignCast(runs));
-    pieces[0] = .{ .offset = 0, .length = length };
+    pieces[0] = .{ .offset = 0, .length = length, .font = tdc.TDFONT_FIXED };
 
     var msg = tdc.TdtSetText{
         .buffer = buffer,
