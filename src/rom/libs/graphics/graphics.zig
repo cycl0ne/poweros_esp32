@@ -1134,6 +1134,43 @@ test "BeginDraw, EndDraw: what is drawn between them goes to the display once" {
     try tearDown(gb);
 }
 
+test "BeginDraw, EndDraw: the columns written are gathered with the rows" {
+    const gb = try setUp();
+    var pixels: [16 * 8 * 2]u8 = @splat(0);
+    var bm = boardBitMap(&pixels, 16, 8);
+    const white = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) }, .{} };
+    const rp = try onBitMap(gb, &bm, &white);
+    const gfx = base(gb);
+
+    gfx.BeginDraw(@ptrCast(rp));
+    gfx.RectFill(@ptrCast(rp), &.{ .min_x = 4, .min_y = 1, .max_x = 6, .max_y = 2 });
+    try testing.expectEqual(@as(u32, 4), bm.dirty_left);
+    try testing.expectEqual(@as(u32, 6), bm.dirty_right);
+
+    // A piece beside it widens what is gathered to take both in.
+    gfx.RectFill(@ptrCast(rp), &.{ .min_x = 9, .min_y = 3, .max_x = 11, .max_y = 4 });
+    try testing.expectEqual(@as(u32, 4), bm.dirty_left);
+    try testing.expectEqual(@as(u32, 11), bm.dirty_right);
+    try testing.expectEqual(@as(u32, 1), bm.dirty_top);
+    try testing.expectEqual(@as(u32, 4), bm.dirty_end);
+
+    // A line hands on no more than the box of its two ends.
+    gfx.Move(@ptrCast(rp), 2, 5);
+    gfx.Draw(@ptrCast(rp), 3, 6);
+    try testing.expectEqual(@as(u32, 2), bm.dirty_left);
+    try testing.expectEqual(@as(u32, 7), bm.dirty_end);
+
+    // Past the surface's edge is cut off before it is gathered.
+    gfx.RectFill(@ptrCast(rp), &.{ .min_x = 12, .min_y = 6, .max_x = 40, .max_y = 7 });
+    try testing.expectEqual(@as(u32, 16), bm.dirty_right);
+
+    gfx.EndDraw(@ptrCast(rp));
+    try testing.expectEqual(@as(u32, 0), bm.dirty_end);
+
+    gfx.FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
 test "BeginDraw, EndDraw: pieces far apart are not welded together" {
     const gb = try setUp();
     // Tall enough that two pieces can be far apart in it.

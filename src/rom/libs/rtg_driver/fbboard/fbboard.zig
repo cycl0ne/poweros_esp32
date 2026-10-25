@@ -31,11 +31,14 @@
 //! The pointer is laid over the picture in that last frame, as the qemu
 //! board does it: while a pointer or the overlay is shown, or the picture
 //! is several in bands, the display reads the composed frame instead - the
-//! shown buffer's rows copied in as they are refreshed, and the images
-//! laid over them. A move puts back the pointer's old rectangle from the
-//! shown buffer and lays it at the new one, so it costs the pointer's size
-//! and not the picture's. With nothing over the picture the display reads
-//! the shown buffer itself, and nothing is copied.
+//! shown buffer's rectangles copied in as they are refreshed, no wider
+//! than what was written, and the images laid over them. The copy is the
+//! engine's, so a large one - the whole picture, when composing starts or
+//! another buffer is shown - is shared between the cores. A move puts
+//! back the pointer's old rectangle from the shown buffer and lays it at
+//! the new one, so it costs the pointer's size and not the picture's.
+//! With nothing over the picture the display reads the shown buffer
+//! itself, and nothing is copied.
 //!
 //! A refresh comes from whichever task drew, a pointer move from
 //! intuition's pointer task, each on any core: everything that writes the
@@ -89,7 +92,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 6;
+const REVISION = 7;
 const BUILD_DATE = "24.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -370,17 +373,74 @@ fn sourceRow(screen: *Screen, y: u32) ?[*]u8 {
     return null;
 }
 
-/// Display rows `top` to `end`, each from its band, into the composed
-/// frame.
-fn copyRows(screen: *Screen, top: u32, end: u32) void {
+/// A rectangle of the display: columns `left` up to `right`, rows `top`
+/// up to `end`.
+const Box = struct { left: u32, top: u32, right: u32, end: u32 };
+
+/// The whole display.
+fn whole(screen: *const Screen) Box {
+    return .{ .left = 0, .top = 0, .right = screen.width, .end = screen.height };
+}
+
+/// The composed frame as a buffer, for the engine to copy into.
+fn composedMap(screen: *const Screen) rtg.RtgBitMap {
+    return .{
+        .pixels = screen.composed,
+        .width = screen.width,
+        .height = screen.height,
+        .pitch = screen.pitch,
+        .format = screen.format,
+    };
+}
+
+/// `box` of the display, each row from its band, into the composed frame,
+/// and handed on: one run where the box is as wide as the display, a run
+/// a row otherwise.
+fn copyArea(screen: *Screen, box: Box) void {
     const composed = screen.composed orelse return;
-    const pitch = screen.pitch;
-    var y = top;
-    while (y < end) : (y += 1) {
-        const from = sourceRow(screen, y) orelse continue;
-        screen.sys.CopyMem(from, composed + y * pitch, pitch);
+    if (box.left >= box.right or box.top >= box.end) return;
+    for (screen.bands[0..screen.band_count], 0..) |band, i| {
+        const band_end = if (i + 1 < screen.band_count) screen.bands[i + 1].line else screen.height;
+        const first = @max(box.top, band.line);
+        const end = @min(box.end, band_end);
+        if (first < end) copyBand(screen, band, box, first, end);
     }
-    if (top < end) handOn(screen, composed + top * pitch, (end - top) * pitch);
+    const pitch = screen.pitch;
+    const left = box.left * screen.bytes;
+    const run = (box.right - box.left) * screen.bytes;
+    if (left == 0 and run >= pitch) {
+        handOn(screen, composed + box.top * pitch, (box.end - box.top) * pitch);
+    } else {
+        var y = box.top;
+        while (y < box.end) : (y += 1) handOn(screen, composed + y * pitch + left, run);
+    }
+}
+
+/// Display rows `first` to `end` of one band, across the box's columns.
+/// The band's rows are one rectangle of its buffer, which the cores copy
+/// (the engine, shared between them for a large one); a band of one row
+/// repeated, or a format the engine does not take, a row at a time.
+fn copyBand(screen: *Screen, band: rtg.RtgBand, box: Box, first: u32, end: u32) void {
+    if (band.flags & rtg.RTGBANDF_REPEAT == 0) {
+        var into = composedMap(screen);
+        const what = rtg.RtgCopy{
+            .src_x = @intCast(box.left),
+            .src_y = @intCast(band.rowAt(first)),
+            .width = @intCast(box.right - box.left),
+            .height = @intCast(end - first),
+            .dest_x = @intCast(box.left),
+            .dest_y = @intCast(first),
+        };
+        if (engine.copy(&screen.engine, band.bitmap, &into, &what) == err.RTGERR_OK) return;
+    }
+    const composed = screen.composed.?;
+    const at = box.left * screen.bytes;
+    const length = (box.right - box.left) * screen.bytes;
+    var y = first;
+    while (y < end) : (y += 1) {
+        const from = band.bitmap.pixels.? + band.rowAt(y) * screen.pitch;
+        screen.sys.CopyMem(from + at, composed + y * screen.pitch + at, length);
+    }
 }
 
 /// The part of the image's rectangle at (left, top) that is on the
@@ -454,7 +514,7 @@ fn layImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top:
 /// when composing starts, and when another buffer is shown.
 fn rebuild(screen: *Screen) void {
     if (!composing(screen)) return;
-    copyRows(screen, 0, screen.height);
+    copyArea(screen, whole(screen));
     lay(screen);
 }
 
@@ -897,13 +957,13 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
     const last = if (rows == 0) bitmap.height else @min(y +| rows, bitmap.height);
     // Any buffer, shown or not: one drawn ahead is shown by naming it.
     handOn(screen, bitmap.pixels.? + first * bitmap.pitch, (last - first) * bitmap.pitch);
-    compose(screen, bitmap, first, last);
+    compose(screen, bitmap, .{ .left = 0, .top = first, .right = @min(bitmap.width, screen.width), .end = last });
     return err.RTGERR_OK;
 }
 
 /// A rectangle written: the write-back of its pixels alone, a run a row -
-/// one run over the rows where it is as wide as the buffer - then the
-/// rows composed as a refresh composes them.
+/// one run over the rows where it is as wide as the buffer - then that
+/// rectangle composed, and no more of the rows.
 fn refreshRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
     const screen = screenOf(board);
     const first: u32 = @intCast(area.y);
@@ -917,23 +977,26 @@ fn refreshRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.Rt
         var y = first;
         while (y < last) : (y += 1) handOn(screen, bitmap.pixels.? + y * bitmap.pitch + left, run);
     }
-    compose(screen, bitmap, first, last);
+    const x: u32 = @intCast(area.x);
+    compose(screen, bitmap, .{ .left = x, .top = first, .right = @min(x + @as(u32, @intCast(area.width)), screen.width), .end = last });
     return err.RTGERR_OK;
 }
 
-/// Rows of a buffer handed on, copied into the composed frame where the
-/// display reads that, and the images laid over them again.
-fn compose(screen: *Screen, bitmap: *rtg.RtgBitMap, first: u32, last: u32) void {
+/// `area` of a buffer handed on - its own rows and columns - copied into
+/// the composed frame where the display reads that, and the images laid
+/// over it again.
+fn compose(screen: *Screen, bitmap: *rtg.RtgBitMap, area: Box) void {
     hold(screen);
     defer letGo(screen);
     if (!composing(screen)) return;
+    if (area.left >= area.right) return;
     var shown = false;
     for (screen.bands[0..screen.band_count], 0..) |band, i| {
         if (band.bitmap != bitmap) continue;
         const band_end = if (i + 1 < screen.band_count) screen.bands[i + 1].line else screen.height;
-        const lines = band.linesOf(first, last, band_end);
+        const lines = band.linesOf(area.top, area.end, band_end);
         if (lines.first >= lines.end) continue;
-        copyRows(screen, lines.first, lines.end);
+        copyArea(screen, .{ .left = area.left, .top = lines.first, .right = area.right, .end = lines.end });
         shown = true;
     }
     if (shown) lay(screen);

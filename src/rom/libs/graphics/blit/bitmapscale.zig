@@ -94,7 +94,7 @@ pub fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const 
     if (src.pixels) |pixels| {
         const described = rtg.RtgPixels{ .pixels = pixels, .pitch = src.pitch, .format = src.format, .x = from.min_x, .y = from.min_y };
         if (_blit.scaleByEngine(gb, dest, &described, from, dest_area.*)) {
-            drawing.handOn(gb, dest, dest_area.min_y, dest_area.max_y);
+            drawing.handOn(gb, dest, dest_area.*);
             return;
         }
     }
@@ -143,5 +143,5 @@ pub fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const 
             drawing.grow(&bound, y, &any);
         }
     }
-    if (any) drawing.handOn(gb, dest, bound.min_y, bound.max_y);
+    if (any) drawing.handOn(gb, dest, drawing.written(dest_area.*, bound));
 }

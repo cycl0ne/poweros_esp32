@@ -36,8 +36,10 @@ const Written = struct {
         _draw.fillSpan(rp, x0, x1, y, &w.bound, &w.any);
     }
 
-    fn done(w: *Written, gb: *GraphicsBase, rp: *RastPort) void {
-        if (w.any) _draw.handOn(gb, rp, w.bound.min_y, w.bound.max_y);
+    /// Hand on the rows written, across the columns of `reach`, the
+    /// box the drawing kept within.
+    fn done(w: *Written, gb: *GraphicsBase, rp: *RastPort, reach: Rect) void {
+        if (w.any) _draw.handOn(gb, rp, _draw.written(reach, w.bound));
     }
 };
 
@@ -90,7 +92,7 @@ pub fn roundRect(gb: *GraphicsBase, rp: *RastPort, area: Rect, radius: u32, widt
         };
         ringRow(rp, &w, y, area.min_x + o, area.max_x - o, hole, side);
     }
-    w.done(gb, rp);
+    w.done(gb, rp, area);
 }
 
 /// A circle's outline `width` thick, inside the circle of `radius`.
@@ -123,7 +125,7 @@ pub fn ellipse(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, rx: i32, ry: 
         };
         ringRow(rp, &w, cy + dy, cx - ox, cx + ox + 1, hole, null);
     }
-    w.done(gb, rp);
+    w.done(gb, rp, .{ .min_x = cx - rx, .min_y = cy - ry, .max_x = cx + rx + 1, .max_y = cy + ry + 1 });
 }
 
 /// An arc of a circle `width` thick, inside the circle of `radius`, over
@@ -157,7 +159,7 @@ pub fn arc(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, radius: i32, from
             _draw.grow(&w.bound, y, &w.any);
         }
     }
-    w.done(gb, rp);
+    w.done(gb, rp, .{ .min_x = cx - radius, .min_y = cy - radius, .max_x = cx + radius + 1, .max_y = cy + radius + 1 });
 }
 
 /// A line `width` across from one point to another: a square brush put
@@ -205,5 +207,10 @@ pub fn line(gb: *GraphicsBase, rp: *RastPort, x0: i32, y0: i32, x1: i32, y1: i32
         }
     }
     rp.pattern_step = step;
-    w.done(gb, rp);
+    w.done(gb, rp, .{
+        .min_x = @min(x0, x1) - before,
+        .min_y = @min(y0, y1) - before,
+        .max_x = @max(x0, x1) + after + 1,
+        .max_y = @max(y0, y1) + after + 1,
+    });
 }

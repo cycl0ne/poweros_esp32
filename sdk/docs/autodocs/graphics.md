@@ -51,7 +51,7 @@ Generated from the source by `./zig build autodoc`.
 - [DrawRoundBevel](#drawroundbevel) - Draws the outline of a rectangle whose corners are rounded as a bevel: one colour on the top and the left, another on the bottom and the right.
 - [DrawRoundRect](#drawroundrect) - The outline of a rectangle whose corners are rounded.
 - [DrawVLine](#drawvline) - A run of pixels downward. `DrawHLine` turned on its side.
-- [EndDraw](#enddraw) - The rows gathered since `BeginDraw` handed to the display, in one.
+- [EndDraw](#enddraw) - What was gathered since `BeginDraw` handed to the display, in one.
 - [EraseRect](#eraserect) - Paints part of a RastPort the way its empty parts are meant to look.
 - [FillArc](#fillarc) - Fills a wedge of a circle with the RastPort's pen: a pie, or a ring where the arc gives an inner radius.
 - [FillRoundRect](#fillroundrect) - Fills a rectangle whose corners are rounded, with the RastPort's pen.
@@ -905,12 +905,12 @@ Nothing.
 
 **BEHAVIOR**
 
-Every drawing call hands the rows it wrote to the display as it
+Every drawing call hands what it wrote to the display as it
 finishes, so a thing drawn in two calls - rubbed out, then drawn
 again - can be seen half done: the display is given the picture
-between the two. Between `BeginDraw` and `EndDraw` the rows are
-gathered instead, and `EndDraw` hands the lot on at once, so no
-half-finished state is ever shown.
+between the two. Between `BeginDraw` and `EndDraw` what is written is
+gathered instead, into one rectangle, and `EndDraw` hands the lot on
+at once, so no half-finished state is ever shown.
 
 The batch is held on the **buffer**, not on this RastPort, so drawing
 through another RastPort onto the same buffer is gathered into it
@@ -1567,7 +1567,7 @@ Both must be in the same format. Moving between formats means unpacking
 and repacking every pixel, which is a different operation and will be a
 different call.
 
-The rows written in the destination are handed on to the display before
+What was written in the destination is handed on to the display before
 it returns, as every drawing call does.
 
 **CONTEXT**
@@ -2160,8 +2160,8 @@ Nothing is allocated.
 
 **NOTES**
 
-- The rows written are handed on to the display before it returns, as
-  every drawing call does. A run of Draws therefore costs a refresh
+- The rows written, across the box of the two ends, are handed on to
+  the display before it returns, as every drawing call does. A run of Draws therefore costs a refresh
   each; that is the same bargain RectFill makes, and the place to
   change it if it is ever measured to matter is `handOn`.
 
@@ -2760,7 +2760,7 @@ gb.DrawVLine(rp, 10, 20, 50);
 
 ## EndDraw
 
-The rows gathered since `BeginDraw` handed to the display, in one.
+What was gathered since `BeginDraw` handed to the display, in one.
 
 **SYNOPSIS**
 
@@ -2783,10 +2783,11 @@ Nothing.
 
 **BEHAVIOR**
 
-The rows written since the matching `BeginDraw` go to the display as
-one run, from the first row written to the last - what lies between
-them is sent as well, since a run is what a display is told. Nothing
-was drawn, nothing is sent.
+What was written since the matching `BeginDraw` goes to the display as
+one rectangle, from the first row written to the last and across every
+column written - what lies between is sent as well, since a rectangle
+is what a display is told (rtg's RefreshRect). Nothing was drawn,
+nothing is sent.
 
 With batches nested, this closes one of them; the rows go when the
 last one closes. Without a `BeginDraw` to match, it does nothing.
@@ -2812,7 +2813,7 @@ None known.
 
 **SEE ALSO**
 
-`BeginDraw`, `rtg.RefreshBitMap`
+`BeginDraw`, `rtg.RefreshRect`
 
 **EXAMPLES**
 
@@ -3014,8 +3015,8 @@ what asking for a radius that large means. A radius is also taken down
 to 256, which on either of this machine's displays is already a corner
 half the height of the screen.
 
-The rows that were written are handed on to the display before it
-returns, so drawing is immediate.
+What was written is handed on to the display before it returns, so
+drawing is immediate: the rows written, across the shape's box.
 
 **CONTEXT**
 
@@ -4130,10 +4131,10 @@ the surface, and what is left is filled. The pen's alpha decides how:
 `DRMD_JAM1` alone writes the pen whatever its alpha, so a pen that is not
 opaque is only composed under `.src_over`.
 
-The rows that were written are handed on to the display before it
-returns, so drawing is immediate. Only the rows
-touched go: a small fill costs a small refresh. A surface in plain
-memory has nobody to hand them to.
+What was written is handed on to the display before it returns, so
+drawing is immediate. Only the rectangle touched goes: a small fill
+costs a small refresh. A surface in plain memory has nobody to hand it
+to.
 
 **CONTEXT**
 
@@ -4439,7 +4440,7 @@ window's RastPort is whatever is on the display there.
 What the move vacates is left as it was: whoever scrolled is about to
 draw there, and a fill would be drawn over.
 
-The rows written are handed on to the display before it returns, as
+What was written is handed on to the display before it returns, as
 every drawing call does.
 
 **CONTEXT**

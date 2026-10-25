@@ -125,12 +125,13 @@ pub const RtgBitMap = extern struct {
     /// exec gave.
     offset: usize = 0,
     taken: usize = 0,
-    /// The rows written since the last RefreshBitMap: `dirty_end` is one
-    /// past the last. `dirty_end` 0 means none. They are gathered here
-    /// only while `held` is not 0; otherwise a row is handed on as it is
-    /// written and these stay empty. graphics.library's alone: every task
-    /// drawing on the buffer shares them, so it changes them under its
-    /// batches' lock and clears them as it takes them to hand on.
+    /// The rows written since the last refresh: `dirty_end` is one past
+    /// the last. `dirty_end` 0 means none; `dirty_left` and `dirty_right`
+    /// are their columns. They are gathered here only while `held` is not
+    /// 0; otherwise what is written is handed on at once and these stay
+    /// empty. graphics.library's alone: every task drawing on the buffer
+    /// shares them, so it changes them under its batches' lock and clears
+    /// them as it takes them to hand on.
     dirty_top: u32 = 0,
     dirty_end: u32 = 0,
     /// How many batches are open on this buffer (graphics.library's
@@ -140,6 +141,11 @@ pub const RtgBitMap = extern struct {
     held: u32 = 0,
     /// The caller's, untouched.
     user_data: ?*anyopaque = null,
+    /// The columns of the rows gathered above (`dirty_top`): `dirty_right`
+    /// is one past the last. Last, so that the fields before kept their
+    /// places when these came.
+    dirty_left: u32 = 0,
+    dirty_right: u32 = 0,
 
     /// The first byte of a row. The caller has checked `y`.
     pub inline fn rowPtr(bm: *const RtgBitMap, y: u32) [*]u8 {

@@ -24,7 +24,7 @@ pub const GraphicsBase = extern struct {
     /// kernel's own `exec.SysBase`.
     sys_base: *ExecBase,
     /// Every buffer's drawing batch - how many are drawing on it (`held`)
-    /// and the rows gathered for its end (`dirty_top`, `dirty_end`), which
+    /// and the rectangle gathered for its end (`dirty_top` and the rest), which
     /// every task drawing on it changes: a spinlock, held for the count or
     /// the merge and never across a send to the display.
     draw_lock: exec.Lock,

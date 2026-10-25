@@ -113,5 +113,5 @@ pub fn DrawEllipse(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, rx: i32, 
         y += 1;
     }
     rp.pattern_step = step;
-    if (any) handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) handOn(gb, rp, .{ .min_x = cx - rx, .min_y = bound.min_y, .max_x = cx + rx + 1, .max_y = bound.max_y });
 }

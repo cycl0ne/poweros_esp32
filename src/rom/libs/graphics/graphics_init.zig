@@ -41,13 +41,15 @@ pub const LIBRARY_VERSION = 0;
 /// `DrawRoundBevel`: a rounded outline as a bevel in two colours. 26
 /// dithers a gradient on 16 bits scaled to the display's steps: a four by
 /// four averages to the colour as shown, and a colour the surface holds
-/// is not dithered. The version stays 0 until there is something to
-/// demand of it.
-pub const LIBRARY_REVISION = 26;
+/// is not dithered. 27 hands on rectangles rather than rows: a drawing
+/// tells the display the columns it wrote as well (`RefreshRect`), and a
+/// batch gathers a rectangle. The version stays 0 until there is
+/// something to demand of it.
+pub const LIBRARY_REVISION = 27;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
-const BUILD_DATE = "20.10.2026";
+const BUILD_DATE = "24.10.2026";
 
 /// The `$VER:` string, NUL first so that a scan of the image finds it and
 /// `id_string` can start one byte in as a plain C string.

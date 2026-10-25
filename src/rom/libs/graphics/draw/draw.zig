@@ -60,8 +60,8 @@ const _draw = @import("_draw.zig");
 /// Nothing is allocated.
 ///
 /// NOTES:
-/// - The rows written are handed on to the display before it returns, as
-///   every drawing call does. A run of Draws therefore costs a refresh
+/// - The rows written, across the box of the two ends, are handed on to
+///   the display before it returns, as every drawing call does. A run of Draws therefore costs a refresh
 ///   each; that is the same bargain RectFill makes, and the place to
 ///   change it if it is ever measured to matter is `handOn`.
 ///
@@ -96,12 +96,13 @@ pub fn Draw(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32) void {
     }
 
     var step: u32 = rp.pattern_step;
-    var it = visible(rp, .{
+    const reach = graphics.Rect{
         .min_x = @min(from_x, x),
         .min_y = @min(from_y, y),
         .max_x = @max(from_x, x) + 1,
         .max_y = @max(from_y, y) + 1,
-    });
+    };
+    var it = visible(rp, reach);
     var top: i32 = 0;
     var end: i32 = 0;
     var any = false;
@@ -120,5 +121,5 @@ pub fn Draw(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32) void {
         }
     }
     rp.pattern_step = step;
-    if (any) handOn(gb, rp, top, end);
+    if (any) handOn(gb, rp, .{ .min_x = reach.min_x, .min_y = top, .max_x = reach.max_x, .max_y = end });
 }

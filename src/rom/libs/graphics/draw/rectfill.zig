@@ -52,10 +52,10 @@ const _draw = @import("_draw.zig");
 /// `DRMD_JAM1` alone writes the pen whatever its alpha, so a pen that is not
 /// opaque is only composed under `.src_over`.
 ///
-/// The rows that were written are handed on to the display before it
-/// returns, so drawing is immediate. Only the rows
-/// touched go: a small fill costs a small refresh. A surface in plain
-/// memory has nobody to hand them to.
+/// What was written is handed on to the display before it returns, so
+/// drawing is immediate. Only the rectangle touched goes: a small fill
+/// costs a small refresh. A surface in plain memory has nobody to hand it
+/// to.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -109,22 +109,13 @@ pub fn RectFill(gb: *GraphicsBase, rp: *RastPort, area: *const Rect) void {
     rp.fill_box = area.*;
     const from_style = _draw.styled(rp);
     var it = visible(rp, area.*);
-    var top: i32 = 0;
-    var end: i32 = 0;
     var any = false;
 
     while (it.next()) |r| {
         if (from_style) {
             _draw.fillStyled(rp, r);
         } else if (!fillByEngine(gb, rp, r)) fillSoftware(rp, r);
-        if (!any) {
-            top = r.rect.min_y;
-            end = r.rect.max_y;
-            any = true;
-        } else {
-            top = @min(top, r.rect.min_y);
-            end = @max(end, r.rect.max_y);
-        }
+        any = true;
     }
-    if (any) handOn(gb, rp, top, end);
+    if (any) handOn(gb, rp, area.*);
 }

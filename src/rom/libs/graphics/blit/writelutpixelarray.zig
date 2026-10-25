@@ -117,7 +117,7 @@ pub fn WriteLUTPixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8,
             drawing.grow(&bound, y, &any);
         }
     }
-    if (any) drawing.handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) drawing.handOn(gb, rp, drawing.written(area.*, bound));
 }
 
 /// The table in a surface's format; false for one with no colours.

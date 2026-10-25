@@ -135,7 +135,7 @@ pub fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) v
         var bound = graphics.Rect{};
         var any = false;
         drawing.fillSpan(rp, start_x, pen_x, y, &bound, &any);
-        if (any) drawing.handOn(gb, rp, bound.min_y, bound.max_y);
+        if (any) drawing.handOn(gb, rp, .{ .min_x = start_x, .min_y = y, .max_x = pen_x, .max_y = y + 1 });
     }
 
     // The point ends after the last letter, so one Text follows another.
@@ -286,7 +286,7 @@ fn composeRun(gb: *GraphicsBase, rp: *RastPort, look: Look, string: [*]const u8,
         drawing.grow(&bound, r.min_y, &any);
         drawing.grow(&bound, r.max_y - 1, &any);
     }
-    if (any) drawing.handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) drawing.handOn(gb, rp, drawing.written(area, bound));
 }
 
 /// One glyph of coverage or colour onto one piece, with the point at `at`

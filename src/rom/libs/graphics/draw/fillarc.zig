@@ -9,6 +9,7 @@ const _round = @import("_round.zig");
 const _smooth = @import("_smooth.zig");
 const fillSpan = _draw.fillShapeSpan;
 const handOn = _draw.handOn;
+const written = _draw.written;
 const inSweep = _draw.inSweep;
 const grow = _draw.grow;
 const pieceAt = _draw.pieceAt;
@@ -147,5 +148,5 @@ pub fn FillArc(gb: *GraphicsBase, rp: *RastPort, arc: *const Arc) void {
             grow(&bound, y, &any);
         }
     }
-    if (any) handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) handOn(gb, rp, written(rp.fill_box, bound));
 }

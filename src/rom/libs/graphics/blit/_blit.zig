@@ -257,12 +257,8 @@ pub fn blitInto(
 
     const dx = dest_x - src_x;
     const dy = dest_y - src_y;
-    var it = drawing.visible(dest, .{
-        .min_x = from.min_x + dx,
-        .min_y = from.min_y + dy,
-        .max_x = from.max_x + dx,
-        .max_y = from.max_y + dy,
-    });
+    const request = from.offset(dx, dy);
+    var it = drawing.visible(dest, request);
     var bound = Rect{};
     var any = false;
     const inverse = dest.draw_mode & graphics.DRMD_INVERSVID != 0;
@@ -351,7 +347,7 @@ pub fn blitInto(
             drawing.grow(&bound, y, &any);
         }
     }
-    if (any) drawing.handOn(gb, dest, bound.min_y, bound.max_y);
+    if (any) drawing.handOn(gb, dest, drawing.written(request, bound));
 }
 
 // --- pixels laid over what is already there ---------------------------------

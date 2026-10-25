@@ -25,12 +25,12 @@ const RastPort = @import("../rastport/_rastport.zig").RastPort;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// Every drawing call hands the rows it wrote to the display as it
+/// Every drawing call hands what it wrote to the display as it
 /// finishes, so a thing drawn in two calls - rubbed out, then drawn
 /// again - can be seen half done: the display is given the picture
-/// between the two. Between `BeginDraw` and `EndDraw` the rows are
-/// gathered instead, and `EndDraw` hands the lot on at once, so no
-/// half-finished state is ever shown.
+/// between the two. Between `BeginDraw` and `EndDraw` what is written is
+/// gathered instead, into one rectangle, and `EndDraw` hands the lot on
+/// at once, so no half-finished state is ever shown.
 ///
 /// The batch is held on the **buffer**, not on this RastPort, so drawing
 /// through another RastPort onto the same buffer is gathered into it

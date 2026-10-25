@@ -19,6 +19,7 @@
 //! The work is on the edge: a shape's inside costs what a hard fill costs,
 //! and each edge pixel sixteen questions.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const graphics = sdk.graphics;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
@@ -354,10 +355,16 @@ pub fn fill(gb: *GraphicsBase, rp: *RastPort, unready: anytype, top: i32, bottom
     const styled = as_fill and _draw.styled(rp);
     var bound = Rect{};
     var any = false;
+    // The columns the rows reached, which with the rows written is what
+    // is handed on.
+    var left: i32 = std.math.maxInt(i32);
+    var right: i32 = std.math.minInt(i32);
     var y = top;
     while (y <= bottom) : (y += 1) {
         const outer = Band.of(.{ shape.outer.span(y - 1), shape.outer.span(y), shape.outer.span(y + 1) });
         const reach = outer.wide orelse continue;
+        left = @min(left, reach[0]);
+        right = @max(right, reach[1] + 1);
         const hole: Band = if (shape.hole) |h| Band.of(.{ h.span(y - 1), h.span(y), h.span(y + 1) }) else .{};
 
         // Walked across once: a run of pixels surely in goes down whole,
@@ -380,7 +387,7 @@ pub fn fill(gb: *GraphicsBase, rp: *RastPort, unready: anytype, top: i32, bottom
             edgePixel(rp, x, y, coverage(shape, x, y), styled, &bound, &any);
         }
     }
-    if (any) _draw.handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) _draw.handOn(gb, rp, .{ .min_x = left, .min_y = bound.min_y, .max_x = right, .max_y = bound.max_y });
 }
 
 /// One pixel of a smooth line, in the pen, laid over what is there by
@@ -437,5 +444,7 @@ pub fn line(gb: *GraphicsBase, rp: *RastPort, x0: i32, y0: i32, x1: i32, y1: i32
         }
         across += slope;
     }
-    if (any) _draw.handOn(gb, rp, bound.min_y, bound.max_y);
+    // The pixel past the line's edge is shared too, a column or a row
+    // beyond its ends' box.
+    if (any) _draw.handOn(gb, rp, .{ .min_x = @min(x0, x1), .min_y = bound.min_y, .max_x = @max(x0, x1) + 2, .max_y = bound.max_y });
 }

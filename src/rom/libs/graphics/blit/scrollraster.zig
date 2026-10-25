@@ -48,7 +48,7 @@ const blitInto = _blit.blitInto;
 /// What the move vacates is left as it was: whoever scrolled is about to
 /// draw there, and a fill would be drawn over.
 ///
-/// The rows written are handed on to the display before it returns, as
+/// What was written is handed on to the display before it returns, as
 /// every drawing call does.
 ///
 /// CONTEXT:

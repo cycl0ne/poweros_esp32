@@ -57,8 +57,9 @@ const _draw = @import("_draw.zig");
 /// ```
 pub fn WritePixel(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32) void {
     rp.last_error = graphics.GERR_OK;
-    var it = visible(rp, .{ .min_x = x, .min_y = y, .max_x = x + 1, .max_y = y + 1 });
+    const at = graphics.Rect{ .min_x = x, .min_y = y, .max_x = x + 1, .max_y = y + 1 };
+    var it = visible(rp, at);
     const piece = it.next() orelse return;
     plot(rp, piece, x, y);
-    handOn(gb, rp, y, y + 1);
+    handOn(gb, rp, at);
 }

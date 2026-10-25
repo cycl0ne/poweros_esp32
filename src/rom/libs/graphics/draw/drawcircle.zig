@@ -80,5 +80,5 @@ pub fn DrawCircle(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, radius: i3
         }
     }
     rp.pattern_step = step;
-    if (any) handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) handOn(gb, rp, .{ .min_x = cx - radius, .min_y = bound.min_y, .max_x = cx + radius + 1, .max_y = bound.max_y });
 }

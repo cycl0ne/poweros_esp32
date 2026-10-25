@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! EndDraw: the end of a piece of work, and the rows it wrote handed on.
+//! EndDraw: the end of a piece of work, and what it wrote handed on.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -9,7 +9,7 @@ const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const RastPort = @import("../rastport/_rastport.zig").RastPort;
 const draw = @import("_draw.zig");
 
-/// The rows gathered since `BeginDraw` handed to the display, in one.
+/// What was gathered since `BeginDraw` handed to the display, in one.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -26,10 +26,11 @@ const draw = @import("_draw.zig");
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// The rows written since the matching `BeginDraw` go to the display as
-/// one run, from the first row written to the last - what lies between
-/// them is sent as well, since a run is what a display is told. Nothing
-/// was drawn, nothing is sent.
+/// What was written since the matching `BeginDraw` goes to the display as
+/// one rectangle, from the first row written to the last and across every
+/// column written - what lies between is sent as well, since a rectangle
+/// is what a display is told (rtg's RefreshRect). Nothing was drawn,
+/// nothing is sent.
 ///
 /// With batches nested, this closes one of them; the rows go when the
 /// last one closes. Without a `BeginDraw` to match, it does nothing.
@@ -50,7 +51,7 @@ const draw = @import("_draw.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `BeginDraw`, `rtg.RefreshBitMap`
+/// `BeginDraw`, `rtg.RefreshRect`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -64,18 +65,18 @@ pub fn EndDraw(gb: *GraphicsBase, rp: *RastPort) void {
     const bm = rp.draw_held orelse return;
     if (rp.draw_depth == 0) rp.draw_held = null;
     // Counted and taken under the batches' lock: every task drawing on
-    // the buffer shares the count and the span, and a count lost to the
-    // other core would leave the buffer gathering for ever.
-    const span = taken: {
+    // the buffer shares the count and what is gathered, and a count lost
+    // to the other core would leave the buffer gathering for ever.
+    const area = taken: {
         gb.sys_base.AcquireLock(&gb.draw_lock);
         defer gb.sys_base.ReleaseLock(&gb.draw_lock);
         if (bm.held == 0) return;
         bm.held -= 1;
         if (bm.held != 0) return;
-        break :taken draw.takeSpan(bm) orelse return;
+        break :taken draw.takeArea(bm) orelse return;
     };
     // Sent with the lock let go: a driver may wait on its bus.
-    _ = gb.rtg_base.RefreshBitMap(bm, span.top, span.end - span.top);
+    draw.refresh(gb, bm, area);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

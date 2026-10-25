@@ -565,7 +565,7 @@ pub fn span(gb: *GraphicsBase, rp: *RastPort, from: Rect, horizontal: bool) void
     const run: u32 = @intCast(if (horizontal) from.width() else from.height());
     step +%= run;
     rp.pattern_step = step;
-    if (any) handOn(gb, rp, top, end);
+    if (any) handOn(gb, rp, .{ .min_x = from.min_x, .min_y = top, .max_x = from.max_x, .max_y = end });
 }
 
 /// One row of a solid fill, clipped, with the rows it touched noted.
@@ -813,100 +813,138 @@ pub const Sweep = struct {
     const near: u32 = 1 << 19;
 };
 
-/// Give the rows that were written to the display.
+/// Give what was written to the display.
 ///
 /// A buffer of a board's is only on the glass once rtg.library has been
-/// told; plain memory has nobody to tell. Only the rows touched go, so a
-/// small fill costs a small refresh.
+/// told; plain memory has nobody to tell. Only the rectangle touched goes,
+/// so a small fill costs a small refresh.
 ///
 /// INPUTS:
 /// - `gb` - the library, for rtg.library.
 /// - `rp` - the RastPort.
-/// - `top` - the first row written.
-/// - `end` - one past the last.
-pub fn handOn(gb: *GraphicsBase, rp: *RastPort, top: i32, end: i32) void {
-    if (end <= top) return;
-    // With targets the rows went to whichever of them covers them, at that
-    // target's own offset, so each is told about its own share. A target
-    // that is not a board's buffer - a window's backing store - has
+/// - `area` - what was written: the rows written, across the columns of
+///   the request they were written for - every piece written is inside
+///   those (`written`).
+pub fn handOn(gb: *GraphicsBase, rp: *RastPort, area: Rect) void {
+    if (area.isEmpty()) return;
+    // With targets the pixels went to whichever of them covers them, at
+    // that target's own offset, so each is told about its own share. A
+    // target that is not a board's buffer - a window's backing store - has
     // nothing to tell.
     if (rp.clip_list) |list| {
         var at: ?*graphics.ClipTarget = list;
         while (at) |t| : (at = t.next) {
             const bm = t.bitmap orelse continue;
-            const lo = @max(top, t.rect.min_y);
-            const hi = @min(end, t.rect.max_y);
-            if (hi <= lo) continue;
-            tell(gb, bm, @intCast(lo + t.dy), @intCast(hi - lo));
+            const share = area.intersect(t.rect);
+            if (share.isEmpty()) continue;
+            tell(gb, bm, share.offset(t.dx, t.dy));
         }
         return;
     }
     const bitmap = rp.bitmap orelse return;
-    tell(gb, bitmap, @intCast(top), @intCast(end - top));
+    const share = area.intersect(rp.clip);
+    if (share.isEmpty()) return;
+    tell(gb, bitmap, share);
 }
 
-/// `rows` rows from `y` of `bm` are new: handed to the display, or
-/// gathered for the end of the batch that is open on it.
+/// What a primitive hands on: the rows it wrote (`bound`, grown a row at
+/// a time by `grow`) across the columns of `request`, the rectangle it was
+/// asked to write in.
+pub fn written(request: Rect, bound: Rect) Rect {
+    return .{ .min_x = request.min_x, .min_y = bound.min_y, .max_x = request.max_x, .max_y = bound.max_y };
+}
+
+/// `area` of `bm` is new: handed to the display, or gathered for the end
+/// of the batch that is open on it.
 ///
-/// A batch is what `BeginDraw` opens. While one is, a row written is
+/// A batch is what `BeginDraw` opens. While one is, what is written is
 /// only remembered; the display sees nothing until the last `EndDraw`
-/// hands the gathered rows on in one. That is what keeps a thing drawn
+/// hands what was gathered on in one. That is what keeps a thing drawn
 /// in two steps - rubbed out, then drawn again - from ever being shown
 /// half done.
-fn tell(gb: *GraphicsBase, bm: *RtgBitMap, y: u32, count: u32) void {
-    const end = y + count;
+fn tell(gb: *GraphicsBase, bm: *RtgBitMap, area: Rect) void {
+    const given: Area = .{
+        .left = @intCast(area.min_x),
+        .top = @intCast(area.min_y),
+        .right = @intCast(area.max_x),
+        .end = @intCast(area.max_y),
+    };
     // The batch is the buffer's, so every task drawing on it changes these
     // fields, each under a layer lock of its own. Read, merged and written
     // back under the batches' lock, or a task on the other core would
-    // write back a span that lost another's rows.
-    const flushed: ?Span = gathered: {
+    // write back an area that lost another's.
+    const flushed: ?Area = gathered: {
         gb.sys_base.AcquireLock(&gb.draw_lock);
         defer gb.sys_base.ReleaseLock(&gb.draw_lock);
-        if (bm.held == 0) break :gathered .{ .top = y, .end = end };
+        if (bm.held == 0) break :gathered given;
         if (bm.dirty_end <= bm.dirty_top) {
-            bm.dirty_top = y;
-            bm.dirty_end = end;
+            gather(bm, given);
             break :gathered null;
         }
         // What lies between two gathered pieces is sent with them, because
-        // a display is told a run of rows and not a set of them. Welding a
+        // a display is told one rectangle and not a set of them. Welding a
         // piece on across a gap therefore sends every untouched row in the
         // gap as well, and a send's own cost is about one row's worth of
         // pixels - so anything past a handful of them is dearer than
-        // sending what is gathered and starting again.
-        const gap = if (y >= bm.dirty_end)
-            y - bm.dirty_end
-        else if (end <= bm.dirty_top)
-            bm.dirty_top - end
+        // sending what is gathered and starting again. Side by side, the
+        // pieces are taken together across whatever lies between.
+        const gap = if (given.top >= bm.dirty_end)
+            given.top - bm.dirty_end
+        else if (given.end <= bm.dirty_top)
+            bm.dirty_top - given.end
         else
             0;
         if (gap > merge_gap) {
-            const old: Span = .{ .top = bm.dirty_top, .end = bm.dirty_end };
-            bm.dirty_top = y;
-            bm.dirty_end = end;
+            const old = takeArea(bm).?;
+            gather(bm, given);
             break :gathered old;
         }
-        bm.dirty_top = @min(bm.dirty_top, y);
-        bm.dirty_end = @max(bm.dirty_end, end);
+        bm.dirty_left = @min(bm.dirty_left, given.left);
+        bm.dirty_top = @min(bm.dirty_top, given.top);
+        bm.dirty_right = @max(bm.dirty_right, given.right);
+        bm.dirty_end = @max(bm.dirty_end, given.end);
         break :gathered null;
     };
     // Sent with the lock let go: a driver may wait on its bus.
-    if (flushed) |gathered| _ = gb.rtg_base.RefreshBitMap(bm, gathered.top, gathered.end - gathered.top);
+    if (flushed) |area_now| refresh(gb, bm, area_now);
 }
 
-/// A run of rows of a buffer, `end` one past the last.
-pub const Span = struct { top: u32, end: u32 };
+/// A rectangle of a buffer, `right` and `end` one past its last column
+/// and row.
+pub const Area = struct { left: u32, top: u32, right: u32, end: u32 };
 
-/// The rows gathered on `bm`, taken out of it: read and cleared as one
-/// step, so rows another task gathers after this are left for it rather
+/// `area` gathered on `bm`, where nothing is. The caller holds the
+/// batches' lock.
+fn gather(bm: *RtgBitMap, area: Area) void {
+    bm.dirty_left = area.left;
+    bm.dirty_top = area.top;
+    bm.dirty_right = area.right;
+    bm.dirty_end = area.end;
+}
+
+/// What is gathered on `bm`, taken out of it: read and cleared as one
+/// step, so what another task gathers after this is left for it rather
 /// than wiped. Null when nothing is gathered. The caller holds the
 /// batches' lock (`GraphicsBase.draw_lock`).
-pub fn takeSpan(bm: *RtgBitMap) ?Span {
+pub fn takeArea(bm: *RtgBitMap) ?Area {
     if (bm.dirty_end <= bm.dirty_top) return null;
-    const taken: Span = .{ .top = bm.dirty_top, .end = bm.dirty_end };
+    const taken: Area = .{ .left = bm.dirty_left, .top = bm.dirty_top, .right = bm.dirty_right, .end = bm.dirty_end };
+    bm.dirty_left = 0;
     bm.dirty_top = 0;
+    bm.dirty_right = 0;
     bm.dirty_end = 0;
     return taken;
+}
+
+/// `area` of `bm` handed to the display (rtg's RefreshRect). With no lock
+/// held: a driver may wait on its bus.
+pub fn refresh(gb: *GraphicsBase, bm: *RtgBitMap, area: Area) void {
+    _ = gb.rtg_base.RefreshRect(bm, &.{
+        .x = @intCast(area.left),
+        .y = @intCast(area.top),
+        .width = @intCast(area.right - area.left),
+        .height = @intCast(area.end - area.top),
+    });
 }
 
 /// The untouched rows a batch will carry rather than send what it has

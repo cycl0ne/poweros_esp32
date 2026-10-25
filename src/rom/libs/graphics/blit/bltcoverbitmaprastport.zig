@@ -113,12 +113,8 @@ pub fn BltCoverBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_ar
     // be taken back to the pixel of the source it came from.
     const dx = dest_x - src_area.min_x;
     const dy = dest_y - src_area.min_y;
-    var it = drawing.visible(dest, .{
-        .min_x = from.min_x + dx,
-        .min_y = from.min_y + dy,
-        .max_x = from.max_x + dx,
-        .max_y = from.max_y + dy,
-    });
+    const request = from.offset(dx, dy);
+    var it = drawing.visible(dest, request);
     var bound = Rect{};
     var any = false;
     const src_bytes = _blit.pixelBytes(src);
@@ -155,5 +151,5 @@ pub fn BltCoverBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_ar
             drawing.grow(&bound, y, &any);
         }
     }
-    if (any) drawing.handOn(gb, dest, bound.min_y, bound.max_y);
+    if (any) drawing.handOn(gb, dest, drawing.written(request, bound));
 }

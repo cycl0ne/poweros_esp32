@@ -112,5 +112,5 @@ pub fn BltTemplate(gb: *GraphicsBase, rp: *RastPort, bits: [*]const u8, pitch: u
             drawing.grow(&bound, y, &any);
         }
     }
-    if (any) drawing.handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) drawing.handOn(gb, rp, drawing.written(area.*, bound));
 }

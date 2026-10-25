@@ -9,6 +9,7 @@ const _round = @import("_round.zig");
 const _smooth = @import("_smooth.zig");
 const fillSpan = _draw.fillShapeSpan;
 const handOn = _draw.handOn;
+const written = _draw.written;
 const Rect = graphics.Rect;
 const RastPort = _draw.RastPort;
 
@@ -48,8 +49,8 @@ const RastPort = _draw.RastPort;
 /// to 256, which on either of this machine's displays is already a corner
 /// half the height of the screen.
 ///
-/// The rows that were written are handed on to the display before it
-/// returns, so drawing is immediate.
+/// What was written is handed on to the display before it returns, so
+/// drawing is immediate: the rows written, across the shape's box.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -98,7 +99,7 @@ pub fn FillRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect, radius
     if (r <= 0) {
         var y = area.min_y;
         while (y < area.max_y) : (y += 1) fillSpan(rp, area.min_x, area.max_x, y, &bound, &any);
-        if (any) handOn(gb, rp, bound.min_y, bound.max_y);
+        if (any) handOn(gb, rp, written(area.*, bound));
         return;
     }
 
@@ -121,5 +122,5 @@ pub fn FillRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect, radius
     var y = area.min_y + r;
     while (y < area.max_y - r) : (y += 1) fillSpan(rp, area.min_x, area.max_x, y, &bound, &any);
 
-    if (any) handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) handOn(gb, rp, written(area.*, bound));
 }

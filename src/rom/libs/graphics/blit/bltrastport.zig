@@ -48,7 +48,7 @@ const blitInto = _blit.blitInto;
 /// and repacking every pixel, which is a different operation and will be a
 /// different call.
 ///
-/// The rows written in the destination are handed on to the display before
+/// What was written in the destination is handed on to the display before
 /// it returns, as every drawing call does.
 ///
 /// CONTEXT:

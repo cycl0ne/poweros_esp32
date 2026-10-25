@@ -100,7 +100,7 @@ pub fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
 
     const described = rtg.RtgPixels{ .pixels = pixels, .pitch = pitch, .format = from, .x = src_area.min_x, .y = src_area.min_y };
     if (_blit.scaleByEngine(gb, rp, &described, src_area.*, dest_area.*)) {
-        drawing.handOn(gb, rp, dest_area.min_y, dest_area.max_y);
+        drawing.handOn(gb, rp, dest_area.*);
         return;
     }
 
@@ -142,5 +142,5 @@ pub fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
             drawing.grow(&bound, y, &any);
         }
     }
-    if (any) drawing.handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) drawing.handOn(gb, rp, drawing.written(dest_area.*, bound));
 }

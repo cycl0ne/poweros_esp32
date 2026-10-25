@@ -7,6 +7,7 @@ const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _draw = @import("_draw.zig");
 const _round = @import("_round.zig");
 const handOn = _draw.handOn;
+const written = _draw.written;
 const pieceAt = _draw.pieceAt;
 const plotPatterned = _draw.plotPatterned;
 const grow = _draw.grow;
@@ -128,5 +129,5 @@ pub fn DrawRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect, radius
             }
         }
     }
-    if (any) handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) handOn(gb, rp, written(area.*, bound));
 }

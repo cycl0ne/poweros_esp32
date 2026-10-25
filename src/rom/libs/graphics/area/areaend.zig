@@ -141,6 +141,6 @@ pub fn AreaEnd(gb: *GraphicsBase, rp: *RastPort) bool {
             drawing.fillShapeSpan(rp, xs[pair], xs[pair + 1] + 1, y, &bound, &any);
         }
     }
-    if (any) drawing.handOn(gb, rp, bound.min_y, bound.max_y);
+    if (any) drawing.handOn(gb, rp, drawing.written(rp.fill_box, bound));
     return true;
 }
