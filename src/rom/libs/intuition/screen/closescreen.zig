@@ -76,6 +76,8 @@ pub fn CloseScreen(ib: *IntuitionBase, screen: ?*Screen) bool {
     // or - this being its last - its home, left black rather than showing
     // a screen that is no longer there. A buffer of its own goes once it
     // is not shown.
+    // Windows fading out on it go with the rest of its layers.
+    @import("../window/_fade.zig").forgetScreen(ib, s);
     ib.layers_base.DisposeLayerInfo(s.layer_info);
     s.shown = s.bitmap;
     showFront(ib, s.board, s.home);

@@ -46,6 +46,7 @@ const backfill = @import("../backfill/_backfill.zig");
 const super = @import("../super/_super.zig");
 const _locks = @import("../locks/_locks.zig");
 const compose = @import("../compose/_compose.zig");
+const effects = @import("../compose/_effects.zig");
 const LayersBase = @import("../layers.zig").LayersBase;
 
 /// Moves a layer and changes its size together.
@@ -348,7 +349,10 @@ fn moveComposed(lb: *LayersBase, group: []Member, dw: i32, dh: i32) bool {
     var exact = touched != null;
     for (group) |member| {
         const region = touched orelse break;
-        if (!gb.OrRectRegion(region, &member.old) or !gb.OrRectRegion(region, &member.new)) exact = false;
+        // With its shadow, where it has one.
+        const old_reach = effects.reachAt(member.layer, member.old);
+        const new_reach = effects.reachAt(member.layer, member.new);
+        if (!gb.OrRectRegion(region, &old_reach) or !gb.OrRectRegion(region, &new_reach)) exact = false;
     }
 
     for (group) |*member| {

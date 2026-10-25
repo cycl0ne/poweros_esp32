@@ -20,6 +20,7 @@ const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const LayersBase = @import("../layers.zig").LayersBase;
+const effects = @import("../compose/_effects.zig");
 const Rect = graphics.Rect;
 
 /// Every layer of one display.
@@ -62,6 +63,14 @@ pub const LayerInfo = struct {
     /// the display (`LATAG_Compose`, compose/_compose.zig). Never set on
     /// a machine the composing is not built for.
     compose: bool = false,
+    /// Composed, as the last retile left it: some layer is seen through
+    /// (`LATAG_Opacity`), and some layer's shadow can be seen
+    /// (compose/_effects.zig).
+    veiled: bool = false,
+    shaded: bool = false,
+    /// The pictures of the shadows in use, one a size, kept until the
+    /// LayerInfo goes.
+    shadows: ?*effects.Shadow = null,
 };
 
 /// The buffer a layer of a composed LayerInfo draws into: a handle on
@@ -167,6 +176,18 @@ pub const Layer = struct {
     /// or null.
     picture: ?*const rtg.Surface = null,
     picture_area: Rect = .{},
+    /// Composed, what it looks like: the radius of its corners, the size
+    /// of its shadow, how much it covers (255, all), and whether it counts
+    /// (`LATAG_Corners`, `LATAG_Shadow`, `LATAG_Opacity`, `LATAG_Ghost`).
+    corners: u16 = 0,
+    shadow: u16 = 0,
+    opacity: u8 = 255,
+    ghost: bool = false,
+    /// Where its shadow can be seen, in the display's coordinates, and
+    /// the rectangle round that; null with no shadow, or none that falls
+    /// on anything (compose/_effects.zig).
+    shade: ?*graphics.Region = null,
+    shade_box: Rect = .{},
 };
 
 /// Room for one kept piece, from the LayerInfo's pool.

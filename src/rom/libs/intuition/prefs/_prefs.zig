@@ -17,6 +17,7 @@ const sc = intuition.screens;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _screen = @import("../screen/_screen.zig");
+const _fade = @import("../window/_fade.zig");
 
 /// How far apart two presses may be and still be one double-click, as
 /// the library is born.
@@ -49,6 +50,9 @@ pub fn answer(ib: *IntuitionBase, tags: ?[*]const TagItem, born: bool) u32 {
             intuition.IPREFS_OffScreen => @as(*u32, @ptrFromInt(item.data)).* = if (born) 0 else ib.off_screen,
             intuition.IPREFS_WideGadgets => @as(*u32, @ptrFromInt(item.data)).* = if (born) 0 else ib.wide_gadgets,
             intuition.IPREFS_BeepFlash => @as(*u32, @ptrFromInt(item.data)).* = if (born) 1 else ib.beep_flash,
+            intuition.IPREFS_WindowCorners => @as(*u32, @ptrFromInt(item.data)).* = if (born) _fade.default_corners else ib.window_corners,
+            intuition.IPREFS_WindowShadow => @as(*u32, @ptrFromInt(item.data)).* = if (born) _fade.default_shadow else ib.window_shadow,
+            intuition.IPREFS_WindowFade => @as(*u32, @ptrFromInt(item.data)).* = if (born) _fade.default_fade else ib.window_fade,
             intuition.IPREFS_ScreenFont, intuition.IPREFS_DefaultFont, intuition.IPREFS_FixedFont => {
                 const into: *?*graphics.TextFont = @ptrFromInt(item.data);
                 into.* = if (born)

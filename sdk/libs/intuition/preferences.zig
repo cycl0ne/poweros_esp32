@@ -80,6 +80,20 @@ pub const IPREFS_BeepFlash = IPREFS_Dummy + 11;
 /// caller's may go as soon as `SetPrefs` returns; null for none, as the
 /// system starts. Set only: the copy is intuition's own.
 pub const IPREFS_BeepSound = IPREFS_Dummy + 12;
+/// How round a window's corners are on a screen whose windows are
+/// composed, each in a buffer of its own: their radius in pixels, 6 as
+/// the system starts, up to 16; 0 for square ones. A window with a border
+/// that is not a backdrop has them; every one open takes a change at
+/// once. Got: a `*u32`.
+pub const IPREFS_WindowCorners = IPREFS_Dummy + 13;
+/// How far the shadow a window casts there reaches, in pixels: 12 as the
+/// system starts, up to 32; 0 for none. The same windows have it, and
+/// every one open takes a change at once. Got: a `*u32`.
+pub const IPREFS_WindowShadow = IPREFS_Dummy + 14;
+/// How long a window takes there to fade in as it opens and out as it
+/// closes, in milliseconds: 160 as the system starts, up to 1000; 0 for
+/// at once. The same windows do. Got: a `*u32`.
+pub const IPREFS_WindowFade = IPREFS_Dummy + 15;
 
 /// A sound for `IPREFS_BeepSound`: `frames` frames of 16-bit samples in
 /// the machine's byte order, `channels` (1 or 2) interleaved, left first,

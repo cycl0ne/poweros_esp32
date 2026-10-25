@@ -10,6 +10,7 @@ const LayerInfo = _layerinfo.LayerInfo;
 const Layer = _layerinfo.Layer;
 const tile = @import("../tile/_tile.zig");
 const compose = @import("../compose/_compose.zig");
+const effects = @import("../compose/_effects.zig");
 const _locks = @import("../locks/_locks.zig");
 const LayersBase = @import("../layers.zig").LayersBase;
 
@@ -63,7 +64,7 @@ pub fn MoveLayerInFrontOf(lb: *LayersBase, layer: *Layer, other: *Layer) bool {
     lb.sys_base.Remove(&layer.node);
     lb.sys_base.Insert(&info.layers, &layer.node, other.node.pred);
     const ok = tile.retile(lb, info);
-    compose.show(lb, info, layer.bounds);
+    compose.show(lb, info, effects.reach(layer));
     layer.last_error = if (ok) layers.LERR_OK else layers.LERR_NO_MEMORY;
     return ok;
 }

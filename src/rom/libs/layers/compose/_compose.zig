@@ -51,6 +51,7 @@ const Layer = info_mod.Layer;
 const Buffer = info_mod.Buffer;
 const LayersBase = @import("../layers.zig").LayersBase;
 const super = @import("../super/_super.zig");
+const effects = @import("_effects.zig");
 
 /// Whether this build composes at all. The 32-bit machines are the
 /// ESP32s, where the display's memory is what everything waits on and a
@@ -286,28 +287,96 @@ fn watched(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callc
 /// exec for room: a window under one or two others is a handful.
 const pieces_at_hand = 16;
 
-/// What of one layer can be seen inside `area`, copied from its buffer on
-/// to the display.
-///
-/// It is called from whichever task drew, holding that layer, so it
-/// touches only what the layer's lock keeps still - its place and what it
-/// can see - and no pool of the LayerInfo's, which the other layers' tasks
-/// share. A piece is copied through the LayerInfo's own RastPort on the
-/// display and handed on from there, by the engine where the board has
-/// one.
-///
-/// INPUTS:
-/// - `lb` - the library.
-/// - `layer` - the layer.
-/// - `area` - where, in the display's coordinates.
-pub fn showLayer(lb: *LayersBase, layer: *Layer, area: Rect) void {
-    const gb = lb.graphics_base;
-    const own = layer.own orelse return;
-    const dest = layer.info.display_rp orelse return;
-    const cut = Rect.intersect(area, layer.bounds);
-    if (cut.isEmpty()) return;
-    const ox, const oy = super.origin(layer);
+/// How a piece of a layer reaches the display: through the LayerInfo's
+/// RastPort, handed on at once (or at the end of the batch it is in);
+/// copied on to the display's buffer, handed on by the caller; or laid
+/// over what is there at the layer's opacity, the same.
+const How = enum { through, copied, laid };
 
+/// A rectangle of `from` - `x`, `y` its corner there - on to `piece` of
+/// the display, `how` says how. `bitmap` is `from` as a board's buffer,
+/// for the engine's copy, or null.
+fn put(lb: *LayersBase, layer: *const Layer, from: *const rtg.Surface, bitmap: ?*rtg.RtgBitMap, x: i32, y: i32, piece: Rect, how: How) void {
+    const gb = lb.graphics_base;
+    const rb = lb.rtg_base;
+    const info = layer.info;
+    if (how == .through) {
+        const dest = info.display_rp orelse return;
+        gb.BltBitMapRastPort(from, x, y, dest, piece.min_x, piece.min_y, piece.width(), piece.height());
+        return;
+    }
+    const display = info.bitmap orelse return;
+    const rect = rtg.RtgRect{ .x = piece.min_x, .y = piece.min_y, .width = piece.width(), .height = piece.height() };
+    if (how == .laid) {
+        const pixels = rtg.RtgPixels{
+            .pixels = from.pixels,
+            .pitch = from.pitch,
+            .format = from.format,
+            .flags = rtg.RTGPIXF_OPAQUE,
+            .x = x,
+            .y = y,
+        };
+        // A board that cannot lay it over has it copied: seen whole a
+        // moment early, rather than not at all.
+        if (rb.BlendPixels(display, &rect, &pixels, layer.opacity) == rtg.errors.RTGERR_OK) return;
+    }
+    if (bitmap) |source| {
+        const copy = rtg.RtgCopy{ .src_x = x, .src_y = y, .width = piece.width(), .height = piece.height(), .dest_x = piece.min_x, .dest_y = piece.min_y };
+        if (rb.CopyRect(source, display, &copy) == rtg.errors.RTGERR_OK) return;
+    }
+    _ = gb.BltBitMap(from, x, y, @ptrCast(display), piece.min_x, piece.min_y, piece.width(), piece.height());
+}
+
+/// A piece of a layer, in the display's coordinates and inside what it
+/// can see, on to the display: from its buffer, and from the picture it
+/// shows where the piece is under that.
+fn putLayer(lb: *LayersBase, layer: *const Layer, piece: Rect, how: How) void {
+    const own = layer.own orelse return;
+    const ox, const oy = super.origin(layer);
+    const buffer: *const rtg.Surface = @ptrCast(own.bitmap);
+    const over = if (layer.picture) |_| Rect{
+        .min_x = layer.picture_area.min_x + ox,
+        .min_y = layer.picture_area.min_y + oy,
+        .max_x = layer.picture_area.max_x + ox,
+        .max_y = layer.picture_area.max_y + oy,
+    } else Rect{};
+    const shown = Rect.intersect(piece, over);
+    if (shown.isEmpty()) {
+        put(lb, layer, buffer, own.bitmap, piece.min_x - ox, piece.min_y - oy, piece, how);
+        return;
+    }
+    put(lb, layer, layer.picture.?, null, shown.min_x - over.min_x, shown.min_y - over.min_y, shown, how);
+    // The rest of the piece, around the picture: above, below, and to
+    // either side of it.
+    const around = [4]Rect{
+        .{ .min_x = piece.min_x, .min_y = piece.min_y, .max_x = piece.max_x, .max_y = shown.min_y },
+        .{ .min_x = piece.min_x, .min_y = shown.max_y, .max_x = piece.max_x, .max_y = piece.max_y },
+        .{ .min_x = piece.min_x, .min_y = shown.min_y, .max_x = shown.min_x, .max_y = shown.max_y },
+        .{ .min_x = shown.max_x, .min_y = shown.min_y, .max_x = piece.max_x, .max_y = shown.max_y },
+    };
+    for (around) |rest| {
+        if (!rest.isEmpty()) put(lb, layer, buffer, own.bitmap, rest.min_x - ox, rest.min_y - oy, rest, how);
+    }
+}
+
+/// A piece of a layer copied on to the display at once, with the shadows
+/// of the layers in front of it that fall there: those are laid over it
+/// before it is handed on, so it is never seen without them.
+fn putShaded(lb: *LayersBase, layer: *const Layer, piece: Rect) void {
+    if (!layer.info.shaded or !effects.shadedFront(layer, piece)) {
+        putLayer(lb, layer, piece, .through);
+        return;
+    }
+    putLayer(lb, layer, piece, .copied);
+    effects.darkenFront(lb, layer, piece);
+    const display = layer.info.bitmap orelse return;
+    _ = lb.rtg_base.RefreshRect(display, &.{ .x = piece.min_x, .y = piece.min_y, .width = piece.width(), .height = piece.height() });
+}
+
+/// The pieces of a layer's visible region, `at_hand` or from exec, for
+/// `each` to be called with every one of them inside `cut`.
+fn eachPiece(lb: *LayersBase, layer: *const Layer, cut: Rect, context: anytype, comptime each: fn (@TypeOf(context), Rect) void) void {
+    const gb = lb.graphics_base;
     var at_hand: [pieces_at_hand]Rect = undefined;
     const n = gb.RegionRectangles(layer.visible, &at_hand, pieces_at_hand);
     if (n == 0) return;
@@ -322,34 +391,48 @@ pub fn showLayer(lb: *LayersBase, layer: *Layer, area: Rect) void {
             pieces = all[0..n];
         }
     }
-    const over = if (layer.picture) |_| Rect{
-        .min_x = layer.picture_area.min_x + ox,
-        .min_y = layer.picture_area.min_y + oy,
-        .max_x = layer.picture_area.max_x + ox,
-        .max_y = layer.picture_area.max_y + oy,
-    } else Rect{};
     for (pieces) |r| {
         const piece = Rect.intersect(r, cut);
-        if (piece.isEmpty()) continue;
-        const shown = Rect.intersect(piece, over);
-        if (shown.isEmpty()) {
-            gb.BltBitMapRastPort(@ptrCast(own.bitmap), piece.min_x - ox, piece.min_y - oy, dest, piece.min_x, piece.min_y, piece.width(), piece.height());
-            continue;
-        }
-        gb.BltBitMapRastPort(layer.picture.?, shown.min_x - over.min_x, shown.min_y - over.min_y, dest, shown.min_x, shown.min_y, shown.width(), shown.height());
-        // The rest of the piece, around the picture: above, below, and
-        // to either side of it.
-        const around = [4]Rect{
-            .{ .min_x = piece.min_x, .min_y = piece.min_y, .max_x = piece.max_x, .max_y = shown.min_y },
-            .{ .min_x = piece.min_x, .min_y = shown.max_y, .max_x = piece.max_x, .max_y = piece.max_y },
-            .{ .min_x = piece.min_x, .min_y = shown.min_y, .max_x = shown.min_x, .max_y = shown.max_y },
-            .{ .min_x = shown.max_x, .min_y = shown.min_y, .max_x = piece.max_x, .max_y = shown.max_y },
-        };
-        for (around) |rest| {
-            if (rest.isEmpty()) continue;
-            gb.BltBitMapRastPort(@ptrCast(own.bitmap), rest.min_x - ox, rest.min_y - oy, dest, rest.min_x, rest.min_y, rest.width(), rest.height());
-        }
+        if (!piece.isEmpty()) each(context, piece);
     }
+}
+
+/// What of one layer can be seen inside `area`, copied from its buffer on
+/// to the display.
+///
+/// It is called from whichever task drew, holding that layer, so it
+/// touches only what the layer's lock keeps still - its place and what it
+/// can see, and every other layer's, which change only while all are
+/// held - and no pool of the LayerInfo's, which the other layers' tasks
+/// share. A piece is copied through the LayerInfo's own RastPort on the
+/// display and handed on from there, by the engine where the board has
+/// one; where a shadow falls on it, on to the display's buffer, darkened,
+/// and handed on after.
+///
+/// What is seen through, or under something seen through, waits: laying
+/// it over what is behind it is for `show`, which copies that first.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer.
+/// - `area` - where, in the display's coordinates.
+pub fn showLayer(lb: *LayersBase, layer: *Layer, area: Rect) void {
+    if (layer.own == null or layer.info.display_rp == null) return;
+    if (layer.opacity != 255) return;
+    const cut = Rect.intersect(area, layer.bounds);
+    if (cut.isEmpty()) return;
+    const Each = struct {
+        lb: *LayersBase,
+        layer: *Layer,
+
+        fn piece(each: @This(), r: Rect) void {
+            if (!each.layer.info.veiled) return putShaded(each.lb, each.layer, r);
+            var parts: [effects.most_unveiled]Rect = undefined;
+            const n = effects.unveiled(each.layer, r, &parts);
+            for (parts[0..n]) |part| putShaded(each.lb, each.layer, part);
+        }
+    };
+    eachPiece(lb, layer, cut, Each{ .lb = lb, .layer = layer }, Each.piece);
 }
 
 /// Everything inside `area` copied on to the display again, each pixel
@@ -357,7 +440,10 @@ pub fn showLayer(lb: *LayersBase, layer: *Layer, area: Rect) void {
 /// it is.
 ///
 /// The caller holds every layer, so no layer is drawn meanwhile, and the
-/// whole of it is handed on to the board at once.
+/// whole of it is handed on to the board at once. With shadows, or a
+/// layer seen through, it is done in order, back to front: each layer's
+/// shadow laid over what is behind it, then the layer copied over that -
+/// or laid over it, seen through.
 ///
 /// INPUTS:
 /// - `lb` - the library.
@@ -369,13 +455,33 @@ pub fn show(lb: *LayersBase, info: *LayerInfo, area: Rect) void {
     if (cut.isEmpty()) return;
     const gb = lb.graphics_base;
     const dest = info.display_rp orelse return;
-    gb.BeginDraw(dest);
-    defer gb.EndDraw(dest);
-    var it = info.layers.iterator();
-    while (it.next()) |node| {
-        const layer: *Layer = @fieldParentPtr("node", node);
-        showLayer(lb, layer, cut);
+    if (!info.veiled and !info.shaded) {
+        gb.BeginDraw(dest);
+        defer gb.EndDraw(dest);
+        var it = info.layers.iterator();
+        while (it.next()) |node| {
+            const layer: *Layer = @fieldParentPtr("node", node);
+            showLayer(lb, layer, cut);
+        }
+        return;
     }
+    const display = info.bitmap orelse return;
+    const Each = struct {
+        lb: *LayersBase,
+        layer: *Layer,
+
+        fn piece(each: @This(), r: Rect) void {
+            putLayer(each.lb, each.layer, r, if (each.layer.opacity == 255) .copied else .laid);
+        }
+    };
+    var at = info.layers.last();
+    while (at) |node| {
+        const layer: *Layer = @fieldParentPtr("node", node);
+        at = if (node.pred.?.pred == null) null else node.pred;
+        effects.darken(lb, layer, cut);
+        if (layer.own != null) eachPiece(lb, layer, cut, Each{ .lb = lb, .layer = layer }, Each.piece);
+    }
+    _ = lb.rtg_base.RefreshRect(display, &.{ .x = cut.min_x, .y = cut.min_y, .width = cut.width(), .height = cut.height() });
 }
 
 /// `show` for every rectangle of a region, handed on to the board at

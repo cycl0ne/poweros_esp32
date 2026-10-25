@@ -21,6 +21,7 @@ const LayerInfo = info_mod.LayerInfo;
 const Layer = info_mod.Layer;
 const tile = @import("../tile/_tile.zig");
 const compose = @import("../compose/_compose.zig");
+const effects = @import("../compose/_effects.zig");
 const smart = @import("../smart/_smart.zig");
 const backfill = @import("../backfill/_backfill.zig");
 const super = @import("../super/_super.zig");
@@ -74,7 +75,7 @@ pub fn reorder(lb: *LayersBase, layer: *Layer, put: enum { front, back }) bool {
     lb.sys_base.Remove(&layer.node);
     insert(lb.sys_base, info, layer, put == .back);
     const ok = tile.retile(lb, info);
-    compose.show(lb, info, layer.bounds);
+    compose.show(lb, info, effects.reach(layer));
     layer.last_error = if (ok) layers.LERR_OK else layers.LERR_NO_MEMORY;
     return ok;
 }

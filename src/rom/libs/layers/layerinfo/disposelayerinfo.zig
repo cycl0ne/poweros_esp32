@@ -10,6 +10,7 @@ const _layerinfo = @import("_layerinfo.zig");
 const LayerInfo = _layerinfo.LayerInfo;
 const Layer = _layerinfo.Layer;
 const LayersBase = @import("../layers.zig").LayersBase;
+const effects = @import("../compose/_effects.zig");
 
 /// Throws a LayerInfo away, and every layer still in it.
 ///
@@ -62,8 +63,10 @@ pub fn DisposeLayerInfo(lb: *LayersBase, info: ?*LayerInfo) void {
         const layer: *Layer = @fieldParentPtr("node", node);
         layers_lib.DeleteLayer(@ptrCast(layer));
     }
-    // This library's own RastPort on the display goes with it.
+    // This library's own RastPort on the display goes with it, and the
+    // pictures of the shadows its layers cast.
     if (layer_info.display_rp) |rp| lb.graphics_base.FreeRastPort(rp);
+    effects.freeShadows(lb, layer_info);
     // Every clip target the pool ever held, in one call.
     lb.sys_base.DeletePool(layer_info.pool);
     lb.sys_base.FreeVec(layer_info);

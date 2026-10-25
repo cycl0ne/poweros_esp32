@@ -13,6 +13,7 @@ const tile = @import("../tile/_tile.zig");
 const smart = @import("../smart/_smart.zig");
 const _locks = @import("../locks/_locks.zig");
 const compose = @import("../compose/_compose.zig");
+const effects = @import("../compose/_effects.zig");
 const LayersBase = @import("../layers.zig").LayersBase;
 
 /// Takes a layer away.
@@ -92,7 +93,8 @@ pub fn DeleteLayer(lb: *LayersBase, layer: ?*Layer) void {
     gb.DisposeRegion(gone.damage);
     gb.FreeRastPort(gone.rp);
     compose.drop(lb, gone);
-    const was = gone.bounds;
+    effects.dropShade(gb, gone);
+    const was = effects.reach(gone);
     sys.FreeVec(gone);
 
     // What was behind it can see more now.

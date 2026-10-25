@@ -3324,7 +3324,9 @@ fn GetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) u32
 - `tags` - the settings wanted, each an `IPREFS_` tag whose data is
   where its value is written: a `*u32` for `IPREFS_DoubleClick`
   (milliseconds), `IPREFS_ScreenFontHeight` (rows), `IPREFS_Keyboard`,
-  `IPREFS_OffScreen`, `IPREFS_WideGadgets` and `IPREFS_BeepFlash`; a
+  `IPREFS_OffScreen`, `IPREFS_WideGadgets`, `IPREFS_BeepFlash`,
+  `IPREFS_WindowCorners`, `IPREFS_WindowShadow` (pixels) and
+  `IPREFS_WindowFade` (milliseconds); a
   `*?*graphics.TextFont` for the three fonts; a
   `*[NUMDRIPENS]graphics.Pen` for `IPREFS_Pens`.
 
@@ -7183,6 +7185,14 @@ value:
   sets it - every window it reaches is drawn again.
 - `IPREFS_BeepFlash`: whether `DisplayBeep` flashes the display, 0 or
   1; anything else is refused.
+- `IPREFS_WindowCorners`, `IPREFS_WindowShadow`: on a screen whose
+  windows are composed, the radius of a window's corners, up to 16,
+  and how far its shadow reaches, up to 32, in pixels; 0 for none, more
+  refused. Every window with a border that is not a backdrop takes
+  them at once, and its border is drawn again.
+- `IPREFS_WindowFade`: there, how long such a window takes to fade in
+  as it opens and out as it closes, in milliseconds, up to 1000; 0 for
+  at once, more refused. A window fading as it is set fades as it was.
 - `IPREFS_BeepSound`: the sound `DisplayBeep` plays, copied, or none
   for null. One with no frames, a rate past `AUDIO_MAX_RATE`, other
   than one or two channels or a volume past `AUDIO_VOLUME_MAX` is

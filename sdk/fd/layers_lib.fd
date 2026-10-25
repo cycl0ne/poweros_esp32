@@ -115,4 +115,9 @@ bool DamageLayer(*layers.Layer layer, *const graphics.Rect area)
 /// it stays. False, and nothing shown, for a layer that is not composed,
 /// a super layer, or a picture not in the display's pixels.
 bool ShowLayerPicture(*layers.Layer layer, ?*const rtg.Surface picture, ?*const graphics.Rect area)
+/// Change what a composed layer looks like: LATAG_Corners, LATAG_Shadow,
+/// LATAG_Opacity, LATAG_Ghost, as CreateLayerTagList takes them. The
+/// display is shown again where the layer and its shadow were and are.
+/// False for a layer that is not composed, or without memory.
+bool SetLayerAttrsTagList(*layers.Layer layer, ?[*]const utility.TagItem tags)
 ##end

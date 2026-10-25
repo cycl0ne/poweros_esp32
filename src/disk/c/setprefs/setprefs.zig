@@ -128,7 +128,7 @@ const fixed_at = 2;
 
 /// Everything the tags point into, kept until `SetPrefs` has read it.
 const Gathered = struct {
-    tags: [16]TagItem = undefined,
+    tags: [24]TagItem = undefined,
     count: usize = 0,
     fonts: [3]?*graphics.TextFont = @splat(null),
     pens: [sc.NUMDRIPENS]graphics.Pen = undefined,
@@ -465,6 +465,9 @@ fn gatherReset(l: Libs, g: *Gathered) void {
     var off_screen: u32 = 0;
     var wide_gadgets: u32 = 0;
     var beep_flash: u32 = 0;
+    var corners: u32 = 0;
+    var shadow: u32 = 0;
+    var fade: u32 = 0;
     _ = l.ib.GetDefPrefs(&[_]TagItem{
         .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) },
         .{ .tag = intuition.IPREFS_ScreenFontHeight, .data = @intFromPtr(&rows) },
@@ -472,6 +475,9 @@ fn gatherReset(l: Libs, g: *Gathered) void {
         .{ .tag = intuition.IPREFS_OffScreen, .data = @intFromPtr(&off_screen) },
         .{ .tag = intuition.IPREFS_WideGadgets, .data = @intFromPtr(&wide_gadgets) },
         .{ .tag = intuition.IPREFS_BeepFlash, .data = @intFromPtr(&beep_flash) },
+        .{ .tag = intuition.IPREFS_WindowCorners, .data = @intFromPtr(&corners) },
+        .{ .tag = intuition.IPREFS_WindowShadow, .data = @intFromPtr(&shadow) },
+        .{ .tag = intuition.IPREFS_WindowFade, .data = @intFromPtr(&fade) },
         .{},
     });
     g.add(intuition.IPREFS_DoubleClick, ms);
@@ -479,6 +485,9 @@ fn gatherReset(l: Libs, g: *Gathered) void {
     g.add(intuition.IPREFS_Keyboard, keys);
     g.add(intuition.IPREFS_OffScreen, off_screen);
     g.add(intuition.IPREFS_WideGadgets, wide_gadgets);
+    g.add(intuition.IPREFS_WindowCorners, corners);
+    g.add(intuition.IPREFS_WindowShadow, shadow);
+    g.add(intuition.IPREFS_WindowFade, fade);
     for (font_tags) |tag| g.add(tag, 0);
     g.add(intuition.IPREFS_Pens, 0);
     g.add(intuition.IPREFS_Style, 0);
@@ -496,6 +505,9 @@ fn show(l: Libs) void {
     var fonts: [3]?*graphics.TextFont = @splat(null);
     var pens: [sc.NUMDRIPENS]graphics.Pen = undefined;
     var beep_flash: u32 = 0;
+    var corners: u32 = 0;
+    var shadow: u32 = 0;
+    var fade: u32 = 0;
     _ = l.ib.GetPrefs(&[_]TagItem{
         .{ .tag = intuition.IPREFS_BeepFlash, .data = @intFromPtr(&beep_flash) },
         .{ .tag = intuition.IPREFS_DoubleClick, .data = @intFromPtr(&ms) },
@@ -507,6 +519,9 @@ fn show(l: Libs) void {
         .{ .tag = font_tags[1], .data = @intFromPtr(&fonts[1]) },
         .{ .tag = font_tags[2], .data = @intFromPtr(&fonts[2]) },
         .{ .tag = intuition.IPREFS_Pens, .data = @intFromPtr(&pens) },
+        .{ .tag = intuition.IPREFS_WindowCorners, .data = @intFromPtr(&corners) },
+        .{ .tag = intuition.IPREFS_WindowShadow, .data = @intFromPtr(&shadow) },
+        .{ .tag = intuition.IPREFS_WindowFade, .data = @intFromPtr(&fade) },
         .{},
     });
     defer for (fonts) |font| if (font) |f| l.gb.CloseFont(f);
@@ -524,6 +539,9 @@ fn show(l: Libs) void {
     const shape = intuition_file.off_screen_names[@min(wide_gadgets, 1)];
     @memcpy(wide[0..shape.len], shape);
     _ = Printf(l.dl, MSG_WORD, .{ @as([*:0]const u8, "WIDEGADGETS"), @as([*:0]const u8, &wide) });
+    _ = Printf(l.dl, MSG_NUMBER, .{ @as([*:0]const u8, "CORNERS"), @as(u64, corners), @as([*:0]const u8, "pixels") });
+    _ = Printf(l.dl, MSG_NUMBER, .{ @as([*:0]const u8, "SHADOW"), @as(u64, shadow), @as([*:0]const u8, "pixels") });
+    _ = Printf(l.dl, MSG_NUMBER, .{ @as([*:0]const u8, "FADE"), @as(u64, fade), @as([*:0]const u8, "ms") });
     const font_names = [3][*:0]const u8{ "SCREEN", "DEFAULT", "FIXED" };
     for (fonts, font_names) |font, label| {
         const f = font orelse continue;

@@ -130,7 +130,10 @@ pub const LIBRARY_VERSION = 0;
 /// 53: a tablet reaches no further down than the display, so a screen
 /// pulled down follows the pointer and goes no further; a gadget's
 /// RastPort holds its window's layer as the window's does.
-pub const LIBRARY_REVISION = 53;
+/// 54: on a composed screen a window has round corners and casts a
+/// shadow, and fades in as it opens and out as it closes, with motion
+/// (IPREFS_WindowCorners, IPREFS_WindowShadow, IPREFS_WindowFade).
+pub const LIBRARY_REVISION = 54;
 const BUILD_DATE = "25.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -248,6 +251,10 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ib.keyboard_mode = sdk.intuition.KEYBOARD_AUTO;
     ib.off_screen = 0;
     ib.wide_gadgets = 0;
+    ib.window_corners = @import("window/_fade.zig").default_corners;
+    ib.window_shadow = @import("window/_fade.zig").default_shadow;
+    ib.window_fade = @import("window/_fade.zig").default_fade;
+    ib.fades.init();
     ib.style_serial = 0;
     ib.system_pens = @import("screen/_screen.zig").default_pens;
     ib.keymap_base = @ptrCast(sys_base.OpenLibrary(sdk.keymap.KEYMAPNAME, sdk.keymap.KEYMAP_VERSION));

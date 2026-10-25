@@ -163,6 +163,16 @@ pub const IntuitionBase = extern struct {
     /// Whether the gadgets in the title bars are wide
     /// (`IPREFS_WideGadgets`): 0 or 1.
     wide_gadgets: u32,
+    /// What a window looks like on a screen whose windows are composed:
+    /// the radius of its corners, the size of its shadow, how many
+    /// milliseconds it fades in and out in (`IPREFS_WindowCorners`,
+    /// `IPREFS_WindowShadow`, `IPREFS_WindowFade`); 0 for none.
+    window_corners: u32,
+    window_shadow: u32,
+    window_fade: u32,
+    /// The windows fading in or out, under the screen list's lock
+    /// (window/_fade.zig).
+    fades: exec.MinList,
     /// The RastPorts `ObtainGIRPort` has given out, and the layer held for
     /// each, so that the release can let the right one go.
     held: [_gadget.held_max]_gadget.Held,

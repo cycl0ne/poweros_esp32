@@ -433,6 +433,27 @@ fn blendPixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgR
     log.last_pixels = pixels.*;
     log.last_alpha = alpha;
     if (dest.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    const whole = pixels.flags & rtg.RTGPIXF_OPAQUE != 0;
+    // A picture in the buffer's own format - a window's buffer - is taken
+    // only as one that covers fully.
+    if (whole and pixels.format == .rgb565) {
+        var line: u32 = 0;
+        while (line < area.height) : (line += 1) {
+            const to = rows16(dest, @as(u32, @intCast(area.y)) + line);
+            const from: [*]const u16 = @ptrCast(@alignCast(pixels.pixels.? + @as(usize, @intCast(pixels.y + @as(i32, @intCast(line)))) * pixels.pitch));
+            var column: u32 = 0;
+            while (column < area.width) : (column += 1) {
+                const pen = from[@as(usize, @intCast(pixels.x)) + column];
+                const red: u32 = (pen >> 11) & 0x1F;
+                const green: u32 = (pen >> 5) & 0x3F;
+                const blue: u32 = pen & 0x1F;
+                const over = (red << 3 | red >> 2) << 16 | (green << 2 | green >> 4) << 8 | (blue << 3 | blue >> 2);
+                const x = @as(u32, @intCast(area.x)) + column;
+                to[x] = mix(to[x], over, alpha);
+            }
+        }
+        return err.RTGERR_OK;
+    }
     if (pixels.format != .bgra32 and pixels.format != .rgba32) return err.RTGERR_BAD_FORMAT;
     var row: u32 = 0;
     while (row < area.height) : (row += 1) {
@@ -442,7 +463,7 @@ fn blendPixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgR
         while (column < area.width) : (column += 1) {
             var pen = from[@as(usize, @intCast(pixels.x)) + column];
             if (pixels.format == .rgba32) pen = (pen & 0xFF00_FF00) | (pen >> 16 & 0xFF) | (pen & 0xFF) << 16;
-            const coverage = ((pen >> 24) * alpha + 127) / 255;
+            const coverage = if (whole) alpha else ((pen >> 24) * alpha + 127) / 255;
             const x = @as(u32, @intCast(area.x)) + column;
             to[x] = mix(to[x], pen, coverage);
         }

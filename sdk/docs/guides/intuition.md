@@ -199,6 +199,25 @@ title bar gadgets" in `SYS:Programs/Prefs` - they are a third wider: 20,
 24 and 23. Every screen and window open takes the change at once; the
 sizing gadget keeps its shape either way.
 
+On a screen whose windows are composed - the 64-bit machines, each window
+in a picture of its own - a window with a border that is not a backdrop
+has round corners, casts a soft shadow on what is behind it, and fades in
+as it opens and out as it closes. `IPREFS_WindowCorners` is the corners'
+radius in pixels (6, up to 16), `IPREFS_WindowShadow` how far the shadow
+reaches (12, up to 32), `IPREFS_WindowFade` how long a fade takes in
+milliseconds (160, up to 1000); 0 turns each off. They are `CORNERS=6
+SHADOW=12 FADE=160` in `intuition.prefs`, and the "Round window corners",
+"Window shadows" and "Windows fade in and out" boxes in
+`SYS:Programs/Prefs`. Corners and shadows change on every window open at
+once; a fade, on the next window that opens or closes. A window closed is
+gone for its program at once - CloseWindow returns, its memory is given
+back - and only its picture fades, which nothing points at. A borderless
+window and a backdrop have none of it: they are the shape their program
+draws. The layers library does the work (`LATAG_Corners`,
+`LATAG_Shadow`, `LATAG_Opacity`, `LATAG_Ghost`, `SetLayerAttrsTagList`),
+motion.library times the fades, and where windows are not composed - the
+ESP32s - nothing of it is done.
+
 The depth gadget brings a window that another one overlaps from in front
 to the front, and sends a window nothing covers to the back, so that
 pressing it again and again goes through every window piled on one spot.

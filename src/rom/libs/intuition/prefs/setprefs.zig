@@ -18,6 +18,7 @@ const Window = _window.Window;
 const Screen = _screen.Screen;
 const Object = intuition.Object;
 const ic = intuition.imageclass;
+const _fade = @import("../window/_fade.zig");
 
 /// The system's settings changed.
 ///
@@ -66,6 +67,14 @@ const ic = intuition.imageclass;
 ///   sets it - every window it reaches is drawn again.
 /// - `IPREFS_BeepFlash`: whether `DisplayBeep` flashes the display, 0 or
 ///   1; anything else is refused.
+/// - `IPREFS_WindowCorners`, `IPREFS_WindowShadow`: on a screen whose
+///   windows are composed, the radius of a window's corners, up to 16,
+///   and how far its shadow reaches, up to 32, in pixels; 0 for none, more
+///   refused. Every window with a border that is not a backdrop takes
+///   them at once, and its border is drawn again.
+/// - `IPREFS_WindowFade`: there, how long such a window takes to fade in
+///   as it opens and out as it closes, in milliseconds, up to 1000; 0 for
+///   at once, more refused. A window fading as it is set fades as it was.
 /// - `IPREFS_BeepSound`: the sound `DisplayBeep` plays, copied, or none
 ///   for null. One with no frames, a rate past `AUDIO_MAX_RATE`, other
 ///   than one or two channels or a volume past `AUDIO_VOLUME_MAX` is
@@ -113,6 +122,9 @@ pub fn SetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) bool {
     var told = false;
     // The fonts are set together: one given, the others as they are.
     var fonts_given = false;
+    // The windows' corners or shadows changed: every window open takes
+    // them once all the tags are read.
+    var reshaped = false;
     var fonts: [3]?*graphics.TextFont = @splat(null);
     var given: [3]bool = @splat(false);
 
@@ -174,6 +186,27 @@ pub fn SetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) bool {
                 }
                 ib.beep_flash = @truncate(item.data);
             },
+            intuition.IPREFS_WindowCorners, intuition.IPREFS_WindowShadow => {
+                const most: usize = if (item.tag == intuition.IPREFS_WindowCorners) _fade.most_corners else _fade.most_shadow;
+                if (item.data > most) {
+                    taken = false;
+                    continue;
+                }
+                const into = if (item.tag == intuition.IPREFS_WindowCorners) &ib.window_corners else &ib.window_shadow;
+                if (item.data != into.*) {
+                    into.* = @truncate(item.data);
+                    reshaped = true;
+                }
+                told = true;
+            },
+            intuition.IPREFS_WindowFade => {
+                if (item.data > _fade.most_fade) {
+                    taken = false;
+                    continue;
+                }
+                ib.window_fade = @truncate(item.data);
+                told = true;
+            },
             intuition.IPREFS_BeepSound => {
                 if (!_misc.setBeepSound(ib, @ptrFromInt(item.data))) taken = false;
             },
@@ -203,8 +236,29 @@ pub fn SetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) bool {
         const sf = intuition.screens;
         if (!it.SetSystemFonts(fonts[sf.SYSFONT_SCREEN], fonts[sf.SYSFONT_DEFAULT], fonts[sf.SYSFONT_FIXED])) taken = false;
     }
+    if (reshaped) reshape(ib);
     if (told) _input.tellAll(ib, wn.IDCMP_NEWPREFS);
     return taken;
+}
+
+/// Every window open given the corners and the shadow the preferences
+/// say now, and its border drawn again along its new corners.
+fn reshape(ib: *IntuitionBase) void {
+    _window.lock(ib);
+    defer _window.unlock(ib);
+    var screens = ib.screen_list.head;
+    while (screens) |sn| : (screens = sn.succ) {
+        if (sn.succ == null) break;
+        const s: *Screen = @ptrCast(@alignCast(sn));
+        var windows = s.windows.head;
+        while (windows) |n| : (windows = n.succ) {
+            if (n.succ == null) break;
+            const w: *Window = @ptrCast(@alignCast(n));
+            if (!_fade.framed(w.flags)) continue;
+            _ = ib.layers_base.SetLayerAttrsTagList(w.layer, &_fade.lookOf(ib, w.flags));
+            _window.drawBorder(ib, w);
+        }
+    }
 }
 
 /// The title bars' gadgets made wide (`wide` 1) or narrow (0) on every

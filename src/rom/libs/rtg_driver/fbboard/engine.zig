@@ -290,6 +290,9 @@ const Lay = struct {
     swap: bool,
     /// The strength it is laid at, 1 to 255.
     alpha: u32,
+    /// Every pixel covers fully, whatever its top byte says
+    /// (`RTGPIXF_OPAQUE`): laid at `alpha` alone.
+    whole: bool,
 
     fn band(job: *const Lay, lo: u32, hi: u32) void {
         var y = lo;
@@ -298,7 +301,9 @@ const Lay = struct {
             const out = job.target.row(y);
             const count = job.target.width;
             const full = job.alpha == 255;
-            if (job.swap) {
+            if (job.whole) {
+                if (job.swap) wholeRow(out, in, count, job.alpha, true) else wholeRow(out, in, count, job.alpha, false);
+            } else if (job.swap) {
                 if (full) layRow(out, in, count, 255, true, true) else layRow(out, in, count, job.alpha, true, false);
             } else {
                 if (full) layRow(out, in, count, 255, false, true) else layRow(out, in, count, job.alpha, false, false);
@@ -321,6 +326,22 @@ fn layRow(out: [*]u32, in: [*]const u32, count: u32, alpha: u32, comptime swap: 
             const parts = mixOf(pen, coverage);
             pixel.* = mix(pixel.*, parts.rb, parts.g, 255 - coverage);
         }
+    }
+}
+
+/// A row of a picture that covers fully laid over a row of the buffer at
+/// `alpha`, the same for every pixel.
+fn wholeRow(out: [*]u32, in: [*]const u32, count: u32, alpha: u32, comptime swap: bool) void {
+    if (alpha == 255) {
+        for (out[0..count], in[0..count]) |*pixel, source| {
+            pixel.* = if (swap) (source & 0xFF00_FF00) | (source >> 16 & 0xFF) | (source & 0xFF) << 16 else source;
+        }
+        return;
+    }
+    for (out[0..count], in[0..count]) |*pixel, source| {
+        const pen = if (swap) (source & 0xFF00_FF00) | (source >> 16 & 0xFF) | (source & 0xFF) << 16 else source;
+        const parts = mixOf(pen, alpha);
+        pixel.* = mix(pixel.*, parts.rb, parts.g, 255 - alpha);
     }
 }
 
@@ -351,6 +372,7 @@ pub fn blendPixels(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.Rtg
         .picture_pitch = pixels.pitch,
         .swap = pixels.format == .rgba32,
         .alpha = @min(alpha, 255),
+        .whole = pixels.flags & rtg.RTGPIXF_OPAQUE != 0,
     } }, partsFor(pixelsOf(area)));
     return err.RTGERR_OK;
 }

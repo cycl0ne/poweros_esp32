@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! intuition.prefs: intuition.library's own settings as a file - one line,
-//! `DOUBLECLICK=500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO WIDEGADGETS=NO`:
+//! `DOUBLECLICK=500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO WIDEGADGETS=NO
+//! CORNERS=6 SHADOW=12 FADE=160`:
 //!
 //! - DOUBLECLICK: how far apart two presses may be and still be one
 //!   double-click, in milliseconds.
@@ -12,6 +13,10 @@
 //!   edges - YES or NO.
 //! - WIDEGADGETS: whether the gadgets in the title bars are wide - YES or
 //!   NO.
+//! - CORNERS, SHADOW, FADE: on a screen whose windows are composed, how
+//!   round a window's corners are and how far its shadow reaches, in
+//!   pixels, and how long it takes to fade in and out, in milliseconds;
+//!   0 for none.
 //!
 //! One left out keeps the value it has. `parse` reads the line into
 //! `Settings`, `toTags` makes those it gave the tags `SetPrefs` takes,
@@ -24,7 +29,7 @@ const utility = @import("../utility/utility.zig");
 const style = @import("style.zig");
 const TagItem = utility.TagItem;
 
-/// The line's five settings, and which of them it gave.
+/// The line's eight settings, and which of them it gave.
 pub const Settings = struct {
     /// Milliseconds.
     double_click: u32 = 1500,
@@ -36,6 +41,10 @@ pub const Settings = struct {
     off_screen: u32 = 0,
     /// 1 when the title bars' gadgets are wide.
     wide_gadgets: u32 = 0,
+    /// Pixels, pixels and milliseconds; 0 for none.
+    corners: u32 = 6,
+    shadow: u32 = 12,
+    fade: u32 = 160,
     /// A bit each, in that order.
     given: u32 = 0,
 };
@@ -44,6 +53,14 @@ const given_font: u32 = 2;
 const given_keyboard: u32 = 4;
 const given_off_screen: u32 = 8;
 const given_wide_gadgets: u32 = 16;
+const given_corners: u32 = 32;
+const given_shadow: u32 = 64;
+const given_fade: u32 = 128;
+
+/// The most CORNERS, SHADOW and FADE may be.
+pub const most_corners = 16;
+pub const most_shadow = 32;
+pub const most_fade = 1000;
 
 pub const ENV_FILE = "ENV:Sys/intuition.prefs";
 pub const ENVARC_FILE = "ENVARC:Sys/intuition.prefs";
@@ -95,7 +112,22 @@ pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
                 if (style.same(value, name)) break @intCast(k);
             } else return "WIDEGADGETS is YES or NO";
             settings.given |= given_wide_gadgets;
-        } else return "not in the form DOUBLECLICK=ms SCREENFONT=rows KEYBOARD=AUTO OFFSCREEN=NO WIDEGADGETS=NO";
+        } else if (style.same(word, "CORNERS")) {
+            const pixels = style.decimal(value) orelse return "CORNERS is pixels, 0 to 16";
+            if (pixels > most_corners) return "CORNERS is pixels, 0 to 16";
+            settings.corners = pixels;
+            settings.given |= given_corners;
+        } else if (style.same(word, "SHADOW")) {
+            const pixels = style.decimal(value) orelse return "SHADOW is pixels, 0 to 32";
+            if (pixels > most_shadow) return "SHADOW is pixels, 0 to 32";
+            settings.shadow = pixels;
+            settings.given |= given_shadow;
+        } else if (style.same(word, "FADE")) {
+            const ms = style.decimal(value) orelse return "FADE is milliseconds, 0 to 1000";
+            if (ms > most_fade) return "FADE is milliseconds, 0 to 1000";
+            settings.fade = ms;
+            settings.given |= given_fade;
+        } else return "not in the form DOUBLECLICK=ms SCREENFONT=rows KEYBOARD=AUTO OFFSCREEN=NO WIDEGADGETS=NO CORNERS=6 SHADOW=12 FADE=160";
     }
     return null;
 }
@@ -114,7 +146,7 @@ fn number(value: u32, into: []u8) usize {
     return n;
 }
 
-/// The settings the line gave as `SetPrefs`'s tags, into `out` (five
+/// The settings the line gave as `SetPrefs`'s tags, into `out` (eight
 /// will do); how many, no end.
 pub fn toTags(settings: *const Settings, out: []TagItem) usize {
     var n: usize = 0;
@@ -138,11 +170,23 @@ pub fn toTags(settings: *const Settings, out: []TagItem) usize {
         out[n] = .{ .tag = intuition.IPREFS_WideGadgets, .data = settings.wide_gadgets };
         n += 1;
     }
+    if (settings.given & given_corners != 0) {
+        out[n] = .{ .tag = intuition.IPREFS_WindowCorners, .data = settings.corners };
+        n += 1;
+    }
+    if (settings.given & given_shadow != 0) {
+        out[n] = .{ .tag = intuition.IPREFS_WindowShadow, .data = settings.shadow };
+        n += 1;
+    }
+    if (settings.given & given_fade != 0) {
+        out[n] = .{ .tag = intuition.IPREFS_WindowFade, .data = settings.fade };
+        n += 1;
+    }
     return n;
 }
 
-/// `settings` written as the line, all five, into `into` (96 bytes will
-/// do); how many bytes, no newline.
+/// `settings` written as the line, all eight, into `into` (128 bytes
+/// will do); how many bytes, no newline.
 pub fn write(settings: *const Settings, into: []u8) usize {
     var n: usize = 0;
     const put = struct {
@@ -161,6 +205,12 @@ pub fn write(settings: *const Settings, into: []u8) usize {
     put(into, &n, off_screen_names[@min(settings.off_screen, 1)]);
     put(into, &n, " WIDEGADGETS=");
     put(into, &n, off_screen_names[@min(settings.wide_gadgets, 1)]);
+    put(into, &n, " CORNERS=");
+    n += number(settings.corners, into[n..]);
+    put(into, &n, " SHADOW=");
+    n += number(settings.shadow, into[n..]);
+    put(into, &n, " FADE=");
+    n += number(settings.fade, into[n..]);
     return n;
 }
 
@@ -182,10 +232,19 @@ pub const header =
     \\# WIDEGADGETS  whether the close, depth and zoom gadgets in the
     \\#              title bars are wide: YES or NO. YES makes them a
     \\#              third wider.
+    \\# CORNERS      on a screen whose windows are composed (the 64-bit
+    \\#              machines), the radius of a window's round corners in
+    \\#              pixels, up to 16; 0 for square ones.
+    \\# SHADOW       there, how far the shadow a window casts reaches, in
+    \\#              pixels, up to 32; 0 for none.
+    \\# FADE         there, how long a window takes to fade in as it opens
+    \\#              and out as it closes, in milliseconds, up to 1000; 0
+    \\#              for at once.
     \\#
     \\# One left out keeps the value intuition has. These are the system's
     \\# own:
     \\#
     \\# DOUBLECLICK=1500 SCREENFONT=16 KEYBOARD=AUTO OFFSCREEN=NO WIDEGADGETS=NO
+    \\# CORNERS=6 SHADOW=12 FADE=160
     \\
 ;

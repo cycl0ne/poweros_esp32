@@ -50,6 +50,7 @@ const side_border = _window.side_border;
 const targetScreen = _window.targetScreen;
 const unlock = _window.unlock;
 const zoomWidth = _window.zoomWidth;
+const _fade = @import("_fade.zig");
 
 /// Opens a window.
 ///
@@ -303,13 +304,18 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     // hook - and the window's own otherwise.
     const paints_it = ub.GetTagData(wn.WA_BackFill, @intFromPtr(&w.backfill), tags);
 
+    // On a composed screen: its corners and its shadow, and unseen until
+    // it fades in, once it is all drawn.
+    const fades = _fade.fades(ib, flags);
+    const look = _fade.lookOf(ib, flags);
     const layer_tags = [_]TagItem{
         .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&bounds) },
         .{ .tag = layers.LATAG_Refresh, .data = refresh },
         .{ .tag = layers.LATAG_Backdrop, .data = @intFromBool(flags & WF_BACKDROP != 0) },
         .{ .tag = layers.LATAG_BackFill, .data = paints_it },
         .{ .tag = layers.LATAG_SuperBitMap, .data = super },
-        .{},
+        .{ .tag = layers.LATAG_Opacity, .data = if (fades) 0 else 255 },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(&look) },
     };
     const layer = lb.CreateLayerTagList(s.layer_info, &layer_tags) orelse {
         ib.sys_base.FreeMem(memory, @sizeOf(Window));
@@ -393,6 +399,7 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
             .{ .tag = layers.LATAG_BackFill, .data = paints_it },
             .{ .tag = layers.LATAG_SuperBitMap, .data = super },
             .{ .tag = layers.LATAG_MovesWith, .data = @intFromPtr(layer) },
+            .{ .tag = layers.LATAG_Opacity, .data = if (fades) 0 else 255 },
             .{},
         };
         if (lb.CreateLayerTagList(s.layer_info, &inner_tags)) |inner_layer| {
@@ -478,7 +485,10 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     }
     if (!ok) {
         disposeParts(ib, w);
+        if (w.gi_rp) |gi_rp| gb.FreeRastPort(gi_rp);
+        if (w.inner_layer) |inner| lb.DeleteLayer(inner);
         lb.DeleteLayer(layer);
+        if (w.text_font) |font| gb.CloseFont(font);
         ib.sys_base.FreeMem(memory, @sizeOf(Window));
         return null;
     }
@@ -498,6 +508,8 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         drawBorder(ib, w);
     }
     _gadget.renderAll(ib, w);
+    // Drawn, it comes in.
+    if (fades) _fade.fadeIn(ib, w);
     // Its help group: the one asked for, a window's, or one of its own;
     // it has gadget help if the group does.
     w.help_group = @truncate(ub.GetTagData(wn.WA_HelpGroup, 0, tags));

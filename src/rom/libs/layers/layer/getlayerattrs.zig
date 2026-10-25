@@ -35,7 +35,8 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// BEHAVIOR:
 /// A tag with a null pointer is passed over, and one the library does not
 /// know is ignored, so a program built against a later SDK still works.
-/// `LATAG_GetInFront` answers 0 for the frontmost layer.
+/// `LATAG_GetInFront` answers 0 for the frontmost layer, and passes over
+/// a ghost (`LATAG_Ghost`).
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -75,7 +76,9 @@ pub fn GetLayerAttrs(lb: *LayersBase, layer: *Layer, tags: ?[*]const TagItem) vo
                 .{ .x = layer.scroll_x, .y = layer.scroll_y },
             layers.LATAG_GetLastError => @as(*i32, @ptrFromInt(item.data)).* = layer.last_error,
             layers.LATAG_GetInFront => {
-                const pred = layer.node.pred.?;
+                // A ghost in front does not count.
+                var pred = layer.node.pred.?;
+                while (pred.pred != null and @as(*Layer, @fieldParentPtr("node", pred)).ghost) pred = pred.pred.?;
                 const front: usize = if (pred.pred == null) 0 else @intFromPtr(@as(*Layer, @fieldParentPtr("node", pred)));
                 @as(*usize, @ptrFromInt(item.data)).* = front;
             },

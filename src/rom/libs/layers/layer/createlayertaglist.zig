@@ -19,6 +19,7 @@ const backfill = @import("../backfill/_backfill.zig");
 const super = @import("../super/_super.zig");
 const _locks = @import("../locks/_locks.zig");
 const compose = @import("../compose/_compose.zig");
+const effects = @import("../compose/_effects.zig");
 const LayersBase = @import("../layers.zig").LayersBase;
 
 /// Makes a new layer on a display.
@@ -200,6 +201,15 @@ pub fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const Tag
         .damage = owed,
         .moves_with = moves_with,
     };
+    // Composed, what it looks like, and its shadow's picture made before
+    // the retile looks for it.
+    if (compose.on(info)) {
+        layer.corners = @intCast(@min(ub.GetTagData(layers.LATAG_Corners, 0, tag_list), 0xFFFF));
+        layer.shadow = @intCast(@min(ub.GetTagData(layers.LATAG_Shadow, 0, tag_list), effects.most_shadow));
+        layer.opacity = @intCast(@min(ub.GetTagData(layers.LATAG_Opacity, 255, tag_list), 255));
+        layer.ghost = ub.GetTagData(layers.LATAG_Ghost, 0, tag_list) != 0;
+        if (layer.shadow != 0 and !effects.makeShadow(lb, info, layer.shadow)) layer.shadow = 0;
+    }
     // Composed, it draws into a buffer of its own, which has to be there
     // before the retile gives it targets.
     if (compose.on(info) and !compose.take(lb, layer)) {
@@ -229,6 +239,9 @@ pub fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const Tag
     // see it. Composed, the paint goes into its buffer, and what can be
     // seen of it on to the display as it is handed on.
     backfill.fill(lb, layer, super.extent(layer));
+    // Its shadow is on what is behind it, which nobody draws now; and a
+    // layer seen through is laid over that only when shown in order.
+    if (layer.shadow != 0 or layer.opacity != 255) compose.show(lb, info, effects.reach(layer));
     // Coming into view is not damage: the whole layer was just made and
     // its program is about to draw it. What the retile put there is for
     // the layers that were already here.

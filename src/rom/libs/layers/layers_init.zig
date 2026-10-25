@@ -35,7 +35,7 @@ pub const LIBRARY_VERSION = 0;
 /// drawing call through it holds the layer while it draws; a picture
 /// shown over part of a composed layer, not copied into it
 /// (ShowLayerPicture, LATAG_GetComposed).
-pub const LIBRARY_REVISION = 7;
+pub const LIBRARY_REVISION = 8;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
 const BUILD_DATE = "25.10.2026";
