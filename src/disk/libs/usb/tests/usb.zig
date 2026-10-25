@@ -719,6 +719,34 @@ test "a hub with two devices, a third plugged in later, and the hub pulled with 
     try rig.deinit();
 }
 
+test "a port whose power an over-current took gets it back, and the mouse in it is found" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = standin.addRoot(hc, 1);
+    const hub = standin.addHub(hc, standin.root, 1, usbhc.USB_SPEED_HIGH, 4);
+    const mouse = standin.addDevice(hc, hub, 3, usbhc.USB_SPEED_HIGH, 0x3151, 0x5007, d.USB_CLASS_HID, .{ "", "Mouse", "" });
+    // The hub's ports 1 and 3 trip as they come on, the mouse already in 3.
+    hc.functions[hub].trips = 1 << 0 | 1 << 2;
+    standin.plug(hc, hub);
+    standin.plug(hc, mouse);
+
+    const root = rig.start();
+    const hub_device = childOf(root, 1).?;
+    const mouse_device = childOf(hub_device, 3).?;
+    try testing.expectEqual(@as(u16, 0x5007), mouse_device.public.descriptor.product_id);
+    try testing.expect(mouse_device.public.flags & usb.USBDF_CONFIGURED != 0);
+    try testing.expectEqual(@as(u32, 1), rig.driver.binds);
+    // Both ports have their power back, the empty one too, and no change
+    // is left on either.
+    for ([_]u8{ 0, 2 }) |at| {
+        try testing.expect(hc.functions[hub].port_status[at] & d.USB_PORT_STAT_POWER != 0);
+        try testing.expectEqual(@as(u16, 0), hc.functions[hub].port_change[at]);
+    }
+    try testing.expect(childOf(hub_device, 1) == null);
+    try rig.deinit();
+}
+
 test "a stalled request: strings left out, a configuration that never comes leaves the device failed" {
     var rig: BusRig = undefined;
     try rig.init();
