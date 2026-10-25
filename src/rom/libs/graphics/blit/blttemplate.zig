@@ -16,6 +16,7 @@ const drawing = @import("../draw/_draw.zig");
 const Rect = graphics.Rect;
 const RastPort = _blit.RastPort;
 const _blit = @import("_blit.zig");
+const rastport = @import("../rastport/_rastport.zig");
 
 /// Stencils a shape onto the surface in the pens.
 ///
@@ -54,10 +55,11 @@ const _blit = @import("_blit.zig");
 /// in - otherwise a clipped shape would slide rather than be cut.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -74,6 +76,8 @@ const _blit = @import("_blit.zig");
 /// gb.BltTemplate(rp, &arrow_bits, 2, 0, 0, &.{ .min_x = x, .min_y = y, .max_x = x + 16, .max_y = y + 16 });
 /// ```
 pub fn BltTemplate(gb: *GraphicsBase, rp: *RastPort, bits: [*]const u8, pitch: u32, src_x: i32, src_y: i32, area: *const Rect) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     var it = drawing.visible(rp, area.*);
     var bound = Rect{};

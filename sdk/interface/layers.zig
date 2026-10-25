@@ -15,6 +15,7 @@ const exec = @import("../libs/exec/exec.zig");
 const utility = @import("../libs/utility/utility.zig");
 const graphics = @import("../libs/graphics/graphics.zig");
 const layers = @import("../libs/layers/layers.zig");
+const rtg = @import("../libs/rtg/rtg.zig");
 
 /// The name to open it by (OpenLibrary, OpenDevice).
 pub const NAME = "layers.library";
@@ -48,6 +49,7 @@ pub const LVO = struct {
     pub const LayersErrorText = libraries.lvo(28);
     pub const DamageLayer = libraries.lvo(29);
     pub const NewLayerInfoTagList = libraries.lvo(30);
+    pub const ShowLayerPicture = libraries.lvo(31);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -80,6 +82,7 @@ pub const Fn = struct {
     pub const LayersErrorText = *const fn (*LayersBase, i32) callconv(.c) [*:0]const u8;
     pub const DamageLayer = *const fn (*LayersBase, *layers.Layer, *const graphics.Rect) callconv(.c) bool;
     pub const NewLayerInfoTagList = *const fn (*LayersBase, *graphics.RastPort, ?[*]const utility.TagItem) callconv(.c) ?*layers.LayerInfo;
+    pub const ShowLayerPicture = *const fn (*LayersBase, *layers.Layer, ?*const rtg.Surface, ?*const graphics.Rect) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -261,5 +264,16 @@ pub const LayersBase = opaque {
     /// a buffer of its own that is copied on to the display.
     pub fn NewLayerInfoTagList(self: *LayersBase, rp: *graphics.RastPort, tags: ?[*]const utility.TagItem) ?*layers.LayerInfo {
         return libraries.call(self, LVO.NewLayerInfoTagList, Fn.NewLayerInfoTagList, .{ rp, tags });
+    }
+
+    /// Show `picture` over `area` of a composed layer - the layer's
+    /// coordinates, the picture's top-left at the area's top-left - in place
+    /// of what the layer holds there, copied from the picture to the display
+    /// rather than into the layer: now, and whenever that part is shown
+    /// again. Null puts the picture shown until then into the layer, where
+    /// it stays. False, and nothing shown, for a layer that is not composed,
+    /// a super layer, or a picture not in the display's pixels.
+    pub fn ShowLayerPicture(self: *LayersBase, layer: *layers.Layer, picture: ?*const rtg.Surface, area: ?*const graphics.Rect) bool {
+        return libraries.call(self, LVO.ShowLayerPicture, Fn.ShowLayerPicture, .{ layer, picture, area });
     }
 };

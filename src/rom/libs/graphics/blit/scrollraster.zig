@@ -52,9 +52,10 @@ const blitInto = _blit.blitInto;
 /// every drawing call does.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded and it hands rows on at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -76,6 +77,8 @@ const blitInto = _blit.blitInto;
 /// if (!gb.ScrollRaster(rp, 0, cell_height, &text_area)) drawEverything();
 /// ```
 pub fn ScrollRaster(gb: *GraphicsBase, rp: *RastPort, dx: i32, dy: i32, area: *const Rect) bool {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     if (dx == 0 and dy == 0) return true;
     const within = Rect.intersect(area.*, rp.clip);

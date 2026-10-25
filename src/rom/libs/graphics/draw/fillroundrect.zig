@@ -7,6 +7,7 @@ const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _draw = @import("_draw.zig");
 const _round = @import("_round.zig");
 const _smooth = @import("_smooth.zig");
+const rastport = @import("../rastport/_rastport.zig");
 const fillSpan = _draw.fillShapeSpan;
 const handOn = _draw.handOn;
 const written = _draw.written;
@@ -53,10 +54,11 @@ const RastPort = _draw.RastPort;
 /// drawing is immediate: the rows written, across the shape's box.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded and it hands rows on to
 ///   rtg.library at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -83,6 +85,8 @@ const RastPort = _draw.RastPort;
 /// gb.FillRoundRect(rp, &.{ .min_x = 10, .min_y = 10, .max_x = 130, .max_y = 42 }, 8);
 /// ```
 pub fn FillRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect, radius: u32) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     if (area.isEmpty()) return;
 

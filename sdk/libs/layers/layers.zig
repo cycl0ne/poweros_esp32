@@ -18,7 +18,9 @@
 //! it, covered or not, and what of it can be seen is copied on to the
 //! display - when it is drawn, and when layers move. Nothing covered is
 //! lost, so nothing is owed for being uncovered, and a move copies the
-//! layer's pixels rather than asking for them again.
+//! layer's pixels rather than asking for them again. A composed layer can
+//! also show a picture of the caller's over part of itself, copied from
+//! where it is rather than into the layer first (`ShowLayerPicture`).
 //!
 //! **A layer draws in its own coordinates.** `(0,0)` is the layer's
 //! top-left wherever the layer happens to be, because the offset on to the
@@ -155,6 +157,10 @@ pub const LATAG_GetLastError = LATAG_Dummy + 20;
 /// `*usize`: the layer just in front of it, or 0 when it is the frontmost -
 /// how a depth gadget decides between to the front and to the back.
 pub const LATAG_GetInFront = LATAG_Dummy + 22;
+/// `*u32`: 1 when `ShowLayerPicture` can show a picture in the layer - it
+/// is composed, drawing into a buffer of its own, and not a super layer -
+/// else 0.
+pub const LATAG_GetComposed = LATAG_Dummy + 23;
 
 // --- what went wrong -------------------------------------------------------
 

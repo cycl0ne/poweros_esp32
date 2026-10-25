@@ -10,6 +10,7 @@
 ##include libs/utility/utility as utility
 ##include libs/graphics/graphics as graphics
 ##include libs/layers/layers as layers
+##include libs/rtg/rtg as rtg
 ##basetype LayersBase
 ##name layers.library
 ##bias 4
@@ -106,4 +107,12 @@ bool DamageLayer(*layers.Layer layer, *const graphics.Rect area)
 /// NewLayerInfo with tags: `LATAG_Compose` to compose its layers, each in
 /// a buffer of its own that is copied on to the display.
 ?*layers.LayerInfo NewLayerInfoTagList(*graphics.RastPort rp, ?[*]const utility.TagItem tags)
+/// Show `picture` over `area` of a composed layer - the layer's
+/// coordinates, the picture's top-left at the area's top-left - in place
+/// of what the layer holds there, copied from the picture to the display
+/// rather than into the layer: now, and whenever that part is shown
+/// again. Null puts the picture shown until then into the layer, where
+/// it stays. False, and nothing shown, for a layer that is not composed,
+/// a super layer, or a picture not in the display's pixels.
+bool ShowLayerPicture(*layers.Layer layer, ?*const rtg.Surface picture, ?*const graphics.Rect area)
 ##end

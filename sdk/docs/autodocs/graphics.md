@@ -619,10 +619,11 @@ so a shape can be filled by inverting what is under it.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -926,7 +927,9 @@ this does nothing for it.
 
 **CONTEXT**
 
-Waits: no. Interrupts: yes. Locks: none needed. Process: no.
+Waits: while another task holds the RastPort's lock (`RPTAG_Lock`).
+Interrupts: only on a RastPort without one. Locks: the RastPort's,
+taken here; no spinlock may be held. Process: no.
 
 **OWNERSHIP**
 
@@ -999,10 +1002,11 @@ picture rather than sliding.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1078,10 +1082,11 @@ A piece that lies in a board's buffer goes to the board's blend
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it
   wrote on to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1215,10 +1220,11 @@ the destination is a board's buffer and the engine can.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1297,9 +1303,10 @@ written, and not a read of what is under it.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1373,10 +1380,11 @@ a rectangle with holes in it.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1437,10 +1445,11 @@ holes in it.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1500,10 +1509,11 @@ Clear bits and the engine work as for a template.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1572,9 +1582,10 @@ it returns, as every drawing call does.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded and it hands rows on at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1654,10 +1665,11 @@ in - otherwise a clipped shape would slide rather than be cut.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2149,9 +2161,10 @@ and this is neither. A pen that is not opaque composes under
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded and it hands rows on at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2225,10 +2238,11 @@ time.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2283,10 +2297,11 @@ rounding to drift and no arithmetic a small machine minds.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2343,10 +2358,11 @@ curve, and is drawn as one.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2401,10 +2417,11 @@ the clip is dotted as though it had not been.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2459,10 +2476,11 @@ corners rather than starting again at each.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2519,10 +2537,11 @@ corners would be holes.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2590,9 +2609,10 @@ and dark in its right one, so the two corners mirror each other.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2669,9 +2689,10 @@ as one walk, so a dashed outline keeps its rhythm through a corner.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2734,10 +2755,11 @@ counting from the start of the run.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2794,7 +2816,9 @@ last one closes. Without a `BeginDraw` to match, it does nothing.
 
 **CONTEXT**
 
-Waits: no. Interrupts: yes. Locks: none needed. Process: no.
+Waits: while another task holds the RastPort's lock (`RPTAG_Lock`).
+Interrupts: only on a RastPort without one. Locks: the RastPort's,
+taken here; no spinlock may be held. Process: no.
 
 **OWNERSHIP**
 
@@ -2869,9 +2893,10 @@ it. Whatever manages windows is what sets that hook.
 
 **CONTEXT**
 
-- Waits: only if the hook does.
+- Waits: while another task holds the RastPort's lock (`RPTAG_Lock`),
+  and if the hook does.
 - Interrupts: no. It draws, and it may call a hook.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2937,9 +2962,10 @@ the sweep's edges cross are walked a pixel at a time.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3020,10 +3046,11 @@ drawing is immediate: the rows written, across the shape's box.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded and it hands rows on to
   rtg.library at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4061,10 +4088,11 @@ unchanged.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4138,10 +4166,11 @@ to.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded - a full-screen fill is a
   million pixels - and it hands rows on to rtg.library at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4366,10 +4395,11 @@ reach exactly; everything else is done here.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it
   wrote on to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4445,9 +4475,10 @@ every drawing call does.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded and it hands rows on at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4728,10 +4759,11 @@ Bold and extended each widen a character by one.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -4940,9 +4972,10 @@ other measuring call would give for the same string, font and style.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5213,10 +5246,11 @@ in, so a clipped picture is cut rather than slid.
 
 **CONTEXT**
 
-- Waits: no, but it allocates.
+- Waits: while another task holds the RastPort's lock (`RPTAG_Lock`),
+  if it has one; and it allocates.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote
   on to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5275,10 +5309,11 @@ caller that asked for a pixel meant a pixel.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
   to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5344,10 +5379,11 @@ in, so a clipped picture is cut rather than slid.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one.
 - Interrupts: no. The work is unbounded, and it hands the rows it wrote
   on to the display at the end.
-- Locks: none needed.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**

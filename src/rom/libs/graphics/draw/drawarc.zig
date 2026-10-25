@@ -50,10 +50,11 @@ const handOn = _draw.handOn;
 /// time.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -70,6 +71,8 @@ const handOn = _draw.handOn;
 /// gb.DrawArc(rp, 160, 100, 40, 0, 90); // the upper right quarter
 /// ```
 pub fn DrawArc(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, radius: i32, from: i32, to: i32) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     if (radius < 0) return;
     if (rp.line_width > 1 or rp.smooth) return @import("_wide.zig").arc(gb, rp, cx, cy, radius, from, to, @intCast(rp.line_width));

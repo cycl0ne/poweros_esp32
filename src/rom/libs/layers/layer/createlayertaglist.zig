@@ -165,6 +165,9 @@ pub fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const Tag
         // The RastPort carries how the layer's empty parts are painted, so
         // that anything given the RastPort alone paints them the same way.
         .{ .tag = graphics.RPTAG_BackFill, .data = ub.GetTagData(layers.LATAG_BackFill, 0, tag_list) },
+        // Every drawing call holds the lock the layer's clip targets are
+        // rebuilt under, whether its caller took it or not.
+        .{ .tag = graphics.RPTAG_Lock, .data = @intFromPtr(&layer.lock) },
         .{},
     };
     const rp = gb.CreateRastPortTagList(&rp_tags) orelse {

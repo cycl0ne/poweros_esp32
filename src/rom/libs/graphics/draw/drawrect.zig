@@ -37,10 +37,11 @@ const RastPort = rastport.RastPort;
 /// corners would be holes.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -57,6 +58,8 @@ const RastPort = rastport.RastPort;
 /// gb.DrawRect(rp, &.{ .min_x = 10, .min_y = 10, .max_x = 110, .max_y = 60 });
 /// ```
 pub fn DrawRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     const graphics_lib = gb.iface();
     rp.last_error = graphics.GERR_OK;
     if (area.isEmpty()) return;

@@ -100,8 +100,10 @@ pub fn ObtainGIRPort(ib: *IntuitionBase, gadget_info: ?*classusr.GadgetInfo) ?*g
     var targets: usize = 0;
     var clip: graphics.Rect = .{};
     var ground: usize = 0;
+    var lock: usize = 0;
     const from = [_]TagItem{
         .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&targets) },
+        .{ .tag = graphics.RPTAG_Lock, .data = @intFromPtr(&lock) },
         .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&clip) },
         .{ .tag = graphics.RPTAG_BackFill, .data = @intFromPtr(&ground) },
         .{},
@@ -110,6 +112,7 @@ pub fn ObtainGIRPort(ib: *IntuitionBase, gadget_info: ?*classusr.GadgetInfo) ?*g
     const narrowed = graphics.Rect.intersect(clip, info_.clip);
     const to = [_]TagItem{
         .{ .tag = graphics.RPTAG_ClipTargets, .data = targets },
+        .{ .tag = graphics.RPTAG_Lock, .data = lock },
         .{ .tag = graphics.RPTAG_ClipRegion, .data = 0 },
         .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&narrowed) },
         .{ .tag = graphics.RPTAG_APen, .data = w.detail_pen },

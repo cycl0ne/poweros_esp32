@@ -33,6 +33,7 @@ Generated from the source by `./zig build autodoc`.
 - [NewLayerInfo](#newlayerinfo) - Makes the LayerInfo of one display, with no layers on it yet.
 - [NewLayerInfoTagList](#newlayerinfotaglist) - Makes the LayerInfo of one display, with no layers on it yet, the way the tags say.
 - [ScrollLayer](#scrolllayer) - Moves the window a `LAYERSUPER` layer shows of its own bitmap.
+- [ShowLayerPicture](#showlayerpicture) - Shows a picture over part of a composed layer, in place of what the layer holds there.
 - [SizeLayer](#sizelayer) - Changes a layer's size, its top-left staying where it is.
 - [UnlockLayer](#unlocklayer) - Lets a layer go again.
 - [UnlockLayerInfo](#unlocklayerinfo) - Lets the list of layers go again.
@@ -582,7 +583,7 @@ fn GetLayerAttrs(lb: *LayersBase, layer: *Layer, tags: ?[*]const TagItem) void
   value goes: `LATAG_GetBounds` a `*Rect`, `LATAG_GetFlags` a `*u32`,
   `LATAG_GetRastPort`, `LATAG_GetDamage` and `LATAG_GetInFront` a
   `*usize`, `LATAG_GetScroll` a `*Point`, `LATAG_GetLastError` an
-  `*i32`.
+  `*i32`, `LATAG_GetComposed` a `*u32`.
 
 **RESULT**
 
@@ -835,11 +836,12 @@ The caller holds the layer until `UnlockLayer`.
 
 **NOTES**
 
-**A task drawing into a layer must hold this while it draws.** The calls
-that rebuild a layer's clipping take it themselves, but the walking of
-that clipping is done inside graphics.library, which has no idea layers
-exist - so only the task that decided to draw can take it. Without it, a
-retile can free the clip list a drawing call is part way through.
+Every drawing call through the layer's RastPort holds it by itself for
+as long as that call draws - the RastPort carries it, as `RPTAG_Lock` -
+so no retile frees the clipping, nor a size change the buffer, under
+one call. A task holds it across several calls that belong together:
+the layer neither moves nor changes size between them, and what they
+draw goes to the display at once, never half done.
 
 Be brief: anything that would move or resize the layer waits for it.
 
@@ -1343,6 +1345,88 @@ None known.
 
 ```zig
 _ = lb.ScrollLayer(layer, 0, 16);
+```
+
+## ShowLayerPicture
+
+Shows a picture over part of a composed layer, in place of what the layer holds there.
+
+**SYNOPSIS**
+
+```zig
+fn ShowLayerPicture(lb: *LayersBase, layer: *Layer, picture: ?*const rtg.Surface, area: ?*const graphics.Rect) bool
+```
+
+**SINCE**
+
+0.7. LVO -130.
+
+**INPUTS**
+
+- `layer` - the layer.
+- `picture` - the picture, in the display's pixels; null to stop
+  showing one.
+- `area` - where in the layer, in the **layer's** coordinates; the
+  picture's top-left lands on the area's. Cut to the picture's size.
+  Unused with no picture.
+
+**RESULT**
+
+True when the picture is shown, or with null when none is any longer.
+False, and nothing shown, for a layer that is not composed
+(`LATAG_GetComposed`), a super layer, a picture not in the display's
+pixels, or an area it does not reach.
+
+**BEHAVIOR**
+
+What of the area can be seen is copied from the picture on to the
+display at once, and again whenever that part of the layer is shown -
+uncovered, moved, brought forward - for as long as the picture is
+shown. Nothing is copied into the layer: what is drawn into the layer
+under the area goes into its buffer and stays hidden under the
+picture. Another picture, or another area, takes the place of the one
+before. Null puts the picture shown until then into the layer's
+buffer, where it stays: the display shows the same, now from the
+layer.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the layer.
+- Interrupts: no. It may wait.
+- Locks: the layer's, taken here; no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The picture stays the caller's, and is read by whichever task shows
+the layer for as long as it is shown: it is not to be drawn into while
+it is, and not to be freed before this has been called with null, or
+the layer has been deleted. `area` is only read.
+
+**NOTES**
+
+- A picture drawn into while it is shown can be copied to the display
+  half drawn. A swapchain shows one picture while the next is drawn in
+  another.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetLayerAttrs` (`LATAG_GetComposed`), `NewLayerInfoTagList`
+(`LATAG_Compose`)
+
+**EXAMPLES**
+
+```zig
+// The next image of a swapchain shown inside the window's border,
+// then, as the swapchain goes, left in the window.
+const inside = graphics.Rect{ .min_x = left, .min_y = top, .max_x = left + width, .max_y = top + height };
+if (!lb.ShowLayerPicture(layer, &image, &inside)) copyIntoWindow(&image);
+// ...
+_ = lb.ShowLayerPicture(layer, null, null);
 ```
 
 ## SizeLayer

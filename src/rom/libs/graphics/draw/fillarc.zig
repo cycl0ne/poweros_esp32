@@ -7,6 +7,7 @@ const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _draw = @import("_draw.zig");
 const _round = @import("_round.zig");
 const _smooth = @import("_smooth.zig");
+const rastport = @import("../rastport/_rastport.zig");
 const fillSpan = _draw.fillShapeSpan;
 const handOn = _draw.handOn;
 const written = _draw.written;
@@ -55,9 +56,10 @@ const Arc = graphics.Arc;
 /// the sweep's edges cross are walked a pixel at a time.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -84,6 +86,8 @@ const Arc = graphics.Arc;
 /// gb.FillArc(rp, &.{ .cx = 20, .cy = 20, .radius = 8 });
 /// ```
 pub fn FillArc(gb: *GraphicsBase, rp: *RastPort, arc: *const Arc) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     const radius = arc.radius;
     if (radius <= 0) return;

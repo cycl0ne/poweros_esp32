@@ -6,6 +6,7 @@ const graphics = sdk.graphics;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _draw = @import("_draw.zig");
 const _round = @import("_round.zig");
+const rastport = @import("../rastport/_rastport.zig");
 const handOn = _draw.handOn;
 const written = _draw.written;
 const pieceAt = _draw.pieceAt;
@@ -49,9 +50,10 @@ const RastPort = _draw.RastPort;
 /// as one walk, so a dashed outline keeps its rhythm through a corner.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -76,6 +78,8 @@ const RastPort = _draw.RastPort;
 /// gb.DrawRoundRect(rp, &box, 6);
 /// ```
 pub fn DrawRoundRect(gb: *GraphicsBase, rp: *RastPort, area: *const Rect, radius: u32) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     const graphics_lib = gb.iface();
     rp.last_error = graphics.GERR_OK;
     if (area.isEmpty()) return;

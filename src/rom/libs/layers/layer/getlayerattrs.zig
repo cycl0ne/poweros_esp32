@@ -27,7 +27,7 @@ const LayersBase = @import("../layers.zig").LayersBase;
 ///   value goes: `LATAG_GetBounds` a `*Rect`, `LATAG_GetFlags` a `*u32`,
 ///   `LATAG_GetRastPort`, `LATAG_GetDamage` and `LATAG_GetInFront` a
 ///   `*usize`, `LATAG_GetScroll` a `*Point`, `LATAG_GetLastError` an
-///   `*i32`.
+///   `*i32`, `LATAG_GetComposed` a `*u32`.
 ///
 /// RESULT:
 /// Nothing; the values are where the tags point.
@@ -79,6 +79,7 @@ pub fn GetLayerAttrs(lb: *LayersBase, layer: *Layer, tags: ?[*]const TagItem) vo
                 const front: usize = if (pred.pred == null) 0 else @intFromPtr(@as(*Layer, @fieldParentPtr("node", pred)));
                 @as(*usize, @ptrFromInt(item.data)).* = front;
             },
+            layers.LATAG_GetComposed => @as(*u32, @ptrFromInt(item.data)).* = @intFromBool(layer.own != null and layer.super == null),
             else => {},
         }
     }

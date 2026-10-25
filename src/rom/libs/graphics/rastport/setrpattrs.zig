@@ -113,6 +113,7 @@ pub fn SetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) voi
             graphics.RPTAG_BackFill => rp.backfill = item.data,
             graphics.RPTAG_LineWidth => rp.line_width = @max(@as(u32, @truncate(item.data)), 1),
             graphics.RPTAG_Smooth => rp.smooth = item.data != 0,
+            graphics.RPTAG_Lock => rp.lock = @ptrFromInt(item.data),
             // A copy, so the caller's may go; 0 is the pen again.
             graphics.RPTAG_FillStyle => if (!_rastport.setFill(gb, rp, @ptrFromInt(item.data))) {
                 rp.last_error = graphics.GERR_NO_MEMORY;

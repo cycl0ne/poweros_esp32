@@ -50,9 +50,10 @@ const RastPort = _rastport.RastPort;
 /// it. Whatever manages windows is what sets that hook.
 ///
 /// CONTEXT:
-/// - Waits: only if the hook does.
+/// - Waits: while another task holds the RastPort's lock (`RPTAG_Lock`),
+///   and if the hook does.
 /// - Interrupts: no. It draws, and it may call a hook.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -69,6 +70,8 @@ const RastPort = _rastport.RastPort;
 /// gb.EraseRect(rp, &.{ .min_x = 0, .min_y = 0, .max_x = 200, .max_y = 100 });
 /// ```
 pub fn EraseRect(gb: *GraphicsBase, rp: *RastPort, area: *const graphics.Rect) void {
+    const held = _rastport.hold(gb, rp);
+    defer _rastport.letGo(gb, held);
     const graphics_lib = gb.iface();
     if (rp.backfill == graphics.BACKFILL_NONE) return;
     if (rp.backfill != 0) {

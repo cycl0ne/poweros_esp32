@@ -30,8 +30,10 @@ pub const LIBRARY_VERSION = 1;
 /// 3: a window's pixels read from intuition 0.49 (`WA_PixelFormat`).
 /// 4: a triangle's edges sorted the way its rows are walked once, as it
 /// is set up, not again in every tile it touches.
-pub const LIBRARY_REVISION = 4;
-const BUILD_DATE = "20.10.2026";
+/// 5: a window on a composed screen shows a swapchain's picture as it is
+/// (layers 0.7's `ShowLayerPicture`), not copied into the window first.
+pub const LIBRARY_REVISION = 5;
+const BUILD_DATE = "25.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

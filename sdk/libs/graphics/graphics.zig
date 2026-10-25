@@ -554,6 +554,15 @@ pub const RPTAG_LineWidth = RPTAG_Dummy + 24;
 /// and columns are the same either way.
 pub const RPTAG_Smooth = RPTAG_Dummy + 25;
 
+/// A `*exec.SignalSemaphore` every drawing call on this RastPort holds for
+/// as long as it draws, or 0 for none. Whatever manages windows gives a
+/// window's RastPort the lock its clip targets are rebuilt under, so that
+/// no drawing call walks a list - or writes a buffer - that is being taken
+/// away, whether or not the caller took the lock itself. A caller that
+/// holds it already loses nothing: it nests. A call between two RastPorts
+/// takes both without waiting on one while it holds the other.
+pub const RPTAG_Lock = RPTAG_Dummy + 26;
+
 /// What a hook that paints an empty area is told.
 ///
 /// The hook draws **through the RastPort it is handed**, with the ordinary

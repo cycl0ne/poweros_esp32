@@ -162,6 +162,11 @@ pub const Layer = struct {
     /// the hook its handle tells of what was drawn. Null in any other.
     own: ?Buffer = null,
     watch: utility.Hook = .{},
+    /// A picture of the caller's shown over `picture_area` - the layer's
+    /// coordinates - in place of the buffer there (`ShowLayerPicture`),
+    /// or null.
+    picture: ?*const rtg.Surface = null,
+    picture_area: Rect = .{},
 };
 
 /// Room for one kept piece, from the LayerInfo's pool.

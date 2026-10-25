@@ -37,7 +37,8 @@
 //! QueuePresent shows one from the display's next frame on, as
 //! ChangeScreenBuffer does. A swapchain on a window hands out pictures in
 //! memory, and QueuePresent copies one into the window at the display's
-//! next frame, through its layer.
+//! next frame, through its layer - or, on a screen whose windows are
+//! composed, shows it in the window as it is, without the copy.
 
 /// The library's name, for OpenLibrary.
 pub const FACETNAME = "facet.library";
@@ -1356,7 +1357,11 @@ pub const ScreenSurfaceCreateInfo = extern struct {
 /// its border: the swapchain's images are pictures of that size in
 /// memory, and showing one copies it into the window at the display's
 /// next frame, through the window's layer - what covers the window is
-/// left alone. The window stays open for as long as the surface lasts.
+/// left alone. On a screen whose windows are composed, each in a buffer
+/// of its own, the picture is shown in the window rather than copied into
+/// it, and kept shown until the next is; the last stays in the window as
+/// the swapchain goes. The window stays open for as long as the surface
+/// lasts.
 pub const WindowSurfaceCreateInfo = extern struct {
     flags: u32 = 0,
     window: *intuition.Window,

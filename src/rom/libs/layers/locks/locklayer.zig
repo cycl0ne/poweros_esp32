@@ -41,11 +41,12 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// The caller holds the layer until `UnlockLayer`.
 ///
 /// NOTES:
-/// **A task drawing into a layer must hold this while it draws.** The calls
-/// that rebuild a layer's clipping take it themselves, but the walking of
-/// that clipping is done inside graphics.library, which has no idea layers
-/// exist - so only the task that decided to draw can take it. Without it, a
-/// retile can free the clip list a drawing call is part way through.
+/// Every drawing call through the layer's RastPort holds it by itself for
+/// as long as that call draws - the RastPort carries it, as `RPTAG_Lock` -
+/// so no retile frees the clipping, nor a size change the buffer, under
+/// one call. A task holds it across several calls that belong together:
+/// the layer neither moves nor changes size between them, and what they
+/// draw goes to the display at once, never half done.
 ///
 /// Be brief: anything that would move or resize the layer waits for it.
 ///

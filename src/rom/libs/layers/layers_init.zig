@@ -31,7 +31,11 @@ pub const LIBRARY_VERSION = 0;
 /// The build within the version. Set into the base by `init`, since exec
 /// copies only the tag's name, version and ID string.
 /// 6: a composed LayerInfo - NewLayerInfoTagList, LATAG_Compose.
-pub const LIBRARY_REVISION = 6;
+/// 7: a layer's RastPort carries the layer's lock (RPTAG_Lock), so every
+/// drawing call through it holds the layer while it draws; a picture
+/// shown over part of a composed layer, not copied into it
+/// (ShowLayerPicture, LATAG_GetComposed).
+pub const LIBRARY_REVISION = 7;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
 const BUILD_DATE = "25.10.2026";

@@ -23,6 +23,11 @@
 //!   uncovered, moved or brought forward is copied, not drawn again: no
 //!   damage, no keeping, nothing carried across the display.
 //!
+//! A caller's picture shown over part of a layer (`ShowLayerPicture`) is
+//! copied from where it is in place of that part of the buffer, whenever
+//! the layer is: a swapchain's image shown in a window, without a copy
+//! into the window first.
+//!
 //! The buffer is attached to the display's board (rtg's AttachBitMap), so
 //! the board's engine draws in it as it draws on the display; its memory
 //! is this library's, from exec, and none of the board's own. A super
@@ -186,9 +191,54 @@ pub fn take(lb: *LayersBase, layer: *Layer) bool {
 /// - `lb` - the library.
 /// - `layer` - the layer, off the list.
 pub fn drop(lb: *LayersBase, layer: *Layer) void {
+    layer.picture = null;
     const buffer = layer.own orelse return;
     layer.own = null;
     free(lb, buffer);
+}
+
+/// `picture` shown over `area` of a layer, in the layer's coordinates and
+/// cut to the picture's size, and what of it can be seen copied on to the
+/// display. False, and nothing shown, for a picture not in the display's
+/// pixels or an area it does not reach. The caller holds the layer.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer, composed and not a super one.
+/// - `picture` - the picture, the caller's.
+/// - `area` - where in the layer.
+pub fn showPicture(lb: *LayersBase, layer: *Layer, picture: *const rtg.Surface, area: Rect) bool {
+    if (picture.format != layer.info.surface.format) return false;
+    const reach = Rect{
+        .min_x = area.min_x,
+        .min_y = area.min_y,
+        .max_x = @min(area.max_x, area.min_x + @as(i32, @intCast(picture.width))),
+        .max_y = @min(area.max_y, area.min_y + @as(i32, @intCast(picture.height))),
+    };
+    if (reach.isEmpty()) return false;
+    layer.picture = picture;
+    layer.picture_area = reach;
+    const ox, const oy = super.origin(layer);
+    showLayer(lb, layer, .{ .min_x = reach.min_x + ox, .min_y = reach.min_y + oy, .max_x = reach.max_x + ox, .max_y = reach.max_y + oy });
+    return true;
+}
+
+/// The picture a layer shows put into its buffer, where it stays, and no
+/// longer shown in place of it: the display shows the same as before.
+/// The caller holds the layer.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer.
+pub fn keepPicture(lb: *LayersBase, layer: *Layer) void {
+    const picture = layer.picture orelse return;
+    layer.picture = null;
+    const own = layer.own orelse return;
+    const area = Rect.intersect(layer.picture_area, .{ .max_x = @intCast(own.bitmap.width), .max_y = @intCast(own.bitmap.height) });
+    if (area.isEmpty()) return;
+    const from_x = area.min_x - layer.picture_area.min_x;
+    const from_y = area.min_y - layer.picture_area.min_y;
+    _ = lb.graphics_base.BltBitMap(picture, from_x, from_y, @ptrCast(own.bitmap), area.min_x, area.min_y, area.width(), area.height());
 }
 
 /// A layer that changes size takes `fresh`, a buffer of the new size,
@@ -272,10 +322,33 @@ pub fn showLayer(lb: *LayersBase, layer: *Layer, area: Rect) void {
             pieces = all[0..n];
         }
     }
+    const over = if (layer.picture) |_| Rect{
+        .min_x = layer.picture_area.min_x + ox,
+        .min_y = layer.picture_area.min_y + oy,
+        .max_x = layer.picture_area.max_x + ox,
+        .max_y = layer.picture_area.max_y + oy,
+    } else Rect{};
     for (pieces) |r| {
         const piece = Rect.intersect(r, cut);
         if (piece.isEmpty()) continue;
-        gb.BltBitMapRastPort(@ptrCast(own.bitmap), piece.min_x - ox, piece.min_y - oy, dest, piece.min_x, piece.min_y, piece.width(), piece.height());
+        const shown = Rect.intersect(piece, over);
+        if (shown.isEmpty()) {
+            gb.BltBitMapRastPort(@ptrCast(own.bitmap), piece.min_x - ox, piece.min_y - oy, dest, piece.min_x, piece.min_y, piece.width(), piece.height());
+            continue;
+        }
+        gb.BltBitMapRastPort(layer.picture.?, shown.min_x - over.min_x, shown.min_y - over.min_y, dest, shown.min_x, shown.min_y, shown.width(), shown.height());
+        // The rest of the piece, around the picture: above, below, and
+        // to either side of it.
+        const around = [4]Rect{
+            .{ .min_x = piece.min_x, .min_y = piece.min_y, .max_x = piece.max_x, .max_y = shown.min_y },
+            .{ .min_x = piece.min_x, .min_y = shown.max_y, .max_x = piece.max_x, .max_y = piece.max_y },
+            .{ .min_x = piece.min_x, .min_y = shown.min_y, .max_x = shown.min_x, .max_y = shown.max_y },
+            .{ .min_x = shown.max_x, .min_y = shown.min_y, .max_x = piece.max_x, .max_y = shown.max_y },
+        };
+        for (around) |rest| {
+            if (rest.isEmpty()) continue;
+            gb.BltBitMapRastPort(@ptrCast(own.bitmap), rest.min_x - ox, rest.min_y - oy, dest, rest.min_x, rest.min_y, rest.width(), rest.height());
+        }
     }
 }
 

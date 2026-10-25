@@ -253,11 +253,24 @@ fn handler(events: ?*InputEvent, data: ?*anyopaque) callconv(.c) ?*InputEvent {
 
 /// The rightmost and lowest pixel the pointer reaches: the front
 /// screen's, down to its bottom edge where it is pulled down.
-fn pointerLimits(ib: *IntuitionBase) struct { right: i32, bottom: i32 } {
+fn pointerLimits(ib: *IntuitionBase) Reach {
     const first = ib.screen_list.head;
     if (first == null or first.?.succ == null) return .{ .right = 0, .bottom = 0 };
     const front: *Screen = @ptrCast(@alignCast(first.?));
-    return .{ .right = @max(front.width - 1, 0), .bottom = @max(front.top + front.height - 1, 0) };
+    return reachOf(front.top, front.width, front.height, @intCast(front.board.info.height));
+}
+
+const Reach = struct { right: i32, bottom: i32 };
+
+/// The pointer's reach on a front screen `width` by `height` whose top
+/// edge is at display line `top`, on a display `glass` lines high: down
+/// to the screen's bottom edge, and never past the display's. A screen
+/// pulled down goes on below the glass; a tablet spread over a reach that
+/// grew as the screen came down would put the pointer further down with
+/// every step, and the screen held by it with it.
+fn reachOf(top: i32, width: i32, height: i32, glass: i32) Reach {
+    const end = if (glass > 0) @min(top + height, glass) else top + height;
+    return .{ .right = @max(width - 1, 0), .bottom = @max(end - 1, 0) };
 }
 
 /// A tablet's place as the pointer position it makes: as far across the
@@ -1795,6 +1808,16 @@ fn releaseScreenDepth(ib: *IntuitionBase) void {
 }
 
 const testing = @import("std").testing;
+
+test "the pointer's reach: the front screen's, and no further down than the display" {
+    try testing.expectEqual(Reach{ .right = 1919, .bottom = 1079 }, reachOf(0, 1920, 1080, 1080));
+    try testing.expectEqual(Reach{ .right = 1919, .bottom = 1079 }, reachOf(500, 1920, 1080, 1080));
+    try testing.expectEqual(Reach{ .right = 639, .bottom = 679 }, reachOf(200, 640, 480, 1080));
+    try testing.expectEqual(Reach{ .right = 639, .bottom = 479 }, reachOf(0, 640, 480, 0));
+    // Pulled down, the bar held at a tablet place stays where it is put.
+    const at = tabletAcross(0x8000, reachOf(500, 1920, 1080, 1080).bottom);
+    try testing.expectEqual(at, tabletAcross(0x8000, reachOf(0, 1920, 1080, 1080).bottom));
+}
 
 test "a tablet's place: as far across the screen as across the tablet" {
     try testing.expectEqual(@as(i32, 0), tabletAcross(0, 1023));

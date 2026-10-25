@@ -42,10 +42,11 @@ const blitInto = _blit.blitInto;
 /// the destination is a board's buffer and the engine can.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -62,5 +63,7 @@ const blitInto = _blit.blitInto;
 /// gb.BltBitMapRastPort(picture, 0, 0, rp, 20, 20, 64, 48);
 /// ```
 pub fn BltBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *RastPort, dest_x: i32, dest_y: i32, width: i32, height: i32) void {
+    const held = rastport.hold(gb, dest);
+    defer rastport.letGo(gb, held);
     blitInto(gb, src, src_x, src_y, dest, dest_x, dest_y, width, height, null, 0);
 }

@@ -43,10 +43,11 @@ const blitInto = _blit.blitInto;
 /// a rectangle with holes in it.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -63,5 +64,7 @@ const blitInto = _blit.blitInto;
 /// gb.BltMaskBitMapRastPort(icon, 0, 0, rp, x, y, 32, 32, &icon_mask, 4);
 /// ```
 pub fn BltMaskBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *RastPort, dest_x: i32, dest_y: i32, width: i32, height: i32, mask: [*]const u8, mask_pitch: u32) void {
+    const held = rastport.hold(gb, dest);
+    defer rastport.letGo(gb, held);
     blitInto(gb, src, src_x, src_y, dest, dest_x, dest_y, width, height, mask, mask_pitch);
 }
