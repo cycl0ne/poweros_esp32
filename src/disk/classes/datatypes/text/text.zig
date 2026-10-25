@@ -62,6 +62,7 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tdc.TEXTDTCLASS,
     .version = 2,
+    .revision = 1,
     .date = "25.10.2026",
     .super = dtc.DATATYPESCLASS,
     .opens = &.{ datatypes.DATATYPESNAME, iffparse.IFFPARSENAME, sdk.diskfont.DISKFONTNAME, sdk.dos.DOSNAME },

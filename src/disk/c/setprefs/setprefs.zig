@@ -90,7 +90,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.5 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.6 (25.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";
@@ -99,14 +99,11 @@ const arg_reset = 1;
 const arg_show = 2;
 
 const default_dir = "ENV:Sys";
-/// The most of the style file read.
-const max_style = 16384;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOMEMORY = "No memory for the settings\n";
 const MSG_BAD = "%s: %s\n";
 const MSG_BADLINE = "%s, line %ld: %s\n";
-const MSG_LONG = "%s is longer than %ld bytes: the rest is not read\n";
 const MSG_BADSIZE = "%s: a font is written family/size, as spleen.font/16 or spleen.font/10P\n";
 const MSG_NOFONT = "%s: not in FONTS:, at no size that will do\n";
 const MSG_NOTFIXED = "%s is proportional: consoles keep pospaz\n";
@@ -169,9 +166,9 @@ const Libs = struct {
 fn readSettings(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     var path: [128:0]u8 = undefined;
     const from = pathOf(&path, dir, "intuition.prefs");
-    var text: [1024]u8 = undefined;
-    const read = prefs.load(l.dl, from, &text) orelse return dos.RETURN_OK;
-    const words = prefs.firstLine(read) orelse return dos.RETURN_OK;
+    const text = prefs.loadWhole(l.sys, l.dl, from) orelse return dos.RETURN_OK;
+    defer l.sys.FreeVec(text.ptr);
+    const words = prefs.firstLine(text) orelse return dos.RETURN_OK;
     var settings: intuition_file.Settings = .{};
     if (intuition_file.parse(words, &settings)) |wrong| {
         _ = Printf(l.dl, MSG_BAD, .{ from, wrong });
@@ -185,9 +182,9 @@ fn readSettings(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
 fn readPens(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     var path: [128:0]u8 = undefined;
     const from = pathOf(&path, dir, "palette.prefs");
-    var text: [1024]u8 = undefined;
-    const read = prefs.load(l.dl, from, &text) orelse return dos.RETURN_OK;
-    const words = prefs.firstLine(read) orelse return dos.RETURN_OK;
+    const text = prefs.loadWhole(l.sys, l.dl, from) orelse return dos.RETURN_OK;
+    defer l.sys.FreeVec(text.ptr);
+    const words = prefs.firstLine(text) orelse return dos.RETURN_OK;
     var palette: palette_file.Palette = .{};
     _ = l.ib.GetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Pens, .data = @intFromPtr(&palette.pens) }, .{} });
     if (palette_file.parse(words, &palette)) |wrong| {
@@ -204,10 +201,9 @@ fn readPens(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
 fn readFonts(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     var path: [128:0]u8 = undefined;
     const from = pathOf(&path, dir, "font.prefs");
-    var text: [2048]u8 = undefined;
-    comptime if (font_file.header.len + 448 > text.len) @compileError("font.prefs' explanation has outgrown readFonts' buffer");
-    const read = prefs.load(l.dl, from, &text) orelse return dos.RETURN_OK;
-    const words = prefs.firstLine(read) orelse return dos.RETURN_OK;
+    const text = prefs.loadWhole(l.sys, l.dl, from) orelse return dos.RETURN_OK;
+    defer l.sys.FreeVec(text.ptr);
+    const words = prefs.firstLine(text) orelse return dos.RETURN_OK;
     var line: font_file.Line = .{};
     if (font_file.parse(words, &line)) |wrong| {
         _ = Printf(l.dl, MSG_BAD, .{ from, wrong });
@@ -253,18 +249,9 @@ fn readStyle(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     var path: [128:0]u8 = undefined;
     const from = pathOf(&path, dir, "style.prefs");
     const sys = l.sys;
-    const text_mem = sys.AllocVec(max_style, exec.MEMF_ANY) orelse {
-        _ = Printf(l.dl, MSG_NOMEMORY, .{});
-        return dos.RETURN_FAIL;
-    };
-    defer sys.FreeVec(text_mem);
-    const buffer: [*]u8 = @ptrCast(text_mem);
-    const text = prefs.load(l.dl, from, buffer[0..max_style]) orelse return dos.RETURN_OK;
+    const text = prefs.loadWhole(sys, l.dl, from) orelse return dos.RETURN_OK;
+    defer sys.FreeVec(text.ptr);
     var result: i32 = dos.RETURN_OK;
-    if (text.len == max_style) {
-        _ = Printf(l.dl, MSG_LONG, .{ from, @as(u64, max_style) });
-        result = dos.RETURN_WARN;
-    }
 
     // Room for every line that has words in it; a file with none is the
     // default.
@@ -315,9 +302,9 @@ fn readStyle(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
 fn readSound(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     var path: [128:0]u8 = undefined;
     const from = pathOf(&path, dir, "sound.prefs");
-    var text: [1024]u8 = undefined;
-    const read = prefs.load(l.dl, from, &text) orelse return dos.RETURN_OK;
-    const words = prefs.firstLine(read) orelse return dos.RETURN_OK;
+    const text = prefs.loadWhole(l.sys, l.dl, from) orelse return dos.RETURN_OK;
+    defer l.sys.FreeVec(text.ptr);
+    const words = prefs.firstLine(text) orelse return dos.RETURN_OK;
     var settings: sound_file.Settings = .{};
     if (sound_file.parse(words, &settings)) |wrong| {
         _ = Printf(l.dl, MSG_BAD, .{ from, wrong });

@@ -448,15 +448,13 @@ pub const Desktop = struct {
 
     // --- the prefs ---------------------------------------------------------
 
-    /// `anvil.prefs` read; a file that is not there, or says something
-    /// wrong, leaves the desktop's own. The buffer holds the file's
-    /// explanation (`header`) and its line with room to spare: a file cut
-    /// short would lose the line, which comes last.
+    /// `anvil.prefs` read, whole however long its explanation; a file
+    /// that is not there, or says something wrong, leaves the desktop's
+    /// own.
     fn readPrefs(d: *Desktop) void {
-        var text: [2048]u8 = undefined;
-        comptime if (anvil_prefs.header.len + 241 > text.len) @compileError("anvil.prefs' explanation has outgrown readPrefs' buffer");
         var settings: anvil_prefs.Settings = .{};
-        if (sdk.prefs.load(d.dl, anvil_prefs.ENV_FILE, &text)) |read| {
+        if (sdk.prefs.loadWhole(d.sys, d.dl, anvil_prefs.ENV_FILE)) |read| {
+            defer d.sys.FreeVec(read.ptr);
             if (sdk.prefs.firstLine(read)) |line| {
                 if (anvil_prefs.parse(line, &settings) != null) settings = .{};
             }
@@ -470,9 +468,8 @@ pub const Desktop = struct {
         if (d.own_font) |font| d.gb.CloseFont(font);
         d.own_font = null;
         const df = d.df orelse return;
-        var text: [2048]u8 = undefined;
-        comptime if (font_prefs.header.len + 448 > text.len) @compileError("font.prefs' explanation has outgrown readFont's buffer");
-        const read = sdk.prefs.load(d.dl, font_prefs.ENV_FILE, &text) orelse return;
+        const read = sdk.prefs.loadWhole(d.sys, d.dl, font_prefs.ENV_FILE) orelse return;
+        defer d.sys.FreeVec(read.ptr);
         const words = sdk.prefs.firstLine(read) orelse return;
         var line: font_prefs.Line = .{};
         if (font_prefs.parse(words, &line) != null) return;

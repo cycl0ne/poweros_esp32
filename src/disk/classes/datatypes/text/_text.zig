@@ -207,9 +207,8 @@ pub fn chooseFamilies(base: *Base, own: *Data, given: ?*const graphics.TextAttr)
     var line: font_prefs.Line = .{};
     if (base.opened[opened_dos]) |lib| {
         const dl: *DosBase = @ptrCast(lib);
-        var text: [2048]u8 = undefined;
-        comptime if (font_prefs.header.len + 448 > text.len) @compileError("font.prefs' explanation has outgrown chooseFamilies' buffer");
-        if (sdk.prefs.load(dl, font_prefs.ENV_FILE, &text)) |read| {
+        if (sdk.prefs.loadWhole(base.sys_base, dl, font_prefs.ENV_FILE)) |read| {
+            defer base.sys_base.FreeVec(read.ptr);
             if (sdk.prefs.firstLine(read)) |words| {
                 if (font_prefs.parse(words, &line) != null) line = .{};
             }

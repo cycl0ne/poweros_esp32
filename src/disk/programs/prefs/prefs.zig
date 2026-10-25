@@ -115,7 +115,7 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.11";
+const VERSION = "1.12";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (25.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
@@ -177,8 +177,6 @@ const ID_NOT = 5;
 
 /// The most lines the style file may have.
 const max_lines = 96;
-/// The most of a file read.
-const max_file = 16384;
 
 /// The style as the file has it: its lines, which the page edits.
 const Model = struct {
@@ -484,13 +482,11 @@ const Editor = struct {
             @memcpy(path[n..][0..piece.len], piece);
             n += piece.len;
         }
-        const memory = e.sys.AllocVec(max_file, exec.MEMF_ANY) orelse return;
-        defer e.sys.FreeVec(memory);
-        const buffer: [*]u8 = @ptrCast(memory);
-        const text = prefs.load(e.dl, &path, buffer[0..max_file]) orelse {
+        const text = prefs.loadWhole(e.sys, e.dl, &path) orelse {
             e.say("The look could not be read");
             return;
         };
+        defer e.sys.FreeVec(text.ptr);
         e.model = .{};
         e.model.load(text);
         // What it is: its first comment.
@@ -871,8 +867,11 @@ const Editor = struct {
 
     /// The outputs: the settings file's, then audio.device's over them -
     /// what plays now; the rows, those on the machine first.
-    fn readAudio(e: *Editor, text: []u8) void {
-        if (prefs.load(e.dl, audio_file.ENV_FILE, text)) |read| _ = e.audio.load(read);
+    fn readAudio(e: *Editor) void {
+        if (prefs.loadWhole(e.sys, e.dl, audio_file.ENV_FILE)) |read| {
+            defer e.sys.FreeVec(read.ptr);
+            _ = e.audio.load(read);
+        }
         const control = if (e.control) |*opened| opened else return;
         audio_file.gather(control, &e.audio);
         e.audio_before = e.audio;
@@ -1888,7 +1887,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         };
     }
 
-    const memory = sys.AllocVec(@sizeOf(Editor) + max_file, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+    const memory = sys.AllocVec(@sizeOf(Editor), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
@@ -1896,14 +1895,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const e: *Editor = @ptrCast(@alignCast(memory));
     // The wheel's library, last, is also where its conversions are.
     e.* = .{ .ib = ib, .dl = dl, .sys = sys, .wheel_base = @ptrCast(libraries[wanted.len - 1]) };
-    const file: [*]u8 = @as([*]u8, @ptrCast(memory)) + @sizeOf(Editor);
 
-    // What is in force now: the files in ENV:.
-    if (prefs.load(dl, style_file.ENV_FILE, file[0..max_file])) |text| e.model.load(text);
-    if (prefs.load(dl, font_file.ENV_FILE, file[0..max_file])) |text| {
+    // What is in force now: the files in ENV:, each read whole.
+    if (prefs.loadWhole(sys, dl, style_file.ENV_FILE)) |text| {
+        defer sys.FreeVec(text.ptr);
+        e.model.load(text);
+    }
+    if (prefs.loadWhole(sys, dl, font_file.ENV_FILE)) |text| {
+        defer sys.FreeVec(text.ptr);
         if (prefs.firstLine(text)) |line| _ = font_file.parse(line, &e.font_line);
     }
-    if (prefs.load(dl, anvil_file.ENV_FILE, file[0..max_file])) |text| {
+    if (prefs.loadWhole(sys, dl, anvil_file.ENV_FILE)) |text| {
+        defer sys.FreeVec(text.ptr);
         var desktop: anvil_file.Settings = .{};
         if (prefs.firstLine(text)) |line| if (anvil_file.parse(line, &desktop) == null) {
             e.desktop = desktop;
@@ -1917,14 +1920,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         ib.FreeScreenDrawInfo(screen, dri);
         ib.UnlockPubScreen(null, screen);
     }
-    if (prefs.load(dl, palette_file.ENV_FILE, file[0..max_file])) |text| {
+    if (prefs.loadWhole(sys, dl, palette_file.ENV_FILE)) |text| {
+        defer sys.FreeVec(text.ptr);
         var palette = palette_file.Palette{ .pens = e.pens };
         if (prefs.firstLine(text)) |line| if (palette_file.parse(line, &palette) == null) {
             e.pens = palette.pens;
         };
     }
 
-    if (prefs.load(dl, sound_file.ENV_FILE, file[0..max_file])) |text| {
+    if (prefs.loadWhole(sys, dl, sound_file.ENV_FILE)) |text| {
+        defer sys.FreeVec(text.ptr);
         var beep: sound_file.Settings = .{};
         if (prefs.firstLine(text)) |line| if (sound_file.parse(line, &beep) == null) {
             e.beep = beep;
@@ -1932,7 +1937,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     e.control = audiocontrol.Control.open(sys);
     defer e.closeSound();
-    e.readAudio(file[0..max_file]);
+    e.readAudio();
 
     e.readPresets();
     const layout = build(e) orelse {
