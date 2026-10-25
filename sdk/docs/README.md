@@ -309,6 +309,7 @@ object, whatever format it came out of; see the
 | png.datatype | PNG | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
 | gif.datatype | GIF | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
 | jpeg.datatype | baseline JPEG | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
+| font.datatype | font families, as a sheet of their characters and sizes | [`pictureclass.zig`](../libs/datatypes/pictureclass.zig) |
 | animation.datatype | every animation: frames drawn ahead on a process of its own, played in time | [`animationclass.zig`](../libs/datatypes/animationclass.zig) |
 | gifanim.datatype | GIF with more than one picture | [`animationclass.zig`](../libs/datatypes/animationclass.zig) |
 | lottie.datatype | Lottie vector animations | [`animationclass.zig`](../libs/datatypes/animationclass.zig) |

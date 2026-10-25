@@ -1,0 +1,1 @@
+NAME=Font BASE=font GROUP=pict ID=FONT MASK=PFCT PATTERN=#?.font PRI=5 BROWSE=SYS:Programs/MultiView

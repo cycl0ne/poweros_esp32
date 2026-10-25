@@ -157,6 +157,14 @@ Datatype, codec: 1024 x 600 in 198387 us, read by the codec
 Compared: worst 35, mean 107/100, 559 of 614400 pixels more than 24 apart
 ```
 
+**A font is shown as a picture of it.** font.datatype takes a family's
+contents file (`FONTS:spleen.font`, `sdk.diskfont.fontfile`) and draws a
+sheet: the file's name and what the font is, a table of its characters,
+and one line of text at each size it was drawn at - an outline's at 12
+to 64 rows. The sizes are opened through diskfont.library, so the
+picture is the font as every program gets it, and MultiView shows a font
+as it shows any picture.
+
 `PDTM_READPIXELARRAY` hands a rectangle of it back in whichever
 shape the program wants - `PBPAFMT_RGB`, `PBPAFMT_RGBA`, `PBPAFMT_ARGB`
 or `PBPAFMT_GREY8`. `PDTA_Scale` draws the picture at the size of the

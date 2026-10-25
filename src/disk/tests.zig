@@ -146,6 +146,7 @@ test {
     _ = @import("classes/datatypes/jpeg/idct.zig");
     _ = @import("classes/datatypes/jpeg/decode.zig");
     _ = @import("classes/datatypes/markdown/parse.zig");
+    _ = @import("classes/datatypes/font/sheet.zig");
     _ = @import("classes/gadgets/tests/classes.zig");
     _ = @import("classes/gadgets/colorwheel/_colour.zig");
 }
