@@ -256,9 +256,12 @@ revocation.
 refuses to open (`TLSERR_CLOCK`) while the clock is still where a cold
 boot leaves it: `C:net/TimeSync`, which the boot runs, sets it, and
 saves it (`C:SetClock SAVE`) to the clock battclock.resource keeps -
-a board's clock chip, or the chip's RTC timer, which keeps it over a
-reset - so the boot after starts with the date. The clock keeps local
-time; the session works the UTC out by `ENVARC:Sys/timezone`.
+a board's clock chip, the JH7110's RTC or the ESP32s' RTC timer, the
+last two over a reset - so the boot after starts with the date; and to
+`ENVARC:Sys/clock`, where the boot starts the clock (`SetClock LOAD`)
+when that clock lost it: behind, then, but never in 1978. The clock
+keeps local time; the session works the UTC out by
+`ENVARC:Sys/timezone`.
 
 **Waiting.** A record is decrypted whole, and what a read does not take
 waits in the session, where `WaitSelect` does not see it: ask
@@ -325,8 +328,9 @@ link's speed unless the file says.
 | `ENVARC:Sys/net/id_ed25519` | the key `C:net/SSH` and `C:net/SCP` log in with, made by `SSH KEYGEN`; `.pub` beside it |
 | `ENVARC:Sys/net/known_hosts` | the host keys `C:net/SSH` and `C:net/SCP` have seen, OpenSSH's lines |
 | `ENVARC:Sys/net/filter` | the packet filter's rules: `S:Network-Startup` loads them before any interface comes up |
+| `ENVARC:Sys/clock` | the date `SetClock SAVE` last kept, in seconds since 1 January 1978: `SetClock LOAD` in the startup sequence starts the clock there when the clock that keeps the date has none, or an earlier one |
 | `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule; `SetClock ZONE` in the startup sequence keeps it in battmem.resource for the file systems, so after changing it run that too |
-| `S:Network-Startup` | run by the Startup-Sequence in a shell of its own, once the desktop is up: `AddNetInterface ALL QUIET`, then `TimeSync` and, when a server answered, `SetClock SAVE`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
+| `S:Network-Startup` | run by the Startup-Sequence in a shell of its own, once the desktop is up: `AddNetInterface ALL QUIET`, then `TimeSync REDATE` - the files the start wrote on SYS: and RAM: before the clock was right move with it - and, when a server answered, `SetClock SAVE`, then `MountShare ALL` for the shares in `DEVS:Shares/`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
 
 An interface file is keywords, one to a line, and `/* */` comments:
 
@@ -372,7 +376,8 @@ column. A board without the file's device skips the interface, with its
 files serves every board (without, it names the interface it could not
 add and ends with `WARN`). With DHCP, `AddNetInterface` waits for the
 address up to `TIMEOUT` seconds, but not for an interface whose link
-stays down for a second - no cable - unless it is joining a Wi-Fi
+stays down for five seconds - no cable; a gigabit link takes seconds to
+agree on its speed - unless it is joining a Wi-Fi
 `Network`. A file that says `Start = DEVICE` is left out of `ALL`: its
 device brings it up by name when its hardware first comes, as
 usb/ecm.device does `USB0` when an Ethernet adapter is plugged in.

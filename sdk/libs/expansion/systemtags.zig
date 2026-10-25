@@ -365,9 +365,10 @@ pub const PARTKIND_USB: u32 = 17;
 /// - serial.device's unit - and PART_Label where the board brings it
 /// out. One the system keeps for itself, a console, is not listed.
 pub const PARTKIND_UART: u32 = 18;
-/// A clock chip that keeps the date while the board is off, on its own
-/// cell: PART_Bus and PART_BusUnit the I2C bus, PART_Address the chip.
-/// battclock.resource keeps the date in it.
+/// A clock that keeps the date: a chip on its own cell, which keeps it
+/// while the board is off - PART_Bus and PART_BusUnit the I2C bus,
+/// PART_Address the chip - or the chip's own RTC (BUS_MEMORY,
+/// PART_Address its registers). battclock.resource keeps the date in it.
 pub const PARTKIND_RTC: u32 = 19;
 /// A random number generator in the chip, which sdk.hardware.rng reads:
 /// PART_Address where its registers are (BUS_MEMORY).
@@ -493,6 +494,11 @@ pub const CHIP_VIRTIO_GPU: u32 = 33;
 /// turned into pulses on PART_PinLeft and PART_PinRight - the VisionFive
 /// 2's audio jack.
 pub const CHIP_JH7110_PWMDAC: u32 = 34;
+/// The JH7110's own RTC (PARTKIND_RTC on BUS_MEMORY, PART_Address its
+/// registers): the date in BCD from 2000 to 2099, counted from the
+/// board's 32.768 kHz oscillator. A reset stops it and keeps the date; a
+/// power cut loses it.
+pub const CHIP_JH7110_RTC: u32 = 35;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

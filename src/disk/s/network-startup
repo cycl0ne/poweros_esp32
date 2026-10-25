@@ -17,10 +17,12 @@ EndIf
 C:net/AddNetInterface ALL QUIET
 
 ; The clock set from a time server: DHCP's, ENVARC:Sys/net/timeserver's,
-; or pool.ntp.org, in the local time of ENVARC:Sys/timezone - and, when a
-; server answered, kept in the clock that keeps the date over a reset or
-; a power cut (battclock.resource).
-C:net/TimeSync QUIET
+; or pool.ntp.org, in the local time of ENVARC:Sys/timezone; what the
+; start wrote on SYS: and RAM: before it moved with it (REDATE). When a
+; server answered, the time is kept in the clock that keeps the date over
+; a reset or a power cut (battclock.resource), and in ENVARC:Sys/clock,
+; where the next start begins if that clock lost it.
+C:net/TimeSync QUIET REDATE
 If NOT WARN
   C:SetClock SAVE
 EndIf

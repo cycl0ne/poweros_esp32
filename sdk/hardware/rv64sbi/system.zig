@@ -124,6 +124,7 @@ pub const AONCLK_GMAC0_AHB = 2;
 pub const AONCLK_GMAC0_AXI = 3;
 pub const AONCLK_GMAC0_RMII_RTX = 4;
 pub const AONCLK_GMAC0_TX = 5;
+pub const AONCLK_RTC_APB = 10;
 
 /// The VOUT generator's.
 pub const VOUTCLK_DC8200_PIX = 1;
@@ -160,6 +161,9 @@ pub const STGRST_PCIE0_AXI_MST0 = 11;
 /// The always-on generator's.
 pub const AONRST_GMAC0_AXI = 0;
 pub const AONRST_GMAC0_AHB = 1;
+pub const AONRST_RTC_APB = 5;
+pub const AONRST_RTC_CAL = 6;
+pub const AONRST_RTC_32K = 7;
 
 /// The VOUT generator's.
 pub const VOUTRST_DC8200_AXI = 0;

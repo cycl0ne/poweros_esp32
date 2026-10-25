@@ -2,7 +2,7 @@
 //! TimeSync: the system's date and time set from a time server. Built
 //! against the SDK only.
 //!
-//!   TimeSync SERVER,PORT/K/N,QUIET/S,TEST/S
+//!   TimeSync SERVER,PORT/K/N,QUIET/S,TEST/S,REDATE/S
 //!
 //! SERVER is a name or a dotted address; without it, the first time
 //! server DHCP named for an interface, else the one in
@@ -10,6 +10,16 @@
 //! comment), else pool.ntp.org. PORT is 123 unless
 //! given. The time is set and printed, unless QUIET; TEST prints it and
 //! sets nothing.
+//!
+//! **REDATE** puts right what the system stamped before the clock was
+//! right: when the clock moves by a minute or more, every file and drawer
+//! on SYS: and RAM: - what the system writes as it starts, before the
+//! network is up - whose date lies between this start and the moment
+//! before the move moves as far as the clock did. This start is the
+//! clock then less the time the machine has been up. A file of an earlier
+//! start whose date lies there moves too: after a power cut the clock
+//! starts from the date C:SetClock SAVE last kept, which an earlier start
+//! went on from. How many moved is said, unless QUIET.
 //!
 //! **SNTP (RFC 4330).** One request goes out over UDP, and again after two
 //! seconds, three times in all. An answer counts only from the server
@@ -40,14 +50,15 @@ const Printf = dos.stdio.Printf;
 const zone = sdk.dos.timezone;
 
 pub const COMMAND_NAME = "TimeSync";
-const VERSION_STRING = "\x00$VER: TimeSync 1.2 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: TimeSync 1.3 (25.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "SERVER,PORT/K/N,QUIET/S,TEST/S";
+const template = "SERVER,PORT/K/N,QUIET/S,TEST/S,REDATE/S";
 const arg_server = 0;
 const arg_port = 1;
 const arg_quiet = 2;
 const arg_test = 3;
+const arg_redate = 4;
 
 /// The zone the system clock keeps, as a POSIX TZ rule.
 const TIMEZONE_FILE = zone.zone_file;
@@ -56,6 +67,13 @@ const port_default: u16 = 123;
 const tries = 3;
 const patience_secs = 2;
 
+/// The volumes REDATE goes through: what the system writes as it starts.
+const redate_volumes = [_][*:0]const u8{ "SYS:", "RAM:" };
+/// The least move of the clock REDATE moves files for: less is drift.
+const redate_least_secs = 60;
+/// How deep REDATE goes into drawers.
+const redate_depth = 32;
+
 const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_NOHOST = "%s: %s: no such host\n";
 const MSG_FAILED = "%s: %s failed: %s (errno %d)\n";
@@ -63,6 +81,7 @@ const MSG_NOANSWER = "%s: no answer from %s\n";
 const MSG_BADZONE = "%s: %s is no time zone rule; using UTC\n";
 const MSG_TIME = "%s %s %s, from %s (stratum %u)";
 const MSG_MOVED = ", the clock moved by %s%lu.%03u s\n";
+const MSG_REDATED = "%u files and drawers on SYS: and RAM: moved with it\n";
 
 /// 1 January 1900, where NTP counts from, to 1 January 1970; and 1970 to
 /// 1 January 1978, where the system clock counts from.
@@ -90,7 +109,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [4]usize = @splat(0);
+    var argv: [5]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -146,10 +165,20 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var old_time: timer.TimeVal = .{};
     timer_base.GetSysTime(&old_time);
+    var redated: ?u32 = null;
     if (!test_only) {
         clock.node.command = timer.TR_SETSYSTIME;
         clock.time = new_time;
         _ = sys.DoIO(&clock.node);
+        if (argv[arg_redate] != 0) {
+            const by = @as(i64, new_time.secs) - old_time.secs;
+            redated = 0;
+            if (by >= redate_least_secs or by <= -redate_least_secs) {
+                const up_secs: u32 = @intCast(eclock(timer_base) / 1_000_000);
+                const window: Window = .{ .from = old_time.secs -| up_secs, .to = old_time.secs, .by = by };
+                for (redate_volumes) |volume| redated.? += redateVolume(sys, dl, volume, window);
+            }
+        }
     }
     if (quiet) return dos.RETURN_OK;
 
@@ -178,7 +207,59 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     } else {
         _ = Printf(dl, MSG_MOVED, .{ sign, moved_ms / 1000, @as(u32, @intCast(moved_ms % 1000)) });
     }
+    if (redated) |count| _ = Printf(dl, MSG_REDATED, .{count});
     return dos.RETURN_OK;
+}
+
+/// The dates REDATE moves - `from` to `to`, in seconds since 1 January
+/// 1978 - and how far.
+const Window = struct { from: u32, to: u32, by: i64 };
+
+/// `date` moved as far as the window says, if it lies in it.
+fn movedDate(date: dos.DateStamp, window: Window) ?dos.DateStamp {
+    if (date.days < 0 or date.minute < 0 or date.tick < 0) return null;
+    const secs = @as(i64, date.days) * 86400 + @as(i64, date.minute) * 60 + @divTrunc(date.tick, 50);
+    if (secs < window.from or secs > window.to) return null;
+    const new_secs: i64 = @max(secs + window.by, 0);
+    return .{
+        .days = @intCast(@divTrunc(new_secs, 86400)),
+        .minute = @intCast(@divTrunc(@mod(new_secs, 86400), 60)),
+        .tick = @intCast(@mod(new_secs, 60) * 50 + @mod(date.tick, 50)),
+    };
+}
+
+/// The files and drawers on `volume` whose date lies in `window`, moved:
+/// how many.
+fn redateVolume(sys: *ExecBase, dl: *DosBase, volume: [*:0]const u8, window: Window) u32 {
+    const lock = dl.Lock(volume, dos.SHARED_LOCK) orelse return 0;
+    defer dl.UnLock(lock);
+    return redateDrawer(sys, dl, lock, window, 0);
+}
+
+/// The same for what the drawer at `lock` holds, its drawers' contents
+/// first. Each level's FileInfoBlock is allocated: `redate_depth` of
+/// them is more than a command's stack holds.
+fn redateDrawer(sys: *ExecBase, dl: *DosBase, lock: *dos.FileLock, window: Window, depth: u32) u32 {
+    const memory = sys.AllocVec(@sizeOf(dos.FileInfoBlock), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return 0;
+    defer sys.FreeVec(memory);
+    const fib: *dos.FileInfoBlock = @ptrCast(@alignCast(memory));
+    if (!dl.Examine(lock, fib)) return 0;
+    const outer = dl.CurrentDir(lock);
+    defer _ = dl.CurrentDir(outer);
+    var count: u32 = 0;
+    while (dl.ExNext(lock, fib)) {
+        const name: [*:0]const u8 = @ptrCast(&fib.file_name);
+        if (fib.dir_entry_type == dos.ST_USERDIR and depth < redate_depth) {
+            if (dl.Lock(name, dos.SHARED_LOCK)) |inner| {
+                count += redateDrawer(sys, dl, inner, window, depth + 1);
+                dl.UnLock(inner);
+            }
+        }
+        if (movedDate(fib.date, window)) |date| {
+            if (dl.SetFileDate(name, &date)) count += 1;
+        }
+    }
+    return count;
 }
 
 fn copyText(into: []u8, text: [*:0]const u8) void {
