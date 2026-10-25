@@ -342,7 +342,10 @@ up at QEMU's 1280×800. `./zig build virt-ramfb` shows the same on the
 `ramfb`, which reads the picture out of RAM itself, the pointer drawn
 into it. The window is QEMU's GTK or SDL one (Arch packages them apart,
 as `qemu-ui-gtk` and `qemu-ui-sdl`); without either QEMU serves the
-display over VNC on `localhost:5900`. QEMU run by hand adds the rest -
+display over VNC on `localhost:5900`. Arch packages the virtio GPU
+apart as well, as `qemu-hw-display-virtio-gpu`: without it QEMU says
+`'virtio-gpu-device' is not a valid device model name`, and only the
+`ramfb` steps run. QEMU run by hand adds the rest -
 an SSD, sound:
 
 ```sh

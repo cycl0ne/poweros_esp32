@@ -145,10 +145,13 @@ const Queue = struct {
     }
 };
 
-/// The control queue: two descriptors a command, a slot each.
+/// The control queue: two descriptors a command, a slot each. Its most
+/// entries: a device that offers fewer gets a queue of its size, and the
+/// slots past it go unused - QEMU's GPU offers 64.
 const control_size = 128;
 const control_slots = control_size / 2;
-/// The cursor queue: a descriptor a command, with no answer.
+/// The cursor queue: a descriptor a command, with no answer; its most
+/// entries as well.
 const cursor_size = 16;
 
 /// A control command: what it asks, and room for the answer it gets.
@@ -424,6 +427,11 @@ pub fn start(gpu: *Gpu, sys: *ExecBase) bool {
     }
     if (!setUpQueue(gpu, 0, &gpu.control, base + layout.control, control_size)) return fail(gpu);
     if (!setUpQueue(gpu, 1, &gpu.cursor, base + layout.cursor, cursor_size)) return fail(gpu);
+    // What a smaller queue has no room for is held from the start, so it
+    // is never handed out.
+    const slots = gpu.control.size / 2;
+    gpu.busy = if (slots < control_slots) ~@as(u64, 0) << @intCast(slots) else 0;
+    gpu.cursor_busy = if (gpu.cursor.size < cursor_size) ~@as(u16, 0) << @intCast(gpu.cursor.size) else 0;
     gpu.write(STATUS, status | STATUS_DRIVER_OK);
     return true;
 }
@@ -442,11 +450,14 @@ pub fn stop(gpu: *Gpu) void {
     gpu.memory_size = 0;
 }
 
-/// Queue `index` at `address`, `size` entries, told to the device as its
-/// version wants it.
-fn setUpQueue(gpu: *Gpu, index: u32, queue: *Queue, address: usize, size: u16) bool {
+/// Queue `index` at `address`, as many entries as the device offers up to
+/// `most`, told to the device as its version wants it. False when it
+/// offers too few for a command.
+fn setUpQueue(gpu: *Gpu, index: u32, queue: *Queue, address: usize, most: u16) bool {
     gpu.write(QUEUE_SEL, index);
-    if (gpu.read(QUEUE_NUM_MAX) < size) return false;
+    const offered = gpu.read(QUEUE_NUM_MAX);
+    if (offered < 2) return false;
+    const size: u16 = @intCast(@min(offered, most));
     queue.* = Queue.at(address, size);
     queue.avail[0] = AVAIL_NO_INTERRUPT;
     gpu.write(QUEUE_NUM, size);
@@ -497,12 +508,15 @@ fn reclaim(gpu: *Gpu) void {
     }
 }
 
-/// A slot the device is not holding, waited for while every one is.
+/// A slot the device is not holding, waited for while every one is - the
+/// device told first, since commands handed over without a `kick` yet
+/// may be what fills a small queue.
 fn freeSlot(gpu: *Gpu, waiter: anytype) ?u32 {
     var tries: u32 = 0;
     while (true) : (tries += 1) {
         reclaim(gpu);
         if (~gpu.busy != 0) return @ctz(~gpu.busy);
+        if (tries == 0) kick(gpu, 0);
         if (tries == patience) return null;
         rest(tries, waiter);
     }
@@ -722,6 +736,9 @@ test "a queue's device ring is on the page after its driver ring" {
     try std.testing.expectEqual(4096, usedAt(128));
     try std.testing.expectEqual(8192, queueBytes(128));
     try std.testing.expectEqual(4096, usedAt(16));
+    // A smaller queue, as QEMU's GPU offers, fits where the largest goes.
+    try std.testing.expectEqual(4096, usedAt(64));
+    try std.testing.expect(queueBytes(64) <= queueBytes(control_size));
     try std.testing.expect(layout.bytes <= 6 * page);
     try std.testing.expect(@sizeOf(Transfer) <= @sizeOf(@FieldType(Slot, "request")));
 }
