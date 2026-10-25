@@ -11,8 +11,8 @@
 //! sections:
 //!
 //!   Mounted disks:
-//!   Unit      Size    Used    Free Full Errs   Status   Name
-//!   DH0:     14932K      27    3796   1%   0   Read/Write System
+//!   Unit      Size       Used       Free Full Errs   Status   Name
+//!   DH0:     14932K         27       3796   1%   0  Read/Write System
 //!
 //!   Volumes available:
 //!   System [Mounted]
@@ -29,7 +29,10 @@
 //!   drive answers `ID_BUSY_DISK` and prints "Disk busy".
 //! - **Sizes are 64-bit.** id_NumBlocks and id_NumBlocksUsed are u64 here,
 //!   so a disk larger than 4 GiB counts correctly; a 32-bit product would
-//!   wrap.
+//!   wrap. The size goes up a unit while it has more than four digits, to
+//!   T; the used and free blocks get ten digits and a space before each,
+//!   so a count longer than that pushes the line on rather than running
+//!   into its neighbour.
 //! - **Names are C strings**, and `id_VolumeNode` is a pointer, so the
 //!   volume's name is read straight off the node.
 //! - A handler that does not answer DISK_INFO (NIL:, PIPE:) is skipped.
@@ -48,14 +51,14 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Info";
-const VERSION_STRING = "\x00$VER: Info 1.2 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Info 1.3 (25.10.2026)\r\n";
 
 const template = "DEVICE";
 const arg_device = 0;
 
 const MSG_VOL_MOUNTED = "[Mounted]";
 const MSG_DEV_HEADER = "\nMounted disks:\n" ++
-    "Unit      Size    Used    Free Full Errs   Status   Name\n";
+    "Unit      Size       Used       Free Full Errs   Status   Name\n";
 const MSG_VOL_HEADER = "\nVolumes available:\n";
 const MSG_PROT_READ_ONLY = "Read Only";
 const MSG_PROT_VALIDATING = "Validating";
@@ -69,6 +72,8 @@ const MSG_TYPE_BUSY = "Disk busy";
 /// language's "Kilo" and "Mega" may not begin with K and M.
 const MSG_KILOBYTES = "K";
 const MSG_MEGABYTES = "M";
+const MSG_GIGABYTES = "G";
+const MSG_TERABYTES = "T";
 
 /// The most a device name may be: 30, the colon and the NUL.
 const max_name = dos.MAX_DEVICE_NAME + 2;
@@ -323,9 +328,10 @@ fn printOne(run: *Run, info: *const dos.InfoData, node: *const dos.DosList, volu
     const bytes = info.num_blocks * info.bytes_per_block;
     var size = bytes >> 10;
     var mult: [*:0]const u8 = MSG_KILOBYTES;
-    if (size > 9999) {
-        size = bytes >> 20;
-        mult = MSG_MEGABYTES;
+    for ([_][*:0]const u8{ MSG_MEGABYTES, MSG_GIGABYTES, MSG_TERABYTES }) |next| {
+        if (size <= 9999) break;
+        size >>= 10;
+        mult = next;
     }
 
     // Percent full, one more when the remainder is at least half a block.
@@ -340,7 +346,7 @@ fn printOne(run: *Run, info: *const dos.InfoData, node: *const dos.DosList, volu
         else => MSG_PROT_READ_WRITE,
     };
 
-    _ = Printf(dl, "%-8s%5ld%s%8ld%8ld %3ld%% %3d  %-10s %s\n", .{
+    _ = Printf(dl, "%-8s%5ld%s %10ld %10ld %3ld%% %3d  %-10s %s\n", .{
         unit_name,
         size,
         mult,
