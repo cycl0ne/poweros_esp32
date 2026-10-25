@@ -258,6 +258,15 @@ _ = control.prefer(0x24B61A00);      // there or not
 A volume there is in percent of as recorded, 0 to 100, as a person sets
 it; `percentOf` and `volumeOf` turn it into the device's and back.
 
+A percent is as loud as it sounds, not as large as the wave: up to 100
+the device's volume is the percent's cube, so 10% is -60 dB, 50% -18 dB
+and 90% -2.7 dB, and every step of a slider is heard as about as much as
+the next. Past 100 it grows in proportion, as a boost: 200% is twice as
+recorded. Every program that takes a volume in percent - the Volume
+window, Player, `C:Audio`, `C:Play`, `C:Record`, the beep's in
+`sound.prefs` - turns it with `volumeOf`, so a percent is the same
+wherever it is set.
+
 ## The settings kept: `audio.prefs`
 
 `ENVARC:Sys/audio.prefs` holds a line per output - its number, its

@@ -14,6 +14,16 @@
 //!
 //! A volume here is in percent of as recorded, 0 to 100, as a person sets
 //! it; `percentOf` and `volumeOf` turn it into the device's and back.
+//!
+//! **A percent is as loud as it sounds**, not as large as the wave: the
+//! ear hears decibels, and a volume in proportion to the wave put all of
+//! quiet to loud into the first tenth of a slider - 50% was -6 dB, 90%
+//! -0.9 dB. Up to 100 the device's volume is the percent's cube, as ALSA
+//! maps a mixer's volume: 10% is -60 dB, 50% -18 dB, 90% -2.7 dB. Past
+//! 100, where a player or a recorder boosts what is quiet, it grows in
+//! proportion again: 200% is twice as recorded, +6 dB. Every program that
+//! takes a volume in percent turns it with `volumeOf`, so that a percent
+//! is the same wherever it is set.
 
 const exec = @import("../libs/exec/exec.zig");
 const audio = @import("audio.zig");
@@ -27,15 +37,40 @@ pub const AUDIO_CONTROL_REVISION = 9;
 /// The most outputs `Outputs` holds.
 pub const max_outputs = 8;
 
-/// A volume in percent, 0 to 100, as the device has it.
+/// A volume in percent as the device has it: up to 100 the percent's
+/// cube of `AUDIO_VOLUME_UNITY`, past it in proportion, at most
+/// `AUDIO_VOLUME_MAX`.
+///
+/// Below -90 dB, where nothing is heard and the cube rounds to the same
+/// step of the device's volume for 1% and 2%, each percent keeps a step
+/// of its own, so that every percent comes back from `percentOf` as it
+/// went in.
 pub fn volumeOf(percent: u32) u32 {
-    return @intCast(@as(u64, @min(percent, 100)) * audio.AUDIO_VOLUME_UNITY / 100);
+    const unity: u64 = audio.AUDIO_VOLUME_UNITY;
+    if (percent > 100) return @intCast(@min(@as(u64, percent) * unity / 100, audio.AUDIO_VOLUME_MAX));
+    const p: u64 = percent;
+    const cube = (p * p * p * unity + 500_000) / 1_000_000;
+    return @intCast(@max(cube, p));
 }
 
-/// The device's volume in percent, rounded, at most 100.
+/// The device's volume in percent, at most 100: the percent whose volume
+/// is nearest.
 pub fn percentOf(volume: u32) u32 {
-    const percent = (@as(u64, volume) * 100 + audio.AUDIO_VOLUME_UNITY / 2) / audio.AUDIO_VOLUME_UNITY;
-    return @intCast(@min(percent, 100));
+    if (volume >= audio.AUDIO_VOLUME_UNITY) return 100;
+    var best: u32 = 0;
+    var percent: u32 = 1;
+    while (percent <= 100) : (percent += 1) {
+        const step = volumeOf(percent);
+        if (distance(step, volume) < distance(volumeOf(best), volume)) best = percent;
+        // The volumes only grow, so past the volume asked for nothing
+        // comes nearer.
+        if (step > volume) break;
+    }
+    return best;
+}
+
+fn distance(a: u32, b: u32) u32 {
+    return if (a > b) a - b else b - a;
 }
 
 /// An output's name, as the device wrote it, up to its NUL.

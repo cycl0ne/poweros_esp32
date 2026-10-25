@@ -22,6 +22,7 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const audio = sdk.devices.audio;
+const audiocontrol = sdk.devices.audiocontrol;
 const ac = sdk.audiocodec;
 const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -233,7 +234,7 @@ pub const Engine = struct {
         io.format = audio.AUDIO_S16;
         io.channels = @intCast(@max(engine.info.channels, 1));
         io.rate = @max(engine.info.rate, 1);
-        io.volume = audio.AUDIO_VOLUME_UNITY * engine.volume / 100;
+        io.volume = audiocontrol.volumeOf(engine.volume);
         io.pan = 0;
         _ = engine.sys.DoIO(&io.std.req);
     }

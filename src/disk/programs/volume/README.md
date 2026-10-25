@@ -14,7 +14,8 @@ type `Volume` in a shell.
   through. Picking another plays every sound through it from then on,
   the ones already playing included.
 - **Volume** is how loud that output plays, from 0 to 100 percent of as
-  the sound was recorded. It changes while the slider is dragged. Each
+  the sound was recorded, as loud as it sounds: half way is -18 dB, and
+  each step of the slider is heard as about as much as the next. It changes while the slider is dragged. Each
   output keeps its own volume: picking another output shows that one's.
 
 The window reads both again every second, so headphones plugged in or a

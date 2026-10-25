@@ -48,7 +48,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Audio";
-const VERSION_STRING = "\x00$VER: Audio 1.0 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Audio 1.1 (25.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "OUTPUT/K,VOLUME/K/N,PREFER/K,LIST/S,SAVE/S";

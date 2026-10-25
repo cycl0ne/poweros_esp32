@@ -214,7 +214,9 @@ test "sound.prefs: a line read, its file quoted, written back; the tone rises, s
     var again: prefs.sound.Settings = .{};
     try testing.expect(prefs.sound.parse(line, &again) == null);
     try testing.expectEqualStrings(std.mem.sliceTo(&settings.sample, 0), std.mem.sliceTo(&again.sample, 0));
-    try testing.expectEqual(sdk.devices.audio.AUDIO_VOLUME_UNITY * 40 / 100, prefs.sound.volumeOf(&again));
+    // As loud as 40% is everywhere: the cube, 0.064 of as recorded.
+    try testing.expectEqual(sdk.devices.audiocontrol.volumeOf(40), prefs.sound.volumeOf(&again));
+    try testing.expectEqual(@as(u32, 4194), prefs.sound.volumeOf(&again));
 
     // What it does not take.
     var bad: prefs.sound.Settings = .{};
@@ -292,6 +294,18 @@ test "audio.prefs: lines read, the preferred one alone, written back; volumes in
     try testing.expectEqual(@as(u32, 0), ac.volumeOf(0));
     for (0..101) |percent| try testing.expectEqual(@as(u32, @intCast(percent)), ac.percentOf(ac.volumeOf(@intCast(percent))));
     try testing.expectEqual(@as(u32, 100), ac.percentOf(sdk.devices.audio.AUDIO_VOLUME_MAX));
+    // A percent is as loud as it sounds: half way an eighth of the wave,
+    // -18 dB, and a tenth a thousandth, -60 dB.
+    try testing.expectEqual(sdk.devices.audio.AUDIO_VOLUME_UNITY / 8, ac.volumeOf(50));
+    try testing.expectEqual(@as(u32, 66), ac.volumeOf(10));
+    // Past 100 in proportion, as a boost: 200 twice as recorded, and no
+    // more than the device takes.
+    try testing.expectEqual(2 * sdk.devices.audio.AUDIO_VOLUME_UNITY, ac.volumeOf(200));
+    try testing.expectEqual(sdk.devices.audio.AUDIO_VOLUME_MAX, ac.volumeOf(1000));
+    // Every percent louder than the one before, so none is lost.
+    for (1..401) |percent| try testing.expect(ac.volumeOf(@intCast(percent)) > ac.volumeOf(@intCast(percent - 1)));
+    // A volume between two steps is the nearer one's.
+    try testing.expectEqual(@as(u32, 50), ac.percentOf(sdk.devices.audio.AUDIO_VOLUME_UNITY / 8 + 100));
 }
 
 test "the styles the editor offers: every line read" {

@@ -42,8 +42,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = sl.SLIDER_CLASS,
     .version = 1,
-    .revision = 1,
-    .date = "03.10.2026",
+    .revision = 2,
+    .date = "25.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -185,6 +185,12 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
 /// How wide the shown level is: room for its characters in the font, or
 /// the pixels asked for where those are wider; nothing when the level is
 /// not shown.
+///
+/// The room is the widest of as many zeros as the level may have and the
+/// least and the greatest level as they are shown, since what the format
+/// puts after the number is often wider than a digit: "100%" is wider
+/// than "0000". Narrower, a long level drawn past its room was left there
+/// when a shorter one was drawn over it.
 fn displayWidth(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo) i32 {
     if (own.format == null) return 0;
     const ib = base.intuition_base;
@@ -192,7 +198,13 @@ fn displayWidth(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: 
     defer measure.done(ib);
     var zeros: [40]u8 = @splat('0');
     zeros[own.max_level_len] = 0;
-    return @max(measure.width(ib, @ptrCast(&zeros)), own.max_level_pixels);
+    var widest = @max(measure.width(ib, @ptrCast(&zeros)), own.max_level_pixels);
+    const o: *Object = @ptrCast(@alignCast(@constCast(g)));
+    var shown: [40]u8 = undefined;
+    for ([_]i32{ own.min, own.max }) |level| {
+        widest = @max(widest, measure.width(ib, textOf(base, own, o, level, &shown)));
+    }
+    return widest;
 }
 
 /// The parts of a gadget `size` big, relative to its box: the shown level
@@ -239,12 +251,17 @@ fn placeInner(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const cla
 
 /// The level as shown: through the hook first when there is one.
 pub fn levelText(base: *gadgets.Base, own: *Data, o: *Object) [*:0]const u8 {
-    var number: i64 = own.level;
+    return textOf(base, own, o, own.level, &own.written);
+}
+
+/// `level` as it is shown, written into `into`.
+fn textOf(base: *gadgets.Base, own: *const Data, o: *Object, level: i32, into: *[40]u8) [*:0]const u8 {
+    var number: i64 = level;
     if (own.disp_func) |hook| {
-        var level = own.level;
-        number = @as(i32, @truncate(@as(isize, @bitCast(base.utility_base.CallHookPkt(hook, o, @ptrCast(&level))))));
+        var given = level;
+        number = @as(i32, @truncate(@as(isize, @bitCast(base.utility_base.CallHookPkt(hook, o, @ptrCast(&given))))));
     }
-    return support.formatNumber(base.sys_base, own.format.?, number, own.written[0 .. own.max_level_len + 1]);
+    return support.formatNumber(base.sys_base, own.format.?, number, into[0 .. own.max_level_len + 1]);
 }
 
 fn drawDisplay(base: *gadgets.Base, own: *Data, o: *Object, rp: *graphics.RastPort, info: *classusr.GadgetInfo) void {

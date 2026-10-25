@@ -14,7 +14,9 @@ Player FILES/M,VOLUME/K/N,LOOK/K
 ```
 
 - `FILES` are played one after another.
-- `VOLUME` is in percent of as recorded (100), up to 200.
+- `VOLUME` is in percent of as recorded (100), up to 200: up to 100 as
+  loud as it sounds - half way is -18 dB - and past it a boost, 200
+  twice as loud as recorded.
 - `LOOK` is the picture to start with: `PLASMA`, `WAVE` or `BARS`.
 
 A file dropped on the window from the desktop, picked with the button at

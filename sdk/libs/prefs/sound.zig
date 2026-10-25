@@ -24,6 +24,7 @@
 
 const intuition = @import("../intuition/intuition.zig");
 const audio = @import("../../devices/audio.zig");
+const audiocontrol = @import("../../devices/audiocontrol.zig");
 const style = @import("style.zig");
 
 /// What a beep sounds like: `Settings.sound`.
@@ -178,9 +179,10 @@ pub fn beepFrames(settings: *const Settings) u32 {
     return beep_rate * settings.duration / 1000;
 }
 
-/// audio.device's volume for the line's percent.
+/// audio.device's volume for the line's percent, as loud as every
+/// other volume in percent (`audiocontrol.volumeOf`).
 pub fn volumeOf(settings: *const Settings) u32 {
-    return audio.AUDIO_VOLUME_UNITY * settings.volume / 100;
+    return audiocontrol.volumeOf(settings.volume);
 }
 
 /// One cycle of a sine, a little below full scale, worked out while
