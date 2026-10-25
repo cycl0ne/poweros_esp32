@@ -26,7 +26,8 @@ device requests are described in `sdk/devices/network.zig`,
 - [SSH: ssh.device](#ssh-sshdevice) - the server, its files over sftp
   and scp, the client (`C:net/SSH`), copying (`C:net/SCP`), the device
 - [A share as a volume: smb-handler](#a-share-as-a-volume-smb-handler) -
-  `C:net/MountShare`, the logon, signing and encryption, names
+  `C:net/MountShare`, share files, the logon, signing and encryption,
+  staying connected, names
 - [A packet filter](#a-packet-filter) - its rules, `C:net/Filter`, and
   the packet hooks it is built on
 - [Commands](#commands)
@@ -822,14 +823,16 @@ MountShare NAS DISMOUNT
 
 | Keyword | Means |
 |---|---|
-| `NAME/M` | the device, `NAS` or `NAS:`; several with DISMOUNT |
+| `NAME/M` | the device, `NAS` or `NAS:`; several at once |
+| `ALL/S` | every share in `DEVS:Shares/`, as its file says; with DISMOUNT, every share mounted |
 | `SHARE/K` | `//server/share`, slashes either way: a name or an address, IPv6 in brackets, `:port` when it is not 445 |
 | `USER/K`, `PASSWORD/K`, `DOMAIN/K` | the logon; with neither user nor password it is anonymous, which a server may take as a guest |
 | `VOLUME/K` | the volume's name; the share's without it |
 | `PORT/K/N` | the server's port, as `:port` in SHARE |
 | `READONLY/S` | nothing written, whatever the server allows |
 | `ENCRYPT/S` | every message encrypted, or no mount |
-| `QUIET/S` | nothing said when it mounts |
+| `SAVE/S` | once mounted, what it was mounted with written into its share file, and a PASSWORD's NT hash into its password file |
+| `QUIET/S` | nothing said when it mounts, or is mounted already |
 | `DISMOUNT/S` | logs off and takes the device away; not while a lock or a file is open on it |
 
 MountShare starts the handler at once, and the handler connects, logs on
@@ -838,7 +841,45 @@ be had is not left mounted, and MountShare says why: no address for the
 name, no answer or a refused connection, the server speaking neither
 SMB 2 nor 3, a wrong user or password (or a disabled, locked or expired
 account), no such share or none for this user, encryption that cannot
-be had, or an answer whose signature is wrong.
+be had, or an answer whose signature is wrong. A share mounted already
+is left as it is.
+
+**A share file** says once what the command line would say each time:
+`DEVS:Shares/<NAME>`, in the keyword format of the interface files, and
+`MountShare NAS` mounts the share it describes. What the command line
+gives goes over what the file says.
+
+```
+/* DEVS:Shares/NAS */
+Share   = //nas.lan/public
+User    = me
+Encrypt = YES
+```
+
+| Keyword | Means |
+|---|---|
+| `Share` | `//server/share`, as SHARE; in quotes when it holds a space |
+| `User`, `Domain` | the logon |
+| `Volume` | the volume's name; the share's without it |
+| `Port` | the server's port, when `Share` does not say it |
+| `ReadOnly`, `Encrypt` | `YES` or `NO` (the default), as READONLY and ENCRYPT |
+
+A keyword the file does not know is an error, with its line and column.
+**The password** is not in the share file, which anyone reading DEVS:
+sees: when PASSWORD is not given it is the first line of
+`ENVARC:Sys/net/shares/<NAME>`, and 32 hex digits there are taken as
+its NT hash. SAVE writes the hash, never the password, which may open
+more than this share:
+
+```
+MountShare NAS SHARE=//nas.lan/public USER=me PASSWORD=secret ENCRYPT SAVE
+MountShare: NAS: is //nas.lan/public, SMB 3.1.1, signed with AES-GMAC, encrypted with AES-128-GCM
+MountShare: NAS: saved in DEVS:Shares/NAS, its password's hash in ENVARC:Sys/net/shares/NAS
+```
+
+`S:Network-Startup` runs `MountShare ALL QUIET` once the interfaces are
+up and the clock is set, so every share with a file is there after the
+boot; one whose server cannot be had then is mounted by hand later.
 
 - **The dialects** 2.0.2, 2.1, 3.0, 3.0.2 and 3.1.1 are offered in one
   negotiation, and the server picks; SMB 1 is not spoken.
@@ -867,6 +908,20 @@ be had, or an answer whose signature is wrong.
   file's date is its last write, in local time by the time zone.
 - **Info** answers from the share's size as read at the mount, never from
   the network while it holds the device list.
+- **Staying connected**: a connection that is lost - the server
+  restarted, the network away for a while - is made again when it is
+  next needed: the negotiation, the logon and the share as at the mount.
+  The packet that found it lost is served again on the new connection,
+  and a `Copy` under way goes on from where it was; every open file is
+  opened again by its path and keeps its position. A file that is no
+  longer there answers "object not found" from then on, and a directory
+  being listed starts over from the entries it had handed out. While the
+  server cannot be had, each packet that needs it answers "not mounted"
+  at once, and a new connection is tried at most every five seconds.
+  With anything locked or open, the handler sends an ECHO when a minute
+  went by without a packet, so a connection that died is found, and made
+  again, before a program next asks. A server that stops answering
+  without closing the connection is given 30 seconds.
 
 ## A packet filter
 
@@ -982,6 +1037,6 @@ bsdsocket.library only for the length of a call, keeps its hooks in.
 | `C:net/ShellServer` | a shell for each connection to a TCP port: Telnet, or with `SSH` an SSH server, with sftp and scp for the files |
 | `C:net/SSH` | a shell or a command on another machine over SSH; `KEYGEN` makes the key for logins |
 | `C:net/SCP` | files to and from another machine over SSH (SFTP); `ALL` for a directory |
-| `C:net/MountShare` | a share on an SMB 2 or 3 server mounted as a device; `DISMOUNT` takes it away |
+| `C:net/MountShare` | a share on an SMB 2 or 3 server mounted as a device, from the command line or its file in `DEVS:Shares/`; `ALL` mounts every one, `SAVE` writes the file, `DISMOUNT` takes it away |
 | `C:net/Net` | a network device spoken to directly |
 | `C:test/BsdSockTest` | bsdsocket.library against the BSD socket API |

@@ -344,6 +344,7 @@ flowchart TB
     m_smb_handler --> m_bsdsocket_library
     m_smb_handler --> m_crypto_library
     m_smb_handler --> m_dos_library
+    m_smb_handler --> m_timer_device
     m_ssh_device --> m_bsdsocket_library
     m_ssh_device --> m_crypto_library
     m_ssh_device --> m_timer_device

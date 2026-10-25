@@ -201,7 +201,9 @@ Beside them:
   snapshots ([posfs guide](sdk/docs/guides/posfs.md)); FAT32 and exFAT
   on cards and sticks; the flash file system (`DH0:`), `RAM:`, `PIPE:`;
   a share on an SMB 2 or 3 server, read as a volume, signed and
-  encrypted (`C:net/MountShare`, [network guide](sdk/docs/guides/network.md#a-share-as-a-volume-smb-handler));
+  encrypted, mounted at boot from its file in `DEVS:Shares/` and
+  connected again after a server restart (`C:net/MountShare`,
+  [network guide](sdk/docs/guides/network.md#a-share-as-a-volume-smb-handler));
   partitions from an RDB or a GPT on any drive, laid out in
   `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)).
 - **Devices:** timer, serial, console, input from keyboards, mice and

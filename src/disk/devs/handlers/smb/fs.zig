@@ -39,8 +39,21 @@
 //! **Dates** are LastWriteTime, from UTC into the zone the system clock
 //! keeps.
 //!
-//! **A broken connection** answers ERROR_DEVICE_NOT_MOUNTED for every
-//! packet that needs the server; locks and files are still let go of.
+//! **A lost connection is made again** - the connection, the
+//! negotiation, the logon and the tree, by the handler's `reconnect` -
+//! the next time a packet needs the server, and at once for the packet
+//! that found it lost: that one is served again on the new connection,
+//! and a READ goes on from the piece it was at. The server's handles went
+//! with the old connection, so every open file is opened again by its
+//! path and keeps its position; one that is no longer there answers
+//! ERROR_OBJECT_NOT_FOUND from then on. A scan starts over from the
+//! entries it had handed out. While the server cannot be had, a packet
+//! that needs it answers ERROR_DEVICE_NOT_MOUNTED; locks and files are
+//! still let go of.
+//!
+//! **Idle**, with anything locked or open, the handler sends an ECHO now
+//! and then (`idle`): a connection that died is found, and made again,
+//! before a program next asks.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -148,6 +161,9 @@ pub const Lock = extern struct {
     file_id: [16]u8 = @splat(0),
     open: bool = false,
     is_dir: bool = false,
+    /// An open file that was not there when its handle was made again
+    /// on a new connection.
+    gone: bool = false,
     /// An open file's position, and its size as last known.
     pos: u64 align(4) = 0,
     size: u64 align(4) = 0,
@@ -207,6 +223,9 @@ pub const FileSystem = struct {
     batch_length: usize = 0,
     /// The connection is gone.
     lost: bool = false,
+    /// Makes the connection again after it was lost - the session, the
+    /// logon and the tree - or says it cannot yet: the handler's.
+    reconnect: ?*const fn (fs: *FileSystem) bool = null,
 
     // --- memory ---------------------------------------------------------------
 
@@ -443,6 +462,54 @@ pub const FileSystem = struct {
         fs.exchange(&request, &replies) catch {};
     }
 
+    // --- staying connected ----------------------------------------------------
+
+    /// After a lost connection: the connection made again, and every
+    /// open file opened again by its path, at its position. The scans'
+    /// handles went with the old connection: each starts over at its next
+    /// EXAMINE_NEXT. False while the server cannot be had.
+    pub fn recover(fs: *FileSystem) bool {
+        if (!fs.lost) return true;
+        const reconnect = fs.reconnect orelse return false;
+        var it = fs.locks;
+        while (it) |lock| : (it = lock.nextLock()) {
+            const scan = lock.scan orelse continue;
+            fs.sys.FreeVec(scan);
+            lock.scan = null;
+        }
+        if (!reconnect(fs)) return false;
+        fs.lost = false;
+        var path: Path = .{};
+        it = fs.locks;
+        while (it) |lock| : (it = lock.nextLock()) {
+            if (!lock.open) continue;
+            lock.gone = true;
+            path.set(lock.path()) catch continue;
+            const object = fs.openFile(&path) catch {
+                if (fs.lost) return false;
+                continue;
+            };
+            lock.file_id = object.file_id;
+            lock.size = object.size;
+            lock.gone = false;
+        }
+        return true;
+    }
+
+    /// Nothing asked for a while: with anything locked or open, an ECHO,
+    /// and a connection found lost made again.
+    pub fn idle(fs: *FileSystem) void {
+        if (!fs.inUse()) return;
+        if (!fs.lost) {
+            var request = fs.session.begin(.echo);
+            request.on_tree = false;
+            commands.echo(&request);
+            var replies = session_area.noReplies();
+            fs.exchange(&request, &replies) catch {};
+        }
+        if (fs.lost) _ = fs.recover();
+    }
+
     // --- locks ----------------------------------------------------------------
 
     fn locate(fs: *FileSystem, dir_arg: isize, name: ?[*:0]const u8, access: i32) Error!*Lock {
@@ -623,14 +690,23 @@ pub const FileSystem = struct {
         const lock = try fs.fileOf(args.fh);
         const buffer = args.buffer orelse return 0;
         const length: usize = if (args.length > 0) @intCast(args.length) else 0;
-        const piece_max: usize = @min(session_area.io_max, fs.session.max_read);
+        var recovered = false;
         var done: usize = 0;
         while (done < length) {
+            if (lock.gone) return error.NotFound;
+            // The server's limit, which a new connection may change.
+            const piece_max: usize = @min(session_area.io_max, fs.session.max_read);
             const want: u32 = @intCast(@min(length - done, piece_max));
             var request = fs.session.begin(.read);
             commands.read(&request, &lock.file_id, lock.pos, want);
             var replies = session_area.noReplies();
-            try fs.exchange(&request, &replies);
+            fs.exchange(&request, &replies) catch |err| {
+                // Lost on the way: the piece asked for again, once, on
+                // the file's handle on a new connection.
+                if (recovered or !fs.lost or !fs.recover()) return err;
+                recovered = true;
+                continue;
+            };
             const data = commands.readData(&replies[0]) orelse return errorOf(replies[0].status());
             const count = @min(data.len, length - done);
             @memcpy(buffer[done..][0..count], data[0..count]);
@@ -655,6 +731,7 @@ pub const FileSystem = struct {
     /// To a position; the old one. Not before the start or past the end.
     fn seek(fs: *FileSystem, args: dos.SeekArgs) Error!i64 {
         const lock = try fs.fileOf(args.fh);
+        if (lock.gone) return error.NotFound;
         if (args.mode == dos.OFFSET_END) try fs.askSize(lock);
         const from: i128 = switch (args.mode) {
             dos.OFFSET_BEGINNING => 0,
@@ -678,7 +755,7 @@ pub const FileSystem = struct {
         const handle = args.fh orelse return error.InvalidLock;
         const lock: *Lock = @ptrCast(@alignCast(handle.key orelse return error.InvalidLock));
         if (!fs.owns(lock)) return error.InvalidLock;
-        if (lock.open and !fs.lost) fs.closeHandle(&lock.file_id);
+        if (lock.open and !lock.gone and !fs.lost) fs.closeHandle(&lock.file_id);
         lock.open = false;
         fs.freeLock(lock);
         handle.key = null;
@@ -764,14 +841,28 @@ pub const FileSystem = struct {
     /// Every lock and file let go of on the server, for a dismount.
     pub fn releaseAll(fs: *FileSystem) void {
         while (fs.locks) |lock| {
-            if (lock.open and !fs.lost) fs.closeHandle(&lock.file_id);
+            if (lock.open and !lock.gone and !fs.lost) fs.closeHandle(&lock.file_id);
             fs.freeLock(lock);
         }
     }
 
     // --- packets --------------------------------------------------------------
 
+    /// A packet answered. One that needs the server and finds the
+    /// connection lost has it made again first; one that loses it on the
+    /// way is served once more on a new connection - a READ goes on by
+    /// itself, from where it was.
     pub fn answer(fs: *FileSystem, pkt: *DosPacket) Answer {
+        const action = pkt.getAction();
+        if (!asksServer(action)) return fs.serve(pkt);
+        if (fs.lost and !fs.recover()) return no(error.NotMounted);
+        const first = fs.serve(pkt);
+        if (!fs.lost or action == .read or first.res2 != dos.ERROR_DEVICE_NOT_MOUNTED) return first;
+        if (!fs.recover()) return first;
+        return fs.serve(pkt);
+    }
+
+    fn serve(fs: *FileSystem, pkt: *DosPacket) Answer {
         const raw = pkt.args.raw;
         switch (pkt.getAction()) {
             .locate_object => {
@@ -866,6 +957,15 @@ pub const FileSystem = struct {
         }
     }
 };
+
+/// The packets that ask the server something: everything else is
+/// answered from what the handler holds, the connection there or not.
+fn asksServer(action: dos.ActionCode) bool {
+    return switch (action) {
+        .locate_object, .examine_object, .examine_next, .examine_fh, .findinput, .read, .seek, .fh_from_lock => true,
+        else => false,
+    };
+}
 
 /// The furthest position a packet's i64 can say.
 const max_position: u64 = 0x7FFF_FFFF_FFFF_FFFF;

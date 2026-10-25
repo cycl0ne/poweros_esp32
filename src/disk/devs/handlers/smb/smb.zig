@@ -24,6 +24,16 @@
 //! answer from the share's size as last asked, so Info, which holds the
 //! device list while it asks, never waits on the network.
 //!
+//! **Staying connected.** A connection that is lost is made again when
+//! it is next needed (`fs.zig` says how), through `reconnect`: the
+//! connection, the negotiation, the logon and the tree as at the start.
+//! A try that fails is not made again for `retry_seconds`, on the
+//! E-clock, so while the server is gone each packet that needs it is
+//! answered at once. The idle timer runs out every `idle_seconds`; when
+//! no packet came since it last did and anything is locked or open, an
+//! ECHO goes, so a connection that died is found and made again before a
+//! program next asks.
+//!
 //! **Dismounting** (ACTION_DIE) is refused while anything is locked or
 //! open on the volume. Otherwise the handler disconnects from the share,
 //! logs off, takes its volume off the device list and ends; the device
@@ -45,6 +55,8 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const DosPacket = dos.DosPacket;
 const Process = dos.Process;
+const timer = sdk.devices.timer;
+const TimerBase = sdk.interface.timer.TimerBase;
 const connection_area = @import("connection.zig");
 const session_area = @import("session.zig");
 const negotiate_area = @import("negotiate.zig");
@@ -57,7 +69,7 @@ const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 0;
+const HANDLER_REVISION = 1;
 const BUILD_DATE = "25.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -73,6 +85,11 @@ const CRYPTO_REVISION = 4;
 const list_tries = 100;
 const list_try_ticks = 2;
 
+/// How often the idle timer runs out, and how long after a reconnection
+/// that failed the next may be tried.
+const idle_seconds = 60;
+const retry_seconds = 5;
+
 /// Everything the process keeps, in one allocation.
 const State = struct {
     sys: *ExecBase,
@@ -86,6 +103,15 @@ const State = struct {
     volume: ?*dos.DosList = null,
     /// The volume's name, NUL-terminated.
     volume_name: [dos.name_max + 1]u8 = @splat(0),
+    /// The idle timer: its request on timer.device's UNIT_VBLANK and the
+    /// port it comes back to, null without the device.
+    clock: timer.TimeRequest = .{},
+    clock_port: ?*exec.MsgPort = null,
+    clock_running: bool = false,
+    /// A packet came since the idle timer last ran out.
+    busy: bool = false,
+    /// When a reconnection may be tried again, in seconds on the E-clock.
+    retry_after: u64 = 0,
 };
 
 /// The handler process: ACTION_STARTUP - the connection, the logon and
@@ -143,34 +169,56 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
         },
         .fs = undefined,
     };
-    st.fs = .{ .sys = sys, .session = &st.session, .port = &me.msg_port, .zone = timeZone(sys) };
+    st.fs = .{ .sys = sys, .session = &st.session, .port = &me.msg_port, .zone = timeZone(sys), .reconnect = &reconnect };
     cb.RandomBytes(&st.session.client_guid, 16);
 
-    if (!connect(st)) {
+    // The share's size, for Info; a server that will not say is shown
+    // with none.
+    const connected = connect(st);
+    if (connected) st.fs.askSpace() catch {};
+    if (!connected or st.fs.lost) {
         st.session.connection.close();
         return dl.ReplyPkt(startup_packet, dos.DOSFALSE, dos.ERROR_DEVICE_NOT_MOUNTED);
     }
     addVolume(st);
+    openClock(st);
     if (node) |device| device.task = &me.msg_port;
     dl.ReplyPkt(startup_packet, dos.DOSTRUE, 0);
 
+    // Packets on the process's port, the idle timer on its own.
+    const packets = &me.msg_port;
+    const clock_mask: u32 = if (st.clock_port) |port| port.sigMask() else 0;
+    startClock(st);
     while (true) {
-        const pkt = dl.WaitPkt() orelse continue;
-        if (pkt.getAction() == .die) {
-            if (st.fs.inUse()) {
-                dl.ReplyPkt(pkt, dos.DOSFALSE, dos.ERROR_OBJECT_IN_USE);
-                continue;
+        if (st.clock_port) |port| {
+            if (sys.GetMsg(port) != null) {
+                st.clock_running = false;
+                if (!st.busy) st.fs.idle();
+                st.busy = false;
+                startClock(st);
             }
-            st.fs.releaseAll();
-            if (!st.fs.lost) logon_area.logoff(&st.session);
-            st.session.connection.close();
-            if (node) |device| device.task = null;
-            removeVolume(st, &me.msg_port);
-            dl.ReplyPkt(pkt, dos.DOSTRUE, 0);
-            return;
         }
-        const reply = st.fs.answer(pkt);
-        dl.ReplyPkt(pkt, reply.res1, reply.res2);
+        while (sys.GetMsg(packets)) |message| {
+            const pkt = DosPacket.fromMessage(message);
+            st.busy = true;
+            if (pkt.getAction() == .die) {
+                if (st.fs.inUse()) {
+                    dl.ReplyPkt(pkt, dos.DOSFALSE, dos.ERROR_OBJECT_IN_USE);
+                    continue;
+                }
+                closeClock(st);
+                st.fs.releaseAll();
+                if (!st.fs.lost) logon_area.logoff(&st.session);
+                st.session.connection.close();
+                if (node) |device| device.task = null;
+                removeVolume(st, &me.msg_port);
+                dl.ReplyPkt(pkt, dos.DOSTRUE, 0);
+                return;
+            }
+            const reply = st.fs.answer(pkt);
+            dl.ReplyPkt(pkt, reply.res1, reply.res2);
+        }
+        _ = sys.Wait(packets.sigMask() | clock_mask);
     }
 }
 
@@ -264,10 +312,72 @@ fn connect(st: *State) bool {
         },
     }
     if (session.encrypt_all or session.encrypt_tree) result.cipher = session.keys.cipher;
-    // The share's size, for Info; a server that will not say is shown
-    // with none.
-    st.fs.askSpace() catch {};
-    return !st.fs.lost;
+    return true;
+}
+
+/// The connection made again after it was lost: what the old one had
+/// forgotten, then the connection, the negotiation, the logon and the
+/// tree as at the start - unless a try failed less than `retry_seconds`
+/// ago. The file system's `reconnect`.
+fn reconnect(fs: *FileSystem) bool {
+    const st: *State = @alignCast(@fieldParentPtr("fs", fs));
+    const now = seconds(st);
+    if (now) |at| if (at < st.retry_after) return false;
+    st.session.reset();
+    if (connect(st)) {
+        st.retry_after = 0;
+        return true;
+    }
+    st.session.reset();
+    if (now) |at| st.retry_after = at + retry_seconds;
+    return false;
+}
+
+/// Seconds on the E-clock, which only ever counts up - whatever the
+/// system's time is set to; null without timer.device.
+fn seconds(st: *State) ?u64 {
+    if (st.clock_port == null) return null;
+    const timer_base: *TimerBase = @ptrCast(@alignCast(st.clock.node.device orelse return null));
+    var value: timer.EClockVal = .{};
+    const rate = timer_base.ReadEClock(&value);
+    if (rate == 0) return null;
+    return value.toTicks() / rate;
+}
+
+/// The idle timer's request, opened on timer.device with a port of its
+/// own. Without it the handler still works; it sends no ECHO, and tries
+/// a reconnection whenever it is asked to.
+fn openClock(st: *State) void {
+    const sys = st.sys;
+    const port = sys.CreateMsgPort() orelse return;
+    st.clock = .{ .node = .{ .message = .{ .reply_port = port, .length = @sizeOf(timer.TimeRequest) } } };
+    if (sys.OpenDevice(timer.TIMERNAME, timer.UNIT_VBLANK, &st.clock.node, 0) != 0) {
+        sys.DeleteMsgPort(port);
+        return;
+    }
+    st.clock_port = port;
+}
+
+/// The idle timer started for `idle_seconds`.
+fn startClock(st: *State) void {
+    if (st.clock_port == null or st.clock_running) return;
+    st.clock.node.command = timer.TR_ADDREQUEST;
+    st.clock.time = .{ .secs = idle_seconds };
+    st.sys.SendIO(&st.clock.node);
+    st.clock_running = true;
+}
+
+/// The idle timer stopped and its device closed.
+fn closeClock(st: *State) void {
+    const port = st.clock_port orelse return;
+    if (st.clock_running) {
+        _ = st.sys.AbortIO(&st.clock.node);
+        _ = st.sys.WaitIO(&st.clock.node);
+        st.clock_running = false;
+    }
+    st.sys.CloseDevice(&st.clock.node);
+    st.sys.DeleteMsgPort(port);
+    st.clock_port = null;
 }
 
 /// A stage that broke off: a signature or seal that was wrong is a
