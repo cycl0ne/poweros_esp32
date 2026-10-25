@@ -30,6 +30,9 @@ pub const filesystems = @import("filesystems.zig");
 /// posfs, the PowerOS file system: its format, its names and its own
 /// packets (sdk/libs/dos/posfs).
 pub const posfs = @import("posfs/posfs.zig");
+/// A share on an SMB server as a device: its startup message, its DosType
+/// and the protocol's codes (sdk/libs/dos/smb.zig).
+pub const smb = @import("smb.zig");
 pub const workfile = @import("workfile.zig");
 /// Keyword files: the mountlist format, read a token at a time.
 pub const keywords = @import("keywords.zig");

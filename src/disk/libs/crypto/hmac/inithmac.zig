@@ -20,8 +20,9 @@ const _hash = @import("../hash/_hash.zig");
 /// INPUTS:
 /// - `context`: the caller's, made with `.{}` so that its `size` is
 ///   right; whatever it held before is dropped.
-/// - `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384 or
-///   HASH_SHA512.
+/// - `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384,
+///   HASH_SHA512, and since 1.4 HASH_MD5 and HASH_MD4 (HMAC-MD5 is what
+///   NTLMv2 signs with).
 /// - `key`: the key's bytes; may be null when `key_length` is 0.
 /// - `key_length`: any length. A key longer than the hash's block is
 ///   hashed first, as RFC 2104 says.

@@ -22,9 +22,10 @@
 //! else could add or remove a device meanwhile. The data may be stale by the
 //! time it reaches the screen - a disk could have gone - and that is accepted.
 //!
-//! - **`ID_FLASHFS_DISK` and `ID_POSFS_DISK` count as file systems.** A
-//!   DosType that is not in the list is unreadable; the flash file
-//!   system's is `FLS\0` and posfs's `POS\0`, so they are in the list. An unformatted partition still answers `ID_NOT_REALLY_DOS` and
+//! - **`ID_FLASHFS_DISK`, `ID_POSFS_DISK` and `ID_SMB_DISK` count as file
+//!   systems.** A DosType that is not in the list is unreadable; the
+//!   flash file system's is `FLS\0`, posfs's `POS\0` and a mounted
+//!   share's `SMB\0`, so they are in the list. An unformatted partition still answers `ID_NOT_REALLY_DOS` and
 //!   still prints "Not a DOS disk", which is what it is; an inhibited
 //!   drive answers `ID_BUSY_DISK` and prints "Disk busy".
 //! - **Sizes are 64-bit.** id_NumBlocks and id_NumBlocksUsed are u64 here,
@@ -51,7 +52,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Info";
-const VERSION_STRING = "\x00$VER: Info 1.3 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Info 1.4 (25.10.2026)\r\n";
 
 const template = "DEVICE";
 const arg_device = 0;
@@ -92,8 +93,8 @@ fn isConsole(disk_type: u32) bool {
 }
 
 /// The DosTypes that are a file system with blocks to count, the flash
-/// file system's and posfs's among them - a `FLS\0` or `POS\0` volume is
-/// as real as a `DOS\0` one.
+/// file system's, posfs's and a share's among them - a `FLS\0`, `POS\0`
+/// or `SMB\0` volume is as real as a `DOS\0` one.
 fn isFileSystem(disk_type: u32) bool {
     return switch (disk_type) {
         dos.ID_DOS_DISK,
@@ -105,6 +106,7 @@ fn isFileSystem(disk_type: u32) bool {
         dos.ID_MSDOS_DISK,
         dos.flashfs.ID_FLASHFS_DISK,
         dos.posfs.ID_POSFS_DISK,
+        dos.smb.ID_SMB_DISK,
         => true,
         else => false,
     };

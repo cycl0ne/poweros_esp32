@@ -90,6 +90,7 @@ test {
     _ = @import("c/net/addnetinterface/config.zig");
     _ = @import("c/net/timesync/tests/zone.zig");
     _ = @import("c/net/httpget/http.zig");
+    _ = @import("c/net/mountshare/place.zig");
     _ = @import("c/net/shellserver/tests/sftp.zig");
     _ = @import("devs/handlers/fat/_fat.zig");
     _ = @import("devs/handlers/fat/testmedia.zig");
@@ -128,6 +129,12 @@ test {
     _ = @import("devs/handlers/posfs/tests/powercut.zig");
     _ = @import("devs/handlers/posfs/tests/system.zig");
     _ = @import("devs/handlers/posfs/posfs.zig");
+    _ = @import("devs/handlers/smb/wire.zig");
+    _ = @import("devs/handlers/smb/spnego.zig");
+    _ = @import("devs/handlers/smb/names.zig");
+    _ = @import("devs/handlers/smb/fs.zig");
+    _ = @import("devs/handlers/smb/smb.zig");
+    _ = @import("devs/handlers/smb/tests/smb.zig");
     _ = @import("classes/datatypes/png/tests/png.zig");
     _ = @import("classes/datatypes/gif/lzw.zig");
     _ = @import("classes/datatypes/gif/decode.zig");

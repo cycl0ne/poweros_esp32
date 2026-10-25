@@ -55,6 +55,11 @@ pub const HASH_SHA224: u32 = 2;
 pub const HASH_SHA256: u32 = 3;
 pub const HASH_SHA384: u32 = 4;
 pub const HASH_SHA512: u32 = 5;
+/// MD5 and MD4 (since 1.4), for the protocols that are built on them -
+/// NTLM's logon, PPP's CHAP. Neither keeps a secret any more: nothing new
+/// should rest on them.
+pub const HASH_MD5: u32 = 6;
+pub const HASH_MD4: u32 = 7;
 
 /// The longest digest there is, SHA-512's: a buffer this long takes any.
 pub const DIGEST_MAX: u32 = 64;
@@ -69,6 +74,7 @@ pub inline fn digestLength(algorithm: u32) u32 {
         HASH_SHA256 => 32,
         HASH_SHA384 => 48,
         HASH_SHA512 => 64,
+        HASH_MD5, HASH_MD4 => 16,
         else => 0,
     };
 }
@@ -76,7 +82,7 @@ pub inline fn digestLength(algorithm: u32) u32 {
 /// The bytes of an algorithm's block, or 0 for one there is not.
 pub inline fn blockLength(algorithm: u32) u32 {
     return switch (algorithm) {
-        HASH_SHA1, HASH_SHA224, HASH_SHA256 => 64,
+        HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_MD5, HASH_MD4 => 64,
         HASH_SHA384, HASH_SHA512 => 128,
         else => 0,
     };

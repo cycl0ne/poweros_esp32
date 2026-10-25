@@ -19,8 +19,8 @@ const _hash = @import("_hash.zig");
 /// INPUTS:
 /// - `context`: the caller's, made with `.{}` so that its `size` is
 ///   right; whatever it held before is dropped.
-/// - `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384 or
-///   HASH_SHA512.
+/// - `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384,
+///   HASH_SHA512, and since 1.4 HASH_MD5 and HASH_MD4.
 ///
 /// RESULT:
 /// CRYPTOERR_OK, or CRYPTOERR_ALGORITHM for an algorithm there is not;
@@ -45,8 +45,9 @@ const _hash = @import("_hash.zig");
 /// Nothing is allocated; the context stays the caller's.
 ///
 /// NOTES:
-/// SHA-1 is here for the formats that still name it; nothing new should
-/// rest on it.
+/// SHA-1, MD5 and MD4 are here for the formats and protocols that still
+/// name them - MD4 and MD5 for NTLM's logon and PPP's CHAP; nothing new
+/// should rest on them. MD4 and MD5 run on the CPU on every chip.
 ///
 /// BUGS:
 /// None known.
