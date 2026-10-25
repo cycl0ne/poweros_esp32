@@ -21,10 +21,12 @@
 //! frames.
 //!
 //! **A board without a region** (RTGRF_SYSTEM_MEMORY) has its buffers
-//! taken from exec as they are asked for, external memory first, and
-//! given back when they are freed: a picture nobody shows costs nothing.
-//! The arena then only counts them against the most the board may hold
-//! at once, and aligns each by taking a little more than it needs.
+//! taken from exec as they are asked for, external memory first - or only
+//! memory a DMA engine reaches, for a display that reads nothing else
+//! (RTGRF_DMA_MEMORY) - and given back when they are freed: a picture
+//! nobody shows costs nothing. The arena then only counts them against
+//! the most the board may hold at once, and aligns each by taking a
+//! little more than it needs.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -41,6 +43,16 @@ const Block = struct {
     offset: usize = 0,
     size: usize = 0,
 };
+
+/// The memory a board's buffers from the system have to be, by its
+/// region's flags: `MEMF_DMA` for a display that reads only that
+/// (`RTGRF_DMA_MEMORY`), else 0.
+///
+/// INPUTS:
+/// - `flags` - the region's `RTGRF_` flags.
+pub fn attributesOf(flags: u32) u32 {
+    return if (flags & sdk.rtg.boards.RTGRF_DMA_MEMORY != 0) exec.MEMF_DMA else 0;
+}
 
 /// What a board's display memory has been cut into.
 pub const Arena = struct {
@@ -64,6 +76,10 @@ pub const Arena = struct {
     /// the most they may hold at once, and `used` what they hold.
     system: bool = false,
     used: usize = 0,
+    /// The memory every buffer from the system has to be, as exec's
+    /// attributes (`MEMF_DMA`), or 0 for external memory first and then
+    /// any.
+    attributes: u32 = 0,
 
     /// `base` is where the region starts, because the alignment has to be
     /// true of the addresses a display reads and not merely of the offsets
@@ -106,8 +122,10 @@ pub const Arena = struct {
     /// - `sys` - exec.
     /// - `limit` - the most the buffers may hold together.
     /// - `alignment` - what every buffer and row is aligned to.
-    pub fn initSystem(arena: *Arena, sys: *ExecBase, limit: usize, alignment: u32) void {
-        arena.* = .{ .size = limit, .alignment = if (alignment == 0) 64 else alignment, .system = true };
+    /// - `attributes` - the memory they have to be (`MEMF_DMA`), or 0 for
+    ///   external memory first and then any.
+    pub fn initSystem(arena: *Arena, sys: *ExecBase, limit: usize, alignment: u32, attributes: u32) void {
+        arena.* = .{ .size = limit, .alignment = if (alignment == 0) 64 else alignment, .system = true, .attributes = attributes };
         sys.NewList(&arena.blocks);
         arena.free_bytes = limit;
     }
@@ -138,7 +156,10 @@ pub const Arena = struct {
         const want = arena.roundUp(bytes);
         if (arena.used + want > arena.size) return null;
         const whole = want + arena.alignment - 1;
-        const memory = sys.AllocMem(whole, exec.MEMF_EXTERNAL) orelse sys.AllocMem(whole, exec.MEMF_ANY) orelse return null;
+        const memory = if (arena.attributes != 0)
+            sys.AllocMem(whole, arena.attributes) orelse return null
+        else
+            sys.AllocMem(whole, exec.MEMF_EXTERNAL) orelse sys.AllocMem(whole, exec.MEMF_ANY) orelse return null;
         const at = @intFromPtr(memory);
         arena.used += want;
         arena.free_bytes = arena.size - arena.used;
@@ -329,7 +350,7 @@ pub const Arena = struct {
     /// - `sys` - exec.
     pub fn largest(arena: *Arena, sys: *ExecBase) usize {
         if (arena.system) {
-            const piece = sys.AvailMem(exec.MEMF_EXTERNAL | exec.MEMF_LARGEST);
+            const piece = sys.AvailMem((if (arena.attributes != 0) arena.attributes else exec.MEMF_EXTERNAL) | exec.MEMF_LARGEST);
             const whole = if (piece > arena.alignment) piece - (arena.alignment - 1) else 0;
             return @min(arena.free_bytes, arena.roundDown(whole));
         }

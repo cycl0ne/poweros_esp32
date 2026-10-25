@@ -18,6 +18,7 @@ const memoryFor = _board.memoryFor;
 const err = rtg.errors;
 const fail = _board.fail;
 const registry = @import("../driver/_driver.zig");
+const memory_mod = @import("../memory/_memory.zig");
 const readRequest = _board.readRequest;
 const _board = @import("_board.zig");
 
@@ -138,7 +139,7 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     else
         0;
     if (board.region.flags & rtg.boards.RTGRF_SYSTEM_MEMORY != 0) {
-        private.arena.initSystem(sys, board.region.size, alignment);
+        private.arena.initSystem(sys, board.region.size, alignment, memory_mod.attributesOf(board.region.flags));
     } else {
         private.arena.init(sys, @intFromPtr(board.region.base), board.region.size, alignment);
     }

@@ -19,8 +19,9 @@ pub const LIBRARY_VERSION = 1;
 /// 4: pixels laid over a buffer by the engine - BlendPixels, BlendRect,
 /// ScalePixels.
 /// 5: RefreshRect - a rectangle handed on, not its whole rows.
-pub const LIBRARY_REVISION = 5;
-const BUILD_DATE = "19.10.2026";
+/// 6: buffers from system memory a DMA engine reaches (RTGRF_DMA_MEMORY).
+pub const LIBRARY_REVISION = 6;
+const BUILD_DATE = "25.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

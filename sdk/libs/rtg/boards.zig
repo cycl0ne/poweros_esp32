@@ -84,6 +84,10 @@ pub const RTGRF_ADOPTED: u32 = 1 << 2;
 /// system memory (external first) when it is allocated and gives it back
 /// when it is freed, so memory is spent only on the pictures that exist.
 pub const RTGRF_SYSTEM_MEMORY: u32 = 1 << 3;
+/// With RTGRF_SYSTEM_MEMORY: the display reads only memory a DMA engine
+/// reaches, so each buffer is taken from exec's `MEMF_DMA` memory and
+/// nowhere else - on the 64-bit machines what is below 4 GiB.
+pub const RTGRF_DMA_MEMORY: u32 = 1 << 4;
 
 /// What a board is and what it can do. GetBoardInfo fills it in; clear it,
 /// pass its size, and trust the count that comes back - a program on the

@@ -10,6 +10,7 @@ const TagItem = utility.TagItem;
 const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const bitmaps = @import("../bitmap/_bitmap.zig");
+const memory_mod = @import("../memory/_memory.zig");
 const err = rtg.errors;
 const privateOf = _board.privateOf;
 const _board = @import("_board.zig");
@@ -97,7 +98,7 @@ pub fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) i32
     // one has gone with it.
     private.arena.deinit(sys);
     if (board.region.flags & rtg.boards.RTGRF_SYSTEM_MEMORY != 0) {
-        private.arena.initSystem(sys, board.region.size, board.region.alignment);
+        private.arena.initSystem(sys, board.region.size, board.region.alignment, memory_mod.attributesOf(board.region.flags));
     } else {
         private.arena.init(sys, @intFromPtr(board.region.base), board.region.size, board.region.alignment);
     }
