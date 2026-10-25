@@ -31,6 +31,9 @@ MultiView [FILE] [CLIP/K/N] [SCALE/S] [PUBSCREEN/K]
   wheel takes it nearer or further.
 - Space pauses what is shown, or goes on with it, when it is something
   that can be: a model turns by itself until Space is pressed again.
+- A Markdown document is laid out as GitHub shows one - headings over
+  rules, lists under their marks, tables, quotes, code on a ground of
+  its own - in the fonts the Fonts page of Prefs gives documents.
 
 MultiView knows no formats itself. The datatypes classes in
 SYS:classes/datatypes read the files, and the descriptors in

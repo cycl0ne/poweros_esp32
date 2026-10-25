@@ -29,7 +29,7 @@ pub fn offsetAt(base: *Base, own: *Data, x: i32, y: i32) u32 {
     const fragments = own.fragments orelse return 0;
     const pieces = own.pieces orelse return 0;
     if (own.line_count == 0) return 0;
-    const line = lines[layout.lineAt(own, y)];
+    const line = lines[layout.lineAt(own, x, y)];
     if (line.count == 0) return endOfLine(own, line);
 
     var f: u32 = 0;
@@ -37,7 +37,7 @@ pub fn offsetAt(base: *Base, own: *Data, x: i32, y: i32) u32 {
         const fragment = fragments[line.first + f];
         if (x >= fragment.left + fragment.width and f + 1 < line.count) continue;
         const piece = &pieces[fragment.piece];
-        const into = x - fragment.left;
+        const into = x - fragment.left - fragment.inset;
         if (into <= 0) return fragment.offset;
         // The character boundary nearest the place pressed.
         var best: u32 = 0;
@@ -68,7 +68,7 @@ fn pieceAt(own: *Data, x: i32, y: i32) ?*const tdc.Piece {
     const fragments = own.fragments orelse return null;
     const pieces = own.pieces orelse return null;
     if (own.line_count == 0) return null;
-    const line = lines[layout.lineAt(own, y)];
+    const line = lines[layout.lineAt(own, x, y)];
     var f: u32 = 0;
     while (f < line.count) : (f += 1) {
         const fragment = fragments[line.first + f];

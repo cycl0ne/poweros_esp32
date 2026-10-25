@@ -384,7 +384,20 @@ SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16
 A size is in rows, or in points with `P` after it. A fourth,
 `ICON=family/size`, is the font of the names under the desktop's icons;
 left out, the desktop takes `DEFAULT`'s, and `C:SetPrefs` leaves it to
-the desktop. `SetPrefs SHOW` prints the three in use; a program reads and sets them with `GetPrefs` and
+the desktop. Two more are a document's: `DOCUMENT=family/size` is what
+text.datatype sets a document's text in - a Markdown file in MultiView -
+and `CODE=family/size` the code in it and a plain text file; left out,
+they are `DEFAULT`'s and `FIXED`'s. text.datatype reads them itself as
+it opens a document, sizes its headings from `DOCUMENT`'s size, and
+finds a family's bold and italic by name - `go-bold.font`,
+`go-italic.font`, `go-bolditalic.font` beside `go.font` - drawing the
+style over the nearest face it has where there is none. The disk's line:
+
+```
+SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 DOCUMENT=go.font/18 CODE=go-mono.font/15
+```
+
+Prefs' Fonts page sets all six. `SetPrefs SHOW` prints the three in use; a program reads and sets them with `GetPrefs` and
 `SetPrefs` (`IPREFS_ScreenFont`, `IPREFS_DefaultFont`,
 `IPREFS_FixedFont`). The boot shell's window opens after `C:SetPrefs`,
 so it is in the fonts the file names.

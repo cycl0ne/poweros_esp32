@@ -517,6 +517,8 @@ flowchart TB
     m_sound_datatype --> m_timer_device
     m_spinner_gadget --> m_motion_library
     m_text_datatype --> m_datatypes_library
+    m_text_datatype --> m_diskfont_library
+    m_text_datatype --> m_dos_library
     m_text_datatype --> m_iffparse_library
     m_text_gadget --> m_diskfont_library
     m_textedit_gadget --> m_keymap_library

@@ -90,7 +90,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.4 (20.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.5 (25.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";
@@ -204,7 +204,8 @@ fn readPens(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
 fn readFonts(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     var path: [128:0]u8 = undefined;
     const from = pathOf(&path, dir, "font.prefs");
-    var text: [1024]u8 = undefined;
+    var text: [2048]u8 = undefined;
+    comptime if (font_file.header.len + 448 > text.len) @compileError("font.prefs' explanation has outgrown readFonts' buffer");
     const read = prefs.load(l.dl, from, &text) orelse return dos.RETURN_OK;
     const words = prefs.firstLine(read) orelse return dos.RETURN_OK;
     var line: font_file.Line = .{};

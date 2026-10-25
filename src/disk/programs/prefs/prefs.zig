@@ -115,8 +115,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.10";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (20.10.2026)\r\n";
+const VERSION = "1.11";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (25.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -138,8 +138,6 @@ const ID_FIELD = 16;
 const ID_SAVE = 40;
 const ID_USE = 41;
 const ID_CANCEL = 42;
-/// A font field's ID: this and which.
-const ID_FONT = 48;
 /// The system page's window looks.
 const ID_CORNERS = 52;
 const ID_SHADOW = 53;
@@ -165,6 +163,8 @@ const ID_PREFER = 130;
 const ID_OUT_VOLUME = 136;
 const ID_BEEP_SOUND = 145;
 const ID_TEST = 150;
+/// A font field's ID: this and which.
+const ID_FONT = 152;
 
 /// The colour wheel's window's gadgets.
 const ID_WHEEL = 1;
@@ -747,6 +747,14 @@ const Editor = struct {
         const line = e.model.need(e.partName(), e.stateName()) orelse return;
         _ = line.set(key, if (choice == 0) "" else table[choice - 1].name);
         e.showPreview();
+    }
+
+    /// A font as the page shows it: as the file has it or, left out, the
+    /// one that stands in for it, so that a font not picked is not
+    /// written as anything.
+    fn fontShown(e: *const Editor, which: font_file.Which) ?[]const u8 {
+        if (e.font_line.get(which)) |text| return text;
+        return e.font_line.get(font_file.standIn(which) orelse return null);
     }
 
     /// The fonts' line as it is to be written: each font as the file had
@@ -1390,8 +1398,11 @@ fn row(ib: *IntuitionBase, children: []const ?*Object) ?*Object {
 var pages: [tab_names.len:null]?*Object = @splat(null);
 
 /// The window's whole layout, the editor's gadgets kept in it; null when
-/// something could not be made.
-fn build(e: *Editor) ?*Object {
+/// something could not be made. Never inlined: every tag list it hands
+/// over has a place of its own in its frame - near 8 KiB on AArch64 -
+/// which must be given back before the window is laid out, or the two
+/// together run past the end of a 16 KiB stack.
+noinline fn build(e: *Editor) ?*Object {
     const ib = e.ib;
     // The style page.
     e.part_chooser = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
@@ -1532,10 +1543,17 @@ fn build(e: *Editor) ?*Object {
     pages[page_colours] = column(ib, null, &.{ groups, note, builtin }, &.{}) orelse return null;
 
     // The fonts page.
-    const font_titles = [font_file.which_names.len][*:0]const u8{ "Font of screens' bars and menus", "Font of windows and gadgets", "Font of consoles (fixed-width)", "Font of the desktop's icons" };
+    const font_titles = [font_file.which_names.len][*:0]const u8{
+        "Font of screens' bars and menus",
+        "Font of windows and gadgets",
+        "Font of consoles (fixed-width)",
+        "Font of the desktop's icons",
+        "Font of documents (Markdown)",
+        "Font of code in documents and of plain text",
+    };
     for (&e.fonts, 0..) |*o, i| {
         var name: [font_file.value_len:0]u8 = undefined;
-        const attr = if (e.font_line.get(@enumFromInt(i))) |text| font_file.attrOf(text, &name) else null;
+        const attr = if (e.fontShown(@enumFromInt(i))) |text| font_file.attrOf(text, &name) else null;
         o.* = ib.NewObjectTagList(null, gfo.GETFONT_CLASS, &[_]TagItem{
             pair(gc.GA_ID, ID_FONT + i),
             pair(gfo.GETFONT_TitleText, @intFromPtr(font_titles[i])),
@@ -1545,7 +1563,9 @@ fn build(e: *Editor) ?*Object {
             .{},
         }) orelse return null;
     }
-    pages[page_fonts] = column(ib, "The system's fonts", &.{ e.fonts[0], e.fonts[1], e.fonts[2], e.fonts[3] }, &.{ "Sc_reen", "_Windows", "Conso_les", "Ic_ons" }) orelse return null;
+    const system_fonts = column(ib, "The system's fonts", &.{ e.fonts[0], e.fonts[1], e.fonts[2], e.fonts[3] }, &.{ "Sc_reen", "_Windows", "Conso_les", "Ic_ons" }) orelse return null;
+    const document_fonts = column(ib, "Documents", &.{ e.fonts[4], e.fonts[5] }, &.{ "_Text", "Co_de" }) orelse return null;
+    pages[page_fonts] = column(ib, null, &.{ system_fonts, document_fonts }, &.{}) orelse return null;
 
     // The desktop page.
     var ground_text: [20:0]u8 = @splat(0);
@@ -2025,7 +2045,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                         var size: usize = 0;
                         _ = ib.GetAttr(gfo.GETFONT_Size, o, &size);
                         var was: [font_file.value_len:0]u8 = undefined;
-                        const before = if (e.font_line.get(@enumFromInt(i))) |text| font_file.attrOf(text, &was) else null;
+                        const before = if (e.fontShown(@enumFromInt(i))) |text| font_file.attrOf(text, &was) else null;
                         const same_font = if (before) |b| name != 0 and sameText(std_span(@ptrFromInt(name)), std_span(b.name)) and b.y_size == size else false;
                         if (!same_font) e.font_picked[i] = true;
                     }

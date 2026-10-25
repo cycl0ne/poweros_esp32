@@ -485,8 +485,11 @@ pub const CLI_DEFAULT_PROMPT = "%N.%S> ";
 /// bytes: at least this, whatever the shell process itself was given. A
 /// window of gadgets goes deep - a layout in a group in a page, every
 /// message through several calls of a register-window stack - and 8 KiB
-/// was found too little for one.
-pub const CLI_DEFAULT_STACK: u32 = 16384;
+/// was found too little for one. 4 KiB for each byte of a pointer: 16 KiB
+/// where a pointer is four bytes, 32 KiB where it is eight, since the
+/// frames grow with the pointers - on the VisionFive 2, with its windows
+/// composed, SYS:Programs/Prefs took 19 KiB.
+pub const CLI_DEFAULT_STACK: u32 = 4096 * @sizeOf(usize);
 
 /// struct CommandLineInterface, without BCPL: the names are
 /// NUL-terminated strings in buffers of CLI_MAX_* bytes, allocated with it

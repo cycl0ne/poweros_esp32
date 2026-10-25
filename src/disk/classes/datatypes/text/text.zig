@@ -12,9 +12,12 @@
 //!
 //! **Text is runs, not characters.** A run is a stretch drawn one way: a
 //! font, a style, a pen, and where it leads when it is pressed. Plain
-//! text is one run a line; a marked-up document is several. Everything
-//! that differs between formats is in the runs, so a new format is a
-//! reader and nothing else.
+//! text is one run a line; a marked-up document is several, in blocks -
+//! paragraphs, headings, items of lists, listings, rules, cells of
+//! tables. Everything that differs between formats is in the runs and
+//! the blocks, so a new format is a reader and nothing else; how a
+//! document looks - GitHub's way with Markdown, in the fonts
+//! `font.prefs` names for documents - is this class's.
 //!
 //! **A line is measured before there is anything to draw into.** The
 //! object keeps a RastPort of no display for the purpose, because laying
@@ -54,13 +57,14 @@ const TagItem = utility.TagItem;
 ///
 /// datatypes.library is opened and held because datatypesclass, this
 /// class's superclass, is made when that library is first opened;
-/// iffparse.library because `DTM_COPY` writes an IFF form.
+/// iffparse.library because `DTM_COPY` writes an IFF form;
+/// diskfont.library for the fonts, and dos.library to read which.
 pub const Library = gadgets.ClassLibrary(.{
     .name = tdc.TEXTDTCLASS,
-    .version = 1,
-    .date = "29.09.2026",
+    .version = 2,
+    .date = "25.10.2026",
     .super = dtc.DATATYPESCLASS,
-    .opens = &.{ datatypes.DATATYPESNAME, iffparse.IFFPARSENAME },
+    .opens = &.{ datatypes.DATATYPESNAME, iffparse.IFFPARSENAME, sdk.diskfont.DISKFONTNAME, sdk.dos.DOSNAME },
     .Instance = _text.Data,
     .dispatch = dispatch,
 });
@@ -70,8 +74,9 @@ comptime {
 
 pub const Data = _text.Data;
 
-/// How far in from the box's edge the text is drawn.
-const margin = 2;
+/// How far in from the box's edge the text is drawn: none, as the page
+/// has its own space round it.
+const margin = 0;
 
 /// The attributes among `tags` that are this class's. Whether the text
 /// has to be laid out again.
@@ -123,12 +128,15 @@ fn takeText(base: *Base, cl: *Class, o: *Object, msg: *tdc.TdtSetText) usize {
     own.buffer_len = msg.buffer_len;
     own.pieces = msg.pieces;
     own.piece_count = msg.piece_count;
+    own.blocks = msg.blocks;
+    own.block_count = if (msg.blocks != null) msg.block_count else 0;
     own.mark_start = 0;
     own.mark_end = 0;
     if (msg.text_attr) |attr| {
         _text.closeFonts(base, own);
-        _text.openFonts(base, own, attr);
+        _text.chooseFamilies(base, own, attr);
     }
+    _text.openFonts(base, own);
     // Laid out once at its full length, so that the object knows what
     // size it would like to be before it is given a box.
     _ = layout.layOut(base, own, 0);
@@ -142,14 +150,18 @@ fn takeText(base: *Base, cl: *Class, o: *Object, msg: *tdc.TdtSetText) usize {
 /// A document is any length, and a window opened at the length of one
 /// would fill the screen and then be clamped to it. What it is measured
 /// in is the font it is drawn in, so the page is the same page whatever
-/// size that font is.
-const page_columns = 72;
-const page_rows = 24;
+/// size that font is: a document as wide as GitHub shows one, fifty
+/// heights of its font across, plain text eighty of its characters; and
+/// forty of its lines down.
+const page_columns = 80;
+const page_ems = 50;
+const page_rows = 40;
 
 fn nominalSize(base: *Base, own: *const Data) struct { width: i32, height: i32 } {
     const rp = own.measure orelse return .{ .width = own.widest, .height = layout.totalHeight(own) };
+    const which = if (own.blocks != null) tdc.TDFONT_NORMAL else tdc.TDFONT_FIXED;
     const tags = [_]TagItem{
-        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(_text.fontOf(own, tdc.TDFONT_NORMAL)) },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(_text.fontOf(own, which)) },
         .{},
     };
     base.graphics_base.SetRPAttrs(rp, &tags);
@@ -161,9 +173,10 @@ fn nominalSize(base: *Base, own: *const Data) struct { width: i32, height: i32 }
         .{},
     };
     base.graphics_base.GetRPAttrs(rp, &ask);
+    const across: i32 = if (own.blocks != null) page_ems * _text.rowsOf(own) else page_columns * @as(i32, @intCast(@max(width, 1)));
     return .{
-        .width = @min(own.widest, page_columns * @as(i32, @intCast(@max(width, 1)))),
-        .height = @min(layout.totalHeight(own), page_rows * @as(i32, @intCast(@max(height, 1)))),
+        .width = @min(own.widest, across),
+        .height = @min(layout.totalHeight(own), @divTrunc(page_rows * @as(i32, @intCast(@max(height, 1))) * 4, 3)),
     };
 }
 
@@ -278,7 +291,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 return 0;
             };
             const attr: ?*const graphics.TextAttr = @ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_TextAttr));
-            _text.openFonts(base, own, attr);
+            _text.chooseFamilies(base, own, attr);
+            _text.openFonts(base, own);
             _ = setAttrs(base, own, new.attr_list);
             return made;
         },
@@ -352,7 +366,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         dtc.DTM_COPY => {
             const own = classes.instData(Data, cl, o.?);
-            const ip: *IFFParseBase = @ptrCast(base.opened[1] orelse return 0);
+            const ip: *IFFParseBase = @ptrCast(base.opened[_text.opened_iffparse] orelse return 0);
             return @intFromBool(mark.copy(own, ip));
         },
         else => return ib.SendSuperMessage(cl, o, msg),
