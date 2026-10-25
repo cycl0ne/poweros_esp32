@@ -18,6 +18,7 @@ const tile = @import("../tile/_tile.zig");
 const backfill = @import("../backfill/_backfill.zig");
 const super = @import("../super/_super.zig");
 const _locks = @import("../locks/_locks.zig");
+const compose = @import("../compose/_compose.zig");
 const LayersBase = @import("../layers.zig").LayersBase;
 
 /// Makes a new layer on a display.
@@ -65,7 +66,11 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// The refresh modes differ in what happens to a covered piece:
 /// `LAYERSIMPLE` loses it and is owed it back as damage, `LAYERSMART`
 /// keeps it in a surface of its own and puts it back, and `LAYERSUPER`
-/// keeps it in the program's own bitmap.
+/// keeps it in the program's own bitmap. In a composed LayerInfo nothing
+/// is lost by any of them: a layer draws into a buffer of its own, the
+/// whole layer - for `LAYERSUPER`, its bitmap - and what of it can be seen
+/// is copied on to the display. A layer with `LAYERS_NOBACKFILL` starts as
+/// what the display showed where it lies.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the display's layers.
@@ -192,6 +197,16 @@ pub fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const Tag
         .damage = owed,
         .moves_with = moves_with,
     };
+    // Composed, it draws into a buffer of its own, which has to be there
+    // before the retile gives it targets.
+    if (compose.on(info) and !compose.take(lb, layer)) {
+        gb.DisposeRegion(owed);
+        gb.DisposeRegion(seen);
+        gb.FreeRastPort(rp);
+        sys.FreeVec(mem);
+        report(lb, tag_list, layers.LERR_NO_MEMORY);
+        return null;
+    }
     sys.InitSemaphore(&layer.lock);
     // Every layer's lock is also on the LayerInfo's list, so LockLayers is
     // one ObtainSemaphoreList rather than a walk that two callers going
@@ -208,7 +223,8 @@ pub fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const Tag
     if (!tile.retile(lb, info)) layer.last_error = layers.LERR_NO_MEMORY;
     // Nothing has ever been drawn in it, and what is on the display there
     // belongs to whoever had it before, so it is painted before anyone can
-    // see it.
+    // see it. Composed, the paint goes into its buffer, and what can be
+    // seen of it on to the display as it is handed on.
     backfill.fill(lb, layer, super.extent(layer));
     // Coming into view is not damage: the whole layer was just made and
     // its program is about to draw it. What the retile put there is for

@@ -16,6 +16,7 @@ const exec = sdk.exec;
 const graphics = sdk.graphics;
 const layers = sdk.layers;
 const rtg = sdk.rtg;
+const utility = sdk.utility;
 const ExecBase = sdk.interface.exec.ExecBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const LayersBase = @import("../layers.zig").LayersBase;
@@ -57,6 +58,22 @@ pub const LayerInfo = struct {
     /// A count each look at a layer's stores moves on, so that a store
     /// several pieces share is counted once (`Store.visit`).
     visit: u32 = 0,
+    /// Each layer draws into a buffer of its own, which is copied on to
+    /// the display (`LATAG_Compose`, compose/_compose.zig). Never set on
+    /// a machine the composing is not built for.
+    compose: bool = false,
+};
+
+/// The buffer a layer of a composed LayerInfo draws into: a handle on
+/// the display's board, so its engine draws there, and the memory behind
+/// it when this library allocated it - none for a super layer, whose
+/// buffer is its own bitmap.
+pub const Buffer = struct {
+    bitmap: *rtg.RtgBitMap,
+    /// What exec gave, and how much: the pixels start in it at the first
+    /// cache line.
+    memory: ?*anyopaque = null,
+    bytes: usize = 0,
 };
 
 /// A surface a covered part of a layer was put into. It stays as long as
@@ -141,6 +158,10 @@ pub const Layer = struct {
     /// The layer this one moves and sizes with (`LATAG_MovesWith`), or
     /// null.
     moves_with: ?*Layer = null,
+    /// In a composed LayerInfo, the buffer it draws into, all of it, and
+    /// the hook its handle tells of what was drawn. Null in any other.
+    own: ?Buffer = null,
+    watch: utility.Hook = .{},
 };
 
 /// Room for one kept piece, from the LayerInfo's pool.

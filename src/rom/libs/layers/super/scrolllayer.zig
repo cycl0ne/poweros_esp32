@@ -11,6 +11,7 @@ const LayerInfo = _layerinfo.LayerInfo;
 const Layer = _layerinfo.Layer;
 const _super = @import("_super.zig");
 const tile = @import("../tile/_tile.zig");
+const compose = @import("../compose/_compose.zig");
 const _locks = @import("../locks/_locks.zig");
 const LayersBase = @import("../layers.zig").LayersBase;
 
@@ -39,7 +40,8 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// of the layer is visible its pixels are on the display and the bitmap
 /// does not have them, so scrolling without that would lose whatever was
 /// drawn while it showed. Then the window moves, and the part it has moved
-/// on to is copied out of the bitmap.
+/// on to is copied out of the bitmap. In a composed LayerInfo the bitmap
+/// has every pixel already, and what shows is copied out of it afresh.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the layer.
@@ -78,6 +80,14 @@ pub fn ScrollLayer(lb: *LayersBase, layer: *Layer, dx: i32, dy: i32) bool {
     const to_x = @max(0, @min(layer.scroll_x + dx, most_x));
     const to_y = @max(0, @min(layer.scroll_y + dy, most_y));
     if (to_x == layer.scroll_x and to_y == layer.scroll_y) return true;
+    // Composed, the bitmap has all of it and its targets carry no scroll:
+    // only where the copying reads from moves.
+    if (compose.on(layer.info)) {
+        layer.scroll_x = to_x;
+        layer.scroll_y = to_y;
+        compose.showLayer(lb, layer, layer.bounds);
+        return true;
+    }
 
     // What is on the display belongs in the bitmap before the window moves
     // off it, or everything drawn while it was shown would be lost.

@@ -125,8 +125,10 @@ pub const LIBRARY_VERSION = 0;
 /// 50: input.device and the input and pointer tasks' stacks, started with
 /// the first screen, are the system's, not that screen's opener's.
 /// 51: a window is dragged a step a frame at most, as it is sized.
-pub const LIBRARY_REVISION = 51;
-const BUILD_DATE = "24.10.2026";
+/// 52: a screen on a board that composes (RTGBF_COMPOSE) has its windows
+/// composed, each in a buffer of its own.
+pub const LIBRARY_REVISION = 52;
+const BUILD_DATE = "25.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

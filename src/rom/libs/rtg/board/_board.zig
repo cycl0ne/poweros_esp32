@@ -65,6 +65,7 @@ const Request = struct {
     transport: ?*rtg.RtgTransport = null,
     brightness: ?u32 = null,
     display_on: bool = false,
+    compose: bool = false,
     error_ptr: ?*i32 = null,
 };
 
@@ -85,6 +86,7 @@ pub fn readRequest(rb: *RtgBase, tag_list: ?[*]const TagItem) Request {
         else
             null,
         .display_on = ub.GetTagData(tags.RTGA_DisplayOn, 0, tag_list) != 0,
+        .compose = ub.GetTagData(tags.RTGA_Compose, 0, tag_list) != 0,
         .error_ptr = @ptrFromInt(ub.GetTagData(tags.RTGA_ErrorPtr, 0, tag_list)),
     };
 }

@@ -115,6 +115,7 @@ flowchart TB
     m_jpeg_resource --> m_timer_device
     m_keyboard_device --> m_timer_device
     m_layers_library --> m_graphics_library
+    m_layers_library --> m_rtg_library
     m_motion_library --> m_timer_device
     m_mouse_device --> m_timer_device
     m_nil_handler --> m_dos_library

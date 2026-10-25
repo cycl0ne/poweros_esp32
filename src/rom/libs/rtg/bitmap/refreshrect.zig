@@ -15,7 +15,7 @@ const err = rtg.errors;
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn RefreshRect(_: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32
+/// fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32
 /// ```
 ///
 /// SINCE: 1.5. LVO -256.
@@ -43,6 +43,12 @@ const err = rtg.errors;
 /// Rectangles that do not overlap may be handed on at once by several
 /// tasks, as tiles drawn on several cores are.
 ///
+/// A buffer with a `watch` hook is not the board's to hear about: the
+/// hook is called instead, with the buffer and the rectangle cut to it,
+/// in the task that handed it on, and this answers `RTGERR_OK`. That is
+/// how a window's own buffer on a composed screen tells whoever copies it
+/// on to the screen.
+///
 /// CONTEXT:
 /// - Waits: only if the driver does.
 /// - Interrupts: no. The driver may wait on its bus.
@@ -62,10 +68,14 @@ const err = rtg.errors;
 /// ```zig
 /// _ = rb.RefreshRect(buffer, &.{ .x = 64, .y = 128, .width = 64, .height = 64 });
 /// ```
-pub fn RefreshRect(_: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32 {
+pub fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32 {
     if (!drawable(bitmap)) return err.RTGERR_BAD_ARG;
-    const board = boardOf(bitmap) orelse return err.RTGERR_BAD_ARG;
     const cut = clip(bitmap, area) orelse return err.RTGERR_OK;
+    if (bitmap.watch) |hook| {
+        _ = rb.utility_base.CallHookPkt(hook, bitmap, @constCast(&cut));
+        return err.RTGERR_OK;
+    }
+    const board = boardOf(bitmap) orelse return err.RTGERR_BAD_ARG;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
     if (ops.refresh_rect) |refresh_rect| return refresh_rect(board, bitmap, &cut);
     const refresh = ops.refresh orelse return err.RTGERR_NOT_SUPPORTED;

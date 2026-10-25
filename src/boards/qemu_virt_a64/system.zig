@@ -54,6 +54,11 @@ const gpu = [_]Tag{
     // them - each taken from memory as it is opened: a ceiling, not memory
     // set aside.
     .value(tags.RTGA_Buffers, 16),
+    // The windows of a screen each draw into a buffer of their own, and
+    // what can be seen of them is copied into the screen's: memory here
+    // reads back fast, and nothing a window loses to being covered has to
+    // be drawn again.
+    .value(tags.RTGA_Compose, 1),
     .done,
 };
 
@@ -73,6 +78,11 @@ const display = [_]Tag{
     // them - each taken from memory as it is opened: a ceiling, not memory
     // set aside.
     .value(tags.RTGA_Buffers, 16),
+    // The windows of a screen each draw into a buffer of their own, and
+    // what can be seen of them is copied into the screen's: memory here
+    // reads back fast, and nothing a window loses to being covered has to
+    // be drawn again.
+    .value(tags.RTGA_Compose, 1),
     .done,
 };
 

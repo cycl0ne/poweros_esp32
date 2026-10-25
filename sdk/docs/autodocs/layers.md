@@ -31,6 +31,7 @@ Generated from the source by `./zig build autodoc`.
 - [MoveLayerInFrontOf](#movelayerinfrontof) - Puts one layer directly in front of another.
 - [MoveSizeLayer](#movesizelayer) - Moves a layer and changes its size together.
 - [NewLayerInfo](#newlayerinfo) - Makes the LayerInfo of one display, with no layers on it yet.
+- [NewLayerInfoTagList](#newlayerinfotaglist) - Makes the LayerInfo of one display, with no layers on it yet, the way the tags say.
 - [ScrollLayer](#scrolllayer) - Moves the window a `LAYERSUPER` layer shows of its own bitmap.
 - [SizeLayer](#sizelayer) - Changes a layer's size, its top-left staying where it is.
 - [UnlockLayer](#unlocklayer) - Lets a layer go again.
@@ -217,7 +218,11 @@ there belongs to whoever had it before; coming into view is not damage.
 The refresh modes differ in what happens to a covered piece:
 `LAYERSIMPLE` loses it and is owed it back as damage, `LAYERSMART`
 keeps it in a surface of its own and puts it back, and `LAYERSUPER`
-keeps it in the program's own bitmap.
+keeps it in the program's own bitmap. In a composed LayerInfo nothing
+is lost by any of them: a layer draws into a buffer of its own, the
+whole layer - for `LAYERSUPER`, its bitmap - and what of it can be seen
+is copied on to the display. A layer with `LAYERS_NOBACKFILL` starts as
+what the display showed where it lies.
 
 **CONTEXT**
 
@@ -352,8 +357,10 @@ Nothing.
 
 Its RastPort, its regions and everything it kept go back. What was
 behind it is uncovered: a simple layer there is owed the pixels as
-damage, a smart or super one gets them back from its keeping. A layer
-that moved with it (`LATAG_MovesWith`) stays, and moves on its own.
+damage, a smart or super one gets them back from its keeping - and in
+a composed LayerInfo every one of them is copied out of its buffer, so
+none is owed anything. A layer that moved with it (`LATAG_MovesWith`)
+stays, and moves on its own.
 
 **CONTEXT**
 
@@ -1117,6 +1124,13 @@ sizes by the same amounts in the same pass. Where one of them covered
 another before, it covers it after, so none is uncovered by another on
 the way and none owes a redraw for it.
 
+In a composed LayerInfo every layer has all of its pixels in its own
+buffer, so none is owed anything for the move, a smart layer as little
+as a simple one: where each was and where each is are copied on to the
+display again. One that changes size takes a buffer of the new size
+with as much of the old as fits; what it gains is painted, and a simple
+layer is owed it as damage.
+
 **CONTEXT**
 
 - Waits: yes, while another task holds the display's layers.
@@ -1169,11 +1183,8 @@ which is what a machine with no display gives.
 
 **BEHAVIOR**
 
-Everything about the display comes out of the RastPort, so the library
-never reaches past graphics.library to ask what the machine has. The
-LayerInfo keeps a RastPort of its own on the same buffer, for putting a
-covered piece of a layer back, and a memory pool for the clip targets a
-retile makes by the hundred.
+`NewLayerInfoTagList` with no tags: the layers share the display's
+buffer.
 
 **CONTEXT**
 
@@ -1193,12 +1204,82 @@ None known.
 
 **SEE ALSO**
 
-`DisposeLayerInfo`, `CreateLayerTagList`
+`NewLayerInfoTagList`, `DisposeLayerInfo`, `CreateLayerTagList`
 
 **EXAMPLES**
 
 ```zig
 const info = lb.NewLayerInfo(screen_rp) orelse return error.NoDisplay;
+defer lb.DisposeLayerInfo(info);
+```
+
+## NewLayerInfoTagList
+
+Makes the LayerInfo of one display, with no layers on it yet, the way the tags say.
+
+**SYNOPSIS**
+
+```zig
+fn NewLayerInfoTagList(lb: *LayersBase, rp: *graphics.RastPort, tags: ?[*]const TagItem) ?*LayerInfo
+```
+
+**SINCE**
+
+0.6. LVO -124.
+
+**INPUTS**
+
+- `rp` - the RastPort the display is drawn on, as `CreateRastPortTagList`
+  answers it with no tags. It says how big the display is and where its
+  pixels are. It is read, not taken over.
+- `tags` - `LATAG_Compose`, or null for none.
+
+**RESULT**
+
+The LayerInfo, or null: no memory, or nothing behind `rp` to draw on -
+which is what a machine with no display gives.
+
+**BEHAVIOR**
+
+Everything about the display comes out of the RastPort, so the library
+never reaches past graphics.library to ask what the machine has. The
+LayerInfo keeps a RastPort of its own on the same buffer, for putting a
+covered piece of a layer back, and a memory pool for the clip targets a
+retile makes by the hundred.
+
+With `LATAG_Compose` each layer made in it draws into a buffer of its
+own, the whole of the layer, and what of it can be seen is copied on
+to the display as it is drawn and as the layers move. That needs a
+display that is a board's buffer, so that the layers' buffers can be
+the board's too and its engine draws in them; on plain memory, and on
+a machine the composing is not built for (the 32-bit ones), the tag is
+passed over and the layers share the display's buffer.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no. It allocates.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caller owns the LayerInfo until `DisposeLayerInfo`, which also takes
+away every layer still in it. `rp` and the tags stay the caller's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`NewLayerInfo`, `DisposeLayerInfo`, `CreateLayerTagList`
+
+**EXAMPLES**
+
+```zig
+const composed = [_]TagItem{ .{ .tag = layers.LATAG_Compose, .data = 1 }, .{} };
+const info = lb.NewLayerInfoTagList(screen_rp, &composed) orelse return error.NoDisplay;
 defer lb.DisposeLayerInfo(info);
 ```
 
@@ -1235,7 +1316,8 @@ What is on the display is put back into the bitmap first: while a part
 of the layer is visible its pixels are on the display and the bitmap
 does not have them, so scrolling without that would lose whatever was
 drawn while it showed. Then the window moves, and the part it has moved
-on to is copied out of the bitmap.
+on to is copied out of the bitmap. In a composed LayerInfo the bitmap
+has every pixel already, and what shows is copied out of it afresh.
 
 **CONTEXT**
 

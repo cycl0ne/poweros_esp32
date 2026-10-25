@@ -22,7 +22,9 @@
 //! Each call is a file of its own in the folder for its category -
 //! layerinfo/, layer/, locks/, damage/, move/, super/, backfill/ and
 //! errors/ - and tile/ and smart/ hold the geometry and the keeping of
-//! covered pixels, which the calls share. The jump table is layers_lvo.zig,
+//! covered pixels, which the calls share, and compose/ the other way of
+//! doing it: each layer in a buffer of its own, copied on to the display
+//! (`LATAG_Compose`, on the 64-bit machines). The jump table is layers_lvo.zig,
 //! the ROM tag and init layers_init.zig, the base layers_base.zig. This
 //! file holds the names the rest of the kernel reaches the library by, and
 //! the tests of calls working together. Its functions are
@@ -77,6 +79,7 @@ test {
     _ = @import("backfill/_backfill.zig");
     _ = @import("backfill/dohookcliprects.zig");
     _ = @import("backfill/installlayerhook.zig");
+    _ = @import("compose/_compose.zig");
     _ = @import("damage/beginupdate.zig");
     _ = @import("damage/damagelayer.zig");
     _ = @import("damage/endupdate.zig");
@@ -93,6 +96,7 @@ test {
     _ = @import("layerinfo/_layerinfo.zig");
     _ = @import("layerinfo/disposelayerinfo.zig");
     _ = @import("layerinfo/newlayerinfo.zig");
+    _ = @import("layerinfo/newlayerinfotaglist.zig");
     _ = @import("locks/_locks.zig");
     _ = @import("locks/locklayer.zig");
     _ = @import("locks/locklayerinfo.zig");
@@ -119,13 +123,14 @@ fn setUp() !*LayersBase {
 }
 
 /// Nothing here expunges itself, so the test gives back every open and
-/// frees all four: layers closes graphics and utility, graphics closes rtg
-/// and utility, rtg closes utility.
+/// frees all four: layers closes rtg, graphics and utility, graphics
+/// closes rtg and utility, rtg closes utility.
 fn tearDown(lb: *LayersBase) !void {
     const gb: *kgraphics.GraphicsBase = @ptrCast(@alignCast(lb.graphics_base));
     const rb: *krtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
     const ub: *kutility.UtilityBase = @ptrCast(@alignCast(lb.utility_base));
 
+    kexec.CloseLibrary(kexec.SysBase, &rb.lib);
     kexec.CloseLibrary(kexec.SysBase, &gb.lib);
     kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     kexec.Remove(kexec.SysBase, &lb.lib.node);
@@ -1324,5 +1329,294 @@ test "layers: raising one damages what it uncovers, and an update draws only tha
 
     base(lb).DisposeLayerInfo(info);
     gbase(lb).FreeRastPort(screen);
+    try tearDown(lb);
+}
+
+// --- composed --------------------------------------------------------------
+
+const fake = @import("../rtg_driver/fakeboard/fakeboard.zig");
+const compose = @import("compose/_compose.zig");
+
+/// A display that is a board's buffer - the test board's, 32 by 16 - and
+/// a LayerInfo over it that composes.
+const Composed = struct {
+    state: *fake.State,
+    board: *rtg.RtgBoard,
+    bitmap: *rtg.RtgBitMap,
+    screen: *graphics.RastPort,
+    info: *layers.LayerInfo,
+
+    fn make(lb: *LayersBase) !Composed {
+        const rb = lb.rtg_base;
+        const state = fake.create(lb.sys_base) orelse return error.NoDriver;
+        if (!rb.AddRtgDriver(&state.driver)) return error.NoDriver;
+        const empty = [_]TagItem{.{}};
+        const board = rb.CreateBoardTagList(fake.DRIVER_NAME, &empty) orelse return error.NoBoard;
+        const bitmap = rb.AllocBitMap(board, 32, 16, @intFromEnum(rtg.bitmaps.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse
+            return error.NoBitMap;
+        @memset(bitmap.pixels.?[0..bitmap.size_bytes], 0);
+        const on_board = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(bitmap) }, .{} };
+        const screen = gbase(lb).CreateRastPortTagList(&on_board) orelse return error.NoRastPort;
+        const composed = [_]TagItem{ .{ .tag = layers.LATAG_Compose, .data = 1 }, .{} };
+        const info = base(lb).NewLayerInfoTagList(screen, &composed) orelse return error.NoLayerInfo;
+        return .{ .state = state, .board = board, .bitmap = bitmap, .screen = screen, .info = info };
+    }
+
+    fn done(c: Composed, lb: *LayersBase) void {
+        const rb = lb.rtg_base;
+        base(lb).DisposeLayerInfo(c.info);
+        gbase(lb).FreeRastPort(c.screen);
+        rb.FreeBitMap(c.bitmap);
+        rb.DeleteBoard(c.board);
+        _ = rb.RemRtgDriver(&c.state.driver);
+        fake.destroy(c.state);
+    }
+
+    fn at(c: Composed, x: u32, y: u32) u16 {
+        return pixelAt(@ptrCast(c.bitmap), x, y);
+    }
+};
+
+test "composed: what is covered is kept, and what is uncovered or moved is copied, never owed" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+    const info_of: *info_mod.LayerInfo = @ptrCast(@alignCast(c.info));
+    try testing.expectEqual(compose.built, info_of.compose);
+
+    const back_where = Rect{ .max_x = 20, .max_y = 10 };
+    const back = try layerAt(lb, c.info, &back_where, layers.LAYERSIMPLE);
+    const front_where = Rect{ .min_x = 12, .min_y = 6, .max_x = 32, .max_y = 16 };
+    const front = try layerAt(lb, c.info, &front_where, layers.LAYERSIMPLE);
+
+    // Each draws all of itself; what the front one covers lands in the
+    // back one's buffer and not on the display.
+    fill(lb, back, graphics.penRGB(255, 0, 0), .{ .max_x = 20, .max_y = 10 });
+    fill(lb, front, graphics.penRGB(0, 255, 0), .{ .max_x = 20, .max_y = 10 });
+    try testing.expectEqual(red, c.at(5, 3));
+    try testing.expectEqual(green, c.at(15, 8));
+    // Drawn while covered, the back one's blue goes into its buffer only.
+    fill(lb, back, graphics.penRGB(0, 0, 255), .{ .min_x = 14, .min_y = 7, .max_x = 20, .max_y = 10 });
+    try testing.expectEqual(green, c.at(15, 8));
+
+    // Raised, it is copied out of its buffer: nothing owed, nothing lost.
+    try testing.expect(base(lb).UpfrontLayer(back));
+    try testing.expectEqual(@as(u32, 0), owed(lb, back));
+    try testing.expectEqual(blue, c.at(15, 8));
+    try testing.expectEqual(red, c.at(12, 6));
+    try testing.expectEqual(green, c.at(25, 12));
+
+    // Lowered again, the front one shows all of itself, owing nothing.
+    try testing.expect(base(lb).BehindLayer(back));
+    try testing.expectEqual(@as(u32, 0), owed(lb, front));
+    try testing.expectEqual(green, c.at(15, 8));
+
+    // Moved, a layer takes its pixels with it - a simple one too - and
+    // what it leaves is what is behind it, copied out of that one's buffer.
+    try testing.expect(base(lb).MoveLayer(front, -12, -6));
+    try testing.expectEqual(@as(u32, 0), owed(lb, front));
+    try testing.expectEqual(@as(u32, 0), owed(lb, back));
+    try testing.expectEqual(green, c.at(0, 0));
+    try testing.expectEqual(green, c.at(19, 9));
+    // Where no layer is now, the display is left as it was, as when the
+    // layers share it: a screen's ground layer is what covers that.
+    try testing.expectEqual(green, c.at(25, 12));
+    // Moved back off, the back one's covered blue corner is there.
+    try testing.expect(base(lb).MoveLayer(front, 12, 6));
+    try testing.expectEqual(red, c.at(5, 3));
+
+    // Taken away, the front one leaves the back one whole.
+    base(lb).DeleteLayer(front);
+    try testing.expectEqual(blue, c.at(15, 8));
+    try testing.expectEqual(red, c.at(12, 6));
+    try testing.expectEqual(@as(u32, 0), owed(lb, back));
+
+    base(lb).DeleteLayer(back);
+    c.done(lb);
+    try tearDown(lb);
+}
+
+test "composed: sized, a layer keeps what fits, paints what it gained, and a simple one is owed that" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+
+    const where = Rect{ .min_x = 2, .min_y = 2, .max_x = 10, .max_y = 8 };
+    const simple = try layerAt(lb, c.info, &where, layers.LAYERSIMPLE);
+    fill(lb, simple, graphics.penRGB(255, 0, 0), .{ .max_x = 8, .max_y = 6 });
+
+    try testing.expect(base(lb).SizeLayer(simple, 4, 2));
+    try testing.expectEqual(red, c.at(2, 2));
+    try testing.expectEqual(red, c.at(9, 7));
+    // The gain is painted in the background pen, 0, and owed.
+    try testing.expectEqual(@as(u16, 0), c.at(13, 9));
+    try testing.expectEqual(layers.LAYERREFRESH, owed(lb, simple));
+    try testing.expect(base(lb).BeginUpdate(simple));
+    fill(lb, simple, graphics.penRGB(0, 255, 0), .{ .max_x = 12, .max_y = 8 });
+    base(lb).EndUpdate(simple, true);
+    try testing.expectEqual(red, c.at(9, 7)); // was not owed
+    try testing.expectEqual(green, c.at(13, 9));
+    try testing.expectEqual(green, c.at(4, 9));
+
+    // Smaller again, what is left keeps its pixels and nothing is owed.
+    try testing.expect(base(lb).SizeLayer(simple, -6, -4));
+    try testing.expectEqual(@as(u32, 0), owed(lb, simple));
+    try testing.expectEqual(red, c.at(7, 5));
+
+    base(lb).DeleteLayer(simple);
+    c.done(lb);
+    try tearDown(lb);
+}
+
+test "composed: a layer with its own bitmap draws in it, and scrolling only moves what is copied" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+
+    const bm_tags = [_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = 16 },
+        .{ .tag = graphics.BMTAG_Height, .data = 8 },
+        .{ .tag = graphics.BMTAG_Format, .data = @intFromEnum(rtg.bitmaps.PixelFormat.rgb565) },
+        .{ .tag = graphics.BMTAG_Clear, .data = 1 },
+        .{},
+    };
+    const sheet = gbase(lb).AllocBitMapTagList(&bm_tags) orelse return error.NoBitMap;
+    const where = Rect{ .min_x = 4, .min_y = 4, .max_x = 12, .max_y = 12 };
+    const tags = [_]TagItem{
+        .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&where) },
+        .{ .tag = layers.LATAG_Refresh, .data = layers.LAYERSUPER },
+        .{ .tag = layers.LATAG_SuperBitMap, .data = @intFromPtr(sheet) },
+        .{},
+    };
+    const layer = base(lb).CreateLayerTagList(c.info, &tags) orelse return error.NoLayer;
+
+    fill(lb, layer, graphics.penRGB(255, 0, 0), .{ .max_x = 8, .max_y = 8 });
+    fill(lb, layer, graphics.penRGB(0, 255, 0), .{ .min_x = 8, .max_x = 16, .max_y = 8 });
+    // The bitmap has all of it, the shown half and the other.
+    try testing.expectEqual(red, pixelAt(sheet, 0, 0));
+    try testing.expectEqual(green, pixelAt(sheet, 15, 7));
+    try testing.expectEqual(red, c.at(4, 4));
+    try testing.expectEqual(@as(u16, 0), c.at(12, 4));
+
+    try testing.expect(base(lb).ScrollLayer(layer, 8, 0));
+    try testing.expectEqual(green, c.at(4, 4));
+    try testing.expectEqual(green, c.at(11, 11));
+    try testing.expect(base(lb).ScrollLayer(layer, -8, 0));
+    try testing.expectEqual(red, c.at(11, 11));
+
+    base(lb).DeleteLayer(layer);
+    gbase(lb).FreeBitMap(sheet);
+    c.done(lb);
+    try tearDown(lb);
+}
+
+test "composed: asked for on plain memory, the layers share the display as without it" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    var pixels: [32 * 16 * 2]u8 = @splat(0);
+    var surface = rtg.Surface{ .pixels = &pixels, .width = 32, .height = 16, .pitch = 32 * 2, .size_bytes = pixels.len, .format = .rgb565 };
+    const screen = try display(lb, &surface);
+    const composed = [_]TagItem{ .{ .tag = layers.LATAG_Compose, .data = 1 }, .{} };
+    const info = base(lb).NewLayerInfoTagList(screen, &composed) orelse return error.NoLayerInfo;
+    const info_of: *info_mod.LayerInfo = @ptrCast(@alignCast(info));
+    try testing.expect(!info_of.compose);
+
+    const where = Rect{ .max_x = 8, .max_y = 8 };
+    const layer = try layerAt(lb, info, &where, layers.LAYERSIMPLE);
+    fill(lb, layer, graphics.penRGB(255, 0, 0), .{ .max_x = 8, .max_y = 8 });
+    try testing.expectEqual(red, pixelAt(&surface, 3, 3));
+
+    base(lb).DeleteLayer(layer);
+    base(lb).DisposeLayerInfo(info);
+    gbase(lb).FreeRastPort(screen);
+    try tearDown(lb);
+}
+
+test "composed: moved, sized and reordered at random, every pixel is the front layer's, and nothing is owed but what a size gains" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+
+    const pictures = [_]Painted{
+        .{ .top = .{ 255, 0, 0 }, .bottom = .{ 0, 255, 0 } },
+        .{ .top = .{ 0, 0, 255 }, .bottom = .{ 255, 255, 0 } },
+        .{ .top = .{ 255, 0, 255 }, .bottom = .{ 0, 255, 255 } },
+        .{ .top = .{ 255, 255, 255 }, .bottom = .{ 0, 0, 0 } },
+    };
+    const modes = [_]usize{ layers.LAYERSMART, layers.LAYERSIMPLE, layers.LAYERSMART, layers.LAYERSIMPLE };
+    var made: [4]*layers.Layer = undefined;
+    var where: [4]Rect = undefined;
+    var order: [4]usize = undefined;
+    for (0..4) |i| {
+        where[i] = .{ .min_x = @intCast(i * 5), .min_y = @intCast(i * 2), .max_x = @intCast(i * 5 + 12), .max_y = @intCast(i * 2 + 8) };
+        made[i] = try layerAt(lb, c.info, &where[i], modes[i]);
+        pictures[i].paint(lb, made[i], 12, 8);
+        order[3 - i] = i;
+    }
+
+    var prng = std.Random.DefaultPrng.init(0xC0FFEE);
+    const rand = prng.random();
+    var step: u32 = 0;
+    while (step < 1000) : (step += 1) {
+        const i = rand.uintLessThan(usize, 4);
+        const w = where[i].width();
+        const h = where[i].height();
+        const op = rand.uintLessThan(u32, 4);
+        switch (op) {
+            0 => {
+                // Off the display too: a composed layer has all of itself.
+                const dx = rand.intRangeAtMost(i32, -where[i].min_x - 4, 36 - where[i].max_x);
+                const dy = rand.intRangeAtMost(i32, -where[i].min_y - 4, 20 - where[i].max_y);
+                try testing.expect(base(lb).MoveLayer(made[i], dx, dy));
+                where[i] = .{ .min_x = where[i].min_x + dx, .min_y = where[i].min_y + dy, .max_x = where[i].max_x + dx, .max_y = where[i].max_y + dy };
+            },
+            1 => {
+                const nw = rand.intRangeAtMost(i32, 4, 16);
+                const nh = rand.intRangeAtMost(i32, 4, 12);
+                try testing.expect(base(lb).SizeLayer(made[i], nw - w, nh - h));
+                where[i].max_x = where[i].min_x + nw;
+                where[i].max_y = where[i].min_y + nh;
+                // The program draws its picture again for the new size, as
+                // NEWSIZE has it do; a simple one through the update.
+                if (owed(lb, made[i]) != 0 and base(lb).BeginUpdate(made[i])) base(lb).EndUpdate(made[i], true);
+                pictures[i].paint(lb, made[i], nw, nh);
+            },
+            2 => {
+                try testing.expect(base(lb).UpfrontLayer(made[i]));
+                var k: usize = 0;
+                while (order[k] != i) k += 1;
+                while (k > 0) : (k -= 1) order[k] = order[k - 1];
+                order[0] = i;
+            },
+            else => {
+                try testing.expect(base(lb).BehindLayer(made[i]));
+                var k: usize = 0;
+                while (order[k] != i) k += 1;
+                while (k < 3) : (k += 1) order[k] = order[k + 1];
+                order[3] = i;
+            },
+        }
+        for (0..4) |j| try testing.expectEqual(@as(u32, 0), owed(lb, made[j]));
+        var y: i32 = 0;
+        while (y < 16) : (y += 1) {
+            var x: i32 = 0;
+            while (x < 32) : (x += 1) {
+                for (order) |j| {
+                    const r = where[j];
+                    if (x < r.min_x or x >= r.max_x or y < r.min_y or y >= r.max_y) continue;
+                    const want = pictures[j].at(y - r.min_y, r.height());
+                    const have = c.at(@intCast(x), @intCast(y));
+                    if (want != have) {
+                        std.debug.print("step {d}: pixel {d},{d} is {x:0>4}, layer {d} wants {x:0>4}\n", .{ step, x, y, have, j, want });
+                        return error.TestUnexpectedResult;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    for (made) |l| base(lb).DeleteLayer(l);
+    c.done(lb);
     try tearDown(lb);
 }

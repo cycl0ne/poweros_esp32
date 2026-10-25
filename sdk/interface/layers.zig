@@ -47,6 +47,7 @@ pub const LVO = struct {
     pub const DoHookClipRects = libraries.lvo(27);
     pub const LayersErrorText = libraries.lvo(28);
     pub const DamageLayer = libraries.lvo(29);
+    pub const NewLayerInfoTagList = libraries.lvo(30);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -78,6 +79,7 @@ pub const Fn = struct {
     pub const DoHookClipRects = *const fn (*LayersBase, *utility.Hook, *graphics.RastPort, *const graphics.Rect) callconv(.c) void;
     pub const LayersErrorText = *const fn (*LayersBase, i32) callconv(.c) [*:0]const u8;
     pub const DamageLayer = *const fn (*LayersBase, *layers.Layer, *const graphics.Rect) callconv(.c) bool;
+    pub const NewLayerInfoTagList = *const fn (*LayersBase, *graphics.RastPort, ?[*]const utility.TagItem) callconv(.c) ?*layers.LayerInfo;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -253,5 +255,11 @@ pub const LayersBase = opaque {
     /// is painted. False if there was no memory for it.
     pub fn DamageLayer(self: *LayersBase, layer: *layers.Layer, area: *const graphics.Rect) bool {
         return libraries.call(self, LVO.DamageLayer, Fn.DamageLayer, .{ layer, area });
+    }
+
+    /// NewLayerInfo with tags: `LATAG_Compose` to compose its layers, each in
+    /// a buffer of its own that is copied on to the display.
+    pub fn NewLayerInfoTagList(self: *LayersBase, rp: *graphics.RastPort, tags: ?[*]const utility.TagItem) ?*layers.LayerInfo {
+        return libraries.call(self, LVO.NewLayerInfoTagList, Fn.NewLayerInfoTagList, .{ rp, tags });
     }
 };

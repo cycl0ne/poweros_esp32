@@ -1200,3 +1200,59 @@ test "every error has words, and so has one that does not exist" {
     try testing.expectEqualStrings("unknown error", std.mem.span(base(rb).RtgErrorText(-999)));
     try tearDown(rb);
 }
+
+/// What a watch hook was told: how often, and the last rectangle.
+const Told = struct {
+    calls: u32 = 0,
+    rect: rtg.RtgRect = .{},
+
+    fn hear(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        _ = object;
+        const told: *Told = @ptrCast(@alignCast(hook.data.?));
+        told.calls += 1;
+        told.rect = @as(*const rtg.RtgRect, @ptrCast(@alignCast(message.?))).*;
+        return 0;
+    }
+};
+
+test "a buffer with a watch hook: the hook is told what was written, and the board is not" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+
+    // RTGA_Compose is the board's to keep, for intuition to read.
+    const composing = [_]TagItem{ .{ .tag = rtg.tags.RTGA_Compose, .data = 1 }, .{} };
+    const board = base(rb).CreateBoardTagList(fake.DRIVER_NAME, &composing) orelse return error.NoBoard;
+    try testing.expect(board.info.flags & rtg.boards.RTGBF_COMPOSE != 0);
+    const plain = try makeBoard(rb);
+    try testing.expect(plain.info.flags & rtg.boards.RTGBF_COMPOSE == 0);
+
+    var pixels: [8 * 4 * 2]u8 = @splat(0);
+    const described = rtg.RtgBitMap{ .pixels = &pixels, .width = 8, .height = 4, .pitch = 16, .size_bytes = pixels.len, .format = .rgb565 };
+    const bm = base(rb).AttachBitMap(board, &described) orelse return error.NoBitMap;
+    var told: Told = .{};
+    var hook = utility.Hook{ .entry = &Told.hear, .data = &told };
+    bm.watch = &hook;
+
+    const before = fk.log.refreshed;
+    // Cut to the buffer, as the board would have had it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bm, &.{ .x = 2, .y = 1, .width = 20, .height = 2 }));
+    try testing.expectEqual(@as(u32, 1), told.calls);
+    try testing.expectEqual(rtg.RtgRect{ .x = 2, .y = 1, .width = 6, .height = 2 }, told.rect);
+    // Rows are a rectangle the buffer's width.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshBitMap(bm, 3, 0));
+    try testing.expectEqual(@as(u32, 2), told.calls);
+    try testing.expectEqual(rtg.RtgRect{ .x = 0, .y = 3, .width = 8, .height = 1 }, told.rect);
+    try testing.expectEqual(before, fk.log.refreshed);
+
+    // Without the hook, the board hears of it again.
+    bm.watch = null;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bm, &.{ .width = 8, .height = 4 }));
+    try testing.expectEqual(before + 1, fk.log.refreshed);
+    try testing.expectEqual(@as(u32, 2), told.calls);
+
+    base(rb).FreeBitMap(bm);
+    base(rb).DeleteBoard(plain);
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
