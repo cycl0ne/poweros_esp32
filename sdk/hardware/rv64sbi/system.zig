@@ -40,8 +40,10 @@ const sbi = @import("sbi.zig");
 const mmio = @import("mmio.zig");
 
 /// What the board does to the machine before the firmware resets it,
-/// which the kernel sets from the board: the VisionFive 2's firmware
-/// resets it over an I2C bus U-Boot left in reset.
+/// which the kernel sets from the board: the VisionFive 2 resets the chip
+/// itself through its watchdog, which does not return, and should that
+/// fail readies the I2C bus U-Boot left in reset, over which its firmware
+/// resets it.
 pub var before_reset: ?*const fn () void = null;
 
 /// The whole machine restarted: a cold reboot through the firmware. If
@@ -95,6 +97,8 @@ pub const SYSCLK_GMAC1_GTXCLK = 100;
 pub const SYSCLK_GMAC0_GTXCLK = 108;
 pub const SYSCLK_GMAC0_PTP = 109;
 pub const SYSCLK_GMAC0_GTXC = 111;
+pub const SYSCLK_WDT_APB = 122;
+pub const SYSCLK_WDT_CORE = 123;
 pub const SYSCLK_TEMP_APB = 129;
 pub const SYSCLK_TEMP_CORE = 130;
 pub const SYSCLK_I2C5_APB = 143;
@@ -136,6 +140,8 @@ pub const SYSRST_SDIO1_AHB = 65;
 pub const SYSRST_I2C5_APB = 81;
 pub const SYSRST_I2STX0_APB = 101;
 pub const SYSRST_I2STX0_BCLK = 102;
+pub const SYSRST_WDT_APB = 109;
+pub const SYSRST_WDT_CORE = 110;
 pub const SYSRST_TEMP_APB = 123;
 pub const SYSRST_TEMP_CORE = 124;
 
