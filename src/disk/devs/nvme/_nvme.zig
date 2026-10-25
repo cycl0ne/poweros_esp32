@@ -105,7 +105,8 @@ pub const Controller = struct {
     task: ?*exec.Task = null,
     int_signal: u32 = 0,
     /// Whether it works: false once it failed and could not be brought
-    /// back.
+    /// back, and then for good - it is given up, and its units have no
+    /// medium.
     alive: bool = false,
     number: u8 = 0,
     serial: [20]u8 = @splat(' '),
@@ -128,6 +129,12 @@ pub const Unit = extern struct {
 
     pub fn blockBytes(unit: *const Unit) u32 {
         return @as(u32, 1) << @intCast(unit.block_shift);
+    }
+
+    /// Whether its medium has gone: its controller was given up.
+    pub fn gone(unit: *const Unit) bool {
+        const c = unit.controller orelse return false;
+        return !c.alive;
     }
 };
 

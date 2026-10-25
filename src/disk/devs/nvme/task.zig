@@ -12,6 +12,12 @@
 //! a controller that stops answering is reset and the request sent again,
 //! once.
 //!
+//! **A controller that does not come back** is given up, and its units'
+//! media go with it: the request, and every one after it, is answered
+//! TDERR_NoCard at once, and TD_CHANGENUM counts the change. A file
+//! system then lets its volume go, as for a medium taken out, rather
+//! than waiting out a reset for each block it asks for.
+//!
 //! **CMD_UPDATE** is Flush where the controller has a volatile write
 //! cache, and answered at once where it has none: what it was given is on
 //! the medium already.
@@ -80,6 +86,10 @@ fn serve(base: *NvmeBase, io: *exec.IORequest) void {
         io.err = td.TDERR_BadUnitNum;
         return;
     };
+    if (unit.gone()) {
+        io.err = td.TDERR_NoCard;
+        return;
+    }
     switch (io.command) {
         exec.CMD_READ, exec.CMD_WRITE => readWrite(base, c, unit, io),
         exec.CMD_UPDATE => flush(c, unit, io),
@@ -110,16 +120,22 @@ fn readWrite(base: *NvmeBase, c: *Controller, unit: *Unit, io: *exec.IORequest) 
         io.err = exec.IOERR_BADADDRESS;
         return;
     };
-    var outcome: Outcome = .lost;
-    if (c.alive) outcome = transfer(c, unit, io.command == exec.CMD_WRITE, @intFromPtr(data), req.offset, req.length);
+    var outcome = transfer(c, unit, io.command == exec.CMD_WRITE, @intFromPtr(data), req.offset, req.length);
     if (outcome == .lost and controller.recover(c)) {
         outcome = transfer(c, unit, io.command == exec.CMD_WRITE, @intFromPtr(data), req.offset, req.length);
     }
     switch (outcome) {
         .done => req.actual = req.length,
         .failed => |status| io.err = errorOf(status),
-        .lost => io.err = td.TDERR_NotSpecified,
+        .lost => io.err = lostError(unit),
     }
+}
+
+/// A request's error where the controller stopped answering: no medium
+/// where it was given up, TDERR_NotSpecified where it came back but
+/// failed again - the next request has it reset once more.
+fn lostError(unit: *const Unit) i8 {
+    return if (unit.gone()) td.TDERR_NoCard else td.TDERR_NotSpecified;
 }
 
 /// A piece out on a slot: where it is in the caller's buffer, and how
@@ -240,9 +256,9 @@ fn receive(c: *const Controller, slot: *_nvme.Slot, piece: *const Piece) void {
 fn flush(c: *Controller, unit: *Unit, io: *exec.IORequest) void {
     if (!c.volatile_cache) return;
     const command = regs.Command{ .opcode = regs.NVM_FLUSH, .nsid = unit.nsid };
-    const status = (if (c.alive) one(c, command) else null) orelse
+    const status = one(c, command) orelse
         (if (controller.recover(c)) one(c, command) else null) orelse {
-        io.err = td.TDERR_NotSpecified;
+        io.err = lostError(unit);
         return;
     };
     if (status != 0) io.err = errorOf(status);
@@ -277,9 +293,9 @@ fn trim(c: *Controller, unit: *Unit, io: *exec.IORequest) void {
         };
         // A controller that stops answering is reset, and the command
         // sent again: once a request.
-        const status = (if (c.alive) one(c, command) else null) orelse {
+        const status = one(c, command) orelse {
             if (recovered or !controller.recover(c)) {
-                io.err = td.TDERR_NotSpecified;
+                io.err = lostError(unit);
                 return;
             }
             recovered = true;

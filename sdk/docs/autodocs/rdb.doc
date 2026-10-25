@@ -769,8 +769,9 @@ rdb.library/WriteRDB
    RESULT
 	The handle, with the unit open; `err` is then RDBERR_OK. Null when the
 	device or unit cannot be opened, answers no TD_GETGEOMETRY, has no
-	medium in it or blocks smaller than 256 bytes (RDBERR_DEVICE), or for
-	no memory (RDBERR_NOMEM).
+	medium in it or blocks smaller than 256 bytes (RDBERR_DEVICE), when
+	the medium went or changed while its blocks were read (RDBERR_CHANGED),
+	or for no memory (RDBERR_NOMEM).
 
    BEHAVIOR
 	The first RDB_LOCATION_LIMIT blocks are searched for a sound

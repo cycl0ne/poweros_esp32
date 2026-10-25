@@ -25,7 +25,8 @@
 //! it failed (CSTS.CFS) - has the controller reset through pci.library
 //! and brought up again, once. One that reset itself, as an SSD whose
 //! power dipped does, is only given back its configuration there
-//! (ResetPCIDevice).
+//! (ResetPCIDevice). One that does not come back is given up: it is not
+//! reset again, and its units' media are gone with it (task.zig).
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -367,12 +368,15 @@ pub fn healthy(c: *Controller) bool {
 }
 
 /// The controller reset and brought up again: whether it came back. Its
-/// slots are free after it.
+/// slots are free after it. One that does not come back is given up for
+/// good: a reset waits as long as pci.library and CAP.TO allow - a
+/// minute and more - and tried again for each request, every block a
+/// file system asked for would wait that long.
 pub fn recover(c: *Controller) bool {
     sdk.exec.kprintf(c.sys, "%s: controller %ld: no answer; reset\n", .{ _nvme.DEVICE_NAME, @as(i64, c.number) });
     for (&c.slots) |*slot| slot.* = .{ .pages = slot.pages };
     c.alive = c.pb.ResetPCIDevice(c.function) and start(c, false);
-    if (!c.alive) sdk.exec.kprintf(c.sys, "%s: controller %ld: did not come back\n", .{ _nvme.DEVICE_NAME, @as(i64, c.number) });
+    if (!c.alive) sdk.exec.kprintf(c.sys, "%s: controller %ld: did not come back; given up, its units have no medium\n", .{ _nvme.DEVICE_NAME, @as(i64, c.number) });
     return c.alive;
 }
 

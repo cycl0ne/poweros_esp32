@@ -20,8 +20,12 @@
 //!                    blocks.
 //!   TD_GETNUMTRACKS  io_Actual: its blocks.
 //!   TD_PROTSTATUS    io_Actual: 0, it is writable.
-//!   TD_CHANGENUM     io_Actual: 0, it never changed.
-//!   TD_CHANGESTATE   io_Actual: 0, a medium is in.
+//!   TD_CHANGENUM     io_Actual: 0; 1 once its controller is given up.
+//!   TD_CHANGESTATE   io_Actual: 0, a medium is in; 1 once its
+//!                    controller is given up, which takes the medium.
+//!
+//! A unit whose controller was given up (task.zig) answers every other
+//! command TDERR_NoCard, as a drive with no medium in it.
 //!
 //! **Bringing it up.** The first open makes the device: pci.library is
 //! opened, which brings up the board's PCI Express ports, and the
@@ -61,8 +65,8 @@ const mount = @import("mount.zig");
 
 pub const DEVICE_NAME = _nvme.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 3;
-const BUILD_DATE = "19.10.2026";
+const DEVICE_REVISION = 4;
+const BUILD_DATE = "25.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -101,6 +105,10 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
     const unit = _nvme.unitOf(io);
     const req = _nvme.stdReq(io);
     req.actual = 0;
+    if (unit.gone() and io.command != td.TD_CHANGENUM and io.command != td.TD_CHANGESTATE) {
+        io.err = td.TDERR_NoCard;
+        return base.sys_base.ReplyIO(io);
+    }
     switch (io.command) {
         exec.CMD_READ, exec.CMD_WRITE, exec.CMD_UPDATE, td.TDCMD_TRIM => return queue(base, io),
         td.TDCMD_ERASE, exec.CMD_CLEAR => {},
@@ -110,7 +118,8 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
             io.err = exec.IOERR_BADADDRESS;
         },
         td.TD_GETNUMTRACKS => req.actual = unit.blocks,
-        td.TD_PROTSTATUS, td.TD_CHANGENUM, td.TD_CHANGESTATE => req.actual = 0,
+        td.TD_PROTSTATUS => req.actual = 0,
+        td.TD_CHANGENUM, td.TD_CHANGESTATE => req.actual = @intFromBool(unit.gone()),
         else => io.err = exec.IOERR_NOCMD,
     }
     base.sys_base.ReplyIO(io);

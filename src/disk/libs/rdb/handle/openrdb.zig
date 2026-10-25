@@ -30,8 +30,9 @@ const _handle = @import("_handle.zig");
 /// RESULT:
 /// The handle, with the unit open; `err` is then RDBERR_OK. Null when the
 /// device or unit cannot be opened, answers no TD_GETGEOMETRY, has no
-/// medium in it or blocks smaller than 256 bytes (RDBERR_DEVICE), or for
-/// no memory (RDBERR_NOMEM).
+/// medium in it or blocks smaller than 256 bytes (RDBERR_DEVICE), when
+/// the medium went or changed while its blocks were read (RDBERR_CHANGED),
+/// or for no memory (RDBERR_NOMEM).
 ///
 /// BEHAVIOR:
 /// The first RDB_LOCATION_LIMIT blocks are searched for a sound
@@ -136,6 +137,9 @@ fn open(base: *RDBBase, device: [*:0]const u8, unit: u32, reason: *i32) ?*rdb.RD
         handle.buffer = @ptrCast(buffer);
         const read = _handle.readTable(handle);
         if (read != rdb.RDBERR_OK) break :fail read;
+        // A block that cannot be read is no table, so a medium that went
+        // while they were read would look blank.
+        if (_handle.changed(handle)) break :fail rdb.RDBERR_CHANGED;
         return &handle.public;
     };
     _handle.destroy(handle);
