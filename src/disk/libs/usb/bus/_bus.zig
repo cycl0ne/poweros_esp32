@@ -17,6 +17,12 @@
 //! here); every other interface is offered to the class drivers
 //! (`bind/_bind.zig`).
 //!
+//! **A port that had an over-current** has no power: the hub took it, and
+//! a hub may do so as its ports come on together at cold start, with a
+//! mouse already in one of them. The power is given back once the cause
+//! had 100 ms to pass, as Linux does, and what is in the port is found
+//! then; a port whose over-current stays is left off.
+//!
 //! **A SuperSpeed hub** has a descriptor and a port status of its own:
 //! its descriptor is read as USB_DT_SS_HUB, its depth set before its ports
 //! are powered, and its ports' status turned into the USB 2 form the rest
@@ -853,15 +859,19 @@ fn hubChanged(bus: *Bus, hub: *Hub) void {
     sendStatus(bus, hub);
 }
 
-/// One port of a hub looked at: its changes cleared, and what was plugged
-/// in or pulled out dealt with.
+/// One port of a hub looked at: its changes cleared, its power given back
+/// after an over-current, and what was plugged in or pulled out dealt
+/// with.
 fn portChanged(bus: *Bus, hub: *Hub, port: u8) void {
-    const state = portState(bus, hub, port) orelse return;
+    var state = portState(bus, hub, port) orelse return;
+    if (state.status.change & d.USB_PORT_STAT_C_OVERCURRENT != 0) {
+        _ = clearPortFeature(bus, hub, port, d.USB_PORT_FEAT_C_OVER_CURRENT);
+        state = cooledDown(bus, hub, port) orelse return;
+    }
     const status = state.status;
     const change = status.change;
     if (change & d.USB_PORT_STAT_C_ENABLE != 0) _ = clearPortFeature(bus, hub, port, d.USB_PORT_FEAT_C_ENABLE);
     if (change & d.USB_PORT_STAT_C_SUSPEND != 0) _ = clearPortFeature(bus, hub, port, d.USB_PORT_FEAT_C_SUSPEND);
-    if (change & d.USB_PORT_STAT_C_OVERCURRENT != 0) _ = clearPortFeature(bus, hub, port, d.USB_PORT_FEAT_C_OVER_CURRENT);
     if (change & d.USB_PORT_STAT_C_RESET != 0) _ = clearPortFeature(bus, hub, port, d.USB_PORT_FEAT_C_RESET);
     const connection_changed = change & d.USB_PORT_STAT_C_CONNECTION != 0;
     if (connection_changed) _ = clearPortFeature(bus, hub, port, d.USB_PORT_FEAT_C_CONNECTION);
@@ -877,6 +887,26 @@ fn portChanged(bus: *Bus, hub: *Hub, port: u8) void {
     } else if (status.status & d.USB_PORT_STAT_CONNECTION != 0) {
         connect(bus, hub, port);
     }
+}
+
+/// How long an over-current is given to pass before the port's power is
+/// given back.
+const overcurrent_cool_ms = 100;
+
+/// A port a hub took the power of for an over-current, after the cause
+/// had its time to pass: its power given back - where it is gone and the
+/// over-current is not still there - and its state as it then is. A hub
+/// turns the power off, and only the host turns it on again (USB 2.0
+/// 11.12.5): until then the port shows nothing in it. A port whose
+/// over-current stays is left without power.
+fn cooledDown(bus: *Bus, hub: *Hub, port: u8) ?PortState {
+    delay(bus, overcurrent_cool_ms);
+    const state = portState(bus, hub, port) orelse return null;
+    const status = state.status.status;
+    if (status & d.USB_PORT_STAT_POWER != 0 or status & d.USB_PORT_STAT_OVERCURRENT != 0) return state;
+    if (setPortFeature(bus, hub, port, d.USB_PORT_FEAT_POWER) != 0) return state;
+    delay(bus, hub.power_ms);
+    return portState(bus, hub, port);
 }
 
 /// Something plugged into a port: debounced, reset, set up.

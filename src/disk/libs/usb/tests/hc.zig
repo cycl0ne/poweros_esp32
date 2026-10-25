@@ -14,7 +14,9 @@
 //! nothing there is UHIOERR_TIMEOUT. A function answers the standard descriptors, its
 //! address and its configuration, and a hub its own descriptor and its
 //! ports' status and features - a reset is done at once, the port enabled
-//! at the function's speed. Anything else stalls, as does the one request
+//! at the function's speed; a port the script has trip loses its power to
+//! an over-current the first time it comes on, and shows what is in it
+//! once the power is back. Anything else stalls, as does the one request
 //! the script names, and a function the script says goes in the middle is
 //! pulled after that many control transfers.
 //!
@@ -96,6 +98,11 @@ pub const Function = extern struct {
     ports: u8 = 0,
     port_status: [max_ports]u16 = @splat(0),
     port_change: [max_ports]u16 = @splat(0),
+    /// The script: a hub's ports, a bit each from port 1, whose power
+    /// trips an over-current the first time it comes on; and the ports it
+    /// took the power of so, which show nothing in them until it is back.
+    trips: u8 = 0,
+    tripped: u8 = 0,
     /// Its status transfer, held while no port changed.
     held: ?*usbhc.IOUsbHC = null,
     /// The script: the request it stalls - bRequest, and for
@@ -593,12 +600,29 @@ fn childAt(hc: *HC, index: u8, port: u8) ?u8 {
 /// A hub's port powered or reset: a reset is done at once, the port
 /// enabled at the speed of what is in it, and that at address 0 again. A
 /// warm reset brings a SuperSpeed link back: what is on it shows as
-/// connected.
+/// connected. Power the script has trip is taken away again, an
+/// over-current change in its place; given back, what is in the port
+/// shows as plugged in.
 fn setFeature(hc: *HC, index: u8, port: u8, feature: u16) void {
     const hub = &hc.functions[index];
     const super = isSuperHub(hc, index);
+    const bit = @as(u8, 1) << @intCast(port - 1);
     switch (feature) {
-        d.USB_PORT_FEAT_POWER => hub.port_status[port - 1] |= if (super) d.USB_SS_PORT_STAT_POWER else d.USB_PORT_STAT_POWER,
+        d.USB_PORT_FEAT_POWER => {
+            if (hub.trips & bit != 0) {
+                hub.trips &= ~bit;
+                hub.tripped |= bit;
+                hub.port_status[port - 1] &= ~(d.USB_PORT_STAT_CONNECTION | d.USB_PORT_STAT_ENABLE);
+                hub.port_change[port - 1] |= d.USB_PORT_STAT_C_OVERCURRENT;
+                return;
+            }
+            hub.port_status[port - 1] |= if (super) d.USB_SS_PORT_STAT_POWER else d.USB_PORT_STAT_POWER;
+            if (hub.tripped & bit == 0) return;
+            hub.tripped &= ~bit;
+            if (childAt(hc, index, port) == null) return;
+            hub.port_status[port - 1] |= d.USB_PORT_STAT_CONNECTION;
+            hub.port_change[port - 1] |= d.USB_PORT_STAT_C_CONNECTION;
+        },
         d.USB_PORT_FEAT_RESET => {
             if (hub.port_status[port - 1] & d.USB_PORT_STAT_CONNECTION == 0) return;
             const at = childAt(hc, index, port) orelse return;
