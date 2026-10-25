@@ -4,7 +4,8 @@
 //! at 0x10000000 with byte-wide registers one after the other (QEMU
 //! gives its divisor a 3.6864 MHz clock) on PLIC source 10, a 10 MHz
 //! timebase, and the PLIC's contexts two per hart, machine mode first.
-//! With `-device ramfb` a display too, 1920x1080 as the VisionFive 2's.
+//! With `-device virtio-gpu-device` or `-device ramfb` a display too,
+//! 1920x1080 as the VisionFive 2's.
 //!
 //! What is true of the board is written down here once, as the system tag
 //! list the ROM carries for expansion.library (a part per SYSTAG_Part). The
@@ -31,6 +32,27 @@ const screen = struct {
 const fw_cfg: usize = 0x1010_0000;
 
 // --- the display ------------------------------------------------------------------
+
+/// QEMU's virtio GPU, there when QEMU is started with `-device
+/// virtio-gpu-device`: behind one of the machine's 8 virtio-mmio
+/// transports, 0x1000 bytes apart from 0x1000_1000, of which QEMU gives the
+/// first device added the last. The picture is as large as QEMU's window
+/// has it (`xres`, `yres`), the part's size where it says none. Listed
+/// before the ramfb, so a machine with both shows the GPU.
+const gpu = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PANEL),
+    .value(st.PART_Chip, st.CHIP_VIRTIO_GPU),
+    .pointer(st.PART_ChipName, "virtio-gpu"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x1000_1000),
+    .value(st.PART_Windows, 8),
+    .value(st.PART_WindowSize, 0x1000),
+    .value(tags.RTGA_Width, screen.width),
+    .value(tags.RTGA_Height, screen.height),
+    .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
+    .value(tags.RTGA_Buffers, 3),
+    .done,
+};
 
 /// QEMU's ramfb, there when QEMU is started with `-device ramfb`: a
 /// picture in RAM the emulator shows in its window. What the fb rtg driver
@@ -108,6 +130,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_Cores, 4),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
+    .pointer(st.SYSTAG_Part, &gpu),
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &pci_host),
     .pointer(st.SYSTAG_Part, &usb),

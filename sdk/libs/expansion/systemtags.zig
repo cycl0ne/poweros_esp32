@@ -217,6 +217,12 @@ pub const PART_PciIoBus = PART_Dummy + 27;
 /// the bus, where that is not where the processor reaches them.
 pub const PART_PciMemBus = PART_Dummy + 28;
 pub const PART_PciPrefBus = PART_Dummy + 29;
+/// A row of like register windows the part is behind one of, not known
+/// which until they are looked at - QEMU's virtio-mmio transports:
+/// PART_Address the first, PART_Windows how many, PART_WindowSize how
+/// far apart.
+pub const PART_Windows = PART_Dummy + 30;
+pub const PART_WindowSize = PART_Dummy + 31;
 
 // Its lines, each a BoardPin. Which ones a part has depends on its kind.
 pub const PART_PinClock = PART_Dummy + 0x20;
@@ -466,6 +472,11 @@ pub const CHIP_JH7110_DMAC: u32 = 31;
 /// beside its cores: one reading, 12 bits, which thermal.resource clocks
 /// and turns into degrees.
 pub const CHIP_JH7110_TEMP: u32 = 32;
+/// QEMU's virtio GPU on a virtio-mmio transport (PARTKIND_PANEL on
+/// BUS_MEMORY, the transports PART_Address, PART_Windows and
+/// PART_WindowSize): a picture in RAM copied into the emulator's window a
+/// rectangle at a time, and a pointer of its own.
+pub const CHIP_VIRTIO_GPU: u32 = 33;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
