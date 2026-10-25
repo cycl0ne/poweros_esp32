@@ -89,6 +89,7 @@ test "every length and every split gives std.crypto's digest" {
         .{ .algorithm = crypto.HASH_SHA256, .reference = std.crypto.hash.sha2.Sha256 },
         .{ .algorithm = crypto.HASH_SHA384, .reference = std.crypto.hash.sha2.Sha384 },
         .{ .algorithm = crypto.HASH_SHA512, .reference = std.crypto.hash.sha2.Sha512 },
+        .{ .algorithm = crypto.HASH_MD5, .reference = std.crypto.hash.Md5 },
     };
     inline for (pairs) |pair| {
         var length: usize = 0;
@@ -108,6 +109,34 @@ test "every length and every split gives std.crypto's digest" {
             try testing.expectEqualSlices(u8, &expected, digest[0..expected.len]);
         }
     }
+}
+
+test "RFC 1321's MD5 and RFC 1320's MD4 test suites" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    const Case = struct { text: []const u8, md5: []const u8, md4: []const u8 };
+    const cases = [_]Case{
+        .{ .text = "", .md5 = "d41d8cd98f00b204e9800998ecf8427e", .md4 = "31d6cfe0d16ae931b73c59d7e0c089c0" },
+        .{ .text = "a", .md5 = "0cc175b9c0f1b6a831c399e269772661", .md4 = "bde52cb31de33e46245e05fbdbd6fb24" },
+        .{ .text = "abc", .md5 = "900150983cd24fb0d6963f7d28e17f72", .md4 = "a448017aaf21d8525fc10ae87aa6729d" },
+        .{ .text = "message digest", .md5 = "f96b697d7cb7938d525a2f31aaf161d0", .md4 = "d9130a8164549fe818874806e1c7014b" },
+        .{ .text = "abcdefghijklmnopqrstuvwxyz", .md5 = "c3fcd3d76192e4007dfb496cca67e13b", .md4 = "d79e1c308aa5bbcdeea8ed63df412da9" },
+        .{ .text = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", .md5 = "d174ab98d277d9f5a5611c2c9f419d9f", .md4 = "043f8582f241db351ce627e153e7f0e4" },
+        .{ .text = "1234567890" ** 8, .md5 = "57edf4a22be3c955ac49da2e2107b67a", .md4 = "e33b4ddc9c38f2199c3e7b164fcc0536" },
+    };
+    for (cases) |case| {
+        var md5: [16]u8 = undefined;
+        var md4: [16]u8 = undefined;
+        _ = try std.fmt.hexToBytes(&md5, case.md5);
+        _ = try std.fmt.hexToBytes(&md4, case.md4);
+        try testing.expectEqualSlices(u8, &md5, try digestOf(cb, crypto.HASH_MD5, case.text));
+        try testing.expectEqualSlices(u8, &md4, try digestOf(cb, crypto.HASH_MD4, case.text));
+    }
+    // NTLM's hash of a password is MD4 over its UTF-16: "Password", as
+    // MS-NLMP 4.2.2.1.2 has it.
+    const password = [_]u8{ 'P', 0, 'a', 0, 's', 0, 's', 0, 'w', 0, 'o', 0, 'r', 0, 'd', 0 };
+    try testing.expectEqualSlices(u8, &hex("a4f49c406510bdcab6824ee7c30fd852"), try digestOf(cb, crypto.HASH_MD4, &password));
 }
 
 test "a hash of an unknown algorithm is refused, and takes nothing" {
@@ -163,6 +192,41 @@ test "RFC 4231's HMAC-SHA-256, and keys of every length as std.crypto has them" 
         cb.UpdateHmac(&context, message[10..], message.len - 10);
         try testing.expectEqual(@as(u32, 64), cb.FinishHmac(&context, &mac));
         try testing.expectEqualSlices(u8, &expected, &mac);
+    }
+}
+
+test "RFC 2202's HMAC-MD5, and keys of every length as std.crypto has them" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    var context: crypto.HmacContext = .{};
+    var mac: [crypto.DIGEST_MAX]u8 = undefined;
+    const Case = struct { key: []const u8, data: []const u8, mac: [16]u8 };
+    const cases = [_]Case{
+        .{ .key = &(@as([16]u8, @splat(0x0b))), .data = "Hi There", .mac = hex("9294727a3638bb1c13f48ef8158bfc9d") },
+        .{ .key = "Jefe", .data = "what do ya want for nothing?", .mac = hex("750c783e6ab0b503eaa86e310a5db738") },
+        .{ .key = &(@as([16]u8, @splat(0xaa))), .data = &(@as([50]u8, @splat(0xdd))), .mac = hex("56be34521d144c88dbb8c733f0e8b3f6") },
+        .{ .key = &(@as([80]u8, @splat(0xaa))), .data = "Test Using Larger Than Block-Size Key - Hash Key First", .mac = hex("6b1ab7fe4bd7bf8f0b62e6ce61b9d0cd") },
+    };
+    for (cases) |case| {
+        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitHmac(&context, crypto.HASH_MD5, case.key.ptr, @intCast(case.key.len)));
+        cb.UpdateHmac(&context, case.data.ptr, @intCast(case.data.len));
+        try testing.expectEqual(@as(u32, 16), cb.FinishHmac(&context, &mac));
+        try testing.expectEqualSlices(u8, &case.mac, mac[0..16]);
+    }
+
+    var key: [100]u8 = undefined;
+    for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 11);
+    const message = "what do ya want for nothing?";
+    const HmacMd5 = std.crypto.auth.hmac.HmacMd5;
+    for ([_]usize{ 0, 1, 63, 64, 65, 100 }) |key_length| {
+        var expected: [HmacMd5.mac_length]u8 = undefined;
+        HmacMd5.create(&expected, message, key[0..key_length]);
+        _ = cb.InitHmac(&context, crypto.HASH_MD5, &key, @intCast(key_length));
+        cb.UpdateHmac(&context, message[0..7], 7);
+        cb.UpdateHmac(&context, message[7..], message.len - 7);
+        try testing.expectEqual(@as(u32, 16), cb.FinishHmac(&context, &mac));
+        try testing.expectEqualSlices(u8, &expected, mac[0..16]);
     }
 }
 

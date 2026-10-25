@@ -142,12 +142,14 @@ crypto.library/VerifySignature
 
    RESULT
 	The digest's length in bytes: 20 for SHA-1, 28, 32, 48 or 64 for the
-	others. 0 for a context InitHash did not set up, and nothing written.
+	other SHAs, 16 for MD5 and MD4. 0 for a context InitHash did not set
+	up, and nothing written.
 
    BEHAVIOR
-	The hash is padded as FIPS 180-4 says and its last blocks run; the
-	digest is written most significant byte first, as it is printed and
-	sent. The context is wiped: to hash again it needs InitHash.
+	The hash is padded as FIPS 180-4 says (RFC 1320 and 1321 for MD4 and
+	MD5, whose length goes low byte first) and its last blocks run; the
+	digest is written in the order it is printed and sent. The context is
+	wiped: to hash again it needs InitHash.
 
    CONTEXT
 	- Waits: yes, for the SHA engine while another task has it.
@@ -394,8 +396,8 @@ crypto.library/VerifySignature
    INPUTS
 	- `context`: the caller's, made with `.{}` so that its `size` is
 	  right; whatever it held before is dropped.
-	- `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384 or
-	  HASH_SHA512.
+	- `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384,
+	  HASH_SHA512, and since 1.4 HASH_MD5 and HASH_MD4.
 
    RESULT
 	CRYPTOERR_OK, or CRYPTOERR_ALGORITHM for an algorithm there is not;
@@ -420,8 +422,9 @@ crypto.library/VerifySignature
 	Nothing is allocated; the context stays the caller's.
 
    NOTES
-	SHA-1 is here for the formats that still name it; nothing new should
-	rest on it.
+	SHA-1, MD5 and MD4 are here for the formats and protocols that still
+	name them - MD4 and MD5 for NTLM's logon and PPP's CHAP; nothing new
+	should rest on them. MD4 and MD5 run on the CPU on every chip.
 
    BUGS
 	None known.
@@ -449,8 +452,9 @@ crypto.library/VerifySignature
    INPUTS
 	- `context`: the caller's, made with `.{}` so that its `size` is
 	  right; whatever it held before is dropped.
-	- `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384 or
-	  HASH_SHA512.
+	- `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384,
+	  HASH_SHA512, and since 1.4 HASH_MD5 and HASH_MD4 (HMAC-MD5 is what
+	  NTLMv2 signs with).
 	- `key`: the key's bytes; may be null when `key_length` is 0.
 	- `key_length`: any length. A key longer than the hash's block is
 	  hashed first, as RFC 2104 says.

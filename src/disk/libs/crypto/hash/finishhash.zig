@@ -23,12 +23,14 @@ const _hash = @import("_hash.zig");
 ///
 /// RESULT:
 /// The digest's length in bytes: 20 for SHA-1, 28, 32, 48 or 64 for the
-/// others. 0 for a context InitHash did not set up, and nothing written.
+/// other SHAs, 16 for MD5 and MD4. 0 for a context InitHash did not set
+/// up, and nothing written.
 ///
 /// BEHAVIOR:
-/// The hash is padded as FIPS 180-4 says and its last blocks run; the
-/// digest is written most significant byte first, as it is printed and
-/// sent. The context is wiped: to hash again it needs InitHash.
+/// The hash is padded as FIPS 180-4 says (RFC 1320 and 1321 for MD4 and
+/// MD5, whose length goes low byte first) and its last blocks run; the
+/// digest is written in the order it is printed and sent. The context is
+/// wiped: to hash again it needs InitHash.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the SHA engine while another task has it.

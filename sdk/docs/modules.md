@@ -225,6 +225,7 @@ flowchart TB
     m_sdcard_device["sdcard.device"]
     m_serial_device["serial.device"]
     m_slip_device["slip.device"]
+    m_smb_handler["smb-handler"]
     m_ssh_device["ssh.device"]
     m_telnet_device["telnet.device"]
     m_timer_device["timer.device"]
@@ -339,6 +340,11 @@ flowchart TB
     m_slip_device --> m_serial_device
     m_slip_device --> m_timer_device
     m_slip_device -.-> m_usbserial_device
+    m_smb_handler --> m_battmem_resource
+    m_smb_handler --> m_bsdsocket_library
+    m_smb_handler --> m_crypto_library
+    m_smb_handler --> m_dos_library
+    m_smb_handler --> m_timer_device
     m_ssh_device --> m_bsdsocket_library
     m_ssh_device --> m_crypto_library
     m_ssh_device --> m_timer_device
@@ -368,7 +374,7 @@ flowchart TB
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_acm_device,m_aic8800_device,m_clipboard_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_uac_device,m_usbotg_device,m_xhci_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
-    class m_fat_handler,m_posfs_handler hand
+    class m_fat_handler,m_posfs_handler,m_smb_handler hand
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_datatype_classes,m_gadget_classes cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151

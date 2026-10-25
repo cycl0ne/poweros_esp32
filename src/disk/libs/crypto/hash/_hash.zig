@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Hashing, as the hash and HMAC calls share it: bytes gathered into
-//! whole blocks for the SHA engine, and the padding that ends a hash.
+//! whole blocks for the SHA engine - or for MD4 and MD5, which no engine
+//! has - and the padding that ends a hash.
 //!
 //! A context keeps what does not yet make a block in its buffer. Data
 //! that arrives while the buffer is empty goes to the engine straight
@@ -12,6 +13,7 @@ const crypto = sdk.crypto;
 const HashContext = crypto.HashContext;
 const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 const sha = @import("../engine/sha.zig");
+const md = @import("md.zig");
 
 /// Whether `algorithm` is one the library has.
 pub fn known(algorithm: u32) bool {
@@ -26,7 +28,11 @@ pub fn begin(context: *HashContext, algorithm: u32) void {
 }
 
 fn run(cb: *CryptoBase, context: *HashContext, data: [*]const u8, blocks: u32) void {
-    sha.run(cb, context.algorithm, &context.state, context.started == 0, data, blocks);
+    const first = context.started == 0;
+    if (littleEndian(context.algorithm))
+        md.run(context.algorithm, &context.state, first, data, blocks)
+    else
+        sha.run(cb, context.algorithm, &context.state, first, data, blocks);
     context.started = 1;
 }
 
@@ -54,6 +60,12 @@ pub fn absorb(cb: *CryptoBase, context: *HashContext, data: [*]const u8, length:
     context.buffered = left;
 }
 
+/// Whether an algorithm counts its words, and its length at the end, low
+/// byte first: MD4 and MD5; the SHAs go the other way.
+fn littleEndian(algorithm: u32) bool {
+    return algorithm == crypto.HASH_MD5 or algorithm == crypto.HASH_MD4;
+}
+
 /// The hash ended: padded, its digest into `digest`, and the context
 /// wiped. The digest's length.
 pub fn finish(cb: *CryptoBase, context: *HashContext, digest: [*]u8) u32 {
@@ -69,7 +81,11 @@ pub fn finish(cb: *CryptoBase, context: *HashContext, digest: [*]u8) u32 {
         context.buffered = 0;
     }
     for (context.buffered..block) |index| context.buffer[index] = 0;
-    for (0..8) |index| context.buffer[block - 1 - index] = @truncate(bits >> @intCast(8 * index));
+    const low_first = littleEndian(context.algorithm);
+    for (0..8) |index| {
+        const at = if (low_first) block - 8 + index else block - 1 - index;
+        context.buffer[at] = @truncate(bits >> @intCast(8 * index));
+    }
     run(cb, context, &context.buffer, 1);
     const length = crypto.digestLength(context.algorithm);
     const state: [*]const u8 = @ptrCast(&context.state);

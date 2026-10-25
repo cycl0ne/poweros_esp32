@@ -25,6 +25,13 @@ If NOT WARN
   C:SetClock SAVE
 EndIf
 
+; Every share in DEVS:Shares/ mounted, as its file says (the password,
+; or its hash, from ENVARC:Sys/net/shares/): a server that cannot be had
+; is not mounted, and stops nothing.
+If EXISTS DEVS:Shares
+  C:net/MountShare ALL QUIET
+EndIf
+
 ; The system log to a syslog server, when ENVARC:Sys/net/syslog names one
 ; (host or host:port): what the log holds now, then every line as it
 ; comes, in a task of its own.

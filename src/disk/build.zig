@@ -62,7 +62,7 @@ const tests = [_][]const u8{
     "memowner",    "records",    "exall",       "disktest",  "filetest",
     "speed2d",     "windraw",
 };
-const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter" };
+const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "mountshare" };
 
 /// Programs with windows, in SYS:Programs and - the system's own tools -
 /// SYS:System: started by their full name or from a shell there, not on
@@ -189,6 +189,7 @@ const modules = [_]Program{
     .{ .disk = "devs/usb/aic8800.device", .source = "devs/usb/aic8800/aic8800.zig", .name = "aic8800.device" },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
     .{ .disk = "devs/handlers/posfs-handler", .source = "devs/handlers/posfs/posfs.zig", .name = "posfs-handler" },
+    .{ .disk = "devs/handlers/smb-handler", .source = "devs/handlers/smb/smb.zig", .name = "smb-handler" },
 };
 
 /// Drivers of the ESP32-S3's own hardware, built for it alone: RS-485 on
