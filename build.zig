@@ -126,8 +126,26 @@ const DiskIcon = struct { path: []const u8, picture: []const u8, fields: []const
 
 /// The stack every icon that starts a program asks for: what a command
 /// gets in a shell (`CLI_DEFAULT_STACK`), so a program has the same stack
-/// started from its icon as typed.
-const icon_stack = "STACK=16384";
+/// started from its icon as typed. That depends on the chip's pointers,
+/// so this field stands for it in the list, and each disk gets the icon
+/// with its own (`iconStack`).
+const icon_stack = "STACK=CLI_DEFAULT_STACK";
+
+/// `CLI_DEFAULT_STACK` on a chip whose pointers are `pointer_bytes` long:
+/// 4 KiB for each byte, as sdk/libs/dos/dosextens.zig has it.
+fn iconStack(b: *std.Build, pointer_bytes: u32) []const u8 {
+    return b.fmt("STACK={d}", .{4096 * pointer_bytes});
+}
+
+/// The icon `one` made by tools/mkicon from `picture`, with `stack` for
+/// the field `icon_stack`.
+fn makeIcon(b: *std.Build, mkicon: *std.Build.Step.Compile, picture: []const u8, one: DiskIcon, stack: []const u8) std.Build.LazyPath {
+    const run = b.addRunArtifact(mkicon);
+    run.addFileArg(.{ .cwd_relative = picture });
+    const made = run.addOutputFileArg(std.fs.path.basename(one.path));
+    for (one.fields) |field| run.addArg(if (std.mem.eql(u8, field, icon_stack)) stack else field);
+    return made;
+}
 
 const disk_icons = [_]DiskIcon{
     // The defaults, in ENVARC:Sys and from there in ENV:Sys: a file
@@ -555,11 +573,22 @@ pub fn build(b: *std.Build) void {
                 std.log.info("no picture {s} (scripts/fetch-icons.sh): the disk has no {s}", .{ one.picture, one.path });
                 continue;
             };
-            const run = b.addRunArtifact(mkicon);
-            run.addFileArg(.{ .cwd_relative = picture });
-            const made_icon = run.addOutputFileArg(std.fs.path.basename(one.path));
-            run.addArgs(one.fields);
-            disks.addPrefixedFileArg(b.fmt("{s}=", .{one.path}), made_icon);
+            const prefix = b.fmt("{s}=", .{one.path});
+            const sized = for (one.fields) |field| {
+                if (std.mem.eql(u8, field, icon_stack)) break true;
+            } else false;
+            if (!sized) {
+                disks.addPrefixedFileArg(prefix, makeIcon(b, mkicon, picture, one, ""));
+                continue;
+            }
+            // An icon that asks for a command's stack: made once for each
+            // size of pointer, and each disk given its chip's.
+            var by_width: [2]?std.Build.LazyPath = @splat(null);
+            for (disks.runs, DiskImages.pointer_bytes) |run, bytes| {
+                const slot = &by_width[bytes / 8];
+                if (slot.* == null) slot.* = makeIcon(b, mkicon, picture, one, iconStack(b, bytes));
+                run.addPrefixedFileArg(prefix, slot.*.?);
+            }
         }
     }
     // The `disk/` tree, and then -Dextra last, so that either may
@@ -1344,6 +1373,10 @@ const p4_flash_part_offset = 0x40000;
 /// Disk images made from one recipe: what is given goes into each.
 const DiskImages = struct {
     runs: [4]*std.Build.Step.Run,
+
+    /// How long a pointer is on each run's chip, in the order of `runs`:
+    /// the ESP32-S3's and the ESP32-P4's, then RISC-V 64's and AArch64's.
+    const pointer_bytes = [4]u32{ 4, 4, 8, 8 };
 
     fn addArg(images: DiskImages, arg: []const u8) void {
         for (images.runs) |run| run.addArg(arg);

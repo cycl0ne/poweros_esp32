@@ -529,8 +529,9 @@ handed.
 
 ### A stack that runs out
 
-A command runs on a stack of its own, `CLI_DEFAULT_STACK` (16 KiB) unless
-the shell's `Stack` command set another size. A window of gadgets uses
+A command runs on a stack of its own, `CLI_DEFAULT_STACK` (16 KiB on the
+ESP32s, 32 KiB on the 64-bit boards, whose frames are wider) unless the
+shell's `Stack` command set another size. A window of gadgets uses
 more of it than its size suggests: a layout in a group in a page, and
 every message passing through several calls, each with a frame on a
 register-window stack.

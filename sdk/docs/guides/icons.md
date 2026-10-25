@@ -147,8 +147,9 @@ Tango icon library, in the public domain, drawn from its SVG sources at
 the size the board shows icons at (48 pixels on the 7B and in QEMU, 40
 on the 3.5" board) into `toolchain/icons/<size>/`. Every one of them that
 starts a program - a program's, and the tool, project and script
-defaults - asks for a 16 KiB stack (`STACK=16384`), what a command gets
-in a shell, so a program has the same stack opened from its icon as
+defaults - asks for the stack a command gets in a shell
+(`CLI_DEFAULT_STACK`: `STACK=16384` on the ESP32s' disks, `STACK=32768`
+on the 64-bit ones), so a program has the same stack opened from its icon as
 typed. Without them the disk has no icons of its own and the library's
 built-in ones stand in. A picture the script gained since it last ran is
 not there until it runs again: the build leaves that one icon out and
