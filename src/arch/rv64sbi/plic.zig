@@ -47,12 +47,12 @@ pub const interrupt_hardware: exec.InterruptHardware = .{
 var softint_pending: [max_cores]u32 = @splat(0);
 var cross_core_pending: [max_cores]u32 = @splat(0);
 
-/// Core 0's: every source off in its context and at priority 0, its
-/// threshold 0, and its software and external interrupts on. The
-/// devices' sources are core 0's.
+/// Core 0's: every source the machine's PLIC has off in its context and
+/// at priority 0, its threshold 0, and its software and external
+/// interrupts on. The devices' sources are core 0's.
 pub fn init() void {
     const context = plic.supervisorContext(cpu.hartId());
-    for (1..intbits.INTB_PLIC_COUNT) |source| {
+    for (1..plic.sources + 1) |source| {
         plic.setEnabled(context, @intCast(source), false);
         plic.setPriority(@intCast(source), 0);
     }
@@ -133,14 +133,14 @@ fn isAlarm(source: u32) bool {
 
 fn enableSource(source: u32, _: bool) bool {
     if (isAlarm(source)) return true;
-    if (source == 0 or source >= intbits.INTB_PLIC_COUNT) return false;
+    if (!plic.has(source)) return false;
     plic.setPriority(source, 1);
     plic.setEnabled(plic.supervisorContext(cpu.hartids[0]), source, true);
     return true;
 }
 
 fn disableSource(source: u32) void {
-    if (source == 0 or source >= intbits.INTB_PLIC_COUNT) return;
+    if (!plic.has(source)) return;
     plic.setEnabled(plic.supervisorContext(cpu.hartids[0]), source, false);
     plic.setPriority(source, 0);
 }
@@ -158,6 +158,6 @@ fn restore(state: u32) void {
 /// or the timer's for an alarm.
 pub fn lineOf(source: u32) ?u6 {
     if (isAlarm(source)) return trap.tick_line;
-    if (source == 0 or source >= intbits.INTB_PLIC_COUNT) return null;
+    if (!plic.has(source)) return null;
     return if (plic.isEnabled(plic.supervisorContext(cpu.hartids[0]), source)) trap.external_line else null;
 }

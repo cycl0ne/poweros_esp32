@@ -12,6 +12,7 @@
 
 const map = @import("map.zig");
 const reg = @import("mmio.zig").reg;
+const intbits = @import("intbits.zig");
 
 const PRIORITY = 0x0;
 const PENDING = 0x1000;
@@ -25,6 +26,15 @@ const CLAIM = 0x4;
 /// Supervisor mode of hart n is context `first + stride * n`.
 pub const Contexts = struct { first: u32, stride: u32 };
 pub var contexts: Contexts = .{ .first = 1, .stride = 2 };
+
+/// The highest source the machine's PLIC has: past it there are neither
+/// priorities nor enable bits. The kernel sets it from the board.
+pub var sources: u32 = intbits.INTB_PLIC_COUNT - 1;
+
+/// Whether the PLIC has `source`; 0 is none.
+pub fn has(source: u32) bool {
+    return source != 0 and source <= sources;
+}
 
 /// The supervisor context of hart `hartid`.
 pub fn supervisorContext(hartid: usize) usize {

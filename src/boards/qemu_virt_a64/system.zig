@@ -5,7 +5,8 @@
 //! console at 0x09000000 with a 24 MHz clock on interrupt ID 33, the
 //! GIC's distributor at 0x08000000 and its CPU interface at 0x08010000.
 //! The generic timer's rate is the core's own (CNTFRQ_EL0). With
-//! `-device ramfb` a display too, 1920x1080 as on the RISC-V board.
+//! `-device virtio-gpu-device` or `-device ramfb` a display too,
+//! 1920x1080 as on the RISC-V board.
 //!
 //! What is true of the board is written down here once, as the system tag
 //! list the ROM carries for expansion.library (a part per SYSTAG_Part). The
@@ -31,6 +32,27 @@ const screen = struct {
 const fw_cfg: usize = 0x0902_0000;
 
 // --- the display ------------------------------------------------------------------
+
+/// QEMU's virtio GPU, there when QEMU is started with `-device
+/// virtio-gpu-device`: behind one of the machine's 32 virtio-mmio
+/// transports, 0x200 bytes apart from 0x0A00_0000, of which QEMU gives the
+/// first device added the last. The picture is as large as QEMU's window
+/// has it (`xres`, `yres`), the part's size where it says none. Listed
+/// before the ramfb, so a machine with both shows the GPU.
+const gpu = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PANEL),
+    .value(st.PART_Chip, st.CHIP_VIRTIO_GPU),
+    .pointer(st.PART_ChipName, "virtio-gpu"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x0A00_0000),
+    .value(st.PART_Windows, 32),
+    .value(st.PART_WindowSize, 0x200),
+    .value(tags.RTGA_Width, screen.width),
+    .value(tags.RTGA_Height, screen.height),
+    .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
+    .value(tags.RTGA_Buffers, 3),
+    .done,
+};
 
 /// QEMU's ramfb, there when QEMU is started with `-device ramfb`: a
 /// picture in RAM the emulator shows in its window. What the fb rtg driver
@@ -108,6 +130,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_Cores, 4),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
+    .pointer(st.SYSTAG_Part, &gpu),
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &pci_host),
     .pointer(st.SYSTAG_Part, &usb),

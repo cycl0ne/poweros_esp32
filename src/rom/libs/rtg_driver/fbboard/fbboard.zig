@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-//! A display that reads its picture out of the machine's RAM by itself,
-//! as a display board: QEMU virt's ramfb (`ramfb.zig`) and the JH7110's
-//! display controller behind its HDMI port (`jh7110.zig`).
+//! A display whose picture is in the machine's RAM, as a display board:
+//! QEMU virt's ramfb (`ramfb.zig`) and the JH7110's display controller
+//! behind its HDMI port (`jh7110.zig`), which read it out of RAM by
+//! themselves, and QEMU's virtio GPU (`virtio.zig`), which is told what
+//! changed.
 //!
 //! A module of its own, on the same footing as the other drivers: it
 //! opens rtg.library at cold start and hands in a driver called "fb",
@@ -19,7 +21,13 @@
 //! caches, and nothing on QEMU's virt, whose ramfb reads RAM through the
 //! host's (SYSTAG_CacheFlush absent, SYSTAG_DmaCoherent).
 //!
-//! The emulator's display has one mode, the size the board names. The
+//! The virtio GPU keeps a copy of each picture in the emulator instead,
+//! and shows that: the rectangle a refresh hands on is copied into it and
+//! shown, so there it is the hand-on that puts what was written on the
+//! glass, a rectangle at a time, and showing a buffer is naming its copy.
+//!
+//! The emulator's displays have one mode: the ramfb the size the board
+//! names, the virtio GPU the size QEMU's window has for it. The
 //! JH7110's has the modes the monitor on its HDMI port names in its EDID
 //! and the port can send, read when the board is made (`monitor.zig`):
 //! the one the monitor prefers is the default, and any of them can be set.
@@ -52,7 +60,10 @@
 //! (`cursor`), the image copied into a buffer of the block's as ARGB, its
 //! mask the alpha, and a move is the plane written again at its new place.
 //! Two buffers take turns, so the one the controller reads is never the
-//! one written. The overlay is still laid in the composed frame.
+//! one written. The overlay is still laid in the composed frame. The
+//! virtio GPU's cursor is the same, laid over its window by the emulator -
+//! with a tablet, as the host's own pointer - and moved by a command; so
+//! there nothing is composed for the pointer either.
 //!
 //! The board's engine is the processor's own cores (`engine.zig`): a
 //! fill, a copy, a colour or a picture with coverage laid over, a picture
@@ -83,6 +94,7 @@ const st = sdk.expansion.systemtags;
 
 const ramfb = @import("ramfb.zig");
 const jh7110 = @import("jh7110.zig");
+const virtio = @import("virtio.zig");
 const monitor = @import("monitor.zig");
 const edid = @import("../edid.zig");
 const engine = @import("engine.zig");
@@ -92,15 +104,15 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 7;
-const BUILD_DATE = "24.10.2026";
+const REVISION = 8;
+const BUILD_DATE = "25.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
 /// The chips this drives, as the board's panel part names them.
-const chips = [_]u32{ st.CHIP_QEMU_RAMFB, st.CHIP_JH7110_DC8200 };
+const chips = [_]u32{ st.CHIP_QEMU_RAMFB, st.CHIP_JH7110_DC8200, st.CHIP_VIRTIO_GPU };
 
 /// What every row and every buffer starts on: whole cache lines, so a
 /// refresh writes back exactly the rows it names, and as wide as any
@@ -124,6 +136,7 @@ const State = struct {
 const Scanout = union(enum) {
     ramfb: ramfb.Ramfb,
     jh7110,
+    virtio: virtio.Gpu,
 };
 
 /// Everything one board of this driver has. The library allocates it
@@ -307,12 +320,51 @@ fn screenOf(board: *rtg.RtgBoard) *Screen {
 
 // --- the display -------------------------------------------------------------
 
-/// `length` bytes at `from`, which the CPU has written, where the display
-/// reads them: written back out of the caches, where the machine's
-/// display goes past them.
-fn handOn(screen: *Screen, from: [*]u8, length: usize) void {
+/// `length` bytes at `from`, which the CPU has written, written back out
+/// of the caches, where the machine's display goes past them.
+fn writeBack(screen: *Screen, from: [*]u8, length: usize) void {
     if (length == 0) return;
     screen.sys.CacheClearE(from, @intCast(length), exec.CACRF_ClearD);
+}
+
+/// `box` of a picture the CPU has written, where the display reads it:
+/// written back - a run a row, one run over the rows where the box is as
+/// wide as the picture - and on the virtio GPU copied into the emulator's
+/// copy of the picture, and shown there when it is the one shown. Only a
+/// picture the display can be shown is copied.
+fn handOn(screen: *Screen, picture: *const rtg.RtgBitMap, box: Box) void {
+    if (box.left >= box.right or box.top >= box.end) return;
+    const pixels = picture.pixels orelse return;
+    const pitch = picture.pitch;
+    const bytes = rtg.formatBytes(picture.format);
+    if (box.left == 0 and box.right >= picture.width) {
+        writeBack(screen, pixels + box.top * pitch, (box.end - box.top) * pitch);
+    } else {
+        const left = box.left * bytes;
+        const run = (box.right - box.left) * bytes;
+        var y = box.top;
+        while (y < box.end) : (y += 1) writeBack(screen, pixels + y * pitch + left, run);
+    }
+    switch (screen.scanout) {
+        .virtio => |*gpu| if (showable(screen, picture)) virtio.update(gpu, .{
+            .pixels = @intFromPtr(pixels),
+            .pitch = pitch,
+            .height = picture.height,
+        }, .{
+            .x = box.left,
+            .y = box.top,
+            .width = box.right - box.left,
+            .height = box.end - box.top,
+        }, Waiter{ .screen = screen }),
+        else => {},
+    }
+}
+
+/// Whether the display can be shown `picture`: its size, its rows and its
+/// format are the display's.
+fn showable(screen: *const Screen, picture: *const rtg.RtgBitMap) bool {
+    return picture.width == screen.width and picture.height == screen.height and
+        picture.pitch == screen.pitch and picture.format == screen.format;
 }
 
 /// The display told to read from `address` from its next frame on.
@@ -327,6 +379,11 @@ fn scanFrom(screen: *Screen, address: usize) void {
             jh7110.show(address);
             break :done true;
         },
+        .virtio => |*gpu| virtio.show(gpu, .{
+            .pixels = address,
+            .pitch = screen.pitch,
+            .height = screen.height,
+        }, screen.width, screen.height, Waiter{ .screen = screen }),
     };
     if (shown) screen.scanning = address;
 }
@@ -382,10 +439,11 @@ fn whole(screen: *const Screen) Box {
     return .{ .left = 0, .top = 0, .right = screen.width, .end = screen.height };
 }
 
-/// The composed frame as a buffer, for the engine to copy into.
-fn composedMap(screen: *const Screen) rtg.RtgBitMap {
+/// A picture of the display's size and rows at `pixels` - the composed
+/// frame, a buffer - for the engine to copy into and to be handed on.
+fn pictureAt(screen: *const Screen, pixels: ?[*]u8) rtg.RtgBitMap {
     return .{
-        .pixels = screen.composed,
+        .pixels = pixels,
         .width = screen.width,
         .height = screen.height,
         .pitch = screen.pitch,
@@ -394,8 +452,7 @@ fn composedMap(screen: *const Screen) rtg.RtgBitMap {
 }
 
 /// `box` of the display, each row from its band, into the composed frame,
-/// and handed on: one run where the box is as wide as the display, a run
-/// a row otherwise.
+/// and handed on.
 fn copyArea(screen: *Screen, box: Box) void {
     const composed = screen.composed orelse return;
     if (box.left >= box.right or box.top >= box.end) return;
@@ -405,15 +462,7 @@ fn copyArea(screen: *Screen, box: Box) void {
         const end = @min(box.end, band_end);
         if (first < end) copyBand(screen, band, box, first, end);
     }
-    const pitch = screen.pitch;
-    const left = box.left * screen.bytes;
-    const run = (box.right - box.left) * screen.bytes;
-    if (left == 0 and run >= pitch) {
-        handOn(screen, composed + box.top * pitch, (box.end - box.top) * pitch);
-    } else {
-        var y = box.top;
-        while (y < box.end) : (y += 1) handOn(screen, composed + y * pitch + left, run);
-    }
+    handOn(screen, &pictureAt(screen, composed), box);
 }
 
 /// Display rows `first` to `end` of one band, across the box's columns.
@@ -422,7 +471,7 @@ fn copyArea(screen: *Screen, box: Box) void {
 /// repeated, or a format the engine does not take, a row at a time.
 fn copyBand(screen: *Screen, band: rtg.RtgBand, box: Box, first: u32, end: u32) void {
     if (band.flags & rtg.RTGBANDF_REPEAT == 0) {
-        var into = composedMap(screen);
+        var into = pictureAt(screen, screen.composed);
         const what = rtg.RtgCopy{
             .src_x = @intCast(box.left),
             .src_y = @intCast(band.rowAt(first)),
@@ -445,7 +494,16 @@ fn copyBand(screen: *Screen, band: rtg.RtgBand, box: Box, first: u32, end: u32) 
 
 /// The part of the image's rectangle at (left, top) that is on the
 /// picture, as columns and rows; null when none of it is.
-const Clip = struct { x0: u32, y0: u32, x1: u32, y1: u32 };
+const Clip = struct {
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+
+    fn box(clip: Clip) Box {
+        return .{ .left = clip.x0, .top = clip.y0, .right = clip.x1, .end = clip.y1 };
+    }
+};
 
 fn clipOf(screen: *Screen, image: *const rtg.RtgPointerImage, left: i32, top: i32) ?Clip {
     const x0 = @max(left, 0);
@@ -472,10 +530,9 @@ fn restoreImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, 
     var y = clip.y0;
     while (y < clip.y1) : (y += 1) {
         const from = sourceRow(screen, y) orelse continue;
-        const into = composed + y * screen.pitch + at;
-        screen.sys.CopyMem(from + at, into, length);
-        handOn(screen, into, length);
+        screen.sys.CopyMem(from + at, composed + y * screen.pitch + at, length);
     }
+    handOn(screen, &pictureAt(screen, composed), clip.box());
 }
 
 /// The images laid over the composed frame: the overlay, then the pointer
@@ -506,8 +563,8 @@ fn layImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top:
                 else => @as([*]u32, @ptrCast(@alignCast(into)))[x] = @as([*]const u32, @ptrCast(@alignCast(row)))[image_x],
             }
         }
-        handOn(screen, into + clip.x0 * screen.bytes, (clip.x1 - clip.x0) * screen.bytes);
     }
+    handOn(screen, &pictureAt(screen, composed), clip.box());
 }
 
 /// The whole picture into the composed frame, with the images over it:
@@ -574,8 +631,14 @@ fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
 fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
     const screen = screenOf(board);
     if (screen.cursor != null) {
+        const was = screen.pointer_shown;
         screen.pointer_shown = show;
-        cursorPlane(screen);
+        // The virtio GPU's cursor is not switched off but emptied.
+        if (screen.scanout != .virtio) {
+            cursorPlane(screen);
+        } else if (was != show) {
+            cursorImage(screen, screen.pointer);
+        }
         return err.RTGERR_OK;
     }
     hold(screen);
@@ -588,60 +651,85 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
 
 // --- the pointer, on the controller's cursor plane ---------------------------
 
-/// The bytes of one of the cursor plane's buffers.
+/// The bytes of one of the cursor plane's buffers: the JH7110's largest
+/// image, which is the virtio GPU's one size.
 const cursor_bytes = jh7110.cursor_side * jh7110.cursor_side * 4;
+comptime {
+    std.debug.assert(virtio.cursor_side == jh7110.cursor_side);
+}
 
 fn cursorBuffer(screen: *Screen, turn: u1) [*]u8 {
     return screen.cursor.? + @as(usize, turn) * cursor_bytes;
 }
 
-/// The plane told its buffer, size and hot spot, the hot spot's place -
-/// where the image's top left puts it, kept on the picture - and whether
-/// it is seen: only with an image.
-fn cursorPlane(screen: *Screen) void {
-    const buffer = cursorBuffer(screen, screen.cursor_turn);
+/// Where the pointer's hot spot is: where the image's top left puts it,
+/// kept on the picture.
+fn hotSpot(screen: *const Screen) struct { x: u32, y: u32 } {
     const x = screen.pointer_left + @as(i32, @intCast(screen.cursor_hot_x));
     const y = screen.pointer_top + @as(i32, @intCast(screen.cursor_hot_y));
     const max_x: i32 = @intCast(screen.width - 1);
     const max_y: i32 = @intCast(screen.height - 1);
-    jh7110.cursor(
-        @intFromPtr(buffer),
-        screen.cursor_small,
-        screen.cursor_hot_x,
-        screen.cursor_hot_y,
-        @intCast(std.math.clamp(x, 0, max_x)),
-        @intCast(std.math.clamp(y, 0, max_y)),
-        screen.pointer_shown and screen.pointer != null,
-    );
+    return .{ .x = @intCast(std.math.clamp(x, 0, max_x)), .y = @intCast(std.math.clamp(y, 0, max_y)) };
+}
+
+/// The plane told its buffer, size and hot spot, the hot spot's place,
+/// and whether it is seen: only with an image. The virtio GPU's cursor
+/// is only moved: its image says the rest.
+fn cursorPlane(screen: *Screen) void {
+    const at = hotSpot(screen);
+    switch (screen.scanout) {
+        .virtio => |*gpu| virtio.moveCursor(gpu, at.x, at.y),
+        else => jh7110.cursor(
+            @intFromPtr(cursorBuffer(screen, screen.cursor_turn)),
+            screen.cursor_small,
+            screen.cursor_hot_x,
+            screen.cursor_hot_y,
+            at.x,
+            at.y,
+            screen.pointer_shown and screen.pointer != null,
+        ),
+    }
 }
 
 /// A new image into the buffer the plane is not reading - ARGB, opaque
-/// where the mask says, clear elsewhere - and the plane turned to it.
+/// where the mask says, clear elsewhere - and the plane turned to it. The
+/// virtio GPU's cursor cannot be switched off: while the pointer is
+/// hidden its image is one with nothing in it.
 fn cursorImage(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
     screen.pointer = image;
-    const one = image orelse return cursorPlane(screen);
-    const small = one.width <= jh7110.cursor_side / 2 and one.height <= jh7110.cursor_side / 2;
+    const emptied = screen.scanout == .virtio;
+    const drawn = if (emptied and !screen.pointer_shown) null else image;
+    if (drawn == null and !emptied) return cursorPlane(screen);
+    const small = if (drawn) |one| !emptied and one.width <= jh7110.cursor_side / 2 and one.height <= jh7110.cursor_side / 2 else false;
     const side: u32 = if (small) jh7110.cursor_side / 2 else jh7110.cursor_side;
     const turn = screen.cursor_turn +% 1;
     const buffer = cursorBuffer(screen, turn);
     const pixels: [*]u32 = @ptrCast(@alignCast(buffer));
     @memset(pixels[0 .. side * side], 0);
-    const rows = @min(one.height, side);
-    const columns = @min(one.width, side);
-    var y: u32 = 0;
-    while (y < rows) : (y += 1) {
-        const row: [*]const u32 = @ptrCast(@alignCast(one.pixels + y * one.pitch));
-        var x: u32 = 0;
-        while (x < columns) : (x += 1) {
-            if (one.opaqueAt(x, y)) pixels[y * side + x] = row[x] | 0xFF00_0000;
+    if (drawn) |one| {
+        const rows = @min(one.height, side);
+        const columns = @min(one.width, side);
+        var y: u32 = 0;
+        while (y < rows) : (y += 1) {
+            const row: [*]const u32 = @ptrCast(@alignCast(one.pixels + y * one.pitch));
+            var x: u32 = 0;
+            while (x < columns) : (x += 1) {
+                if (one.opaqueAt(x, y)) pixels[y * side + x] = row[x] | 0xFF00_0000;
+            }
         }
+        screen.cursor_hot_x = @min(one.hot_x, side - 1);
+        screen.cursor_hot_y = @min(one.hot_y, side - 1);
     }
-    handOn(screen, buffer, side * side * 4);
+    writeBack(screen, buffer, side * side * 4);
     screen.cursor_turn = turn;
     screen.cursor_small = small;
-    screen.cursor_hot_x = @min(one.hot_x, side - 1);
-    screen.cursor_hot_y = @min(one.hot_y, side - 1);
-    cursorPlane(screen);
+    switch (screen.scanout) {
+        .virtio => |*gpu| {
+            const at = hotSpot(screen);
+            virtio.setCursor(gpu, buffer, turn, screen.cursor_hot_x, screen.cursor_hot_y, at.x, at.y, Waiter{ .screen = screen });
+        },
+        else => cursorPlane(screen),
+    }
 }
 
 fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
@@ -670,12 +758,18 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
 // --- the board -------------------------------------------------------------------
 
 /// The display the part describes, if it is there.
-fn findScanout(chip: u32, address: usize) ?Scanout {
+fn findScanout(rb: *RtgBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
+    const address = rb.GetRtgTagData(st.PART_Address, 0, tag_list);
     return switch (chip) {
         st.CHIP_QEMU_RAMFB => .{ .ramfb = ramfb.find(address) orelse return null },
         // Its registers do not answer while its domain is off, so nothing
         // is asked of it before the mode is set.
         st.CHIP_JH7110_DC8200 => .jh7110,
+        st.CHIP_VIRTIO_GPU => .{ .virtio = virtio.find(
+            address,
+            @truncate(rb.GetRtgTagData(st.PART_Windows, 1, tag_list)),
+            rb.GetRtgTagData(st.PART_WindowSize, 0, tag_list),
+        ) orelse return null },
         else => null,
     };
 }
@@ -687,7 +781,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     const sys = state.sys;
 
     const chip: u32 = @truncate(rb.GetRtgTagData(st.PART_Chip, st.CHIP_NONE, tag_list));
-    const scanout = findScanout(chip, rb.GetRtgTagData(st.PART_Address, 0, tag_list)) orelse return err.RTGERR_NO_DISPLAY;
+    const scanout = findScanout(rb, chip, tag_list) orelse return err.RTGERR_NO_DISPLAY;
     const format: rtg.PixelFormat = @enumFromInt(@as(u8, @truncate(rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32), tag_list))));
     const bytes: u32 = switch (format) {
         .bgra32 => 4,
@@ -706,6 +800,19 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     sys.InitSemaphore(&screen.compose_lock);
     if (screen.width == 0 or screen.height == 0) return err.RTGERR_BAD_ARG;
     if (screen.width > 0x3FFF or screen.height > 0x3FFF) return err.RTGERR_BAD_ARG;
+    if (scanout == .virtio) {
+        // The GPU up, and the picture as large as the emulator's window
+        // has it - QEMU's xres and yres - where it says.
+        if (format != .bgra32) return err.RTGERR_BAD_FORMAT;
+        const gpu = &screen.scanout.virtio;
+        if (!virtio.start(gpu, sys)) return err.RTGERR_NO_DISPLAY;
+        if (virtio.displaySize(gpu, Waiter{ .screen = screen })) |size| {
+            if (size.width <= 0x3FFF and size.height <= 0x3FFF) {
+                screen.width = size.width;
+                screen.height = size.height;
+            }
+        }
+    }
     if (scanout == .jh7110) {
         // The modes the monitor takes, the part's size at 60 Hz without
         // one, and the display's frame interrupt.
@@ -733,10 +840,11 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     for (screen.modes[0..screen.mode_count]) |*mode| frame = @max(frame, @as(usize, mode.pitch) * mode.height);
     const frames: u32 = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
     // The cursor plane's two buffers after the composed frame.
-    const cursors: usize = if (scanout == .jh7110) 2 * cursor_bytes else 0;
+    const cursors: usize = if (scanout == .ramfb) 0 else 2 * cursor_bytes;
     screen.memory_size = (frames + 1) * frame + cursors + page;
     screen.memory = sys.AllocMem(screen.memory_size, exec.MEMF_DMA) orelse {
         screen.memory_size = 0;
+        if (scanout == .virtio) virtio.stop(&screen.scanout.virtio);
         return err.RTGERR_NO_MEMORY;
     };
     const base = std.mem.alignForward(usize, @intFromPtr(screen.memory.?), page);
@@ -759,6 +867,8 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
 
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const screen = screenOf(board);
+    // The GPU lets go of the buffers before they are given back.
+    if (screen.scanout == .virtio) virtio.stop(&screen.scanout.virtio);
     if (screen.frame_hooked) screen.sys.RemIntServer(screen.frame_irq, &screen.frame_int);
     screen.frame_hooked = false;
     if (screen.timer_open) screen.sys.CloseDevice(&screen.timer_io.node);
@@ -865,7 +975,7 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
         const first = board.region.base.?;
         const bytes = @as(usize, screen.pitch) * screen.height;
         @memset(first[0..bytes], 0);
-        handOn(screen, first, bytes);
+        handOn(screen, &pictureAt(screen, first), whole(screen));
         // What it read until now says nothing about the new mode.
         screen.scanning = 0;
         if (!begin(screen, @intFromPtr(first))) return err.RTGERR_NO_DISPLAY;
@@ -892,7 +1002,7 @@ const Waiter = struct {
 /// said on the raw port, when it did not come up.
 fn begin(screen: *Screen, address: usize) bool {
     switch (screen.scanout) {
-        .ramfb => scanFrom(screen, address),
+        .ramfb, .virtio => scanFrom(screen, address),
         .jh7110 => {
             const failure = jh7110.start(screen.sys, &screen.timings.modes[screen.current], address, screen.pitch, Waiter{ .screen = screen });
             switch (failure) {
@@ -919,8 +1029,7 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     const screen = screenOf(board);
     if (bitmap) |bm| {
         if (bm.pixels == null) return err.RTGERR_BAD_ARG;
-        if (bm.width != screen.width or bm.height != screen.height) return err.RTGERR_NOT_DISPLAYABLE;
-        if (bm.pitch != screen.pitch or bm.format != screen.format) return err.RTGERR_NOT_DISPLAYABLE;
+        if (!showable(screen, bm)) return err.RTGERR_NOT_DISPLAYABLE;
     }
     // A flip from one picture to another takes a frame. The first picture
     // shown is not waited for: it comes up at cold start.
@@ -938,7 +1047,7 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
         } else if (screen.composed) |black| {
             const bytes = @as(usize, screen.pitch) * screen.height;
             @memset(black[0..bytes], 0);
-            handOn(screen, black, bytes);
+            handOn(screen, &pictureAt(screen, black), whole(screen));
             scanFrom(screen, @intFromPtr(black));
         }
         break :flip another;
@@ -948,37 +1057,28 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     return err.RTGERR_OK;
 }
 
-/// Rows were written by the CPU: out of its caches, and into the composed
-/// frame while the display reads that - those of them the bands show, and
-/// the pointer back over them where they cross it.
+/// Rows were written by the CPU: handed on, and into the composed frame
+/// while the display reads that - those of them the bands show, and the
+/// pointer back over them where they cross it.
 fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
     const screen = screenOf(board);
     const first = if (rows == 0) 0 else @min(y, bitmap.height);
     const last = if (rows == 0) bitmap.height else @min(y +| rows, bitmap.height);
     // Any buffer, shown or not: one drawn ahead is shown by naming it.
-    handOn(screen, bitmap.pixels.? + first * bitmap.pitch, (last - first) * bitmap.pitch);
+    handOn(screen, bitmap, .{ .left = 0, .top = first, .right = bitmap.width, .end = last });
     compose(screen, bitmap, .{ .left = 0, .top = first, .right = @min(bitmap.width, screen.width), .end = last });
     return err.RTGERR_OK;
 }
 
-/// A rectangle written: the write-back of its pixels alone, a run a row -
-/// one run over the rows where it is as wide as the buffer - then that
-/// rectangle composed, and no more of the rows.
+/// A rectangle written: its pixels alone handed on, then that rectangle
+/// composed, and no more of the rows.
 fn refreshRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
     const screen = screenOf(board);
-    const first: u32 = @intCast(area.y);
-    const last = first + @as(u32, @intCast(area.height));
-    const bytes = rtg.formatBytes(bitmap.format);
-    const left = @as(usize, @intCast(area.x)) * bytes;
-    const run = @as(usize, @intCast(area.width)) * bytes;
-    if (left == 0 and run >= bitmap.pitch) {
-        handOn(screen, bitmap.pixels.? + first * bitmap.pitch, (last - first) * bitmap.pitch);
-    } else {
-        var y = first;
-        while (y < last) : (y += 1) handOn(screen, bitmap.pixels.? + y * bitmap.pitch + left, run);
-    }
     const x: u32 = @intCast(area.x);
-    compose(screen, bitmap, .{ .left = x, .top = first, .right = @min(x + @as(u32, @intCast(area.width)), screen.width), .end = last });
+    const first: u32 = @intCast(area.y);
+    const box = Box{ .left = x, .top = first, .right = x + @as(u32, @intCast(area.width)), .end = first + @as(u32, @intCast(area.height)) };
+    handOn(screen, bitmap, box);
+    compose(screen, bitmap, .{ .left = box.left, .top = box.top, .right = @min(box.right, screen.width), .end = box.end });
     return err.RTGERR_OK;
 }
 

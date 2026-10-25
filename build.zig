@@ -710,25 +710,31 @@ pub fn build(b: *std.Build) void {
     run_virt.has_side_effects = true;
     b.step("virt", "Boot the RISC-V 64 kernel in QEMU's virt machine (quit with Ctrl-A X)").dependOn(&run_virt.step);
 
-    // The same with what the board has around it: the ramfb, 1920x1080 as
-    // the VisionFive 2's HDMI, and USB with a keyboard and a tablet, whose
-    // pointer stays where the host's is. The window is QEMU's own choice -
-    // GTK or SDL, VNC on :5900 where it has neither - with the host's
-    // cursor hidden over the machine's pointer; the console stays on the
-    // terminal.
-    const run_virt_display = b.addSystemCommand(&.{
-        "qemu-system-riscv64",     "-M",        "virt",      "-m",      "512M",
-        "-smp",                    "4",         "-bios",     "default", "-display",
-        "default,show-cursor=off", "-serial",   "mon:stdio", "-device", "ramfb",
-        "-device",                 "qemu-xhci", "-device",   "usb-kbd", "-device",
-        "usb-tablet",              "-kernel",
-    });
-    run_virt_display.addArtifactArg(virt_kernel);
-    run_virt_display.addArg("-initrd");
-    run_virt_display.addFileArg(rv64_disk_bin);
-    run_virt_display.stdio = .inherit;
-    run_virt_display.has_side_effects = true;
-    b.step("virt-display", "Boot QEMU's virt machine with its display, keyboard and tablet").dependOn(&run_virt_display.step);
+    // The same with what the board has around it: the virtio GPU, 1920x1080
+    // as the VisionFive 2's HDMI, and USB with a keyboard and a tablet,
+    // whose pointer stays where the host's is. The window is QEMU's own
+    // choice - GTK or SDL, VNC on :5900 where it has neither - and the
+    // GPU's cursor is the host's pointer over it; the console stays on the
+    // terminal. `virt-ramfb` has the ramfb instead, the machine's pointer
+    // composed into the picture and the host's hidden over it.
+    for ([_][3][]const u8{
+        .{ "virtio-gpu-device,xres=1920,yres=1080", "virt-display", "virtio GPU" },
+        .{ "ramfb", "virt-ramfb", "ramfb" },
+    }) |display| {
+        const run_virt_display = b.addSystemCommand(&.{
+            "qemu-system-riscv64",     "-M",        "virt",      "-m",      "512M",
+            "-smp",                    "4",         "-bios",     "default", "-display",
+            "default,show-cursor=off", "-serial",   "mon:stdio", "-device", display[0],
+            "-device",                 "qemu-xhci", "-device",   "usb-kbd", "-device",
+            "usb-tablet",              "-kernel",
+        });
+        run_virt_display.addArtifactArg(virt_kernel);
+        run_virt_display.addArg("-initrd");
+        run_virt_display.addFileArg(rv64_disk_bin);
+        run_virt_display.stdio = .inherit;
+        run_virt_display.has_side_effects = true;
+        b.step(display[1], b.fmt("Boot QEMU's virt machine with its display ({s}), keyboard and tablet", .{display[2]})).dependOn(&run_virt_display.step);
+    }
 
     // QEMU's AArch64 virt machine, a board of its own: the `virt64` step
     // boots its kernel as QEMU boots an arm64 Linux Image - at EL1, the
@@ -751,20 +757,26 @@ pub fn build(b: *std.Build) void {
     b.step("virt64", "Boot the AArch64 kernel in QEMU's virt machine (quit with Ctrl-A X)").dependOn(&run_virt64.step);
 
     // The same with what the board has around it, as `virt-display`: the
-    // ramfb, USB with a keyboard and a tablet, the console on the terminal.
-    const run_virt64_display = b.addSystemCommand(&virt64_machine);
-    run_virt64_display.addArgs(&.{
-        "-display", "default,show-cursor=off", "-serial",   "mon:stdio",
-        "-device",  "ramfb",                   "-device",   "qemu-xhci",
-        "-device",  "usb-kbd",                 "-device",   "usb-tablet",
-        "-kernel",
-    });
-    run_virt64_display.addFileArg(virt64_kernel.image);
-    run_virt64_display.addArg("-initrd");
-    run_virt64_display.addFileArg(a64_disk_bin);
-    run_virt64_display.stdio = .inherit;
-    run_virt64_display.has_side_effects = true;
-    b.step("virt64-display", "Boot QEMU's AArch64 virt machine with its display, keyboard and tablet").dependOn(&run_virt64_display.step);
+    // virtio GPU - or the ramfb, `virt64-ramfb` - USB with a keyboard and a
+    // tablet, the console on the terminal.
+    for ([_][3][]const u8{
+        .{ "virtio-gpu-device,xres=1920,yres=1080", "virt64-display", "virtio GPU" },
+        .{ "ramfb", "virt64-ramfb", "ramfb" },
+    }) |display| {
+        const run_virt64_display = b.addSystemCommand(&virt64_machine);
+        run_virt64_display.addArgs(&.{
+            "-display", "default,show-cursor=off", "-serial",   "mon:stdio",
+            "-device",  display[0],                "-device",   "qemu-xhci",
+            "-device",  "usb-kbd",                 "-device",   "usb-tablet",
+            "-kernel",
+        });
+        run_virt64_display.addFileArg(virt64_kernel.image);
+        run_virt64_display.addArg("-initrd");
+        run_virt64_display.addFileArg(a64_disk_bin);
+        run_virt64_display.stdio = .inherit;
+        run_virt64_display.has_side_effects = true;
+        b.step(display[1], b.fmt("Boot QEMU's AArch64 virt machine with its display ({s}), keyboard and tablet", .{display[2]})).dependOn(&run_virt64_display.step);
+    }
 
     // The machine with EL2 and EL3 (virtualization=on): the firmware is
     // QEMU's PSCI at EL3, reached by SMC, and every core comes in at EL2,

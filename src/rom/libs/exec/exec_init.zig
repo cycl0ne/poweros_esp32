@@ -70,9 +70,11 @@ pub const LIBRARY_VERSION = 1;
 /// core has its stack checked as each slice ends, as a switch would. 19:
 /// on an AArch64 machine whose devices see the caches (SYSTAG_DmaCoherent,
 /// QEMU's virt), CacheClearE, CachePreDMA and CachePostDMA leave the data
-/// caches alone.
-pub const LIBRARY_REVISION = 19;
-const BUILD_DATE = "24.10.2026";
+/// caches alone. 20: on a RISC-V machine only the sources its PLIC has
+/// (SYSTAG_PlicSources) are set up and taken - QEMU's virt's 95, not the
+/// JH7110's 136.
+pub const LIBRARY_REVISION = 20;
+const BUILD_DATE = "25.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
