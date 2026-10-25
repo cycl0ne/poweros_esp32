@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const graphics = sdk.graphics;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const RastPort = @import("../rastport/_rastport.zig").RastPort;
+const rastport = @import("../rastport/_rastport.zig");
 
 /// What stands for the rest of a string that did not fit. Three full
 /// stops rather than one ellipsis character: a font here is indexed by
@@ -43,9 +44,10 @@ const dots = "...";
 /// other measuring call would give for the same string, font and style.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -70,6 +72,8 @@ const dots = "...";
 /// _ = gb.TextFitted(rp, name, len, 120);
 /// ```
 pub fn TextFitted(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32, width: i32) u32 {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     const graphics_lib = gb.iface();
     rp.last_error = graphics.GERR_OK;
     if (width <= 0) return 0;

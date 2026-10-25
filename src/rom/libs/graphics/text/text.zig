@@ -67,10 +67,11 @@ const Piece = drawing.Piece;
 /// Bold and extended each widen a character by one.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -88,6 +89,8 @@ const Piece = drawing.Piece;
 /// gb.Text(rp, "Hello", 5);
 /// ```
 pub fn Text(gb: *GraphicsBase, rp: *RastPort, string: [*]const u8, count: u32) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     // Drawing nothing because nobody put a font on the RastPort is a
     // failure to do what was asked, not an answer. Opening a font does not

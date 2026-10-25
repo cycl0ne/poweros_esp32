@@ -220,9 +220,13 @@ edge.
 The RastPort's (0, 0) is the window's top-left corner, border included,
 so the part to draw in starts at the border's left and top widths; with
 `WA_GimmeZeroZero` the inside is a layer of its own and (0, 0) is its
-corner. **A program draws with the window's layer held** - `LockLayer`
-on `WA_Layer` - because intuition draws the border and the gadgets from
-its own task. Text, lines and images from a description (`PrintIText`,
+corner. Intuition draws the border and the gadgets from its own task,
+and moves and sizes windows from it; every drawing call holds the
+window's layer while it draws, so no single call is cut short by that.
+**A program draws with the window's layer held** - `LockLayer` on
+`WA_Layer` - around what belongs together: the window then neither
+moves nor changes size between the calls, and what they draw reaches
+the display at once. Text, lines and images from a description (`PrintIText`,
 `DrawBorder`, `DrawImage`) are in
 [Text from a description](fonts.md#text-from-a-description).
 

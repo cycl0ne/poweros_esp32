@@ -132,7 +132,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 10;
+const REVISION = 11;
 const BUILD_DATE = "25.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -700,10 +700,25 @@ fn layOver(screen: *Screen, into_frame: [*]u8, given: ?*const rtg.RtgPointerImag
 }
 
 /// The whole picture into the composed frame, with the images over it:
-/// when composing starts, and when another buffer is shown.
+/// when composing starts.
 fn rebuild(screen: *Screen) void {
     if (!composing(screen)) return;
     copyArea(screen, whole(screen));
+    lay(screen);
+}
+
+/// The bands now set made in the composed frame, which showed `old`:
+/// when the display read it until now, only the rows that come from
+/// another buffer or another row of it are copied and handed on - a
+/// screen pulled further down leaves the rows above it - else the whole
+/// picture. The images are laid over it again.
+fn reband(screen: *Screen, old: []const rtg.RtgBand, was: bool) void {
+    if (!composing(screen)) return;
+    if (!was) return rebuild(screen);
+    var changed: damage.Damage = .{};
+    changed.rebanded(old, screen.bands[0..screen.band_count], screen.width, screen.height);
+    if (changed.isEmpty()) return;
+    for (changed.list()) |box| copyArea(screen, box);
     lay(screen);
 }
 
@@ -1063,16 +1078,19 @@ fn makeBox(screen: *Screen, into: [*]u8, box: Box, over: Laid) void {
 }
 
 /// What the display shows changed - `bands`, none for black - and the
-/// whole picture of it made and waited for, as a flip is.
+/// picture of it made and waited for, as a flip is: the rows that show
+/// something else than before, nothing when none does.
 fn showFlipped(screen: *Screen, bands: []const rtg.RtgBand) void {
     const sys = screen.sys;
     sys.ObtainSemaphore(&screen.flip_lock);
     defer sys.ReleaseSemaphore(&screen.flip_lock);
     sys.AcquireLock(&screen.damage_lock);
+    var changed: damage.Damage = .{};
+    changed.rebanded(screen.bands[0..screen.band_count], bands, screen.width, screen.height);
     @memcpy(screen.bands[0..bands.len], bands);
     screen.band_count = @intCast(bands.len);
     screen.showing = if (bands.len == 0) null else bands[bands.len - 1].bitmap;
-    noteBox(screen, whole(screen));
+    for (changed.list()) |box| noteBox(screen, box);
     sys.ReleaseLock(&screen.damage_lock);
     _ = flipFrames(screen);
 }
@@ -1437,13 +1455,17 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
         defer letGo(screen);
         if (bitmap == null and ownFrame(screen) == null) return err.RTGERR_NO_MEMORY;
         const another = screen.showing != null and bitmap != null and (screen.showing != bitmap or screen.band_count > 1);
+        const was = composing(screen);
+        var old: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
+        const old_count = screen.band_count;
+        @memcpy(old[0..old_count], screen.bands[0..old_count]);
         screen.showing = bitmap;
         screen.band_count = 0;
         if (bitmap) |bm| {
             screen.bands[0] = .{ .bitmap = bm };
             screen.band_count = 1;
             provide(screen);
-            rebuild(screen);
+            reband(screen, old[0..old_count], was);
             present(screen);
         } else {
             const black = screen.composed.?;
@@ -1514,8 +1536,9 @@ fn compose(screen: *Screen, bitmap: *rtg.RtgBitMap, area: Box) void {
     if (shown) lay(screen);
 }
 
-/// Several buffers at once, in bands: composed, shown, and a frame waited
-/// out, as a flip is. With no memory to compose them in, the last alone,
+/// Several buffers at once, in bands: composed - the rows that show
+/// something else than before - shown, and a frame waited out, as a flip
+/// is. With no memory to compose them in, the last alone,
 /// as a board that cannot show bands would show it.
 fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
     const screen = screenOf(board);
@@ -1533,6 +1556,10 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
         hold(screen);
         defer letGo(screen);
         const before = screen.showing != null;
+        const was = composing(screen);
+        var old: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
+        const old_count = screen.band_count;
+        @memcpy(old[0..old_count], screen.bands[0..old_count]);
         @memcpy(screen.bands[0..count], bands[0..count]);
         screen.band_count = count;
         screen.showing = bands[count - 1].bitmap;
@@ -1542,7 +1569,7 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
             screen.band_count = 1;
             code = err.RTGERR_NO_MEMORY;
         }
-        rebuild(screen);
+        reband(screen, old[0..old_count], was);
         present(screen);
         unused = spare(screen);
         break :shown before;

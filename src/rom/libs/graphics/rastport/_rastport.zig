@@ -147,7 +147,49 @@ pub const RastPort = extern struct {
     /// The box the shape being filled sits in, which a gradient is laid
     /// across: set by each fill call before it fills.
     fill_box: graphics.Rect = .{},
+    /// `RPTAG_Lock`: held by every drawing call on this RastPort, or null.
+    lock: ?*exec.SignalSemaphore = null,
 };
+
+/// `rp`'s lock (`RPTAG_Lock`) taken for a drawing call, for as long as it
+/// draws; null when it has none. What manages windows hands a window's
+/// RastPort the lock its clip targets are rebuilt under, so a call holding
+/// it never walks a list, or writes a buffer, that is being taken away -
+/// whether or not its caller took the lock first. It nests, so a caller
+/// that did loses nothing. Let go with `letGo`.
+pub fn hold(gb: *GraphicsBase, rp: *const RastPort) ?*exec.SignalSemaphore {
+    const lock = rp.lock orelse return null;
+    gb.sys_base.ObtainSemaphore(lock);
+    return lock;
+}
+
+pub fn letGo(gb: *GraphicsBase, held: ?*exec.SignalSemaphore) void {
+    if (held) |lock| gb.sys_base.ReleaseSemaphore(lock);
+}
+
+/// Both RastPorts' locks, for a call from one to the other. The second is
+/// only tried while the first is held, and when it is not to be had the
+/// first is let go and waited for the other way round: two tasks copying
+/// opposite ways never each hold what the other waits for.
+pub fn holdBoth(gb: *GraphicsBase, a: *const RastPort, b: *const RastPort) [2]?*exec.SignalSemaphore {
+    const first = a.lock orelse return .{ hold(gb, b), null };
+    const second = b.lock orelse return .{ hold(gb, a), null };
+    if (first == second) return .{ hold(gb, a), null };
+    const sys = gb.sys_base;
+    while (true) {
+        sys.ObtainSemaphore(first);
+        if (sys.AttemptSemaphore(second)) return .{ first, second };
+        sys.ReleaseSemaphore(first);
+        sys.ObtainSemaphore(second);
+        if (sys.AttemptSemaphore(first)) return .{ second, first };
+        sys.ReleaseSemaphore(second);
+    }
+}
+
+pub fn letGoBoth(gb: *GraphicsBase, held: [2]?*exec.SignalSemaphore) void {
+    letGo(gb, held[1]);
+    letGo(gb, held[0]);
+}
 
 /// Write what went wrong where the caller asked for it, for the calls that
 /// have no RastPort to put it in yet.

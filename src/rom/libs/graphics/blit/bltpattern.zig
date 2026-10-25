@@ -50,10 +50,11 @@ const patternRows = _blit.patternRows;
 /// Clear bits and the engine work as for a template.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -70,6 +71,8 @@ const patternRows = _blit.patternRows;
 /// gb.BltPattern(rp, &checker, 1, 8, 8, &desktop);
 /// ```
 pub fn BltPattern(gb: *GraphicsBase, rp: *RastPort, bits: [*]const u8, pitch: u32, width: u32, height: u32, area: *const Rect) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     if (width == 0 or height == 0) {
         rp.last_error = graphics.GERR_BAD_SIZE;

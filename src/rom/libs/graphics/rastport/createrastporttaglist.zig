@@ -188,6 +188,7 @@ pub fn CreateRastPortTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) ?*RastP
     };
     rp.line_width = @max(@as(u32, @truncate(ub.GetTagData(graphics.RPTAG_LineWidth, 1, tags))), 1);
     rp.smooth = ub.GetTagData(graphics.RPTAG_Smooth, 0, tags) != 0;
+    rp.lock = @ptrFromInt(ub.GetTagData(graphics.RPTAG_Lock, 0, tags));
     // Without the memory for a fill style's copy the RastPort fills with
     // its pen, and says so.
     if (!_rastport.setFill(gb, rp, @ptrFromInt(ub.GetTagData(graphics.RPTAG_FillStyle, 0, tags)))) {

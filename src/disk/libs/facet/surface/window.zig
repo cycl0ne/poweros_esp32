@@ -11,6 +11,14 @@
 //! picture is copied, as layers.library asks of a task drawing into one:
 //! the window cannot be moved or sized part way through.
 //!
+//! On a screen whose windows are composed, each in a buffer of its own
+//! (`LATAG_GetComposed`), a picture is not copied into the window but
+//! shown in it (`ShowLayerPicture`): layers.library copies it from where
+//! it is on to the display, now and whenever the window is shown again,
+//! and the swapchain keeps it as the one shown until the next is. The
+//! picture shown last is put into the window as its swapchain goes, so
+//! the window goes on showing it.
+//!
 //! The window itself is not kept, its number is (`WA_Number`): each time
 //! it is read or drawn into it is found by the number under the screens'
 //! semaphore (`FindWindowNumber`), and its layer taken before that is let
@@ -64,6 +72,10 @@ const Window = struct {
     /// picture waits for: null for a screen no board shows.
     format: PixelFormat,
     board: ?*rtg.RtgBoard,
+    /// Whether the window's layer shows a picture rather than having it
+    /// copied in, and the picture it shows, if one of the surface's.
+    composed: bool,
+    showing: ?*Offscreen = null,
 };
 
 /// A picture: its pixels, as the surface BltBitMapRastPort reads, and the
@@ -83,6 +95,8 @@ const Inside = struct {
 };
 
 pub const ops = _surface.Ops{ .copies = true, .shape = &shape, .most = &most, .make = &make, .unmake = &unmake, .show = &show, .close = &close };
+/// The same over a composed window, which shows a picture where it is.
+const shown_ops = _surface.Ops{ .copies = false, .shape = &shape, .most = &most, .make = &make, .unmake = &unmake, .show = &show, .close = &close };
 
 /// `surface`'s ops and context set for `window`;
 /// error_initialization_failed without the libraries.
@@ -109,19 +123,24 @@ pub fn open(sys: *ExecBase, surface: *Surface, window: *intuition.Window) facet.
     var bitmap: usize = 0;
     gb.GetRPAttrs(rastport, &[_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(&bitmap) }, .{} });
     const shown: ?*const rtg.RtgBitMap = @ptrFromInt(bitmap);
+    const layer: *layers.Layer = @ptrFromInt(attr(ib, window, wn.WA_Layer));
+    const lb: *LayersBase = @ptrCast(libraries[2].?);
+    var composed: u32 = 0;
+    lb.GetLayerAttrs(layer, &[_]TagItem{ .{ .tag = layers.LATAG_GetComposed, .data = @intFromPtr(&composed) }, .{} });
     kept.* = .{
         .sys = sys,
         .ib = ib,
         .gb = gb,
-        .lb = @ptrCast(libraries[2].?),
+        .lb = lb,
         .rb = @ptrCast(libraries[3].?),
         .number = @intCast(number),
         .rastport = rastport,
-        .layer = @ptrFromInt(attr(ib, window, wn.WA_Layer)),
+        .layer = layer,
         .format = pixelsOf(ib, window),
         .board = if (shown) |screen_bitmap| @ptrCast(@alignCast(screen_bitmap.board)) else null,
+        .composed = composed != 0,
     };
-    surface.ops = &ops;
+    surface.ops = if (kept.composed) &shown_ops else &ops;
     surface.context = kept;
     return .success;
 }
@@ -181,9 +200,14 @@ fn allocate(sys: *ExecBase, width: u32, height: u32, pitch: u32, format: PixelFo
     return made;
 }
 
-/// None is the display's: each goes at once.
+/// None is the display's: each goes at once - the one a composed window
+/// shows put into the window first.
 fn unmake(surface: *Surface, pictures: []Picture, _: ?u32) void {
-    const sys = of(surface).sys;
+    const kept = of(surface);
+    const sys = kept.sys;
+    for (pictures) |*picture| {
+        if (kept.showing == offscreenOf(picture)) letGo(kept);
+    }
     for (pictures) |*picture| {
         const offscreen = offscreenOf(picture);
         sys.FreeMem(offscreen.block, offscreen.bytes);
@@ -191,12 +215,28 @@ fn unmake(surface: *Surface, pictures: []Picture, _: ?u32) void {
     }
 }
 
+/// The picture a composed window shows put into the window, where it
+/// stays, before it is given back. A window closed has let go of it.
+fn letGo(kept: *Window) void {
+    kept.showing = null;
+    const held = kept.ib.LockIBase(0);
+    if (kept.ib.FindWindowNumber(kept.number) == null) {
+        kept.ib.UnlockIBase(held);
+        return;
+    }
+    kept.lb.LockLayer(kept.layer);
+    defer kept.lb.UnlockLayer(kept.layer);
+    kept.ib.UnlockIBase(held);
+    _ = kept.lb.ShowLayerPicture(kept.layer, null, null);
+}
+
 /// The display's next frame waited for, and the picture copied into the
 /// window with its layer held - as much of it as fits inside the border
-/// now, where the window has been made smaller since the swapchain was.
-/// False once the window has closed. The layer is taken while the window
-/// is held open by the screens' semaphore, which is then let go: a close
-/// waits for the layer, and the screens are not held through the copy.
+/// now, where the window has been made smaller since the swapchain was -
+/// or, in a composed window, shown there as it is. False once the window
+/// has closed. The layer is taken while the window is held open by the
+/// screens' semaphore, which is then let go: a close waits for the
+/// layer, and the screens are not held through the copy.
 fn show(surface: *Surface, picture: *Picture) bool {
     const kept = of(surface);
     const offscreen = offscreenOf(picture);
@@ -212,6 +252,13 @@ fn show(surface: *Surface, picture: *Picture) bool {
     kept.ib.UnlockIBase(held);
     const width = @min(offscreen.surface.width, inside.width);
     const height = @min(offscreen.surface.height, inside.height);
+    if (kept.composed) {
+        const area = graphics.Rect{ .min_x = inside.left, .min_y = inside.top, .max_x = inside.left + @as(i32, @intCast(width)), .max_y = inside.top + @as(i32, @intCast(height)) };
+        if (kept.lb.ShowLayerPicture(kept.layer, &offscreen.surface, &area)) {
+            kept.showing = offscreen;
+            return true;
+        }
+    }
     kept.gb.BltBitMapRastPort(&offscreen.surface, 0, 0, kept.rastport, inside.left, inside.top, @intCast(width), @intCast(height));
     return true;
 }

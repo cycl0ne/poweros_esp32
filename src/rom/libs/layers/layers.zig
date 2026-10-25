@@ -1468,6 +1468,71 @@ test "composed: sized, a layer keeps what fits, paints what it gained, and a sim
     try tearDown(lb);
 }
 
+test "composed: a picture shown in a layer is copied from where it is, and left in the layer when let go" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+
+    const back_where = Rect{ .min_x = 2, .min_y = 2, .max_x = 22, .max_y = 12 };
+    const back = try layerAt(lb, c.info, &back_where, layers.LAYERSMART);
+    fill(lb, back, graphics.penRGB(255, 0, 0), .{ .max_x = 20, .max_y = 10 });
+    var composed: u32 = 0;
+    base(lb).GetLayerAttrs(back, &[_]TagItem{ .{ .tag = layers.LATAG_GetComposed, .data = @intFromPtr(&composed) }, .{} });
+    try testing.expectEqual(@as(u32, @intFromBool(compose.built)), composed);
+    if (!compose.built) {
+        base(lb).DeleteLayer(back);
+        c.done(lb);
+        return tearDown(lb);
+    }
+
+    // A green picture, 8 by 4, shown at (4,2) of the layer: on the
+    // display from (6,4), the layer red around it.
+    var pixels: [8 * 4]u16 = @splat(green);
+    const picture = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 8, .height = 4, .pitch = 8 * 2, .size_bytes = @sizeOf(@TypeOf(pixels)), .format = .rgb565 };
+    const area = Rect{ .min_x = 4, .min_y = 2, .max_x = 20, .max_y = 10 };
+    try testing.expect(base(lb).ShowLayerPicture(back, &picture, &area));
+    try testing.expectEqual(green, c.at(6, 4));
+    try testing.expectEqual(green, c.at(13, 7));
+    try testing.expectEqual(red, c.at(14, 7));
+    try testing.expectEqual(red, c.at(6, 8));
+    try testing.expectEqual(red, c.at(5, 4));
+
+    // Drawn under it, the layer stays hidden there; a layer in front
+    // covers it, and taken away shows the picture again, never asking.
+    fill(lb, back, graphics.penRGB(0, 0, 255), .{ .max_x = 20, .max_y = 10 });
+    try testing.expectEqual(green, c.at(8, 5));
+    try testing.expectEqual(blue, c.at(5, 4));
+    const front_where = Rect{ .min_x = 0, .min_y = 0, .max_x = 10, .max_y = 6 };
+    const front = try layerAt(lb, c.info, &front_where, layers.LAYERSIMPLE);
+    fill(lb, front, graphics.penRGB(255, 0, 0), .{ .max_x = 10, .max_y = 6 });
+    try testing.expectEqual(red, c.at(8, 5));
+    base(lb).DeleteLayer(front);
+    try testing.expectEqual(green, c.at(8, 5));
+    try testing.expectEqual(@as(u32, 0), owed(lb, back));
+
+    // A picture changed under the layer shows when it is shown again.
+    @memset(&pixels, blue);
+    try testing.expect(base(lb).ShowLayerPicture(back, &picture, &area));
+    try testing.expectEqual(blue, c.at(8, 5));
+
+    // Let go of, it is in the layer, and goes with it as it moves.
+    @memset(&pixels, green);
+    try testing.expect(base(lb).ShowLayerPicture(back, &picture, &area));
+    try testing.expect(base(lb).ShowLayerPicture(back, null, null));
+    @memset(&pixels, 0);
+    try testing.expect(base(lb).MoveLayer(back, 4, 2));
+    try testing.expectEqual(green, c.at(10, 6));
+    try testing.expectEqual(blue, c.at(9, 6));
+
+    // In another format, it is not shown.
+    const other = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 4, .height = 4, .pitch = 8 * 2, .size_bytes = @sizeOf(@TypeOf(pixels)), .format = .bgra32 };
+    try testing.expect(!base(lb).ShowLayerPicture(back, &other, &area));
+
+    base(lb).DeleteLayer(back);
+    c.done(lb);
+    try tearDown(lb);
+}
+
 test "composed: a layer with its own bitmap draws in it, and scrolling only moves what is copied" {
     const lb = try setUp();
     defer kexec.deinit();

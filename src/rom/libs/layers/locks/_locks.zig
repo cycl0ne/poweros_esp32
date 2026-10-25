@@ -22,10 +22,10 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// which is what the locks are for, and why the library takes them itself
 /// rather than trusting every caller to remember.
 ///
-/// The other half cannot be taken here: **a task drawing into a layer must
-/// hold that layer's lock**, because graphics.library is the one doing the
-/// walking and it has no idea layers exist. That is the contract, and it
-/// is the price of the two libraries not knowing about each other.
+/// The other half is taken by graphics.library, which does the walking
+/// and has no idea layers exist: a layer's RastPort carries the layer's
+/// lock (`RPTAG_Lock`, set by `CreateLayerTagList`), and every drawing
+/// call through it holds that for as long as it draws.
 ///
 /// INPUTS:
 /// - `lb` - the library, called through for `LockLayers`.

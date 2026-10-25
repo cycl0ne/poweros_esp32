@@ -7,6 +7,7 @@ const graphics = sdk.graphics;
 
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const RastPort = @import("../rastport/_rastport.zig").RastPort;
+const rastport = @import("../rastport/_rastport.zig");
 
 /// The drawing from here to the matching `EndDraw` is one piece of work.
 ///
@@ -45,7 +46,9 @@ const RastPort = @import("../rastport/_rastport.zig").RastPort;
 /// this does nothing for it.
 ///
 /// CONTEXT:
-/// Waits: no. Interrupts: yes. Locks: none needed. Process: no.
+/// Waits: while another task holds the RastPort's lock (`RPTAG_Lock`).
+/// Interrupts: only on a RastPort without one. Locks: the RastPort's,
+/// taken here; no spinlock may be held. Process: no.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated.
@@ -69,6 +72,8 @@ const RastPort = @import("../rastport/_rastport.zig").RastPort;
 /// gb.EndDraw(rp); // both reach the display together
 /// ```
 pub fn BeginDraw(gb: *GraphicsBase, rp: *RastPort) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     if (rp.draw_depth == 0) {
         // The buffer this RastPort writes to: the first target that has
@@ -106,6 +111,7 @@ const testing = std.testing;
 
 test "BeginDraw on a RastPort with no buffer does nothing" {
     var rp: RastPort = undefined;
+    rp.lock = null;
     rp.clip_list = null;
     rp.bitmap = null;
     rp.draw_depth = 0;

@@ -127,7 +127,10 @@ pub const LIBRARY_VERSION = 0;
 /// 51: a window is dragged a step a frame at most, as it is sized.
 /// 52: a screen on a board that composes (RTGBF_COMPOSE) has its windows
 /// composed, each in a buffer of its own.
-pub const LIBRARY_REVISION = 52;
+/// 53: a tablet reaches no further down than the display, so a screen
+/// pulled down follows the pointer and goes no further; a gadget's
+/// RastPort holds its window's layer as the window's does.
+pub const LIBRARY_REVISION = 53;
 const BUILD_DATE = "25.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

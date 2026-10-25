@@ -41,10 +41,11 @@ const getPixel = _draw.getPixel;
 /// unchanged.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt does
 ///   not share.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -61,7 +62,9 @@ const getPixel = _draw.getPixel;
 /// var colour: graphics.Pen = 0;
 /// if (gb.ReadPixel(rp, 10, 10, &colour)) keep(colour);
 /// ```
-pub fn ReadPixel(_: *GraphicsBase, rp: *RastPort, x: i32, y: i32, out: *graphics.Pen) bool {
+pub fn ReadPixel(gb: *GraphicsBase, rp: *RastPort, x: i32, y: i32, out: *graphics.Pen) bool {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     // With targets the pixel is wherever that part of the RastPort keeps
     // its pixels, which for a covered window is not the display at all.

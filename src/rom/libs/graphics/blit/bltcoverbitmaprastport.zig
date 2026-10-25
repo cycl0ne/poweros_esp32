@@ -65,9 +65,10 @@ const Cover = graphics.Cover;
 /// written, and not a read of what is under it.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -96,6 +97,8 @@ const Cover = graphics.Cover;
 ///     &.{ .bits = soft.pixels.?, .pitch = soft.pitch });
 /// ```
 pub fn BltCoverBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const Rect, dest: *RastPort, dest_x: i32, dest_y: i32, cover: *const Cover) void {
+    const held = rastport.hold(gb, dest);
+    defer rastport.letGo(gb, held);
     dest.last_error = graphics.GERR_OK;
     if (cover.alpha == 0) return;
     if (src.pixels == null) {

@@ -8,6 +8,7 @@ const graphics = sdk.graphics;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const RastPort = @import("../rastport/_rastport.zig").RastPort;
 const draw = @import("_draw.zig");
+const rastport = @import("../rastport/_rastport.zig");
 
 /// What was gathered since `BeginDraw` handed to the display, in one.
 ///
@@ -36,7 +37,9 @@ const draw = @import("_draw.zig");
 /// last one closes. Without a `BeginDraw` to match, it does nothing.
 ///
 /// CONTEXT:
-/// Waits: no. Interrupts: yes. Locks: none needed. Process: no.
+/// Waits: while another task holds the RastPort's lock (`RPTAG_Lock`).
+/// Interrupts: only on a RastPort without one. Locks: the RastPort's,
+/// taken here; no spinlock may be held. Process: no.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated.
@@ -59,6 +62,8 @@ const draw = @import("_draw.zig");
 /// defer gb.EndDraw(rp);
 /// ```
 pub fn EndDraw(gb: *GraphicsBase, rp: *RastPort) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     if (rp.draw_depth == 0) return;
     rp.draw_depth -= 1;
@@ -88,6 +93,7 @@ const testing = std.testing;
 
 test "EndDraw without a BeginDraw does nothing" {
     var rp: RastPort = undefined;
+    rp.lock = null;
     rp.draw_depth = 0;
     rp.draw_held = null;
     EndDraw(undefined, &rp);

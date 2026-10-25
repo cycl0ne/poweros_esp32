@@ -41,10 +41,11 @@ const handOn = _draw.handOn;
 /// curve, and is drawn as one.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -61,6 +62,8 @@ const handOn = _draw.handOn;
 /// gb.DrawEllipse(rp, 160, 100, 60, 30);
 /// ```
 pub fn DrawEllipse(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, rx: i32, ry: i32) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     const graphics_lib = gb.iface();
     rp.last_error = graphics.GERR_OK;
     if (rx < 0 or ry < 0) return;

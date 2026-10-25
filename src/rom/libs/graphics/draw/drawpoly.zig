@@ -36,10 +36,11 @@ const RastPort = rastport.RastPort;
 /// corners rather than starting again at each.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -58,6 +59,8 @@ const RastPort = rastport.RastPort;
 /// gb.DrawPoly(rp, corners.len, &corners);
 /// ```
 pub fn DrawPoly(gb: *GraphicsBase, rp: *RastPort, count: u32, points: [*]const graphics.Point) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     const graphics_lib = gb.iface();
     rp.last_error = graphics.GERR_OK;
     var i: u32 = 0;

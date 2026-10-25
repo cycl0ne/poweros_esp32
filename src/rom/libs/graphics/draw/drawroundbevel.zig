@@ -12,6 +12,7 @@ const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _draw = @import("_draw.zig");
 const _smooth = @import("_smooth.zig");
 const _wide = @import("_wide.zig");
+const rastport = @import("../rastport/_rastport.zig");
 const Rect = graphics.Rect;
 const Pen = graphics.Pen;
 const RastPort = _draw.RastPort;
@@ -57,9 +58,10 @@ const TagItem = sdk.utility.TagItem;
 /// and dark in its right one, so the two corners mirror each other.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -87,6 +89,8 @@ const TagItem = sdk.utility.TagItem;
 /// gb.DrawRoundBevel(rp, &box, 6, shine, shadow);
 /// ```
 pub fn DrawRoundBevel(gb: *GraphicsBase, rp: *RastPort, area: *const Rect, radius: u32, light: Pen, dark: Pen) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     const graphics_lib = gb.iface();
     rp.last_error = graphics.GERR_OK;
     if (area.isEmpty()) return;

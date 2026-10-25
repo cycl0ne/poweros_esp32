@@ -105,6 +105,7 @@ pub fn GetRPAttrs(gb: *GraphicsBase, rp: *RastPort, tags: ?[*]const TagItem) voi
             graphics.RPTAG_FillStyle => @as(*usize, @ptrFromInt(item.data)).* = @intFromPtr(rp.fill),
             graphics.RPTAG_LineWidth => @as(*u32, @ptrFromInt(item.data)).* = rp.line_width,
             graphics.RPTAG_Smooth => @as(*u32, @ptrFromInt(item.data)).* = @intFromBool(rp.smooth),
+            graphics.RPTAG_Lock => @as(*usize, @ptrFromInt(item.data)).* = @intFromPtr(rp.lock),
             graphics.RPTAG_LastError => @as(*i32, @ptrFromInt(item.data)).* = rp.last_error,
             else => {},
         }

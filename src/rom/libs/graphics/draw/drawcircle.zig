@@ -39,10 +39,11 @@ const handOn = _draw.handOn;
 /// rounding to drift and no arithmetic a small machine minds.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -59,6 +60,8 @@ const handOn = _draw.handOn;
 /// gb.DrawCircle(rp, 160, 100, 40);
 /// ```
 pub fn DrawCircle(gb: *GraphicsBase, rp: *RastPort, cx: i32, cy: i32, radius: i32) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     if (radius < 0) return;
     if (rp.line_width > 1 or rp.smooth) return @import("_wide.zig").circle(gb, rp, cx, cy, radius, @intCast(rp.line_width));

@@ -14,6 +14,7 @@ const visible = _draw.visible;
 const Rect = graphics.Rect;
 const RastPort = _draw.RastPort;
 const _draw = @import("_draw.zig");
+const rastport = @import("../rastport/_rastport.zig");
 
 /// Fills a rectangle with the RastPort's pen.
 ///
@@ -58,10 +59,11 @@ const _draw = @import("_draw.zig");
 /// to.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded - a full-screen fill is a
 ///   million pixels - and it hands rows on to rtg.library at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -103,6 +105,8 @@ const _draw = @import("_draw.zig");
 /// gb.RectFill(over, &.{ .min_x = 60, .min_y = 10, .max_x = 160, .max_y = 60 });
 /// ```
 pub fn RectFill(gb: *GraphicsBase, rp: *RastPort, area: *const Rect) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     // It cannot fail. It says so anyway, so that what is read belongs to
     // the call just made rather than to one five calls ago.
     rp.last_error = graphics.GERR_OK;

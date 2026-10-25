@@ -51,10 +51,11 @@ const rastport = @import("../rastport/_rastport.zig");
 /// in, so a clipped picture is cut rather than slid.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote
 ///   on to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -75,6 +76,8 @@ const rastport = @import("../rastport/_rastport.zig");
 /// gb.WritePixelArray(rp, frame.ptr, 320 * 4, @intFromEnum(PixelFormat.rgba32), 0, 0, &.{ .min_x = 10, .min_y = 10, .max_x = 330, .max_y = 250 });
 /// ```
 pub fn WritePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pitch: u32, format: u32, src_x: i32, src_y: i32, area: *const Rect) void {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     const from: PixelFormat = @enumFromInt(format);
     if (rastport.packPen(from, 0) == null or rastport.packPen(rp.surface.format, 0) == null) {

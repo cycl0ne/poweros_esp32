@@ -50,10 +50,11 @@ const pixelBytes = _blit.pixelBytes;
 /// picture rather than sliding.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -70,6 +71,8 @@ const pixelBytes = _blit.pixelBytes;
 /// gb.BitMapScale(thumb, &.{ .max_x = 32, .max_y = 32 }, rp, &.{ .min_x = 10, .min_y = 10, .max_x = 138, .max_y = 138 });
 /// ```
 pub fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const Rect, dest: *RastPort, dest_area: *const Rect) void {
+    const held = rastport.hold(gb, dest);
+    defer rastport.letGo(gb, held);
     dest.last_error = graphics.GERR_OK;
     if (src.format != dest.surface.format) {
         dest.last_error = graphics.GERR_BAD_FORMAT;

@@ -45,10 +45,11 @@ const shapeRange = _area.shapeRange;
 /// so a shape can be filled by inverting what is under it.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the RastPort's lock
+///   (`RPTAG_Lock`), if it has one.
 /// - Interrupts: no. The work is unbounded, and it hands the rows it wrote on
 ///   to the display at the end.
-/// - Locks: none needed.
+/// - Locks: the RastPort's own, taken here; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -72,6 +73,8 @@ const shapeRange = _area.shapeRange;
 /// _ = gb.AreaEnd(rp);
 /// ```
 pub fn AreaEnd(gb: *GraphicsBase, rp: *RastPort) bool {
+    const held = rastport.hold(gb, rp);
+    defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
     const points = rp.area_points orelse {
         rp.last_error = graphics.GERR_NO_MEMORY;
