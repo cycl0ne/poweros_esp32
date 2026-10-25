@@ -48,6 +48,17 @@ const temperature = [_]Tag{
     .done,
 };
 
+/// The JH7110's own RTC, in the always-on domain. The board has no cell
+/// for it: it keeps the date over a reset, not over a power cut.
+const rtc = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_RTC),
+    .value(st.PART_Chip, st.CHIP_JH7110_RTC),
+    .pointer(st.PART_ChipName, "jh7110 rtc"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x1704_0000),
+    .done,
+};
+
 /// The microSD slot: SDIO1, on GPIO7 to 12 as the board wires them, its
 /// interrupt PLIC source 75. No card-detect or write-protect line.
 const card_slot = [_]Tag{
@@ -268,6 +279,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &jack),
     .pointer(st.SYSTAG_Part, &trng),
     .pointer(st.SYSTAG_Part, &temperature),
+    .pointer(st.SYSTAG_Part, &rtc),
     .pointer(st.SYSTAG_Part, &dmac),
     .pointer(st.SYSTAG_Part, &card_slot),
     .pointer(st.SYSTAG_Part, &pcie0),

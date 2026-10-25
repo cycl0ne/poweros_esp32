@@ -2,12 +2,14 @@
 //! battclock.resource: the clock that keeps the date while the system is
 //! off or restarting, in seconds since 1 January 1978.
 //!
-//! The clock is the board's clock chip when its system list names one -
-//! a PCF8563 on I2C (PARTKIND_RTC, `source/pcf8563.zig`), which keeps the
-//! date on its own cell while the board is off - and otherwise the chip's
-//! own RTC timer (`source/rtctimer.zig`), which counts through a reset
-//! but not through a power cut. At its start the resource sets the system
-//! time from the clock; `C:SetClock` loads, saves and resets it.
+//! The clock is the board's clock when its system list names one
+//! (PARTKIND_RTC): a PCF8563 on I2C (`source/pcf8563.zig`), which keeps
+//! the date on its own cell while the board is off, or the JH7110's own
+//! RTC (`source/jh7110rtc.zig`), which a reset stops but keeps the date
+//! in, and a power cut loses it. Otherwise it is the ESP32s' RTC timer
+//! (`source/rtctimer.zig`), which counts through a reset but not through
+//! a power cut. At its start the resource sets the system time from the
+//! clock; `C:SetClock` loads, saves and resets it.
 //!
 //! Each call is a file of its own under `clock/`. The jump table is
 //! battclock_lvo.zig, the ROM tag and init battclock_init.zig, the base
@@ -37,6 +39,7 @@ pub const RESOURCE_NAME = battclock_init.RESOURCE_NAME;
 const testing = std.testing;
 const rtctimer = @import("source/rtctimer.zig");
 const pcf8563 = @import("source/pcf8563.zig");
+const jh7110rtc = @import("source/jh7110rtc.zig");
 
 test {
     _ = @import("battclock_lvo.zig");
@@ -124,4 +127,34 @@ test "the PCF8563's registers: a low cell, a non-BCD digit and an early year are
     var month_zero = pcf8563.registersOf(.{ .sec = 0, .min = 0, .hour = 0, .mday = 1, .month = 1, .year = 2026, .wday = 4 });
     month_zero[5] = 0x80;
     try testing.expectEqual(@as(?utility.ClockData, null), pcf8563.dateOf(month_zero));
+}
+
+test "the JH7110 RTC's registers for a date, and the date back" {
+    const date: utility.ClockData = .{ .sec = 18, .min = 55, .hour = 21, .mday = 25, .month = 10, .year = 2026 };
+    const regs = jh7110rtc.registersOf(date);
+    // As the VisionFive 2's RTC read at that moment.
+    try testing.expectEqual(@as(u32, 0x0008_6A98), regs.time);
+    try testing.expectEqual(@as(u32, 0x0001_3425), regs.date);
+    const back = jh7110rtc.dateOf(regs).?;
+    try testing.expectEqual(date.sec, back.sec);
+    try testing.expectEqual(date.min, back.min);
+    try testing.expectEqual(date.hour, back.hour);
+    try testing.expectEqual(date.mday, back.mday);
+    try testing.expectEqual(date.month, back.month);
+    try testing.expectEqual(date.year, back.year);
+    const last = jh7110rtc.dateOf(jh7110rtc.registersOf(.{ .sec = 59, .min = 59, .hour = 23, .mday = 31, .month = 12, .year = 2099 })).?;
+    try testing.expectEqual(@as(u16, 2099), last.year);
+    try testing.expectEqual(@as(u16, 23), last.hour);
+}
+
+test "what a power-on leaves in the JH7110 RTC, and day 0, are no date" {
+    // As the VisionFive 2's RTC read after a power-on: no minute 5B, no
+    // day 32.
+    try testing.expect(jh7110rtc.dateOf(.{ .time = 0x0013_ED88, .date = 0x0002_3C32 }) == null);
+    try testing.expect(jh7110rtc.dateOf(.{ .time = 0x0008_6A98, .date = 0x0002_3C32 }) == null);
+    // How the resource keeps no date.
+    try testing.expect(jh7110rtc.dateOf(.{ .time = 0, .date = 0 }) == null);
+    // A month 13, and an hour 24.
+    try testing.expect(jh7110rtc.dateOf(.{ .time = 0x0008_6A98, .date = 0x0001_34E5 }) == null);
+    try testing.expect(jh7110rtc.dateOf(.{ .time = 0x0009_0000, .date = 0x0001_3425 }) == null);
 }

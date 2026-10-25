@@ -13,8 +13,6 @@ FailAt 21
 ; shell after this one.
 Alias Clear "Echo NOLINE *"*E[0;0H*E[J*""
 
-C:MakeDir >NIL: RAM:T RAM:Clipboards RAM:ENV RAM:ENV/Sys
-
 ; Kept in memory: loaded once and run from there until Resident takes it
 ; off the list again. Assign is cached because the lines below call it.
 Resident >NIL: C:Assign PURE
@@ -31,10 +29,17 @@ Assign >NIL: FONTS: SYS:fonts
 ; The global variables that survive a reboot live on the disk; the ones a
 ; running system reads live in RAM:, and start as a copy of them.
 Assign >NIL: ENVARC: SYS:Prefs/Env-Archive
-C:Copy >NIL: ENVARC: RAM:ENV ALL QUIET NOREQ
+
 ; The time zone where a file system reads it without a file: exFAT writes
-; each moment with its offset from UTC.
-C:SetClock >NIL: ZONE
+; each moment with its offset from UTC. And the clock never earlier than
+; the date SetClock SAVE last kept - a board whose clock lost the date
+; would start in 1978 - before the first file is written, so that every
+; file has a date of this start's clock, which C:net/TimeSync REDATE
+; puts right once the network has the time.
+C:SetClock >NIL: ZONE LOAD
+
+C:MakeDir >NIL: RAM:T RAM:Clipboards RAM:ENV RAM:ENV/Sys
+C:Copy >NIL: ENVARC: RAM:ENV ALL QUIET NOREQ
 
 Assign >NIL: ENV: RAM:ENV
 Assign >NIL: T: RAM:T

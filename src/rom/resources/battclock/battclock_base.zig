@@ -14,6 +14,8 @@ pub const CLOCK_NONE: u32 = 0;
 pub const CLOCK_RTC_TIMER: u32 = 1;
 /// A PCF8563 on I2C (source/pcf8563.zig).
 pub const CLOCK_PCF8563: u32 = 2;
+/// The JH7110's own RTC (source/jh7110rtc.zig).
+pub const CLOCK_JH7110_RTC: u32 = 3;
 
 pub const BattClockBase = extern struct {
     lib: exec.Library,
@@ -26,6 +28,8 @@ pub const BattClockBase = extern struct {
     /// The PCF8563's bus - i2c.device's unit - and its address.
     i2c_unit: u32,
     i2c_address: u32,
+    /// The JH7110's RTC: its registers.
+    rtc_address: usize,
     /// The RTC timer's slow clock: microseconds per cycle, 19 bits of them
     /// fraction - measured at this start, then over the time since.
     period: u32,

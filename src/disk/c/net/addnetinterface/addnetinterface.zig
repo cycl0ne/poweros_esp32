@@ -12,8 +12,10 @@
 //! with the file's device, address or DHCP, routes and name servers. With
 //! DHCP it waits up to TIMEOUT seconds (10) for an address and says which
 //! it got, unless NOWAIT: then DHCP goes on without it. An interface
-//! whose link stays down for a second - no cable in its socket - is not
-//! waited for; DHCP starts when the link comes. An interface
+//! whose link stays down for five seconds - no cable in its socket - is
+//! not waited for; DHCP starts when the link comes. (A gigabit link takes
+//! seconds to agree on its speed: one second was too short for the
+//! VisionFive 2's.) An interface
 //! that is up already is left as it is. QUIET says nothing, not even that a
 //! device is missing - what the boot runs, on every board, whether it has
 //! the device or not.
@@ -46,7 +48,7 @@ const config_file = @import("config.zig");
 const Config = config_file.Config;
 
 pub const COMMAND_NAME = "AddNetInterface";
-const VERSION_STRING = "\x00$VER: AddNetInterface 1.7 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddNetInterface 1.8 (25.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,QUIET/S,TIMEOUT/K/N,NOWAIT/S";
@@ -278,11 +280,11 @@ fn joinNetwork(sys: *ExecBase, dl: *DosBase, config: *const Config, options: Opt
 const Waited = enum { bound, no_link, no_answer };
 
 /// How long a link may be down before it is not waited for: long
-/// enough for the device to have said so.
-const no_link_ticks = 50;
+/// enough for a gigabit link to have agreed on its speed.
+const no_link_ticks = 250;
 
 /// Until DHCP has an address for the interface, or a link-local one
-/// stands in, or its link has been down a second - unless one is
+/// stands in, or its link has been down five seconds - unless one is
 /// `coming` - or the time is up.
 fn waitForAddress(dl: *DosBase, sb: *SocketBase, interface: [*:0]const u8, ticks: u32, coming: bool) Waited {
     var waited: u32 = 0;
