@@ -155,6 +155,9 @@ pub const RTGBF_ADOPTED: u32 = 1 << 5;
 /// Its pointer is shown (ShowBoardPointer). What is on the glass also
 /// needs an image set (SetBoardPointer).
 pub const RTGBF_POINTER: u32 = 1 << 6;
+/// The windows of a screen on it are composed (RTGA_Compose): intuition
+/// opens its screens' layers that way.
+pub const RTGBF_COMPOSE: u32 = 1 << 7;
 
 /// RtgBoardInfo.caps: which ops the driver filled in.
 pub const RTGBC_SET_MODE: u32 = 1 << 0;

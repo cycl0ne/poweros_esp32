@@ -12,6 +12,7 @@ const Layer = _layerinfo.Layer;
 const tile = @import("../tile/_tile.zig");
 const smart = @import("../smart/_smart.zig");
 const _locks = @import("../locks/_locks.zig");
+const compose = @import("../compose/_compose.zig");
 const LayersBase = @import("../layers.zig").LayersBase;
 
 /// Takes a layer away.
@@ -32,8 +33,10 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// BEHAVIOR:
 /// Its RastPort, its regions and everything it kept go back. What was
 /// behind it is uncovered: a simple layer there is owed the pixels as
-/// damage, a smart or super one gets them back from its keeping. A layer
-/// that moved with it (`LATAG_MovesWith`) stays, and moves on its own.
+/// damage, a smart or super one gets them back from its keeping - and in
+/// a composed LayerInfo every one of them is copied out of its buffer, so
+/// none is owed anything. A layer that moved with it (`LATAG_MovesWith`)
+/// stays, and moves on its own.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the display's layers.
@@ -88,8 +91,11 @@ pub fn DeleteLayer(lb: *LayersBase, layer: ?*Layer) void {
     gb.DisposeRegion(gone.visible);
     gb.DisposeRegion(gone.damage);
     gb.FreeRastPort(gone.rp);
+    compose.drop(lb, gone);
+    const was = gone.bounds;
     sys.FreeVec(gone);
 
     // What was behind it can see more now.
     _ = tile.retile(lb, info);
+    compose.show(lb, info, was);
 }

@@ -40,6 +40,7 @@ test {
     _ = @import("libs/rtg_driver/fbboard/phy.zig");
     _ = @import("libs/rtg_driver/fbboard/monitor.zig");
     _ = @import("libs/rtg_driver/fbboard/virtio.zig");
+    _ = @import("libs/rtg_driver/fbboard/damage.zig");
     _ = @import("devs/keyboard/rawkey.zig");
     _ = @import("devs/mouse/events.zig");
     _ = @import("devs/input/events.zig");

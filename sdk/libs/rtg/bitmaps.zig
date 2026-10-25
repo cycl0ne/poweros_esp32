@@ -13,6 +13,7 @@
 //! together: move a field of either and the build stops.
 
 const nodes = @import("../exec/nodes.zig");
+const hooks = @import("../utility/hooks.zig");
 
 /// How the bytes of a picture are laid out. A buffer, a board's memory and
 /// a shape's bits each say which of these they are.
@@ -146,6 +147,13 @@ pub const RtgBitMap = extern struct {
     /// places when these came.
     dirty_left: u32 = 0,
     dirty_right: u32 = 0,
+    /// Told instead of the board when a rectangle of this buffer is handed
+    /// on (RefreshRect, RefreshBitMap), or null. Its object is the buffer
+    /// and its message the `*const RtgRect` written, cut to the buffer. A
+    /// buffer nobody shows - a window's own, when its screen is composed
+    /// - has nothing for the board to do, and whoever copies it on to a
+    /// screen is the one to know what changed. Set by the buffer's owner.
+    watch: ?*hooks.Hook = null,
 
     /// The first byte of a row. The caller has checked `y`.
     pub inline fn rowPtr(bm: *const RtgBitMap, y: u32) [*]u8 {

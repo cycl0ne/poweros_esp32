@@ -240,6 +240,7 @@ pub fn tearDown(ib: *IntuitionBase) !void {
     kexec.Remove(kexec.SysBase, &ib.lib.node);
     kexec.freeLibraryMemory(kexec.SysBase, &ib.lib);
 
+    kexec.CloseLibrary(kexec.SysBase, &rb.lib);
     kexec.CloseLibrary(kexec.SysBase, &gb.lib);
     kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     kexec.Remove(kexec.SysBase, &lb.lib.node);

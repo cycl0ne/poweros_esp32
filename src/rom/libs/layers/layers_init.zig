@@ -2,7 +2,8 @@
 //! layers.library's ROM tag, and the init routine it names.
 //!
 //! The tag is a cold-start, auto-init resident at priority 19, under
-//! graphics.library, which the init opens along with utility.library.
+//! graphics.library, which the init opens along with utility.library and
+//! rtg.library.
 //! exec builds the library from the InitTable - the jump table is
 //! layers_lvo.zig's - and calls `init`.
 
@@ -29,10 +30,11 @@ pub const LIBRARY_VERSION = 0;
 
 /// The build within the version. Set into the base by `init`, since exec
 /// copies only the tag's name, version and ID string.
-pub const LIBRARY_REVISION = 5;
+/// 6: a composed LayerInfo - NewLayerInfoTagList, LATAG_Compose.
+pub const LIBRARY_REVISION = 6;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
-const BUILD_DATE = "15.10.2026";
+const BUILD_DATE = "25.10.2026";
 
 /// The `$VER:` string, NUL first so a scan of the image finds it.
 const LIBRARY_VERSION_STRING =
@@ -60,8 +62,8 @@ fn layersBase(lib: *exec.Library) *LayersBase {
 /// - `sys_base` - exec, kept in the base.
 ///
 /// RESULT:
-/// The library, or null if utility.library or graphics.library could not
-/// be opened.
+/// The library, or null if utility.library, graphics.library or
+/// rtg.library could not be opened.
 ///
 /// CONTEXT:
 /// Runs on the exec task at cold start, with multitasking started.
@@ -77,8 +79,14 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         sys_base.CloseLibrary(utility_lib);
         return null;
     };
+    const rtg_lib = sys_base.OpenLibrary(sdk.rtg.RTGNAME, sdk.rtg.RTG_VERSION) orelse {
+        sys_base.CloseLibrary(graphics_lib);
+        sys_base.CloseLibrary(utility_lib);
+        return null;
+    };
     lb.utility_base = @ptrCast(utility_lib);
     lb.graphics_base = @ptrCast(graphics_lib);
+    lb.rtg_base = @ptrCast(rtg_lib);
     return lib;
 }
 
@@ -89,8 +97,8 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
-/// Cold start at 19: under graphics.library (20), which it opens, and so
-/// under rtg.library (24) and its drivers as well.
+/// Cold start at 19: under graphics.library (20) and rtg.library (24),
+/// which it opens, and so under rtg's drivers as well.
 pub export const layers_library_tag: exec.Resident linksection(".resident") = .{
     .match_tag = &layers_library_tag,
     .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,

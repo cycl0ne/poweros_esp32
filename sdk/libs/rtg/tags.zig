@@ -71,6 +71,12 @@ pub const RTGA_Transport = RTGA_Dummy + 18;
 pub const RTGA_Adopt = RTGA_Dummy + 19;
 /// *i32: where to put the error as well as in RtgLastError.
 pub const RTGA_ErrorPtr = RTGA_Dummy + 20;
+/// bool: the windows of a screen on this board are composed - each draws
+/// into a buffer of its own, and what of it can be seen is copied into the
+/// screen's (RTGBF_COMPOSE). For a machine whose memory is fast enough to
+/// read every pixel back; absent, false: every window draws straight into
+/// the screen's buffer.
+pub const RTGA_Compose = RTGA_Dummy + 21;
 
 // --- the RGB board driver: RTGA_DriverBase + 0, 64 wide ------------------
 

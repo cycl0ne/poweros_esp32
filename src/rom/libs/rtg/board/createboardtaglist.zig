@@ -34,8 +34,9 @@ const _board = @import("_board.zig");
 /// INPUTS:
 /// - `driver_name` - the driver to make it with.
 /// - `tag_list` - the `RTGA_` options: the board's name, a transport it
-///   talks through, whether to switch the display on, a brightness, data
-///   for the driver, and `RTGA_ErrorPtr` for the reason if it fails.
+///   talks through, whether to switch the display on, a brightness,
+///   whether its screens' windows are composed (`RTGA_Compose`), data for
+///   the driver, and `RTGA_ErrorPtr` for the reason if it fails.
 ///
 /// RESULT:
 /// The board, or null. `RtgLastError` - and `RTGA_ErrorPtr`, if given -
@@ -48,7 +49,9 @@ const _board = @import("_board.zig");
 /// its modes, its display memory and what its engine can do. A board comes
 /// up in no mode and showing nothing; `SetBoardMode` and `ShowBitMap` are
 /// what put a picture up. Without `RTGA_BoardName` the board is named after
-/// the driver and a number: rgb0, rgb1.
+/// the driver and a number: rgb0, rgb1. `RTGA_Compose` is kept as
+/// `RTGBF_COMPOSE` in the board's flags for intuition to read; the driver
+/// does nothing for it.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the board list, and if the
@@ -129,6 +132,9 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
 
     // What the driver said it can do, and what it left to the caller.
     board.info.caps = if (board.ops) |ops| capsOf(ops) else 0;
+    // Whether its screens' windows are composed is the board's to say,
+    // for intuition to read: the driver has nothing to do with it.
+    if (request.compose) board.info.flags |= rtg.boards.RTGBF_COMPOSE;
     board.info.modes = countModes(board);
 
     // The display memory it reported, cut up from here on by the library.

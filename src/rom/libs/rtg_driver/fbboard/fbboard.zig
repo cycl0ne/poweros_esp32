@@ -13,13 +13,11 @@
 //! RAM every frame, wherever it is told the picture is: there is no stream
 //! to keep fed and no doorbell to ring, so showing a buffer is naming its
 //! address, and what the CPU writes into the buffer shown is on the glass
-//! by the next frame - once it is out of the CPU's caches, on a machine
-//! whose display does not see them. The buffers are RAM the CPU reaches
-//! through its caches (`RTGRF_CPU_CACHED`), so a refresh hands the rows on
-//! with exec's CacheClearE, and whether that writes them back is the
-//! machine's to say: it does on the JH7110, whose display goes past the
-//! caches, and nothing on QEMU's virt, whose ramfb reads RAM through the
-//! host's (SYSTAG_CacheFlush absent, SYSTAG_DmaCoherent).
+//! by the next frame. The buffers are RAM the CPU reaches through its
+//! caches (`RTGRF_CPU_CACHED`), so a refresh hands the rows on with exec's
+//! CacheClearE, and whether that writes them back is the machine's to
+//! say: nothing on QEMU's virt, whose ramfb reads RAM through the host's
+//! caches (SYSTAG_CacheFlush absent, SYSTAG_DmaCoherent).
 //!
 //! The virtio GPU keeps a copy of each picture in the emulator instead,
 //! and shows that: the rectangle a refresh hands on is copied into it and
@@ -37,8 +35,9 @@
 //! gives it back when it is freed (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY),
 //! at most as many pictures of the largest mode as the board asks for
 //! (RTGA_Buffers) - so a screen nobody has opened costs nothing. The
-//! driver's own are a frame to compose in and, on a display with a cursor
-//! plane, the plane's two images.
+//! driver's own are a frame to compose in - two the display is shown, on
+//! the JH7110 - and, on a display with a cursor plane, the plane's two
+//! images.
 //!
 //! The pointer is laid over the picture in that frame, as the qemu board
 //! does it: while a pointer or the overlay is shown, or the picture is
@@ -53,13 +52,11 @@
 //! itself, and nothing is copied.
 //!
 //! The composed frame is taken when it is first needed. Where the pointer
-//! is the display's own, on the virtio GPU and the JH7110, it is given
-//! back once the display reads a buffer again - on the JH7110 a frame
-//! later, since its controller reads the old address until the frame
-//! ends - so it is there only while a screen is pulled down or an icon
-//! dragged. On the ramfb, where the pointer is laid in it, it stays. Black,
-//! as the display comes up or when nothing is shown, is the composed frame
-//! cleared.
+//! is the display's own, on the virtio GPU, it is given back once the
+//! display reads a buffer again, so it is there only while a screen is
+//! pulled down or an icon dragged. On the ramfb, where the pointer is laid
+//! in it, it stays. Black, as the display comes up or when nothing is
+//! shown, is the composed frame cleared.
 //!
 //! A refresh comes from whichever task drew, a pointer move from
 //! intuition's pointer task, each on any core: everything that writes the
@@ -68,12 +65,29 @@
 //! pointer just laid on another, nor a restore cut a hole into rows just
 //! copied.
 //!
+//! The JH7110's display reads RAM past the caches, and the caches write
+//! their lines back in an order of their own: a picture drawn over while
+//! it is read shows, for a frame, a patchwork of old and new cache lines,
+//! sixteen pixels each. So there the display never reads a buffer anybody
+//! draws in, nor the composed frame. It reads one of two frames of the
+//! driver's own (`flipFrames`): what is written is noted as rectangles
+//! (`damage.zig`), and a task of the driver's makes the next picture in
+//! the frame the display is not reading - those rectangles, and those
+//! that went into the other frame the time before, copied in from the
+//! bands with the overlay laid over them - writes it out of the caches,
+//! and tells the display to read it from the next frame on, which it
+//! waits for before the frame read until then is written again. A
+//! drawing is seen a frame or two after it was made, and whole. The
+//! buffers drawn in are never written back, since nothing reads them past
+//! the caches; showing a buffer, or bands, is a whole picture made and
+//! waited for.
+//!
 //! The JH7110's controller has a pointer of its own, its cursor plane,
 //! which it lays over the picture itself: there the pointer is that
 //! (`cursor`), the image copied into a buffer of the block's as ARGB, its
 //! mask the alpha, and a move is the plane written again at its new place.
 //! Two buffers take turns, so the one the controller reads is never the
-//! one written. The overlay is still laid in the composed frame. The
+//! one written. The overlay is laid in the picture made for it. The
 //! virtio GPU's cursor is the same, laid over its window by the emulator -
 //! with a tablet, as the host's own pointer - and moved by a command; so
 //! there nothing is composed for the pointer either.
@@ -111,13 +125,14 @@ const virtio = @import("virtio.zig");
 const monitor = @import("monitor.zig");
 const edid = @import("../edid.zig");
 const engine = @import("engine.zig");
+const damage = @import("damage.zig");
 const tags = rtg.tags;
 const timer = sdk.devices.timer;
 
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 9;
+const REVISION = 10;
 const BUILD_DATE = "25.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -230,6 +245,30 @@ const Screen = struct {
     frames: u32 = 0,
     frame_waiters: ?*FrameWaiter = null,
     frames_come: bool = false,
+    /// Where the display reads past the caches (`flipFrames`): the two
+    /// frames it is shown, as AllocMem gave them and the bytes taken, and
+    /// which of them it reads. Null where it is shown buffers itself.
+    flip_memory: ?*anyopaque = null,
+    flip_bytes: usize = 0,
+    flip_frames: [2][*]u8 = undefined,
+    front: u1 = 0,
+    /// What was written since the last picture was made, and what went
+    /// into that picture, which the other frame has not had: under
+    /// `damage_lock`, which also keeps the bands and the overlay's place
+    /// still while a refresh reads them.
+    fresh: damage.Damage = .{},
+    last: damage.Damage = .{},
+    damage_lock: exec.Lock = .{},
+    /// Held while a picture is made and waited for, and while the bands or
+    /// the overlay's image change, so that what a picture is made from
+    /// stays for as long as it is made.
+    flip_lock: exec.SignalSemaphore = .{},
+    /// The task that makes the pictures, what wakes it, and what tells
+    /// that it has stopped.
+    flipper: ?*exec.Task = null,
+    work: exec.Waitable = .{},
+    stopping: bool = false,
+    stopped: exec.Waitable = .{},
 };
 
 /// Wait for `frames` frames: for the display's frame interrupt to come
@@ -488,13 +527,10 @@ fn spare(screen: *Screen) ?*anyopaque {
     return memory;
 }
 
-/// What `spare` let go of, given back: on the JH7110 a frame on, unless
-/// one has been waited out since the display was told to read elsewhere -
-/// its controller takes a new address up as a frame starts and reads the
-/// old one until then. The emulator's displays have let go of it already.
-fn giveBack(screen: *Screen, memory: ?*anyopaque, waited: bool) void {
+/// What `spare` let go of, given back. The emulator's displays have let
+/// go of it already.
+fn giveBack(screen: *Screen, memory: ?*anyopaque) void {
     const frame = memory orelse return;
-    if (!waited and screen.scanout == .jh7110) pace(screen, 1);
     screen.sys.FreeMem(frame, screen.frame_bytes + page);
 }
 
@@ -511,9 +547,7 @@ fn sourceRow(screen: *Screen, y: u32) ?[*]u8 {
     return null;
 }
 
-/// A rectangle of the display: columns `left` up to `right`, rows `top`
-/// up to `end`.
-const Box = struct { left: u32, top: u32, right: u32, end: u32 };
+const Box = damage.Box;
 
 /// The whole display.
 fn whole(screen: *const Screen) Box {
@@ -536,23 +570,29 @@ fn pictureAt(screen: *const Screen, pixels: ?[*]u8) rtg.RtgBitMap {
 /// and handed on.
 fn copyArea(screen: *Screen, box: Box) void {
     const composed = screen.composed orelse return;
-    if (box.left >= box.right or box.top >= box.end) return;
+    if (box.isEmpty()) return;
+    copyInto(screen, composed, box);
+    handOn(screen, &pictureAt(screen, composed), box);
+}
+
+/// `box` of the display, each row from its band, into the frame at
+/// `into`.
+fn copyInto(screen: *Screen, into: [*]u8, box: Box) void {
     for (screen.bands[0..screen.band_count], 0..) |band, i| {
         const band_end = if (i + 1 < screen.band_count) screen.bands[i + 1].line else screen.height;
         const first = @max(box.top, band.line);
         const end = @min(box.end, band_end);
-        if (first < end) copyBand(screen, band, box, first, end);
+        if (first < end) copyBand(screen, into, band, box, first, end);
     }
-    handOn(screen, &pictureAt(screen, composed), box);
 }
 
 /// Display rows `first` to `end` of one band, across the box's columns.
 /// The band's rows are one rectangle of its buffer, which the cores copy
 /// (the engine, shared between them for a large one); a band of one row
 /// repeated, or a format the engine does not take, a row at a time.
-fn copyBand(screen: *Screen, band: rtg.RtgBand, box: Box, first: u32, end: u32) void {
+fn copyBand(screen: *Screen, frame: [*]u8, band: rtg.RtgBand, box: Box, first: u32, end: u32) void {
     if (band.flags & rtg.RTGBANDF_REPEAT == 0) {
-        var into = pictureAt(screen, screen.composed);
+        var into = pictureAt(screen, frame);
         const what = rtg.RtgCopy{
             .src_x = @intCast(box.left),
             .src_y = @intCast(band.rowAt(first)),
@@ -563,13 +603,12 @@ fn copyBand(screen: *Screen, band: rtg.RtgBand, box: Box, first: u32, end: u32) 
         };
         if (engine.copy(&screen.engine, band.bitmap, &into, &what) == err.RTGERR_OK) return;
     }
-    const composed = screen.composed.?;
     const at = box.left * screen.bytes;
     const length = (box.right - box.left) * screen.bytes;
     var y = first;
     while (y < end) : (y += 1) {
         const from = band.bitmap.pixels.? + band.rowAt(y) * screen.pitch;
-        screen.sys.CopyMem(from + at, composed + y * screen.pitch + at, length);
+        screen.sys.CopyMem(from + at, frame + y * screen.pitch + at, length);
     }
 }
 
@@ -626,15 +665,27 @@ fn lay(screen: *Screen) void {
 /// One image laid over the composed frame: a masked copy, cut to the
 /// picture.
 fn layImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top: i32) void {
-    const image = given orelse return;
-    const clip = clipOf(screen, image, left, top) orelse return;
     const composed = screen.composed orelse return;
-    if (image.format != screen.format) return;
+    const clip = layOver(screen, composed, given, left, top, whole(screen)) orelse return;
+    handOn(screen, &pictureAt(screen, composed), clip.box());
+}
+
+/// One image laid over the frame at `into`, cut to the picture and to
+/// `within`: where it was laid, null when nowhere.
+fn layOver(screen: *Screen, into_frame: [*]u8, given: ?*const rtg.RtgPointerImage, left: i32, top: i32, within: Box) ?Clip {
+    const image = given orelse return null;
+    var clip = clipOf(screen, image, left, top) orelse return null;
+    if (image.format != screen.format) return null;
+    clip.x0 = @max(clip.x0, within.left);
+    clip.y0 = @max(clip.y0, within.top);
+    clip.x1 = @min(clip.x1, within.right);
+    clip.y1 = @min(clip.y1, within.end);
+    if (clip.x0 >= clip.x1 or clip.y0 >= clip.y1) return null;
     var y = clip.y0;
     while (y < clip.y1) : (y += 1) {
         const image_y: u32 = @intCast(@as(i32, @intCast(y)) - top);
         const row = image.pixels + image_y * image.pitch;
-        const into = composed + y * screen.pitch;
+        const into = into_frame + y * screen.pitch;
         var x = clip.x0;
         while (x < clip.x1) : (x += 1) {
             const image_x: u32 = @intCast(@as(i32, @intCast(x)) - left);
@@ -645,7 +696,7 @@ fn layImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top:
             }
         }
     }
-    handOn(screen, &pictureAt(screen, composed), clip.box());
+    return clip;
 }
 
 /// The whole picture into the composed frame, with the images over it:
@@ -679,7 +730,7 @@ fn change(screen: *Screen, comptime apply: fn (*Screen, anytype) void, arg: anyt
         present(screen);
         break :unused spare(screen);
     };
-    giveBack(screen, unused, false);
+    giveBack(screen, unused);
 }
 
 fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
@@ -736,7 +787,7 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
         present(screen);
         break :unused spare(screen);
     };
-    giveBack(screen, unused, false);
+    giveBack(screen, unused);
     return err.RTGERR_OK;
 }
 
@@ -828,6 +879,10 @@ fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
     if (image) |one| {
         if (one.format != screen.format) return err.RTGERR_BAD_FORMAT;
     }
+    if (flips(screen)) {
+        overlayFlipped(screen, image);
+        return err.RTGERR_OK;
+    }
     change(screen, struct {
         fn apply(on: *Screen, given: anytype) void {
             on.overlay = given;
@@ -838,12 +893,240 @@ fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
 
 fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     const screen = screenOf(board);
+    if (flips(screen)) return overlayMoved(screen, left, top);
     change(screen, struct {
         fn apply(on: *Screen, place: anytype) void {
             on.overlay_left = place[0];
             on.overlay_top = place[1];
         }
     }.apply, .{ left, top });
+}
+
+// --- a display that reads past the caches: two frames, flipped --------------
+
+/// The task that makes the pictures: above the programs that draw, so that
+/// what they drew is shown at the pace of the display, and below
+/// intuition's tasks, which move what is drawn.
+const flipper_name = "rtg-fb frames";
+const flipper_pri = 19;
+
+/// Whether the display is shown two frames of the driver's own, the next
+/// picture made in the one it is not reading (`flipFrames`), rather than
+/// the buffers themselves: where it reads past the caches.
+fn flips(screen: *const Screen) bool {
+    return screen.flip_memory != null;
+}
+
+/// The two frames taken, each a picture of the largest mode from a page
+/// on, black and written back, and the task that makes the pictures
+/// started. False without memory for either.
+fn startFlipping(screen: *Screen) bool {
+    const sys = screen.sys;
+    const size = std.mem.alignForward(usize, screen.frame_bytes, page);
+    const own = takeOwn(screen, 2 * size) orelse return false;
+    @memset(own.at[0 .. 2 * size], 0);
+    writeBack(screen, own.at, 2 * size);
+    screen.flip_frames = .{ own.at, own.at + size };
+    screen.flip_bytes = 2 * size;
+    screen.front = 0;
+    sys.InitSemaphore(&screen.flip_lock);
+    sys.InitLock(&screen.damage_lock, "rtg-fb damage", exec.LOCKORDER_DRIVER, 0);
+    // The task is the system's, not that of whoever made the board.
+    sys.BeginSystemMemory();
+    const task = sys.CreateTask(flipper_name, flipper_pri, &flipperCode, 0);
+    sys.EndSystemMemory();
+    const made = task orelse {
+        sys.FreeMem(own.memory, screen.flip_bytes + page);
+        return false;
+    };
+    screen.flip_memory = own.memory;
+    screen.flipper = made;
+    @atomicStore(?*anyopaque, &made.user_data, screen, .release);
+    sys.Signal(made, exec.SIGF_SINGLE);
+    return true;
+}
+
+/// The task stopped and the frames given back.
+fn stopFlipping(screen: *Screen) void {
+    const sys = screen.sys;
+    const memory = screen.flip_memory orelse return;
+    @atomicStore(bool, &screen.stopping, true, .release);
+    sys.SignalWaitable(&screen.work);
+    _ = sys.WaitForAny(&[_]*exec.Waitable{&screen.stopped}, 1, exec.WAIT_FOREVER);
+    sys.FreeMem(memory, screen.flip_bytes + page);
+    screen.flip_memory = null;
+    screen.flipper = null;
+}
+
+/// The task: a picture made each time something was noted, at most one a
+/// frame, since each is waited for.
+fn flipperCode(sys: *ExecBase) callconv(.c) void {
+    const me = sys.FindTask(null).?;
+    while (@atomicLoad(?*anyopaque, &me.user_data, .acquire) == null) _ = sys.Wait(exec.SIGF_SINGLE);
+    const screen: *Screen = @ptrCast(@alignCast(me.user_data.?));
+    while (true) {
+        _ = sys.WaitForAny(&[_]*exec.Waitable{&screen.work}, 1, exec.WAIT_FOREVER);
+        // Reset before what was noted is taken: whatever is noted after
+        // it wakes the task again.
+        sys.ResetWaitable(&screen.work);
+        if (@atomicLoad(bool, &screen.stopping, .acquire)) break;
+        sys.ObtainSemaphore(&screen.flip_lock);
+        _ = flipFrames(screen);
+        sys.ReleaseSemaphore(&screen.flip_lock);
+    }
+    // The last it does with the screen: it is freed once this is seen.
+    sys.SignalWaitable(&screen.stopped);
+}
+
+/// `box` of the display noted for the next picture. Made holding
+/// `damage_lock`.
+fn noteBox(screen: *Screen, box: Box) void {
+    screen.fresh.add(box);
+}
+
+/// Where an image is on the picture noted, if it is on it. Made holding
+/// `damage_lock`.
+fn noteImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top: i32) void {
+    const image = given orelse return;
+    const clip = clipOf(screen, image, left, top) orelse return;
+    noteBox(screen, clip.box());
+}
+
+/// `area` of `bitmap` written: noted where the bands show it, and the task
+/// woken. Nothing is written back - the display never reads the buffer.
+fn noteWritten(screen: *Screen, bitmap: *const rtg.RtgBitMap, area: Box) void {
+    if (area.isEmpty()) return;
+    const sys = screen.sys;
+    var noted = false;
+    sys.AcquireLock(&screen.damage_lock);
+    for (screen.bands[0..screen.band_count], 0..) |band, i| {
+        if (band.bitmap != bitmap) continue;
+        const band_end = if (i + 1 < screen.band_count) screen.bands[i + 1].line else screen.height;
+        const lines = band.linesOf(area.top, area.end, band_end);
+        if (lines.first >= lines.end) continue;
+        noteBox(screen, .{ .left = area.left, .top = lines.first, .right = area.right, .end = lines.end });
+        noted = true;
+    }
+    sys.ReleaseLock(&screen.damage_lock);
+    if (noted) sys.SignalWaitable(&screen.work);
+}
+
+/// The overlay as a picture is made with it.
+const Laid = struct { image: ?*const rtg.RtgPointerImage, left: i32, top: i32 };
+
+/// The next picture made in the frame the display is not reading, and
+/// switched to: what was noted since the last one and what went into
+/// that one, which this frame has not had, copied in from the bands with
+/// the overlay laid over it and written out of the caches; then the
+/// display told to read this frame, which it takes up as the next frame
+/// starts - waited for, since until then it reads the other, which the
+/// next picture is made in. False, and nothing switched, when nothing was
+/// noted. Made holding `flip_lock`.
+fn flipFrames(screen: *Screen) bool {
+    const sys = screen.sys;
+    sys.AcquireLock(&screen.damage_lock);
+    const fresh = screen.fresh;
+    screen.fresh = .{};
+    const over = Laid{ .image = screen.overlay, .left = screen.overlay_left, .top = screen.overlay_top };
+    sys.ReleaseLock(&screen.damage_lock);
+    if (fresh.isEmpty()) return false;
+    const back = screen.flip_frames[screen.front ^ 1];
+    var boxes = fresh;
+    boxes.addAll(&screen.last);
+    for (boxes.list()) |box| makeBox(screen, back, box, over);
+    screen.last = fresh;
+    scanFrom(screen, @intFromPtr(back));
+    pace(screen, 1);
+    screen.front ^= 1;
+    screen.updates +%= 1;
+    return true;
+}
+
+/// One rectangle of a picture, in the frame at `into`: each row from its
+/// band, black where nothing is shown, the overlay laid over it, and
+/// written out of the caches.
+fn makeBox(screen: *Screen, into: [*]u8, box: Box, over: Laid) void {
+    var picture = pictureAt(screen, into);
+    if (screen.band_count == 0) {
+        const area = rtg.RtgRect{
+            .x = @intCast(box.left),
+            .y = @intCast(box.top),
+            .width = @intCast(box.right - box.left),
+            .height = @intCast(box.end - box.top),
+        };
+        _ = engine.fill(&screen.engine, &picture, &area, 0);
+    } else {
+        copyInto(screen, into, box);
+    }
+    _ = layOver(screen, into, over.image, over.left, over.top, box);
+    handOn(screen, &picture, box);
+}
+
+/// What the display shows changed - `bands`, none for black - and the
+/// whole picture of it made and waited for, as a flip is.
+fn showFlipped(screen: *Screen, bands: []const rtg.RtgBand) void {
+    const sys = screen.sys;
+    sys.ObtainSemaphore(&screen.flip_lock);
+    defer sys.ReleaseSemaphore(&screen.flip_lock);
+    sys.AcquireLock(&screen.damage_lock);
+    @memcpy(screen.bands[0..bands.len], bands);
+    screen.band_count = @intCast(bands.len);
+    screen.showing = if (bands.len == 0) null else bands[bands.len - 1].bitmap;
+    noteBox(screen, whole(screen));
+    sys.ReleaseLock(&screen.damage_lock);
+    _ = flipFrames(screen);
+}
+
+/// The display brought up, or changed to the mode taken, black: both
+/// frames cleared and written back, nothing shown in them until a buffer
+/// is again, and the display reading the first. False when it did not
+/// come up.
+fn beginFlipped(screen: *Screen) bool {
+    const sys = screen.sys;
+    sys.ObtainSemaphore(&screen.flip_lock);
+    defer sys.ReleaseSemaphore(&screen.flip_lock);
+    const bytes = @as(usize, screen.pitch) * screen.height;
+    for (screen.flip_frames) |frame| {
+        @memset(frame[0..bytes], 0);
+        writeBack(screen, frame, bytes);
+    }
+    sys.AcquireLock(&screen.damage_lock);
+    screen.band_count = 0;
+    screen.showing = null;
+    screen.fresh = .{};
+    sys.ReleaseLock(&screen.damage_lock);
+    screen.last = .{};
+    screen.front = 0;
+    // What it read until now says nothing about the new mode.
+    screen.scanning = 0;
+    return begin(screen, @intFromPtr(screen.flip_frames[0]));
+}
+
+/// The overlay's image changed, its old and new places noted. The image
+/// laid until now is not read again once this returns: a picture being
+/// made with it is waited out.
+fn overlayFlipped(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
+    const sys = screen.sys;
+    sys.ObtainSemaphore(&screen.flip_lock);
+    sys.AcquireLock(&screen.damage_lock);
+    noteImage(screen, screen.overlay, screen.overlay_left, screen.overlay_top);
+    screen.overlay = image;
+    noteImage(screen, image, screen.overlay_left, screen.overlay_top);
+    sys.ReleaseLock(&screen.damage_lock);
+    sys.ReleaseSemaphore(&screen.flip_lock);
+    sys.SignalWaitable(&screen.work);
+}
+
+/// The overlay moved, its old and new places noted.
+fn overlayMoved(screen: *Screen, left: i32, top: i32) void {
+    const sys = screen.sys;
+    sys.AcquireLock(&screen.damage_lock);
+    noteImage(screen, screen.overlay, screen.overlay_left, screen.overlay_top);
+    screen.overlay_left = left;
+    screen.overlay_top = top;
+    noteImage(screen, screen.overlay, left, top);
+    sys.ReleaseLock(&screen.damage_lock);
+    sys.SignalWaitable(&screen.work);
 }
 
 // --- the board -------------------------------------------------------------------
@@ -941,6 +1224,14 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         screen.cursor_memory = own.memory;
         screen.cursor = own.at;
     }
+    // A display that reads past the caches is shown frames of the
+    // driver's own, never a buffer drawn in.
+    if (scanout == .jh7110 and !startFlipping(screen)) {
+        if (screen.cursor_memory) |memory| sys.FreeMem(memory, 2 * cursor_bytes + page);
+        screen.cursor_memory = null;
+        screen.cursor = null;
+        return err.RTGERR_NO_MEMORY;
+    }
     board.region = .{
         .size = frames * frame,
         .alignment = row_alignment,
@@ -960,6 +1251,7 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const screen = screenOf(board);
     // The GPU lets go of the buffers before they are given back.
     if (screen.scanout == .virtio) virtio.stop(&screen.scanout.virtio);
+    stopFlipping(screen);
     if (screen.frame_hooked) screen.sys.RemIntServer(screen.frame_irq, &screen.frame_int);
     screen.frame_hooked = false;
     if (screen.timer_open) screen.sys.CloseDevice(&screen.timer_io.node);
@@ -1065,7 +1357,9 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
     if (index >= screen.mode_count or mode.format != screen.format) return err.RTGERR_BAD_MODE;
     const changed = index != screen.current;
     take(screen, index);
-    if (screen.scanning == 0 or changed) {
+    if (flips(screen) and (screen.scanning == 0 or changed)) {
+        if (!beginFlipped(screen)) return err.RTGERR_NO_DISPLAY;
+    } else if (screen.scanning == 0 or changed) {
         hold(screen);
         defer letGo(screen);
         const black = ownFrame(screen) orelse return err.RTGERR_NO_MEMORY;
@@ -1127,6 +1421,14 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
         if (bm.pixels == null) return err.RTGERR_BAD_ARG;
         if (!showable(screen, bm)) return err.RTGERR_NOT_DISPLAYABLE;
     }
+    if (flips(screen)) {
+        if (bitmap) |bm| {
+            showFlipped(screen, &[_]rtg.RtgBand{.{ .bitmap = bm }});
+        } else {
+            showFlipped(screen, &.{});
+        }
+        return err.RTGERR_OK;
+    }
     // A flip from one picture to another takes a frame. The first picture
     // shown is not waited for: it comes up at cold start.
     var unused: ?*anyopaque = null;
@@ -1155,7 +1457,7 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     };
     // Waited out with the frame let go: the pointer moves meanwhile.
     if (flip) pace(screen, 1);
-    giveBack(screen, unused, flip);
+    giveBack(screen, unused);
     return err.RTGERR_OK;
 }
 
@@ -1166,6 +1468,10 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
     const screen = screenOf(board);
     const first = if (rows == 0) 0 else @min(y, bitmap.height);
     const last = if (rows == 0) bitmap.height else @min(y +| rows, bitmap.height);
+    if (flips(screen)) {
+        noteWritten(screen, bitmap, .{ .left = 0, .top = first, .right = @min(bitmap.width, screen.width), .end = last });
+        return err.RTGERR_OK;
+    }
     // Any buffer, shown or not: one drawn ahead is shown by naming it.
     handOn(screen, bitmap, .{ .left = 0, .top = first, .right = bitmap.width, .end = last });
     compose(screen, bitmap, .{ .left = 0, .top = first, .right = @min(bitmap.width, screen.width), .end = last });
@@ -1179,6 +1485,10 @@ fn refreshRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.Rt
     const x: u32 = @intCast(area.x);
     const first: u32 = @intCast(area.y);
     const box = Box{ .left = x, .top = first, .right = x + @as(u32, @intCast(area.width)), .end = first + @as(u32, @intCast(area.height)) };
+    if (flips(screen)) {
+        noteWritten(screen, bitmap, .{ .left = box.left, .top = box.top, .right = @min(box.right, screen.width), .end = box.end });
+        return err.RTGERR_OK;
+    }
     handOn(screen, bitmap, box);
     compose(screen, bitmap, .{ .left = box.left, .top = box.top, .right = @min(box.right, screen.width), .end = box.end });
     return err.RTGERR_OK;
@@ -1213,6 +1523,10 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
         const bm = band.bitmap;
         if (bm.pixels == null or bm.pitch != screen.pitch or bm.format != screen.format) return err.RTGERR_NOT_DISPLAYABLE;
     }
+    if (flips(screen)) {
+        showFlipped(screen, bands[0..count]);
+        return err.RTGERR_OK;
+    }
     var code = err.RTGERR_OK;
     var unused: ?*anyopaque = null;
     const was_shown = shown: {
@@ -1234,7 +1548,7 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
         break :shown before;
     };
     if (was_shown) pace(screen, 1);
-    giveBack(screen, unused, was_shown);
+    giveBack(screen, unused);
     return code;
 }
 

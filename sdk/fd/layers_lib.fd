@@ -103,4 +103,7 @@ void DoHookClipRects(*utility.Hook hook, *graphics.RastPort rp, *const graphics.
 /// coordinates, joins its damage, and the layer is owed a refresh. Nothing
 /// is painted. False if there was no memory for it.
 bool DamageLayer(*layers.Layer layer, *const graphics.Rect area)
+/// NewLayerInfo with tags: `LATAG_Compose` to compose its layers, each in
+/// a buffer of its own that is copied on to the display.
+?*layers.LayerInfo NewLayerInfoTagList(*graphics.RastPort rp, ?[*]const utility.TagItem tags)
 ##end

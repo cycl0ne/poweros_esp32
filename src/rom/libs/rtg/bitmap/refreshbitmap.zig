@@ -16,7 +16,7 @@ const _bitmap = @import("_bitmap.zig");
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn RefreshBitMap(_: *RtgBase, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) i32
+/// fn RefreshBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) i32
 /// ```
 ///
 /// SINCE: 1.0. LVO -108.
@@ -35,7 +35,8 @@ const _bitmap = @import("_bitmap.zig");
 /// What a caller that wrote the pixels itself calls when it has finished.
 /// A board whose display reads the buffer itself needs nothing; one that
 /// sends the pixels over a bus sends those rows. The rows are cut to the
-/// buffer.
+/// buffer. A buffer with a `watch` hook has the hook told instead, with
+/// the rows as a rectangle the buffer's width, as `RefreshRect` does.
 ///
 /// CONTEXT:
 /// - Waits: only if the driver does.
@@ -56,10 +57,15 @@ const _bitmap = @import("_bitmap.zig");
 /// ```zig
 /// _ = rb.RefreshBitMap(buffer, 10, 50);
 /// ```
-pub fn RefreshBitMap(_: *RtgBase, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
+pub fn RefreshBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
     if (bitmap.pixels == null) return err.RTGERR_BAD_ARG;
     if (y >= bitmap.height) return err.RTGERR_BOUNDS;
     const count = if (rows == 0) bitmap.height - y else @min(rows, bitmap.height - y);
+    if (bitmap.watch) |hook| {
+        var rows_written = rtg.RtgRect{ .y = @intCast(y), .width = @intCast(bitmap.width), .height = @intCast(count) };
+        _ = rb.utility_base.CallHookPkt(hook, bitmap, &rows_written);
+        return err.RTGERR_OK;
+    }
 
     const board: *rtg.RtgBoard = @ptrCast(@alignCast(bitmap.board orelse return err.RTGERR_BAD_ARG));
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;

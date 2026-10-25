@@ -20,7 +20,9 @@ pub const LIBRARY_VERSION = 1;
 /// ScalePixels.
 /// 5: RefreshRect - a rectangle handed on, not its whole rows.
 /// 6: buffers from system memory a DMA engine reaches (RTGRF_DMA_MEMORY).
-pub const LIBRARY_REVISION = 6;
+/// 7: a buffer's `watch` hook told in place of the board, and RTGA_Compose
+/// kept as RTGBF_COMPOSE - a composed screen's windows.
+pub const LIBRARY_REVISION = 7;
 const BUILD_DATE = "25.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

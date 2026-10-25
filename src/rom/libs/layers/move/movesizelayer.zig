@@ -22,6 +22,9 @@
 //!   stays kept. It costs a copy of the layer both ways and it is never
 //!   owed a redraw, which is what a smart layer is for.
 //!
+//! Composed, there is neither problem: each layer's pixels are in a
+//! buffer of its own, which moves with it (`moveComposed`).
+//!
 //! The layers made to move with this one (`LATAG_MovesWith`) go in the
 //! same pass: each works out what it will see at its new place with the
 //! others already there, and the pixels of all of them travel in one
@@ -42,6 +45,7 @@ const smart = @import("../smart/_smart.zig");
 const backfill = @import("../backfill/_backfill.zig");
 const super = @import("../super/_super.zig");
 const _locks = @import("../locks/_locks.zig");
+const compose = @import("../compose/_compose.zig");
 const LayersBase = @import("../layers.zig").LayersBase;
 
 /// Moves a layer and changes its size together.
@@ -79,6 +83,13 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// sizes by the same amounts in the same pass. Where one of them covered
 /// another before, it covers it after, so none is uncovered by another on
 /// the way and none owes a redraw for it.
+///
+/// In a composed LayerInfo every layer has all of its pixels in its own
+/// buffer, so none is owed anything for the move, a smart layer as little
+/// as a simple one: where each was and where each is are copied on to the
+/// display again. One that changes size takes a buffer of the new size
+/// with as much of the old as fits; what it gains is painted, and a simple
+/// layer is owed it as damage.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the display's layers.
@@ -150,6 +161,7 @@ pub fn MoveSizeLayer(lb: *LayersBase, layer: *Layer, dx: i32, dy: i32, dw: i32, 
             return false;
         }
     }
+    if (compose.on(info)) return moveComposed(lb, group, dw, dh);
 
     // What each will be able to see when it gets there.
     for (group) |*member| {
@@ -290,7 +302,86 @@ const Member = struct {
     /// What it will have there once the pixels are dealt with; the
     /// layer's own from the moment it is in place.
     have: ?*graphics.Region = null,
+    /// Composed, and changing size: the buffer of the new size it takes.
+    buffer: ?_layerinfo.Buffer = null,
 };
+
+/// The move in a composed LayerInfo, where every layer has all of its
+/// pixels in a buffer of its own: nothing on the display is carried,
+/// nothing is kept and nothing is owed. The layers take their new places;
+/// one that changes size takes a buffer of the new size with as much of
+/// the old one in it as fits, and what it gained is painted in it; and
+/// everything the move touched - where each was and where each is - is
+/// copied on to the display again.
+///
+/// The new buffers are got before anything changes: without the memory
+/// for all of them the move is not made.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `group` - the layers moving, the one asked first, with their old and
+///   new rectangles.
+/// - `dw` - the change of width.
+/// - `dh` - the change of height.
+///
+/// RESULT:
+/// False, with `LERR_NO_MEMORY` in the layer asked, without the memory
+/// for a new buffer; the move is then not made.
+fn moveComposed(lb: *LayersBase, group: []Member, dw: i32, dh: i32) bool {
+    const gb = lb.graphics_base;
+    const layer = group[0].layer;
+    const info = layer.info;
+    if (dw != 0 or dh != 0) for (group) |*member| {
+        // A super layer's buffer is its bitmap, which does not change.
+        if (member.layer.super != null) continue;
+        const plain = member.layer.backfill == layers.LAYERS_NOBACKFILL;
+        member.buffer = compose.make(lb, info, @intCast(member.new.width()), @intCast(member.new.height()), plain) orelse {
+            for (group) |other| if (other.buffer) |made| compose.free(lb, made);
+            layer.last_error = layers.LERR_NO_MEMORY;
+            return false;
+        };
+    };
+    // What the move touches. Without the memory to say it exactly, the
+    // whole display is copied again: more than was needed, never less.
+    const touched = lb.newRegion();
+    defer if (touched) |region| gb.DisposeRegion(region);
+    var exact = touched != null;
+    for (group) |member| {
+        const region = touched orelse break;
+        if (!gb.OrRectRegion(region, &member.old) or !gb.OrRectRegion(region, &member.new)) exact = false;
+    }
+
+    for (group) |*member| {
+        const moving = member.layer;
+        if (member.buffer) |fresh| compose.replace(lb, moving, fresh);
+        moving.bounds = member.new;
+        const own = ownExtent(moving);
+        const clip = [_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&own) }, .{} };
+        gb.SetRPAttrs(moving.rp, &clip);
+        _ = gb.AndRectRegion(moving.damage, &own);
+    }
+    if (!tile.retile(lb, info)) layer.last_error = layers.LERR_NO_MEMORY;
+    for (group) |member| {
+        if (member.buffer == null) continue;
+        const moving = member.layer;
+        // Its targets still name the buffer it had.
+        if (!tile.rebuild(lb, moving)) layer.last_error = layers.LERR_NO_MEMORY;
+        // What it gained has never held anything: painted, and owed by a
+        // simple layer as it would be drawn on the display.
+        const own = ownExtent(moving);
+        const was = Rect{ .max_x = member.old.width(), .max_y = member.old.height() };
+        const right = Rect{ .min_x = was.max_x, .max_x = own.max_x, .max_y = own.max_y };
+        const below = Rect{ .min_y = was.max_y, .max_x = @min(was.max_x, own.max_x), .max_y = own.max_y };
+        for ([_]Rect{ right, below }) |gained| {
+            if (gained.isEmpty()) continue;
+            backfill.fill(lb, moving, gained);
+            if (moving.flags & (layers.LAYERSMART | layers.LAYERSUPER) != 0) continue;
+            if (gb.OrRectRegion(moving.damage, &gained)) moving.flags |= layers.LAYERREFRESH;
+        }
+    }
+    if (exact) compose.showRegion(lb, info, touched.?) else compose.show(lb, info, info.bounds);
+    return true;
+}
 
 /// Where a moving layer is going, or null for one that stays.
 fn newOf(group: []const Member, layer: *const Layer) ?Rect {

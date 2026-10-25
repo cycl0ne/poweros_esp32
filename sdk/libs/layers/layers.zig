@@ -13,6 +13,13 @@
 //! RastPort. graphics.library never learns what a window is, and this
 //! library draws nothing.
 //!
+//! **A composed LayerInfo** (`LATAG_Compose`, on the 64-bit machines) is
+//! the other way round: each layer draws into a buffer of its own, all of
+//! it, covered or not, and what of it can be seen is copied on to the
+//! display - when it is drawn, and when layers move. Nothing covered is
+//! lost, so nothing is owed for being uncovered, and a move copies the
+//! layer's pixels rather than asking for them again.
+//!
 //! **A layer draws in its own coordinates.** `(0,0)` is the layer's
 //! top-left wherever the layer happens to be, because the offset on to the
 //! display rides in the clip targets rather than in anything the caller
@@ -104,6 +111,11 @@ pub const LATAG_SuperBitMap = LATAG_Dummy + 7;
 /// layer leaves this one on its own.
 pub const LATAG_MovesWith = LATAG_Dummy + 8;
 
+/// For `NewLayerInfoTagList`: true to compose its layers, each in a buffer
+/// of its own (see the top of this file). Only a display that is a
+/// board's buffer can be composed, and only on the 64-bit machines; asked
+/// for anywhere else, the LayerInfo is made as without it.
+pub const LATAG_Compose = LATAG_Dummy + 9;
 /// Where to write the error if the call fails, as an `*i32`. The layer
 /// that would have carried it does not exist yet, which is why this is
 /// here at all.

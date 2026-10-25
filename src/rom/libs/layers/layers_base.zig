@@ -7,6 +7,7 @@ const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
+const RtgBase = sdk.interface.rtg.RtgBase;
 const graphics = sdk.graphics;
 
 /// The base: everything about the library that can change.
@@ -26,6 +27,11 @@ pub const LayersBase = extern struct {
     /// tiling is done with are its, and so is the RastPort a layer draws
     /// through. This is what keeps a caller from needing either.
     graphics_base: *GraphicsBase,
+    /// rtg.library, opened by the init and kept: a composed layer's own
+    /// buffer is attached to its display's board, so that the board's
+    /// engine draws in it as it does on the display, and what is drawn in
+    /// it is told to this library rather than to the board.
+    rtg_base: *RtgBase,
 
     /// This library as a caller sees it, to call its own functions through
     /// the jump table.

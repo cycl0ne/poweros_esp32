@@ -833,8 +833,9 @@ fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]co
 
 - `driver_name` - the driver to make it with.
 - `tag_list` - the `RTGA_` options: the board's name, a transport it
-  talks through, whether to switch the display on, a brightness, data
-  for the driver, and `RTGA_ErrorPtr` for the reason if it fails.
+  talks through, whether to switch the display on, a brightness,
+  whether its screens' windows are composed (`RTGA_Compose`), data for
+  the driver, and `RTGA_ErrorPtr` for the reason if it fails.
 
 **RESULT**
 
@@ -849,7 +850,9 @@ driver can read from its interrupts. The driver fills the handle in:
 its modes, its display memory and what its engine can do. A board comes
 up in no mode and showing nothing; `SetBoardMode` and `ShowBitMap` are
 what put a picture up. Without `RTGA_BoardName` the board is named after
-the driver and a number: rgb0, rgb1.
+the driver and a number: rgb0, rgb1. `RTGA_Compose` is kept as
+`RTGBF_COMPOSE` in the board's flags for intuition to read; the driver
+does nothing for it.
 
 **CONTEXT**
 
@@ -2062,7 +2065,7 @@ Hands rows of a buffer that were written on to the display.
 **SYNOPSIS**
 
 ```zig
-fn RefreshBitMap(_: *RtgBase, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) i32
+fn RefreshBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) i32
 ```
 
 **SINCE**
@@ -2086,7 +2089,8 @@ for a board that needs no telling, or what the driver answered.
 What a caller that wrote the pixels itself calls when it has finished.
 A board whose display reads the buffer itself needs nothing; one that
 sends the pixels over a bus sends those rows. The rows are cut to the
-buffer.
+buffer. A buffer with a `watch` hook has the hook told instead, with
+the rows as a rectangle the buffer's width, as `RefreshRect` does.
 
 **CONTEXT**
 
@@ -2120,7 +2124,7 @@ Hands a rectangle of a buffer that was written on to the display.
 **SYNOPSIS**
 
 ```zig
-fn RefreshRect(_: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32
+fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32
 ```
 
 **SINCE**
@@ -2152,6 +2156,12 @@ cut to the buffer first.
 
 Rectangles that do not overlap may be handed on at once by several
 tasks, as tiles drawn on several cores are.
+
+A buffer with a `watch` hook is not the board's to hear about: the
+hook is called instead, with the buffer and the rectangle cut to it,
+in the task that handed it on, and this answers `RTGERR_OK`. That is
+how a window's own buffer on a composed screen tells whoever copies it
+on to the screen.
 
 **CONTEXT**
 

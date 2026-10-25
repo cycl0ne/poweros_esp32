@@ -159,7 +159,13 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
         dropPlace(ib, place);
         return fail(code_ptr, sc.OSERR_NOMEM);
     };
-    const info = lb.NewLayerInfo(rp) orelse {
+    // A board that says so has its screens' windows composed, each in a
+    // buffer of its own (RTGA_Compose).
+    const composed = [_]TagItem{
+        .{ .tag = layers.LATAG_Compose, .data = @intFromBool(place.board.info.flags & rtg.boards.RTGBF_COMPOSE != 0) },
+        .{},
+    };
+    const info = lb.NewLayerInfoTagList(rp, &composed) orelse {
         if (given_font == null) gb.CloseFont(font);
         ib.sys_base.FreeMem(memory, @sizeOf(Screen));
         dropPlace(ib, place);

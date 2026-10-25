@@ -20,6 +20,7 @@ const info_mod = @import("../layerinfo/_layerinfo.zig");
 const LayerInfo = info_mod.LayerInfo;
 const Layer = info_mod.Layer;
 const tile = @import("../tile/_tile.zig");
+const compose = @import("../compose/_compose.zig");
 const smart = @import("../smart/_smart.zig");
 const backfill = @import("../backfill/_backfill.zig");
 const super = @import("../super/_super.zig");
@@ -56,7 +57,9 @@ pub fn insert(sys: *ExecBase, info: *LayerInfo, layer: *Layer, behind: bool) voi
     sys.AddTail(&info.layers, &layer.node);
 }
 
-/// Move a layer in the order and work the tiling out again.
+/// Move a layer in the order and work the tiling out again. Composed,
+/// what it covers or uncovers by it - all inside its own rectangle - is
+/// copied on to the display.
 ///
 /// INPUTS:
 /// - `lb` - the library.
@@ -71,6 +74,7 @@ pub fn reorder(lb: *LayersBase, layer: *Layer, put: enum { front, back }) bool {
     lb.sys_base.Remove(&layer.node);
     insert(lb.sys_base, info, layer, put == .back);
     const ok = tile.retile(lb, info);
+    compose.show(lb, info, layer.bounds);
     layer.last_error = if (ok) layers.LERR_OK else layers.LERR_NO_MEMORY;
     return ok;
 }

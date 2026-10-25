@@ -17,6 +17,11 @@
 //! space the layers are laid out in. A layer's clip targets are in the
 //! **layer's**, because that is the space its program draws in, and the
 //! difference between the two is the offset each target carries.
+//!
+//! In a **composed** LayerInfo (compose/_compose.zig) what a layer can see
+//! decides only what of it is copied on to the display. Its targets are
+//! its own buffer, all of it, whatever covers it, and a retile keeps
+//! nothing, puts nothing back and owes nothing.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -34,9 +39,12 @@ const LayersBase = @import("../layers.zig").LayersBase;
 const smart = @import("../smart/_smart.zig");
 const backfill = @import("../backfill/_backfill.zig");
 const super = @import("../super/_super.zig");
+const compose = @import("../compose/_compose.zig");
 
 /// What a layer can see, in the layer's own coordinates and narrowed by
-/// whatever else is asked for. The caller disposes of it.
+/// whatever else is asked for. The caller disposes of it. In a composed
+/// LayerInfo a layer may draw in all of itself, seen or not, so it is the
+/// whole layer that is narrowed.
 ///
 /// `also` is another region in the layer's coordinates to keep inside -
 /// the damage, for `BeginUpdate` - or null for all of it.
@@ -48,9 +56,20 @@ const super = @import("../super/_super.zig");
 ///   null.
 pub fn inLayerSpace(lb: *LayersBase, layer: *Layer, also: ?*graphics.Region) ?*graphics.Region {
     const gb = lb.graphics_base;
-    const work = info_mod.copyRegion(lb, layer.visible) orelse return null;
-    const ox, const oy = super.origin(layer);
-    gb.OffsetRegion(work, -ox, -oy);
+    const work = if (compose.on(layer.info)) whole: {
+        const all = lb.newRegion() orelse return null;
+        const extent = super.extent(layer);
+        if (!gb.OrRectRegion(all, &extent)) {
+            gb.DisposeRegion(all);
+            return null;
+        }
+        break :whole all;
+    } else seen: {
+        const seen = info_mod.copyRegion(lb, layer.visible) orelse return null;
+        const ox, const oy = super.origin(layer);
+        gb.OffsetRegion(seen, -ox, -oy);
+        break :seen seen;
+    };
     // The program's own clip, which is why InstallClipRegion is a call
     // here rather than on the RastPort: only this library knows which
     // pieces of the layer went where, so only it can fold the two.
@@ -70,7 +89,9 @@ pub fn inLayerSpace(lb: *LayersBase, layer: *Layer, also: ?*graphics.Region) ?*g
 }
 
 /// Put a region, in the layer's coordinates, on the layer's RastPort as
-/// the places it may draw. What was there is freed.
+/// the places it may draw. What was there is freed. In a composed
+/// LayerInfo every target is the layer's own buffer, at no offset: the
+/// layer's coordinates are the buffer's.
 ///
 /// INPUTS:
 /// - `lb` - the library.
@@ -85,6 +106,12 @@ pub fn install(lb: *LayersBase, layer: *Layer, region: *graphics.Region, with_ke
     const gb = lb.graphics_base;
     const sys = lb.sys_base;
     const count = gb.RegionRectangles(region, null, 0);
+    // Where the pixels go: the display, at the layer's place on it, or
+    // the layer's own buffer.
+    const own: ?*sdk.rtg.RtgBitMap = if (compose.on(layer.info)) if (layer.own) |buffer| buffer.bitmap else null else null;
+    const into: *sdk.rtg.Surface = if (own) |bm| @ptrCast(bm) else layer.info.surface;
+    const into_bitmap = if (own) |bm| bm else layer.info.bitmap;
+    const ox: i32, const oy: i32 = if (own != null) .{ 0, 0 } else super.origin(layer);
 
     var list: ?*graphics.ClipTarget = null;
     var tail: ?*graphics.ClipTarget = null;
@@ -104,11 +131,10 @@ pub fn install(lb: *LayersBase, layer: *Layer, region: *graphics.Region, with_ke
                 info_mod.freeTargets(sys, layer.info, list);
                 return false;
             };
-            const ox, const oy = super.origin(layer);
             t.* = .{
                 .rect = rects[i],
-                .surface = layer.info.surface,
-                .bitmap = layer.info.bitmap,
+                .surface = into,
+                .bitmap = into_bitmap,
                 // Where the layer sits on the display, which is what lets
                 // its program draw at (0,0) and mean its own corner - and
                 // where its own bitmap is showing, when it has one.
@@ -128,8 +154,8 @@ pub fn install(lb: *LayersBase, layer: *Layer, region: *graphics.Region, with_ke
     // whole of LAYERSMART as far as a drawing call is concerned.
     // A layer with a bitmap of its own draws into it everywhere it cannot
     // be seen - which includes the whole of the bitmap that the window is
-    // not showing.
-    if (with_kept) {
+    // not showing. A composed layer has neither: its buffer is all of it.
+    if (with_kept and own == null) {
         if (layer.super) |bm| {
             const rest = lb.newRegion() orelse return false;
             defer gb.DisposeRegion(rest);
@@ -195,7 +221,7 @@ pub fn install(lb: *LayersBase, layer: *Layer, region: *graphics.Region, with_ke
     // the display's corner. One target with nothing in it clips everything.
     if (list == null) {
         const t = info_mod.newTarget(sys, layer.info) orelse return false;
-        t.* = .{ .rect = .{}, .surface = layer.info.surface, .bitmap = layer.info.bitmap };
+        t.* = .{ .rect = .{}, .surface = into, .bitmap = into_bitmap };
         list = t;
     }
 
@@ -268,6 +294,13 @@ pub fn rebuild(lb: *LayersBase, layer: *Layer) bool {
 /// before a smart layer behind it had saved what it was losing there, and
 /// the smart layer kept the other layer's picture.
 ///
+/// **Composed, it is only the first half:** what each layer can see is
+/// worked out the same way, and that is all. Nothing covered is lost, so
+/// nothing is kept, put back or owed, and a layer's targets do not depend
+/// on what it can see - only a new layer, which has none yet, is given
+/// its. The display is not touched: copying on to it what changed is the
+/// caller's, which knows where that is (`compose.show`).
+///
 /// INPUTS:
 /// - `lb` - the library.
 /// - `info` - the display.
@@ -276,6 +309,7 @@ pub fn rebuild(lb: *LayersBase, layer: *Layer) bool {
 /// False if any part of it ran out of memory.
 pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
     const gb = lb.graphics_base;
+    const composed = compose.on(info);
 
     // What the layers in front have claimed, in the display's coordinates.
     const covered = lb.newRegion() orelse return false;
@@ -296,7 +330,9 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
         if (!gb.OrRectRegion(seen, &on_screen) or !gb.SubRegionRegion(covered, seen)) ok = false;
         if (!gb.OrRectRegion(covered, &layer.bounds)) ok = false;
 
-        if (layer.flags & layers.LAYERSUPER != 0) {
+        if (composed) {
+            // Its buffer keeps all of it already.
+        } else if (layer.flags & layers.LAYERSUPER != 0) {
             // Its own bitmap is its keeping: what has just been covered
             // goes into it now; what has just been uncovered comes back in
             // the second pass.
@@ -313,7 +349,11 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
         layer.next_visible = null;
 
         var newly: ?*graphics.Region = null;
-        if (layer.flags & layers.LAYERSUPER != 0) {
+        if (composed) {
+            // Nothing to bring back and nothing owed: what it can see now
+            // is in its buffer, and copied on to the display by whoever
+            // moved what.
+        } else if (layer.flags & layers.LAYERSUPER != 0) {
             if (!super.bringBack(lb, layer, seen)) ok = false;
         } else if (layer.flags & layers.LAYERSMART != 0) {
             // It keeps what is covered and gets it back when it is
@@ -348,9 +388,13 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
 
         gb.DisposeRegion(layer.visible);
         layer.visible = seen;
-        if (layer.flags & (layers.LAYERSMART | layers.LAYERSUPER) == 0) trimDamage(lb, layer);
+        // A composed layer's damage is what its program still owes its
+        // buffer, covered or not, so it is kept whole.
+        if (!composed and layer.flags & (layers.LAYERSMART | layers.LAYERSUPER) == 0) trimDamage(lb, layer);
 
-        if (!rebuild(lb, layer)) ok = false;
+        if (!composed or layer.targets == null) {
+            if (!rebuild(lb, layer)) ok = false;
+        }
         // After the targets are in place, so that the paint goes where the
         // layer's pixels go.
         if (newly) |area| {
