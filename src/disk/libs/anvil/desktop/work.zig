@@ -6,7 +6,9 @@
 //! first walks them to count what there is - bytes for a copy, files for
 //! a delete - then does it, with a window that says which file it is at
 //! and how far along it is, and a Stop button that ends it between two
-//! pieces. A copy asks before it puts a file where one is already
+//! pieces. A copy's window says how fast it goes as well: the bytes of
+//! the last second, measured on timer.device's E-clock, which a clock
+//! set meanwhile does not move. A copy asks before it puts a file where one is already
 //! (Replace, Replace All, Skip, Stop); a drawer that is there already is
 //! copied into. A file's icon goes with it, and its protection, date and
 //! comment are kept. A soft link in a drawer is never gone through: a
@@ -31,11 +33,13 @@ const gc = intuition.gadgetclass;
 const classusr = intuition.classusr;
 const fg = sdk.gadgets.fuelgauge;
 const tx = sdk.gadgets.text;
+const timer = sdk.devices.timer;
 const TagItem = utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const IconBase = sdk.interface.icon.IconBase;
+const TimerBase = sdk.interface.timer.TimerBase;
 const Object = intuition.Object;
 const _base = @import("../anvil_base.zig");
 const run = @import("run.zig");
@@ -44,7 +48,7 @@ const Desktop = @import("_desktop.zig").Desktop;
 
 /// Copying; deleting what was picked; deleting what is in a drawer - the
 /// trash - and keeping the drawer.
-pub const Kind = enum { copy, delete, empty };
+pub const Kind = enum(u8) { copy, delete, empty };
 
 /// The most files one job is given.
 pub const sources_max = 16;
@@ -52,12 +56,15 @@ pub const sources_max = 16;
 const chunk = 32768;
 /// How deep a copy or a delete goes into drawers within drawers.
 const depth_max = 24;
+/// How long a copy's rate is measured over, in microseconds.
+const rate_period_us = 1_000_000;
 
 const ID_STOP = 1;
 
 /// A job, in one block: the end message first, which the desktop frees
-/// the block by.
-pub const Job = struct {
+/// the block by. Extern, so that it stays first: Zig orders a plain
+/// struct's fields as it likes.
+pub const Job = extern struct {
     ended: run.Ended = .{},
     base: *_base.AnvilBase,
     kind: Kind,
@@ -78,6 +85,16 @@ pub const Job = struct {
     gauge: ?*Object = null,
     label: ?*Object = null,
     label_text: [64:0]u8 = @splat(0),
+    /// A copy's rate, under the gauge.
+    rate: ?*Object = null,
+    rate_text: [24:0]u8 = @splat(0),
+    /// The E-clock the rate is measured on; null without timer.device.
+    clock: timer.TimeRequest = .{},
+    timer_base: ?*TimerBase = null,
+    /// Where the rate shown was measured from: the E-clock then, in
+    /// microseconds, and the bytes copied by then.
+    rate_since_us: u64 = 0,
+    rate_since_done: u64 = 0,
     total: u64 = 0,
     done: u64 = 0,
     shown_percent: u32 = 101,
@@ -141,10 +158,15 @@ fn workMain(sys: *ExecBase) callconv(.c) void {
     job.ib = @ptrCast(open(job, 1, intuition.INTUITIONNAME));
     job.icon_base = @ptrCast(open(job, 2, sdk.icon.ICONNAME));
     // Its window: without the gadgets' classes it works without one.
+    if (job.kind == .copy and sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &job.clock.node, 0) == 0) {
+        job.timer_base = @ptrCast(@alignCast(job.clock.node.device.?));
+    }
+    defer if (job.timer_base != null) sys.CloseDevice(&job.clock.node);
     if (open(job, 3, fg.GAUGE_LIBRARY) != null and open(job, 4, tx.TEXT_LIBRARY) != null) openWindow(job);
     defer closeWindow(job);
 
     for (job.sources[0..job.count]) |*source| measure(job, source, 0);
+    restartRate(job);
     for (job.sources[0..job.count]) |*source| {
         if (job.stopped) break;
         switch (job.kind) {
@@ -184,13 +206,18 @@ fn openWindow(job: *Job) void {
         pair(fg.GAUGE_Format, @intFromPtr("%ld%%")),
         .{},
     });
+    if (job.timer_base != null) {
+        job.rate = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&job.rate_text)), .{} });
+    }
     const stop = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
         pair(gc.GA_Text, @intFromPtr("_Stop")),
         pair(gc.GA_ID, ID_STOP),
         pair(gc.GA_RelVerify, 1),
         .{},
     });
-    const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+    var tags: [12]TagItem = undefined;
+    var n: usize = 0;
+    for ([_]TagItem{
         pair(lg.LAYOUTA_Orientation, lg.LORIENT_VERT),
         pair(lg.LAYOUTA_Margin, 6),
         pair(lg.LAYOUTA_Spacing, 6),
@@ -198,10 +225,19 @@ fn openWindow(job: *Job) void {
         pair(lg.CHILDA_MinWidth, 300),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(job.gauge)),
         pair(lg.CHILDA_WeightHeight, 0),
-        pair(lg.LAYOUTA_AddChild, @intFromPtr(stop)),
-        pair(lg.CHILDA_WeightHeight, 0),
-        .{},
-    }) orelse return;
+    }) |tag| {
+        tags[n] = tag;
+        n += 1;
+    }
+    if (job.rate) |rate| {
+        tags[n] = pair(lg.LAYOUTA_AddChild, @intFromPtr(rate));
+        tags[n + 1] = pair(lg.CHILDA_WeightHeight, 0);
+        n += 2;
+    }
+    tags[n] = pair(lg.LAYOUTA_AddChild, @intFromPtr(stop));
+    tags[n + 1] = pair(lg.CHILDA_WeightHeight, 0);
+    tags[n + 2] = .{};
+    const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &tags) orelse return;
     job.window_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         pair(wn.WA_Title, @intFromPtr(titleOf(job.kind))),
         pair(wn.WA_DragBar, 1),
@@ -263,6 +299,88 @@ fn show(job: *Job, name: []const u8) void {
         job.shown_percent = percent;
         if (job.gauge) |gauge| _ = ib.SetGadgetAttrsTagList(gauge, window, &[_]TagItem{ pair(fg.GAUGE_Level, percent), .{} });
     }
+    const rate = job.rate orelse return;
+    const now = nowUs(job);
+    if (now - job.rate_since_us < rate_period_us) return;
+    const per_second = (job.done - job.rate_since_done) * 1_000_000 / (now - job.rate_since_us);
+    job.rate_since_us = now;
+    job.rate_since_done = job.done;
+    var text: [24]u8 = undefined;
+    const length = rateText(&text, per_second);
+    if (eqlText(&job.rate_text, text[0..length])) return;
+    @memset(&job.rate_text, 0);
+    @memcpy(job.rate_text[0..length], text[0..length]);
+    _ = ib.SetGadgetAttrsTagList(rate, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&job.rate_text)), .{} });
+}
+
+/// The E-clock in microseconds; 0 without timer.device.
+fn nowUs(job: *Job) u64 {
+    const timer_base = job.timer_base orelse return 0;
+    var value: timer.EClockVal = .{};
+    const rate = timer_base.ReadEClock(&value);
+    const count = @as(u64, value.hi) << 32 | value.lo;
+    return count / rate * 1_000_000 + count % rate * 1_000_000 / rate;
+}
+
+/// The rate measured from now on: at the start, and after a question,
+/// whose wait copied nothing.
+fn restartRate(job: *Job) void {
+    job.rate_since_us = nowUs(job);
+    job.rate_since_done = job.done;
+}
+
+const KiB: u64 = 1024;
+const MiB: u64 = 1024 * KiB;
+const GiB: u64 = 1024 * MiB;
+
+/// Bytes a second in the unit that suits them, rounded down, 1024 to the
+/// next as the desktop's title counts: bytes below a kilobyte ("512
+/// B/s"), kilobytes and megabytes to a tenth ("12.5 KB/s", "45.6 MB/s"),
+/// gigabytes to a hundredth ("2.05 GB/s"). At most 19 characters.
+pub fn rateText(into: []u8, per_second: u64) usize {
+    var n: usize = 0;
+    if (per_second < KiB) {
+        n += digits(into[n..], per_second);
+        n += put(into[n..], " B/s");
+    } else if (per_second < MiB) {
+        const tenths = per_second * 10 / KiB;
+        n += digits(into[n..], tenths / 10);
+        n += put(into[n..], ".");
+        n += digits(into[n..], tenths % 10);
+        n += put(into[n..], " KB/s");
+    } else if (per_second < GiB) {
+        const tenths = per_second * 10 / MiB;
+        n += digits(into[n..], tenths / 10);
+        n += put(into[n..], ".");
+        n += digits(into[n..], tenths % 10);
+        n += put(into[n..], " MB/s");
+    } else {
+        const hundredths = per_second / GiB * 100 + per_second % GiB * 100 / GiB;
+        n += digits(into[n..], hundredths / 100);
+        n += put(into[n..], if (hundredths % 100 < 10) ".0" else ".");
+        n += digits(into[n..], hundredths % 100);
+        n += put(into[n..], " GB/s");
+    }
+    return n;
+}
+
+fn digits(into: []u8, value: u64) usize {
+    var reversed: [20]u8 = undefined;
+    var count: usize = 0;
+    var left = value;
+    while (true) {
+        reversed[count] = '0' + @as(u8, @intCast(left % 10));
+        count += 1;
+        left /= 10;
+        if (left == 0) break;
+    }
+    for (0..count) |i| into[i] = reversed[count - 1 - i];
+    return count;
+}
+
+fn put(into: []u8, text: []const u8) usize {
+    @memcpy(into[0..text.len], text);
+    return text.len;
 }
 
 fn eqlText(held: []const u8, text: []const u8) bool {
@@ -407,15 +525,19 @@ fn copyFile(job: *Job, source: [*:0]const u8, target: [*:0]const u8) bool {
     const dl = job.dl;
     if (dl.Lock(target, dos.SHARED_LOCK)) |there| {
         dl.UnLock(there);
-        if (!job.replace_all) switch (ask(job, target)) {
-            .replace => {},
-            .replace_all => job.replace_all = true,
-            .skip => return false,
-            .stop => {
-                job.stopped = true;
-                return false;
-            },
-        };
+        if (!job.replace_all) {
+            const answer = ask(job, target);
+            restartRate(job);
+            switch (answer) {
+                .replace => {},
+                .replace_all => job.replace_all = true,
+                .skip => return false,
+                .stop => {
+                    job.stopped = true;
+                    return false;
+                },
+            }
+        }
     }
     const from = dl.Open(source, dos.MODE_OLDFILE) orelse return false;
     defer _ = dl.Close(from);

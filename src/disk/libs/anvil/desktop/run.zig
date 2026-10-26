@@ -43,7 +43,7 @@ const chosen_max = 16;
 const line_max = 4096;
 
 /// The message a started program's process gives back as it ends.
-pub const Ended = struct {
+pub const Ended = extern struct {
     message: exec.Message = .{},
 };
 

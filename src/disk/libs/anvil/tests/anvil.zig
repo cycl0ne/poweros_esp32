@@ -3,7 +3,7 @@
 //! shrunk to the icon size, icons placed in the first free cell, the
 //! ground's geometry, the title's figures, the tool types as Information
 //! writes them, the startup drawer's order and waits, how far the wheel
-//! scrolls a drawer, and the jump table.
+//! scrolls a drawer, a copy's rate, and the jump table.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -18,6 +18,7 @@ const drawer = @import("../drawer/_drawer.zig");
 const leaveout = @import("../desktop/leaveout.zig");
 const information = @import("../info/information.zig");
 const startup = @import("../desktop/startup.zig");
+const work = @import("../desktop/work.zig");
 const Rect = graphics.Rect;
 
 const testing = std.testing;
@@ -280,4 +281,22 @@ test "the startup drawer: highest STARTPRI first, equals in the drawer's order; 
     try testing.expectEqual(@as(?u32, 3600), startup.seconds("9999"));
     try testing.expectEqual(@as(?u32, null), startup.seconds("5s"));
     try testing.expectEqual(@as(?u32, null), startup.seconds(""));
+}
+
+test "a copy's rate in the unit that suits it, rounded down" {
+    var text: [24]u8 = undefined;
+    const cases = [_]struct { per_second: u64, shown: []const u8 }{
+        .{ .per_second = 0, .shown = "0 B/s" },
+        .{ .per_second = 1023, .shown = "1023 B/s" },
+        .{ .per_second = 1024, .shown = "1.0 KB/s" },
+        .{ .per_second = 12 * 1024 + 512, .shown = "12.5 KB/s" },
+        .{ .per_second = 1024 * 1024 - 1, .shown = "1023.9 KB/s" },
+        .{ .per_second = 45 * 1024 * 1024 + 629_146, .shown = "45.6 MB/s" },
+        .{ .per_second = 1024 * 1024 * 1024 - 1, .shown = "1023.9 MB/s" },
+        .{ .per_second = 2 * 1024 * 1024 * 1024 + 53_687_092, .shown = "2.05 GB/s" },
+        .{ .per_second = 3 * 1024 * 1024 * 1024, .shown = "3.00 GB/s" },
+    };
+    for (cases) |case| try testing.expectEqualStrings(case.shown, text[0..work.rateText(&text, case.per_second)]);
+    // The most there is still fits.
+    try testing.expect(work.rateText(&text, std.math.maxInt(u64)) <= text.len);
 }
