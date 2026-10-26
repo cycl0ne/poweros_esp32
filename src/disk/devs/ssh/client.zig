@@ -123,6 +123,10 @@ pub const Client = struct {
     terminal_length: usize = 0,
     columns: u32 = 0,
     rows: u32 = 0,
+    /// The session's variables, as SshSession lists them, without the
+    /// empty one that ends the list.
+    environment: [ssh.SSH_ENVIRONMENT_MAX]u8 = @splat(0),
+    environment_length: usize = 0,
     /// The server gave the session a terminal.
     has_terminal: bool = false,
     exit_status: u32 = status_none,
@@ -421,12 +425,15 @@ pub const Client = struct {
 
     // --- the session -------------------------------------------------------
 
-    /// The session asked for: the channel opened, then the terminal and
+    /// The session asked for: the channel opened, then the terminal, the
+    /// variables - when `with_environment`: the SshSession has them - and
     /// the shell or the command.
-    pub fn session(client: *Client, given: *const ssh.SshSession) void {
+    pub fn session(client: *Client, given: *const ssh.SshSession, with_environment: bool) void {
         const t = &client.transport;
         client.command_length = textLength(&given.command);
         @memcpy(client.command[0..client.command_length], given.command[0..client.command_length]);
+        client.environment_length = if (with_environment) environmentLength(&given.environment) else 0;
+        @memcpy(client.environment[0..client.environment_length], given.environment[0..client.environment_length]);
         client.terminal_length = textLength(&given.terminal);
         @memcpy(client.terminal[0..client.terminal_length], given.terminal[0..client.terminal_length]);
         client.columns = given.columns;
@@ -513,6 +520,7 @@ pub const Client = struct {
     }
 
     fn askStart(client: *Client) void {
+        client.sendEnvironment();
         var bytes: [600]u8 = undefined;
         var writer = Writer{ .bytes = &bytes };
         if (client.command_length > 0) {
@@ -523,6 +531,21 @@ pub const Client = struct {
         }
         client.transport.send(writer.written());
         client.step = .starting;
+    }
+
+    /// The session's variables, each an `env` request that asks for no
+    /// reply: a server that does not take one leaves it out (RFC 4254,
+    /// 6.4).
+    fn sendEnvironment(client: *Client) void {
+        var at: usize = 0;
+        while (nextVariable(client.environment[0..client.environment_length], &at)) |variable| {
+            var bytes: [ssh.SSH_ENVIRONMENT_MAX + 32]u8 = undefined;
+            var writer = Writer{ .bytes = &bytes };
+            client.requestHeadChannel(&writer, "env", false);
+            writer.string(variable.name);
+            writer.string(variable.value);
+            client.transport.send(writer.written());
+        }
     }
 
     fn requestHeadChannel(client: *const Client, writer: *Writer, request: []const u8, want_reply: bool) void {
@@ -598,4 +621,34 @@ fn textLength(text: []const u8) usize {
     var length: usize = 0;
     while (length < text.len and text[length] != 0) length += 1;
     return length;
+}
+
+/// How much of `list` its variables take, each with its NUL, up to the
+/// empty one that ends it; one cut off by the list's end is left out.
+pub fn environmentLength(list: []const u8) usize {
+    var at: usize = 0;
+    while (at < list.len and list[at] != 0) {
+        const length = textLength(list[at..]);
+        if (at + length == list.len) break;
+        at += length + 1;
+    }
+    return at;
+}
+
+/// A variable: its name and its value.
+pub const Variable = struct { name: []const u8, value: []const u8 };
+
+/// The next variable in `list` from `at`, which moves past it; null at
+/// the end. An entry without a name before its `=` is passed over.
+pub fn nextVariable(list: []const u8, at: *usize) ?Variable {
+    while (at.* < list.len) {
+        const entry = list[at.*..][0..textLength(list[at.*..])];
+        at.* += entry.len + 1;
+        const equals = for (entry, 0..) |char, index| {
+            if (char == '=') break index;
+        } else continue;
+        if (equals == 0) continue;
+        return .{ .name = entry[0..equals], .value = entry[equals + 1 ..] };
+    }
+    return null;
 }

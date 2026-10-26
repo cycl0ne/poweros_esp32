@@ -185,6 +185,7 @@ flowchart TB
     m_battmem_resource["battmem.resource"]
     m_bsdsocket_library["bsdsocket.library"]
     m_clipboard_device["clipboard.device"]
+    m_compression_library["compression.library"]
     m_crypto_library["crypto.library"]
     m_datatype_classes["datatype classes"]
     m_datatypes_library["datatypes.library"]
@@ -205,6 +206,7 @@ flowchart TB
     m_gpio_resource["gpio.resource"]
     m_graphics_library["graphics.library"]
     m_hid_device["hid.device"]
+    m_http_library["http.library"]
     m_icon_library["icon.library"]
     m_iffparse_library["iffparse.library"]
     m_input_device["input.device"]
@@ -309,6 +311,9 @@ flowchart TB
     m_hid_device --> m_keyboard_device
     m_hid_device --> m_mouse_device
     m_hid_device --> m_usb_library
+    m_http_library --> m_compression_library
+    m_http_library --> m_tls_library
+    m_icon_library --> m_compression_library
     m_icon_library --> m_datatypes_library
     m_icon_library --> m_dos_library
     m_iffparse_library --> m_clipboard_device
@@ -372,7 +377,7 @@ flowchart TB
     m_xhci_device --> m_timer_device
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_anvil_library,m_asl_library,m_audiocodec_library,m_bsdsocket_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_filter_library,m_icon_library,m_iffparse_library,m_modbus_library,m_pci_library,m_rdb_library,m_tls_library,m_truetype_library,m_usb_library,m_wpa_library lib
+    class m_anvil_library,m_asl_library,m_audiocodec_library,m_bsdsocket_library,m_compression_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_filter_library,m_http_library,m_icon_library,m_iffparse_library,m_modbus_library,m_pci_library,m_rdb_library,m_tls_library,m_truetype_library,m_usb_library,m_wpa_library lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_acm_device,m_aic8800_device,m_clipboard_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_uac_device,m_usbotg_device,m_xhci_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
@@ -414,6 +419,7 @@ flowchart TB
     m_calendar_gadget["calendar.gadget"]
     m_checkbox_gadget["checkbox.gadget"]
     m_chooser_gadget["chooser.gadget"]
+    m_compression_library["compression.library"]
     m_cycle_gadget["cycle.gadget"]
     m_datatypes_library["datatypes.library"]
     m_diskfont_library["diskfont.library"]
@@ -519,6 +525,7 @@ flowchart TB
     m_obj_datatype --> m_model_datatype
     m_picture_datatype --> m_datatypes_library
     m_picture_datatype --> m_iffparse_library
+    m_png_datatype --> m_compression_library
     m_png_datatype --> m_dos_library
     m_png_datatype --> m_picture_datatype
     m_scroller_gadget --> m_motion_library
@@ -537,7 +544,7 @@ flowchart TB
     m_textedit_gadget --> m_scroller_gadget
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_anvil_library,m_asl_library,m_audiocodec_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_iffparse_library lib
+    class m_anvil_library,m_asl_library,m_audiocodec_library,m_compression_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_iffparse_library lib
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_8svx_datatype,m_animation_datatype,m_ascii_datatype,m_audiocodec_datatype,m_bmp_datatype,m_calendar_gadget,m_checkbox_gadget,m_chooser_gadget,m_cycle_gadget,m_font_datatype,m_fuelgauge_gadget,m_gif_datatype,m_gifanim_datatype,m_ilbm_datatype,m_integer_gadget,m_jpeg_datatype,m_keyboard_gadget,m_listbrowser_gadget,m_listview_gadget,m_lottie_datatype,m_markdown_datatype,m_model_datatype,m_obj_datatype,m_palette_gadget,m_picture_datatype,m_png_datatype,m_scroller_gadget,m_scrollgroup_gadget,m_sound_datatype,m_spinner_gadget,m_string_gadget,m_text_datatype,m_text_gadget,m_textedit_gadget cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151

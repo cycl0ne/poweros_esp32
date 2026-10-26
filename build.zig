@@ -258,6 +258,7 @@ pub fn build(b: *std.Build) void {
     // UART1's backend: the RS-485 port's or a SLIP line's.
     const uart1 = rs485 orelse slip_line;
     const usb_devices = b.option([]const u8, "usb", "Plug these QEMU USB devices into the qemu steps' USB port, comma-separated (usb-hub,usb-kbd,usb-mouse); an item with '=' is a property of the device before it (usb-kbd,port=1,id=kbd)");
+    const virt_ui = b.option([]const u8, "virt-ui", "QEMU's -display for the virt and virt64 display steps (default: gtk,show-cursor=off,zoom-to-fit=off - GTK's window at the picture's size, 1:1; default,show-cursor=off takes SDL, or VNC, where there is no GTK)") orelse "gtk,show-cursor=off,zoom-to-fit=off";
     const usb_disk = b.option([]const u8, "usb-disk", "Plug a USB stick into the qemu steps' USB port whose blocks are this raw image file (-snapshot runs keep it unchanged)");
     const usb = qemuUsb(b, usb_devices, usb_disk);
     // The display is the one a person sits at: `telnet localhost 2323`
@@ -768,11 +769,11 @@ pub fn build(b: *std.Build) void {
         .{ "ramfb", "virt-ramfb", "ramfb" },
     }) |display| {
         const run_virt_display = b.addSystemCommand(&.{
-            "qemu-system-riscv64",     "-M",        "virt",      "-m",      "512M",
-            "-smp",                    "4",         "-bios",     "default", "-display",
-            "default,show-cursor=off", "-serial",   "mon:stdio", "-device", display[0],
-            "-device",                 "qemu-xhci", "-device",   "usb-kbd", "-device",
-            "usb-tablet",              "-kernel",
+            "qemu-system-riscv64", "-M",        "virt",      "-m",      "512M",
+            "-smp",                "4",         "-bios",     "default", "-display",
+            virt_ui,               "-serial",   "mon:stdio", "-device", display[0],
+            "-device",             "qemu-xhci", "-device",   "usb-kbd", "-device",
+            "usb-tablet",          "-kernel",
         });
         run_virt_display.addArtifactArg(virt_kernel);
         run_virt_display.addArg("-initrd");
@@ -811,9 +812,9 @@ pub fn build(b: *std.Build) void {
     }) |display| {
         const run_virt64_display = b.addSystemCommand(&virt64_machine);
         run_virt64_display.addArgs(&.{
-            "-display", "default,show-cursor=off", "-serial",   "mon:stdio",
-            "-device",  display[0],                "-device",   "qemu-xhci",
-            "-device",  "usb-kbd",                 "-device",   "usb-tablet",
+            "-display", virt_ui,    "-serial", "mon:stdio",
+            "-device",  display[0], "-device", "qemu-xhci",
+            "-device",  "usb-kbd",  "-device", "usb-tablet",
             "-kernel",
         });
         run_virt64_display.addFileArg(virt64_kernel.image);
@@ -1656,12 +1657,18 @@ fn qemuConsole(b: *std.Build, display: []const []const u8, uart1: ?[]const u8) [
 
 /// `snapshot` false lets the kernel write the image, so a disk on it keeps
 /// what is written from one boot to the next.
+///
+/// Both cores run on one host thread (`-accel tcg,thread=single`). With a
+/// thread each, the Espressif QEMU damages its own heap about a second
+/// into a boot, while the desktop loads its code - a double free in its
+/// flash requests, or a crash in its translated code - in up to half of
+/// all boots; on one thread none.
 fn qemuRunPath(b: *std.Build, qemu: []const u8, flash_image: std.Build.LazyPath, snapshot: bool, network: []const []const u8, usb: []const []const u8, extra: []const []const u8) *std.Build.Step.Run {
     // Like the board's N16R8 module: 8 MB octal PSRAM (-m is the PSRAM size).
     const run = b.addSystemCommand(&.{
         qemu,                                            "-machine", "esp32s3",
         "-m",                                            "8M",       "-global",
-        "driver=ssi_psram,property=is_octal,value=true",
+        "driver=ssi_psram,property=is_octal,value=true", "-accel",   "tcg,thread=single",
     });
     if (snapshot) run.addArg("-snapshot");
     run.addArgs(network);

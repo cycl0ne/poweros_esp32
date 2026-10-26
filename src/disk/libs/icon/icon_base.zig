@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 //! icon.library's base, shared by every opener: exec's Library header,
 //! what it was loaded from, dos.library, the default icons read so far,
-//! and datatypes.library once a file's group has been asked.
+//! datatypes.library once a file's group has been asked, and
+//! compression.library once a picture has been unpacked.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
+const CompressionBase = sdk.interface.compression.CompressionBase;
 const Default = @import("default/_default.zig").Default;
 const default_count = @import("default/_default.zig").count;
 
@@ -17,14 +19,16 @@ pub const IconBase = extern struct {
     /// What LoadSeg made, handed back at the expunge.
     seg_list: ?*anyopaque = null,
     dos_base: *DosBase,
-    /// The defaults read so far and datatypes.library: under `defaults_lock`,
-    /// a semaphore, since filling a default reads a file.
+    /// The defaults read so far, datatypes.library and
+    /// compression.library: under `defaults_lock`, a semaphore, since
+    /// filling a default reads a file.
     defaults_lock: exec.SignalSemaphore = .{},
     defaults: [default_count]Default = @splat(.{}),
     datatypes_base: ?*DataTypesBase = null,
     /// datatypes.library has been asked for, and is not asked again.
     datatypes_tried: u8 = 0,
     pad: [3]u8 = .{ 0, 0, 0 },
+    compression_base: ?*CompressionBase = null,
     /// The count of each picture's users: a spinlock, since giving a
     /// picture back is quick and happens on any task.
     users_lock: exec.Lock = .{},

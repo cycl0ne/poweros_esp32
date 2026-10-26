@@ -13,17 +13,19 @@
 //! and goes with the last.
 //!
 //! The file is decoded with the SDK's PNG decoder (`sdk.datatypes.png`):
-//! the `IDAT` chunks joined, unpacked whole, each row's filter undone
-//! against the row above, and its pixels spread out to red, green, blue
-//! and coverage - into the picture's rows directly, or through one row
-//! for the seven passes of an interlaced file.
+//! the `IDAT` chunks unpacked whole by compression.library, which the
+//! first picture opens, each row's filter undone against the row above,
+//! and its pixels spread out to red, green, blue and coverage - into the
+//! picture's rows directly, or through one row for the seven passes of
+//! an interlaced file.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const icon = sdk.icon;
 const iconfile = icon.file;
 const decode = sdk.datatypes.png.decode;
-const inflate = sdk.datatypes.png.inflate;
+const compression = sdk.compression;
+const CompressionBase = sdk.interface.compression.CompressionBase;
 const IconBase = @import("../icon_base.zig").IconBase;
 
 /// What a picture is checked by when an icon hands one back: an image
@@ -53,7 +55,8 @@ pub const Picture = extern struct {
 };
 
 pub const Error = error{
-    /// Not a PNG, or one this cannot read.
+    /// Not a PNG, or one this cannot read - also for want of
+    /// compression.library.
     WrongType,
     /// More than `PICTURE_MAX` pixels either way.
     TooLarge,
@@ -118,13 +121,26 @@ pub fn release(base: *IconBase, picture: *Picture) void {
 /// the caller's stack nothing: an icon is read on whatever stack the
 /// program that asks has.
 const Work = struct {
-    stream: inflate.Work = .{},
     palette: decode.Palette = .{},
 };
+
+/// compression.library, opened by the first picture unpacked and kept
+/// until the expunge; null when it is not there. Under `defaults_lock`,
+/// which a default being filled in already holds.
+fn compressionOf(base: *IconBase) ?*CompressionBase {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.defaults_lock);
+    defer sys.ReleaseSemaphore(&base.defaults_lock);
+    if (base.compression_base == null) {
+        if (sys.OpenLibrary(compression.COMPRESSIONNAME, 1)) |lib| base.compression_base = @ptrCast(lib);
+    }
+    return base.compression_base;
+}
 
 /// The file's pixels, red, green, blue and coverage, into `pixels`.
 fn unpack(base: *IconBase, file: []const u8, info: decode.Info, pixels: []u8) Error!void {
     const sys = base.sys_base;
+    const cb = compressionOf(base) orelse return Error.WrongType;
     const work_memory = sys.AllocVec(@sizeOf(Work), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return Error.NoMemory;
     defer sys.FreeVec(work_memory);
     const work: *Work = @ptrCast(@alignCast(work_memory));
@@ -146,25 +162,15 @@ fn unpack(base: *IconBase, file: []const u8, info: decode.Info, pixels: []u8) Er
     if (idat_length == 0) return Error.WrongType;
     decode.readPalette(info, &work.palette, plte, trns) catch return Error.WrongType;
 
-    // The compressed stream is the IDAT chunks joined.
-    const joined_memory = sys.AllocVec(idat_length, exec.MEMF_ANY) orelse return Error.NoMemory;
-    defer sys.FreeVec(joined_memory);
-    const joined: [*]u8 = @ptrCast(joined_memory);
-    var at: usize = 0;
-    walk = decode.Walk.start(file) catch return Error.WrongType;
-    while (walk.next() catch return Error.WrongType) |chunk| {
-        if (chunk.id != decode.ID_IDAT) continue;
-        @memcpy(joined[at..][0..chunk.data.len], chunk.data);
-        at += chunk.data.len;
-    }
-
     // Unpacked whole: every row with the filter byte in front of it.
     const raw_size = decode.rawSize(info);
     const raw_memory = sys.AllocVec(raw_size, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return Error.NoMemory;
     defer sys.FreeVec(raw_memory);
     const raw: [*]u8 = @ptrCast(raw_memory);
-    const written = inflate.uncompress(&work.stream, joined[0..idat_length], raw[0..raw_size]) catch return Error.WrongType;
-    if (written != raw_size) return Error.WrongType;
+    decode.unpackRows(cb, file, raw[0..raw_size]) catch |failure| return switch (failure) {
+        error.NoMemory => Error.NoMemory,
+        else => Error.WrongType,
+    };
 
     // The row a pass's first row is undone against: zeroes. And one row
     // of colour, for a pass whose pixels are not next to one another.

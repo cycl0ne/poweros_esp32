@@ -15,8 +15,9 @@ const _default = @import("default/_default.zig");
 pub const LIBRARY_NAME = icon.ICONNAME;
 pub const LIBRARY_VERSION = 1;
 /// 1: a default for the files of `GID_MODEL`, ENV:Sys/def_model.info.
-pub const LIBRARY_REVISION = 1;
-const BUILD_DATE = "20.10.2026";
+/// 2: pictures unpacked by compression.library.
+pub const LIBRARY_REVISION = 2;
+const BUILD_DATE = "25.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -44,8 +45,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
 /// The library goes when nobody has it open. The defaults it kept are
 /// let go of - an icon a program still held would keep its picture, but
 /// a program that has closed the library has given its icons back - and
-/// datatypes.library and dos.library closed, the base freed, the file it
-/// was loaded from handed back.
+/// datatypes.library, compression.library and dos.library closed, the
+/// base freed, the file it was loaded from handed back.
 fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const base = _base.iconBase(lib);
     if (lib.open_cnt != 0) {
@@ -56,6 +57,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const seg_list = base.seg_list;
     _default.forgetAll(base);
     if (base.datatypes_base) |dt| sys.CloseLibrary(@ptrCast(@alignCast(dt)));
+    if (base.compression_base) |cb| sys.CloseLibrary(cb.lib());
     sys.CloseLibrary(@ptrCast(@alignCast(base.dos_base)));
     sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);

@@ -15,6 +15,7 @@ const iconfile = icon.file;
 const host = @import("host_rom");
 const kexec = host.exec;
 const icon_init = @import("../icon_init.zig");
+const compression_init = @import("../../compression/compression_init.zig");
 
 const testing = std.testing;
 const DosBase = sdk.interface.dos.DosBase;
@@ -78,12 +79,14 @@ const Disk = struct {
 var lent: [512 * 1024]u8 align(16) = undefined;
 
 /// exec, utility and dos with memory lent; a process with WORK: behind it
-/// and ENV: a drawer on it holding `Sys`; icon.library made and opened.
+/// and ENV: a drawer on it holding `Sys`; compression.library made, which
+/// icon.library opens for its pictures; icon.library made and opened.
 const Rig = struct {
     db: *host.dos.DosBase,
     region: *exec.MemHeader = undefined,
     proc: dos.Process = .{},
     saved: ?*kexec.Task = null,
+    compression: *exec.Library = undefined,
     library: *exec.Library = undefined,
     ib: *IconBase = undefined,
 
@@ -108,6 +111,8 @@ const Rig = struct {
         dl.UnLock(dl.CreateDir("WORK:Env/Sys") orelse return error.NoDir);
         try testing.expect(dl.AssignLock("ENV", dl.Lock("WORK:Env", dos.SHARED_LOCK)));
 
+        const packer = kexec.InitResident(kexec.SysBase, &compression_init.compression_library_tag, null) orelse return error.NoCompression;
+        rig.compression = @ptrCast(@alignCast(packer));
         const lib = kexec.InitResident(kexec.SysBase, &icon_init.icon_library_tag, null) orelse return error.NoIcon;
         rig.library = @ptrCast(@alignCast(lib));
         rig.ib = @ptrCast(rig.sysLib().OpenLibrary(icon.ICONNAME, 1) orelse return error.NoBase);
@@ -127,6 +132,7 @@ const Rig = struct {
         rig.sysLib().CloseLibrary(rig.ib.lib());
         _ = rig.sysLib().RemLibrary(rig.library);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, icon.ICONNAME) == null);
+        _ = rig.sysLib().RemLibrary(rig.compression);
         _ = rig.dosLib().AssignLock("ENV", null);
         Disk.disk.deinit();
         kexec.SysBase.cpu().this_task = rig.saved.?;

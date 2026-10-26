@@ -1,76 +1,15 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of the PNG decoder png.datatype and icon.library read
-//! with (sdk/libs/datatypes/png/): the DEFLATE stream - stored, fixed and
-//! own codes, a truncated stream, one too long for its room - then the
-//! chunks' checksum, the header, the filters, the bits of a pixel and
-//! the passes of an interlaced file.
+//! with (sdk/libs/datatypes/png/): the chunks' checksum, the header, the
+//! filters, the bits of a pixel and the passes of an interlaced file.
+//! The stream is compression.library's, tested with it; icon.library's
+//! tests read whole files.
 
 const std = @import("std");
 const sdk = @import("sdk");
-const inflate = sdk.datatypes.png.inflate;
 const decode = sdk.datatypes.png.decode;
 
 const testing = std.testing;
-
-// --- the stream -------------------------------------------------------------
-
-test "a stored block comes back as it is" {
-    // 0x01: last block, stored; then the length and its complement.
-    const stream = [_]u8{ 0x01, 0x05, 0x00, 0xFA, 0xFF, 'h', 'e', 'l', 'l', 'o' };
-    var work = inflate.Work{};
-    var into: [16]u8 = undefined;
-    try testing.expectEqual(@as(usize, 5), try inflate.inflate(&work, &stream, &into));
-    try testing.expectEqualStrings("hello", into[0..5]);
-}
-
-test "a run is coded as a repeat of itself" {
-    // Sixty 'a's, which the coder writes as one byte and a repeat that
-    // reads out of what it is itself writing.
-    const stream = [_]u8{
-        0x78, 0x9c, 0x4b, 0x4c, 0x24, 0x1f, 0x00, 0x00, 0xb5, 0xc0, 0x16, 0xbd,
-    };
-    var work = inflate.Work{};
-    var into: [64]u8 = undefined;
-    const written = try inflate.uncompress(&work, &stream, &into);
-    try testing.expectEqual(@as(usize, 60), written);
-    for (into[0..written]) |byte| try testing.expectEqual(@as(u8, 'a'), byte);
-}
-
-test "a block with its own codes" {
-    const stream = [_]u8{
-        0x78, 0xda, 0x2d, 0x8d, 0xdb, 0x11, 0xc3, 0x20, 0x0c, 0x04, 0x5b, 0xb9,
-        0xd4, 0xe1, 0x6a, 0x20, 0x16, 0xa0, 0x04, 0x23, 0x9b, 0xa7, 0xa1, 0xfa,
-        0x68, 0x3c, 0xf9, 0xde, 0xbd, 0xbd, 0x1a, 0x08, 0x57, 0xe3, 0xf7, 0x17,
-        0x36, 0xcb, 0x48, 0x70, 0x72, 0xe3, 0xd3, 0x8e, 0xb3, 0x40, 0x3a, 0x65,
-        0x54, 0xc5, 0xd1, 0xac, 0x89, 0x5d, 0xfc, 0x86, 0xd3, 0xa8, 0x77, 0x4c,
-        0x58, 0x95, 0x06, 0xd7, 0x00, 0xc7, 0x9d, 0x14, 0x2d, 0x4a, 0x88, 0x7c,
-        0x35, 0xc9, 0xba, 0xf5, 0x65, 0x43, 0x90, 0x81, 0x4e, 0x37, 0x27, 0x1f,
-        0xe7, 0x3f, 0xbf, 0x1b, 0x57, 0xb1, 0xc8, 0x66, 0x53, 0x9e, 0x83, 0xd7,
-        0x0f, 0xbe, 0x65, 0x2c, 0xbd,
-    };
-    var work = inflate.Work{};
-    var into: [256]u8 = undefined;
-    const written = try inflate.uncompress(&work, &stream, &into);
-    try testing.expectEqualStrings(
-        "the quick brown fox jumps over the lazy dog; pack my box with five " ++
-            "dozen liquor jugs; how vexingly quick daft zebras jump!",
-        into[0..written],
-    );
-}
-
-test "a truncated stream says so" {
-    const stream = [_]u8{ 0x01, 0x05, 0x00, 0xFA, 0xFF, 'h', 'e' };
-    var work = inflate.Work{};
-    var into: [16]u8 = undefined;
-    try testing.expectError(inflate.Error.Truncated, inflate.inflate(&work, &stream, &into));
-}
-
-test "more than there is room for says so" {
-    const stream = [_]u8{ 0x01, 0x05, 0x00, 0xFA, 0xFF, 'h', 'e', 'l', 'l', 'o' };
-    var work = inflate.Work{};
-    var into: [3]u8 = undefined;
-    try testing.expectError(inflate.Error.Overrun, inflate.inflate(&work, &stream, &into));
-}
 
 // --- the file ---------------------------------------------------------------
 

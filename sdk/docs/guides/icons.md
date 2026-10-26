@@ -12,8 +12,8 @@ file that has none the default that fits it. The calls are in
 The icon of `Notes` is `Notes.info` beside it; the icon of the drawer
 `Work` is `Work.info`; a volume's own icon is `Disk.info` in its root.
 The file is a PNG - any size up to 256 pixels each way, with or without
-coverage - and its fields are text in a chunk of its own, `icOn`, after
-`IHDR`:
+coverage, its picture unpacked by `LIBS:compression.library` - and its
+fields are text in a chunk of its own, `icOn`, after `IHDR`:
 
 ```
 KIND=TOOL                 DISK, DRAWER, TOOL, PROJECT, TRASHCAN

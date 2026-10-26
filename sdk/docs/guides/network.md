@@ -4,7 +4,8 @@ How the machine talks to a network: the TCP/IP stack a program uses, the
 interfaces it runs on, the devices that carry its frames, and what it takes
 to write one. The calls are in the reference:
 [bsdsocket](../autodocs/bsdsocket.md), [tls](../autodocs/tls.md),
-[filter](../autodocs/filter.md) and [wpa](../autodocs/wpa.md); the
+[http](../autodocs/http.md), [filter](../autodocs/filter.md) and
+[wpa](../autodocs/wpa.md); the
 device requests are described in `sdk/devices/network.zig`,
 `sdk/devices/wireless.zig`, `sdk/devices/slip.zig`,
 `sdk/devices/telnet.zig` and `sdk/devices/ssh.zig`.
@@ -15,6 +16,9 @@ device requests are described in `sdk/devices/network.zig`,
 - [Waiting: WaitSelect and signals](#waiting-waitselect-and-signals)
 - [Names and addresses](#names-and-addresses)
 - [TLS: a secure connection](#tls-a-secure-connection)
+- [HTTP: http.library](#http-httplibrary) - a client and its kept
+  connections, requests and their answers, bodies sent, redirects,
+  unpacking
 - [Interfaces](#interfaces)
 - [Configuration files](#configuration-files)
 - [The network device API](#the-network-device-api)
@@ -28,6 +32,9 @@ device requests are described in `sdk/devices/network.zig`,
 - [A share as a volume: smb-handler](#a-share-as-a-volume-smb-handler) -
   `C:net/MountShare`, share files, the logon, signing and encryption,
   writing, record locks and notification, staying connected, names
+- [Git: C:net/Git](#git-cnetgit) - the verbs, remotes over HTTP and
+  SSH, credentials and keys, the configuration, the work tree on a dos
+  volume, what a push refuses and what it sends
 - [A packet filter](#a-packet-filter) - its rules, `C:net/Filter`, and
   the packet hooks it is built on
 - [Commands](#commands)
@@ -274,6 +281,108 @@ to. It belongs to the task that opened it.
 `https://tls-v1-2.badssl.com:1012/` (TLS 1.2), and badssl.com's broken
 ones - `expired.`, `wrong.host.`, `self-signed.`, `untrusted-root.`,
 `incomplete-chain.badssl.com` - each refused for its own reason.
+
+## HTTP: http.library
+
+`LIBS:http.library` makes HTTP/1.1 requests, over a plain connection or
+over TLS. A program makes a **client** with its own bsdsocket base, and
+its requests through it; a request to the same scheme, host and port as
+one before it goes over the connection that one left open, so many
+requests to one server cost one connection and one TLS handshake.
+
+```zig
+const http = sdk.http;
+const HttpBase = sdk.interface.http.HttpBase;
+
+const http_lib = sys.OpenLibrary(http.HTTPNAME, 1) orelse return;
+defer sys.CloseLibrary(http_lib);
+const hb: *HttpBase = @ptrCast(http_lib);
+
+const client = hb.CreateClient(sb, &[_]utility.TagItem{
+    .{ .tag = http.HTTP_Timeout, .data = 30 },
+    .{},
+}) orelse return;
+defer hb.DeleteClient(client);
+
+var err: i32 = 0;
+const request = hb.OpenRequest(client, "GET", "https://example.com/", &[_]utility.TagItem{
+    .{ .tag = http.HTTP_Header, .data = @intFromPtr("Accept: text/html") },
+    .{ .tag = http.HTTP_Unzip, .data = 1 },
+    .{},
+}, &err) orelse return; // err: HTTPERR_*
+defer hb.CloseRequest(request);
+
+if (hb.GetRequestAttr(request, http.HTTP_Status) != 200) return;
+var buffer: [4096]u8 = undefined;
+while (true) {
+    const got = hb.ReadRequest(request, &buffer, buffer.len);
+    if (got <= 0) break; // 0: the body's end; below 0: an HTTPERR_*
+    // ... use buffer[0..got]
+}
+```
+
+**A request** is sent by `OpenRequest`, which returns once the head of
+its answer has been read - whatever its status: a 404 is an answer, and
+`HTTP_Status` says so. `GetRequestAttr` answers the status, the status
+line, the body's length and the URL that answered; `GetHeader` any
+header by its name. The body is `ReadRequest`'s, a piece at a time,
+decoded from its chunks; with `HTTP_Unzip` the server may pack it with
+gzip or deflate, and it is unpacked on the way by compression.library.
+The body ends where its length says, at its last chunk, or where the
+server closes; the answer to `HEAD`, a 204 and a 304 have none.
+
+**A body to send** that is in memory goes with the head: `HTTP_Body` and
+`HTTP_BodyLength`. One not at hand in one piece - a file - is the
+program's to write: `HTTP_BodyLength` alone for a length it knows,
+`HTTP_Chunked` for one it does not. `WriteRequest` sends it a piece at a
+time; a `WriteRequest` of 0 bytes ends it, reads the head of the answer
+and answers its status.
+
+```zig
+const request = hb.OpenRequest(client, "PUT", url, &[_]utility.TagItem{
+    .{ .tag = http.HTTP_BodyLength, .data = size },
+    .{},
+}, &err) orelse return;
+defer hb.CloseRequest(request);
+while (nextPiece(&piece)) {
+    if (hb.WriteRequest(request, piece.ptr, @intCast(piece.len)) < 0) return;
+}
+const status = hb.WriteRequest(request, null, 0);
+```
+
+**Redirects** - 301, 302, 303, 307 and 308 with a Location - are
+followed, five at the most unless `HTTP_Redirects` says otherwise; 0
+makes the redirect the answer. 303 asks again with GET, and 301 and 302
+do so for a POST, without the body; 307 and 308 send the method and the
+body again. A redirect to another scheme, host or port goes without
+`HTTP_User`'s authorization and without the program's own Authorization
+and Cookie headers. A body the program writes is sent only once, so a
+redirect to it is the answer.
+
+**Authorization**: `HTTP_User` and `HTTP_Password` go as Basic, and a
+token - a forge's access token - goes as the password. Any other kind is
+a header of the program's: `HTTP_Header` with `Authorization: Bearer
+...`.
+
+**Connections.** A client keeps up to four idle connections, and closes
+the one idle longest to make room for a fifth. `CloseRequest` gives a
+request's connection back when its answer was read to the end and the
+server keeps the connection; any other is closed. A server may close an
+idle connection at any time, and a request finds out only by trying it:
+a request on a kept connection that fails before any of its answer has
+come is sent again on a new one. A body the program writes goes over a
+new connection from the start, since it cannot be sent twice.
+
+`https://` goes over tls.library as above, the server's certificate
+checked unless the client was made with `HTTP_Verify` false; a request
+that fails with `HTTPERR_TLS` says why through `HTTP_GetTLSError`,
+`HTTP_GetVerdict` and `HTTP_GetAlert`. A wait ends after `HTTP_Timeout`
+seconds of quiet, or with Ctrl-C: `HTTPERR_IO`, and bsdsocket's `Errno`
+says which (`EWOULDBLOCK`, `EINTR`).
+
+A client and its requests belong to the task whose socket base they use.
+A request takes some 14 KiB, and 8 KiB more while it unpacks; the head
+of an answer must fit in 8 KiB. `C:net/HTTPGet` is written on it.
 
 ## Interfaces
 
@@ -800,9 +909,11 @@ comes back, for the caller to judge before anything secret is sent),
 `SSHCMD_LOGIN` (a key, a password, both, or neither to ask; `SSHERR_LOGIN`
 with the ways the server still takes; the server's banner, if it sent
 one), `SSHCMD_SESSION` (a shell, a command or a subsystem, with a
-terminal or without). Then `CMD_READ` and `CMD_WRITE` carry the session,
-`SSHCMD_WINDOW` tells a new size, `SSHCMD_EOF` ends the session's input,
-and `SSHCMD_STATUS` is answered with the exit status once it is over.
+terminal or without, and variables for it - `GIT_PROTOCOL=version=2` -
+sent as `env` requests that a server may leave out). Then `CMD_READ`
+and `CMD_WRITE` carry the session, `SSHCMD_WINDOW` tells a new size,
+`SSHCMD_EOF` ends the session's input, and `SSHCMD_STATUS` is answered
+with the exit status once it is over.
 When the connection goes first, a step's answer is `IOERR_ENDOFSTREAM`
 with the reason in `io_Actual`.
 
@@ -955,6 +1066,111 @@ boot; one whose server cannot be had then is mounted by hand later.
   again, before a program next asks. A server that stops answering
   without closing the connection is given 30 seconds.
 
+## Git: C:net/Git
+
+`C:net/Git` works with git repositories in git's own format: a
+repository it clones or makes is one any git reads and writes, and one
+git made - on a disk, on a share - is one it works in. Its first word
+is the verb; the rest is read by that verb's own template. `Git ?`
+lists the verbs, `Git <verb> ?` shows one's template.
+
+| Verb | Does |
+|---|---|
+| `clone URL/A,DIR,DEPTH/K/N,BRANCH/K,QUIET/S` | a remote repository copied into DIR (the URL's last name without one) and its branch - BRANCH, or the one the remote's HEAD names - checked out; DEPTH keeps that many commits of history |
+| `ls-remote URL/A,HEADS/S,TAGS/S,SYMREF/S` | a remote's refs |
+| `fetch REMOTE,DEPTH/K/N,QUIET/S` | what a remote has that is not here, its refs set as its fetch refspecs map them (`refs/remotes/origin/*`); DEPTH deepens a shallow repository |
+| `pull REMOTE,QUIET/S` | a fetch, then the current branch moved forward to its upstream |
+| `push REMOTE,REFS/M,FORCE/S,TAGS/S,SETUPSTREAM=U/S,QUIET/S` | branches and tags set on a remote, the objects it lacks sent with them; SETUPSTREAM makes each branch follow the one it went to |
+| `remote ACTION,NAME,URL,VERBOSE=V/S` | the remotes listed (VERBOSE with their URLs), one added (`add NAME URL`) or taken out (`remove NAME`, with its refs here) |
+| `init DIRECTORY` | an empty repository |
+| `add PATHS/M,ALL=A/S` | files put in the index as they are now; a directory, or the work tree for ALL, with every file in it |
+| `rm PATHS/M/A,CACHED/S,RECURSIVE=R/S,FORCE/S` | files taken out of the index and the work tree; CACHED keeps the files |
+| `commit MESSAGE=M/A/K,ALL=A/S` | the index made a commit on the current branch; ALL puts the files the index knows in first |
+| `status SHORT=S/S` | what is staged, what has changed, what is untracked |
+| `log REVISION,COUNT=N/K/N,ONELINE/S` | the history, newest first |
+| `diff CACHED=STAGED/S` | the paths that changed, and how: added, modified, deleted |
+| `branch REMOTES=R/S,ALL=A/S` | the branches |
+| `checkout NAME/A` | the work tree moved to a branch or a commit |
+| `cat-file OBJECT/A,TYPE=T/S,SIZE=S/S` | an object, shown |
+
+**A remote** is `https://host/path` or `http://...`, spoken to over
+http.library in git's protocol version 2 where the server speaks it and
+version 0 where it does not; or `ssh://[user@]host[:port]/path` or
+`user@host:path`, over ssh.device. REMOTE is a remote of `.git/config`
+- `origin` for a clone, any that `Git remote add` names - or, for
+`push`, such a URL. Without REMOTE, `fetch`, `pull` and `push` take the
+current branch's remote, else `origin`.
+
+- **Over HTTP** a server that asks for credentials gets the user and
+  token in the URL (`https://user:token@host/path`), else the first
+  line of `ENVARC:Sys/net/git-credentials` - a URL a line, the user and
+  token in it - for that scheme and host, else what is typed on the
+  console, which is then offered to that file. Over HTTPS the server's
+  certificate is checked, and the clock must be set (`TimeSync`).
+- **Over SSH** the host key is checked against
+  `ENVARC:Sys/net/known_hosts` and the login made with the key
+  `ENVARC:Sys/net/id_ed25519` (`SSH KEYGEN` makes it) or a password
+  typed on the console, as `C:net/SSH` makes them.
+
+**The configuration** is `.git/config`, and `ENVARC:Sys/net/gitconfig`
+for what that does not say: `[user]` `name` and `email` sign a commit,
+`init.defaultBranch` names a new repository's branch (`main` without
+it). A commit's time zone is `ENVARC:Sys/timezone`'s.
+
+```
+[user]
+	name = Your Name
+	email = you@example.org
+```
+
+```
+Git clone https://github.com/cycl0ne/poweros_esp32 Work:poweros DEPTH=1
+cd Work:poweros
+Git pull
+
+Git init RAM:notes
+cd RAM:notes
+Echo >todo.txt "buy milk"
+Git add ALL
+Git commit MESSAGE="the first notes"
+Git remote add origin https://github.com/me/notes
+Git push SETUPSTREAM
+```
+
+**The work tree on a dos volume.** A repository made here says in its
+config that its files keep no executable bit (`core.filemode` false: a
+file the commit has as 100755 may be run, one as 100644 may not, by its
+E bit), that a symbolic link is a file holding its target
+(`core.symlinks` false), and that case is ignored. A path no dos volume
+holds - a name with a `:`, `.git` in any case, one that differs from a
+path before it only in case, one longer than a name may be - is not
+written: it is named, and kept in the index as not checked out, so it
+is not taken for deleted. A submodule is an empty directory; its own
+repository is not cloned. Names are UTF-8 in the repository and Latin-1
+on the volume where Latin-1 has their characters, byte for byte where
+it does not. A file has changed when its size or date says so, and when
+those cannot tell, when its hash does.
+
+**Nothing is lost.** `clone`, `checkout` and `pull` leave a changed file
+as it is, or refuse and change nothing, naming the files in the way.
+`pull` moves a branch only forward, to an upstream that descends from
+it; a branch and an upstream that have gone apart are said to have, and
+nothing changes. `push` sets a branch the remote has only to a commit
+that descends from the remote's: a remote with commits that are not here
+(fetch them first), or a branch moved some other way, is refused -
+unless `FORCE`, or a `+` before the ref, says to set it anyway. A tag
+the remote has at another object is refused the same way. Which commit
+descends from which is found by walking the history newest first by
+date, a few commits further than it seems to need: a commit dated before
+its parent - made on a clock set wrong - still counts as its descendant.
+
+**What goes over the wire.** A fetch names the commits at hand, so the
+server sends only what is new. A push walks the history of both sides
+and sends the commits, trees and blobs the remote's commits do not
+reach, each one whole: a pack without deltas, which is larger than one
+made of them. Objects are named by SHA-1; a repository named by SHA-256
+is refused.
+
 ## A packet filter
 
 Every program that binds a socket listens on every interface: a shell
@@ -1062,7 +1278,7 @@ bsdsocket.library only for the length of a call, keeps its hooks in.
 | `C:net/Ping`, `Resolve` | echo requests; the addresses of a name |
 | `C:net/HostName` | the machine's name, shown or set; `SAVE` keeps it |
 | `C:net/TimeSync` | the clock from a time server |
-| `C:net/HTTPGet` | a file over HTTP or HTTPS; `NOVERIFY` leaves a test server's certificate unchecked |
+| `C:net/HTTPGet` | a file over HTTP or HTTPS, through http.library; `NOVERIFY` leaves a test server's certificate unchecked |
 | `C:net/Tcp`, `Udp` | a connection or a datagram by hand; `Udp JOIN` joins a group and prints what it hears |
 | `C:net/PacketCapture` | an interface's frames into a pcap file; `FILTERED` only what the filter stopped |
 | `C:net/Filter` | the packet filter's rules loaded (`LOAD`), shown with their counts (`SHOW`), its exchanges (`FLOWS`), taken out (`OFF`) |
@@ -1070,5 +1286,6 @@ bsdsocket.library only for the length of a call, keeps its hooks in.
 | `C:net/SSH` | a shell or a command on another machine over SSH; `KEYGEN` makes the key for logins |
 | `C:net/SCP` | files to and from another machine over SSH (SFTP); `ALL` for a directory |
 | `C:net/MountShare` | a share on an SMB 2 or 3 server mounted as a device, from the command line or its file in `DEVS:Shares/`; `ALL` mounts every one, `SAVE` writes the file, `DISMOUNT` takes it away |
+| `C:net/Git` | git repositories: clone, fetch, pull and push over HTTPS and SSH; init, add, rm, commit, status, log, diff, branch, checkout, remote |
 | `C:net/Net` | a network device spoken to directly |
 | `C:test/BsdSockTest` | bsdsocket.library against the BSD socket API |

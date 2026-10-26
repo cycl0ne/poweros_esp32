@@ -1,0 +1,500 @@
+TABLE OF CONTENTS
+
+http.library/CloseRequest
+http.library/CreateClient
+http.library/DeleteClient
+http.library/GetHeader
+http.library/GetRequestAttr
+http.library/OpenRequest
+http.library/ReadRequest
+http.library/WriteRequest
+http.library/CloseRequest                            http.library/CloseRequest
+
+   NAME
+	CloseRequest -- Ends a request: its connection goes back to the client for the next request when it can, and the request is freed.
+
+   SYNOPSIS
+	    fn CloseRequest(base: *HttpBase, request: ?*http.Request) void
+
+   SINCE
+	1.0. LVO -32.
+
+   INPUTS
+	- `request`: from OpenRequest, or null.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	A request whose answer was read to its end, from a server that keeps
+	the connection, gives the connection back to its client, which keeps
+	up to four idle and closes the one idle longest to make room. Any
+	other request closes its connection: one whose body was not read to
+	the end, one that failed, one whose server said `Connection: close`
+	or whose body ended with the connection. Null, or a pointer
+	OpenRequest did not make, does nothing.
+
+   CONTEXT
+	- Waits: yes, while a TLS session says goodbye.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: the task that opened the client's socket base.
+
+   OWNERSHIP
+	The request is gone, and with it the strings GetRequestAttr and
+	GetHeader handed out.
+
+   NOTES
+	To keep the connection of an answer whose body is of no interest, read
+	the body to its end first.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`OpenRequest`, `ReadRequest`, `DeleteClient`
+
+   EXAMPLES
+	    hb.CloseRequest(request);
+http.library/CreateClient                            http.library/CreateClient
+
+   NAME
+	CreateClient -- Makes a client, through which a program makes its requests and which keeps their connections for the next.
+
+   SYNOPSIS
+	    fn CreateClient(base: *HttpBase, socket_base: *SocketBase, tags: ?[*]const utility.TagItem) ?*http.Client
+
+   SINCE
+	1.0. LVO -20.
+
+   INPUTS
+	- `socket_base`: the program's own bsdsocket.library base, which the
+	  client's connections are made in.
+	- `tags`:
+	  - HTTP_Verify (bool, true): the servers' certificates are checked.
+	  - HTTP_UserAgent (`[*:0]const u8`): what the requests send as their
+	    User-Agent; `PowerOS-http.library/1.0` unless given.
+	  - HTTP_Timeout (u32, 0): the seconds a connection may stay quiet
+	    before a request fails; 0 waits for as long as it takes.
+
+   RESULT
+	The client; null when there is no memory for it.
+
+   BEHAVIOR
+	Allocates the client and keeps the settings. No connection is made
+	until the first request.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do; its requests need the task that opened
+	  `socket_base`.
+
+   OWNERSHIP
+	The client is the caller's until DeleteClient. `socket_base` stays
+	the caller's, and open until the client is deleted. The User-Agent is
+	copied.
+
+   NOTES
+	A User-Agent is cut at its 95th character, and before anything that
+	would end a header line.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DeleteClient`, `OpenRequest`
+
+   EXAMPLES
+	    const client = hb.CreateClient(sb, &[_]utility.TagItem{
+	        .{ .tag = http.HTTP_Timeout, .data = 30 },
+	        .{},
+	    }) orelse return;
+	    defer hb.DeleteClient(client);
+http.library/DeleteClient                            http.library/DeleteClient
+
+   NAME
+	DeleteClient -- Closes the connections a client keeps and frees the client.
+
+   SYNOPSIS
+	    fn DeleteClient(base: *HttpBase, client: ?*http.Client) void
+
+   SINCE
+	1.0. LVO -24.
+
+   INPUTS
+	- `client`: from CreateClient, or null.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	Closes every idle connection - a TLS session's goodbye sent first -
+	and frees the client. Null, or a pointer CreateClient did not make,
+	does nothing.
+
+   CONTEXT
+	- Waits: yes, while a TLS session says goodbye.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: the task that opened the client's socket base.
+
+   OWNERSHIP
+	The client is gone; its socket base stays the caller's.
+
+   NOTES
+	Every request made through the client must have been closed first.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateClient`, `CloseRequest`
+
+   EXAMPLES
+	    hb.DeleteClient(client);
+http.library/GetHeader                                  http.library/GetHeader
+
+   NAME
+	GetHeader -- Finds a header of the answer by its name and answers its value.
+
+   SYNOPSIS
+	    fn GetHeader(base: *HttpBase, request: *http.Request, name: [*:0]const u8) ?[*:0]const u8
+
+   SINCE
+	1.0. LVO -48.
+
+   INPUTS
+	- `request`: from OpenRequest, its answer's head read.
+	- `name`: the header's name, without its colon; case does not matter.
+
+   RESULT
+	The value, without the blanks round it; null when the answer has no
+	such header, while the body is still being written, or for a request
+	OpenRequest did not make.
+
+   BEHAVIOR
+	Looks through the head of the answer as it came - the last answer,
+	after the redirects - for the first line of that name.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The value is the request's, there until CloseRequest.
+
+   NOTES
+	Of a header given more than once (Set-Cookie) only the first is
+	answered.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`GetRequestAttr`, `OpenRequest`
+
+   EXAMPLES
+	    const kind = hb.GetHeader(request, "Content-Type") orelse "application/octet-stream";
+http.library/GetRequestAttr                        http.library/GetRequestAttr
+
+   NAME
+	GetRequestAttr -- Answers one of a request's attributes.
+
+   SYNOPSIS
+	    fn GetRequestAttr(base: *HttpBase, request: *http.Request, attr: utility.Tag) usize
+
+   SINCE
+	1.0. LVO -44.
+
+   INPUTS
+	- `request`: from OpenRequest.
+	- `attr`:
+	  - HTTP_Status: the answer's status, 200 for OK; 0 while the body is
+	    being written.
+	  - HTTP_StatusLine (`[*:0]const u8`): `HTTP/1.1 404 Not Found`; empty
+	    while the body is being written.
+	  - HTTP_ContentLength: the body's length as the answer gives it, or
+	    HTTP_LENGTH_UNKNOWN for one in chunks, one that ends with the
+	    connection, or one being unpacked.
+	  - HTTP_URL (`[*:0]const u8`): the URL that answered, after the
+	    redirects.
+	  - HTTP_Reused (bool): the request went over a connection an earlier
+	    one had made.
+	  - HTTP_Secure (bool): it went over TLS.
+	  - HTTP_Error: the HTTPERR_* that broke it, or HTTPERR_OK.
+	  - HTTP_Verdict: the certificate check's TLSV_*, over TLS.
+	  - HTTP_Unzipping (bool): ReadRequest unpacks the body.
+
+   RESULT
+	The attribute's value; 0 for an attribute there is not, or a request
+	OpenRequest did not make.
+
+   BEHAVIOR
+	Reads the request; nothing goes over the connection.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	A string is the request's, there until CloseRequest.
+
+   NOTES
+	On a 32-bit chip a length of 4 GiB or more reads as
+	HTTP_LENGTH_UNKNOWN; the Content-Length header has it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`GetHeader`, `OpenRequest`
+
+   EXAMPLES
+	    const status = hb.GetRequestAttr(request, http.HTTP_Status);
+	    const line: [*:0]const u8 = @ptrFromInt(hb.GetRequestAttr(request, http.HTTP_StatusLine));
+http.library/OpenRequest                              http.library/OpenRequest
+
+   NAME
+	OpenRequest -- Sends a request to a URL and reads the head of its answer, following redirects.
+
+   SYNOPSIS
+	    fn OpenRequest(base: *HttpBase, client: *http.Client, method: [*:0]const u8, url: [*:0]const u8, tags: ?[*]const utility.TagItem, err: ?*i32) ?*http.Request
+
+   SINCE
+	1.0. LVO -28.
+
+   INPUTS
+	- `client`: from CreateClient.
+	- `method`: `GET`, `POST`, `HEAD`, `PUT`, ... - at most 15 characters.
+	- `url`: `http://host[:port][/path][?query]` or `https://...`, the host
+	  a name, an IPv4 address or an IPv6 one in brackets; at most 2048
+	  characters. A `#fragment` is not sent.
+	- `tags`:
+	  - HTTP_Header (`[*:0]const u8`, as often as needed): a header line
+	    of the program's own, `Name: value`.
+	  - HTTP_Body (`*const anyopaque`) and HTTP_BodyLength (u32): a body
+	    in memory, sent with the head.
+	  - HTTP_BodyLength alone: a body of that many bytes the program
+	    writes with WriteRequest.
+	  - HTTP_Chunked (bool, false): a body the program writes with
+	    WriteRequest, of a length not known in advance.
+	  - HTTP_User and HTTP_Password (`[*:0]const u8`): Basic
+	    authorization, at most 2047 characters the two together; a token
+	    goes as the password.
+	  - HTTP_Redirects (u32, 5): the most redirects followed; 0 makes a
+	    redirect the answer.
+	  - HTTP_Unzip (bool, false): the server may pack the body, and
+	    ReadRequest unpacks it.
+	  - HTTP_GetTLSError (`*i32`), HTTP_GetVerdict (`*u32`), HTTP_GetAlert
+	    (`*u32`): where the TLS session's TLSERR_*, its certificate
+	    check's TLSV_* and the alert a server refused with go.
+	- `err`: where the outcome goes (HTTPERR_*), or null.
+
+   RESULT
+	The request, its answer's head read - or, with a body the program
+	writes, its own head sent - and `err` HTTPERR_OK. Null, with `err`:
+	HTTPERR_URL for a URL that is none, HTTPERR_HOST for a host without
+	an address, HTTPERR_IO when no connection could be made or it failed,
+	HTTPERR_TLS when the TLS session could not be had, HTTPERR_PROTOCOL
+	for an answer that is not HTTP, HTTPERR_TRUNCATED for one cut short,
+	HTTPERR_REDIRECT for too many redirects or one to nowhere,
+	HTTPERR_STATE for a method or header that is none, credentials too
+	long, or a request head longer than 8 KiB, HTTPERR_LIBRARY without tls.library for
+	`https://` or compression.library for HTTP_Unzip, HTTPERR_DATA for a
+	packed answer that does not start as one, HTTPERR_NOMEM.
+
+	An answer is an answer whatever its status: a 404 or a 500 is a
+	request whose HTTP_Status says so.
+
+   BEHAVIOR
+	The request goes as HTTP/1.1 over a connection the client kept to the
+	same scheme, host and port, or a new one - over TLS for `https://`,
+	asking for `http/1.1`. Its head carries Host, User-Agent, the Basic
+	authorization, `Accept-Encoding: gzip, deflate` with HTTP_Unzip, the
+	program's headers, and the body's Content-Length - or
+	`Transfer-Encoding: chunked` for HTTP_Chunked. A POST, PUT or PATCH
+	without a body says its length is 0.
+
+	A kept connection that fails before any of the answer has come is
+	given up and the request sent again on a new one: a server may close
+	a connection it has been idle on at any time. A body the program
+	writes always goes over a new connection.
+
+	Interim answers (100 Continue) are read past. A redirect - 301, 302,
+	303, 307 or 308 with a Location - is followed when the request's body
+	is not the program's to write: its body read and dropped, and the
+	request sent to where it leads. 303 asks with GET, and 301 and 302
+	turn a POST into a GET, both without the body; 307 and 308 keep the
+	method and the body. A redirect to another scheme, host or port goes
+	without HTTP_User's authorization and without the program's
+	Authorization and Cookie headers.
+
+   CONTEXT
+	- Waits: yes, for the server, as long as HTTP_Timeout allows; Ctrl-C
+	  ends a wait with HTTPERR_IO.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: yes, the one that opened the client's socket base - the
+	  host is looked up, and tls.library reads its certificate stores.
+
+   OWNERSHIP
+	The request is the caller's until CloseRequest. The strings, the
+	header lines and an in-memory body need only last for the call.
+
+   NOTES
+	A request takes some 14 KiB, and 8 KiB more with HTTP_Unzip; a TLS
+	connection some 75 KiB more. The answer's head is read into the
+	request's 8 KiB: one longer fails with HTTPERR_PROTOCOL.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ReadRequest`, `WriteRequest`, `GetRequestAttr`, `GetHeader`,
+	`CloseRequest`, `CreateClient`
+
+   EXAMPLES
+	    var err: i32 = 0;
+	    const request = hb.OpenRequest(client, "GET", "https://example.org/", &[_]utility.TagItem{
+	        .{ .tag = http.HTTP_Header, .data = @intFromPtr("Accept: text/html") },
+	        .{ .tag = http.HTTP_Unzip, .data = 1 },
+	        .{},
+	    }, &err) orelse return err;
+	    defer hb.CloseRequest(request);
+	    if (hb.GetRequestAttr(request, http.HTTP_Status) != 200) return;
+http.library/ReadRequest                              http.library/ReadRequest
+
+   NAME
+	ReadRequest -- Reads the next bytes of the answer's body.
+
+   SYNOPSIS
+	    fn ReadRequest(base: *HttpBase, request: *http.Request, buffer: *anyopaque, length: u32) i32
+
+   SINCE
+	1.0. LVO -36.
+
+   INPUTS
+	- `request`: from OpenRequest, its answer's head read.
+	- `buffer`: room for `length` bytes.
+	- `length`: how many bytes at most.
+
+   RESULT
+	How many bytes were read, at least 1; 0 at the body's end; below 0
+	an HTTPERR_*: HTTPERR_IO when the connection failed, HTTPERR_TLS when
+	its session did, HTTPERR_TRUNCATED when it ended before the body,
+	HTTPERR_PROTOCOL for chunks that make no sense, HTTPERR_DATA for a
+	packed body that does not unpack, HTTPERR_STATE while the program's
+	own body has not been ended.
+
+   BEHAVIOR
+	Hands over first what came with the head, then what the connection
+	brings, as soon as it brings any: a read may answer fewer bytes than
+	asked for long before the end. The body is decoded from its chunks; a
+	body packed with gzip or deflate is unpacked when the request asked
+	for HTTP_Unzip, and its end is the packed stream's. A body ends where
+	its Content-Length says, at its last chunk, or where the server closes
+	the connection; the answer to HEAD, a 204 and a 304 have none.
+
+	An error breaks the request: every read after it answers the same
+	error, and the connection is not kept.
+
+   CONTEXT
+	- Waits: yes, for the server, as long as HTTP_Timeout allows; Ctrl-C
+	  ends a wait with HTTPERR_IO.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: the task that opened the client's socket base.
+
+   OWNERSHIP
+	The bytes are the caller's.
+
+   NOTES
+	One read takes at most 2 GiB less 64 KiB, whatever `length` says.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`OpenRequest`, `GetRequestAttr`, `CloseRequest`
+
+   EXAMPLES
+	    var buffer: [4096]u8 = undefined;
+	    while (true) {
+	        const got = hb.ReadRequest(request, &buffer, buffer.len);
+	        if (got < 0) return got;
+	        if (got == 0) break;
+	        _ = dos.Write(file, &buffer, got);
+	    }
+http.library/WriteRequest                            http.library/WriteRequest
+
+   NAME
+	WriteRequest -- Sends the next bytes of a request's body the program writes, or ends the body and reads the head of the answer.
+
+   SYNOPSIS
+	    fn WriteRequest(base: *HttpBase, request: *http.Request, data: ?*const anyopaque, length: u32) i32
+
+   SINCE
+	1.0. LVO -40.
+
+   INPUTS
+	- `request`: from OpenRequest with HTTP_Chunked, or with
+	  HTTP_BodyLength and no HTTP_Body.
+	- `data`: the bytes; null with a `length` of 0.
+	- `length`: how many; 0 ends the body.
+
+   RESULT
+	For bytes: `length` once they are all sent. For the end: the answer's
+	status, once its head is read. Below 0 an HTTPERR_*: HTTPERR_STATE
+	for a request whose body is not the program's, for bytes past the
+	length it gave, for an end before all of them came, or for a
+	`length` past 2 GiB; HTTPERR_IO, HTTPERR_TLS, HTTPERR_PROTOCOL,
+	HTTPERR_TRUNCATED and HTTPERR_DATA as OpenRequest answers them.
+
+   BEHAVIOR
+	A body with HTTP_BodyLength goes as it is, and is ended once all of
+	its bytes have been written; one with HTTP_Chunked goes as a chunk
+	per call, of up to 8 KiB each, and its end is the last chunk. The
+	answer to it is read as OpenRequest reads one, interim answers aside,
+	but a redirect is not followed: it is the answer. After the end, the
+	body of the answer is read with ReadRequest.
+
+	A failure breaks the request: every call after it answers the same
+	error, and the connection is not kept.
+
+   CONTEXT
+	- Waits: yes, for the server, as long as HTTP_Timeout allows; Ctrl-C
+	  ends a wait with HTTPERR_IO.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: the task that opened the client's socket base.
+
+   OWNERSHIP
+	The bytes stay the caller's; they are sent before the call returns.
+
+   NOTES
+	A server may answer before it has the whole body - to refuse it, say
+	- and close; the next WriteRequest then fails with HTTPERR_IO.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`OpenRequest`, `ReadRequest`, `CloseRequest`
+
+   EXAMPLES
+	    const request = hb.OpenRequest(client, "POST", url, &[_]utility.TagItem{
+	        .{ .tag = http.HTTP_Chunked, .data = 1 },
+	        .{ .tag = http.HTTP_Header, .data = @intFromPtr("Content-Type: application/octet-stream") },
+	        .{},
+	    }, &err) orelse return err;
+	    defer hb.CloseRequest(request);
+	    while (more(&piece)) {
+	        if (hb.WriteRequest(request, piece.ptr, @intCast(piece.len)) < 0) return;
+	    }
+	    const status = hb.WriteRequest(request, null, 0);

@@ -13,7 +13,8 @@ test {
     _ = @import("programs/terminal/tests/terminal.zig");
     _ = @import("programs/player/spectrum.zig");
     _ = @import("programs/player/visual.zig");
-    _ = @import("c/screendump/png.zig");
+    _ = @import("c/screendump/tests/png.zig");
+    _ = @import("c/hash/digests.zig");
     _ = @import("classes/datatypes/8svx/body.zig");
     _ = @import("devs/sdcard/card.zig");
     _ = @import("prefs/tests/prefs.zig");
@@ -40,6 +41,8 @@ test {
     _ = @import("libs/bsdsocket/tests/dhcp6.zig");
     _ = @import("libs/bsdsocket/tests/socket6.zig");
     _ = @import("libs/crypto/tests/crypto.zig");
+    _ = @import("libs/compression/tests/compression.zig");
+    _ = @import("libs/http/tests/http.zig");
     _ = @import("libs/crypto/tests/keys.zig");
     _ = @import("libs/tls/tests/x509.zig");
     _ = @import("libs/tls/tests/tls13.zig");
@@ -89,8 +92,12 @@ test {
     _ = @import("c/pciinfo/tests/pciinfo.zig");
     _ = @import("c/test/raster/reference.zig");
     _ = @import("c/net/addnetinterface/config.zig");
+    _ = @import("c/net/git/tests/formats.zig");
+    _ = @import("c/net/git/tests/transport.zig");
+    _ = @import("c/net/git/tests/packs.zig");
+    _ = @import("c/net/git/config.zig");
+    _ = @import("c/net/git/ignore.zig");
     _ = @import("c/net/timesync/tests/zone.zig");
-    _ = @import("c/net/httpget/http.zig");
     _ = @import("c/net/mountshare/place.zig");
     _ = @import("c/net/mountshare/sharefile.zig");
     _ = @import("c/net/shellserver/tests/sftp.zig");

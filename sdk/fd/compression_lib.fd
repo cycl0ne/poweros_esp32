@@ -1,0 +1,32 @@
+//! compression.library's functions: DEFLATE packing and unpacking, bare
+//! or wrapped as zlib or gzip, a buffer at a time through a Stream the
+//! caller keeps (sdk.compression) or in one go, and the two checksums the
+//! wrappings use. A call that can fail answers COMPRESS_OK, COMPRESS_END
+//! or a COMPRESSERR_* code.
+##include libs/compression/compression as compression
+##basetype CompressionBase
+##name compression.library
+##bias 4
+##public
+/// `stream` set up for unpacking data of `format` (FORMAT_*).
+i32 InitInflate(*compression.Stream stream, u32 format)
+/// As much of the input unpacked as the output has room for.
+i32 Inflate(*compression.Stream stream, u32 flush)
+/// The stream's state freed.
+void EndInflate(*compression.Stream stream)
+/// `stream` set up for packing into `format` at `level` (0 to 9).
+i32 InitDeflate(*compression.Stream stream, u32 format, u32 level)
+/// As much of the input packed as the output has room for.
+i32 Deflate(*compression.Stream stream, u32 flush)
+/// The stream's state freed.
+void EndDeflate(*compression.Stream stream)
+/// The whole input unpacked into the output in one go.
+i32 Uncompress(*compression.Stream stream, u32 format)
+/// The whole input packed into the output in one go.
+i32 Compress(*compression.Stream stream, u32 format, u32 level)
+/// The most bytes `length` bytes can pack into.
+u32 CompressBound(u32 format, u32 length)
+/// `crc` carried on over `length` bytes of `data` (CRC-32, start with 0).
+u32 Crc32(u32 crc, ?*const anyopaque data, u32 length)
+/// `adler` carried on over `length` bytes of `data` (Adler-32, start with 1).
+u32 Adler32(u32 adler, ?*const anyopaque data, u32 length)

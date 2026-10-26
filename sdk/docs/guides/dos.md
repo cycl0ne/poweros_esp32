@@ -99,6 +99,33 @@ bytes than asked without being the end. `OpenFromLock`, `DupLockFromFH`,
 `ParentOfFH`, `ExamineFH` and `NameFromFH` lead from a lock to an open
 file and back; `SetFileSize` cuts or grows a file.
 
+### A file's digest: C:Hash
+
+`C:Hash FILE/M,ALGO/K,CHECK/S,TO/K,ALL/S,QUIET/S` writes a line for each
+file its patterns reach, in sha256sum's form - the digest in lower-case
+hex, two spaces, the name - so a list made here checks on another system
+and one made there checks here. `ALGO` is `CRC32`, `MD5`, `SHA1`,
+`SHA224`, `SHA256` (without `ALGO`), `SHA384` or `SHA512`; all but
+CRC-32 come from crypto.library. `ALL` steps into directories, `TO`
+writes the list to a file and leaves that file out of it, and with no
+`FILE` Hash reads its input and names it `-`.
+
+`CHECK` takes the files as lists: each line's file is opened by its name
+from the current directory and called `OK` or `FAILED`, or named with the
+reason it could not be read; `QUIET` leaves the OKs out. BSD's tagged
+lines (`SHA256 (name) = digest`) and SFV files (`name CRC32`) are read
+too. A line's algorithm is `ALGO`'s, else its tag's, else the one its
+digest's length belongs to. Names are UTF-8 in a list, as other systems
+write them, and Latin-1 on the disk. Hash ends with 5 when a file did not
+match or could not be read, and with 10 when a list had no line it
+understood.
+
+```
+Hash Work:Downloads ALL TO=RAM:sums
+Hash CHECK RAM:sums QUIET
+Hash archive.lha ALGO=CRC32
+```
+
 ## Buffered reading and writing
 
 Each handle has a buffer, allocated on its first buffered call

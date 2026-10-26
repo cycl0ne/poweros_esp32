@@ -59,9 +59,10 @@
 //!                  again with others. Either way, with the banner the
 //!                  server sent meanwhile, if it sent one.
 //!   SSHCMD_SESSION io_Data: an SshSession, a command, a subsystem or a
-//!                  shell, and a terminal. 0 once it runs, io_Actual 1
-//!                  when it has the terminal; SSHERR_SESSION when the
-//!                  server refused it.
+//!                  shell, a terminal, and variables; io_Length its size
+//!                  - one shorter than the SshSession has no variables.
+//!                  0 once it runs, io_Actual 1 when it has the terminal;
+//!                  SSHERR_SESSION when the server refused it.
 //!   CMD_READ       what the session printed, its errors among it, as
 //!                  soon as there is a byte; IOERR_ENDOFSTREAM once the
 //!                  server has sent its end.
@@ -130,6 +131,8 @@ pub const SSH_KEYS_MAX = 16;
 pub const SSH_PASSWORD_MAX = 64;
 /// The most of a server's banner an SshLogin brings back.
 pub const SSH_BANNER_MAX = 2048;
+/// The room for a session's variables, `NAME=value` each.
+pub const SSH_ENVIRONMENT_MAX = 256;
 
 /// What SSHCMD_ACCEPT is given, and what it hands back.
 pub const SshAccept = extern struct {
@@ -195,6 +198,11 @@ pub const SshSession = extern struct {
     columns: u32 = 0,
     rows: u32 = 0,
     subsystem: u32 = 0,
+    /// Variables for the session (`GIT_PROTOCOL=version=2`): `NAME=value`
+    /// each ended by a NUL, the list by an empty one. They go to the
+    /// server before the command; one it does not take is left out, and
+    /// the session runs without it.
+    environment: [SSH_ENVIRONMENT_MAX]u8 = @splat(0),
 };
 
 /// The host key's file, the authorized keys and the public key's line

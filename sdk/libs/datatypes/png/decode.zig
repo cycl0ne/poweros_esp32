@@ -18,9 +18,14 @@
 //! shape by the time it reaches picture.datatype. Sixteen bits a channel
 //! are taken by their high byte: the screens have eight.
 //!
+//! The stream is unpacked by compression.library (`unpackRows`), one
+//! `IDAT` chunk after another straight into the caller's rows, so the
+//! chunks are never joined into a copy of their own.
+//!
 //! png.datatype reads a picture with it, icon.library an icon.
 
-const inflate = @import("inflate.zig");
+const compression = @import("../../compression/compression.zig");
+const CompressionBase = @import("../../../interface/compression.zig").CompressionBase;
 
 pub const Error = error{
     /// It does not begin the way a PNG does.
@@ -29,7 +34,11 @@ pub const Error = error{
     Corrupt,
     /// Something the format allows and this decoder does not.
     Unsupported,
-} || inflate.Error;
+    /// The stream ended before the rows did.
+    Truncated,
+    /// The memory to unpack the stream with could not be had.
+    NoMemory,
+};
 
 /// The eight bytes every file starts with: one high byte so that a
 /// stream stripped to seven bits shows, then the name, then line ends
@@ -192,6 +201,38 @@ pub fn rawSize(info: Info) usize {
         total += @as(usize, size.height) * (1 + info.rowBytes(size.width));
     }
     return total;
+}
+
+/// The file's stream unpacked into `raw`, which is `rawSize` bytes: the
+/// `IDAT` chunks handed to Inflate one after another. A stream that ends
+/// before `raw` is full is Truncated, one that does not end when it is
+/// full or is no zlib stream is Corrupt.
+pub fn unpackRows(cb: *CompressionBase, file: []const u8, raw: []u8) Error!void {
+    var stream: compression.Stream = .{ .next_out = raw.ptr, .avail_out = @intCast(raw.len) };
+    switch (cb.InitInflate(&stream, compression.FORMAT_ZLIB)) {
+        compression.COMPRESS_OK => {},
+        compression.COMPRESSERR_MEMORY => return Error.NoMemory,
+        else => return Error.Corrupt,
+    }
+    defer cb.EndInflate(&stream);
+    var walk = try Walk.start(file);
+    while (try walk.next()) |chunk| {
+        if (chunk.id == ID_IEND) break;
+        if (chunk.id != ID_IDAT or chunk.data.len == 0) continue;
+        stream.next_in = chunk.data.ptr;
+        stream.avail_in = @intCast(chunk.data.len);
+        switch (cb.Inflate(&stream, compression.FLUSH_NONE)) {
+            compression.COMPRESS_OK => {
+                // Input left over means the rows are full and the stream
+                // goes on past them.
+                if (stream.avail_in != 0) return Error.Corrupt;
+            },
+            compression.COMPRESS_END => return if (stream.total_out == raw.len) {} else Error.Truncated,
+            compression.COMPRESSERR_MEMORY => return Error.NoMemory,
+            else => return Error.Corrupt,
+        }
+    }
+    return Error.Truncated;
 }
 
 // --- undoing a filter -------------------------------------------------------
