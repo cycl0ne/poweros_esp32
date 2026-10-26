@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MIT
 //! Audio: the machine's sound outputs - which plays, which is preferred,
-//! how loud each is - shown and set. Built against the SDK only.
+//! how loud each is and what its equalizer does - shown and set. Built
+//! against the SDK only.
 //!
-//!   Audio OUTPUT/K,VOLUME/K/N,PREFER/K,LIST/S,SAVE/S
+//!   Audio OUTPUT/K,VOLUME/K/N,EQ/K,PREFER/K,LIST/S,SAVE/S
 //!
 //! On its own it shows what plays: the output played through, its rate,
-//! its sides and its volume; the output preferred, and whether it is
-//! there; the streams open and the sounds playing by trigger; the way in.
+//! its sides and its volume, and its equalizer - the preset it is, or its
+//! bands; the output preferred, and whether it is there; the streams open
+//! and the sounds playing by trigger; the way in.
 //!
 //!   Output     es8311 (24B61A00), 48000 Hz, one side, volume 80%
+//!   Equalizer  Techno (7,6,3,0,-2,-2,0,2,4,5)
 //!   Preferred  QEMU USB Audio (ECD5FB99), not there
 //!   Streams    1 of 16, 0 of 8 sounds triggered
 //!   Input      es8311, one side
@@ -27,10 +30,15 @@
 //! - VOLUME sets how loud everything plays through the output played
 //!   through - OUTPUT's, when both are given - in percent of as recorded,
 //!   0 to 100; the device keeps it for that output;
+//! - EQ sets the equalizer of the same output: a preset by its name, any
+//!   case (`Audio EQ Techno`, `Audio EQ "More bass"`, `Audio EQ Flat`),
+//!   or ten numbers of dB split by commas, 31 Hz to 16 kHz, each -12 to
+//!   12 (`Audio EQ 4,3,0,0,0,0,0,2,3,0`); the device keeps it for that
+//!   output;
 //! - SAVE keeps what the device has now in ENV:Sys/audio.prefs and
-//!   ENVARC:Sys/audio.prefs - each output's volume and the one preferred -
-//!   so C:SetPrefs gives it back at the next boot; outputs the file names
-//!   that are not plugged in keep their lines.
+//!   ENVARC:Sys/audio.prefs - each output's volume and equalizer, and the
+//!   one preferred - so C:SetPrefs gives it back at the next boot; outputs
+//!   the file names that are not plugged in keep their lines.
 //!
 //! Given any of these, it prints nothing unless something goes wrong, so
 //! a script can set the sound up.
@@ -48,24 +56,30 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Audio";
-const VERSION_STRING = "\x00$VER: Audio 1.1 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Audio 1.3 (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "OUTPUT/K,VOLUME/K/N,PREFER/K,LIST/S,SAVE/S";
+const template = "OUTPUT/K,VOLUME/K/N,EQ/K,PREFER/K,LIST/S,SAVE/S";
 const arg_output = 0;
 const arg_volume = 1;
-const arg_prefer = 2;
-const arg_list = 3;
-const arg_save = 4;
-const arg_count = 5;
+const arg_equalizer = 2;
+const arg_prefer = 3;
+const arg_list = 4;
+const arg_save = 5;
+const arg_count = 6;
 
 const MSG_NODEVICE = "%s: no %s - this machine has no sound\n";
 const MSG_NOOUTPUT = "%s: no output %s\n";
 const MSG_NOSTART = "%s: %s would not start\n";
 const MSG_BADVOLUME = "%s: VOLUME is 0 to 100 percent\n";
+const MSG_BADEQ = "%s: EQ is a preset - %s - or ten numbers of dB, -12 to 12, split by commas\n";
+const MSG_NOEQ = "%s: %s has no equalizer\n";
 const MSG_NOTSAVED = "%s: %s could not be written\n";
 const MSG_OUTPUT = "Output     %s (%s), %u Hz, %s, volume %u%%\n";
 const MSG_SILENT = "Output     none\n";
+const MSG_EQUALIZER = "Equalizer  %s (%s)\n";
+const MSG_EQUALIZER_BANDS = "Equalizer  %s\n";
+const MSG_FLAT = "Equalizer  flat\n";
 const MSG_PREFERRED = "Preferred  %s (%s)%s\n";
 const MSG_PREFERRED_NUMBER = "Preferred  %s%s\n";
 const MSG_PREFERRED_FILED = "Preferred  %s (%s)%s\n";
@@ -110,6 +124,29 @@ fn span(text: [*:0]const u8) []const u8 {
     var length: usize = 0;
     while (text[length] != 0) length += 1;
     return text[0..length];
+}
+
+/// The bands EQ names: a preset's, or ten numbers; null for neither.
+fn bandsNamed(wanted: []const u8) ?audiocontrol.Bands {
+    if (audiocontrol.presetNamed(wanted)) |preset| return preset.bands;
+    var bands: audiocontrol.Bands = undefined;
+    return if (audio_file.bandsOf(wanted, &bands)) bands else null;
+}
+
+/// Every preset's name, split by commas, NUL after it, into `into`.
+fn presetNames(into: []u8) [*:0]const u8 {
+    var n: usize = 0;
+    for (audiocontrol.presets, 0..) |preset, at| {
+        const name = span(preset.name);
+        const gap: []const u8 = if (at == 0) "" else ", ";
+        if (n + gap.len + name.len >= into.len) break;
+        @memcpy(into[n..][0..gap.len], gap);
+        n += gap.len;
+        @memcpy(into[n..][0..name.len], name);
+        n += name.len;
+    }
+    into[n] = 0;
+    return @ptrCast(into.ptr);
 }
 
 /// The listed output `wanted` names, by its number or its name; null for
@@ -173,6 +210,7 @@ fn showState(dl: *DosBase, control: *audiocontrol.Control, text: []u8) void {
             sidesText(device.channels),
             audiocontrol.percentOf(device.master),
         });
+        if (control.hasEqualizer()) showEqualizer(dl, &info.equalizer);
     } else _ = Printf(dl, MSG_SILENT, .{});
     if (device.preferred_id != 0) {
         var outputs: audiocontrol.Outputs = .{};
@@ -188,6 +226,18 @@ fn showState(dl: *DosBase, control: *audiocontrol.Control, text: []u8) void {
     }
     _ = Printf(dl, MSG_STREAMS, .{ device.streams, device.max_streams, device.triggers, device.max_triggers });
     if (device.input) |input| _ = Printf(dl, MSG_INPUT, .{ input, sidesText(device.input_channels) });
+}
+
+/// An equalizer: flat, the preset it is with its bands, or its bands.
+fn showEqualizer(dl: *DosBase, bands: *const audiocontrol.Bands) void {
+    var text: [48:0]u8 = @splat(0);
+    _ = audio_file.bandsText(bands, &text);
+    const preset = audiocontrol.presetOf(bands);
+    if (preset == 0) {
+        _ = Printf(dl, MSG_FLAT, .{});
+    } else if (preset < audiocontrol.presets.len) {
+        _ = Printf(dl, MSG_EQUALIZER, .{ audiocontrol.presets[preset].name, @as([*:0]const u8, &text) });
+    } else _ = Printf(dl, MSG_EQUALIZER_BANDS, .{@as([*:0]const u8, &text)});
 }
 
 /// Every output, a line each, and the preferred one when it is not there
@@ -258,9 +308,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var outputs: audiocontrol.Outputs = .{};
     outputs.read(&control);
 
+    const equalizer = rdargs.string(argv[arg_equalizer]);
+    const bands: ?audiocontrol.Bands = if (equalizer) |wanted| bandsNamed(span(wanted)) orelse {
+        var names: [256]u8 = undefined;
+        _ = Printf(dl, MSG_BADEQ, .{ COMMAND_NAME, presetNames(&names) });
+        return dos.RETURN_ERROR;
+    } else null;
+
     const output = rdargs.string(argv[arg_output]);
     const prefer = rdargs.string(argv[arg_prefer]);
-    const acted = output != null or prefer != null or volume != null or argv[arg_save] != 0;
+    const acted = output != null or prefer != null or volume != null or equalizer != null or argv[arg_save] != 0;
     if (output) |wanted| {
         const id = listed(&outputs, span(wanted)) orelse {
             _ = Printf(dl, MSG_NOOUTPUT, .{ COMMAND_NAME, wanted });
@@ -279,6 +336,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = control.prefer(id);
     }
     if (volume) |percent| control.setVolume(0, @intCast(percent));
+    if (bands) |*wanted| {
+        if (!control.hasEqualizer()) {
+            _ = Printf(dl, MSG_NOEQ, .{ COMMAND_NAME, @as([*:0]const u8, audio.AUDIONAME) });
+            return dos.RETURN_ERROR;
+        }
+        _ = control.setEqualizer(0, wanted);
+    }
     if (argv[arg_save] != 0 and !save(dl, &control, &text)) return dos.RETURN_ERROR;
 
     if (argv[arg_list] != 0) {

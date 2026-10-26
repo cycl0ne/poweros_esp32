@@ -33,6 +33,22 @@
 //! the write after that (`Refill`), so a queue of any length - a program
 //! that streams sound as one write after another - is heard without a
 //! gap. A fill says how many writes each voice played to their end.
+//!
+//! **The equalizer** (`Equalizer`) shapes the sum, a side at a time,
+//! after the master and before the clip: ten bands an octave apart, each a
+//! peak an octave wide raised or lowered by whole dB. A band is a
+//! second-order filter, worked out in floating point when it is set
+//! (`tune`) and run in integers - its coefficients in 2^28ths, the
+//! samples with 8 bits below the 16 while they go through, what each
+//! output's rounding leaves over carried into the next - so the low bands,
+//! whose filters lie close to the edge of feeding back on themselves, stay
+//! as quiet as the high ones. A band at 0 dB is no filter at all and costs
+//! nothing, and with every band flat the mix is the same to the bit as
+//! with none. While a band is raised, the master is turned down by as much
+//! as the highest band is raised, before the sum goes in. A band that
+//! comes on takes what came into it lately as what it heard and gave out,
+//! so moving a band from 0 does not click. An output that plays one side
+//! has the bands run once, on the two sides joined.
 
 const std = @import("std");
 
@@ -151,12 +167,14 @@ pub fn masterGain(volume: u32) i32 {
 }
 
 /// `frames` stereo frames into `out`, taken from whichever voices are
-/// playing, the master gain over their sum. `out` holds two samples a
-/// frame, in the order `sides` gives. A voice that takes over its queued
-/// write asks `refill` for the next. Answers what ended.
-pub fn fill(voices: []Voice, out: []i16, sides: Sides, master: i32, refill: ?Refill) Done {
+/// playing, the master gain over their sum, then `equalizer`'s bands when
+/// there is one. `out` holds two samples a frame, in the order `sides`
+/// gives. A voice that takes over its queued write asks `refill` for the
+/// next. Answers what ended.
+pub fn fill(voices: []Voice, out: []i16, sides: Sides, master: i32, refill: ?Refill, equalizer: ?*Equalizer) Done {
     var done: Done = .{};
     const frames = out.len / 2;
+    const gain: i64 = if (equalizer) |eq| (@as(i64, master) * eq.preamp + gain_half) >> gain_shift else master;
     var start: usize = 0;
     while (start < frames) : (start += run_frames) {
         const count: usize = @min(run_frames, frames - start);
@@ -165,8 +183,8 @@ pub fn fill(voices: []Voice, out: []i16, sides: Sides, master: i32, refill: ?Ref
         for (0..count) |frame| {
             // Sixteen voices at four times their volume overrun 32 bits
             // once the master goes over them, so the master is taken in 64.
-            var first: i64 = (@as(i64, sums[frame * 2]) * master + gain_half) >> gain_shift;
-            var second: i64 = (@as(i64, sums[frame * 2 + 1]) * master + gain_half) >> gain_shift;
+            var first: i64 = (@as(i64, sums[frame * 2]) * gain + gain_half) >> gain_shift;
+            var second: i64 = (@as(i64, sums[frame * 2 + 1]) * gain + gain_half) >> gain_shift;
             switch (sides) {
                 .left_first => {},
                 .right_first => {
@@ -178,6 +196,12 @@ pub fn fill(voices: []Voice, out: []i16, sides: Sides, master: i32, refill: ?Ref
                     first = @divTrunc(first + second, 2);
                     second = first;
                 },
+            }
+            // One side heard through both halves goes through the bands
+            // once.
+            if (equalizer) |eq| {
+                first = eq.equalize(0, first);
+                second = if (sides == .mono) first else eq.equalize(1, second);
             }
             out[(start + frame) * 2] = clip(first);
             out[(start + frame) * 2 + 1] = clip(second);
@@ -328,6 +352,183 @@ fn clip(value: i64) i16 {
     return @intCast(value);
 }
 
+// --- the equalizer --------------------------------------------------------
+
+/// The bands: how many, the frequency in the middle of each in Hz, an
+/// octave apart, and how many dB a band is raised or lowered at most.
+pub const eq_bands = 10;
+pub const eq_frequencies = [eq_bands]u32{ 31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 };
+pub const eq_range = 12;
+
+/// A band's coefficients are in `1 << coef_shift`ths: room for the
+/// largest, near 2.3 for a high band raised 12 dB, and fine enough for
+/// the 31 Hz band's, which differ from 1 and 2 by a few thousandths.
+const coef_shift: u6 = 28;
+const coef_one: i64 = 1 << coef_shift;
+/// The bits a sample carries below its 16 while it goes through the
+/// bands: each band's rounding lands there, not on what is heard.
+const eq_fraction: u6 = 8;
+/// The most a sample going in may be: 32 times full scale, past which it
+/// is clipped whatever the bands do, since they lower by 12 dB at most.
+/// With the fraction, 2^28.
+const in_limit: i64 = 32 << 15;
+/// The most a band gives out, with the fraction: 2^29 - twice the most
+/// that goes in - so that the difference of a sample in and one out fits
+/// 32 bits, and a product of a sample and a coefficient, four of them
+/// summed, 64.
+const out_limit: i64 = 1 << 29;
+
+/// A band's filter: a peak an octave wide, its coefficients in
+/// `1 << coef_shift`ths with the first of the feedback ones made 1. A
+/// peak's middle ones, b1 and a1, are the same, so one does for both:
+/// b1 x1 - a1 y1 is `middle` (x1 - y1), a product less a sample.
+pub const Filter = extern struct {
+    b0: i32 = 0,
+    middle: i32 = 0,
+    b2: i32 = 0,
+    a2: i32 = 0,
+};
+
+/// What a band remembers of one side: the two samples that went in last
+/// and the two that came out, and what the rounding of the last left over,
+/// added to the next.
+pub const History = extern struct {
+    x1: i32 = 0,
+    x2: i32 = 0,
+    y1: i32 = 0,
+    y2: i32 = 0,
+    rest: i32 = 0,
+};
+
+/// The bands as the mix runs them: the filters of those raised or
+/// lowered, each side's history through each, and the gain that goes over
+/// the sum first.
+pub const Equalizer = extern struct {
+    filters: [eq_bands]Filter = @splat(.{}),
+    history: [eq_bands][2]History = @splat(@splat(.{})),
+    /// The last two samples into the first band, a side each: what a band
+    /// that comes on takes as having heard and given out.
+    heard: [2][2]i32 = @splat(@splat(0)),
+    /// The bands that filter, a bit each: those raised or lowered, below
+    /// 0.45 of the output's rate.
+    on: u32 = 0,
+    /// The gain over the sum before the bands, in 4096ths: down by as much
+    /// as the highest band is raised.
+    preamp: i32 = gain_unity,
+
+    /// The filters made for `bands` - each band raised or lowered that
+    /// many dB, past `eq_range` held to it - at an output's `rate`. A band
+    /// so high that its peak would reach half the rate is left out. A band
+    /// that comes on is given what came into it lately as its history; one
+    /// that stays on keeps its own.
+    pub fn tune(eq: *Equalizer, bands: *const [eq_bands]i8, rate: u32) void {
+        const before = eq.on;
+        eq.on = 0;
+        var raised: usize = 0;
+        for (bands, 0..) |given, band| {
+            const db: i32 = @max(@min(given, eq_range), -eq_range);
+            if (db == 0 or @as(u64, eq_frequencies[band]) * 20 >= @as(u64, rate) * 9) continue;
+            eq.filters[band] = peak(eq_frequencies[band], db, rate);
+            eq.on |= @as(u32, 1) << @intCast(band);
+            if (db > 0) raised = @max(raised, @as(usize, @intCast(db)));
+        }
+        eq.preamp = preamps[raised];
+        for (0..2) |side| {
+            var x1 = eq.heard[side][0];
+            var x2 = eq.heard[side][1];
+            for (0..eq_bands) |band| {
+                const bit = @as(u32, 1) << @intCast(band);
+                if (eq.on & bit == 0) continue;
+                const history = &eq.history[band][side];
+                if (before & bit == 0) history.* = .{ .x1 = x1, .x2 = x2, .y1 = x1, .y2 = x2 };
+                x1 = history.y1;
+                x2 = history.y2;
+            }
+        }
+    }
+
+    /// One side's sample, at 16 bits, through every band that is on.
+    fn equalize(eq: *Equalizer, side: usize, sample: i64) i64 {
+        const in: i32 = @intCast(@max(@min(sample, in_limit), -in_limit) << eq_fraction);
+        const heard = &eq.heard[side];
+        heard[1] = heard[0];
+        heard[0] = in;
+        if (eq.on == 0) return sample;
+        var x = in;
+        var on = eq.on;
+        while (on != 0) : (on &= on - 1) {
+            const band = @ctz(on);
+            const filter = &eq.filters[band];
+            const history = &eq.history[band][side];
+            // Wrapping: the limits keep every sum inside 64 bits, and the
+            // checks the operators would add are a fifth of what a band
+            // costs a 32-bit chip.
+            const sum = (@as(i64, filter.b0) *% x) +% (@as(i64, filter.middle) *% (history.x1 -% history.y1)) +%
+                (@as(i64, filter.b2) *% history.x2) -% (@as(i64, filter.a2) *% history.y2) +% history.rest;
+            const y: i32 = @truncate(@max(@min(sum >> coef_shift, out_limit), -out_limit));
+            history.rest = @truncate(sum & (coef_one - 1));
+            history.x2 = history.x1;
+            history.x1 = x;
+            history.y2 = history.y1;
+            history.y1 = y;
+            x = y;
+        }
+        return (@as(i64, x) + (1 << (eq_fraction - 1))) >> eq_fraction;
+    }
+};
+
+/// How wide a band's peak is: an octave, from half its height below to
+/// half above.
+const q_octave: f64 = std.math.sqrt2;
+
+/// 10^(dB/40) for each dB from -`eq_range` to `eq_range`: the root of a
+/// peak's height, as its coefficients take it.
+const amplitudes = table: {
+    var made: [2 * eq_range + 1]f64 = undefined;
+    for (&made, 0..) |*amplitude, at| {
+        const db: f64 = @floatFromInt(@as(i32, @intCast(at)) - eq_range);
+        amplitude.* = @exp(db / 40.0 * std.math.ln10);
+    }
+    break :table made;
+};
+
+/// The gain over the sum for each dB the highest band is raised, from 0
+/// to `eq_range`, in 4096ths: that many dB down.
+const preamps = table: {
+    var made: [eq_range + 1]i32 = undefined;
+    for (&made, 0..) |*preamp, raised| {
+        const db: f64 = @floatFromInt(raised);
+        preamp.* = @intFromFloat(@round(@as(f64, @floatFromInt(gain_unity)) * @exp(-db / 20.0 * std.math.ln10)));
+    }
+    break :table made;
+};
+
+/// A band's filter: a peak `db` dB high in the middle, at `frequency` in
+/// an output at `rate`, an octave wide. With A = 10^(dB/40), w0 = 2 pi
+/// frequency / rate and alpha = sin(w0) / 2Q, it is
+///
+///   b0 = 1 + alpha A    b1 = -2 cos(w0)    b2 = 1 - alpha A
+///   a0 = 1 + alpha / A  a1 = -2 cos(w0)    a2 = 1 - alpha / A
+///
+/// each divided by a0: at `frequency` it gives A squared, far from it 1.
+fn peak(frequency: u32, db: i32, rate: u32) Filter {
+    const amplitude = amplitudes[@intCast(db + eq_range)];
+    const w0 = 2.0 * std.math.pi * @as(f64, @floatFromInt(frequency)) / @as(f64, @floatFromInt(rate));
+    const alpha = @sin(w0) / (2.0 * q_octave);
+    const cos_w0 = @cos(w0);
+    const a0 = 1.0 + alpha / amplitude;
+    return .{
+        .b0 = coefficient((1.0 + alpha * amplitude) / a0),
+        .middle = coefficient(-2.0 * cos_w0 / a0),
+        .b2 = coefficient((1.0 - alpha * amplitude) / a0),
+        .a2 = coefficient((1.0 - alpha / amplitude) / a0),
+    };
+}
+
+fn coefficient(value: f64) i32 {
+    return @intFromFloat(@floor(value * @as(f64, @floatFromInt(coef_one)) + 0.5));
+}
+
 // --- tests --------------------------------------------------------------------------
 
 const testing = std.testing;
@@ -383,7 +584,7 @@ test "16-bit mono plays on both sides, once, then silence" {
     var voices: [max_voices]Voice = @splat(.{});
     voices[0] = monoVoice(&data);
     var out: [8]i16 = @splat(0);
-    const done = fill(&voices, &out, .left_first, gain_unity, null);
+    const done = fill(&voices, &out, .left_first, gain_unity, null, null);
     try testing.expectEqualSlices(i16, &.{ 1000, 1000, -2000, -2000, 0, 0, 0, 0 }, &out);
     try testing.expectEqual(@as(u16, 1), done.ended[0]);
     try testing.expectEqual(@as(u32, 1), done.finished);
@@ -395,7 +596,7 @@ test "8-bit and 32-bit samples are heard at 16 bits" {
     var voices: [max_voices]Voice = @splat(.{});
     voices[0] = .{ .data = &eight, .frames = 2, .format = s8, .channels = 1, .step = one, .loops = 1 };
     var out: [4]i16 = @splat(0);
-    _ = fill(&voices, &out, .left_first, gain_unity, null);
+    _ = fill(&voices, &out, .left_first, gain_unity, null, null);
     try testing.expectEqualSlices(i16, &.{ 100 * 256, 100 * 256, -100 * 256, -100 * 256 }, &out);
 
     // A 32-bit sample: its top 16 bits, the low ones rounded away.
@@ -403,7 +604,7 @@ test "8-bit and 32-bit samples are heard at 16 bits" {
     const wide = [4]u8{ @truncate(word), @truncate(word >> 8), @truncate(word >> 16), @truncate(word >> 24) };
     voices[0] = .{ .data = &wide, .frames = 1, .format = s32, .channels = 1, .step = one, .loops = 1 };
     var one_frame: [2]i16 = @splat(0);
-    _ = fill(&voices, &one_frame, .left_first, gain_unity, null);
+    _ = fill(&voices, &one_frame, .left_first, gain_unity, null, null);
     try testing.expectEqual(@as(i16, -1234), one_frame[0]);
 }
 
@@ -415,7 +616,7 @@ test "a stereo stream keeps its sides, each at its own gain" {
     voices[0].gain_left = g.left;
     voices[0].gain_right = g.right;
     var out: [2]i16 = @splat(0);
-    _ = fill(&voices, &out, .left_first, gain_unity, null);
+    _ = fill(&voices, &out, .left_first, gain_unity, null, null);
     try testing.expectEqualSlices(i16, &.{ 500, -3000 }, &out);
 }
 
@@ -426,13 +627,13 @@ test "voices are summed, the master goes over them, and the sum is clipped" {
     voices[0].endless = 1;
     voices[1] = voices[0];
     var out: [2]i16 = @splat(0);
-    _ = fill(&voices, &out, .left_first, gain_unity, null);
+    _ = fill(&voices, &out, .left_first, gain_unity, null, null);
     try testing.expectEqual(std.math.maxInt(i16), out[0]);
     // At half the master the pair fits.
-    _ = fill(&voices, &out, .left_first, gain_unity / 2, null);
+    _ = fill(&voices, &out, .left_first, gain_unity / 2, null, null);
     try testing.expectEqual(@as(i16, 20_000), out[0]);
     // Nothing at all.
-    _ = fill(&voices, &out, .left_first, 0, null);
+    _ = fill(&voices, &out, .left_first, 0, null, null);
     try testing.expectEqual(@as(i16, 0), out[0]);
 }
 
@@ -442,14 +643,14 @@ test "loops: a write played n times, or for ever" {
     voices[0] = monoVoice(&data);
     voices[0].loops = 2;
     var out: [10]i16 = @splat(0);
-    const done = fill(&voices, &out, .left_first, gain_unity, null);
+    const done = fill(&voices, &out, .left_first, gain_unity, null, null);
     try testing.expectEqualSlices(i16, &.{ 1, 1, 2, 2, 1, 1, 2, 2, 0, 0 }, &out);
     try testing.expectEqual(@as(u16, 1), done.ended[0]);
 
     voices[0] = monoVoice(&data);
     voices[0].endless = 1;
     var forever: [16]i16 = @splat(0);
-    const none = fill(&voices, &forever, .left_first, gain_unity, null);
+    const none = fill(&voices, &forever, .left_first, gain_unity, null, null);
     try testing.expectEqual(@as(u32, 0), none.finished);
     try testing.expect(voices[0].playing());
 }
@@ -461,7 +662,7 @@ test "a queued write in another form follows in the frame the first one ends in"
     voices[0] = monoVoice(&first);
     voices[0].queued = .{ .data = &second, .frames = 2, .loops = 1, .format = s8, .channels = 1 };
     var out: [10]i16 = @splat(0);
-    const done = fill(&voices, &out, .left_first, gain_unity, null);
+    const done = fill(&voices, &out, .left_first, gain_unity, null, null);
     const heard = [_]i16{ 10, 20, 256, 512, 0 };
     for (heard, 0..) |sample, frame| try testing.expectEqual(sample, out[frame * 2]);
     try testing.expectEqual(@as(u16, 2), done.ended[0]);
@@ -474,7 +675,7 @@ test "between two frames the line between them plays" {
     voices[0] = monoVoice(&ramp);
     voices[0].step = one / 4;
     var out: [12]i16 = @splat(0);
-    _ = fill(&voices, &out, .left_first, gain_unity, null);
+    _ = fill(&voices, &out, .left_first, gain_unity, null, null);
     const heard = [_]i16{ 0, 250, 500, 750, 1000, 750 };
     for (heard, 0..) |sample, frame| try testing.expectEqual(sample, out[frame * 2]);
 }
@@ -517,7 +718,7 @@ test "what runs past the end is carried into the next write" {
     voices[0].step = one + one / 2;
     voices[0].queued = .{ .data = &second, .frames = 4, .loops = 1, .format = s16, .channels = 1 };
     var out: [6]i16 = @splat(0);
-    _ = fill(&voices, &out, .left_first, gain_unity, null);
+    _ = fill(&voices, &out, .left_first, gain_unity, null, null);
     // 100, half way from 200 to 300, then the next write's second frame.
     try testing.expectEqual(@as(i16, 100), out[0]);
     try testing.expectEqual(@as(i16, 250), out[2]);
@@ -529,13 +730,13 @@ test "a stopped voice is silent and keeps its place" {
     var voices: [max_voices]Voice = @splat(.{});
     voices[0] = monoVoice(&ramp);
     var out: [2]i16 = @splat(0);
-    _ = fill(&voices, &out, .left_first, gain_unity, null);
+    _ = fill(&voices, &out, .left_first, gain_unity, null, null);
     try testing.expectEqual(@as(i16, 10), out[0]);
     voices[0].stopped = 1;
-    _ = fill(&voices, &out, .left_first, gain_unity, null);
+    _ = fill(&voices, &out, .left_first, gain_unity, null, null);
     try testing.expectEqual(@as(i16, 0), out[0]);
     voices[0].stopped = 0;
-    _ = fill(&voices, &out, .left_first, gain_unity, null);
+    _ = fill(&voices, &out, .left_first, gain_unity, null, null);
     try testing.expectEqual(@as(i16, 20), out[0]);
 }
 
@@ -544,9 +745,9 @@ test "a mono output hears both sides together; sides the other way round" {
     var voices: [max_voices]Voice = @splat(.{});
     voices[0] = .{ .data = &data, .frames = 1, .format = s16, .channels = 2, .step = 0, .endless = 1 };
     var out: [2]i16 = @splat(0);
-    _ = fill(&voices, &out, .mono, gain_unity, null);
+    _ = fill(&voices, &out, .mono, gain_unity, null, null);
     try testing.expectEqualSlices(i16, &.{ 300, 300 }, &out);
-    _ = fill(&voices, &out, .right_first, gain_unity, null);
+    _ = fill(&voices, &out, .right_first, gain_unity, null, null);
     try testing.expectEqualSlices(i16, &.{ -400, 1000 }, &out);
 }
 
@@ -574,7 +775,7 @@ test "a queue of short writes plays without a gap, each asked for as the last is
     voices[0] = monoVoice(&a);
     voices[0].queued = Feed.next(&feed, 0).?;
     var out: [14]i16 = @splat(0);
-    const done = fill(&voices, &out, .left_first, gain_unity, .{ .context = &feed, .next = Feed.next });
+    const done = fill(&voices, &out, .left_first, gain_unity, .{ .context = &feed, .next = Feed.next }, null);
     const heard = [_]i16{ 1, 2, 3, 4, 5, 0, 0 };
     for (heard, 0..) |sample, frame| try testing.expectEqual(sample, out[frame * 2]);
     try testing.expectEqual(@as(u16, 4), done.ended[0]);
@@ -589,10 +790,126 @@ test "a write longer than 65536 frames plays to its end" {
     voices[0] = monoVoice(&long_write);
     var out: [2000]i16 = @splat(0);
     for (0..long_write.len / 2 / 1000) |_| {
-        const done = fill(&voices, &out, .left_first, gain_unity, null);
+        const done = fill(&voices, &out, .left_first, gain_unity, null, null);
         try testing.expectEqual(@as(u16, 0), done.ended[0]);
     }
     try testing.expectEqual(@as(i16, 99), out[out.len - 2]);
-    const done = fill(&voices, &out, .left_first, gain_unity, null);
+    const done = fill(&voices, &out, .left_first, gain_unity, null, null);
     try testing.expectEqual(@as(u16, 1), done.ended[0]);
+}
+
+/// A second of a tone and of what came out of the mix, for the
+/// equalizer's tests: too big for a test's stack.
+var eq_tone: [48_000 * 2]u8 = @splat(0);
+var eq_out: [48_000 * 2]i16 = @splat(0);
+
+/// `buffer` filled with a tone of `frequency` at 48 kHz, `amplitude` high,
+/// as 16-bit mono.
+fn toneOf(buffer: []u8, frequency: f64, amplitude: f64) void {
+    for (0..buffer.len / 2) |frame| {
+        const along = 2.0 * std.math.pi * frequency * @as(f64, @floatFromInt(frame)) / 48_000.0;
+        const word: u16 = @bitCast(@as(i16, @intFromFloat(@round(amplitude * @sin(along)))));
+        buffer[frame * 2] = @truncate(word);
+        buffer[frame * 2 + 1] = @truncate(word >> 8);
+    }
+}
+
+/// How loud a tone of `frequency` comes out through `bands`, in dB
+/// against how loud it went in: over the second half of a second, once
+/// the bands have settled.
+fn heardDb(frequency: f64, bands: *const [eq_bands]i8) f64 {
+    toneOf(&eq_tone, frequency, 8000);
+    var voices: [max_voices]Voice = @splat(.{});
+    voices[0] = monoVoice(&eq_tone);
+    var eq: Equalizer = .{};
+    eq.tune(bands, 48_000);
+    _ = fill(&voices, &eq_out, .left_first, gain_unity, null, &eq);
+    var went: f64 = 0;
+    var came: f64 = 0;
+    for (24_000..48_000) |frame| {
+        const in: f64 = @floatFromInt(sampleAt(&eq_tone, s16, 1, @intCast(frame), 0));
+        const out: f64 = @floatFromInt(eq_out[frame * 2]);
+        went += in * in;
+        came += out * out;
+    }
+    return 10.0 * std.math.log10(came / went);
+}
+
+fn expectDb(expected: f64, heard: f64) !void {
+    try testing.expectApproxEqAbs(expected, heard, 0.5);
+}
+
+test "the equalizer flat leaves the mix as it was, to the bit, even after a band was moved and put back" {
+    toneOf(&eq_tone, 440, 12_000);
+    var voices: [max_voices]Voice = @splat(.{});
+    voices[0] = monoVoice(&eq_tone);
+    voices[0].step = one + one / 3;
+    var plain: [4096]i16 = undefined;
+    _ = fill(&voices, &plain, .left_first, gain_unity * 3, null, null);
+
+    voices[0] = monoVoice(&eq_tone);
+    voices[0].step = one + one / 3;
+    var eq: Equalizer = .{};
+    var bands: [eq_bands]i8 = @splat(0);
+    bands[2] = 5;
+    eq.tune(&bands, 48_000);
+    bands[2] = 0;
+    eq.tune(&bands, 48_000);
+    try testing.expectEqual(@as(u32, 0), eq.on);
+    var equalized: [4096]i16 = undefined;
+    _ = fill(&voices, &equalized, .left_first, gain_unity * 3, null, &eq);
+    try testing.expectEqualSlices(i16, &plain, &equalized);
+}
+
+test "a band raised keeps its tone where it was and turns the rest down by as much" {
+    var bands: [eq_bands]i8 = @splat(0);
+    bands[5] = 12; // 1 kHz
+    try expectDb(0, heardDb(1000, &bands));
+    try expectDb(-12, heardDb(62.5, &bands));
+    try expectDb(-12, heardDb(16_000, &bands));
+    // Half way to the next band, half the height.
+    try expectDb(-6, heardDb(1414, &bands));
+}
+
+test "a band lowered takes its tone down and leaves the rest" {
+    var bands: [eq_bands]i8 = @splat(0);
+    bands[1] = -12; // 62 Hz
+    try expectDb(-12, heardDb(62, &bands));
+    try expectDb(0, heardDb(1000, &bands));
+    bands = @splat(0);
+    bands[9] = -6; // 16 kHz
+    try expectDb(-6, heardDb(16_000, &bands));
+    try expectDb(0, heardDb(250, &bands));
+}
+
+test "the lowest bands, raised and lowered, die away to nothing once the sound has gone" {
+    var bands: [eq_bands]i8 = @splat(0);
+    bands[0] = 12;
+    bands[1] = -12;
+    bands[2] = 7;
+    var eq: Equalizer = .{};
+    eq.tune(&bands, 48_000);
+    toneOf(&eq_tone, 40, 30_000);
+    var voices: [max_voices]Voice = @splat(.{});
+    voices[0] = monoVoice(eq_tone[0 .. 12_000 * 2]);
+    var out: [2 * 4800]i16 = undefined;
+    // A quarter of a second of loud bass, then two seconds of nothing.
+    for (0..55) |_| _ = fill(&voices, &out, .left_first, gain_unity, null, &eq);
+    for (out) |sample| try testing.expectEqual(@as(i16, 0), sample);
+}
+
+test "a band whose peak would reach half the output's rate is left out" {
+    var bands: [eq_bands]i8 = @splat(3);
+    var eq: Equalizer = .{};
+    eq.tune(&bands, 48_000);
+    try testing.expectEqual(@as(u32, 0x3FF), eq.on);
+    eq.tune(&bands, 22_050);
+    try testing.expectEqual(@as(u32, 0x1FF), eq.on);
+    eq.tune(&bands, 16_000);
+    try testing.expectEqual(@as(u32, 0x0FF), eq.on);
+    // Past the range, held to it.
+    bands = @splat(0);
+    bands[4] = 40;
+    eq.tune(&bands, 48_000);
+    try testing.expectEqual(preamps[eq_range], eq.preamp);
 }

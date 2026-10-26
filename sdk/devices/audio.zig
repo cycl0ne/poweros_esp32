@@ -60,6 +60,11 @@
 //!                         `std.data` and `std.length` in the request's
 //!                         own format, channels, rate, volume and pan,
 //!                         `loops` times over; replied when it has played
+//!   AUDIOCMD_EQUALIZER    an output's equalizer, from `std.data`:
+//!                         `AUDIO_EQ_BANDS` signed bytes, each band raised
+//!                         or lowered that many dB, up to
+//!                         `AUDIO_EQ_RANGE`; `output` names the output,
+//!                         0 the one played through
 //!
 //! AbortIO takes a write back: one that waits, or the one that plays,
 //! which stops, the next going on. It takes a trigger back the same way.
@@ -75,7 +80,8 @@
 //! voice gives way to AUDIOERR_NOVOICE. The samples are the program's
 //! until the trigger is replied. An open with `AUDIOF_TRIGGER` in its
 //! flags is for triggers alone and takes no stream: of the commands it
-//! takes AUDIOCMD_TRIGGER, the query and the output and master commands.
+//! takes AUDIOCMD_TRIGGER, the query, and the output, master and
+//! equalizer commands.
 //! A trigger plays on when the open it was sent on is closed.
 //!
 //! **What the board has** is the query's answer: the rate the output runs
@@ -141,9 +147,21 @@
 //! set there, and the mix gives it only what its range does not reach;
 //! the master reads the same.
 //!
+//! **Each output has its own equalizer** (since 2.12): ten bands an
+//! octave apart, from 31 Hz to 16 kHz (`AUDIO_EQ_FREQUENCIES`), each
+//! raised or lowered by whole dB, up to `AUDIO_EQ_RANGE`. AUDIOCMD_EQUALIZER
+//! sets an output's, in force at once on the one played through and kept
+//! for another until it plays, in the same table as the volumes;
+//! `AudioOutputInfo.equalizer` reads it back. An output no equalizer was
+//! set for plays flat: a curve is made for one output's sound - a small
+//! speaker's thin bass - and is wrong for the next. The bands work on
+//! the mix of every stream, and while one is raised the whole is turned
+//! down by as much as the highest band is raised, so a raised band does
+//! not push the loud parts past the top.
+//!
 //! The output commands read `output`, a field an IOAudio of 2.2 had not
 //! got: a request smaller than the whole is refused them with
-//! IOERR_BADLENGTH, and opens as before.
+//! IOERR_BADLENGTH, and opens as before. So is AUDIOCMD_EQUALIZER.
 
 const exec = @import("../libs/exec/exec.zig");
 const IOStdReq = exec.IOStdReq;
@@ -187,6 +205,8 @@ pub const AUDIOCMD_GETOUTPUT: u16 = exec.CMD_NONSTD + 5;
 pub const AUDIOCMD_TRIGGER: u16 = exec.CMD_NONSTD + 6;
 /// Since 2.9.
 pub const AUDIOCMD_PREFEROUTPUT: u16 = exec.CMD_NONSTD + 7;
+/// Since 2.12.
+pub const AUDIOCMD_EQUALIZER: u16 = exec.CMD_NONSTD + 8;
 
 /// OpenDevice's flags: an open for triggers alone, which takes no stream.
 /// Since 2.6.
@@ -196,12 +216,20 @@ pub const AUDIOF_TRIGGER: u32 = 1 << 0;
 pub const AUDIO_MAX_TRIGGERS: u32 = 8;
 
 /// How many outputs' volumes the device keeps: past that, the one set
-/// longest ago is forgotten. Since 2.9.
+/// longest ago is forgotten. Since 2.9; since 2.12 their equalizers too.
 pub const AUDIO_MAX_VOLUMES: u32 = 16;
+
+/// The equalizer's bands: how many, the frequency in the middle of each
+/// in Hz, an octave apart, and how many dB a band is raised or lowered
+/// at most. Since 2.12.
+pub const AUDIO_EQ_BANDS = 10;
+pub const AUDIO_EQ_FREQUENCIES = [AUDIO_EQ_BANDS]u32{ 31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 };
+pub const AUDIO_EQ_RANGE: i8 = 12;
 
 // --- errors -----------------------------------------------------------------------
 
-/// A format, a channel count or a rate the device does not take.
+/// A format, a channel count or a rate the device does not take; a
+/// volume past `AUDIO_VOLUME_MAX`, a band past `AUDIO_EQ_RANGE`.
 pub const AUDIOERR_BADFORMAT: i8 = -10;
 /// Every stream is playing already, or the recording is someone's.
 pub const AUDIOERR_NOSTREAM: i8 = -11;
@@ -318,6 +346,10 @@ pub const AudioOutputInfo = extern struct {
     /// Its volume: the master while it plays (AUDIOCMD_MASTER). Since
     /// 2.9.
     volume: u32 = 0,
+    /// Its equalizer: each band raised or lowered that many dB, all 0 for
+    /// flat (AUDIOCMD_EQUALIZER). Since 2.12.
+    equalizer: [AUDIO_EQ_BANDS]i8 = @splat(0),
+    pad: [2]u8 = @splat(0),
 };
 
 /// AudioOutputInfo.flags

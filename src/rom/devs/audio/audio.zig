@@ -44,6 +44,13 @@
 //! range does not reach, so its sound leaves at full scale; for any other
 //! the master is a gain in the mix.
 //!
+//! The table keeps each output's equalizer too (AUDIOCMD_EQUALIZER): its
+//! bands, in dB. Starting an output tunes the mixer's bands
+//! (`mixer.Equalizer`) to its curve at the rate it runs in, flat for one
+//! the table has none for; a curve set for the output played through is
+//! tuned at once, between two buffers, since the command holds the lock
+//! the mix does.
+//!
 //! A sink may run at more than one rate. The device runs it in the mode
 //! that the most open streams play in unconverted: the mode whose rate
 //! the most of them have; a tie goes to the sink's default mode, then to
@@ -104,8 +111,8 @@ const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 11;
-const BUILD_DATE = "22.10.2026";
+const DEVICE_REVISION = 12;
+const BUILD_DATE = "26.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -124,7 +131,13 @@ const max_streams: usize = audio.AUDIO_MAX_STREAMS;
 const max_triggers: usize = audio.AUDIO_MAX_TRIGGERS;
 comptime {
     std.debug.assert(max_streams + max_triggers == mixer.max_voices);
+    std.debug.assert(mixer.eq_bands == audio.AUDIO_EQ_BANDS);
+    std.debug.assert(mixer.eq_range == audio.AUDIO_EQ_RANGE);
+    for (mixer.eq_frequencies, audio.AUDIO_EQ_FREQUENCIES) |own, sdk_frequency| std.debug.assert(own == sdk_frequency);
 }
+
+/// An equalizer's bands, each raised or lowered that many dB.
+const Bands = [audio.AUDIO_EQ_BANDS]i8;
 
 /// The rate a stream is stepped for until an output is there: what every
 /// output so far runs at. Attaching one steps every stream for its own.
@@ -134,12 +147,18 @@ const usual_rate: u32 = 48_000;
 /// second of 512 frames at 48 kHz.
 const look_every: u32 = 47;
 
-/// An output's volume, as the table keeps it: its number (0 for an empty
-/// place), and when it was set, by the count of volumes set.
-const Volume = extern struct {
+/// What the table keeps of an output: its number (0 for an empty place),
+/// its volume when one was set, its equalizer's bands, and when it was
+/// last set, by the count of settings made.
+const Kept = extern struct {
     id: u32 = 0,
     volume: u32 = audio.AUDIO_VOLUME_UNITY,
     set: u32 = 0,
+    /// Whether `volume` was set: an output with none plays at the volume
+    /// in force.
+    has_volume: u8 = 0,
+    bands: Bands = @splat(0),
+    pad: u8 = 0,
 };
 
 /// One stream: what an open made, and what every request on it points at
@@ -208,14 +227,20 @@ const AudioBase = extern struct {
     /// What an open for triggers alone points its requests at.
     trigger_unit: exec.Unit = .{},
     /// The device's volume, over every stream (AUDIOCMD_MASTER): the
-    /// output's that plays, from `volumes`.
+    /// output's that plays, from `kept`.
     master: u32 = audio.AUDIO_VOLUME_UNITY,
     /// What the mix gives of it: all of it, or what the output's own
     /// volume leaves over.
     gain: u32 = audio.AUDIO_VOLUME_UNITY,
-    /// Each output's volume that was set, and the count of them set.
-    volumes: [audio.AUDIO_MAX_VOLUMES]Volume = @splat(.{}),
-    volumes_set: u32 = 0,
+    /// What was set for each output - its volume, its equalizer - and the
+    /// count of settings made.
+    kept: [audio.AUDIO_MAX_VOLUMES]Kept = @splat(.{}),
+    kept_set: u32 = 0,
+    /// The equalizer of the output played through: its bands, and the
+    /// mixer's filters tuned to them at the rate it runs in.
+    bands: Bands = @splat(0),
+    pad3: [2]u8 = .{ 0, 0 },
+    equalizer: mixer.Equalizer = .{},
     /// The preferred output's number (0: none), whether it was on the list
     /// when the task last looked, and the buffers played since.
     preferred: u32 = 0,
@@ -306,6 +331,8 @@ fn attachSink(ab: *AudioBase, sink: *rta.AudioSink) bool {
     ab.sides = sidesOf(mode);
     if (volumeOf(ab, sink.id)) |volume| ab.master = volume;
     applyMaster(ab);
+    ab.bands = bandsOf(ab, sink.id);
+    ab.equalizer.tune(&ab.bands, ab.rate);
     for (0..max_streams) |n| {
         if (ab.streams[n].in_use != 0) ab.voices[n].step = mixer.stepFor(ab.streams[n].rate, ab.rate);
     }
@@ -406,19 +433,29 @@ fn firstChoice(ab: *AudioBase) ?*rta.AudioSink {
 /// The volume set for the output of that number, or null for none.
 fn volumeOf(ab: *const AudioBase, id: u32) ?u32 {
     if (id == 0) return null;
-    for (&ab.volumes) |*kept| {
-        if (kept.id == id) return kept.volume;
+    for (&ab.kept) |*kept| {
+        if (kept.id == id and kept.has_volume != 0) return kept.volume;
     }
     return null;
 }
 
-/// The output of that number's volume kept: in its own place, else an
-/// empty one, else the place of the one set longest ago.
-fn keepVolume(ab: *AudioBase, id: u32, volume: u32) void {
-    if (id == 0) return;
+/// The equalizer set for the output of that number: flat for none.
+fn bandsOf(ab: *const AudioBase, id: u32) Bands {
+    if (id != 0) {
+        for (&ab.kept) |*kept| {
+            if (kept.id == id) return kept.bands;
+        }
+    }
+    return @splat(0);
+}
+
+/// The table's place for the output of that number, counted as set now:
+/// its own, else an empty one, else - made its, emptied - the place of the
+/// one set longest ago.
+fn keptFor(ab: *AudioBase, id: u32) *Kept {
     var place: usize = 0;
     var found = false;
-    for (&ab.volumes, 0..) |*kept, at| {
+    for (&ab.kept, 0..) |*kept, at| {
         if (kept.id == id) {
             place = at;
             found = true;
@@ -426,17 +463,32 @@ fn keepVolume(ab: *AudioBase, id: u32, volume: u32) void {
         }
     }
     if (!found) {
-        for (&ab.volumes, 0..) |*kept, at| {
+        for (&ab.kept, 0..) |*kept, at| {
             if (kept.id == 0) {
                 place = at;
-                found = true;
                 break;
             }
-            if (ab.volumes_set -% kept.set > ab.volumes_set -% ab.volumes[place].set) place = at;
+            if (ab.kept_set -% kept.set > ab.kept_set -% ab.kept[place].set) place = at;
         }
+        ab.kept[place] = .{ .id = id };
     }
-    ab.volumes_set +%= 1;
-    ab.volumes[place] = .{ .id = id, .volume = volume, .set = ab.volumes_set };
+    ab.kept_set +%= 1;
+    ab.kept[place].set = ab.kept_set;
+    return &ab.kept[place];
+}
+
+/// The output of that number's volume kept.
+fn keepVolume(ab: *AudioBase, id: u32, volume: u32) void {
+    if (id == 0) return;
+    const kept = keptFor(ab, id);
+    kept.volume = volume;
+    kept.has_volume = 1;
+}
+
+/// The output of that number's equalizer kept.
+fn keepBands(ab: *AudioBase, id: u32, bands: *const Bands) void {
+    if (id == 0) return;
+    keptFor(ab, id).bands = bands.*;
 }
 
 /// AUDIOCMD_MASTER: the volume of the output `output` names, or of the one
@@ -448,6 +500,26 @@ fn setMaster(ab: *AudioBase, output: u32, volume: u32) void {
     if (id != playing) return;
     ab.master = volume;
     applyMaster(ab);
+}
+
+/// AUDIOCMD_EQUALIZER: the bands of the output `output` names, or of the
+/// one played through for 0 - tuned at once when it is that one. Under
+/// the device's lock.
+fn setEqualizer(ab: *AudioBase, output: u32, bands: *const Bands) void {
+    const playing: u32 = if (ab.sink) |sink| sink.id else 0;
+    const id = if (output != 0) output else playing;
+    keepBands(ab, id, bands);
+    if (id != playing) return;
+    ab.bands = bands.*;
+    ab.equalizer.tune(&ab.bands, ab.rate);
+}
+
+/// Whether every band is in the range a band may be raised or lowered.
+fn bandsValid(bands: *const Bands) bool {
+    for (bands) |band| {
+        if (band > audio.AUDIO_EQ_RANGE or band < -audio.AUDIO_EQ_RANGE) return false;
+    }
+    return true;
 }
 
 /// The master in force handed to the output played through: set at its
@@ -506,14 +578,15 @@ fn setOutput(ab: *AudioBase, id: u32) i8 {
 
 /// What a program is told of an output: its number, whether it is the
 /// default, the one played through and the preferred one, the most sides
-/// any of its modes plays, their rates, its name, and its volume - the
-/// one in force for one that has none of its own.
+/// any of its modes plays, their rates, its name, its volume - the one in
+/// force for one that has none of its own - and its equalizer.
 fn outputInfoOf(ab: *AudioBase, sink: *rta.AudioSink) audio.AudioOutputInfo {
     var info: audio.AudioOutputInfo = .{ .id = sink.id };
     if (sink == ab.rta_base.NextSink(null)) info.flags |= audio.AUDIOOF_DEFAULT;
     if (sink == ab.sink) info.flags |= audio.AUDIOOF_CURRENT;
     if (sink.id == ab.preferred) info.flags |= audio.AUDIOOF_PREFERRED;
     info.volume = if (sink == ab.sink) ab.master else volumeOf(ab, sink.id) orelse ab.master;
+    info.equalizer = if (sink == ab.sink) ab.bands else bandsOf(ab, sink.id);
     var it = sink.modes.iterator();
     while (it.next()) |node| {
         const mode: *rta.AudioMode = @fieldParentPtr("node", node);
@@ -639,7 +712,7 @@ fn mixBuffer(ab: *AudioBase) void {
 /// `out` mixed from the streams, and the writes that played out replied.
 /// Under the device's lock.
 fn mixInto(ab: *AudioBase, out: []i16) void {
-    const done = mixer.fill(&ab.voices, out, ab.sides, mixer.masterGain(ab.gain), .{ .context = ab, .next = handNext });
+    const done = mixer.fill(&ab.voices, out, ab.sides, mixer.masterGain(ab.gain), .{ .context = ab, .next = handNext }, &ab.equalizer);
     for (0..max_streams) |n| {
         for (0..done.ended[n]) |_| playedOut(ab, n);
     }
@@ -1274,6 +1347,20 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
             // the output played through.
             const output = if (io.message.length < @sizeOf(IOAudio)) 0 else ioa.output;
             if (ioa.volume <= audio.AUDIO_VOLUME_MAX) setMaster(ab, output, ioa.volume) else io.err = audio.AUDIOERR_BADFORMAT;
+        },
+        audio.AUDIOCMD_EQUALIZER => {
+            // The bands in `std.data`; the output in `output`, which a
+            // request from before the output commands has not got.
+            if (io.message.length < @sizeOf(IOAudio) or ioa.std.data == null or ioa.std.length < audio.AUDIO_EQ_BANDS) {
+                io.err = exec.IOERR_BADLENGTH;
+            } else {
+                var bands: Bands = undefined;
+                @memcpy(&bands, @as([*]const i8, @ptrCast(ioa.std.data.?))[0..audio.AUDIO_EQ_BANDS]);
+                if (bandsValid(&bands)) {
+                    setEqualizer(ab, ioa.output, &bands);
+                    ioa.std.actual = audio.AUDIO_EQ_BANDS;
+                } else io.err = audio.AUDIOERR_BADFORMAT;
+            }
         },
         // Nothing is cached and nothing is buffered anywhere else.
         exec.CMD_CLEAR, exec.CMD_UPDATE => {},
@@ -2253,6 +2340,105 @@ test "the preferred output takes the sound when it comes, once; each output keep
     _ = replied(port);
     detachSink(ab);
     rb.DeleteSink(again);
+    try testDeviceGone(ab, &.{port});
+}
+
+/// AUDIOCMD_EQUALIZER on the stream `from` was opened on: `length` bytes
+/// of `bands` for the output `output`, waited for.
+fn equalizerCommand(io: *IOAudio, from: *const IOAudio, output: u32, bands: *const Bands, length: usize) i32 {
+    io.std.data = @ptrCast(@constCast(bands));
+    io.std.length = length;
+    io.output = output;
+    return command(io, from, audio.AUDIOCMD_EQUALIZER);
+}
+
+/// What is heard once the lowest band has settled: the first sample
+/// mixed after a third of a second. The sink keeps only the first of
+/// what it plays, so the mix is read where it is made.
+fn heardSettled(ab: *AudioBase) i16 {
+    for (0..8) |_| _ = mix(ab, 2048);
+    return mix(ab, 1)[0];
+}
+
+test "each output keeps its own equalizer: the one played through is heard through it at once, another when it plays" {
+    const ab = try testDevice();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const rb = ab.rta_base;
+    const head_tags = [_]sdk.utility.TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("Headphones") },
+        .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -1)) },
+        .{},
+    };
+    const headphones = rb.CreateSinkTagList(capture.DRIVER_NAME, &head_tags).?;
+    const speaker = ab.sink.?;
+    const port = sys.CreateMsgPort().?;
+    var io = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), openStream(ab, &io));
+
+    // A steady level, played for ever: no band peaks at 0 Hz, so what is
+    // heard of it is the gain over the sum.
+    var level: [capture.buffer_frames * 2]i16 = @splat(8000);
+    var write = requestFor(ab, port);
+    sendWrite(&write, &io, std.mem.sliceAsBytes(&level), 0);
+
+    // The speaker's curve, for the one played through: 1 kHz raised 12 dB
+    // and 31 Hz lowered 6 - in force at once, the whole a quarter as loud.
+    var speaker_bands: Bands = @splat(0);
+    speaker_bands[5] = 12;
+    speaker_bands[0] = -6;
+    var eq = requestFor(ab, port);
+    try testing.expectEqual(@as(i32, 0), equalizerCommand(&eq, &io, 0, &speaker_bands, audio.AUDIO_EQ_BANDS));
+    try testing.expectEqual(speaker_bands, ab.bands);
+    try testing.expectEqual(@as(u32, 1 << 5 | 1 << 0), ab.equalizer.on);
+    try testing.expectEqual(@as(i16, 2010), heardSettled(ab));
+
+    // The headphones', by their number while they do not play: kept, the
+    // speaker's still in force. Each is listed with its own.
+    var head_bands: Bands = @splat(0);
+    head_bands[9] = -3;
+    try testing.expectEqual(@as(i32, 0), equalizerCommand(&eq, &io, headphones.id, &head_bands, audio.AUDIO_EQ_BANDS));
+    try testing.expectEqual(speaker_bands, ab.bands);
+    var info: audio.AudioOutputInfo = .{};
+    var ask = requestFor(ab, port);
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_NEXTOUTPUT, 0, &info));
+    try testing.expectEqual(speaker_bands, info.equalizer);
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_NEXTOUTPUT, speaker.id, &info));
+    try testing.expectEqual(head_bands, info.equalizer);
+
+    // Over to the headphones: their curve, only lowered, the level whole.
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, headphones.id, null));
+    try testing.expectEqual(head_bands, ab.bands);
+    try testing.expectEqual(@as(u32, 1 << 9), ab.equalizer.on);
+    try testing.expectEqual(@as(i16, 8000), heardSettled(ab));
+
+    // A band past the range, too few bytes, or a request from before the
+    // output commands: refused, nothing changed.
+    var wild = head_bands;
+    wild[3] = audio.AUDIO_EQ_RANGE + 1;
+    try testing.expectEqual(@as(i32, audio.AUDIOERR_BADFORMAT), equalizerCommand(&eq, &io, 0, &wild, audio.AUDIO_EQ_BANDS));
+    try testing.expectEqual(@as(i32, exec.IOERR_BADLENGTH), equalizerCommand(&eq, &io, 0, &wild, audio.AUDIO_EQ_BANDS - 1));
+    var old = requestFor(ab, port);
+    old.std.req.message.length = audio.AUDIO_MIN_REQUEST;
+    try testing.expectEqual(@as(i32, exec.IOERR_BADLENGTH), equalizerCommand(&old, &io, 0, &head_bands, audio.AUDIO_EQ_BANDS));
+    try testing.expectEqual(head_bands, ab.bands);
+
+    // An output no curve was set for plays flat.
+    const line_tags = [_]sdk.utility.TagItem{
+        .{ .tag = rta.tags.RTAA_Name, .data = @intFromPtr("Line out") },
+        .{ .tag = rta.tags.RTAA_Priority, .data = @bitCast(@as(isize, -2)) },
+        .{},
+    };
+    const line_out = rb.CreateSinkTagList(capture.DRIVER_NAME, &line_tags).?;
+    try testing.expectEqual(@as(i8, 0), outputCommand(ab, &ask, &io, audio.AUDIOCMD_SETOUTPUT, line_out.id, null));
+    try testing.expectEqual(@as(u32, 0), ab.equalizer.on);
+    try testing.expectEqual(mixer.gain_unity, ab.equalizer.preamp);
+
+    _ = close(&ab.dev, &io.std.req);
+    _ = replied(port);
+    detachSink(ab);
+    rb.DeleteSink(line_out);
+    rb.DeleteSink(headphones);
     try testDeviceGone(ab, &.{port});
 }
 

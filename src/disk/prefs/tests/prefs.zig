@@ -245,7 +245,28 @@ test "sound.prefs: a line read, its file quoted, written back; the tone rises, s
     try testing.expectEqual(@as(u32, 480), prefs.sound.beepFrames(&tone));
 }
 
-test "audio.prefs: lines read, the preferred one alone, written back; volumes in percent" {
+test "the equalizer's presets: each found by its bands and by its name, any case; others Custom" {
+    const audiocontrol = sdk.devices.audiocontrol;
+    for (&audiocontrol.presets, 0..) |*preset, at| {
+        try testing.expectEqual(at, audiocontrol.presetOf(&preset.bands));
+        try testing.expectEqual(preset, audiocontrol.presetNamed(std.mem.span(preset.name)).?);
+        try testing.expectEqualStrings(std.mem.span(preset.name), std.mem.span(audiocontrol.preset_labels[at].?));
+    }
+    try testing.expectEqualStrings("Custom", std.mem.span(audiocontrol.preset_labels[audiocontrol.preset_custom].?));
+    try testing.expectEqual(null, audiocontrol.preset_labels[audiocontrol.preset_custom + 1]);
+    const flat: audiocontrol.Bands = @splat(0);
+    try testing.expectEqual(0, audiocontrol.presetOf(&flat));
+    var bent = audiocontrol.presets[6].bands;
+    bent[4] += 1;
+    try testing.expectEqual(audiocontrol.preset_custom, audiocontrol.presetOf(&bent));
+    try testing.expectEqualStrings("Techno", std.mem.span(audiocontrol.presetNamed("tECHNO").?.name));
+    try testing.expectEqualStrings("More bass", std.mem.span(audiocontrol.presetNamed("more BASS").?.name));
+    try testing.expectEqual(null, audiocontrol.presetNamed("Tech"));
+    try testing.expectEqual(null, audiocontrol.presetNamed("Technos"));
+    try testing.expectEqual(null, audiocontrol.presetNamed(""));
+}
+
+test "audio.prefs: lines read, the preferred one alone, written back; volumes in percent; equalizers" {
     var settings: prefs.audio.Settings = .{};
     const text =
         \\# a comment
@@ -254,7 +275,7 @@ test "audio.prefs: lines read, the preferred one alone, written back; volumes in
         \\OUTPUT=0 VOLUME=50
         \\OUTPUT=12 VOLUME=101
         \\VOLUME=20
-        \\OUTPUT=24B61A00 VOLUME=70 NAME=es8311
+        \\OUTPUT=24B61A00 VOLUME=70 EQ=4,+3,0,0,0,0,0,-2,12,-12 NAME=es8311
     ;
     try testing.expectEqual(@as(u32, 3), settings.load(text));
     try testing.expectEqual(@as(usize, 2), settings.count);
@@ -262,7 +283,9 @@ test "audio.prefs: lines read, the preferred one alone, written back; volumes in
     // naming one preferred is the one.
     try testing.expectEqual(@as(u32, 0x24B6_1A00), settings.outputs[0].id);
     try testing.expectEqual(@as(u32, 70), settings.outputs[0].volume);
+    try testing.expectEqual([_]i8{ 4, 3, 0, 0, 0, 0, 0, -2, 12, -12 }, settings.outputs[0].bands);
     try testing.expect(!settings.outputs[0].preferred);
+    try testing.expect(settings.outputs[1].flat());
     try testing.expectEqualStrings("QEMU USB Audio", settings.outputs[1].nameText());
     try testing.expectEqual(@as(u32, 100), settings.outputs[1].volume);
     try testing.expectEqual(@as(u32, 0xECD5_FB99), settings.preferred().?.id);
@@ -270,18 +293,34 @@ test "audio.prefs: lines read, the preferred one alone, written back; volumes in
     var output: prefs.audio.Output = .{};
     try testing.expectEqualStrings("VOLUME is 0 to 100 percent", std.mem.span(prefs.audio.parseLine("OUTPUT=1 VOLUME=x", &output).?));
     try testing.expectEqualStrings("a line names its OUTPUT", std.mem.span(prefs.audio.parseLine("VOLUME=1", &output).?));
+    const eq_wrong = "EQ is ten numbers of dB, -12 to 12, split by commas";
+    for ([_][]const u8{
+        "OUTPUT=1 EQ=0,0,0,0,0,0,0,0,0",
+        "OUTPUT=1 EQ=0,0,0,0,0,0,0,0,0,0,0",
+        "OUTPUT=1 EQ=0,0,0,0,13,0,0,0,0,0",
+        "OUTPUT=1 EQ=0,0,0,0,-13,0,0,0,0,0",
+        "OUTPUT=1 EQ=0,0,,0,0,0,0,0,0,0",
+        "OUTPUT=1 EQ=0,0,a,0,0,0,0,0,0,0",
+        "OUTPUT=1 EQ=",
+    }) |line| try testing.expectEqualStrings(eq_wrong, std.mem.span(prefs.audio.parseLine(line, &output).?));
 
     var out: [prefs.audio.max_file]u8 = undefined;
     const n = prefs.audio.write(&settings, &out);
     try testing.expect(std.mem.startsWith(u8, out[0..n], prefs.audio.header));
     try testing.expectEqualStrings(
-        \\OUTPUT=24B61A00 VOLUME=70 NAME=es8311
+        \\OUTPUT=24B61A00 VOLUME=70 EQ=4,3,0,0,0,0,0,-2,12,-12 NAME=es8311
         \\OUTPUT=ECD5FB99 VOLUME=100 NAME="QEMU USB Audio" PREFERRED=YES
         \\
     , out[prefs.audio.header.len..n]);
     var again: prefs.audio.Settings = .{};
     try testing.expectEqual(@as(u32, 0), again.load(out[0..n]));
     try testing.expectEqual(@as(u32, 0xECD5_FB99), again.preferred().?.id);
+    try testing.expectEqual(settings.outputs[0].bands, again.outputs[0].bands);
+    // The longest line there can be fits.
+    var longest: prefs.audio.Output = .{ .id = 0xFFFF_FFFF, .volume = 100, .preferred = true, .bands = @splat(-12) };
+    longest.setName("A name thirty-one letters long..");
+    var line: [prefs.audio.max_line]u8 = undefined;
+    try testing.expect(prefs.audio.writeLine(&longest, &line) < prefs.audio.max_line);
 
     // Preferring one the file does not name puts it at the end; none
     // prefers none.

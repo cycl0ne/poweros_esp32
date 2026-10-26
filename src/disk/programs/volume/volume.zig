@@ -1,21 +1,31 @@
 // SPDX-License-Identifier: MIT
-//! Volume: the output the machine plays through and how loud it is, in a
-//! small window. Built against the SDK only.
+//! Volume: the output the machine plays through, how loud it is and what
+//! its equalizer does, in a small window. Built against the SDK only.
 //!
 //!   Volume
 //!
 //! The chooser lists audio.device's outputs and shows the one played
 //! through; picking another plays every sound going on through it from
 //! then on. The slider is that output's volume, in percent of as
-//! recorded, and changes it while it is dragged. Both are read again
-//! every second and whenever the window is made active, so an output
-//! plugged in or out, or a volume set elsewhere, shows.
+//! recorded, and changes it while it is dragged.
+//!
+//! Under them is that output's equalizer: a slider for each of its ten
+//! bands, 31 Hz to 16 kHz, from -12 dB at the bottom to +12 at the top,
+//! with its dB above it and its frequency below. A band changes what is
+//! heard while it is dragged. Under them Preset picks a curve by name -
+//! Classical, Rock, Techno, Speech, ... (`audiocontrol.presets`) - and
+//! shows the one the bands are, or Custom; Flat puts every band back to
+//! 0. With a device that has no equalizer the bands are ghosted.
+//!
+//! All of it is read again every second and whenever the window is made
+//! active, so an output plugged in or out, or a volume or equalizer set
+//! elsewhere, shows.
 //!
 //! The window closes with its close gadget or Ctrl-C. When anything was
-//! changed, what the device has then - each output's volume and the one
-//! preferred - is kept in ENV:Sys/audio.prefs and ENVARC:Sys/audio.prefs,
-//! so C:SetPrefs gives it back at the next boot; outputs the file names
-//! that are not plugged in keep their lines.
+//! changed, what the device has then - each output's volume and
+//! equalizer, and the one preferred - is kept in ENV:Sys/audio.prefs and
+//! ENVARC:Sys/audio.prefs, so C:SetPrefs gives it back at the next boot;
+//! outputs the file names that are not plugged in keep their lines.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -39,12 +49,14 @@ const wn = intuition.windows;
 const wc = intuition.windowclass;
 const icc = intuition.icclass;
 const classusr = intuition.classusr;
+const pg = intuition.propgclass;
 const sl = sdk.gadgets.slider;
 const ch = sdk.gadgets.chooser;
+const tx = sdk.gadgets.text;
 
 pub const COMMAND_NAME = "Volume";
-const VERSION = "1.1";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (25.10.2026)\r\n";
+const VERSION = "1.2";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -57,6 +69,12 @@ const MSG_NOTSAVED = "%s: %s could not be written\n";
 
 const ID_OUTPUT = 1;
 const ID_VOLUME = 2;
+const ID_FLAT = 3;
+const ID_PRESET = 4;
+/// A band's slider's ID: this and the band.
+const ID_BAND = 16;
+
+const band_count = audio.AUDIO_EQ_BANDS;
 
 /// How often the outputs are read again, in milliseconds.
 const look_every = 1000;
@@ -75,7 +93,19 @@ const App = struct {
     window: ?*intuition.Window = null,
     output: *Object = undefined,
     volume: *Object = undefined,
-    /// Whether an output was picked or a volume set here.
+    /// The equalizer shown - the output played through's - whether the
+    /// device has one, and its gadgets: a slider and a value for each
+    /// band, the value's text, the presets' chooser and the one it shows,
+    /// and Flat.
+    bands: audiocontrol.Bands = @splat(0),
+    equalizes: bool = false,
+    band_sliders: [band_count]*Object = undefined,
+    band_values: [band_count]*Object = undefined,
+    value_texts: [band_count][4:0]u8 = @splat(@splat(0)),
+    preset: *Object = undefined,
+    preset_shown: usize = 0,
+    flat: *Object = undefined,
+    /// Whether an output was picked, a volume or a band set here.
     changed: bool = false,
 
     fn set(app: *App, gadget: *Object, tags: []const TagItem) void {
@@ -105,7 +135,12 @@ const App = struct {
                 .{},
             });
             app.set(app.volume, &.{ pair(gc.GA_Disabled, @intFromBool(app.outputs.count == 0)), .{} });
+            const no_bands = app.outputs.count == 0 or !app.equalizes;
+            for (app.band_sliders) |slider| app.set(slider, &.{ pair(gc.GA_Disabled, @intFromBool(no_bands)), .{} });
+            app.set(app.preset, &.{ pair(gc.GA_Disabled, @intFromBool(no_bands)), .{} });
+            app.set(app.flat, &.{ pair(gc.GA_Disabled, @intFromBool(no_bands)), .{} });
         }
+        app.lookBands();
         const percent = app.currentPercent();
         if (percent == app.percent) return;
         app.percent = percent;
@@ -131,14 +166,198 @@ const App = struct {
         app.changed = true;
     }
 
-    /// What the slider says while it is dragged.
+    /// The equalizer of the output played through read again: the bands
+    /// shown anew when it changed.
+    fn lookBands(app: *App) void {
+        if (!app.equalizes) return;
+        var info: audio.AudioOutputInfo = .{};
+        const now: audiocontrol.Bands = if (app.control.current(&info)) info.equalizer else @splat(0);
+        for (now, app.bands) |band, shown| {
+            if (band != shown) break;
+        } else return;
+        app.bands = now;
+        app.showBands();
+    }
+
+    /// Every band's slider and value as `bands` has them, and the preset
+    /// they are.
+    fn showBands(app: *App) void {
+        for (0..band_count) |band| {
+            app.set(app.band_sliders[band], &.{ pair(sl.SLIDER_Level, @bitCast(@as(isize, app.bands[band]))), .{} });
+            app.showValue(band);
+        }
+        app.showPreset();
+    }
+
+    /// The preset the bands are, or Custom, on its chooser.
+    fn showPreset(app: *App) void {
+        const shown = audiocontrol.presetOf(&app.bands);
+        if (shown == app.preset_shown) return;
+        app.preset_shown = shown;
+        app.set(app.preset, &.{ pair(ch.CHOOSER_Active, shown), .{} });
+    }
+
+    /// A band's dB, above its slider.
+    fn showValue(app: *App, band: usize) void {
+        dbText(&app.value_texts[band], app.bands[band]);
+        app.set(app.band_values[band], &.{ pair(tx.TEXT_Text, @intFromPtr(&app.value_texts[band])), .{} });
+    }
+
+    /// A band's slider at `level`: the output played through heard with
+    /// it at once.
+    fn takeBand(app: *App, band: usize, level: isize) void {
+        const db: i8 = @intCast(@max(@min(level, audio.AUDIO_EQ_RANGE), -audio.AUDIO_EQ_RANGE));
+        if (db == app.bands[band]) return;
+        app.bands[band] = db;
+        _ = app.control.setEqualizer(0, &app.bands);
+        app.showValue(band);
+        app.showPreset();
+        app.changed = true;
+    }
+
+    /// A band's slider as it stands now.
+    fn readBand(app: *App, band: usize) void {
+        var level: usize = 0;
+        _ = app.ib.GetAttr(sl.SLIDER_Level, app.band_sliders[band], &level);
+        app.takeBand(band, @bitCast(level));
+    }
+
+    /// Flat: every band at 0.
+    fn flatten(app: *App) void {
+        app.bands = @splat(0);
+        _ = app.control.setEqualizer(0, &app.bands);
+        app.showBands();
+        app.changed = true;
+    }
+
+    /// A preset picked: its bands heard at once. Custom changes nothing
+    /// and goes back to what the bands are.
+    fn takePreset(app: *App, choice: usize) void {
+        app.preset_shown = choice;
+        if (choice < audiocontrol.presets.len) {
+            app.bands = audiocontrol.presets[choice].bands;
+            _ = app.control.setEqualizer(0, &app.bands);
+            app.changed = true;
+        }
+        app.showBands();
+    }
+
+    /// What a slider says while it is dragged.
     fn updated(app: *App, object: *Object) void {
         var id: usize = 0;
         _ = app.ib.GetAttr(wc.WINDOWA_GadgetID, object, &id);
+        if (id >= ID_BAND and id < ID_BAND + band_count) return app.readBand(id - ID_BAND);
         if (id != ID_VOLUME) return;
         var level: usize = 0;
         _ = app.ib.GetAttr(sl.SLIDER_Level, app.volume, &level);
         app.takeVolume(level);
+    }
+
+    /// The equalizer's group: for each band its dB, its slider and its
+    /// frequency, a column each in a grid, and the presets and Flat under
+    /// them; null, with nothing of it left made, when something could not
+    /// be.
+    fn makeEqualizer(app: *App, ghosted: bool) ?*Object {
+        const ib = app.ib;
+        // The grid's cells in reading order: the values, the sliders, the
+        // frequencies.
+        var cells: [3 * band_count]?*Object = @splat(null);
+        for (0..band_count) |band| {
+            dbText(&app.value_texts[band], app.bands[band]);
+            cells[band] = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+                pair(tx.TEXT_Text, @intFromPtr(&app.value_texts[band])),
+                pair(tx.TEXT_Justification, tx.TEXT_JUSTIFY_CENTER),
+                .{},
+            });
+            cells[band_count + band] = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+                pair(gc.GA_ID, ID_BAND + band),
+                pair(gc.GA_RelVerify, 1),
+                pair(gc.GA_Disabled, @intFromBool(ghosted)),
+                pair(pg.PGA_Freedom, pg.FREEVERT),
+                pair(sl.SLIDER_Min, @bitCast(@as(isize, -audio.AUDIO_EQ_RANGE))),
+                pair(sl.SLIDER_Max, audio.AUDIO_EQ_RANGE),
+                pair(sl.SLIDER_Level, @bitCast(@as(isize, app.bands[band]))),
+                pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
+                .{},
+            });
+            cells[2 * band_count + band] = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+                pair(tx.TEXT_Text, @intFromPtr(audiocontrol.band_labels[band])),
+                pair(tx.TEXT_Justification, tx.TEXT_JUSTIFY_CENTER),
+                .{},
+            });
+        }
+        const preset = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+            pair(gc.GA_ID, ID_PRESET),
+            pair(gc.GA_RelVerify, 1),
+            pair(gc.GA_Disabled, @intFromBool(ghosted)),
+            pair(ch.CHOOSER_Labels, @intFromPtr(&audiocontrol.preset_labels)),
+            pair(ch.CHOOSER_Active, audiocontrol.presetOf(&app.bands)),
+            .{},
+        });
+        const flat = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+            pair(gc.GA_Text, @intFromPtr("Flat")),
+            pair(gc.GA_ID, ID_FLAT),
+            pair(gc.GA_RelVerify, 1),
+            pair(gc.GA_Disabled, @intFromBool(ghosted)),
+            .{},
+        });
+        const whole = for (cells) |cell| {
+            if (cell == null) break false;
+        } else preset != null and flat != null;
+        if (!whole) {
+            for (cells) |cell| if (cell) |made| ib.DisposeObject(made);
+            if (preset) |made| ib.DisposeObject(made);
+            if (flat) |made| ib.DisposeObject(made);
+            return null;
+        }
+        // The presets and Flat in a row under the bands.
+        const bottom = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ),
+            pair(lg.LAYOUTA_Spacing, 6),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(preset.?)),
+            pair(lg.CHILDA_Label, @intFromPtr("Preset")),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(flat.?)),
+            pair(lg.CHILDA_WeightWidth, 0),
+            pair(lg.CHILDA_MinWidth, 64),
+            .{},
+        }) orelse {
+            for (cells) |cell| ib.DisposeObject(cell.?);
+            ib.DisposeObject(preset.?);
+            ib.DisposeObject(flat.?);
+            return null;
+        };
+        var tags: [3 * band_count + 4]TagItem = undefined;
+        tags[0] = pair(lg.LAYOUTA_Orientation, lg.LORIENT_GRID);
+        tags[1] = pair(lg.LAYOUTA_Columns, band_count);
+        tags[2] = pair(lg.LAYOUTA_Spacing, 4);
+        for (cells, 3..) |cell, at| tags[at] = pair(lg.LAYOUTA_AddChild, @intFromPtr(cell.?));
+        tags[tags.len - 1] = .{};
+        const grid = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &tags) orelse {
+            for (cells) |cell| ib.DisposeObject(cell.?);
+            ib.DisposeObject(bottom);
+            return null;
+        };
+        const group = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            pair(lg.LAYOUTA_FrameTitle, @intFromPtr("Equalizer")),
+            pair(lg.LAYOUTA_Margin, 6),
+            pair(lg.LAYOUTA_Spacing, 6),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(grid)),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(bottom)),
+            pair(lg.CHILDA_WeightHeight, 0),
+            .{},
+        }) orelse {
+            ib.DisposeObject(grid);
+            ib.DisposeObject(bottom);
+            return null;
+        };
+        for (0..band_count) |band| {
+            app.band_values[band] = cells[band].?;
+            app.band_sliders[band] = cells[band_count + band].?;
+        }
+        app.preset = preset.?;
+        app.preset_shown = audiocontrol.presetOf(&app.bands);
+        app.flat = flat.?;
+        return group;
     }
 
     /// What the device has now, over the file's outputs, written to ENV:
@@ -155,6 +374,22 @@ const App = struct {
     }
 };
 
+/// A band's dB as its value shows it: +4, 0, -12.
+fn dbText(into: *[4:0]u8, db: i8) void {
+    var n: usize = 0;
+    if (db != 0) {
+        into[0] = if (db > 0) '+' else '-';
+        n = 1;
+    }
+    const size: u8 = @abs(db);
+    if (size >= 10) {
+        into[n] = '0' + size / 10;
+        n += 1;
+    }
+    into[n] = '0' + size % 10;
+    into[n + 1] = 0;
+}
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
@@ -162,9 +397,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var libraries: [4]?*exec.Library = @splat(null);
+    var libraries: [5]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
-    const wanted = [_][*:0]const u8{ intuition.INTUITIONNAME, motion.MOTIONNAME, sl.SLIDER_LIBRARY, ch.CHOOSER_LIBRARY };
+    const wanted = [_][*:0]const u8{ intuition.INTUITIONNAME, motion.MOTIONNAME, sl.SLIDER_LIBRARY, ch.CHOOSER_LIBRARY, tx.TEXT_LIBRARY };
     for (wanted, 0..) |name, i| {
         libraries[i] = sys.OpenLibrary(name, 0) orelse {
             _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, name });
@@ -185,6 +420,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer app.control.close();
     app.outputs.read(&app.control);
     app.percent = app.currentPercent();
+    app.equalizes = app.control.hasEqualizer();
+    if (app.equalizes) {
+        var info: audio.AudioOutputInfo = .{};
+        if (app.control.current(&info)) app.bands = info.equalizer;
+    }
 
     const none = app.outputs.count == 0;
     app.output = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
@@ -214,6 +454,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
         return dos.RETURN_FAIL;
     };
+    const equalizer = app.makeEqualizer(none or !app.equalizes) orelse {
+        ib.DisposeObject(app.output);
+        ib.DisposeObject(app.volume);
+        _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
+        return dos.RETURN_FAIL;
+    };
     const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         pair(lg.LAYOUTA_Margin, 8),
         pair(lg.LAYOUTA_Spacing, 6),
@@ -223,10 +469,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(lg.LAYOUTA_AddChild, @intFromPtr(app.volume)),
         pair(lg.CHILDA_Label, @intFromPtr("_Volume")),
         pair(lg.CHILDA_WeightHeight, 0),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(equalizer)),
         .{},
     }) orelse {
         ib.DisposeObject(app.output);
         ib.DisposeObject(app.volume);
+        ib.DisposeObject(equalizer);
         _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
         return dos.RETURN_FAIL;
     };
@@ -285,6 +533,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                 wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
                     ID_OUTPUT => app.pickOutput(code),
                     ID_VOLUME => app.takeVolume(code),
+                    ID_FLAT => app.flatten(),
+                    ID_PRESET => app.takePreset(code),
+                    ID_BAND...ID_BAND + band_count - 1 => |id| app.readBand(id - ID_BAND),
                     else => {},
                 },
                 wc.WMHI_IDCMPUPDATE => app.updated(object),

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! audio.device's outputs and volumes, from a program: an open that takes
 //! no stream, and the commands that list the outputs, choose one, prefer
-//! one and set their volumes - what a shell command, a preferences editor
-//! or a window with a volume slider all do.
+//! one and set their volumes and equalizers - what a shell command, a
+//! preferences editor or a window with a volume slider all do.
 //!
 //! `Control.open` opens the device for triggers alone (`AUDIOF_TRIGGER`),
 //! which takes none of its streams, on a port of its own, and refuses a
@@ -10,7 +10,17 @@
 //! for every output. Each call is a DoIO on that request: it waits
 //! for the device's task where the command is the task's to carry out (a
 //! change of output). `Outputs` is the list read once, with its names as a
-//! chooser gadget takes its labels.
+//! chooser gadget takes its labels. `hasEqualizer` says whether the device
+//! has the equalizer (2.12 on), and `band_labels` names its bands as a
+//! window shows them under their sliders.
+//!
+//! `presets` are equalizer curves by name - Classical, Rock, Techno,
+//! Speech, Small speaker and more - which a window offers in a chooser
+//! (`preset_labels`, with Custom after them) and `Audio EQ` takes by
+//! name. A preset is only a starting point: what the device keeps is the
+//! ten bands, and `presetOf` names the preset a set of bands is, if it is
+//! one. Each curve is in whole dB and raises nothing more than 8 dB, as
+//! the device turns the whole down by the highest raise.
 //!
 //! A volume here is in percent of as recorded, 0 to 100, as a person sets
 //! it; `percentOf` and `volumeOf` turn it into the device's and back.
@@ -33,6 +43,89 @@ const IOAudio = audio.IOAudio;
 /// The oldest device that has every command here: 2.9.
 pub const AUDIO_CONTROL_VERSION = 2;
 pub const AUDIO_CONTROL_REVISION = 9;
+/// The oldest that has the equalizer: 2.12.
+pub const AUDIO_EQUALIZER_REVISION = 12;
+
+/// The equalizer's bands, by the frequency in the middle of each.
+pub const band_labels = [audio.AUDIO_EQ_BANDS][*:0]const u8{ "31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k" };
+
+/// An equalizer's bands, each raised or lowered that many dB; all 0 is
+/// flat.
+pub const Bands = [audio.AUDIO_EQ_BANDS]i8;
+
+/// An equalizer curve by name.
+pub const Preset = struct {
+    name: [*:0]const u8,
+    bands: Bands,
+};
+
+/// The equalizer's presets, 31 Hz to 16 kHz: flat first, then music by
+/// kind, then speech, then curves for a part of the sound or a speaker.
+pub const presets = [_]Preset{
+    .{ .name = "Flat", .bands = .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } },
+    .{ .name = "Classical", .bands = .{ 4, 3, 2, 1, -1, -1, 0, 2, 3, 4 } },
+    .{ .name = "Jazz", .bands = .{ 3, 2, 1, 2, -1, -1, 0, 1, 2, 3 } },
+    .{ .name = "Pop", .bands = .{ -1, 0, 2, 4, 5, 4, 2, 0, -1, -1 } },
+    .{ .name = "Rock", .bands = .{ 5, 4, 3, 1, -1, -1, 1, 3, 4, 5 } },
+    .{ .name = "Dance", .bands = .{ 6, 5, 3, 0, 0, -2, -2, 0, 3, 4 } },
+    .{ .name = "Techno", .bands = .{ 7, 6, 3, 0, -2, -2, 0, 2, 4, 5 } },
+    .{ .name = "Hip-Hop", .bands = .{ 6, 5, 2, 3, -1, -1, 1, 0, 2, 3 } },
+    .{ .name = "Speech", .bands = .{ -6, -4, -2, 1, 3, 4, 4, 3, 1, -2 } },
+    .{ .name = "More bass", .bands = .{ 8, 7, 5, 3, 1, 0, 0, 0, 0, 0 } },
+    .{ .name = "More treble", .bands = .{ 0, 0, 0, 0, 0, 1, 3, 5, 7, 8 } },
+    .{ .name = "Loudness", .bands = .{ 6, 4, 2, 0, 0, 0, 0, 1, 3, 4 } },
+    .{ .name = "Small speaker", .bands = .{ -6, -2, 4, 4, 2, 0, 0, 1, 2, 2 } },
+};
+
+/// Where a chooser of presets shows bands that are none of them.
+pub const preset_custom = presets.len;
+
+/// The presets' names as a chooser takes its labels, Custom after them.
+pub const preset_labels: [presets.len + 1:null]?[*:0]const u8 = labels: {
+    var labels: [presets.len + 1:null]?[*:0]const u8 = @splat(null);
+    for (presets, 0..) |preset, at| labels[at] = preset.name;
+    labels[preset_custom] = "Custom";
+    break :labels labels;
+};
+
+/// The preset `bands` are, by its place in `presets`; `preset_custom`
+/// when they are none.
+pub fn presetOf(bands: *const Bands) usize {
+    for (&presets, 0..) |*preset, at| {
+        if (sameBands(&preset.bands, bands)) return at;
+    }
+    return preset_custom;
+}
+
+/// The preset called `name`, whatever the case of its letters; null when
+/// there is none.
+pub fn presetNamed(name: []const u8) ?*const Preset {
+    for (&presets) |*preset| {
+        var at: usize = 0;
+        while (preset.name[at] != 0 and at < name.len and lower(preset.name[at]) == lower(name[at])) at += 1;
+        if (preset.name[at] == 0 and at == name.len) return preset;
+    }
+    return null;
+}
+
+fn sameBands(one: *const Bands, other: *const Bands) bool {
+    for (one, other) |a, b| {
+        if (a != b) return false;
+    }
+    return true;
+}
+
+fn lower(char: u8) u8 {
+    return if (char >= 'A' and char <= 'Z') char + ('a' - 'A') else char;
+}
+
+comptime {
+    for (presets) |preset| {
+        for (preset.bands) |band| {
+            if (band < -audio.AUDIO_EQ_RANGE or band > 8) @compileError("a preset's band below -12 dB or above +8 dB");
+        }
+    }
+}
 
 /// The most outputs `Outputs` holds.
 pub const max_outputs = 8;
@@ -168,6 +261,21 @@ pub const Control = struct {
     pub fn setVolume(control: *Control, id: u32, percent: u32) void {
         control.io.volume = volumeOf(percent);
         _ = control.send(audio.AUDIOCMD_MASTER, id, null, 0);
+    }
+
+    /// Whether the device has an equalizer for each output: 2.12 on.
+    pub fn hasEqualizer(control: *const Control) bool {
+        const device = control.io.std.req.device.?;
+        return device.version > AUDIO_CONTROL_VERSION or
+            (device.version == AUDIO_CONTROL_VERSION and device.revision >= AUDIO_EQUALIZER_REVISION);
+    }
+
+    /// The equalizer of the output of that number, there or not (0: the
+    /// one played through): 0, or the device's error - AUDIOERR_BADFORMAT
+    /// for a band past `AUDIO_EQ_RANGE`, IOERR_NOCMD from a device without
+    /// one.
+    pub fn setEqualizer(control: *Control, id: u32, bands: *const Bands) i8 {
+        return control.send(audio.AUDIOCMD_EQUALIZER, id, @ptrCast(@constCast(bands)), audio.AUDIO_EQ_BANDS);
     }
 };
 

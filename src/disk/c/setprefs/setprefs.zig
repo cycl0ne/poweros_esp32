@@ -25,10 +25,10 @@
 //!   sound: none, a tone made from the line, or a sound file decoded
 //!   whole through datatypes.library (four seconds of it at most). A file
 //!   that cannot be read is reported, and the tone is played instead.
-//! - audio.prefs: each output's volume, those not plugged in too, and the
-//!   output preferred - played through whenever it is there. A line that
-//!   cannot be read is reported with its number and passed over; a
-//!   machine without audio.device takes none of it.
+//! - audio.prefs: each output's volume and equalizer, those not plugged
+//!   in too, and the output preferred - played through whenever it is
+//!   there. A line that cannot be read is reported with its number and
+//!   passed over; a machine without audio.device takes none of it.
 //!
 //! A file that is not there changes nothing of its own. Every screen and
 //! window takes the pens, the style and the title bars' gadgets at once,
@@ -39,7 +39,7 @@
 //!
 //! RESET puts every setting back to what the system starts with, and the
 //! style to the default - no output preferred, every output listed at
-//! full volume; the files are not read. SHOW prints the settings in force
+//! full volume and flat; the files are not read. SHOW prints the settings in force
 //! - after setting them when FROM or RESET is given, and on its own
 //! changes nothing:
 //!
@@ -53,12 +53,13 @@
 //!   FIXED        pospaz.font 16 rows (ROM)
 //!   PENS         DETAIL=#AAAAAA BLOCK=#000000 ...
 //!   BEEPFLASH    YES
-//!   OUTPUT       es8311 80%
+//!   OUTPUT       es8311 80%, EQ 4,3,0,0,0,0,0,2,3,0
 //!   OUTPUT       QEMU USB Audio 40%
 //!   PREFERRED    QEMU USB Audio
 //!
-//! An OUTPUT line for each output there is, with its volume; PREFERRED
-//! names the one preferred, by its number when it is not there.
+//! An OUTPUT line for each output there is, with its volume and its
+//! equalizer when it is not flat; PREFERRED names the one preferred, by
+//! its number when it is not there.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -90,7 +91,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.7 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.8 (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";
@@ -113,6 +114,7 @@ const MSG_WORD = "%-12s %s\n";
 const MSG_FONT = "%-12s %s %ld rows%s\n";
 const MSG_NOSAMPLE = "%s: cannot be read as a sound - the tone plays instead\n";
 const MSG_OUTPUT = "%-12s %s %u%%\n";
+const MSG_OUTPUT_EQ = "%-12s %s %u%%, EQ %s\n";
 const MSG_PREFERRED = "%-12s %s\n";
 const MSG_PREFERRED_GONE = "%-12s %s, not there\n";
 
@@ -363,25 +365,37 @@ fn readAudio(l: Libs, dir: [*:0]const u8, _: *Gathered) i32 {
 }
 
 /// What the system starts with, for audio.device: no output preferred,
-/// and every output listed at full volume.
+/// and every output listed at full volume, flat.
 fn resetAudio(l: Libs) void {
     var control = audiocontrol.Control.open(l.sys) orelse return;
     defer control.close();
     _ = control.prefer(0);
     var outputs: audiocontrol.Outputs = .{};
     outputs.read(&control);
-    for (outputs.infos[0..outputs.count]) |*info| control.setVolume(info.id, 100);
+    const flat: audiocontrol.Bands = @splat(0);
+    for (outputs.infos[0..outputs.count]) |*info| {
+        control.setVolume(info.id, 100);
+        if (control.hasEqualizer()) _ = control.setEqualizer(info.id, &flat);
+    }
 }
 
-/// Every output there is and its volume, and the one preferred: by its
-/// name when it is there, by its number when it is not.
+/// Every output there is, its volume and its equalizer when it is not
+/// flat, and the one preferred: by its name when it is there, by its
+/// number when it is not.
 fn showAudio(l: Libs) void {
     var control = audiocontrol.Control.open(l.sys) orelse return;
     defer control.close();
     var outputs: audiocontrol.Outputs = .{};
     outputs.read(&control);
     for (outputs.infos[0..outputs.count], 0..) |*info, at| {
-        _ = Printf(l.dl, MSG_OUTPUT, .{ @as([*:0]const u8, "OUTPUT"), outputs.labels[at].?, audiocontrol.percentOf(info.volume) });
+        const output: audio_file.Output = .{ .bands = info.equalizer };
+        if (output.flat()) {
+            _ = Printf(l.dl, MSG_OUTPUT, .{ @as([*:0]const u8, "OUTPUT"), outputs.labels[at].?, audiocontrol.percentOf(info.volume) });
+        } else {
+            var bands: [48:0]u8 = @splat(0);
+            _ = audio_file.bandsText(&info.equalizer, &bands);
+            _ = Printf(l.dl, MSG_OUTPUT_EQ, .{ @as([*:0]const u8, "OUTPUT"), outputs.labels[at].?, audiocontrol.percentOf(info.volume), @as([*:0]const u8, &bands) });
+        }
     }
     var device: sdk.devices.audio.AudioInfo = .{};
     if (!control.query(&device) or device.preferred_id == 0) return;

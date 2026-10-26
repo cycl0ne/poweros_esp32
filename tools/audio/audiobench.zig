@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! audiobench: how fast audio.device's mixer is on this host, for 1, 4, 8
-//! and 16 voices playing at once. Run by `./zig build audio-bench`.
+//! and 16 voices playing at once, and for one voice through 5 and 10
+//! bands of the equalizer - against the one voice alone, what the bands
+//! cost. Run by `./zig build audio-bench`.
 //!
 //! Each voice is a 16-bit write played for ever at a rate of its own -
 //! a 44.1 kHz stream into the 48 kHz output, so every frame is a blend of
@@ -26,34 +28,58 @@ pub fn main(init: std.process.Init) !void {
         data[i * 2] = @truncate(word);
         data[i * 2 + 1] = @truncate(word >> 8);
     }
-    var out: [buffer_frames * 2]i16 = undefined;
     std.debug.print("audio.device mixer, {d} s of sound at {d} Hz in buffers of {d} frames\n", .{ seconds, out_rate, buffer_frames });
     for ([_]usize{ 1, 4, 8, 16 }) |count| {
-        var voices: [mixer.max_voices]mixer.Voice = @splat(.{});
-        for (voices[0..count], 0..) |*v, n| {
-            const g = mixer.gains(0x10000 / @as(u32, @intCast(count)), @as(i32, @intCast(n % 3)) * 0x4000 - 0x4000);
-            v.* = .{
-                .data = &data,
-                .frames = data.len / 2,
-                .format = mixer.s16,
-                .channels = 1,
-                .endless = 1,
-                .step = mixer.stepFor(44_100 - @as(u32, @intCast(n)) * 100, out_rate),
-                .gain_left = g.left,
-                .gain_right = g.right,
-            };
-        }
-        var check: i64 = 0;
-        const buffers = seconds * out_rate / buffer_frames;
-        const start = std.Io.Timestamp.now(init.io, .awake);
-        for (0..buffers) |_| {
-            _ = mixer.fill(&voices, &out, .left_first, mixer.gain_unity, null);
-            check +%= out[0] +% out[out.len - 1];
-        }
-        const end = std.Io.Timestamp.now(init.io, .awake);
-        const ns: u64 = @intCast(start.durationTo(end).nanoseconds);
-        const per_second_us = ns / 1000 / seconds;
-        const faster = @as(u64, seconds) * std.time.ns_per_s / @max(ns, 1);
-        std.debug.print("{d:>3} voices: {d:>6} us a second of sound, {d:>5}x real time (check {d})\n", .{ count, per_second_us, faster, check });
+        const ns = timeMix(init.io, &data, count, null);
+        report(count, 0, ns);
+    }
+    for ([_]usize{ 5, 10 }) |raised| {
+        var bands: [mixer.eq_bands]i8 = @splat(0);
+        for (bands[0..raised], 0..) |*band, n| band.* = if (n % 2 == 0) 6 else -6;
+        var equalizer: mixer.Equalizer = .{};
+        equalizer.tune(&bands, out_rate);
+        const ns = timeMix(init.io, &data, 1, &equalizer);
+        report(1, raised, ns);
+    }
+}
+
+/// `count` voices mixed for `seconds` of sound, through `equalizer` when
+/// there is one: how long it took, in nanoseconds.
+fn timeMix(io: std.Io, data: []const u8, count: usize, equalizer: ?*mixer.Equalizer) u64 {
+    var out: [buffer_frames * 2]i16 = undefined;
+    var voices: [mixer.max_voices]mixer.Voice = @splat(.{});
+    for (voices[0..count], 0..) |*v, n| {
+        const g = mixer.gains(0x10000 / @as(u32, @intCast(count)), @as(i32, @intCast(n % 3)) * 0x4000 - 0x4000);
+        v.* = .{
+            .data = data.ptr,
+            .frames = @intCast(data.len / 2),
+            .format = mixer.s16,
+            .channels = 1,
+            .endless = 1,
+            .step = mixer.stepFor(44_100 - @as(u32, @intCast(n)) * 100, out_rate),
+            .gain_left = g.left,
+            .gain_right = g.right,
+        };
+    }
+    var check: i64 = 0;
+    const buffers = seconds * out_rate / buffer_frames;
+    const start = std.Io.Timestamp.now(io, .awake);
+    for (0..buffers) |_| {
+        _ = mixer.fill(&voices, &out, .left_first, mixer.gain_unity, null, equalizer);
+        check +%= out[0] +% out[out.len - 1];
+    }
+    const end = std.Io.Timestamp.now(io, .awake);
+    // The sum kept, so the mix is not left out as unused.
+    std.mem.doNotOptimizeAway(check);
+    return @intCast(start.durationTo(end).nanoseconds);
+}
+
+fn report(count: usize, bands: usize, ns: u64) void {
+    const per_second_us = ns / 1000 / seconds;
+    const faster = @as(u64, seconds) * std.time.ns_per_s / @max(ns, 1);
+    if (bands == 0) {
+        std.debug.print("{d:>3} voices:           {d:>6} us a second of sound, {d:>5}x real time\n", .{ count, per_second_us, faster });
+    } else {
+        std.debug.print("{d:>3} voice, {d:>2} bands:  {d:>6} us a second of sound, {d:>5}x real time\n", .{ count, bands, per_second_us, faster });
     }
 }

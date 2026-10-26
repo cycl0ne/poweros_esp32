@@ -12,7 +12,7 @@ the other round: the **recording**, read from the codec's microphone
 input in the form the program asks for.
 
 This guide is a stream first, then writing to it as it plays, what the
-board has, the master volume, sound decoded from a file
+board has, the master volume, an output's equalizer, sound decoded from a file
 (audiocodec.library), the outputs and ways in underneath (rta.library),
 and recording.
 
@@ -237,6 +237,73 @@ part's range leaves over, so its sound leaves at full scale and its
 quiet end keeps every bit. Every other output has the master as a gain
 in the mix. The query's `master` is the master either way.
 
+## An output's equalizer
+
+Since 2.12 **each output has its own equalizer**: ten bands an octave
+apart, from 31 Hz to 16 kHz (`AUDIO_EQ_FREQUENCIES`), each raised or
+lowered by whole dB up to `AUDIO_EQ_RANGE` (12). `AUDIOCMD_EQUALIZER`
+takes the bands from `std.data` - `AUDIO_EQ_BANDS` signed bytes, `length`
+at least that - for the output `output` names, 0 the one played through:
+
+```zig
+var bands: [audio.AUDIO_EQ_BANDS]i8 = .{ 4, 3, 0, 0, 0, 0, 0, 2, 3, 0 };
+io.std.req.command = audio.AUDIOCMD_EQUALIZER;
+io.std.data = &bands;
+io.std.length = bands.len;
+io.output = 0;
+_ = sys.DoIO(&io.std.req);
+```
+
+It is kept like a volume - in force at once on the output played
+through, kept for another until it plays, in the same table of
+`AUDIO_MAX_VOLUMES` - and `AudioOutputInfo.equalizer` reads it back. An
+output none was set for plays flat: a curve is made for one output's
+sound - a small speaker's thin bass - and is wrong for the next. A band
+past the range is refused with `AUDIOERR_BADFORMAT`, a short `length`
+or a request of 2.2 with `IOERR_BADLENGTH`.
+
+Each band is a peak an octave wide around its frequency, worked on the
+mix of every stream after the master. While a band is raised the whole
+is turned down by as much as the highest band is raised, so a raised
+band does not push the loud parts past the top: the band raised most
+sounds as loud as it would flat, and everything else quieter. A band at 0 costs nothing, and a flat equalizer leaves
+the mix as it is, sample for sample. A band too near half the output's
+rate to be worked - 16 kHz at 22050 Hz, 8 and 16 kHz at 16000 Hz - is
+left out. An output that plays one side has the bands worked once, on
+the sides joined.
+
+**Presets** are curves by name, in `sdk.devices.audiocontrol`'s
+`presets`; the Volume window and Prefs offer them in a chooser, and
+`Audio EQ` takes them by name:
+
+| Preset | 31 | 62 | 125 | 250 | 500 | 1k | 2k | 4k | 8k | 16k |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Flat | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| Classical | 4 | 3 | 2 | 1 | -1 | -1 | 0 | 2 | 3 | 4 |
+| Jazz | 3 | 2 | 1 | 2 | -1 | -1 | 0 | 1 | 2 | 3 |
+| Pop | -1 | 0 | 2 | 4 | 5 | 4 | 2 | 0 | -1 | -1 |
+| Rock | 5 | 4 | 3 | 1 | -1 | -1 | 1 | 3 | 4 | 5 |
+| Dance | 6 | 5 | 3 | 0 | 0 | -2 | -2 | 0 | 3 | 4 |
+| Techno | 7 | 6 | 3 | 0 | -2 | -2 | 0 | 2 | 4 | 5 |
+| Hip-Hop | 6 | 5 | 2 | 3 | -1 | -1 | 1 | 0 | 2 | 3 |
+| Speech | -6 | -4 | -2 | 1 | 3 | 4 | 4 | 3 | 1 | -2 |
+| More bass | 8 | 7 | 5 | 3 | 1 | 0 | 0 | 0 | 0 | 0 |
+| More treble | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 5 | 7 | 8 |
+| Loudness | 6 | 4 | 2 | 0 | 0 | 0 | 0 | 1 | 3 | 4 |
+| Small speaker | -6 | -2 | 4 | 4 | 2 | 0 | 0 | 1 | 2 | 2 |
+
+A preset is a starting point: the device keeps the ten bands, not a
+name, and a band moved after it makes the curve Custom. No preset raises
+a band more than 8 dB, since the whole is turned down by the highest
+raise. Small speaker turns down the two lowest bands, which a small
+speaker cannot play and which would only take its room, and raises the
+lowest ones it can.
+
+The bands are worked with integers, as the mix is, and cost time on
+every sample: on the host ten bands take about twenty times as long as
+mixing one stream (`./zig build audio-bench`). How much of a core they
+take on a board is `C:test/AudioTest BENCH`'s figure with a curve set.
+
 ## Choosing from a program: `sdk.devices.audiocontrol`
 
 A program that only chooses - a shell command, a preferences editor, a
@@ -253,10 +320,20 @@ outputs.read(&control);              // the list, with a chooser's labels
 _ = control.play(outputs.infos[1].id);
 control.setVolume(0, 60);            // the one played through, at 60%
 _ = control.prefer(0x24B61A00);      // there or not
+if (control.hasEqualizer()) {
+    const bands: audiocontrol.Bands = .{ 4, 3, 0, 0, 0, 0, 0, 2, 3, 0 };
+    _ = control.setEqualizer(0, &bands);
+}
 ```
 
 A volume there is in percent of as recorded, 0 to 100, as a person sets
 it; `percentOf` and `volumeOf` turn it into the device's and back.
+`hasEqualizer` says whether the device has equalizers (2.12), and
+`band_labels` names the bands for a window: `31` to `16k`. `presets` are
+the curves by name; `preset_labels` lists their names for a chooser,
+Custom after them, `presetOf` finds the preset a set of bands is
+(`preset_custom` for none), and `presetNamed` the one of a name, any
+case.
 
 A percent is as loud as it sounds, not as large as the wave: up to 100
 the device's volume is the percent's cube, so 10% is -60 dB, 50% -18 dB
@@ -270,17 +347,22 @@ wherever it is set.
 ## The settings kept: `audio.prefs`
 
 `ENVARC:Sys/audio.prefs` holds a line per output - its number, its
-volume in percent, its name for reading, and which one is preferred:
+volume in percent, its equalizer when it is not flat, its name for
+reading, and which one is preferred:
 
 ```
-OUTPUT=24B61A00 VOLUME=80 NAME=es8311
+OUTPUT=24B61A00 VOLUME=80 EQ=4,3,0,0,0,0,0,2,3,0 NAME=es8311
 OUTPUT=ECD5FB99 VOLUME=40 NAME="QEMU USB Audio" PREFERRED=YES
 ```
 
+`EQ=` is the ten bands' dB from 31 Hz up, split by commas, each -12 to
+12; a line without it is flat.
+
 S:Startup-Sequence's `C:SetPrefs` hands it to the device at boot,
 before the first sound, and `SetPrefs SHOW` lists what the device has
-then: every output there is with its volume, and the preferred one -
-by its number when it is not there. `sdk.prefs.audio` reads and writes it: `apply` hands
+then: every output there is with its volume and, when it is not flat,
+its equalizer, and the preferred one - by its number when it is not
+there. `sdk.prefs.audio` reads and writes it: `apply` hands
 settings to the device, `gather` reads what the device has into them,
 keeping the lines of outputs that are not plugged in.
 
@@ -288,11 +370,12 @@ Three places set it:
 
 - `C:Audio` in the shell (below);
 - the **Sound** page of `SYS:Programs/Prefs`: the preferred output, a
-  volume per output, and the beep (what `sound.prefs` holds), with a
-  Test button; Use and Save keep them, Cancel puts back what was;
+  volume per output, an equalizer per output, and the beep (what
+  `sound.prefs` holds), with a Test button; Use and Save keep them,
+  Cancel puts back what was;
 - `SYS:Programs/Volume`, from its icon or the desktop's Anvil menu
-  (**Volume...**): the output played through and its volume, kept when
-  the window closes.
+  (**Volume...**): the output played through, its volume and its
+  equalizer, kept when the window closes.
 
 Player has an Output chooser of its own, beside its file, which plays
 every sound through the output picked.
@@ -639,13 +722,16 @@ system list names no pads for them.
 `C:Audio` shows and sets the outputs:
 
 ```
-Audio                         the output played through, its rate and
-                              volume; the preferred one; the streams
+Audio                         the output played through, its rate,
+                              volume and equalizer; the preferred one;
+                              the streams
 Audio LIST                    every output: name, number, sides, rates,
                               volume, which plays and which is preferred
 Audio OUTPUT es8311           play through that one from now on
 Audio PREFER ECD5FB99         prefer that one, there or not (NONE: none)
 Audio VOLUME 60               the one played through at 60%
+Audio EQ Techno               its equalizer: a preset, any case
+Audio EQ 4,3,0,0,0,0,0,2,3,0  or ten bands of dB, 31 Hz to 16 kHz
 Audio OUTPUT es8311 VOLUME 80 SAVE
                               and kept in ENV: and ENVARC:audio.prefs
 ```
@@ -683,7 +769,8 @@ and spreads its feature unit's volume over 255 steps: a volume of half,
 -6 dB at the unit, is 229/255.
 
 `./zig build audio-bench` times the mixer on the host, for 1, 4, 8 and
-16 streams; the board's own figure is `C:test/AudioTest BENCH`'s. The mixer
+16 streams and for one stream through 5 and 10 bands of the equalizer;
+the board's own figure is `C:test/AudioTest BENCH`'s. The mixer
 is held to a reference mix byte for byte by a host test
 (`src/rom/devs/audio/golden.zig`); a change to it that is meant to change
 what is heard writes the reference again with `./zig build audio-golden`.

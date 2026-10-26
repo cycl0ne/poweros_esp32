@@ -4,13 +4,16 @@
 # OUTPUT     the output's number, as Audio LIST shows it.
 # VOLUME     how loud everything plays through it, in percent of as
 #            recorded: 0 to 100.
+# EQ         its equalizer: ten numbers split by commas, the bands
+#            31 62 125 250 500 1k 2k 4k 8k 16k Hz, each raised or
+#            lowered that many dB, -12 to 12. Left out, flat.
 # NAME       its name - in double quotes when it has a space in it -
 #            for reading: the number is what counts.
 # PREFERRED  YES on the output played through whenever it is there,
 #            headphones that are plugged in taking the sound over.
 #
-# An output with no line plays at the volume of the one before it;
-# with none preferred, the device plays through the first its drivers
-# made. As:
+# An output with no line plays at the volume of the one before it,
+# flat; with none preferred, the device plays through the first its
+# drivers made. As:
 #
-# OUTPUT=24B61A00 VOLUME=80 NAME=es8311 PREFERRED=YES
+# OUTPUT=24B61A00 VOLUME=80 EQ=4,3,0,0,0,0,0,2,3,0 NAME=es8311 PREFERRED=YES

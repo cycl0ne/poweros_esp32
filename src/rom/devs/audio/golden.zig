@@ -153,7 +153,7 @@ pub fn render(out: *[frames * 2]i16) void {
     var at: usize = 0;
     while (at < frames) : (at += buffer_frames) {
         const count: usize = @min(buffer_frames, frames - at);
-        _ = mixer.fill(&voices, out[at * 2 ..][0 .. count * 2], .left_first, master, .{ .context = &queue, .next = Queue.next });
+        _ = mixer.fill(&voices, out[at * 2 ..][0 .. count * 2], .left_first, master, .{ .context = &queue, .next = Queue.next }, null);
     }
 }
 

@@ -47,8 +47,11 @@ The settings are on seven pages, under tabs:
 - **Sound:** the outputs and their volumes on the left - which one is
   preferred, played through whenever it is there and taking the sound
   over when it is plugged in, and a slider for each output that is
-  there or that the settings name, heard at once while it moves - and
-  the beep on the right: whether the screen flashes, and the sound
+  there or that the settings name, heard at once while it moves; under
+  them the equalizer of the output picked above it, a slider for each
+  of ten bands from 31 Hz to 16 kHz, -12 to +12 dB, heard at once, a
+  Preset chooser of curves by name (Classical, Rock, Techno, Speech, ...)
+  and Flat - and the beep on the right: whether the screen flashes, and the sound
   played with it - none, a tone of a pitch and a length, or a sound
   file - at what volume. Test plays the beep as it is set; a line at
   the bottom says what came of it.
@@ -63,9 +66,9 @@ field, and OK and Cancel. Until it is closed the editor takes no input.
   ENVARC:Sys.
 - **Use** keeps them until the machine starts again: they are written to
   ENV:Sys alone.
-- **Cancel** leaves everything as it was; the volumes and the preferred
-  output, which change while they are set, go back to what they were,
-  as they do when the window is closed.
+- **Cancel** leaves everything as it was; the volumes, the equalizers
+  and the preferred output, which change while they are set, go back to
+  what they were, as they do when the window is closed.
 
 Save and Use hand the settings to the system at once. Every open window
 takes the style, the colours and the title bars' gadgets straight away;
