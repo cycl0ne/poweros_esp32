@@ -11,15 +11,28 @@
 //! The pages go with the gadget: disposing of it disposes of them, as a
 //! layout disposes of its children.
 //!
-//! Set it from a `clicktab.gadget` above it (`ICA_TARGET` and `ICA_MAP`),
-//! or from any other gadget, or by hand.
+//! Given a `clicktab.gadget` (`PAGE_Tabs`), the gadget holds the row of
+//! tabs along its top and draws a frame round the pages below it, in the
+//! style's look for a button; the tab in front opens into the frame. A
+//! press on a tab turns the page, a page turned with `PAGE_Current` is
+//! shown in the row, and the row's `IDCMP_GADGETUP` reaches the window
+//! in the row's own name, as it does anywhere else.
 //!
+//!   const names = [_:null]?[*:0]const u8{ "General", "Network", "About" };
 //!   const pages = [_:null]?*Object{ general, network, about };
-//!   const book = ib.NewObjectTagList(null, pg.PAGE_CLASS, &.{
-//!       .{ .tag = pg.PAGE_Pages, .data = @intFromPtr(&pages) },
-//!       .{ .tag = pg.PAGE_Current, .data = 0 },
+//!   const tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &.{
+//!       .{ .tag = gc.GA_ID, .data = ID_TABS },
+//!       .{ .tag = ct.CLICKTAB_Labels, .data = @intFromPtr(&names) },
 //!       .{},
 //!   });
+//!   const book = ib.NewObjectTagList(null, pg.PAGE_CLASS, &.{
+//!       .{ .tag = pg.PAGE_Pages, .data = @intFromPtr(&pages) },
+//!       .{ .tag = pg.PAGE_Tabs, .data = @intFromPtr(tabs) },
+//!       .{},
+//!   });
+//!
+//! Without one it is the pages alone, with no frame, set from any gadget
+//! (`ICA_TARGET`, `ICA_MAP`) or by hand.
 
 const gadgets = @import("gadgets.zig");
 
@@ -37,3 +50,8 @@ pub const PAGE_Pages = PAGE_Dummy + 0x01;
 pub const PAGE_Current = PAGE_Dummy + 0x02;
 /// How many pages there are. Read only.
 pub const PAGE_NumPages = PAGE_Dummy + 0x03;
+/// A `clicktab.gadget` (`*Object`) to stand along the top, its tabs the
+/// pages', with a frame round the pages below it. The page gadget points
+/// the row's `ICA_TARGET` at itself, keeps the row's `CLICKTAB_Current`
+/// the page shown, and disposes of the row with itself. Made only.
+pub const PAGE_Tabs = PAGE_Dummy + 0x04;

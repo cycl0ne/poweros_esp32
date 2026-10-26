@@ -122,8 +122,8 @@ const drives = @import("drives.zig");
 const Span = model.Span;
 
 pub const COMMAND_NAME = "HDToolBox";
-const VERSION = "1.2";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.10.2026)\r\n";
+const VERSION = "1.3";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -170,12 +170,6 @@ const tab_names = [_:null]?[*:0]const u8{ "Partition", "Advanced", "File systems
 const page_partition = 0;
 const page_advanced = 1;
 const page_files = 2;
-
-const tab_to_page = [_]TagItem{
-    .{ .tag = ct.CLICKTAB_Current, .data = pgc.PAGE_Current },
-    .{ .tag = gc.GA_ID, .data = utility.TAG_IGNORE },
-    .{},
-};
 
 const columns = [_]lb.Column{
     .{ .title = "Name", .weight = 3 },
@@ -2297,12 +2291,14 @@ const App = struct {
             .{},
         }) orelse return null;
 
-        const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{ pair(pgc.PAGE_Pages, @intFromPtr(&app.pages)), .{} }) orelse return null;
         app.tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
             pair(gc.GA_ID, ID_TABS),
             pair(ct.CLICKTAB_Labels, @intFromPtr(&tab_names)),
-            pair(icc.ICA_TARGET, @intFromPtr(book)),
-            pair(icc.ICA_MAP, @intFromPtr(&tab_to_page)),
+            .{},
+        }) orelse return null;
+        const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{
+            pair(pgc.PAGE_Pages, @intFromPtr(&app.pages)),
+            pair(pgc.PAGE_Tabs, @intFromPtr(app.tabs)),
             .{},
         }) orelse return null;
 
@@ -2324,8 +2320,6 @@ const App = struct {
             pair(lg.LAYOUTA_AddChild, @intFromPtr(app.bar)),
             pair(lg.CHILDA_WeightHeight, 0),
             pair(lg.LAYOUTA_AddChild, @intFromPtr(app.list)),
-            pair(lg.LAYOUTA_AddChild, @intFromPtr(app.tabs)),
-            pair(lg.CHILDA_WeightHeight, 0),
             pair(lg.LAYOUTA_AddChild, @intFromPtr(book)),
             pair(lg.CHILDA_WeightHeight, 0),
             pair(lg.LAYOUTA_AddChild, @intFromPtr(buttons)),

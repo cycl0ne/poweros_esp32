@@ -317,7 +317,8 @@ as lines or bars, kept by the gadget), `keyboard` (keys on the screen,
 written to input.device as a keyboard's are),
 `integer` (a number field with a range and stepping arrows), `chooser` (a
 button that pops a list up to pick from), `clicktab` with `page` (a
-row of tabs over pages of gadgets), `getfile`, `getfont` and
+row of tabs along the top of pages of gadgets, framed together),
+`getfile`, `getfont` and
 `getdevice` (a field with a button beside it that opens asl.library's
 requester), and
 `textedit` (text of many lines to edit, with undo, the clipboard,

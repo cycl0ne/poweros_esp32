@@ -995,7 +995,7 @@ its drawer with its name in the File field
 | `C:test/Screens SWITCH` | two screens, a window on each, switched with buttons |
 | `C:test/Layout` | weights, alignment, labels, wrapping and `GRID` |
 | `C:test/Gadgets` | the gadget classes in one layout, each worked by its key |
-| `C:test/Settings` | tabs over pages joined by `ICA_MAP`, framed groups |
+| `C:test/Settings` | tabs along a page gadget's top, its pages framed below them (`PAGE_Tabs`), framed groups |
 | `C:test/Widgets` | meters, a canvas drawn into and queued, codes, a chart |
 | `C:test/Asl` | the file and font requesters |
 | `SYS:Programs/Notepad` | a window object with menus, border scroll bars, a second window, requesters |

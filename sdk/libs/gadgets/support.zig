@@ -343,6 +343,129 @@ pub fn drawFrame(ib: *IntuitionBase, frame: *Object, rp: *graphics.RastPort, box
     _ = ib.SendMessage(frame, @ptrCast(&draw));
 }
 
+// --- boxes open on one side -------------------------------------------------
+//
+// A tab and the frame it opens into are each a box with one side left
+// out: a tab has no bottom, its frame no top. `DrawPart` draws whole
+// parts, so a class that draws such a box takes the edges' look from the
+// style and draws them itself, the same way for both.
+
+/// How the edges of a part of the style look at rest, as a class draws
+/// them itself: one colour for the light sides - the left and the top -
+/// and one for the dark, how thick the sides and the top and bottom are,
+/// and how far the corners are rounded. A rounded part is as thick all
+/// round as the thicker of its two, as `DrawPart` draws one.
+pub const Edges = struct {
+    light: Pen,
+    dark: Pen,
+    /// How thick the left and right edges are.
+    x: i32,
+    /// How thick the top and bottom edges are.
+    y: i32,
+    radius: i32,
+
+    /// The edges of `part` in a gadget's style over its screen's. A raised
+    /// border or a ridge is light at the top and left, a recessed one or a
+    /// groove the other way round, and a flat one or none is the border's
+    /// colour all round.
+    pub fn of(ib: *IntuitionBase, dri: ?*const sc.DrawInfo, own: ?*const intuition.Style, part: u32) Edges {
+        const style = intuition.style;
+        const shine: Pen = @truncate(ib.GetStyleAttr(dri, own, part, style.STATE_NORMAL, style.STYLE_ShinePen));
+        const shadow: Pen = @truncate(ib.GetStyleAttr(dri, own, part, style.STATE_NORMAL, style.STYLE_ShadowPen));
+        const border: Pen = @truncate(ib.GetStyleAttr(dri, own, part, style.STATE_NORMAL, style.STYLE_BorderPen));
+        const kind = ib.GetStyleAttr(dri, own, part, style.STATE_NORMAL, style.STYLE_Border);
+        const x: i32 = @max(@as(i32, @intCast(ib.GetStyleAttr(dri, own, part, style.STATE_NORMAL, style.STYLE_BorderX))), 1);
+        const y: i32 = @max(@as(i32, @intCast(ib.GetStyleAttr(dri, own, part, style.STATE_NORMAL, style.STYLE_BorderY))), 1);
+        const radius: i32 = @intCast(ib.GetStyleAttr(dri, own, part, style.STATE_NORMAL, style.STYLE_Radius));
+        const raised = kind == style.BORDER_RAISED or kind == style.BORDER_RIDGE;
+        const recessed = kind == style.BORDER_RECESSED or kind == style.BORDER_GROOVE;
+        return .{
+            .light = if (raised) shine else if (recessed) shadow else border,
+            .dark = if (raised) shadow else if (recessed) shine else border,
+            .x = if (radius > 0) @max(x, y) else x,
+            .y = if (radius > 0) @max(x, y) else y,
+            .radius = radius,
+        };
+    }
+};
+
+/// The side of a box `drawOpenBox` leaves out.
+pub const Open = enum { top, bottom };
+
+/// A box's edges in `edges`' look, all but the side `open`, with the two
+/// corners away from it rounded: light on the left and along the top,
+/// dark on the right and along the bottom, the two meeting half way round
+/// the top right and bottom left corners, as a rounded bevel's do. The
+/// sides run to the open edge of the box; nothing inside is drawn. The
+/// corners are drawn with smooth edges (`RPTAG_Smooth`), the RastPort's
+/// own setting given back afterwards. A radius no larger than the edges
+/// are thick gives square corners.
+pub fn drawOpenBox(gb: *GraphicsBase, rp: *graphics.RastPort, edges: Edges, box: gc.Box, open: Open) void {
+    if (box.width <= 0 or box.height <= 0) return;
+    const right = box.left + box.width;
+    const bottom = box.top + box.height;
+    const radius = @min(edges.radius, @divTrunc(box.width, 2), box.height);
+    if (radius <= @max(edges.x, edges.y)) {
+        switch (open) {
+            .bottom => {
+                fill(gb, rp, .{ .left = box.left, .top = box.top, .width = box.width, .height = edges.y }, edges.light);
+                fill(gb, rp, .{ .left = box.left, .top = box.top + edges.y, .width = edges.x, .height = box.height - edges.y }, edges.light);
+                fill(gb, rp, .{ .left = right - edges.x, .top = box.top + edges.y, .width = edges.x, .height = box.height - edges.y }, edges.dark);
+            },
+            .top => {
+                fill(gb, rp, .{ .left = box.left, .top = box.top, .width = edges.x, .height = box.height - edges.y }, edges.light);
+                fill(gb, rp, .{ .left = right - edges.x, .top = box.top, .width = edges.x, .height = box.height }, edges.dark);
+                fill(gb, rp, .{ .left = box.left, .top = bottom - edges.y, .width = box.width - edges.x, .height = edges.y }, edges.dark);
+            },
+        }
+        return;
+    }
+    var smooth: u32 = 0;
+    gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = @intFromPtr(&smooth) }, .{} });
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });
+    defer gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = smooth }, .{} });
+    // A corner's centre is a radius in from the two edges it rounds, so
+    // its ring reaches the box's own edge pixels; each half of the ring is
+    // as thick as the edge it runs into.
+    const ring = radius - 1;
+    const near_left = box.left + ring;
+    const near_right = right - radius;
+    switch (open) {
+        .bottom => {
+            fill(gb, rp, .{ .left = box.left + radius, .top = box.top, .width = box.width - 2 * radius, .height = edges.y }, edges.light);
+            fill(gb, rp, .{ .left = box.left, .top = box.top + radius, .width = edges.x, .height = box.height - radius }, edges.light);
+            fill(gb, rp, .{ .left = right - edges.x, .top = box.top + radius, .width = edges.x, .height = box.height - radius }, edges.dark);
+            const centre = box.top + ring;
+            ringPiece(gb, rp, near_left, centre, ring, edges.y, 90, 135, edges.light);
+            ringPiece(gb, rp, near_left, centre, ring, edges.x, 135, 180, edges.light);
+            ringPiece(gb, rp, near_right, centre, ring, edges.y, 45, 90, edges.light);
+            ringPiece(gb, rp, near_right, centre, ring, edges.x, 0, 45, edges.dark);
+        },
+        .top => {
+            fill(gb, rp, .{ .left = box.left, .top = box.top, .width = edges.x, .height = box.height - radius }, edges.light);
+            fill(gb, rp, .{ .left = right - edges.x, .top = box.top, .width = edges.x, .height = box.height - radius }, edges.dark);
+            fill(gb, rp, .{ .left = box.left + radius, .top = bottom - edges.y, .width = box.width - 2 * radius, .height = edges.y }, edges.dark);
+            const centre = bottom - radius;
+            ringPiece(gb, rp, near_left, centre, ring, edges.x, 180, 225, edges.light);
+            ringPiece(gb, rp, near_left, centre, ring, edges.y, 225, 270, edges.dark);
+            ringPiece(gb, rp, near_right, centre, ring, edges.y, 270, 315, edges.dark);
+            ringPiece(gb, rp, near_right, centre, ring, edges.x, 315, 360, edges.dark);
+        },
+    }
+}
+
+/// A piece of a ring `thick` wide about (`cx`, `cy`), its outside
+/// `radius` from the centre, from `from` to `to` degrees; a ring a pixel
+/// wide is an arc.
+fn ringPiece(gb: *GraphicsBase, rp: *graphics.RastPort, cx: i32, cy: i32, radius: i32, thick: i32, from: i32, to: i32, pen: Pen) void {
+    setPen(gb, rp, pen);
+    if (thick <= 1) {
+        gb.DrawArc(rp, cx, cy, radius, from, to);
+        return;
+    }
+    gb.FillArc(rp, &.{ .cx = cx, .cy = cy, .radius = radius, .inner = radius - thick + 1, .from = from, .to = to });
+}
+
 // --- arrows -----------------------------------------------------------------
 //
 // The stepping arrows of a scroller and of a number field are the same

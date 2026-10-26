@@ -14,17 +14,25 @@
 //! `CLICKTAB_FirstShown` on, with two arrows at the right end that move
 //! the row along one tab at a time.
 //!
-//! A row of tabs is a `page.gadget` above what it shows: the page is the
-//! tab row's `ICA_TARGET`, and `ICA_MAP` turns `CLICKTAB_Current` into
-//! `PAGE_Current`, so a tab press changes the page without the program
-//! hearing anything.
+//! The tabs are cards standing on a line along the bottom of the row,
+//! drawn in the style's look for a button, sharing the row's width; the
+//! one in front opens into what is below it.
 //!
-//!   const map = [_]TagItem{ .{ .tag = ct.CLICKTAB_Current, .data = pg.PAGE_Current }, .{} };
+//! A row of tabs over pages is a `page.gadget`'s `PAGE_Tabs`: the page
+//! gadget holds the row along its top, frames the pages below it - the
+//! row's line is the frame's top edge - and turns the page as a tab is
+//! pressed, without the program hearing anything. The row works on its
+//! own too, over anything a program changes when it hears the row's
+//! `IDCMP_GADGETUP`, or through its `ICA_TARGET`.
+//!
 //!   const tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &.{
 //!       .{ .tag = gc.GA_ID, .data = 1 },
 //!       .{ .tag = ct.CLICKTAB_Labels, .data = @intFromPtr(&names) },
-//!       .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(pages) },
-//!       .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&map) },
+//!       .{},
+//!   });
+//!   const book = ib.NewObjectTagList(null, pg.PAGE_CLASS, &.{
+//!       .{ .tag = pg.PAGE_Pages, .data = @intFromPtr(&pages) },
+//!       .{ .tag = pg.PAGE_Tabs, .data = @intFromPtr(tabs) },
 //!       .{},
 //!   });
 

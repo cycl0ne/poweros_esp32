@@ -19,10 +19,10 @@
 //!   is picked in one is printed.
 //! - **About**: a line of text.
 //!
-//! The tabs are the page gadget's `ICA_TARGET`, and an `ICA_MAP` turns
-//! `CLICKTAB_Current` into `PAGE_Current`, so pressing a tab turns the
-//! page without the program hearing anything. `PAGE` opens it on a tab
-//! other than the first. Every gadget let go is printed with its ID and
+//! The tabs are the page gadget's `PAGE_Tabs`: it holds them along its
+//! top, frames the pages below them, and turns the page as a tab is
+//! pressed without the program hearing anything. `PAGE` opens it on a
+//! tab other than the first. Every gadget let go is printed with its ID and
 //! the code it finished with. The close gadget or Ctrl-C end it.
 //!
 //! Each label's underlined letter works its gadget: `t` takes the next
@@ -59,7 +59,7 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Settings";
-const VERSION_STRING = "\x00$VER: Settings 1.1 (12.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Settings 1.2 (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "PAGE/K/N";
@@ -104,16 +104,6 @@ fn nameOf(id: usize) [*:0]const u8 {
 
 const tab_names = [_:null]?[*:0]const u8{ "General", "Copy", "Files", "About" };
 const keymaps = [_:null]?[*:0]const u8{ "deutsch", "usa", "usa2", "france", "italia", "espana", "sverige", "norsk" };
-
-/// What the tabs say and what the page shows, kept in step by the
-/// connection alone: the tab's number becomes the page's.
-const tab_to_page = [_]TagItem{
-    .{ .tag = ct.CLICKTAB_Current, .data = pgc.PAGE_Current },
-    // The gadget's own ID travels with every update and means nothing to
-    // the page, so it is dropped here.
-    .{ .tag = gc.GA_ID, .data = utility.TAG_IGNORE },
-    .{},
-};
 
 /// The pages, which the page gadget is given a pointer to and keeps: it
 /// does not copy them, so they live here rather than in `build`.
@@ -298,32 +288,32 @@ fn build(ib: *IntuitionBase, first_tab: u32) ?Shown {
     pages[1] = copy;
     pages[2] = files_page;
     pages[3] = about_page;
-    const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{
-        .{ .tag = pgc.PAGE_Pages, .data = @intFromPtr(&pages) },
-        .{ .tag = pgc.PAGE_Current, .data = first_tab },
-        .{},
-    });
-    const tabs = if (book != null) ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
+    const tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_TABS },
         .{ .tag = gc.GA_Key, .data = 't' },
         .{ .tag = ct.CLICKTAB_Labels, .data = @intFromPtr(&tab_names) },
-        .{ .tag = ct.CLICKTAB_Current, .data = first_tab },
-        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(book) },
-        .{ .tag = icc.ICA_MAP, .data = @intFromPtr(&tab_to_page) },
+        .{},
+    });
+    // The page gadget takes the tabs and the pages, and shows the first
+    // page in the tabs too.
+    const book = if (tabs != null) ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{
+        .{ .tag = pgc.PAGE_Pages, .data = @intFromPtr(&pages) },
+        .{ .tag = pgc.PAGE_Tabs, .data = @intFromPtr(tabs) },
+        .{ .tag = pgc.PAGE_Current, .data = first_tab },
         .{},
     }) else null;
-    const layout = if (tabs != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+    const layout = if (book != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         .{ .tag = lg.LAYOUTA_Margin, .data = 6 },
-        .{ .tag = lg.LAYOUTA_Spacing, .data = 0 },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(tabs) },
-        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(book) },
         .{},
     }) else null;
     const whole = layout orelse {
-        ib.DisposeObject(tabs);
-        ib.DisposeObject(book); // and the pages in it
-        if (book == null) for (made_pages) |built| ib.DisposeObject(built);
+        if (book) |made| {
+            ib.DisposeObject(made); // and the tabs and the pages in it
+        } else {
+            ib.DisposeObject(tabs);
+            for (made_pages) |built| ib.DisposeObject(built);
+        }
         return null;
     };
     return .{ .layout = whole, .tabs = tabs.?, .gauge = gauge.?, .file = file.?, .font = font.?, .device = device.? };

@@ -116,7 +116,7 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.14";
+const VERSION = "1.15";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
@@ -307,12 +307,6 @@ const Preset = struct {
     node: exec.Node = .{},
     name: [32:0]u8 = @splat(0),
 };
-const tab_to_page = [_]TagItem{
-    .{ .tag = ct.CLICKTAB_Current, .data = pgc.PAGE_Current },
-    .{ .tag = gc.GA_ID, .data = utility.TAG_IGNORE },
-    .{},
-};
-
 /// The style's fields: a key each, its label, and its group.
 const Field = struct { key: style_file.Key, label: [*:0]const u8 };
 const colour_fields = [_]Field{
@@ -1820,12 +1814,14 @@ noinline fn build(e: *Editor) ?*Object {
     }) orelse return null;
     pages[page_sound] = column(ib, null, &.{ sound_groups, e.sound_status }, &.{}) orelse return null;
 
-    const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{ pair(pgc.PAGE_Pages, @intFromPtr(&pages)), .{} }) orelse return null;
     e.tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_TABS),
         pair(ct.CLICKTAB_Labels, @intFromPtr(&tab_names)),
-        pair(icc.ICA_TARGET, @intFromPtr(book)),
-        pair(icc.ICA_MAP, @intFromPtr(&tab_to_page)),
+        .{},
+    }) orelse return null;
+    const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{
+        pair(pgc.PAGE_Pages, @intFromPtr(&pages)),
+        pair(pgc.PAGE_Tabs, @intFromPtr(e.tabs)),
         .{},
     }) orelse return null;
     const buttons = row(ib, &.{
@@ -1836,8 +1832,6 @@ noinline fn build(e: *Editor) ?*Object {
     return ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         pair(lg.LAYOUTA_Margin, 6),
         pair(lg.LAYOUTA_Spacing, 6),
-        pair(lg.LAYOUTA_AddChild, @intFromPtr(e.tabs)),
-        pair(lg.CHILDA_WeightHeight, 0),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(book)),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(buttons)),
         pair(lg.CHILDA_WeightHeight, 0),

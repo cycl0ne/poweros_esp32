@@ -276,11 +276,16 @@ over another part.
 
 **Which part.** A button, or anything pressed, is `PART_MAIN`; a box
 that holds content - a field, a list - is `PART_FIELD`, so a list is
-drawn as a field is; a frame round a group is `PART_GROUP`. What only
-stands on the window - a page, a row of tabs between the tabs, a text
-without a frame - is not a part at all: it is the window's ground,
-painted as the window paints it with `EraseRect` through the gadget's
-RastPort. A round part's corners are its own: what is drawn inside it
+drawn as a field is; a frame round a group is `PART_GROUP`. A tab and
+the frame a page gadget draws round its pages under a row of tabs each
+leave one side open - a tab its bottom, the frame its top - so their
+classes take the edges of `PART_MAIN` from the style (`support.Edges`:
+the light and dark colours, how thick, how round) and draw them
+themselves (`support.drawOpenBox`); a style square at the corners still
+gets tabs rounded a little. What only stands on the window - a page,
+the inside of a tab, the row between the tabs, a text without a frame -
+is not a part at all: it is the window's ground, painted as the window
+paints it with `EraseRect` through the gadget's RastPort. A round part's corners are its own: what is drawn inside it
 keeps clear of them by the radius less the border. A gadget in a
 window's border (`GA_RightBorder` and the like) stands on the border
 instead: what it does not draw is the border's, in its colour while the

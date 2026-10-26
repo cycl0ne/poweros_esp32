@@ -2327,6 +2327,82 @@ test "page.gadget: the page that is shown answers for the gadget" {
     try rig.down();
 }
 
+test "page.gadget: a row of tabs along its top turns the pages, and a page turned by hand shows in it" {
+    var heard = Heard{ .tag = pgc.PAGE_Current, .ib = undefined };
+    var rig = try Rig.up(&pageclass.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const tabs_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &clicktab.Library.resident_tag, null).?));
+
+    const first = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("One") },
+        .{ .tag = gc.GA_ID, .data = 1 },
+        .{ .tag = gc.GA_Key, .data = 'a' },
+        .{},
+    }).?;
+    const second = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("Two") },
+        .{ .tag = gc.GA_ID, .data = 2 },
+        .{ .tag = gc.GA_Key, .data = 'b' },
+        .{},
+    }).?;
+    const pages = [_:null]?*Object{ first, second };
+    const names = [_:null]?[*:0]const u8{ "One", "Two" };
+    const tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 7 },
+        .{ .tag = gc.GA_Key, .data = 't' },
+        .{ .tag = ct.CLICKTAB_Labels, .data = @intFromPtr(&names) },
+        .{},
+    }).?;
+    const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{
+        .{ .tag = pgc.PAGE_Pages, .data = @intFromPtr(&pages) },
+        .{ .tag = pgc.PAGE_Tabs, .data = @intFromPtr(tabs) },
+        .{ .tag = pgc.PAGE_Current, .data = 1 },
+        .{},
+    }).?;
+    // The row shows the page the gadget was made on.
+    try testing.expectEqual(@as(usize, 1), attr(ib, tabs, ct.CLICKTAB_Current));
+
+    // Taller than a page by the row and the frame, wider than a page by
+    // the frame, and never narrower than the row.
+    var want = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    try testing.expect(ib.SendMessage(book, @ptrCast(&want)) != 0);
+    var row = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    _ = ib.SendMessage(tabs, @ptrCast(&row));
+    var page = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
+    _ = ib.SendMessage(first, @ptrCast(&page));
+    try testing.expect(want.domain.height > row.domain.height + page.domain.height);
+    try testing.expect(want.domain.width > page.domain.width);
+    try testing.expect(want.domain.width >= row.domain.width);
+    // A page with no most size leaves the gadget's unlimited, the frame
+    // and the row not added past the limit.
+    var most = gc.GpDomain{ .which = gc.GDOMAIN_MAXIMUM };
+    _ = ib.SendMessage(book, @ptrCast(&most));
+    try testing.expect(most.domain.width <= gc.GDOMAIN_UNLIMITED and most.domain.height <= gc.GDOMAIN_UNLIMITED);
+
+    // The row is asked for a key before the page: its key takes the next
+    // tab, round to the first, and the page turns with it.
+    var termination: i32 = -1;
+    var step = keyed('t', 0, &termination);
+    try testing.expect(ib.SendMessage(book, @ptrCast(&step)) != gc.GMKR_NOTHING);
+    try testing.expectEqual(@as(usize, 0), attr(ib, tabs, ct.CLICKTAB_Current));
+    try testing.expectEqual(@as(usize, 0), attr(ib, book, pgc.PAGE_Current));
+    var key_a = keyed('a', 0, &termination);
+    var key_b = keyed('b', 0, &termination);
+    try testing.expect(ib.SendMessage(book, @ptrCast(&key_a)) != gc.GMKR_NOTHING);
+    try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(book, @ptrCast(&key_b)));
+
+    // A page turned by hand is the tab in front.
+    _ = ib.SetAttrsTagList(book, &[_]TagItem{ .{ .tag = pgc.PAGE_Current, .data = 1 }, .{} });
+    try testing.expectEqual(@as(usize, 1), attr(ib, tabs, ct.CLICKTAB_Current));
+
+    // The row goes with the gadget: its class has no objects left, so its
+    // library goes when it is asked to.
+    ib.DisposeObject(book);
+    _ = kexec.SysBase.iface().RemLibrary(tabs_lib);
+    try testing.expect(ib.FindClass(tabs_lib.name().ptr) == null);
+    try rig.down();
+}
+
 /// A display for a window to open on: the fake board, 64 by 40 pixels.
 const Display = struct {
     state: *host_rom.fakeboard.State,
