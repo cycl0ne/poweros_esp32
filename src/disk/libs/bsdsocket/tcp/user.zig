@@ -162,12 +162,17 @@ pub fn receive(stack: *StackBase, socket: *Socket, into: []u8, peek: bool) ?u32 
             if (tcb.oob_state == _tcp.oob_taken) tcb.oob_state = _tcp.oob_none;
         }
     }
-    const before = output.window(tcb);
     tcb.receive.drop(taken);
-    // A window that opened by a segment or by half the ring is said at
-    // once, so a sender waiting on it goes on.
-    const opened = output.window(tcb) - before;
-    if (tcb.state != .closed and (before == 0 or opened >= tcb.mss or opened >= tcb.receive.size / 2)) {
+    // The window said at once when what the peer was last told it may
+    // send is down to half the ring or less, and the window now is at
+    // least twice that and a segment more than it, so a sender waiting on
+    // it goes on (as Linux's receiver does). One whose reader keeps up has
+    // room it was told of all along, and the next acknowledgement takes
+    // the rest: a reader of small pieces sent an update for every one.
+    const told: u32 = if (_tcp.after(tcb.rcv_adv, tcb.rcv_nxt)) tcb.rcv_adv -% tcb.rcv_nxt else 0;
+    const now = output.window(tcb);
+    const widest = @min(tcb.receive.size, @as(u32, 65535) << @intCast(tcb.rcv_shift));
+    if (tcb.state != .closed and told <= widest / 2 and now >= 2 * told and now - told >= @min(tcb.mss, widest / 2)) {
         tcb.flags |= _tcp.ack_now;
         output.output(stack, tcb);
     }

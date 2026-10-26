@@ -367,6 +367,26 @@ test "the Internet checksum of a known IPv4 header" {
     try testing.expectEqual(@as(u16, 0xB861), _ip.finish(_ip.sum(0, &cleared)));
 }
 
+test "the checksum a word at a time is the checksum two bytes at a time" {
+    var bytes: [1600]u8 align(8) = undefined;
+    var prng = std.Random.DefaultPrng.init(0x1071);
+    prng.random().bytes(&bytes);
+    // Runs of 0xFF carry most.
+    @memset(bytes[100..400], 0xFF);
+    for (0..9) |offset| {
+        for ([_]usize{ 0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 20, 31, 40, 63, 64, 65, 300, 1460, 1480, 1500, 1591 }) |length| {
+            const piece = bytes[offset..][0..length];
+            for ([_]u32{ 0, 0x1234, 0x2FFFD }) |start| {
+                var want: u64 = start;
+                var at: usize = 0;
+                while (at + 1 < piece.len) : (at += 2) want += _ip.get16(piece, at);
+                if (at < piece.len) want += @as(u32, piece[at]) << 8;
+                try testing.expectEqual(_ip.finish(@truncate(want)), _ip.finish(_ip.sum(start, piece)));
+            }
+        }
+    }
+}
+
 // --- running out of memory -----------------------------------------------------------
 
 /// exec's own AllocMem, and which allocation from now on fails: the

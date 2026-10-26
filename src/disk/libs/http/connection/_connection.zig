@@ -11,9 +11,10 @@
 //! The address is looked up with GetAddrInfo and each answer tried in
 //! the order it gives them, IPv6 and IPv4, until one connects. A client's
 //! HTTP_Timeout becomes the socket's SO_RCVTIMEO and SO_SNDTIMEO. The
-//! socket's receive ring is 64 KiB, set before it connects: it is the
-//! window the server may send into, and a stream socket's 8 KiB holds a
-//! download to about 24 MB/s on a gigabit link.
+//! socket's receive ring is 128 KiB on the 64-bit machines and 64 KiB
+//! elsewhere, set before it connects: it is the window the server may
+//! send into, and a stream socket's 8 KiB holds a download to about
+//! 24 MB/s on a gigabit link.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -28,9 +29,13 @@ const _base = @import("../http_base.zig");
 const Client = _client.Client;
 const Url = _protocol.Url;
 
-/// The socket's receive ring, and so the window offered: as wide as a
-/// window goes without window scaling.
-const ring_bytes: i32 = 64 * 1024;
+/// The socket's receive ring, and so the window offered. On the 64-bit
+/// machines 128 KiB, a gigabit link's round trip on a LAN and some: a
+/// gigabit download fills the link with it (115 MB/s on the VisionFive
+/// 2), where 512 KiB let the server send bursts that came back as
+/// retransmissions, 100 MB/s. Elsewhere as wide as a window goes without
+/// window scaling.
+const ring_bytes: i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 128 * 1024 else 64 * 1024;
 
 /// The longest host name a connection keeps.
 pub const host_most = 255;
