@@ -17,7 +17,10 @@
 //! **One process, one connection, one request at a time**: packets wait
 //! on the port while the handler waits for the server. `fs.zig` turns
 //! each packet into the requests it takes; `session.zig` and what it is
-//! built on speak SMB.
+//! built on speak SMB. Only a READ sent ahead and a WRITE's last piece
+//! (`fs.zig` says when) are not waited for: their answers are read
+//! between packets as they come - a READ's into two buffers of the
+//! process's - told by the socket's event signal.
 //!
 //! **The volume** is named after the share, or as the startup says,
 //! dated at the logon, with the DosType `SMB\0`; it is write-protected
@@ -68,6 +71,7 @@ const timer = sdk.devices.timer;
 const record = dos.record;
 const notify = dos.notify;
 const TimerBase = sdk.interface.timer.TimerBase;
+const TagItem = sdk.utility.TagItem;
 const connection_area = @import("connection.zig");
 const session_area = @import("session.zig");
 const negotiate_area = @import("negotiate.zig");
@@ -81,7 +85,7 @@ const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 7;
+const HANDLER_REVISION = 8;
 const BUILD_DATE = "26.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -166,6 +170,12 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     const block = sys.AllocVec(@sizeOf(State), exec.MEMF_CLEAR) orelse
         return refuse(dl, startup_packet, startup, smb.SMBSTAGE_MEMORY);
     defer sys.FreeVec(block);
+    // Reading ahead, when there is the memory for it, and a signal that
+    // says when its answer comes.
+    const ahead_block = sys.AllocVec(2 * session_area.receive_size, exec.MEMF_ANY);
+    defer if (ahead_block) |ahead| sys.FreeVec(ahead);
+    const event_signal = sys.AllocSignal(-1);
+    defer if (event_signal >= 0) sys.FreeSignal(event_signal);
 
     const st: *State = @ptrCast(@alignCast(block));
     const cb: *CryptoBase = @ptrCast(crypto_lib);
@@ -196,6 +206,14 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     };
     if (node) |device| st.fs.device_name = cString(std.mem.span(device.name));
     cb.RandomBytes(&st.session.client_guid, 16);
+    const event_mask: u32 = if (event_signal >= 0) @as(u32, 1) << @intCast(event_signal) else 0;
+    if (ahead_block != null and event_mask != 0) {
+        const tags = [_]TagItem{ .{ .tag = bsd.SBTM_SETVAL(bsd.SBTC_SIGEVENTMASK), .data = event_mask }, .{} };
+        if (sb.SocketBaseTagList(&tags) == 0) {
+            const bytes: [*]u8 = @ptrCast(ahead_block.?);
+            st.fs.ahead_buffers = .{ bytes[0..session_area.receive_size], bytes[session_area.receive_size..][0..session_area.receive_size] };
+        }
+    }
 
     // The share's size, for Info; a server that will not say is shown
     // with none.
@@ -214,10 +232,11 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     dl.ReplyPkt(startup_packet, dos.DOSTRUE, 0);
 
     // Packets on the process's port; the idle timer, the record locks'
-    // timers and the watchers' replies on their own.
+    // timers and the watchers' replies on their own; while a READ ahead
+    // is coming, its answer on the socket's event signal.
     const packets = &me.msg_port;
     const clock_mask: u32 = if (st.clock_port) |port| port.sigMask() else 0;
-    const mask = packets.sigMask() | clock_mask | st.records.signals() | st.watchers.signals();
+    const mask = packets.sigMask() | clock_mask | st.records.signals() | st.watchers.signals() | event_mask;
     startClock(st);
     while (true) {
         if (st.clock_port) |port| {
@@ -253,7 +272,12 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
             if (!reply.held) dl.ReplyPkt(pkt, reply.res1, reply.res2);
         }
         st.fs.refresh();
-        _ = sys.Wait(mask);
+        st.fs.pump();
+        if (sys.Wait(if (st.fs.reading()) mask else mask & ~event_mask) & event_mask != 0) {
+            var events: u32 = 0;
+            while (sb.GetSocketEvents(&events) >= 0) {}
+            st.fs.pump();
+        }
     }
 }
 

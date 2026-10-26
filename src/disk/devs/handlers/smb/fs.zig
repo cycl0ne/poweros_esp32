@@ -40,6 +40,23 @@
 //! Its size is what the open said, asked again when a seek is to its end
 //! or past it.
 //!
+//! **Reading ahead**: after a read that follows the one before, or
+//! starts the file, the piece after it is asked for at once
+//! (`readAhead`) - one READ at a time - and its answer read as it comes,
+//! between packets, into one of two buffers of the handler's. The next
+//! read takes what it wants from there, waiting for the rest when not
+//! all of it has come, and the piece after that is asked for. What was
+//! read ahead is kept while the file is open, and let go of when
+//! anything is written through this handler and when a new connection
+//! is made; where it found the file ending is believed for a second, as
+//! the file may grow. Without the buffers nothing is read ahead.
+//!
+//! **Writing behind**: a WRITE is answered once its last piece has gone,
+//! before the server says how it went; that answer is read between
+//! packets, or before the next request. What it brings - the disk full,
+//! a failure, the connection gone with it - is answered by the file's
+//! next WRITE, FLUSH or END, as Linux's cifs and NFS tell it.
+//!
 //! **A change** is one round trip: the object opened, the change set on
 //! it (SET_INFO: a name, a deletion, attributes, a date) and the handle
 //! closed, compounded. A delete is refused while the object is locked; a
@@ -69,7 +86,9 @@
 //! path and keeps its position; one that is no longer there answers
 //! ERROR_OBJECT_NOT_FOUND from then on. A scan starts over from the
 //! entries it had handed out. A WRITE, like a READ, goes on from the
-//! piece it was at. CREATE_DIR, DELETE_OBJECT and RENAME_OBJECT are not
+//! piece it was at - but a WRITE's last piece, whose answer went with the
+//! old connection, is not written again: the file's next WRITE, FLUSH or
+//! END fails. CREATE_DIR, DELETE_OBJECT and RENAME_OBJECT are not
 //! served again - the server may have done them before the connection
 //! went - and answer ERROR_DEVICE_NOT_MOUNTED. While the server cannot be
 //! had, a packet that needs it answers ERROR_DEVICE_NOT_MOUNTED; locks
@@ -248,9 +267,14 @@ pub const Lock = extern struct {
     writable: bool = false,
     modified: bool = false,
     unflushed: bool = false,
+    /// What a piece written behind came to, as `@intFromError`, until the
+    /// file's next WRITE, FLUSH or END tells it; 0 when nothing failed.
+    write_error: u16 = 0,
     /// An open file's position, and its size as last known.
     pos: u64 align(4) = 0,
     size: u64 align(4) = 0,
+    /// Where its last read ended: a read from there follows it.
+    read_end: u64 align(4) = 0,
     /// A directory scan under way.
     scan: ?*Scan = null,
 
@@ -299,6 +323,22 @@ const Setting = union(enum) {
     rename: []const u8,
 };
 
+/// A piece of an open file read ahead: `want` bytes from `offset` asked
+/// for into buffer `index` as message `id`, `since` seconds on `now`'s
+/// clock; once `arrived`, its `data`, and whether the file `end`s there.
+/// Nothing without a `lock`.
+const ReadAhead = struct {
+    lock: ?*Lock = null,
+    offset: u64 = 0,
+    want: u32 = 0,
+    index: u1 = 0,
+    id: u64 = 0,
+    since: u64 = 0,
+    arrived: bool = false,
+    data: []const u8 = &.{},
+    end: bool = false,
+};
+
 pub const FileSystem = struct {
     sys: *ExecBase,
     dl: *DosBase,
@@ -343,6 +383,15 @@ pub const FileSystem = struct {
     /// Seconds on a clock that only counts up, null without one: the
     /// handler's.
     now: ?*const fn (fs: *FileSystem) ?u64 = null,
+    /// Two buffers of `session_area.receive_size` bytes to read ahead
+    /// into, none without: the handler's. What was read ahead, and the
+    /// READ ahead coming.
+    ahead_buffers: ?[2][]u8 = null,
+    cached: ReadAhead = .{},
+    coming: ReadAhead = .{},
+    /// The piece written behind while its answer comes: the file's, its
+    /// message id and its length. Nothing without a lock.
+    behind: struct { lock: ?*Lock = null, id: u64 = 0, length: u32 = 0 } = .{},
 
     // --- memory ---------------------------------------------------------------
 
@@ -438,6 +487,9 @@ pub const FileSystem = struct {
 
     fn freeLock(fs: *FileSystem, lock: *Lock) void {
         fs.endScan(lock);
+        if (fs.cached.lock == lock) fs.cached.lock = null;
+        if (fs.coming.lock == lock) fs.coming.lock = null;
+        if (fs.behind.lock == lock) fs.behind.lock = null;
         // A file's record locks go with its handle.
         if (fs.records) |records| records.release(lock);
         if (fs.locks == lock) {
@@ -527,7 +579,7 @@ pub const FileSystem = struct {
     /// The requests sent and their answers in `replies`; a broken
     /// connection is NotMounted from here on.
     fn exchange(fs: *FileSystem, request: *session_area.Request, replies: []Reply) Error!void {
-        if (fs.lost) return error.NotMounted;
+        try fs.settleAhead();
         fs.session.exchange(request, replies) catch {
             fs.lost = true;
             return error.NotMounted;
@@ -538,7 +590,7 @@ pub const FileSystem = struct {
     /// One READ sent, its data read straight into `into` when it can be:
     /// as `Session.exchangeRead`, a broken connection NotMounted.
     fn exchangeRead(fs: *FileSystem, request: *session_area.Request, replies: []Reply, into: []u8) Error!?usize {
-        if (fs.lost) return error.NotMounted;
+        try fs.settleAhead();
         const count = fs.session.exchangeRead(request, replies, into) catch {
             fs.lost = true;
             return error.NotMounted;
@@ -715,13 +767,17 @@ pub const FileSystem = struct {
     pub fn recover(fs: *FileSystem) bool {
         if (!fs.lost) return true;
         const reconnect = fs.reconnect orelse return false;
+        fs.forgetAhead();
         var it = fs.locks;
         while (it) |lock| : (it = lock.nextLock()) {
             const scan = lock.scan orelse continue;
             fs.sys.FreeVec(scan);
             lock.scan = null;
         }
-        if (!reconnect(fs)) return false;
+        const connected = reconnect(fs);
+        // A piece written behind whose answer went with the connection.
+        fs.taken();
+        if (!connected) return false;
         fs.lost = false;
         it = fs.locks;
         while (it) |lock| : (it = lock.nextLock()) {
@@ -999,14 +1055,31 @@ pub const FileSystem = struct {
         lock.writable = true;
     }
 
+    /// READ: from the position, what was read ahead first, the rest in
+    /// pieces; and when it followed the read before, the piece after it
+    /// asked for ahead.
     fn read(fs: *FileSystem, args: dos.IOArgs) Error!usize {
         const lock = try fs.fileOf(args.fh);
         const buffer = args.buffer orelse return 0;
         const length: usize = if (args.length > 0) @intCast(args.length) else 0;
+        const following = lock.pos == lock.read_end;
         var recovered = false;
         var done: usize = 0;
         while (done < length) {
             if (lock.gone) return error.NotFound;
+            const ahead = fs.fromAhead(lock, buffer[done..length]) catch |err| {
+                if (recovered or !fs.lost or !fs.recover()) return err;
+                recovered = true;
+                continue;
+            };
+            if (ahead) |count| {
+                // Nothing there: the file ends.
+                if (count == 0) break;
+                done += count;
+                lock.pos += count;
+                if (lock.pos > lock.size) lock.size = lock.pos;
+                continue;
+            }
             // The server's limit, which a new connection may change, and
             // the credits there are.
             const piece_max: usize = fs.session.pieceMax(fs.session.max_read);
@@ -1033,7 +1106,159 @@ pub const FileSystem = struct {
             if (lock.pos > lock.size) lock.size = lock.pos;
             if (count < want) break;
         }
+        lock.read_end = lock.pos;
+        if (following) fs.readAhead(lock);
         return done;
+    }
+
+    // --- reading ahead --------------------------------------------------------
+
+    /// What was read ahead of `lock` from its position copied into
+    /// `into`: how much, 0 where the file ends - or null when nothing
+    /// read ahead is there. The READ ahead from there is waited for
+    /// when it is still coming.
+    fn fromAhead(fs: *FileSystem, lock: *Lock, into: []u8) Error!?usize {
+        fs.taken();
+        var moved = false;
+        while (true) {
+            const cached = &fs.cached;
+            if (cached.lock == lock and lock.pos >= cached.offset and lock.pos - cached.offset <= cached.data.len) {
+                const rest = cached.data[@intCast(lock.pos - cached.offset)..];
+                if (rest.len > 0 or (cached.end and fs.fresh(cached))) {
+                    const count = @min(rest.len, into.len);
+                    @memcpy(into[0..count], rest[0..count]);
+                    return count;
+                }
+            }
+            if (moved or fs.coming.lock != lock or fs.coming.offset != lock.pos) return null;
+            if (!fs.coming.arrived) try fs.settleAhead();
+            if (fs.coming.lock != lock or !fs.coming.arrived) return null;
+            fs.cached = fs.coming;
+            fs.coming.lock = null;
+            moved = true;
+        }
+    }
+
+    /// After a read that followed the one before: the piece after what
+    /// was read ahead of `lock`, or after its position, asked for ahead -
+    /// not when the file ends before it, as far as is known. A READ ahead
+    /// for another file is let be while it is fresh.
+    fn readAhead(fs: *FileSystem, lock: *Lock) void {
+        const buffers = fs.ahead_buffers orelse return;
+        if (fs.lost or lock.gone) return;
+        fs.taken();
+        const cached = &fs.cached;
+        var from = lock.pos;
+        if (cached.lock == lock and lock.pos >= cached.offset and lock.pos - cached.offset <= cached.data.len) {
+            if (cached.end and fs.fresh(cached)) return;
+            from = cached.offset + cached.data.len;
+        }
+        if (from >= lock.size) return;
+        if (fs.coming.lock) |other| {
+            if (other == lock and fs.coming.offset == from) return;
+            if (other != lock and fs.fresh(&fs.coming)) return;
+        }
+        // Whatever else was coming taken in, and let go of.
+        fs.settleAhead() catch return;
+        fs.coming.lock = null;
+        const index: u1 = if (cached.lock != null) cached.index ^ 1 else 0;
+        const want = fs.session.pieceMax(fs.session.max_read);
+        var request = fs.session.begin(.read);
+        commands.read(&request, &lock.file_id, from, want);
+        const id = fs.session.sendAhead(&request, buffers[index]) catch {
+            fs.lost = true;
+            return;
+        };
+        fs.coming = .{ .lock = lock, .offset = from, .want = want, .since = fs.clock(), .index = index, .id = id };
+    }
+
+    /// Whether a READ ahead is coming: what `pump` is for. A WRITE's
+    /// answer waits on the connection for the next request.
+    pub fn reading(fs: *const FileSystem) bool {
+        return fs.coming.lock != null and !fs.coming.arrived;
+    }
+
+    /// What has come of the READ ahead read, without waiting: the
+    /// handler's, between packets. A broken connection is lost.
+    pub fn pump(fs: *FileSystem) void {
+        if (!fs.reading()) return;
+        fs.session.pump() catch {
+            fs.lost = true;
+        };
+        fs.taken();
+    }
+
+    /// All of the READ ahead read, waiting for what has not come; a broken
+    /// connection NotMounted.
+    fn settleAhead(fs: *FileSystem) Error!void {
+        if (fs.lost) return error.NotMounted;
+        fs.session.settle() catch {
+            fs.lost = true;
+        };
+        fs.taken();
+        if (fs.lost) return error.NotMounted;
+    }
+
+    /// The answer to the request sent ahead taken from the session once it
+    /// has all come: a READ's kept in `coming` while that still wants it,
+    /// let go of otherwise; a WRITE's failure kept with its file. A READ
+    /// ahead the session no longer has is forgotten, a WRITE behind
+    /// failed.
+    fn taken(fs: *FileSystem) void {
+        const coming = &fs.coming;
+        if (fs.session.landed) |landed| {
+            fs.session.landed = null;
+            if (coming.lock != null and !coming.arrived and landed.id == coming.id) fs.arrived(&landed);
+            if (fs.behind.lock != null and landed.id == fs.behind.id) fs.wrote(&landed);
+        }
+        if (coming.lock != null and !coming.arrived and !fs.session.aheadOf(coming.id)) coming.lock = null;
+        // A piece written behind whose answer will not come: the
+        // connection went with it.
+        if (fs.behind.lock) |lock| if (!fs.session.aheadOf(fs.behind.id)) {
+            lock.write_error = @intFromError(error.NotMounted);
+            fs.behind.lock = null;
+        };
+    }
+
+    /// The READ ahead's answer kept, its data no more than was asked
+    /// for: where the file ends when it is less. A failed READ is
+    /// forgotten; one that says the session or share has gone loses the
+    /// connection.
+    fn arrived(fs: *FileSystem, landed: *const session_area.Landed) void {
+        const coming = &fs.coming;
+        const data = landed.data orelse commands.readData(&landed.reply) orelse {
+            switch (landed.reply.status()) {
+                smb.STATUS_USER_SESSION_DELETED, smb.STATUS_NETWORK_SESSION_EXPIRED, smb.STATUS_NETWORK_NAME_DELETED => fs.lost = true,
+                else => {},
+            }
+            coming.lock = null;
+            return;
+        };
+        coming.data = data[0..@min(data.len, coming.want)];
+        coming.end = data.len < coming.want;
+        coming.arrived = true;
+    }
+
+    /// Everything read ahead let go of, and the READ ahead coming: its
+    /// answer is not kept when it comes.
+    fn forgetAhead(fs: *FileSystem) void {
+        fs.cached.lock = null;
+        fs.coming.lock = null;
+    }
+
+    /// Whether what was read ahead is young enough to be believed where it
+    /// says the file ends: asked for no more than a second ago, on `now`'s
+    /// clock - any age without one.
+    fn fresh(fs: *FileSystem, ahead: *const ReadAhead) bool {
+        const now = fs.now orelse return true;
+        const seconds = now(fs) orelse return true;
+        return seconds -% ahead.since <= 1;
+    }
+
+    /// The seconds on `now`'s clock, 0 without one.
+    fn clock(fs: *FileSystem) u64 {
+        const now = fs.now orelse return 0;
+        return now(fs) orelse 0;
     }
 
     /// WRITE: the buffer at the position, in pieces; the handle made one
@@ -1045,34 +1270,81 @@ pub const FileSystem = struct {
         if (length == 0) return 0;
         if (fs.read_only) return error.WriteProtected;
         if (lock.gone) return error.NotFound;
+        fs.forgetAhead();
         if (!lock.writable) try fs.makeWritable(lock);
         var recovered = false;
         var done: usize = 0;
+        // The piece of this WRITE whose answer is still coming.
+        var behind: usize = 0;
         while (done < length) {
             if (lock.gone) return error.NotFound;
             const piece_max: usize = fs.session.pieceMax(fs.session.max_write);
             const piece: usize = @min(length - done, piece_max);
             var request = fs.session.begin(.write);
             commands.write(&request, &lock.file_id, lock.pos, buffer[done..][0..piece]);
-            var replies = session_area.noReplies();
-            fs.exchange(&request, &replies) catch |err| {
+            fs.writeBehind(lock, &request, piece) catch |err| {
                 // Lost on the way: the piece written again, once - to the
-                // same place, so whatever of it arrived is written over.
+                // same place, so whatever of it arrived is written over -
+                // from the one before it when that one's answer went too.
                 if (recovered or !fs.lost or !fs.recover()) return err;
                 recovered = true;
+                if (behind > 0 and lock.write_error != 0) {
+                    lock.write_error = 0;
+                    done -= behind;
+                    lock.pos -= behind;
+                }
+                behind = 0;
                 continue;
             };
-            const count: usize = commands.written(&replies[0]) orelse return changeErrorOf(replies[0].status());
-            if (count == 0) return error.DiskFull;
             lock.modified = true;
             lock.unflushed = true;
             fs.space_stale = true;
-            done += @min(count, piece);
-            lock.pos += @min(count, piece);
+            behind = piece;
+            done += piece;
+            lock.pos += piece;
             if (lock.pos > lock.size) lock.size = lock.pos;
-            if (count < piece) break;
         }
         return done;
+    }
+
+    /// One piece of a WRITE sent, its answer left to come - the answer
+    /// to the request before it taken first, and when that was the
+    /// file's piece written behind and it failed, the failure answered
+    /// instead.
+    fn writeBehind(fs: *FileSystem, lock: *Lock, request: *session_area.Request, length: usize) Error!void {
+        try fs.settleAhead();
+        try failedBehind(lock);
+        const id = fs.session.sendAhead(request, fs.session.receive_buffer) catch {
+            fs.lost = true;
+            return error.NotMounted;
+        };
+        fs.behind = .{ .lock = lock, .id = id, .length = @intCast(length) };
+    }
+
+    /// The answer to a piece written behind: a failure, or fewer bytes
+    /// written than sent, kept for the file to tell; one that says the
+    /// session or share has gone loses the connection too.
+    fn wrote(fs: *FileSystem, landed: *const session_area.Landed) void {
+        const lock = fs.behind.lock.?;
+        fs.behind.lock = null;
+        const count = commands.written(&landed.reply) orelse {
+            const status = landed.reply.status();
+            switch (status) {
+                smb.STATUS_USER_SESSION_DELETED, smb.STATUS_NETWORK_SESSION_EXPIRED, smb.STATUS_NETWORK_NAME_DELETED => fs.lost = true,
+                else => {},
+            }
+            lock.write_error = @intFromError(changeErrorOf(status));
+            return;
+        };
+        if (count < fs.behind.length) lock.write_error = @intFromError(error.DiskFull);
+    }
+
+    /// What a piece of `lock` written behind came to, told once.
+    fn failedBehind(lock: *Lock) Error!void {
+        if (lock.write_error == 0) return;
+        const failure: Error = @errorCast(@errorFromInt(lock.write_error));
+        lock.write_error = 0;
+        return failure;
     }
 
     /// The open file's size asked again.
@@ -1121,6 +1393,7 @@ pub const FileSystem = struct {
         if (lock.gone) return error.NotFound;
         const to = try fs.positionOf(lock, args.position, args.mode);
         if (to < 0 or to > max_position) return error.SeekError;
+        fs.forgetAhead();
         if (!lock.writable) try fs.makeWritable(lock);
         const size: u64 = @intCast(to);
         var request = fs.session.begin(.set_info);
@@ -1140,11 +1413,14 @@ pub const FileSystem = struct {
     }
 
     /// END: the handle closed on the server, and the lock freed. A file
-    /// that was written to is told of, and its directory.
+    /// that was written to is told of, and its directory. A piece written
+    /// behind that failed is the answer, the file closed all the same.
     fn close(fs: *FileSystem, args: dos.FileHandleArgs) Error!void {
         const handle = args.fh orelse return error.InvalidLock;
         const lock: *Lock = @ptrCast(@alignCast(handle.key orelse return error.InvalidLock));
         if (!fs.owns(lock)) return error.InvalidLock;
+        if (fs.behind.lock == lock) fs.settleAhead() catch {};
+        const failed = failedBehind(lock);
         if (lock.open and !lock.gone and !fs.lost) fs.closeHandle(&lock.file_id);
         if (lock.modified) {
             fs.tell(lock.key);
@@ -1153,12 +1429,17 @@ pub const FileSystem = struct {
         lock.open = false;
         fs.freeLock(lock);
         handle.key = null;
+        return failed;
     }
 
     /// FLUSH: every open file written to since it was last flushed
-    /// flushed on the server.
+    /// flushed on the server - first the answer to the last piece written
+    /// behind taken, and a failure of one answered.
     fn flush(fs: *FileSystem) Error!void {
+        try fs.settleAhead();
         var it = fs.locks;
+        while (it) |lock| : (it = lock.nextLock()) try failedBehind(lock);
+        it = fs.locks;
         while (it) |lock| : (it = lock.nextLock()) {
             if (!lock.open or lock.gone or !lock.unflushed) continue;
             var request = fs.session.begin(.flush);

@@ -16,6 +16,11 @@
 //! its side - answers STATUS_PENDING first, and each of those starts the
 //! receive's time again.
 //!
+//! **Something to read is told** with the opener's event signal
+//! (SO_EVENTMASK FD_READ; the handler sets the signal), so the handler
+//! can take a READ's answer that comes ahead between packets
+//! (`readSome`).
+//!
 //! **Its rings are 64 KiB**, set before it connects, so that the SYN
 //! already offers the receive ring: the ring is the window the server
 //! may send into, and a stream socket's 8 KiB took a 64 KiB READ's answer
@@ -96,6 +101,8 @@ pub const Connection = struct {
             const on: i32 = 1;
             _ = sb.SetSockOpt(socket, bsd.IPPROTO_TCP, bsd.TCP_NODELAY, &on, @sizeOf(i32));
             _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_KEEPALIVE, &on, @sizeOf(i32));
+            const told: u32 = bsd.FD_READ;
+            _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_EVENTMASK, &told, @sizeOf(u32));
             connection.socket = socket;
             failure.* = .{};
             return true;
@@ -155,6 +162,18 @@ pub const Connection = struct {
             return null;
         }
         return length;
+    }
+
+    /// As much of `into` as the stream has: with `wait`, at least a byte,
+    /// waiting for it; without, 0 when nothing has come. Null when the
+    /// connection failed, closed or ran out of time, which closes it.
+    pub fn readSome(connection: *Connection, into: []u8, wait: bool) ?usize {
+        if (connection.socket < 0) return null;
+        const got = connection.sb.Recv(connection.socket, into.ptr, @intCast(into.len), if (wait) 0 else bsd.MSG_DONTWAIT);
+        if (got > 0) return @intCast(got);
+        if (got < 0 and !wait and connection.sb.Errno() == bsd.EWOULDBLOCK) return 0;
+        connection.close();
+        return null;
     }
 
     /// `into` filled from the stream: false when the connection failed,
