@@ -176,6 +176,9 @@ pub const Volume = struct {
     session_started: bool = false,
     /// A write failed: nothing more is written until the next mount.
     failed: bool = false,
+    /// Blocks written since the last barrier, which a record may name: the
+    /// journal writes nothing more before a barrier has put them down.
+    unordered: bool = false,
     /// What the mount found in the journal and applied.
     replayed: objects.Replayed = .{},
     /// What the file system above can give up when the volume is full and
@@ -545,6 +548,7 @@ pub const Volume = struct {
             if (vol.map == null) vol.cache.forget(at) else vol.setVerified(at, false);
         }
         vol.forgetData(addr, count);
+        vol.unordered = true;
         if (!vol.dev.write(vol.byteOf(addr), from)) {
             vol.failed = true;
             return error.Io;
@@ -574,6 +578,7 @@ pub const Volume = struct {
             vol.failed = true;
             return error.Io;
         }
+        vol.unordered = false;
     }
 
     // --- nodes being changed --------------------------------------------------------

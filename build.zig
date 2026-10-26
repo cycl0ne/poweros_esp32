@@ -1442,7 +1442,11 @@ const DiskImages = struct {
 
 /// The two NVMe SSDs of a virt machine: the system disk the build made,
 /// whose writes QEMU keeps in a copy that ends with the run
-/// (`snapshot=on`), and the work disk, which keeps them.
+/// (`snapshot=on`), and the work disk, which keeps them. QEMU passes the
+/// work disk's flushes on to nobody (`cache=unsafe`): each would be a
+/// sync of the image file on the host, milliseconds apiece, while what
+/// was written is in the host's own cache already and stays there when
+/// QEMU quits or is killed - only a crash of the host can lose it.
 const VirtDisks = struct {
     system: std.Build.LazyPath,
     /// The work disk's path, and the step that puts it there.
@@ -1454,7 +1458,7 @@ const VirtDisks = struct {
         run.addPrefixedFileArg("if=none,id=system,format=raw,snapshot=on,file=", disks.system);
         run.addArgs(&.{
             "-device", "nvme,serial=system,drive=system",
-            "-drive",  b.fmt("if=none,id=work,format=raw,file={s}", .{disks.work.path}),
+            "-drive",  b.fmt("if=none,id=work,format=raw,cache=unsafe,file={s}", .{disks.work.path}),
             "-device", "nvme,serial=work,drive=work",
         });
         run.step.dependOn(disks.work.step);

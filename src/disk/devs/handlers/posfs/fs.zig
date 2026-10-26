@@ -6,10 +6,14 @@
 //! The packets mean what they mean for RAM: and flashfs - the arguments,
 //! the answers, the lock rules, the error codes. On top:
 //!
-//! - **Every change is durable when it is answered.** A packet that
-//!   changes the volume writes its record and waits for the medium before
-//!   it replies (`objects.change`); a write to a file is durable when the
-//!   file is closed or flushed, and then all of it at once.
+//! - **Every change is durable in the order it was answered.** A packet
+//!   that changes the volume puts its record in the journal and replies
+//!   (`objects.change`); the journal goes to the medium with one barrier
+//!   for the changes of a moment (`writeJournal`, which the handler calls
+//!   shortly after the first change waits), and at ACTION_FLUSH. A cut
+//!   loses only the newest changes, never one without those after it. A
+//!   write to a file counts as a change when the file is closed or
+//!   flushed, and then all of it at once.
 //! - **The protection bits are kept to**: a file with r set is not read,
 //!   one with w set not written, one with d set not deleted, and
 //!   MODE_NEWFILE on a file with w or d set is refused. The others are
@@ -31,10 +35,11 @@
 //!   take none.
 //!
 //! - **A medium that goes** (`retire`) takes the volume's memory with it,
-//!   unwritten. Its locks are parked: they answer ERROR_DEVICE_NOT_MOUNTED
-//!   until the same volume is back (`revive`), and then name what they
-//!   named, since an object's id is never given to another. Its handles
-//!   are lost with what they had not committed, and good only for END.
+//!   unwritten - the changes the journal had not written yet too. Its
+//!   locks are parked: they answer ERROR_DEVICE_NOT_MOUNTED until the
+//!   same volume is back (`revive`), and then name what they named,
+//!   since an object's id is never given to another. Its handles are
+//!   lost with what they had not committed, and good only for END.
 //!
 //! - **Recycled** (recycled.zig), while the volume has it on: a delete
 //!   of an object's last name moves the name there, and only a delete
@@ -73,6 +78,7 @@ const record = dos.record;
 const media = @import("media.zig");
 const volume = @import("volume.zig");
 const checkpoint = @import("checkpoint.zig");
+const journal = @import("journal.zig");
 const space = @import("space.zig");
 const objects = @import("objects.zig");
 const dirs = @import("dirs.zig");
@@ -492,12 +498,28 @@ pub const FileSystem = struct {
         return false;
     }
 
-    /// Everything written made durable: every file's changes committed.
+    /// Everything written made durable: every file's changes committed,
+    /// and the journal written.
     pub fn flush(fs: *FileSystem) Error!void {
         var open = fs.opens;
         while (open) |it| : (open = it.next) {
             if (it.writing) try files.commit(&fs.vol, &it.overlay);
         }
+        try fs.writeJournal();
+    }
+
+    /// Whether answered changes wait in the journal's memory: what the
+    /// handler's journal timer is started for.
+    pub fn journalWaits(fs: *const FileSystem) bool {
+        const vol = &fs.vol;
+        return !vol.read_only and !vol.failed and journal.hasPending(vol);
+    }
+
+    /// The changes answered since the journal was last written, written
+    /// and made durable together.
+    pub fn writeJournal(fs: *FileSystem) Error!void {
+        if (!fs.journalWaits()) return;
+        try journal.flush(&fs.vol);
     }
 
     /// Whether changes wait for a checkpoint, an orphan for its job, or a

@@ -3,9 +3,11 @@
 //! them, and replay.
 //!
 //! **Every change is a record.** A packet that changes the volume builds
-//! its record, writes it to the journal and only then applies it
-//! (`apply`): the same code that replay runs on the records it finds
-//! after the checkpoint it mounted. A record carries everything its
+//! its record, appends it to the journal and applies it (`apply`): the
+//! same code that replay runs on the records it finds after the
+//! checkpoint it mounted. The record reaches the medium with the others
+//! of its moment (`journal.flush`), and always before a checkpoint that
+//! holds what it changed. A record carries everything its
 //! change needs - oids, positions, times - so applying it reads neither
 //! the clock nor file data, and gives the same tree every time. What it
 //! depends on is checked again as it is applied (the object is there, the
@@ -150,16 +152,17 @@ pub fn touchDir(vol: *Volume, dir: u64, time: u64, delta: i2) Error!void {
 
 // --- changes ---------------------------------------------------------------------------
 
-/// A change made: its record written and on the medium, then applied.
-/// What the record needs is checked before; a change that fails to apply
-/// after its record is durable stops all writing, and the next mount
-/// replays it.
+/// A change made: its record appended to the journal, then applied. It
+/// is durable once the journal is next flushed - by the handler shortly
+/// after, by ACTION_FLUSH, or by a checkpoint. What the record needs is
+/// checked before; a change that fails to apply has its record written
+/// all the same and stops all writing, and the next mount replays it.
 pub fn change(vol: *Volume, kind: layout.Record, payload: []const u8) Error!void {
     if (vol.read_only or vol.failed) return error.ReadOnly;
     try checkpoint.startSession(vol);
     try journal.append(vol, kind, 0, &.{payload});
-    try journal.flush(vol);
     apply(vol, kind, 0, payload) catch |err| {
+        journal.flush(vol) catch {};
         vol.failed = true;
         return err;
     };

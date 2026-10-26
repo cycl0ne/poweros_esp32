@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! posfs's journal: every change, as it was asked for, in the order it
-//! was made - written before the change is answered, read again by the
-//! next mount when the volume was not put away.
+//! was made - gathered in memory and written in groups, the changes of a
+//! moment with one barrier, and read again by the next mount when the
+//! volume was not put away.
 //!
 //! **A journal block** starts with its header - its place in the chain
 //! (`jseq`), the next block (taken with this one, so writing a record
@@ -19,13 +20,21 @@
 //! padded, and the next records start in the unit after. On flash that
 //! means no page is programmed twice; on a disk, that no sector holding a
 //! durable record is ever written again, so a cut while one is written
-//! loses only what was in it - records not yet answered.
+//! loses only what was in it - the records of that flush.
+//!
+//! **Data goes down first.** A commit names blocks written before it, and
+//! a device with a cache puts writes down in an order of its own: while
+//! such blocks wait (`unordered`), a barrier goes in front of the
+//! journal's next write, so no record on the medium names data that is
+//! not.
 //!
 //! **Reading it back** (`Scanner`) takes a record only when its lsn is the
 //! next one, its checksum - seeded with the volume's id and the life -
 //! holds, and it fits its block. A record that fails ends its flush; the
 //! next flush starts at the next unit, or in the next block, and if no
-//! record there is the next one the journal ends there. A journal block
+//! record there is the next one the journal ends there. So a cut that
+//! put down only part of a flush keeps its records up to the first one
+//! lost, and none after it. A journal block
 //! is the one wanted only when its header has the jseq and the life the
 //! checkpoint said; one left from an earlier use has neither.
 
@@ -220,10 +229,12 @@ fn nextBlock(vol: *Volume) Error!void {
 }
 
 /// The pending units written, padded to a whole unit, and nothing more
-/// pending: the next record starts in the unit after.
+/// pending: the next record starts in the unit after. Data written since
+/// the last barrier is put down before them.
 fn writePending(vol: *Volume) Error!void {
     const journal = &vol.journal;
     if (journal.pending_len == 0) return;
+    if (vol.unordered) try vol.barrier();
     const unit = vol.write_unit;
     var len = (journal.pending_len + unit - 1) / unit * unit;
     if (journal.unit_start + len > vol.block_size) len = vol.block_size - journal.unit_start;
@@ -234,7 +245,8 @@ fn writePending(vol: *Volume) Error!void {
     journal.pending_len = 0;
 }
 
-/// Everything appended on the medium itself.
+/// Everything appended on the medium itself: the changes answered since
+/// the last flush made durable together.
 pub fn flush(vol: *Volume) Error!void {
     if (vol.journal.pending_len == 0) return;
     try writePending(vol);

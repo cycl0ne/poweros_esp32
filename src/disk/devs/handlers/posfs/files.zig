@@ -14,10 +14,11 @@
 //! yet. A block written over is written to a new home, never where it
 //! was; the edges of a write that does not cover a block are read first.
 //! Reads of the file see the overlay. A close commits it: the data is
-//! made durable, then one record says what it replaces, and applying that
-//! record (`applyCommit`) puts the new extents in the tree and gives up
-//! the old - so after a cut the file is the old one or the new one, never
-//! a mix. A small file's commit carries its bytes in the record.
+//! written, then one record says what it replaces - the journal puts the
+//! data on the medium before the record - and applying that record
+//! (`applyCommit`) puts the new extents in the tree and gives up the old,
+//! so after a cut the file is the old one or the new one, never a mix. A
+//! small file's commit carries its bytes in the record.
 //!
 //! **Checksums** (the volume's VT_CHECKSUMS, unless the file is
 //! INODE_NOCSUM): every block written gets a crc, seeded with the
@@ -1086,8 +1087,9 @@ pub fn inlineLimit(vol: *const Volume) u32 {
 }
 
 /// What the overlay holds made the file's committed content: the data
-/// durable, then the record, then applied. The overlay matches the tree
-/// after it.
+/// written, then the record, then applied - durable with the journal's
+/// next flush, which puts the data down first. The overlay matches the
+/// tree after it.
 pub fn commit(vol: *Volume, ov: *Overlay) Error!void {
     if (!ov.modified) return;
     var node = try objects.needInode(vol, ov.oid);
@@ -1111,7 +1113,6 @@ pub fn commit(vol: *Volume, ov: *Overlay) Error!void {
             _ = try pendingFor(vol, ov, &node, 0, null);
         }
         try spill(vol, ov, true);
-        try vol.barrier();
         if (ov.trunc_all) record.flags |= layout.COMMIT_TRUNC_ALL;
         if (ov.trim != no_trim) {
             record.flags |= layout.COMMIT_TRIM;

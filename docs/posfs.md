@@ -36,10 +36,14 @@ Every rule below follows from five invariants.
    checkpoint, the one before it, or the journal after them refers to is
    never written. Every change goes to a free block, and a freed block is
    given out again only after two more checkpoints.
-2. **A change is durable before it is answered.** A packet that changes
-   the volume writes one journal record describing the change, waits for
-   the medium, and only then replies. A file's new content is written to
-   free blocks first; the one record that makes it the file's goes after.
+2. **Changes become durable in the order they were answered.** A packet
+   that changes the volume puts one record describing the change in the
+   journal and replies. The journal goes to the medium with one barrier
+   for the changes of a moment - 50 ms after the first of them began to
+   wait, or at once for `ACTION_FLUSH` - so a cut leaves the answered
+   changes up to one of them, in order: it loses at most the newest. A
+   file's new content is written to free blocks first; the one record
+   that makes it the file's is written only once they are on the medium.
 3. **Replay is deterministic.** A record carries every value its change
    needs - object ids, directory positions, times, block addresses - so
    applying it reads neither the clock nor file data and gives the same
@@ -500,18 +504,26 @@ compressed one is one chunk at a chunk's offset.
 ### Writing units
 
 Records are written a write unit at a time, and a unit only once. The
-records of a change go into a pending buffer; the flush writes them as
-whole units, the last padded with what an unwritten byte reads as, and
-the next record starts in the unit after. On flash no page is
-programmed twice between erases; on a disk no sector that holds a
-durable record is written again, so a cut while one is written loses
-only records not yet answered. Every change flushes its own record and
-waits for the medium (a barrier: `CMD_UPDATE`, which a device with a
-write cache answers once the cache is on the medium), so a change costs
-at least one unit: 256 bytes on flash, a sector (512 bytes or more) on
-any other medium. A block with no
-room for another record is left, and the chain goes on in `next`; the
-block after it is taken then.
+records of the changes answered go into a pending buffer; a flush
+writes them as whole units, the last padded with what an unwritten byte
+reads as, and the next record starts in the unit after. On flash no
+page is programmed twice between erases; on a disk no sector that holds
+a durable record is written again, so a cut while one is written loses
+only the records of that flush. A flush ends with a barrier
+(`CMD_UPDATE`, which a device with a write cache answers once the cache
+is on the medium). The handler flushes 50 ms after the first record
+began to wait, so the changes of that time share their units and one
+barrier - a program writing file after file pays for a barrier per
+group, not two or three per file - and a flush costs at least one unit:
+256 bytes on flash, a sector (512 bytes or more) on any other medium.
+
+**Data goes down first.** Blocks written since the last barrier that a
+record may name - a commit's data - get a barrier of their own before
+the journal's next write, which may be a flush or a block filled in
+the middle of one. A record on the medium never names data that is not.
+
+A block with no room for another record is left, and the chain goes on
+in `next`; the block after it is taken then.
 
 ### Reading it back
 
@@ -519,7 +531,10 @@ The scanner starts at the checkpoint's journal position (block, `jseq`,
 offset) and takes a record only when its lsn is the next one, its
 checksum holds, and it fits its block. A record that fails ends its flush:
 the scan goes on at the next unit, or in the next block, and when no
-record there has the next lsn the journal ends. A journal block counts
+record there has the next lsn the journal ends. So a cut that put down
+only part of a flush - a device with a cache writes in an order of its
+own - keeps its records up to the first one lost, and none after it. A
+journal block counts
 only when its header has the `jseq` and the `life` expected; a block left
 from an earlier use of that address has neither.
 
@@ -672,11 +687,14 @@ attribute):
 1. The request is checked, and the record built with every value fixed:
    the new oid, the position, the time.
 2. If this mount has not written yet, its first checkpoint.
-3. The record appended and flushed: whole units written, then a barrier.
+3. The record appended to the pending units.
 4. The record applied to the tree in memory (`objects.apply`), the same
-   code replay runs. A record that fails to apply after it is durable
-   stops all writing; the next mount replays it.
+   code replay runs. A record that fails to apply is written with the
+   records before it and stops all writing; the next mount replays it.
 5. A checkpoint when one is due; then the reply, and notification.
+6. The flush, 50 ms after the first record began to wait, at
+   `ACTION_FLUSH`, or as a checkpoint's first step: a barrier when data
+   was written since the last, the whole units, then a barrier.
 
 ## Files being written
 
@@ -695,8 +713,9 @@ block are read first.
 - A file whose size is at most `inline_max`: its bytes go into the record
   (`INLINE | TRUNC_ALL`), and its blocks are given up.
 - Any other: the blocks still in memory are written (compressed where it
-  saves, with crcs where the switch says), a barrier, then one commit
-  record with an ExtSpec per run. Applying it drops what the record
+  saves, with crcs where the switch says), then one commit record with
+  an ExtSpec per run, which the journal writes only after a barrier has
+  put the blocks down. Applying it drops what the record
   replaces (all, past `trim`, and the ranges the new extents cover - the
   old extents cut, their crcs with them), puts the new extents in with
   `birth` = the current generation, marks their blocks used, and sets the
@@ -904,11 +923,16 @@ its reach.
   device, on the host tools' images and on the tests' media.
 - **A medium that goes** (`TD_CHANGENUM` before each packet, and the
   change interrupt): the volume's memory goes with it, unwritten - what
-  was answered is in its journal. Its locks are kept and answer
+  was answered is in its journal, but for what the journal timer had
+  not written yet. Its locks are kept and answer
   `ERROR_DEVICE_NOT_MOUNTED`; its volume node stays on the device list
   while locks point at it. The same volume back - by the uuid in its
   label - takes them up again; since an object's id is never given to
   another, each lock names what it named.
+- **The journal timer**: a second request on the idle timer's port,
+  started when an answered change waits in the journal's memory; 50 ms
+  later the journal is written. Without timer.device it is written after
+  every change.
 - **Idle work**: the idle checkpoint and orphan jobs, woken by a timer on
   `UNIT_VBLANK` made when changes first wait.
 - **Inhibit** commits every open file and writes a checkpoint, then
@@ -942,13 +966,16 @@ failing the way its kind of medium fails when the power goes:
   garbage.
 - **usb**: writes go into the stick's cache and reach the medium in an
   order of the stick's choosing, all of them at `update`; a cut loses
-  what the cache still held, some of it written and some not.
+  what the cache still held, some of it written and some not, and so
+  does a cut while `update` puts the cache down.
 
 The **power-cut test** (`tests/powercut.zig`) runs a seeded list of
 changes on a fresh volume until the medium dies at write N, for every N,
 also mid-write and again during replay, then mounts what is left. The
-volume must check clean and be what the changes answered before the cut,
-or that and the change the cut fell in - never anything else, never a
-mix - on all three media, with compression, checksums, Recycled, orphan
+volume must check clean and be what the changes answered made it up to
+one of them: no earlier than the last time the journal was written
+(after every other change, as the handler's timer would), no later than
+the change the cut fell in - never anything else, never a mix - on all
+three media, with compression, checksums, Recycled, orphan
 jobs and snapshots among the changes. `./zig build test -Dposfs-soak=<n>`
 runs it on n more seeds.

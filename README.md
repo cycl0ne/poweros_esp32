@@ -350,9 +350,13 @@ what a run writes to it goes with the run (QEMU's `snapshot=on`), and
 the next build or run starts from it as it was made. The work disk,
 `DH1:` (`Work`, 1 GB), is made blank the first time, as
 `work/virt.bin`, and keeps what is saved to it from then on; delete the
-file for a blank one. Both files take on the host only what has been
-written to them. The ROM holds pci.library, nvme.device and
-posfs-handler, and nvme.device starts at cold start and hands the SSDs'
+file for a blank one. QEMU passes its flushes on to nobody
+(`cache=unsafe`), since each would sync the image file on the host,
+milliseconds apiece: what the machine wrote stays when QEMU quits or is
+killed, and only a crash of the host can lose the last of it. Both
+files take on the host only what has been written to them. The ROM
+holds pci.library, nvme.device and posfs-handler, and nvme.device
+starts at cold start and hands the SSDs'
 partitions to dos ([disks guide](sdk/docs/guides/rdb.md#starting-from-an-ssd)).
 QEMU locks the work disk while it runs, so one machine of each kind runs
 at a time. `./zig build

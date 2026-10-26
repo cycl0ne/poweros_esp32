@@ -6,10 +6,12 @@ disk. Its handler is `posfs-handler`, which dos loads from `HANDLERS:`
 the first time a drive needs it. Its DosType is `POS\0` for a drive
 that is the volume, and `POS\1` for a drive that begins with a partition
 table, the volume in its first partition of type 0x7F. It keeps directories, files
-and free space in copy-on-write B+trees, writes every change to a journal before it
-answers, and never writes over a block that the volume's last durable
-state refers to. A power cut at any moment leaves a volume that mounts
-at once, holding every change that was answered.
+and free space in copy-on-write B+trees, writes every change to a journal - the
+changes of 50 ms together, under one barrier - and never writes over a
+block that the volume's last durable state refers to. A power cut at any
+moment leaves a volume that mounts at once, holding the changes that
+were answered up to one of them, in order: at most those of the last
+50 ms are lost.
 
 This guide is what posfs keeps, what it promises about the order of
 things, how it is set and checked, how a deleted file comes back, how a
@@ -20,18 +22,28 @@ its limits are.
 
 | Change | Durable |
 |---|---|
-| a directory made, an object deleted or renamed, its protection, comment, date or owner set | when the packet is answered: its record is in the journal |
-| a file's content, size and the truncation of `MODE_NEWFILE` | when the file is closed, or flushed (`ACTION_FLUSH`), all of it at once |
+| a directory made, an object deleted or renamed, its protection, comment, date or owner set | at most 50 ms after the packet is answered, when the journal is written with the changes of that time; at once with `ACTION_FLUSH` |
+| a file's content, size and the truncation of `MODE_NEWFILE` | at most 50 ms after the file is closed, or when it is flushed (`ACTION_FLUSH`), all of it at once |
 | the volume's name (`Relabel`) | when the packet is answered |
 | a snapshot made or deleted, a rollback | when the packet is answered |
+
+Changes reach the medium in the order they were answered. A cut takes
+back only the newest of them, and never one while keeping one after it:
+a file saved and then renamed is never there under the new name without
+its content. Gathering the changes of 50 ms under one barrier is what
+lets a program that writes many files in a row - an unpacker, `Copy
+ALL`, `Git clone` - run at the speed of the disk rather than of its
+cache flushes. A program that must know its changes are on the medium
+sends `ACTION_FLUSH`: every open file's changes and the journal are
+written before it is answered.
 
 A file opened with `MODE_NEWFILE` over an existing one keeps the old
 content until it is closed: a cut before then leaves the old file. A
 file being written to is read through its handles as it now is, while
 the volume holds the content of its last close. A cut in the middle of a
-`Copy` leaves the file being copied as it was before - or, for a file
-that was not there, the file there and empty - and every file copied
-before it whole.
+`Copy` leaves the files copied up to one of them whole - those of its
+last 50 ms may be gone - and that one as it was before, or, for a file
+that was not there, there and empty.
 
 New data always goes to free blocks. When a file is closed, its blocks
 are written first, then the one journal record that makes them the
@@ -231,7 +243,8 @@ packet: a cut leaves the volume as it was before, or with it done.
 ## A medium that goes
 
 A removable medium can be taken out at any moment. What was answered is
-in the volume's journal, and the next mount replays it; what an open
+in the volume's journal - all but the changes of the last 50 ms - and
+the next mount replays it; what an open
 file had not committed - written since its last close or flush - is
 lost, and its Close says so (`ERROR_DEVICE_NOT_MOUNTED`). The handle
 is good for nothing else after.

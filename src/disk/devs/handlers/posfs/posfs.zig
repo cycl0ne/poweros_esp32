@@ -32,15 +32,22 @@
 //! when one goes in or out, so it looks then too and tells input
 //! (IECLASS_DISKINSERTED, IECLASS_DISKREMOVED). A medium that went takes
 //! what the volume held in memory with it, unwritten - what was answered
-//! is in its journal - and what its open files had not committed. Its
+//! is in its journal, but for the changes the journal timer had not
+//! written yet - and what its open files had not committed. Its
 //! locks are kept (`retire`), and so is its volume node, on the device
 //! list with no handler behind it while locks point at it: that is what
 //! lets dos ask for the volume by name. The same volume coming back - the
 //! same id in its label, whatever its name - takes the node up again and
 //! its locks work again; the node goes once no lock points at it.
 //!
-//! **Idle work.** A change is durable when it is answered: it is in the
-//! journal. What the trees hold in memory goes down as a checkpoint when
+//! **The journal timer.** A change is answered as soon as its record is
+//! in the journal's memory. The journal goes to the medium 50 ms after
+//! the first change began to wait there - every change answered
+//! meanwhile with it, under one barrier - and at once for ACTION_FLUSH.
+//! A cut loses at most the changes of those 50 ms, the newest of them,
+//! and never one without those after it.
+//!
+//! **Idle work.** What the trees hold in memory goes down as a checkpoint when
 //! the journal or the changed nodes run full, and otherwise once the
 //! handler has had nothing to do for a while - 30 seconds on flash, whose
 //! sectors wear, 5 on a disk. A timer on timer.device's UNIT_VBLANK, made
@@ -93,8 +100,8 @@ const fs_core = @import("fs.zig");
 
 pub const HANDLER_NAME = posfs.HANDLER_NAME;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 4;
-const BUILD_DATE = "25.10.2026";
+const HANDLER_REVISION = 5;
+const BUILD_DATE = "26.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -107,6 +114,12 @@ pub const DEFAULT_LABEL = "Empty";
 /// checkpoint, on a medium that is erased (flash) and on one that is not.
 const idle_flash_micros: u64 = 30_000_000;
 const idle_disk_micros: u64 = 5_000_000;
+
+/// How long answered changes wait in the journal's memory for the ones
+/// after them before it is written: short enough that a cut loses next
+/// to nothing a person did, long enough that a program writing file
+/// after file has most of them go down under one barrier.
+const journal_micros: u64 = 50_000;
 
 /// The medium: the volume's blocks on the device the startup message
 /// names. Every address is the volume's own, so the file system never
@@ -393,6 +406,10 @@ const State = struct {
     clock_port: ?*MsgPort = null,
     clock_open: bool = false,
     clock_running: bool = false,
+    /// The journal timer: a copy of the idle timer's request, on its port,
+    /// running while answered changes wait in the journal's memory.
+    journal_clock: timer.TimeRequest = .{},
+    journal_running: bool = false,
     /// Who watches what, when there was memory for its port.
     watchers: dos.notify.Watchers = undefined,
     /// The record locks, when there was memory for their port.
@@ -502,7 +519,12 @@ pub fn fsHandler(sb: *ExecBase) callconv(.c) void {
         if (st.fs.watchers) |watchers| watchers.collect();
         if (st.fs.records) |records| records.collect();
         if (st.clock_port) |clock_port| {
-            if (sb.GetMsg(clock_port) != null) {
+            while (sb.GetMsg(clock_port)) |message| {
+                if (message == &st.journal_clock.node.message) {
+                    st.journal_running = false;
+                    if (st.mounted and st.inhibited == 0) st.fs.writeJournal() catch {};
+                    continue;
+                }
                 st.clock_running = false;
                 if (st.mounted and st.inhibited == 0) st.fs.idle() catch {};
             }
@@ -517,7 +539,10 @@ pub fn fsHandler(sb: *ExecBase) callconv(.c) void {
             sweepIfFree(dl, st);
             st.label.apply(dl, st.volume);
         }
-        if (st.mounted and st.inhibited == 0 and st.fs.pending()) startClock(sb, st);
+        if (st.mounted and st.inhibited == 0) {
+            if (st.fs.journalWaits()) startJournalClock(sb, st);
+            if (st.fs.pending()) startClock(sb, st);
+        }
         const got = sb.Wait(packets.sigMask() | replies | timers | clock | st.change_mask);
         if (got & st.change_mask != 0) mediumChanged(sb, dl, st);
     }
@@ -638,8 +663,9 @@ const Input = struct {
 };
 
 /// The idle timer's request, opened on timer.device with a port of its
-/// own. Without it the handler still works; it writes checkpoints only
-/// when its journal or its changed nodes run full.
+/// own, and the journal timer's, a copy of it. Without it the handler
+/// still works; it writes checkpoints only when its journal or its
+/// changed nodes run full, and its journal after every change.
 fn openClock(sb: *ExecBase, st: *State) void {
     const clock_port = sb.CreateMsgPort() orelse return;
     st.clock = .{ .node = .{ .message = .{ .reply_port = clock_port, .length = @sizeOf(timer.TimeRequest) } } };
@@ -649,6 +675,7 @@ fn openClock(sb: *ExecBase, st: *State) void {
     }
     st.clock_port = clock_port;
     st.clock_open = true;
+    st.journal_clock = st.clock;
 }
 
 /// The idle timer started, unless it runs already: changes wait.
@@ -658,6 +685,21 @@ fn startClock(sb: *ExecBase, st: *State) void {
     st.clock.time = timer.TimeVal.fromMicros(if (st.media.geometry.erase_size != 0) idle_flash_micros else idle_disk_micros);
     sb.SendIO(&st.clock.node);
     st.clock_running = true;
+}
+
+/// The journal timer started, unless it runs already: answered changes
+/// wait in the journal's memory. Without timer.device they are written
+/// at once.
+fn startJournalClock(sb: *ExecBase, st: *State) void {
+    if (!st.clock_open) {
+        st.fs.writeJournal() catch {};
+        return;
+    }
+    if (st.journal_running) return;
+    st.journal_clock.node.command = timer.TR_ADDREQUEST;
+    st.journal_clock.time = timer.TimeVal.fromMicros(journal_micros);
+    sb.SendIO(&st.journal_clock.node);
+    st.journal_running = true;
 }
 
 /// One packet. Before there is a file system, and while the drive is

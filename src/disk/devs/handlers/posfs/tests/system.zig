@@ -457,7 +457,9 @@ test "a medium that goes and comes back: locks parked and working again, handles
     var reading: FileHandle = .{};
     try testing.expectEqual(dos.DOSTRUE, helpers.openFile(fs, &reading, .findinput, "a").res1);
 
-    // Alpha taken out: its locks parked, and not good for anything yet.
+    // Alpha taken out once the journal timer has run: its locks parked,
+    // and not good for anything yet.
+    try fs.writeJournal();
     fs.retire();
     fs.volume_node = null;
     try testing.expectEqual(@as(u32, 3), fs.locksOn(&alpha_node));

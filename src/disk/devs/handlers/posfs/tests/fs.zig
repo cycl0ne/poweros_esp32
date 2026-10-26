@@ -118,8 +118,16 @@ pub const Setup = struct {
         try expectClean(&setup.fs);
     }
 
-    /// The power gone now, and the medium mounted as it is: replay.
+    /// The power gone once the journal timer has run, and the medium
+    /// mounted as it is: replay.
     pub fn crash(setup: *Setup) !void {
+        try setup.fs.writeJournal();
+        try setup.crashNow();
+    }
+
+    /// The power gone now, with what the journal holds in memory, and the
+    /// medium mounted as it is: replay.
+    pub fn crashNow(setup: *Setup) !void {
         setup.m.cut();
         const copy = try setup.m.image(2);
         setup.fs.deinit();
@@ -181,6 +189,46 @@ test "files come back after a mount, and after replay" {
         // And replayed once only: mounted again, the same.
         try setup.remount();
         try testing.expectEqualStrings("replayed", back[0..try readFile(&setup.fs, "after", &back)]);
+    }
+}
+
+test "the changes of a moment go down under one barrier, and a cut takes back only those" {
+    for (kinds) |kind| {
+        var setup: Setup = undefined;
+        try setup.init(kind, 2 * 1024 * 1024, 4096);
+        defer setup.deinit();
+        var data: [6000]u8 = undefined;
+        var back: [8000]u8 = undefined;
+        try writeFile(&setup.fs, "first", pattern(1, &data));
+        try setup.fs.writeJournal();
+        // Twenty files, each a create and a commit, and a directory: a
+        // barrier only where the journal goes on in its next block, and
+        // two when it is written - the data's, then the records'.
+        const before = setup.m.updates;
+        var name: [4:0]u8 = .{ 'f', 0, 0, 0 };
+        for (0..20) |index| {
+            name[1] = 'a' + @as(u8, @intCast(index));
+            try writeFile(&setup.fs, &name, pattern(index + 2, &data));
+        }
+        const dir = send(&setup.fs, .create_dir, .{ 0, arg("Drawer"), 0, 0 });
+        try testing.expect(dir.res1 != 0);
+        _ = send(&setup.fs, .free_lock, .{ dir.res1, 0, 0, 0 });
+        try testing.expect(setup.fs.journalWaits());
+        try setup.fs.writeJournal();
+        try testing.expect(!setup.fs.journalWaits());
+        try testing.expect(setup.m.updates - before <= 4);
+        // Answered and not yet written: a cut takes back those, and only
+        // those.
+        try writeFile(&setup.fs, "late", "lost");
+        try testing.expectEqual(dos.DOSTRUE, send(&setup.fs, .delete_object, .{ 0, arg("first"), 0, 0 }).res1);
+        try setup.crashNow();
+        try testing.expectError(error.NotThere, readFile(&setup.fs, "late", &back));
+        try testing.expectEqualSlices(u8, pattern(1, &data), back[0..try readFile(&setup.fs, "first", &back)]);
+        for (0..20) |index| {
+            name[1] = 'a' + @as(u8, @intCast(index));
+            try testing.expectEqualSlices(u8, pattern(index + 2, &data), back[0..try readFile(&setup.fs, &name, &back)]);
+        }
+        try testing.expectEqual(dos.ST_USERDIR, try listedType(&setup.fs, "Drawer"));
     }
 }
 
@@ -755,6 +803,7 @@ test "checksums: a block changed on the medium is ERROR_BAD_CHECKSUM, never its 
         _ = pattern(5, &data);
         @memcpy(data[4096..][0..marker.len], marker);
         try writeFile(&setup.fs, "file", &data);
+        try setup.fs.writeJournal();
         // The file's second block, found on the medium by what it holds.
         const at = std.mem.indexOf(u8, setup.m.bytes, marker) orelse return error.TestUnexpectedResult;
         setup.m.bytes[at + 100] ^= 0x10;
@@ -927,7 +976,7 @@ test "posfs SETTINGS: durable when answered, followed by what is written after" 
     try testing.expectEqual(dos.DOSTRUE, sendOwn(fs, packets.ACTION_POSFS_SETTINGS, &on).res1);
     try testing.expectEqual(packets.SET_CHECKSUMS | packets.SET_COMPRESS, (try infoOf(fs)).settings);
     // Durable at once: the power gone right after keeps it.
-    try setup.crash();
+    try setup.crashNow();
     try testing.expectEqual(packets.SET_CHECKSUMS | packets.SET_COMPRESS, (try infoOf(&setup.fs)).settings);
     try writeFile(&setup.fs, "after", &model);
     try testing.expect(try blocksOf(&setup.fs, "after") < 4);
@@ -1011,6 +1060,7 @@ test "posfs CHECK DATA: a block changed on the medium is found, by the data pass
         _ = pattern(5, &data);
         @memcpy(data[4096..][0..marker.len], marker);
         try writeFile(fs, "file", &data);
+        try fs.writeJournal();
         const at = std.mem.indexOf(u8, setup.m.bytes, marker) orelse return error.TestUnexpectedResult;
         setup.m.bytes[at + 100] ^= 0x10;
         const quick = try checkAll(fs, 0, {}, null);

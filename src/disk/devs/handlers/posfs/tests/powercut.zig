@@ -2,10 +2,12 @@
 //! The power cut at every write: a seeded list of changes run on a fresh
 //! volume until the medium dies at write N, then what is left mounted -
 //! and cut again while replay runs - and the volume read back. It must be
-//! clean, and be what the changes answered before the cut made it, or
-//! that and the change the cut fell in: never anything else, never a mix.
-//! With snapshots among the changes, what each snapshot holds is part of
-//! what the volume must be.
+//! clean, and be what the changes answered made it up to one of them: no
+//! earlier than the last time the journal was written, no later than the
+//! change the cut fell in - never anything else, never a mix. The
+//! journal is written after every other change, as the handler's timer
+//! would. With snapshots among the changes, what each snapshot holds is
+//! part of what the volume must be.
 
 const std = @import("std");
 const testing = std.testing;
@@ -264,21 +266,32 @@ fn filesHeld(fs: *FileSystem, prefix: []const u8, files: *const Files) !bool {
     return true;
 }
 
+/// How far a run got: the change the power went in (the length when it
+/// never did), and the state the journal had last been written at, which
+/// a cut may not take back.
+const Reached = struct { at: usize, durable: usize };
+
 /// A fresh volume, the directory the names need, and the changes run on
-/// it: the states after each one answered, and the change the power went
-/// in (the length when it never did).
-fn runTo(m: *TestMedia, fs: *FileSystem, ops: []const Op, states: *std.ArrayList(State)) !usize {
+/// it: the states after each one answered, and how far it got.
+fn runTo(m: *TestMedia, fs: *FileSystem, ops: []const Op, states: *std.ArrayList(State)) !Reached {
     var state: State = .{};
     defer state.deinit();
     try states.append(testing.allocator, try state.clone());
+    var durable: usize = 0;
     for (ops, 0..) |op, index| {
         _ = try apply(fs, op, &state);
-        // Now and then the handler is idle: a checkpoint.
-        if (index % 4 == 3) fs.idle() catch {};
-        if (m.dead) return index;
+        // After every other change the journal timer runs out, and now
+        // and then the handler is idle: a checkpoint.
+        if (index % 4 == 3) {
+            fs.idle() catch {};
+        } else if (index % 2 == 1) {
+            fs.writeJournal() catch {};
+        }
+        if (m.dead) return .{ .at = index, .durable = durable };
         try states.append(testing.allocator, try state.clone());
+        if (index % 2 == 1) durable = index + 1;
     }
-    return ops.len;
+    return .{ .at = ops.len, .durable = durable };
 }
 
 fn freeStates(states: *std.ArrayList(State)) void {
@@ -318,27 +331,31 @@ fn fileSystem(m: *TestMedia, settings: u32) FileSystem {
     return fs;
 }
 
-/// Mounted after the cut, and the state one of those allowed: before the
-/// change the cut fell in, after it - or, for a file written under a new
-/// name, between its Open and its Close, the file there and empty.
-fn expectRecovered(copy: *TestMedia, states: []State, at: usize, op: ?Op, settings: u32) !void {
+/// Mounted after the cut, and the state one of those allowed: the one
+/// after any change from the last the journal was written at to the one
+/// the cut fell in - or, for a file written under a new name among them,
+/// between its Open and its Close, the file there and empty.
+fn expectRecovered(copy: *TestMedia, states: []State, reached: Reached, ops: []const Op, settings: u32) !void {
     var fs = fileSystem(copy, settings);
     defer fs.deinit();
     try fs.mount();
     try util.expectClean(&fs);
-    const before = &states[at];
-    if (try holds(&fs, before)) return;
-    if (at + 1 < states.len and try holds(&fs, &states[at + 1])) return;
-    if (op) |change| switch (change) {
-        .write => |w| if (before.files[w.name] == null) {
-            var opened = try before.clone();
-            defer opened.deinit();
-            opened.files[w.name] = .{};
-            if (try holds(&fs, &opened)) return;
-        },
-        else => {},
-    };
-    std.debug.print("after a cut in change {d}: neither the state before it nor after\n", .{at});
+    const last = @min(reached.at + 1, states.len - 1);
+    var at = reached.durable;
+    while (at <= last) : (at += 1) {
+        const state = &states[at];
+        if (try holds(&fs, state)) return;
+        if (at < ops.len) switch (ops[at]) {
+            .write => |w| if (state.files[w.name] == null) {
+                var opened = try state.clone();
+                defer opened.deinit();
+                opened.files[w.name] = .{};
+                if (try holds(&fs, &opened)) return;
+            },
+            else => {},
+        };
+    }
+    std.debug.print("after a cut in change {d}: no state from change {d} to it\n", .{ reached.at, reached.durable });
     return error.TestUnexpectedResult;
 }
 
@@ -385,7 +402,7 @@ fn runCounted(kind: testmedia.Kind, block_size: u32, seed: u64, op_count: usize,
         m.cut_bytes = (cut * 97) % 512;
         var seen: std.ArrayList(State) = .empty;
         defer freeStates(&seen);
-        const at = blk: {
+        const reached = blk: {
             var fs = fileSystem(&m, settings);
             defer fs.deinit();
             try fs.mount();
@@ -405,9 +422,9 @@ fn runCounted(kind: testmedia.Kind, block_size: u32, seed: u64, op_count: usize,
             again.cut();
             var after = try again.image(seed + 9);
             defer after.deinit();
-            try expectRecovered(&after, states.items, at, if (at < ops.len) ops[at] else null, settings);
+            try expectRecovered(&after, states.items, reached, ops, settings);
         }
-        try expectRecovered(&copy, states.items, at, if (at < ops.len) ops[at] else null, settings);
+        try expectRecovered(&copy, states.items, reached, ops, settings);
     }
     return counts;
 }

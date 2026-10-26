@@ -316,7 +316,8 @@ test "Recycled: switched on only with the name free, off only with nothing in it
     try writeFile(fs, "x", "x");
     try testing.expectEqual(@as(i32, 0), delete(fs, "x"));
 
-    // The power gone right after a delete: it is in Recycled after replay.
+    // The power gone after a delete, once the journal is written: it is in
+    // Recycled after replay.
     try writeFile(fs, "y", "y");
     try testing.expectEqual(@as(i32, 0), delete(fs, "y"));
     try setup.crash();

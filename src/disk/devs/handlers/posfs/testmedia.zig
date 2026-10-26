@@ -12,11 +12,13 @@
 //!   after are not.
 //! - **usb**: writes go into the stick's own cache and reach the medium
 //!   in an order of the stick's choosing - all of them on `update`. A cut
-//!   loses what the cache still held, some of it put down and some not.
+//!   loses what the cache still held, some of it put down and some not;
+//!   so does a cut while `update` puts the cache down.
 //!
-//! A cut is `cut_at`: the number of writes (an erase is one) that still
-//! go through, and `cut_bytes` of the next. After it nothing more reaches
-//! the medium, and a test mounts what is left (`image`) on a fresh one.
+//! A cut is `cut_at`: the number of writes (an erase is one, and so is an
+//! update) that still go through, and `cut_bytes` of the next. After it
+//! nothing more reaches the medium, and a test mounts what is left
+//! (`image`) on a fresh one.
 //! The clock and the random numbers are counters, so every run is the
 //! same run.
 
@@ -277,6 +279,10 @@ pub const TestMedia = struct {
 
     pub fn update(m: *TestMedia) bool {
         if (m.dead) return true;
+        if (m.allowance(0)) |_| {
+            m.cut();
+            return true;
+        }
         m.updates += 1;
         for (m.held.items) |held| {
             @memcpy(m.bytes[@intCast(held.at)..][0..held.data.len], held.data);
