@@ -935,7 +935,9 @@ starts makes its drives from the first medium in it, as usb/disk.device
 does for a stick. A board that has sdcard.device in the ROM, to start
 from its card (the VisionFive 2), hands the partitions of the card's
 RigidDiskBlock to dos at cold start; opened by `C:BindDrivers`, the
-device makes `SD0:` for a card without one. [Disks and
+device makes `SD0:` for a card without one. nvme.device in the ROM does
+the same for an SSD's (the VisionFive 2, QEMU's virt machines, which
+start from one). [Disks and
 partitions](rdb.md) has the partition table and how to change it.
 
 **A handler works on what its startup message names**, and on nothing

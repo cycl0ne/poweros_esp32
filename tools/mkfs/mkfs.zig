@@ -4,9 +4,11 @@
 //! shell copying programs into RAM: at every start.
 //!
 //! usage: mkfs [--tree=<dir>] [--manifest=<file>]
+//!            [--gpt=<file> --gpt-bytes=<bytes>]
 //!            <out.bin> <volume> <partition> <sectors> <partition-sectors>
 //!            <sector-size> <page-size> <rdb-sectors>
 //!            [<path-in-image>[=<host-file>] ...]
+//!        mkfs --blank --gpt=<file> --gpt-bytes=<bytes> <volume> <partition>
 //!
 //! `volume` is what the file system calls itself; `partition` is what the
 //! device node is called (`DH0`), which is what flash.device reads out of
@@ -31,6 +33,22 @@
 //! system's - and stops there; the rest of the disk area is left as it is,
 //! which on flash means erased.
 //!
+//! **The same volume on a disk with a GPT** (`--gpt`): an image of
+//! `--gpt-bytes` for a disk of 512-byte blocks - an SSD - with what
+//! `RDB INIT GPT`, `RDB ADD` and `Format` make of one: a GPT whose one
+//! partition is a PowerOS container over every usable block from the
+//! first MiB, a RigidDiskBlock in the container's first block, and one
+//! partition from the container's first MiB to its end, under the same
+//! name, bootable, with posfs on it holding the same files. posfs is the
+//! handler's own code too (`src/disk/devs/handlers/posfs`, through the
+//! `posfs` module), sent the same packets, over the image file itself.
+//! The file is as long as the disk, but only what was written takes room
+//! on the host: the rest is a hole, which reads as zeroes.
+//!
+//! **A blank disk** (`--blank`): only that disk, with an empty volume
+//! and its partition not bootable - a disk to keep work on. Its only
+//! arguments are the volume's name and the partition's.
+//!
 //! **The same files outside the image**, for a volume that is not made
 //! from it - a card that is SYS:, brought up to date file by file
 //! (tools/vf2_update.py in the port's repository). `--tree` writes every
@@ -48,7 +66,9 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const hardblocks = dos.hardblocks;
 const flashfs = dos.flashfs;
+const gpt = dos.gpt;
 const disk = @import("fs");
+const posfs = @import("posfs");
 
 /// The fewest blocks kept for the RDB and its chain: every block a
 /// RigidDiskBlock may be in (RDB_LOCATION_LIMIT). The RigidDiskBlock is in
@@ -129,6 +149,107 @@ const ImageMedia = struct {
 
 const FileSystem = disk.FileSystem(ImageMedia);
 
+/// A GPT disk's block: an SSD's, and an NVMe namespace's in QEMU.
+const gpt_block: u32 = 512;
+/// Where the partition starts in the container, in blocks: one MiB in,
+/// past the table's blocks, leaving room for file systems kept in the
+/// table, and on a boundary of every block size posfs takes.
+const gpt_partition_first: u32 = 2048;
+
+/// The GPT disk as posfs's medium contract asks for it: the partition's
+/// part of the image file, read and written in place. A disk erases for
+/// itself, and the file system writes whole sectors.
+const DiskMedia = struct {
+    io: std.Io,
+    file: std.Io.File,
+    /// The partition: its first byte in the file, and how many it has.
+    first: u64,
+    length: u64,
+    allocator: mem.Allocator,
+    /// What the volume's random numbers are made from: the same disk made
+    /// again gets the same ones.
+    seed: [32]u8,
+    drawn: u64 = 0,
+
+    pub fn size(m: *DiskMedia) u64 {
+        return m.length;
+    }
+
+    pub fn sectorSize(_: *DiskMedia) u32 {
+        return gpt_block;
+    }
+
+    pub fn writeSize(_: *DiskMedia) u32 {
+        return 0;
+    }
+
+    pub fn eraseSize(_: *DiskMedia) u32 {
+        return 0;
+    }
+
+    pub fn mapped(_: *DiskMedia) ?[*]const u8 {
+        return null;
+    }
+
+    pub fn read(m: *DiskMedia, at: u64, into: []u8) bool {
+        if (at > m.length or into.len > m.length - at) return false;
+        const got = m.file.readPositionalAll(m.io, into, m.first + at) catch return false;
+        return got == into.len;
+    }
+
+    pub fn write(m: *DiskMedia, at: u64, from: []const u8) bool {
+        if (at > m.length or from.len > m.length - at) return false;
+        m.file.writePositionalAll(m.io, from, m.first + at) catch return false;
+        return true;
+    }
+
+    pub fn erase(_: *DiskMedia, _: u64, _: u64) bool {
+        return true;
+    }
+
+    pub fn update(_: *DiskMedia) bool {
+        return true;
+    }
+
+    pub fn writable(_: *DiskMedia) bool {
+        return true;
+    }
+
+    pub fn alloc(m: *DiskMedia, len: usize) ?[]u8 {
+        const block = m.allocator.alignedAlloc(u8, .@"8", len) catch return null;
+        @memset(block, 0);
+        return block;
+    }
+
+    pub fn allocRaw(m: *DiskMedia, len: usize) ?[]u8 {
+        return m.allocator.alignedAlloc(u8, .@"8", len) catch null;
+    }
+
+    pub fn free(m: *DiskMedia, block: []u8) void {
+        const aligned: []align(8) u8 = @alignCast(block);
+        m.allocator.free(aligned);
+    }
+
+    /// 1 Jan 1978, as every date on the flash disk.
+    pub fn now(_: *DiskMedia) u64 {
+        return 0;
+    }
+
+    pub fn random(m: *DiskMedia, into: *[16]u8) void {
+        into.* = drawn(&m.seed, m.drawn)[0..16].*;
+        m.drawn += 1;
+    }
+};
+
+/// The `index`th number drawn from `seed`: random enough to tell volumes
+/// and disks apart, and the same for the same inputs.
+fn drawn(seed: *const [32]u8, index: u64) [32]u8 {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(seed);
+    hash.update(mem.asBytes(&index));
+    return hash.finalResult();
+}
+
 /// An answer from the file system.
 const Reply = struct { res1: isize, res2: i32 };
 
@@ -188,6 +309,9 @@ pub fn main(init: std.process.Init) !void {
     // with "--".
     var tree_path: ?[]const u8 = null;
     var manifest_path: ?[]const u8 = null;
+    var gpt_path: ?[]const u8 = null;
+    var gpt_bytes: u64 = 0;
+    var blank = false;
     var kept: std.ArrayList([:0]const u8) = .empty;
     for (all_args, 0..) |arg, index| {
         if (index == 0 or !mem.startsWith(u8, arg, "--")) {
@@ -196,9 +320,24 @@ pub fn main(init: std.process.Init) !void {
             tree_path = arg["--tree=".len..];
         } else if (mem.startsWith(u8, arg, "--manifest=")) {
             manifest_path = arg["--manifest=".len..];
+        } else if (mem.startsWith(u8, arg, "--gpt=")) {
+            gpt_path = arg["--gpt=".len..];
+        } else if (mem.startsWith(u8, arg, "--gpt-bytes=")) {
+            const text = arg["--gpt-bytes=".len..];
+            gpt_bytes = std.fmt.parseInt(u64, text, 0) catch fatal("{s}: not a number", .{text});
+        } else if (mem.eql(u8, arg, "--blank")) {
+            blank = true;
         } else fatal("{s}: no such option", .{arg});
     }
     const args = kept.items;
+    const cwd = std.Io.Dir.cwd();
+    if (gpt_path != null and gpt_bytes == 0) fatal("--gpt: --gpt-bytes says how large the disk is", .{});
+    if (blank) {
+        if (args.len != 3 or gpt_path == null) fatal("usage: mkfs --blank --gpt=<file> --gpt-bytes=<bytes> <volume> <partition>", .{});
+        checkDrive(args[2]);
+        gptDisk(io, cwd, gpt_path.?, gpt_bytes, args[1], args[2], false, &.{}, arena);
+        return;
+    }
     if (args.len < 9) fatal("usage: mkfs <out.bin> <volume> <partition> <sectors> <partition-sectors> <sector-size> <page-size> <rdb-sectors> [<path>[=<file>] ...]", .{});
 
     const out_path = args[1];
@@ -213,12 +352,9 @@ pub fn main(init: std.process.Init) !void {
     if (sectors < rdb_blocks + 2 or sector_size == 0) fatal("a disk needs more than its RDB blocks", .{});
     const part_sectors = if (asked == 0) sectors - rdb_blocks else asked;
     if (part_sectors < 2 or part_sectors > sectors - rdb_blocks) fatal("{d} sectors: the disk has {d} past its RDB blocks", .{ part_sectors, sectors - rdb_blocks });
-    if (drive.len >= @typeInfo(@FieldType(hardblocks.PartitionBlock, "drive_name")).array.len) {
-        fatal("{s}: too long for a partition name", .{drive});
-    }
+    checkDrive(drive);
 
     // Everything the volume gets, read first.
-    const cwd = std.Io.Dir.cwd();
     var entries: std.ArrayList(Entry) = .empty;
     for (args[9..]) |entry| {
         const split = mem.indexOfScalar(u8, entry, '=');
@@ -274,6 +410,122 @@ pub fn main(init: std.process.Init) !void {
 
     const used = flashfsVolume(store, rdb_blocks, part_sectors, sector_size, page_size, label, entries.items, arena);
     try cwd.writeFile(io, .{ .sub_path = out_path, .data = store[0..used] });
+    if (gpt_path) |path| gptDisk(io, cwd, path, gpt_bytes, label, drive, true, entries.items, arena);
+}
+
+/// A partition's name that fits its PartitionBlock.
+fn checkDrive(drive: []const u8) void {
+    if (drive.len >= @typeInfo(@FieldType(hardblocks.PartitionBlock, "drive_name")).array.len) {
+        fatal("{s}: too long for a partition name", .{drive});
+    }
+}
+
+/// The GPT disk: its GPT and the copy at its end, the PowerOS container,
+/// the table in it, and posfs on the table's one partition with what
+/// `entries` puts there.
+fn gptDisk(io: std.Io, cwd: std.Io.Dir, path: []const u8, bytes: u64, label: []const u8, drive: []const u8, bootable: bool, entries: []const Entry, arena: mem.Allocator) void {
+    if (bytes % gpt_block != 0) fatal("--gpt-bytes={d}: not whole {d}-byte blocks", .{ bytes, gpt_block });
+    const blocks = bytes / gpt_block;
+    var seed: [32]u8 = undefined;
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(label);
+    hash.update(drive);
+    hash.update(mem.asBytes(&bytes));
+    hash.final(&seed);
+    var disk_guid = drawn(&seed, 0)[0..16].*;
+    gpt.markRandom(&disk_guid);
+    var header = gpt.freshHeader(blocks, gpt_block, &disk_guid) orelse fatal("--gpt-bytes={d}: too small for a GPT", .{bytes});
+
+    // The container over every usable block from the first aligned one.
+    var container: gpt.Entry = .{
+        .partition_type_guid = gpt.TYPE_CONTAINER,
+        .unique_partition_guid = drawn(&seed, 1)[0..16].*,
+        .starting_lba = gpt.alignUp(header.first_usable_lba, gpt_block),
+        .ending_lba = header.last_usable_lba,
+    };
+    gpt.markRandom(&container.unique_partition_guid);
+    gpt.setName(&container, "PowerOS");
+    const container_blocks = container.ending_lba - container.starting_lba + 1;
+    if (container_blocks > 0xFFFF_FFFF) fatal("--gpt-bytes={d}: a table counts at most 2^32 blocks", .{bytes});
+    if (container_blocks < gpt_partition_first + 2) fatal("--gpt-bytes={d}: no room for a partition", .{bytes});
+
+    const file = cwd.createFile(io, path, .{ .read = true }) catch |e| fatal("{s}: {t}", .{ path, e });
+    defer file.close(io);
+    file.setLength(io, bytes) catch |e| fatal("{s}: {t}", .{ path, e });
+
+    // The protective MBR, the GPT with its entries, and the copy of both
+    // at the end.
+    const entries_bytes = arena.alloc(u8, @intCast(gpt.entriesBlocks(&header, gpt_block) * gpt_block)) catch fatal("out of memory", .{});
+    @memset(entries_bytes, 0);
+    gpt.putEntry(&header, entries_bytes, 0, &container);
+    const entries_crc = gpt.entriesCrc(&header, entries_bytes);
+    var block: [gpt_block]u8 = undefined;
+    gpt.makeProtective(&block, blocks);
+    writeAt(io, file, path, &block, 0);
+    var backup = gpt.backupOf(&header);
+    gpt.putHeader(&header, entries_crc, &block);
+    writeAt(io, file, path, &block, header.my_lba * gpt_block);
+    writeAt(io, file, path, entries_bytes, header.partition_entry_lba * gpt_block);
+    gpt.putHeader(&backup, entries_crc, &block);
+    writeAt(io, file, path, &block, backup.my_lba * gpt_block);
+    writeAt(io, file, path, entries_bytes, backup.partition_entry_lba * gpt_block);
+
+    // The table in the container, as InitRDB makes it - its blocks the
+    // first RDB_LOCATION_LIMIT, a cylinder a block - and the partition
+    // from the container's first MiB to its end. Block numbers count from
+    // the container's first block.
+    const cylinders: u32 = @intCast(container_blocks);
+    var rdb: hardblocks.RigidDiskBlock = .{
+        .block_bytes = gpt_block,
+        .partition_list = partition_block,
+        .cylinders = cylinders,
+        .sectors = 1,
+        .heads = 1,
+        .rdb_blocks_lo = 0,
+        .rdb_blocks_hi = min_rdb_blocks - 1,
+        .lo_cylinder = min_rdb_blocks,
+        .hi_cylinder = cylinders - 1,
+        .cyl_blocks = 1,
+    };
+    @memcpy(rdb.disk_vendor[0.."PowerOS".len], "PowerOS");
+    @memcpy(rdb.disk_product[0.."disk image".len], "disk image");
+    var part: hardblocks.PartitionBlock = .{
+        .flags = if (bootable) hardblocks.PBFF_BOOTABLE else 0,
+        .environment = .{
+            .size_block = gpt_block,
+            .low_cyl = gpt_partition_first,
+            .high_cyl = cylinders - 1,
+            .num_buffers = buffers,
+            .buf_mem_type = sdk.exec.MEMF_ANY,
+            .dos_type = dos.posfs.ID_POSFS_DISK,
+        },
+    };
+    @memcpy(part.drive_name[0..drive.len], drive);
+    var table: [2 * gpt_block]u8 = @splat(0);
+    putBlock(&table, rdb_block, gpt_block, &rdb);
+    putBlock(&table, partition_block, gpt_block, &part);
+    writeAt(io, file, path, &table, container.starting_lba * gpt_block);
+
+    // posfs on the partition, filled, and put away clean.
+    var media: DiskMedia = .{
+        .io = io,
+        .file = file,
+        .first = (container.starting_lba + gpt_partition_first) * gpt_block,
+        .length = (container_blocks - gpt_partition_first) * gpt_block,
+        // Not the arena: the file system frees as much as it takes,
+        // packet after packet.
+        .allocator = std.heap.smp_allocator,
+        .seed = drawn(&seed, 2),
+    };
+    var fs = posfs.FileSystem.init(posfs.Device.of(DiskMedia, &media));
+    defer fs.deinit();
+    fs.format(.{ .name = label, .partition_block = gpt_block }) catch |e| fatal("{s}: format: {t}", .{ path, e });
+    fill(&fs, entries);
+    fs.unmount() catch |e| fatal("{s}: unmount: {t}", .{ path, e });
+}
+
+fn writeAt(io: std.Io, file: std.Io.File, path: []const u8, bytes: []const u8, at: u64) void {
+    file.writePositionalAll(io, bytes, at) catch |e| fatal("{s}: {t}", .{ path, e });
 }
 
 /// The flash file system on the partition; the image's end is the last

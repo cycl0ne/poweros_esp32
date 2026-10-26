@@ -26,6 +26,16 @@ const disk_page = 256;
 /// otherwise, in KiB: the RigidDiskBlock, the PartitionBlocks, and room
 /// for the file systems kept in the table (tools/mkfs's `rdb-sectors`).
 const default_rdb_size_kib = 64;
+/// The disks of QEMU's virt machines, NVMe SSDs with a GPT and posfs on
+/// them: the system disk, DH0:, made afresh by every build and started
+/// from as it is - what a run writes to it goes with the run - and the
+/// work disk, DH1:, made blank once and kept from then on with what is
+/// saved to it.
+const virt_system_bytes = 256 * 1024 * 1024;
+const virt_work_bytes = 1024 * 1024 * 1024;
+/// Where the work disks are kept, from the root of the tree: outside
+/// zig-out/, which cleaning the build clears.
+const virt_work_dir = "work";
 
 /// Where a file that is not built here is put to have it on the disk
 /// image: `disk/` in the root of the tree.
@@ -353,6 +363,8 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseSafe,
     });
     posfs_mod.addImport("sdk", sdk);
+    // mkfs writes posfs with the same code, on a disk with a GPT.
+    mkfs.root_module.addImport("posfs", posfs_mod);
     const posfsck = b.addExecutable(.{
         .name = "posfsck",
         .root_module = b.createModule(.{
@@ -455,12 +467,17 @@ pub fn build(b: *std.Build) void {
     const rv64_tree = make_rv64_disk.addPrefixedOutputDirectoryArg("--tree=", "disk-rv64");
     const rv64_manifest = make_rv64_disk.addPrefixedOutputFileArg("--manifest=", "disk-rv64.manifest");
     const rv64_disk_made = make_rv64_disk.addOutputFileArg("disk-rv64-made.bin");
+    // And as the virt machine's system disk, a GPT disk with posfs.
+    const rv64_system_disk = make_rv64_disk.addPrefixedOutputFileArg("--gpt=", "system-rv64.bin");
+    make_rv64_disk.addArg(b.fmt("--gpt-bytes={d}", .{virt_system_bytes}));
     const make_a64_disk = b.addRunArtifact(mkfs);
     // The AArch64 disk's files as a tree and a list as well, as the
     // RISC-V 64 disk's (zig-out/disk-a64/, zig-out/bin/disk-a64.manifest).
     const a64_tree = make_a64_disk.addPrefixedOutputDirectoryArg("--tree=", "disk-a64");
     const a64_manifest = make_a64_disk.addPrefixedOutputFileArg("--manifest=", "disk-a64.manifest");
     const a64_disk_made = make_a64_disk.addOutputFileArg("disk-a64-made.bin");
+    const a64_system_disk = make_a64_disk.addPrefixedOutputFileArg("--gpt=", "system-a64.bin");
+    make_a64_disk.addArg(b.fmt("--gpt-bytes={d}", .{virt_system_bytes}));
     const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk, make_rv64_disk, make_a64_disk } };
     const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
     const rv64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.rv64sbi });
@@ -621,10 +638,11 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&b.addInstallBinFile(disk_bin, "disk.bin").step);
     b.getInstallStep().dependOn(&b.addInstallBinFile(p4_disk_bin, "disk-esp32p4.bin").step);
 
-    // The RISC-V 64 and AArch64 machines' disk is loaded into RAM beside
-    // the kernel (QEMU's -initrd, U-Boot's booti) and is all the disk there
-    // is, so it is made as large as the disk, the rest erased
-    // (tools/padimage).
+    // The RISC-V 64 and AArch64 boards' flash disk is loaded into RAM
+    // beside the kernel - by U-Boot's booti, or by QEMU's -initrd given
+    // by hand - and is all the disk there is, so it is made as large as
+    // the disk, the rest erased (tools/padimage). QEMU's virt machines
+    // start from an NVMe SSD instead (`VirtDisks`).
     const padimage = b.addExecutable(.{
         .name = "padimage",
         .root_module = b.createModule(.{
@@ -637,6 +655,8 @@ pub fn build(b: *std.Build) void {
     pad_rv64_disk.addFileArg(rv64_disk_made);
     const rv64_disk_bin = pad_rv64_disk.addOutputFileArg("disk-rv64.bin");
     pad_rv64_disk.addArg(b.fmt("{d}", .{disk_size}));
+    // The virt machine's system disk too, for QEMU run by hand.
+    if (board == .qemu_virt) b.getInstallStep().dependOn(&b.addInstallBinFile(rv64_system_disk, "system-rv64.bin").step);
     if (chipOf(board) == .rv64sbi) {
         b.getInstallStep().dependOn(&b.addInstallBinFile(rv64_disk_bin, "disk-rv64.bin").step);
         b.getInstallStep().dependOn(&b.addInstallBinFile(rv64_manifest, "disk-rv64.manifest").step);
@@ -650,6 +670,7 @@ pub fn build(b: *std.Build) void {
     pad_a64_disk.addFileArg(a64_disk_made);
     const a64_disk_bin = pad_a64_disk.addOutputFileArg("disk-a64.bin");
     pad_a64_disk.addArg(b.fmt("{d}", .{disk_size}));
+    if (board == .qemu_virt_a64) b.getInstallStep().dependOn(&b.addInstallBinFile(a64_system_disk, "system-a64.bin").step);
     if (chipOf(board) == .a64psci) {
         b.getInstallStep().dependOn(&b.addInstallBinFile(a64_disk_bin, "disk-a64.bin").step);
         b.getInstallStep().dependOn(&b.addInstallBinFile(a64_manifest, "disk-a64.manifest").step);
@@ -740,20 +761,26 @@ pub fn build(b: *std.Build) void {
     run_emu.has_side_effects = true;
     b.step("emu", "Boot the ESP32-P4 kernel in esp-emulator (quit with Ctrl-C)").dependOn(&run_emu.step);
 
+    // The virt machines' work disk, blank: copied to work/ for each
+    // machine the first time it runs (`keepWorkDisk`).
+    const make_work_disk = b.addRunArtifact(mkfs);
+    make_work_disk.addArg("--blank");
+    const blank_work_disk = make_work_disk.addPrefixedOutputFileArg("--gpt=", "work.bin");
+    make_work_disk.addArgs(&.{ b.fmt("--gpt-bytes={d}", .{virt_work_bytes}), "Work", "DH1" });
+
     // QEMU's RISC-V 64 virt machine, a board of its own: the `virt` step
     // boots its kernel under the OpenSBI QEMU brings (-bios default),
-    // which enters it in supervisor mode at 0x80200000, with the disk
-    // image as its initrd: QEMU loads it into RAM and says where in the
-    // device tree's /chosen.
+    // which enters it in supervisor mode at 0x80200000, and it starts
+    // from its system disk, an NVMe SSD (`virtDisks`).
     const virt_kernel = if (board == .qemu_virt) kernel else addKernel(b, rv64_target, optimize, sdk, .qemu_virt, disk_offset, cores, selftest, memdebug);
+    const virt_disks: VirtDisks = .{ .system = rv64_system_disk, .work = keepWorkDisk(b, blank_work_disk, "virt.bin") };
     const run_virt = b.addSystemCommand(&.{
         "qemu-system-riscv64", "-M", "virt",       "-m",    "512M",
         "-smp",                "4",  "-nographic", "-bios", "default",
-        "-kernel",
     });
+    virt_disks.addTo(run_virt);
+    run_virt.addArg("-kernel");
     run_virt.addArtifactArg(virt_kernel);
-    run_virt.addArg("-initrd");
-    run_virt.addFileArg(rv64_disk_bin);
     run_virt.stdio = .inherit;
     run_virt.has_side_effects = true;
     b.step("virt", "Boot the RISC-V 64 kernel in QEMU's virt machine (quit with Ctrl-A X)").dependOn(&run_virt.step);
@@ -778,10 +805,9 @@ pub fn build(b: *std.Build) void {
             "usb-tablet",
         });
         run_virt_display.addArgs(virt_network);
+        virt_disks.addTo(run_virt_display);
         run_virt_display.addArg("-kernel");
         run_virt_display.addArtifactArg(virt_kernel);
-        run_virt_display.addArg("-initrd");
-        run_virt_display.addFileArg(rv64_disk_bin);
         run_virt_display.stdio = .inherit;
         run_virt_display.has_side_effects = true;
         b.step(display[1], b.fmt("Boot QEMU's virt machine with its display ({s}), keyboard, tablet and network", .{display[2]})).dependOn(&run_virt_display.step);
@@ -790,19 +816,20 @@ pub fn build(b: *std.Build) void {
     // QEMU's AArch64 virt machine, a board of its own: the `virt64` step
     // boots its kernel as QEMU boots an arm64 Linux Image - at EL1, the
     // device tree in x0, PSCI by HVC - with Cortex-A76 cores and a GICv2
-    // as the Pi's BCM2712 has them, everything below 4 GiB, and the disk
-    // image as its initrd.
+    // as the Pi's BCM2712 has them, everything below 4 GiB, and the same
+    // two NVMe SSDs, its own system disk and work disk.
     const virt64_kernel = if (board == .qemu_virt_a64) built else addA64Image(b, addKernel(b, a64_target, optimize, sdk, .qemu_virt_a64, disk_offset, cores, selftest, memdebug));
     const virt64_machine = [_][]const u8{
         "qemu-system-aarch64", "-M",   "virt,gic-version=2,highmem=off",
         "-cpu",                "cortex-a76", "-m",
         "512M",                "-smp", "4",
     };
+    const virt64_disks: VirtDisks = .{ .system = a64_system_disk, .work = keepWorkDisk(b, blank_work_disk, "virt64.bin") };
     const run_virt64 = b.addSystemCommand(&virt64_machine);
-    run_virt64.addArgs(&.{ "-nographic", "-kernel" });
+    run_virt64.addArg("-nographic");
+    virt64_disks.addTo(run_virt64);
+    run_virt64.addArg("-kernel");
     run_virt64.addFileArg(virt64_kernel.image);
-    run_virt64.addArg("-initrd");
-    run_virt64.addFileArg(a64_disk_bin);
     run_virt64.stdio = .inherit;
     run_virt64.has_side_effects = true;
     b.step("virt64", "Boot the AArch64 kernel in QEMU's virt machine (quit with Ctrl-A X)").dependOn(&run_virt64.step);
@@ -821,10 +848,9 @@ pub fn build(b: *std.Build) void {
             "-device",  "usb-kbd",  "-device", "usb-tablet",
         });
         run_virt64_display.addArgs(virt_network);
+        virt64_disks.addTo(run_virt64_display);
         run_virt64_display.addArg("-kernel");
         run_virt64_display.addFileArg(virt64_kernel.image);
-        run_virt64_display.addArg("-initrd");
-        run_virt64_display.addFileArg(a64_disk_bin);
         run_virt64_display.stdio = .inherit;
         run_virt64_display.has_side_effects = true;
         b.step(display[1], b.fmt("Boot QEMU's AArch64 virt machine with its display ({s}), keyboard, tablet and network", .{display[2]})).dependOn(&run_virt64_display.step);
@@ -837,11 +863,11 @@ pub fn build(b: *std.Build) void {
         "qemu-system-aarch64", "-M",   "virt,gic-version=2,highmem=off,virtualization=on",
         "-cpu",                "cortex-a76", "-m",
         "512M",                "-smp", "4",
-        "-nographic",          "-kernel",
+        "-nographic",
     });
+    virt64_disks.addTo(run_virt64_el2);
+    run_virt64_el2.addArg("-kernel");
     run_virt64_el2.addFileArg(virt64_kernel.image);
-    run_virt64_el2.addArg("-initrd");
-    run_virt64_el2.addFileArg(a64_disk_bin);
     run_virt64_el2.stdio = .inherit;
     run_virt64_el2.has_side_effects = true;
     b.step("virt64-el2", "Boot the AArch64 kernel in QEMU's virt machine entered at EL2, PSCI by SMC").dependOn(&run_virt64_el2.step);
@@ -1413,6 +1439,47 @@ const DiskImages = struct {
         for (images.runs) |run| run.addPrefixedFileArg(prefix, path);
     }
 };
+
+/// The two NVMe SSDs of a virt machine: the system disk the build made,
+/// whose writes QEMU keeps in a copy that ends with the run
+/// (`snapshot=on`), and the work disk, which keeps them.
+const VirtDisks = struct {
+    system: std.Build.LazyPath,
+    /// The work disk's path, and the step that puts it there.
+    work: WorkDisk,
+
+    fn addTo(disks: VirtDisks, run: *std.Build.Step.Run) void {
+        const b = run.step.owner;
+        run.addArg("-drive");
+        run.addPrefixedFileArg("if=none,id=system,format=raw,snapshot=on,file=", disks.system);
+        run.addArgs(&.{
+            "-device", "nvme,serial=system,drive=system",
+            "-drive",  b.fmt("if=none,id=work,format=raw,file={s}", .{disks.work.path}),
+            "-device", "nvme,serial=work,drive=work",
+        });
+        run.step.dependOn(disks.work.step);
+    }
+};
+
+const WorkDisk = struct { path: []const u8, step: *std.Build.Step };
+
+/// A machine's work disk, `name` in `virt_work_dir`: the blank one copied
+/// there when there is none yet, which leaves one that is alone. A copy
+/// keeps the blank's holes, so the disk takes on the host what has been
+/// written to it.
+fn keepWorkDisk(b: *std.Build, blank: std.Build.LazyPath, name: []const u8) WorkDisk {
+    const path = b.pathFromRoot(b.pathJoin(&.{ virt_work_dir, name }));
+    const keep = b.addSystemCommand(&.{
+        "sh",
+        "-c",
+        \\[ -f "$0" ] || { mkdir -p "$(dirname "$0")" && cp "$1" "$0"; }
+        ,
+        path,
+    });
+    keep.addFileArg(blank);
+    keep.has_side_effects = true;
+    return .{ .path = path, .step = &keep.step };
+}
 
 /// A RISC-V 64 kernel made into what is booted: the ELF, which QEMU loads
 /// as it is, and a raw binary of it from its first address (0x80200000),

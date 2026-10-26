@@ -243,9 +243,9 @@ Beside them:
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, playing into a file, the UART1 and UART3-IN connectors |
-| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos on the disk image in RAM; with `-device virtio-gpu-device` or `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with an `nvme` device an SSD; sound into an output that goes nowhere, and with `-device usb-audio` through QEMU's USB speaker, sample for sample, plugged in and out as it plays; with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in) |
+| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk that keeps what is saved to it beside it; with `-device virtio-gpu-device` or `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with more `nvme` devices more SSDs; sound into an output that goes nowhere, and with `-device usb-audio` through QEMU's USB speaker, sample for sample, plugged in and out as it plays; with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in) |
 | `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: sound through a USB speaker or headset, USB 3 devices at SuperSpeed, a disk over UAS; not driven yet: the second Ethernet port, the eMMC socket |
-| `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos on the disk image in RAM, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device virtio-gpu-device` or `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with an `nvme` device an SSD, with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in); sound into an output that goes nowhere. The CM5 itself is to be the next board of this chip |
+| `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk beside it, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device virtio-gpu-device` or `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with more `nvme` devices more SSDs, with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in); sound into an output that goes nowhere. The CM5 itself is to be the next board of this chip |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network
@@ -336,13 +336,26 @@ them, so QEMU started by hand needs the same option.
 mode: `zig-out/bin/kernel` (the ELF), `kernel.bin` (the same from its
 first address, 0x80200000, with the header U-Boot's `booti` reads) and
 `disk-rv64.bin`, the disk as an image of its whole 14 MB. There is no
-flash: the loader puts the image in RAM beside the kernel and names it in
-the device tree, flash.device serves it as `DH0:`, and what is written
-to it is gone when the machine stops. Nothing is flashed: the `flash*`
-steps are the ESP32 boards'.
+flash: on the VisionFive 2 the loader puts the image in RAM beside the
+kernel and names it in the device tree, flash.device serves it as
+`DH0:`, and what is written to it is gone when the machine stops.
+Nothing is flashed: the `flash*` steps are the ESP32 boards'.
 
 `./zig build virt` boots QEMU's virt machine on the serial console with
-four harts and 512 MB, the disk image as its initrd. `./zig build
+four harts and 512 MB, and two NVMe SSDs, each with a GPT whose PowerOS
+container holds one posfs partition. The machine starts from the system
+disk, `DH0:` (`System`, 256 MB), which the build makes with the disk
+image's files (`zig-out/bin/system-rv64.bin` with `-Dboard=qemu_virt`):
+what a run writes to it goes with the run (QEMU's `snapshot=on`), and
+the next build or run starts from it as it was made. The work disk,
+`DH1:` (`Work`, 1 GB), is made blank the first time, as
+`work/virt.bin`, and keeps what is saved to it from then on; delete the
+file for a blank one. Both files take on the host only what has been
+written to them. The ROM holds pci.library, nvme.device and
+posfs-handler, and nvme.device starts at cold start and hands the SSDs'
+partitions to dos ([disks guide](sdk/docs/guides/rdb.md#starting-from-an-ssd)).
+QEMU locks the work disk while it runs, so one machine of each kind runs
+at a time. `./zig build
 virt-display` adds the display (QEMU's virtio GPU, 1920×1080 as the
 VisionFive 2's HDMI) and USB with a keyboard, a tablet and an Ethernet
 adapter (`usb-net`, the machine's network: DHCP hands out 10.0.2.15 on
@@ -362,12 +375,14 @@ for a pixel (`zoom-to-fit=off`; Arch packages it apart, as
 packages the virtio GPU apart as well, as `qemu-hw-display-virtio-gpu`:
 without it QEMU says `'virtio-gpu-device' is not a valid device model
 name`, and only the `ramfb` steps run. QEMU run by hand adds the rest -
-an SSD, sound:
+another SSD, sound:
 
 ```sh
 ./zig build -Dboard=qemu_virt
 qemu-system-riscv64 -M virt -m 512M -smp 4 -bios default \
-    -kernel zig-out/bin/kernel -initrd zig-out/bin/disk-rv64.bin \
+    -kernel zig-out/bin/kernel \
+    -drive if=none,id=system,format=raw,snapshot=on,file=zig-out/bin/system-rv64.bin \
+    -device nvme,serial=system,drive=system \
     -device virtio-gpu-device,xres=1920,yres=1080 \
     -device qemu-xhci -device usb-kbd -device usb-tablet \
     -drive if=none,id=ssd,format=raw,file=ssd.img -device nvme,serial=1,drive=ssd
@@ -397,32 +412,38 @@ FAT32 volume can be both U-Boot's and PowerOS's
 `-Dboard=qemu_virt_a64` builds a kernel for an AArch64 machine under
 PSCI firmware (chip `a64psci`): `zig-out/bin/kernel` (the ELF, for a
 debugger), `kernel.bin` (the same from its first address, 0x40200000,
-with the arm64 `Image` header QEMU and the Pi's firmware read) and
-`disk-a64.bin`, the disk as an image of its whole 14 MB, which the
-loader puts in RAM as on the RISC-V machines. The kernel runs at EL1
+with the arm64 `Image` header QEMU and the Pi's firmware read),
+`disk-a64.bin`, the disk as an image of its whole 14 MB for a loader to
+put in RAM as on the VisionFive 2, and `system-a64.bin`, the same files
+as the system disk the `virt64` steps start from. The kernel runs at EL1
 with its MMU on: an identity map, RAM normal cacheable memory, page 0
 left out so a null pointer faults, the kernel's code read-only. A core
 that comes in at EL2 drops to EL1 first.
 
 `./zig build virt64` boots QEMU's virt machine with four Cortex-A76
-cores, a GICv2 and 512 MB, all below 4 GiB, on the serial console;
+cores, a GICv2 and 512 MB, all below 4 GiB, on the serial console, and
+its own two SSDs as `virt` has them - the system disk, and the work disk
+in `work/virt64.bin`;
 `./zig build virt64-display` adds the display (the virtio GPU;
 `virt64-ramfb` the ramfb) and USB with a keyboard, a tablet and an
 Ethernet adapter, as `virt-display` has them, and `./zig build
 virt64-el2` enters the kernel at EL2, PSCI by SMC, as the CM5's firmware
-does. QEMU run by hand adds an SSD:
+does. QEMU run by hand adds another SSD:
 
 ```sh
 ./zig build -Dboard=qemu_virt_a64
 qemu-system-aarch64 -M virt,gic-version=2,highmem=off -cpu cortex-a76 -m 512M -smp 4 \
-    -kernel zig-out/bin/kernel.bin -initrd zig-out/bin/disk-a64.bin \
+    -kernel zig-out/bin/kernel.bin \
+    -drive if=none,id=system,format=raw,snapshot=on,file=zig-out/bin/system-a64.bin \
+    -device nvme,serial=system,drive=system \
     -device virtio-gpu-device,xres=1920,yres=1080 \
     -device qemu-xhci -device usb-kbd -device usb-tablet \
     -drive if=none,id=ssd,format=raw,file=ssd.img -device nvme,serial=1,drive=ssd
 ```
 
 QEMU loads `kernel.bin`, not the ELF: only for an `Image` does it pass
-the device tree and name the initrd in it.
+the device tree, and name an initrd in it (`-initrd`, the flash disk
+image).
 
 More build steps and options:
 

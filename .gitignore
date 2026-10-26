@@ -12,5 +12,9 @@ CLAUDE.md
 # Files dropped onto the disk image (see build.zig: disk_tree)
 /disk/
 
+# The QEMU virt machines' work disks, which keep what is saved to them
+# (see build.zig: virt_work_dir)
+/work/
+
 # Work lists, kept locally
 todo/

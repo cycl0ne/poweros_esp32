@@ -577,12 +577,14 @@ highest boot priority is where the system starts from. So what
 once by `MountPartition`; until then the nodes on the list are the ones
 from before.
 
-**On a RISC-V 64 machine** the flash disk is the disk image the loader
-put in RAM beside the kernel - `disk-rv64.bin`, QEMU's `-initrd` or
-U-Boot's `booti` with a ramdisk, found in the device tree's `/chosen`.
-flash.device serves it as a flash chip, erased to 0xFF a sector at a
-time, and reads its table the same way. What is written to it is gone
-at power off.
+**On a RISC-V 64 or AArch64 machine** the flash disk is the disk image
+the loader put in RAM beside the kernel - `disk-rv64.bin` through
+U-Boot's `booti` with a ramdisk, or QEMU's `-initrd` given by hand,
+found in the device tree's `/chosen`. flash.device serves it as a flash
+chip, erased to 0xFF a sector at a time, and reads its table the same
+way. What is written to it is gone at power off. A machine started
+without one has no flash disk: QEMU's virt machines start from an SSD
+(below).
 
 Changing the cylinders or the file system of a partition that is
 mounted leaves its drive working on the old ones until the next boot,
@@ -617,7 +619,8 @@ written to a card is mounted as it says at the next start, or at once
 by `MountPartition`.
 
 **An SSD** on PCI Express is nvme.device's, on the RISC-V 64 disk, which
-`C:BindDrivers` starts at boot. Once its controllers are up it reads
+`C:BindDrivers` starts at boot - or at cold start, where the ROM holds
+it (below). Once its controllers are up it reads
 each namespace's table, as a card's: a drive per partition not marked
 `PBFF_NOMOUNT`, or `NV<n>:` over the whole namespace with the file
 system its first block says; one with a GPT gets its container's
@@ -654,6 +657,29 @@ RDB sdcard.device INIT ADD SD0 LOW 8192 HIGH 62333951 DOSTYPE MSD BOOTABLE BOOTP
 
 `SYS:` is then the FAT volume on the card, and it needs the system's
 drawers on it, as the disk image has them.
+
+### Starting from an SSD
+
+A ROM that holds nvme.device - the VisionFive 2's and QEMU's virt
+machines', with pci.library and posfs-handler beside it - makes it at
+cold start, before dos is up: it makes pci.library from the library's
+ROM tag, brings the controllers up, reads each namespace's table as
+sdcard.device reads the card's - the RigidDiskBlock, or the one in the
+PowerOS container of a GPT - and hands the partitions to
+expansion.library as boot nodes. The bootable partition with the highest
+boot priority of every disk's is where the system starts from; the
+others are mounted beside it. Once dos is up, the device's first opener
+starts its DOS process, which takes a namespace with nodes as theirs
+and makes the drives of one without: `NV<n>:`, or its GPT's partitions.
+The other GPT partitions of a namespace whose container gave nodes get
+no drive.
+
+QEMU's virt machines start so. Their steps attach two SSDs, each a GPT
+whose PowerOS container holds a table with one posfs partition: the
+system disk, `DH0:` (`System`), bootable, which the build makes with the
+disk image's files (`tools/mkfs --gpt`) and which a run's writes leave
+as it was, and the work disk, `DH1:` (`Work`), made blank once and kept
+in `work/` with what is saved to it.
 
 ## In a window: HDToolBox
 

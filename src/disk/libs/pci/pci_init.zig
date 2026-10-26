@@ -222,7 +222,9 @@ const init_table = exec.InitTable{
 /// something opens it - ramlib loads the file and hands this tag to
 /// InitResident. In the ROM the same: ramlib makes it from the tag when
 /// it is first opened, so the ports' links are trained when a driver
-/// first asks, not at cold start. In `.resident`, which program.ld KEEPs.
+/// first asks - at cold start where the ROM's nvme.device, a cold-start
+/// device, makes it from the tag itself. In `.resident`, which program.ld
+/// KEEPs.
 pub export const pci_library_tag: exec.Resident linksection(".resident") = .{
     .match_tag = &pci_library_tag,
     .flags = exec.RTF_AUTOINIT,

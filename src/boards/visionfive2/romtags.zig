@@ -13,10 +13,12 @@
 //!
 //! And the SSD on the M.2 slot: pci.library for the PCI Express ports,
 //! nvme.device and posfs-handler, the disk's own too - what starting from
-//! the SSD takes. Each is made when it is first opened, as from the disk,
-//! nvme.device by BindDrivers after dos is up: its partitions are no boot
-//! nodes yet, and SYS: is the card's. The ROM's posfs-handler runs the
-//! SSD's posfs partitions unless their table brings a newer one.
+//! the SSD takes. nvme.device is a cold-start device in the ROM: it makes
+//! pci.library, brings up the SSD and hands its partitions to
+//! expansion.library as boot nodes, so a bootable one is started from
+//! when its BootPri is the highest of every disk's. The ROM's
+//! posfs-handler runs the SSD's posfs partitions unless their table
+//! brings a newer one.
 
 pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),

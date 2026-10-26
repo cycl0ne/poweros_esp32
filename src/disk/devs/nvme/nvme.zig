@@ -35,6 +35,16 @@
 //! open. A namespace whose blocks carry metadata, or are not 512 bytes to
 //! 4 KiB, is left out.
 //!
+//! **In the ROM** the device is made at cold start instead, so that the
+//! machine can start from an SSD: its init makes pci.library from the
+//! library's ROM tag where nothing has made it yet - ramlib, which
+//! otherwise would, comes after dos - and once the controllers are up
+//! reads each namespace's RigidDiskBlock, or the table in its GPT's
+//! PowerOS container, and hands its partitions to expansion.library as
+//! boot nodes (`sdk.expansion.bootdisk`): a bootable one at its
+//! de_BootPri, the others at -128, all of them mounted when dos takes
+//! the nodes.
+//!
 //! **The work** is the task's (task.zig): reads and writes in pieces of
 //! the controller's largest transfer, several out at once, straight into
 //! and out of the caller's pages. BeginIO answers what it knows - the
@@ -43,8 +53,9 @@
 //! **The drives** are made once the device is up, by a DOS process of
 //! its own (mount.zig): a drive per partition where a namespace holds a
 //! RigidDiskBlock or a GPT, `NV<n>` over the whole namespace otherwise - unless a
-//! MountList entry mounted by hand opens the unit already, which is then
-//! its drive.
+//! device node opens the unit already - a boot node, or a MountList
+//! entry mounted by hand - which is then its drive. The ROM's copy, made
+//! before dos, starts the process at its first open once dos is up.
 //!
 //! The device stays once made: it owns its task, its controllers'
 //! interrupts and the memory they read and write.
@@ -65,8 +76,8 @@ const mount = @import("mount.zig");
 
 pub const DEVICE_NAME = _nvme.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 5;
-const BUILD_DATE = "25.10.2026";
+const DEVICE_REVISION = 6;
+const BUILD_DATE = "26.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -140,6 +151,9 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
     _ = flags;
     const base = _nvme.nvmeBase(dev);
     if (unit_number >= base.unit_count) return td.TDERR_BadUnitNum;
+    // The ROM's copy started before dos: its DOS process is started by
+    // the first opener that finds dos up.
+    if (in_rom and base.dos_base == null) startMounter(base);
     const unit = &base.units[unit_number];
     dev.open_cnt += 1;
     dev.flags &= ~exec.LIBF_DELEXP;
@@ -171,7 +185,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     base.sys_base = sys_base;
     base.seg_list = seg_list;
     for (&base.units, 0..) |*unit, number| unit.* = .{ .number = @intCast(number) };
-    base.pci_base = @ptrCast(sys_base.OpenLibrary(pci.PCINAME, 2) orelse return null);
+    base.pci_base = @ptrCast(openPci(sys_base) orelse return null);
 
     const signal = sys_base.AllocSignal(-1);
     if (signal < 0) return null;
@@ -191,10 +205,66 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     // Without its port the task has ended; without units it stays, and
     // every open is refused.
     if (base.requests == null) return null;
+    if (in_rom) bootPartitions(base, dev);
     // Last: nothing after this fails, so the process never runs on a base
-    // that is freed.
-    if (base.unit_count != 0) startMounter(base);
+    // that is freed. The ROM's copy has no dos to start it with yet: its
+    // first opener starts it (`open`).
+    if (!in_rom and base.unit_count != 0) startMounter(base);
     return dev;
+}
+
+/// pci.library, opened. The ROM's copy is made at cold start, before
+/// ramlib, which makes a library the ROM has when it is first opened: the
+/// library is made from its ROM tag here then, as ramlib would.
+fn openPci(sys: *ExecBase) ?*exec.Library {
+    if (sys.OpenLibrary(pci.PCINAME, 2)) |lib| return lib;
+    if (!in_rom) return null;
+    const tag = sys.FindResident(pci.PCINAME) orelse return null;
+    if (tag.version < 2 or tag.type != .library) return null;
+    _ = sys.InitResident(tag, null) orelse return null;
+    return sys.OpenLibrary(pci.PCINAME, 2);
+}
+
+/// A namespace's blocks, as `bootdisk` reads them: one at a time, through
+/// the device's own BeginIO, into a block of the init's.
+const NamespaceDisk = struct {
+    sys: *ExecBase,
+    io: *exec.IOStdReq,
+    block: []u8,
+
+    pub fn readBlock(disk: NamespaceDisk, number: u32, into: []u8) bool {
+        if (into.len > disk.block.len) return false;
+        disk.io.req.command = exec.CMD_READ;
+        disk.io.data = disk.block.ptr;
+        disk.io.length = disk.block.len;
+        disk.io.offset = @as(u64, number) * disk.block.len;
+        if (disk.sys.DoIO(&disk.io.req) != 0) return false;
+        @memcpy(into, disk.block[0..into.len]);
+        return true;
+    }
+};
+
+/// The partitions each namespace's RigidDiskBlock names, or the table in
+/// its GPT's PowerOS container, handed to expansion.library as boot
+/// nodes: dos takes them as soon as the cold start reaches it. A
+/// namespace with neither has none, and gets its drives from the DOS
+/// process.
+fn bootPartitions(base: *NvmeBase, dev: *exec.Device) void {
+    const sys = base.sys_base;
+    const port = sys.CreateMsgPort() orelse return;
+    defer sys.DeleteMsgPort(port);
+    for (base.units[0..base.unit_count]) |*unit| {
+        const bytes = unit.blockBytes();
+        const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return;
+        defer sys.FreeVec(memory);
+        var io: exec.IOStdReq = .{ .req = .{
+            .message = .{ .reply_port = port, .length = @sizeOf(exec.IOStdReq) },
+            .device = dev,
+            .unit = &unit.unit,
+        } };
+        const disk = NamespaceDisk{ .sys = sys, .io = &io, .block = @as([*]u8, @ptrCast(memory))[0..bytes] };
+        sdk.expansion.bootdisk.mountPartitions(sys, DEVICE_NAME, unit.number, disk, bytes, 0);
+    }
 }
 
 /// The DOS process that makes the units' drives, started and waited for
@@ -246,15 +316,17 @@ const speaks = [_]u32{ devices.DEVIF_BLOCK, 0 };
 const labels = [_][*:0]const u8{ "NV0:", "NV1:", "NV2:", "NV3:", "NV4:", "NV5:", "NV6:", "NV7:" };
 
 /// AUTOINIT and DEVICEINFO: made when something opens it - ramlib loads
-/// the file from DEVS: and hands this tag to InitResident, or makes it
-/// from the tag where the device is in the ROM (the VisionFive 2's); in
-/// both, BindDrivers opens it, as ObtainDeviceUnits lists it.
+/// the file from DEVS: and hands this tag to InitResident - and opened by
+/// BindDrivers, as ObtainDeviceUnits lists it. In the ROM it is a
+/// cold-start device too: before dos.library (-128), which takes its
+/// boot nodes, and after timer.device (50), whose timer its task waits
+/// on, beside sdcard.device.
 export const nvme_device_tag: exec.ResidentDevice linksection(".resident") = .{
     .resident = .{
         .match_tag = @ptrCast(&nvme_device_tag),
-        .flags = exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO,
+        .flags = exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO | if (in_rom) exec.RTF_COLDSTART else 0,
         .version = DEVICE_VERSION,
-        .pri = 0,
+        .pri = if (in_rom) 30 else 0,
         .type = .device,
         .name = DEVICE_NAME,
         .id_string = DEVICE_VERSION_STRING[1..],
