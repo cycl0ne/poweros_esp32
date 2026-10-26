@@ -104,8 +104,8 @@ const image_dirs = [_][]const u8{
     // empty until some are put there.
     "WBStartup",
     // SYS:System - the system's own tools: Shell, which the desktop's
-    // own icons start, HDToolBox, CPULoad and MemMap; in Docs what each
-    // of the others is.
+    // own icons start, HDToolBox, CPULoad, NetLoad and MemMap; in Docs
+    // what each of the others is.
     "System",
     "System/Docs",
     // The volume's trash: a file put in it is renamed there, and Empty
@@ -212,9 +212,11 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/Shell.info", .picture = "utilities-terminal", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/HDToolBox.info", .picture = "drive-harddisk", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/NetLoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/MemMap.info", .picture = "computer", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "System/Docs/CPULoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "System/Docs/NetLoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/HDToolBox.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/MemMap.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
 };

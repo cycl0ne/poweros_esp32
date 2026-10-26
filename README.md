@@ -225,7 +225,7 @@ Beside them:
   ([dos guide](sdk/docs/guides/dos.md)).
 - **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
   Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
-  HDToolBox, CPULoad and MemMap.
+  HDToolBox, CPULoad, NetLoad and MemMap.
 - **When something fails:** a Guru and a ROM debugger on the serial
   port, memory debugging, the system log, and a program that fails held
   for Suspend, Kill or Reboot

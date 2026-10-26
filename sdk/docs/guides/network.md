@@ -395,7 +395,7 @@ behind it are:
 |---|---|
 | `AddInterfaceTagList(name, tags)` | opens the device and brings the interface up: `IFA_Device`, `IFA_Unit`, `IFA_Configure` (`IFCONFIGURE_DHCP` or fixed with `IFA_Address`, `IFA_NetMask`, `IFA_Gateway`), `IFA_NameServer`, `IFA_Domain`, `IFA_MTU`, `IFA_Reads`/`IFA_Writes`, `IFA_TCPSendSpace`/`IFA_TCPRecvSpace`, and for IPv6 `IFA_IPv6`, `IFA_InterfaceID`, `IFA_PrivacyAddresses`, `IFA_Address6`, `IFA_Prefix6`, `IFA_Gateway6`, `IFA_NameServer6` |
 | `ConfigureInterfaceTagList` | changes what it runs with - its IPv6 address too (`IFA_Address6`) - `IFA_PrivacyAddresses` on or off, or `IFA_State` online and offline |
-| `QueryInterfaceTagList` | reads it back: `IFQ_Address`, `IFQ_NetMask`, `IFQ_Gateway`, `IFQ_MTU`, `IFQ_State`, `IFQ_HardwareAddress`, `IFQ_Speed`, the packet counts, the device and unit, and a time server DHCP named |
+| `QueryInterfaceTagList` | reads it back: `IFQ_Address`, `IFQ_NetMask`, `IFQ_Gateway`, `IFQ_MTU`, `IFQ_State`, `IFQ_HardwareAddress`, `IFQ_Speed`, the packet and byte counts, the device and unit, and a time server DHCP named |
 | `ObtainInterfaceList` / `ReleaseInterfaceList` | the names of all of them |
 | `RemoveInterface` | takes one down and closes its device |
 | `AddRouteTagList` / `DeleteRouteTagList` | routes: `RTA_Destination`, `RTA_NetMask`, `RTA_Gateway`, `RTA_DefaultGateway`; IPv6 ones with `RTA_Destination6`, `RTA_PrefixLength6`, `RTA_Gateway6`, `RTA_DefaultGateway6`, `RTA_Interface` |
@@ -424,6 +424,11 @@ sees: `C:net/NetStatus` shows, under each interface, what the device
 dropped - frames it had no room for, damaged ones, packets that came with
 no read of their type waiting (the stack tracks IPv4, ARP and IPv6 on the
 unit with S2_TRACKTYPE), and packets of types nobody reads.
+Each interface counts the bytes it hands to its link and takes from it
+(`IFQ_BytesSent`, `IFQ_BytesReceived`), the IP and ARP packets without
+the link's header, alike whatever the device is; `SYS:System/NetLoad`
+shows them as rates, an interface at a time, with a chart of the last
+minutes.
 
 ## Configuration files
 

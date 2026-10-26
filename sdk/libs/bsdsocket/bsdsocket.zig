@@ -592,6 +592,10 @@ pub const IFQ_Speed: u32 = IFQ_Dummy + 13;
 /// order, or 0.
 pub const IFQ_TimeServer: u32 = IFQ_Dummy + 14;
 pub const IFQ_TimeServer2: u32 = IFQ_Dummy + 15;
+/// u64s: the bytes of the packets out and in - IP's, ARP's - without the
+/// link's own header, so they are counted alike whatever the device is.
+pub const IFQ_BytesSent: u32 = IFQ_Dummy + 16;
+pub const IFQ_BytesReceived: u32 = IFQ_Dummy + 17;
 
 /// IFQ_State's bits.
 pub const IFSTATE_UP: u32 = 1 << 0;

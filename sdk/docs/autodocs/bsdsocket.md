@@ -2312,8 +2312,9 @@ fn QueryInterfaceTagList(base: *SocketBase, name: [*:0]const u8, tags: ?[*]const
   goes: `IFQ_Address`, `IFQ_NetMask`, `IFQ_Broadcast`, `IFQ_Gateway`
   (u32, network order), `IFQ_MTU`, `IFQ_State` (IFSTATE_*),
   `IFQ_DeviceUnit`, `IFQ_PacketsDropped` (u32), `IFQ_PacketsSent`,
-  `IFQ_PacketsReceived`, `IFQ_Speed` (u64), `IFQ_HardwareAddress`
-  ([6]u8), `IFQ_DeviceName` ([*:0]const u8, or null for lo0),
+  `IFQ_PacketsReceived`, `IFQ_BytesSent` and `IFQ_BytesReceived`
+  (since 1.14), `IFQ_Speed` (u64), `IFQ_HardwareAddress` ([6]u8),
+  `IFQ_DeviceName` ([*:0]const u8, or null for lo0),
   `IFQ_TimeServer`, `IFQ_TimeServer2` (u32, network order: the time
   servers DHCP named, or 0).
 
@@ -2325,7 +2326,12 @@ there is not, or one with no pointer).
 **BEHAVIOR**
 
 The answers are taken together, under the stack's lock, so they
-belong to one moment.
+belong to one moment. The counts run from the interface's start: the
+packets as the stack sent and took them, the bytes as they were
+handed to the link and taken from it - an IP packet's whole length,
+an ARP packet's, without the link's header. lo0 counts what it sends
+both ways. The difference of two readings is what went in between,
+which is how a program shows a rate.
 
 **CONTEXT**
 

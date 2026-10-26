@@ -124,6 +124,58 @@ test "an interface says what it is, and is changed while it runs" {
     try rig.deinit();
 }
 
+/// What `name` has sent and taken in, in bytes.
+fn bytesOf(sb: *SocketBase, name: [*:0]const u8) ![2]u64 {
+    var counts: [2]u64 = undefined;
+    const query = [_]TagItem{
+        .{ .tag = bsd.IFQ_BytesSent, .data = @intFromPtr(&counts[0]) },
+        .{ .tag = bsd.IFQ_BytesReceived, .data = @intFromPtr(&counts[1]) },
+        .{},
+    };
+    if (sb.QueryInterfaceTagList(name, &query) != 0) return error.NoInterface;
+    return counts;
+}
+
+test "an interface counts the bytes it hands to its link and takes from it" {
+    var rig = try Rig.init();
+    const sb = rig.sb;
+    const socket = sb.Socket(bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+    try testing.expect(socket >= 0);
+
+    // A datagram to a station not yet known: what goes to the link is
+    // ARP's request, and the datagram waits for the answer.
+    const before = try bytesOf(sb, "eth0");
+    var station: bsd.sockaddr_in = .{ .sin_port = bsd.htons(9), .sin_addr = .{ .s_addr = sb.Inet_Addr("192.168.1.30") } };
+    try testing.expectEqual(@as(i32, 4), sb.SendTo(socket, "data", 4, 0, station.anyConst(), @sizeOf(bsd.sockaddr_in)));
+    var after = try bytesOf(sb, "eth0");
+    try testing.expectEqual(before[0] + _arp.packet_bytes, after[0]);
+    try testing.expectEqual(before[1], after[1]);
+
+    // A frame from the link counts as it comes, whatever is made of it.
+    const frame = rig.stack.frames.take(rig.stack.sys_base).?;
+    frame.length = 10;
+    @memset(frame.bytes(), 0);
+    const somebody = [6]u8{ 2, 0, 0, 0, 0, 9 };
+    _netif.receive(rig.stack, _netif.named(rig.stack, "eth0").?, frame, &somebody, &.{ 2, 0, 0, 0, 0, 7 }, 0x0800, 0);
+    after = try bytesOf(sb, "eth0");
+    try testing.expectEqual(before[1] + 10, after[1]);
+
+    // lo0 counts what it sends both ways: a datagram of 5 bytes is 33 of
+    // IP. It goes to a socket there, so no ICMP answer adds to it.
+    const listening = sb.Socket(bsd.PF_INET, bsd.SOCK_DGRAM, 0);
+    var here: bsd.sockaddr_in = .{ .sin_port = bsd.htons(7000), .sin_addr = .{ .s_addr = bsd.htonl(bsd.INADDR_LOOPBACK) } };
+    try testing.expectEqual(@as(i32, 0), sb.Bind(listening, here.anyConst(), @sizeOf(bsd.sockaddr_in)));
+    const quiet = try bytesOf(sb, "lo0");
+    try testing.expectEqual(@as(i32, 5), sb.SendTo(socket, "hello", 5, 0, here.anyConst(), @sizeOf(bsd.sockaddr_in)));
+    const looped = try bytesOf(sb, "lo0");
+    try testing.expectEqual(quiet[0] + 33, looped[0]);
+    try testing.expectEqual(quiet[1] + 33, looped[1]);
+
+    try testing.expectEqual(@as(i32, 0), sb.CloseSocket(listening));
+    try testing.expectEqual(@as(i32, 0), sb.CloseSocket(socket));
+    try rig.deinit();
+}
+
 test "an interface taken down and up again, and its ARP entries told of" {
     var rig = try Rig.init();
     const sb = rig.sb;

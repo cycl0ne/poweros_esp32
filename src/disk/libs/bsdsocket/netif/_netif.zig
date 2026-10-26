@@ -66,6 +66,10 @@ pub const Interface = extern struct {
     sent: u64 align(4) = 0,
     received: u64 align(4) = 0,
     dropped: u32 = 0,
+    /// The bytes of the packets handed to the link and taken in from it,
+    /// without the link's header.
+    bytes_sent: u64 align(4) = 0,
+    bytes_received: u64 align(4) = 0,
     /// Its IPv6: whether it speaks it, and its addresses.
     ip6: _ip6.Link = .{},
     /// The IPv4 groups it is in, and their reports.
@@ -216,6 +220,7 @@ pub fn groupStation(group: Address) [6]u8 {
 /// and is delivered by the same loop after it, so nothing recurses.
 fn loop(stack: *StackBase, interface: *Interface, frame: *Frame) i32 {
     const sys = stack.sys_base;
+    interface.bytes_sent += frame.length;
     if (stack.looping != 0) {
         sys.AddTail(&stack.loopback_queue, &frame.node);
         return 0;
@@ -225,6 +230,7 @@ fn loop(stack: *StackBase, interface: *Interface, frame: *Frame) i32 {
     var next: ?*Frame = frame;
     while (next) |packet| {
         interface.received += 1;
+        interface.bytes_received += packet.length;
         if (packet.length > 0 and packet.bytes()[0] >> 4 == 6) _ip6.input(stack, interface, packet) else _ip.input(stack, interface, packet);
         next = if (sys.RemHead(&stack.loopback_queue)) |node| @fieldParentPtr("node", node) else null;
     }
@@ -236,6 +242,7 @@ fn loop(stack: *StackBase, interface: *Interface, frame: *Frame) i32 {
 /// IPv6's; the frame is theirs.
 pub fn receive(stack: *StackBase, interface: *Interface, frame: *Frame, from: *const [6]u8, to: *const [6]u8, packet_type: u16, now: u64) void {
     interface.received += 1;
+    interface.bytes_received += frame.length;
     if (stack.captures != 0) _capture.tap(stack, interface, frame.bytes(), bsd.CAPTURE_IN, .{ .ethernet = .{ .to = to, .from = from, .packet_type = packet_type } });
     if (packet_type == _arp.ethertype) return _arp.input(stack, interface, frame, now);
     if (packet_type == _ip6.ethertype) return _ip6.input(stack, interface, frame);
@@ -252,5 +259,6 @@ pub fn transmit(stack: *StackBase, interface: *Interface, frame: *Frame, to: *co
         stack.frames.give(stack.sys_base, frame);
         return bsd.ENETDOWN;
     };
+    interface.bytes_sent += frame.length;
     return send(stack, interface, frame, to, packet_type);
 }

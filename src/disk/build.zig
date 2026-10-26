@@ -80,6 +80,7 @@ const window_programs = [_]Program{
     .{ .disk = "System/Shell", .source = "system/shell/shell.zig", .name = "shell" },
     .{ .disk = "System/HDToolBox", .source = "system/hdtoolbox/hdtoolbox.zig", .name = "hdtoolbox" },
     .{ .disk = "System/CPULoad", .source = "system/cpuload/cpuload.zig", .name = "cpuload" },
+    .{ .disk = "System/NetLoad", .source = "system/netload/netload.zig", .name = "netload" },
     .{ .disk = "System/MemMap", .source = "system/memmap/memmap.zig", .name = "memmap" },
 };
 
@@ -370,6 +371,7 @@ pub const files = [_]File{
     // SYS:System/Docs - the same for the system's tools.
     .{ .disk = "System/Docs/HDToolBox.md", .source = "system/hdtoolbox/README.md" },
     .{ .disk = "System/Docs/CPULoad.md", .source = "system/cpuload/README.md" },
+    .{ .disk = "System/Docs/NetLoad.md", .source = "system/netload/README.md" },
     .{ .disk = "System/Docs/MemMap.md", .source = "system/memmap/README.md" },
 };
 
