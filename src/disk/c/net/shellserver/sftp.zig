@@ -739,20 +739,24 @@ fn isFileSystem(dl: *DosBase, entry: *dos.DosList) bool {
     return info.disk_type != dos.ID_CON and info.disk_type != dos.ID_RAWCON;
 }
 
-/// The zone the system clock keeps; UTC without one.
+/// The zone the system clock keeps: the rule on the zone file's first
+/// line that is not a comment, however long the comments before it; UTC
+/// without one.
 fn readZone(dl: *DosBase) timezone.Zone {
     const file = dl.Open(timezone.zone_file, dos.MODE_OLDFILE) orelse return .{};
     defer _ = dl.Close(file);
     var text: [256]u8 = undefined;
-    const got = dl.Read(file, &text, text.len);
-    if (got <= 0) return .{};
-    var rest: []const u8 = text[0..@intCast(got)];
-    while (rest.len > 0) {
-        var end: usize = 0;
-        while (end < rest.len and rest[end] != '\n') end += 1;
-        var line = rest[0..end];
-        rest = if (end < rest.len) rest[end + 1 ..] else rest[rest.len..];
-        while (line.len > 0 and (line[line.len - 1] == '\r' or line[line.len - 1] == ' ' or line[line.len - 1] == '\t')) line = line[0 .. line.len - 1];
+    // A line longer than the buffer comes in pieces; only the first
+    // piece of a line is looked at.
+    var line_start = true;
+    while (dl.FGets(file, &text, text.len) != null) {
+        var length: usize = 0;
+        while (length < text.len and text[length] != 0) length += 1;
+        const starts = line_start;
+        line_start = length > 0 and text[length - 1] == '\n';
+        if (!starts) continue;
+        var line: []const u8 = text[0..length];
+        while (line.len > 0 and (line[line.len - 1] == '\n' or line[line.len - 1] == '\r' or line[line.len - 1] == ' ' or line[line.len - 1] == '\t')) line = line[0 .. line.len - 1];
         while (line.len > 0 and (line[0] == ' ' or line[0] == '\t')) line = line[1..];
         if (line.len == 0 or line[0] == '#') continue;
         return timezone.parse(line) orelse .{};
