@@ -53,9 +53,10 @@ pub const compiled = hardware.chip == .rv64sbi;
 const pl080 = hardware.pl080;
 const reg = hardware.mmio.reg;
 
-/// Bytes each buffer holds: an SMB message of 64 KiB and its headers, a
-/// TLS record, an SSH packet.
-pub const room: u32 = 68 * 1024;
+/// Bytes each buffer holds: smb-handler's largest message - a READ's
+/// answer or a WRITE of 1 MiB - and its headers, so that its signature
+/// or its seal is one run; a TLS record and an SSH packet easily.
+pub const room: u32 = 1024 * 1024 + 4096;
 /// The least whole-block data the engine is worth starting for: below,
 /// the software AES is as quick.
 pub const least: u32 = 64;

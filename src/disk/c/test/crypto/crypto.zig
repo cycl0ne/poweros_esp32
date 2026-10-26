@@ -52,7 +52,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Crypto";
-const VERSION_STRING = "\x00$VER: Crypto 1.4 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Crypto 1.5 (26.10.2026)\r\n";
 
 const template = "VERBOSE/S,BENCH/S,RANDOM/S";
 const arg_verbose = 0;
@@ -355,9 +355,14 @@ fn gcmAgrees(cb: *CryptoBase, key: []const u8, aad: []const u8, data: [*]const u
     return same(opened[0..length], data[0..length]);
 }
 
+/// How much long data there is: 2.2 MB on the 64-bit boards - past two
+/// of the JH7110's engine buffers (1 MiB and 4 KiB each) - and 150000
+/// bytes on the ESP32s. A check longer than that is left out.
+const long_size: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 2_200_000 else 150_000;
+
 fn longData(run: *Run) void {
     const cb = run.cb;
-    const size = 150_000;
+    const size = long_size;
     const memory = run.sys.AllocVec(4 * size, exec.MEMF_ANY) orelse {
         run.check("long data: memory for it", false);
         return;
@@ -386,8 +391,13 @@ fn longData(run: *Run) void {
         .{ .name = "AES-128-CTR, 4101 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 16, .length = 4101, .split = 1001 },
         .{ .name = "AES-128-CTR, 20003 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 16, .length = 20003, .split = 4101 },
         .{ .name = "AES-256-CTR, 149999 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 32, .length = 149_999, .split = 77_777 },
+        .{ .name = "AES-128-CTR, 1100003 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 16, .length = 1_100_003, .split = 500_001 },
+        .{ .name = "AES-128-CBC decrypt, 2100000 bytes", .mode = crypto.CIPHER_AES_CBC | crypto.CIPHERF_DECRYPT, .key_length = 16, .length = 2_100_000, .split = 1_052_672 },
     };
-    for (ciphers) |c| run.check(c.name, twoWays(cb, c.mode, key[0..c.key_length], &iv, data.ptr, one, pieces, c.length, c.split));
+    for (ciphers) |c| {
+        if (c.length > size) continue;
+        run.check(c.name, twoWays(cb, c.mode, key[0..c.key_length], &iv, data.ptr, one, pieces, c.length, c.split));
+    }
 
     const header = hex("feedfacedeadbeefabaddad201");
     const messages = [_]struct { name: [*:0]const u8, key_length: u32, aad: u32, length: u32 }{
@@ -395,13 +405,24 @@ fn longData(run: *Run) void {
         .{ .name = "AES-128-GCM, 30011 bytes", .key_length = 16, .aad = 13, .length = 30011 },
         .{ .name = "AES-256-GCM, 66560 bytes", .key_length = 32, .aad = 0, .length = 66560 },
         .{ .name = "AES-128-GCM, 100000 bytes", .key_length = 16, .aad = 13, .length = 100_000 },
+        // An SMB READ's answer of 1 MiB with its headers, and a message
+        // longer than the engine's buffer, which goes to software.
+        .{ .name = "AES-128-GCM, 1048656 bytes", .key_length = 16, .aad = 13, .length = 1_048_656 },
+        .{ .name = "AES-256-GCM, 1100000 bytes", .key_length = 32, .aad = 13, .length = 1_100_000 },
     };
-    for (messages) |m| run.check(m.name, gcmAgrees(cb, key[0..m.key_length], header[0..m.aad], data.ptr, m.length, one, pieces, other));
+    for (messages) |m| {
+        if (m.length > size) continue;
+        run.check(m.name, gcmAgrees(cb, key[0..m.key_length], header[0..m.aad], data.ptr, m.length, one, pieces, other));
+    }
     const macs = [_]struct { name: [*:0]const u8, length: u32 }{
         .{ .name = "AES-128-GMAC, 1000 bytes", .length = 1000 },
         .{ .name = "AES-128-GMAC, 66560 bytes", .length = 66560 },
+        .{ .name = "AES-128-GMAC, 1048656 bytes", .length = 1_048_656 },
     };
-    for (macs) |m| run.check(m.name, gcmAgrees(cb, key[0..16], data[0..m.length], data.ptr, 0, one, pieces, other));
+    for (macs) |m| {
+        if (m.length > size) continue;
+        run.check(m.name, gcmAgrees(cb, key[0..16], data[0..m.length], data.ptr, 0, one, pieces, other));
+    }
     longHashes(run, data);
 }
 
@@ -415,7 +436,7 @@ const hash_names = [_]struct { algorithm: u32, name: []const u8 }{
 
 /// HashPieces and HmacPieces on long messages, cut in odd places, against
 /// the incremental calls: lengths about the engine's threshold, its
-/// buffer (68 KiB) and two of them.
+/// buffer (1 MiB and 4 KiB) and two of them.
 fn longHashes(run: *Run, data: []const u8) void {
     const cb = run.cb;
     const Bytes = crypto.Bytes;
@@ -423,7 +444,8 @@ fn longHashes(run: *Run, data: []const u8) void {
     var expected: [crypto.DIGEST_MAX]u8 = undefined;
     var digest: [crypto.DIGEST_MAX]u8 = undefined;
     for (hash_names) |h| {
-        for ([_]u32{ 511, 512, 4099, 69632, 69633, 139265, 150_000 }) |length| {
+        for ([_]u32{ 511, 512, 4099, 69633, 150_000, 1_052_672, 1_052_673, 2_105_345 }) |length| {
+            if (length > data.len) continue;
             const want = digestOf(cb, h.algorithm, data[0..length], &expected);
             const cut = length / 3;
             const later = length - length / 7;

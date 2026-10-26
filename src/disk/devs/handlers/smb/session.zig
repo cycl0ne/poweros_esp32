@@ -17,10 +17,13 @@
 //! the answers are read into the receive buffer one after the other until
 //! every request has its own.
 //!
-//! **Message ids and credits.** Every request takes the next message id
-//! and costs one credit (none on 2.0.2, which has no charge): nothing
-//! here asks for more than 64 KiB at a time. Each asks for `credits_asked`
-//! more, so a session never runs out.
+//! **Message ids and credits.** Every request costs a credit for each 64
+//! KiB it reads or writes, at least one (none on 2.0.2, which has no
+//! charge), and takes as many message ids, from the next. Only a server
+//! that takes more than a credit's worth in one request (CAP_LARGE_MTU,
+//! 2.1 and later) is asked for more, and never for more than the credits
+//! there are pay for. Each request asks for `credits_asked` more, so a
+//! session never runs out.
 //!
 //! **What is believed.** In a signed session every answer must carry a
 //! right signature, but the few a server sends before it can sign - an
@@ -42,9 +45,12 @@ const Command = wire.Command;
 const Writer = wire.Writer;
 const Reader = wire.Reader;
 
-/// The most one request reads or writes, and so what one QUERY_DIRECTORY
-/// asks for: one credit's worth.
-pub const io_max: u32 = 64 * 1024;
+/// What one credit pays for, and so what one QUERY_DIRECTORY asks for.
+pub const credit_bytes: u32 = 64 * 1024;
+
+/// The most one READ or WRITE moves: 1 MiB where memory is plenty, so a
+/// big file costs a round trip a MiB; a credit's worth on the ESP32s.
+pub const io_max: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else credit_bytes;
 
 /// The largest message either way: a READ's answer or a WRITE's request
 /// of `io_max`, and their headers.
@@ -63,8 +69,11 @@ pub const receive_size: usize = crypt.header_size + message_max + 8 * 1024;
 /// The most requests in one compound.
 pub const compound_max: usize = 4;
 
-/// Credits each request asks for.
+/// Credits each request asks for: more than the most one costs.
 const credits_asked: u16 = 32;
+comptime {
+    if (io_max / credit_bytes >= credits_asked) @compileError("a request would cost more credits than it asks for");
+}
 
 /// A FileId that stands for the one the compound's CREATE opens.
 pub const related_file: [16]u8 = @splat(0xFF);
@@ -103,6 +112,8 @@ pub const Request = struct {
     writer: Writer,
     starts: [compound_max]usize = undefined,
     commands: [compound_max]Command = undefined,
+    /// What each costs, in credits.
+    charges: [compound_max]u16 = undefined,
     count: usize = 0,
     /// Whether the session's tree is named (every command after
     /// TREE_CONNECT but LOGOFF and ECHO).
@@ -118,8 +129,16 @@ pub const Request = struct {
         if (request.count > 0) request.writer.alignTo(8);
         request.starts[request.count] = request.writer.at;
         request.commands[request.count] = command;
+        request.charges[request.count] = 1;
         request.count += 1;
         request.writer.zeros(wire.header_size);
+    }
+
+    /// The last request added made to cost what moving `bytes` does: a
+    /// credit for each 64 KiB, at least one.
+    pub fn charge(request: *Request, bytes: u32) void {
+        if (request.count == 0) return;
+        request.charges[request.count - 1] = @intCast(@max(1, (bytes + credit_bytes - 1) / credit_bytes));
     }
 
     /// The bytes of the `index`th request: from its header to the next's,
@@ -158,9 +177,12 @@ pub const Session = struct {
     server_capabilities: u32 = 0,
     server_guid: [16]u8 = @splat(0),
     server_time: u64 = 0,
-    max_transact: u32 = io_max,
-    max_read: u32 = io_max,
-    max_write: u32 = io_max,
+    max_transact: u32 = credit_bytes,
+    max_read: u32 = credit_bytes,
+    max_write: u32 = credit_bytes,
+    /// Whether a request may cost more than one credit: a dialect after
+    /// 2.0.2 on a server with CAP_LARGE_MTU.
+    multi_credit: bool = false,
     /// 3.1.1's choices: the cipher and the signing algorithm.
     cipher: u16 = smb.SMB2_CIPHER_NONE,
     signing_algorithm: u16 = smb.SMB2_SIGNING_AES_CMAC,
@@ -182,6 +204,16 @@ pub const Session = struct {
         var request: Request = .{ .writer = .{ .bytes = session.send_buffer[message_at..] } };
         request.add(command);
         return request;
+    }
+
+    /// The most one READ or WRITE may move now: `io_max` within the
+    /// server's `limit` (MaxReadSize or MaxWriteSize), a credit's worth
+    /// where a request may not cost more, and what the credits there are
+    /// pay for.
+    pub fn pieceMax(session: *const Session, limit: u32) u32 {
+        const most = @min(io_max, limit);
+        if (!session.multi_credit) return @min(most, credit_bytes);
+        return @intCast(@min(most, @as(u64, @max(session.credits, 1)) * credit_bytes));
     }
 
     /// Everything a connection had, forgotten: the next one starts again
@@ -206,11 +238,15 @@ pub const Session = struct {
         const cb = session.cb;
         const encrypt = session.encrypt_all or (request.on_tree and session.encrypt_tree);
         const sign = session.signer.signs() and !encrypt;
-        const first_id = session.message_id;
+        // Each request's message id, the first of those its charge takes.
+        var ids: [compound_max]u64 = undefined;
+        var spent: u32 = 0;
         for (0..request.count) |index| {
             const message = request.message(index);
+            const charge: u16 = if (session.dialect == smb.SMB2_DIALECT_0202 or request.commands[index] == .negotiate) 0 else request.charges[index];
+            ids[index] = session.message_id;
             const header: Header = .{
-                .credit_charge = if (session.dialect == smb.SMB2_DIALECT_0202 or request.commands[index] == .negotiate) 0 else 1,
+                .credit_charge = charge,
                 .command = request.commands[index],
                 .credits = credits_asked,
                 .flags = if (index > 0) wire.FLAGS_RELATED_OPERATIONS else 0,
@@ -220,10 +256,11 @@ pub const Session = struct {
                 .session_id = session.session_id,
             };
             header.write(message);
-            session.message_id += 1;
+            session.message_id += @max(charge, 1);
+            spent += @max(charge, 1);
             if (sign) session.signer.sign(cb, message);
         }
-        if (session.credits >= request.count) session.credits -= @intCast(request.count) else session.credits = 0;
+        session.credits -|= spent;
 
         const length = request.writer.at;
         const frame = if (encrypt) blk: {
@@ -259,8 +296,9 @@ pub const Session = struct {
                 at += end;
                 session.credits += header.credits;
                 if (header.flags & wire.FLAGS_SERVER_TO_REDIR == 0) return error.Protocol;
-                if (header.message_id < first_id or header.message_id >= first_id + request.count) continue;
-                const index: usize = @intCast(header.message_id - first_id);
+                const index = for (ids[0..request.count], 0..) |id, at_index| {
+                    if (id == header.message_id) break at_index;
+                } else continue;
                 // An interim answer: the real one comes later.
                 if (header.status == smb.STATUS_PENDING and header.flags & wire.FLAGS_ASYNC_COMMAND != 0) continue;
                 if (!sealed and !session.believes(message, &header)) return error.Security;

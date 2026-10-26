@@ -124,6 +124,7 @@ pub fn close(request: *Request, file_id: *const [16]u8) void {
 /// READ: `length` bytes from `offset`, asked to come right after the
 /// answer's own fields.
 pub fn read(request: *Request, file_id: *const [16]u8, offset: u64, length: u32) void {
+    request.charge(length);
     const writer = &request.writer;
     writer.uint16(49);
     writer.byte(wire.header_size + 16); // Padding: where the data is to be
@@ -153,6 +154,7 @@ pub fn readData(reply: *const Reply) ?[]const u8 {
 /// WRITE: `data` at `offset`, carried right after the request's own
 /// fields; never empty.
 pub fn write(request: *Request, file_id: *const [16]u8, offset: u64, data: []const u8) void {
+    request.charge(@intCast(data.len));
     const writer = &request.writer;
     writer.uint16(49);
     writer.uint16(wire.header_size + 48); // DataOffset

@@ -52,8 +52,14 @@ pub const Kind = enum(u8) { copy, delete, empty };
 
 /// The most files one job is given.
 pub const sources_max = 16;
-/// How many bytes are copied at a time.
+/// The buffer in the job's own block: what a copy reads at a time on the
+/// ESP32s, and where memory for a larger one is short.
 const chunk = 32768;
+/// The most a copy reads at a time: a buffer of the largest file's size,
+/// up to 1 MiB where memory is plenty, so a big file costs a read a MiB -
+/// a network share answers a read in one round trip, and a disk writes
+/// it in one go.
+const chunk_most: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else chunk;
 /// How deep a copy or a delete goes into drawers within drawers.
 const depth_max = 24;
 /// How long a copy's rate is measured over, in microseconds.
@@ -97,9 +103,14 @@ pub const Job = extern struct {
     rate_since_done: u64 = 0,
     total: u64 = 0,
     done: u64 = 0,
+    /// A copy's largest file, which the copy's buffer is sized by.
+    largest: u64 = 0,
     shown_percent: u32 = 101,
     stopped: bool = false,
     replace_all: bool = false,
+    /// The copy's buffer, allocated for the job; null for `buffer`.
+    pieces: ?[*]u8 = null,
+    piece_size: u32 = chunk,
     buffer: [chunk]u8 = undefined,
 };
 
@@ -166,6 +177,8 @@ fn workMain(sys: *ExecBase) callconv(.c) void {
     defer closeWindow(job);
 
     for (job.sources[0..job.count]) |*source| measure(job, source, 0);
+    if (job.kind == .copy) allocatePieces(job);
+    defer if (job.pieces) |pieces| sys.FreeVec(pieces);
     restartRate(job);
     for (job.sources[0..job.count]) |*source| {
         if (job.stopped) break;
@@ -416,7 +429,7 @@ fn measure(job: *Job, path: [*:0]const u8, depth: usize) void {
     defer job.sys.FreeVec(fib);
     if (!dl.Examine(lock, fib)) return;
     if (!dos.isDirectory(fib.dir_entry_type)) {
-        job.total += if (job.kind == .copy) fib.size else 1;
+        counted(job, fib.size);
         return;
     }
     job.total += 1;
@@ -424,7 +437,7 @@ fn measure(job: *Job, path: [*:0]const u8, depth: usize) void {
     var below: [dos.path_max + 1:0]u8 = @splat(0);
     while (dl.ExNext(lock, fib)) {
         if (!dos.isDirectory(fib.dir_entry_type)) {
-            job.total += if (job.kind == .copy) fib.size else 1;
+            counted(job, fib.size);
             continue;
         }
         _ = drawer_path.join(&below, textOf(path), textOf(@ptrCast(&fib.file_name))) orelse continue;
@@ -432,7 +445,28 @@ fn measure(job: *Job, path: [*:0]const u8, depth: usize) void {
     }
 }
 
+/// A file counted: its bytes for a copy, which notes the largest, or one
+/// more file.
+fn counted(job: *Job, size: u64) void {
+    if (job.kind != .copy) {
+        job.total += 1;
+        return;
+    }
+    job.total += size;
+    job.largest = @max(job.largest, size);
+}
+
 // --- copying --------------------------------------------------------------------------
+
+/// The copy's buffer: the largest file's size, between the job's own 32
+/// KiB and `chunk_most`. Without the memory the job's own will do.
+fn allocatePieces(job: *Job) void {
+    const size: u32 = @intCast(@min(job.largest, chunk_most));
+    if (size <= chunk) return;
+    const memory = job.sys.AllocVec(size, exec.MEMF_ANY) orelse return;
+    job.pieces = @ptrCast(memory);
+    job.piece_size = size;
+}
 
 /// One picked file copied, with its icon: into the job's drawer, or as a
 /// copy of itself beside it.
@@ -542,14 +576,15 @@ fn copyFile(job: *Job, source: [*:0]const u8, target: [*:0]const u8) bool {
     const from = dl.Open(source, dos.MODE_OLDFILE) orelse return false;
     defer _ = dl.Close(from);
     const to = dl.Open(target, dos.MODE_NEWFILE) orelse return false;
+    const bytes: [*]u8 = job.pieces orelse &job.buffer;
     var whole = true;
     while (!job.stopped) {
-        const got = dl.Read(from, &job.buffer, chunk);
+        const got = dl.Read(from, bytes, @intCast(job.piece_size));
         if (got <= 0) {
             whole = got == 0;
             break;
         }
-        if (dl.Write(to, &job.buffer, got) != got) {
+        if (dl.Write(to, bytes, got) != got) {
             whole = false;
             break;
         }
