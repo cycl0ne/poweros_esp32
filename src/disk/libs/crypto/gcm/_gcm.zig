@@ -9,6 +9,10 @@
 //! their lengths, is software - the S3's AES engine has no GCM of its
 //! own - and takes the same steps whatever H and the data are.
 //!
+//! The JH7110's engine, on the VisionFive 2, does GCM itself, by DMA: a
+//! message it suits goes there (`bulk`), and only the header's share of
+//! the tag is worked out here.
+//!
 //! A block is multiplied without carries by H with ordinary integer
 //! multiplications: each 32-bit operand split into four with three empty
 //! bits between their bits, so that a carry never reaches a bit that
@@ -28,6 +32,7 @@ const AES_BLOCK = crypto.AES_BLOCK;
 const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 const _cipher = @import("../cipher/_cipher.zig");
 const aes = @import("../engine/aes.zig");
+const jh7110 = @import("../engine/jh7110.zig");
 
 /// x * y without carries, 32 by 32 bits into 64.
 fn multiply32(x: u32, y: u32) u64 {
@@ -61,6 +66,44 @@ fn multiply64(x: u64, y: u64) u128 {
     return @as(u128, low) ^ (@as(u128, middle) << 32) ^ (@as(u128, high) << 64);
 }
 
+/// x * y in GCM's field, each 128 bits as a block's bytes read most
+/// significant first.
+fn multiply(x: u128, y: u128) u128 {
+    const x_low: u64 = @truncate(x);
+    const x_high: u64 = @truncate(x >> 64);
+    const y_low: u64 = @truncate(y);
+    const y_high: u64 = @truncate(y >> 64);
+    const low = multiply64(x_low, y_low);
+    const high = multiply64(x_high, y_high);
+    const middle = multiply64(x_low ^ x_high, y_low ^ y_high) ^ low ^ high;
+    // The 255-bit product, as high and low 128 bits, shifted up one.
+    var product_high = high ^ (middle >> 64);
+    var product_low = low ^ (middle << 64);
+    product_high = product_high << 1 | product_low >> 127;
+    product_low <<= 1;
+    // Reversed, the high half is the product's low 128 coefficients and
+    // the low half its high ones (u), which come down by x^128 =
+    // x^7 + x^2 + x + 1; what that pushes past x^127 comes down again.
+    const u = product_low;
+    const w = (u << 127) ^ (u << 126) ^ (u << 121);
+    return product_high ^ u ^ (u >> 1) ^ (u >> 2) ^ (u >> 7) ^ w ^ (w >> 1) ^ (w >> 2) ^ (w >> 7);
+}
+
+/// `h` to the power `exponent` in GCM's field, by squaring and
+/// multiplying: the steps follow the exponent - a message's length, no
+/// secret - and not `h`.
+fn power(h: u128, exponent: u32) u128 {
+    // The field's 1: the block whose first bit is set.
+    var result: u128 = 1 << 127;
+    var square = h;
+    var rest = exponent;
+    while (rest != 0) : (rest >>= 1) {
+        if (rest & 1 != 0) result = multiply(result, square);
+        square = multiply(square, square);
+    }
+    return result;
+}
+
 /// GHASH under way: the key H and the running value Y, each 128 bits as
 /// the block's bytes read most significant first.
 const Ghash = struct {
@@ -73,25 +116,7 @@ const Ghash = struct {
 
     /// Y = (Y ^ block) * H.
     fn block(ghash: *Ghash, bytes: *const [AES_BLOCK]u8) void {
-        const x = ghash.y ^ load128(bytes);
-        const x_low: u64 = @truncate(x);
-        const x_high: u64 = @truncate(x >> 64);
-        const h_low: u64 = @truncate(ghash.h);
-        const h_high: u64 = @truncate(ghash.h >> 64);
-        const low = multiply64(x_low, h_low);
-        const high = multiply64(x_high, h_high);
-        const middle = multiply64(x_low ^ x_high, h_low ^ h_high) ^ low ^ high;
-        // The 255-bit product, as high and low 128 bits, shifted up one.
-        var product_high = high ^ (middle >> 64);
-        var product_low = low ^ (middle << 64);
-        product_high = product_high << 1 | product_low >> 127;
-        product_low <<= 1;
-        // Reversed, the high half is the product's low 128 coefficients and
-        // the low half its high ones (u), which come down by x^128 =
-        // x^7 + x^2 + x + 1; what that pushes past x^127 comes down again.
-        const u = product_low;
-        const w = (u << 127) ^ (u << 126) ^ (u << 121);
-        ghash.y = product_high ^ u ^ (u >> 1) ^ (u >> 2) ^ (u >> 7) ^ w ^ (w >> 1) ^ (w >> 2) ^ (w >> 7);
+        ghash.y = multiply(ghash.y ^ load128(bytes), ghash.h);
     }
 
     /// `length` bytes, the last block padded with zeroes.
@@ -127,6 +152,11 @@ fn store64(bytes: *[8]u8, value: u64) void {
     for (bytes, 0..) |*byte, index| byte.* = @truncate(value >> @intCast(56 - 8 * index));
 }
 
+fn store128(bytes: *[AES_BLOCK]u8, value: u128) void {
+    store64(bytes[0..8], @truncate(value >> 64));
+    store64(bytes[8..16], @truncate(value));
+}
+
 /// The lengths block: the header's and the data's lengths in bits.
 fn lengthsBlock(ghash: *Ghash, first: u32, second: u32) void {
     var block: [AES_BLOCK]u8 = undefined;
@@ -141,6 +171,7 @@ pub fn run(cb: *CryptoBase, message: *const GcmMessage, seal: bool) i32 {
     if (message.nonce_length == 0) return crypto.CRYPTOERR_LENGTH;
     if (message.aad_length != 0 and message.aad == null) return crypto.CRYPTOERR_LENGTH;
     if (message.length != 0 and (message.input == null or message.output == null)) return crypto.CRYPTOERR_LENGTH;
+    if (bulk(cb, message, seal)) |result| return result;
 
     var session = aes.begin(cb, message.key, message.key_length, false);
     defer session.end();
@@ -206,4 +237,66 @@ fn tagOf(session: *aes.Session, ghash: *Ghash, j0: *const [AES_BLOCK]u8, aad_len
     _cipher.xorBlock(&tag, &mask);
     _cipher.wipe(&mask);
     return tag;
+}
+
+/// The least header the JH7110's engine takes a GMAC for: below, the two
+/// blocks the software spends on H and E(K, J0) and its GHASH are quicker.
+const gmac_least: u32 = 512;
+
+/// The message through the JH7110's engine, where the board has one and
+/// the message suits it - a 12-byte nonce, its data or (GMAC) its header
+/// fitting the engine's buffers: the result, or null for the software.
+///
+/// The engine takes a header only through its registers, a word at a
+/// time, so it is given none: it seals or opens the data alone, and the
+/// header's share of the tag is added here. GHASH over blocks X1..Xm is
+/// the sum of Xi * H^(m-i+1); the header's blocks come first, so each
+/// carries c more powers of H than it would alone, c being the data's
+/// blocks, and the lengths block differs. With Y_A the header's GHASH
+/// without lengths, L the message's lengths block and L' the engine's
+/// (no header), the tag is the engine's exclusive-ored with
+/// (Y_A * H^c ^ L ^ L') * H.
+///
+/// A message of header alone - GMAC, which SMB signs with - is opened as
+/// if it were the data: opening hashes what it is given, so only the
+/// lengths block differs (Y_A is 0). What opening decrypts is thrown
+/// away. A message opened is copied out of the engine's buffer only once
+/// its tag is right.
+fn bulk(cb: *CryptoBase, message: *const GcmMessage, seal: bool) ?i32 {
+    if (message.nonce_length != 12) return null;
+    const gmac = message.length == 0;
+    const length = if (gmac) message.aad_length else message.length;
+    if (length > jh7110.room or length < (if (gmac) gmac_least else jh7110.least)) return null;
+    const state = jh7110.take(cb) orelse return null;
+    defer jh7110.give(cb, state);
+    const data: [*]const u8 = if (gmac) message.aad.? else message.input.?;
+    @memcpy(state.input()[0..length], data[0..length]);
+    var tag: [AES_BLOCK]u8 = undefined;
+    if (!jh7110.gcm(cb, state, message.key, message.key_length, message.nonce, length, gmac or !seal, &tag)) return null;
+
+    var hash_key: [AES_BLOCK]u8 = @splat(0);
+    var session = aes.begin(cb, message.key, message.key_length, false);
+    session.block(&hash_key, &hash_key);
+    session.end();
+    const h = load128(&hash_key);
+    _cipher.wipe(&hash_key);
+    // L ^ L': the message's lengths against the engine's, 0 and `length`.
+    var fix = ((@as(u128, message.aad_length) * 8) << 64) ^ (@as(u128, message.length) * 8) ^ (@as(u128, length) * 8);
+    if (!gmac and message.aad_length != 0) {
+        var header: Ghash = .{ .h = h };
+        header.update(message.aad.?, message.aad_length);
+        fix ^= multiply(header.y, power(h, (message.length + AES_BLOCK - 1) / AES_BLOCK));
+    }
+    store128(&tag, load128(&tag) ^ multiply(fix, h));
+
+    if (!seal) {
+        var differ: u8 = 0;
+        for (tag, message.tag) |a, b| differ |= a ^ b;
+        _cipher.wipe(&tag);
+        if (differ != 0) return crypto.CRYPTOERR_TAG;
+    }
+    if (!gmac) @memcpy(message.output.?[0..length], state.output()[0..length]);
+    if (seal) message.tag.* = tag;
+    _cipher.wipe(&tag);
+    return crypto.CRYPTOERR_OK;
 }

@@ -391,6 +391,10 @@ pub const PARTKIND_DMA: u32 = 22;
 /// ("SoC"). The board's sensors are thermal.resource's units in the order
 /// the board lists them.
 pub const PARTKIND_THERMAL: u32 = 23;
+/// A crypto engine in the chip, which crypto.library hands its work to:
+/// PART_Chip which, PART_Address its registers (BUS_MEMORY), PART_Irq its
+/// interrupt.
+pub const PARTKIND_CRYPTO: u32 = 24;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -499,6 +503,16 @@ pub const CHIP_JH7110_PWMDAC: u32 = 34;
 /// board's 32.768 kHz oscillator. A reset stops it and keeps the date; a
 /// power cut loses it.
 pub const CHIP_JH7110_RTC: u32 = 35;
+/// The DMA controller in the JH7110's security block, ARM's PL080 with
+/// eight channels (PARTKIND_DMA on BUS_MEMORY), which feeds the crypto
+/// engine (CHIP_JH7110_CRYPTO) and which dma.resource hands out as its
+/// PL080 channels.
+pub const CHIP_JH7110_SDMA: u32 = 36;
+/// The JH7110's crypto engine, in its security block (PARTKIND_CRYPTO on
+/// BUS_MEMORY): AES with 128-, 192- and 256-bit keys in ECB, CBC, CTR,
+/// CCM and GCM, SHA-2 and SM3 with HMAC, and a big-number unit, its data
+/// moved by the block's DMA controller (CHIP_JH7110_SDMA).
+pub const CHIP_JH7110_CRYPTO: u32 = 37;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

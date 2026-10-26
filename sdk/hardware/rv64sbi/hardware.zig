@@ -28,6 +28,7 @@ pub const rng = @import("rng.zig");
 pub const trng = @import("trng.zig");
 pub const ccache = @import("ccache.zig");
 pub const dwdma = @import("dwdma.zig");
+pub const pl080 = @import("pl080.zig");
 pub const dwi2c = @import("dwi2c.zig");
 pub const cpuclock = @import("cpuclock.zig");
 

@@ -16,6 +16,12 @@
 //! chip the hashes, AES and the exponentiations go through the SHA, AES
 //! and RSA engines; the curves are software.
 //!
+//! Long data checks what only long data reaches - the JH7110's engine
+//! takes 64 bytes of AES, or 512 of GMAC, and more: ECB, CBC and CTR in
+//! one call against the same in 48-byte pieces, which stay in software
+//! everywhere, and GCM's ciphertext and tags against CTR in pieces and a
+//! GHASH worked out here bit by bit, as SP 800-38D gives it.
+//!
 //! It prints one line per check that fails (every check, with VERBOSE)
 //! and a count at the end; the return code is 0 when all pass, 10 when
 //! any fails, 20 when the library cannot be opened.
@@ -27,7 +33,9 @@
 //! RANDOM puts 20000 bits of RandomBytes through FIPS 140-2's monobit,
 //! poker and long-run tests.
 
+const std = @import("std");
 const sdk = @import("sdk");
+const exec = sdk.exec;
 const dos = sdk.dos;
 const crypto = sdk.crypto;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -36,7 +44,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Crypto";
-const VERSION_STRING = "\x00$VER: Crypto 1.2 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Crypto 1.3 (26.10.2026)\r\n";
 
 const template = "VERBOSE/S,BENCH/S,RANDOM/S";
 const arg_verbose = 0;
@@ -63,6 +71,7 @@ fn nibble(comptime digit: u8) u8 {
 
 /// What a run keeps: where to print, and what passed.
 const Run = struct {
+    sys: *ExecBase,
     dl: *DosBase,
     cb: *CryptoBase,
     verbose: bool,
@@ -204,6 +213,155 @@ fn gcm(run: *Run) void {
     run.check("AES-128-GCM, a forged tag refused", run.cb.OpenGcm(&message) == crypto.CRYPTOERR_TAG and same(&data, &sealed));
     tag[0] ^= 0x80;
     run.check("AES-128-GCM open (GCM test case 4)", run.cb.OpenGcm(&message) == crypto.CRYPTOERR_OK and same(&data, &plain));
+}
+
+/// `length` bytes of `from` through a fresh context of `mode`, into `one`
+/// in two calls - the first `split` bytes, then the rest - and into
+/// `pieces` 48 bytes at a time: whether both came out the same.
+fn twoWays(cb: *CryptoBase, mode: u32, key: []const u8, iv: *const [16]u8, from: [*]const u8, one: [*]u8, pieces: [*]u8, length: u32, split: u32) bool {
+    var context: crypto.CipherContext = .{};
+    if (cb.InitCipher(&context, mode, key.ptr, @intCast(key.len), iv) != crypto.CRYPTOERR_OK) return false;
+    if (cb.UpdateCipher(&context, from, one, split) != crypto.CRYPTOERR_OK) return false;
+    if (cb.UpdateCipher(&context, from + split, one + split, length - split) != crypto.CRYPTOERR_OK) return false;
+    if (cb.InitCipher(&context, mode, key.ptr, @intCast(key.len), iv) != crypto.CRYPTOERR_OK) return false;
+    var at: u32 = 0;
+    while (at < length) : (at += 48) {
+        if (cb.UpdateCipher(&context, from + at, pieces + at, @min(48, length - at)) != crypto.CRYPTOERR_OK) return false;
+    }
+    return same(one[0..length], pieces[0..length]);
+}
+
+/// x * y in GCM's field, a bit at a time (SP 800-38D, algorithm 1),
+/// blocks read most significant first.
+fn fieldMultiply(x: u128, y: u128) u128 {
+    var z: u128 = 0;
+    var v = y;
+    var bit: u8 = 0;
+    while (bit < 128) : (bit += 1) {
+        if ((x >> @intCast(127 - bit)) & 1 != 0) z ^= v;
+        v = if (v & 1 != 0) (v >> 1) ^ (@as(u128, 0xE1) << 120) else v >> 1;
+    }
+    return z;
+}
+
+/// GHASH with `h` over `aad`, `data` and their lengths.
+fn ghashOf(h: u128, aad: []const u8, data: []const u8) u128 {
+    var y: u128 = 0;
+    for ([_][]const u8{ aad, data }) |part| {
+        var at: usize = 0;
+        while (at < part.len) : (at += 16) {
+            var block: [16]u8 = @splat(0);
+            const take = @min(16, part.len - at);
+            @memcpy(block[0..take], part[at..][0..take]);
+            y = fieldMultiply(y ^ std.mem.readInt(u128, &block, .big), h);
+        }
+    }
+    return fieldMultiply(y ^ ((@as(u128, aad.len) * 8) << 64) ^ (@as(u128, data.len) * 8), h);
+}
+
+/// One block through AES-ECB with `key`.
+fn blockOf(cb: *CryptoBase, key: []const u8, block: [16]u8) [16]u8 {
+    var context: crypto.CipherContext = .{};
+    var out = block;
+    _ = cb.InitCipher(&context, crypto.CIPHER_AES_ECB, key.ptr, @intCast(key.len), null);
+    _ = cb.UpdateCipher(&context, &out, &out, 16);
+    return out;
+}
+
+/// `data` (`length` bytes, maybe none) and `aad` sealed with AES-GCM
+/// into `sealed`, checked against CTR from J0 + 1 in 48-byte pieces into
+/// `expected` and the GHASH here; then opened again, once with a forged
+/// tag, which leaves `opened` as it was, and once as sealed.
+fn gcmAgrees(cb: *CryptoBase, key: []const u8, aad: []const u8, data: [*]const u8, length: u32, sealed: [*]u8, expected: [*]u8, opened: [*]u8) bool {
+    const nonce = hex("cafebabefacedbaddecaf888");
+    var tag: [crypto.GCM_TAG]u8 = undefined;
+    const seal: crypto.GcmMessage = .{
+        .key = key.ptr,
+        .key_length = @intCast(key.len),
+        .nonce = &nonce,
+        .nonce_length = 12,
+        .aad = aad.ptr,
+        .aad_length = @intCast(aad.len),
+        .input = data,
+        .output = sealed,
+        .length = length,
+        .tag = &tag,
+    };
+    if (cb.SealGcm(&seal) != crypto.CRYPTOERR_OK) return false;
+
+    var j0: [16]u8 = @splat(0);
+    @memcpy(j0[0..12], &nonce);
+    j0[15] = 1;
+    var counter = j0;
+    counter[15] = 2;
+    var context: crypto.CipherContext = .{};
+    _ = cb.InitCipher(&context, crypto.CIPHER_AES_CTR, key.ptr, @intCast(key.len), &counter);
+    var at: u32 = 0;
+    while (at < length) : (at += 48) _ = cb.UpdateCipher(&context, data + at, expected + at, @min(48, length - at));
+    if (!same(sealed[0..length], expected[0..length])) return false;
+    const h = std.mem.readInt(u128, &blockOf(cb, key, @splat(0)), .big);
+    const mask = std.mem.readInt(u128, &blockOf(cb, key, j0), .big);
+    if (std.mem.readInt(u128, &tag, .big) != mask ^ ghashOf(h, aad, sealed[0..length])) return false;
+
+    var open = seal;
+    open.input = sealed;
+    open.output = opened;
+    @memset(opened[0..length], 0xEE);
+    tag[15] ^= 1;
+    if (cb.OpenGcm(&open) != crypto.CRYPTOERR_TAG) return false;
+    for (opened[0..length]) |byte| if (byte != 0xEE) return false;
+    tag[15] ^= 1;
+    if (cb.OpenGcm(&open) != crypto.CRYPTOERR_OK) return false;
+    return same(opened[0..length], data[0..length]);
+}
+
+fn longData(run: *Run) void {
+    const cb = run.cb;
+    const size = 150_000;
+    const memory = run.sys.AllocVec(4 * size, exec.MEMF_ANY) orelse {
+        run.check("long data: memory for it", false);
+        return;
+    };
+    defer run.sys.FreeVec(memory);
+    const all: [*]u8 = @ptrCast(memory);
+    const data = all[0..size];
+    const one = all[size..];
+    const pieces = all[2 * size ..];
+    const other = all[3 * size ..];
+    var x: u32 = 0x1234_5678;
+    for (data) |*byte| {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        byte.* = @truncate(x);
+    }
+    const key = hex("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
+    // A counter whose low bytes carry out within the data.
+    const iv = hex("f0f1f2f3f4f5f6f7f8f9fafbfffffffe");
+    const ciphers = [_]struct { name: [*:0]const u8, mode: u32, key_length: u32, length: u32, split: u32 }{
+        .{ .name = "AES-128-ECB, 20000 bytes", .mode = crypto.CIPHER_AES_ECB, .key_length = 16, .length = 20000, .split = 4096 },
+        .{ .name = "AES-128-CBC encrypt, 4096 bytes", .mode = crypto.CIPHER_AES_CBC, .key_length = 16, .length = 4096, .split = 1024 },
+        .{ .name = "AES-128-CBC decrypt, 150000 bytes", .mode = crypto.CIPHER_AES_CBC | crypto.CIPHERF_DECRYPT, .key_length = 16, .length = 150_000, .split = 4096 },
+        .{ .name = "AES-256-CBC encrypt, 150000 bytes", .mode = crypto.CIPHER_AES_CBC, .key_length = 32, .length = 150_000, .split = 70_000 },
+        .{ .name = "AES-128-CTR, 4101 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 16, .length = 4101, .split = 1001 },
+        .{ .name = "AES-128-CTR, 20003 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 16, .length = 20003, .split = 4101 },
+        .{ .name = "AES-256-CTR, 149999 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 32, .length = 149_999, .split = 77_777 },
+    };
+    for (ciphers) |c| run.check(c.name, twoWays(cb, c.mode, key[0..c.key_length], &iv, data.ptr, one, pieces, c.length, c.split));
+
+    const header = hex("feedfacedeadbeefabaddad201");
+    const messages = [_]struct { name: [*:0]const u8, key_length: u32, aad: u32, length: u32 }{
+        .{ .name = "AES-128-GCM, 4103 bytes", .key_length = 16, .aad = 13, .length = 4103 },
+        .{ .name = "AES-128-GCM, 30011 bytes", .key_length = 16, .aad = 13, .length = 30011 },
+        .{ .name = "AES-256-GCM, 66560 bytes", .key_length = 32, .aad = 0, .length = 66560 },
+        .{ .name = "AES-128-GCM, 100000 bytes", .key_length = 16, .aad = 13, .length = 100_000 },
+    };
+    for (messages) |m| run.check(m.name, gcmAgrees(cb, key[0..m.key_length], header[0..m.aad], data.ptr, m.length, one, pieces, other));
+    const macs = [_]struct { name: [*:0]const u8, length: u32 }{
+        .{ .name = "AES-128-GMAC, 1000 bytes", .length = 1000 },
+        .{ .name = "AES-128-GMAC, 66560 bytes", .length = 66560 },
+    };
+    for (macs) |m| run.check(m.name, gcmAgrees(cb, key[0..16], data[0..m.length], data.ptr, 0, one, pieces, other));
 }
 
 fn modexp(run: *Run) void {
@@ -507,11 +665,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(crypto_lib);
 
-    var run: Run = .{ .dl = dl, .cb = @ptrCast(crypto_lib), .verbose = argv[arg_verbose] != 0 };
+    var run: Run = .{ .sys = sys, .dl = dl, .cb = @ptrCast(crypto_lib), .verbose = argv[arg_verbose] != 0 };
     hashes(&run);
     hmac(&run);
     aes(&run);
     gcm(&run);
+    longData(&run);
     modexp(&run);
     keys(&run);
     signatures(&run);

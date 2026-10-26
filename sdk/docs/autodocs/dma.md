@@ -10,7 +10,7 @@ Generated from the source by `./zig build autodoc`.
 ## Index
 
 - [AllocDMAChain](#allocdmachain) - A descriptor chain over `length` bytes at `buffer`, for a side: DMA_OUT sends them all (EOF on the last descriptor), DMA_IN fills them.
-- [AllocDMAChannel](#allocdmachannel) - Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1), a 2D one (DMA2D_CHANNEL0 on) or a DesignWare one (DWDMA_CHANNEL0 on): null if it is now yours, else its owner's name.
+- [AllocDMAChannel](#allocdmachannel) - Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1), a 2D one (DMA2D_CHANNEL0 on), a DesignWare one (DWDMA_CHANNEL0 on) or a PL080 one (PL080_CHANNEL0 on): null if it is now yours, else its owner's name.
 - [ClearDMAInts](#cleardmaints) - Clear a side's interrupts.
 - [ConnectDMAChannel](#connectdmachannel) - Connect a general channel to a peripheral (DMAPERI_*), or DMAPERI_MEMORY for memory to memory, with DMACF_* flags.
 - [DMAChannelOwner](#dmachannelowner) - Who has a channel, or null.
@@ -44,7 +44,7 @@ isn't in internal RAM or PSRAM, or without memory. Not from interrupts.
 
 ## AllocDMAChannel
 
-Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1), a 2D one (DMA2D_CHANNEL0 on) or a DesignWare one (DWDMA_CHANNEL0 on): null if it is now yours, else its owner's name.
+Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1), a 2D one (DMA2D_CHANNEL0 on), a DesignWare one (DWDMA_CHANNEL0 on) or a PL080 one (PL080_CHANNEL0 on): null if it is now yours, else its owner's name.
 
 **SYNOPSIS**
 

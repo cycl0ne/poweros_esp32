@@ -919,7 +919,7 @@ None.
 
 **BUGS**
 
-GHASH runs in software, as in SealGcm.
+As in SealGcm: on the S3 GHASH runs in software.
 
 **SEE ALSO**
 
@@ -1057,8 +1057,10 @@ is how a nonce is made.
 
 **BUGS**
 
-GHASH runs in software, bit by bit, and is slower than the engine:
-it, not AES, sets the pace of a long message.
+On the S3 GHASH runs in software, bit by bit, and is slower than the
+engine: it, not AES, sets the pace of a long message. The JH7110's
+engine does all of GCM, for a message with a 12-byte nonce whose data
+- or header alone - is at most 68 KiB.
 
 **SEE ALSO**
 

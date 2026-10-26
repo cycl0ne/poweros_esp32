@@ -10,12 +10,13 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const _base = @import("crypto_base.zig");
 const CryptoBase = _base.CryptoBase;
 const _engine = @import("engine/_engine.zig");
+const jh7110 = @import("engine/jh7110.zig");
 const crypto_lvo = @import("crypto_lvo.zig");
 
 pub const LIBRARY_NAME = crypto.CRYPTONAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 4;
-const BUILD_DATE = "25.10.2026";
+pub const LIBRARY_REVISION = 5;
+const BUILD_DATE = "26.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -38,8 +39,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     return lib;
 }
 
-/// The library goes when nobody has it open: the engines stopped, the
-/// base freed, and the file it was loaded from handed back.
+/// The library goes when nobody has it open: the engines stopped, what
+/// the JH7110's engine took given back, the base freed, and the file it
+/// was loaded from handed back.
 fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     if (lib.open_cnt != 0) {
         lib.flags |= exec.LIBF_DELEXP;
@@ -51,6 +53,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     sys.Disable();
     _engine.stop();
     sys.Enable();
+    jh7110.stop(cb);
     sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);

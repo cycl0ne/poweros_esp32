@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! UpdateCipher: data through a cipher.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const crypto = sdk.crypto;
 const CipherContext = crypto.CipherContext;
@@ -8,6 +9,7 @@ const AES_BLOCK = crypto.AES_BLOCK;
 const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 const _cipher = @import("_cipher.zig");
 const aes = @import("../engine/aes.zig");
+const jh7110 = @import("../engine/jh7110.zig");
 
 /// Encrypts or decrypts data with the context's cipher.
 ///
@@ -68,10 +70,20 @@ pub fn UpdateCipher(cb: *CryptoBase, context: *CipherContext, input: ?*const any
     if (length == 0) return crypto.CRYPTOERR_OK;
     const from: [*]const u8 = @ptrCast(input orelse return crypto.CRYPTOERR_LENGTH);
     const to: [*]u8 = @ptrCast(output orelse return crypto.CRYPTOERR_LENGTH);
+    var at: u32 = 0;
+    // CTR first spends what is left of the last call's key stream, so
+    // that the rest starts on a block.
+    if (cipher == crypto.CIPHER_AES_CTR) {
+        while (at < length and context.stream_used < AES_BLOCK) : (at += 1) {
+            to[at] = from[at] ^ context.stream[context.stream_used];
+            context.stream_used += 1;
+        }
+    }
+    at += bulk(cb, context, cipher, decrypt, from + at, to + at, (length - at) / AES_BLOCK * AES_BLOCK);
+    if (at == length) return crypto.CRYPTOERR_OK;
     // CTR encrypts its counter blocks whichever way the data goes.
     var session = aes.begin(cb, &context.key, context.key_length, decrypt and cipher != crypto.CIPHER_AES_CTR);
     defer session.end();
-    var at: u32 = 0;
     switch (cipher) {
         crypto.CIPHER_AES_ECB => while (at < length) : (at += AES_BLOCK) {
             var block: [AES_BLOCK]u8 = from[at..][0..AES_BLOCK].*;
@@ -103,4 +115,38 @@ pub fn UpdateCipher(cb: *CryptoBase, context: *CipherContext, input: ?*const any
         },
     }
     return crypto.CRYPTOERR_OK;
+}
+
+/// Whole blocks through the JH7110's engine, a buffer's worth at a time,
+/// the chain or the counter carried on after each: how many bytes it did
+/// - all of them; none on a board without the engine, or for data too
+/// short to be worth it; fewer if the engine stopped answering, and
+/// software goes on from there.
+fn bulk(cb: *CryptoBase, context: *CipherContext, cipher: u32, decrypt: bool, from: [*]const u8, to: [*]u8, length: u32) u32 {
+    if (length < jh7110.least) return 0;
+    const state = jh7110.take(cb) orelse return 0;
+    defer jh7110.give(cb, state);
+    const mode: jh7110.Mode = switch (cipher) {
+        crypto.CIPHER_AES_ECB => .ecb,
+        crypto.CIPHER_AES_CBC => .cbc,
+        else => .ctr,
+    };
+    var done: u32 = 0;
+    while (done < length) {
+        const piece = @min(length - done, jh7110.room);
+        @memcpy(state.input()[0..piece], from[done..][0..piece]);
+        if (!jh7110.cipher(cb, state, mode, &context.key, context.key_length, decrypt and cipher != crypto.CIPHER_AES_CTR, &context.chain, piece)) break;
+        @memcpy(to[done..][0..piece], state.output()[0..piece]);
+        switch (cipher) {
+            // The last ciphertext block: given, or made.
+            crypto.CIPHER_AES_CBC => context.chain = (if (decrypt) state.input() else state.output())[piece - AES_BLOCK ..][0..AES_BLOCK].*,
+            crypto.CIPHER_AES_CTR => {
+                const counter = std.mem.readInt(u128, &context.chain, .big) +% piece / AES_BLOCK;
+                std.mem.writeInt(u128, &context.chain, counter, .big);
+            },
+            else => {},
+        }
+        done += piece;
+    }
+    return done;
 }
