@@ -12,8 +12,10 @@ If EXISTS ENVARC:Sys/net/filter
   C:net/Filter LOAD QUIET
 EndIf
 
-; Every interface in DEVS:NetInterfaces/, and a DHCP address waited for:
-; ten seconds at the most.
+; Every interface in DEVS:NetInterfaces/, its link waited for (fifteen
+; seconds at the most), then a DHCP address (ten), then a router's IPv6
+; prefix (until twelve seconds after the link): a share that is only
+; reached by IPv6 is mounted below.
 C:net/AddNetInterface ALL QUIET
 
 ; The clock set from a time server: DHCP's, ENVARC:Sys/net/timeserver's,

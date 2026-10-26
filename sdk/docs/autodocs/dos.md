@@ -3795,11 +3795,16 @@ The name is parsed with ParsePath. Without a device it goes to the
 current directory's handler with the directory (":name": the
 volume's root), or to pr_FileSystemTask. CONSOLE: is pr_ConsoleTask
 and PROGDIR: pr_HomeDir. Anything else is looked up on the device
-list: a device whose handler isn't running has it started; a volume
-gives its handler; an assign gives its directory, a late one binding
+list: a device whose handler isn't running has it started, under the
+entry lock without the list lock; a volume gives its handler; an assign gives its directory, a late one binding
 it first, a non-binding one locking it anew with DVPF_UNLOCK. With
 `olddp` the next directory of the assign is given in `olddp` itself,
 after unlocking a lock made for it.
+
+The entry lock is never waited for with the list held: a handler that
+starts under it adds its volume, which takes the list to write. While
+another handler is starting, the list is let go, that start waited out,
+and the name looked up again.
 
 **CONTEXT**
 
