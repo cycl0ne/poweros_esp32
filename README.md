@@ -324,7 +324,10 @@ a shell on it. The terminal QEMU runs in is the serial console: `s3>`
 there is the ROM's debug shell, `newshell` starts a CLI (`List`, `Info`,
 ...), and Ctrl-A X quits QEMU. `qemu-display` also forwards host port
 2323 to the machine's Telnet port and 2222 to its SSH port, for
-`C:net/ShellServer`.
+`C:net/ShellServer`. The steps run both of the S3's cores on one host
+thread (`-accel tcg,thread=single`): with a thread for each, Espressif's
+QEMU damages its own memory early in a boot and stops in up to half of
+them, so QEMU started by hand needs the same option.
 
 ### The RISC-V machines
 
@@ -348,12 +351,15 @@ its cursor is the machine's pointer, which the window shows as the
 host's own; `-device virtio-gpu-device` without `xres` and `yres` comes
 up at QEMU's 1280×800. `./zig build virt-ramfb` shows the same on the
 `ramfb`, which reads the picture out of RAM itself, the pointer drawn
-into it. The window is QEMU's GTK or SDL one (Arch packages them apart,
-as `qemu-ui-gtk` and `qemu-ui-sdl`); without either QEMU serves the
-display over VNC on `localhost:5900`. Arch packages the virtio GPU
-apart as well, as `qemu-hw-display-virtio-gpu`: without it QEMU says
-`'virtio-gpu-device' is not a valid device model name`, and only the
-`ramfb` steps run. QEMU run by hand adds the rest -
+into it. The window is QEMU's GTK one at the picture's size, a pixel
+for a pixel (`zoom-to-fit=off`; Arch packages it apart, as
+`qemu-ui-gtk`). `-Dvirt-ui=` gives QEMU another `-display`:
+`default,show-cursor=off` takes SDL where there is no GTK
+(`qemu-ui-sdl`), and without either serves the display over VNC on
+`localhost:5900`; the `virt64` display steps are the same. Arch
+packages the virtio GPU apart as well, as `qemu-hw-display-virtio-gpu`:
+without it QEMU says `'virtio-gpu-device' is not a valid device model
+name`, and only the `ramfb` steps run. QEMU run by hand adds the rest -
 an SSD, sound:
 
 ```sh
