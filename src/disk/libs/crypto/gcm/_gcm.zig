@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! AES-GCM (NIST SP 800-38D), as SealGcm and OpenGcm share it.
+//! AES-GCM (NIST SP 800-38D), as SealGcm and OpenGcm share it, and GMAC
+//! a piece at a time, as InitGmac, UpdateGmac and FinishGmac share it.
 //!
 //! The AES engine gives the hash key H = E(K, 0), the counter blocks'
 //! key stream and the tag's mask E(K, J0); J0 is the nonce with a 32-bit
@@ -24,10 +25,15 @@
 //!
 //! Opening checks the tag over the ciphertext before anything is
 //! decrypted, so a forged message never reaches the output.
+//!
+//! A GMAC under way keeps H, E(K, J0) and GHASH's running value in its
+//! context, and the bytes short of a block; whole blocks go through
+//! straight from the caller's memory. It is software on every chip.
 
 const sdk = @import("sdk");
 const crypto = sdk.crypto;
 const GcmMessage = crypto.GcmMessage;
+const GmacContext = crypto.GmacContext;
 const AES_BLOCK = crypto.AES_BLOCK;
 const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 const _cipher = @import("../cipher/_cipher.zig");
@@ -165,6 +171,80 @@ fn lengthsBlock(ghash: *Ghash, first: u32, second: u32) void {
     ghash.block(&block);
 }
 
+/// J0, the counter block the tag's mask is made from: a 12-byte nonce
+/// and a counter of 1, or the GHASH of any other nonce.
+fn firstCounter(ghash: *const Ghash, nonce: [*]const u8, nonce_length: u32) [AES_BLOCK]u8 {
+    var j0: [AES_BLOCK]u8 = @splat(0);
+    if (nonce_length == 12) {
+        for (0..12) |index| j0[index] = nonce[index];
+        j0[15] = 1;
+        return j0;
+    }
+    var nonce_hash = ghash.*;
+    nonce_hash.y = 0;
+    nonce_hash.update(nonce, nonce_length);
+    lengthsBlock(&nonce_hash, 0, nonce_length);
+    return nonce_hash.result();
+}
+
+// --- GMAC a piece at a time -----------------------------------------------------
+
+/// `context` set up for a GMAC with `key` (a length `keyLength` takes)
+/// and `nonce` (1 byte or more): H and E(K, J0) worked out, and nothing
+/// taken yet. The context's `size` stays as it was.
+pub fn gmacBegin(cb: *CryptoBase, context: *GmacContext, key: [*]const u8, key_length: u32, nonce: [*]const u8, nonce_length: u32) void {
+    var session = aes.begin(cb, key, key_length, false);
+    defer session.end();
+    var hash_key: [AES_BLOCK]u8 = @splat(0);
+    session.block(&hash_key, &hash_key);
+    const ghash = Ghash.init(&hash_key);
+    var j0 = firstCounter(&ghash, nonce, nonce_length);
+    session.block(&j0, &context.mask);
+    _cipher.wipe(&j0);
+    context.hash_key = hash_key;
+    _cipher.wipe(&hash_key);
+    context.key_length = key_length;
+    for (0..key_length) |index| context.key[index] = key[index];
+}
+
+/// `length` bytes of `data` into the GMAC: the bytes before a whole block
+/// gathered in the context, whole blocks taken where they lie.
+pub fn gmacAbsorb(context: *GmacContext, data: [*]const u8, length: u32) void {
+    context.total += length;
+    const h = load128(&context.hash_key);
+    var y = load128(&context.state);
+    var at: u32 = 0;
+    if (context.buffered != 0) {
+        const take = @min(length, AES_BLOCK - context.buffered);
+        for (0..take) |index| context.partial[context.buffered + index] = data[index];
+        context.buffered += take;
+        at = take;
+        if (context.buffered < AES_BLOCK) return;
+        y = multiply(y ^ load128(&context.partial), h);
+        context.buffered = 0;
+    }
+    while (length - at >= AES_BLOCK) : (at += AES_BLOCK) {
+        y = multiply(y ^ load128(data[at..][0..AES_BLOCK]), h);
+    }
+    for (0..length - at) |index| context.partial[index] = data[at + index];
+    context.buffered = length - at;
+    store128(&context.state, y);
+}
+
+/// The GMAC's tag: the bytes short of a block padded with zeroes, the
+/// lengths block (the data as header, no ciphertext), and the result
+/// masked with E(K, J0).
+pub fn gmacEnd(context: *GmacContext, tag: *[AES_BLOCK]u8) void {
+    const h = load128(&context.hash_key);
+    var y = load128(&context.state);
+    if (context.buffered != 0) {
+        for (context.buffered..AES_BLOCK) |index| context.partial[index] = 0;
+        y = multiply(y ^ load128(&context.partial), h);
+    }
+    y = multiply(y ^ (@as(u128, context.total * 8) << 64), h);
+    store128(tag, y ^ load128(&context.mask));
+}
+
 /// Seals the message (`seal`) or opens it: SealGcm's and OpenGcm's work.
 pub fn run(cb: *CryptoBase, message: *const GcmMessage, seal: bool) i32 {
     if (!_cipher.keyLength(message.key_length)) return crypto.CRYPTOERR_KEY;
@@ -180,17 +260,7 @@ pub fn run(cb: *CryptoBase, message: *const GcmMessage, seal: bool) i32 {
     var ghash = Ghash.init(&hash_key);
     _cipher.wipe(&hash_key);
 
-    var j0: [AES_BLOCK]u8 = @splat(0);
-    if (message.nonce_length == 12) {
-        for (0..12) |index| j0[index] = message.nonce[index];
-        j0[15] = 1;
-    } else {
-        var nonce_hash = ghash;
-        nonce_hash.y = 0;
-        nonce_hash.update(message.nonce, message.nonce_length);
-        lengthsBlock(&nonce_hash, 0, message.nonce_length);
-        j0 = nonce_hash.result();
-    }
+    var j0 = firstCounter(&ghash, message.nonce, message.nonce_length);
 
     if (message.aad) |aad| ghash.update(aad, message.aad_length);
     if (!seal and message.length != 0) ghash.update(message.input.?, message.length);

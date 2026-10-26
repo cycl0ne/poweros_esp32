@@ -31,9 +31,21 @@
 //! only as the end of the request. In an encrypted one every answer must
 //! come sealed under the session's key. An answer that fails either is
 //! the connection's end: nothing after it can be trusted.
+//!
+//! **A READ's data streamed.** `exchangeRead` reads a READ's answer
+//! straight into the caller's buffer as it comes, not into the receive
+//! buffer to be copied out, when the session is not encrypted and signs
+//! with GMAC or not at all: its header and fields first, and when they are
+//! the READ's successful answer, the data in pieces of `stream_piece`,
+//! each taken into the signature (`UpdateGmac`) while the next arrives.
+//! The signature is known only at the end, so data that fails it is in
+//! the buffer by then: the read fails, and the buffer's contents are not
+//! the file's. Any other answer is read whole and taken as `exchange`
+//! takes it.
 
 const sdk = @import("sdk");
 const smb = sdk.dos.smb;
+const crypto = sdk.crypto;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 const wire = @import("wire.zig");
 const signing = @import("signing.zig");
@@ -68,6 +80,13 @@ pub const receive_size: usize = crypt.header_size + message_max + 8 * 1024;
 
 /// The most requests in one compound.
 pub const compound_max: usize = 4;
+
+/// What comes before a READ's data in its answer: the header and the
+/// READ's own fields.
+const read_lead: usize = wire.header_size + 16;
+
+/// How much of a streamed READ is read before it goes into the signature.
+const stream_piece: usize = 32 * 1024;
 
 /// Credits each request asks for: more than the most one costs.
 const credits_asked: u16 = 32;
@@ -234,12 +253,109 @@ pub const Session = struct {
     /// each request in order. A request whose answer says it failed is
     /// not an error here: its status is in its reply.
     pub fn exchange(session: *Session, request: *Request, replies: []Reply) Error!void {
+        var ids: [compound_max]u64 = undefined;
+        const encrypt = try session.send(request, replies, &ids);
+        var answered: usize = 0;
+        try session.answers(request, replies, &ids, encrypt, 0, &answered);
+    }
+
+    /// One READ sent, and its data read straight into `into` as it comes
+    /// when it can be (see the top): the data's length then. Null when its
+    /// answer was read whole, as `exchange` reads it, and is `replies[0]`,
+    /// its data still to be taken from there. A failed READ is not an
+    /// error here: its status is in its reply.
+    pub fn exchangeRead(session: *Session, request: *Request, replies: []Reply, into: []u8) Error!?usize {
+        var ids: [compound_max]u64 = undefined;
+        const encrypt = try session.send(request, replies, &ids);
+        var answered: usize = 0;
+        const gmac = session.signer.algorithm == smb.SMB2_SIGNING_AES_GMAC;
+        if (request.count != 1 or encrypt or (session.signer.signs() and !gmac)) {
+            try session.answers(request, replies, &ids, encrypt, 0, &answered);
+            return null;
+        }
+        const buffer = session.receive_buffer;
+        const length = session.connection.frameLength(buffer.len) orelse return error.Network;
+        const lead = buffer[0..@min(length, read_lead)];
+        if (!session.connection.readAll(lead)) return error.Network;
+        if (session.streams(lead, length, ids[0], into.len)) |count| {
+            const header = Header.read(lead).?;
+            const verify = header.flags & wire.FLAGS_SIGNED != 0 and session.signer.signs();
+            try session.stream(lead, length, into[0..count], verify);
+            session.credits += header.credits;
+            replies[0] = .{ .header = header, .message = lead };
+            return count;
+        }
+        // Not one to stream: the rest read too, and taken as any answer.
+        if (!session.connection.readAll(buffer[lead.len..length])) return error.Network;
+        try session.take(buffer[0..length], request, replies, &ids, encrypt, &answered);
+        try session.answers(request, replies, &ids, encrypt, (length + 7) & ~@as(usize, 7), &answered);
+        return null;
+    }
+
+    /// The length of the data a READ's answer carries when it is to be
+    /// streamed - the successful answer to the READ whose message id is
+    /// `id`, alone in its message, believed, its data right after its
+    /// fields and no longer than `room` - or null.
+    ///
+    /// INPUTS:
+    /// - `lead` - the message's first `read_lead` bytes, or all of it.
+    /// - `length` - the whole message's.
+    fn streams(session: *const Session, lead: []const u8, length: usize, id: u64, room: usize) ?usize {
+        if (lead.len < read_lead) return null;
+        const header = Header.read(lead) orelse return null;
+        if (header.flags & wire.FLAGS_SERVER_TO_REDIR == 0 or header.flags & wire.FLAGS_ASYNC_COMMAND != 0) return null;
+        if (header.message_id != id or header.command != .read or header.status != smb.STATUS_SUCCESS or header.next_command != 0) return null;
+        // Unsigned in a signed session: `take` finds it not believed.
+        if (header.flags & wire.FLAGS_SIGNED == 0 and session.signed) return null;
+        const fields = lead[wire.header_size..];
+        if (wire.u16At(fields, 0) != 17 or fields[2] != read_lead) return null;
+        const count: usize = wire.u32At(fields, 4);
+        if (count > room or read_lead + count > length) return null;
+        return count;
+    }
+
+    /// A READ's answer whose first `read_lead` bytes are in `lead` read on:
+    /// its data into `into`, whatever follows it into the receive buffer
+    /// after `lead`, and when `verify`, its signature checked over all of
+    /// it as it comes.
+    fn stream(session: *Session, lead: []u8, length: usize, into: []u8, verify: bool) Error!void {
+        const cb = session.cb;
+        var context: crypto.GmacContext = .{};
+        var given: [16]u8 = undefined;
+        if (verify) {
+            @memcpy(&given, lead[wire.signature_at..][0..16]);
+            @memset(lead[wire.signature_at..][0..16], 0);
+            const nonce = signing.gmacNonce(lead);
+            if (cb.InitGmac(&context, &session.signer.key, 16, &nonce, nonce.len) != crypto.CRYPTOERR_OK) return error.Security;
+            cb.UpdateGmac(&context, lead.ptr, @intCast(lead.len));
+        }
+        var at: usize = 0;
+        while (at < into.len) {
+            const piece = into[at..][0..@min(into.len - at, stream_piece)];
+            if (!session.connection.readAll(piece)) return error.Network;
+            if (verify) cb.UpdateGmac(&context, piece.ptr, @intCast(piece.len));
+            at += piece.len;
+        }
+        const rest = session.receive_buffer[lead.len..][0 .. length - lead.len - into.len];
+        if (!session.connection.readAll(rest)) return error.Network;
+        if (!verify) return;
+        cb.UpdateGmac(&context, rest.ptr, @intCast(rest.len));
+        var signature: [crypto.GCM_TAG]u8 = undefined;
+        if (cb.FinishGmac(&context, &signature) != crypto.CRYPTOERR_OK) return error.Security;
+        // Every byte compared, whatever the first that differs.
+        var difference: u8 = 0;
+        for (given, signature) |one, other| difference |= one ^ other;
+        if (difference != 0) return error.Security;
+    }
+
+    /// The requests' headers written, signed or sealed, and sent; each
+    /// one's message id in `ids`. Whether they went encrypted.
+    fn send(session: *Session, request: *Request, replies: []Reply, ids: *[compound_max]u64) Error!bool {
         if (request.writer.full or request.count == 0 or replies.len < request.count) return error.Protocol;
         const cb = session.cb;
         const encrypt = session.encrypt_all or (request.on_tree and session.encrypt_tree);
         const sign = session.signer.signs() and !encrypt;
         // Each request's message id, the first of those its charge takes.
-        var ids: [compound_max]u64 = undefined;
         var spent: u32 = 0;
         for (0..request.count) |index| {
             const message = request.message(index);
@@ -269,42 +385,51 @@ pub const Session = struct {
             break :blk session.send_buffer[0 .. frame_header + sealed.len];
         } else session.send_buffer[message_at - frame_header .. message_at + length];
         if (!session.connection.send(frame)) return error.Network;
+        return encrypt;
+    }
 
-        // The answers, until each request has its own.
-        var answered: usize = 0;
-        var room: usize = 0;
-        while (answered < request.count) {
-            const got = session.connection.receive(session.receive_buffer[room..]) orelse return error.Network;
-            const sealed = wire.same(got[0..@min(got.len, 4)], &wire.transform_id);
-            const plain = if (sealed) blk: {
-                if (!session.keys.encrypts()) return error.Security;
-                break :blk crypt.open(cb, &session.keys, session.session_id, got) orelse return error.Security;
-            } else blk: {
-                if (encrypt) return error.Security;
-                break :blk got;
-            };
-            room += got.len;
-            room = (room + 7) & ~@as(usize, 7);
-            // The messages in it, by their NextCommand.
-            var at: usize = 0;
-            while (at < plain.len) {
-                const rest = plain[at..];
-                const header = Header.read(rest) orelse return error.Protocol;
-                const end: usize = if (header.next_command == 0) rest.len else header.next_command;
-                if (end < wire.header_size or end > rest.len) return error.Protocol;
-                const message = rest[0..end];
-                at += end;
-                session.credits += header.credits;
-                if (header.flags & wire.FLAGS_SERVER_TO_REDIR == 0) return error.Protocol;
-                const index = for (ids[0..request.count], 0..) |id, at_index| {
-                    if (id == header.message_id) break at_index;
-                } else continue;
-                // An interim answer: the real one comes later.
-                if (header.status == smb.STATUS_PENDING and header.flags & wire.FLAGS_ASYNC_COMMAND != 0) continue;
-                if (!sealed and !session.believes(message, &header)) return error.Security;
-                if (replies[index].message.len == 0) answered += 1;
-                replies[index] = .{ .header = header, .message = message };
-            }
+    /// The answers read into the receive buffer from `room` on, until each
+    /// request has its own; `answered` counts those that have.
+    fn answers(session: *Session, request: *const Request, replies: []Reply, ids: *const [compound_max]u64, encrypt: bool, room: usize, answered: *usize) Error!void {
+        var at = room;
+        while (answered.* < request.count) {
+            const got = session.connection.receive(session.receive_buffer[at..]) orelse return error.Network;
+            try session.take(got, request, replies, ids, encrypt, answered);
+            at += got.len;
+            at = (at + 7) & ~@as(usize, 7);
+        }
+    }
+
+    /// The answers in one message as it came, `got`, put in `replies` by
+    /// their message ids; `answered` counts the requests that have one.
+    fn take(session: *Session, got: []u8, request: *const Request, replies: []Reply, ids: *const [compound_max]u64, encrypt: bool, answered: *usize) Error!void {
+        const sealed = wire.same(got[0..@min(got.len, 4)], &wire.transform_id);
+        const plain = if (sealed) blk: {
+            if (!session.keys.encrypts()) return error.Security;
+            break :blk crypt.open(session.cb, &session.keys, session.session_id, got) orelse return error.Security;
+        } else blk: {
+            if (encrypt) return error.Security;
+            break :blk got;
+        };
+        // The messages in it, by their NextCommand.
+        var at: usize = 0;
+        while (at < plain.len) {
+            const rest = plain[at..];
+            const header = Header.read(rest) orelse return error.Protocol;
+            const end: usize = if (header.next_command == 0) rest.len else header.next_command;
+            if (end < wire.header_size or end > rest.len) return error.Protocol;
+            const message = rest[0..end];
+            at += end;
+            session.credits += header.credits;
+            if (header.flags & wire.FLAGS_SERVER_TO_REDIR == 0) return error.Protocol;
+            const index = for (ids[0..request.count], 0..) |id, at_index| {
+                if (id == header.message_id) break at_index;
+            } else continue;
+            // An interim answer: the real one comes later.
+            if (header.status == smb.STATUS_PENDING and header.flags & wire.FLAGS_ASYNC_COMMAND != 0) continue;
+            if (!sealed and !session.believes(message, &header)) return error.Security;
+            if (replies[index].message.len == 0) answered.* += 1;
+            replies[index] = .{ .header = header, .message = message };
         }
     }
 

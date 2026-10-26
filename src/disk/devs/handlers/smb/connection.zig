@@ -128,19 +128,30 @@ pub const Connection = struct {
     /// `into` - all of which close it, since nothing after it could be
     /// read in step.
     pub fn receive(connection: *Connection, into: []u8) ?[]u8 {
-        var framing: [frame_header]u8 = undefined;
-        if (!connection.readAll(&framing)) return null;
-        const length = @as(usize, framing[1]) << 16 | @as(usize, framing[2]) << 8 | framing[3];
-        // Anything but a session message is not SMB's.
-        if (framing[0] != 0 or length > into.len) {
-            connection.close();
-            return null;
-        }
+        const length = connection.frameLength(into.len) orelse return null;
         if (!connection.readAll(into[0..length])) return null;
         return into[0..length];
     }
 
-    fn readAll(connection: *Connection, into: []u8) bool {
+    /// The next message's framing read, and its length: null when the
+    /// connection failed, or the message is longer than `most` - which
+    /// closes it. The message is then the caller's to read, all of it,
+    /// with `readAll`.
+    pub fn frameLength(connection: *Connection, most: usize) ?usize {
+        var framing: [frame_header]u8 = undefined;
+        if (!connection.readAll(&framing)) return null;
+        const length = @as(usize, framing[1]) << 16 | @as(usize, framing[2]) << 8 | framing[3];
+        // Anything but a session message is not SMB's.
+        if (framing[0] != 0 or length > most) {
+            connection.close();
+            return null;
+        }
+        return length;
+    }
+
+    /// `into` filled from the stream: false when the connection failed,
+    /// closed or ran out of time, which closes it.
+    pub fn readAll(connection: *Connection, into: []u8) bool {
         if (connection.socket < 0) return false;
         var at: usize = 0;
         while (at < into.len) {

@@ -12,6 +12,7 @@ Generated from the source by `./zig build autodoc`.
 
 - [Decapsulate](#decapsulate) - Takes the secret out of a ciphertext Encapsulate made for one's own public key.
 - [Encapsulate](#encapsulate) - Makes a secret for the owner of a public key, and the ciphertext that gives it to them: they take it out with Decapsulate, and nobody else can.
+- [FinishGmac](#finishgmac) - Ends a GMAC: its tag, and the context wiped.
 - [FinishHash](#finishhash) - Ends a hash and writes its digest.
 - [FinishHmac](#finishhmac) - Ends an HMAC and writes the MAC.
 - [HashPieces](#hashpieces) - Hashes a message given whole, in any number of pieces, in one call.
@@ -19,6 +20,7 @@ Generated from the source by `./zig build autodoc`.
 - [HkdfExtract](#hkdfextract) - Extracts a pseudorandom key from input keying material and a salt (HKDF-Extract, RFC 5869).
 - [HmacPieces](#hmacpieces) - Makes the HMAC of a message given whole, in any number of pieces, in one call.
 - [InitCipher](#initcipher) - Sets up a context for AES in one mode, with a key and an IV.
+- [InitGmac](#initgmac) - Sets up a context for a GMAC - GCM's tag over data it only authenticates - whose data comes in pieces.
 - [InitHash](#inithash) - Sets up a context for a new hash of one algorithm.
 - [InitHmac](#inithmac) - Sets up a context for a new HMAC with one hash algorithm and a key.
 - [KemKeyPair](#kemkeypair) - Makes a key pair for a key encapsulation mechanism: a public key that others encapsulate secrets to, and the private key that takes them out again.
@@ -30,6 +32,7 @@ Generated from the source by `./zig build autodoc`.
 - [SharedSecret](#sharedsecret) - Works out the secret one's own private key shares with the owner of a public key: Diffie-Hellman on a curve.
 - [Sign](#sign) - Signs a message with a private key: Ed25519.
 - [UpdateCipher](#updatecipher) - Encrypts or decrypts data with the context's cipher.
+- [UpdateGmac](#updategmac) - Adds data to a GMAC under way.
 - [UpdateHash](#updatehash) - Adds bytes to a hash under way.
 - [UpdateHmac](#updatehmac) - Adds bytes to an HMAC under way.
 - [VerifySignature](#verifysignature) - Checks a signature with a public key: RSA in both its encodings, ECDSA on P-256 and P-384, and Ed25519.
@@ -165,6 +168,72 @@ None known.
 var ciphertext: [crypto.MLKEM768_CIPHERTEXT]u8 = undefined;
 var secret: [crypto.KEM_SECRET]u8 = undefined;
 if (cb.Encapsulate(crypto.KEM_MLKEM768, &crypto.Bytes.of(their_key), &ciphertext, &secret) != crypto.CRYPTOERR_OK) return error.BadKey;
+```
+
+## FinishGmac
+
+Ends a GMAC: its tag, and the context wiped.
+
+**SYNOPSIS**
+
+```zig
+fn FinishGmac(cb: *CryptoBase, context: *GmacContext, tag: *anyopaque) i32
+```
+
+**SINCE**
+
+2.2. LVO -120.
+
+**INPUTS**
+
+- `context`: set up by InitGmac, and given its data by UpdateGmac.
+- `tag`: room for GCM_TAG (16) bytes.
+
+**RESULT**
+
+CRYPTOERR_OK, with the tag in `tag`; CRYPTOERR_CONTEXT for a context
+InitGmac did not set up, and nothing is written.
+
+**BEHAVIOR**
+
+The bytes short of a block are padded with zeroes, the lengths block
+- the data's length as a header's, and no ciphertext - goes through
+GHASH, and the result is masked with E(K, J0). The context is wiped,
+the key with it, its `size` kept: InitGmac starts it again.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+The caller compares the tag with the one it was sent, every byte
+whatever the first that differs, so that how long the comparison
+takes says nothing about where they part.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InitGmac`, `UpdateGmac`, `OpenGcm`
+
+**EXAMPLES**
+
+```zig
+var tag: [crypto.GCM_TAG]u8 = undefined;
+_ = cb.FinishGmac(&context, &tag);
+var differ: u8 = 0;
+for (tag, sent) |a, b| differ |= a ^ b;
+if (differ != 0) return error.Forged;
 ```
 
 ## FinishHash
@@ -657,6 +726,85 @@ var context: crypto.CipherContext = .{};
 if (cb.InitCipher(&context, crypto.CIPHER_AES_CBC | crypto.CIPHERF_DECRYPT, &key, 32, &iv) != crypto.CRYPTOERR_OK) return;
 defer context = .{};
 _ = cb.UpdateCipher(&context, data.ptr, data.ptr, data.len);
+```
+
+## InitGmac
+
+Sets up a context for a GMAC - GCM's tag over data it only authenticates - whose data comes in pieces.
+
+**SYNOPSIS**
+
+```zig
+fn InitGmac(cb: *CryptoBase, context: *GmacContext, key: *const anyopaque, key_length: u32, nonce: *const anyopaque, nonce_length: u32) i32
+```
+
+**SINCE**
+
+2.2. LVO -112.
+
+**INPUTS**
+
+- `context`: the caller's, made with `.{}` so that its `size` is
+  right; whatever it held before is dropped.
+- `key`: the AES key, `key_length` bytes: 16 or 32.
+- `nonce`: `nonce_length` bytes; 12 is what GCM is made for, and any
+  length but 0 is taken.
+
+**RESULT**
+
+CRYPTOERR_OK; CRYPTOERR_KEY for another key length; CRYPTOERR_LENGTH
+for a nonce of no bytes. The context is left empty on an error, and
+UpdateGmac and FinishGmac do nothing with it. CRYPTOERR_CONTEXT for a
+context whose `size` is less than `@sizeOf(GmacContext)`, which is
+not written to at all.
+
+**BEHAVIOR**
+
+The hash key H = E(K, 0) and the tag's mask E(K, J0) are worked out
+here, two AES blocks, and kept in the context with the key. The tag
+FinishGmac gives is the one SealGcm gives a message whose header is
+all the data UpdateGmac was given, and which has no plaintext. Any
+number of GMACs may be under way at once, each in its own context.
+
+**CONTEXT**
+
+- Waits: yes, for the AES engine while another task has it.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated; the context stays the caller's. It holds the
+key until FinishGmac wipes it: a context given up before then is the
+caller's to clear.
+
+**NOTES**
+
+What this is for: a message whose MAC is to be checked as it arrives
+- SMB's signature over a READ's answer of up to 1 MiB, hashed as the
+network delivers it, so that receiving and hashing go on together. A
+message that is all at hand is quicker through SealGcm with it as
+the header, which the JH7110's engine takes from 512 bytes on.
+
+**BUGS**
+
+GHASH runs in software on every chip, about 35-50 MB/s on the
+VisionFive 2.
+
+**SEE ALSO**
+
+`UpdateGmac`, `FinishGmac`, `SealGcm`
+
+**EXAMPLES**
+
+```zig
+var context: crypto.GmacContext = .{};
+var tag: [crypto.GCM_TAG]u8 = undefined;
+if (cb.InitGmac(&context, &key, 16, &nonce, 12) != crypto.CRYPTOERR_OK) return;
+cb.UpdateGmac(&context, header.ptr, header.len);
+cb.UpdateGmac(&context, body.ptr, body.len);
+_ = cb.FinishGmac(&context, &tag);
 ```
 
 ## InitHash
@@ -1439,6 +1587,70 @@ None known.
 
 ```zig
 if (cb.UpdateCipher(&context, packet.ptr, packet.ptr, packet.len) != crypto.CRYPTOERR_OK) return error.Cipher;
+```
+
+## UpdateGmac
+
+Adds data to a GMAC under way.
+
+**SYNOPSIS**
+
+```zig
+fn UpdateGmac(cb: *CryptoBase, context: *GmacContext, data: ?*const anyopaque, length: u32) void
+```
+
+**SINCE**
+
+2.2. LVO -116.
+
+**INPUTS**
+
+- `context`: set up by InitGmac.
+- `data`: the bytes; may be null when `length` is 0.
+- `length`: how many.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+How the data is divided between calls makes no difference to the
+tag. Bytes short of a 16-byte block wait in the context for the next
+call; whole blocks are hashed where they lie, nothing copied. A
+context InitGmac did not set up takes nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands; `data` is only read.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InitGmac`, `FinishGmac`
+
+**EXAMPLES**
+
+```zig
+while (received < length) {
+    const got = receive(buffer[received..]);
+    cb.UpdateGmac(&context, buffer[received..].ptr, got);
+    received += got;
+}
 ```
 
 ## UpdateHash

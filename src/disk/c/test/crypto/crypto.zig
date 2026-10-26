@@ -24,7 +24,9 @@
 //! bytes of SHA-2 and more, which HashPieces and HmacPieces give the
 //! engine, against the incremental calls, which stay in software:
 //! messages of one buffer of the engine's, of two and of three, and HMAC
-//! keys shorter than a word, a block long, and longer.
+//! keys shorter than a word, a block long, and longer. GMAC a piece at
+//! a time (InitGmac, UpdateGmac, FinishGmac) against SealGcm with the
+//! data as its header and the GHASH worked out here.
 //!
 //! It prints one line per check that fails (every check, with VERBOSE)
 //! and a count at the end; the return code is 0 when all pass, 10 when
@@ -35,7 +37,7 @@
 //! engine's share of GCM) and SHA-256 in bulk - in microseconds an
 //! operation or kilobytes a second, on timer.device's E-clock; and
 //! SHA-256 of messages from 256 bytes to 64 KiB, in one HashPieces and in
-//! steps.
+//! steps, and GMAC a piece at a time.
 //! RANDOM puts 20000 bits of RandomBytes through FIPS 140-2's monobit,
 //! poker and long-run tests.
 
@@ -52,7 +54,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Crypto";
-const VERSION_STRING = "\x00$VER: Crypto 1.5 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Crypto 1.6 (26.10.2026)\r\n";
 
 const template = "VERBOSE/S,BENCH/S,RANDOM/S";
 const arg_verbose = 0;
@@ -299,6 +301,34 @@ fn ghashOf(h: u128, aad: []const u8, data: []const u8) u128 {
     return fieldMultiply(y ^ ((@as(u128, aad.len) * 8) << 64) ^ (@as(u128, data.len) * 8), h);
 }
 
+/// GMAC of `data` a piece at a time - 1, 15, 4097 and 65536 bytes in
+/// turn - against SealGcm with `data` as its header, and against the
+/// GHASH worked out here.
+fn gmacAgrees(cb: *CryptoBase, key: []const u8, data: []const u8) bool {
+    const nonce = hex("cafebabefacedbaddecaf888");
+    var sealed: [crypto.GCM_TAG]u8 = undefined;
+    const message: crypto.GcmMessage = .{ .key = key.ptr, .key_length = @intCast(key.len), .nonce = &nonce, .nonce_length = 12, .aad = data.ptr, .aad_length = @intCast(data.len), .tag = &sealed };
+    if (cb.SealGcm(&message) != crypto.CRYPTOERR_OK) return false;
+    var context: crypto.GmacContext = .{};
+    if (cb.InitGmac(&context, key.ptr, @intCast(key.len), &nonce, nonce.len) != crypto.CRYPTOERR_OK) return false;
+    const cuts = [_]usize{ 1, 15, 4097, 65536 };
+    var at: usize = 0;
+    var turn: usize = 0;
+    while (at < data.len) : (turn += 1) {
+        const take = @min(data.len - at, cuts[turn % cuts.len]);
+        cb.UpdateGmac(&context, data[at..].ptr, @intCast(take));
+        at += take;
+    }
+    var tag: [crypto.GCM_TAG]u8 = undefined;
+    if (cb.FinishGmac(&context, &tag) != crypto.CRYPTOERR_OK or !same(&tag, &sealed)) return false;
+    const h = std.mem.readInt(u128, &blockOf(cb, key, @splat(0)), .big);
+    var j0: [16]u8 = @splat(0);
+    @memcpy(j0[0..12], &nonce);
+    j0[15] = 1;
+    const mask = std.mem.readInt(u128, &blockOf(cb, key, j0), .big);
+    return std.mem.readInt(u128, &tag, .big) == mask ^ ghashOf(h, data, &.{});
+}
+
 /// One block through AES-ECB with `key`.
 fn blockOf(cb: *CryptoBase, key: []const u8, block: [16]u8) [16]u8 {
     var context: crypto.CipherContext = .{};
@@ -422,6 +452,16 @@ fn longData(run: *Run) void {
     for (macs) |m| {
         if (m.length > size) continue;
         run.check(m.name, gcmAgrees(cb, key[0..16], data[0..m.length], data.ptr, 0, one, pieces, other));
+    }
+    const streamed = [_]struct { name: [*:0]const u8, key_length: u32, length: u32 }{
+        .{ .name = "AES-128-GMAC in pieces, 0 bytes", .key_length = 16, .length = 0 },
+        .{ .name = "AES-128-GMAC in pieces, 4103 bytes", .key_length = 16, .length = 4103 },
+        .{ .name = "AES-256-GMAC in pieces, 66561 bytes", .key_length = 32, .length = 66561 },
+        .{ .name = "AES-128-GMAC in pieces, 1048656 bytes", .key_length = 16, .length = 1_048_656 },
+    };
+    for (streamed) |m| {
+        if (m.length > size) continue;
+        run.check(m.name, gmacAgrees(cb, key[0..m.key_length], data[0..m.length]));
     }
     longHashes(run, data);
 }
@@ -754,6 +794,12 @@ fn bench(run: *Run) void {
     started = micros(run);
     for (0..256) |_| _ = digestOf(cb, crypto.HASH_SHA256, &Buffer.data, &digest);
     throughput(run, "SHA-256", started, 256);
+    var gmac: crypto.GmacContext = .{};
+    started = micros(run);
+    _ = cb.InitGmac(&gmac, &key, 16, &nonce, 12);
+    for (0..64) |_| cb.UpdateGmac(&gmac, &Buffer.data, Buffer.data.len);
+    _ = cb.FinishGmac(&gmac, &tag);
+    throughput(run, "AES-128-GMAC in pieces", started, 64);
     sizes(run);
 }
 

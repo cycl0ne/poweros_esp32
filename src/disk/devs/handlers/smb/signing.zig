@@ -76,21 +76,26 @@ pub const Signer = struct {
                 break :blk mac[0..16].*;
             },
             smb.SMB2_SIGNING_AES_CMAC => cmac(cb, &signer.key, message),
-            else => blk: {
-                // GMAC: the nonce is the message's id, then bit 0 for an
-                // answer and bit 1 for CANCEL.
-                var nonce: [12]u8 = @splat(0);
-                wire.put64(&nonce, 0, wire.u64At(message, 24));
-                const flags = wire.u32At(message, 16);
-                var role: u32 = 0;
-                if (flags & wire.FLAGS_SERVER_TO_REDIR != 0) role |= 1;
-                if (wire.u16At(message, 12) == @intFromEnum(wire.Command.cancel)) role |= 2;
-                wire.put32(&nonce, 8, role);
-                break :blk gmac(cb, &signer.key, &nonce, message);
-            },
+            else => gmac(cb, &signer.key, &gmacNonce(message), message),
         };
     }
 };
+
+/// GMAC's nonce for a message: its id, then bit 0 for an answer and bit 1
+/// for CANCEL.
+///
+/// INPUTS:
+/// - `message` - the message's header at least.
+pub fn gmacNonce(message: []const u8) [12]u8 {
+    var nonce: [12]u8 = @splat(0);
+    wire.put64(&nonce, 0, wire.u64At(message, 24));
+    const flags = wire.u32At(message, 16);
+    var role: u32 = 0;
+    if (flags & wire.FLAGS_SERVER_TO_REDIR != 0) role |= 1;
+    if (wire.u16At(message, 12) == @intFromEnum(wire.Command.cancel)) role |= 2;
+    wire.put32(&nonce, 8, role);
+    return nonce;
+}
 
 /// HMAC-SHA256 over `parts` in turn, in one call: on the JH7110 a long
 /// message's goes through the crypto engine.

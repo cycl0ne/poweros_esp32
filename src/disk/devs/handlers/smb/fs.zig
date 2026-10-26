@@ -532,6 +532,24 @@ pub const FileSystem = struct {
             fs.lost = true;
             return error.NotMounted;
         };
+        try fs.stillThere(request, replies);
+    }
+
+    /// One READ sent, its data read straight into `into` when it can be:
+    /// as `Session.exchangeRead`, a broken connection NotMounted.
+    fn exchangeRead(fs: *FileSystem, request: *session_area.Request, replies: []Reply, into: []u8) Error!?usize {
+        if (fs.lost) return error.NotMounted;
+        const count = fs.session.exchangeRead(request, replies, into) catch {
+            fs.lost = true;
+            return error.NotMounted;
+        };
+        try fs.stillThere(request, replies);
+        return count;
+    }
+
+    /// NotMounted, and the connection lost, when an answer says the
+    /// session or the share has gone.
+    fn stillThere(fs: *FileSystem, request: *const session_area.Request, replies: []Reply) Error!void {
         for (replies[0..request.count]) |*reply| switch (reply.status()) {
             smb.STATUS_USER_SESSION_DELETED, smb.STATUS_NETWORK_SESSION_EXPIRED, smb.STATUS_NETWORK_NAME_DELETED => {
                 fs.lost = true;
@@ -996,16 +1014,20 @@ pub const FileSystem = struct {
             var request = fs.session.begin(.read);
             commands.read(&request, &lock.file_id, lock.pos, want);
             var replies = session_area.noReplies();
-            fs.exchange(&request, &replies) catch |err| {
+            // Straight into the buffer, or from the answer.
+            const streamed = fs.exchangeRead(&request, &replies, buffer[done..length]) catch |err| {
                 // Lost on the way: the piece asked for again, once, on
                 // the file's handle on a new connection.
                 if (recovered or !fs.lost or !fs.recover()) return err;
                 recovered = true;
                 continue;
             };
-            const data = commands.readData(&replies[0]) orelse return errorOf(replies[0].status());
-            const count = @min(data.len, length - done);
-            @memcpy(buffer[done..][0..count], data[0..count]);
+            const count = streamed orelse blk: {
+                const data = commands.readData(&replies[0]) orelse return errorOf(replies[0].status());
+                const count = @min(data.len, length - done);
+                @memcpy(buffer[done..][0..count], data[0..count]);
+                break :blk count;
+            };
             done += count;
             lock.pos += count;
             if (lock.pos > lock.size) lock.size = lock.pos;

@@ -39,6 +39,9 @@ pub const LVO = struct {
     pub const Decapsulate = libraries.lvo(24);
     pub const HashPieces = libraries.lvo(25);
     pub const HmacPieces = libraries.lvo(26);
+    pub const InitGmac = libraries.lvo(27);
+    pub const UpdateGmac = libraries.lvo(28);
+    pub const FinishGmac = libraries.lvo(29);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -67,6 +70,9 @@ pub const Fn = struct {
     pub const Decapsulate = *const fn (*CryptoBase, u32, *const anyopaque, *const crypto.Bytes, *anyopaque) callconv(.c) i32;
     pub const HashPieces = *const fn (*CryptoBase, u32, ?[*]const crypto.Bytes, u32, *anyopaque) callconv(.c) u32;
     pub const HmacPieces = *const fn (*CryptoBase, u32, ?*const anyopaque, u32, ?[*]const crypto.Bytes, u32, *anyopaque) callconv(.c) u32;
+    pub const InitGmac = *const fn (*CryptoBase, *crypto.GmacContext, *const anyopaque, u32, *const anyopaque, u32) callconv(.c) i32;
+    pub const UpdateGmac = *const fn (*CryptoBase, *crypto.GmacContext, ?*const anyopaque, u32) callconv(.c) void;
+    pub const FinishGmac = *const fn (*CryptoBase, *crypto.GmacContext, *anyopaque) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -204,5 +210,21 @@ pub const CryptoBase = opaque {
     /// another, into `mac`: its length, or 0 for a hash there is not.
     pub fn HmacPieces(self: *CryptoBase, algorithm: u32, key: ?*const anyopaque, key_length: u32, pieces: ?[*]const crypto.Bytes, count: u32, mac: *anyopaque) u32 {
         return libraries.call(self, LVO.HmacPieces, Fn.HmacPieces, .{ algorithm, key, key_length, pieces, count, mac });
+    }
+
+    /// A GMAC begun on `context` with `key` (16 or 32 bytes) and `nonce`.
+    pub fn InitGmac(self: *CryptoBase, context: *crypto.GmacContext, key: *const anyopaque, key_length: u32, nonce: *const anyopaque, nonce_length: u32) i32 {
+        return libraries.call(self, LVO.InitGmac, Fn.InitGmac, .{ context, key, key_length, nonce, nonce_length });
+    }
+
+    /// `length` more bytes of data into the GMAC under way.
+    pub fn UpdateGmac(self: *CryptoBase, context: *crypto.GmacContext, data: ?*const anyopaque, length: u32) void {
+        return libraries.call(self, LVO.UpdateGmac, Fn.UpdateGmac, .{ context, data, length });
+    }
+
+    /// The GMAC ended: its tag (GCM_TAG bytes) into `tag`, and the context
+    /// wiped.
+    pub fn FinishGmac(self: *CryptoBase, context: *crypto.GmacContext, tag: *anyopaque) i32 {
+        return libraries.call(self, LVO.FinishGmac, Fn.FinishGmac, .{ context, tag });
     }
 };

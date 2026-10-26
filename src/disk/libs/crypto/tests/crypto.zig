@@ -443,6 +443,66 @@ test "GCM of every length as std.crypto has it, and a nonce that is not 12 bytes
     try testing.expectEqualSlices(u8, &hex("619cc5aefffe0bfa462af43c1699d050"), &tag6);
 }
 
+test "GMAC a piece at a time: std.crypto's tag however the data is cut, a long nonce, and what it refuses" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    var key: [32]u8 = undefined;
+    for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% 1);
+    const nonce = [12]u8{ 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
+    var data: [200]u8 = undefined;
+    for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 13 +% 5);
+    const Pair = struct { key_length: u32, reference: type };
+    const pairs = [_]Pair{
+        .{ .key_length = 16, .reference = std.crypto.aead.aes_gcm.Aes128Gcm },
+        .{ .key_length = 32, .reference = std.crypto.aead.aes_gcm.Aes256Gcm },
+    };
+    inline for (pairs) |pair| {
+        for (0..data.len + 1) |length| {
+            // GMAC: the data as the header, no plaintext.
+            var expected: [16]u8 = undefined;
+            pair.reference.encrypt(&.{}, &expected, &.{}, data[0..length], nonce, key[0..pair.key_length].*);
+            // In three pieces, cut at different places.
+            var context: crypto.GmacContext = .{};
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, pair.key_length, &nonce, nonce.len));
+            const first = length / 3;
+            const second = length - length / 5;
+            cb.UpdateGmac(&context, data[0..].ptr, @intCast(first));
+            cb.UpdateGmac(&context, data[first..].ptr, @intCast(second - first));
+            cb.UpdateGmac(&context, null, 0);
+            cb.UpdateGmac(&context, data[second..].ptr, @intCast(length - second));
+            var tag: [16]u8 = undefined;
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
+            try testing.expectEqualSlices(u8, &expected, &tag);
+            // Wiped: the context takes nothing more until InitGmac.
+            try testing.expectEqual(@as(u32, 0), context.key_length);
+            try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.FinishGmac(&context, &tag));
+        }
+    }
+
+    // A 60-byte nonce, hashed into J0: the tag SealGcm gives the data as
+    // its header.
+    const long_nonce = hex("9313225df88406e555909c5aff5269aa6a7a9538534f7da1e4c303d2a318a728c3c0c95156809539fcf0e2429a6b525416aedbf5a0de6a57a637b39b");
+    var sealed: [16]u8 = undefined;
+    const message: crypto.GcmMessage = .{ .key = &key, .key_length = 16, .nonce = &long_nonce, .nonce_length = long_nonce.len, .aad = &data, .aad_length = data.len, .tag = &sealed };
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
+    var context: crypto.GmacContext = .{};
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, 16, &long_nonce, long_nonce.len));
+    for (data) |byte| cb.UpdateGmac(&context, &byte, 1);
+    var tag: [16]u8 = undefined;
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
+    try testing.expectEqualSlices(u8, &sealed, &tag);
+
+    // Refused: a key of 24 bytes, a nonce of none, a context too small.
+    try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.InitGmac(&context, &key, 24, &nonce, nonce.len));
+    cb.UpdateGmac(&context, &data, data.len);
+    try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.FinishGmac(&context, &tag));
+    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.InitGmac(&context, &key, 16, &nonce, 0));
+    var small: crypto.GmacContext = .{ .size = 100 };
+    try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.InitGmac(&small, &key, 16, &nonce, nonce.len));
+    try testing.expectEqual(@as(u32, 0), small.key_length);
+}
+
 // --- ModExp -------------------------------------------------------------------
 
 test "ModExp: small numbers, a base above the modulus, an exponent of 0, bad moduli" {
