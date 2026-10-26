@@ -163,6 +163,20 @@ pub fn bufferTags() [3]sdk.utility.TagItem {
     };
 }
 
+/// The types the reads take, tracked by the device (S2_TRACKTYPE): a
+/// packet that comes while every read of its type is out - a burst longer
+/// than the reads waiting for it - is counted as that type's dropped,
+/// apart from the types nobody here reads, which only the unit's unknown
+/// count has (S2_GETTYPESTATS, NetStatus). A type the unit tracks already
+/// - the interface added again - goes on counting; nothing untracks them.
+pub fn track(sys: *ExecBase, req: *net.IOSana2Req) void {
+    for ([_]u16{ _ip.ethertype, _arp.ethertype, _ip6.ethertype }) |packet_type| {
+        req.req.command = net.S2_TRACKTYPE;
+        req.packet_type = packet_type;
+        _ = sys.DoIO(&req.req);
+    }
+}
+
 // --- in flight ----------------------------------------------------------------
 
 fn requestOf(node: *exec.Node) *Request {

@@ -33,7 +33,12 @@
 //! request) or the server's MaxReadSize and MaxWriteSize. A file is opened sharing
 //! everything, so another client's work on it is not refused. FINDINPUT
 //! opens it to be read, and its first WRITE opens it again to be written
-//! too: a file that is only read never asks for more. FINDOUTPUT makes
+//! too: a file that is only read never asks for more. FINDINPUT reads
+//! the file's first 64 KiB in the same round trip as its CREATE, kept as
+//! a piece read ahead (below), so a small file is read, and found to end,
+//! without asking again; a file only read is closed without waiting for
+//! the CLOSE's answer, which comes before the next request as a piece
+//! written behind's does - a small file, one round trip. FINDOUTPUT makes
 //! the file or empties it, exclusive, refused while this handler has it
 //! locked; FINDUPDATE opens it shared, made when it is not there - one
 //! that may not be written is opened to be read, and its writes refused.
@@ -324,6 +329,10 @@ const space_seconds = 5;
 
 /// What a CREATE asks for to write a file, besides reading it.
 const write_access: u32 = commands.FILE_WRITE_DATA | commands.FILE_APPEND_DATA | commands.FILE_WRITE_ATTRIBUTES;
+
+/// What FINDINPUT reads with its CREATE: a credit's worth, which holds
+/// most small files whole - an icon, a script, a prefs file.
+const first_bytes: u32 = session_area.credit_bytes;
 
 /// What a change sets on an object: SET_INFO's class and value.
 const Setting = union(enum) {
@@ -746,6 +755,18 @@ pub const FileSystem = struct {
         fs.exchange(&request, &replies) catch {};
     }
 
+    /// A handle that was only read closed without waiting for the
+    /// server's answer, which has nothing to say that matters: it is
+    /// taken before the next request, as a piece written behind's is.
+    fn closeBehind(fs: *FileSystem, file_id: *const [16]u8) void {
+        fs.settleAhead() catch return;
+        var request = fs.session.begin(.close);
+        commands.close(&request, file_id);
+        _ = fs.session.sendAhead(&request, fs.session.receive_buffer) catch {
+            fs.lost = true;
+        };
+    }
+
     /// The object at `path` opened with `access`, `setting` set on it
     /// and the handle closed, in one round trip: the status of the first
     /// of them that failed, or success.
@@ -988,14 +1009,54 @@ pub const FileSystem = struct {
     }
 
     /// FINDINPUT: the file at `fs.path`, there already, opened to be
-    /// read, shared.
+    /// read, shared - its first piece read in the same round trip.
     fn openInput(fs: *FileSystem) Error!*Lock {
-        const object = fs.openFile(fs.path.slice(), false, commands.FILE_OPEN) catch |err| blk: {
+        var first: ReadAhead = .{};
+        const object = fs.openToRead(fs.path.slice(), &first) catch |err| blk: {
             if (err != error.NotFound and err != error.DirNotFound) return err;
             if (!try fs.replaceStandIns(&fs.path)) return err;
-            break :blk try fs.openFile(fs.path.slice(), false, commands.FILE_OPEN);
+            break :blk try fs.openToRead(fs.path.slice(), &first);
         };
-        return fs.openLock(&object, false, dos.SHARED_LOCK);
+        const lock = try fs.openLock(&object, false, dos.SHARED_LOCK);
+        if (first.arrived) {
+            first.lock = lock;
+            fs.cached = first;
+        }
+        return lock;
+    }
+
+    /// The file at `path` opened to be read, as `openFile` does, and its
+    /// first `first_bytes` read in the same round trip - a CREATE and a
+    /// READ of what it opens, compounded - into a buffer read ahead into,
+    /// kept in `first` as a piece read ahead: a file no larger is read,
+    /// and found to end, without asking again. Without the buffers, the
+    /// CREATE alone.
+    fn openToRead(fs: *FileSystem, path: []const u8, first: *ReadAhead) Error!commands.Object {
+        const buffers = fs.ahead_buffers orelse return fs.openFile(path, false, commands.FILE_OPEN);
+        var request = fs.session.begin(.create);
+        commands.create(&request, path, commands.FILE_READ_DATA | commands.FILE_READ_ATTRIBUTES | commands.SYNCHRONIZE, 0, commands.FILE_OPEN, commands.FILE_NON_DIRECTORY_FILE);
+        const want: u32 = @intCast(@min(first_bytes, fs.session.pieceMax(fs.session.max_read)));
+        request.add(.read);
+        commands.read(&request, &session_area.related_file, 0, want);
+        var replies = session_area.noReplies();
+        try fs.exchange(&request, &replies);
+        const object = commands.created(&replies[0]) orelse return errorOf(replies[0].status());
+        const data = commands.readData(&replies[1]) orelse return object;
+        // Not into the buffer a READ ahead of another file came into; what
+        // was read ahead before is let go of.
+        const index: u1 = if (fs.coming.lock != null) fs.coming.index ^ 1 else 0;
+        fs.cached.lock = null;
+        const count = @min(data.len, want);
+        @memcpy(buffers[index][0..count], data[0..count]);
+        first.* = .{
+            .want = want,
+            .index = index,
+            .since = fs.clock(),
+            .arrived = true,
+            .data = buffers[index][0..count],
+            .end = count < want or count >= object.size,
+        };
+        return object;
     }
 
     /// FINDOUTPUT: the file at `fs.path` made, or emptied, and opened
@@ -1572,7 +1633,9 @@ pub const FileSystem = struct {
         }
         if (fs.behind.lock == lock) fs.settleAhead() catch {};
         const failed = failedBehind(lock);
-        if (lock.open and !lock.gone and !fs.lost) fs.closeHandle(&lock.file_id);
+        if (lock.open and !lock.gone and !fs.lost) {
+            if (lock.writable) fs.closeHandle(&lock.file_id) else fs.closeBehind(&lock.file_id);
+        }
         if (lock.modified) {
             fs.tell(lock.key);
             fs.tellParent(lock.path());

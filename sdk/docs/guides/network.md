@@ -418,7 +418,12 @@ gives them back, each one alone (`/128`, NetStatus marks it `dhcp`); one
 that sets only the O flag has its name servers and search domain there,
 which the stack asks for and asks again after the server's refresh time.
 How many reads and writes the stack keeps with the device grows with the
-link's speed unless the file says.
+link's speed unless the file says. A burst longer than the reads waiting
+for its type is lost in the device, which the stack's Dropped count never
+sees: `C:net/NetStatus` shows, under each interface, what the device
+dropped - frames it had no room for, damaged ones, packets that came with
+no read of their type waiting (the stack tracks IPv4, ARP and IPv6 on the
+unit with S2_TRACKTYPE), and packets of types nobody reads.
 
 ## Configuration files
 
