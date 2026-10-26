@@ -78,7 +78,7 @@ const Git = context.Git;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = context.COMMAND_NAME;
-const VERSION_STRING = "\x00$VER: Git 1.0 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Git 1.1 (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "VERB,ARGS/F";

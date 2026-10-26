@@ -36,9 +36,13 @@ pub fn receive(repo: *Repository, connection: *Connection, request: *const trans
     };
     var sink: files.FileSink = .{ .dl = dl, .file = pack_file };
     const received = connection.remote.fetch(request, sink.asSink());
+    // Why a Write failed - the disk full - kept from the packets after it:
+    // each one sets IoErr, the progress line's end too.
+    const failure = dl.IoErr();
     const closed = dl.Close(pack_file);
     git.endProgress();
     const got = received orelse {
+        _ = dl.SetIoErr(failure);
         connection.sayFailure();
         _ = dl.DeleteFile(pack_name);
         return null;

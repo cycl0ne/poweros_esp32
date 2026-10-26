@@ -72,9 +72,13 @@ pub const LIBRARY_VERSION = 1;
 /// QEMU's virt), CacheClearE, CachePreDMA and CachePostDMA leave the data
 /// caches alone. 20: on a RISC-V machine only the sources its PLIC has
 /// (SYSTAG_PlicSources) are set up and taken - QEMU's virt's 95, not the
-/// JH7110's 136.
-pub const LIBRARY_REVISION = 20;
-const BUILD_DATE = "25.10.2026";
+/// JH7110's 136. 21: a core parks for another's hold with its interrupts
+/// masked whatever the spin that asked had, so a task in AcquireLock's
+/// spin is not switched away inside the park and counted as parked - the
+/// machine stuck in ReleaseOtherCores, with flash.device's writes on
+/// QEMU's virt.
+pub const LIBRARY_REVISION = 21;
+const BUILD_DATE = "26.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

@@ -641,7 +641,10 @@ pub fn run(git: *Git, argv: []const usize) i32 {
         .quiet = git.quiet,
     };
     if (!remote.push(&request)) {
+        // Why a Read of the pack failed, kept from the progress line's end.
+        const failure = dl.IoErr();
         git.endProgress();
+        _ = dl.SetIoErr(failure);
         connection.sayFailure();
         return dos.RETURN_ERROR;
     }

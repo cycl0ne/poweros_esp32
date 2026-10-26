@@ -85,8 +85,15 @@ pub fn releaseOther() void {
 pub var parked_max: [2]u32 = @splat(0);
 
 /// Parked if the other core asks: from the cross-core interrupt, and from
-/// every spin with interrupts masked.
+/// every spin for the other core.
+/// Its interrupts are masked while it parks, whatever the spin had:
+/// with them on - a task in AcquireLock's spin - the cross-core
+/// interrupt would come in inside the park, and its handler, and
+/// whatever its exit switches to, would run while the holder has this
+/// core parked.
 pub fn parkIfAsked() void {
+    const state = cpu.setIntlevel(3);
+    defer cpu.restorePs(state);
     const asked = @atomicLoad(u32, &asker, .acquire);
     const core = cpu.coreId();
     if (asked == 0 or asked == core + 1) return;
