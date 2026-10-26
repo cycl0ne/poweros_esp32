@@ -4,6 +4,7 @@
 
 const sdk = @import("sdk");
 const _locks = @import("_locks.zig");
+const Alert = @import("../interrupt/alert.zig").Alert;
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const SemaphoreMessage = sdk.exec.SemaphoreMessage;
@@ -73,8 +74,14 @@ pub fn Vacate(base: *ExecBase, sem: *SignalSemaphore, bid: *SemaphoreMessage) vo
     const granted = bid.request.granted;
     if (!granted) {
         sys.Remove(&bid.request.link);
-        sem.queue_count -= 1;
+        _locks.queueChanged(base, sem);
     }
     bid.request = .{};
-    if (granted) _locks.leave(base, sem, task) else sys.ReplyMsg(&bid.msg);
+    if (!granted) return sys.ReplyMsg(&bid.msg);
+    if (!_locks.heldBy(sem, task)) {
+        // Direct, not through the table, as `leave` does.
+        Alert(base, sdk.exec.AN_SemCorrupt);
+        return;
+    }
+    _locks.dropBidHold(task, sem, _locks.letGo(base, sem, task));
 }

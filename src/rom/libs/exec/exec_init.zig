@@ -76,8 +76,13 @@ pub const LIBRARY_VERSION = 1;
 /// masked whatever the spin that asked had, so a task in AcquireLock's
 /// spin is not switched away inside the park and counted as parked - the
 /// machine stuck in ReleaseOtherCores, with flash.device's writes on
-/// QEMU's virt.
-pub const LIBRARY_REVISION = 21;
+/// QEMU's virt. 22: a semaphore's state is one word: one that can be had
+/// at once is taken and given back with a compare-and-swap on it, without
+/// exec's semaphore lock, which only queueing and handing on take -
+/// 1714 cycles for an Obtain and Release with nothing in the way, and
+/// twice that with the cores busy, before; Procure's grants are counted
+/// in a table of their own (`Task.bid_holds`).
+pub const LIBRARY_REVISION = 22;
 const BUILD_DATE = "26.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

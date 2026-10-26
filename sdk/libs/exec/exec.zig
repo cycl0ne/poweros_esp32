@@ -142,6 +142,7 @@ pub const TaskFn = tasks.TaskFn;
 pub const TaskEndFn = tasks.TaskEndFn;
 pub const TaskEndHook = tasks.TaskEndHook;
 pub const max_semaphore_holds = tasks.max_semaphore_holds;
+pub const max_bid_holds = tasks.max_bid_holds;
 pub const StackFn = tasks.StackFn;
 pub const ExceptFn = tasks.ExceptFn;
 pub const TrapInfo = tasks.TrapInfo;
@@ -189,6 +190,9 @@ pub const LOCKORDER_SYSTEM = locks.LOCKORDER_SYSTEM;
 pub const SemaphoreRequest = semaphores.SemaphoreRequest;
 pub const SemaphoreHold = semaphores.SemaphoreHold;
 pub const SemaphoreMessage = semaphores.SemaphoreMessage;
+pub const SEM_HOLDS = semaphores.SEM_HOLDS;
+pub const SEMF_EXCLUSIVE = semaphores.SEMF_EXCLUSIVE;
+pub const SEMF_WAITERS = semaphores.SEMF_WAITERS;
 pub const SM_EXCLUSIVE = semaphores.SM_EXCLUSIVE;
 pub const SM_SHARED = semaphores.SM_SHARED;
 

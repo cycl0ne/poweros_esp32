@@ -6,7 +6,6 @@ const sdk = @import("sdk");
 const _locks = @import("_locks.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
-const SemaphoreRequest = sdk.exec.SemaphoreRequest;
 const SignalSemaphore = sdk.exec.SignalSemaphore;
 
 /// Takes a semaphore shared if that can be done without waiting.
@@ -30,8 +29,9 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes exec's semaphore lock.
-/// - Locks: takes exec's semaphore lock for a moment.
+/// - Interrupts: no. It is a task's: the hold is counted in its table.
+/// - Locks: none - one compare-and-swap on the semaphore, with this core's
+///   interrupts masked for a moment.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -49,11 +49,5 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// defer sys.ReleaseSemaphore(&self.lock);
 /// ```
 pub fn AttemptSemaphoreShared(base: *ExecBase, sem: *SignalSemaphore) bool {
-    const sys = base.iface();
-    sys.AcquireLock(&base.lock_semaphores);
-    defer sys.ReleaseLock(&base.lock_semaphores);
-    const task = sys.FindTask(null).?;
-    if (sem.queue_count >= 0 and sem.owner != task and sem.owner != null) return false;
-    var request: SemaphoreRequest = .{ .waiter = task, .shared = true };
-    return _locks.enter(base, sem, &request);
+    return _locks.obtainNow(base, sem, true);
 }

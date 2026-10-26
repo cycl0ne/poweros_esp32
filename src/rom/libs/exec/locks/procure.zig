@@ -82,14 +82,30 @@ pub fn Procure(base: *ExecBase, sem: *SignalSemaphore, bid: *SemaphoreMessage) v
     const holder: ?*Task = if (shared) null else task;
     bid.semaphore = null;
     bid.request = .{ .waiter = task, .shared = shared, .bid = bid };
-    sem.queue_count += 1;
-    if (sem.queue_count == 0 or sem.owner == holder) {
-        if (sem.queue_count == 0) sem.owner = holder;
-        sem.nest_count += 1;
-        bid.request.granted = true;
-        _locks.noteHold(task, sem, shared);
-        _locks.reply(base, sem, bid);
-        return;
+    var state = _locks.load(sem);
+    while (true) : (state = _locks.load(sem)) {
+        if (granted(sem, state, holder, shared)) |next| {
+            if (!_locks.exchange(base, sem, state, next)) continue;
+            if (next == sdk.exec.SEMF_EXCLUSIVE | 1) sem.owner = holder;
+            bid.request.granted = true;
+            _locks.noteBidHold(task, sem, shared);
+            _locks.reply(base, sem, bid);
+            return;
+        }
+        if (state & sdk.exec.SEMF_WAITERS != 0 or _locks.exchange(base, sem, state, state | sdk.exec.SEMF_WAITERS)) break;
     }
     sys.AddTail(&sem.wait_queue, &bid.request.link);
+}
+
+/// What `sem`'s state becomes when a bid is granted now, or null when it
+/// has to wait: when it is free, or its holder is what the bid asks for -
+/// the bidder itself for an exclusive bid, held shared for a shared one.
+/// A shared bid from the exclusive owner waits.
+fn granted(sem: *const SignalSemaphore, state: u32, holder: ?*Task, shared: bool) ?u32 {
+    const holds = state & sdk.exec.SEM_HOLDS;
+    if (holds == sdk.exec.SEM_HOLDS) return null;
+    if (holds == 0) return if (shared) 1 else sdk.exec.SEMF_EXCLUSIVE | 1;
+    const exclusive = state & sdk.exec.SEMF_EXCLUSIVE != 0;
+    if (shared) return if (exclusive) null else state + 1;
+    return if (exclusive and sem.owner == holder) state + 1 else null;
 }

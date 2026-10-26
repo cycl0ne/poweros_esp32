@@ -374,15 +374,13 @@ test "LockDosList: exactly one of READ and WRITE; the sentinel to start from" {
     // attempt gives back what it had taken.
     var other: kexec.Task = .{};
     db.delete_lock.owner = &other;
-    db.delete_lock.queue_count = 0;
-    db.delete_lock.nest_count = 1;
+    db.delete_lock.state = exec.SEMF_EXCLUSIVE | 1;
     try testing.expect(dl.AttemptLockDosList(dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE | dos.LDF_WRITE) == null);
-    try testing.expectEqual(@as(i16, -1), db.dev_lock.queue_count);
-    try testing.expectEqual(@as(i16, -1), db.entry_lock.queue_count);
+    try testing.expectEqual(@as(u32, 0), db.dev_lock.state);
+    try testing.expectEqual(@as(u32, 0), db.entry_lock.state);
     try testing.expect(dl.AttemptLockDosList(dos.LDF_DELETE | dos.LDF_READ) == null);
     db.delete_lock.owner = null;
-    db.delete_lock.queue_count = -1;
-    db.delete_lock.nest_count = 0;
+    db.delete_lock.state = 0;
     try tearDown(db);
 }
 
@@ -562,8 +560,8 @@ test "GetDeviceProc starts a device's handler with ACTION_STARTUP, once" {
     try testing.expectEqual(node, StartupWait.node.?);
     try testing.expectEqual(&handler.msg_port, node.task.?); // the handler claimed it
     // The list and the entry lock both given back.
-    try testing.expectEqual(@as(i16, -1), db.dev_lock.queue_count);
-    try testing.expectEqual(@as(i16, -1), db.entry_lock.queue_count);
+    try testing.expectEqual(@as(u32, 0), db.dev_lock.state);
+    try testing.expectEqual(@as(u32, 0), db.entry_lock.state);
     dl.FreeDeviceProc(dp);
 
     const again = dl.GetDeviceProc("NIL:", null).?;

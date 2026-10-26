@@ -1690,8 +1690,9 @@ it nests like `ObtainSemaphore`.
 - Waits: **no, and that is the point of it.** This is how a lock is
   taken from somewhere that must not block - an interrupt's task, or
   code holding another lock.
-- Interrupts: no. It takes exec's semaphore lock.
-- Locks: takes exec's semaphore lock for a moment.
+- Interrupts: no. It is a task's: the hold is counted in its table.
+- Locks: none - one compare-and-swap on the semaphore, with this core's
+  interrupts masked for a moment.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1749,8 +1750,9 @@ It succeeds if the semaphore is free, held shared, or held by this task.
 **CONTEXT**
 
 - Waits: no.
-- Interrupts: no. It takes exec's semaphore lock.
-- Locks: takes exec's semaphore lock for a moment.
+- Interrupts: no. It is a task's: the hold is counted in its table.
+- Locks: none - one compare-and-swap on the semaphore, with this core's
+  interrupts masked for a moment.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5558,8 +5560,10 @@ comes free, so it cannot be overtaken.
 
 - Waits: yes, whenever another task holds it.
 - Interrupts: no. It waits.
-- Locks: takes exec's semaphore lock to look, and gives it back before it
-  waits; no spinlock may be held.
+- Locks: none when it can be had at once - one compare-and-swap on the
+  semaphore, with this core's interrupts masked for a moment. To queue
+  for it, exec's semaphore lock, given back before it waits; no
+  spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -5696,8 +5700,9 @@ The exclusive owner asking for it shared simply nests.
 
 - Waits: yes, whenever someone holds it exclusively.
 - Interrupts: no. It waits.
-- Locks: takes exec's semaphore lock while it looks; no spinlock may be
-  held: it waits.
+- Locks: none when it can be had at once - one compare-and-swap on the
+  semaphore. To queue for it, exec's semaphore lock, given back before
+  it waits; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -6731,8 +6736,11 @@ somewhere else.
 
 - Waits: no, but handing the semaphore on signals a task, which may
   switch.
-- Interrupts: no. It takes exec's semaphore lock, and may signal.
-- Locks: takes exec's semaphore lock for a moment.
+- Interrupts: no. It may take exec's semaphore lock, and may signal.
+- Locks: none when it hands nothing on - one compare-and-swap on the
+  semaphore, with this core's interrupts masked for a moment. The last
+  release with tasks waiting takes exec's semaphore lock to hand it
+  on.
 - Process: a Task will do, and it must be **the task that obtained
   it**.
 

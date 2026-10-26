@@ -842,7 +842,7 @@ test "a library an Open is on its way to is not expunged, and one going is not o
     _ = RemLibrary(SysBase, lib);
     try testing.expect(FindName(SysBase, &SysBase.lib_list, "pinned.library") == null);
     // Every lock given back: the list's is free.
-    try testing.expectEqual(@as(i16, -1), SysBase.sem_libraries.queue_count);
+    try testing.expectEqual(@as(u32, 0), SysBase.sem_libraries.state);
     try expectNoLeaks();
 }
 
@@ -864,7 +864,7 @@ test "the low-memory flush expunges one idle library per call, and passes over a
     try testing.expect(FindName(SysBase, &SysBase.lib_list, "idle.library") == null);
     try testing.expect(FindName(SysBase, &SysBase.lib_list, LIBRARY_NAME) != null);
     try testing.expect(SysBase.lib.flags & LIBF_GOING == 0);
-    try testing.expectEqual(@as(i16, -1), SysBase.sem_libraries.queue_count);
+    try testing.expectEqual(@as(u32, 0), SysBase.sem_libraries.state);
     try expectNoLeaks();
 }
 
@@ -941,9 +941,9 @@ test "LockExecList takes each list's own lock, and UnlockExecList gives it back"
 
     _ = LockExecList(SysBase, sdk.exec.EXECLIST_LIBRARIES).?;
     // Shared: held, by nobody in particular.
-    try testing.expect(SysBase.sem_libraries.queue_count >= 0 and SysBase.sem_libraries.owner == null);
+    try testing.expect(SysBase.sem_libraries.state != 0 and SysBase.sem_libraries.state & sdk.exec.SEMF_EXCLUSIVE == 0);
     UnlockExecList(SysBase, sdk.exec.EXECLIST_LIBRARIES);
-    try testing.expectEqual(@as(i16, -1), SysBase.sem_libraries.queue_count);
+    try testing.expectEqual(@as(u32, 0), SysBase.sem_libraries.state);
 
     _ = LockExecList(SysBase, sdk.exec.EXECLIST_MEMORY).?;
     try testing.expect(SysBase.lock_memory.state != 0);
@@ -1596,7 +1596,7 @@ test "Kill: started again at its end on its own stack, out of a semaphore's queu
     try testing.expectEqual(upper, task.sp_upper);
     try testing.expectEqual(@as(usize, 0), task.home_upper);
     try testing.expect(task.waiting == null and sem.wait_queue.isEmpty());
-    try testing.expectEqual(@as(i16, 0), sem.queue_count);
+    try testing.expectEqual(sdk.exec.SEMF_EXCLUSIVE | 1, sem.state);
     try testing.expectEqual(sdk.exec.TaskState.ready, task.state);
     try testing.expectEqual(@as(i8, -1), task.id_nest_cnt);
     // Its context made anew; the host's makes the task its own context.
@@ -3368,7 +3368,12 @@ test "ports: AddPort, FindPort, RemPort" {
 
 /// `task`'s entry for `sem` in its table of holds: how often, which kind.
 fn expectHold(task: *Task, sem: *SignalSemaphore, count: u16, shared: bool) !void {
-    for (&task.holds) |*hold| {
+    return expectHoldIn(&task.holds, sem, count, shared);
+}
+
+/// `sem`'s entry in a table of holds: how often, which kind.
+fn expectHoldIn(table: []const sdk.exec.SemaphoreHold, sem: *SignalSemaphore, count: u16, shared: bool) !void {
+    for (table) |*hold| {
         if (hold.semaphore != sem) continue;
         try testing.expectEqual(count, hold.count);
         try testing.expectEqual(shared, hold.shared);
@@ -3428,22 +3433,24 @@ test "semaphores: each task's table of what it holds, and its end giving them ba
     try testing.expectEqual(b, sem.owner.?);
     try testing.expect(rb.granted);
     try expectHold(b, &sem, 1, false);
-    try testing.expectEqual(@as(i16, 1), other.nest_count);
+    try testing.expectEqual(@as(u16, 1), other.nestCount());
     try expectHold(boot, &other, 1, true);
     ReleaseSemaphore(SysBase, &other);
     RemTask(SysBase, b);
-    try testing.expectEqual(@as(i16, -1), sem.queue_count);
+    try testing.expectEqual(@as(u32, 0), sem.state);
     try testing.expect(sem.owner == null);
-    try testing.expectEqual(@as(i16, -1), other.queue_count);
+    try testing.expectEqual(@as(u32, 0), other.state);
 
-    // A grant by Procure is a hold too, and Vacate gives it back.
+    // A grant by Procure is a hold too, in the table of Procure's grants,
+    // and Vacate gives it back.
     const port = CreateMsgPort(SysBase).?;
     var bid = SemaphoreMessage.init(port, false);
     Procure(SysBase, &sem, &bid);
-    try expectHold(boot, &sem, 1, false);
+    try expectHoldIn(&boot.bid_holds, &sem, 1, false);
+    try testing.expectEqual(@as(usize, 0), holdCount(boot));
     _ = GetMsg(SysBase, port);
     Vacate(SysBase, &sem, &bid);
-    try testing.expectEqual(@as(usize, 0), holdCount(boot));
+    try testing.expect(boot.bid_holds[0].semaphore == null);
     DeleteMsgPort(SysBase, port);
 
     // Past the table's end a hold is counted as lost; let go, the count
@@ -3458,6 +3465,109 @@ test "semaphores: each task's table of what it holds, and its end giving them ba
     for (&many) |*each| ReleaseSemaphore(SysBase, each);
     try testing.expectEqual(@as(usize, 0), holdCount(boot));
     try testing.expectEqual(@as(u16, 0), boot.holds_lost);
+    try expectNoLeaks();
+}
+
+test "semaphores: the state word, without and with the lock" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+    const boot = SysBase.cpu().this_task;
+    const a = CreateTask(SysBase, "a", -1, &idleCode, 1024).?;
+    const b = CreateTask(SysBase, "b", -1, &idleCode, 1024).?;
+    const exclusive = sdk.exec.SEMF_EXCLUSIVE;
+    const waiters = sdk.exec.SEMF_WAITERS;
+    var sem: SignalSemaphore = .{};
+    InitSemaphore(SysBase, &sem);
+    try testing.expectEqual(@as(u32, 0), sem.state);
+
+    // Taken and given back with no queue: the word alone, the owner with
+    // the exclusive hold of a free one.
+    ObtainSemaphore(SysBase, &sem);
+    try testing.expectEqual(exclusive | 1, sem.state);
+    try testing.expectEqual(boot, sem.owner.?);
+    ObtainSemaphoreShared(SysBase, &sem); // the owner's own: nested
+    try testing.expectEqual(exclusive | 2, sem.state);
+    try testing.expect(_locks.releaseNow(SysBase, &sem));
+    try testing.expect(_locks.releaseNow(SysBase, &sem));
+    try testing.expectEqual(@as(u32, 0), sem.state);
+    try testing.expect(sem.owner == null);
+    try testing.expectEqual(@as(usize, 0), holdCount(boot));
+
+    // A release that is not the task's, or of a free one, is not done
+    // without the lock: `leave` alerts.
+    try testing.expect(!_locks.releaseNow(SysBase, &sem));
+    var ra: SemaphoreRequest = .{ .waiter = a };
+    try testing.expect(_locks.enter(SysBase, &sem, &ra));
+    try testing.expect(!_locks.releaseNow(SysBase, &sem));
+    try testing.expect(!AttemptSemaphore(SysBase, &sem));
+    try testing.expect(!AttemptSemaphoreShared(SysBase, &sem));
+
+    // Queued behind a: the flag set with the request, and a's last release
+    // hands the semaphore to boot in the same change - never 0 between.
+    var rboot: SemaphoreRequest = .{ .waiter = boot };
+    try testing.expect(!_locks.enter(SysBase, &sem, &rboot));
+    try testing.expectEqual(exclusive | waiters | 1, sem.state);
+    _locks.leave(SysBase, &sem, a);
+    try testing.expect(rboot.granted);
+    try testing.expectEqual(exclusive | 1, sem.state);
+    try testing.expectEqual(boot, sem.owner.?);
+    try expectHold(boot, &sem, 1, false);
+    ReleaseSemaphore(SysBase, &sem);
+    try testing.expectEqual(@as(u32, 0), sem.state);
+
+    // Shared: counted together, joined while a writer waits, the writer's
+    // when the last reader goes.
+    ObtainSemaphoreShared(SysBase, &sem);
+    var ras: SemaphoreRequest = .{ .waiter = a, .shared = true };
+    try testing.expect(_locks.enter(SysBase, &sem, &ras));
+    try testing.expectEqual(@as(u32, 2), sem.state);
+    var rb: SemaphoreRequest = .{ .waiter = b };
+    try testing.expect(!_locks.enter(SysBase, &sem, &rb));
+    try testing.expectEqual(waiters | 2, sem.state);
+    try testing.expect(AttemptSemaphoreShared(SysBase, &sem)); // a reader still gets in
+    try testing.expectEqual(waiters | 3, sem.state);
+    try testing.expect(_locks.releaseNow(SysBase, &sem));
+    try testing.expect(_locks.releaseNow(SysBase, &sem));
+    try testing.expectEqual(waiters | 1, sem.state);
+    try testing.expect(!rb.granted);
+    _locks.leave(SysBase, &sem, a); // the last reader: b's
+    try testing.expect(rb.granted);
+    try testing.expectEqual(exclusive | 1, sem.state);
+    try testing.expectEqual(b, sem.owner.?);
+
+    // Behind b: a shared waiter and an exclusive one. b's release gives the
+    // reader its share and keeps the flag for the writer.
+    var ras2: SemaphoreRequest = .{ .waiter = a, .shared = true };
+    var rx: SemaphoreRequest = .{ .waiter = boot };
+    try testing.expect(!_locks.enter(SysBase, &sem, &ras2));
+    try testing.expect(!_locks.enter(SysBase, &sem, &rx));
+    _locks.leave(SysBase, &sem, b);
+    try testing.expect(ras2.granted and !rx.granted);
+    try testing.expectEqual(waiters | 1, sem.state);
+    try testing.expect(sem.owner == null);
+    _locks.leave(SysBase, &sem, a);
+    try testing.expect(rx.granted);
+    try testing.expectEqual(exclusive | 1, sem.state);
+    ReleaseSemaphore(SysBase, &sem);
+    try testing.expectEqual(@as(u32, 0), sem.state);
+
+    // A bid granted, and Vacate'd by another task, in Procure's table only.
+    const port = CreateMsgPort(SysBase).?;
+    var bid = SemaphoreMessage.init(port, true);
+    Procure(SysBase, &sem, &bid);
+    _ = GetMsg(SysBase, port);
+    try testing.expectEqual(@as(u32, 1), sem.state);
+    try expectHoldIn(&boot.bid_holds, &sem, 1, true);
+    try testing.expectEqual(@as(usize, 0), holdCount(boot));
+    Vacate(SysBase, &sem, &bid);
+    try testing.expectEqual(@as(u32, 0), sem.state);
+    try testing.expect(boot.bid_holds[0].semaphore == null);
+    DeleteMsgPort(SysBase, port);
+
+    RemTask(SysBase, a);
+    RemTask(SysBase, b);
     try expectNoLeaks();
 }
 
@@ -3479,7 +3589,7 @@ test "semaphores: a task removed while it waits is taken out of the queue" {
     a.waiting_for = &sem;
     RemTask(SysBase, a);
     try testing.expect(sem.wait_queue.isEmpty());
-    try testing.expectEqual(@as(i16, 0), sem.queue_count);
+    try testing.expectEqual(sdk.exec.SEMF_EXCLUSIVE | 1, sem.state); // the flag gone with the waiter
 
     // Granted before it is removed: the grant takes the name off, and the
     // end gives the hold back.
@@ -3492,7 +3602,7 @@ test "semaphores: a task removed while it waits is taken out of the queue" {
     try testing.expect(b.waiting == null and b.waiting_for == null);
     RemTask(SysBase, b);
     try testing.expect(sem.owner == null);
-    try testing.expectEqual(@as(i16, -1), sem.queue_count);
+    try testing.expectEqual(@as(u32, 0), sem.state);
     try expectNoLeaks();
 }
 
@@ -3509,13 +3619,13 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         const b = CreateTask(SysBase, "b", -1, &idleCode, 1024).?;
         var sem: SignalSemaphore = .{};
         InitSemaphore(SysBase, &sem);
-        try testing.expectEqual(@as(i16, -1), sem.queue_count);
+        try testing.expectEqual(@as(u32, 0), sem.state);
 
         ObtainSemaphore(SysBase, &sem); // free: at once
         ObtainSemaphore(SysBase, &sem); // the owner again: nested
         try testing.expect(AttemptSemaphore(SysBase, &sem));
         try testing.expectEqual(boot, sem.owner.?);
-        try testing.expectEqual(@as(i16, 3), sem.nest_count);
+        try testing.expectEqual(@as(u16, 3), sem.nestCount());
         ReleaseSemaphore(SysBase, &sem);
 
         // a, then b ask for it (the part of ObtainSemaphore before its Wait).
@@ -3523,14 +3633,14 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         var rb: SemaphoreRequest = .{ .waiter = b };
         try testing.expect(!_locks.enter(SysBase, &sem, &ra));
         try testing.expect(!_locks.enter(SysBase, &sem, &rb));
-        try testing.expectEqual(@as(i16, 3), sem.queue_count); // 2 holds + 2 waiters - 1
+        try testing.expectEqual(sdk.exec.SEMF_EXCLUSIVE | sdk.exec.SEMF_WAITERS | 2, sem.state); // 2 holds, waiters
 
         ReleaseSemaphore(SysBase, &sem); // still held once
         try testing.expectEqual(boot, sem.owner.?);
         try testing.expectEqual(@as(u32, 0), a.sig_recvd & SIGF_SINGLE);
         ReleaseSemaphore(SysBase, &sem); // straight to a, the first waiter
         try testing.expectEqual(a, sem.owner.?);
-        try testing.expectEqual(@as(i16, 1), sem.nest_count);
+        try testing.expectEqual(@as(u16, 1), sem.nestCount());
         try testing.expect(ra.granted);
         try testing.expect(a.sig_recvd & SIGF_SINGLE != 0); // and woken
         try testing.expect(!rb.granted);
@@ -3538,7 +3648,7 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         _locks.leave(SysBase, &sem, a);
         try testing.expectEqual(b, sem.owner.?);
         _locks.leave(SysBase, &sem, b);
-        try testing.expectEqual(@as(i16, -1), sem.queue_count);
+        try testing.expectEqual(@as(u32, 0), sem.state);
         try testing.expect(sem.owner == null);
 
         // Releasing a free semaphore, or one another task holds, is an alert.
@@ -3578,7 +3688,7 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         try testing.expect(_locks.enter(SysBase, &sem, &ra)); // shared with boot
         try testing.expect(!AttemptSemaphore(SysBase, &sem)); // not exclusively
         try testing.expect(AttemptSemaphoreShared(SysBase, &sem));
-        try testing.expectEqual(@as(i16, 3), sem.nest_count);
+        try testing.expectEqual(@as(u16, 3), sem.nestCount());
         ReleaseSemaphore(SysBase, &sem);
 
         // An exclusive request waits for every shared holder, and shared
@@ -3605,7 +3715,7 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         try testing.expect(!_locks.enter(SysBase, &sem, &rc2));
         _locks.leave(SysBase, &sem, b);
         try testing.expect(sem.owner == null);
-        try testing.expectEqual(@as(i16, 2), sem.nest_count);
+        try testing.expectEqual(@as(u16, 2), sem.nestCount());
         try testing.expect(ra2.granted and rc2.granted);
         try testing.expect(!rx.granted);
         _locks.leave(SysBase, &sem, a);
@@ -3616,10 +3726,10 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         // The exclusive owner taking it shared just nests.
         ObtainSemaphoreShared(SysBase, &sem);
         try testing.expectEqual(boot, sem.owner.?);
-        try testing.expectEqual(@as(i16, 2), sem.nest_count);
+        try testing.expectEqual(@as(u16, 2), sem.nestCount());
         ReleaseSemaphore(SysBase, &sem);
         ReleaseSemaphore(SysBase, &sem);
-        try testing.expectEqual(@as(i16, -1), sem.queue_count);
+        try testing.expectEqual(@as(u32, 0), sem.state);
 
         RemTask(SysBase, a);
         RemTask(SysBase, b);
@@ -3647,7 +3757,7 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         ObtainSemaphoreList(SysBase, &list);
         for (&sems) |*s| try testing.expectEqual(boot, s.owner.?);
         ReleaseSemaphoreList(SysBase, &list);
-        for (&sems) |*s| try testing.expectEqual(@as(i16, -1), s.queue_count);
+        for (&sems) |*s| try testing.expectEqual(@as(u32, 0), s.state);
 
         // a holds the middle one: the others are taken, that one is queued,
         // and it comes when a releases it.
@@ -3679,7 +3789,7 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         try testing.expect(AttemptSemaphoreShared(SysBase, &public));
         ReleaseSemaphore(SysBase, &public);
         ReleaseSemaphore(SysBase, &public);
-        try testing.expectEqual(@as(i16, -1), public.queue_count);
+        try testing.expectEqual(@as(u32, 0), public.state);
         RemSemaphore(SysBase, &public);
         try testing.expect(FindSemaphore(SysBase, "test.sem") == null);
 
@@ -3712,10 +3822,10 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         var again = SemaphoreMessage.init(port, false);
         Procure(SysBase, &sem, &again);
         try testing.expectEqual(&again.msg, GetMsg(SysBase, port).?);
-        try testing.expectEqual(@as(i16, 2), sem.nest_count);
+        try testing.expectEqual(@as(u16, 2), sem.nestCount());
         Vacate(SysBase, &sem, &again);
         try testing.expect(again.semaphore == null);
-        try testing.expectEqual(@as(i16, 1), sem.nest_count);
+        try testing.expectEqual(@as(u16, 1), sem.nestCount());
 
         // A shared bid from the exclusive owner is no nesting (as in the ROM):
         // it waits until the exclusive hold is gone. Any non-zero ln_Name
@@ -3747,19 +3857,19 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         try testing.expectEqual(&shared_bid.msg, GetMsg(SysBase, port).?);
         try testing.expectEqual(&sem, shared_bid.semaphore.?);
         try testing.expect(sem.owner == null);
-        try testing.expectEqual(@as(i16, 2), sem.nest_count);
+        try testing.expectEqual(@as(u16, 2), sem.nestCount());
         Vacate(SysBase, &sem, &own_shared);
-        try testing.expectEqual(@as(i16, 1), sem.nest_count);
+        try testing.expectEqual(@as(u16, 1), sem.nestCount());
 
         // A bid still waiting is withdrawn: back without the semaphore.
         var late = SemaphoreMessage.init(port, false);
         Procure(SysBase, &sem, &late);
         try testing.expect(GetMsg(SysBase, port) == null);
-        const queued = sem.queue_count;
+        const queued = sem.state;
         Vacate(SysBase, &sem, &late);
         try testing.expectEqual(&late.msg, GetMsg(SysBase, port).?);
         try testing.expect(late.semaphore == null);
-        try testing.expectEqual(queued - 1, sem.queue_count);
+        try testing.expectEqual(queued, sem.state); // b still waits
 
         // boot vacates a's bid (any task may): b gets it. Vacating it again
         // does nothing.
@@ -3769,7 +3879,7 @@ test "semaphores: exclusive and shared, the list, public ones, Procure and Vacat
         Vacate(SysBase, &sem, &shared_bid);
         try testing.expectEqual(b, sem.owner.?);
         _locks.leave(SysBase, &sem, b);
-        try testing.expectEqual(@as(i16, -1), sem.queue_count);
+        try testing.expectEqual(@as(u32, 0), sem.state);
 
         DeleteMsgPort(SysBase, port);
         RemTask(SysBase, a);

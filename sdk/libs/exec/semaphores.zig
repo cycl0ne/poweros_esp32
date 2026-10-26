@@ -58,20 +58,40 @@ pub const SemaphoreHold = extern struct {
     shared: bool = false,
 };
 
+/// A semaphore's `state`: how often it is held - by its owner, or by all
+/// its shared holders together - in the low 16 bits.
+pub const SEM_HOLDS: u32 = 0xFFFF;
+/// Held exclusively, by `owner`.
+pub const SEMF_EXCLUSIVE: u32 = 1 << 30;
+/// Tasks are queued for it (`wait_queue`): its last release hands it to
+/// them, under exec's semaphore lock.
+pub const SEMF_WAITERS: u32 = 1 << 31;
+
 /// struct SignalSemaphore. Set it up with InitSemaphore (or AddSemaphore).
 pub const SignalSemaphore = extern struct {
     /// ss_Link: NT_SIGNALSEM; name and priority for public semaphores, or
     /// the link for ObtainSemaphoreList.
     link: Node = .{ .type = .signalsem },
-    /// ss_NestCount: how often it is held (by the owner, or by all shared
-    /// holders together).
-    nest_count: i16 = 0,
+    /// ss_NestCount's place, unused since exec 1.22: how often it is held
+    /// is in `state`. Kept, so nothing after it moves.
+    reserved: i16 = 0,
     /// ss_WaitQueue: SemaphoreRequests, oldest first.
     wait_queue: List = .{},
     /// ss_MultipleLink: the request ObtainSemaphoreList queues.
     multiple_link: SemaphoreRequest = .{},
     /// ss_Owner: the exclusive owner; null when free or held shared.
     owner: ?*Task = null,
-    /// ss_QueueCount: holds plus waiters, minus one; -1 when free.
-    queue_count: i16 = -1,
+    /// In ss_QueueCount's place: how often it is held, whether
+    /// exclusively and whether tasks wait (`SEM_HOLDS`, `SEMF_*`); 0 when
+    /// free. Changed by exec alone, atomically: a semaphore that can be
+    /// had at once is taken and given back with one compare-and-swap on
+    /// it, and exec's semaphore lock is taken only to queue for one and to
+    /// hand it on.
+    state: u32 = 0,
+
+    /// How often it is held: by its owner, or by all its shared holders
+    /// together. A moment's answer.
+    pub fn nestCount(sem: *const SignalSemaphore) u16 {
+        return @truncate(@atomicLoad(u32, &sem.state, .monotonic) & SEM_HOLDS);
+    }
 };

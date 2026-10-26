@@ -57,9 +57,9 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// ```
 pub fn InitSemaphore(_: *ExecBase, sem: *SignalSemaphore) void {
     sem.link.type = .signalsem;
-    sem.nest_count = 0;
+    sem.reserved = 0;
     sem.owner = null;
-    sem.queue_count = -1;
+    sem.state = 0;
     sem.multiple_link = .{};
     sem.wait_queue.init(.unknown);
 }

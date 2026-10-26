@@ -442,7 +442,7 @@ test "a name being loaded is not waited for by its own loader, and its record go
     drop(&rlb, mine);
     sys.ReleaseSemaphore(&rlb.lock);
     try testing.expect(rlb.loading.isEmpty());
-    try testing.expectEqual(@as(i16, 0), rlb.lock.nest_count);
+    try testing.expectEqual(@as(u16, 0), rlb.lock.nestCount());
     try kexec.expectNoLeaks();
 }
 

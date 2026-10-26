@@ -526,11 +526,11 @@ test "layers: the library takes the locks itself, and they nest" {
     // the list is released as a list, and a semaphore on it that was never
     // obtained is one the release cannot account for.
     const l: *info_mod.Layer = @ptrCast(@alignCast(layer));
-    try testing.expectEqual(@as(i16, 1), l.lock.nest_count);
+    try testing.expectEqual(@as(u16, 1), l.lock.nestCount());
 
     try testing.expect(base(lb).MoveLayer(layer, 2, 2));
     try testing.expect(base(lb).UpfrontLayer(layer));
-    try testing.expectEqual(@as(i16, 1), l.lock.nest_count);
+    try testing.expectEqual(@as(u16, 1), l.lock.nestCount());
 
     // And the hold is still exactly one deep: what the library took, it
     // gave back.
@@ -538,22 +538,22 @@ test "layers: the library takes the locks itself, and they nest" {
     base(lb).UnlockLayers(info);
     try testing.expectEqual(@as(u32, 0), li.locked_all);
     // And the inherited hold went back with it.
-    try testing.expectEqual(@as(i16, 0), l.lock.nest_count);
+    try testing.expectEqual(@as(u16, 0), l.lock.nestCount());
 
     // A layer's own lock nests the same way, which is what a drawing task
     // holds while it draws - and an update holds it from BeginUpdate to
     // EndUpdate, a level of its own.
     base(lb).LockLayer(layer);
     base(lb).LockLayer(layer);
-    try testing.expectEqual(@as(i16, 2), l.lock.nest_count);
+    try testing.expectEqual(@as(u16, 2), l.lock.nestCount());
     if (base(lb).BeginUpdate(layer)) {
-        try testing.expectEqual(@as(i16, 3), l.lock.nest_count);
+        try testing.expectEqual(@as(u16, 3), l.lock.nestCount());
         base(lb).EndUpdate(layer, true);
     }
-    try testing.expectEqual(@as(i16, 2), l.lock.nest_count);
+    try testing.expectEqual(@as(u16, 2), l.lock.nestCount());
     base(lb).UnlockLayer(layer);
     base(lb).UnlockLayer(layer);
-    try testing.expectEqual(@as(i16, 0), l.lock.nest_count);
+    try testing.expectEqual(@as(u16, 0), l.lock.nestCount());
 
     base(lb).DisposeLayerInfo(info);
     gbase(lb).FreeRastPort(screen);

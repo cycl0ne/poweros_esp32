@@ -136,6 +136,8 @@ pub const TaskSwitchFn = *const fn (task: *Task, sys_base: *ExecBase) callconv(.
 /// How many semaphores a task's `holds` table names: one per lock it holds
 /// at once, nested holds of one lock in one entry.
 pub const max_semaphore_holds = 16;
+/// How many semaphores won by Procure a task's `bid_holds` names.
+pub const max_bid_holds = 4;
 
 /// struct Task.
 /// What `RemTask` runs for a hook when the task it is on ends: on the task
@@ -234,10 +236,12 @@ pub const Task = extern struct {
     /// allocates is the system's.
     system_memory_nest: u32 = 0,
     /// The semaphores it holds, one entry each with how often, written by
-    /// exec under its semaphore lock as the task is granted one and lets
-    /// it go: what its end gives back (`RemTask`). A hold past the table's
-    /// end is counted in `holds_lost` instead, and stays held after an
-    /// end.
+    /// exec as the task is granted one and lets it go: what its end gives
+    /// back (`RemTask`). Written only by the task itself, with its core's
+    /// interrupts masked, and by the task that hands it the semaphore it
+    /// sleeps for - never while it runs, so the table needs no lock. A
+    /// hold past the table's end is counted in `holds_lost` instead, and
+    /// stays held after an end. Procure's grants are in `bid_holds`.
     holds: [max_semaphore_holds]semaphores.SemaphoreHold = @splat(.{}),
     holds_lost: u16 = 0,
     /// It has allocated MEMF_PRIVATE memory: its end looks for what is
@@ -256,6 +260,12 @@ pub const Task = extern struct {
     /// otherwise. Kill starts the task's end on its own stack.
     home_lower: usize = 0,
     home_upper: usize = 0,
+    /// The semaphores it won with Procure, as `holds` has the others: a
+    /// bid may be granted, and Vacate'd, by another task while this one
+    /// runs, so these are written only under exec's semaphore lock. A
+    /// grant past the table's end is counted in `bid_holds_lost`.
+    bid_holds: [max_bid_holds]semaphores.SemaphoreHold = @splat(.{}),
+    bid_holds_lost: u16 = 0,
 
     pub fn name(task: *const Task) [:0]const u8 {
         return std.mem.span(task.node.name orelse return "");
