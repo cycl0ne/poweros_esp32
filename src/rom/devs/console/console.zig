@@ -46,8 +46,8 @@ const render = @import("render.zig");
 
 pub const DEVICE_NAME = con.CONSOLENAME;
 const DEVICE_VERSION = 0;
-const DEVICE_REVISION = 3;
-const BUILD_DATE = "15.10.2026";
+const DEVICE_REVISION = 4;
+const BUILD_DATE = "26.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -57,7 +57,11 @@ const vec = exec.libraries.vec;
 
 /// Above the programs it serves, with input.device and the keyboard.
 const task_pri = 20;
-const stack_size = 8192;
+/// The standard stack: the task draws the window's text, which on a
+/// composed screen goes on through graphics, layers' composition and rtg
+/// to the display - about 9 KiB deep on the 64-bit boards, where 8 KiB
+/// ran over while a window was sized.
+const stack_size = sdk.dos.CLI_DEFAULT_STACK;
 /// Below intuition's 50: it activates a window before a key is looked at.
 const handler_pri = 45;
 /// How many characters wait for a read.

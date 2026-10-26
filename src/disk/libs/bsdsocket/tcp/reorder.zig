@@ -5,16 +5,22 @@
 //! A held segment keeps only its data, in a frame of its own, with its
 //! sequence number where a datagram keeps its sender. All that is held
 //! together may not be more than the room left in the receive ring - what
-//! the window offered - so a peer cannot fill the stack's frames with
-//! segments that never become whole. What does not fit is dropped; the
-//! peer sends it again.
+//! the window offered - nor more than `held_max` frames, so a peer cannot
+//! fill the stack's frames with segments that never become whole, however
+//! wide a scaled window is or however small the segments. What does not
+//! fit is dropped; the peer sends it again.
 
 const sdk = @import("sdk");
 const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
-const Frame = @import("../frame/_frame.zig").Frame;
+const _frame = @import("../frame/_frame.zig");
+const Frame = _frame.Frame;
 const _tcp = @import("_tcp.zig");
 const Tcb = _tcp.Tcb;
+
+/// The most segments one connection holds: a quarter of the stack's
+/// frames, about 180 KiB of full segments.
+const held_max = _frame.frames_max / 4;
 
 fn sequenceOf(frame: *const Frame) u32 {
     return frame.sequence;
@@ -24,7 +30,7 @@ fn sequenceOf(frame: *const Frame) u32 {
 pub fn hold(stack: *StackBase, tcb: *Tcb, sequence: u32, data: []const u8) void {
     const sys = stack.sys_base;
     const length: u32 = @intCast(data.len);
-    if (length == 0 or tcb.held_bytes + length > tcb.receive.space()) return;
+    if (length == 0 or tcb.held_bytes + length > tcb.receive.space() or tcb.held_count >= held_max) return;
     // Where it goes: before the first held segment that starts after it.
     var before: ?*Frame = null;
     var it = tcb.held.iterator();
@@ -55,6 +61,7 @@ pub fn hold(stack: *StackBase, tcb: *Tcb, sequence: u32, data: []const u8) void 
         sys.AddTail(&tcb.held, &frame.node);
     }
     tcb.held_bytes += length;
+    tcb.held_count += 1;
 }
 
 /// What the held segments have that starts at RCV.NXT, moved into the
@@ -68,6 +75,7 @@ pub fn release(stack: *StackBase, tcb: *Tcb) u32 {
         if (_tcp.after(start, tcb.rcv_nxt)) break;
         sys.Remove(node);
         tcb.held_bytes -= frame.length;
+        tcb.held_count -= 1;
         const end = start +% frame.length;
         if (_tcp.after(end, tcb.rcv_nxt)) {
             const skip = tcb.rcv_nxt -% start;
@@ -85,4 +93,5 @@ pub fn clear(stack: *StackBase, tcb: *Tcb) void {
     const sys = stack.sys_base;
     while (sys.RemHead(&tcb.held)) |node| stack.frames.give(sys, @fieldParentPtr("node", node));
     tcb.held_bytes = 0;
+    tcb.held_count = 0;
 }

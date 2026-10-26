@@ -15,10 +15,12 @@
 //! the tag is worked out here.
 //!
 //! A block is multiplied without carries by H with ordinary integer
-//! multiplications: each 32-bit operand split into four with three empty
-//! bits between their bits, so that a carry never reaches a bit that
-//! counts (`multiply32`), and Karatsuba on top - 128 by 128 bits in nine
-//! such products. GCM numbers its bits from the most significant end, so
+//! multiplications, each operand split into parts with empty bits between
+//! their bits so that a carry never reaches a bit that counts, and
+//! Karatsuba on top: 128 by 128 bits in three products of 64 by 64. A
+//! 64-bit chip multiplies those five parts by five (`multiply64Fifths`);
+//! a 32-bit chip does Karatsuba again, 32 by 32 bits four parts by four
+//! (`multiply32`). GCM numbers its bits from the most significant end, so
 //! the 256-bit product of the blocks as they are loaded is the reversed
 //! product shifted by one; it is shifted back and reduced modulo
 //! x^128 + x^7 + x^2 + x + 1 in that reversed order (`block`).
@@ -30,6 +32,7 @@
 //! context, and the bytes short of a block; whole blocks go through
 //! straight from the caller's memory. It is software on every chip.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const crypto = sdk.crypto;
 const GcmMessage = crypto.GcmMessage;
@@ -60,8 +63,14 @@ fn multiply32(x: u32, y: u32) u64 {
         (z2 & 0x4444_4444_4444_4444) | (z3 & 0x8888_8888_8888_8888);
 }
 
-/// x * y without carries, 64 by 64 bits into 128: Karatsuba over halves.
-fn multiply64(x: u64, y: u64) u128 {
+/// x * y without carries, 64 by 64 bits into 128, the way the chip does it
+/// best. `after`, a product the caller worked out before, only orders the
+/// work (`behind`).
+const multiply64 = if (@sizeOf(usize) == 8) multiply64Fifths else multiply64Halves;
+
+/// 64 by 64 bits on a 32-bit chip: Karatsuba over halves with `multiply32`.
+fn multiply64Halves(x: u64, y: u64, after: u128) u128 {
+    _ = after;
     const x_low: u32 = @truncate(x);
     const x_high: u32 = @truncate(x >> 32);
     const y_low: u32 = @truncate(y);
@@ -72,6 +81,56 @@ fn multiply64(x: u64, y: u64) u128 {
     return @as(u128, low) ^ (@as(u128, middle) << 32) ^ (@as(u128, high) << 64);
 }
 
+/// Bits 0, 5, 10 ... 60: the first of the five parts `multiply64Fifths`
+/// splits an operand into, the others this shifted up one to four.
+const fifth: u64 = 0x1084_2108_4210_8421;
+
+/// 64 by 64 bits on a 64-bit chip, which multiplies 64 by 64 bits into 128
+/// in two instructions: each operand split into five with four empty bits
+/// between their bits. A column of one part times another holds thirteen
+/// at the most, four bits' worth, so a carry never reaches a bit that
+/// counts.
+///
+/// The twenty-five products are summed a class of the result at a time,
+/// and each class waits for the one before it (`behind`): left to itself
+/// the compiler works all fifty words out first and spills most of them
+/// to the stack, which costs more than the multiplying.
+inline fn multiply64Fifths(x: u64, y: u64, after: u128) u128 {
+    const x_behind = behind(x, after);
+    const y_behind = behind(y, after);
+    var x_parts: [5]u64 = undefined;
+    var y_parts: [5]u64 = undefined;
+    inline for (0..5) |part| {
+        x_parts[part] = x_behind & (fifth << part);
+        y_parts[part] = y_behind & (fifth << part);
+    }
+    var product: u128 = 0;
+    inline for (0..5) |k| {
+        if (k != 0) {
+            inline for (&x_parts) |*part| part.* = behind(part.*, product);
+        }
+        var z: u128 = 0;
+        inline for (0..5) |i| z ^= @as(u128, x_parts[i]) * y_parts[(k + 5 - i) % 5];
+        // The bits of class k: k, k + 5 ... in the low word and, 64 being
+        // 4 more than a multiple of 5, k + 1, k + 6 ... in the high one.
+        const bits = @as(u128, fifth << ((k + 1) % 5)) << 64 | (fifth << k);
+        product |= z & bits;
+    }
+    return product;
+}
+
+/// `value`, which the compiler takes to depend on `after`, so that what is
+/// worked out from it waits for `after`. The asm is empty: it costs no
+/// instruction.
+inline fn behind(value: u64, after: u128) u64 {
+    return asm volatile (""
+        : [out] "=r" (-> u64),
+        : [in] "0" (value),
+          [low] "r" (@as(u64, @truncate(after))),
+          [high] "r" (@as(u64, @truncate(after >> 64))),
+    );
+}
+
 /// x * y in GCM's field, each 128 bits as a block's bytes read most
 /// significant first.
 fn multiply(x: u128, y: u128) u128 {
@@ -79,9 +138,9 @@ fn multiply(x: u128, y: u128) u128 {
     const x_high: u64 = @truncate(x >> 64);
     const y_low: u64 = @truncate(y);
     const y_high: u64 = @truncate(y >> 64);
-    const low = multiply64(x_low, y_low);
-    const high = multiply64(x_high, y_high);
-    const middle = multiply64(x_low ^ x_high, y_low ^ y_high) ^ low ^ high;
+    const low = multiply64(x_low, y_low, 0);
+    const high = multiply64(x_high, y_high, low);
+    const middle = multiply64(x_low ^ x_high, y_low ^ y_high, high) ^ low ^ high;
     // The 255-bit product, as high and low 128 bits, shifted up one.
     var product_high = high ^ (middle >> 64);
     var product_low = low ^ (middle << 64);
@@ -94,6 +153,11 @@ fn multiply(x: u128, y: u128) u128 {
     const w = (u << 127) ^ (u << 126) ^ (u << 121);
     return product_high ^ u ^ (u >> 1) ^ (u >> 2) ^ (u >> 7) ^ w ^ (w >> 1) ^ (w >> 2) ^ (w >> 7);
 }
+
+/// How a loop over whole blocks calls `multiply`: in place on a 64-bit
+/// chip, which saves twelve registers and restores them for each call
+/// otherwise, and as the compiler likes on a 32-bit one.
+const in_loop: std.builtin.CallModifier = if (@sizeOf(usize) == 8) .always_inline else .auto;
 
 /// `h` to the power `exponent` in GCM's field, by squaring and
 /// multiplying: the steps follow the exponent - a message's length, no
@@ -127,13 +191,12 @@ const Ghash = struct {
 
     /// `length` bytes, the last block padded with zeroes.
     fn update(ghash: *Ghash, data: [*]const u8, length: u32) void {
-        var at: u32 = 0;
-        while (at < length) : (at += AES_BLOCK) {
-            var padded: [AES_BLOCK]u8 = @splat(0);
-            const take = @min(length - at, AES_BLOCK);
-            for (0..take) |index| padded[index] = data[at + index];
-            ghash.block(&padded);
-        }
+        const whole = length & ~@as(u32, AES_BLOCK - 1);
+        ghash.y = wholeBlocks(ghash.y, ghash.h, data, whole);
+        if (whole == length) return;
+        var padded: [AES_BLOCK]u8 = @splat(0);
+        for (0..length - whole) |index| padded[index] = data[whole + index];
+        ghash.block(&padded);
     }
 
     fn result(ghash: *const Ghash) [AES_BLOCK]u8 {
@@ -143,6 +206,17 @@ const Ghash = struct {
         return out;
     }
 };
+
+/// GHASH's running value `y` after `length` bytes of whole blocks, taken
+/// where they lie: (y ^ block) * h for each.
+fn wholeBlocks(y: u128, h: u128, data: [*]const u8, length: u32) u128 {
+    var value = y;
+    var at: u32 = 0;
+    while (at < length) : (at += AES_BLOCK) {
+        value = @call(in_loop, multiply, .{ value ^ load128(data[at..][0..AES_BLOCK]), h });
+    }
+    return value;
+}
 
 fn load128(bytes: *const [AES_BLOCK]u8) u128 {
     return @as(u128, load64(bytes[0..8])) << 64 | load64(bytes[8..16]);
@@ -223,9 +297,9 @@ pub fn gmacAbsorb(context: *GmacContext, data: [*]const u8, length: u32) void {
         y = multiply(y ^ load128(&context.partial), h);
         context.buffered = 0;
     }
-    while (length - at >= AES_BLOCK) : (at += AES_BLOCK) {
-        y = multiply(y ^ load128(data[at..][0..AES_BLOCK]), h);
-    }
+    const whole = (length - at) & ~@as(u32, AES_BLOCK - 1);
+    y = wholeBlocks(y, h, data + at, whole);
+    at += whole;
     for (0..length - at) |index| context.partial[index] = data[at + index];
     context.buffered = length - at;
     store128(&context.state, y);
@@ -309,13 +383,9 @@ fn tagOf(session: *aes.Session, ghash: *Ghash, j0: *const [AES_BLOCK]u8, aad_len
     return tag;
 }
 
-/// The least header the JH7110's engine takes a GMAC for: below, the two
-/// blocks the software spends on H and E(K, J0) and its GHASH are quicker.
-const gmac_least: u32 = 512;
-
 /// The message through the JH7110's engine, where the board has one and
-/// the message suits it - a 12-byte nonce, its data or (GMAC) its header
-/// fitting the engine's buffers: the result, or null for the software.
+/// the message suits it - a 12-byte nonce and data fitting the engine's
+/// buffers: the result, or null for the software.
 ///
 /// The engine takes a header only through its registers, a word at a
 /// time, so it is given none: it seals or opens the data alone, and the
@@ -325,24 +395,21 @@ const gmac_least: u32 = 512;
 /// blocks, and the lengths block differs. With Y_A the header's GHASH
 /// without lengths, L the message's lengths block and L' the engine's
 /// (no header), the tag is the engine's exclusive-ored with
-/// (Y_A * H^c ^ L ^ L') * H.
+/// (Y_A * H^c ^ L ^ L') * H. A message opened is copied out of the
+/// engine's buffer only once its tag is right.
 ///
-/// A message of header alone - GMAC, which SMB signs with - is opened as
-/// if it were the data: opening hashes what it is given, so only the
-/// lengths block differs (Y_A is 0). What opening decrypts is thrown
-/// away. A message opened is copied out of the engine's buffer only once
-/// its tag is right.
+/// A message of header alone - GMAC, which SMB signs with - stays in the
+/// software, which on the U74s hashes it faster than the engine does
+/// (72 against 42 MB/s).
 fn bulk(cb: *CryptoBase, message: *const GcmMessage, seal: bool) ?i32 {
     if (message.nonce_length != 12) return null;
-    const gmac = message.length == 0;
-    const length = if (gmac) message.aad_length else message.length;
-    if (length > jh7110.room or length < (if (gmac) gmac_least else jh7110.least)) return null;
+    const length = message.length;
+    if (length > jh7110.room or length < jh7110.least) return null;
     const state = jh7110.take(cb) orelse return null;
     defer jh7110.give(cb, state);
-    const data: [*]const u8 = if (gmac) message.aad.? else message.input.?;
-    @memcpy(state.input()[0..length], data[0..length]);
+    @memcpy(state.input()[0..length], message.input.?[0..length]);
     var tag: [AES_BLOCK]u8 = undefined;
-    if (!jh7110.gcm(cb, state, message.key, message.key_length, message.nonce, length, gmac or !seal, &tag)) return null;
+    if (!jh7110.gcm(cb, state, message.key, message.key_length, message.nonce, length, !seal, &tag)) return null;
 
     var hash_key: [AES_BLOCK]u8 = @splat(0);
     var session = aes.begin(cb, message.key, message.key_length, false);
@@ -350,12 +417,12 @@ fn bulk(cb: *CryptoBase, message: *const GcmMessage, seal: bool) ?i32 {
     session.end();
     const h = load128(&hash_key);
     _cipher.wipe(&hash_key);
-    // L ^ L': the message's lengths against the engine's, 0 and `length`.
-    var fix = ((@as(u128, message.aad_length) * 8) << 64) ^ (@as(u128, message.length) * 8) ^ (@as(u128, length) * 8);
-    if (!gmac and message.aad_length != 0) {
+    // L ^ L': the lengths differ in the header's alone.
+    var fix = (@as(u128, message.aad_length) * 8) << 64;
+    if (message.aad_length != 0) {
         var header: Ghash = .{ .h = h };
         header.update(message.aad.?, message.aad_length);
-        fix ^= multiply(header.y, power(h, (message.length + AES_BLOCK - 1) / AES_BLOCK));
+        fix ^= multiply(header.y, power(h, (length + AES_BLOCK - 1) / AES_BLOCK));
     }
     store128(&tag, load128(&tag) ^ multiply(fix, h));
 
@@ -365,7 +432,7 @@ fn bulk(cb: *CryptoBase, message: *const GcmMessage, seal: bool) ?i32 {
         _cipher.wipe(&tag);
         if (differ != 0) return crypto.CRYPTOERR_TAG;
     }
-    if (!gmac) @memcpy(message.output.?[0..length], state.output()[0..length]);
+    @memcpy(message.output.?[0..length], state.output()[0..length]);
     if (seal) message.tag.* = tag;
     _cipher.wipe(&tag);
     return crypto.CRYPTOERR_OK;

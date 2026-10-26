@@ -47,8 +47,17 @@ const Packet = struct {
 var wire: [128]Packet = undefined;
 var wire_count: usize = 0;
 var segments_seen: usize = 0;
+/// How many packets the wire holds before it refuses the next with
+/// ENOBUFS, as a device's full queue does, and how many it refused.
+var wire_room: usize = wire.len;
+var wire_refused: usize = 0;
 
 fn onto(to_b: bool, stack: *StackBase, frame: *Frame) i32 {
+    if (wire_count >= wire_room) {
+        wire_refused += 1;
+        stack.frames.give(stack.sys_base, frame);
+        return bsd.ENOBUFS;
+    }
     const bytes = frame.bytes();
     wire[wire_count] = .{ .to_b = to_b, .length = bytes.len, .bytes = undefined };
     @memcpy(wire[wire_count].bytes[0..bytes.len], bytes);
@@ -85,6 +94,8 @@ const Rig = struct {
         const region = sys.AddMemList(lent.len, exec.MEMF_ANY, 0, &lent, "lent").?;
         wire_count = 0;
         segments_seen = 0;
+        wire_room = wire.len;
+        wire_refused = 0;
         return .{
             .kub = kub,
             .region = region,
@@ -873,6 +884,164 @@ test "segments that lie about their headers, options and places are dropped or t
     _ = rig.b.sb.CloseSocket(pair.listener);
     _ = rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
     _ = rig.a.sb.CloseSocket(pair.client);
+    wire_count = 0;
+    try rig.deinit();
+}
+
+test "a segment that fills the front of a hole is acknowledged at once, not after the delay" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 100);
+    const server = _tcp.of(socketOf(&rig.b, pair.server));
+    const client_port = socketOf(&rig.a, pair.client).local_port;
+    const next = server.rcv_nxt;
+    // The third byte first: held, and the hole said at once.
+    forge(&rig, client_port, 100, .{ .seq = next +% 2, .ack = server.snd_una, .flags = _tcp.ACK, .data = "c" });
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    wire_count = 0;
+    // The first: the hole is still there behind it, and that is said at
+    // once too, so a sender without SACK sends the next.
+    forge(&rig, client_port, 100, .{ .seq = next, .ack = server.snd_una, .flags = _tcp.ACK, .data = "a" });
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    try testing.expectEqual(next +% 1, _ip.get32(wire[0].bytes[20..], 8));
+    wire_count = 0;
+    // The second fills it: all three acknowledged.
+    forge(&rig, client_port, 100, .{ .seq = next +% 1, .ack = server.snd_una, .flags = _tcp.ACK, .data = "b" });
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    try testing.expectEqual(next +% 3, _ip.get32(wire[0].bytes[20..], 8));
+    wire_count = 0;
+    var buffer: [4]u8 = undefined;
+    try testing.expectEqual(@as(i32, 3), rig.b.sb.Recv(pair.server, &buffer, buffer.len, 0));
+    try testing.expectEqualStrings("abc", buffer[0..3]);
+    const cut: bsd.linger = .{ .l_onoff = 1, .l_linger = 0 };
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.b.sb.CloseSocket(pair.server);
+    _ = rig.b.sb.CloseSocket(pair.listener);
+    _ = rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.a.sb.CloseSocket(pair.client);
+    wire_count = 0;
+    try rig.deinit();
+}
+
+test "a link whose queue is full holds a burst back, and the connection goes on unharmed" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 101);
+    const size: i32 = 64 * 1024;
+    _ = rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_SNDBUF, &size, @sizeOf(i32));
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &size, @sizeOf(i32));
+    // Room for six packets on the wire: a window's burst does not fit.
+    wire_room = 6;
+    const data = try testing.allocator.alloc(u8, 256 * 1024);
+    defer testing.allocator.free(data);
+    const got = try testing.allocator.alloc(u8, data.len);
+    defer testing.allocator.free(got);
+    for (data, 0..) |*byte, index| byte.* = @truncate(index *% 3 +% index / 1024);
+    var sent: usize = 0;
+    var received: usize = 0;
+    var failed: usize = 0;
+    var now: u64 = rig.a.stack.fixed_time;
+    var rounds: usize = 0;
+    while (received < data.len and rounds < 5000) : (rounds += 1) {
+        if (sent < data.len) {
+            const taken = rig.a.sb.Send(pair.client, data[sent..].ptr, @intCast(data.len - sent), 0);
+            if (taken > 0) sent += @intCast(taken) else if (taken < 0 and rig.a.sb.Errno() != bsd.EWOULDBLOCK) failed += 1;
+        }
+        rig.pump();
+        while (true) {
+            const taken = rig.b.sb.Recv(pair.server, got[received..].ptr, @intCast(got.len - received), 0);
+            if (taken <= 0) break;
+            received += @intCast(taken);
+        }
+        now += 1000;
+        if (wire_count == 0) {
+            if (rig.earliest()) |deadline| now = @max(now, deadline);
+        }
+        rig.advance(now);
+    }
+    try testing.expectEqual(data.len, received);
+    try testing.expectEqualSlices(u8, data, got);
+    try testing.expect(wire_refused > 0);
+    try testing.expectEqual(@as(usize, 0), failed);
+    wire_room = wire.len;
+    closeAll(&rig, pair);
+    try rig.deinit();
+}
+
+// --- window scaling ----------------------------------------------------------------
+
+test "windows past 64 KiB are scaled when both SYNs offer it, and fill a ring of 128 KiB" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 98);
+    const client = _tcp.of(socketOf(&rig.a, pair.client));
+    const server = _tcp.of(socketOf(&rig.b, pair.server));
+    // Both SYNs offered it: both ends read and send their windows shifted.
+    for ([_]*_tcp.Tcb{ client, server }) |tcb| {
+        try testing.expectEqual(_tcp.window_shift, tcb.snd_shift);
+        try testing.expectEqual(_tcp.window_shift, tcb.rcv_shift);
+    }
+    const size: i32 = 128 * 1024;
+    try testing.expectEqual(@as(i32, 0), rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &size, @sizeOf(i32)));
+    try testing.expectEqual(@as(i32, 0), rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_SNDBUF, &size, @sizeOf(i32)));
+    // A segment from B tells A the new window, more than 16 bits say.
+    _ = rig.b.sb.Send(pair.server, "x", 1, 0);
+    rig.pump();
+    var one: [1]u8 = undefined;
+    _ = rig.a.sb.Recv(pair.client, &one, 1, 0);
+    try testing.expectEqual(@as(u32, 128 * 1024), client.snd_wnd);
+
+    const data = try testing.allocator.alloc(u8, 128 * 1024);
+    defer testing.allocator.free(data);
+    for (data, 0..) |*byte, index| byte.* = @truncate(index *% 11 +% index / 512);
+    try testing.expectEqual(@as(i32, @intCast(data.len)), rig.a.sb.Send(pair.client, data.ptr, @intCast(data.len), 0));
+    // B reads nothing until all of it is in B's ring: A went on past
+    // 64 KiB that B had not read.
+    var rounds: usize = 0;
+    while (server.receive.count < data.len and rounds < 100) : (rounds += 1) {
+        rig.pump();
+        rig.advance(rig.earliest() orelse break);
+    }
+    try testing.expectEqual(@as(u32, @intCast(data.len)), server.receive.count);
+    const got = try testing.allocator.alloc(u8, data.len);
+    defer testing.allocator.free(got);
+    try testing.expectEqual(@as(i32, @intCast(data.len)), rig.b.sb.Recv(pair.server, got.ptr, @intCast(got.len), 0));
+    try testing.expectEqualSlices(u8, data, got);
+    closeAll(&rig, pair);
+    try rig.deinit();
+}
+
+test "a peer whose SYN offers no window scale gets none, and windows stay 16 bits" {
+    var rig = try Rig.init();
+    const listener = try stream(rig.b.sb);
+    var here = at(address_b, 99);
+    _ = rig.b.sb.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in));
+    _ = rig.b.sb.Listen(listener, 2);
+    // A SYN with the MSS option alone; the answer has it alone too, in a
+    // header of 24 bytes.
+    const mss = [_]u8{ _tcp.option_mss, 4, 0x05, 0xB4 };
+    forge(&rig, 4000, 99, .{ .seq = 1000, .ack = 0, .flags = _tcp.SYN, .options = &mss });
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    const answer = wire[0].bytes[20..];
+    try testing.expectEqual(@as(u8, (24 / 4) << 4), answer[12]);
+    const iss = _ip.get32(answer, 4);
+    wire_count = 0;
+    forge(&rig, 4000, 99, .{ .seq = 1001, .ack = iss +% 1, .flags = _tcp.ACK });
+    const server = rig.b.sb.Accept(listener, null, null);
+    try testing.expect(server >= 0);
+    const tcb = _tcp.of(socketOf(&rig.b, server));
+    try testing.expectEqual(@as(u8, 0), tcb.snd_shift);
+    try testing.expectEqual(@as(u8, 0), tcb.rcv_shift);
+    // The peer's window is taken as it says, and a ring of 128 KiB offers
+    // no more than 16 bits hold.
+    try testing.expectEqual(@as(u32, 8192), tcb.snd_wnd);
+    const size: i32 = 128 * 1024;
+    _ = rig.b.sb.SetSockOpt(server, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &size, @sizeOf(i32));
+    _ = rig.b.sb.Send(server, "x", 1, 0);
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    try testing.expectEqual(@as(u16, 65535), _ip.get16(wire[0].bytes[20..], 14));
+    wire_count = 0;
+    const cut: bsd.linger = .{ .l_onoff = 1, .l_linger = 0 };
+    _ = rig.b.sb.SetSockOpt(server, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.b.sb.CloseSocket(server);
+    _ = rig.b.sb.CloseSocket(listener);
     wire_count = 0;
     try rig.deinit();
 }

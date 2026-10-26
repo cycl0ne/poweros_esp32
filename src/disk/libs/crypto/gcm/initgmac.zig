@@ -54,11 +54,10 @@ const _gcm = @import("_gcm.zig");
 /// What this is for: a message whose MAC is to be checked as it arrives
 /// - SMB's signature over a READ's answer of up to 1 MiB, hashed as the
 /// network delivers it, so that receiving and hashing go on together. A
-/// message that is all at hand is quicker through SealGcm with it as
-/// the header, which the JH7110's engine takes from 512 bytes on.
+/// message that is all at hand takes one SealGcm, with it as the header.
 ///
 /// BUGS:
-/// GHASH runs in software on every chip, about 35-50 MB/s on the
+/// GHASH runs in software on every chip, about 72 MB/s on the
 /// VisionFive 2.
 ///
 /// SEE ALSO:

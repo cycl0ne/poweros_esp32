@@ -37,7 +37,7 @@
 //! engine's share of GCM) and SHA-256 in bulk - in microseconds an
 //! operation or kilobytes a second, on timer.device's E-clock; and
 //! SHA-256 of messages from 256 bytes to 64 KiB, in one HashPieces and in
-//! steps, and GMAC a piece at a time.
+//! steps, and GMAC a piece at a time and in one call.
 //! RANDOM puts 20000 bits of RandomBytes through FIPS 140-2's monobit,
 //! poker and long-run tests.
 
@@ -54,7 +54,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Crypto";
-const VERSION_STRING = "\x00$VER: Crypto 1.6 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Crypto 1.7 (26.10.2026)\r\n";
 
 const template = "VERBOSE/S,BENCH/S,RANDOM/S";
 const arg_verbose = 0;
@@ -800,6 +800,10 @@ fn bench(run: *Run) void {
     for (0..64) |_| cb.UpdateGmac(&gmac, &Buffer.data, Buffer.data.len);
     _ = cb.FinishGmac(&gmac, &tag);
     throughput(run, "AES-128-GMAC in pieces", started, 64);
+    const signed: crypto.GcmMessage = .{ .key = &key, .key_length = 16, .nonce = &nonce, .nonce_length = 12, .aad = &Buffer.data, .aad_length = Buffer.data.len, .tag = &tag };
+    started = micros(run);
+    for (0..64) |_| _ = cb.SealGcm(&signed);
+    throughput(run, "AES-128-GMAC in one call", started, 64);
     sizes(run);
 }
 

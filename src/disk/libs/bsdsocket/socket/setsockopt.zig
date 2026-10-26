@@ -15,7 +15,8 @@ const _inet = @import("../inet/_inet.zig");
 const _igmp = @import("../igmp/_igmp.zig");
 const Address = @import("../ip6/address.zig").Address;
 
-/// The most a socket may buffer: SO_RCVBUF and SO_SNDBUF are held to it.
+/// The most a datagram socket may hold waiting: SO_RCVBUF and SO_SNDBUF
+/// are held to it. A stream's rings go to `_tcp.ring_max`.
 const buffer_max: u32 = 256 * 1024;
 
 /// One of the socket's options set.
@@ -74,7 +75,8 @@ const buffer_max: u32 = 256 * 1024;
 /// queue takes one datagram whatever the limit. It is held to between 1
 /// byte and 256 KiB. On a
 /// stream socket it and `SO_SNDBUF` are the sizes of its rings, from 1 KiB
-/// to 64 KiB, and change only while the ring is empty (`EINVAL` else).
+/// to 64 KiB - to 1 MiB on the 64-bit boards, whose windows are scaled -
+/// and change only while the ring is empty (`EINVAL` else).
 /// `SO_REUSEADDR` must be set before Bind to count. `SO_SNDTIMEO` is kept
 /// and changes nothing for a datagram socket, which never waits to send.
 /// `SO_EVENTMASK` with `FD_WRITE` tells of it at once, since a datagram
@@ -208,7 +210,7 @@ pub fn SetSockOpt(sb: *SocketBase, descriptor: i32, level: i32, option: i32, val
                 bsd.SO_REUSEADDR => setFlag(socket, _socket.reuse_address, number != 0),
                 bsd.SO_BROADCAST => setFlag(socket, _socket.broadcast_allowed, number != 0),
                 bsd.SO_RCVBUF, bsd.SO_SNDBUF => {
-                    const bytes = bytesOf(number);
+                    const bytes = bytesOf(number, if (socket.socket_type == bsd.SOCK_STREAM) _tcp.ring_max else buffer_max);
                     if (socket.socket_type == bsd.SOCK_STREAM) {
                         // A stream's buffer is its ring, made anew while
                         // it is empty.
@@ -235,10 +237,10 @@ fn setFlag(socket: *_socket.Socket, flag: u32, on: bool) void {
     if (on) socket.flags |= flag else socket.flags &= ~flag;
 }
 
-fn bytesOf(number: i32) u32 {
+fn bytesOf(number: i32, most: u32) u32 {
     if (number < 1) return 1;
     const bytes: u32 = @intCast(number);
-    return @min(bytes, buffer_max);
+    return @min(bytes, most);
 }
 
 /// A group joined or left, as an ipv6_mreq asks: 0, or the errno.

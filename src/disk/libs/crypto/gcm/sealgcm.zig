@@ -55,7 +55,8 @@ const _gcm = @import("_gcm.zig");
 /// On the S3 GHASH runs in software, bit by bit, and is slower than the
 /// engine: it, not AES, sets the pace of a long message. The JH7110's
 /// engine does all of GCM, for a message with a 12-byte nonce whose data
-/// - or header alone - is at most 1 MiB and 4 KiB.
+/// is at most 1 MiB and 4 KiB. A message of header alone (GMAC) is hashed
+/// in software there, at about 72 MB/s, which is faster than the engine.
 ///
 /// SEE ALSO:
 /// `OpenGcm`, `InitCipher`, `RandomBytes`
