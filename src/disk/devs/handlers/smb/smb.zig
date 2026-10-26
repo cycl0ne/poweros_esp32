@@ -17,7 +17,12 @@
 //! **One process, one connection, one request at a time**: packets wait
 //! on the port while the handler waits for the server. `fs.zig` turns
 //! each packet into the requests it takes; `session.zig` and what it is
-//! built on speak SMB.
+//! built on speak SMB. Only a READ sent ahead and a WRITE's last piece
+//! (`fs.zig` says when) are not waited for: their answers are read
+//! between packets as they come - a READ's into two buffers of the
+//! process's - told by the socket's event signal. Small writes are
+//! gathered in a third buffer until a piece is full or the gathering
+//! timer runs out, `gather_micros` after it began.
 //!
 //! **The volume** is named after the share, or as the startup says,
 //! dated at the logon, with the DosType `SMB\0`; it is write-protected
@@ -68,6 +73,7 @@ const timer = sdk.devices.timer;
 const record = dos.record;
 const notify = dos.notify;
 const TimerBase = sdk.interface.timer.TimerBase;
+const TagItem = sdk.utility.TagItem;
 const connection_area = @import("connection.zig");
 const session_area = @import("session.zig");
 const negotiate_area = @import("negotiate.zig");
@@ -81,7 +87,7 @@ const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 7;
+const HANDLER_REVISION = 9;
 const BUILD_DATE = "26.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -104,6 +110,9 @@ const list_try_ticks = 2;
 const idle_seconds = 60;
 const retry_seconds = 5;
 
+/// How long small writes are gathered at most before they go.
+const gather_micros = 100_000;
+
 /// Everything the process keeps, in one allocation.
 const State = struct {
     sys: *ExecBase,
@@ -122,6 +131,10 @@ const State = struct {
     clock: timer.TimeRequest = .{},
     clock_port: ?*exec.MsgPort = null,
     clock_running: bool = false,
+    /// The gathering timer: a copy of the idle timer's request, on its
+    /// port, running while small writes are gathered.
+    gather_clock: timer.TimeRequest = .{},
+    gather_running: bool = false,
     /// A packet came since the idle timer last ran out.
     busy: bool = false,
     /// When a reconnection may be tried again, in seconds on the E-clock.
@@ -166,6 +179,12 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     const block = sys.AllocVec(@sizeOf(State), exec.MEMF_CLEAR) orelse
         return refuse(dl, startup_packet, startup, smb.SMBSTAGE_MEMORY);
     defer sys.FreeVec(block);
+    // Reading ahead and gathering writes, when there is the memory for
+    // them, and a signal that says when a READ's answer comes.
+    const ahead_block = sys.AllocVec(2 * session_area.receive_size + session_area.io_max, exec.MEMF_ANY);
+    defer if (ahead_block) |ahead| sys.FreeVec(ahead);
+    const event_signal = sys.AllocSignal(-1);
+    defer if (event_signal >= 0) sys.FreeSignal(event_signal);
 
     const st: *State = @ptrCast(@alignCast(block));
     const cb: *CryptoBase = @ptrCast(crypto_lib);
@@ -196,6 +215,14 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     };
     if (node) |device| st.fs.device_name = cString(std.mem.span(device.name));
     cb.RandomBytes(&st.session.client_guid, 16);
+    const event_mask: u32 = if (event_signal >= 0) @as(u32, 1) << @intCast(event_signal) else 0;
+    if (ahead_block != null and event_mask != 0) {
+        const tags = [_]TagItem{ .{ .tag = bsd.SBTM_SETVAL(bsd.SBTC_SIGEVENTMASK), .data = event_mask }, .{} };
+        if (sb.SocketBaseTagList(&tags) == 0) {
+            const bytes: [*]u8 = @ptrCast(ahead_block.?);
+            st.fs.ahead_buffers = .{ bytes[0..session_area.receive_size], bytes[session_area.receive_size..][0..session_area.receive_size] };
+        }
+    }
 
     // The share's size, for Info; a server that will not say is shown
     // with none.
@@ -208,20 +235,31 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     st.fs.read_only = readOnly(st);
     addVolume(st);
     openClock(st);
+    // Writes are gathered only where a timer sends them.
+    if (st.fs.ahead_buffers != null and st.clock_port != null) {
+        const bytes: [*]u8 = @ptrCast(ahead_block.?);
+        st.fs.gather_buffer = bytes[2 * session_area.receive_size ..][0..session_area.io_max];
+    }
     if (st.records.init(sys, dl)) st.fs.records = &st.records;
     if (st.watchers.init(sys)) st.fs.watchers = &st.watchers;
     if (node) |device| device.task = &me.msg_port;
     dl.ReplyPkt(startup_packet, dos.DOSTRUE, 0);
 
     // Packets on the process's port; the idle timer, the record locks'
-    // timers and the watchers' replies on their own.
+    // timers and the watchers' replies on their own; while a READ ahead
+    // is coming, its answer on the socket's event signal.
     const packets = &me.msg_port;
     const clock_mask: u32 = if (st.clock_port) |port| port.sigMask() else 0;
-    const mask = packets.sigMask() | clock_mask | st.records.signals() | st.watchers.signals();
+    const mask = packets.sigMask() | clock_mask | st.records.signals() | st.watchers.signals() | event_mask;
     startClock(st);
     while (true) {
         if (st.clock_port) |port| {
-            if (sys.GetMsg(port) != null) {
+            while (sys.GetMsg(port)) |message| {
+                if (message == &st.gather_clock.node.message) {
+                    st.gather_running = false;
+                    st.fs.sendDue();
+                    continue;
+                }
                 st.clock_running = false;
                 if (!st.busy) st.fs.idle();
                 st.busy = false;
@@ -253,7 +291,13 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
             if (!reply.held) dl.ReplyPkt(pkt, reply.res1, reply.res2);
         }
         st.fs.refresh();
-        _ = sys.Wait(mask);
+        if (st.fs.gathering()) startGatherClock(st);
+        st.fs.pump();
+        if (sys.Wait(if (st.fs.reading()) mask else mask & ~event_mask) & event_mask != 0) {
+            var events: u32 = 0;
+            while (sb.GetSocketEvents(&events) >= 0) {}
+            st.fs.pump();
+        }
     }
 }
 
@@ -406,6 +450,7 @@ fn openClock(st: *State) void {
         return;
     }
     st.clock_port = port;
+    st.gather_clock = st.clock;
 }
 
 /// The idle timer started for `idle_seconds`.
@@ -417,13 +462,27 @@ fn startClock(st: *State) void {
     st.clock_running = true;
 }
 
-/// The idle timer stopped and its device closed.
+/// The gathering timer started for `gather_micros`.
+fn startGatherClock(st: *State) void {
+    if (st.clock_port == null or st.gather_running) return;
+    st.gather_clock.node.command = timer.TR_ADDREQUEST;
+    st.gather_clock.time = .{ .micro = gather_micros };
+    st.sys.SendIO(&st.gather_clock.node);
+    st.gather_running = true;
+}
+
+/// The idle and gathering timers stopped and their device closed.
 fn closeClock(st: *State) void {
     const port = st.clock_port orelse return;
     if (st.clock_running) {
         _ = st.sys.AbortIO(&st.clock.node);
         _ = st.sys.WaitIO(&st.clock.node);
         st.clock_running = false;
+    }
+    if (st.gather_running) {
+        _ = st.sys.AbortIO(&st.gather_clock.node);
+        _ = st.sys.WaitIO(&st.gather_clock.node);
+        st.gather_running = false;
     }
     st.sys.CloseDevice(&st.clock.node);
     st.sys.DeleteMsgPort(port);
