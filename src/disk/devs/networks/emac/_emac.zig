@@ -58,8 +58,12 @@ pub const DEVICE_NAME = "emac.device";
 
 /// Frames that can wait in the receive chain for the task, and frames in
 /// the engine's hands to send. A caller that sends more waits in the
-/// unit's queue.
-pub const receive_count = 16;
+/// unit's queue. A frame that comes while the chain is full is lost, so
+/// on the JH7110 it holds what a gigabit link brings while the task is
+/// late: a 64 KiB TCP window is 45 frames, 12 us apart, and 16 lost the
+/// rest of each one. The ESP32-P4's link is 100 Mbit, and its internal
+/// memory small.
+pub const receive_count = if (sdk.hardware.chip == .rv64sbi) 128 else 16;
 pub const send_count = 8;
 /// A buffer: the longest frame, with its checksum and a VLAN tag, in
 /// whole cache lines.

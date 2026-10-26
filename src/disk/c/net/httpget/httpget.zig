@@ -18,7 +18,9 @@
 //! The request is HTTP/1.1 with `Connection: close`: one request per
 //! connection, so the body ends where its length says, where its last
 //! chunk does, or where the server closes. The protocol's parts are in
-//! http.zig.
+//! http.zig. The socket's receive ring is 64 KiB, set before it
+//! connects: it is the window the server may send into, and a stream
+//! socket's 8 KiB held a fetch to about 24 MB/s on a gigabit link.
 //!
 //! `https:` goes over TLS 1.3, or 1.2 with a server that speaks nothing
 //! newer (LIBS:tls.library), port 443 unless the
@@ -44,7 +46,7 @@ const Printf = dos.stdio.Printf;
 const http = @import("http.zig");
 
 pub const COMMAND_NAME = "HTTPGet";
-const VERSION_STRING = "\x00$VER: HTTPGet 1.4 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: HTTPGet 1.5 (25.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "URL/A,TO/K,QUIET/S,NOVERIFY/S";
@@ -74,6 +76,9 @@ const MSG_BADREDIRECT = "%s: a redirect to nowhere\n";
 const MSG_DONE = "%lu bytes in %lu.%02u s, %lu KiB/s\n";
 
 const buffer_bytes = 8192;
+/// The socket's receive ring, and so the window offered: as wide as a
+/// window goes without window scaling.
+const ring_bytes: i32 = 64 * 1024;
 const url_most = 1024;
 const redirects_most = 5;
 const user_agent = "PowerOS-HTTPGet/1.0";
@@ -303,6 +308,7 @@ fn fetch(dl: *DosBase, sb: *SocketBase, work: *Work, url: http.Url, to: ?[*:0]co
     while (entry) |each| : (entry = each.ai_next) {
         socket = sb.Socket(each.ai_family, each.ai_socktype, each.ai_protocol);
         if (socket < 0) continue;
+        _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &ring_bytes, @sizeOf(i32));
         if (sb.Connect(socket, each.ai_addr.?, each.ai_addrlen) == 0) break;
         _ = sb.CloseSocket(socket);
         socket = -1;

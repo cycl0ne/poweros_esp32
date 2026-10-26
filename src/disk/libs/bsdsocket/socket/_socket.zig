@@ -27,6 +27,7 @@
 //! by another task with the same base, so the descriptor is looked up
 //! again each time.
 
+const builtin = @import("builtin");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
@@ -317,6 +318,20 @@ pub fn portTaken(stack: *StackBase, socket: *const Socket, address: Address, por
         if (overlaps(socket, address, other)) return other;
     }
     return null;
+}
+
+/// Where the ephemeral ports start, when the stack starts: anywhere in
+/// the range, from the chip's random number generator (RFC 6056). Every
+/// start began at the first, so a reboot handed out the ports the start
+/// before had, and a server that still held connections on them - the
+/// machine had gone without closing them - let no new one through. On
+/// the host the first: the tests want the same ports every run.
+pub fn startPorts(stack: *StackBase) void {
+    if (builtin.os.tag != .freestanding) return;
+    var bytes: [2]u8 = undefined;
+    sdk.hardware.rng.fill(&bytes);
+    const range: u32 = 65536 - @as(u32, _base.port_first);
+    stack.next_port = @intCast(_base.port_first + (@as(u32, bytes[0]) << 8 | bytes[1]) % range);
 }
 
 /// `socket` bound to any address and the next port nobody has, from the

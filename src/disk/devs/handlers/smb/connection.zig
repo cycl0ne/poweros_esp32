@@ -15,6 +15,12 @@
 //! one call. A server that is slow to work - a large directory, a copy on
 //! its side - answers STATUS_PENDING first, and each of those starts the
 //! receive's time again.
+//!
+//! **Its receive ring is 64 KiB**, set before it connects, so that the
+//! SYN already offers it: the ring is the window the server may send
+//! into, and a stream socket's 8 KiB took a 64 KiB READ's answer eight
+//! round trips. 64 KiB is as wide as a window goes without window
+//! scaling.
 
 const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
@@ -24,6 +30,9 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 
 pub const connect_seconds: u32 = 10;
 pub const io_seconds: u32 = 30;
+
+/// The socket's receive ring, and so the window offered.
+const ring_bytes: i32 = 64 * 1024;
 
 /// What framing takes in front of a message.
 pub const frame_header: usize = 4;
@@ -67,6 +76,7 @@ pub const Connection = struct {
                 failure.code = sb.Errno();
                 continue;
             }
+            _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &ring_bytes, @sizeOf(i32));
             setTime(sb, socket, bsd.SO_SNDTIMEO, connect_seconds);
             if (sb.Connect(socket, address, address_info.ai_addrlen) < 0) {
                 failure.code = sb.Errno();
