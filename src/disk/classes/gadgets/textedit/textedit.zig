@@ -53,6 +53,17 @@
 //!
 //! **Widths** come from the window's font, a byte at a time, measured once
 //! for each font (`IntuiTextLength`); a tab stops every eight spaces.
+//!
+//! **Highlighting** (`TEXTEDIT_HighlightHook`): before a line's first row
+//! is drawn its bytes are copied out of the gap buffer, the first
+//! `TEHL_MOST` of them, and the hook labels them; the line's other rows
+//! use the same labels, and each drawing asks afresh, as the text may
+//! have changed in between. The copy and the labels are one block
+//! (`Marks`), made when a hook is first given - on the program's task,
+//! never while drawing - and kept until the gadget goes. A run of a row
+//! then breaks where the pen changes, not only where the selection does.
+//! The kinds' colours are two sets, one for a light field and one for a
+//! dark, chosen by how bright the field's ground is.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -84,9 +95,10 @@ pub const Library = gadgets.ClassLibrary(.{
     .name = te.TEXTEDIT_CLASS,
     .version = 1,
     // 1: the wheel, a third press, indent, line numbers. 2: a press
-    // follows the one before by place and time (DoubleTap).
-    .revision = 2,
-    .date = "08.10.2026",
+    // follows the one before by place and time (DoubleTap). 3:
+    // highlighting (TEXTEDIT_HighlightHook).
+    .revision = 3,
+    .date = "26.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -144,6 +156,18 @@ const COMMAND = ie.IEQUALIFIER_LCOMMAND | ie.IEQUALIFIER_RCOMMAND;
 /// Which inner gadget has the input.
 const Scrolling = enum(u8) { none, vertical, horizontal };
 
+/// A line's bytes and the kinds its highlight hook gave them, kept for the
+/// rest of that line's rows.
+const Marks = struct {
+    /// The line they are for; `no_line` until one is asked.
+    line: u32 = no_line,
+    length: u32 = 0,
+    bytes: [te.TEHL_MOST]u8 = undefined,
+    kinds: [te.TEHL_MOST]u8 = undefined,
+
+    const no_line: u32 = 0xFFFF_FFFF;
+};
+
 /// What was told to the target last: whole words, no padding, so that
 /// utility.library's CompareMem tells two of them apart exactly.
 const Told = extern struct {
@@ -196,6 +220,10 @@ pub const Data = struct {
     /// The presses in a row at one place, each in the double-click time
     /// of the one before: two select a word, three a line.
     presses: u8 = 0,
+    highlight_hook: ?*utility.Hook = null,
+    /// Made with the first hook; null before, or when there was no memory
+    /// for it, and the text is drawn plain.
+    marks: ?*Marks = null,
 };
 
 // --- memory -----------------------------------------------------------------
@@ -337,7 +365,54 @@ fn selection(own: *const Data) struct { from: u32, to: u32 } {
 /// Bytes of a run gathered before they are drawn.
 const run_room = 128;
 
-const Pens = struct { text: u32, ground: u32, fill: u32, fill_text: u32 };
+const Pens = struct {
+    text: u32,
+    ground: u32,
+    fill: u32,
+    fill_text: u32,
+    /// A pen for each kind a highlight hook gives, `TEHL_TEXT`'s the text
+    /// pen.
+    kinds: [te.TEHL_COUNT]u32,
+
+    fn ofKind(pens: Pens, kind: u8) u32 {
+        return if (kind < te.TEHL_COUNT) pens.kinds[kind] else pens.text;
+    }
+};
+
+/// The colours of the kinds after plain text - keyword, type, built-in,
+/// string, number, comment - on a light field and on a dark one.
+const light_kinds = [te.TEHL_COUNT - 1]u32{ 0xFF0033B3, 0xFF00737A, 0xFF8A4B00, 0xFFA31515, 0xFF098658, 0xFF7A7A7A };
+const dark_kinds = [te.TEHL_COUNT - 1]u32{ 0xFF6CA8E0, 0xFF4EC9B0, 0xFFDCDCAA, 0xFFE09A7A, 0xFFB5CEA8, 0xFF8C8C8C };
+
+/// Whether a ground is dark: its brightness, weighted as the eye weighs
+/// red, green and blue, below half.
+fn isDark(ground: u32) bool {
+    const red = (ground >> 16) & 0xFF;
+    const green = (ground >> 8) & 0xFF;
+    const blue = ground & 0xFF;
+    return red * 299 + green * 587 + blue * 114 < 128 * 1000;
+}
+
+/// The kinds of a line's bytes, from where the line starts.
+const Labels = struct { start: u32, kinds: []const u8 };
+
+/// The kinds the highlight hook gives `line`'s bytes: asked once for the
+/// line, the same for its other rows. Null without a hook.
+fn labelsOf(own: *Data, o: *Object, line: u32) ?Labels {
+    const hook = own.highlight_hook orelse return null;
+    const marks = own.marks orelse return null;
+    const start = own.text.lineStart(line);
+    if (marks.line != line) {
+        const length = @min(own.text.lineEnd(line) - start, te.TEHL_MOST);
+        own.text.copyOut(start, start + length, &marks.bytes);
+        @memset(marks.kinds[0..length], te.TEHL_TEXT);
+        var msg = te.TeHighlightMsg{ .text = &marks.bytes, .length = length, .kinds = &marks.kinds, .line = line };
+        _ = hook.entry.?(hook, o, @ptrCast(&msg));
+        marks.line = line;
+        marks.length = length;
+    }
+    return .{ .start = start, .kinds = marks.kinds[0..marks.length] };
+}
 
 /// A run of a row's bytes drawn at `x` from the field's left.
 fn drawRun(gb: *sdk.interface.graphics.GraphicsBase, rp: *graphics.RastPort, bytes: []const u8, left: i32, baseline: i32, pen: u32) void {
@@ -375,8 +450,9 @@ fn drawNumber(gb: *sdk.interface.graphics.GraphicsBase, own: *const Data, rp: *g
 }
 
 /// One row of the text, at `top` in the window, inside `area` (the
-/// window's coordinates).
-fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: gc.Box, top: i32, baseline: i32, row: u32, pens: Pens) void {
+/// window's coordinates), its bytes in the pens of their kinds when the
+/// line has `labels`.
+fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: gc.Box, top: i32, baseline: i32, row: u32, pens: Pens, labels: ?Labels) void {
     const gb = base.graphics_base;
     const text = &own.text;
     const start = text.rowStart(row);
@@ -404,22 +480,23 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
     var run: [run_room]u8 = undefined;
     var used: usize = 0;
     var run_left: i64 = 0;
-    var run_selected = false;
+    var run_pen: u32 = pens.text;
     var x: u32 = 0;
     var at = start;
     while (at < end) : (at += 1) {
         const byte = text.byteAt(at);
         const width = text.widthAt(byte, x);
         const selected = at >= sel.from and at < sel.to;
+        const pen = if (selected) pens.fill_text else pens.ofKind(kindAt(labels, at));
         const shows = byte != '\t' and width != 0 and @as(i64, x) >= view_left and @as(i64, x) + width <= view_right;
-        if (used != 0 and (!shows or selected != run_selected or used == run.len)) {
-            drawRun(gb, rp, run[0..used], area.left + @as(i32, @intCast(run_left - view_left)), baseline, if (run_selected) pens.fill_text else pens.text);
+        if (used != 0 and (!shows or pen != run_pen or used == run.len)) {
+            drawRun(gb, rp, run[0..used], area.left + @as(i32, @intCast(run_left - view_left)), baseline, run_pen);
             used = 0;
         }
         if (shows) {
             if (used == 0) {
                 run_left = x;
-                run_selected = selected;
+                run_pen = pen;
             }
             run[used] = byte;
             used += 1;
@@ -427,7 +504,7 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
         x += width;
         if (@as(i64, x) > view_right and !own.wrap) break;
     }
-    drawRun(gb, rp, run[0..used], area.left + @as(i32, @intCast(run_left - view_left)), baseline, if (run_selected) pens.fill_text else pens.text);
+    drawRun(gb, rp, run[0..used], area.left + @as(i32, @intCast(run_left - view_left)), baseline, run_pen);
 
     // The cursor, while it has the keyboard: a block over the byte it
     // stands before, that byte drawn on it - the fill pen as ground and the
@@ -456,6 +533,14 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, area: 
             }
         }
     }
+}
+
+/// The kind of the byte at `pos`: text past the bytes the hook was asked
+/// about, or without labels.
+fn kindAt(labels: ?Labels, pos: u32) u8 {
+    const known = labels orelse return te.TEHL_TEXT;
+    const index = pos - known.start;
+    return if (index < known.kinds.len) known.kinds[index] else te.TEHL_TEXT;
 }
 
 fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
@@ -493,7 +578,12 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     support.fill(gb, rp, .{ .left = inside, .top = area.top, .width = area.left + area.width + text_margin - inside - 1, .height = area.height - 1 }, ground);
 
     const styled = support.pensFor(ib, info.draw_info, g.style, ic.PART_FIELD, sdk.intuition.style.PART_SELECTION);
-    const pens = Pens{ .text = styled[sc.TEXTPEN], .ground = ground, .fill = styled[sc.FILLPEN], .fill_text = styled[sc.FILLTEXTPEN] };
+    var pens = Pens{ .text = styled[sc.TEXTPEN], .ground = ground, .fill = styled[sc.FILLPEN], .fill_text = styled[sc.FILLTEXTPEN], .kinds = undefined };
+    pens.kinds[te.TEHL_TEXT] = pens.text;
+    @memcpy(pens.kinds[1..], if (isDark(ground)) &dark_kinds else &light_kinds);
+    // The text may have changed since the last drawing: every line is
+    // labelled afresh.
+    if (own.marks) |marks| marks.line = Marks.no_line;
     if (own.font) |font| {
         const set = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) }, .{} };
         gb.SetRPAttrs(rp, &set);
@@ -507,7 +597,8 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
         const row = own.top + shown;
         if (row >= own.text.rowCount()) break;
         const top = area.top + @as(i32, @intCast(shown)) * own.line_height;
-        drawRow(base, own, rp, area, top, top + @as(i32, @intCast(baseline)), row, pens);
+        const labels = labelsOf(own, o, own.text.lineOf(own.text.rowStart(row)));
+        drawRow(base, own, rp, area, top, top + @as(i32, @intCast(baseline)), row, pens, labels);
         if (own.line_numbers) drawNumber(gb, own, rp, numbers, top + @as(i32, @intCast(baseline)), row, pens);
     }
     if (own.line_numbers and area.height > 0) {
@@ -935,7 +1026,7 @@ fn toScroller(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput, whic
 // --- attributes -------------------------------------------------------------
 
 /// What a tag list asks of the text: a new text, wrap, line numbers,
-/// read-only, changed.
+/// read-only, changed, a highlight hook.
 /// Whether it changes what is shown.
 fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem) bool {
     const ub = base.utility_base;
@@ -967,6 +1058,18 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem) bool {
         const numbers = item.data != 0;
         if (numbers != own.line_numbers) {
             own.line_numbers = numbers;
+            shows = true;
+        }
+    }
+    if (ub.FindTagItem(te.TEXTEDIT_HighlightHook, tags)) |item| {
+        const hook: ?*utility.Hook = @ptrFromInt(item.data);
+        if (hook != own.highlight_hook) {
+            own.highlight_hook = hook;
+            if (hook != null and own.marks == null) {
+                const memory: ?*Marks = @ptrCast(@alignCast(base.sys_base.AllocVec(@sizeOf(Marks), exec.MEMF_ANY)));
+                if (memory) |marks| marks.* = .{};
+                own.marks = memory;
+            }
             shows = true;
         }
     }
@@ -1069,6 +1172,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             ib.DisposeObject(own.vertical);
             ib.DisposeObject(own.horizontal);
             ib.DisposeObject(own.frame);
+            if (own.marks) |marks| base.sys_base.FreeVec(marks);
+            own.marks = null;
             if (own.ready) {
                 own.text.deinit();
                 own.history.deinit();
@@ -1133,6 +1238,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 te.TEXTEDIT_TotalHoriz => nowTold(base, own, o.?, null).widest,
                 te.TEXTEDIT_VisibleHoriz => nowTold(base, own, o.?, null).width,
                 te.TEXTEDIT_Scrollers => @intFromBool(own.scrollers),
+                te.TEXTEDIT_HighlightHook => @intFromPtr(own.highlight_hook),
                 else => return ib.SendSuperMessage(cl, o, msg),
             };
             return 1;

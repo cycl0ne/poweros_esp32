@@ -321,7 +321,8 @@ row of tabs over pages of gadgets), `getfile`, `getfont` and
 `getdevice` (a field with a button beside it that opens asl.library's
 requester), and
 `textedit` (text of many lines to edit, with undo, the clipboard,
-finding and line numbers - what `SYS:Programs/Notepad` is made of), and
+finding, line numbers and highlighting through a hook that labels each
+line - what `SYS:Programs/Notepad` is made of), and
 `scrollgroup` (a layout larger than the window, scrolled; `C:test/Scroll`),
 and `listbrowser` (a list in columns, sorted by a heading, its rows a
 tree; `C:test/ListBrowser`). Each

@@ -54,6 +54,15 @@
 //! brings it into view, `TEM_REPLACE` replaces a selected match and finds
 //! the next, `TEM_REPLACEALL` replaces every one as a single step of undo.
 //!
+//! **Highlighting** is the program's to say and the gadget's to draw:
+//! `TEXTEDIT_HighlightHook` is asked for each line as it is drawn, and
+//! gives each of its bytes a kind - a keyword, a type, a string, a comment
+//! (`TEHL_*`). The gadget draws each kind in a colour of its own, a set
+//! for a light field and one for a dark one, and what is selected in the
+//! selection's pen as ever. A line is labelled from its own bytes alone,
+//! so a language whose comments or strings run across lines shows only
+//! what each line says by itself.
+//!
 //!   const editor = ib.NewObjectTagList(null, te.TEXTEDIT_CLASS, &.{
 //!       .{ .tag = gc.GA_ID, .data = 1 },
 //!       .{ .tag = te.TEXTEDIT_Text, .data = @intFromPtr(bytes) },
@@ -132,6 +141,42 @@ pub const TEXTEDIT_VisibleHoriz = TEXTEDIT_Dummy + 0x10;
 /// line standing out; a line that wraps is numbered on its first row.
 /// Made, set and read.
 pub const TEXTEDIT_LineNumbers = TEXTEDIT_Dummy + 0x11;
+
+/// A `*utility.Hook` that labels a line's bytes: called for each line as
+/// it is drawn, the gadget as the object and a `*TeHighlightMsg` as the
+/// message, it writes a `TEHL_*` kind for each byte into `kinds`. It may
+/// neither draw nor wait: it is called while the gadget draws. Null draws
+/// everything as plain text. Made, set and read.
+pub const TEXTEDIT_HighlightHook = TEXTEDIT_Dummy + 0x12;
+
+/// The kinds a highlight hook gives a byte, each drawn in a colour of its
+/// own: plain text, a keyword, a type, a built-in function, a string or
+/// character, a number or a constant, a comment.
+pub const TEHL_TEXT: u8 = 0;
+pub const TEHL_KEYWORD: u8 = 1;
+pub const TEHL_TYPE: u8 = 2;
+pub const TEHL_BUILTIN: u8 = 3;
+pub const TEHL_STRING: u8 = 4;
+pub const TEHL_NUMBER: u8 = 5;
+pub const TEHL_COMMENT: u8 = 6;
+/// One past the last kind; a byte labelled beyond it is drawn as text.
+pub const TEHL_COUNT: u8 = 7;
+
+/// The most bytes of a line the hook is asked about; the ones after are
+/// drawn as text.
+pub const TEHL_MOST: u32 = 1024;
+
+/// What `TEXTEDIT_HighlightHook` is handed.
+pub const TeHighlightMsg = extern struct {
+    /// The line's bytes, without its line feed.
+    text: [*]const u8,
+    length: u32,
+    /// A kind for each of the `length` bytes, all `TEHL_TEXT` to begin
+    /// with.
+    kinds: [*]u8,
+    /// Which line it is, from 0.
+    line: u32,
+};
 
 /// The class's own methods, sent with `DoGadgetMethodA` so that what they
 /// change is drawn. Every one answers 0 when it did nothing.

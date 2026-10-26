@@ -27,7 +27,15 @@ The menus, with their right-Amiga keys:
   Select All (A)
 - **Search:** Find... (F), Find Next (G), Find Previous (P),
   Replace... (R)
-- **View:** Word Wrap (W) and Line Numbers (L), both on to start with
+- **View:** Word Wrap (W) and Line Numbers (L), both on to start with;
+  Zig Highlighting (H), off to start with
+
+**Zig Highlighting** shows Zig source in colours: keywords, types,
+built-in functions (`@import`), strings, numbers and comments each in
+their own, on a light field or a dark one. Each line is coloured from
+what it says itself, which is all Zig needs: none of its comments or
+strings goes on past the end of a line. The colours stop after a line's
+first 1024 characters.
 
 Ctrl-X, Ctrl-C and Ctrl-V cut, copy and paste as the menu does. Open and
 Save As ask for the file with a file requester. A file dragged from the

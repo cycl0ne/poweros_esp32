@@ -27,7 +27,13 @@
 //!            Select All (A)
 //!   Search   Find... (F), Find Next (G), Find Previous (P),
 //!            Replace... (R)
-//!   View     Word Wrap (W), Line Numbers (L), both on to begin with
+//!   View     Word Wrap (W), Line Numbers (L), both on to begin with;
+//!            Zig Highlighting (H), off
+//!
+//! Zig Highlighting gives the text a highlight hook (highlight.zig) that
+//! labels each line as Zig - keywords, types, built-in functions, strings,
+//! numbers, comments - and the text draws each kind in a colour of its
+//! own.
 //!
 //! Control-X, -C and -V cut, copy and paste as the menu does: the gadget
 //! hands those keys to the window, and Notepad works the clipboard from
@@ -59,6 +65,7 @@ const classusr = intuition.classusr;
 const icc = intuition.icclass;
 const te = sdk.gadgets.textedit;
 const sr = sdk.gadgets.scroller;
+const highlight = @import("highlight.zig");
 const st = sdk.gadgets.string;
 const cb = sdk.gadgets.checkbox;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -72,8 +79,8 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Notepad";
-const VERSION = "1.3";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.10.2026)\r\n";
+const VERSION = "1.4";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -126,6 +133,7 @@ const ITEM_REPLACE = 3;
 
 const ITEM_WRAP = 0;
 const ITEM_NUMBERS = 1;
+const ITEM_ZIG = 2;
 
 fn item(label: [*:0]const u8, key: ?[*:0]const u8) mn.NewMenu {
     return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key };
@@ -158,6 +166,7 @@ const menus = [_]mn.NewMenu{
     .{ .type = mn.NM_TITLE, .label = "View" },
     .{ .type = mn.NM_ITEM, .label = "Word Wrap", .comm_key = "W", .flags = mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED },
     .{ .type = mn.NM_ITEM, .label = "Line Numbers", .comm_key = "L", .flags = mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED },
+    .{ .type = mn.NM_ITEM, .label = "Zig Highlighting", .comm_key = "H", .flags = mn.CHECKIT | mn.MENUTOGGLE },
     .{},
 };
 
@@ -191,6 +200,9 @@ const Notepad = struct {
     shown_changed: bool = false,
     wrap: bool = true,
     numbers: bool = true,
+    /// Zig Highlighting is on, the text labelled through `zig_hook`.
+    zig: bool = false,
+    zig_hook: sdk.utility.Hook = .{ .entry = highlightZig },
     finder: ?Finder = null,
     search: [search_size:0]u8 = @splat(0),
     with: [search_size:0]u8 = @splat(0),
@@ -693,6 +705,11 @@ const Notepad = struct {
                     _ = np.ib.SetGadgetAttrsTagList(np.editor, np.window, &[_]TagItem{ .{ .tag = te.TEXTEDIT_LineNumbers, .data = @intFromBool(np.numbers) }, .{} });
                     np.followEditor();
                 },
+                ITEM_ZIG => {
+                    np.zig = !np.zig;
+                    const hook: usize = if (np.zig) @intFromPtr(&np.zig_hook) else 0;
+                    _ = np.ib.SetGadgetAttrsTagList(np.editor, np.window, &[_]TagItem{ .{ .tag = te.TEXTEDIT_HighlightHook, .data = hook }, .{} });
+                },
                 else => {},
             },
             else => {},
@@ -792,6 +809,15 @@ const Notepad = struct {
         }
     }
 };
+
+/// The text's highlight hook while Zig Highlighting is on: a line's bytes
+/// labelled as Zig. Called while the text draws, on whichever task draws
+/// it.
+fn highlightZig(_: *sdk.utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const line: *te.TeHighlightMsg = @ptrCast(@alignCast(message orelse return 0));
+    highlight.label(line.text[0..line.length], line.kinds[0..line.length]);
+    return 0;
+}
 
 /// The two scroll bars in the border, the window object's; either is
 /// null when it could not be made.

@@ -7,6 +7,7 @@
 test {
     _ = @import("classes/gadgets/textedit/text.zig");
     _ = @import("classes/gadgets/textedit/undo.zig");
+    _ = @import("programs/notepad/highlight.zig");
     _ = @import("programs/sheet/tests/sheet.zig");
     _ = @import("system/hdtoolbox/tests/hdtoolbox.zig");
     _ = @import("system/memmap/tests/memmap.zig");
