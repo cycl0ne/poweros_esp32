@@ -10,12 +10,17 @@
 //! comes - usb/ecm.device, `USB0`, when an adapter is plugged in. The interface takes the file's name
 //! in lower case - ETH0 becomes eth0 - and is added to bsdsocket.library
 //! with the file's device, address or DHCP, routes and name servers. With
-//! DHCP it waits up to TIMEOUT seconds (10) for an address and says which
-//! it got, unless NOWAIT: then DHCP goes on without it. An interface
-//! whose link stays down for five seconds - no cable in its socket - is
-//! not waited for; DHCP starts when the link comes. (A gigabit link takes
-//! seconds to agree on its speed: one second was too short for the
-//! VisionFive 2's.) An interface
+//! DHCP it waits for the link, then up to TIMEOUT seconds (10) for an
+//! address, and says which it got, unless NOWAIT: then DHCP goes on
+//! without it. An interface whose link has not come within fifteen
+//! seconds - no cable in its socket - is not waited for; DHCP starts when
+//! the link comes. (A gigabit link takes seconds to agree on its speed:
+//! the VisionFive 2's takes five or six after a reset.) With IPv6 AUTO
+//! it waits on for a router's prefix too - a preferred address that is
+//! not link-local - until twelve seconds after the link came, the span of
+//! the stack's three router solicitations: a server that is only reached
+//! by IPv6 is not reached before, and a network without a router costs
+//! what is left of the twelve. An interface
 //! that is up already is left as it is. QUIET says nothing, not even that a
 //! device is missing - what the boot runs, on every board, whether it has
 //! the device or not.
@@ -48,7 +53,7 @@ const config_file = @import("config.zig");
 const Config = config_file.Config;
 
 pub const COMMAND_NAME = "AddNetInterface";
-const VERSION_STRING = "\x00$VER: AddNetInterface 1.8 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: AddNetInterface 1.9 (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,QUIET/S,TIMEOUT/K/N,NOWAIT/S";
@@ -244,7 +249,7 @@ fn addOne(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, op
         if (!options.quiet) _ = Printf(dl, MSG_WAITING, .{interface});
         // A network being joined brings its link only once it is joined.
         switch (waitForAddress(dl, sb, interface, options.timeout_ticks, config.network[0] != 0)) {
-            .bound => {},
+            .bound => |linked| if (config.ipv6 == bsd.IFIPV6_AUTO) waitForRouter(dl, sb, interface, linked),
             .no_link => {
                 if (!options.quiet) _ = Printf(dl, MSG_NOLINK, .{interface});
                 return dos.RETURN_OK;
@@ -277,28 +282,82 @@ fn joinNetwork(sys: *ExecBase, dl: *DosBase, config: *const Config, options: Opt
     return true;
 }
 
-const Waited = enum { bound, no_link, no_answer };
+const Waited = union(enum) {
+    /// An address, the link up for so many ticks by then.
+    bound: u32,
+    no_link,
+    no_answer,
+};
 
 /// How long a link may be down before it is not waited for: long
-/// enough for a gigabit link to have agreed on its speed.
-const no_link_ticks = 250;
+/// enough for a gigabit link to have agreed on its speed, three times
+/// what the VisionFive 2's takes. Only the network behind the boot waits.
+const no_link_ticks = 750;
 
 /// Until DHCP has an address for the interface, or a link-local one
-/// stands in, or its link has been down five seconds - unless one is
-/// `coming` - or the time is up.
+/// stands in, or its link has been down fifteen seconds, or the link has
+/// been up `ticks` without an address. A link that is `coming` - a
+/// network being joined - not there by then is no answer rather than no
+/// link.
 fn waitForAddress(dl: *DosBase, sb: *SocketBase, interface: [*:0]const u8, ticks: u32, coming: bool) Waited {
     var waited: u32 = 0;
     var down: u32 = 0;
-    while (waited <= ticks) : (waited += 10) {
+    while (waited <= ticks) {
         var state: u32 = 0;
         const tags = [_]TagItem{ .{ .tag = bsd.IFQ_State, .data = @intFromPtr(&state) }, .{} };
         if (sb.QueryInterfaceTagList(interface, &tags) < 0) return .no_answer;
-        if (state & (bsd.IFSTATE_BOUND | bsd.IFSTATE_LINKLOCAL) != 0) return .bound;
-        down = if (state & bsd.IFSTATE_UP != 0) 0 else down + 10;
-        if (!coming and down >= no_link_ticks) return .no_link;
+        if (state & (bsd.IFSTATE_BOUND | bsd.IFSTATE_LINKLOCAL) != 0) return .{ .bound = waited };
+        // DHCP's time counts while the link is up.
+        if (state & bsd.IFSTATE_UP != 0) {
+            down = 0;
+            waited += 10;
+        } else {
+            down += 10;
+            if (down >= no_link_ticks) return if (coming) .no_answer else .no_link;
+        }
         dl.Delay(10);
     }
     return .no_answer;
+}
+
+/// How long after the link came a router's prefix is waited for: the
+/// stack's first router solicitation goes within a second of the
+/// link-local address, the last eight seconds after, and the address made
+/// from the prefix is tried for a second before it is preferred.
+const router_ticks = 600;
+
+/// Until the interface has a preferred IPv6 address that is not
+/// link-local, or `router_ticks` have gone since its link came - `linked`
+/// of them already.
+fn waitForRouter(dl: *DosBase, sb: *SocketBase, interface: [*:0]const u8, linked: u32) void {
+    var waited = linked;
+    while (waited < router_ticks) : (waited += 10) {
+        if (hasGlobal6(sb, interface)) return;
+        dl.Delay(10);
+    }
+}
+
+/// Whether the interface has a preferred IPv6 address outside fe80::/10.
+fn hasGlobal6(sb: *SocketBase, interface: [*:0]const u8) bool {
+    var table: [16]bsd.Address6Info = undefined;
+    const found = sb.GetNetworkStatistics(bsd.NETSTATUS_ADDRESSES6, &table, @sizeOf(@TypeOf(table)));
+    if (found <= 0) return false;
+    for (table[0..@min(@as(usize, @intCast(found)), table.len)]) |*info| {
+        if (info.state != bsd.ADDR6_PREFERRED) continue;
+        const bytes = info.address.s6_addr;
+        if (bytes[0] == 0xFE and bytes[1] & 0xC0 == 0x80) continue;
+        if (sameName(&info.interface, interface)) return true;
+    }
+    return false;
+}
+
+/// Whether an info's interface name is `interface`.
+fn sameName(own: *const [bsd.IFNAMSIZ]u8, interface: [*:0]const u8) bool {
+    for (own, 0..) |char, at| {
+        if (char != interface[at]) return false;
+        if (char == 0) return true;
+    }
+    return interface[own.len] == 0;
 }
 
 /// The address the interface has, as it has it now.

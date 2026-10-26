@@ -32,7 +32,7 @@ const Rig = struct {
         const sys = kexec.SysBase.iface();
         const made = kexec.InitResident(kexec.SysBase, &crypto_init.crypto_library_tag, null) orelse return error.NoLibrary;
         const library: *sdk.exec.Library = @ptrCast(@alignCast(made));
-        const opened = sys.OpenLibrary(crypto.CRYPTONAME, 1) orelse return error.NoBase;
+        const opened = sys.OpenLibrary(crypto.CRYPTONAME, crypto_init.LIBRARY_VERSION) orelse return error.NoBase;
         return .{ .sys = sys, .library = library, .cb = @ptrCast(opened) };
     }
 
@@ -193,6 +193,91 @@ test "RFC 4231's HMAC-SHA-256, and keys of every length as std.crypto has them" 
         try testing.expectEqual(@as(u32, 64), cb.FinishHmac(&context, &mac));
         try testing.expectEqualSlices(u8, &expected, &mac);
     }
+}
+
+test "HashPieces: std.crypto's digest however the message is cut, and nothing for what it cannot read" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    var data: [5000]u8 = undefined;
+    for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 11 +% 5);
+    const Pair = struct { algorithm: u32, reference: type };
+    const pairs = [_]Pair{
+        .{ .algorithm = crypto.HASH_SHA1, .reference = std.crypto.hash.Sha1 },
+        .{ .algorithm = crypto.HASH_SHA224, .reference = std.crypto.hash.sha2.Sha224 },
+        .{ .algorithm = crypto.HASH_SHA256, .reference = std.crypto.hash.sha2.Sha256 },
+        .{ .algorithm = crypto.HASH_SHA384, .reference = std.crypto.hash.sha2.Sha384 },
+        .{ .algorithm = crypto.HASH_SHA512, .reference = std.crypto.hash.sha2.Sha512 },
+        .{ .algorithm = crypto.HASH_MD5, .reference = std.crypto.hash.Md5 },
+    };
+    inline for (pairs) |pair| {
+        for ([_]usize{ 0, 1, 55, 64, 127, 128, 129, 300, 2047, 2048, 5000 }) |length| {
+            var expected: [pair.reference.digest_length]u8 = undefined;
+            pair.reference.hash(data[0..length], &expected, .{});
+            // Three pieces cut at different places, and an empty one
+            // with no bytes among them.
+            const first = length / 3;
+            const second = length - length / 5;
+            const pieces = [_]crypto.Bytes{
+                .of(data[0..first]),
+                .{},
+                .of(data[first..second]),
+                .of(data[second..length]),
+            };
+            var digest: [crypto.DIGEST_MAX]u8 = undefined;
+            try testing.expectEqual(@as(u32, expected.len), cb.HashPieces(pair.algorithm, &pieces, pieces.len, &digest));
+            try testing.expectEqualSlices(u8, &expected, digest[0..expected.len]);
+        }
+    }
+
+    var digest: [crypto.DIGEST_MAX]u8 = @splat(0xA5);
+    try testing.expectEqual(@as(u32, 32), cb.HashPieces(crypto.HASH_SHA256, null, 0, &digest));
+    try testing.expectEqualSlices(u8, &hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"), digest[0..32]);
+
+    // Refused, and nothing written: a hash there is not, pieces not
+    // given, and a piece whose bytes are not.
+    @memset(&digest, 0xA5);
+    const missing = [_]crypto.Bytes{ .of(data[0..10]), .{ .length = 5 } };
+    try testing.expectEqual(@as(u32, 0), cb.HashPieces(99, &missing, 1, &digest));
+    try testing.expectEqual(@as(u32, 0), cb.HashPieces(crypto.HASH_SHA256, null, 1, &digest));
+    try testing.expectEqual(@as(u32, 0), cb.HashPieces(crypto.HASH_SHA256, &missing, missing.len, &digest));
+    try testing.expect(std.mem.allEqual(u8, &digest, 0xA5));
+}
+
+test "HmacPieces: RFC 4231's HMAC-SHA-256, std.crypto's MAC for keys of every length, and nothing for what it cannot read" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    var mac: [crypto.DIGEST_MAX]u8 = undefined;
+    const said = [_]crypto.Bytes{ .of("what do ya want "), .of("for nothing?") };
+    try testing.expectEqual(@as(u32, 32), cb.HmacPieces(crypto.HASH_SHA256, "Jefe", 4, &said, said.len, &mac));
+    try testing.expectEqualSlices(u8, &hex("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"), mac[0..32]);
+
+    var key: [200]u8 = undefined;
+    for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 13);
+    var data: [3000]u8 = undefined;
+    for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% 1);
+    const pieces = [_]crypto.Bytes{ .of(data[0..1000]), .{}, .of(data[1000..2999]), .of(data[2999..]) };
+    const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
+    const HmacSha512 = std.crypto.auth.hmac.sha2.HmacSha512;
+    for ([_]usize{ 0, 1, 13, 64, 65, 127, 128, 129, 200 }) |key_length| {
+        var expected256: [HmacSha256.mac_length]u8 = undefined;
+        HmacSha256.create(&expected256, &data, key[0..key_length]);
+        try testing.expectEqual(@as(u32, 32), cb.HmacPieces(crypto.HASH_SHA256, &key, @intCast(key_length), &pieces, pieces.len, &mac));
+        try testing.expectEqualSlices(u8, &expected256, mac[0..32]);
+        var expected512: [HmacSha512.mac_length]u8 = undefined;
+        HmacSha512.create(&expected512, &data, key[0..key_length]);
+        try testing.expectEqual(@as(u32, 64), cb.HmacPieces(crypto.HASH_SHA512, &key, @intCast(key_length), &pieces, pieces.len, &mac));
+        try testing.expectEqualSlices(u8, &expected512, &mac);
+    }
+
+    // Refused, and nothing written: a key not given, a hash there is
+    // not, pieces not given.
+    @memset(&mac, 0xA5);
+    try testing.expectEqual(@as(u32, 0), cb.HmacPieces(crypto.HASH_SHA256, null, 4, &pieces, pieces.len, &mac));
+    try testing.expectEqual(@as(u32, 0), cb.HmacPieces(99, &key, 4, &pieces, pieces.len, &mac));
+    try testing.expectEqual(@as(u32, 0), cb.HmacPieces(crypto.HASH_SHA256, &key, 4, null, 2, &mac));
+    try testing.expect(std.mem.allEqual(u8, &mac, 0xA5));
 }
 
 test "RFC 2202's HMAC-MD5, and keys of every length as std.crypto has them" {
@@ -356,6 +441,66 @@ test "GCM of every length as std.crypto has it, and a nonce that is not 12 bytes
     try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message6));
     try testing.expectEqualSlices(u8, &hex("8ce24998625615b603a033aca13fb894be9112a5c3a211a8ba262a3cca7e2ca701e4a9a4fba43c90ccdcb281d48c7c6fd62875d2aca417034c34aee5"), &data6);
     try testing.expectEqualSlices(u8, &hex("619cc5aefffe0bfa462af43c1699d050"), &tag6);
+}
+
+test "GMAC a piece at a time: std.crypto's tag however the data is cut, a long nonce, and what it refuses" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    var key: [32]u8 = undefined;
+    for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% 1);
+    const nonce = [12]u8{ 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
+    var data: [200]u8 = undefined;
+    for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 13 +% 5);
+    const Pair = struct { key_length: u32, reference: type };
+    const pairs = [_]Pair{
+        .{ .key_length = 16, .reference = std.crypto.aead.aes_gcm.Aes128Gcm },
+        .{ .key_length = 32, .reference = std.crypto.aead.aes_gcm.Aes256Gcm },
+    };
+    inline for (pairs) |pair| {
+        for (0..data.len + 1) |length| {
+            // GMAC: the data as the header, no plaintext.
+            var expected: [16]u8 = undefined;
+            pair.reference.encrypt(&.{}, &expected, &.{}, data[0..length], nonce, key[0..pair.key_length].*);
+            // In three pieces, cut at different places.
+            var context: crypto.GmacContext = .{};
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, pair.key_length, &nonce, nonce.len));
+            const first = length / 3;
+            const second = length - length / 5;
+            cb.UpdateGmac(&context, data[0..].ptr, @intCast(first));
+            cb.UpdateGmac(&context, data[first..].ptr, @intCast(second - first));
+            cb.UpdateGmac(&context, null, 0);
+            cb.UpdateGmac(&context, data[second..].ptr, @intCast(length - second));
+            var tag: [16]u8 = undefined;
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
+            try testing.expectEqualSlices(u8, &expected, &tag);
+            // Wiped: the context takes nothing more until InitGmac.
+            try testing.expectEqual(@as(u32, 0), context.key_length);
+            try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.FinishGmac(&context, &tag));
+        }
+    }
+
+    // A 60-byte nonce, hashed into J0: the tag SealGcm gives the data as
+    // its header.
+    const long_nonce = hex("9313225df88406e555909c5aff5269aa6a7a9538534f7da1e4c303d2a318a728c3c0c95156809539fcf0e2429a6b525416aedbf5a0de6a57a637b39b");
+    var sealed: [16]u8 = undefined;
+    const message: crypto.GcmMessage = .{ .key = &key, .key_length = 16, .nonce = &long_nonce, .nonce_length = long_nonce.len, .aad = &data, .aad_length = data.len, .tag = &sealed };
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
+    var context: crypto.GmacContext = .{};
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, 16, &long_nonce, long_nonce.len));
+    for (data) |byte| cb.UpdateGmac(&context, &byte, 1);
+    var tag: [16]u8 = undefined;
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
+    try testing.expectEqualSlices(u8, &sealed, &tag);
+
+    // Refused: a key of 24 bytes, a nonce of none, a context too small.
+    try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.InitGmac(&context, &key, 24, &nonce, nonce.len));
+    cb.UpdateGmac(&context, &data, data.len);
+    try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.FinishGmac(&context, &tag));
+    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.InitGmac(&context, &key, 16, &nonce, 0));
+    var small: crypto.GmacContext = .{ .size = 100 };
+    try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.InitGmac(&small, &key, 16, &nonce, nonce.len));
+    try testing.expectEqual(@as(u32, 0), small.key_length);
 }
 
 // --- ModExp -------------------------------------------------------------------

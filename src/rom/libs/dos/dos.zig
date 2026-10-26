@@ -561,6 +561,9 @@ test "GetDeviceProc starts a device's handler with ACTION_STARTUP, once" {
     try testing.expectEqual(@as(isize, @bitCast(@intFromPtr(name))), StartupWait.name_arg);
     try testing.expectEqual(node, StartupWait.node.?);
     try testing.expectEqual(&handler.msg_port, node.task.?); // the handler claimed it
+    // The list and the entry lock both given back.
+    try testing.expectEqual(@as(i16, -1), db.dev_lock.queue_count);
+    try testing.expectEqual(@as(i16, -1), db.entry_lock.queue_count);
     dl.FreeDeviceProc(dp);
 
     const again = dl.GetDeviceProc("NIL:", null).?;

@@ -31,7 +31,7 @@ dma.resource/StopDMA
 dma.resource/AllocDMAChannel                      dma.resource/AllocDMAChannel
 
    NAME
-	AllocDMAChannel -- Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1), a 2D one (DMA2D_CHANNEL0 on) or a DesignWare one (DWDMA_CHANNEL0 on): null if it is now yours, else its owner's name.
+	AllocDMAChannel -- Claim a channel for `name` - a general one (0 to DMA_CHANNELS - 1), a 2D one (DMA2D_CHANNEL0 on), a DesignWare one (DWDMA_CHANNEL0 on) or a PL080 one (PL080_CHANNEL0 on): null if it is now yours, else its owner's name.
 
    SYNOPSIS
 	    ?[*:0]const u8 AllocDMAChannel(u32 channel, [*:0]const u8 name)

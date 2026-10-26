@@ -37,6 +37,28 @@ const trng = [_]Tag{
     .done,
 };
 
+/// The security block's crypto engine, and the PL080 that moves its data:
+/// crypto.library's, and dma.resource's PL080 channels, on PLIC sources
+/// 28 and 29.
+const crypto_engine = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_CRYPTO),
+    .value(st.PART_Chip, st.CHIP_JH7110_CRYPTO),
+    .pointer(st.PART_ChipName, "jh7110 crypto"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x1600_0000),
+    .value(st.PART_Irq, 28),
+    .done,
+};
+const crypto_dma = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_DMA),
+    .value(st.PART_Chip, st.CHIP_JH7110_SDMA),
+    .pointer(st.PART_ChipName, "jh7110 sec dma"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x1600_8000),
+    .value(st.PART_Irq, 29),
+    .done,
+};
+
 /// The JH7110's own temperature sensor, beside its cores.
 const temperature = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_THERMAL),
@@ -278,6 +300,8 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &jack),
     .pointer(st.SYSTAG_Part, &trng),
+    .pointer(st.SYSTAG_Part, &crypto_engine),
+    .pointer(st.SYSTAG_Part, &crypto_dma),
     .pointer(st.SYSTAG_Part, &temperature),
     .pointer(st.SYSTAG_Part, &rtc),
     .pointer(st.SYSTAG_Part, &dmac),

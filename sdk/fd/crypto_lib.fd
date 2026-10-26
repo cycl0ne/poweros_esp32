@@ -61,4 +61,18 @@ i32 Encapsulate(u32 kem, *const crypto.Bytes public_key, *anyopaque ciphertext, 
 /// The secret `ciphertext` carries to the owner of `private_key`, into
 /// `secret`.
 i32 Decapsulate(u32 kem, *const anyopaque private_key, *const crypto.Bytes ciphertext, *anyopaque secret)
+/// The digest of `count` pieces, taken one after another, with
+/// `algorithm` (HASH_*) into `digest`: its length, or 0 for a hash there
+/// is not.
+u32 HashPieces(u32 algorithm, ?[*]const crypto.Bytes pieces, u32 count, *anyopaque digest)
+/// HMAC with `algorithm` and `key` over `count` pieces, taken one after
+/// another, into `mac`: its length, or 0 for a hash there is not.
+u32 HmacPieces(u32 algorithm, ?*const anyopaque key, u32 key_length, ?[*]const crypto.Bytes pieces, u32 count, *anyopaque mac)
+/// A GMAC begun on `context` with `key` (16 or 32 bytes) and `nonce`.
+i32 InitGmac(*crypto.GmacContext context, *const anyopaque key, u32 key_length, *const anyopaque nonce, u32 nonce_length)
+/// `length` more bytes of data into the GMAC under way.
+void UpdateGmac(*crypto.GmacContext context, ?*const anyopaque data, u32 length)
+/// The GMAC ended: its tag (GCM_TAG bytes) into `tag`, and the context
+/// wiped.
+i32 FinishGmac(*crypto.GmacContext context, *anyopaque tag)
 ##end

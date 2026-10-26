@@ -22,11 +22,16 @@
 //! and asked about like the others; their owner sets them up and starts
 //! them through `sdk.hardware.dwdma`, and the general calls refuse them.
 //!
+//! **The PL080's channels**, PL080_CHANNELS of them from PL080_CHANNEL0
+//! on (the eight of the JH7110's security block, which feed its crypto
+//! engine, where the board lists the controller): the same, driven
+//! through `sdk.hardware.pl080`.
+//!
 //! A channel's interrupts are exec's: AddIntServer(dmaIntNumber(channel,
 //! side), ...). The sources are level-triggered, so a server clears what it
-//! handles (DMAIntStatus, ClearDMAInts). A DesignWare channel's is its
-//! controller's, which the four share: a server asks its own channel
-//! before it answers non-zero.
+//! handles (DMAIntStatus, ClearDMAInts). A DesignWare or a PL080 channel's
+//! is its controller's, which its channels share: a server asks its own
+//! channel before it answers non-zero.
 
 const hardware = @import("../hardware/hardware.zig");
 const intbits = hardware.intbits;
@@ -53,8 +58,15 @@ pub const DWDMA_CHANNELS: u32 = switch (hardware.chip) {
     .rv64sbi => hardware.dwdma.channels,
 };
 pub const DWDMA_CHANNEL0: u32 = DMA2D_CHANNEL0 + DMA2D_CHANNELS;
-/// Every channel the resource hands out: general, 2D and DesignWare.
-pub const DMA_ALL_CHANNELS: u32 = DMA_CHANNELS + DMA2D_CHANNELS + DWDMA_CHANNELS;
+/// The PL080's channels, numbered from PL080_CHANNEL0.
+pub const PL080_CHANNELS: u32 = switch (hardware.chip) {
+    .esp32s3, .esp32p4, .a64psci => 0,
+    .rv64sbi => hardware.pl080.channels,
+};
+pub const PL080_CHANNEL0: u32 = DWDMA_CHANNEL0 + DWDMA_CHANNELS;
+/// Every channel the resource hands out: general, 2D, DesignWare and
+/// PL080.
+pub const DMA_ALL_CHANNELS: u32 = DMA_CHANNELS + DMA2D_CHANNELS + DWDMA_CHANNELS + PL080_CHANNELS;
 
 /// A channel's sides: IN receives (device to memory), OUT transmits
 /// (memory to device).
@@ -206,12 +218,13 @@ pub const DMADescriptor = extern struct {
 };
 
 /// What dmaIntNumber answers for a side there is not: 2D channel 2's
-/// receive side, or a DesignWare channel where the board has no such
-/// controller.
+/// receive side, or a DesignWare or PL080 channel where the board has no
+/// such controller.
 pub const DMA_NOINT: u32 = 0xFFFF_FFFF;
 
 /// exec's interrupt number for a channel's side: general, 2D, or
-/// DesignWare - its controller's, from the board's part, for either side.
+/// DesignWare or PL080 - its controller's, from the board's part, for
+/// either side.
 pub fn dmaIntNumber(channel: u32, side: u32) u32 {
     const in = side == DMA_IN;
     switch (hardware.chip) {
@@ -227,6 +240,10 @@ pub fn dmaIntNumber(channel: u32, side: u32) u32 {
         },
         .rv64sbi => {
             if (channel < DWDMA_CHANNEL0 or channel >= DMA_ALL_CHANNELS) return DMA_NOINT;
+            if (channel >= PL080_CHANNEL0) {
+                const controller = hardware.pl080.find() orelse return DMA_NOINT;
+                return controller.irq;
+            }
             const controller = hardware.dwdma.find() orelse return DMA_NOINT;
             return controller.irq;
         },

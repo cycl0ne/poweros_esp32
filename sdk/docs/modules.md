@@ -271,6 +271,8 @@ flowchart TB
     m_bsdsocket_library -.-> m_slip_device
     m_bsdsocket_library --> m_timer_device
     m_clipboard_device --> m_dos_library
+    m_crypto_library --> m_dma_resource
+    m_crypto_library --> m_timer_device
     m_datatypes_library -.-> m_datatype_classes
     m_datatypes_library --> m_dos_library
     m_datatypes_library --> m_graphics_library

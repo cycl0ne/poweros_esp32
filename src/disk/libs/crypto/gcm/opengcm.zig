@@ -49,7 +49,7 @@ const _gcm = @import("_gcm.zig");
 /// None.
 ///
 /// BUGS:
-/// GHASH runs in software, as in SealGcm.
+/// As in SealGcm: on the S3 GHASH runs in software.
 ///
 /// SEE ALSO:
 /// `SealGcm`
