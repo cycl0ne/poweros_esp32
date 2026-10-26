@@ -13,7 +13,9 @@
 //! show the background again: that part becomes the ground's damage, and a
 //! layer's damage is backfilled - here in the background pen. The ground
 //! keeps nothing and draws nothing else, so its damage is dropped after
-//! every repair.
+//! every repair. On a composed screen it has no buffer of its own
+//! (`LATAG_NoBuffer`): it is painted by its backfill wherever it is seen,
+//! and costs no memory.
 //!
 //! **Buffers.** A screen draws in a buffer of its display's memory, the
 //! display's size. The first screen of a display takes the buffer the
@@ -83,9 +85,12 @@ pub const Screen = extern struct {
     /// The title bar, or null without one.
     bar: ?*layers.Layer = null,
     /// The whole screen at the very back: what a window leaves is its
-    /// damage, backfilled in the background pen by `ground_fill`.
+    /// damage, backfilled in the background pen by `ground_fill`. Composed,
+    /// it has no buffer and is painted by it wherever it is seen.
     ground: ?*layers.Layer = null,
     ground_fill: utility.Hook = .{},
+    /// What paints the ground: `ground_fill`, or the caller's `SA_BackFill`.
+    ground_hook: usize = 0,
     base: *IntuitionBase,
     font: *graphics.TextFont,
     /// Whether the font is the screen's own to close.

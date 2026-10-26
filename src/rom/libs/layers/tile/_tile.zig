@@ -92,7 +92,8 @@ pub fn inLayerSpace(lb: *LayersBase, layer: *Layer, also: ?*graphics.Region) ?*g
 /// Put a region, in the layer's coordinates, on the layer's RastPort as
 /// the places it may draw. What was there is freed. In a composed
 /// LayerInfo every target is the layer's own buffer, at no offset: the
-/// layer's coordinates are the buffer's.
+/// layer's coordinates are the buffer's. A bare layer has none: it may
+/// draw nowhere, and is only what its backfill paints when it is shown.
 ///
 /// INPUTS:
 /// - `lb` - the library.
@@ -106,7 +107,7 @@ pub fn inLayerSpace(lb: *LayersBase, layer: *Layer, also: ?*graphics.Region) ?*g
 pub fn install(lb: *LayersBase, layer: *Layer, region: *graphics.Region, with_kept: bool) bool {
     const gb = lb.graphics_base;
     const sys = lb.sys_base;
-    const count = gb.RegionRectangles(region, null, 0);
+    const count = if (compose.bare(layer)) 0 else gb.RegionRectangles(region, null, 0);
     // Where the pixels go: the display, at the layer's place on it, or
     // the layer's own buffer.
     const own: ?*sdk.rtg.RtgBitMap = if (compose.on(layer.info)) if (layer.own) |buffer| buffer.bitmap else null else null;

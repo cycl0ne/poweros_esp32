@@ -133,8 +133,10 @@ pub const LIBRARY_VERSION = 0;
 /// 54: on a composed screen a window has round corners and casts a
 /// shadow, and fades in as it opens and out as it closes, with motion
 /// (IPREFS_WindowCorners, IPREFS_WindowShadow, IPREFS_WindowFade).
-pub const LIBRARY_REVISION = 54;
-const BUILD_DATE = "25.10.2026";
+/// 55: a composed screen's ground has no buffer of its own
+/// (LATAG_NoBuffer): it is painted by its backfill wherever it is seen.
+pub const LIBRARY_REVISION = 55;
+const BUILD_DATE = "26.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

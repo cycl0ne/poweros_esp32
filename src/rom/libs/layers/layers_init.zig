@@ -41,10 +41,13 @@ pub const LIBRARY_VERSION = 0;
 /// time, not a row at a time.
 /// 11: the pieces of a composed layer copied on to the display as one job
 /// of the board's engine (rtg's CopyRects), not one a piece.
-pub const LIBRARY_REVISION = 11;
+/// 12: a composed layer with no buffer of its own (LATAG_NoBuffer), only
+/// what its backfill paints wherever it is seen; InstallLayerHook shows
+/// it again.
+pub const LIBRARY_REVISION = 12;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
-const BUILD_DATE = "25.10.2026";
+const BUILD_DATE = "26.10.2026";
 
 /// The `$VER:` string, NUL first so a scan of the image finds it.
 const LIBRARY_VERSION_STRING =

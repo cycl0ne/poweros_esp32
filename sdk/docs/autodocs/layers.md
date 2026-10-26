@@ -198,6 +198,8 @@ fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const TagItem
     pen, `LAYERS_NOBACKFILL` for nothing, or a `*Hook`.
   - `LATAG_MovesWith` - a `*Layer` of the same display it moves and
     sizes with.
+  - `LATAG_NoBuffer` - non-zero, composed: no buffer, only its
+    backfill, painted where it is seen.
   - `LATAG_ErrorPtr` - an `*i32` that gets the reason if it fails.
 
 **RESULT**
@@ -224,7 +226,10 @@ keeps it in the program's own bitmap. In a composed LayerInfo nothing
 is lost by any of them: a layer draws into a buffer of its own, the
 whole layer - for `LAYERSUPER`, its bitmap - and what of it can be seen
 is copied on to the display. A layer with `LAYERS_NOBACKFILL` starts as
-what the display showed where it lies.
+what the display showed where it lies. A simple one with a backfill can
+do without the buffer (`LATAG_NoBuffer`): it is then what its backfill
+paints on to the display wherever it is seen, covers all of what is
+behind it, and nothing drawn through its RastPort lands anywhere.
 
 **CONTEXT**
 
@@ -716,11 +721,19 @@ layer made bigger, uncovered, or created after this. The layer's
 RastPort carries it too, so anything handed the RastPort alone paints
 the ground the same way.
 
+A layer with no buffer (`LATAG_NoBuffer`) is nothing but what its
+backfill paints, so it is shown again at once, painted by the new one -
+how a screen's ground takes new pens, with the same hook installed
+again. It cannot show nothing: `LAYERS_NOBACKFILL` is its background
+pen instead, and 0 is what is given back for it after.
+
 **CONTEXT**
 
-- Waits: no.
+- Waits: for a layer with no buffer, while another task holds any of
+  the display's layers; otherwise no.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: none needed; for a layer with no buffer, every layer of the
+  display, taken here.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1384,7 +1397,8 @@ The display is shown again wherever the layer and its shadow were and
 are: a layer seen through laid over what is behind it at its new
 opacity, what it uncovers or covers anew copied. A tag not given
 leaves that as it was, and one this library does not know is ignored.
-Set once a frame, it is how a layer fades in or out: from 0 to 255 as
+A layer with no buffer (`LATAG_NoBuffer`) is always opaque: its
+`LATAG_Opacity` is ignored. Set once a frame, it is how a layer fades in or out: from 0 to 255 as
 it comes, the other way round as it goes, a ghost (`LATAG_Ghost`) so
 that nothing is meant for it meanwhile, then deleted.
 

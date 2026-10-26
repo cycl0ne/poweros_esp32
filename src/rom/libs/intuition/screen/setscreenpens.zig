@@ -117,6 +117,10 @@ fn paint(ib: *IntuitionBase, s: *Screen) void {
         var rp: usize = 0;
         lb.GetLayerAttrs(ground, &[_]TagItem{ .{ .tag = layers.LATAG_GetRastPort, .data = @intFromPtr(&rp) }, .{} });
         if (rp != 0) gb.EraseRect(@ptrFromInt(rp), &.{ .max_x = s.width, .max_y = s.height });
+        // A composed screen's ground has no buffer, and its RastPort
+        // draws nowhere: its hook installed again shows it in the new
+        // pens. To any other ground it changes nothing.
+        _ = lb.InstallLayerHook(ground, s.ground_hook);
     }
     _screen.drawBar(ib, s);
     var node = s.windows.head;

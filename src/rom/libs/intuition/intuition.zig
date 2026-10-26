@@ -2756,6 +2756,59 @@ test "SetScreenPens: the system's pens reach a screen and its window's ground; a
     try tearDown(ib);
 }
 
+test "screens: composed, the ground has no buffer, and is its pens wherever a window leaves it" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const sc = intuition.screens;
+    const layers = sdk.layers;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 80, 80, .rgb565);
+    display.board.info.flags |= sdk.rtg.boards.RTGBF_COMPOSE;
+    // Closed, a window goes at once rather than fading on the input task;
+    // and a small shadow, whose picture the tests' memory has room for.
+    ib.window_fade = 0;
+    ib.window_shadow = 3;
+
+    const screen = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_Title, .data = @intFromPtr("Composed") }, .{} }).?;
+    const kept: *_kscreen.Screen = @ptrCast(@alignCast(screen));
+    // The bar has a buffer, the ground none.
+    var composed: u32 = 0;
+    ib.layers_base.GetLayerAttrs(kept.bar.?, &[_]TagItem{ .{ .tag = layers.LATAG_GetComposed, .data = @intFromPtr(&composed) }, .{} });
+    try testing.expectEqual(@as(u32, 1), composed);
+    ib.layers_base.GetLayerAttrs(kept.ground.?, &[_]TagItem{ .{ .tag = layers.LATAG_GetComposed, .data = @intFromPtr(&composed) }, .{} });
+    try testing.expectEqual(@as(u32, 0), composed);
+    const ground = display.pixel(70, 70);
+    try testing.expect(ground != 0);
+
+    // A window with a shadow over it, taken away: the ground is painted
+    // again where it was, and its shadow is gone.
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 10 },
+        .{ .tag = wn.WA_Top, .data = 20 },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_CustomScreen, .data = @intFromPtr(screen) },
+        .{},
+    }).?;
+    // Its frame, and its shadow below it.
+    try testing.expect(display.pixel(10, 35) != ground);
+    try testing.expect(display.pixel(30, 50) != ground);
+    it.CloseWindow(w);
+    for (12..80) |y| for (0..80) |x| try testing.expectEqual(ground, display.pixel(x, y));
+
+    // New pens reach it: the ground is painted in the new background.
+    var pens = kept.pens;
+    pens[sc.BACKGROUNDPEN] = graphics.penRGB(0xFF, 0, 0);
+    it.SetScreenPens(screen, &pens);
+    try testing.expectEqual(@as(u16, 0xF800), display.pixel(70, 70));
+    try testing.expectEqual(@as(u16, 0xF800), display.pixel(5, 40));
+
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "input: a window that never takes the activation is pressed beside a field being typed into" {
     const ib = try setUp();
     defer kexec.deinit();

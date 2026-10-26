@@ -28,6 +28,13 @@
 //! the layer is: a swapchain's image shown in a window, without a copy
 //! into the window first.
 //!
+//! A layer that is nothing but its backfill - a screen's ground, which a
+//! buffer would cost the size of the display - can have none
+//! (`LATAG_NoBuffer`). Where it is seen it is painted on to the display by
+//! its backfill whenever it is shown, as a layer with a buffer is copied,
+//! and darkened after where shadows fall on it: fresh, then darkened, so
+//! a shadow is never laid twice. Its RastPort draws nowhere.
+//!
 //! The buffer is attached to the display's board (rtg's AttachBitMap), so
 //! the board's engine draws in it as it draws on the display; its memory
 //! is this library's, from exec, and none of the board's own. A super
@@ -44,6 +51,7 @@ const layers = sdk.layers;
 const rtg = sdk.rtg;
 const utility = sdk.utility;
 const Rect = graphics.Rect;
+const TagItem = utility.TagItem;
 
 const info_mod = @import("../layerinfo/_layerinfo.zig");
 const LayerInfo = info_mod.LayerInfo;
@@ -51,6 +59,7 @@ const Layer = info_mod.Layer;
 const Buffer = info_mod.Buffer;
 const LayersBase = @import("../layers.zig").LayersBase;
 const super = @import("../super/_super.zig");
+const backfill = @import("../backfill/_backfill.zig");
 const effects = @import("_effects.zig");
 
 /// Whether this build composes at all. The 32-bit machines are the
@@ -186,6 +195,44 @@ pub fn take(lb: *LayersBase, layer: *Layer) bool {
     return true;
 }
 
+/// What a new layer of a composed LayerInfo that has no buffer
+/// (`LATAG_NoBuffer`) paints through, made before the layer is on the
+/// list: a handle on the display's memory, attached to its board so the
+/// engine paints there, and whose hand-on is nobody's - what is painted
+/// is handed on with the rest of what is shown. False without memory.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer: simple, with a backfill.
+pub fn takeBare(lb: *LayersBase, layer: *Layer) bool {
+    const info = layer.info;
+    const board = boardOf(info) orelse return false;
+    const display = info.bitmap orelse return false;
+    const described = rtg.RtgBitMap{
+        .pixels = display.pixels,
+        .width = display.width,
+        .height = display.height,
+        .pitch = display.pitch,
+        .size_bytes = display.size_bytes,
+        .format = display.format,
+    };
+    const bitmap = lb.rtg_base.AttachBitMap(board, &described) orelse return false;
+    _ = lb.sys_base.SetMemOwner(bitmap, null);
+    layer.watch = .{ .entry = &unwatched, .data = layer };
+    bitmap.watch = &layer.watch;
+    layer.through = bitmap;
+    return true;
+}
+
+/// Whether a layer has no buffer of its own and is only what its backfill
+/// paints.
+///
+/// INPUTS:
+/// - `layer` - the layer.
+pub inline fn bare(layer: *const Layer) bool {
+    return built and layer.through != null;
+}
+
 /// A layer's buffer given back, as the layer goes.
 ///
 /// INPUTS:
@@ -193,6 +240,10 @@ pub fn take(lb: *LayersBase, layer: *Layer) bool {
 /// - `layer` - the layer, off the list.
 pub fn drop(lb: *LayersBase, layer: *Layer) void {
     layer.picture = null;
+    if (layer.through) |bitmap| {
+        layer.through = null;
+        free(lb, .{ .bitmap = bitmap });
+    }
     const buffer = layer.own orelse return;
     layer.own = null;
     free(lb, buffer);
@@ -280,6 +331,15 @@ fn watched(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callc
         .max_x = written.x + written.width + ox,
         .max_y = written.y + written.height + oy,
     });
+    return 0;
+}
+
+/// What the display's handle a bare layer paints through is told: nothing
+/// to do. Whoever is showing it hands what it painted on.
+fn unwatched(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = hook;
+    _ = object;
+    _ = message;
     return 0;
 }
 
@@ -461,11 +521,37 @@ const Batch = struct {
     }
 
     fn finish(b: *Batch, lb: *LayersBase, layer: *const Layer, piece: Rect) void {
-        const gather = b.gather orelse return;
-        if (layer.info.shaded and effects.shadedFront(layer, piece)) effects.darkenFront(lb, layer, piece);
-        gather.add(lb, layer.info, piece);
+        land(lb, layer, piece, b.gather orelse return);
     }
 };
+
+/// A piece just put on the display from `layer`, darkened where the
+/// shadows of the layers in front fall on it - before it is handed on, so
+/// it is never seen without them - and gathered to be handed on.
+fn land(lb: *LayersBase, layer: *const Layer, piece: Rect, gather: *Gather) void {
+    if (layer.info.shaded and effects.shadedFront(layer, piece)) effects.darkenFront(lb, layer, piece);
+    gather.add(lb, layer.info, piece);
+}
+
+/// A piece of a bare layer, in the display's coordinates and inside what
+/// it can see, painted on to the display by the layer's backfill: through
+/// its own RastPort, narrowed to the piece for the call. The caller holds
+/// every layer, so nothing else draws through that RastPort meanwhile.
+fn paintBare(lb: *LayersBase, layer: *Layer, piece: Rect) void {
+    const through = layer.through orelse return;
+    const gb = lb.graphics_base;
+    const ox, const oy = super.origin(layer);
+    var target = graphics.ClipTarget{
+        .rect = .{ .min_x = piece.min_x - ox, .min_y = piece.min_y - oy, .max_x = piece.max_x - ox, .max_y = piece.max_y - oy },
+        .surface = @ptrCast(through),
+        .bitmap = through,
+        .dx = ox,
+        .dy = oy,
+    };
+    gb.SetRPAttrs(layer.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&target) }, .{} });
+    backfill.fill(lb, layer, target.rect);
+    gb.SetRPAttrs(layer.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(layer.targets) }, .{} });
+}
 
 /// The pieces of a layer's visible region, `at_hand` or from exec, for
 /// `each` to be called with every one of them inside `cut`.
@@ -516,9 +602,10 @@ pub fn showLayer(lb: *LayersBase, layer: *Layer, area: Rect) void {
     gather.handOn(lb, layer.info);
 }
 
-/// `showLayer`, its pieces gathered for the caller to hand on.
+/// `showLayer`, its pieces gathered for the caller to hand on. A bare
+/// layer's are painted rather than copied.
 fn copyLayer(lb: *LayersBase, layer: *Layer, area: Rect, gather: *Gather) void {
-    if (layer.own == null) return;
+    if (layer.own == null and !bare(layer)) return;
     if (layer.opacity != 255) return;
     const cut = Rect.intersect(area, layer.bounds);
     if (cut.isEmpty()) return;
@@ -528,10 +615,16 @@ fn copyLayer(lb: *LayersBase, layer: *Layer, area: Rect, gather: *Gather) void {
         batch: *Batch,
 
         fn piece(each: @This(), r: Rect) void {
-            if (!each.layer.info.veiled) return each.batch.add(each.lb, each.layer, r);
+            if (!each.layer.info.veiled) return each.put(r);
             var parts: [effects.most_unveiled]Rect = undefined;
             const n = effects.unveiled(each.layer, r, &parts);
-            for (parts[0..n]) |part| each.batch.add(each.lb, each.layer, part);
+            for (parts[0..n]) |part| each.put(part);
+        }
+
+        fn put(each: @This(), r: Rect) void {
+            if (!bare(each.layer)) return each.batch.add(each.lb, each.layer, r);
+            paintBare(each.lb, each.layer, r);
+            land(each.lb, each.layer, r, each.batch.gather.?);
         }
     };
     var batch = Batch{ .gather = gather };
@@ -540,8 +633,8 @@ fn copyLayer(lb: *LayersBase, layer: *Layer, area: Rect, gather: *Gather) void {
 }
 
 /// Everything inside `area` copied on to the display again, each pixel
-/// from the layer that can be seen there. What no layer covers is left as
-/// it is.
+/// from the layer that can be seen there - painted, from a bare one. What
+/// no layer covers is left as it is.
 ///
 /// The caller holds every layer, so no layer is drawn meanwhile, and the
 /// whole of it is handed on to the board at once. With shadows, or a
@@ -578,6 +671,7 @@ fn showInto(lb: *LayersBase, info: *LayerInfo, area: Rect, gather: *Gather) void
         batch: *Batch,
 
         fn piece(each: @This(), r: Rect) void {
+            if (bare(each.layer)) return paintBare(each.lb, each.layer, r);
             if (each.layer.opacity != 255) return putLayer(each.lb, each.layer, r, .laid);
             each.batch.add(each.lb, each.layer, r);
         }
@@ -587,7 +681,7 @@ fn showInto(lb: *LayersBase, info: *LayerInfo, area: Rect, gather: *Gather) void
         const layer: *Layer = @fieldParentPtr("node", node);
         at = if (node.pred.?.pred == null) null else node.pred;
         effects.darken(lb, layer, cut);
-        if (layer.own != null) {
+        if (layer.own != null or bare(layer)) {
             // Each layer's copied before the next one's shadow falls on it.
             var batch = Batch{};
             eachPiece(lb, layer, cut, Each{ .lb = lb, .layer = layer, .batch = &batch }, Each.piece);

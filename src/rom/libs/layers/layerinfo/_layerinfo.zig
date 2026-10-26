@@ -171,6 +171,11 @@ pub const Layer = struct {
     /// the hook its handle tells of what was drawn. Null in any other.
     own: ?Buffer = null,
     watch: utility.Hook = .{},
+    /// Composed and with no buffer of its own (`LATAG_NoBuffer`): a handle
+    /// on the display's memory, which its backfill paints through where
+    /// it is seen. Its hook is `watch`, told nothing: what is painted is
+    /// handed on with what the compositor copies. Null for every other.
+    through: ?*rtg.RtgBitMap = null,
     /// A picture of the caller's shown over `picture_area` - the layer's
     /// coordinates - in place of the buffer there (`ShowLayerPicture`),
     /// or null.
