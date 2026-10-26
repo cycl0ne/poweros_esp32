@@ -16,11 +16,16 @@
 //! its side - answers STATUS_PENDING first, and each of those starts the
 //! receive's time again.
 //!
-//! **Its receive ring is 64 KiB**, set before it connects, so that the
-//! SYN already offers it: the ring is the window the server may send
-//! into, and a stream socket's 8 KiB took a 64 KiB READ's answer eight
-//! round trips. 64 KiB is as wide as a window goes without window
-//! scaling.
+//! **Its rings are 64 KiB**, set before it connects, so that the SYN
+//! already offers the receive ring: the ring is the window the server
+//! may send into, and a stream socket's 8 KiB took a 64 KiB READ's answer
+//! eight round trips. Wider is slower on the VisionFive 2, though its
+//! windows scale: the server sends a window at the link's speed, faster
+//! than the stack takes it, and past the device's 128 reads (about
+//! 180 KiB) the rest is lost - READs fell from 50 MB/s at 64 and 128 KiB
+//! to 14 at 256 KiB and under 1 at 1 MiB. The send ring is 64 KiB on the
+//! 64-bit boards as well (WRITEs 31 MB/s against 27 with the stack's
+//! 8 KiB), and the stack's own elsewhere.
 
 const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
@@ -32,7 +37,9 @@ pub const connect_seconds: u32 = 10;
 pub const io_seconds: u32 = 30;
 
 /// The socket's receive ring, and so the window offered.
-const ring_bytes: i32 = 64 * 1024;
+const receive_ring: i32 = 64 * 1024;
+/// Its send ring: the stack's own 8 KiB where memory is short.
+const send_ring: ?i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 64 * 1024 else null;
 
 /// What framing takes in front of a message.
 pub const frame_header: usize = 4;
@@ -76,7 +83,8 @@ pub const Connection = struct {
                 failure.code = sb.Errno();
                 continue;
             }
-            _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &ring_bytes, @sizeOf(i32));
+            _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &receive_ring, @sizeOf(i32));
+            if (send_ring) |bytes| _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_SNDBUF, &bytes, @sizeOf(i32));
             setTime(sb, socket, bsd.SO_SNDTIMEO, connect_seconds);
             if (sb.Connect(socket, address, address_info.ai_addrlen) < 0) {
                 failure.code = sb.Errno();

@@ -25,6 +25,10 @@
 //! comes before its turn is dropped and a duplicate acknowledgement sent,
 //! so the peer sends it again.
 //!
+//! **Window scaling** (RFC 7323): a SYN's window scale option is read,
+//! and when both SYNs had one every later window from the peer is taken
+//! shifted by what its SYN said, held to 14.
+//!
 //! **Urgent data** (URG): the pointer marks one past the last urgent
 //! byte. That byte is set aside from the stream when it comes, for
 //! Recv with MSG_OOB, and the place it was taken from is the mark.
@@ -63,8 +67,10 @@ const Segment = struct {
     window: u32,
     /// The urgent pointer, read with URG.
     urgent: u32,
-    /// The MSS option, if it came.
+    /// The MSS option, if it came; the window scale option's shift, if it
+    /// came, on a SYN.
     mss: ?u32,
+    shift: ?u8,
     /// The data after the header, and what the segment occupies of the
     /// sequence space: the data, and one each for SYN and FIN.
     data: []const u8,
@@ -86,6 +92,7 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
     if (header.destination.isV4() and _netif.isBroadcast(stack, header.destination.v4())) return;
     const flags = bytes[13];
     const data = bytes[offset..];
+    const options = optionsOf(bytes[_tcp.header_bytes..offset]);
     var seg: Segment = .{
         .source_port = _ip.get16(bytes, 0),
         .destination_port = _ip.get16(bytes, 2),
@@ -94,7 +101,8 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
         .flags = flags,
         .window = _ip.get16(bytes, 14),
         .urgent = _ip.get16(bytes, 18),
-        .mss = mssOption(bytes[_tcp.header_bytes..offset]),
+        .mss = options.mss,
+        .shift = if (flags & _tcp.SYN != 0) options.shift else null,
         .data = data,
         .length = @as(u32, @intCast(data.len)) + @intFromBool(flags & _tcp.SYN != 0) + @intFromBool(flags & _tcp.FIN != 0),
     };
@@ -116,6 +124,8 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
         return output.sendReset(stack, header, seg.destination_port, seg.source_port, seg.seq, seg.ack, seg.length, seg.flags);
     };
     const tcb = _tcp.of(socket);
+    // Every window but a SYN's comes shifted by what the peer's SYN said.
+    if (flags & _tcp.SYN == 0) seg.window <<= @intCast(tcb.snd_shift);
     switch (tcb.state) {
         .listen => listening(stack, socket, &seg, header),
         .syn_sent => synSent(stack, tcb, &seg, header),
@@ -128,23 +138,42 @@ fn bad(stack: *StackBase) void {
     stack.counts.tcp_bad += 1;
 }
 
-/// The MSS option among `options`, if it is there and whole.
-fn mssOption(options: []const u8) ?u32 {
+/// The options this stack reads.
+const Options = struct {
+    mss: ?u32 = null,
+    shift: ?u8 = null,
+};
+
+/// The MSS and window scale options among `options`, each if it is there
+/// and whole.
+fn optionsOf(options: []const u8) Options {
+    var found: Options = .{};
     var at: usize = 0;
     while (at < options.len) {
         const kind = options[at];
-        if (kind == _tcp.option_end) return null;
+        if (kind == _tcp.option_end) break;
         if (kind == _tcp.option_nop) {
             at += 1;
             continue;
         }
-        if (at + 1 >= options.len) return null;
+        if (at + 1 >= options.len) break;
         const length = options[at + 1];
-        if (length < 2 or at + length > options.len) return null;
-        if (kind == _tcp.option_mss and length == 4) return _ip.get16(options, at + 2);
+        if (length < 2 or at + length > options.len) break;
+        if (kind == _tcp.option_mss and length == 4) found.mss = _ip.get16(options, at + 2);
+        if (kind == _tcp.option_window_scale and length == 3) found.shift = @min(options[at + 2], _tcp.shift_max);
         at += length;
     }
-    return null;
+    return found;
+}
+
+/// The connection's windows scaled when the peer's SYN offered window
+/// scaling and this end scales: ours go out shifted by `window_shift`,
+/// the peer's are read shifted by what it said. Neither is otherwise.
+fn agreeScale(tcb: *Tcb, seg: *const Segment) void {
+    const shift = seg.shift orelse return;
+    if (_tcp.window_shift == 0) return;
+    tcb.snd_shift = shift;
+    tcb.rcv_shift = _tcp.window_shift;
 }
 
 /// The MSS to send with: the peer's, if it named one, held to what our
@@ -195,6 +224,7 @@ fn listening(stack: *StackBase, listener: *Socket, seg: *const Segment, header: 
     tcb.snd_wl1 = seg.seq;
     tcb.snd_wl2 = seg.ack;
     tcb.mss = sendMss(stack, child, seg.mss);
+    agreeScale(tcb, seg);
     tcb.listener = listener;
     stack.sys_base.AddTail(&lt.accept_queue, &tcb.accept_node);
     lt.queued += 1;
@@ -220,6 +250,7 @@ fn synSent(stack: *StackBase, tcb: *Tcb, seg: *const Segment, header: _inet.Pack
     tcb.irs = seg.seq;
     tcb.rcv_nxt = seg.seq +% 1;
     tcb.mss = sendMss(stack, socket, seg.mss);
+    agreeScale(tcb, seg);
     if (ack_acceptable) tcb.snd_una = seg.ack;
     if (_tcp.after(tcb.snd_una, tcb.iss)) {
         tcb.state = .established;
@@ -515,8 +546,12 @@ fn takeText(stack: *StackBase, tcb: *Tcb, seg: *const Segment) bool {
         } else {
             const taken = _tcp.deliver(tcb, seg.data);
             tcb.rcv_nxt +%= taken;
-            if (tcb.held_bytes > 0 and reorder.release(stack, tcb) > 0) {
-                // A hole filled: said at once.
+            if (tcb.held_bytes > 0) {
+                // A hole filled, or the front of one: said at once (RFC
+                // 5681 4.2). A sender without SACK sends what is missing
+                // a segment an acknowledgement, and one held back for the
+                // delayed acknowledgement cost 200 ms a segment.
+                _ = reorder.release(stack, tcb);
                 tcb.flags |= _tcp.ack_now;
             }
             if (taken > 0) _socket.wake(socket, bsd.FD_READ);

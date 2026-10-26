@@ -11,6 +11,12 @@
 //! again, from there. Its receive ring holds what came in order and the
 //! program has not read; the room left in it is the window offered.
 //!
+//! **Window scaling** (RFC 7323) is offered in the SYN where a ring may
+//! be larger than the 64 KiB a window says unscaled: the 64-bit boards,
+//! whose rings go up to 1 MiB. Both ends must offer it for it to count;
+//! from then on every window but a SYN's is shifted, ours by
+//! `window_shift`, the peer's by what its SYN said.
+//!
 //! **Sequence numbers** wrap at 2^32, so they are compared by the sign of
 //! their difference, never with < on the numbers themselves.
 //!
@@ -19,6 +25,7 @@
 //! sends what was written, says FIN and waits out TIME_WAIT. While it does
 //! it holds the library open. It is freed when it reaches CLOSED.
 
+const builtin = @import("builtin");
 const sdk = @import("sdk");
 const Address = @import("../ip6/address.zig").Address;
 const exec = sdk.exec;
@@ -48,15 +55,26 @@ pub const URG: u8 = 0x20;
 pub const option_end: u8 = 0;
 pub const option_nop: u8 = 1;
 pub const option_mss: u8 = 2;
+pub const option_window_scale: u8 = 3;
 
 /// The MSS a peer that names none is taken to have (RFC 9293 3.7.1).
 pub const default_mss: u32 = 536;
 /// The longest a listener's queue of connections not yet accepted may be.
 pub const backlog_max: u32 = 8;
-/// What a ring holds by default, and at the least and most.
+/// What a ring holds by default, and at the least and most: 1 MiB on the
+/// 64-bit boards, where memory is plenty, as much as a window says
+/// unscaled elsewhere. The host tests take the 64-bit boards' sizes, so
+/// window scaling is tested.
 pub const ring_default: u32 = 8 * 1024;
 pub const ring_min: u32 = 1024;
-pub const ring_max: u32 = 64 * 1024;
+pub const ring_max: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or builtin.is_test) 1 << 20 else 64 * 1024;
+/// The shift our windows go out with when the peer scales too: enough
+/// for the largest ring (65535 << 4 is 16 bytes short of 1 MiB). 0 where
+/// a ring is no larger than a window unscaled, and then no window scale
+/// is offered at all.
+pub const window_shift: u8 = if (ring_max > 65535) 4 else 0;
+/// The largest shift a peer may ask for (RFC 7323 2.3).
+pub const shift_max: u8 = 14;
 /// The longest segment lifetime, and TIME_WAIT's 2 MSL.
 pub const msl_us: u64 = 30_000_000;
 
@@ -139,15 +157,14 @@ pub const Ring = extern struct {
     }
 
     /// As much of `bytes` added at the end as there is room for: how much.
+    /// Two copies at the most, up to the ring's end and on from its start.
     pub fn write(ring: *Ring, bytes: []const u8) u32 {
         const taken: u32 = @min(ring.space(), @as(u32, @intCast(bytes.len)));
         const data = ring.data.?;
-        var at = (ring.start + ring.count) % ring.size;
-        for (bytes[0..taken]) |byte| {
-            data[at] = byte;
-            at += 1;
-            if (at == ring.size) at = 0;
-        }
+        const at = (ring.start + ring.count) % ring.size;
+        const first = @min(taken, ring.size - at);
+        @memcpy(data[at..][0..first], bytes[0..first]);
+        @memcpy(data[0 .. taken - first], bytes[first..taken]);
         ring.count += taken;
         return taken;
     }
@@ -156,12 +173,11 @@ pub const Ring = extern struct {
     /// stay in the ring.
     pub fn copyOut(ring: *const Ring, offset: u32, into: []u8) void {
         const data = ring.data.?;
-        var at = (ring.start + offset) % ring.size;
-        for (into) |*byte| {
-            byte.* = data[at];
-            at += 1;
-            if (at == ring.size) at = 0;
-        }
+        const at = (ring.start + offset) % ring.size;
+        const length: u32 = @intCast(into.len);
+        const first = @min(length, ring.size - at);
+        @memcpy(into[0..first], data[at..][0..first]);
+        @memcpy(into[first..], data[0 .. length - first]);
     }
 
     /// The first `count` bytes let go of.
@@ -177,7 +193,11 @@ pub const Ring = extern struct {
 pub const Tcb = extern struct {
     socket: *Socket,
     state: State = .closed,
-    pad: [3]u8 = .{ 0, 0, 0 },
+    /// Window scaling: the shift the peer's windows are read with and the
+    /// one ours go out with - both 0 unless both SYNs offered it.
+    snd_shift: u8 = 0,
+    rcv_shift: u8 = 0,
+    pad: u8 = 0,
     flags: u32 = 0,
     /// Send sequence variables; `ring_seq` is the sequence number of the
     /// send ring's first byte.
@@ -230,9 +250,12 @@ pub const Tcb = extern struct {
     dupacks: u32 = 0,
     /// In-order segments not acknowledged yet.
     unacked_segments: u32 = 0,
-    /// Segments that came before their turn (reorder.zig), and their bytes.
+    /// Segments that came before their turn (reorder.zig), their bytes and
+    /// how many there are.
     held: exec.List = .{},
     held_bytes: u32 = 0,
+    held_count: u16 = 0,
+    pad4: u16 = 0,
     /// When a segment last came, for keepalive.
     last_heard: u64 align(4) = 0,
     /// Urgent data going out: one past its last byte (SND.UP), while

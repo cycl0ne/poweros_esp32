@@ -2496,7 +2496,8 @@ bsdsocket.library/WaitSelect
 	queue takes one datagram whatever the limit. It is held to between 1
 	byte and 256 KiB. On a
 	stream socket it and `SO_SNDBUF` are the sizes of its rings, from 1 KiB
-	to 64 KiB, and change only while the ring is empty (`EINVAL` else).
+	to 64 KiB - to 1 MiB on the 64-bit boards, whose windows are scaled -
+	and change only while the ring is empty (`EINVAL` else).
 	`SO_REUSEADDR` must be set before Bind to count. `SO_SNDTIMEO` is kept
 	and changes nothing for a datagram socket, which never waits to send.
 	`SO_EVENTMASK` with `FD_WRITE` tells of it at once, since a datagram

@@ -29,14 +29,16 @@ const _timer = @import("../timer/_timer.zig");
 const protocol: u8 = @intCast(bsd.IPPROTO_TCP);
 
 /// The window to offer: the room in the receive ring, as much of it as
-/// 16 bits say.
+/// 16 bits say once shifted by the connection's scale.
 pub fn window(tcb: *const Tcb) u32 {
-    return @min(tcb.receive.space(), 65535);
+    return @min(tcb.receive.space(), @as(u32, 65535) << @intCast(tcb.rcv_shift));
 }
 
 /// One segment of `connection`: `length` bytes from `ring_offset` in the
-/// send ring, with `flags`, and the MSS option on a SYN. 0, or the errno
-/// that says why it could not go.
+/// send ring, with `flags`, and on a SYN the MSS option and, where this
+/// end scales its windows, the window scale - in our own SYN always, in
+/// the answer to the peer's only when that offered it too. 0, or the
+/// errno that says why it could not go.
 pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offset: u32, length: u32) i32 {
     const socket = tcb.socket;
     const path = _inet.route(stack, socket.remote_address, socket.scope) orelse return bsd.EHOSTUNREACH;
@@ -44,8 +46,13 @@ pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offs
     if (length > 0) tcb.send.copyOut(ring_offset, frame.room()[frame.start..][0..length]);
     frame.length = length;
     const with_mss = flags & _tcp.SYN != 0;
-    const header_length: u32 = _tcp.header_bytes + @as(u32, if (with_mss) 4 else 0);
-    const offered = window(tcb);
+    const with_scale = with_mss and _tcp.window_shift != 0 and (tcb.state == .syn_sent or tcb.rcv_shift != 0);
+    const header_length: u32 = _tcp.header_bytes + @as(u32, if (with_mss) 4 else 0) + @as(u32, if (with_scale) 4 else 0);
+    // A SYN's window is never scaled (RFC 7323 2.2); any other says the
+    // window shifted down, and what it offers is that shifted back up.
+    const shift: u5 = if (with_mss) 0 else @intCast(tcb.rcv_shift);
+    const field = @min(window(tcb), @as(u32, 65535) << shift) >> shift;
+    const offered = field << shift;
     const header = frame.push(header_length);
     _ip.put16(header, 0, socket.local_port);
     _ip.put16(header, 2, socket.remote_port);
@@ -56,13 +63,19 @@ pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offs
     const urgent = flags & (_tcp.ACK | _tcp.RST) == _tcp.ACK and tcb.flags & _tcp.urgent_out != 0 and _tcp.after(tcb.snd_up, sequence);
     header[12] = @intCast((header_length / 4) << 4);
     header[13] = if (urgent) flags | _tcp.URG else flags;
-    _ip.put16(header, 14, @intCast(offered));
+    _ip.put16(header, 14, @intCast(field));
     _ip.put16(header, 16, 0);
     _ip.put16(header, 18, if (urgent) @intCast(@min(tcb.snd_up -% sequence, 0xFFFF)) else 0);
     if (with_mss) {
         header[20] = _tcp.option_mss;
         header[21] = 4;
         _ip.put16(header, 22, @intCast(localMss(path.mtu, socket.remote_address)));
+    }
+    if (with_scale) {
+        header[24] = _tcp.option_nop;
+        header[25] = _tcp.option_window_scale;
+        header[26] = 3;
+        header[27] = _tcp.window_shift;
     }
     const total = frame.length;
     const checksum = _ip.finish(_ip.sum(_inet.pseudoSum(socket.local_address, socket.remote_address, protocol, total), frame.bytes()));
@@ -88,7 +101,9 @@ pub fn localMss(mtu: u32, peer: Address) u32 {
 /// data is in flight, unless TCP_NODELAY or urgent data (Nagle) - the FIN once the data
 /// before it has gone, and an acknowledgement if one is owed and nothing
 /// else carried it. After a timeout SND.NXT is back at SND.UNA, and the
-/// same loop sends everything again, FIN included.
+/// same loop sends everything again, FIN included. A segment the link
+/// has no room for (ENOBUFS) waits for the acknowledgements of those
+/// before it.
 pub fn output(stack: *StackBase, tcb: *Tcb) void {
     switch (tcb.state) {
         .closed, .listen, .syn_sent, .time_wait => {
@@ -137,6 +152,19 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
             tcb.rtt_start = now;
         }
         const refused = segment(stack, tcb, sequence, flags, offset, length);
+        if (refused == bsd.ENOBUFS) {
+            // No frame, or the link's queue full: the segment did not go.
+            // SND.NXT goes back to it, and the congestion window to half
+            // of what is in flight, so the queue drains before the next
+            // burst; the acknowledgements of what went send it, or the
+            // timer does if none come. Not the connection's error.
+            tcb.snd_nxt = sequence;
+            if (tcb.timing != 0 and tcb.rtt_seq == sequence) tcb.timing = 0;
+            tcb.ssthresh = @max((sequence -% tcb.snd_una) / 2, 2 * tcb.mss);
+            tcb.cwnd = tcb.ssthresh;
+            timers.arm(stack, tcb, now);
+            break;
+        }
         if (refused != 0) {
             tcb.socket.pending_error = refused;
             break;
@@ -147,7 +175,8 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
     timers.persist(stack, tcb, now);
 }
 
-/// A SYN, or a SYN and ACK answering one: ISS, and the MSS option.
+/// A SYN, or a SYN and ACK answering one: ISS, the MSS option and the
+/// window scale where it goes.
 pub fn sendSyn(stack: *StackBase, tcb: *Tcb) i32 {
     const flags: u8 = if (tcb.state == .syn_received) _tcp.SYN | _tcp.ACK else _tcp.SYN;
     const refused = segment(stack, tcb, tcb.iss, flags, 0, 0);

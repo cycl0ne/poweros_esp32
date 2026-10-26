@@ -24,7 +24,7 @@ const Interface = @import("../netif/_netif.zig").Interface;
 
 /// Room in front for the headers of a packet going out: the link's (14 on
 /// Ethernet), IPv6's (40; IPv4's is 20) and the transport's (8 for UDP,
-/// 20 for TCP, 24 with the MSS option), rounded up.
+/// 20 for TCP, 28 with the MSS and window scale options), rounded up.
 pub const headroom = 96;
 /// A frame's buffer: the headroom and the largest packet a link takes,
 /// 1500 bytes of IP and a 14-byte header, with its checksum.
