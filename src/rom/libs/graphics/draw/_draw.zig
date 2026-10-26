@@ -148,29 +148,13 @@ pub fn pixelBytes(format: PixelFormat) u32 {
     return @max(rtg.bitmaps.formatBits(format) / 8, 1);
 }
 
-/// Write one pixel, already packed into the surface's format.
-///
-/// INPUTS:
-/// - `at` - where the pixel is.
-/// - `bytes` - how many bytes a pixel takes.
-/// - `value` - the pixel, in the surface's format, right-aligned.
-fn putPixel(at: [*]u8, bytes: u32, value: u32) void {
-    // Little-endian, low bytes first, which is the order the formats are
-    // named in and the order a display reads them back.
-    var i: u32 = 0;
-    while (i < bytes) : (i += 1) at[i] = @truncate(value >> @intCast(i * 8));
-}
-
 /// Read one pixel, still in the surface's format.
 ///
 /// INPUTS:
 /// - `at` - where the pixel is.
 /// - `bytes` - how many bytes a pixel takes.
 pub fn getPixel(at: [*]const u8, bytes: u32) u32 {
-    var value: u32 = 0;
-    var i: u32 = 0;
-    while (i < bytes) : (i += 1) value |= @as(u32, at[i]) << @intCast(i * 8);
-    return value;
+    return rows.load(at, bytes);
 }
 
 /// `src` over `dst`, both 0xAARRGGBB, by src's alpha.
@@ -186,13 +170,330 @@ pub fn over(src: Pen, dst: Pen) Pen {
     const a: u32 = src >> 24 & 0xFF;
     if (a == 0xFF) return src;
     if (a == 0) return dst;
-    const inv = 255 - a;
-    // Rounded rather than truncated, so a pen at full alpha over anything
-    // is exactly the pen and a run of composites does not drift dark.
-    const r = (((src >> 16 & 0xFF) * a) + ((dst >> 16 & 0xFF) * inv) + 127) / 255;
-    const g = (((src >> 8 & 0xFF) * a) + ((dst >> 8 & 0xFF) * inv) + 127) / 255;
-    const b = (((src & 0xFF) * a) + ((dst & 0xFF) * inv) + 127) / 255;
-    return graphics.penARGB(0xFF, @truncate(r), @truncate(g), @truncate(b));
+    return Mix.of(src).over(dst);
+}
+
+/// x / 255 rounded down, for x up to 255 * 255 + 255: what every mix of
+/// two colours ends in, without a division.
+///
+/// INPUTS:
+/// - `x` - the sum.
+pub inline fn div255(x: u32) u32 {
+    return (x + 1 + (x >> 8)) >> 8;
+}
+
+/// The same for two values a half-word each, as red and blue lie in a
+/// pixel, each up to 255 * 255 + 127 - what a mix sums to - so that
+/// neither carries into the other.
+///
+/// INPUTS:
+/// - `x` - the two sums, one in each half.
+inline fn div255Pair(x: u32) u32 {
+    return (x + 0x0001_0001 + (x >> 8 & 0x00FF_00FF)) >> 8 & 0x00FF_00FF;
+}
+
+/// A colour of coverage 1 to 254 to be laid over pixel after pixel, with
+/// what every pixel needs of it worked out once.
+///
+/// Each channel is rounded, `(colour * a + under * (255 - a) + 127) /
+/// 255`, which lands full coverage exactly on the colour and keeps a run
+/// of composites from drifting dark. Red and blue go together in one word
+/// a half-word each, so a pixel is two multiplies and two shifts rather
+/// than three divisions - the same sums fbboard's engine does, so a
+/// picture does not depend on which of the two laid it.
+pub const Mix = struct {
+    /// The colour's red and blue, a half-word each, times its alpha and
+    /// 127 more.
+    rb: u32,
+    /// Its green, the same.
+    g: u32,
+    /// What is under it counts by 255 less the alpha.
+    inverse: u32,
+
+    /// What laying `pen` takes.
+    ///
+    /// INPUTS:
+    /// - `pen` - the colour, 0xAARRGGBB, its alpha 1 to 254.
+    pub fn of(pen: Pen) Mix {
+        const a: u32 = pen >> 24;
+        return .{
+            .rb = ((pen >> 16 & 0xFF) * a + 127) << 16 | ((pen & 0xFF) * a + 127),
+            .g = (pen >> 8 & 0xFF) * a + 127,
+            .inverse = 255 - a,
+        };
+    }
+
+    /// The colour over `under`, opaque.
+    ///
+    /// INPUTS:
+    /// - `m` - the colour, made ready.
+    /// - `under` - what is there, 0xAARRGGBB.
+    pub inline fn over(m: Mix, under: Pen) Pen {
+        const rb = (under & 0x00FF_00FF) * m.inverse + m.rb;
+        const g = (under >> 8 & 0xFF) * m.inverse + m.g;
+        return 0xFF00_0000 | div255Pair(rb) | div255(g) << 8;
+    }
+};
+
+/// How a pen lands, which the draw mode decides once for a whole drawing:
+/// written; the pixel turned over instead (`DRMD_COMPLEMENT`); laid over
+/// it by the pen's alpha (`DRMD_BLEND`, a pen that is not opaque); or not
+/// at all, a pen with no alpha laid over leaving what is there, its own
+/// alpha too, as `over` leaves it.
+pub const Lay = enum { put, complement, blend, none };
+
+/// One pen ready to be written on one surface, pixel after pixel.
+///
+/// What `plotPen` decides for every pixel - the mode, the pixel's size,
+/// the pen packed, what mixing it takes - is decided here once, so a run
+/// of pixels is a loop of stores. Which pen it is (`DRMD_JAM2`,
+/// `DRMD_INVERSVID`) is still the caller's business, as it is for
+/// `plotPen`.
+pub const Brush = struct {
+    format: PixelFormat,
+    bytes: u32,
+    lay: Lay,
+    packed_pen: u32,
+    /// Only for `.blend`.
+    mix: Mix,
+
+    /// A pen as this RastPort's mode lays it on a surface of `format`.
+    ///
+    /// INPUTS:
+    /// - `rp` - the RastPort. Its draw mode decides how the pen lands.
+    /// - `format` - the surface's format.
+    /// - `pen` - the colour, 0xAARRGGBB.
+    /// - `packed_pen` - the same colour in that format.
+    pub fn of(rp: *const RastPort, format: PixelFormat, pen: Pen, packed_pen: u32) Brush {
+        const lay: Lay = if (rp.draw_mode & graphics.DRMD_COMPLEMENT != 0)
+            .complement
+        else if (rp.draw_mode & graphics.DRMD_BLEND != 0 and !graphics.penIsOpaque(pen))
+            (if (pen >> 24 == 0) .none else .blend)
+        else
+            .put;
+        return .{
+            .format = format,
+            .bytes = pixelBytes(format),
+            .lay = lay,
+            .packed_pen = packed_pen,
+            .mix = if (lay == .blend) Mix.of(pen) else undefined,
+        };
+    }
+
+    /// The foreground pen, or the background pen.
+    ///
+    /// INPUTS:
+    /// - `rp` - the RastPort.
+    /// - `format` - the surface's format.
+    /// - `back` - whether it is the background pen.
+    pub fn either(rp: *const RastPort, format: PixelFormat, back: bool) Brush {
+        return if (back) of(rp, format, rp.bg_pen, rp.bg_packed) else of(rp, format, rp.fg_pen, rp.fg_packed);
+    }
+
+    /// The pen the line pattern's `ink` stands for, or null for none.
+    ///
+    /// INPUTS:
+    /// - `rp` - the RastPort.
+    /// - `format` - the surface's format.
+    /// - `ink` - which of the pens, if any.
+    pub fn inked(rp: *const RastPort, format: PixelFormat, ink: Ink) ?Brush {
+        return switch (ink) {
+            .foreground => either(rp, format, false),
+            .background => either(rp, format, true),
+            .nothing => null,
+        };
+    }
+
+    /// One pixel, at `at`.
+    ///
+    /// INPUTS:
+    /// - `b` - the pen.
+    /// - `at` - where the pixel is.
+    pub inline fn put(b: *const Brush, at: [*]u8) void {
+        switch (b.lay) {
+            .put => rows.store(at, b.bytes, b.packed_pen),
+            .complement => rows.store(at, b.bytes, rows.load(at, b.bytes) ^ b.everyBit()),
+            .blend => b.blendAt(at),
+            .none => {},
+        }
+    }
+
+    /// Every bit a pixel has: what a complement turns over.
+    inline fn everyBit(b: *const Brush) u32 {
+        return if (b.bytes >= 4) 0xFFFF_FFFF else (@as(u32, 1) << @intCast(b.bytes * 8)) - 1;
+    }
+
+    fn blendAt(b: *const Brush, at: [*]u8) void {
+        const under = rastport.unpackPen(b.format, rows.load(at, b.bytes));
+        rows.store(at, b.bytes, rastport.packPen(b.format, b.mix.over(under)) orelse b.packed_pen);
+    }
+
+    /// How a loop over pixels from `at`, `stride` bytes apart, may store
+    /// them: as whole words or half-words when every one of them is
+    /// aligned to its size, which a surface's pixels nearly always are, or
+    /// a byte at a time. Checked once for the loop, not for each pixel.
+    pub fn widthAt(b: *const Brush, at: [*]const u8, stride: usize) Width {
+        const at_or_stride = @intFromPtr(at) | stride;
+        if (b.bytes == 4 and at_or_stride & 3 == 0) return .word;
+        if (b.bytes == 2 and at_or_stride & 1 == 0) return .half;
+        return .bytes;
+    }
+
+    pub const Width = enum {
+        bytes,
+        half,
+        word,
+
+        pub fn Type(comptime width: Width) type {
+            return switch (width) {
+                .bytes => u8,
+                .half => u16,
+                .word => u32,
+            };
+        }
+    };
+
+    /// One pixel, at `at`, stored as `T` says: `u8` a byte at a time,
+    /// `u16` or `u32` in one store at an address the caller has made sure
+    /// is aligned.
+    pub inline fn putAs(b: *const Brush, comptime T: type, at: [*]u8) void {
+        @setRuntimeSafety(false);
+        if (T == u8) return b.put(at);
+        const pixel: *T = @ptrCast(@alignCast(at));
+        switch (b.lay) {
+            .put => pixel.* = @truncate(b.packed_pen),
+            .complement => pixel.* = ~pixel.*,
+            .blend => b.blendAt(at),
+            .none => {},
+        }
+    }
+
+    /// `count` pixels, `stride` bytes apart, from `at`: a row when the
+    /// stride is a pixel, a column when it is the surface's pitch.
+    ///
+    /// INPUTS:
+    /// - `b` - the pen.
+    /// - `at` - the first pixel.
+    /// - `stride` - bytes from one pixel to the next.
+    /// - `count` - how many.
+    pub fn run(b: *const Brush, at: [*]u8, stride: usize, count: usize) void {
+        if (count == 0) return;
+        switch (b.lay) {
+            .put => if (stride == b.bytes) return rows.fill(at, b.bytes, count, b.packed_pen),
+            .complement => if (stride == b.bytes) return rows.invert(at, count * b.bytes),
+            .blend => return b.blendRun(at, stride, count),
+            .none => return,
+        }
+        switch (b.widthAt(at, stride)) {
+            inline else => |width| b.runAs(width.Type(), at, stride, count),
+        }
+    }
+
+    fn runAs(b: *const Brush, comptime T: type, at: [*]u8, stride: usize, count: usize) void {
+        @setRuntimeSafety(false);
+        var to = at;
+        var i: usize = 0;
+        while (i < count) : (i += 1) {
+            b.putAs(T, to);
+            to += stride;
+        }
+    }
+
+    /// A run laid over what is there. The formats the displays use go a
+    /// whole pixel at a time with the format known; the rest through the
+    /// pen packed and unpacked as `plotPen` does it.
+    fn blendRun(b: *const Brush, at: [*]u8, stride: usize, count: usize) void {
+        @setRuntimeSafety(false);
+        switch (b.format) {
+            inline .bgra32, .rgb565 => |format| {
+                const T = if (format == .bgra32) u32 else u16;
+                if (@intFromPtr(at) % @sizeOf(T) == 0 and stride % @sizeOf(T) == 0) {
+                    var to = at;
+                    var i: usize = 0;
+                    while (i < count) : (i += 1) {
+                        const pixel: *T = @ptrCast(@alignCast(to));
+                        const under = @call(.always_inline, rastport.unpackPen, .{ format, pixel.* });
+                        pixel.* = @truncate(@call(.always_inline, rastport.packPen, .{ format, b.mix.over(under) }).?);
+                        to += stride;
+                    }
+                    return;
+                }
+            },
+            else => {},
+        }
+        var to = at;
+        var i: usize = 0;
+        while (i < count) : (i += 1) {
+            b.blendAt(to);
+            to += stride;
+        }
+    }
+
+    /// A line between two points inside the piece, every pixel of it in
+    /// this pen: Bresenham's walk, the address moved with the point.
+    ///
+    /// INPUTS:
+    /// - `b` - the pen.
+    /// - `p` - the piece being written.
+    /// - `x0` - the first end's column.
+    /// - `y0` - its row.
+    /// - `x1` - the other end's column.
+    /// - `y1` - its row.
+    pub fn walk(b: *const Brush, p: Piece, x0: i32, y0: i32, x1: i32, y1: i32) void {
+        const at = address(p, x0, y0);
+        switch (b.widthAt(at, p.surface.pitch)) {
+            inline else => |width| b.walkAs(width.Type(), at, p.surface.pitch, x0, y0, x1, y1),
+        }
+    }
+
+    fn walkAs(b: *const Brush, comptime T: type, first: [*]u8, pitch: usize, x0: i32, y0: i32, x1: i32, y1: i32) void {
+        @setRuntimeSafety(false);
+        const dx: i32 = @intCast(@abs(x1 - x0));
+        const dy: i32 = @intCast(@abs(y1 - y0));
+        const right = x1 > x0;
+        const down = y1 > y0;
+        var at = first;
+        var x = x0;
+        var y = y0;
+        var err = dx - dy;
+        while (true) {
+            b.putAs(T, at);
+            if (x == x1 and y == y1) break;
+            const e2 = err * 2;
+            if (e2 > -dy) {
+                err -= dy;
+                if (right) {
+                    x += 1;
+                    at += b.bytes;
+                } else {
+                    x -= 1;
+                    at -= b.bytes;
+                }
+            }
+            if (e2 < dx) {
+                err += dx;
+                if (down) {
+                    y += 1;
+                    at += pitch;
+                } else {
+                    y -= 1;
+                    at -= pitch;
+                }
+            }
+        }
+    }
+};
+
+/// Where a pixel of a piece is in memory.
+///
+/// INPUTS:
+/// - `p` - the piece: its surface and offset.
+/// - `x` - the column, in the RastPort's coordinates.
+/// - `y` - the row.
+pub inline fn address(p: Piece, x: i32, y: i32) [*]u8 {
+    const surface = p.surface;
+    return surface.pixels.? + @as(usize, @intCast(y + p.dy)) * surface.pitch +
+        @as(usize, @intCast(x + p.dx)) * pixelBytes(surface.format);
 }
 
 /// Fill one rectangle in software, a row at a time.
@@ -213,32 +514,10 @@ pub fn fillSoftware(rp: *RastPort, p: Piece) void {
     // filled rectangle is not one. Which pen it uses still follows
     // DRMD_INVERSVID, so an inverted fill is the background colour.
     const inverse = rp.draw_mode & graphics.DRMD_INVERSVID != 0;
-
-    // A fill that only writes its pen - no inverting, nothing to compose -
-    // is the same packed pixel down every row, so it goes a row at a time.
-    const pen = if (inverse) rp.bg_pen else rp.fg_pen;
-    const composes = rp.draw_mode & graphics.DRMD_BLEND != 0 and !graphics.penIsOpaque(pen);
-    if (rp.draw_mode & graphics.DRMD_COMPLEMENT == 0 and !composes) {
-        const surface = p.surface;
-        const bytes = pixelBytes(surface.format);
-        const value = if (inverse) rp.bg_packed else rp.fg_packed;
-        const count: usize = @intCast(area.width());
-        var row: i32 = area.min_y;
-        while (row < area.max_y) : (row += 1) {
-            const at = surface.pixels.? + @as(usize, @intCast(row + p.dy)) * surface.pitch +
-                @as(usize, @intCast(area.min_x + p.dx)) * bytes;
-            rows.fill(at, bytes, count, value);
-        }
-        return;
-    }
-
-    var y: i32 = area.min_y;
-    while (y < area.max_y) : (y += 1) {
-        var x: i32 = area.min_x;
-        while (x < area.max_x) : (x += 1) {
-            if (inverse) plotBack(rp, p, x, y) else plot(rp, p, x, y);
-        }
-    }
+    const brush = Brush.either(rp, p.surface.format, inverse);
+    const count: usize = @intCast(area.width());
+    var row: i32 = area.min_y;
+    while (row < area.max_y) : (row += 1) brush.run(address(p, area.min_x, row), brush.bytes, count);
 }
 
 /// The board's engine, if this rectangle can go to it: its fill for an
@@ -298,25 +577,8 @@ pub fn fillByEngine(gb: *GraphicsBase, rp: *RastPort, p: Piece) bool {
 /// - `pen` - the colour, 0xAARRGGBB.
 /// - `packed_pen` - the same colour in the surface's format.
 fn plotPen(rp: *RastPort, p: Piece, x: i32, y: i32, pen: graphics.Pen, packed_pen: u32) void {
-    const surface = p.surface;
-    const bytes = pixelBytes(surface.format);
-    const at = surface.pixels.? + @as(usize, @intCast(y + p.dy)) * surface.pitch +
-        @as(usize, @intCast(x + p.dx)) * bytes;
-
-    if (rp.draw_mode & graphics.DRMD_COMPLEMENT != 0) {
-        // Everything the format holds is flipped, so drawing twice puts it
-        // back exactly - which is the whole use of it.
-        const mask: u32 = if (bytes >= 4) 0xFFFF_FFFF else (@as(u32, 1) << @intCast(bytes * 8)) - 1;
-        putPixel(at, bytes, getPixel(at, bytes) ^ mask);
-        return;
-    }
-    if (rp.draw_mode & graphics.DRMD_BLEND != 0 and !graphics.penIsOpaque(pen)) {
-        const under = rastport.unpackPen(surface.format, getPixel(at, bytes));
-        const mixed = over(pen, under);
-        putPixel(at, bytes, rastport.packPen(surface.format, mixed) orelse packed_pen);
-        return;
-    }
-    putPixel(at, bytes, packed_pen);
+    const brush = Brush.of(rp, p.surface.format, pen, packed_pen);
+    brush.put(address(p, x, y));
 }
 
 /// One pixel in the foreground pen.
@@ -356,10 +618,9 @@ pub fn plotOver(p: Piece, x: i32, y: i32, pen: Pen) void {
     if (alpha == 0) return;
     const surface = p.surface;
     const bytes = pixelBytes(surface.format);
-    const at = surface.pixels.? + @as(usize, @intCast(y + p.dy)) * surface.pitch +
-        @as(usize, @intCast(x + p.dx)) * bytes;
-    const mixed = if (alpha == 0xFF) pen else over(pen, rastport.unpackPen(surface.format, getPixel(at, bytes)));
-    putPixel(at, bytes, rastport.packPen(surface.format, mixed) orelse return);
+    const at = address(p, x, y);
+    const mixed = if (alpha == 0xFF) pen else Mix.of(pen).over(rastport.unpackPen(surface.format, rows.load(at, bytes)));
+    rows.store(at, bytes, rastport.packPen(surface.format, mixed) orelse return);
 }
 
 /// Whether the pattern says to draw here, and which pen if so.
@@ -380,6 +641,16 @@ pub fn inkAt(rp: *RastPort, step: u32) Ink {
     const set = if (rp.draw_mode & graphics.DRMD_INVERSVID != 0) bit == 0 else bit != 0;
     if (set) return .foreground;
     return if (rp.draw_mode & graphics.DRMD_JAM2 != 0) .background else .nothing;
+}
+
+/// The ink of a line pattern that is the same at every step - every bit
+/// set, or none - or null for one that changes along the line.
+///
+/// INPUTS:
+/// - `rp` - the RastPort. Its pattern and draw mode decide.
+pub fn solidInk(rp: *RastPort) ?Ink {
+    if (rp.line_pattern != 0xFFFF and rp.line_pattern != 0) return null;
+    return inkAt(rp, 0);
 }
 
 /// One pixel of a patterned run: the `step`th since the pattern began.
@@ -492,6 +763,16 @@ pub fn clipSegment(r: Rect, x0: i32, y0: i32, x1: i32, y1: i32) ?[4]i32 {
 /// - `y1` - its row.
 /// - `step` - how far along the line pattern it is, moved on here.
 pub fn line(rp: *RastPort, p: Piece, x0: i32, y0: i32, x1: i32, y1: i32, step: *u32) void {
+    // A pattern that says the same everywhere is one pen for the whole
+    // line, written as a run where the line is straight.
+    if (solidInk(rp)) |ink| {
+        const length: u32 = @max(@abs(x1 - x0), @abs(y1 - y0)) + 1;
+        step.* +%= length;
+        const brush = Brush.inked(rp, p.surface.format, ink) orelse return;
+        if (y0 == y1) return brush.run(address(p, @min(x0, x1), y0), brush.bytes, length);
+        if (x0 == x1) return brush.run(address(p, x0, @min(y0, y1)), p.surface.pitch, length);
+        return brush.walk(p, x0, y0, x1, y1);
+    }
     var x = x0;
     var y = y0;
     const dx = @abs(x1 - x0);
@@ -533,10 +814,23 @@ pub fn span(gb: *GraphicsBase, rp: *RastPort, from: Rect, horizontal: bool) void
     var top: i32 = 0;
     var end: i32 = 0;
     var any = false;
+    const solid = solidInk(rp);
     while (it.next()) |r| {
-        // The pattern counts from the start of the run, not from where the
-        // clip let it begin, or a run cut in two would be dotted wrongly.
-        if (horizontal) {
+        if (solid) |ink| {
+            // One pen all along: rows, or columns a pitch at a time.
+            if (Brush.inked(rp, r.surface.format, ink)) |brush| {
+                if (horizontal) {
+                    var y: i32 = r.rect.min_y;
+                    while (y < r.rect.max_y) : (y += 1) brush.run(address(r, r.rect.min_x, y), brush.bytes, @intCast(r.rect.width()));
+                } else {
+                    var x: i32 = r.rect.min_x;
+                    while (x < r.rect.max_x) : (x += 1) brush.run(address(r, x, r.rect.min_y), r.surface.pitch, @intCast(r.rect.height()));
+                }
+            }
+        } else if (horizontal) {
+            // The pattern counts from the start of the run, not from where
+            // the clip let it begin, or a run cut in two would be dotted
+            // wrongly.
             var x: i32 = r.rect.min_x;
             while (x < r.rect.max_x) : (x += 1) {
                 var y: i32 = r.rect.min_y;
@@ -587,10 +881,8 @@ pub fn fillSpan(rp: *RastPort, x0: i32, x1: i32, y: i32, bound: *Rect, any: *boo
     const inverse = rp.draw_mode & graphics.DRMD_INVERSVID != 0;
     var it = visible(rp, .{ .min_x = x0, .min_y = y, .max_x = x1, .max_y = y + 1 });
     while (it.next()) |r| {
-        var x: i32 = r.rect.min_x;
-        while (x < r.rect.max_x) : (x += 1) {
-            if (inverse) plotBack(rp, r, x, y) else plot(rp, r, x, y);
-        }
+        const brush = Brush.either(rp, r.surface.format, inverse);
+        brush.run(address(r, r.rect.min_x, y), brush.bytes, @intCast(r.rect.width()));
         grow(bound, y, any);
     }
 }
@@ -1171,4 +1463,59 @@ pub fn fillStyled(rp: *RastPort, p: Piece) void {
         var x: i32 = p.rect.min_x;
         while (x < p.rect.max_x) : (x += 1) plotOver(p, x, y, fillColour(rp, x, y, p.surface.format));
     }
+}
+
+// --- tests (host: ./zig build test) -----------------------------------------
+//
+// The loops that use these are held to the pixel-at-a-time path in
+// graphics.zig, where a RastPort can be made to draw with.
+
+const testing = @import("std").testing;
+
+test "div255 is a division by 255 for every sum a mix can make" {
+    var x: u32 = 0;
+    while (x <= 255 * 255 + 255) : (x += 1) try testing.expectEqual(x / 255, div255(x));
+    // Two at once, neither spilling into the other, up to the most a mix
+    // sums to: 255 * 255 and the 127 that rounds it.
+    x = 0;
+    while (x <= 255 * 255 + 127) : (x += 1) {
+        const other = 255 * 255 + 127 - x;
+        try testing.expectEqual((x / 255) << 16 | other / 255, div255Pair(x << 16 | other));
+    }
+}
+
+test "Mix lays a colour as the sums divided by 255 lay it" {
+    const slow = struct {
+        fn over(src: Pen, dst: Pen) Pen {
+            const a: u32 = src >> 24;
+            var mixed: Pen = 0xFF00_0000;
+            var shift: u5 = 0;
+            while (shift < 24) : (shift += 8) {
+                mixed |= (((src >> shift & 0xFF) * a + (dst >> shift & 0xFF) * (255 - a) + 127) / 255) << shift;
+            }
+            return mixed;
+        }
+    }.over;
+    // Every colour over every colour under, at coverages from the ends
+    // and the middle; then every coverage of every colour over a few.
+    // Each channel is mixed by itself, so one value in all three of a
+    // pen's channels and another in the three under it covers them.
+    for ([_]u32{ 1, 2, 64, 127, 128, 200, 253, 254 }) |a| {
+        for (0..256) |s| for (0..256) |d| {
+            const c: u32 = @intCast(s);
+            const u: u32 = @intCast(d);
+            const pen = a << 24 | c << 16 | (255 - c) << 8 | c;
+            const under = 0xFF00_0000 | u << 16 | u << 8 | (255 - u);
+            try testing.expectEqual(slow(pen, under), over(pen, under));
+        };
+    }
+    for (1..255) |a| for (0..256) |s| for ([_]u32{ 0, 77, 255 }) |u| {
+        const c: u32 = @intCast(s);
+        const pen = @as(u32, @intCast(a)) << 24 | c << 16 | c << 8 | c;
+        const under = 0xFF00_0000 | u << 16 | u << 8 | u;
+        try testing.expectEqual(slow(pen, under), Mix.of(pen).over(under));
+    };
+    // The ends are not mixed at all.
+    try testing.expectEqual(@as(Pen, 0xFF12_3456), over(0xFF12_3456, 0xFF65_4321));
+    try testing.expectEqual(@as(Pen, 0xFF65_4321), over(0x0012_3456, 0xFF65_4321));
 }

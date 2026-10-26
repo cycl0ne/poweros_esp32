@@ -227,7 +227,9 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
     // other, so made in this order the ground is at the very back and the
     // bar in front of it. The ground's hook paints it as it is made;
     // without memory for it the display is painted directly, and a window
-    // leaving a part of it leaves it as it was.
+    // leaving a part of it leaves it as it was. Composed, the ground has
+    // no buffer: it is its hook, painted wherever it is seen, and a
+    // screen's worth of memory is not spent on one colour.
     graphics.SetFont(gb, rp, font);
     menuImages(ib, s);
     if (ub.GetTagData(sc.SA_ShowTitle, 1, tags) != 0 and ub.GetTagData(sc.SA_Quiet, 0, tags) == 0) {
@@ -263,11 +265,13 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
         }
     }
     s.ground_fill = .{ .entry = &fillGround, .data = s };
+    s.ground_hook = ub.GetTagData(sc.SA_BackFill, @intFromPtr(&s.ground_fill), tags);
     const ground_tags = [_]TagItem{
         .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&bounds) },
         .{ .tag = layers.LATAG_Refresh, .data = layers.LAYERSIMPLE },
         .{ .tag = layers.LATAG_Backdrop, .data = 1 },
-        .{ .tag = layers.LATAG_BackFill, .data = ub.GetTagData(sc.SA_BackFill, @intFromPtr(&s.ground_fill), tags) },
+        .{ .tag = layers.LATAG_BackFill, .data = s.ground_hook },
+        .{ .tag = layers.LATAG_NoBuffer, .data = 1 },
         .{},
     };
     s.ground = lb.CreateLayerTagList(info, &ground_tags);

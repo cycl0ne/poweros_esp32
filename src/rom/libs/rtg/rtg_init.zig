@@ -22,7 +22,8 @@ pub const LIBRARY_VERSION = 1;
 /// 6: buffers from system memory a DMA engine reaches (RTGRF_DMA_MEMORY).
 /// 7: a buffer's `watch` hook told in place of the board, and RTGA_Compose
 /// kept as RTGBF_COMPOSE - a composed screen's windows.
-pub const LIBRARY_REVISION = 8;
+/// 9: CopyRects - several copies as one job of the engine.
+pub const LIBRARY_REVISION = 9;
 const BUILD_DATE = "25.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

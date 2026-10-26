@@ -60,8 +60,9 @@ const _ip6 = @import("../ip6/_ip6.zig");
 const read_bytes: u32 = _frame.buffer_bytes - _frame.headroom;
 /// Packets that may wait for a write.
 pub const queue_max = 64;
-/// Reads and writes at the most, whatever the link.
-pub const reads_max = 32;
+/// Reads and writes at the most, whatever the link: a gigabit link takes
+/// all the reads there are.
+pub const reads_max = 128;
 pub const writes_max = 16;
 
 pub const Kind = enum(u8) { read_ip, read_arp, read_ip6, write, event, control };

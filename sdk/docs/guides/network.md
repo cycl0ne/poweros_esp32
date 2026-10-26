@@ -484,10 +484,16 @@ column. A board without the file's device skips the interface, with its
 `QUIET`, as `S:Network-Startup` runs it, it says nothing, so one set of
 files serves every board (without, it names the interface it could not
 add and ends with `WARN`). With DHCP, `AddNetInterface` waits for the
-address up to `TIMEOUT` seconds, but not for an interface whose link
-stays down for five seconds - no cable; a gigabit link takes seconds to
-agree on its speed - unless it is joining a Wi-Fi
-`Network`. A file that says `Start = DEVICE` is left out of `ALL`: its
+link, then for the address up to `TIMEOUT` seconds, but not for an
+interface whose link stays down for fifteen seconds - no cable; a
+gigabit link takes seconds to agree on its speed, five or six on the
+VisionFive 2. An interface joining a Wi-Fi `Network` whose link has not
+come by then ends with `WARN`, as one without an address does. With
+`IPv6 = AUTO` it then waits for a router's prefix - a preferred address
+that is not link-local - until twelve seconds after the link came, the
+span of the stack's three router solicitations, so that what runs next
+can reach a server that has only an IPv6 address on the network; on a
+network without a router that costs what is left of the twelve. A file that says `Start = DEVICE` is left out of `ALL`: its
 device brings it up by name when its hardware first comes, as
 usb/ecm.device does `USB0` when an Ethernet adapter is plugged in.
 

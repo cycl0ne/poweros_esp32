@@ -10,7 +10,10 @@
 //!
 //! The address is looked up with GetAddrInfo and each answer tried in
 //! the order it gives them, IPv6 and IPv4, until one connects. A client's
-//! HTTP_Timeout becomes the socket's SO_RCVTIMEO and SO_SNDTIMEO.
+//! HTTP_Timeout becomes the socket's SO_RCVTIMEO and SO_SNDTIMEO. The
+//! socket's receive ring is 64 KiB, set before it connects: it is the
+//! window the server may send into, and a stream socket's 8 KiB holds a
+//! download to about 24 MB/s on a gigabit link.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -24,6 +27,10 @@ const _client = @import("../client/_client.zig");
 const _base = @import("../http_base.zig");
 const Client = _client.Client;
 const Url = _protocol.Url;
+
+/// The socket's receive ring, and so the window offered: as wide as a
+/// window goes without window scaling.
+const ring_bytes: i32 = 64 * 1024;
 
 /// The longest host name a connection keeps.
 pub const host_most = 255;
@@ -123,6 +130,7 @@ pub fn connect(client: *Client, url: Url, failure: *Failure) ?*Connection {
     while (entry) |each| : (entry = each.ai_next) {
         socket = sb.Socket(each.ai_family, each.ai_socktype, each.ai_protocol);
         if (socket < 0) continue;
+        _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &ring_bytes, @sizeOf(i32));
         if (client.timeout != 0) {
             const wait: TimeVal = .{ .secs = client.timeout };
             _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_RCVTIMEO, &wait, @sizeOf(TimeVal));

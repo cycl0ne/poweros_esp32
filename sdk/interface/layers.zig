@@ -51,6 +51,7 @@ pub const LVO = struct {
     pub const NewLayerInfoTagList = libraries.lvo(30);
     pub const ShowLayerPicture = libraries.lvo(31);
     pub const SetLayerAttrsTagList = libraries.lvo(32);
+    pub const RefillLayer = libraries.lvo(33);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -85,6 +86,7 @@ pub const Fn = struct {
     pub const NewLayerInfoTagList = *const fn (*LayersBase, *graphics.RastPort, ?[*]const utility.TagItem) callconv(.c) ?*layers.LayerInfo;
     pub const ShowLayerPicture = *const fn (*LayersBase, *layers.Layer, ?*const rtg.Surface, ?*const graphics.Rect) callconv(.c) bool;
     pub const SetLayerAttrsTagList = *const fn (*LayersBase, *layers.Layer, ?[*]const utility.TagItem) callconv(.c) bool;
+    pub const RefillLayer = *const fn (*LayersBase, *layers.Layer, *const graphics.Rect) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -285,5 +287,13 @@ pub const LayersBase = opaque {
     /// False for a layer that is not composed, or without memory.
     pub fn SetLayerAttrsTagList(self: *LayersBase, layer: *layers.Layer, tags: ?[*]const utility.TagItem) bool {
         return libraries.call(self, LVO.SetLayerAttrsTagList, Fn.SetLayerAttrsTagList, .{ layer, tags });
+    }
+
+    /// Paint `area` of a layer - its own coordinates - again with its
+    /// backfill, for a program whose hook paints what it shows: a layer with
+    /// no buffer is shown again there, any other has the hook called through
+    /// its RastPort.
+    pub fn RefillLayer(self: *LayersBase, layer: *layers.Layer, area: *const graphics.Rect) void {
+        return libraries.call(self, LVO.RefillLayer, Fn.RefillLayer, .{ layer, area });
     }
 };

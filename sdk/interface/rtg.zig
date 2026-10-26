@@ -80,6 +80,7 @@ pub const LVO = struct {
     pub const BlendRect = libraries.lvo(61);
     pub const ScalePixels = libraries.lvo(62);
     pub const RefreshRect = libraries.lvo(63);
+    pub const CopyRects = libraries.lvo(64);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -145,6 +146,7 @@ pub const Fn = struct {
     pub const BlendRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, u32) callconv(.c) i32;
     pub const ScalePixels = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPixels, u32, u32) callconv(.c) i32;
     pub const RefreshRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect) callconv(.c) i32;
+    pub const CopyRects = *const fn (*RtgBase, *rtg.RtgBitMap, *rtg.RtgBitMap, [*]const rtg.RtgCopy, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -516,5 +518,15 @@ pub const RtgBase = opaque {
     /// board can, its rows where it cannot. Cut down to the buffer.
     pub fn RefreshRect(self: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32 {
         return libraries.call(self, LVO.RefreshRect, Fn.RefreshRect, .{ bitmap, area });
+    }
+
+    /// Copy several rectangles of one buffer on to another as one job, each
+    /// as CopyRect copies it and cut down to both buffers: the pieces of a
+    /// window seen between others, copied by the board's engine at once
+    /// rather than one after another. The rectangles do not overlap where they
+    /// land, and the two buffers are not one. RTGERR_NOT_SUPPORTED unless the
+    /// board's engine takes them.
+    pub fn CopyRects(self: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) i32 {
+        return libraries.call(self, LVO.CopyRects, Fn.CopyRects, .{ src, dest, copies, count });
     }
 };

@@ -53,6 +53,7 @@ const BoardBrightness = @import("display/boardbrightness.zig").BoardBrightness;
 const FillRect = @import("engine/fillrect.zig").FillRect;
 const InvertRect = @import("engine/invertrect.zig").InvertRect;
 const CopyRect = @import("engine/copyrect.zig").CopyRect;
+const CopyRects = @import("engine/copyrects.zig").CopyRects;
 const BlitTemplate = @import("engine/blittemplate.zig").BlitTemplate;
 const BlitPattern = @import("engine/blitpattern.zig").BlitPattern;
 const WaitBlit = @import("engine/waitblit.zig").WaitBlit;
@@ -350,6 +351,9 @@ fn lvoScalePixels(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, 
 fn lvoRefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
     return RefreshRect(rb, bitmap, area);
 }
+fn lvoCopyRects(rb: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) callconv(.c) i32 {
+    return CopyRects(rb, src, dest, copies, count);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -418,6 +422,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoBlendRect),
     vec(lvoScalePixels),
     vec(lvoRefreshRect),
+    vec(lvoCopyRects),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -425,7 +430,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 64), vectors.len);
+    try testing.expectEqual(@as(usize, 65), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

@@ -121,10 +121,11 @@ fn begin(d: *Desktop, held: *Held) bool {
     while (it.next()) |node| {
         const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
         if (!ic.selected) continue;
-        const was = ic.selected;
-        ic.selected = false;
-        ic.draw(d.gb, rp, &drag_look, corner);
-        ic.selected = was;
+        // Drawn as if not picked, from a copy: the icon itself is the
+        // desktop's backfill hook's to read, on any task.
+        var plain = ic.*;
+        plain.selected = false;
+        plain.draw(d.gb, rp, &drag_look, corner);
     }
     // Where the press was, in the picture.
     const press_x = held.x - borderLeft(d, held) + origin.x - corner.x;
@@ -245,6 +246,11 @@ fn dropOn(d: *Desktop, held: *const Held, where: ?*Drawer, ic: *Icon) bool {
 /// so none is kept out of a cell by where another lay before.
 fn moveIcons(d: *Desktop, held: *const Held, dx: i32, dy: i32) void {
     const list = if (held.drawer) |dr| &dr.icons else &d.volumes;
+    // On the desktop's ground, what the hook reads: changed while held,
+    // and then painted where the icons were and where they are.
+    const on_ground = held.drawer == null;
+    const before = if (on_ground) pickedReach(d, list) else null;
+    if (on_ground) d.change();
     var it = list.iterator();
     while (it.next()) |node| {
         const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
@@ -262,7 +268,23 @@ fn moveIcons(d: *Desktop, held: *const Held, dx: i32, dy: i32) void {
         }
     }
     if (held.drawer) |dr| return drawer.drawInside(d, dr);
-    d.drawWholeNow();
+    d.changed();
+    if (before) |area| d.drawArea(area);
+    if (pickedReach(d, list)) |area| d.drawArea(area);
+}
+
+/// The box round everything the picked icons of the desktop's ground may
+/// touch, or null with none picked.
+fn pickedReach(d: *Desktop, list: *exec.List) ?Rect {
+    var all: ?Rect = null;
+    var it = list.iterator();
+    while (it.next()) |node| {
+        const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
+        if (!ic.selected) continue;
+        const r = ic.reach(&d.look);
+        all = if (all) |a| .{ .min_x = @min(a.min_x, r.min_x), .min_y = @min(a.min_y, r.min_y), .max_x = @max(a.max_x, r.max_x), .max_y = @max(a.max_y, r.max_y) } else r;
+    }
+    return all;
 }
 
 /// The files of the icons picked in the held icon's window put into the

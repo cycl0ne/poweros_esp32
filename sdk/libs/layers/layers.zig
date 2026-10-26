@@ -20,7 +20,10 @@
 //! lost, so nothing is owed for being uncovered, and a move copies the
 //! layer's pixels rather than asking for them again. A composed layer can
 //! also show a picture of the caller's over part of itself, copied from
-//! where it is rather than into the layer first (`ShowLayerPicture`).
+//! where it is rather than into the layer first (`ShowLayerPicture`). A
+//! layer that is nothing but its backfill - a screen's ground - needs no
+//! buffer at all: it is painted on to the display wherever it is seen
+//! (`LATAG_NoBuffer`).
 //!
 //! **A composed layer can have round corners, cast a shadow and be seen
 //! through** (`LATAG_Corners`, `LATAG_Shadow`, `LATAG_Opacity`), set as it
@@ -151,6 +154,16 @@ pub const LATAG_Opacity = LATAG_Dummy + 12;
 /// front of it there (`LATAG_GetInFront`). What a window that has gone
 /// leaves while it fades. False, the default, makes it count again.
 pub const LATAG_Ghost = LATAG_Dummy + 13;
+/// True: a composed layer with no buffer of its own, which is nothing but
+/// what its backfill paints (`LATAG_BackFill`, the hook or the background
+/// pen). Wherever it is seen, it is painted on to the display by the
+/// backfill each time it is shown, before the shadows in front darken it,
+/// and nothing drawn through its RastPort lands anywhere. What a screen's
+/// ground is: a layer the size of the display that costs no memory.
+/// `InstallLayerHook` shows it again at once, painted by the new hook.
+/// Only for a simple layer that has a backfill; anywhere else, and on a
+/// LayerInfo that is not composed, it is ignored.
+pub const LATAG_NoBuffer = LATAG_Dummy + 14;
 /// Where to write the error if the call fails, as an `*i32`. The layer
 /// that would have carried it does not exist yet, which is why this is
 /// here at all.

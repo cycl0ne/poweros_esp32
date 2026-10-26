@@ -9,6 +9,11 @@
 //! buffers are whole cache lines, written back before and invalidated
 //! after where the data cache covers internal memory, and so is the IN
 //! chain before its descriptors are read.
+//!
+//! A chip whose only channels for memory are a PL080's (the JH7110's
+//! security block) copies on one of those instead: a list from
+//! `sdk.hardware.pl080` in memory below 4 GiB, the channel watched until
+//! it turns itself off, for a second at the most.
 
 const sdk = @import("sdk");
 const _shell = @import("../shell.zig");
@@ -44,8 +49,10 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
                 shell.print("%7d  %s\n", .{ channel, owner });
             } else if (channel < dmares.DWDMA_CHANNEL0) {
                 shell.print("%7d  %s (2D-DMA %d)\n", .{ channel, owner, channel - dmares.DMA2D_CHANNEL0 });
-            } else {
+            } else if (channel < dmares.PL080_CHANNEL0) {
                 shell.print("%7d  %s (DesignWare DMA %d)\n", .{ channel, owner, channel - dmares.DWDMA_CHANNEL0 });
+            } else {
+                shell.print("%7d  %s (PL080 %d)\n", .{ channel, owner, channel - dmares.PL080_CHANNEL0 });
             }
         }
         return;
@@ -54,9 +61,17 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     const bytes = try args.number();
     if (bytes == 0 or bytes > max_copy) return error.Usage;
     const wanted: ?u32 = if (args.peek() != null) try args.number() else null;
-    if (wanted) |channel| if (channel >= dmares.DMA_CHANNELS) return error.Usage;
-    try copy(shell, db, bytes, wanted);
+    if (comptime pl_copies) {
+        if (wanted) |channel| if (channel < dmares.PL080_CHANNEL0 or channel >= dmares.DMA_ALL_CHANNELS) return error.Usage;
+        try plCopy(shell, db, bytes, wanted);
+    } else {
+        if (wanted) |channel| if (channel >= dmares.DMA_CHANNELS) return error.Usage;
+        try copy(shell, db, bytes, wanted);
+    }
 }
+
+/// Whether the copy runs on a PL080 channel: the chip has no general ones.
+const pl_copies = dmares.DMA_CHANNELS == 0 and dmares.PL080_CHANNELS != 0;
 
 /// What the copy's interrupt server works with.
 const Copy = struct {
@@ -192,4 +207,71 @@ fn copy(shell: *Shell, db: *dmares.DmaBase, bytes: u32, wanted: ?u32) !void {
 
 fn lineUp(address: usize) usize {
     return (address + line - 1) & ~@as(usize, line - 1);
+}
+
+/// The items of a PL080 copy of up to `max_copy` bytes, a byte at a time
+/// where its length is not whole words.
+const pl_items = if (pl_copies) sdk.hardware.pl080.itemsFor(max_copy, .byte) else 0;
+
+fn plCopy(shell: *Shell, db: *dmares.DmaBase, bytes: u32, wanted: ?u32) !void {
+    const pl080 = sdk.hardware.pl080;
+    const sys = shell.base.iface();
+    const controller = pl080.find() orelse {
+        shell.print("the board has no PL080\n", .{});
+        return;
+    };
+    var channel: u32 = wanted orelse dmares.PL080_CHANNEL0;
+    if (wanted != null) {
+        if (db.AllocDMAChannel(channel, "shell")) |owner| {
+            shell.print("channel %d is %s's\n", .{ channel, owner });
+            return;
+        }
+    } else while (channel < dmares.DMA_ALL_CHANNELS) : (channel += 1) {
+        if (db.AllocDMAChannel(channel, "shell") == null) break;
+    } else {
+        shell.print("all PL080 channels are taken\n", .{});
+        return;
+    }
+    defer db.FreeDMAChannel(channel);
+    const unit = channel - dmares.PL080_CHANNEL0;
+
+    // Buffers and the list below 4 GiB, on whole cache lines.
+    const source_room = sys.AllocMem(room, sdk.exec.MEMF_DMA) orelse return error.OutOfMemory;
+    defer sys.FreeMem(source_room, room);
+    const destination_room = sys.AllocMem(room, sdk.exec.MEMF_DMA | sdk.exec.MEMF_CLEAR) orelse return error.OutOfMemory;
+    defer sys.FreeMem(destination_room, room);
+    const list_room: u32 = pl_items * @sizeOf(pl080.Item) + line;
+    const list_block = sys.AllocMem(list_room, sdk.exec.MEMF_DMA) orelse return error.OutOfMemory;
+    defer sys.FreeMem(list_block, list_room);
+    const source: [*]u8 = @ptrFromInt(lineUp(@intFromPtr(source_room)));
+    const destination: [*]u8 = @ptrFromInt(lineUp(@intFromPtr(destination_room)));
+    const items: [*]pl080.Item = @ptrFromInt(lineUp(@intFromPtr(list_block)));
+    for (source[0..bytes], 0..) |*b, i| b.* = @truncate(i *% 7 +% 1);
+
+    const width: pl080.Width = if (bytes % 4 == 0) .word else .byte;
+    const count = pl080.fill(items[0..pl_items], .{ .address = @intFromPtr(source), .width = width, .burst = .sixteen }, .{ .address = @intFromPtr(destination), .width = width, .burst = .sixteen }, bytes, 0) orelse {
+        shell.print("the buffers are not below 4 GiB\n", .{});
+        return;
+    };
+    var cached: u32 = bytes;
+    _ = sys.CachePreDMA(source, &cached, sdk.exec.DMAF_ReadFromRAM);
+    cached = bytes;
+    _ = sys.CachePreDMA(destination, &cached, 0);
+    cached = count * @sizeOf(pl080.Item);
+    _ = sys.CachePreDMA(items, &cached, sdk.exec.DMAF_ReadFromRAM);
+
+    const start = uptime.uptimeUs();
+    pl080.start(controller.base, unit, items, .memory_to_memory, 0, 0, false);
+    while (pl080.running(controller.base, unit) and uptime.uptimeUs() - start < 1_000_000) {}
+    const us = uptime.uptimeUs() - start;
+    if (pl080.running(controller.base, unit) or pl080.failed(controller.base, unit) or !pl080.finished(controller.base, unit)) {
+        const failed = pl080.failed(controller.base, unit);
+        pl080.stop(controller.base, unit);
+        shell.print("channel %d (PL080 %d): %s after %ld us\n", .{ channel, unit, if (failed) "an error" else "not finished", us });
+        return;
+    }
+    cached = bytes;
+    sys.CachePostDMA(destination, &cached, 0);
+    const verdict: [*:0]const u8 = if (_shell.same(source[0..bytes], destination[0..bytes])) "copied" else "MISMATCH";
+    shell.print("channel %d (PL080 %d): %d bytes %s in %d items, %ld us\n", .{ channel, unit, bytes, verdict, count, us });
 }

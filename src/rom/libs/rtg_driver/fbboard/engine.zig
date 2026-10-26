@@ -36,6 +36,7 @@
 //! shares between the cores as well.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
@@ -74,11 +75,23 @@ pub fn waitIdle(engine: *Engine) void {
 /// `job` done in as many as `wanted` parts, by the asker and exec's
 /// workers.
 fn share(engine: *Engine, job: Job, wanted: u32) void {
-    const sys = engine.sys orelse return job.run(0, 1);
+    const sys = engine.sys orelse return alone(job, wanted);
     sys.ObtainSemaphoreShared(&engine.drawing);
     defer sys.ReleaseSemaphore(&engine.drawing);
     var shared = job;
     _ = sys.ShareWork(&runPart, &shared, wanted);
+}
+
+/// `job` without exec, as the host's tests run it: its parts drawn one
+/// after another, the last first, so that a part that needed another's
+/// done before it would show.
+fn alone(job: Job, wanted: u32) void {
+    const parts = @max(wanted, 1);
+    var part = parts;
+    while (part > 0) {
+        part -= 1;
+        job.run(part, parts);
+    }
 }
 
 /// A part of a job, on whichever core exec gave it to.
@@ -89,8 +102,13 @@ fn runPart(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
 
 /// How many parts a job of `pixels` is worth.
 fn partsFor(pixels: u64) u32 {
+    if (builtin.is_test and test_parts != 0) return test_parts;
     return @intCast(@min(pixels / smallest, most_parts));
 }
+
+/// The parts every job is cut into in a host test, which has no buffer
+/// large enough to be cut on its own; 0 for as many as its size says.
+var test_parts: u32 = 0;
 
 // --- the jobs ----------------------------------------------------------------
 
@@ -120,6 +138,7 @@ const Job = union(enum) {
     fill: Fill,
     blend: Blend,
     copy: Copy,
+    copies: Copies,
     scale: Scale,
     pattern: Pattern,
     template: Template,
@@ -129,6 +148,7 @@ const Job = union(enum) {
     fn run(job: *const Job, part: u32, parts: u32) void {
         switch (job.*) {
             .copy => |*moving| moving.part(part, parts),
+            .copies => |*many| many.part(part, parts),
             inline else => |*one| {
                 const band = one.rows.band(part, parts);
                 if (band.lo < band.hi) one.band(band.lo, band.hi);
@@ -483,6 +503,74 @@ pub fn copy(engine: *Engine, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, what: *c
     return err.RTGERR_OK;
 }
 
+// --- several copies ----------------------------------------------------------
+
+/// Several rectangles copied from one buffer to another as one job: the
+/// rows of all of them, one rectangle's after the other's, cut into
+/// parts. A window seen in pieces between others is copied on to the
+/// display with the cores woken once, not once a piece.
+const Copies = struct {
+    list: [*]const rtg.RtgCopy,
+    count: u32,
+    /// The rows of all of them together.
+    rows: u32,
+    dest: [*]u8,
+    dest_pitch: u32,
+    src: [*]const u8,
+    src_pitch: u32,
+
+    fn part(job: *const Copies, which: u32, parts: u32) void {
+        const lo = @as(u64, job.rows) * which / parts;
+        const hi = @as(u64, job.rows) * (which + 1) / parts;
+        // Where among all the rows each rectangle's first one is.
+        var first: u64 = 0;
+        for (job.list[0..job.count]) |*one| {
+            if (first >= hi) break;
+            const height: u64 = @intCast(one.height);
+            var at = @max(lo, first);
+            while (at < @min(hi, first + height)) : (at += 1) job.row(one, @intCast(at - first));
+            first += height;
+        }
+    }
+
+    /// Row `line` of one of the rectangles.
+    fn row(job: *const Copies, one: *const rtg.RtgCopy, line: u32) void {
+        const bytes = @as(usize, @intCast(one.width)) * 4;
+        const to = job.dest + (@as(usize, @intCast(one.dest_y)) + line) * job.dest_pitch + @as(usize, @intCast(one.dest_x)) * 4;
+        const from = job.src + (@as(usize, @intCast(one.src_y)) + line) * job.src_pitch + @as(usize, @intCast(one.src_x)) * 4;
+        @memcpy(to[0..bytes], from[0..bytes]);
+    }
+};
+
+/// CopyRects: every rectangle has been clipped to both buffers and none
+/// overlaps another where it lands. The parts copy them in no order and
+/// at once, so a source that shares any memory with the destination is
+/// refused, and rtg gives that board the copies one by one.
+pub fn copyMany(engine: *Engine, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, list: [*]const rtg.RtgCopy, count: u32) i32 {
+    if (!drawable(dest) or !drawable(src)) return err.RTGERR_NOT_SUPPORTED;
+    const src_start = @intFromPtr(src.pixels.?);
+    const src_end = src_start + @as(usize, src.pitch) * src.height;
+    const dest_start = @intFromPtr(dest.pixels.?);
+    const dest_end = dest_start + @as(usize, dest.pitch) * dest.height;
+    if (src_start < dest_end and dest_start < src_end) return err.RTGERR_NOT_SUPPORTED;
+    var rows: u32 = 0;
+    var pixels: u64 = 0;
+    for (list[0..count]) |one| {
+        rows += @intCast(one.height);
+        pixels += @as(u64, @intCast(one.width)) * @as(u64, @intCast(one.height));
+    }
+    share(engine, .{ .copies = .{
+        .list = list,
+        .count = count,
+        .rows = rows,
+        .dest = dest.pixels.?,
+        .dest_pitch = dest.pitch,
+        .src = src.pixels.?,
+        .src_pitch = src.pitch,
+    } }, partsFor(pixels));
+    return err.RTGERR_OK;
+}
+
 // --- a picture scaled --------------------------------------------------------
 
 /// Where a destination column takes its pixels from: the two source
@@ -709,4 +797,218 @@ pub fn template(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRec
         .pens = Pens.of(shape.fg, shape.bg, shape.flags),
     } }, partsFor(pixelsOf(area)));
     return err.RTGERR_OK;
+}
+
+// --- tests (host: ./zig build test) -----------------------------------------
+//
+// Each job against what graphics.library writes in software, a pixel at
+// a time, with every job cut into parts that run one after another.
+
+const testing = std.testing;
+
+/// A buffer of the test's own, `width` by `height`, its rows a cache
+/// line apart as a board's are.
+fn testBitMap(memory: []align(64) u8, width: u32, height: u32) rtg.RtgBitMap {
+    const pitch = (width * 4 + line_bytes - 1) / line_bytes * line_bytes;
+    return .{ .pixels = memory.ptr, .width = width, .height = height, .pitch = pitch, .size_bytes = pitch * height, .format = .bgra32 };
+}
+
+fn pixelOf(bitmap: *const rtg.RtgBitMap, x: u32, y: u32) *u32 {
+    return @ptrFromInt(rowAddress(bitmap, x, y));
+}
+
+/// graphics.library's `over`: each channel divided by 255, rounded.
+fn slowOver(src: u32, dst: u32) u32 {
+    const a = src >> 24;
+    if (a == 0xFF) return src;
+    if (a == 0) return dst;
+    var mixed: u32 = 0xFF00_0000;
+    var shift: u5 = 0;
+    while (shift < 24) : (shift += 8) {
+        mixed |= (((src >> shift & 0xFF) * a + (dst >> shift & 0xFF) * (255 - a) + 127) / 255) << shift;
+    }
+    return mixed;
+}
+
+fn scramble(bitmap: *const rtg.RtgBitMap, seed: u64) void {
+    var prng = std.Random.DefaultPrng.init(seed);
+    prng.random().bytes(bitmap.pixels.?[0 .. @as(usize, bitmap.pitch) * bitmap.height]);
+}
+
+test "fill and blend: the rectangle, each pixel as graphics.library mixes it" {
+    test_parts = 3;
+    defer test_parts = 0;
+    var engine = Engine{};
+    var memory: [64 * 20 * 4]u8 align(64) = undefined;
+    var bitmap = testBitMap(&memory, 40, 20);
+    var before: [memory.len]u8 align(64) = undefined;
+    const area = rtg.RtgRect{ .x = 3, .y = 2, .width = 31, .height = 15 };
+    for ([_]u32{ 0xFF12_3456, 0x8090_A0B0, 0x0112_3456, 0xFE00_FF7F, 0x0012_3456 }) |colour| {
+        scramble(&bitmap, colour);
+        before = memory;
+        try testing.expectEqual(err.RTGERR_OK, blendRect(&engine, &bitmap, &area, colour));
+        for (0..20) |y| for (0..40) |x| {
+            const old = @as(*const u32, @ptrCast(@alignCast(&before[y * bitmap.pitch + x * 4]))).*;
+            const inside = x >= 3 and x < 34 and y >= 2 and y < 17;
+            const want = if (inside) slowOver(colour, old) else old;
+            try testing.expectEqual(want, pixelOf(&bitmap, @intCast(x), @intCast(y)).*);
+        };
+    }
+    scramble(&bitmap, 1);
+    try testing.expectEqual(err.RTGERR_OK, fill(&engine, &bitmap, &area, 0x1234_5678));
+    try testing.expectEqual(@as(u32, 0x1234_5678), pixelOf(&bitmap, 33, 16).*);
+    try testing.expect(pixelOf(&bitmap, 34, 16).* != 0x1234_5678 or pixelOf(&bitmap, 2, 2).* != 0x1234_5678);
+}
+
+test "a picture laid over: by each pixel's coverage, at a strength, either way round" {
+    test_parts = 4;
+    defer test_parts = 0;
+    var engine = Engine{};
+    var memory: [64 * 12 * 4]u8 align(64) = undefined;
+    var bitmap = testBitMap(&memory, 30, 12);
+    var before: [memory.len]u8 align(64) = undefined;
+    var picture: [20 * 10]u32 = undefined;
+    var prng = std.Random.DefaultPrng.init(7);
+    for (&picture, 0..) |*p, i| p.* = prng.random().int(u32) & 0x00FF_FFFF | @as(u32, switch (i % 4) {
+        0 => 0,
+        1 => 255,
+        else => prng.random().int(u8),
+    }) << 24;
+    const area = rtg.RtgRect{ .x = 5, .y = 1, .width = 18, .height = 9 };
+    for ([_]rtg.PixelFormat{ .bgra32, .rgba32 }) |format| for ([_]u32{ 255, 200 }) |alpha| for ([_]u8{ 0, rtg.RTGPIXF_OPAQUE }) |flags| {
+        scramble(&bitmap, alpha + flags);
+        before = memory;
+        const pixels = rtg.RtgPixels{ .pixels = @ptrCast(&picture), .pitch = 20 * 4, .format = format, .flags = flags, .x = 1, .y = 1 };
+        try testing.expectEqual(err.RTGERR_OK, blendPixels(&engine, &bitmap, &area, &pixels, alpha));
+        for (0..9) |dy| for (0..18) |dx| {
+            const source = picture[(1 + dy) * 20 + 1 + dx];
+            const pen = if (format == .rgba32) (source & 0xFF00_FF00) | (source >> 16 & 0xFF) | (source & 0xFF) << 16 else source;
+            // Laid by its own coverage, times the strength in 256ths; a
+            // picture that covers fully by the strength alone, and at full
+            // strength stored as it is.
+            const coverage = if (flags != 0) alpha else if (alpha == 255) pen >> 24 else (pen >> 24) * alpha >> 8;
+            const x = 5 + dx;
+            const y = 1 + dy;
+            const old = @as(*const u32, @ptrCast(@alignCast(&before[y * bitmap.pitch + x * 4]))).*;
+            const want = if (coverage == 0)
+                old
+            else if (coverage == 255)
+                pen
+            else
+                slowOver((pen & 0x00FF_FFFF) | coverage << 24, old);
+            try testing.expectEqual(want, pixelOf(&bitmap, @intCast(x), @intCast(y)).*);
+        };
+    };
+}
+
+test "a copy, between buffers and within one, whichever way the rectangles overlap" {
+    var engine = Engine{};
+    var memory: [64 * 24 * 4]u8 align(64) = undefined;
+    var other: [64 * 24 * 4]u8 align(64) = undefined;
+    var bitmap = testBitMap(&memory, 40, 24);
+    var source = testBitMap(&other, 40, 24);
+    var before: [memory.len]u8 align(64) = undefined;
+    const moves = [_]rtg.RtgCopy{
+        .{ .src_x = 2, .src_y = 3, .width = 20, .height = 15, .dest_x = 9, .dest_y = 3 }, // along its rows
+        .{ .src_x = 1, .src_y = 1, .width = 30, .height = 16, .dest_x = 3, .dest_y = 5 }, // down
+        .{ .src_x = 6, .src_y = 7, .width = 25, .height = 17, .dest_x = 2, .dest_y = 1 }, // up
+        .{ .src_x = 0, .src_y = 0, .width = 12, .height = 6, .dest_x = 20, .dest_y = 15 }, // apart
+    };
+    for ([_]u32{ 1, 2, 5 }) |parts| for (moves) |move| for ([_]bool{ true, false }) |within| {
+        test_parts = parts;
+        defer test_parts = 0;
+        scramble(&bitmap, parts);
+        scramble(&source, parts + 1);
+        before = memory;
+        const from = if (within) &bitmap else &source;
+        const read: []const u8 = if (within) &before else &other;
+        try testing.expectEqual(err.RTGERR_OK, copy(&engine, from, &bitmap, &move));
+        for (0..24) |y| for (0..40) |x| {
+            const inside = x >= move.dest_x and x < move.dest_x + move.width and y >= move.dest_y and y < move.dest_y + move.height;
+            const sx = if (inside) x - @as(usize, @intCast(move.dest_x)) + @as(usize, @intCast(move.src_x)) else x;
+            const sy = if (inside) y - @as(usize, @intCast(move.dest_y)) + @as(usize, @intCast(move.src_y)) else y;
+            const pick = if (inside) read else &before;
+            const want = @as(*const u32, @ptrCast(@alignCast(&pick[sy * bitmap.pitch + sx * 4]))).*;
+            try testing.expectEqual(want, pixelOf(&bitmap, @intCast(x), @intCast(y)).*);
+        };
+    };
+}
+
+test "several copies as one job: every row of every one, however the parts fall" {
+    var engine = Engine{};
+    var memory: [64 * 24 * 4]u8 align(64) = undefined;
+    var other: [64 * 24 * 4]u8 align(64) = undefined;
+    var bitmap = testBitMap(&memory, 40, 24);
+    var source = testBitMap(&other, 40, 24);
+    var before: [memory.len]u8 align(64) = undefined;
+    // The pieces of a window round one in front of it.
+    const pieces = [_]rtg.RtgCopy{
+        .{ .src_x = 0, .src_y = 0, .width = 30, .height = 4, .dest_x = 5, .dest_y = 2 },
+        .{ .src_x = 0, .src_y = 4, .width = 6, .height = 9, .dest_x = 5, .dest_y = 6 },
+        .{ .src_x = 22, .src_y = 4, .width = 8, .height = 9, .dest_x = 27, .dest_y = 6 },
+        .{ .src_x = 0, .src_y = 13, .width = 30, .height = 1, .dest_x = 5, .dest_y = 15 },
+    };
+    for ([_]u32{ 1, 2, 3, 7, 23 }) |parts| {
+        test_parts = parts;
+        defer test_parts = 0;
+        scramble(&bitmap, parts);
+        scramble(&source, parts + 9);
+        before = memory;
+        try testing.expectEqual(err.RTGERR_OK, copyMany(&engine, &source, &bitmap, &pieces, pieces.len));
+        for (0..24) |y| for (0..40) |x| {
+            var want = @as(*const u32, @ptrCast(@alignCast(&before[y * bitmap.pitch + x * 4]))).*;
+            for (pieces) |p| {
+                const dx: usize = @intCast(p.dest_x);
+                const dy: usize = @intCast(p.dest_y);
+                if (x >= dx and x < dx + @as(usize, @intCast(p.width)) and y >= dy and y < dy + @as(usize, @intCast(p.height))) {
+                    const sx = x - dx + @as(usize, @intCast(p.src_x));
+                    const sy = y - dy + @as(usize, @intCast(p.src_y));
+                    want = @as(*const u32, @ptrCast(@alignCast(&other[sy * bitmap.pitch + sx * 4]))).*;
+                }
+            }
+            try testing.expectEqual(want, pixelOf(&bitmap, @intCast(x), @intCast(y)).*);
+        };
+    }
+    // Within one buffer they could read what another part writes.
+    try testing.expectEqual(err.RTGERR_NOT_SUPPORTED, copyMany(&engine, &bitmap, &bitmap, &pieces, pieces.len));
+}
+
+test "a template and a pattern: set bits, clear bits, either swapped or left alone" {
+    test_parts = 3;
+    defer test_parts = 0;
+    var engine = Engine{};
+    var memory: [64 * 16 * 4]u8 align(64) = undefined;
+    var bitmap = testBitMap(&memory, 40, 16);
+    var before: [memory.len]u8 align(64) = undefined;
+    var bits: [6 * 16]u8 = undefined;
+    var prng = std.Random.DefaultPrng.init(3);
+    prng.random().bytes(&bits);
+    const area = rtg.RtgRect{ .x = 3, .y = 1, .width = 33, .height = 13 };
+    for ([_]u32{ 0, rtg.bitmaps.RTGTF_TRANSPARENT, rtg.bitmaps.RTGTF_INVERT, rtg.bitmaps.RTGTF_TRANSPARENT | rtg.bitmaps.RTGTF_INVERT }) |flags| {
+        for ([_]bool{ false, true }) |tiled| {
+            scramble(&bitmap, flags);
+            before = memory;
+            if (tiled) {
+                const tile = rtg.bitmaps.RtgPattern{ .bits = &bits, .pitch = 6, .width = 13, .height = 5, .origin_x = 2, .origin_y = -1, .fg = 0xAAAA_AAAA, .bg = 0x5555_5555, .flags = flags };
+                try testing.expectEqual(err.RTGERR_OK, pattern(&engine, &bitmap, &area, &tile));
+            } else {
+                const shape = rtg.bitmaps.RtgTemplate{ .bits = &bits, .pitch = 6, .src_x = 5, .src_y = 2, .fg = 0xAAAA_AAAA, .bg = 0x5555_5555, .flags = flags };
+                try testing.expectEqual(err.RTGERR_OK, template(&engine, &bitmap, &area, &shape));
+            }
+            for (0..16) |y| for (0..40) |x| {
+                var want = @as(*const u32, @ptrCast(@alignCast(&before[y * bitmap.pitch + x * 4]))).*;
+                if (x >= 3 and x < 36 and y >= 1 and y < 14) {
+                    const col: usize = if (tiled) @intCast(@mod(@as(i64, @intCast(x)) - 2, 13)) else x - 3 + 5;
+                    const row: usize = if (tiled) @intCast(@mod(@as(i64, @intCast(y)) + 1, 5)) else y - 1 + 2;
+                    const set = bits[row * 6 + col / 8] >> @intCast(7 - col % 8) & 1 != 0;
+                    if (set != (flags & rtg.bitmaps.RTGTF_INVERT != 0)) {
+                        want = 0xAAAA_AAAA;
+                    } else if (flags & rtg.bitmaps.RTGTF_TRANSPARENT == 0) {
+                        want = 0x5555_5555;
+                    }
+                }
+                try testing.expectEqual(want, pixelOf(&bitmap, @intCast(x), @intCast(y)).*);
+            };
+        }
+    }
 }

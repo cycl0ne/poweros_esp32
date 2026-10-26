@@ -112,12 +112,9 @@ fn put(d: *Desktop, path: []const u8) void {
         return;
     };
     ic.path = full;
-    ic.measure(d.gb, d.backdrop_rp, &d.look);
+    ic.measure(d.gb, d.measure_rp.?, &d.look);
     volumes.place(d, ic);
-    d.sys.AddTail(&d.volumes, &ic.node);
-    d.holdRoot();
-    ic.draw(d.gb, d.backdrop_rp, &d.look, .{});
-    d.releaseRoot();
+    volumes.putOn(d, ic);
 }
 
 /// The files of a volume that went taken off the desktop - they stay in

@@ -44,11 +44,16 @@ const DevProc = dos.DevProc;
 /// current directory's handler with the directory (":name": the
 /// volume's root), or to pr_FileSystemTask. CONSOLE: is pr_ConsoleTask
 /// and PROGDIR: pr_HomeDir. Anything else is looked up on the device
-/// list: a device whose handler isn't running has it started; a volume
-/// gives its handler; an assign gives its directory, a late one binding
+/// list: a device whose handler isn't running has it started, under the
+/// entry lock without the list lock; a volume gives its handler; an assign gives its directory, a late one binding
 /// it first, a non-binding one locking it anew with DVPF_UNLOCK. With
 /// `olddp` the next directory of the assign is given in `olddp` itself,
 /// after unlocking a lock made for it.
+///
+/// The entry lock is never waited for with the list held: a handler that
+/// starts under it adds its volume, which takes the list to write. While
+/// another handler is starting, the list is let go, that start waited out,
+/// and the name looked up again.
 ///
 /// CONTEXT:
 /// - Waits: yes: for the device list's locks, and for a starting
@@ -112,57 +117,67 @@ pub fn GetDeviceProc(db: *DosBase, name: [*:0]const u8, olddp: ?*DevProc) ?*DevP
     }
 
     const read = dos.LDF_ALL | dos.LDF_READ;
-    const start = dos_lib.LockDosList(read).?;
-    const node = dos_lib.FindDosEntry(start, device_name, dos.LDF_ALL) orelse {
-        dos_lib.UnLockDosList(read);
-        return failNull(db, dos.ERROR_DEVICE_NOT_MOUNTED);
-    };
-    switch (node.type) {
-        .device => {
-            if (node.task) |port| {
+    while (true) {
+        const start = dos_lib.LockDosList(read).?;
+        const node = dos_lib.FindDosEntry(start, device_name, dos.LDF_ALL) orelse {
+            dos_lib.UnLockDosList(read);
+            return failNull(db, dos.ERROR_DEVICE_NOT_MOUNTED);
+        };
+        switch (node.type) {
+            .device => {
+                if (node.task) |port| {
+                    dos_lib.UnLockDosList(read);
+                    return newDevProc(db, port, null, 0, node);
+                }
+                // Start its handler: under the entry lock, without the list
+                // lock, so the handler may add volumes while it starts.
+                // Another start under way holds the entry lock and may wait
+                // for the list: it is waited out with the list let go, and
+                // the device looked up again, its handler maybe running now.
+                const entry = dos.LDF_ENTRY | dos.LDF_WRITE;
+                if (dos_lib.AttemptLockDosList(entry) == null) {
+                    dos_lib.UnLockDosList(read);
+                    _ = dos_lib.LockDosList(entry);
+                    dos_lib.UnLockDosList(entry);
+                    continue;
+                }
                 dos_lib.UnLockDosList(read);
+                defer dos_lib.UnLockDosList(entry);
+                const port = node.task orelse startHandler(db, node, name) orelse return null;
                 return newDevProc(db, port, null, 0, node);
-            }
-            // Start its handler: under the entry lock, without the list
-            // lock, so the handler may add volumes while it starts.
-            const entry = dos.LDF_ENTRY | dos.LDF_WRITE;
-            _ = dos_lib.LockDosList(entry);
-            dos_lib.UnLockDosList(read);
-            defer dos_lib.UnLockDosList(entry);
-            const port = node.task orelse startHandler(db, node, name) orelse return null;
-            return newDevProc(db, port, null, 0, node);
-        },
-        .volume => {
-            const port = node.task;
-            dos_lib.UnLockDosList(read);
-            return newDevProc(db, port orelse return failNull(db, dos.ERROR_DEVICE_NOT_MOUNTED), null, 0, node);
-        },
-        .directory => {
-            const port = node.task;
-            const lock = node.lock;
-            const flags: u32 = if (node.misc.assign.list != null) dos.DVPF_ASSIGN else 0;
-            dos_lib.UnLockDosList(read);
-            return newDevProc(db, port, lock, flags, node);
-        },
-        .late, .nonbinding => {
-            // Its path is locked like any name, with no list lock held:
-            // a copy, since the node may change meanwhile.
-            const kind = node.type;
-            const original = node.misc.assign.assign_name;
-            const path = original orelse {
+            },
+            .volume => {
+                const port = node.task;
                 dos_lib.UnLockDosList(read);
-                return failNull(db, dos.ERROR_OBJECT_NOT_FOUND);
-            };
-            const copy = copyPath(db, path) orelse {
+                return newDevProc(db, port orelse return failNull(db, dos.ERROR_DEVICE_NOT_MOUNTED), null, 0, node);
+            },
+            .directory => {
+                const port = node.task;
+                const lock = node.lock;
+                const flags: u32 = if (node.misc.assign.list != null) dos.DVPF_ASSIGN else 0;
                 dos_lib.UnLockDosList(read);
-                return null;
-            };
-            dos_lib.UnLockDosList(read);
-            return bindAssign(db, name, node, kind, original, copy);
-        },
-        else => {
-            dos_lib.UnLockDosList(read);
-            return failNull(db, dos.ERROR_NOT_IMPLEMENTED);
-        },
+                return newDevProc(db, port, lock, flags, node);
+            },
+            .late, .nonbinding => {
+                // Its path is locked like any name, with no list lock held:
+                // a copy, since the node may change meanwhile.
+                const kind = node.type;
+                const original = node.misc.assign.assign_name;
+                const path = original orelse {
+                    dos_lib.UnLockDosList(read);
+                    return failNull(db, dos.ERROR_OBJECT_NOT_FOUND);
+                };
+                const copy = copyPath(db, path) orelse {
+                    dos_lib.UnLockDosList(read);
+                    return null;
+                };
+                dos_lib.UnLockDosList(read);
+                return bindAssign(db, name, node, kind, original, copy);
+            },
+            else => {
+                dos_lib.UnLockDosList(read);
+                return failNull(db, dos.ERROR_NOT_IMPLEMENTED);
+            },
+        }
     }
 }

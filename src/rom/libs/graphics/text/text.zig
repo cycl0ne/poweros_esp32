@@ -279,11 +279,10 @@ fn composeRun(gb: *GraphicsBase, rp: *RastPort, look: Look, string: [*]const u8,
     while (it.next()) |piece| {
         const r = piece.rect;
         if (jam2) {
+            // The ground under the letters: what a clear bit puts down.
+            const ground = blits.Stencil.of(rp, piece.surface.format).clear.?;
             var y: i32 = r.min_y;
-            while (y < r.max_y) : (y += 1) {
-                var x: i32 = r.min_x;
-                while (x < r.max_x) : (x += 1) blits.stencil(rp, piece, x, y, false);
-            }
+            while (y < r.max_y) : (y += 1) ground.run(drawing.address(piece, r.min_x, y), ground.bytes, @intCast(r.width()));
         }
         var at: i32 = area.min_x - run.room.min_x;
         var i: u32 = 0;

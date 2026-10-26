@@ -8,6 +8,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const crypto = sdk.crypto;
 const ExecBase = sdk.interface.exec.ExecBase;
+const jh7110 = @import("engine/jh7110.zig");
 
 /// The words of the longest number ModExp takes.
 pub const number_words = crypto.NUMBER_MAX / 4;
@@ -31,12 +32,15 @@ pub const CryptoBase = extern struct {
     /// One caller at a time in each engine: a caller holds the lock for
     /// the blocks of one call, and leaves its state in its context.
     sha_lock: exec.SignalSemaphore = .{},
+    /// The S3's AES engine's, or the JH7110's engine's.
     aes_lock: exec.SignalSemaphore = .{},
     /// Held for all of ModExp: it guards `numbers` as well as the engine.
     rsa_lock: exec.SignalSemaphore = .{},
     /// The host's stand-in for the chip's generator (xorshift32).
     random_state: u32 = 0x2545_F491,
     numbers: Numbers = .{},
+    /// The JH7110's engine, once a call has set it up.
+    sec: jh7110.State = .{},
 };
 
 pub fn cryptoBase(lib: *exec.Library) *CryptoBase {

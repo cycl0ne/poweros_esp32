@@ -16,27 +16,45 @@
 //! chip the hashes, AES and the exponentiations go through the SHA, AES
 //! and RSA engines; the curves are software.
 //!
+//! Long data checks what only long data reaches - the JH7110's engine
+//! takes 64 bytes of AES, or 512 of GMAC, and more: ECB, CBC and CTR in
+//! one call against the same in 48-byte pieces, which stay in software
+//! everywhere, and GCM's ciphertext and tags against CTR in pieces and a
+//! GHASH worked out here bit by bit, as SP 800-38D gives it. And 512
+//! bytes of SHA-2 and more, which HashPieces and HmacPieces give the
+//! engine, against the incremental calls, which stay in software:
+//! messages of one buffer of the engine's, of two and of three, and HMAC
+//! keys shorter than a word, a block long, and longer. GMAC a piece at
+//! a time (InitGmac, UpdateGmac, FinishGmac) against SealGcm with the
+//! data as its header and the GHASH worked out here.
+//!
 //! It prints one line per check that fails (every check, with VERBOSE)
 //! and a count at the end; the return code is 0 when all pass, 10 when
 //! any fails, 20 when the library cannot be opened.
 //!
 //! BENCH times each kind of work after the checks - a key pair, a shared
 //! secret, a signature checked and made, AES-GCM, AES-CTR alone (the
-//! engine's share of GCM) and SHA-256 in bulk - in milliseconds an
-//! operation or kilobytes a second, on dos's clock.
+//! engine's share of GCM) and SHA-256 in bulk - in microseconds an
+//! operation or kilobytes a second, on timer.device's E-clock; and
+//! SHA-256 of messages from 256 bytes to 64 KiB, in one HashPieces and in
+//! steps, and GMAC a piece at a time.
 //! RANDOM puts 20000 bits of RandomBytes through FIPS 140-2's monobit,
 //! poker and long-run tests.
 
+const std = @import("std");
 const sdk = @import("sdk");
+const exec = sdk.exec;
 const dos = sdk.dos;
 const crypto = sdk.crypto;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const TimerBase = sdk.interface.timer.TimerBase;
+const timer = sdk.devices.timer;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Crypto";
-const VERSION_STRING = "\x00$VER: Crypto 1.2 (03.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Crypto 1.6 (26.10.2026)\r\n";
 
 const template = "VERBOSE/S,BENCH/S,RANDOM/S";
 const arg_verbose = 0;
@@ -63,9 +81,12 @@ fn nibble(comptime digit: u8) u8 {
 
 /// What a run keeps: where to print, and what passed.
 const Run = struct {
+    sys: *ExecBase,
     dl: *DosBase,
     cb: *CryptoBase,
     verbose: bool,
+    /// timer.device, while BENCH runs.
+    clock: ?*TimerBase = null,
     passed: u32 = 0,
     failed: u32 = 0,
 
@@ -143,6 +164,36 @@ fn hmac(run: *Run) void {
     run.check("HMAC-SHA-512 (RFC 4231 case 2)", same(mac[0..length512], &hex("164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737")));
 }
 
+/// The one-call hashes on short messages, which every chip hashes in
+/// software: the known answers in pieces, the empty message, and what
+/// they refuse.
+fn onePieces(run: *Run) void {
+    const cb = run.cb;
+    const Bytes = crypto.Bytes;
+    const abc = [_]Bytes{ .of("a"), .{}, .of("bc") };
+    const cases = [_]struct { name: [*:0]const u8, algorithm: u32, expected: []const u8 }{
+        .{ .name = "HashPieces SHA-1 \"abc\"", .algorithm = crypto.HASH_SHA1, .expected = &hex("a9993e364706816aba3e25717850c26c9cd0d89d") },
+        .{ .name = "HashPieces SHA-256 \"abc\"", .algorithm = crypto.HASH_SHA256, .expected = &hex("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") },
+        .{ .name = "HashPieces SHA-512 \"abc\"", .algorithm = crypto.HASH_SHA512, .expected = &hex("ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f") },
+    };
+    var digest: [crypto.DIGEST_MAX]u8 = undefined;
+    for (cases) |case| {
+        const length = cb.HashPieces(case.algorithm, &abc, abc.len, &digest);
+        run.check(case.name, same(digest[0..length], case.expected));
+    }
+    const empty = cb.HashPieces(crypto.HASH_SHA256, null, 0, &digest);
+    run.check("HashPieces SHA-256, no pieces", same(digest[0..empty], &hex("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")));
+    const missing = [_]Bytes{.{ .length = 3 }};
+    run.check("HashPieces, a piece without bytes refused", cb.HashPieces(crypto.HASH_SHA256, &missing, 1, &digest) == 0);
+
+    const said = [_]Bytes{ .of("what do ya want "), .of("for nothing?") };
+    var mac: [crypto.DIGEST_MAX]u8 = undefined;
+    const length = cb.HmacPieces(crypto.HASH_SHA256, "Jefe", 4, &said, said.len, &mac);
+    run.check("HmacPieces SHA-256 (RFC 4231 case 2)", same(mac[0..length], &hex("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")));
+    const length512 = cb.HmacPieces(crypto.HASH_SHA512, "Jefe", 4, &said, said.len, &mac);
+    run.check("HmacPieces SHA-512 (RFC 4231 case 2)", same(mac[0..length512], &hex("164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737")));
+}
+
 fn aes(run: *Run) void {
     const cb = run.cb;
     const plain = hex("00112233445566778899aabbccddeeff");
@@ -204,6 +255,262 @@ fn gcm(run: *Run) void {
     run.check("AES-128-GCM, a forged tag refused", run.cb.OpenGcm(&message) == crypto.CRYPTOERR_TAG and same(&data, &sealed));
     tag[0] ^= 0x80;
     run.check("AES-128-GCM open (GCM test case 4)", run.cb.OpenGcm(&message) == crypto.CRYPTOERR_OK and same(&data, &plain));
+}
+
+/// `length` bytes of `from` through a fresh context of `mode`, into `one`
+/// in two calls - the first `split` bytes, then the rest - and into
+/// `pieces` 48 bytes at a time: whether both came out the same.
+fn twoWays(cb: *CryptoBase, mode: u32, key: []const u8, iv: *const [16]u8, from: [*]const u8, one: [*]u8, pieces: [*]u8, length: u32, split: u32) bool {
+    var context: crypto.CipherContext = .{};
+    if (cb.InitCipher(&context, mode, key.ptr, @intCast(key.len), iv) != crypto.CRYPTOERR_OK) return false;
+    if (cb.UpdateCipher(&context, from, one, split) != crypto.CRYPTOERR_OK) return false;
+    if (cb.UpdateCipher(&context, from + split, one + split, length - split) != crypto.CRYPTOERR_OK) return false;
+    if (cb.InitCipher(&context, mode, key.ptr, @intCast(key.len), iv) != crypto.CRYPTOERR_OK) return false;
+    var at: u32 = 0;
+    while (at < length) : (at += 48) {
+        if (cb.UpdateCipher(&context, from + at, pieces + at, @min(48, length - at)) != crypto.CRYPTOERR_OK) return false;
+    }
+    return same(one[0..length], pieces[0..length]);
+}
+
+/// x * y in GCM's field, a bit at a time (SP 800-38D, algorithm 1),
+/// blocks read most significant first.
+fn fieldMultiply(x: u128, y: u128) u128 {
+    var z: u128 = 0;
+    var v = y;
+    var bit: u8 = 0;
+    while (bit < 128) : (bit += 1) {
+        if ((x >> @intCast(127 - bit)) & 1 != 0) z ^= v;
+        v = if (v & 1 != 0) (v >> 1) ^ (@as(u128, 0xE1) << 120) else v >> 1;
+    }
+    return z;
+}
+
+/// GHASH with `h` over `aad`, `data` and their lengths.
+fn ghashOf(h: u128, aad: []const u8, data: []const u8) u128 {
+    var y: u128 = 0;
+    for ([_][]const u8{ aad, data }) |part| {
+        var at: usize = 0;
+        while (at < part.len) : (at += 16) {
+            var block: [16]u8 = @splat(0);
+            const take = @min(16, part.len - at);
+            @memcpy(block[0..take], part[at..][0..take]);
+            y = fieldMultiply(y ^ std.mem.readInt(u128, &block, .big), h);
+        }
+    }
+    return fieldMultiply(y ^ ((@as(u128, aad.len) * 8) << 64) ^ (@as(u128, data.len) * 8), h);
+}
+
+/// GMAC of `data` a piece at a time - 1, 15, 4097 and 65536 bytes in
+/// turn - against SealGcm with `data` as its header, and against the
+/// GHASH worked out here.
+fn gmacAgrees(cb: *CryptoBase, key: []const u8, data: []const u8) bool {
+    const nonce = hex("cafebabefacedbaddecaf888");
+    var sealed: [crypto.GCM_TAG]u8 = undefined;
+    const message: crypto.GcmMessage = .{ .key = key.ptr, .key_length = @intCast(key.len), .nonce = &nonce, .nonce_length = 12, .aad = data.ptr, .aad_length = @intCast(data.len), .tag = &sealed };
+    if (cb.SealGcm(&message) != crypto.CRYPTOERR_OK) return false;
+    var context: crypto.GmacContext = .{};
+    if (cb.InitGmac(&context, key.ptr, @intCast(key.len), &nonce, nonce.len) != crypto.CRYPTOERR_OK) return false;
+    const cuts = [_]usize{ 1, 15, 4097, 65536 };
+    var at: usize = 0;
+    var turn: usize = 0;
+    while (at < data.len) : (turn += 1) {
+        const take = @min(data.len - at, cuts[turn % cuts.len]);
+        cb.UpdateGmac(&context, data[at..].ptr, @intCast(take));
+        at += take;
+    }
+    var tag: [crypto.GCM_TAG]u8 = undefined;
+    if (cb.FinishGmac(&context, &tag) != crypto.CRYPTOERR_OK or !same(&tag, &sealed)) return false;
+    const h = std.mem.readInt(u128, &blockOf(cb, key, @splat(0)), .big);
+    var j0: [16]u8 = @splat(0);
+    @memcpy(j0[0..12], &nonce);
+    j0[15] = 1;
+    const mask = std.mem.readInt(u128, &blockOf(cb, key, j0), .big);
+    return std.mem.readInt(u128, &tag, .big) == mask ^ ghashOf(h, data, &.{});
+}
+
+/// One block through AES-ECB with `key`.
+fn blockOf(cb: *CryptoBase, key: []const u8, block: [16]u8) [16]u8 {
+    var context: crypto.CipherContext = .{};
+    var out = block;
+    _ = cb.InitCipher(&context, crypto.CIPHER_AES_ECB, key.ptr, @intCast(key.len), null);
+    _ = cb.UpdateCipher(&context, &out, &out, 16);
+    return out;
+}
+
+/// `data` (`length` bytes, maybe none) and `aad` sealed with AES-GCM
+/// into `sealed`, checked against CTR from J0 + 1 in 48-byte pieces into
+/// `expected` and the GHASH here; then opened again, once with a forged
+/// tag, which leaves `opened` as it was, and once as sealed.
+fn gcmAgrees(cb: *CryptoBase, key: []const u8, aad: []const u8, data: [*]const u8, length: u32, sealed: [*]u8, expected: [*]u8, opened: [*]u8) bool {
+    const nonce = hex("cafebabefacedbaddecaf888");
+    var tag: [crypto.GCM_TAG]u8 = undefined;
+    const seal: crypto.GcmMessage = .{
+        .key = key.ptr,
+        .key_length = @intCast(key.len),
+        .nonce = &nonce,
+        .nonce_length = 12,
+        .aad = aad.ptr,
+        .aad_length = @intCast(aad.len),
+        .input = data,
+        .output = sealed,
+        .length = length,
+        .tag = &tag,
+    };
+    if (cb.SealGcm(&seal) != crypto.CRYPTOERR_OK) return false;
+
+    var j0: [16]u8 = @splat(0);
+    @memcpy(j0[0..12], &nonce);
+    j0[15] = 1;
+    var counter = j0;
+    counter[15] = 2;
+    var context: crypto.CipherContext = .{};
+    _ = cb.InitCipher(&context, crypto.CIPHER_AES_CTR, key.ptr, @intCast(key.len), &counter);
+    var at: u32 = 0;
+    while (at < length) : (at += 48) _ = cb.UpdateCipher(&context, data + at, expected + at, @min(48, length - at));
+    if (!same(sealed[0..length], expected[0..length])) return false;
+    const h = std.mem.readInt(u128, &blockOf(cb, key, @splat(0)), .big);
+    const mask = std.mem.readInt(u128, &blockOf(cb, key, j0), .big);
+    if (std.mem.readInt(u128, &tag, .big) != mask ^ ghashOf(h, aad, sealed[0..length])) return false;
+
+    var open = seal;
+    open.input = sealed;
+    open.output = opened;
+    @memset(opened[0..length], 0xEE);
+    tag[15] ^= 1;
+    if (cb.OpenGcm(&open) != crypto.CRYPTOERR_TAG) return false;
+    for (opened[0..length]) |byte| if (byte != 0xEE) return false;
+    tag[15] ^= 1;
+    if (cb.OpenGcm(&open) != crypto.CRYPTOERR_OK) return false;
+    return same(opened[0..length], data[0..length]);
+}
+
+/// How much long data there is: 2.2 MB on the 64-bit boards - past two
+/// of the JH7110's engine buffers (1 MiB and 4 KiB each) - and 150000
+/// bytes on the ESP32s. A check longer than that is left out.
+const long_size: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 2_200_000 else 150_000;
+
+fn longData(run: *Run) void {
+    const cb = run.cb;
+    const size = long_size;
+    const memory = run.sys.AllocVec(4 * size, exec.MEMF_ANY) orelse {
+        run.check("long data: memory for it", false);
+        return;
+    };
+    defer run.sys.FreeVec(memory);
+    const all: [*]u8 = @ptrCast(memory);
+    const data = all[0..size];
+    const one = all[size..];
+    const pieces = all[2 * size ..];
+    const other = all[3 * size ..];
+    var x: u32 = 0x1234_5678;
+    for (data) |*byte| {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        byte.* = @truncate(x);
+    }
+    const key = hex("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
+    // A counter whose low bytes carry out within the data.
+    const iv = hex("f0f1f2f3f4f5f6f7f8f9fafbfffffffe");
+    const ciphers = [_]struct { name: [*:0]const u8, mode: u32, key_length: u32, length: u32, split: u32 }{
+        .{ .name = "AES-128-ECB, 20000 bytes", .mode = crypto.CIPHER_AES_ECB, .key_length = 16, .length = 20000, .split = 4096 },
+        .{ .name = "AES-128-CBC encrypt, 4096 bytes", .mode = crypto.CIPHER_AES_CBC, .key_length = 16, .length = 4096, .split = 1024 },
+        .{ .name = "AES-128-CBC decrypt, 150000 bytes", .mode = crypto.CIPHER_AES_CBC | crypto.CIPHERF_DECRYPT, .key_length = 16, .length = 150_000, .split = 4096 },
+        .{ .name = "AES-256-CBC encrypt, 150000 bytes", .mode = crypto.CIPHER_AES_CBC, .key_length = 32, .length = 150_000, .split = 70_000 },
+        .{ .name = "AES-128-CTR, 4101 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 16, .length = 4101, .split = 1001 },
+        .{ .name = "AES-128-CTR, 20003 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 16, .length = 20003, .split = 4101 },
+        .{ .name = "AES-256-CTR, 149999 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 32, .length = 149_999, .split = 77_777 },
+        .{ .name = "AES-128-CTR, 1100003 bytes", .mode = crypto.CIPHER_AES_CTR, .key_length = 16, .length = 1_100_003, .split = 500_001 },
+        .{ .name = "AES-128-CBC decrypt, 2100000 bytes", .mode = crypto.CIPHER_AES_CBC | crypto.CIPHERF_DECRYPT, .key_length = 16, .length = 2_100_000, .split = 1_052_672 },
+    };
+    for (ciphers) |c| {
+        if (c.length > size) continue;
+        run.check(c.name, twoWays(cb, c.mode, key[0..c.key_length], &iv, data.ptr, one, pieces, c.length, c.split));
+    }
+
+    const header = hex("feedfacedeadbeefabaddad201");
+    const messages = [_]struct { name: [*:0]const u8, key_length: u32, aad: u32, length: u32 }{
+        .{ .name = "AES-128-GCM, 4103 bytes", .key_length = 16, .aad = 13, .length = 4103 },
+        .{ .name = "AES-128-GCM, 30011 bytes", .key_length = 16, .aad = 13, .length = 30011 },
+        .{ .name = "AES-256-GCM, 66560 bytes", .key_length = 32, .aad = 0, .length = 66560 },
+        .{ .name = "AES-128-GCM, 100000 bytes", .key_length = 16, .aad = 13, .length = 100_000 },
+        // An SMB READ's answer of 1 MiB with its headers, and a message
+        // longer than the engine's buffer, which goes to software.
+        .{ .name = "AES-128-GCM, 1048656 bytes", .key_length = 16, .aad = 13, .length = 1_048_656 },
+        .{ .name = "AES-256-GCM, 1100000 bytes", .key_length = 32, .aad = 13, .length = 1_100_000 },
+    };
+    for (messages) |m| {
+        if (m.length > size) continue;
+        run.check(m.name, gcmAgrees(cb, key[0..m.key_length], header[0..m.aad], data.ptr, m.length, one, pieces, other));
+    }
+    const macs = [_]struct { name: [*:0]const u8, length: u32 }{
+        .{ .name = "AES-128-GMAC, 1000 bytes", .length = 1000 },
+        .{ .name = "AES-128-GMAC, 66560 bytes", .length = 66560 },
+        .{ .name = "AES-128-GMAC, 1048656 bytes", .length = 1_048_656 },
+    };
+    for (macs) |m| {
+        if (m.length > size) continue;
+        run.check(m.name, gcmAgrees(cb, key[0..16], data[0..m.length], data.ptr, 0, one, pieces, other));
+    }
+    const streamed = [_]struct { name: [*:0]const u8, key_length: u32, length: u32 }{
+        .{ .name = "AES-128-GMAC in pieces, 0 bytes", .key_length = 16, .length = 0 },
+        .{ .name = "AES-128-GMAC in pieces, 4103 bytes", .key_length = 16, .length = 4103 },
+        .{ .name = "AES-256-GMAC in pieces, 66561 bytes", .key_length = 32, .length = 66561 },
+        .{ .name = "AES-128-GMAC in pieces, 1048656 bytes", .key_length = 16, .length = 1_048_656 },
+    };
+    for (streamed) |m| {
+        if (m.length > size) continue;
+        run.check(m.name, gmacAgrees(cb, key[0..m.key_length], data[0..m.length]));
+    }
+    longHashes(run, data);
+}
+
+const hash_names = [_]struct { algorithm: u32, name: []const u8 }{
+    .{ .algorithm = crypto.HASH_SHA1, .name = "SHA-1" },
+    .{ .algorithm = crypto.HASH_SHA224, .name = "SHA-224" },
+    .{ .algorithm = crypto.HASH_SHA256, .name = "SHA-256" },
+    .{ .algorithm = crypto.HASH_SHA384, .name = "SHA-384" },
+    .{ .algorithm = crypto.HASH_SHA512, .name = "SHA-512" },
+};
+
+/// HashPieces and HmacPieces on long messages, cut in odd places, against
+/// the incremental calls: lengths about the engine's threshold, its
+/// buffer (1 MiB and 4 KiB) and two of them.
+fn longHashes(run: *Run, data: []const u8) void {
+    const cb = run.cb;
+    const Bytes = crypto.Bytes;
+    var name: [64]u8 = undefined;
+    var expected: [crypto.DIGEST_MAX]u8 = undefined;
+    var digest: [crypto.DIGEST_MAX]u8 = undefined;
+    for (hash_names) |h| {
+        for ([_]u32{ 511, 512, 4099, 69633, 150_000, 1_052_672, 1_052_673, 2_105_345 }) |length| {
+            if (length > data.len) continue;
+            const want = digestOf(cb, h.algorithm, data[0..length], &expected);
+            const cut = length / 3;
+            const later = length - length / 7;
+            const pieces = [_]Bytes{ .of(data[0..cut]), .{}, .of(data[cut..later]), .of(data[later..length]) };
+            const got = cb.HashPieces(h.algorithm, &pieces, pieces.len, &digest);
+            const label = std.fmt.bufPrintZ(&name, "HashPieces {s}, {d} bytes", .{ h.name, length }) catch unreachable;
+            run.check(label, same(digest[0..got], want));
+        }
+    }
+    var key: [131]u8 = undefined;
+    for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 29 +% 7);
+    for ([_]u32{ crypto.HASH_SHA256, crypto.HASH_SHA512 }) |algorithm| {
+        for ([_]u32{ 4, 13, 64, 100, 131 }) |key_length| {
+            for ([_]u32{ 5000, 70_001 }) |length| {
+                var context: crypto.HmacContext = .{};
+                _ = cb.InitHmac(&context, algorithm, &key, key_length);
+                cb.UpdateHmac(&context, data.ptr, length);
+                const want = cb.FinishHmac(&context, &expected);
+                const pieces = [_]Bytes{ .of(data[0..1001]), .of(data[1001..length]) };
+                const got = cb.HmacPieces(algorithm, &key, key_length, &pieces, pieces.len, &digest);
+                const label = std.fmt.bufPrintZ(&name, "HmacPieces SHA-{d}, key {d}, {d} bytes", .{ @as(u32, if (algorithm == crypto.HASH_SHA256) 256 else 512), key_length, length }) catch unreachable;
+                run.check(label, got == want and same(digest[0..got], expected[0..want]));
+            }
+        }
+    }
 }
 
 fn modexp(run: *Run) void {
@@ -401,20 +708,29 @@ fn random(run: *Run) void {
 
 // --- BENCH: how long the work takes -------------------------------------------
 
-/// Milliseconds on dos's clock, to a fiftieth of a second.
-fn millis(dl: *DosBase) u64 {
-    var stamp: dos.DateStamp = .{};
-    _ = dl.DateStamp(&stamp);
-    const minutes: u64 = @as(u64, @intCast(stamp.days)) * 1440 + @as(u64, @intCast(stamp.minute));
-    return minutes * 60_000 + @as(u64, @intCast(stamp.tick)) * 20;
+/// The E-clock in microseconds: steady, which dos's clock is not when
+/// the date is set under it.
+fn micros(run: *Run) u64 {
+    var value: timer.EClockVal = .{};
+    const rate_hz = run.clock.?.ReadEClock(&value);
+    const count = @as(u64, value.hi) << 32 | value.lo;
+    return count / rate_hz * 1_000_000 + count % rate_hz * 1_000_000 / rate_hz;
 }
 
 fn report(run: *Run, name: [*:0]const u8, started: u64, count: u32) void {
-    const elapsed = millis(run.dl) - started;
-    _ = Printf(run.dl, "%-34s %ld ms each (%u in %ld ms)\n", .{ name, elapsed / count, count, elapsed });
+    const elapsed = micros(run) - started;
+    _ = Printf(run.dl, "%-34s %ld us each (%u in %ld ms)\n", .{ name, elapsed / count, count, elapsed / 1000 });
 }
 
 fn bench(run: *Run) void {
+    var request: timer.TimeRequest = .{};
+    if (run.sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &request.node, 0) != 0) {
+        _ = Printf(run.dl, "%s: cannot open %s\n", .{ COMMAND_NAME, sdk.interface.timer.NAME });
+        return;
+    }
+    defer run.sys.CloseDevice(&request.node);
+    run.clock = @ptrCast(@alignCast(request.node.device.?));
+    defer run.clock = null;
     const cb = run.cb;
     const Bytes = crypto.Bytes;
     var private_key: [crypto.CURVE_PRIVATE_MAX]u8 = undefined;
@@ -427,34 +743,34 @@ fn bench(run: *Run) void {
         .{ .curve = crypto.CURVE_P384, .pair = "P-384 key pair", .agree = "P-384 shared secret" },
     };
     for (curves) |entry| {
-        var started = millis(run.dl);
+        var started = micros(run);
         for (0..5) |_| _ = cb.MakeKeyPair(entry.curve, &private_key, &public_key, &length);
         report(run, entry.pair, started, 5);
-        started = millis(run.dl);
+        started = micros(run);
         for (0..5) |_| _ = cb.SharedSecret(entry.curve, &private_key, &Bytes.of(public_key[0..length]), &secret);
         report(run, entry.agree, started, 5);
     }
     const ec_key: crypto.PublicKey = .{ .point = Bytes.of(&ecdsa_point) };
-    var started = millis(run.dl);
+    var started = micros(run);
     for (0..5) |_| _ = cb.VerifySignature(crypto.SIG_ECDSA_P256, &ec_key, &Bytes.of(&signed_digest), &Bytes.of(&ecdsa_signature));
     report(run, "ECDSA P-256 verify", started, 5);
     const ec384_key: crypto.PublicKey = .{ .point = Bytes.of(&ecdsa384_point) };
-    started = millis(run.dl);
+    started = micros(run);
     for (0..5) |_| _ = cb.VerifySignature(crypto.SIG_ECDSA_P384, &ec384_key, &Bytes.of(&signed_digest384), &Bytes.of(&ecdsa384_signature));
     report(run, "ECDSA P-384 verify", started, 5);
     const rsa_key: crypto.PublicKey = .{ .modulus = Bytes.of(&rsa_modulus), .exponent = Bytes.of(&.{ 1, 0, 1 }) };
-    started = millis(run.dl);
+    started = micros(run);
     for (0..20) |_| _ = cb.VerifySignature(crypto.SIG_RSA_PSS_SHA256, &rsa_key, &Bytes.of(&signed_digest), &Bytes.of(&pss_signature));
     report(run, "RSA-2048 PSS verify", started, 20);
     const seed = hex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
     var signature: [crypto.SIGNATURE_ED25519]u8 = undefined;
-    started = millis(run.dl);
+    started = micros(run);
     for (0..5) |_| _ = cb.Sign(crypto.SIG_ED25519, &seed, &Bytes.of("message"), &signature);
     report(run, "Ed25519 sign", started, 5);
     const ed_key: crypto.PublicKey = .{ .point = Bytes.of(&hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")) };
     var ed_signature: [crypto.SIGNATURE_ED25519]u8 = undefined;
     _ = cb.Sign(crypto.SIG_ED25519, &seed, &Bytes.of(""), &ed_signature);
-    started = millis(run.dl);
+    started = micros(run);
     for (0..5) |_| _ = cb.VerifySignature(crypto.SIG_ED25519, &ed_key, &Bytes.of(""), &Bytes.of(&ed_signature));
     report(run, "Ed25519 verify", started, 5);
 
@@ -466,25 +782,59 @@ fn bench(run: *Run) void {
     const nonce: [12]u8 = @splat(2);
     var tag: [crypto.GCM_TAG]u8 = undefined;
     const message: crypto.GcmMessage = .{ .key = &key, .key_length = 16, .nonce = &nonce, .nonce_length = 12, .input = &Buffer.data, .output = &Buffer.data, .length = Buffer.data.len, .tag = &tag };
-    started = millis(run.dl);
+    started = micros(run);
     for (0..64) |_| _ = cb.SealGcm(&message);
     throughput(run, "AES-128-GCM seal", started, 64);
     var context: crypto.CipherContext = .{};
     _ = cb.InitCipher(&context, crypto.CIPHER_AES_CTR, &key, 16, &([_]u8{3} ** 16));
-    started = millis(run.dl);
+    started = micros(run);
     for (0..64) |_| _ = cb.UpdateCipher(&context, &Buffer.data, &Buffer.data, Buffer.data.len);
     throughput(run, "AES-128-CTR (the engine alone)", started, 64);
     var digest: [crypto.DIGEST_MAX]u8 = undefined;
-    started = millis(run.dl);
+    started = micros(run);
     for (0..256) |_| _ = digestOf(cb, crypto.HASH_SHA256, &Buffer.data, &digest);
     throughput(run, "SHA-256", started, 256);
+    var gmac: crypto.GmacContext = .{};
+    started = micros(run);
+    _ = cb.InitGmac(&gmac, &key, 16, &nonce, 12);
+    for (0..64) |_| cb.UpdateGmac(&gmac, &Buffer.data, Buffer.data.len);
+    _ = cb.FinishGmac(&gmac, &tag);
+    throughput(run, "AES-128-GMAC in pieces", started, 64);
+    sizes(run);
+}
+
+/// SHA-256 of messages from 256 bytes to 64 KiB, 4 MiB of each, in one
+/// HashPieces and in steps: where the JH7110's engine starts to pay.
+fn sizes(run: *Run) void {
+    const cb = run.cb;
+    const total: u32 = 4 << 20;
+    const memory = run.sys.AllocVec(64 * 1024, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return;
+    defer run.sys.FreeVec(memory);
+    const data: [*]const u8 = @ptrCast(memory);
+    var digest: [crypto.DIGEST_MAX]u8 = undefined;
+    for ([_]u32{ 256, 512, 1024, 2048, 4096, 16384, 65536 }) |size| {
+        const rounds = total / size;
+        const pieces = [_]crypto.Bytes{.{ .bytes = data, .length = size }};
+        var started = micros(run);
+        for (0..rounds) |_| _ = cb.HashPieces(crypto.HASH_SHA256, &pieces, 1, &digest);
+        const one = micros(run) - started;
+        started = micros(run);
+        for (0..rounds) |_| _ = digestOf(cb, crypto.HASH_SHA256, data[0..size], &digest);
+        const steps = micros(run) - started;
+        _ = Printf(run.dl, "SHA-256 of %5lu bytes %8ld KiB/s in one call, %ld KiB/s in steps\n", .{ @as(u64, size), rate(total, one), rate(total, steps) });
+    }
+}
+
+/// `bytes` in `elapsed` microseconds, in KiB a second.
+fn rate(bytes: u64, elapsed: u64) u64 {
+    return if (elapsed == 0) 0 else bytes / 1024 * 1_000_000 / elapsed;
 }
 
 /// `rounds` of 16 KiB since `started`, in KiB a second.
 fn throughput(run: *Run, name: [*:0]const u8, started: u64, rounds: u32) void {
-    const elapsed = millis(run.dl) - started;
-    const kib: u64 = 16 * @as(u64, rounds);
-    _ = Printf(run.dl, "%-34s %ld KiB/s (%ld KiB in %ld ms)\n", .{ name, if (elapsed == 0) 0 else kib * 1000 / elapsed, kib, elapsed });
+    const elapsed = micros(run) - started;
+    const bytes: u64 = 16 * 1024 * @as(u64, rounds);
+    _ = Printf(run.dl, "%-34s %ld KiB/s (%ld KiB in %ld ms)\n", .{ name, rate(bytes, elapsed), bytes / 1024, elapsed / 1000 });
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -501,17 +851,19 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer dl.FreeArgs(rda);
 
-    const crypto_lib = sys.OpenLibrary(crypto.CRYPTONAME, 1) orelse {
+    const crypto_lib = sys.OpenLibrary(crypto.CRYPTONAME, 2) orelse {
         _ = Printf(dl, "%s: cannot open %s\n", .{ COMMAND_NAME, crypto.CRYPTONAME });
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(crypto_lib);
 
-    var run: Run = .{ .dl = dl, .cb = @ptrCast(crypto_lib), .verbose = argv[arg_verbose] != 0 };
+    var run: Run = .{ .sys = sys, .dl = dl, .cb = @ptrCast(crypto_lib), .verbose = argv[arg_verbose] != 0 };
     hashes(&run);
     hmac(&run);
+    onePieces(&run);
     aes(&run);
     gcm(&run);
+    longData(&run);
     modexp(&run);
     keys(&run);
     signatures(&run);

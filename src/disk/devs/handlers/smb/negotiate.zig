@@ -116,6 +116,7 @@ pub fn negotiate(session: *Session, salt: *const [32]u8) session_area.Error!u32 
     session.max_transact = wire.u32At(fields, 28);
     session.max_read = wire.u32At(fields, 32);
     session.max_write = wire.u32At(fields, 36);
+    session.multi_credit = dialect != smb.SMB2_DIALECT_0202 and session.server_capabilities & CAP_LARGE_MTU != 0;
     session.server_time = wire.u64At(fields, 40);
     if (dialect != smb.SMB2_DIALECT_0311) return smb.STATUS_SUCCESS;
 

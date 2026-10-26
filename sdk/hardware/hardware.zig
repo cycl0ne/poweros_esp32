@@ -104,6 +104,7 @@ pub const ccache = if (chip == .rv64sbi) own.ccache else struct {};
 /// them (the JH7110's; dma.resource hands them out). The ESP32s' DMA is
 /// `gdma`'s and `dma2d`'s, so there it is empty.
 pub const dwdma = if (chip == .rv64sbi) own.dwdma else struct {};
+pub const pl080 = if (chip == .rv64sbi) own.pl080 else struct {};
 /// The DesignWare I2C controller as a bus master that waits for its own
 /// transfers (the JH7110's; its power controller is on one). The ESP32s'
 /// I2C is `i2c`'s, so there it is empty.

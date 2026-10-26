@@ -24,7 +24,9 @@
 //! `jh7110/channels.zig`) are numbered after those, the same way: the
 //! resource finds the controller in the board's parts and brings it up
 //! when it is made, hands its channels out and stops one given back; its
-//! owner drives it through `sdk.hardware.dwdma`. A chip without general
+//! owner drives it through `sdk.hardware.dwdma`. **The PL080's channels**
+//! (the eight of the JH7110's security block) come after them, the same
+//! way, driven through `sdk.hardware.pl080`. A chip without general
 //! channels has the general calls refuse every channel.
 //!
 //! It builds against the SDK.
@@ -43,20 +45,24 @@ const chip = switch (sdk.hardware.chip) {
     .a64psci => @compileError("dma.resource: no DMA engine driven on this chip yet"),
 };
 const general = chip.general;
-/// The DesignWare channels, numbered after the 2D-DMA's.
+/// The DesignWare channels, numbered after the 2D-DMA's, and the PL080's
+/// after them.
 const dw_channels = if (@hasDecl(chip, "dw_channels")) chip.dw_channels else 0;
 const dw_first = general + chip.dma2d_channels;
-const all_channels = dw_first + dw_channels;
+const pl_channels = if (@hasDecl(chip, "pl_channels")) chip.pl_channels else 0;
+const pl_first = dw_first + dw_channels;
+const all_channels = pl_first + pl_channels;
 /// Which kinds of channel the chip has: the calls for a kind it has not
 /// are left out.
 const has_general = general != 0;
 const has_2d = chip.dma2d_channels != 0;
 const has_dw = dw_channels != 0;
+const has_pl = pl_channels != 0;
 
 pub const RESOURCE_NAME = types.DMANAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 3;
-const BUILD_DATE = "20.10.2026";
+const RESOURCE_REVISION = 4;
+const BUILD_DATE = "26.10.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -82,6 +88,8 @@ comptime {
     if (types.DMA2D_CHANNELS != chip.dma2d_channels) @compileError("the SDK's DMA2D_CHANNELS isn't the chip's");
     if (types.DWDMA_CHANNELS != dw_channels) @compileError("the SDK's DWDMA_CHANNELS isn't the chip's");
     if (types.DWDMA_CHANNEL0 != dw_first) @compileError("the SDK's DWDMA_CHANNEL0 isn't the chip's");
+    if (types.PL080_CHANNELS != pl_channels) @compileError("the SDK's PL080_CHANNELS isn't the chip's");
+    if (types.PL080_CHANNEL0 != pl_first) @compileError("the SDK's PL080_CHANNEL0 isn't the chip's");
     if (has_general and types.DMA_MAXPRI != chip.max_priority) @compileError("the SDK's DMA_MAXPRI isn't the chip's");
 }
 
@@ -93,8 +101,11 @@ const DmaBase = extern struct {
     /// Where the DesignWare controller's registers are, or 0: the board
     /// has none. Set when the resource is made.
     dw_base: usize,
+    /// Where the PL080's registers are, or 0, the same way.
+    pl_base: usize,
     /// Each channel's owner (the name given to AllocDMAChannel), or null:
-    /// the general ones, then the 2D-DMA's, then the DesignWare ones.
+    /// the general ones, then the 2D-DMA's, the DesignWare ones and the
+    /// PL080's.
     owner: [all_channels]?[*:0]const u8,
     /// The number each general channel is connected to on its engine, or
     /// no_peripheral.
@@ -118,7 +129,8 @@ fn sideOf(side: u32) ?chip.Side {
 
 fn lvoAllocDMAChannel(db: *DmaBase, channel: u32, name: [*:0]const u8) callconv(.c) ?[*:0]const u8 {
     if (channel >= all_channels) return "(no such channel)";
-    if (has_dw and channel >= dw_first and db.dw_base == 0) return "(no such channel)";
+    if (has_dw and channel >= dw_first and channel < pl_first and db.dw_base == 0) return "(no such channel)";
+    if (has_pl and channel >= pl_first and db.pl_base == 0) return "(no such channel)";
     db.sys_base.AcquireLock(&db.lock);
     defer db.sys_base.ReleaseLock(&db.lock);
     if (db.owner[channel]) |owner| return owner;
@@ -135,8 +147,10 @@ fn lvoFreeDMAChannel(db: *DmaBase, channel: u32) callconv(.c) void {
         db.peri[channel] = chip.no_peripheral;
     } else if (has_2d and channel < dw_first) {
         chip.stop2d(channel - general);
-    } else if (has_dw and db.dw_base != 0) {
-        chip.stopChannel(db.dw_base, channel - dw_first);
+    } else if (has_dw and channel < pl_first) {
+        if (db.dw_base != 0) chip.stopChannel(db.dw_base, channel - dw_first);
+    } else if (has_pl) {
+        if (db.pl_base != 0) chip.stopPlChannel(db.pl_base, channel - pl_first);
     }
     db.owner[channel] = null;
 }
@@ -288,12 +302,13 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.InitLock(&db.lock, RESOURCE_NAME, exec.LOCKORDER_DRIVER, 0);
     db.owner = @splat(null);
     // The chip's engines up: the general ones and the 2D-DMA, or the
-    // DesignWare controller.
+    // DesignWare controller and the PL080.
     if (comptime has_general) {
         db.peri = @splat(chip.no_peripheral);
         chip.init();
     }
     db.dw_base = if (comptime has_dw) chip.controller(sys_base) else 0;
+    db.pl_base = if (comptime has_pl) chip.plController(sys_base) else 0;
     return lib;
 }
 

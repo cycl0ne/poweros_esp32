@@ -29,9 +29,9 @@ pub const headroom = 96;
 /// A frame's buffer: the headroom and the largest packet a link takes,
 /// 1500 bytes of IP and a 14-byte header, with its checksum.
 pub const buffer_bytes = headroom + 1536;
-/// The most frames there are at once: about 400 KiB, made only as a
-/// busy moment needs them.
-pub const frames_max = 256;
+/// The most frames there are at once: about 800 KiB, made only as a
+/// busy moment needs them. A gigabit link's 128 reads hold a frame each.
+pub const frames_max = 512;
 
 pub const Frame = extern struct {
     /// On the free list, a socket's receive queue, or an interface's

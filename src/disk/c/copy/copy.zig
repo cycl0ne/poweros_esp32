@@ -28,7 +28,9 @@
 //! not an error - not every file system keeps all three.
 //!
 //! BUFFER is the copy buffer in bytes. Without it the buffer is the file's
-//! own size, at most 64 KiB and at least 1024, so a small file costs one
+//! own size, at least 1024 and at most 64 KiB - 1 MiB on the RISC-V 64
+//! and AArch64 boards, whose memory is plenty and whose network shares
+//! answer a read of a MiB in one round trip - so a small file costs one
 //! read and a big one does not cost the whole of memory. NOREQ is taken
 //! and does nothing: there are no requesters to turn off.
 //!
@@ -46,7 +48,7 @@ const Printf = dos.stdio.Printf;
 const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "Copy";
-const VERSION_STRING = "\x00$VER: Copy 1.3 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Copy 1.4 (26.10.2026)\r\n";
 
 const template = "FROM/M,TO/A,ALL/S,QUIET/S,BUF=BUFFER/K/N,CLONE/S,DATES/S,NOPRO/S,COM/S,NOREQ/S";
 const arg_from = 0;
@@ -82,7 +84,7 @@ const max_path = dos.path_max;
 /// How wide one level of the listing is.
 const tab_size = 8;
 /// The most a buffer takes when its size was not asked for.
-const max_buffer = 64 * 1024;
+const max_buffer: usize = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else 64 * 1024;
 const min_buffer = 1024;
 /// How deep it goes; each level costs a lock, not a stack frame.
 const max_depth = 32;

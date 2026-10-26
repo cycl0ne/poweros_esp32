@@ -47,6 +47,8 @@ const LayersBase = @import("../layers.zig").LayersBase;
 ///     pen, `LAYERS_NOBACKFILL` for nothing, or a `*Hook`.
 ///   - `LATAG_MovesWith` - a `*Layer` of the same display it moves and
 ///     sizes with.
+///   - `LATAG_NoBuffer` - non-zero, composed: no buffer, only its
+///     backfill, painted where it is seen.
 ///   - `LATAG_ErrorPtr` - an `*i32` that gets the reason if it fails.
 ///
 /// RESULT:
@@ -71,7 +73,10 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// is lost by any of them: a layer draws into a buffer of its own, the
 /// whole layer - for `LAYERSUPER`, its bitmap - and what of it can be seen
 /// is copied on to the display. A layer with `LAYERS_NOBACKFILL` starts as
-/// what the display showed where it lies.
+/// what the display showed where it lies. A simple one with a backfill can
+/// do without the buffer (`LATAG_NoBuffer`): it is then what its backfill
+/// paints on to the display wherever it is seen, covers all of what is
+/// behind it, and nothing drawn through its RastPort lands anywhere.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the display's layers.
@@ -211,8 +216,14 @@ pub fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const Tag
         if (layer.shadow != 0 and !effects.makeShadow(lb, info, layer.shadow)) layer.shadow = 0;
     }
     // Composed, it draws into a buffer of its own, which has to be there
-    // before the retile gives it targets.
-    if (compose.on(info) and !compose.take(lb, layer)) {
+    // before the retile gives it targets - or, asked to have none, it is
+    // its backfill alone, painted through a handle on the display. That
+    // takes a simple layer that has a backfill, and covers all of what is
+    // behind it: anything else has a buffer.
+    const bare = compose.on(info) and ub.GetTagData(layers.LATAG_NoBuffer, 0, tag_list) != 0 and
+        flags & (layers.LAYERSMART | layers.LAYERSUPER) == 0 and layer.backfill != layers.LAYERS_NOBACKFILL;
+    if (bare) layer.opacity = 255;
+    if (compose.on(info) and !(if (bare) compose.takeBare(lb, layer) else compose.take(lb, layer))) {
         gb.DisposeRegion(owed);
         gb.DisposeRegion(seen);
         gb.FreeRastPort(rp);
@@ -237,11 +248,12 @@ pub fn CreateLayerTagList(lb: *LayersBase, info: *LayerInfo, tags: ?[*]const Tag
     // Nothing has ever been drawn in it, and what is on the display there
     // belongs to whoever had it before, so it is painted before anyone can
     // see it. Composed, the paint goes into its buffer, and what can be
-    // seen of it on to the display as it is handed on.
-    backfill.fill(lb, layer, super.extent(layer));
+    // seen of it on to the display as it is handed on; a bare one is
+    // painted where it is seen as it is shown.
+    if (!bare) backfill.fill(lb, layer, super.extent(layer));
     // Its shadow is on what is behind it, which nobody draws now; and a
     // layer seen through is laid over that only when shown in order.
-    if (layer.shadow != 0 or layer.opacity != 255) compose.show(lb, info, effects.reach(layer));
+    if (bare or layer.shadow != 0 or layer.opacity != 255) compose.show(lb, info, effects.reach(layer));
     // Coming into view is not damage: the whole layer was just made and
     // its program is about to draw it. What the retile put there is for
     // the layers that were already here.

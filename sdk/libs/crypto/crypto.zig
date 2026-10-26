@@ -155,14 +155,37 @@ pub const CipherContext = extern struct {
     reserved: [48]u8 = @splat(0),
 };
 
+/// AES-GCM's tag: 16 bytes, always.
+pub const GCM_TAG: u32 = 16;
+
+/// One GMAC under way: InitGmac, UpdateGmac over the data, FinishGmac -
+/// GCM's tag over data it only authenticates, the tag SealGcm gives a
+/// message of header alone. 160 bytes.
+pub const GmacContext = extern struct {
+    /// The context's size in bytes, as the program was built with it.
+    size: u32 = @sizeOf(GmacContext),
+    /// 16 or 32; 0 until InitGmac.
+    key_length: u32 = 0,
+    /// The bytes waiting in `partial` for a whole block.
+    buffered: u32 = 0,
+    reserved0: u32 = 0,
+    /// The bytes taken so far, those in `partial` included.
+    total: u64 align(4) = 0,
+    key: [32]u8 = @splat(0),
+    /// The hash key H = E(K, 0), and the tag's mask E(K, J0).
+    hash_key: [AES_BLOCK]u8 = @splat(0),
+    mask: [AES_BLOCK]u8 = @splat(0),
+    /// GHASH's running value over the whole blocks so far.
+    state: [AES_BLOCK]u8 = @splat(0),
+    partial: [AES_BLOCK]u8 = @splat(0),
+    reserved: [40]u8 = @splat(0),
+};
+
 comptime {
-    if (@sizeOf(HashContext) != 256 or @sizeOf(HmacContext) != 528 or @sizeOf(CipherContext) != 128) {
+    if (@sizeOf(HashContext) != 256 or @sizeOf(HmacContext) != 528 or @sizeOf(CipherContext) != 128 or @sizeOf(GmacContext) != 160) {
         @compileError("crypto.library: a context's size moved; it is part of the ABI");
     }
 }
-
-/// AES-GCM's tag: 16 bytes, always.
-pub const GCM_TAG: u32 = 16;
 
 /// One message for SealGcm or OpenGcm. SealGcm encrypts `input` into
 /// `output` and writes the tag; OpenGcm checks the tag, and only then

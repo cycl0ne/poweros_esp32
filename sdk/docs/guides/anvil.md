@@ -223,7 +223,8 @@ just to be thrown away.
 
 Copying, deleting and emptying the trash run in a process of their own,
 with a window saying which file they are at, a gauge of how far along
-they are, and Stop. A copy first counts what it will copy. When a file of
+they are, and Stop; a copy's window says how fast it goes too, the bytes
+of the last second in B/s, KB/s, MB/s or GB/s. A copy first counts what it will copy. When a file of
 the same name is there already, it asks: Replace, Replace All, Skip,
 Stop. A drawer is copied whole, into one of the same name if there is
 one. A file's icon, protection, date and comment go with it. The desktop

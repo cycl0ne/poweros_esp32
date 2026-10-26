@@ -22,6 +22,11 @@
 //! on the display where the layer can be seen and in the layer's keeping
 //! where it cannot, and a hook writing into a covered layer works without
 //! knowing that it is covered.
+//!
+//! **A hook draws only in its area**: the RastPort's clip is narrowed to
+//! it for the call. A hook that paints more than a ground - a desktop's
+//! icons, whose names reach across the strips it is called for - draws
+//! each where it meets the area, and nothing next to it twice.
 
 const sdk = @import("sdk");
 const graphics = sdk.graphics;
@@ -50,9 +55,17 @@ pub fn fill(lb: *LayersBase, layer: *Layer, area: Rect) void {
     // in here and the RastPort's own answer is only used for the rest.
     if (layer.backfill == layers.LAYERS_NOBACKFILL) return;
     if (layer.backfill != 0) {
+        const gb = lb.graphics_base;
         const hook: *utility.Hook = @ptrFromInt(layer.backfill);
         var msg = layers.BackFillMsg{ .layer = @ptrCast(layer), .area = area };
+        // The clip narrowed to the area for the call, inside whatever clip
+        // the RastPort's owner set, and put back after.
+        var was: Rect = undefined;
+        gb.GetRPAttrs(layer.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
+        const within = Rect.intersect(was, area);
+        gb.SetRPAttrs(layer.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&within) }, .{} });
         _ = lb.utility_base.CallHookPkt(hook, layer.rp, &msg);
+        gb.SetRPAttrs(layer.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
         return;
     }
     lb.graphics_base.EraseRect(layer.rp, &area);

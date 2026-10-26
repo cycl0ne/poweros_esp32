@@ -15,6 +15,12 @@
 //! one call. A server that is slow to work - a large directory, a copy on
 //! its side - answers STATUS_PENDING first, and each of those starts the
 //! receive's time again.
+//!
+//! **Its receive ring is 64 KiB**, set before it connects, so that the
+//! SYN already offers it: the ring is the window the server may send
+//! into, and a stream socket's 8 KiB took a 64 KiB READ's answer eight
+//! round trips. 64 KiB is as wide as a window goes without window
+//! scaling.
 
 const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
@@ -24,6 +30,9 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 
 pub const connect_seconds: u32 = 10;
 pub const io_seconds: u32 = 30;
+
+/// The socket's receive ring, and so the window offered.
+const ring_bytes: i32 = 64 * 1024;
 
 /// What framing takes in front of a message.
 pub const frame_header: usize = 4;
@@ -67,6 +76,7 @@ pub const Connection = struct {
                 failure.code = sb.Errno();
                 continue;
             }
+            _ = sb.SetSockOpt(socket, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &ring_bytes, @sizeOf(i32));
             setTime(sb, socket, bsd.SO_SNDTIMEO, connect_seconds);
             if (sb.Connect(socket, address, address_info.ai_addrlen) < 0) {
                 failure.code = sb.Errno();
@@ -118,19 +128,30 @@ pub const Connection = struct {
     /// `into` - all of which close it, since nothing after it could be
     /// read in step.
     pub fn receive(connection: *Connection, into: []u8) ?[]u8 {
-        var framing: [frame_header]u8 = undefined;
-        if (!connection.readAll(&framing)) return null;
-        const length = @as(usize, framing[1]) << 16 | @as(usize, framing[2]) << 8 | framing[3];
-        // Anything but a session message is not SMB's.
-        if (framing[0] != 0 or length > into.len) {
-            connection.close();
-            return null;
-        }
+        const length = connection.frameLength(into.len) orelse return null;
         if (!connection.readAll(into[0..length])) return null;
         return into[0..length];
     }
 
-    fn readAll(connection: *Connection, into: []u8) bool {
+    /// The next message's framing read, and its length: null when the
+    /// connection failed, or the message is longer than `most` - which
+    /// closes it. The message is then the caller's to read, all of it,
+    /// with `readAll`.
+    pub fn frameLength(connection: *Connection, most: usize) ?usize {
+        var framing: [frame_header]u8 = undefined;
+        if (!connection.readAll(&framing)) return null;
+        const length = @as(usize, framing[1]) << 16 | @as(usize, framing[2]) << 8 | framing[3];
+        // Anything but a session message is not SMB's.
+        if (framing[0] != 0 or length > most) {
+            connection.close();
+            return null;
+        }
+        return length;
+    }
+
+    /// `into` filled from the stream: false when the connection failed,
+    /// closed or ran out of time, which closes it.
+    pub fn readAll(connection: *Connection, into: []u8) bool {
         if (connection.socket < 0) return false;
         var at: usize = 0;
         while (at < into.len) {

@@ -48,6 +48,11 @@ pub const Log = struct {
     control_calls: u32 = 0,
     fills: u32 = 0,
     copies: u32 = 0,
+    /// Copies asked for together (`copy_rects`): how many calls, and how
+    /// many rectangles the last had. Each rectangle counts in `copies`
+    /// as well.
+    copy_jobs: u32 = 0,
+    last_copy_count: u32 = 0,
     inverts: u32 = 0,
     mirrors: u32 = 0,
     swaps: u32 = 0,
@@ -378,6 +383,17 @@ fn invertRect(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRe
     return err.RTGERR_OK;
 }
 
+fn copyRects(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) callconv(.c) i32 {
+    const log = &stateOfBoard(board).log;
+    log.copy_jobs += 1;
+    log.last_copy_count = count;
+    for (copies[0..count]) |*one| {
+        const result = copyRect(board, src, dest, one);
+        if (result != err.RTGERR_OK) return result;
+    }
+    return err.RTGERR_OK;
+}
+
 fn copyRect(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copy: *const rtg.RtgCopy) callconv(.c) i32 {
     instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
@@ -519,6 +535,7 @@ const full_ops = rtg.RtgBoardOps{
     .control = &control,
     .fill_rect = &fillRect,
     .copy_rect = &copyRect,
+    .copy_rects = &copyRects,
     .invert_rect = &invertRect,
     .wait_blit = &waitBlit,
     .mirror = &mirror,

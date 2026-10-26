@@ -333,8 +333,10 @@ fn moveComposed(lb: *LayersBase, group: []Member, dw: i32, dh: i32) bool {
     const layer = group[0].layer;
     const info = layer.info;
     if (dw != 0 or dh != 0) for (group) |*member| {
-        // A super layer's buffer is its bitmap, which does not change.
-        if (member.layer.super != null) continue;
+        // A super layer's buffer is its bitmap, which does not change; a
+        // bare layer has none, and is painted at its new size as it is
+        // shown.
+        if (member.layer.super != null or compose.bare(member.layer)) continue;
         const plain = member.layer.backfill == layers.LAYERS_NOBACKFILL;
         member.buffer = compose.make(lb, info, @intCast(member.new.width()), @intCast(member.new.height()), plain) orelse {
             for (group) |other| if (other.buffer) |made| compose.free(lb, made);

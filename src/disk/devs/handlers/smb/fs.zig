@@ -28,8 +28,9 @@
 //! handle goes at the end of the directory, or with the lock.
 //!
 //! **An open file is a handle** on the server, the position kept here:
-//! each READ and WRITE says where it is, in pieces of at most 64 KiB or
-//! the server's MaxReadSize and MaxWriteSize. A file is opened sharing
+//! each READ and WRITE says where it is, in pieces of at most 1 MiB (64
+//! KiB on the ESP32s, and where the server takes one credit's worth a
+//! request) or the server's MaxReadSize and MaxWriteSize. A file is opened sharing
 //! everything, so another client's work on it is not refused. FINDINPUT
 //! opens it to be read, and its first WRITE opens it again to be written
 //! too: a file that is only read never asks for more. FINDOUTPUT makes
@@ -272,7 +273,7 @@ pub const Scan = struct {
     /// The server said there are no more.
     end: bool = false,
     entries: commands.Entries = .{ .bytes = &.{} },
-    batch: [session_area.io_max]u8 = undefined,
+    batch: [session_area.credit_bytes]u8 = undefined,
 };
 
 /// The bytes the share's root is, and what an entry's single-entry query
@@ -331,7 +332,7 @@ pub const FileSystem = struct {
     target: Path = .{},
     spare: Path = .{},
     /// A batch for looking for a stand-in's name.
-    batch: [session_area.io_max]u8 = undefined,
+    batch: [session_area.credit_bytes]u8 = undefined,
     /// The length of the last batch `listFirst` or `listMore` read.
     batch_length: usize = 0,
     /// The connection is gone.
@@ -531,6 +532,24 @@ pub const FileSystem = struct {
             fs.lost = true;
             return error.NotMounted;
         };
+        try fs.stillThere(request, replies);
+    }
+
+    /// One READ sent, its data read straight into `into` when it can be:
+    /// as `Session.exchangeRead`, a broken connection NotMounted.
+    fn exchangeRead(fs: *FileSystem, request: *session_area.Request, replies: []Reply, into: []u8) Error!?usize {
+        if (fs.lost) return error.NotMounted;
+        const count = fs.session.exchangeRead(request, replies, into) catch {
+            fs.lost = true;
+            return error.NotMounted;
+        };
+        try fs.stillThere(request, replies);
+        return count;
+    }
+
+    /// NotMounted, and the connection lost, when an answer says the
+    /// session or the share has gone.
+    fn stillThere(fs: *FileSystem, request: *const session_area.Request, replies: []Reply) Error!void {
         for (replies[0..request.count]) |*reply| switch (reply.status()) {
             smb.STATUS_USER_SESSION_DELETED, smb.STATUS_NETWORK_SESSION_EXPIRED, smb.STATUS_NETWORK_NAME_DELETED => {
                 fs.lost = true;
@@ -609,7 +628,7 @@ pub const FileSystem = struct {
 
     /// The directory `dir` opened and its first batch of entries read
     /// into `into`: CREATE and QUERY_DIRECTORY in one round trip.
-    fn listFirst(fs: *FileSystem, dir: []const u8, file_id: *[16]u8, into: *[session_area.io_max]u8) Error!void {
+    fn listFirst(fs: *FileSystem, dir: []const u8, file_id: *[16]u8, into: *[session_area.credit_bytes]u8) Error!void {
         var request = fs.session.begin(.create);
         commands.create(&request, dir, commands.FILE_LIST_DIRECTORY | commands.FILE_READ_ATTRIBUTES | commands.SYNCHRONIZE, 0, commands.FILE_OPEN, commands.FILE_DIRECTORY_FILE);
         request.add(.query_directory);
@@ -629,7 +648,7 @@ pub const FileSystem = struct {
     }
 
     /// The next batch of an open directory's entries: false at its end.
-    fn listMore(fs: *FileSystem, file_id: *const [16]u8, into: *[session_area.io_max]u8) Error!bool {
+    fn listMore(fs: *FileSystem, file_id: *const [16]u8, into: *[session_area.credit_bytes]u8) Error!bool {
         var request = fs.session.begin(.query_directory);
         commands.queryDirectory(&request, file_id, commands.FILE_DIRECTORY_INFORMATION, 0, star, fs.listLength());
         var replies = session_area.noReplies();
@@ -646,7 +665,7 @@ pub const FileSystem = struct {
     /// What a QUERY_DIRECTORY asks for: a batch, within what the server
     /// takes.
     fn listLength(fs: *const FileSystem) u32 {
-        return @min(session_area.io_max, fs.session.max_transact);
+        return @min(session_area.credit_bytes, fs.session.max_transact);
     }
 
     /// A handle closed, answered or not.
@@ -988,22 +1007,27 @@ pub const FileSystem = struct {
         var done: usize = 0;
         while (done < length) {
             if (lock.gone) return error.NotFound;
-            // The server's limit, which a new connection may change.
-            const piece_max: usize = @min(session_area.io_max, fs.session.max_read);
+            // The server's limit, which a new connection may change, and
+            // the credits there are.
+            const piece_max: usize = fs.session.pieceMax(fs.session.max_read);
             const want: u32 = @intCast(@min(length - done, piece_max));
             var request = fs.session.begin(.read);
             commands.read(&request, &lock.file_id, lock.pos, want);
             var replies = session_area.noReplies();
-            fs.exchange(&request, &replies) catch |err| {
+            // Straight into the buffer, or from the answer.
+            const streamed = fs.exchangeRead(&request, &replies, buffer[done..length]) catch |err| {
                 // Lost on the way: the piece asked for again, once, on
                 // the file's handle on a new connection.
                 if (recovered or !fs.lost or !fs.recover()) return err;
                 recovered = true;
                 continue;
             };
-            const data = commands.readData(&replies[0]) orelse return errorOf(replies[0].status());
-            const count = @min(data.len, length - done);
-            @memcpy(buffer[done..][0..count], data[0..count]);
+            const count = streamed orelse blk: {
+                const data = commands.readData(&replies[0]) orelse return errorOf(replies[0].status());
+                const count = @min(data.len, length - done);
+                @memcpy(buffer[done..][0..count], data[0..count]);
+                break :blk count;
+            };
             done += count;
             lock.pos += count;
             if (lock.pos > lock.size) lock.size = lock.pos;
@@ -1026,7 +1050,7 @@ pub const FileSystem = struct {
         var done: usize = 0;
         while (done < length) {
             if (lock.gone) return error.NotFound;
-            const piece_max: usize = @min(session_area.io_max, fs.session.max_write);
+            const piece_max: usize = fs.session.pieceMax(fs.session.max_write);
             const piece: usize = @min(length - done, piece_max);
             var request = fs.session.begin(.write);
             commands.write(&request, &lock.file_id, lock.pos, buffer[done..][0..piece]);

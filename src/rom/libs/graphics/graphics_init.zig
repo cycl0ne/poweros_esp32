@@ -48,9 +48,15 @@ pub const LIBRARY_VERSION = 0;
 /// `Text` hands a string on once, however many runs and bands it is drawn
 /// in. 30: a batch on a buffer handed on as rectangles weighs the pixels
 /// between two pieces, not the rows, so the sides of a frame go each by
-/// itself rather than as the whole window. The version stays 0 until
-/// there is something to demand of it.
-pub const LIBRARY_REVISION = 30;
+/// itself rather than as the whole window. 31: drawing in software goes
+/// by runs, not by pixels - spans, straight lines, a line's walk, a
+/// shape's and a pattern's rows with the pen and the mode decided once
+/// (`Brush`, `Stencil`) - colours are mixed without dividing, a picture
+/// is laid over a row at a time, AreaEnd walks only the edges a row
+/// crosses, and rows are filled a machine word at a time and copied by
+/// exec's copy. The version stays 0 until there is something to demand of
+/// it.
+pub const LIBRARY_REVISION = 31;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

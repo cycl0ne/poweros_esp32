@@ -76,34 +76,39 @@ pub const Signer = struct {
                 break :blk mac[0..16].*;
             },
             smb.SMB2_SIGNING_AES_CMAC => cmac(cb, &signer.key, message),
-            else => blk: {
-                // GMAC: the nonce is the message's id, then bit 0 for an
-                // answer and bit 1 for CANCEL.
-                var nonce: [12]u8 = @splat(0);
-                wire.put64(&nonce, 0, wire.u64At(message, 24));
-                const flags = wire.u32At(message, 16);
-                var role: u32 = 0;
-                if (flags & wire.FLAGS_SERVER_TO_REDIR != 0) role |= 1;
-                if (wire.u16At(message, 12) == @intFromEnum(wire.Command.cancel)) role |= 2;
-                wire.put32(&nonce, 8, role);
-                break :blk gmac(cb, &signer.key, &nonce, message);
-            },
+            else => gmac(cb, &signer.key, &gmacNonce(message), message),
         };
     }
 };
 
-/// HMAC-SHA256 over `parts` in turn.
+/// GMAC's nonce for a message: its id, then bit 0 for an answer and bit 1
+/// for CANCEL.
+///
+/// INPUTS:
+/// - `message` - the message's header at least.
+pub fn gmacNonce(message: []const u8) [12]u8 {
+    var nonce: [12]u8 = @splat(0);
+    wire.put64(&nonce, 0, wire.u64At(message, 24));
+    const flags = wire.u32At(message, 16);
+    var role: u32 = 0;
+    if (flags & wire.FLAGS_SERVER_TO_REDIR != 0) role |= 1;
+    if (wire.u16At(message, 12) == @intFromEnum(wire.Command.cancel)) role |= 2;
+    wire.put32(&nonce, 8, role);
+    return nonce;
+}
+
+/// HMAC-SHA256 over `parts` in turn, in one call: on the JH7110 a long
+/// message's goes through the crypto engine.
 ///
 /// INPUTS:
 /// - `cb` - crypto.library.
 /// - `key` - the key.
-/// - `parts` - the message, in pieces.
+/// - `parts` - the message, in at most five pieces.
 pub fn hmacSha256(cb: *CryptoBase, key: []const u8, parts: []const []const u8) [32]u8 {
-    var context: crypto.HmacContext = .{};
-    _ = cb.InitHmac(&context, crypto.HASH_SHA256, key.ptr, @intCast(key.len));
-    for (parts) |part| cb.UpdateHmac(&context, part.ptr, @intCast(part.len));
+    var pieces: [5]crypto.Bytes = undefined;
+    for (parts, pieces[0..parts.len]) |part, *piece| piece.* = .of(part);
     var mac: [crypto.DIGEST_MAX]u8 = undefined;
-    _ = cb.FinishHmac(&context, &mac);
+    _ = cb.HmacPieces(crypto.HASH_SHA256, key.ptr, @intCast(key.len), &pieces, @intCast(parts.len), &mac);
     return mac[0..32].*;
 }
 

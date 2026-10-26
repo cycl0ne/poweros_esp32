@@ -52,8 +52,10 @@ const _gcm = @import("_gcm.zig");
 /// is how a nonce is made.
 ///
 /// BUGS:
-/// GHASH runs in software, bit by bit, and is slower than the engine:
-/// it, not AES, sets the pace of a long message.
+/// On the S3 GHASH runs in software, bit by bit, and is slower than the
+/// engine: it, not AES, sets the pace of a long message. The JH7110's
+/// engine does all of GCM, for a message with a 12-byte nonce whose data
+/// - or header alone - is at most 1 MiB and 4 KiB.
 ///
 /// SEE ALSO:
 /// `OpenGcm`, `InitCipher`, `RandomBytes`

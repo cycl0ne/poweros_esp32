@@ -122,10 +122,7 @@ pub fn BlendPixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
                 @as(usize, @intCast(from_x)) * src_bytes;
             const to = r.surface.pixels.? + @as(usize, @intCast(y + r.dy)) * r.surface.pitch +
                 @as(usize, @intCast(r.rect.min_x + r.dx)) * to_bytes;
-            for (0..width) |i| {
-                const pen = rastport.unpackPen(from, drawing.getPixel(row + i * src_bytes, src_bytes));
-                _blit.blendPixel(to + i * to_bytes, to_bytes, to_format, pen);
-            }
+            _blit.blendRow(to, to_format, row, from, width);
             drawing.grow(&bound, y, &any);
         }
     }

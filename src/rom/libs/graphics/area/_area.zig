@@ -33,11 +33,17 @@ pub const RastPort = rastport.RastPort;
 const drawing = @import("../draw/_draw.zig");
 
 /// How the one allocation is cut up: the corners, where each shape starts,
-/// and room to sort a scanline's crossings in.
+/// room to sort a scanline's crossings in, and the edges in the order
+/// they begin.
 ///
-/// Every shape needs at most one start and every corner can be a crossing,
-/// so all three are the same length and the size is known from one number.
-pub const bytes_per_point = @sizeOf(Point) + @sizeOf(u32) + @sizeOf(i32);
+/// Every shape needs at most one start, every corner can be a crossing,
+/// and every corner begins one edge, so all four are the same length and
+/// the size is known from one number.
+pub const bytes_per_point = @sizeOf(Point) + @sizeOf(u32) + @sizeOf(i32) + @sizeOf(Edge);
+
+/// An edge of a shape: the corners it runs between, by their places among
+/// the corners collected.
+pub const Edge = struct { from: u32, to: u32 };
 
 /// Where each shape's first corner is, in the RastPort's area room.
 ///
@@ -55,6 +61,16 @@ pub fn shapeStarts(rp: *RastPort) [*]u32 {
 pub fn crossings(rp: *RastPort) [*]i32 {
     const base = @intFromPtr(rp.area_points.?) +
         (@sizeOf(Point) + @sizeOf(u32)) * rp.area_max;
+    return @ptrFromInt(base);
+}
+
+/// The room to order the edges in, in the RastPort's area room.
+///
+/// INPUTS:
+/// - `rp` - the RastPort. Its area room is set up.
+pub fn edges(rp: *RastPort) [*]Edge {
+    const base = @intFromPtr(rp.area_points.?) +
+        (@sizeOf(Point) + @sizeOf(u32) + @sizeOf(i32)) * rp.area_max;
     return @ptrFromInt(base);
 }
 

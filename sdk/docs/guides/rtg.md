@@ -303,8 +303,12 @@ shape in two colours) and `BlitPattern` (a one-bit tile anchored to the
 buffer); `BlendPixels` lays pixels of the caller's own over a buffer by
 their coverage, times a constant alpha, `BlendRect` a colour by its
 alpha, and `ScalePixels` a part of a picture scaled to a rectangle's
-size, mixed between its pixels. `WaitBlit` waits until the engine is
-done.
+size, mixed between its pixels. `CopyRects` copies several rectangles
+from one buffer to another as one job - the pieces of a window seen
+between others, copied on to the display by an engine that shares its
+work between cores with the cores woken once; a board without it is given
+them one by one, as `CopyRect` gives them. `WaitBlit` waits until the
+engine is done.
 
 **The library never does these in software.** A board without the
 operation answers `RTGERR_NOT_SUPPORTED`, and the bit for it is clear in

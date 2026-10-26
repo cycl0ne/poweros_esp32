@@ -11,7 +11,7 @@ const rastport = @import("../rastport/_rastport.zig");
 const Point = graphics.Point;
 const _area = @import("_area.zig");
 const RastPort = rastport.RastPort;
-const bytes_per_point = @sizeOf(Point) + @sizeOf(u32) + @sizeOf(i32);
+const bytes_per_point = _area.bytes_per_point;
 const reset = _area.reset;
 
 /// Room to collect a filled shape in.

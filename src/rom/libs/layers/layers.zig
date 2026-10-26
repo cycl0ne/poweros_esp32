@@ -1796,7 +1796,7 @@ test "composed: a layer with its own bitmap draws in it, and scrolling only move
     try tearDown(lb);
 }
 
-test "composed: a drawing is handed on to the board once, in however many pieces it is seen" {
+test "composed: a drawing is copied as one job and handed on to the board once, in however many pieces it is seen" {
     const lb = try setUp();
     defer kexec.deinit();
     const c = try Composed.make(lb);
@@ -1811,9 +1811,14 @@ test "composed: a drawing is handed on to the board once, in however many pieces
     // Round corners make a layer a stack of rows of pieces.
     const round = try lookingLayer(lb, c.info, &all, 6, 0, 255);
     var before = log.refreshed;
+    var jobs = log.copy_jobs;
+    var copies = log.copies;
     fill(lb, round, graphics.penRGB(255, 0, 0), all);
     try testing.expectEqual(@as(u32, 1), log.refreshed - before);
     try testing.expectEqual(red, c.at(16, 8));
+    // Its pieces were copied together, the engine asked once.
+    try testing.expectEqual(@as(u32, 1), log.copy_jobs - jobs);
+    try testing.expect(log.copies - copies > 4);
     base(lb).DeleteLayer(round);
 
     // A layer in the middle, with a shadow, leaves the back one a frame
@@ -1821,10 +1826,14 @@ test "composed: a drawing is handed on to the board once, in however many pieces
     const middle_where = Rect{ .min_x = 8, .min_y = 4, .max_x = 20, .max_y = 10 };
     const middle = try lookingLayer(lb, c.info, &middle_where, 0, 3, 255);
     before = log.refreshed;
+    jobs = log.copy_jobs;
+    copies = log.copies;
     fill(lb, back, graphics.penRGB(0, 0, 255), all);
     try testing.expectEqual(@as(u32, 1), log.refreshed - before);
     try testing.expectEqual(blue, c.at(0, 0));
     try testing.expectEqual(blue, c.at(31, 15));
+    try testing.expectEqual(@as(u32, 1), log.copy_jobs - jobs);
+    try testing.expectEqual(@as(u32, 4), log.copies - copies);
     base(lb).DeleteLayer(middle);
 
     // Two strips far apart are two, not the whole display between them.
@@ -1950,5 +1959,378 @@ test "composed: moved, sized and reordered at random, every pixel is the front l
 
     for (made) |l| base(lb).DeleteLayer(l);
     c.done(lb);
+    try tearDown(lb);
+}
+
+/// A ground that is not one colour: each row of the display its own, so a
+/// piece painted in the wrong place, or not painted again, shows.
+fn rowsBackFill(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const gb: *GraphicsBase = @ptrCast(@alignCast(hook.data.?));
+    const rp: *graphics.RastPort = @ptrCast(@alignCast(object.?));
+    const msg: *layers.BackFillMsg = @ptrCast(@alignCast(message.?));
+    var y = msg.area.min_y;
+    while (y < msg.area.max_y) : (y += 1) {
+        const v: u8 = @intCast(@mod(y * 16, 256));
+        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(v, 255 - v, 128) }, .{} });
+        gb.RectFill(rp, &.{ .min_x = msg.area.min_x, .min_y = y, .max_x = msg.area.max_x, .max_y = y + 1 });
+    }
+    return 0;
+}
+
+/// What `rowsBackFill` paints row `y` of the display in.
+fn rowColour(y: i32) u16 {
+    const v: u32 = @intCast(@mod(y * 16, 256));
+    return rgb565(v, 255 - v, 128);
+}
+
+/// A screen's ground: the whole display at the back, painted by `hook`,
+/// with or without a buffer of its own.
+fn groundLayer(lb: *LayersBase, info: *layers.LayerInfo, hook: *utility.Hook, buffer: bool) !*layers.Layer {
+    const all = Rect{ .max_x = 32, .max_y = 16 };
+    const tags = [_]TagItem{
+        .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&all) },
+        .{ .tag = layers.LATAG_Backdrop, .data = 1 },
+        .{ .tag = layers.LATAG_BackFill, .data = @intFromPtr(hook) },
+        .{ .tag = layers.LATAG_NoBuffer, .data = @intFromBool(!buffer) },
+        .{},
+    };
+    return base(lb).CreateLayerTagList(info, &tags) orelse error.NoLayer;
+}
+
+test "composed: a layer with no buffer is its backfill, painted wherever it is seen, and darkened once" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+    if (!compose.built) {
+        c.done(lb);
+        return tearDown(lb);
+    }
+    var rows = utility.Hook{ .entry = &rowsBackFill, .data = gbase(lb) };
+    const ground = try groundLayer(lb, c.info, &rows, false);
+    const inside: *info_mod.Layer = @ptrCast(@alignCast(ground));
+    try testing.expect(inside.own == null);
+    try testing.expect(inside.through != null);
+    for (0..16) |y| for (0..32) |x| try testing.expectEqual(rowColour(@intCast(y)), c.at(@intCast(x), @intCast(y)));
+
+    // Drawn into, it lands nowhere: the ground is its hook.
+    fill(lb, ground, graphics.penRGB(255, 0, 0), .{ .max_x = 32, .max_y = 16 });
+    try testing.expectEqual(rowColour(5), c.at(5, 5));
+
+    // A window with a shadow over it darkens it, once.
+    const where = Rect{ .min_x = 8, .min_y = 2, .max_x = 20, .max_y = 8 };
+    const front = try lookingLayer(lb, c.info, &where, 0, 3, 255);
+    fill(lb, front, graphics.penRGB(0, 255, 0), .{ .max_x = 12, .max_y = 6 });
+    try testing.expectEqual(green, c.at(8, 2));
+    const near = c.at(14, 8);
+    try testing.expect(channels(near)[1] < channels(rowColour(8))[1]);
+    try testing.expectEqual(rowColour(15), c.at(0, 15));
+    try testing.expect(setLook(lb, front, layers.LATAG_Shadow, 3));
+    try testing.expectEqual(near, c.at(14, 8));
+
+    // Moved away, what it covered and darkened is painted again.
+    try testing.expect(base(lb).MoveLayer(front, 0, 6));
+    try testing.expectEqual(rowColour(3), c.at(14, 3));
+    try testing.expectEqual(rowColour(4), c.at(7, 4));
+    try testing.expectEqual(green, c.at(8, 8));
+
+    // A new hook shows it again at once, the window and its shadow over it
+    // as before.
+    var blue_hook = utility.Hook{ .entry = &blueBackFill, .data = gbase(lb) };
+    try testing.expectEqual(@intFromPtr(&rows), base(lb).InstallLayerHook(ground, @intFromPtr(&blue_hook)));
+    try testing.expectEqual(blue, c.at(0, 0));
+    try testing.expectEqual(green, c.at(8, 8));
+    try testing.expect(channels(c.at(14, 14))[2] < 255);
+    try testing.expectEqual(blue, c.at(0, 15));
+    // It cannot show nothing: asked to, it is its background pen.
+    try testing.expectEqual(@intFromPtr(&blue_hook), base(lb).InstallLayerHook(ground, layers.LAYERS_NOBACKFILL));
+    try testing.expectEqual(@as(u16, 0), c.at(0, 0));
+    try testing.expectEqual(@as(usize, 0), base(lb).InstallLayerHook(ground, @intFromPtr(&blue_hook)));
+
+    // Taken away, the window leaves the ground whole.
+    base(lb).DeleteLayer(front);
+    for (0..16) |y| for (0..32) |x| try testing.expectEqual(blue, c.at(@intCast(x), @intCast(y)));
+
+    base(lb).DeleteLayer(ground);
+    c.done(lb);
+    try tearDown(lb);
+}
+
+/// A second display on a `Composed`'s board, its layers composed too.
+const Twin = struct {
+    bitmap: *rtg.RtgBitMap,
+    screen: *graphics.RastPort,
+    info: *layers.LayerInfo,
+
+    fn make(lb: *LayersBase, c: Composed) !Twin {
+        const rb = lb.rtg_base;
+        const bitmap = rb.AllocBitMap(c.board, 32, 16, @intFromEnum(rtg.bitmaps.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse
+            return error.NoBitMap;
+        @memset(bitmap.pixels.?[0..bitmap.size_bytes], 0);
+        const on_board = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(bitmap) }, .{} };
+        const screen = gbase(lb).CreateRastPortTagList(&on_board) orelse return error.NoRastPort;
+        const composed = [_]TagItem{ .{ .tag = layers.LATAG_Compose, .data = 1 }, .{} };
+        const info = base(lb).NewLayerInfoTagList(screen, &composed) orelse return error.NoLayerInfo;
+        return .{ .bitmap = bitmap, .screen = screen, .info = info };
+    }
+
+    fn done(t: Twin, lb: *LayersBase) void {
+        base(lb).DisposeLayerInfo(t.info);
+        gbase(lb).FreeRastPort(t.screen);
+        lb.rtg_base.FreeBitMap(t.bitmap);
+    }
+
+    fn at(t: Twin, x: u32, y: u32) u16 {
+        return pixelAt(@ptrCast(t.bitmap), x, y);
+    }
+};
+
+test "composed: a ground with no buffer looks as one with a buffer does, whatever moves over it" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+    if (!compose.built) {
+        c.done(lb);
+        return tearDown(lb);
+    }
+    const t = try Twin.make(lb, c);
+    var rows = utility.Hook{ .entry = &rowsBackFill, .data = gbase(lb) };
+    // The same scene twice: on `c` the ground has no buffer, on `t` it has.
+    const bare = try groundLayer(lb, c.info, &rows, false);
+    const kept = try groundLayer(lb, t.info, &rows, true);
+    try testing.expect(@as(*info_mod.Layer, @ptrCast(@alignCast(kept))).own != null);
+
+    const pictures = [_]Painted{
+        .{ .top = .{ 255, 0, 0 }, .bottom = .{ 0, 255, 0 } },
+        .{ .top = .{ 0, 0, 255 }, .bottom = .{ 255, 255, 0 } },
+        .{ .top = .{ 255, 255, 255 }, .bottom = .{ 0, 0, 0 } },
+    };
+    var on_c: [3]*layers.Layer = undefined;
+    var on_t: [3]*layers.Layer = undefined;
+    var where: [3]Rect = undefined;
+    for (0..3) |i| {
+        where[i] = .{ .min_x = @intCast(i * 7), .min_y = @intCast(i * 3), .max_x = @intCast(i * 7 + 12), .max_y = @intCast(i * 3 + 8) };
+        // Shadows of one size: a shadow's picture is kept for each size,
+        // and the test's memory is small.
+        on_c[i] = try lookingLayer(lb, c.info, &where[i], i, 2, 255);
+        on_t[i] = try lookingLayer(lb, t.info, &where[i], i, 2, 255);
+        pictures[i].paint(lb, on_c[i], 12, 8);
+        pictures[i].paint(lb, on_t[i], 12, 8);
+    }
+
+    var prng = std.Random.DefaultPrng.init(0x6A0D);
+    const rand = prng.random();
+    var step: u32 = 0;
+    while (step < 400) : (step += 1) {
+        const i = rand.uintLessThan(usize, 3);
+        const op = rand.uintLessThan(u32, 7);
+        // One step, the same on both displays.
+        const dx = rand.intRangeAtMost(i32, -where[i].min_x - 4, 36 - where[i].max_x);
+        const dy = rand.intRangeAtMost(i32, -where[i].min_y - 4, 20 - where[i].max_y);
+        const nw = rand.intRangeAtMost(i32, 6, 16);
+        const nh = rand.intRangeAtMost(i32, 4, 12);
+        const value: usize = rand.uintAtMost(u8, 255);
+        for ([_]*[3]*layers.Layer{ &on_c, &on_t }) |made| {
+            const layer = made[i];
+            switch (op) {
+                0 => try testing.expect(base(lb).MoveLayer(layer, dx, dy)),
+                1 => {
+                    try testing.expect(base(lb).SizeLayer(layer, nw - where[i].width(), nh - where[i].height()));
+                    if (owed(lb, layer) != 0 and base(lb).BeginUpdate(layer)) base(lb).EndUpdate(layer, true);
+                    pictures[i].paint(lb, layer, nw, nh);
+                },
+                2 => try testing.expect(base(lb).UpfrontLayer(layer)),
+                3 => try testing.expect(base(lb).BehindLayer(layer)),
+                4 => try testing.expect(setLook(lb, layer, layers.LATAG_Opacity, if (value < 128) value else 255)),
+                5 => try testing.expect(setLook(lb, layer, layers.LATAG_Shadow, value % 2 * 2)),
+                else => try testing.expect(setLook(lb, layer, layers.LATAG_Corners, value % 5)),
+            }
+        }
+        switch (op) {
+            0 => where[i] = .{ .min_x = where[i].min_x + dx, .min_y = where[i].min_y + dy, .max_x = where[i].max_x + dx, .max_y = where[i].max_y + dy },
+            1 => {
+                where[i].max_x = where[i].min_x + nw;
+                where[i].max_y = where[i].min_y + nh;
+            },
+            else => {},
+        }
+        // Both as asked: nothing went without for want of memory.
+        for (on_c, on_t) |one, other| {
+            const a: *info_mod.Layer = @ptrCast(@alignCast(one));
+            const b: *info_mod.Layer = @ptrCast(@alignCast(other));
+            try testing.expectEqual(a.shadow, b.shadow);
+            try testing.expectEqual(a.opacity, b.opacity);
+        }
+        for (0..16) |y| for (0..32) |x| {
+            const want = t.at(@intCast(x), @intCast(y));
+            const have = c.at(@intCast(x), @intCast(y));
+            if (want != have) {
+                std.debug.print("step {d}, op {d}: pixel {d},{d} is {x:0>4} without a buffer, {x:0>4} with\n", .{ step, op, x, y, have, want });
+                return error.TestUnexpectedResult;
+            }
+        };
+    }
+
+    for (on_c) |l| base(lb).DeleteLayer(l);
+    for (on_t) |l| base(lb).DeleteLayer(l);
+    base(lb).DeleteLayer(bare);
+    base(lb).DeleteLayer(kept);
+    t.done(lb);
+    c.done(lb);
+    try tearDown(lb);
+}
+
+/// A backfill that paints what a program shows: the rows of
+/// `rowsBackFill`, and red over `marked`.
+const Marked = struct {
+    hook: utility.Hook,
+    gb: *GraphicsBase,
+    marked: Rect = .{},
+
+    fn paint(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        const m: *Marked = @fieldParentPtr("hook", hook);
+        const rp: *graphics.RastPort = @ptrCast(@alignCast(object.?));
+        const msg: *layers.BackFillMsg = @ptrCast(@alignCast(message.?));
+        var rows = utility.Hook{ .entry = &rowsBackFill, .data = m.gb };
+        _ = rowsBackFill(&rows, object, message);
+        const over = Rect.intersect(msg.area, m.marked);
+        if (over.isEmpty()) return 0;
+        m.gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 0, 0) }, .{} });
+        m.gb.RectFill(rp, &over);
+        return 0;
+    }
+};
+
+test "RefillLayer: what a hook paints, painted again over an area, with or without a buffer" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+    if (!compose.built) {
+        c.done(lb);
+        return tearDown(lb);
+    }
+    const t = try Twin.make(lb, c);
+    var scene_hook = Marked{ .hook = .{ .entry = &Marked.paint }, .gb = gbase(lb) };
+    const bare = try groundLayer(lb, c.info, &scene_hook.hook, false);
+    const kept = try groundLayer(lb, t.info, &scene_hook.hook, true);
+    // A window with a shadow over both.
+    const where = Rect{ .min_x = 8, .min_y = 2, .max_x = 20, .max_y = 8 };
+    const front_c = try lookingLayer(lb, c.info, &where, 0, 2, 255);
+    const front_t = try lookingLayer(lb, t.info, &where, 0, 2, 255);
+    fill(lb, front_c, graphics.penRGB(0, 255, 0), .{ .max_x = 12, .max_y = 6 });
+    fill(lb, front_t, graphics.penRGB(0, 255, 0), .{ .max_x = 12, .max_y = 6 });
+
+    // The scene changes; until it is painted again, nothing shows it.
+    scene_hook.marked = .{ .min_x = 2, .min_y = 2, .max_x = 14, .max_y = 10 };
+    try testing.expectEqual(rowColour(3), c.at(3, 3));
+    base(lb).RefillLayer(bare, &scene_hook.marked);
+    base(lb).RefillLayer(kept, &scene_hook.marked);
+    try testing.expectEqual(red, c.at(3, 3));
+    // Under the window, the window; in its shadow, red darkened once.
+    try testing.expectEqual(green, c.at(9, 3));
+    const shaded = channels(c.at(10, 8));
+    try testing.expect(shaded[0] > 0 and shaded[0] < 255 and shaded[1] == 0);
+    try testing.expectEqual(rowColour(12), c.at(20, 12));
+    for (0..16) |y| for (0..32) |x| try testing.expectEqual(t.at(@intCast(x), @intCast(y)), c.at(@intCast(x), @intCast(y)));
+
+    // Painted again, the shadow is not darkened twice; past the layer, the
+    // area is cut.
+    base(lb).RefillLayer(bare, &.{ .min_x = -8, .min_y = -8, .max_x = 64, .max_y = 64 });
+    base(lb).RefillLayer(kept, &.{ .min_x = -8, .min_y = -8, .max_x = 64, .max_y = 64 });
+    for (0..16) |y| for (0..32) |x| try testing.expectEqual(t.at(@intCast(x), @intCast(y)), c.at(@intCast(x), @intCast(y)));
+    try testing.expectEqual(shaded, channels(c.at(10, 8)));
+
+    // The window gone, what it covered shows the scene as it is now.
+    base(lb).DeleteLayer(front_c);
+    base(lb).DeleteLayer(front_t);
+    try testing.expectEqual(red, c.at(9, 3));
+    try testing.expectEqual(red, c.at(10, 8));
+    for (0..16) |y| for (0..32) |x| try testing.expectEqual(t.at(@intCast(x), @intCast(y)), c.at(@intCast(x), @intCast(y)));
+
+    base(lb).DeleteLayer(bare);
+    base(lb).DeleteLayer(kept);
+    t.done(lb);
+    c.done(lb);
+    try tearDown(lb);
+}
+
+test "RefillLayer: on a display not composed, painted where it can be seen, and into what a smart layer keeps" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    var surface: rtg.Surface = undefined;
+    var pixels: [32 * 16 * 2]u8 = @splat(0);
+    const screen, const info = try scene(lb, &surface, &pixels);
+
+    var scene_hook = Marked{ .hook = .{ .entry = &Marked.paint }, .gb = gbase(lb) };
+    const all = Rect{ .max_x = 32, .max_y = 16 };
+    const simple = try layerAt(lb, info, &all, layers.LAYERSIMPLE);
+    _ = base(lb).InstallLayerHook(simple, @intFromPtr(&scene_hook.hook));
+    base(lb).RefillLayer(simple, &all);
+    const where = Rect{ .min_x = 8, .min_y = 2, .max_x = 20, .max_y = 8 };
+    const front = try layerAt(lb, info, &where, layers.LAYERSIMPLE);
+    fill(lb, front, graphics.penRGB(0, 255, 0), .{ .max_x = 12, .max_y = 6 });
+
+    scene_hook.marked = .{ .min_x = 2, .min_y = 2, .max_x = 14, .max_y = 10 };
+    base(lb).RefillLayer(simple, &scene_hook.marked);
+    try testing.expectEqual(red, pixelAt(&surface, 3, 3));
+    try testing.expectEqual(green, pixelAt(&surface, 9, 3));
+    try testing.expectEqual(red, pixelAt(&surface, 10, 9));
+    try testing.expectEqual(rowColour(12), pixelAt(&surface, 20, 12));
+    base(lb).DeleteLayer(front);
+    base(lb).DeleteLayer(simple);
+
+    // A smart layer keeps what is covered: painted again while covered, it
+    // shows the scene as it is now once uncovered.
+    const smart = try layerAt(lb, info, &all, layers.LAYERSMART);
+    _ = base(lb).InstallLayerHook(smart, @intFromPtr(&scene_hook.hook));
+    scene_hook.marked = .{};
+    base(lb).RefillLayer(smart, &all);
+    const cover = try layerAt(lb, info, &where, layers.LAYERSIMPLE);
+    fill(lb, cover, graphics.penRGB(0, 255, 0), .{ .max_x = 12, .max_y = 6 });
+    scene_hook.marked = .{ .min_x = 2, .min_y = 2, .max_x = 14, .max_y = 10 };
+    base(lb).RefillLayer(smart, &scene_hook.marked);
+    try testing.expectEqual(green, pixelAt(&surface, 9, 3));
+    base(lb).DeleteLayer(cover);
+    try testing.expectEqual(red, pixelAt(&surface, 9, 3));
+    try testing.expectEqual(rowColour(3), pixelAt(&surface, 15, 3));
+
+    base(lb).DeleteLayer(smart);
+    base(lb).DisposeLayerInfo(info);
+    gbase(lb).FreeRastPort(screen);
+    try tearDown(lb);
+}
+
+/// A backfill that paints the whole display red, whatever it is asked.
+fn greedyBackFill(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    _ = message;
+    const gb: *GraphicsBase = @ptrCast(@alignCast(hook.data.?));
+    const rp: *graphics.RastPort = @ptrCast(@alignCast(object.?));
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 0, 0) }, .{} });
+    gb.RectFill(rp, &.{ .min_x = -100, .min_y = -100, .max_x = 100, .max_y = 100 });
+    return 0;
+}
+
+test "backfill: a hook draws only in the area it is called for, and the RastPort's clip is as it was after" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    var surface: rtg.Surface = undefined;
+    var pixels: [32 * 16 * 2]u8 = @splat(0);
+    const screen, const info = try scene(lb, &surface, &pixels);
+    const all = Rect{ .max_x = 32, .max_y = 16 };
+    const layer = try layerAt(lb, info, &all, layers.LAYERSIMPLE);
+    var greedy = utility.Hook{ .entry = &greedyBackFill, .data = gbase(lb) };
+    _ = base(lb).InstallLayerHook(layer, @intFromPtr(&greedy));
+    base(lb).RefillLayer(layer, &.{ .min_x = 4, .min_y = 4, .max_x = 8, .max_y = 8 });
+    try testing.expectEqual(red, pixelAt(&surface, 4, 4));
+    try testing.expectEqual(red, pixelAt(&surface, 7, 7));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 8, 7));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&surface, 3, 4));
+    var rp: usize = 0;
+    base(lb).GetLayerAttrs(layer, &[_]TagItem{ .{ .tag = layers.LATAG_GetRastPort, .data = @intFromPtr(&rp) }, .{} });
+    var clip: Rect = undefined;
+    gbase(lb).GetRPAttrs(@ptrFromInt(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&clip) }, .{} });
+    try testing.expectEqual(Rect{ .max_x = 32, .max_y = 16 }, clip);
+    base(lb).DeleteLayer(layer);
+    base(lb).DisposeLayerInfo(info);
+    gbase(lb).FreeRastPort(screen);
     try tearDown(lb);
 }

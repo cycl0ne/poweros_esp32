@@ -42,7 +42,8 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// are: a layer seen through laid over what is behind it at its new
 /// opacity, what it uncovers or covers anew copied. A tag not given
 /// leaves that as it was, and one this library does not know is ignored.
-/// Set once a frame, it is how a layer fades in or out: from 0 to 255 as
+/// A layer with no buffer (`LATAG_NoBuffer`) is always opaque: its
+/// `LATAG_Opacity` is ignored. Set once a frame, it is how a layer fades in or out: from 0 to 255 as
 /// it comes, the other way round as it goes, a ghost (`LATAG_Ghost`) so
 /// that nothing is meant for it meanwhile, then deleted.
 ///
@@ -82,7 +83,10 @@ pub fn SetLayerAttrsTagList(lb: *LayersBase, layer: *Layer, tags: ?[*]const TagI
         switch (item.tag) {
             layers.LATAG_Corners => layer.corners = @intCast(@min(item.data, 0xFFFF)),
             layers.LATAG_Shadow => layer.shadow = @intCast(@min(item.data, effects.most_shadow)),
-            layers.LATAG_Opacity => layer.opacity = @intCast(@min(item.data, 255)),
+            // A bare layer is painted, not laid over what is behind it.
+            layers.LATAG_Opacity => if (!compose.bare(layer)) {
+                layer.opacity = @intCast(@min(item.data, 255));
+            },
             layers.LATAG_Ghost => layer.ghost = item.data != 0,
             else => {},
         }
