@@ -578,7 +578,9 @@ its interface, `DEVS:NetInterfaces/USB0` for unit 0 (`Start = DEVICE`),
 as `usb0`; it stays from then on, down while no adapter is plugged in.
 The unit is on line while an adapter is plugged in and says it has a
 link. The adapters
-and the bus are described in `sdk/docs/guides/usb.md`.
+and the bus are described in `sdk/docs/guides/usb.md`. In QEMU's virt
+machines it is the network: their display steps plug QEMU's `usb-net`
+in, on its user network.
 
 ## Wireless devices
 

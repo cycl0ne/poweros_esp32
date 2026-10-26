@@ -243,9 +243,9 @@ Beside them:
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, playing into a file, the UART1 and UART3-IN connectors |
-| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos on the disk image in RAM; with `-device virtio-gpu-device` or `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with an `nvme` device an SSD; sound into an output that goes nowhere, and with `-device usb-audio` through QEMU's USB speaker, sample for sample, plugged in and out as it plays; no network |
+| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos on the disk image in RAM; with `-device virtio-gpu-device` or `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with an `nvme` device an SSD; sound into an output that goes nowhere, and with `-device usb-audio` through QEMU's USB speaker, sample for sample, plugged in and out as it plays; with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in) |
 | `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: sound through a USB speaker or headset, USB 3 devices at SuperSpeed, a disk over UAS; not driven yet: the second Ethernet port, the eMMC socket |
-| `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos on the disk image in RAM, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device virtio-gpu-device` or `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with an `nvme` device an SSD; sound into an output that goes nowhere; no network. The CM5 itself is to be the next board of this chip |
+| `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos on the disk image in RAM, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device virtio-gpu-device` or `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with an `nvme` device an SSD, with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in); sound into an output that goes nowhere. The CM5 itself is to be the next board of this chip |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network
@@ -265,10 +265,10 @@ wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 ./zig build qemu-display     # the same with the display in a window
 ./zig build emu              # the ESP32-P4 kernel in esp-emulator (quit: Ctrl-C)
 ./zig build virt             # the RISC-V 64 kernel in QEMU's virt machine (quit: Ctrl-A X)
-./zig build virt-display     # the same with its display, a USB keyboard and a tablet
+./zig build virt-display     # the same with its display, a USB keyboard, a tablet and network
 ./zig build virt-ramfb       # the same with the ramfb as its display
 ./zig build virt64           # the AArch64 kernel in QEMU's virt machine (quit: Ctrl-A X)
-./zig build virt64-display   # the same with its display, a USB keyboard and a tablet
+./zig build virt64-display   # the same with its display, a USB keyboard, a tablet and network
 ./zig build virt64-ramfb     # the same with the ramfb as its display
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
 ```
@@ -344,9 +344,11 @@ steps are the ESP32 boards'.
 `./zig build virt` boots QEMU's virt machine on the serial console with
 four harts and 512 MB, the disk image as its initrd. `./zig build
 virt-display` adds the display (QEMU's virtio GPU, 1920×1080 as the
-VisionFive 2's HDMI) and USB with a keyboard and a tablet, the console
-still on the terminal: the desktop, and `C:test/FacetCube` drawn through
-facet.library as on the board. The GPU is told each rectangle drawn, and
+VisionFive 2's HDMI) and USB with a keyboard, a tablet and an Ethernet
+adapter (`usb-net`, the machine's network: DHCP hands out 10.0.2.15 on
+QEMU's user network, as in `qemu`), the console still on the terminal:
+the desktop, and `C:test/FacetCube` drawn through facet.library as on
+the board. The GPU is told each rectangle drawn, and
 its cursor is the machine's pointer, which the window shows as the
 host's own; `-device virtio-gpu-device` without `xres` and `yres` comes
 up at QEMU's 1280×800. `./zig build virt-ramfb` shows the same on the
@@ -405,8 +407,10 @@ that comes in at EL2 drops to EL1 first.
 `./zig build virt64` boots QEMU's virt machine with four Cortex-A76
 cores, a GICv2 and 512 MB, all below 4 GiB, on the serial console;
 `./zig build virt64-display` adds the display (the virtio GPU;
-`virt64-ramfb` the ramfb) and USB with a keyboard and a tablet, and `./zig build virt64-el2` enters the kernel at EL2,
-PSCI by SMC, as the CM5's firmware does. QEMU run by hand adds an SSD:
+`virt64-ramfb` the ramfb) and USB with a keyboard, a tablet and an
+Ethernet adapter, as `virt-display` has them, and `./zig build
+virt64-el2` enters the kernel at EL2, PSCI by SMC, as the CM5's firmware
+does. QEMU run by hand adds an SSD:
 
 ```sh
 ./zig build -Dboard=qemu_virt_a64
@@ -435,8 +439,8 @@ More build steps and options:
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk image |
 | `-Ddh0-size=8192` | `DH0:` that many KiB, the rest of the flash disk left for partitions made later (HDToolBox, `C:RDB ADD`) |
 | `-Drdb-size=1024` | the flash disk's partition table area before `DH0:`, in KiB (default 64): room for file systems kept in the table (HDToolBox, `C:RDB ADDFS`) |
-| `-Dnet=none` | the `qemu*` steps without a network, or another QEMU `-nic` backend |
-| `-Dnet-dump=net.pcap` | every frame of the `qemu*` steps' network, for Wireshark |
+| `-Dnet=none` | the `qemu*` and virt display steps without a network, or another QEMU network backend (`tap,ifname=tap0,script=no,downscript=no`) |
+| `-Dnet-dump=net.pcap` | every frame of the `qemu*` and virt display steps' network, for Wireshark |
 | `-Dtelnet=2323` | forward that host port to the machine's port 23 (`C:net/ShellServer`) |
 | `-Dssh=2222` | forward that host port to the machine's port 22 (`C:net/ShellServer SSH`); qemu-display forwards 2222 itself |
 | `-Drs485=tcp::5020,server,nowait` | the `qemu*` steps' RS-485 port (`rs485.device`) on that QEMU serial backend |

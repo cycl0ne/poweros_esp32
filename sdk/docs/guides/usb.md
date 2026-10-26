@@ -741,6 +741,10 @@ network of its own, 10.0.3.0/24 - DHCP hands out 10.0.3.15, the gateway
 is 10.0.3.2 - beside the machine's Ethernet on 10.0.2.0/24. In the
 monitor, `netdev_add user,id=n1,net=10.0.3.0/24` and `device_add
 usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
+The virt machines' display steps (`virt-display`, `virt64-display` and
+their `ramfb` steps) plug a `usb-net` into the xHCI controller
+themselves, on the user network at 10.0.2.0/24: it is those machines'
+network.
 
 `-Dusb-disk=<image>` plugs in a stick whose blocks are a raw image file.
 The volume is in a partition table's first FAT partition, as a stick is

@@ -246,12 +246,13 @@ pub fn build(b: *std.Build) void {
         .esp32s3, .esp32p4 => 2,
     };
     if (cores > most_cores) std.debug.panic("-Dcores={d}: this chip has {d} cores", .{ cores, most_cores });
-    const net = b.option([]const u8, "net", "The qemu steps' network: none, or a -nic backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
-    const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu steps' network to this pcap file");
+    const net = b.option([]const u8, "net", "The network of the qemu steps and the virt display steps: none, or a QEMU network backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
+    const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu and virt display steps' network to this pcap file");
     const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for esp32s3wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
-    const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
-    const ssh_port = b.option(u16, "ssh", "Forward this host port to the machine's port 22 (C:net/ShellServer SSH) on the qemu steps' user network; qemu-display forwards 2222 unless given, and 0 forwards none");
+    const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu and virt display steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
+    const ssh_port = b.option(u16, "ssh", "Forward this host port to the machine's port 22 (C:net/ShellServer SSH) on the qemu and virt display steps' user network; qemu-display forwards 2222 unless given, and 0 forwards none");
     const network = qemuNetwork(b, net, net_dump, telnet, ssh_port);
+    const virt_network = virtNetwork(b, net, net_dump, telnet, ssh_port);
     const rs485 = b.option([]const u8, "rs485", "Give the qemu steps' RS-485 port (UART1, rs485.device) to this QEMU serial backend, such as tcp::5020,server,nowait or a pty");
     const slip_line = b.option([]const u8, "slip", "Give the qemu steps' UART1 (serial.device unit 1, a SLIP line) to this QEMU serial backend, such as tcp::5021,server,nowait; not with -Drs485");
     if (rs485 != null and slip_line != null) std.debug.panic("-Drs485 and -Dslip: both are UART1", .{});
@@ -758,8 +759,9 @@ pub fn build(b: *std.Build) void {
     b.step("virt", "Boot the RISC-V 64 kernel in QEMU's virt machine (quit with Ctrl-A X)").dependOn(&run_virt.step);
 
     // The same with what the board has around it: the virtio GPU, 1920x1080
-    // as the VisionFive 2's HDMI, and USB with a keyboard and a tablet,
-    // whose pointer stays where the host's is. The window is QEMU's own
+    // as the VisionFive 2's HDMI, and USB with a keyboard, a tablet, whose
+    // pointer stays where the host's is, and an Ethernet adapter on the
+    // user network (`virtNetwork`). The window is QEMU's own
     // choice - GTK or SDL, VNC on :5900 where it has neither - and the
     // GPU's cursor is the host's pointer over it; the console stays on the
     // terminal. `virt-ramfb` has the ramfb instead, the machine's pointer
@@ -773,14 +775,16 @@ pub fn build(b: *std.Build) void {
             "-smp",                "4",         "-bios",     "default", "-display",
             virt_ui,               "-serial",   "mon:stdio", "-device", display[0],
             "-device",             "qemu-xhci", "-device",   "usb-kbd", "-device",
-            "usb-tablet",          "-kernel",
+            "usb-tablet",
         });
+        run_virt_display.addArgs(virt_network);
+        run_virt_display.addArg("-kernel");
         run_virt_display.addArtifactArg(virt_kernel);
         run_virt_display.addArg("-initrd");
         run_virt_display.addFileArg(rv64_disk_bin);
         run_virt_display.stdio = .inherit;
         run_virt_display.has_side_effects = true;
-        b.step(display[1], b.fmt("Boot QEMU's virt machine with its display ({s}), keyboard and tablet", .{display[2]})).dependOn(&run_virt_display.step);
+        b.step(display[1], b.fmt("Boot QEMU's virt machine with its display ({s}), keyboard, tablet and network", .{display[2]})).dependOn(&run_virt_display.step);
     }
 
     // QEMU's AArch64 virt machine, a board of its own: the `virt64` step
@@ -804,8 +808,8 @@ pub fn build(b: *std.Build) void {
     b.step("virt64", "Boot the AArch64 kernel in QEMU's virt machine (quit with Ctrl-A X)").dependOn(&run_virt64.step);
 
     // The same with what the board has around it, as `virt-display`: the
-    // virtio GPU - or the ramfb, `virt64-ramfb` - USB with a keyboard and a
-    // tablet, the console on the terminal.
+    // virtio GPU - or the ramfb, `virt64-ramfb` - USB with a keyboard, a
+    // tablet and an Ethernet adapter, the console on the terminal.
     for ([_][3][]const u8{
         .{ "virtio-gpu-device,xres=1920,yres=1080", "virt64-display", "virtio GPU" },
         .{ "ramfb", "virt64-ramfb", "ramfb" },
@@ -815,14 +819,15 @@ pub fn build(b: *std.Build) void {
             "-display", virt_ui,    "-serial", "mon:stdio",
             "-device",  display[0], "-device", "qemu-xhci",
             "-device",  "usb-kbd",  "-device", "usb-tablet",
-            "-kernel",
         });
+        run_virt64_display.addArgs(virt_network);
+        run_virt64_display.addArg("-kernel");
         run_virt64_display.addFileArg(virt64_kernel.image);
         run_virt64_display.addArg("-initrd");
         run_virt64_display.addFileArg(a64_disk_bin);
         run_virt64_display.stdio = .inherit;
         run_virt64_display.has_side_effects = true;
-        b.step(display[1], b.fmt("Boot QEMU's AArch64 virt machine with its display ({s}), keyboard and tablet", .{display[2]})).dependOn(&run_virt64_display.step);
+        b.step(display[1], b.fmt("Boot QEMU's AArch64 virt machine with its display ({s}), keyboard, tablet and network", .{display[2]})).dependOn(&run_virt64_display.step);
     }
 
     // The machine with EL2 and EL3 (virtualization=on): the firmware is
@@ -1630,14 +1635,37 @@ fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16,
     if (net) |backend| {
         if (std.mem.eql(u8, backend, "none")) return b.dupeStrings(&.{ "-nic", "none" });
     }
+    const nic = b.fmt("{s},id=net0,model=open_eth{s}", .{ net orelse "user", if (net == null) hostForwards(b, telnet, ssh_port) else "" });
+    const file = dump orelse return b.dupeStrings(&.{ "-nic", nic });
+    return b.dupeStrings(&.{ "-nic", nic, "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) });
+}
+
+/// The virt machines' network, as QEMU's arguments: a USB Ethernet adapter
+/// (`usb-net`, a CDC-ECM function usb/ecm.device drives) on the machine's
+/// xHCI controller, on QEMU's user network as `qemuNetwork` has it -
+/// 10.0.2.15 by DHCP, the gateway 10.0.2.2, DNS at 10.0.2.3. It is the
+/// only network the machines have a driver for. `net`, `dump`, `telnet`
+/// and `ssh_port` are `qemuNetwork`'s; nothing is forwarded unless asked,
+/// so a virt machine starts beside a qemu-display, which holds 2323 and
+/// 2222.
+fn virtNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16, ssh_port: ?u16) []const []const u8 {
+    if (net) |backend| {
+        if (std.mem.eql(u8, backend, "none")) return b.dupeStrings(&.{ "-nic", "none" });
+    }
+    const netdev = b.fmt("{s},id=net0{s}", .{ net orelse "user", if (net == null) hostForwards(b, telnet, ssh_port) else "" });
+    const adapter = [_][]const u8{ "-netdev", netdev, "-device", "usb-net,netdev=net0" };
+    const file = dump orelse return b.dupeStrings(&adapter);
+    return b.dupeStrings(&(adapter ++ [_][]const u8{ "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) }));
+}
+
+/// The user network's port forwards, as a backend's options: `telnet` to
+/// the machine's port 23, `ssh_port` to its port 22; null or 0 is none.
+fn hostForwards(b: *std.Build, telnet: ?u16, ssh_port: ?u16) []const u8 {
     const telnet_forwarded: ?u16 = if (telnet) |port| (if (port == 0) null else port) else null;
     const ssh_forwarded: ?u16 = if (ssh_port) |port| (if (port == 0) null else port) else null;
     const telnet_forward = if (telnet_forwarded) |port| b.fmt(",hostfwd=tcp::{d}-:23", .{port}) else "";
     const ssh_forward = if (ssh_forwarded) |port| b.fmt(",hostfwd=tcp::{d}-:22", .{port}) else "";
-    const forward = b.fmt("{s}{s}", .{ telnet_forward, ssh_forward });
-    const nic = b.fmt("{s},id=net0,model=open_eth{s}", .{ net orelse "user", if (net == null) forward else "" });
-    const file = dump orelse return b.dupeStrings(&.{ "-nic", nic });
-    return b.dupeStrings(&.{ "-nic", nic, "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) });
+    return b.fmt("{s}{s}", .{ telnet_forward, ssh_forward });
 }
 
 /// The display arguments, then the serial ports: UART0, the console, on
