@@ -396,21 +396,20 @@ pub const semaphores = struct {
         address: usize,
         name: [15]u8,
         owner: [15]u8,
-        nest_count: i16,
-        queue_count: i16,
+        nest_count: u32,
         waiting: u32,
     };
 
-    pub const header = "semaphore   name            owner           nest  queue  waiting\n";
+    pub const header = "semaphore   name            owner           nest  waiting\n";
 
     pub fn each(reader: Reader, base: *const ExecBase, sink: anytype) void {
         var public = walkOf(SignalSemaphore, "link", reader, &base.sem_list);
         while (public.next()) |sem| {
-            var row: Row = .{ .address = @intFromPtr(sem), .name = undefined, .owner = undefined, .nest_count = sem.nest_count, .queue_count = sem.queue_count, .waiting = countOf(reader, &sem.wait_queue) };
+            var row: Row = .{ .address = @intFromPtr(sem), .name = undefined, .owner = undefined, .nest_count = sem.nestCount(), .waiting = countOf(reader, &sem.wait_queue) };
             _ = nameInto(reader, &row.name, sem.link.name);
-            const owner: ?[*:0]const u8 = if (sem.queue_count < 0)
+            const owner: ?[*:0]const u8 = if (row.nest_count == 0)
                 "-"
-            else if (sem.owner == null)
+            else if (sem.state & sdk.exec.SEMF_EXCLUSIVE == 0)
                 "(shared)"
             else if (taskAt(reader, sem.owner)) |task|
                 task.node.name orelse ""
@@ -423,16 +422,17 @@ pub const semaphores = struct {
     }
 
     pub fn print(out: anytype, row: *const Row) void {
-        out.print("0x%08zx  %-14s  %-14s %5d  %5d  %d\n", .{
+        out.print("0x%08zx  %-14s  %-14s %5u  %d\n", .{
             row.address,    @as([*:0]const u8, @ptrCast(&row.name)), @as([*:0]const u8, @ptrCast(&row.owner)),
-            row.nest_count, row.queue_count,                         row.waiting,
+            row.nest_count, row.waiting,
         });
     }
 };
 
-/// `locks`: from every task's table of what it holds (`Task.holds`), the
-/// semaphore, its name for a public one, how often and whether shared -
-/// and the one each task waits for.
+/// `locks`: from every task's tables of what it holds (`Task.holds`, and
+/// Procure's grants in `Task.bid_holds`), the semaphore, its name for a
+/// public one, how often and whether shared - and the one each task waits
+/// for.
 pub const locks = struct {
     /// One line: a hold, a wait, or holds a task's table had no room for.
     pub const Row = struct {
@@ -455,12 +455,15 @@ pub const locks = struct {
 
     /// A task's holds, its wait and its lost holds as rows.
     fn take(reader: Reader, task: *const Task, _: u8, sink: anytype) void {
-        for (&task.holds) |*hold| {
-            const sem = hold.semaphore orelse continue;
-            add(reader, sink, task, @intFromPtr(sem), hold.count, if (hold.shared) .shared else .exclusive);
+        for ([_][]const sdk.exec.SemaphoreHold{ &task.holds, &task.bid_holds }) |table| {
+            for (table) |*hold| {
+                const sem = hold.semaphore orelse continue;
+                add(reader, sink, task, @intFromPtr(sem), hold.count, if (hold.shared) .shared else .exclusive);
+            }
         }
         if (task.waiting_for) |sem| add(reader, sink, task, @intFromPtr(sem), 0, .waits);
-        if (task.holds_lost != 0) add(reader, sink, task, 0, task.holds_lost, .lost);
+        const lost = task.holds_lost +| task.bid_holds_lost;
+        if (lost != 0) add(reader, sink, task, 0, lost, .lost);
     }
 
     fn add(reader: Reader, sink: anytype, task: *const Task, semaphore: usize, times: u32, kind: Kind) void {

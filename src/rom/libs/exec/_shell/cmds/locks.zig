@@ -6,7 +6,9 @@
 //! seen while it lasts.
 //!
 //! Copied out under Disable, which keeps the task lists still, and exec's
-//! semaphore lock, which keeps the tables still; printed after. The rows
+//! semaphore lock, which keeps the queues and the grants still - a task's
+//! own obtain or release changes its table without it, so a row is that
+//! moment's; printed after. The rows
 //! and their lines are the ROM debugger's too (`debug/_lists.zig`).
 
 const _shell = @import("../shell.zig");

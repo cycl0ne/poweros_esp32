@@ -485,7 +485,7 @@ test "objects: made by pointer and by name, set, read, counted and freed" {
     ib.iface().DisposeObject(second);
     try testing.expectEqual(@as(u32, 0), cl.object_count);
     // Every count change took the class list and gave it back.
-    try testing.expectEqual(@as(i16, 0), ib.class_lock.nest_count);
+    try testing.expectEqual(@as(u16, 0), ib.class_lock.nestCount());
     try testing.expect(ib.iface().FreeClass(cl));
 
     try tearDown(ib);
@@ -7960,11 +7960,11 @@ test "LockIBase: the screens held, nesting, and let go as often as taken" {
     try testing.expectEqual(me, ib.screen_lock.owner);
     // A call that takes the same semaphore goes through while it is held.
     const again = it.LockIBase(0);
-    try testing.expectEqual(@as(i16, 2), ib.screen_lock.nest_count);
+    try testing.expectEqual(@as(u16, 2), ib.screen_lock.nestCount());
     it.UnlockIBase(again);
     it.UnlockIBase(0);
     try testing.expectEqual(@as(?*exec.Task, null), ib.screen_lock.owner);
-    try testing.expectEqual(@as(i16, 0), ib.screen_lock.nest_count);
+    try testing.expectEqual(@as(u16, 0), ib.screen_lock.nestCount());
 
     try tearDown(ib);
 }

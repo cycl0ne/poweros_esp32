@@ -37,8 +37,11 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// CONTEXT:
 /// - Waits: no, but handing the semaphore on signals a task, which may
 ///   switch.
-/// - Interrupts: no. It takes exec's semaphore lock, and may signal.
-/// - Locks: takes exec's semaphore lock for a moment.
+/// - Interrupts: no. It may take exec's semaphore lock, and may signal.
+/// - Locks: none when it hands nothing on - one compare-and-swap on the
+///   semaphore, with this core's interrupts masked for a moment. The last
+///   release with tasks waiting takes exec's semaphore lock to hand it
+///   on.
 /// - Process: a Task will do, and it must be **the task that obtained
 ///   it**.
 ///
@@ -57,6 +60,7 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 /// defer sys.ReleaseSemaphore(&self.lock);
 /// ```
 pub fn ReleaseSemaphore(base: *ExecBase, sem: *SignalSemaphore) void {
+    if (_locks.releaseNow(base, sem)) return;
     const sys = base.iface();
     sys.AcquireLock(&base.lock_semaphores);
     defer sys.ReleaseLock(&base.lock_semaphores);
