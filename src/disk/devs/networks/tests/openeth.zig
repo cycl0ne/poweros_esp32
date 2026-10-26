@@ -234,6 +234,44 @@ test "a frame no read wants goes to an orphan read, else it is counted" {
     try rig.deinit();
 }
 
+test "a tracked type counts what came with no read of it waiting" {
+    var rig: Rig = undefined;
+    try rig.init();
+    const buffers = byteBuffers();
+    var opener = try rig.open(&buffers, 0);
+    try rig.configure(&opener);
+    var control = opener;
+    control.packet_type = 0x0806;
+    rig.send(&control, net.S2_TRACKTYPE);
+    try testing.expectEqual(&control, rig.answered().?);
+    try testing.expectEqual(@as(i8, 0), control.req.err);
+
+    var data: [64]u8 = undefined;
+    var read = opener;
+    read.packet_type = 0x0806;
+    read.data = &data;
+    read.data_length = data.len;
+    rig.send(&read, exec.CMD_READ);
+    const frame = arpFrame();
+    rig.unit.receive(&frame);
+    try testing.expectEqual(&read, rig.answered().?);
+    // The one read is out: the next ARP frame finds none.
+    rig.unit.receive(&frame);
+    try testing.expectEqual(null, rig.answered());
+
+    var stats: net.Sana2PacketTypeStats = .{};
+    control.stat_data = &stats;
+    rig.send(&control, net.S2_GETTYPESTATS);
+    try testing.expectEqual(&control, rig.answered().?);
+    try testing.expectEqual(@as(i8, 0), control.req.err);
+    try testing.expectEqual(@as(u64, 1), stats.packets_received);
+    try testing.expectEqual(@as(u64, 1), stats.packets_dropped);
+    // The unit's unknown count has it too, as NetStatus takes into account.
+    try testing.expectEqual(@as(u64, 1), rig.unit.stats.unknown_types_received);
+    rig.unit.close(&opener);
+    try rig.deinit();
+}
+
 /// A filter that leaves every frame to reads other than the one whose
 /// data is its hook's.
 fn refuseOne(hook: *Hook, object: ?*anyopaque, _: ?*anyopaque) callconv(.c) usize {

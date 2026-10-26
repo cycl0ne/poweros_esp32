@@ -52,8 +52,8 @@ const Work = _emac.Work;
 
 pub const DEVICE_NAME = _emac.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "25.10.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "26.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -131,10 +131,13 @@ fn netTask(sys: *ExecBase) callconv(.c) void {
     while (true) {
         const raised = takeRaised(base);
         if (raised & mac.int_bus_error != 0) restart(base);
-        if (raised & mac.int_receive_unavailable != 0) {
+        if (raised & (mac.int_receive | mac.int_receive_unavailable) != 0) {
+            // What the MAC had no room for - its queue full while the
+            // descriptors were all ours - taken with every pass, not only
+            // when the ring ran dry: the counts hold 2047 at most.
             for (0..mac.takeMissed()) |_| base.net.overrun();
+            base.received();
         }
-        if (raised & (mac.int_receive | mac.int_receive_unavailable) != 0) base.received();
         if (raised & mac.int_send != 0) base.sent();
         if (base.polling != 0 and sys.CheckIO(&base.timer_io.node) != null) {
             _ = sys.WaitIO(&base.timer_io.node);

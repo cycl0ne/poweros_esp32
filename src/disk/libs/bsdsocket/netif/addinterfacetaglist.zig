@@ -340,6 +340,7 @@ fn open(stack: *StackBase, link: *device.Device, device_name: [*:0]const u8, uni
         sys.CloseDevice(&req.req);
         return bsd.ENXIO;
     }
+    device.track(sys, req);
     req.stat_data = null;
     return 0;
 }

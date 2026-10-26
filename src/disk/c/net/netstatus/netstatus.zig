@@ -6,7 +6,8 @@
 //! Each switch prints a table: the interfaces with their addresses -
 //! IPv4's, then each IPv6 one with its prefix length, state and
 //! lifetimes, and what the last router advertisement said of DHCPv6 (its
-//! M and O flags) - state and packets, and each device's link; the IPv4
+//! M and O flags) - state and packets, and each device's link and what
+//! the device itself dropped, which the stack never sees; the IPv4
 //! and the IPv6 routes, and the name servers asked; every socket with its
 //! addresses, TCP state, queued bytes and the task it belongs to; the ARP
 //! cache; the IPv6 neighbor cache; the stack's counters, what packet
@@ -17,6 +18,7 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
+const net = sdk.devices.network;
 const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -24,7 +26,7 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "NetStatus";
-const VERSION_STRING = "\x00$VER: NetStatus 1.4 (12.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: NetStatus 1.5 (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "INTERFACES/S,ROUTES/S,SOCKETS/S,ARP/S,NEIGHBORS/S,COUNTS/S,ALL/S";
@@ -69,7 +71,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     } else true;
     var first = true;
     if (all or none or argv[arg_interfaces] != 0) {
-        if (!interfaces(dl, sb, &first)) return dos.RETURN_FAIL;
+        if (!interfaces(sys, dl, sb, &first)) return dos.RETURN_FAIL;
     }
     if (all or none or argv[arg_routes] != 0) {
         routes(dl, sb, &first);
@@ -183,7 +185,7 @@ fn addresses6(dl: *DosBase, sb: *SocketBase, name: [*:0]const u8, table: []const
     if (flags & bsd.RA_OTHER != 0) _ = Printf(dl, "         the router has other settings by DHCPv6 (O)\n", .{});
 }
 
-fn interfaces(dl: *DosBase, sb: *SocketBase, first: *bool) bool {
+fn interfaces(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, first: *bool) bool {
     var table6: [rows_max]bsd.Address6Info = undefined;
     const found6 = sb.GetNetworkStatistics(bsd.NETSTATUS_ADDRESSES6, &table6, @sizeOf(@TypeOf(table6)));
     const shown6: usize = if (found6 < 0) 0 else @min(@as(usize, @intCast(found6)), table6.len);
@@ -263,8 +265,59 @@ fn interfaces(dl: *DosBase, sb: *SocketBase, first: *bool) bool {
             _ = Printf(dl, ", gateway %s", .{dotted(gateway, &gateway_text)});
         }
         _ = Printf(dl, "\n", .{});
+        deviceDropped(sys, dl, link, unit);
     }
     return true;
+}
+
+fn noCopy(_: ?*anyopaque, _: ?*const anyopaque, _: u32) callconv(.c) bool {
+    return false;
+}
+
+/// What the device on `name` unit `unit` dropped, a line: frames it had
+/// no room for, frames that came damaged, packets that came while every
+/// read of their type was out - the stack has a number waiting for each
+/// type, and a burst longer than that loses the rest - and packets of the
+/// types nobody reads. The device is opened for its counts and closed
+/// again; nothing is said when it can't be, or doesn't count.
+fn deviceDropped(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, unit: u32) void {
+    const port = sys.CreateMsgPort() orelse return;
+    defer sys.DeleteMsgPort(port);
+    const buffers = [_]TagItem{
+        .{ .tag = net.S2_CopyToBuff, .data = @intFromPtr(&noCopy) },
+        .{ .tag = net.S2_CopyFromBuff, .data = @intFromPtr(&noCopy) },
+        .{},
+    };
+    var req: net.IOSana2Req = .{};
+    req.req.message.reply_port = port;
+    req.req.message.length = @sizeOf(net.IOSana2Req);
+    req.buffer_management = @constCast(&buffers);
+    if (sys.OpenDevice(name, unit, &req.req, 0) != 0) return;
+    defer sys.CloseDevice(&req.req);
+    var stats: net.Sana2DeviceStats = .{};
+    req.req.command = net.S2_GETGLOBALSTATS;
+    req.stat_data = &stats;
+    if (sys.DoIO(&req.req) != 0) return;
+    // The stack's types, as bsdsocket.library tracks them on the unit.
+    const types = [_]u16{ 0x0800, 0x0806, 0x86DD };
+    var no_read: [types.len]u64 = @splat(0);
+    var tracked = true;
+    for (types, &no_read) |packet_type, *count| {
+        var type_stats: net.Sana2PacketTypeStats = .{};
+        req.req.command = net.S2_GETTYPESTATS;
+        req.packet_type = packet_type;
+        req.stat_data = &type_stats;
+        if (sys.DoIO(&req.req) != 0) tracked = false;
+        count.* = type_stats.packets_dropped;
+    }
+    _ = Printf(dl, "         dropped by the device: %lu no room, %lu damaged", .{ stats.overruns, stats.bad_data });
+    // The unit counts a packet no read took among the unknown types too.
+    var unknown = stats.unknown_types_received;
+    if (tracked) {
+        _ = Printf(dl, ", no read waiting %lu IPv4 %lu ARP %lu IPv6", .{ no_read[0], no_read[1], no_read[2] });
+        for (no_read) |count| unknown -|= count;
+    }
+    _ = Printf(dl, ", %lu of other types\n", .{unknown});
 }
 
 /// IFSTATE_* as words: "up dhcp bound".
