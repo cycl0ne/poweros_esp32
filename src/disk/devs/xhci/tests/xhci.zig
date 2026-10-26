@@ -119,17 +119,15 @@ test "an interrupt endpoint's interval as an exponent of 125 us" {
 /// A keyboard's configuration: a boot keyboard's interface with its
 /// interrupt IN, a second setting with an endpoint of its own, and a
 /// second interface with an interrupt OUT and an isochronous endpoint.
-const keyboard_config = [_]u8{
-    9, d.USB_DT_CONFIG, 9 + 9 + 9 + 7 + 9 + 7 + 9 + 7 + 7, 0, 2, 1, 0, 0xA0, 50,
-    9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 1, 1, 0,
-    9, d.USB_DT_HID, 0x11, 0x01, 0, 1, d.USB_DT_REPORT, 63, 0,
-    7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 8, 0, 10,
-    9, d.USB_DT_INTERFACE, 0, 1, 1, 3, 0, 0, 0,
-    7, d.USB_DT_ENDPOINT, 0x83, d.USB_ENDPOINT_XFER_INT, 16, 0, 1,
-    9, d.USB_DT_INTERFACE, 1, 0, 2, 3, 0, 0, 0,
-    7, d.USB_DT_ENDPOINT, 0x02, d.USB_ENDPOINT_XFER_INT, 0x40, 0, 4,
-    7, d.USB_DT_ENDPOINT, 0x84, d.USB_ENDPOINT_XFER_ISOC, 0x00, 0x02, 1,
-};
+const keyboard_config = [_]u8{ 9, d.USB_DT_CONFIG, 9 + 9 + 9 + 7 + 9 + 7 + 9 + 7 + 7, 0, 2, 1, 0, 0xA0, 50 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 1, 1, 0 } ++
+    [_]u8{ 9, d.USB_DT_HID, 0x11, 0x01, 0, 1, d.USB_DT_REPORT, 63, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 8, 0, 10 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 0, 1, 1, 3, 0, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x83, d.USB_ENDPOINT_XFER_INT, 16, 0, 1 } ++
+    [_]u8{ 9, d.USB_DT_INTERFACE, 1, 0, 2, 3, 0, 0, 0 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x02, d.USB_ENDPOINT_XFER_INT, 0x40, 0, 4 } ++
+    [_]u8{ 7, d.USB_DT_ENDPOINT, 0x84, d.USB_ENDPOINT_XFER_ISOC, 0x00, 0x02, 1 };
 
 test "a configuration's endpoints: every first setting's, no isochronous one" {
     var specs: [32]slots.Spec = @splat(.{});
@@ -148,12 +146,10 @@ test "a configuration's endpoints: every first setting's, no isochronous one" {
 }
 
 test "a bulk pair at high speed" {
-    const config = [_]u8{
-        9, d.USB_DT_CONFIG, 32, 0, 1, 1, 0, 0x80, 50,
-        9, d.USB_DT_INTERFACE, 0, 0, 2, 8, 6, 0x50, 0,
-        7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x02, 0,
-        7, d.USB_DT_ENDPOINT, 0x02, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x02, 0,
-    };
+    const config = [_]u8{ 9, d.USB_DT_CONFIG, 32, 0, 1, 1, 0, 0x80, 50 } ++
+        [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 2, 8, 6, 0x50, 0 } ++
+        [_]u8{ 7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x02, 0 } ++
+        [_]u8{ 7, d.USB_DT_ENDPOINT, 0x02, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x02, 0 };
     var specs: [32]slots.Spec = @splat(.{});
     try testing.expectEqual(regs.addFlag(3) | regs.addFlag(4), slots.endpointsOf(&config, 1, regs.SPEED_HIGH, &specs));
     try testing.expectEqual(regs.EP_BULK_IN, specs[3].kind);
@@ -163,14 +159,12 @@ test "a bulk pair at high speed" {
 }
 
 test "a SuperSpeed bulk pair: each endpoint's burst from its companion" {
-    const config = [_]u8{
-        9, d.USB_DT_CONFIG, 44, 0, 1, 1, 0, 0x80, 50,
-        9, d.USB_DT_INTERFACE, 0, 0, 2, 8, 6, 0x50, 0,
-        7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0,
-        6, d.USB_DT_SS_ENDPOINT_COMP, 15, 0, 0, 0,
-        7, d.USB_DT_ENDPOINT, 0x02, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0,
-        6, d.USB_DT_SS_ENDPOINT_COMP, 3, 0, 0, 0,
-    };
+    const config = [_]u8{ 9, d.USB_DT_CONFIG, 44, 0, 1, 1, 0, 0x80, 50 } ++
+        [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 2, 8, 6, 0x50, 0 } ++
+        [_]u8{ 7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+        [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 15, 0, 0, 0 } ++
+        [_]u8{ 7, d.USB_DT_ENDPOINT, 0x02, d.USB_ENDPOINT_XFER_BULK, 0x00, 0x04, 0 } ++
+        [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 3, 0, 0, 0 };
     var specs: [32]slots.Spec = @splat(.{});
     try testing.expectEqual(regs.addFlag(3) | regs.addFlag(4), slots.endpointsOf(&config, 1, regs.SPEED_SUPER, &specs));
     try testing.expectEqual(@as(u32, 1024), specs[3].max_packet);
@@ -183,15 +177,13 @@ test "a SuperSpeed bulk pair: each endpoint's burst from its companion" {
 }
 
 test "a SuperSpeed interrupt endpoint's bytes an interval; an isochronous one is not added with the configuration" {
-    const config = [_]u8{
-        9, d.USB_DT_CONFIG, 50, 0, 1, 1, 0, 0x80, 50,
-        9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 0, 0, 0,
-        7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 0x00, 0x04, 4,
-        6, d.USB_DT_SS_ENDPOINT_COMP, 1, 0, 0x00, 0x08,
-        9, d.USB_DT_INTERFACE, 1, 1, 1, 1, 2, 0, 0,
-        7, d.USB_DT_ENDPOINT, 0x82, d.USB_ENDPOINT_XFER_ISOC, 0x00, 0x04, 1,
-        6, d.USB_DT_SS_ENDPOINT_COMP, 2, 1, 0x00, 0x30,
-    };
+    const config = [_]u8{ 9, d.USB_DT_CONFIG, 50, 0, 1, 1, 0, 0x80, 50 } ++
+        [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 0, 0, 0 } ++
+        [_]u8{ 7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 0x00, 0x04, 4 } ++
+        [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 1, 0, 0x00, 0x08 } ++
+        [_]u8{ 9, d.USB_DT_INTERFACE, 1, 1, 1, 1, 2, 0, 0 } ++
+        [_]u8{ 7, d.USB_DT_ENDPOINT, 0x82, d.USB_ENDPOINT_XFER_ISOC, 0x00, 0x04, 1 } ++
+        [_]u8{ 6, d.USB_DT_SS_ENDPOINT_COMP, 2, 1, 0x00, 0x30 };
     var specs: [32]slots.Spec = @splat(.{});
     try testing.expectEqual(regs.addFlag(3), slots.endpointsOf(&config, 1, regs.SPEED_SUPER, &specs));
     try testing.expectEqual(@as(u32, 1), specs[3].burst);
@@ -199,12 +191,10 @@ test "a SuperSpeed interrupt endpoint's bytes an interval; an isochronous one is
 }
 
 test "a high-speed interrupt endpoint with three transactions a microframe" {
-    const config = [_]u8{
-        9, d.USB_DT_CONFIG, 25, 0, 1, 1, 0, 0x80, 50,
-        9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 0, 0, 0,
+    const config = [_]u8{ 9, d.USB_DT_CONFIG, 25, 0, 1, 1, 0, 0x80, 50 } ++
+        [_]u8{ 9, d.USB_DT_INTERFACE, 0, 0, 1, 3, 0, 0, 0 } ++
         // 1024 bytes, two more transactions (bits 12:11 = 2).
-        7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 0x00, 0x14, 1,
-    };
+        [_]u8{ 7, d.USB_DT_ENDPOINT, 0x81, d.USB_ENDPOINT_XFER_INT, 0x00, 0x14, 1 };
     var specs: [32]slots.Spec = @splat(.{});
     try testing.expectEqual(regs.addFlag(3), slots.endpointsOf(&config, 1, regs.SPEED_HIGH, &specs));
     try testing.expectEqual(@as(u32, 1024), specs[3].max_packet);

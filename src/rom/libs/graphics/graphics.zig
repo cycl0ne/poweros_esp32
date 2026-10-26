@@ -4130,9 +4130,9 @@ test "the drawing loops write what a pixel at a time wrote, in every format and 
                             // Every way a line can go: shallow, steep,
                             // across both pieces, straight back.
                             const ends = [_][4]i32{
-                                .{ 0, 0, 39, 19 },   .{ 39, 2, 1, 17 }, .{ 5, 19, 12, 0 },
-                                .{ 33, 1, 30, 18 },  .{ 2, 10, 38, 10 }, .{ 37, 12, 4, 12 },
-                                .{ 25, 18, 25, 3 },  .{ 18, 5, 26, 9 },
+                                .{ 0, 0, 39, 19 },  .{ 39, 2, 1, 17 },  .{ 5, 19, 12, 0 },
+                                .{ 33, 1, 30, 18 }, .{ 2, 10, 38, 10 }, .{ 37, 12, 4, 12 },
+                                .{ 25, 18, 25, 3 }, .{ 18, 5, 26, 9 },
                             };
                             for (ends) |e| {
                                 g.Move(@ptrCast(rp), e[0], e[1]);

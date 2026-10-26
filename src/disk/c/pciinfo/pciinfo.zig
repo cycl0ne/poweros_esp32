@@ -417,19 +417,19 @@ fn printCapabilities(c: *const Context, function: *const pci.PCIDevice) void {
 }
 
 const cap_names = [_][*:0]const u8{
-    "",              "PM",       "AGP",      "VPD",     "SlotID", "MSI",  "HotSwap", "PCI-X",
-    "HyperTransport", "Vendor",  "Debug",    "CRC",     "HotPlug", "SubsystemID", "AGP8x", "Secure",
-    "Express",       "MSI-X",    "SATA",     "AF",      "EA",     "FPB",
+    "",               "PM",     "AGP",   "VPD", "SlotID",  "MSI",         "HotSwap", "PCI-X",
+    "HyperTransport", "Vendor", "Debug", "CRC", "HotPlug", "SubsystemID", "AGP8x",   "Secure",
+    "Express",        "MSI-X",  "SATA",  "AF",  "EA",      "FPB",
 };
 
 const ext_names = [_][*:0]const u8{
-    "",            "AER",         "VC",            "SerialNumber", "PowerBudget", "RCLink",   "RCInternalLink", "RCEC",
-    "MFVC",        "VC9",         "RCRB",          "Vendor",       "CAC",         "ACS",      "ARI",            "ATS",
-    "SR-IOV",      "MR-IOV",      "Multicast",     "PRI",          "AMD",         "ResizableBAR", "DPA",        "TPH",
-    "LTR",         "SecondaryPCIe", "PMUX",        "PASID",        "LNR",         "DPC",      "L1PMSubstates",  "PTM",
-    "M-PCIe",      "FRS",         "RTR",           "DVSEC",        "VFResizableBAR", "DLF",   "PL16GT",         "LaneMargining",
-    "HierarchyID", "NPEM",        "PL32GT",        "AltProtocol",  "SFI",         "ShadowFunctions", "DOE",    "Device3",
-    "IDE",         "PL64GT",      "FlitLogging",   "FlitPerformance", "FlitErrorInjection",
+    "",            "AER",           "VC",          "SerialNumber",    "PowerBudget",        "RCLink",          "RCInternalLink", "RCEC",
+    "MFVC",        "VC9",           "RCRB",        "Vendor",          "CAC",                "ACS",             "ARI",            "ATS",
+    "SR-IOV",      "MR-IOV",        "Multicast",   "PRI",             "AMD",                "ResizableBAR",    "DPA",            "TPH",
+    "LTR",         "SecondaryPCIe", "PMUX",        "PASID",           "LNR",                "DPC",             "L1PMSubstates",  "PTM",
+    "M-PCIe",      "FRS",           "RTR",         "DVSEC",           "VFResizableBAR",     "DLF",             "PL16GT",         "LaneMargining",
+    "HierarchyID", "NPEM",          "PL32GT",      "AltProtocol",     "SFI",                "ShadowFunctions", "DOE",            "Device3",
+    "IDE",         "PL64GT",        "FlitLogging", "FlitPerformance", "FlitErrorInjection",
 };
 
 // --- HEX -------------------------------------------------------------------------------

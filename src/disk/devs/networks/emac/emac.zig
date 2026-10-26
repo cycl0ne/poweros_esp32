@@ -397,7 +397,7 @@ fn stationOf(sys: *ExecBase, utility: *UtilityBase, tags: ?[*]const sdk.utility.
     const clock = sdk.hardware.cpu.ccount();
     const made = [6]u8{ 0x02, 0x00, @truncate(clock >> 24), @truncate(clock >> 16), @truncate(clock >> 8), @truncate(clock) };
     sdk.exec.kprintf(sys, "%s: the board gives no station address; %02x:%02x:%02x:%02x:%02x:%02x for now\n", .{
-        DEVICE_NAME,         @as(u32, made[0]), @as(u32, made[1]), @as(u32, made[2]),
+        DEVICE_NAME,       @as(u32, made[0]), @as(u32, made[1]), @as(u32, made[2]),
         @as(u32, made[3]), @as(u32, made[4]), @as(u32, made[5]),
     });
     return made;

@@ -1596,22 +1596,22 @@ fn entity(text: []const u8, at: usize) ?Entity {
     }
     const Named = struct { name: []const u8, code: u32 = 0, text: []const u8 = "" };
     const names = [_]Named{
-        .{ .name = "amp", .code = '&' },       .{ .name = "lt", .code = '<' },        .{ .name = "gt", .code = '>' },
-        .{ .name = "quot", .code = '"' },      .{ .name = "apos", .code = '\'' },     .{ .name = "nbsp", .code = 0xA0 },
-        .{ .name = "copy", .code = 0xA9 },     .{ .name = "reg", .code = 0xAE },      .{ .name = "deg", .code = 0xB0 },
-        .{ .name = "middot", .code = 0xB7 },   .{ .name = "times", .code = 0xD7 },    .{ .name = "divide", .code = 0xF7 },
-        .{ .name = "plusmn", .code = 0xB1 },   .{ .name = "sect", .code = 0xA7 },     .{ .name = "para", .code = 0xB6 },
-        .{ .name = "laquo", .code = 0xAB },    .{ .name = "raquo", .code = 0xBB },    .{ .name = "pound", .code = 0xA3 },
-        .{ .name = "yen", .code = 0xA5 },      .{ .name = "cent", .code = 0xA2 },     .{ .name = "frac12", .code = 0xBD },
-        .{ .name = "frac14", .code = 0xBC },   .{ .name = "frac34", .code = 0xBE },   .{ .name = "auml", .code = 0xE4 },
-        .{ .name = "ouml", .code = 0xF6 },     .{ .name = "uuml", .code = 0xFC },     .{ .name = "Auml", .code = 0xC4 },
-        .{ .name = "Ouml", .code = 0xD6 },     .{ .name = "Uuml", .code = 0xDC },     .{ .name = "szlig", .code = 0xDF },
-        .{ .name = "eacute", .code = 0xE9 },   .{ .name = "egrave", .code = 0xE8 },   .{ .name = "agrave", .code = 0xE0 },
-        .{ .name = "ccedil", .code = 0xE7 },   .{ .name = "mdash", .text = "-" },     .{ .name = "ndash", .text = "-" },
-        .{ .name = "hellip", .text = "..." },  .{ .name = "lsquo", .text = "'" },     .{ .name = "rsquo", .text = "'" },
-        .{ .name = "ldquo", .text = "\"" },    .{ .name = "rdquo", .text = "\"" },    .{ .name = "trade", .text = "TM" },
-        .{ .name = "euro", .text = "EUR" },    .{ .name = "larr", .text = "<-" },     .{ .name = "rarr", .text = "->" },
-        .{ .name = "bull", .code = 0xB7 },     .{ .name = "ensp", .code = ' ' },      .{ .name = "emsp", .code = ' ' },
+        .{ .name = "amp", .code = '&' },      .{ .name = "lt", .code = '<' },      .{ .name = "gt", .code = '>' },
+        .{ .name = "quot", .code = '"' },     .{ .name = "apos", .code = '\'' },   .{ .name = "nbsp", .code = 0xA0 },
+        .{ .name = "copy", .code = 0xA9 },    .{ .name = "reg", .code = 0xAE },    .{ .name = "deg", .code = 0xB0 },
+        .{ .name = "middot", .code = 0xB7 },  .{ .name = "times", .code = 0xD7 },  .{ .name = "divide", .code = 0xF7 },
+        .{ .name = "plusmn", .code = 0xB1 },  .{ .name = "sect", .code = 0xA7 },   .{ .name = "para", .code = 0xB6 },
+        .{ .name = "laquo", .code = 0xAB },   .{ .name = "raquo", .code = 0xBB },  .{ .name = "pound", .code = 0xA3 },
+        .{ .name = "yen", .code = 0xA5 },     .{ .name = "cent", .code = 0xA2 },   .{ .name = "frac12", .code = 0xBD },
+        .{ .name = "frac14", .code = 0xBC },  .{ .name = "frac34", .code = 0xBE }, .{ .name = "auml", .code = 0xE4 },
+        .{ .name = "ouml", .code = 0xF6 },    .{ .name = "uuml", .code = 0xFC },   .{ .name = "Auml", .code = 0xC4 },
+        .{ .name = "Ouml", .code = 0xD6 },    .{ .name = "Uuml", .code = 0xDC },   .{ .name = "szlig", .code = 0xDF },
+        .{ .name = "eacute", .code = 0xE9 },  .{ .name = "egrave", .code = 0xE8 }, .{ .name = "agrave", .code = 0xE0 },
+        .{ .name = "ccedil", .code = 0xE7 },  .{ .name = "mdash", .text = "-" },   .{ .name = "ndash", .text = "-" },
+        .{ .name = "hellip", .text = "..." }, .{ .name = "lsquo", .text = "'" },   .{ .name = "rsquo", .text = "'" },
+        .{ .name = "ldquo", .text = "\"" },   .{ .name = "rdquo", .text = "\"" },  .{ .name = "trade", .text = "TM" },
+        .{ .name = "euro", .text = "EUR" },   .{ .name = "larr", .text = "<-" },   .{ .name = "rarr", .text = "->" },
+        .{ .name = "bull", .code = 0xB7 },    .{ .name = "ensp", .code = ' ' },    .{ .name = "emsp", .code = ' ' },
     };
     for (names) |n| {
         if (std.mem.eql(u8, n.name, name)) return .{ .code = n.code, .text = n.text, .end = end + 1 };

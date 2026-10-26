@@ -822,9 +822,9 @@ pub fn build(b: *std.Build) void {
     // two NVMe SSDs, its own system disk and work disk.
     const virt64_kernel = if (board == .qemu_virt_a64) built else addA64Image(b, addKernel(b, a64_target, optimize, sdk, .qemu_virt_a64, disk_offset, cores, selftest, memdebug));
     const virt64_machine = [_][]const u8{
-        "qemu-system-aarch64", "-M",   "virt,gic-version=2,highmem=off",
+        "qemu-system-aarch64", "-M",         "virt,gic-version=2,highmem=off",
         "-cpu",                "cortex-a76", "-m",
-        "512M",                "-smp", "4",
+        "512M",                "-smp",       "4",
     };
     const virt64_disks: VirtDisks = .{ .system = a64_system_disk, .work = keepWorkDisk(b, blank_work_disk, "virt64.bin") };
     const run_virt64 = b.addSystemCommand(&virt64_machine);
@@ -862,9 +862,9 @@ pub fn build(b: *std.Build) void {
     // QEMU's PSCI at EL3, reached by SMC, and every core comes in at EL2,
     // as on the CM5 - so the kernel's way down to EL1 runs.
     const run_virt64_el2 = b.addSystemCommand(&.{
-        "qemu-system-aarch64", "-M",   "virt,gic-version=2,highmem=off,virtualization=on",
+        "qemu-system-aarch64", "-M",         "virt,gic-version=2,highmem=off,virtualization=on",
         "-cpu",                "cortex-a76", "-m",
-        "512M",                "-smp", "4",
+        "512M",                "-smp",       "4",
         "-nographic",
     });
     virt64_disks.addTo(run_virt64_el2);

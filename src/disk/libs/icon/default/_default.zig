@@ -35,7 +35,7 @@ const Picture = _picture.Picture;
 pub const names = [_][]const u8{
     "disk",      "drawer", "tool",     "project", "trashcan",   "script",
     "picture",   "text",   "document", "sound",   "instrument", "music",
-    "animation", "movie",    "model",
+    "animation", "movie",  "model",
 };
 pub const count = names.len;
 
