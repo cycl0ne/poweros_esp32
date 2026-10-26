@@ -37,6 +37,8 @@ pub const LVO = struct {
     pub const KemKeyPair = libraries.lvo(22);
     pub const Encapsulate = libraries.lvo(23);
     pub const Decapsulate = libraries.lvo(24);
+    pub const HashPieces = libraries.lvo(25);
+    pub const HmacPieces = libraries.lvo(26);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -63,6 +65,8 @@ pub const Fn = struct {
     pub const KemKeyPair = *const fn (*CryptoBase, u32, *anyopaque, *anyopaque) callconv(.c) i32;
     pub const Encapsulate = *const fn (*CryptoBase, u32, *const crypto.Bytes, *anyopaque, *anyopaque) callconv(.c) i32;
     pub const Decapsulate = *const fn (*CryptoBase, u32, *const anyopaque, *const crypto.Bytes, *anyopaque) callconv(.c) i32;
+    pub const HashPieces = *const fn (*CryptoBase, u32, ?[*]const crypto.Bytes, u32, *anyopaque) callconv(.c) u32;
+    pub const HmacPieces = *const fn (*CryptoBase, u32, ?*const anyopaque, u32, ?[*]const crypto.Bytes, u32, *anyopaque) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -187,5 +191,18 @@ pub const CryptoBase = opaque {
     /// `secret`.
     pub fn Decapsulate(self: *CryptoBase, kem: u32, private_key: *const anyopaque, ciphertext: *const crypto.Bytes, secret: *anyopaque) i32 {
         return libraries.call(self, LVO.Decapsulate, Fn.Decapsulate, .{ kem, private_key, ciphertext, secret });
+    }
+
+    /// The digest of `count` pieces, taken one after another, with
+    /// `algorithm` (HASH_*) into `digest`: its length, or 0 for a hash there
+    /// is not.
+    pub fn HashPieces(self: *CryptoBase, algorithm: u32, pieces: ?[*]const crypto.Bytes, count: u32, digest: *anyopaque) u32 {
+        return libraries.call(self, LVO.HashPieces, Fn.HashPieces, .{ algorithm, pieces, count, digest });
+    }
+
+    /// HMAC with `algorithm` and `key` over `count` pieces, taken one after
+    /// another, into `mac`: its length, or 0 for a hash there is not.
+    pub fn HmacPieces(self: *CryptoBase, algorithm: u32, key: ?*const anyopaque, key_length: u32, pieces: ?[*]const crypto.Bytes, count: u32, mac: *anyopaque) u32 {
+        return libraries.call(self, LVO.HmacPieces, Fn.HmacPieces, .{ algorithm, key, key_length, pieces, count, mac });
     }
 };

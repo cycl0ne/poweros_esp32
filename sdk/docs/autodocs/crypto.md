@@ -14,8 +14,10 @@ Generated from the source by `./zig build autodoc`.
 - [Encapsulate](#encapsulate) - Makes a secret for the owner of a public key, and the ciphertext that gives it to them: they take it out with Decapsulate, and nobody else can.
 - [FinishHash](#finishhash) - Ends a hash and writes its digest.
 - [FinishHmac](#finishhmac) - Ends an HMAC and writes the MAC.
+- [HashPieces](#hashpieces) - Hashes a message given whole, in any number of pieces, in one call.
 - [HkdfExpand](#hkdfexpand) - Expands a pseudorandom key into keying material of a given length (HKDF-Expand, RFC 5869).
 - [HkdfExtract](#hkdfextract) - Extracts a pseudorandom key from input keying material and a salt (HKDF-Extract, RFC 5869).
+- [HmacPieces](#hmacpieces) - Makes the HMAC of a message given whole, in any number of pieces, in one call.
 - [InitCipher](#initcipher) - Sets up a context for AES in one mode, with a key and an IV.
 - [InitHash](#inithash) - Sets up a context for a new hash of one algorithm.
 - [InitHmac](#inithmac) - Sets up a context for a new HMAC with one hash algorithm and a key.
@@ -295,6 +297,84 @@ for (mac[0..length], received[0..length]) |a, b| differ |= a ^ b;
 if (differ != 0) return error.Forged;
 ```
 
+## HashPieces
+
+Hashes a message given whole, in any number of pieces, in one call.
+
+**SYNOPSIS**
+
+```zig
+fn HashPieces(cb: *CryptoBase, algorithm: u32, pieces: ?[*]const Bytes, count: u32, digest: *anyopaque) u32
+```
+
+**SINCE**
+
+2.0. LVO -104.
+
+**INPUTS**
+
+- `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384,
+  HASH_SHA512, HASH_MD5 or HASH_MD4.
+- `pieces`: `count` pieces of the message, in order; null when
+  `count` is 0. A piece may be empty, its `bytes` then null.
+- `count`: how many pieces; 0 for the empty message.
+- `digest`: room for the digest's length (`digestLength(algorithm)`,
+  at most DIGEST_MAX).
+
+**RESULT**
+
+The digest's length, with the digest in `digest`; 0 for a hash there
+is not, for `pieces` null with `count` above 0, or for a piece with
+bytes to read and `bytes` null - nothing is written then.
+
+**BEHAVIOR**
+
+The digest is the one InitHash, an UpdateHash per piece and
+FinishHash give: how the message is cut makes no difference. Only the
+pieces' bytes are read, once each, and nothing is kept between
+calls.
+
+**CONTEXT**
+
+- Waits: yes, for the SHA engine, or the JH7110's, while another task
+  has it.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands; the pieces are only read. What the message
+left in the library is wiped before the call returns.
+
+**NOTES**
+
+On the JH7110 (the VisionFive 2) this is the call that can hash on
+the crypto engine: SHA-224, SHA-256, SHA-384 and SHA-512 of a message
+of 512 bytes or more go through it - SHA-256 at 40 MB/s against 28 in
+software for 512 bytes, at 66 against 33 from 8 KiB. The engine has
+no way to give back a hash half done, so the incremental calls, which
+leave one between calls, hash in software. A message that is all at
+hand - a file read whole, a packet in its headers and body - is
+hashed with this call.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`HmacPieces`, `InitHash`, `UpdateHash`, `FinishHash`
+
+**EXAMPLES**
+
+```zig
+var digest: [crypto.DIGEST_MAX]u8 = undefined;
+const pieces = [_]crypto.Bytes{ .of(header), .of(body) };
+const length = cb.HashPieces(crypto.HASH_SHA256, &pieces, pieces.len, &digest);
+if (length == 0) return error.Hash;
+```
+
 ## HkdfExpand
 
 Expands a pseudorandom key into keying material of a given length (HKDF-Expand, RFC 5869).
@@ -421,6 +501,87 @@ None known.
 ```zig
 var prk: [32]u8 = undefined;
 _ = cb.HkdfExtract(crypto.HASH_SHA256, &crypto.Bytes.of(&salt), &crypto.Bytes.of(&secret), &prk);
+```
+
+## HmacPieces
+
+Makes the HMAC of a message given whole, in any number of pieces, in one call.
+
+**SYNOPSIS**
+
+```zig
+fn HmacPieces(cb: *CryptoBase, algorithm: u32, key: ?*const anyopaque, key_length: u32, pieces: ?[*]const Bytes, count: u32, mac: *anyopaque) u32
+```
+
+**SINCE**
+
+2.0. LVO -108.
+
+**INPUTS**
+
+- `algorithm`: HASH_SHA1, HASH_SHA224, HASH_SHA256, HASH_SHA384,
+  HASH_SHA512, HASH_MD5 or HASH_MD4.
+- `key`: the key's bytes; may be null when `key_length` is 0.
+- `key_length`: any length. A key longer than the hash's block is
+  hashed first, as RFC 2104 says.
+- `pieces`: `count` pieces of the message, in order; null when
+  `count` is 0. A piece may be empty, its `bytes` then null.
+- `count`: how many pieces; 0 for the empty message.
+- `mac`: room for the digest's length (`digestLength(algorithm)`, at
+  most DIGEST_MAX).
+
+**RESULT**
+
+The MAC's length, with the MAC in `mac`; 0 for a hash there is not,
+for `key` null with `key_length` above 0, for `pieces` null with
+`count` above 0, or for a piece with bytes to read and `bytes` null -
+nothing is written then.
+
+**BEHAVIOR**
+
+The MAC is the one InitHmac, an UpdateHmac per piece and FinishHmac
+give: how the message is cut makes no difference. Only the key's and
+the pieces' bytes are read, and nothing is kept between calls.
+
+**CONTEXT**
+
+- Waits: yes, for the SHA engine, or the JH7110's, while another task
+  has it.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands; the key and the pieces are only read. What
+the key and the message left in the library is wiped before the call
+returns.
+
+**NOTES**
+
+On the JH7110 (the VisionFive 2) this is the call that can make an
+HMAC on the crypto engine, key and all: SHA-224, SHA-256, SHA-384 and
+SHA-512 over a message of 512 bytes or more go through it. An empty
+key is left to software. The incremental calls, which leave an HMAC
+half done between calls, run in software, as the engine cannot give
+one back. SMB's signing, an HMAC-SHA-256 over each message, is what
+this call is for.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`HashPieces`, `InitHmac`, `UpdateHmac`, `FinishHmac`
+
+**EXAMPLES**
+
+```zig
+var mac: [crypto.DIGEST_MAX]u8 = undefined;
+const pieces = [_]crypto.Bytes{ .of(header), .of(body) };
+const length = cb.HmacPieces(crypto.HASH_SHA256, &key, key.len, &pieces, pieces.len, &mac);
+if (length == 0) return error.Mac;
 ```
 
 ## InitCipher

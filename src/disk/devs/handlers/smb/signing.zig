@@ -92,18 +92,18 @@ pub const Signer = struct {
     }
 };
 
-/// HMAC-SHA256 over `parts` in turn.
+/// HMAC-SHA256 over `parts` in turn, in one call: on the JH7110 a long
+/// message's goes through the crypto engine.
 ///
 /// INPUTS:
 /// - `cb` - crypto.library.
 /// - `key` - the key.
-/// - `parts` - the message, in pieces.
+/// - `parts` - the message, in at most five pieces.
 pub fn hmacSha256(cb: *CryptoBase, key: []const u8, parts: []const []const u8) [32]u8 {
-    var context: crypto.HmacContext = .{};
-    _ = cb.InitHmac(&context, crypto.HASH_SHA256, key.ptr, @intCast(key.len));
-    for (parts) |part| cb.UpdateHmac(&context, part.ptr, @intCast(part.len));
+    var pieces: [5]crypto.Bytes = undefined;
+    for (parts, pieces[0..parts.len]) |part, *piece| piece.* = .of(part);
     var mac: [crypto.DIGEST_MAX]u8 = undefined;
-    _ = cb.FinishHmac(&context, &mac);
+    _ = cb.HmacPieces(crypto.HASH_SHA256, key.ptr, @intCast(key.len), &pieces, @intCast(parts.len), &mac);
     return mac[0..32].*;
 }
 

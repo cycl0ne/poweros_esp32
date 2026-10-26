@@ -7,12 +7,17 @@
 //! that arrives while the buffer is empty goes to the engine straight
 //! from the caller's memory, as many whole blocks at once as there are,
 //! so only the ragged ends are copied.
+//!
+//! A message given whole, in pieces (HashPieces, HmacPieces), may go to
+//! the JH7110's engine instead, which hashes nothing it is not given
+//! whole.
 
 const sdk = @import("sdk");
 const crypto = sdk.crypto;
 const HashContext = crypto.HashContext;
 const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 const sha = @import("../engine/sha.zig");
+const jh7110 = @import("../engine/jh7110.zig");
 const md = @import("md.zig");
 
 /// Whether `algorithm` is one the library has.
@@ -93,4 +98,54 @@ pub fn finish(cb: *CryptoBase, context: *HashContext, digest: [*]u8) u32 {
     const size = context.size;
     context.* = .{ .size = size };
     return length;
+}
+
+/// Whether `pieces` may be read: each has its bytes, or none to read.
+pub fn readable(pieces: []const crypto.Bytes) bool {
+    for (pieces) |piece| if (piece.length != 0 and piece.bytes == null) return false;
+    return true;
+}
+
+/// `pieces`, one after another, hashed with `algorithm` (a known one)
+/// into `digest`, in software. The digest's length.
+pub fn ofPieces(cb: *CryptoBase, algorithm: u32, pieces: []const crypto.Bytes, digest: [*]u8) u32 {
+    var context: HashContext = .{};
+    begin(&context, algorithm);
+    for (pieces) |piece| if (piece.length != 0) absorb(cb, &context, piece.bytes.?, piece.length);
+    return finish(cb, &context, digest);
+}
+
+/// `pieces`, one after another, hashed whole by the JH7110's engine into
+/// `digest` - or HMACed with `key`, which is at most a block long. False
+/// on a board without the engine, for a hash it has not, a message too
+/// short to be worth it, or an engine that stopped answering, and the
+/// caller hashes them in software.
+pub fn byEngine(cb: *CryptoBase, algorithm: u32, key: []const u8, pieces: []const crypto.Bytes, digest: [*]u8) bool {
+    if (comptime !jh7110.compiled) return false;
+    const mode = jh7110.shaMode(algorithm) orelse return false;
+    var total: u64 = 0;
+    for (pieces) |piece| total += piece.length;
+    if (total < jh7110.hash_least) return false;
+    const state = jh7110.take(cb) orelse return false;
+    defer jh7110.give(cb, state);
+    if (!jh7110.hashBegin(state, mode, key)) return false;
+    // A buffer goes to the engine full, once there is more to come: all
+    // but the last are `room` bytes, a multiple of every block.
+    const buffer = state.input();
+    var filled: u32 = 0;
+    for (pieces) |piece| {
+        var at: u32 = 0;
+        while (at < piece.length) {
+            if (filled == jh7110.room) {
+                if (!jh7110.hashFeed(cb, state, filled)) return false;
+                filled = 0;
+            }
+            const take = @min(piece.length - at, jh7110.room - filled);
+            @memcpy(buffer[filled..][0..take], piece.bytes.?[at..][0..take]);
+            filled += take;
+            at += take;
+        }
+    }
+    if (!jh7110.hashFeed(cb, state, filled)) return false;
+    return jh7110.hashEnd(state, digest, crypto.digestLength(algorithm), key.len != 0);
 }

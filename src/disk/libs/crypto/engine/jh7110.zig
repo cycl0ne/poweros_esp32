@@ -2,7 +2,9 @@
 //! The JH7110's crypto engine (CHIP_JH7110_CRYPTO, the VisionFive 2): AES
 //! in ECB, CBC, CTR and GCM over a whole buffer at once, fed and emptied
 //! by two of dma.resource's PL080 channels - not a block at a time through
-//! registers, as the S3's engine in `aes.zig` is.
+//! registers, as the S3's engine in `aes.zig` is - and SHA-224, SHA-256,
+//! SHA-384 and SHA-512, plain or as HMAC, over any number of buffers fed
+//! by the first channel alone.
 //!
 //! The data goes through two buffers of the library's, `room` bytes each
 //! and below 4 GiB, as the PL080 needs: the caller copies its input into
@@ -10,6 +12,12 @@
 //! caller copies it from there - GCM's opening only once the tag is
 //! right. A longer message is the caller's to split (UpdateCipher) or to
 //! leave to software (GCM). `give` clears both buffers.
+//!
+//! A hash cannot be left half done: the engine has no way to give back
+//! the state between blocks, nor to take it again. So it hashes only a
+//! message it is given whole (HashPieces, HmacPieces), from `hashBegin`
+//! through as many buffers of `hashFeed` as it takes to `hashEnd`, with
+//! the library's lock held all the while.
 //!
 //! The first call that wants the engine sets it up: the engine and the
 //! PL080 found among the board's parts, two channels taken from
@@ -23,9 +31,11 @@
 //! sleeping until the interrupt, with a second of timer.device as the
 //! limit.
 //!
-//! After Linux's jh7110-aes.c - the registers, and the order they are
-//! written in - and what the board measured: 50 MB/s through AES-CTR or
-//! GCM, against 2.6 MB/s for the software AES.
+//! After Linux's jh7110-aes.c and jh7110-hash.c - the registers, and the
+//! order they are written in - and what the board measured through the
+//! library: 42 MB/s through AES-CTR or GCM, against 2.6 MB/s for the
+//! software AES; 66 MB/s through SHA-256, against 33 MB/s, and already
+//! 40 against 28 on a message of 512 bytes.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -49,6 +59,11 @@ pub const room: u32 = 68 * 1024;
 /// The least whole-block data the engine is worth starting for: below,
 /// the software AES is as quick.
 pub const least: u32 = 64;
+/// The least message the engine hashes. It is quicker from 256 bytes
+/// (28 MB/s against 24 for SHA-256), and 1.4 times as quick from 512;
+/// below that the little it saves is not worth holding the one engine,
+/// while the software hashes on every core at once.
+pub const hash_least: u32 = 512;
 /// A run this long or longer sleeps until the interrupt; a shorter one is
 /// watched.
 const wait_bytes: u32 = 16 * 1024;
@@ -83,9 +98,11 @@ pub const State = extern struct {
     /// The most bytes of the buffers a caller used since `take`.
     used: u32 = 0,
     /// What the server saw of a run: the channels that finished (1 the
-    /// feeding one, 2 the emptying one), and whether one failed.
+    /// feeding one, 2 the emptying one), and whether one failed; and the
+    /// channels the run started, which it waits for.
     finished: u32 = 0,
     failed: u32 = 0,
+    expect: u32 = 0,
     /// The task sleeping until a run ends, and its signal; null when none
     /// is.
     waiter: ?*exec.Task = null,
@@ -122,9 +139,16 @@ const AES_ALEN1 = 0x150;
 const AES_MLEN0 = 0x154;
 const AES_MLEN1 = 0x158;
 const AES_IVLEN = 0x15C;
+// SHA's, from 0x300: the control, the digest read a word at a time, the
+// HMAC key written a word (or a byte) at a time, and its length.
+const SHA_CSR = 0x300;
+const SHA_RDR = 0x308;
+const SHA_WKR = 0x320;
+const SHA_WKLEN = 0x324;
 
 const ALG_START: u32 = 1 << 0;
 const ALG_AES_DMA: u32 = 1 << 1;
+const ALG_HASH_DMA: u32 = 1 << 3;
 const ALG_CLEAR: u32 = 1 << 8;
 
 /// AES_CSR: decrypt (bit 0), the key's length (1-2), busy, the key
@@ -140,6 +164,19 @@ const CSR_GCM_DONE: u32 = 1 << 13;
 
 /// The modes the engine runs, as AES_CSR numbers them.
 pub const Mode = enum(u32) { ecb = 0, cbc = 1, ctr = 4, gcm = 6 };
+
+/// SHA_CSR: start, the unit's reset, the first block, the hash (4-6),
+/// the last, HMAC, the key taken, the key coming, HMAC done, busy.
+const SHA_START: u32 = 1 << 0;
+const SHA_RESET: u32 = 1 << 1;
+const SHA_FIRST: u32 = 1 << 3;
+const SHA_MODE_SHIFT: u5 = 4;
+const SHA_FINAL: u32 = 1 << 8;
+const SHA_HMAC: u32 = 1 << 11;
+const SHA_KEY_DONE: u32 = 1 << 13;
+const SHA_KEY_FLAG: u32 = 1 << 14;
+const SHA_HMAC_DONE: u32 = 1 << 15;
+const SHA_BUSY: u32 = 1 << 16;
 
 /// The engine's request lines on the PL080 (Linux's device tree), and
 /// the bursts its FIFO takes.
@@ -287,8 +324,8 @@ pub fn stop(cb: *CryptoBase) void {
 }
 
 /// The PL080's interrupt, shared by its channels: the engine's two
-/// asked, what they raised it for noted, and once both have finished, or
-/// one failed, the waiter woken.
+/// asked, what they raised it for noted, and once those the run started
+/// have finished, or one failed, the waiter woken.
 fn server(data: ?*anyopaque, _: u32) callconv(.c) i32 {
     const state: *State = @ptrCast(@alignCast(data.?));
     const tx = pl080.raised(state.pl, state.tx);
@@ -299,7 +336,7 @@ fn server(data: ?*anyopaque, _: u32) callconv(.c) i32 {
     @atomicStore(u32, &state.finished, finished, .release);
     const failed = tx == .failed or rx == .failed;
     if (failed) @atomicStore(u32, &state.failed, 1, .release);
-    if (!failed and finished != 3) return 1;
+    if (!failed and finished & state.expect != state.expect) return 1;
     if (@atomicLoad(?*exec.Task, &state.waiter, .acquire)) |task| {
         const cb: *CryptoBase = @fieldParentPtr("sec", state);
         cb.sys_base.Signal(task, state.signals);
@@ -317,27 +354,35 @@ fn broken(state: *State) bool {
     return false;
 }
 
-/// `length` bytes (whole words) of the input buffer through the engine,
-/// set up for them, into the output buffer. False when a channel failed
-/// or the run took longer than a second: the engine is left alone from
-/// then on.
-fn run(cb: *CryptoBase, state: *State, length: u32) bool {
+/// What a run does with the input buffer: AES's whole words go through
+/// the engine into the output buffer; a hash's bytes go into the engine
+/// alone, moved as whole words of which it takes the bytes it is told.
+const Flow = enum { through, into };
+
+/// `length` bytes of the input buffer through the engine, set up for
+/// them, as `flow` says. False when a channel failed or the run took
+/// longer than a second: the engine is left alone from then on.
+fn run(cb: *CryptoBase, state: *State, length: u32, flow: Flow) bool {
     const sys = cb.sys_base;
     const fifo = state.regs + ALG_FIFO;
     const tx_items: [*]pl080.Item = @ptrFromInt(state.tx_items);
     const rx_items: [*]pl080.Item = @ptrFromInt(state.rx_items);
-    _ = pl080.fill(tx_items[0..list_items], .{ .address = state.in, .burst = .thirty_two }, .{ .address = fifo, .step = false, .master = 1, .burst = .thirty_two }, length, 0) orelse return broken(state);
-    _ = pl080.fill(rx_items[0..list_items], .{ .address = fifo, .step = false, .master = 1 }, .{ .address = state.out }, length, 0) orelse return broken(state);
-    var bytes: u32 = length;
+    const moved = (length + 3) & ~@as(u32, 3);
+    _ = pl080.fill(tx_items[0..list_items], .{ .address = state.in, .burst = .thirty_two }, .{ .address = fifo, .step = false, .master = 1, .burst = .thirty_two }, moved, 0) orelse return broken(state);
+    var bytes: u32 = moved;
     _ = sys.CachePreDMA(@ptrFromInt(state.in), &bytes, exec.DMAF_ReadFromRAM);
+    if (flow == .through) {
+        _ = pl080.fill(rx_items[0..list_items], .{ .address = fifo, .step = false, .master = 1 }, .{ .address = state.out }, length, 0) orelse return broken(state);
+        bytes = length;
+        _ = sys.CachePreDMA(@ptrFromInt(state.out), &bytes, 0);
+    }
     bytes = 2 * list_bytes;
     _ = sys.CachePreDMA(@ptrFromInt(state.tx_items), &bytes, exec.DMAF_ReadFromRAM);
-    bytes = length;
-    _ = sys.CachePreDMA(@ptrFromInt(state.out), &bytes, 0);
 
-    write(state, ALG_CR, ALG_START | ALG_AES_DMA);
+    write(state, ALG_CR, ALG_START | (if (flow == .through) ALG_AES_DMA else ALG_HASH_DMA));
     write(state, DMA_IN_LEN, length);
-    write(state, DMA_OUT_LEN, length);
+    if (flow == .through) write(state, DMA_OUT_LEN, length);
+    const expect: u32 = if (flow == .through) 3 else 1;
     const bit: i8 = if (length >= wait_bytes) sys.AllocSignal(-1) else -1;
     var good: bool = undefined;
     if (bit >= 0) {
@@ -345,6 +390,7 @@ fn run(cb: *CryptoBase, state: *State, length: u32) bool {
         const mask = @as(u32, 1) << @intCast(bit);
         state.finished = 0;
         state.failed = 0;
+        state.expect = expect;
         state.signals = mask;
         state.port.sig_task = task;
         state.port.sig_bit = @intCast(bit);
@@ -352,24 +398,24 @@ fn run(cb: *CryptoBase, state: *State, length: u32) bool {
         state.clock.node.command = timer.TR_ADDREQUEST;
         state.clock.time = timer.TimeVal.fromMicros(1_000_000);
         sys.SendIO(&state.clock.node);
-        pl080.start(state.pl, state.rx, rx_items, .peripheral_to_memory, REQUEST_RX, 0, true);
+        if (flow == .through) pl080.start(state.pl, state.rx, rx_items, .peripheral_to_memory, REQUEST_RX, 0, true);
         pl080.start(state.pl, state.tx, tx_items, .memory_to_peripheral, 0, REQUEST_TX, true);
-        while (@atomicLoad(u32, &state.finished, .acquire) != 3 and @atomicLoad(u32, &state.failed, .acquire) == 0) {
+        while (@atomicLoad(u32, &state.finished, .acquire) != expect and @atomicLoad(u32, &state.failed, .acquire) == 0) {
             if (sys.CheckIO(&state.clock.node) != null) break;
             _ = sys.Wait(mask);
         }
         @atomicStore(?*exec.Task, &state.waiter, null, .release);
         _ = sys.AbortIO(&state.clock.node);
         _ = sys.WaitIO(&state.clock.node);
-        good = @atomicLoad(u32, &state.finished, .acquire) == 3 and @atomicLoad(u32, &state.failed, .acquire) == 0;
+        good = @atomicLoad(u32, &state.finished, .acquire) == expect and @atomicLoad(u32, &state.failed, .acquire) == 0;
         _ = sys.SetSignal(0, mask);
         sys.FreeSignal(bit);
     } else {
-        pl080.start(state.pl, state.rx, rx_items, .peripheral_to_memory, REQUEST_RX, 0, false);
+        if (flow == .through) pl080.start(state.pl, state.rx, rx_items, .peripheral_to_memory, REQUEST_RX, 0, false);
         pl080.start(state.pl, state.tx, tx_items, .memory_to_peripheral, 0, REQUEST_TX, false);
         var reads: u32 = 0;
         while (busy(state) and reads < 10_000_000) : (reads += 1) {}
-        good = !busy(state) and !pl080.failed(state.pl, state.tx) and !pl080.failed(state.pl, state.rx);
+        good = !busy(state) and !pl080.failed(state.pl, state.tx) and (flow == .into or !pl080.failed(state.pl, state.rx));
     }
     write(state, ALG_CR, ALG_CLEAR);
     if (!good) {
@@ -377,8 +423,10 @@ fn run(cb: *CryptoBase, state: *State, length: u32) bool {
         pl080.stop(state.pl, state.rx);
         return broken(state);
     }
-    bytes = length;
-    sys.CachePostDMA(@ptrFromInt(state.out), &bytes, 0);
+    if (flow == .through) {
+        bytes = length;
+        sys.CachePostDMA(@ptrFromInt(state.out), &bytes, 0);
+    }
     return true;
 }
 
@@ -408,7 +456,7 @@ pub fn cipher(cb: *CryptoBase, state: *State, mode: Mode, key: [*]const u8, key_
     defer unkeyed(state);
     if (!keyed(state, mode, key, key_length, decrypt)) return false;
     if (mode != .ecb) for (0..4) |index| write(state, AES_IV0 + 4 * index, _engine.loadLittle(iv[4 * index ..].ptr));
-    return run(cb, state, length);
+    return run(cb, state, length, .through);
 }
 
 /// GCM with a 12-byte `nonce` and no associated data over `length` bytes
@@ -432,8 +480,62 @@ pub fn gcm(cb: *CryptoBase, state: *State, key: [*]const u8, key_length: u32, no
     if (!waitFor(state, AES_CSR, CSR_GCM_DONE, true)) return broken(state);
     for (0..3) |index| write(state, AES_IV0 + 4 * index, _engine.loadLittle(nonce + 4 * index));
     if (!waitFor(state, AES_CSR, CSR_GCM_DONE, true)) return broken(state);
-    if (!run(cb, state, padded)) return false;
+    if (!run(cb, state, padded, .through)) return false;
     if (!waitFor(state, AES_CSR, CSR_BUSY, false)) return broken(state);
     for (0..4) |index| _engine.storeLittle(tag[4 * index ..].ptr, read(state, AES_NONCE0 + 4 * index));
+    return true;
+}
+
+/// SHA_CSR's number for the library's HASH_* `algorithm`; null for one
+/// the engine has not (SHA-1, MD5, MD4).
+pub fn shaMode(algorithm: u32) ?u32 {
+    return switch (algorithm) {
+        sdk.crypto.HASH_SHA224 => 3,
+        sdk.crypto.HASH_SHA256 => 4,
+        sdk.crypto.HASH_SHA384 => 5,
+        sdk.crypto.HASH_SHA512 => 6,
+        else => null,
+    };
+}
+
+/// The SHA unit reset and set to the hash `mode` (from `shaMode`): a
+/// plain hash for an empty `key`, else HMAC with `key` - 1 byte to a
+/// block, the caller having hashed a longer one. False when the engine
+/// failed.
+pub fn hashBegin(state: *State, mode: u32, key: []const u8) bool {
+    if (comptime !compiled) return false;
+    write(state, ALG_CR, ALG_CLEAR);
+    write(state, SHA_CSR, SHA_RESET);
+    if (!waitFor(state, SHA_CSR, SHA_BUSY, false)) return broken(state);
+    if (key.len == 0) {
+        write(state, SHA_CSR, mode << SHA_MODE_SHIFT | SHA_START | SHA_FIRST);
+        return true;
+    }
+    write(state, SHA_WKLEN, @intCast(key.len));
+    write(state, SHA_CSR, mode << SHA_MODE_SHIFT | SHA_HMAC | SHA_KEY_FLAG);
+    const words = key.len / 4;
+    for (0..words) |index| write(state, SHA_WKR, _engine.loadLittle(key[4 * index ..].ptr));
+    // The bytes after the last whole word, a byte at a time.
+    for (key[4 * words ..]) |byte| hardware.mmio.reg8(state.regs + SHA_WKR).* = byte;
+    return waitFor(state, SHA_CSR, SHA_KEY_DONE, true) or broken(state);
+}
+
+/// `length` bytes (1 to `room`) of the input buffer into the hash
+/// begun. Every buffer but the message's last must be a multiple of the
+/// hash's block. False when the engine failed.
+pub fn hashFeed(cb: *CryptoBase, state: *State, length: u32) bool {
+    if (comptime !compiled) return false;
+    state.used = @max(state.used, (length + 3) & ~@as(u32, 3));
+    return run(cb, state, length, .into);
+}
+
+/// The hash ended: its `length`-byte digest, or HMAC's MAC, into
+/// `digest`. False when the engine failed, and nothing is written.
+pub fn hashEnd(state: *State, digest: [*]u8, length: u32, hmac: bool) bool {
+    if (comptime !compiled) return false;
+    write(state, SHA_CSR, read(state, SHA_CSR) & ~SHA_FIRST | SHA_FINAL);
+    if (!waitFor(state, SHA_CSR, SHA_BUSY, false)) return broken(state);
+    if (hmac and !waitFor(state, SHA_CSR, SHA_HMAC_DONE, true)) return broken(state);
+    for (0..length / 4) |index| _engine.storeLittle(digest + 4 * index, read(state, SHA_RDR));
     return true;
 }

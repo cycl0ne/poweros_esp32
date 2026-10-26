@@ -33,6 +33,8 @@ const Sign = @import("signature/sign.zig").Sign;
 const KemKeyPair = @import("kem/kemkeypair.zig").KemKeyPair;
 const Encapsulate = @import("kem/encapsulate.zig").Encapsulate;
 const Decapsulate = @import("kem/decapsulate.zig").Decapsulate;
+const HashPieces = @import("hash/hashpieces.zig").HashPieces;
+const HmacPieces = @import("hmac/hmacpieces.zig").HmacPieces;
 
 /// crypto.library's interface, as the SDK generates it from
 /// sdk/fd/crypto_lib.fd.
@@ -79,6 +81,8 @@ const contract_files = [_][]const u8{
     @embedFile("kem/kemkeypair.zig"),
     @embedFile("kem/encapsulate.zig"),
     @embedFile("kem/decapsulate.zig"),
+    @embedFile("hash/hashpieces.zig"),
+    @embedFile("hmac/hmacpieces.zig"),
 };
 
 fn lvoRandomBytes(cb: *CryptoBase, buffer: *anyopaque, length: u32) callconv(.c) void {
@@ -144,6 +148,12 @@ fn lvoEncapsulate(cb: *CryptoBase, kem: u32, public_key: *const crypto.Bytes, ci
 fn lvoDecapsulate(cb: *CryptoBase, kem: u32, private_key: *const anyopaque, ciphertext: *const crypto.Bytes, secret: *anyopaque) callconv(.c) i32 {
     return Decapsulate(cb, kem, private_key, ciphertext, secret);
 }
+fn lvoHashPieces(cb: *CryptoBase, algorithm: u32, pieces: ?[*]const crypto.Bytes, count: u32, digest: *anyopaque) callconv(.c) u32 {
+    return HashPieces(cb, algorithm, pieces, count, digest);
+}
+fn lvoHmacPieces(cb: *CryptoBase, algorithm: u32, key: ?*const anyopaque, key_length: u32, pieces: ?[*]const crypto.Bytes, count: u32, mac: *anyopaque) callconv(.c) u32 {
+    return HmacPieces(cb, algorithm, key, key_length, pieces, count, mac);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -173,6 +183,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoKemKeyPair),
     vec(lvoEncapsulate),
     vec(lvoDecapsulate),
+    vec(lvoHashPieces),
+    vec(lvoHmacPieces),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

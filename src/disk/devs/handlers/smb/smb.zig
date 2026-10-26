@@ -81,16 +81,16 @@ const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 3;
-const BUILD_DATE = "25.10.2026";
+const HANDLER_REVISION = 4;
+const BUILD_DATE = "26.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// crypto.library's first revision with MD4 and MD5, which NTLM takes.
-const CRYPTO_VERSION = 1;
-const CRYPTO_REVISION = 4;
+/// crypto.library's first version with HmacPieces, which signs; MD4 and
+/// MD5, which NTLM takes, came in 1.4.
+const CRYPTO_VERSION = 2;
 
 /// How often, and how long apart, the device list is tried for when the
 /// volume node comes off it at a dismount.
@@ -149,9 +149,6 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     const crypto_lib = sys.OpenLibrary(crypto.CRYPTONAME, CRYPTO_VERSION) orelse
         return refuse(dl, startup_packet, startup, smb.SMBSTAGE_NETWORK);
     defer sys.CloseLibrary(crypto_lib);
-    if (crypto_lib.version == CRYPTO_VERSION and crypto_lib.revision < CRYPTO_REVISION) {
-        return refuse(dl, startup_packet, startup, smb.SMBSTAGE_NETWORK);
-    }
     const socket_lib = sys.OpenLibrary(bsd.SOCKETNAME, 0) orelse
         return refuse(dl, startup_packet, startup, smb.SMBSTAGE_NETWORK);
     defer sys.CloseLibrary(socket_lib);
