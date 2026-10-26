@@ -17,7 +17,7 @@
 //! the session id and the request. Six failures end the connection.
 //!
 //! **The channel**: one `session` channel; `pty-req` (the terminal's type
-//! and size), `env` (refused), then `shell`, `exec` (a command) or
+//! and size), `env` (counted and refused), then `shell`, `exec` (a command) or
 //! `subsystem` (`sftp`: its name, for the opener to serve), which is when
 //! the session is ready. `signal` INT and `break` come as Ctrl-C.
 //! At the end: `exit-status`, EOF and CLOSE.
@@ -61,6 +61,8 @@ pub const Connection = struct {
     // --- the session -------------------------------------------------------
 
     session_ready: bool = false,
+    /// How many `env` requests the client sent: none is taken.
+    environment_refused: u32 = 0,
     kind: u32 = 0,
     columns: u32 = 0,
     rows: u32 = 0,
@@ -386,6 +388,8 @@ pub const Connection = struct {
         } else if (wire.same(request, "break")) {
             conn.channel.pushByte(3);
             ok = true;
+        } else if (wire.same(request, "env")) {
+            conn.environment_refused += 1;
         }
         if (want_reply) conn.channel.reply(t, if (ok) msg.msg_channel_success else msg.msg_channel_failure);
     }

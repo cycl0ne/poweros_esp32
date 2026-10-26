@@ -81,7 +81,7 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
 ```mermaid
 flowchart TB
     subgraph m_programs ["Programs"]
-        m_shell["the shell<br/>56 commands in C:"]
+        m_shell["the shell<br/>58 commands in C:"]
         m_desktop["the desktop<br/>anvil.library"]
         m_apps["SYS:Programs<br/>SYS:System"]
     end
@@ -89,7 +89,7 @@ flowchart TB
     subgraph m_modules ["Libraries and devices"]
         m_intuition["intuition.library<br/>layers.library<br/>graphics.library"]
         m_datatypes["datatypes.library<br/>asl, icon, diskfont"]
-        m_network["bsdsocket.library<br/>tls, usb, pci"]
+        m_network["bsdsocket.library<br/>tls, http, usb, pci"]
         m_audio["audio.device"]
         m_rtg["<b>rtg.library</b><br/>the displays<br/>and their drivers"]
         m_dos["dos.library<br/>posfs, FAT, flash, RAM:"]
@@ -188,11 +188,11 @@ from `LIBS:` when first opened. Every module, with its reference, is in
 | Area | Libraries |
 |---|---|
 | Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates; `expansion` the board's parts |
-| Files | `dos` processes, files, handlers, the shell's `ReadArgs`; `rdb` partitions on any drive |
+| Files | `dos` processes, files, handlers, the shell's `ReadArgs`; `rdb` partitions on any drive; `compression` DEFLATE, zlib and gzip |
 | Displays | **`rtg`**; `graphics` drawing; `layers`; `intuition` screens, windows, gadgets, styles; `keymap`; `motion` animations and timers |
 | Sound | **`rta`**; `audiocodec` WAV, MP3, FLAC, Ogg Vorbis |
 | Desktop | `anvil` the desktop; `asl` requesters; `icon`; `datatypes` pictures, text, animations and sounds by what is in them; `iffparse`; `diskfont` and `truetype` fonts; `facet` 3D in Vulkan's model, on the cores |
-| Network | `bsdsocket` TCP/IP, IPv4 and IPv6; `tls` 1.3 and 1.2; `crypto`; `wpa` WPA2; `filter` a packet filter |
+| Network | `bsdsocket` TCP/IP, IPv4 and IPv6; `tls` 1.3 and 1.2; `http` HTTP/1.1 requests, connections kept; `crypto`; `wpa` WPA2; `filter` a packet filter |
 | Buses | `usb` the USB host stack; `pci` PCI Express; `modbus` RTU and TCP |
 
 Beside them:
@@ -216,9 +216,13 @@ Beside them:
   ([USB guide](sdk/docs/guides/usb.md)); Ethernet up to 1000 Mbit/s, the
   ESP32-S3's Wi-Fi and SLIP, and a shell over Telnet or SSH
   ([network guide](sdk/docs/guides/network.md)).
-- **The shell:** 56 commands in `C:`, test programs in `C:test`, network
-  tools in `C:net`; scripts, output and errors redirected apart, line
-  editing and file name completion ([dos guide](sdk/docs/guides/dos.md)).
+- **The shell:** 58 commands in `C:`, test programs in `C:test`, network
+  tools in `C:net` - among them a git client that clones, fetches,
+  commits and pushes over HTTPS and SSH (`C:net/Git`,
+  [network guide](sdk/docs/guides/network.md#git-cnetgit)); scripts,
+  output and errors redirected apart, line editing and file name
+  completion, files hashed and checked against a list of digests
+  ([dos guide](sdk/docs/guides/dos.md)).
 - **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
   Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
   HDToolBox, CPULoad and MemMap.

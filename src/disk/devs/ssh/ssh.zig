@@ -28,8 +28,8 @@ const unit_file = @import("unit.zig");
 
 pub const DEVICE_NAME = _ssh.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 3;
-const BUILD_DATE = "08.10.2026";
+const DEVICE_REVISION = 4;
+const BUILD_DATE = "26.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++

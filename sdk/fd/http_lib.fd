@@ -1,0 +1,34 @@
+//! http.library's functions: HTTP/1.1 requests over plain connections or
+//! TLS, made through a client that keeps their connections for the next
+//! (sdk.http). Open it with OpenLibrary("http.library", 1).
+##include libs/http/http as http
+##include libs/utility/utility as utility
+##include interface/bsdsocket as bsdsocket
+##basetype HttpBase
+##name http.library
+##bias 4
+##public
+/// A client making its requests through the program's `socket_base`;
+/// null when there is no memory.
+?*http.Client CreateClient(*bsdsocket.SocketBase socket_base, ?[*]const utility.TagItem tags)
+/// The client's connections closed and the client freed.
+void DeleteClient(?*http.Client client)
+/// `method` sent to `url` and the head of the answer read; null, and why
+/// in `err` (HTTPERR_*), when it failed.
+?*http.Request OpenRequest(*http.Client client, [*:0]const u8 method, [*:0]const u8 url, ?[*]const utility.TagItem tags, ?*i32 err)
+/// The request ended and freed; its connection kept for the next request
+/// when it can be.
+void CloseRequest(?*http.Request request)
+/// Up to `length` bytes of the answer's body into `buffer`: how many, 0
+/// at its end, an HTTPERR_* below 0.
+i32 ReadRequest(*http.Request request, *anyopaque buffer, u32 length)
+/// `length` bytes of the request's body sent; 0 bytes end it and read the
+/// answer's head. The status, `length`, or an HTTPERR_* below 0.
+i32 WriteRequest(*http.Request request, ?*const anyopaque data, u32 length)
+/// One of the request's attributes (HTTP_Status, HTTP_StatusLine, ...);
+/// 0 for one it does not know.
+usize GetRequestAttr(*http.Request request, utility.Tag attr)
+/// The value of the answer's header `name`, case aside; null when it has
+/// none.
+?[*:0]const u8 GetHeader(*http.Request request, [*:0]const u8 name)
+##end

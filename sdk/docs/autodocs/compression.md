@@ -1,0 +1,747 @@
+# compression.library
+
+compression.library's functions: DEFLATE packing and unpacking, bare
+or wrapped as zlib or gzip, a buffer at a time through a Stream the
+caller keeps (sdk.compression) or in one go, and the two checksums the
+wrappings use. A call that can fail answers COMPRESS_OK, COMPRESS_END
+or a COMPRESSERR_* code.
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [Adler32](#adler32) - Carries an Adler-32 on over more bytes.
+- [Compress](#compress) - Packs a whole buffer into another.
+- [CompressBound](#compressbound) - Says how large the output of packing a buffer can be at most.
+- [Crc32](#crc32) - Carries a CRC-32 on over more bytes.
+- [Deflate](#deflate) - Packs as much of the input as the output has room for.
+- [EndDeflate](#enddeflate) - Frees what InitDeflate allocated for a stream.
+- [EndInflate](#endinflate) - Frees what InitInflate and Inflate allocated for a stream.
+- [Inflate](#inflate) - Unpacks as much of the input as the output has room for.
+- [InitDeflate](#initdeflate) - Sets up a stream for packing into DEFLATE data in one of its wrappings.
+- [InitInflate](#initinflate) - Sets up a stream for unpacking DEFLATE data in one of its wrappings.
+- [Uncompress](#uncompress) - Unpacks a whole stream from one buffer into another.
+
+## Adler32
+
+Carries an Adler-32 on over more bytes.
+
+**SYNOPSIS**
+
+```zig
+fn Adler32(cb: *CompressionBase, adler: u32, data: ?*const anyopaque, length: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -60.
+
+**INPUTS**
+
+- `adler`: the Adler-32 of the bytes before, 1 for none.
+- `data`, `length`: the bytes; null with 0 for none.
+
+**RESULT**
+
+The Adler-32 of the bytes before and these, as zlib's wrapping
+carries it.
+
+**BEHAVIOR**
+
+The result may be handed in again for the bytes after:
+`Adler32(Adler32(1, a), b)` is `Adler32(1, a ++ b)`.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: may be called from an interrupt.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is kept.
+
+**NOTES**
+
+It starts at 1, not at 0 as Crc32 does.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Crc32`
+
+**EXAMPLES**
+
+```zig
+const sum = cb.Adler32(1, text.ptr, text.len);
+```
+
+## Compress
+
+Packs a whole buffer into another.
+
+**SYNOPSIS**
+
+```zig
+fn Compress(cb: *CompressionBase, stream: *Stream, format: u32, level: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -48.
+
+**INPUTS**
+
+- `stream`: made with `.{}`, not set up, with `next_in`/`avail_in`
+  the bytes to pack and `next_out`/`avail_out` the room for the
+  stream they make.
+- `format`: FORMAT_RAW, FORMAT_ZLIB or FORMAT_GZIP.
+- `level`: 0 to 9.
+
+**RESULT**
+
+COMPRESS_OK with the whole stream written: `total_out` is its length.
+COMPRESSERR_BUFFER when the output was too small, COMPRESSERR_MEMORY
+or COMPRESSERR_STREAM as for InitDeflate.
+
+**BEHAVIOR**
+
+InitDeflate, one Deflate with FLUSH_FINISH, EndDeflate. The room
+CompressBound gives is always enough.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing stays allocated; the Stream may be used again.
+
+**NOTES**
+
+The state (about 320 KiB) is allocated for the call.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Deflate`, `CompressBound`, `Uncompress`
+
+**EXAMPLES**
+
+```zig
+var stream: compression.Stream = .{ .next_in = data.ptr, .avail_in = data.len, .next_out = out.ptr, .avail_out = out.len };
+if (cb.Compress(&stream, compression.FORMAT_ZLIB, compression.LEVEL_DEFAULT) != compression.COMPRESS_OK) return error.NoRoom;
+const packed = out[0..@intCast(stream.total_out)];
+```
+
+## CompressBound
+
+Says how large the output of packing a buffer can be at most.
+
+**SYNOPSIS**
+
+```zig
+fn CompressBound(cb: *CompressionBase, format: u32, length: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -52.
+
+**INPUTS**
+
+- `format`: FORMAT_RAW, FORMAT_ZLIB or FORMAT_GZIP.
+- `length`: the bytes to be packed.
+
+**RESULT**
+
+The most bytes Compress, or Deflate fed the same bytes with
+FLUSH_FINISH at the end and no FLUSH_SYNC, writes for them.
+
+**BEHAVIOR**
+
+A block is never written larger than its bytes stored, so the bound
+is the bytes, at most eight more for each block (a block is 16 KiB of
+input at least, but for the last), the end, and the wrapping's header
+and trailer.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: may be called from an interrupt.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is kept.
+
+**NOTES**
+
+Each FLUSH_SYNC adds up to 10 bytes more.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Compress`, `Deflate`
+
+**EXAMPLES**
+
+```zig
+const room = cb.CompressBound(compression.FORMAT_ZLIB, @intCast(data.len));
+```
+
+## Crc32
+
+Carries a CRC-32 on over more bytes.
+
+**SYNOPSIS**
+
+```zig
+fn Crc32(cb: *CompressionBase, crc: u32, data: ?*const anyopaque, length: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -56.
+
+**INPUTS**
+
+- `crc`: the CRC-32 of the bytes before, 0 for none.
+- `data`, `length`: the bytes; null with 0 for none.
+
+**RESULT**
+
+The CRC-32 of the bytes before and these, as gzip, zip and PNG carry
+it (the reflected polynomial 0xEDB88320, begun and finished with all
+ones).
+
+**BEHAVIOR**
+
+The result may be handed in again for the bytes after, so a file's
+CRC is taken a buffer at a time: `Crc32(Crc32(0, a), b)` is
+`Crc32(0, a ++ b)`.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: may be called from an interrupt.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is kept.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Adler32`
+
+**EXAMPLES**
+
+```zig
+var crc: u32 = 0;
+crc = cb.Crc32(crc, buffer.ptr, got); // for each buffer read
+```
+
+## Deflate
+
+Packs as much of the input as the output has room for.
+
+**SYNOPSIS**
+
+```zig
+fn Deflate(cb: *CompressionBase, stream: *Stream, flush: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -36.
+
+**INPUTS**
+
+- `stream`: set up by InitDeflate, with `next_in`/`avail_in` the input
+  to pack and `next_out`/`avail_out` the room to write to.
+- `flush`: FLUSH_NONE to pack as suits the library; FLUSH_SYNC to have
+  everything given so far out, ending on a byte, the stream going on;
+  FLUSH_FINISH when the input given is the last.
+
+**RESULT**
+
+COMPRESS_END when, after FLUSH_FINISH, the whole stream has been
+written; COMPRESS_OK when the input has been taken and what could be
+written has been (or the output filled first); COMPRESSERR_STREAM for
+a stream InitDeflate did not set up.
+
+**BEHAVIOR**
+
+Takes the input into the window, finds repeats in it and writes the
+blocks as they are made, so input is taken ahead of the output it
+makes: with FLUSH_NONE, the last few hundred bytes given wait for
+more. Output waits in the state when there is no room for it, and no
+input is taken until it is out. `next_in`, `avail_in`, `total_in`,
+`next_out`, `avail_out` and `total_out` move on by what was taken and
+written. With FLUSH_SYNC or FLUSH_FINISH, call again with more room
+while it answers COMPRESS_OK and `avail_out` is 0.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The input and output stay the caller's.
+
+**NOTES**
+
+A FLUSH_SYNC costs a few bytes each time (an empty stored block), and
+starts a new block, which packs less well; it is for a stream the
+other end reads as it comes - a protocol, a log.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InitDeflate`, `EndDeflate`, `Compress`, `CompressBound`
+
+**EXAMPLES**
+
+```zig
+while (true) {
+    stream.next_out = &out;
+    stream.avail_out = out.len;
+    const result = cb.Deflate(&stream, if (last) compression.FLUSH_FINISH else compression.FLUSH_NONE);
+    write(out[0 .. out.len - stream.avail_out]);
+    if (result == compression.COMPRESS_END or (stream.avail_in == 0 and !last)) break;
+}
+```
+
+## EndDeflate
+
+Frees what InitDeflate allocated for a stream.
+
+**SYNOPSIS**
+
+```zig
+fn EndDeflate(cb: *CompressionBase, stream: *Stream) void
+```
+
+**SINCE**
+
+1.0. LVO -40.
+
+**INPUTS**
+
+- `stream`: set up by InitDeflate, finished or not.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Frees the state and clears `state`. Output still waiting in it is
+lost: a stream that is to be whole is ended after COMPRESS_END. A
+stream InitDeflate did not set up, or one already ended, is left
+alone.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The state goes back to the system; the Stream stays the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InitDeflate`, `Deflate`
+
+**EXAMPLES**
+
+```zig
+if (cb.InitDeflate(&stream, compression.FORMAT_ZLIB, 6) != compression.COMPRESS_OK) return;
+defer cb.EndDeflate(&stream);
+```
+
+## EndInflate
+
+Frees what InitInflate and Inflate allocated for a stream.
+
+**SYNOPSIS**
+
+```zig
+fn EndInflate(cb: *CompressionBase, stream: *Stream) void
+```
+
+**SINCE**
+
+1.0. LVO -28.
+
+**INPUTS**
+
+- `stream`: set up by InitInflate, at any point - the end read, an
+  error answered, or in the middle.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Frees the window, if the stream got one, and the state, and clears
+`state`. A stream InitInflate did not set up, or one already ended,
+is left alone.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Everything the stream's state held goes back to the system; the
+Stream itself stays the caller's, and may be set up again.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InitInflate`, `Inflate`
+
+**EXAMPLES**
+
+```zig
+if (cb.InitInflate(&stream, compression.FORMAT_ZLIB) != compression.COMPRESS_OK) return;
+defer cb.EndInflate(&stream);
+```
+
+## Inflate
+
+Unpacks as much of the input as the output has room for.
+
+**SYNOPSIS**
+
+```zig
+fn Inflate(cb: *CompressionBase, stream: *Stream, flush: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -24.
+
+**INPUTS**
+
+- `stream`: set up by InitInflate, with `next_in`/`avail_in` the input
+  to read and `next_out`/`avail_out` the room to write to.
+- `flush`: FLUSH_FINISH when the input given is all there will be;
+  anything else otherwise.
+
+**RESULT**
+
+COMPRESS_END when the stream's end has been read (and its checksum
+matched); COMPRESS_OK when the input ran out or the output filled up
+first; COMPRESSERR_DATA when the input is not a stream of the format;
+COMPRESSERR_TRUNCATED when, with FLUSH_FINISH, the input ran out
+before the end; COMPRESSERR_MEMORY when the window could not be had;
+COMPRESSERR_STREAM for a stream InitInflate did not set up.
+
+**BEHAVIOR**
+
+Reads the input a byte at a time and writes straight into the output,
+stopping wherever either runs out - in a header, a bit into a code, in
+the middle of a repeat - and going on from there at the next call.
+`next_in`, `avail_in` and `total_in` move on by what was read,
+`next_out`, `avail_out` and `total_out` by what was written. Nothing
+past the stream's end is read: after COMPRESS_END, `next_in` is the
+first byte behind the stream and `total_in` its length. The first call
+to read a header sets `format` to what FORMAT_AUTO turned out to be.
+After COMPRESSERR_DATA every later call answers the same.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The input and output stay the caller's; the window the stream may get
+is its state's and goes at EndInflate.
+
+**NOTES**
+
+COMPRESS_OK with input left and `avail_out` 0 means "give me more
+room"; with `avail_in` 0, "give me more input". The window is 32 KiB
+and comes with the first call that returns before the end; a stream
+unpacked in one call never has one.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InitInflate`, `EndInflate`, `Uncompress`
+
+**EXAMPLES**
+
+```zig
+while (true) {
+    if (stream.avail_in == 0) { stream.next_in = &buffer; stream.avail_in = fill(&buffer); }
+    stream.next_out = &out;
+    stream.avail_out = out.len;
+    const result = cb.Inflate(&stream, compression.FLUSH_NONE);
+    write(out[0 .. out.len - stream.avail_out]);
+    if (result != compression.COMPRESS_OK) break;
+}
+```
+
+## InitDeflate
+
+Sets up a stream for packing into DEFLATE data in one of its wrappings.
+
+**SYNOPSIS**
+
+```zig
+fn InitDeflate(cb: *CompressionBase, stream: *Stream, format: u32, level: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -32.
+
+**INPUTS**
+
+- `stream`: the caller's, made with `.{}` so that its `size` is right;
+  a stream set up before must have been ended, or its state is lost.
+- `format`: FORMAT_RAW, FORMAT_ZLIB or FORMAT_GZIP.
+- `level`: 0 (stored, nothing looked for) to 9 (the smallest);
+  LEVEL_DEFAULT is 6.
+
+**RESULT**
+
+COMPRESS_OK; COMPRESSERR_STREAM for a Stream whose `size` is less
+than `@sizeOf(Stream)`, FORMAT_AUTO or a format there is not, or a
+level above 9; COMPRESSERR_MEMORY when the state cannot be had.
+Either way, nothing is left to end.
+
+**BEHAVIOR**
+
+Allocates the stream's state - about 320 KiB: the 64 KiB window, the
+tables that find repeats in it, a block's symbols, the codes it is
+written with and the pending output - and hangs it on `state`, and sets `total_in`, `total_out`
+and `format`. The input and output pointers are not touched.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The state is the stream's until EndDeflate, which must come once for
+every InitDeflate that answered COMPRESS_OK.
+
+**NOTES**
+
+gzip's header is the plain one: no name, no time, the system unknown.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Deflate`, `EndDeflate`, `Compress`
+
+**EXAMPLES**
+
+```zig
+var stream: compression.Stream = .{};
+if (cb.InitDeflate(&stream, compression.FORMAT_GZIP, compression.LEVEL_DEFAULT) != compression.COMPRESS_OK) return;
+defer cb.EndDeflate(&stream);
+```
+
+## InitInflate
+
+Sets up a stream for unpacking DEFLATE data in one of its wrappings.
+
+**SYNOPSIS**
+
+```zig
+fn InitInflate(cb: *CompressionBase, stream: *Stream, format: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -20.
+
+**INPUTS**
+
+- `stream`: the caller's, made with `.{}` so that its `size` is right;
+  a stream set up before must have been ended, or its state is lost.
+- `format`: FORMAT_RAW (bare DEFLATE), FORMAT_ZLIB, FORMAT_GZIP, or
+  FORMAT_AUTO (zlib or gzip, by the first two bytes).
+
+**RESULT**
+
+COMPRESS_OK; COMPRESSERR_STREAM for a Stream whose `size` is less
+than `@sizeOf(Stream)` or a format there is not, COMPRESSERR_MEMORY
+when the state cannot be had. Either way, nothing is left to end.
+
+**BEHAVIOR**
+
+Allocates the stream's state (about 10 KiB; the 32 KiB window comes
+later, and only when a call returns before the stream's end), hangs
+it on `state`, and sets `total_in`, `total_out` and `format`.
+`next_in`, `avail_in`, `next_out` and `avail_out` are not touched:
+they may be set before or after.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The state is the stream's until EndInflate, which must come once for
+every InitInflate that answered COMPRESS_OK.
+
+**NOTES**
+
+A stream belongs to one task at a time; streams on different tasks
+share nothing.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Inflate`, `EndInflate`, `Uncompress`
+
+**EXAMPLES**
+
+```zig
+var stream: compression.Stream = .{};
+if (cb.InitInflate(&stream, compression.FORMAT_AUTO) != compression.COMPRESS_OK) return;
+defer cb.EndInflate(&stream);
+```
+
+## Uncompress
+
+Unpacks a whole stream from one buffer into another.
+
+**SYNOPSIS**
+
+```zig
+fn Uncompress(cb: *CompressionBase, stream: *Stream, format: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -44.
+
+**INPUTS**
+
+- `stream`: made with `.{}`, not set up, with `next_in`/`avail_in`
+  the packed stream (more after it does no harm) and
+  `next_out`/`avail_out` the room for all of it unpacked.
+- `format`: FORMAT_RAW, FORMAT_ZLIB, FORMAT_GZIP or FORMAT_AUTO.
+
+**RESULT**
+
+COMPRESS_OK when the whole stream was unpacked: `total_out` is its
+length unpacked, `total_in` packed. COMPRESSERR_BUFFER when the output
+was too small, COMPRESSERR_TRUNCATED when the input ended first,
+COMPRESSERR_DATA, COMPRESSERR_MEMORY or COMPRESSERR_STREAM as for
+InitInflate and Inflate.
+
+**BEHAVIOR**
+
+InitInflate, one Inflate with FLUSH_FINISH, EndInflate. Unpacked in
+one call, the stream needs no window: what it costs is the state's
+10 KiB for the length of the call.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing stays allocated; the Stream may be used again.
+
+**NOTES**
+
+The pointers and counts move on as Inflate's do, so after
+COMPRESS_OK `next_in` is the first byte behind the stream.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`Inflate`, `Compress`
+
+**EXAMPLES**
+
+```zig
+var stream: compression.Stream = .{ .next_in = packed.ptr, .avail_in = packed.len, .next_out = &out, .avail_out = out.len };
+if (cb.Uncompress(&stream, compression.FORMAT_ZLIB) != compression.COMPRESS_OK) return error.Corrupt;
+const unpacked = out[0..@intCast(stream.total_out)];
+```

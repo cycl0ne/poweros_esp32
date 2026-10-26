@@ -47,3 +47,5 @@ pub const audiocodec = @import("audiocodec.zig");
 pub const wpa = @import("wpa.zig");
 pub const pci = @import("pci.zig");
 pub const facet = @import("facet.zig");
+pub const compression = @import("compression.zig");
+pub const http = @import("http.zig");

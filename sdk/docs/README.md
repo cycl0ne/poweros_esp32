@@ -76,8 +76,12 @@ tags and constants, each with its doc comment.
 - [Icons](guides/icons.md) - the icon file, reading one and its
   picture, tool types, writing one, the defaults, and making icons on
   the host.
+- [Compression](guides/compression.md) - compression.library: a
+  stream and its results, unpacking a buffer at a time and where a
+  stream ends, packing and flushing, the calls that do either in one go,
+  CRC-32 and Adler-32.
 - [Network](guides/network.md) - sockets, multicast groups, waiting on
-  them, names, TLS, interfaces and their files, the network device API,
+  them, names, TLS, HTTP requests (http.library), interfaces and their files, the network device API,
   wireless devices, SLIP over a serial line, writing a network driver,
   telnet.device, SSH both ways (ShellServer SSH with sftp and scp,
   `C:net/SSH`, `C:net/SCP`, ssh.device), a packet filter and the packet hooks under it, and the
@@ -135,10 +139,12 @@ first time something opens it.
 | motion.library | ROM | one clock for animations, timers and timelines | [md](autodocs/motion.md) · [doc](autodocs/motion.doc) |
 | asl.library | `LIBS:` | the file, font and device requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces, packet hooks | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
+| compression.library | `LIBS:` | DEFLATE packed and unpacked, bare or in a zlib or gzip wrapping, a buffer at a time or in one go; CRC-32 and Adler-32 | [md](autodocs/compression.md) · [doc](autodocs/compression.doc), [`compression.zig`](../libs/compression/compression.zig), [guide](guides/compression.md) |
 | crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines where it has them; X25519, P-256, P-384 and Ed25519; signatures checked and made; ML-KEM-768 | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
 | datatypes.library | `LIBS:` | a file opened by what is in it | [md](autodocs/datatypes.md) · [doc](autodocs/datatypes.doc) |
 | facet.library | `LIBS:` | three-dimensional drawing as Vulkan's model has it, on the machine's cores: memory, buffers and images, command buffers and a queue, render passes, pipelines with the program's own shaders, fences and semaphores, swapchains on a screen or in a window | [md](autodocs/facet.md) · [doc](autodocs/facet.doc) |
 | filter.library | `LIBS:` | a packet filter: rules on what comes in, on bsdsocket.library's packet hooks | [md](autodocs/filter.md) · [doc](autodocs/filter.doc) |
+| http.library | `LIBS:` | HTTP/1.1 requests over plain connections or TLS: a client keeping its connections for the next request, bodies sent and read in pieces, redirects followed, packed answers unpacked | [md](autodocs/http.md) · [doc](autodocs/http.doc), [`http.zig`](../libs/http/http.zig), [guide](guides/network.md#http-httplibrary) |
 | icon.library | `LIBS:` | icons: the picture a file is shown with and its fields; the default that fits a file without one | [md](autodocs/icon.md) · [doc](autodocs/icon.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |

@@ -1,0 +1,7 @@
+000eversion 2
+001bagent=git/2.56.0-Linux
+0013ls-refs=unborn
+0020fetch=shallow wait-for-done
+0012server-option
+0017object-format=sha1
+0000

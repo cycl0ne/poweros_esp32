@@ -715,10 +715,16 @@ const Pair = struct {
     }
 
     fn session(pair: *Pair, command: []const u8, terminal: []const u8) void {
+        pair.sessionWith(command, terminal, "");
+    }
+
+    /// A session with variables: `environment` as SshSession lists them.
+    fn sessionWith(pair: *Pair, command: []const u8, terminal: []const u8, environment: []const u8) void {
         var request: ssh.SshSession = .{ .columns = 100, .rows = 30 };
         @memcpy(request.command[0..command.len], command);
         @memcpy(request.terminal[0..terminal.len], terminal);
-        pair.client.session(&request);
+        @memcpy(request.environment[0..environment.len], environment);
+        pair.client.session(&request, true);
         pair.pump();
     }
 };
@@ -819,6 +825,44 @@ test "the client: a key refused, then the password; a command without a terminal
     try testing.expectEqual(@as(u32, 0), rig.server.columns);
 }
 
+test "the client sends a session's variables before its command; refused, the command runs" {
+    const rig = try Rig.init();
+    defer rig.deinit();
+    var pair = try Pair.init(rig);
+    defer pair.deinit();
+    const client = pair.client;
+    pair.pump();
+    pair.login(true, "");
+    try testing.expectEqual(client_file.Step.logged_in, client.step);
+    // Two variables, and an entry without a name, which is not sent.
+    pair.sessionWith("git-upload-pack '/repo.git'", "xterm", "GIT_PROTOCOL=version=2\x00=x\x00LANG=C\x00\x00");
+    try testing.expectEqual(client_file.Step.running, client.step);
+    try testing.expectEqual(@as(u32, 2), rig.server.environment_refused);
+    try testing.expectEqual(ssh.SSHSESSION_EXEC, rig.server.kind);
+    try testing.expectEqualStrings("git-upload-pack '/repo.git'", std.mem.sliceTo(&rig.server.command, 0));
+    try testing.expect(client.has_terminal);
+}
+
+test "a session's variables taken apart: each NAME=value, to the empty one" {
+    var at: usize = 0;
+    const list = "A=1\x00B=\x00noequals\x00=v\x00C=x=y\x00";
+    const names = [_][]const u8{ "A", "B", "C" };
+    const values = [_][]const u8{ "1", "", "x=y" };
+    for (names, values) |name, value| {
+        const variable = client_file.nextVariable(list, &at).?;
+        try testing.expectEqualStrings(name, variable.name);
+        try testing.expectEqualStrings(value, variable.value);
+    }
+    try testing.expectEqual(@as(?client_file.Variable, null), client_file.nextVariable(list, &at));
+
+    try testing.expectEqual(@as(usize, 0), client_file.environmentLength("\x00A=1\x00"));
+    try testing.expectEqual(@as(usize, 8), client_file.environmentLength("A=1\x00B=2\x00\x00junk"));
+    // One cut off by the end of the room is left out.
+    try testing.expectEqual(@as(usize, 4), client_file.environmentLength("A=1\x00B=2"));
+    var full: [ssh.SSH_ENVIRONMENT_MAX]u8 = @splat('x');
+    try testing.expectEqual(@as(usize, 0), client_file.environmentLength(&full));
+}
+
 test "the client: with neither key nor password it asks what the server takes; a banner comes back once" {
     const rig = try Rig.init();
     defer rig.deinit();
@@ -906,7 +950,7 @@ test "the client asks for a subsystem: the server's opener is told its name" {
     pair.login(true, "");
     var request: ssh.SshSession = .{ .subsystem = 1 };
     @memcpy(request.command[0..4], "sftp");
-    pair.client.session(&request);
+    pair.client.session(&request, true);
     pair.pump();
     try testing.expectEqual(client_file.Step.running, pair.client.step);
     try testing.expectEqual(ssh.SSHSESSION_SUBSYSTEM, rig.server.kind);
@@ -925,7 +969,7 @@ test "the client: much more than a window to the server, small answers back in b
     pair.login(true, "");
     var request: ssh.SshSession = .{ .subsystem = 1 };
     @memcpy(request.command[0..4], "sftp");
-    client.session(&request);
+    client.session(&request, true);
     pair.pump();
 
     const total = 300 * 1024;

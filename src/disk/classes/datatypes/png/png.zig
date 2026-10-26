@@ -15,8 +15,9 @@
 //! the picture is later drawn mixed into what is under it.
 //!
 //! **The file is read whole before it is unpacked**, because the
-//! compressed stream is the `IDAT` chunks joined and nothing says where
-//! they end until the file does. A picture too large for memory
+//! compressed stream is the `IDAT` chunks one after another and nothing
+//! says where they end until the file does. compression.library unpacks
+//! them in turn, straight into the rows. A picture too large for memory
 //! therefore fails to open, which is the right answer and not a
 //! half-drawn window.
 
@@ -32,20 +33,22 @@ const datatypes = sdk.datatypes;
 const subclass = datatypes.subclass;
 const dtc = datatypes.datatypesclass;
 const pic = datatypes.pictureclass;
-const inflate = datatypes.png.inflate;
 const decode = datatypes.png.decode;
+const compression = sdk.compression;
 const Class = classes.Class;
 const Object = classes.Object;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
+const CompressionBase = sdk.interface.compression.CompressionBase;
 const Base = gadgets.Base;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
 pub const Library = gadgets.ClassLibrary(.{
     .name = "png.datatype",
     .version = 1,
-    .date = "29.09.2026",
+    .revision = 1,
+    .date = "25.10.2026",
     .super = pic.PICTUREDTCLASS,
-    .opens = &.{pic.PICTURE_LIBRARY},
+    .opens = &.{ pic.PICTURE_LIBRARY, compression.COMPRESSIONNAME },
     .Instance = Data,
     .dispatch = dispatch,
 });
@@ -63,7 +66,6 @@ pub const Data = extern struct {
 /// What the decoder needs besides the file, in one block so that it
 /// costs the caller's stack nothing.
 const Work = struct {
-    stream: inflate.Work = .{},
     palette: decode.Palette = .{},
 };
 
@@ -96,8 +98,8 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     const work: *Work = @ptrCast(@alignCast(memory));
     work.* = .{};
 
-    // The chunks: the palette, what of it is see-through, and how long
-    // the compressed stream is when its pieces are joined.
+    // The chunks: the palette, what of it is see-through, and whether
+    // there is a compressed stream at all.
     var plte: []const u8 = &.{};
     var trns: []const u8 = &.{};
     var idat_length: usize = 0;
@@ -114,21 +116,6 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     if (idat_length == 0) return datatypes.DTERROR_NOT_ENOUGH_DATA;
     decode.readPalette(info, &work.palette, plte, trns) catch return datatypes.DTERROR_INVALID_DATA;
 
-    const joined_memory = sys.AllocVec(idat_length, exec.MEMF_ANY) orelse
-        return datatypes.DTERROR_NOT_ENOUGH_DATA;
-    // Given back as soon as the stream has been unpacked, which is
-    // before the picture is asked for: the two need not be held at once.
-    var joined_held: ?*anyopaque = joined_memory;
-    defer sys.FreeVec(joined_held);
-    const joined: [*]u8 = @ptrCast(joined_memory);
-    var at: usize = 0;
-    walk = decode.Walk.start(file) catch return datatypes.DTERROR_INVALID_DATA;
-    while (walk.next() catch return datatypes.DTERROR_INVALID_DATA) |chunk| {
-        if (chunk.id != decode.ID_IDAT) continue;
-        @memcpy(joined[at..][0..chunk.data.len], chunk.data);
-        at += chunk.data.len;
-    }
-
     // The unpacked rows, each with the filter byte that says how it was
     // written down, and room for two rows of colour: the one being read
     // and the one before it, which a filter counts against.
@@ -137,11 +124,11 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     defer sys.FreeVec(raw_memory);
     const raw: [*]u8 = @ptrCast(raw_memory);
-    const written = inflate.uncompress(&work.stream, joined[0..idat_length], raw[0..raw_size]) catch
-        return datatypes.DTERROR_UNKNOWN_COMPRESSION;
-    sys.FreeVec(joined_held);
-    joined_held = null;
-    if (written != raw_size) return datatypes.DTERROR_NOT_ENOUGH_DATA;
+    const cb: *CompressionBase = @ptrCast(base.opened[1].?);
+    decode.unpackRows(cb, file, raw[0..raw_size]) catch |failure| return switch (failure) {
+        error.Truncated, error.NoMemory => datatypes.DTERROR_NOT_ENOUGH_DATA,
+        else => datatypes.DTERROR_UNKNOWN_COMPRESSION,
+    };
 
     const row_memory = sys.AllocVec(info.width * 4, exec.MEMF_ANY) orelse
         return datatypes.DTERROR_NOT_ENOUGH_DATA;

@@ -35,18 +35,18 @@ pub const File = struct { disk: []const u8, source: []const u8 };
 /// system is used with, `c/test` the programs that exercise a device or a
 /// library and print what happened, `c/net` the network's tools.
 const commands = [_][]const u8{
-    "type",          "dir",        "delete",      "makedir",       "rename",
-    "avail",         "assign",     "version",     "addbuffers",    "which",
-    "list",          "format",     "protect",     "changetaskpri", "wait",
-    "info",          "platform",   "copy",        "rdb",           "i2c",
-    "backlight",     "rtg",        "showinfo",    "setmap",        "mount",
-    "showconfig",    "date",       "setdate",     "setprefs",      "fixfonts",
-    "adddatatypes",  "listfonts",  "log",         "requestfile",   "requestchoice",
-    "requestdevice", "diskchange", "modbus",      "more",          "relabel",
-    "loadanvil",     "iconx",      "usb",         "usbinfo",       "battery",
-    "setclock",      "top",        "play",        "screendump",    "memdebug",
-    "makelink",      "posfs",      "binddrivers", "pciinfo",       "record",
-    "audio",         "temperature",
+    "type",          "dir",         "delete",      "makedir",       "rename",
+    "avail",         "assign",      "version",     "addbuffers",    "which",
+    "list",          "format",      "protect",     "changetaskpri", "wait",
+    "info",          "platform",    "copy",        "rdb",           "i2c",
+    "backlight",     "rtg",         "showinfo",    "setmap",        "mount",
+    "showconfig",    "date",        "setdate",     "setprefs",      "fixfonts",
+    "adddatatypes",  "listfonts",   "log",         "requestfile",   "requestchoice",
+    "requestdevice", "diskchange",  "modbus",      "more",          "relabel",
+    "loadanvil",     "iconx",       "usb",         "usbinfo",       "battery",
+    "setclock",      "top",         "play",        "screendump",    "memdebug",
+    "makelink",      "posfs",       "binddrivers", "pciinfo",       "record",
+    "audio",         "temperature", "hash",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",       "anim",
@@ -62,7 +62,7 @@ const tests = [_][]const u8{
     "memowner",    "records",    "exall",       "disktest",  "filetest",
     "speed2d",     "windraw",
 };
-const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "mountshare" };
+const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "mountshare", "git" };
 
 /// Programs with windows, in SYS:Programs and - the system's own tools -
 /// SYS:System: started by their full name or from a shell there, not on
@@ -101,6 +101,8 @@ const modules = [_]Program{
     .{ .disk = "libs/hello.library", .source = "libs/hello/hello.zig", .name = "hello.library" },
     .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library" },
     .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library" },
+    .{ .disk = "libs/compression.library", .source = "libs/compression/compression.zig", .name = "compression.library" },
+    .{ .disk = "libs/http.library", .source = "libs/http/http.zig", .name = "http.library" },
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
     .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library" },
     .{ .disk = "libs/pci.library", .source = "libs/pci/pci.zig", .name = "pci.library" },

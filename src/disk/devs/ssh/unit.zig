@@ -159,7 +159,7 @@ fn take(sys: *ExecBase, unit: *Unit, io: *exec.IOStdReq) void {
                 },
                 ssh.SSHCMD_SESSION => {
                     if (client.step != .logged_in) return answer(sys, io, ssh.SSHERR_ORDER);
-                    client.session(@ptrCast(@alignCast(io.data.?)));
+                    client.session(@ptrCast(@alignCast(io.data.?)), io.length >= @sizeOf(ssh.SshSession));
                 },
                 else => if (client.step != .running and client.step != .failed) return answer(sys, io, ssh.SSHERR_ORDER),
             }

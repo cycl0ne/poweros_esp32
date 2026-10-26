@@ -12,7 +12,8 @@
 //! `SB_SCREEN_BITMAP`, which hands it out rather than making another, and
 //! copied at once into rows of 8-bit RGB - from whatever form the display
 //! keeps it in - so a picture that moves is taken as one moment. Writing
-//! the PNG (png.zig) comes after, from the copy. The pointer is not in
+//! the PNG (png.zig) comes after, from the copy, packed by
+//! compression.library. The pointer is not in
 //! the screen's buffer - the display lays it over - and so is not in the
 //! picture.
 
@@ -24,6 +25,7 @@ const rtg = sdk.rtg;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
+const CompressionBase = sdk.interface.compression.CompressionBase;
 const PixelFormat = rtg.bitmaps.PixelFormat;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
@@ -31,7 +33,7 @@ const sc = intuition.screens;
 const png = @import("png.zig");
 
 pub const COMMAND_NAME = "ScreenDump";
-const VERSION_STRING = "\x00$VER: ScreenDump 1.0 (13.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ScreenDump 1.1 (25.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TO/A,SCREEN/K,DELAY/K/N,QUIET/S";
@@ -45,6 +47,7 @@ const MSG_NODEFAULT = "%s: no default screen\n";
 const MSG_NOBUFFER = "%s: the screen's buffer cannot be had\n";
 const MSG_FORMAT = "%s: the screen's pixels are in a form this does not read\n";
 const MSG_NOMEMORY = "%s: no memory for a picture of %u by %u\n";
+const MSG_NOLIBRARY = "%s: cannot open %s\n";
 const MSG_DONE = "%s: %u by %u written to %s, %lu bytes\n";
 
 /// What the PNG writer hands over goes to the file, and is counted.
@@ -83,6 +86,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const intuition_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(intuition_lib);
     const ib: *IntuitionBase = @ptrCast(intuition_lib);
+    const compression_lib = sys.OpenLibrary(sdk.compression.COMPRESSIONNAME, 1) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, sdk.compression.COMPRESSIONNAME });
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(compression_lib);
+    const cb: *CompressionBase = @ptrCast(compression_lib);
 
     // Waited out in pieces, so Ctrl-C ends it.
     var waited: u32 = 0;
@@ -141,13 +150,21 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     var output = Output{ .dl = dl, .file = file };
-    const written = png.write(work, .{ .context = &output, .put = Output.put }, width, height, rows[0 .. stride * height]);
+    const result = png.write(work, cb, .{ .context = &output, .put = Output.put }, width, height, rows[0 .. stride * height]);
     const failure = dl.IoErr();
     _ = dl.Close(file);
-    if (!written) {
-        _ = dl.PrintFault(failure, to);
-        _ = dl.DeleteFile(to);
-        return dos.RETURN_FAIL;
+    switch (result) {
+        .written => {},
+        .sink_failed => {
+            _ = dl.PrintFault(failure, to);
+            _ = dl.DeleteFile(to);
+            return dos.RETURN_FAIL;
+        },
+        .no_memory => {
+            _ = Printf(dl, MSG_NOMEMORY, .{ COMMAND_NAME, width, height });
+            _ = dl.DeleteFile(to);
+            return dos.RETURN_FAIL;
+        },
     }
     if (argv[arg_quiet] == 0) _ = Printf(dl, MSG_DONE, .{ COMMAND_NAME, width, height, to, output.written });
     return dos.RETURN_OK;
