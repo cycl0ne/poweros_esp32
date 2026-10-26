@@ -35,8 +35,11 @@ The settings are on seven pages, under tabs:
 - **Desktop:** the desktop's ground - one colour, or two shaded from top
   to bottom - a picture over it and how it is placed, how large icons are
   shown, whether an icon that is moved snaps into the nearest free cell
-  of the grid (as the desktop's Window menu switches it too), and how a
-  drawer with no view of its own is shown.
+  of the grid (as the desktop's Window menu switches it too), how a
+  drawer with no view of its own is shown, and whether each drawer opens
+  in a window of its own (A window per drawer) or in the window of the
+  drawer it is in - the default; a disk opens a window of its own either
+  way.
 - **System:** the double-click time, the height of a screen's font when
   it is given none, when the keyboard on the screen comes up, whether a
   window may be moved partly past the screen's edges, and whether the

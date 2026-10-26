@@ -100,7 +100,9 @@ pub fn pathOf(where: ?*Drawer, ic: *const Icon, into: []u8) ?usize {
 }
 
 /// The icon double-clicked opened - a program's icon by telling its
-/// program.
+/// program. A drawer in a drawer's window opens in that window, unless
+/// the prefs give each drawer a window of its own (NEWWINDOW); a disk, or
+/// a drawer on the desktop's ground, always opens a window of its own.
 pub fn open(d: *Desktop, where: ?*Drawer, ic: *Icon) void {
     if (ic.app != null) return app.opened(d, ic);
     var full: [dos.path_max + 1]u8 = undefined;
@@ -108,6 +110,8 @@ pub fn open(d: *Desktop, where: ?*Drawer, ic: *Icon) void {
     const kind: u32 = if (ic.object) |object| object.kind else if (ic.entry.isDrawer()) icon.WBDRAWER else icon.WBPROJECT;
     const a_disk = where == null and ic.path == null;
     if (a_disk or kind == icon.WBDISK or kind == icon.WBDRAWER or kind == icon.WBGARBAGE or ic.entry.isDrawer()) {
+        const root = length > 0 and full[length - 1] == ':';
+        if (where) |dr| if (!root and !d.prefs.new_window) return drawer.browse(d, dr, full[0..length]);
         drawer.open(d, full[0..length]);
         return;
     }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! anvil.prefs: the desktop's settings as a file - one line:
 //!
-//!     GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO
+//!     GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO
 //!
 //! - GROUND: the desktop's colour, `#RRGGBB`, or two, `#top..#bottom`,
 //!   shaded from the one at the top to the one at the bottom. Left out,
@@ -18,6 +18,9 @@
 //! - SNAP: YES to put an icon that is moved in the nearest free cell of
 //!   the grid its ground's icons are laid out on, NO to leave it where it
 //!   is let go.
+//! - NEWWINDOW: YES to open each drawer in a window of its own, NO to
+//!   open a drawer in the window of the drawer it is in. A disk opens a
+//!   window of its own either way.
 //!
 //! One left out keeps the value it has. `parse` reads the line into
 //! `Settings`, `write` writes them as the line, `groundOf` reads the
@@ -42,7 +45,7 @@ pub const place_names = [3][]const u8{ "TILED", "CENTRED", "SCALED" };
 pub const View = enum(u8) { icon, name, date, size };
 pub const view_names = [4][]const u8{ "ICON", "NAME", "DATE", "SIZE" };
 
-/// SNAP's words, for false and true.
+/// SNAP's and NEWWINDOW's words, for false and true.
 pub const snap_names = [2][]const u8{ "NO", "YES" };
 
 /// The longest picture's name, its NUL aside.
@@ -64,6 +67,9 @@ pub const Settings = struct {
     view: View = .icon,
     /// Whether a moved icon goes to the nearest free cell of the grid.
     snap: bool = false,
+    /// Whether a drawer opens in a window of its own, rather than in its
+    /// parent's.
+    new_window: bool = false,
 
     /// The picture's name, or null for none.
     pub fn pictureName(settings: *const Settings) ?[]const u8 {
@@ -86,9 +92,9 @@ pub const Settings = struct {
     }
 };
 
-/// Whether `a` and `b` draw the desktop alike: the same in all but SNAP,
-/// which changes nothing drawn - so a change of it alone needs no new
-/// ground, look or icons.
+/// Whether `a` and `b` draw the desktop alike: the same in all but SNAP
+/// and NEWWINDOW, which change nothing drawn - so a change of them alone
+/// needs no new ground, look or icons.
 pub fn sameLook(a: *const Settings, b: *const Settings) bool {
     if (a.ground_given != b.ground_given or a.top != b.top or a.bottom != b.bottom) return false;
     if (a.place != b.place or a.icon_size != b.icon_size or a.view != b.view) return false;
@@ -162,13 +168,18 @@ pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
                 if (style.same(value, name)) break @enumFromInt(k);
             } else return "VIEW is ICON, NAME, DATE or SIZE";
         } else if (style.same(word, "SNAP")) {
-            if (style.same(value, snap_names[1])) {
-                settings.snap = true;
-            } else if (style.same(value, snap_names[0])) {
-                settings.snap = false;
-            } else return "SNAP is YES or NO";
-        } else return "not in the form GROUND=#RRGGBB PICTURE=name PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO";
+            settings.snap = yesOrNo(value) orelse return "SNAP is YES or NO";
+        } else if (style.same(word, "NEWWINDOW")) {
+            settings.new_window = yesOrNo(value) orelse return "NEWWINDOW is YES or NO";
+        } else return "not in the form GROUND=#RRGGBB PICTURE=name PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO";
     }
+    return null;
+}
+
+/// YES or NO, as true or false; null for anything else.
+fn yesOrNo(value: []const u8) ?bool {
+    if (style.same(value, snap_names[1])) return true;
+    if (style.same(value, snap_names[0])) return false;
     return null;
 }
 
@@ -236,6 +247,8 @@ pub fn write(settings: *const Settings, into: []u8) usize {
     put(into, &n, view_names[@intFromEnum(settings.view)]);
     put(into, &n, " SNAP=");
     put(into, &n, snap_names[@intFromBool(settings.snap)]);
+    put(into, &n, " NEWWINDOW=");
+    put(into, &n, snap_names[@intFromBool(settings.new_window)]);
     return n;
 }
 
@@ -258,9 +271,12 @@ pub const header =
     \\# SNAP      YES to put an icon that is moved in the nearest free
     \\#           cell of its ground's grid, NO to leave it where it is
     \\#           let go.
+    \\# NEWWINDOW YES to open each drawer in a window of its own, NO to
+    \\#           open a drawer in its parent's window. A disk opens a
+    \\#           window of its own either way.
     \\#
     \\# One left out keeps the desktop's own. These are its own:
     \\#
-    \\# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO
+    \\# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO
     \\
 ;

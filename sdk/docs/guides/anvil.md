@@ -57,7 +57,7 @@ What lies under the icons is one line in `ENV:Sys/anvil.prefs`
 (`sdk.prefs.anvil`, edited on the Desktop page of `SYS:Programs/Prefs`):
 
 ```
-GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO
+GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO
 ```
 
 A colour, or two shaded from the top down - left out, the screen's
@@ -86,8 +86,9 @@ All Files. Where the icons' pictures come from is in the
 
 `anvil.prefs` and `font.prefs` are watched with StartNotify: a line saved
 there is in force at once, and the ground and the icons are made anew -
-but for a change of `SNAP` alone, which changes nothing drawn and only
-sets the menu's mark.
+but for a change of `SNAP` or `NEWWINDOW` alone, which changes nothing
+drawn: `SNAP` only sets the menu's mark, and `NEWWINDOW` counts from the
+next drawer opened.
 The screen's pens are followed through `IDCMP_NEWPREFS`, so a ground left
 to the background pen changes with the palette.
 
@@ -98,12 +99,21 @@ every two seconds.
 ## Drawers
 
 A double click on a disk opens it into a window of its icons, and on a
-drawer in such a window opens that drawer. The window's box, its view and
-which files it shows come from the drawer's icon (`DrawerData`: the
-`WINDOW`, `VIEW` and `SHOW` fields of [the icon file](icons.md#the-file));
-without them it opens over half the screen, a little further across for
-each drawer open - and over the whole screen under its bar on a screen
-narrower than 640.
+drawer in such a window opens that drawer in the same window: its icons
+go, the drawer's take their place, and the window's title follows. Open
+Parent in the Window menu goes back up the same way. With `NEWWINDOW=YES`
+in `anvil.prefs` - A window per drawer on the Desktop page of
+`SYS:Programs/Prefs` - each drawer opens a window of its own instead, as
+does Open Parent. A disk, and a drawer left out on the desktop, always
+opens a window of its own. Where a drawer opens a window of its own and
+one is open on it already, that one comes to the front.
+
+A new window's box, and in either case the drawer's view and which files
+it shows, come from the drawer's icon (`DrawerData`: the `WINDOW`,
+`VIEW` and `SHOW` fields of [the icon file](icons.md#the-file)); without
+a box it opens over half the screen, a little further across for each
+drawer open - and over the whole screen under its bar on a screen
+narrower than 640. A window that turns to another drawer keeps its box.
 
 The drawer is read a bufferful at a time between rounds of input, so a
 large one on a card fills in while the desktop answers. A file `x.info`

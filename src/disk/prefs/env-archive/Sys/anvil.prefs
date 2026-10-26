@@ -15,7 +15,10 @@
 # SNAP      YES to put an icon that is moved in the nearest free
 #           cell of its ground's grid, NO to leave it where it is
 #           let go.
+# NEWWINDOW YES to open each drawer in a window of its own, NO to
+#           open a drawer in its parent's window. A disk opens a
+#           window of its own either way.
 #
 # One left out keeps the desktop's own. These are its own:
 #
-# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO
+# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO

@@ -31,6 +31,13 @@
 //!
 //! **Following**: the drawer is watched with StartNotify and read again
 //! when it changes - whoever changed it.
+//!
+//! **One window or many**: a drawer opened from a drawer's window takes
+//! that window over (`browse`) - its icons let go, its watch moved, the
+//! new drawer read in, the box left as it is - unless `anvil.prefs` says
+//! NEWWINDOW=YES, when it opens a window of its own (`open`). A disk, and
+//! anything opened from the desktop's ground, always gets a window of its
+//! own.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -149,6 +156,25 @@ fn windowAttr(d: *Desktop, window: *intuition.Window, tag: utility.Tag) i32 {
     return @bitCast(@as(u32, @truncate(value)));
 }
 
+/// How a drawer's icon says it is shown: its view and whether all files
+/// show, the prefs' view and all files where it says nothing.
+const Shown = struct { view: View, show_all: bool };
+
+fn shownBy(d: *Desktop, object: ?*icon.DiskObject) Shown {
+    var shown = Shown{ .view = d.prefs.view, .show_all = true };
+    const held = object orelse return shown;
+    const data = held.drawer_data orelse return shown;
+    if (data.view_modes >= icon.DDVM_BYICON and data.view_modes <= icon.DDVM_BYSIZE) shown.view = @enumFromInt(data.view_modes - icon.DDVM_BYICON);
+    if (data.flags & icon.DDFLAGS_SHOWICONS != 0) shown.show_all = false;
+    return shown;
+}
+
+/// The drawer's path watched, so that it is read again when it changes.
+fn follow(d: *Desktop, dr: *Drawer) void {
+    dr.watch = .{ .name = @ptrCast(&dr.path), .flags = notify.NRF_SEND_MESSAGE, .port = d.notify_port, .user_data = @intFromPtr(dr) };
+    dr.watched = d.dl.StartNotify(&dr.watch);
+}
+
 /// `path` opened into a window: brought to the front when it is open
 /// already. The drawer's icon (`Disk.info` for a volume) gives the box,
 /// the view and what is shown.
@@ -166,13 +192,10 @@ pub fn open(d: *Desktop, wanted: []const u8) void {
     const object = d.icon_base.GetDiskObjectNew(&name);
     defer if (object) |held| d.icon_base.FreeDiskObject(held);
 
-    var view = d.prefs.view;
-    var show_all = true;
+    const shown = shownBy(d, object);
     var place_at = defaultBox(d);
     if (object) |held| if (held.drawer_data) |data| {
         if (data.width > 0 and data.height > 0) place_at = .{ .min_x = data.left, .min_y = data.top, .max_x = data.left + data.width, .max_y = data.top + data.height };
-        if (data.view_modes >= icon.DDVM_BYICON and data.view_modes <= icon.DDVM_BYSIZE) view = @enumFromInt(data.view_modes - icon.DDVM_BYICON);
-        if (data.flags & icon.DDFLAGS_SHOWICONS != 0) show_all = false;
     };
 
     const window = d.ib.OpenWindowTagList(&[_]TagItem{
@@ -217,8 +240,8 @@ pub fn open(d: *Desktop, wanted: []const u8) void {
         .layer = @ptrFromInt(layer),
         .path_len = @intCast(wanted.len),
         .is_volume = wanted[wanted.len - 1] == ':',
-        .view = view,
-        .show_all = show_all,
+        .view = shown.view,
+        .show_all = shown.show_all,
     };
     @memcpy(dr.path[0..wanted.len], wanted);
     dr.icons.init(.unknown);
@@ -229,10 +252,38 @@ pub fn open(d: *Desktop, wanted: []const u8) void {
     makeBars(d, dr);
     d.sys.AddTail(&d.drawers, &dr.node);
     d.showChecks(dr.view, dr.show_all);
+    follow(d, dr);
+    startReading(d, dr);
+}
 
-    // Followed: read again when it changes.
-    dr.watch = .{ .name = @ptrCast(&dr.path), .flags = notify.NRF_SEND_MESSAGE, .port = d.notify_port, .user_data = @intFromPtr(dr) };
-    dr.watched = d.dl.StartNotify(&dr.watch);
+/// `dr`'s window turned to the drawer `wanted`, in place of the one it
+/// shows: the icons let go, the watch moved, the new drawer read in with
+/// the view and the files its icon says. The window keeps its box and
+/// place.
+pub fn browse(d: *Desktop, dr: *Drawer, wanted: []const u8) void {
+    if (wanted.len == 0 or wanted.len > dos.path_max) return;
+    var name: [dos.path_max + 1:0]u8 = @splat(0);
+    @memcpy(name[0..wanted.len], wanted);
+    const object = d.icon_base.GetDiskObjectNew(&name);
+    const shown = shownBy(d, object);
+    if (object) |held| d.icon_base.FreeDiskObject(held);
+
+    stopReading(d, dr);
+    if (dr.watched) d.dl.EndNotify(&dr.watch);
+    dr.watched = false;
+    forgetIcons(d, dr);
+    dr.path = @splat(0);
+    @memcpy(dr.path[0..wanted.len], wanted);
+    dr.path_len = @intCast(wanted.len);
+    dr.is_volume = wanted[wanted.len - 1] == ':';
+    dr.view = shown.view;
+    dr.show_all = shown.show_all;
+    dr.origin = .{};
+    makeTitle(d, dr);
+    d.ib.SetWindowTitles(dr.window, &dr.title, wn.TITLE_UNCHANGED);
+    d.showChecks(dr.view, dr.show_all);
+    follow(d, dr);
+    clearInside(d, dr);
     startReading(d, dr);
 }
 
@@ -894,10 +945,11 @@ pub fn closeAll(d: *Desktop) void {
     while (d.drawers.first()) |node| close(d, @alignCast(@fieldParentPtr("node", node)));
 }
 
-/// The drawer `dr` is in opened, or a volume's own window, nothing.
+/// The drawer `dr` is in opened - in `dr`'s window, or in a window of its
+/// own with NEWWINDOW=YES; for a volume's own window, nothing.
 pub fn openParent(d: *Desktop, dr: *Drawer) void {
     const up = path.parent(dr.pathText()) orelse return;
     var copy: [dos.path_max]u8 = undefined;
     @memcpy(copy[0..up.len], up);
-    open(d, copy[0..up.len]);
+    if (d.prefs.new_window) open(d, copy[0..up.len]) else browse(d, dr, copy[0..up.len]);
 }
