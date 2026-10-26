@@ -42,12 +42,15 @@ pub const p4_target_query: std.Target.Query = .{
 
 /// A RISC-V 64 machine in supervisor mode under SBI firmware (OpenSBI):
 /// QEMU's virt and the StarFive JH7110's U74 cores. RV64GC, so the LP64D
-/// ABI: a task carries the D extension's FPU registers.
+/// ABI: a task carries the D extension's FPU registers. Scheduled for the
+/// U74: the instructions are RV64GC's alone, so QEMU runs the same code,
+/// but LLVM knows the in-order core's latencies and fills them - without
+/// it, a chain of FPU operations waits out every one.
 pub const rv64_target_query: std.Target.Query = .{
     .cpu_arch = .riscv64,
     .os_tag = .freestanding,
     .abi = .none,
-    .cpu_model = .{ .explicit = &std.Target.riscv.cpu.generic_rv64 },
+    .cpu_model = .{ .explicit = &std.Target.riscv.cpu.sifive_u74 },
     .cpu_features_add = std.Target.riscv.featureSet(&.{ .m, .a, .f, .d, .c, .zicsr, .zifencei }),
 };
 
