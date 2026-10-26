@@ -100,9 +100,14 @@ pub const StackBase = extern struct {
     /// Run without the stack task: whoever made the stack runs its timers
     /// itself - the host tests, which say what time it is.
     no_task: u8 = 0,
-    pad3: [2]u8 = .{ 0, 0 },
+    /// The stack task is taking its device's answers under the lock, and
+    /// the time it took when it began is `batch_time`: what `clock` says
+    /// meanwhile.
+    in_batch: u8 = 0,
+    pad3: [1]u8 = .{0},
     /// The time, for a stack without its task.
     fixed_time: u64 align(4) = 0,
+    batch_time: u64 align(4) = 0,
     /// The name servers asked - an IPv4 one mapped - and how many there
     /// are.
     nameservers: [bsd.NAMESERVERS_MAX]@import("ip6/address.zig").Address = @splat(.{}),
@@ -138,8 +143,11 @@ pub const StackBase = extern struct {
     start_signal: i8 = -1,
     pad: [3]u8 = .{ 0, 0, 0 },
 
-    /// The stack task told that the earliest deadline changed.
+    /// The stack task told that the earliest deadline changed - unless it
+    /// is the stack task, in a batch, that changed it: it looks at the
+    /// deadlines as the batch ends.
     pub fn rethink(stack: *StackBase) void {
+        if (stack.in_batch != 0) return;
         const task = stack.task orelse return;
         if (stack.rethink_mask != 0) stack.sys_base.Signal(task, stack.rethink_mask);
     }

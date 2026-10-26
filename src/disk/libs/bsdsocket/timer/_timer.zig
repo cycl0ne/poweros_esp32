@@ -145,9 +145,13 @@ pub fn date(stack: *StackBase) timer.TimeVal {
 
 /// The microseconds since the boot, on the E-clock, or 0 before the
 /// stack has a timer. A stack that runs without its task has the time its
-/// runner says.
+/// runner says. While the stack task takes a batch of its device's
+/// answers, every segment of it has the time the batch began: reading
+/// the E-clock traps to the firmware on the JH7110 (some 400 cycles), and
+/// a segment read it two or three times.
 pub fn clock(stack: *StackBase) u64 {
     if (stack.no_task != 0) return stack.fixed_time;
+    if (stack.in_batch != 0) return stack.batch_time;
     const timer_base = stack.timer_base orelse return 0;
     var value: timer.EClockVal = .{};
     const rate = timer_base.ReadEClock(&value);

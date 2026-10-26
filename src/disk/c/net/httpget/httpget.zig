@@ -43,7 +43,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "HTTPGet";
-const VERSION_STRING = "\x00$VER: HTTPGet 1.6 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: HTTPGet 1.7 (26.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "URL/A,TO/K,QUIET/S,NOVERIFY/S";
@@ -71,7 +71,10 @@ const MSG_REDIRECTS = "%s: more than %u redirects, or one to nowhere\n";
 const MSG_HTTP_FAILED = "%s: the request failed (%d)\n";
 const MSG_DONE = "%lu bytes in %lu.%02u s, %lu KiB/s\n";
 
-const buffer_bytes = 8192;
+/// The piece the body is read and written in: 256 KiB on the 64-bit
+/// machines, where a gigabit download in 8 KiB pieces is held to about
+/// 70 MB/s by the reads and writes alone; 8 KiB where memory is short.
+const buffer_bytes: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 256 * 1024 else 8192;
 const redirects_most = 5;
 const user_agent = "PowerOS-HTTPGet/1.0";
 

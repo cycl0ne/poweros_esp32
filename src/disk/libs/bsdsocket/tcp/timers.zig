@@ -192,15 +192,31 @@ fn probe(stack: *StackBase, tcb: *Tcb, now: u64) void {
 
 // --- the delayed acknowledgement ---------------------------------------------------
 
-/// An acknowledgement owed for data that came in order: at once for every
-/// second segment, else within 200 ms.
+/// Segments an acknowledgement may wait for within one batch of the
+/// stack task's; with this many it goes at once.
+pub const batch_acks_most = 8;
+
+/// An acknowledgement owed for data that came in order: for every second
+/// segment, else within 200 ms. While the stack task takes a batch of
+/// its device's answers, the segments of the batch are acknowledged as
+/// it ends - the delayed acknowledgement set for the batch's own time,
+/// which the task runs out then - and at once only when
+/// `batch_acks_most` wait: an acknowledgement is a frame out, a device
+/// write and its answer, and one for every two segments cost the stack
+/// more than anything but the checksum.
 pub fn owe(stack: *StackBase, tcb: *Tcb, now: u64) void {
     tcb.unacked_segments += 1;
-    if (tcb.unacked_segments >= 2) {
+    if (tcb.unacked_segments < 2) {
+        if (!tcb.timer_delack.armed()) _ = _timer.set(stack, &tcb.timer_delack, now + delack_us);
+        return;
+    }
+    if (stack.in_batch == 0 or tcb.unacked_segments >= batch_acks_most) {
         tcb.flags |= _tcp.ack_now;
         return;
     }
-    if (!tcb.timer_delack.armed()) _ = _timer.set(stack, &tcb.timer_delack, now + delack_us);
+    if (!tcb.timer_delack.armed() or tcb.timer_delack.deadline != stack.batch_time) {
+        _ = _timer.set(stack, &tcb.timer_delack, stack.batch_time);
+    }
 }
 
 /// An acknowledgement went: nothing is owed.

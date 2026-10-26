@@ -84,12 +84,52 @@ pub fn put32(bytes: []u8, at: usize, value: u32) void {
 
 /// `bytes` added to a running one's-complement sum of 16-bit words; an
 /// odd byte at the end counts as the high half of a word.
+///
+/// A machine word at a time where `bytes` starts on an even address,
+/// which every packet here does: the one's-complement sum is the same
+/// in either byte order (RFC 1071), so the words are added as the CPU
+/// loads them, with the carry out of each brought round, and the folded
+/// sum turned to the network's order at the end. A packet's checksum was
+/// two bytes a step before, the costliest step of a TCP segment coming
+/// in.
 pub fn sum(start: u32, bytes: []const u8) u32 {
-    var total = start;
+    if (@intFromPtr(bytes.ptr) & 1 != 0) return sumByBytes(start, bytes);
+    const Word = usize;
+    const little = @import("builtin").cpu.arch.endian() == .little;
+    var total: u64 = 0;
+    var at: usize = 0;
+    while (at + 2 <= bytes.len and (@intFromPtr(bytes.ptr) + at) % @sizeOf(Word) != 0) : (at += 2) {
+        total = addCarried(total, @as(*const u16, @ptrCast(@alignCast(bytes.ptr + at))).*);
+    }
+    while (at + 2 * @sizeOf(Word) <= bytes.len) : (at += 2 * @sizeOf(Word)) {
+        const words: *const [2]Word = @ptrCast(@alignCast(bytes.ptr + at));
+        total = addCarried(addCarried(total, words[0]), words[1]);
+    }
+    while (at + 2 <= bytes.len) : (at += 2) {
+        total = addCarried(total, @as(*const u16, @ptrCast(@alignCast(bytes.ptr + at))).*);
+    }
+    // The odd byte is a word's first, its high half in the network's
+    // order: the low half as a little-endian CPU loads it.
+    if (at < bytes.len) total = addCarried(total, if (little) bytes[at] else @as(u16, bytes[at]) << 8);
+    while (total >> 16 != 0) total = (total & 0xFFFF) + (total >> 16);
+    const folded: u16 = @intCast(total);
+    return start + if (little) @byteSwap(folded) else folded;
+}
+
+/// `value` added to `total` with the carry out of the top brought round.
+inline fn addCarried(total: u64, value: u64) u64 {
+    const added = @addWithOverflow(total, value);
+    return added[0] + added[1];
+}
+
+/// The sum two bytes at a time, for bytes on an odd address.
+fn sumByBytes(start: u32, bytes: []const u8) u32 {
+    var total: u64 = start;
     var at: usize = 0;
     while (at + 1 < bytes.len) : (at += 2) total += get16(bytes, at);
     if (at < bytes.len) total += @as(u32, bytes[at]) << 8;
-    return total;
+    while (total >> 32 != 0) total = (total & 0xFFFF_FFFF) + (total >> 32);
+    return @truncate(total);
 }
 
 /// The sum folded and inverted: the checksum to write, or 0 when a

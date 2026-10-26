@@ -175,12 +175,19 @@ fn stackTask(sys: *ExecBase) callconv(.c) void {
         var held = _lock.take(stack);
         const now = _timer.clock(stack);
         _timer.run(stack, now);
+        // The time of the batch is `now`, for every segment in it, until
+        // the lock is let go.
+        stack.batch_time = now;
+        stack.in_batch = 1;
         while (sys.GetMsg(&stack.port)) |message| device.complete(stack, &message.node, now);
         for (&stack.interfaces) |*interface| {
             if (interface.used == 0 or interface.device == null) continue;
             device.retryReads(stack, @ptrCast(@alignCast(interface.device.?)));
         }
+        // The acknowledgements the batch's segments owe (timers.owe).
+        _timer.run(stack, now);
         const next = _timer.earliest(stack);
+        stack.in_batch = 0;
         _lock.give(stack, held);
 
         // The one timer request set for the earliest deadline.
