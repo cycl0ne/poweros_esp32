@@ -7,8 +7,6 @@ const graphics = sdk.graphics;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
-const bitAt = _blit.bitAt;
-const stencil = _blit.stencil;
 const asRtgRect = _blit.asRtgRect;
 const shapeFlags = _blit.shapeFlags;
 const engineUsable = _blit.engineUsable;
@@ -107,14 +105,9 @@ pub fn BltTemplate(gb: *GraphicsBase, rp: *RastPort, bits: [*]const u8, pitch: u
             }
         }
 
-        var y: i32 = r.rect.min_y;
-        while (y < r.rect.max_y) : (y += 1) {
-            var x: i32 = r.rect.min_x;
-            while (x < r.rect.max_x) : (x += 1) {
-                stencil(rp, r, x, y, bitAt(bits, pitch, from_x + (x - r.rect.min_x), from_y + (y - r.rect.min_y)));
-            }
-            drawing.grow(&bound, y, &any);
-        }
+        _blit.templateRows(rp, r, bits, pitch, from_x, from_y);
+        drawing.grow(&bound, r.rect.min_y, &any);
+        drawing.grow(&bound, r.rect.max_y - 1, &any);
     }
     if (any) drawing.handOn(gb, rp, drawing.written(area.*, bound));
 }

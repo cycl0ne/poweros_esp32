@@ -25,6 +25,7 @@ Generated from the source by `./zig build autodoc`.
 - [BoardDisplayBitMap](#boarddisplaybitmap) - Tells which buffer a board is showing.
 - [BoardMode](#boardmode) - Tells which mode a board is in.
 - [CopyRect](#copyrect) - Copies a rectangle between buffers with the board's engine.
+- [CopyRects](#copyrects) - Copies several rectangles from one buffer to another as one job of the board's engine.
 - [CreateBoardTagList](#createboardtaglist) - Makes a board from a driver.
 - [CreateTransportTagList](#createtransporttaglist) - Makes a bus from a driver, for boards to talk through.
 - [DeleteBoard](#deleteboard) - Stops a board and gives back everything it held.
@@ -816,6 +817,75 @@ None known.
 
 ```zig
 _ = rb.CopyRect(buffer, buffer, &.{ .src_x = 0, .src_y = 10, .dest_x = 0, .dest_y = 0, .width = 800, .height = 590 });
+```
+
+## CopyRects
+
+Copies several rectangles from one buffer to another as one job of the board's engine.
+
+**SYNOPSIS**
+
+```zig
+fn CopyRects(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) i32
+```
+
+**SINCE**
+
+1.9. LVO -260.
+
+**INPUTS**
+
+- `src` - the buffer copied from, as for `CopyRect`.
+- `dest` - the buffer copied to, of a board. Not `src`.
+- `copies` - where from, where to and how big, one for each rectangle.
+- `count` - how many there are.
+
+**RESULT**
+
+As for `FillRect`. `RTGERR_BAD_ARG` for `dest` the same buffer as
+`src`.
+
+**BEHAVIOR**
+
+Each rectangle is cut to both buffers as `CopyRect` cuts it, and one
+that is left with nothing is passed over. The rest go to the board's
+`copy_rects` together, up to `RTG_MAX_COPIES` a call, and an engine
+that shares its work between cores shares them out at once: the pieces
+of a window that others cover, copied on to the display, wake the
+cores once rather than once a piece. A board without `copy_rects` is
+given them one at a time, as `CopyRect` would give them.
+
+The rectangles must not overlap where they land, nor the two buffers
+be one: the board may copy them in any order and at the same time. On
+an answer other than `RTGERR_OK` some of them may have been copied.
+
+**CONTEXT**
+
+- Waits: only if the driver does.
+- Interrupts: no. The driver may wait on its bus.
+- Locks: no spinlock may be held: a driver may wait.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CopyRect`, `WaitBlit`
+
+**EXAMPLES**
+
+```zig
+const pieces = [_]rtg.RtgCopy{
+    .{ .src_x = 0, .src_y = 0, .width = 200, .height = 40, .dest_x = 100, .dest_y = 80 },
+    .{ .src_x = 0, .src_y = 40, .width = 60, .height = 100, .dest_x = 100, .dest_y = 120 },
+};
+_ = rb.CopyRects(window, display, &pieces, pieces.len);
 ```
 
 ## CreateBoardTagList

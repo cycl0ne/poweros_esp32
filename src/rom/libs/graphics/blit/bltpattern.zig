@@ -12,12 +12,9 @@ const _blit = @import("_blit.zig");
 const Rect = graphics.Rect;
 const RastPort = rastport.RastPort;
 const drawing = @import("../draw/_draw.zig");
-const bitAt = _blit.bitAt;
 const shapeFlags = _blit.shapeFlags;
 const engineUsable = _blit.engineUsable;
 const asRtgRect = _blit.asRtgRect;
-const stencil = _blit.stencil;
-const writesPensOnly = _blit.writesPensOnly;
 const patternRows = _blit.patternRows;
 
 /// Fills a rectangle with a tile, repeated.
@@ -105,26 +102,9 @@ pub fn BltPattern(gb: *GraphicsBase, rp: *RastPort, bits: [*]const u8, pitch: u3
             }
         }
 
-        if (writesPensOnly(rp)) {
-            patternRows(rp, r, bits, pitch, width, height);
-            drawing.grow(&bound, r.rect.min_y, &any);
-            drawing.grow(&bound, r.rect.max_y - 1, &any);
-            continue;
-        }
-
-        var y: i32 = r.rect.min_y;
-        while (y < r.rect.max_y) : (y += 1) {
-            // Where the pattern is anchored is the surface's origin, not
-            // the RastPort's, so it is the same tiling either way in and
-            // the two rectangles of one pattern still line up.
-            const row: i32 = @mod(y + r.dy, @as(i32, @intCast(height)));
-            var x: i32 = r.rect.min_x;
-            while (x < r.rect.max_x) : (x += 1) {
-                const col: i32 = @mod(x + r.dx, @as(i32, @intCast(width)));
-                stencil(rp, r, x, y, bitAt(bits, pitch, col, row));
-            }
-            drawing.grow(&bound, y, &any);
-        }
+        patternRows(rp, r, bits, pitch, width, height);
+        drawing.grow(&bound, r.rect.min_y, &any);
+        drawing.grow(&bound, r.rect.max_y - 1, &any);
     }
     if (any) drawing.handOn(gb, rp, drawing.written(area.*, bound));
 }

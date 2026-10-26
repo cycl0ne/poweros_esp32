@@ -1796,7 +1796,7 @@ test "composed: a layer with its own bitmap draws in it, and scrolling only move
     try tearDown(lb);
 }
 
-test "composed: a drawing is handed on to the board once, in however many pieces it is seen" {
+test "composed: a drawing is copied as one job and handed on to the board once, in however many pieces it is seen" {
     const lb = try setUp();
     defer kexec.deinit();
     const c = try Composed.make(lb);
@@ -1811,9 +1811,14 @@ test "composed: a drawing is handed on to the board once, in however many pieces
     // Round corners make a layer a stack of rows of pieces.
     const round = try lookingLayer(lb, c.info, &all, 6, 0, 255);
     var before = log.refreshed;
+    var jobs = log.copy_jobs;
+    var copies = log.copies;
     fill(lb, round, graphics.penRGB(255, 0, 0), all);
     try testing.expectEqual(@as(u32, 1), log.refreshed - before);
     try testing.expectEqual(red, c.at(16, 8));
+    // Its pieces were copied together, the engine asked once.
+    try testing.expectEqual(@as(u32, 1), log.copy_jobs - jobs);
+    try testing.expect(log.copies - copies > 4);
     base(lb).DeleteLayer(round);
 
     // A layer in the middle, with a shadow, leaves the back one a frame
@@ -1821,10 +1826,14 @@ test "composed: a drawing is handed on to the board once, in however many pieces
     const middle_where = Rect{ .min_x = 8, .min_y = 4, .max_x = 20, .max_y = 10 };
     const middle = try lookingLayer(lb, c.info, &middle_where, 0, 3, 255);
     before = log.refreshed;
+    jobs = log.copy_jobs;
+    copies = log.copies;
     fill(lb, back, graphics.penRGB(0, 0, 255), all);
     try testing.expectEqual(@as(u32, 1), log.refreshed - before);
     try testing.expectEqual(blue, c.at(0, 0));
     try testing.expectEqual(blue, c.at(31, 15));
+    try testing.expectEqual(@as(u32, 1), log.copy_jobs - jobs);
+    try testing.expectEqual(@as(u32, 4), log.copies - copies);
     base(lb).DeleteLayer(middle);
 
     // Two strips far apart are two, not the whole display between them.

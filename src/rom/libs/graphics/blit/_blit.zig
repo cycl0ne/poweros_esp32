@@ -127,22 +127,123 @@ pub fn stencil(rp: *RastPort, p: drawing.Piece, x: i32, y: i32, set: bool) void 
     }
 }
 
-/// Whether every pixel a shape puts down is simply one of the two packed
-/// pens - nothing inverted, nothing composed - so it can be stored without
-/// going through the per-pixel path that decides those.
+/// What a shape's set bits and its clear bits put down - the pens as
+/// `stencil` chooses them, each ready for a run of pixels - or null where
+/// a bit leaves the pixel alone.
+pub const Stencil = struct {
+    set: ?drawing.Brush,
+    clear: ?drawing.Brush,
+    /// Bytes a pixel takes.
+    bytes: u32,
+
+    /// The pens of this RastPort's mode on a surface of `format`.
+    ///
+    /// INPUTS:
+    /// - `rp` - the RastPort. Its pens and draw mode decide.
+    /// - `format` - the surface's format.
+    pub fn of(rp: *const RastPort, format: rtg.bitmaps.PixelFormat) Stencil {
+        const inverse = rp.draw_mode & graphics.DRMD_INVERSVID != 0;
+        const jam2 = rp.draw_mode & graphics.DRMD_JAM2 != 0;
+        const fore = drawing.Brush.either(rp, format, false);
+        const back: ?drawing.Brush = if (jam2) drawing.Brush.either(rp, format, true) else null;
+        return .{
+            .set = if (inverse) back else fore,
+            .clear = if (inverse) fore else back,
+            .bytes = fore.bytes,
+        };
+    }
+
+    /// The pixel at `at`, for a bit.
+    inline fn put(s: *const Stencil, comptime T: type, at: [*]u8, set: bool) void {
+        if (set) {
+            if (s.set) |*pen| pen.putAs(T, at);
+        } else if (s.clear) |*pen| pen.putAs(T, at);
+    }
+
+    /// `count` pixels from `to`, one for each bit of `line` from bit
+    /// `first` on: a row of a shape. A byte of clear bits that put nothing
+    /// down is passed over whole, which is most of a line of text.
+    ///
+    /// INPUTS:
+    /// - `s` - the pens.
+    /// - `to` - the first pixel.
+    /// - `line` - the shape's row of bits.
+    /// - `first` - the bit the row starts at.
+    /// - `count` - how many pixels.
+    pub fn row(s: *const Stencil, to: [*]u8, line: [*]const u8, first: usize, count: usize) void {
+        const pen = if (s.set) |*p| p else &s.clear.?;
+        switch (pen.widthAt(to, s.bytes)) {
+            inline else => |width| s.rowAs(width.Type(), to, line, first, count),
+        }
+    }
+
+    fn rowAs(s: *const Stencil, comptime T: type, to: [*]u8, line: [*]const u8, first: usize, count: usize) void {
+        @setRuntimeSafety(false);
+        var at = to;
+        var col = first;
+        var left = count;
+        while (left != 0) {
+            const skip: u3 = @intCast(col % 8);
+            const n = @min(8 - @as(usize, skip), left);
+            var bits = line[col / 8] << skip;
+            if (bits == 0 and s.clear == null) {
+                at += n * s.bytes;
+            } else {
+                for (0..n) |_| {
+                    s.put(T, at, bits & 0x80 != 0);
+                    bits <<= 1;
+                    at += s.bytes;
+                }
+            }
+            col += n;
+            left -= n;
+        }
+    }
+
+    /// `count` pixels from `to`, one for each bit of a tile's row from bit
+    /// `first` on, the row starting over every `width` bits: a row of a
+    /// pattern.
+    pub fn tiled(s: *const Stencil, to: [*]u8, line: [*]const u8, first: u32, width: u32, count: usize) void {
+        const pen = if (s.set) |*p| p else &s.clear.?;
+        switch (pen.widthAt(to, s.bytes)) {
+            inline else => |w| s.tiledAs(w.Type(), to, line, first, width, count),
+        }
+    }
+
+    fn tiledAs(s: *const Stencil, comptime T: type, to: [*]u8, line: [*]const u8, first: u32, width: u32, count: usize) void {
+        @setRuntimeSafety(false);
+        var at = to;
+        var col = first;
+        for (0..count) |_| {
+            s.put(T, at, line[col >> 3] >> @intCast(7 - (col & 7)) & 1 != 0);
+            at += s.bytes;
+            col += 1;
+            if (col == width) col = 0;
+        }
+    }
+};
+
+/// A shape over one piece, a row at a time.
 ///
 /// INPUTS:
-/// - `rp` - the RastPort. Its draw mode and pens decide.
-pub fn writesPensOnly(rp: *const RastPort) bool {
-    if (rp.draw_mode & graphics.DRMD_COMPLEMENT != 0) return false;
-    if (rp.draw_mode & graphics.DRMD_BLEND == 0) return true;
-    if (!graphics.penIsOpaque(rp.fg_pen)) return false;
-    return rp.draw_mode & graphics.DRMD_JAM2 == 0 or graphics.penIsOpaque(rp.bg_pen);
+/// - `rp` - the RastPort.
+/// - `r` - the piece being written.
+/// - `bits` - the shape.
+/// - `pitch` - bytes from one of its rows to the next.
+/// - `from_x` - the shape's column that lands on the piece's left.
+/// - `from_y` - its row that lands on the piece's top.
+pub fn templateRows(rp: *const RastPort, r: drawing.Piece, bits: [*]const u8, pitch: u32, from_x: i32, from_y: i32) void {
+    const pens = Stencil.of(rp, r.surface.format);
+    const width: usize = @intCast(r.rect.width());
+    var y: i32 = r.rect.min_y;
+    while (y < r.rect.max_y) : (y += 1) {
+        const line = bits + @as(usize, @intCast(from_y + (y - r.rect.min_y))) * pitch;
+        pens.row(drawing.address(r, r.rect.min_x, y), line, @intCast(from_x), width);
+    }
 }
 
-/// A pattern over one piece, when writesPensOnly says the pens can be
-/// stored as they are: the tile's column stepped along the row rather than
-/// worked out with a division for each pixel.
+/// A pattern over one piece: the tile's column stepped along the row
+/// rather than worked out with a division for each pixel.
 ///
 /// INPUTS:
 /// - `rp` - the RastPort.
@@ -152,29 +253,16 @@ pub fn writesPensOnly(rp: *const RastPort) bool {
 /// - `width` - how wide the tile is.
 /// - `height` - how tall.
 pub fn patternRows(rp: *const RastPort, r: drawing.Piece, bits: [*]const u8, pitch: u32, width: u32, height: u32) void {
-    const bytes = pixelBytes(r.surface);
-    const inverse = rp.draw_mode & graphics.DRMD_INVERSVID != 0;
-    const jam2 = rp.draw_mode & graphics.DRMD_JAM2 != 0;
+    const pens = Stencil.of(rp, r.surface.format);
+    // Where the pattern is anchored is the surface's origin, not the
+    // RastPort's, so it is the same tiling either way in and the two
+    // rectangles of one pattern still line up.
     const first_col: u32 = @intCast(@mod(r.rect.min_x + r.dx, @as(i32, @intCast(width))));
+    const count: usize = @intCast(r.rect.width());
     var y: i32 = r.rect.min_y;
     while (y < r.rect.max_y) : (y += 1) {
         const tile_row: usize = @intCast(@mod(y + r.dy, @as(i32, @intCast(height))));
-        const line = bits + tile_row * pitch;
-        var to = r.surface.pixels.? + @as(usize, @intCast(y + r.dy)) * r.surface.pitch +
-            @as(usize, @intCast(r.rect.min_x + r.dx)) * bytes;
-        var col = first_col;
-        var x: i32 = r.rect.min_x;
-        while (x < r.rect.max_x) : (x += 1) {
-            const set = line[col >> 3] >> @intCast(7 - (col & 7)) & 1 != 0;
-            if (set != inverse) {
-                rows.store(to, bytes, rp.fg_packed);
-            } else if (jam2) {
-                rows.store(to, bytes, rp.bg_packed);
-            }
-            to += bytes;
-            col += 1;
-            if (col == width) col = 0;
-        }
+        pens.tiled(drawing.address(r, r.rect.min_x, y), bits + tile_row * pitch, first_col, width, count);
     }
 }
 
@@ -365,17 +453,57 @@ pub fn blendPixel(to: [*]u8, to_bytes: u32, to_format: rtg.bitmaps.PixelFormat, 
         rows.store(to, to_bytes, rastport.packPen(to_format, pen) orelse 0);
         return;
     }
-    const under = rastport.unpackPen(to_format, drawing.getPixel(to, to_bytes));
-    var mixed: graphics.Pen = 0xFF << 24;
-    var shift: u5 = 0;
-    while (shift < 24) : (shift += 8) {
-        const over_part: u32 = (pen >> shift) & 0xFF;
-        const under_part: u32 = (under >> shift) & 0xFF;
-        // Rounded, so that full coverage of a colour lands on that colour
-        // and no coverage leaves what was there untouched.
-        mixed |= ((over_part * alpha + under_part * (255 - alpha) + 127) / 255) << shift;
+    const under = rastport.unpackPen(to_format, rows.load(to, to_bytes));
+    // Rounded, so that full coverage of a colour lands on that colour and
+    // no coverage leaves what was there untouched.
+    rows.store(to, to_bytes, rastport.packPen(to_format, drawing.Mix.of(pen).over(under)) orelse 0);
+}
+
+/// A row of a picture laid over a row of a surface, each pixel by its own
+/// coverage, as `blendPixel` lays it. The pairs of formats pictures and
+/// displays use go with both formats known and a whole pixel a load; any
+/// other pair a pixel at a time through `blendPixel`.
+///
+/// INPUTS:
+/// - `to` - the surface's row.
+/// - `to_format` - the surface's format.
+/// - `from` - the picture's row.
+/// - `from_format` - the picture's format.
+/// - `count` - how many pixels.
+pub fn blendRow(to: [*]u8, to_format: rtg.bitmaps.PixelFormat, from: [*]const u8, from_format: rtg.bitmaps.PixelFormat, count: usize) void {
+    inline for (.{ .bgra32, .rgb565 }) |dest| {
+        inline for (.{ .rgba32, .bgra32 }) |source| {
+            const D = if (dest == .bgra32) u32 else u16;
+            if (to_format == dest and from_format == source and
+                @intFromPtr(to) % @sizeOf(D) == 0 and @intFromPtr(from) % 4 == 0)
+            {
+                return blendRowAs(dest, source, @ptrCast(@alignCast(to)), @ptrCast(@alignCast(from)), count);
+            }
+        }
     }
-    rows.store(to, to_bytes, rastport.packPen(to_format, mixed) orelse 0);
+    const to_bytes = @max(rtg.bitmaps.formatBits(to_format) / 8, 1);
+    const from_bytes = @max(rtg.bitmaps.formatBits(from_format) / 8, 1);
+    for (0..count) |i| {
+        const pen = rastport.unpackPen(from_format, rows.load(from + i * from_bytes, from_bytes));
+        blendPixel(to + i * to_bytes, to_bytes, to_format, pen);
+    }
+}
+
+fn blendRowAs(
+    comptime dest: rtg.bitmaps.PixelFormat,
+    comptime source: rtg.bitmaps.PixelFormat,
+    to: [*]if (dest == .bgra32) u32 else u16,
+    from: [*]const u32,
+    count: usize,
+) void {
+    @setRuntimeSafety(false);
+    for (to[0..count], from[0..count]) |*pixel, colour| {
+        const pen = @call(.always_inline, rastport.unpackPen, .{ source, colour });
+        const alpha = pen >> 24;
+        if (alpha == 0) continue;
+        const mixed = if (alpha == 0xFF) pen else drawing.Mix.of(pen).over(@call(.always_inline, rastport.unpackPen, .{ dest, pixel.* }));
+        pixel.* = @truncate(@call(.always_inline, rastport.packPen, .{ dest, mixed }).?);
+    }
 }
 
 // --- sampling between pixels ------------------------------------------------

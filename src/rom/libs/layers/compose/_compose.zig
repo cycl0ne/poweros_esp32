@@ -368,6 +368,18 @@ fn put(lb: *LayersBase, layer: *const Layer, from: *const rtg.Surface, bitmap: ?
     _ = gb.BltBitMap(from, x, y, @ptrCast(display), piece.min_x, piece.min_y, piece.width(), piece.height());
 }
 
+/// Where the picture a layer shows lies on the display, or nothing.
+fn pictureOn(layer: *const Layer) Rect {
+    if (layer.picture == null) return .{};
+    const ox, const oy = super.origin(layer);
+    return .{
+        .min_x = layer.picture_area.min_x + ox,
+        .min_y = layer.picture_area.min_y + oy,
+        .max_x = layer.picture_area.max_x + ox,
+        .max_y = layer.picture_area.max_y + oy,
+    };
+}
+
 /// A piece of a layer, in the display's coordinates and inside what it
 /// can see, on to the display: from its buffer, and from the picture it
 /// shows where the piece is under that.
@@ -375,12 +387,7 @@ fn putLayer(lb: *LayersBase, layer: *const Layer, piece: Rect, how: How) void {
     const own = layer.own orelse return;
     const ox, const oy = super.origin(layer);
     const buffer: *const rtg.Surface = @ptrCast(own.bitmap);
-    const over = if (layer.picture) |_| Rect{
-        .min_x = layer.picture_area.min_x + ox,
-        .min_y = layer.picture_area.min_y + oy,
-        .max_x = layer.picture_area.max_x + ox,
-        .max_y = layer.picture_area.max_y + oy,
-    } else Rect{};
+    const over = pictureOn(layer);
     const shown = Rect.intersect(piece, over);
     if (shown.isEmpty()) {
         put(lb, layer, buffer, own.bitmap, piece.min_x - ox, piece.min_y - oy, piece, how);
@@ -400,14 +407,65 @@ fn putLayer(lb: *LayersBase, layer: *const Layer, piece: Rect, how: How) void {
     }
 }
 
-/// A piece of a layer copied on to the display, with the shadows of the
-/// layers in front of it that fall there: those are laid over it before
-/// it is handed on, so it is never seen without them.
-fn putShaded(lb: *LayersBase, layer: *const Layer, piece: Rect, gather: *Gather) void {
-    putLayer(lb, layer, piece, .copied);
-    if (layer.info.shaded and effects.shadedFront(layer, piece)) effects.darkenFront(lb, layer, piece);
-    gather.add(lb, layer.info, piece);
-}
+/// The pieces of one layer copied from its buffer on to the display
+/// together: one job of the board's engine for all of them (rtg's
+/// `CopyRects`) rather than one a piece, each of which wakes every core
+/// and waits for them. A piece the layer's picture shows over comes from
+/// two places and goes by itself, as before.
+///
+/// With a `Gather`, each piece is then darkened where the shadows of the
+/// layers in front fall on it - before it is handed on, so it is never
+/// seen without them - and gathered to be handed on. The pieces do not
+/// overlap, so copying them all before darkening any is the same
+/// picture. Without one the caller does both.
+const Batch = struct {
+    copies: [rtg.RTG_MAX_COPIES]rtg.RtgCopy = undefined,
+    pieces: [rtg.RTG_MAX_COPIES]Rect = undefined,
+    count: u32 = 0,
+    gather: ?*Gather = null,
+
+    fn add(b: *Batch, lb: *LayersBase, layer: *const Layer, piece: Rect) void {
+        if (!Rect.intersect(piece, pictureOn(layer)).isEmpty()) {
+            b.flush(lb, layer);
+            putLayer(lb, layer, piece, .copied);
+            b.finish(lb, layer, piece);
+            return;
+        }
+        if (b.count == b.copies.len) b.flush(lb, layer);
+        const ox, const oy = super.origin(layer);
+        b.copies[b.count] = .{
+            .src_x = piece.min_x - ox,
+            .src_y = piece.min_y - oy,
+            .width = piece.width(),
+            .height = piece.height(),
+            .dest_x = piece.min_x,
+            .dest_y = piece.min_y,
+        };
+        b.pieces[b.count] = piece;
+        b.count += 1;
+    }
+
+    /// What is collected copied on to the display. A board that does not
+    /// take the copies together has them each the way `putLayer` copies
+    /// one - again, where it took some of them before it stopped.
+    fn flush(b: *Batch, lb: *LayersBase, layer: *const Layer) void {
+        if (b.count == 0) return;
+        const pieces = b.pieces[0..b.count];
+        b.count = 0;
+        const own = layer.own orelse return;
+        const display = layer.info.bitmap orelse return;
+        if (lb.rtg_base.CopyRects(own.bitmap, display, &b.copies, @intCast(pieces.len)) != rtg.errors.RTGERR_OK) {
+            for (pieces) |piece| putLayer(lb, layer, piece, .copied);
+        }
+        for (pieces) |piece| b.finish(lb, layer, piece);
+    }
+
+    fn finish(b: *Batch, lb: *LayersBase, layer: *const Layer, piece: Rect) void {
+        const gather = b.gather orelse return;
+        if (layer.info.shaded and effects.shadedFront(layer, piece)) effects.darkenFront(lb, layer, piece);
+        gather.add(lb, layer.info, piece);
+    }
+};
 
 /// The pieces of a layer's visible region, `at_hand` or from exec, for
 /// `each` to be called with every one of them inside `cut`.
@@ -467,16 +525,18 @@ fn copyLayer(lb: *LayersBase, layer: *Layer, area: Rect, gather: *Gather) void {
     const Each = struct {
         lb: *LayersBase,
         layer: *Layer,
-        gather: *Gather,
+        batch: *Batch,
 
         fn piece(each: @This(), r: Rect) void {
-            if (!each.layer.info.veiled) return putShaded(each.lb, each.layer, r, each.gather);
+            if (!each.layer.info.veiled) return each.batch.add(each.lb, each.layer, r);
             var parts: [effects.most_unveiled]Rect = undefined;
             const n = effects.unveiled(each.layer, r, &parts);
-            for (parts[0..n]) |part| putShaded(each.lb, each.layer, part, each.gather);
+            for (parts[0..n]) |part| each.batch.add(each.lb, each.layer, part);
         }
     };
-    eachPiece(lb, layer, cut, Each{ .lb = lb, .layer = layer, .gather = gather }, Each.piece);
+    var batch = Batch{ .gather = gather };
+    eachPiece(lb, layer, cut, Each{ .lb = lb, .layer = layer, .batch = &batch }, Each.piece);
+    batch.flush(lb, layer);
 }
 
 /// Everything inside `area` copied on to the display again, each pixel
@@ -515,9 +575,11 @@ fn showInto(lb: *LayersBase, info: *LayerInfo, area: Rect, gather: *Gather) void
     const Each = struct {
         lb: *LayersBase,
         layer: *Layer,
+        batch: *Batch,
 
         fn piece(each: @This(), r: Rect) void {
-            putLayer(each.lb, each.layer, r, if (each.layer.opacity == 255) .copied else .laid);
+            if (each.layer.opacity != 255) return putLayer(each.lb, each.layer, r, .laid);
+            each.batch.add(each.lb, each.layer, r);
         }
     };
     var at = info.layers.last();
@@ -525,7 +587,12 @@ fn showInto(lb: *LayersBase, info: *LayerInfo, area: Rect, gather: *Gather) void
         const layer: *Layer = @fieldParentPtr("node", node);
         at = if (node.pred.?.pred == null) null else node.pred;
         effects.darken(lb, layer, cut);
-        if (layer.own != null) eachPiece(lb, layer, cut, Each{ .lb = lb, .layer = layer }, Each.piece);
+        if (layer.own != null) {
+            // Each layer's copied before the next one's shadow falls on it.
+            var batch = Batch{};
+            eachPiece(lb, layer, cut, Each{ .lb = lb, .layer = layer, .batch = &batch }, Each.piece);
+            batch.flush(lb, layer);
+        }
     }
     gather.add(lb, info, cut);
 }

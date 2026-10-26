@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! AreaEnd: fills everything collected and begins again.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const graphics = sdk.graphics;
@@ -13,6 +14,8 @@ const Rect = graphics.Rect;
 const RastPort = rastport.RastPort;
 const drawing = @import("../draw/_draw.zig");
 const crossings = _area.crossings;
+const edges = _area.edges;
+const Edge = _area.Edge;
 const reset = _area.reset;
 const shapeRange = _area.shapeRange;
 
@@ -101,31 +104,53 @@ pub fn AreaEnd(gb: *GraphicsBase, rp: *RastPort) bool {
     top = @max(top, rp.clip.min_y);
     bottom = @min(bottom, rp.clip.max_y - 1);
 
+    // Every edge that is not level, in the order of the row it begins
+    // at. A row then looks only at the edges begun above it and not yet
+    // ended - kept together in `list[gone..begun]` - and not at every edge
+    // of every shape: an ellipse has hundreds, and a row crosses two.
+    const list = edges(rp);
+    var count: u32 = 0;
+    var shape: u32 = 0;
+    while (shape < rp.area_shapes) : (shape += 1) {
+        const from, const to = shapeRange(rp, shape);
+        if (to - from < 2) continue;
+        var e: u32 = from;
+        while (e < to) : (e += 1) {
+            // Closed: the last corner joins the first of its own shape.
+            const next = if (e + 1 < to) e + 1 else from;
+            if (points[e].y == points[next].y) continue;
+            list[count] = .{ .from = e, .to = next };
+            count += 1;
+        }
+    }
+    std.sort.heap(Edge, list[0..count], points, beginsAbove);
+
     const xs = crossings(rp);
     var bound = Rect{};
     var any = false;
+    var gone: u32 = 0;
+    var begun: u32 = 0;
 
     var y: i32 = top;
     while (y <= bottom) : (y += 1) {
+        while (begun < count and lowOf(points, list[begun]) <= y) begun += 1;
         var found: u32 = 0;
-        var shape: u32 = 0;
-        while (shape < rp.area_shapes) : (shape += 1) {
-            const from, const to = shapeRange(rp, shape);
-            if (to - from < 2) continue;
-            var e: u32 = from;
-            while (e < to) : (e += 1) {
-                const a = points[e];
-                // Closed: the last corner joins the first of its own shape.
-                const b = points[if (e + 1 < to) e + 1 else from];
-                if (a.y == b.y) continue;
-                const low = @min(a.y, b.y);
-                const high = @max(a.y, b.y);
-                // Half-open in y, so a corner shared by two edges is
-                // counted once and the crossings stay even.
-                if (y < low or y >= high) continue;
-                xs[found] = a.x + @divTrunc((y - a.y) * (b.x - a.x), b.y - a.y);
-                found += 1;
+        var k: u32 = gone;
+        while (k < begun) : (k += 1) {
+            const edge = list[k];
+            const a = points[edge.from];
+            const b = points[edge.to];
+            // Half-open in y, so a corner shared by two edges is counted
+            // once and the crossings stay even. An edge ended above is out
+            // of the list for good: swapped down to where it starts.
+            if (y >= @max(a.y, b.y)) {
+                list[k] = list[gone];
+                list[gone] = edge;
+                gone += 1;
+                continue;
             }
+            xs[found] = a.x + @divTrunc((y - a.y) * (b.x - a.x), b.y - a.y);
+            found += 1;
         }
         if (found < 2) continue;
 
@@ -134,9 +159,9 @@ pub fn AreaEnd(gb: *GraphicsBase, rp: *RastPort) bool {
         var j: u32 = 1;
         while (j < found) : (j += 1) {
             const key = xs[j];
-            var k = j;
-            while (k > 0 and xs[k - 1] > key) : (k -= 1) xs[k] = xs[k - 1];
-            xs[k] = key;
+            var m = j;
+            while (m > 0 and xs[m - 1] > key) : (m -= 1) xs[m] = xs[m - 1];
+            xs[m] = key;
         }
 
         var pair: u32 = 0;
@@ -146,4 +171,13 @@ pub fn AreaEnd(gb: *GraphicsBase, rp: *RastPort) bool {
     }
     if (any) drawing.handOn(gb, rp, drawing.written(rp.fill_box, bound));
     return true;
+}
+
+/// The row an edge begins at.
+fn lowOf(points: [*]const graphics.Point, edge: Edge) i32 {
+    return @min(points[edge.from].y, points[edge.to].y);
+}
+
+fn beginsAbove(points: [*]const graphics.Point, a: Edge, b: Edge) bool {
+    return lowOf(points, a) < lowOf(points, b);
 }

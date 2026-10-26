@@ -196,4 +196,11 @@ i32 ScalePixels(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPixe
 /// as RefreshBitMap hands on rows - only those of the rectangle where the
 /// board can, its rows where it cannot. Cut down to the buffer.
 i32 RefreshRect(*rtg.RtgBitMap bitmap, *const rtg.RtgRect area)
+/// Copy several rectangles of one buffer on to another as one job, each
+/// as CopyRect copies it and cut down to both buffers: the pieces of a
+/// window seen between others, copied by the board's engine at once
+/// rather than one after another. The rectangles do not overlap where they
+/// land, and the two buffers are not one. RTGERR_NOT_SUPPORTED unless the
+/// board's engine takes them.
+i32 CopyRects(*rtg.RtgBitMap src, *rtg.RtgBitMap dest, [*]const rtg.RtgCopy copies, u32 count)
 ##end

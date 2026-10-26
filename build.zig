@@ -403,6 +403,23 @@ pub fn build(b: *std.Build) void {
     run_bench.has_side_effects = true;
     b.step("audio-bench", "Time audio.device's mixer on the host for 1, 4, 8 and 16 voices").dependOn(&run_bench.step);
 
+    // graphics.library's software drawing on the host, as the tests stand
+    // it up: `gfx-bench` says what each kind of call costs, to compare one
+    // change of the drawing loops with the one before. A test binary,
+    // since exec stands on the host only in one, run as a program so that
+    // it may print.
+    const gfxbench_mod = b.createModule(.{
+        .root_source_file = b.path("src/gfxbench.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    });
+    gfxbench_mod.addImport("sdk", sdk);
+    const gfxbench = b.addTest(.{ .name = "gfxbench", .root_module = gfxbench_mod, .filters = &.{"gfx-bench"} });
+    const run_gfxbench = std.Build.Step.Run.create(b, "run gfxbench");
+    run_gfxbench.addArtifactArg(gfxbench);
+    run_gfxbench.has_side_effects = true;
+    b.step("gfx-bench", "Time graphics.library's software drawing on the host, in RGB565 and BGRA32").dependOn(&run_gfxbench.step);
+
     // tools/mkicon, which makes the disk's icons from pictures.
     const mkicon = b.addExecutable(.{
         .name = "mkicon",

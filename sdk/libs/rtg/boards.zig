@@ -445,7 +445,20 @@ pub const RtgBoardOps = extern struct {
     /// clipped to the buffer and is never empty. A board without it is
     /// refreshed the rectangle's rows.
     refresh_rect: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect) callconv(.c) i32 = null,
+
+    // --- several copies as one job. ---
+
+    /// Copy `count` rectangles, at most `RTG_MAX_COPIES`, from `src` to
+    /// `dest` as one job. Each has been clipped to both buffers and none is
+    /// empty; they do not overlap where they land, and the two are not
+    /// one buffer. A board without it is given them one by one through
+    /// `copy_rect`.
+    copy_rects: ?*const fn (*RtgBoard, *RtgBitMap, *RtgBitMap, [*]const bitmaps.RtgCopy, u32) callconv(.c) i32 = null,
 };
+
+/// The most rectangles one `copy_rects` call hands a board: rtg cuts a
+/// longer list into calls of this many.
+pub const RTG_MAX_COPIES = 16;
 
 /// Part of the display shown from a buffer: from display line `line`
 /// down to where the next band starts - or the display's bottom - the

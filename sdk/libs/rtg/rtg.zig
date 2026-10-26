@@ -62,6 +62,7 @@ pub const RtgBoardStats = boards.RtgBoardStats;
 pub const RtgBand = boards.RtgBand;
 pub const RTGBANDF_REPEAT = boards.RTGBANDF_REPEAT;
 pub const RTG_MAX_BANDS = boards.RTG_MAX_BANDS;
+pub const RTG_MAX_COPIES = boards.RTG_MAX_COPIES;
 pub const RtgBoardOps = boards.RtgBoardOps;
 pub const RtgPointerImage = boards.RtgPointerImage;
 pub const RtgDriver = boards.RtgDriver;

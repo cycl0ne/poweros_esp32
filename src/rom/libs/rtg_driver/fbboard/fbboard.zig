@@ -132,7 +132,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 13;
+const REVISION = 14;
 const BUILD_DATE = "25.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -1601,6 +1601,10 @@ fn copyRect(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, wha
     return engine.copy(&screenOf(board).engine, src, dest, what);
 }
 
+fn copyRects(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, list: [*]const rtg.RtgCopy, count: u32) callconv(.c) i32 {
+    return engine.copyMany(&screenOf(board).engine, src, dest, list, count);
+}
+
 fn blitTemplate(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, shape: *const rtg.bitmaps.RtgTemplate) callconv(.c) i32 {
     return engine.template(&screenOf(board).engine, bitmap, area, shape);
 }
@@ -1647,6 +1651,7 @@ const ops = rtg.boards.RtgBoardOps{
     .blend_rect = &blendRect,
     .scale_pixels = &scalePixels,
     .refresh_rect = &refreshRect,
+    .copy_rects = &copyRects,
 };
 
 const driver_ops = rtg.boards.RtgDriverOps{ .create_board = &createBoard };

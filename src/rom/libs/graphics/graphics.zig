@@ -3924,3 +3924,338 @@ test "WritePixelArray: a picture put down as it is, converted, clipped and cut; 
     base(gb).FreeRastPort(@ptrCast(rp));
     try tearDown(gb);
 }
+
+// --- the drawing loops against a pixel at a time ----------------------------
+//
+// The software paths go by rows, columns and runs, with the pen and the
+// mode worked out once (`Brush`, `Stencil`). Here each of them is held to
+// what the library wrote when it went a pixel at a time - the mode decided
+// and the pixel packed for each, every mix divided by 255 - in every format
+// a RastPort can have, every draw mode, a translucent pen and an opaque
+// one, rows aligned and not, and through two clip targets that put the
+// pieces of one drawing at two different offsets.
+
+/// The pixels a call is expected to write, worked out a pixel at a time.
+const Reference = struct {
+    surface: *rtg.Surface,
+    targets: *const [2]graphics.ClipTarget,
+    mode: u32,
+    fg: graphics.Pen,
+    bg: graphics.Pen,
+
+    /// The target a point of the RastPort lands in, if any.
+    fn target(r: *const Reference, x: i32, y: i32) ?*const graphics.ClipTarget {
+        for (r.targets) |*t| if (t.rect.contains(x, y)) return t;
+        return null;
+    }
+
+    /// One pixel in a pen, as `plotPen` decided it for each before.
+    fn plot(r: *const Reference, x: i32, y: i32, back: bool) void {
+        const t = r.target(x, y) orelse return;
+        const pen = if (back) r.bg else r.fg;
+        const format = r.surface.format;
+        const bytes = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+        const at = r.surface.pixels.? + @as(usize, @intCast(y + t.dy)) * r.surface.pitch +
+            @as(usize, @intCast(x + t.dx)) * bytes;
+        var value: u32 = 0;
+        for (0..bytes) |i| value |= @as(u32, at[i]) << @intCast(i * 8);
+        const packed_pen = rastport.packPen(format, pen).?;
+        const out = if (r.mode & graphics.DRMD_COMPLEMENT != 0)
+            value ^ (if (bytes >= 4) 0xFFFF_FFFF else (@as(u32, 1) << @intCast(bytes * 8)) - 1)
+        else if (r.mode & graphics.DRMD_BLEND != 0 and !graphics.penIsOpaque(pen))
+            rastport.packPen(format, slowOver(pen, rastport.unpackPen(format, value))) orelse packed_pen
+        else
+            packed_pen;
+        for (0..bytes) |i| at[i] = @truncate(out >> @intCast(i * 8));
+    }
+
+    /// The pen a fill takes.
+    fn fill(r: *const Reference, x: i32, y: i32) void {
+        r.plot(x, y, r.mode & graphics.DRMD_INVERSVID != 0);
+    }
+
+    /// One pixel of a solid line: the pattern's ink, every bit set.
+    fn ink(r: *const Reference, x: i32, y: i32) void {
+        if (r.mode & graphics.DRMD_INVERSVID == 0) return r.plot(x, y, false);
+        if (r.mode & graphics.DRMD_JAM2 != 0) r.plot(x, y, true);
+    }
+
+    /// One pixel of a shape, as `stencil` put it down.
+    fn stencil(r: *const Reference, x: i32, y: i32, set: bool) void {
+        const lit = if (r.mode & graphics.DRMD_INVERSVID != 0) !set else set;
+        if (lit) {
+            r.plot(x, y, false);
+        } else if (r.mode & graphics.DRMD_JAM2 != 0) {
+            r.plot(x, y, true);
+        }
+    }
+
+    /// A line as Bresenham's walk took it a point at a time, clipped to
+    /// each target as `Draw` clips it.
+    fn line(r: *const Reference, x0: i32, y0: i32, x1: i32, y1: i32) void {
+        for (r.targets) |*t| {
+            const seg = drawing.clipSegment(t.rect, x0, y0, x1, y1) orelse continue;
+            var x = seg[0];
+            var y = seg[1];
+            const dx: i32 = @intCast(@abs(seg[2] - seg[0]));
+            const dy: i32 = @intCast(@abs(seg[3] - seg[1]));
+            var err = dx - dy;
+            while (true) {
+                r.ink(x, y);
+                if (x == seg[2] and y == seg[3]) break;
+                const e2 = err * 2;
+                if (e2 > -dy) {
+                    err -= dy;
+                    x += if (seg[2] > seg[0]) 1 else -1;
+                }
+                if (e2 < dx) {
+                    err += dx;
+                    y += if (seg[3] > seg[1]) 1 else -1;
+                }
+            }
+        }
+    }
+};
+
+/// `src` over `dst` with each channel divided by 255, as it was.
+fn slowOver(src: graphics.Pen, dst: graphics.Pen) graphics.Pen {
+    const a: u32 = src >> 24;
+    if (a == 0xFF) return src;
+    if (a == 0) return dst;
+    var mixed: graphics.Pen = 0xFF00_0000;
+    var shift: u5 = 0;
+    while (shift < 24) : (shift += 8) {
+        mixed |= (((src >> shift & 0xFF) * a + (dst >> shift & 0xFF) * (255 - a) + 127) / 255) << shift;
+    }
+    return mixed;
+}
+
+test "the drawing loops write what a pixel at a time wrote, in every format and mode" {
+    const gb = try setUp();
+    defer kexec.deinit();
+    const g = base(gb);
+
+    const formats = [_]rtg.bitmaps.PixelFormat{ .rgb565, .bgra32, .rgba32, .bgr24, .rgb24, .argb1555, .gray8 };
+    const modes = [_]u32{
+        graphics.DRMD_JAM1,
+        graphics.DRMD_JAM2,
+        graphics.DRMD_JAM1 | graphics.DRMD_COMPLEMENT,
+        graphics.DRMD_JAM1 | graphics.DRMD_BLEND,
+        graphics.DRMD_JAM2 | graphics.DRMD_BLEND,
+        graphics.DRMD_JAM2 | graphics.DRMD_INVERSVID,
+        graphics.DRMD_JAM1 | graphics.DRMD_INVERSVID | graphics.DRMD_BLEND,
+    };
+    const pens = [_][2]graphics.Pen{
+        .{ graphics.penARGB(0x80, 200, 40, 90), graphics.penARGB(0xC0, 10, 220, 130) },
+        .{ graphics.penRGB(200, 40, 90), graphics.penRGB(10, 220, 130) },
+        // No alpha at all, laid over, leaves what is there; one step more
+        // is the least a pen can show.
+        .{ graphics.penARGB(0, 200, 40, 90), graphics.penARGB(1, 10, 220, 130) },
+    };
+    const width = 48;
+    const height = 24;
+    var got_memory: [width * height * 4 + 8]u8 align(8) = undefined;
+    var want_memory: [width * height * 4 + 8]u8 align(8) = undefined;
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const random = prng.random();
+
+    // A shape with rows not a whole number of bytes, read from its fourth
+    // bit; a tile 16 by 4; a picture of every coverage.
+    var shape: [5 * 20]u8 = undefined;
+    random.bytes(&shape);
+    var tile: [2 * 4]u8 = undefined;
+    random.bytes(&tile);
+    var picture: [30 * 20 * 4]u8 = undefined;
+    random.bytes(&picture);
+    for (0..30 * 20) |i| picture[i * 4 + 3] = switch (i % 5) {
+        0 => 0,
+        1 => 255,
+        else => picture[i * 4 + 3],
+    };
+
+    for (formats) |format| {
+        const bytes = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+        for ([_]usize{ 0, 1, 2 }) |offset| {
+            var got = sizedSurface(got_memory[offset..][0 .. width * height * bytes], format, width, height);
+            var want = sizedSurface(want_memory[offset..][0 .. width * height * bytes], format, width, height);
+            // Two pieces of one RastPort, 40 by 20, at two offsets.
+            const right_of = graphics.ClipTarget{ .rect = .{ .min_x = 22, .min_y = 0, .max_x = 40, .max_y = 20 }, .surface = &got, .dx = 7, .dy = 3 };
+            var got_targets = [2]graphics.ClipTarget{
+                .{ .rect = .{ .min_x = 0, .min_y = 0, .max_x = 22, .max_y = 20 }, .surface = &got, .dx = 3, .dy = 1 },
+                right_of,
+            };
+            got_targets[0].next = &got_targets[1];
+            var want_targets = got_targets;
+            want_targets[0].surface = &want;
+            want_targets[1].surface = &want;
+            const window = graphics.Rect{ .max_x = 40, .max_y = 20 };
+
+            for (modes) |mode| for (pens) |pen| {
+                const tags = [_]TagItem{
+                    .{ .tag = graphics.RPTAG_APen, .data = pen[0] },
+                    .{ .tag = graphics.RPTAG_BPen, .data = pen[1] },
+                    .{ .tag = graphics.RPTAG_DrMd, .data = mode },
+                    .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&window) },
+                    .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&got_targets[0]) },
+                    .{},
+                };
+                const rp = try onMemory(gb, &got, &tags);
+                defer g.FreeRastPort(@ptrCast(rp));
+                const ref = Reference{ .surface = &want, .targets = &want_targets, .mode = mode, .fg = pen[0], .bg = pen[1] };
+
+                for (0..9) |case| {
+                    random.bytes(got_memory[0..]);
+                    @memcpy(&want_memory, &got_memory);
+                    switch (case) {
+                        0 => {
+                            const area = graphics.Rect{ .min_x = 3, .min_y = 2, .max_x = 37, .max_y = 19 };
+                            g.RectFill(@ptrCast(rp), &area);
+                            var y = area.min_y;
+                            while (y < area.max_y) : (y += 1) {
+                                var x = area.min_x;
+                                while (x < area.max_x) : (x += 1) ref.fill(x, y);
+                            }
+                        },
+                        1 => {
+                            g.DrawHLine(@ptrCast(rp), 1, 7, 38);
+                            for (1..39) |x| ref.ink(@intCast(x), 7);
+                        },
+                        2 => {
+                            g.DrawVLine(@ptrCast(rp), 21, 1, 18);
+                            g.DrawVLine(@ptrCast(rp), 30, 0, 20);
+                            for (1..19) |y| ref.ink(21, @intCast(y));
+                            for (0..20) |y| ref.ink(30, @intCast(y));
+                        },
+                        3 => {
+                            // Every way a line can go: shallow, steep,
+                            // across both pieces, straight back.
+                            const ends = [_][4]i32{
+                                .{ 0, 0, 39, 19 },   .{ 39, 2, 1, 17 }, .{ 5, 19, 12, 0 },
+                                .{ 33, 1, 30, 18 },  .{ 2, 10, 38, 10 }, .{ 37, 12, 4, 12 },
+                                .{ 25, 18, 25, 3 },  .{ 18, 5, 26, 9 },
+                            };
+                            for (ends) |e| {
+                                g.Move(@ptrCast(rp), e[0], e[1]);
+                                g.Draw(@ptrCast(rp), e[2], e[3]);
+                                ref.line(e[0], e[1], e[2], e[3]);
+                            }
+                        },
+                        4 => {
+                            const area = graphics.Rect{ .min_x = 2, .min_y = 1, .max_x = 39, .max_y = 18 };
+                            g.BltTemplate(@ptrCast(rp), &shape, 5, 3, 1, &area);
+                            var y = area.min_y;
+                            while (y < area.max_y) : (y += 1) {
+                                var x = area.min_x;
+                                while (x < area.max_x) : (x += 1) {
+                                    ref.stencil(x, y, bitOf(&shape, 5, 3 + x - area.min_x, 1 + y - area.min_y));
+                                }
+                            }
+                        },
+                        5 => {
+                            const area = graphics.Rect{ .min_x = 1, .min_y = 2, .max_x = 38, .max_y = 19 };
+                            g.BltPattern(@ptrCast(rp), &tile, 2, 16, 4, &area);
+                            var y = area.min_y;
+                            while (y < area.max_y) : (y += 1) {
+                                var x = area.min_x;
+                                while (x < area.max_x) : (x += 1) {
+                                    const t = ref.target(x, y) orelse continue;
+                                    ref.stencil(x, y, bitOf(&tile, 2, @mod(x + t.dx, 16), @mod(y + t.dy, 4)));
+                                }
+                            }
+                        },
+                        6 => {
+                            const area = graphics.Rect{ .min_x = 6, .min_y = 0, .max_x = 34, .max_y = 18 };
+                            g.BlendPixelArray(@ptrCast(rp), &picture, 30 * 4, @intFromEnum(rtg.bitmaps.PixelFormat.rgba32), 1, 1, &area);
+                            var y = area.min_y;
+                            while (y < area.max_y) : (y += 1) {
+                                var x = area.min_x;
+                                while (x < area.max_x) : (x += 1) {
+                                    const t = ref.target(x, y) orelse continue;
+                                    const i: usize = @intCast((1 + y - area.min_y) * 30 + 1 + x - area.min_x);
+                                    const c = picture[i * 4 ..][0..4];
+                                    const colour = graphics.penARGB(c[3], c[0], c[1], c[2]);
+                                    const at = want.pixels.? + @as(usize, @intCast(y + t.dy)) * want.pitch + @as(usize, @intCast(x + t.dx)) * bytes;
+                                    var value: u32 = 0;
+                                    for (0..bytes) |k| value |= @as(u32, at[k]) << @intCast(k * 8);
+                                    if (c[3] == 0) continue;
+                                    const out = rastport.packPen(format, slowOver(colour, rastport.unpackPen(format, value))).?;
+                                    for (0..bytes) |k| at[k] = @truncate(out >> @intCast(k * 8));
+                                }
+                            }
+                        },
+                        7 => {
+                            // A shape with a hole, and one crossing it.
+                            const corners = [_][2]i32{ .{ 2, 1 }, .{ 37, 3 }, .{ 30, 18 }, .{ 4, 15 } };
+                            const hole = [_][2]i32{ .{ 12, 6 }, .{ 24, 5 }, .{ 20, 12 } };
+                            const across = [_][2]i32{ .{ 0, 9 }, .{ 39, 8 }, .{ 39, 11 }, .{ 0, 12 } };
+                            const shapes = [_][]const [2]i32{ &corners, &hole, &across };
+                            try testing.expect(g.InitArea(@ptrCast(rp), 32));
+                            for (shapes) |s| {
+                                try testing.expect(g.AreaMove(@ptrCast(rp), s[0][0], s[0][1]));
+                                for (s[1..]) |p| try testing.expect(g.AreaDraw(@ptrCast(rp), p[0], p[1]));
+                            }
+                            try testing.expect(g.AreaEnd(@ptrCast(rp)));
+                            evenOdd(&ref, &shapes);
+                        },
+                        8 => {
+                            // Runs of one pixel, and of a few from an odd
+                            // column: all ends, no middle.
+                            const thin = [_]graphics.Rect{
+                                .{ .min_x = 5, .min_y = 1, .max_x = 6, .max_y = 19 },
+                                .{ .min_x = 23, .min_y = 3, .max_x = 26, .max_y = 9 },
+                                .{ .min_x = 9, .min_y = 11, .max_x = 16, .max_y = 12 },
+                            };
+                            for (thin) |area| {
+                                g.RectFill(@ptrCast(rp), &area);
+                                var y = area.min_y;
+                                while (y < area.max_y) : (y += 1) {
+                                    var x = area.min_x;
+                                    while (x < area.max_x) : (x += 1) ref.fill(x, y);
+                                }
+                            }
+                        },
+                        else => unreachable,
+                    }
+                    if (!std.mem.eql(u8, &got_memory, &want_memory)) {
+                        std.debug.print("format {s}, offset {d}, mode {x}, pens {x}, case {d}\n", .{ @tagName(format), offset, mode, pen[0], case });
+                        return error.TestUnexpectedResult;
+                    }
+                }
+            };
+        }
+    }
+    try tearDown(gb);
+}
+
+/// One bit of a shape, the leftmost in the top bit of the first byte.
+fn bitOf(bits: []const u8, pitch: u32, x: i32, y: i32) bool {
+    const byte = bits[@as(usize, @intCast(y)) * pitch + @as(usize, @intCast(x)) / 8];
+    return byte >> @intCast(7 - @as(u32, @intCast(x)) % 8) & 1 != 0;
+}
+
+/// Shapes filled even-odd as AreaEnd filled them before: every edge of
+/// every shape looked at for each row.
+fn evenOdd(ref: *const Reference, shapes: []const []const [2]i32) void {
+    var y: i32 = 0;
+    while (y < 20) : (y += 1) {
+        var xs: [16]i32 = undefined;
+        var found: usize = 0;
+        for (shapes) |s| {
+            for (s, 0..) |a, i| {
+                const b = s[(i + 1) % s.len];
+                if (a[1] == b[1]) continue;
+                if (y < @min(a[1], b[1]) or y >= @max(a[1], b[1])) continue;
+                xs[found] = a[0] + @divTrunc((y - a[1]) * (b[0] - a[0]), b[1] - a[1]);
+                found += 1;
+            }
+        }
+        std.mem.sort(i32, xs[0..found], {}, std.sort.asc(i32));
+        var pair: usize = 0;
+        while (pair + 1 < found) : (pair += 2) {
+            var x = xs[pair];
+            while (x <= xs[pair + 1]) : (x += 1) {
+                if (x >= 0 and x < 40) ref.fill(x, y);
+            }
+        }
+    }
+}
