@@ -46,7 +46,7 @@ const Printf = dos.stdio.Printf;
 const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "Copy";
-const VERSION_STRING = "\x00$VER: Copy 1.2 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Copy 1.3 (26.10.2026)\r\n";
 
 const template = "FROM/M,TO/A,ALL/S,QUIET/S,BUF=BUFFER/K/N,CLONE/S,DATES/S,NOPRO/S,COM/S,NOREQ/S";
 const arg_from = 0;
@@ -219,6 +219,9 @@ fn walk(run: *Run, anchor: *Anchor, source: [*:0]const u8) void {
     }
 
     if (run.into_dir and !openDestination(run)) return;
+    // A file's destination is named from the current directory: that is
+    // held as the destination directory, which the copy steps into.
+    if (!run.into_dir) run.outlock = dl.Lock("", dos.SHARED_LOCK);
 
     while (err == 0) {
         const ap = &anchor.ap;
