@@ -78,7 +78,8 @@ const _fade = @import("_fade.zig");
 ///   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. Its
 ///   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
 ///   `WA_PointerDelay`, as
-///   `SetWindowPointerA` takes them. May be null.
+///   `SetWindowPointerA` takes them. Painted by its backfill alone, with no
+///   buffer, on a composed screen: `WA_NoBuffer`. May be null.
 ///
 /// RESULT:
 /// The window, or null: no screen to open it on (the default one could not
@@ -315,6 +316,10 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         .{ .tag = layers.LATAG_BackFill, .data = paints_it },
         .{ .tag = layers.LATAG_SuperBitMap, .data = super },
         .{ .tag = layers.LATAG_Opacity, .data = if (fades) 0 else 255 },
+        // Painted by its backfill alone: a window with no border, whose
+        // RastPort nothing of intuition's draws into. layers takes it only
+        // for a simple layer with a backfill, on a composed display.
+        .{ .tag = layers.LATAG_NoBuffer, .data = @intFromBool(ub.GetTagData(wn.WA_NoBuffer, 0, tags) != 0 and flags & (WF_BORDERLESS | WF_GZZ) == WF_BORDERLESS) },
         .{ .tag = utility.TAG_MORE, .data = @intFromPtr(&look) },
     };
     const layer = lb.CreateLayerTagList(s.layer_info, &layer_tags) orelse {

@@ -32,6 +32,7 @@ Generated from the source by `./zig build autodoc`.
 - [MoveSizeLayer](#movesizelayer) - Moves a layer and changes its size together.
 - [NewLayerInfo](#newlayerinfo) - Makes the LayerInfo of one display, with no layers on it yet.
 - [NewLayerInfoTagList](#newlayerinfotaglist) - Makes the LayerInfo of one display, with no layers on it yet, the way the tags say.
+- [RefillLayer](#refilllayer) - Paints part of a layer again with its backfill.
 - [ScrollLayer](#scrolllayer) - Moves the window a `LAYERSUPER` layer shows of its own bitmap.
 - [SetLayerAttrsTagList](#setlayerattrstaglist) - Changes what a composed layer looks like.
 - [ShowLayerPicture](#showlayerpicture) - Shows a picture over part of a composed layer, in place of what the layer holds there.
@@ -1298,6 +1299,72 @@ None known.
 const composed = [_]TagItem{ .{ .tag = layers.LATAG_Compose, .data = 1 }, .{} };
 const info = lb.NewLayerInfoTagList(screen_rp, &composed) orelse return error.NoDisplay;
 defer lb.DisposeLayerInfo(info);
+```
+
+## RefillLayer
+
+Paints part of a layer again with its backfill.
+
+**SYNOPSIS**
+
+```zig
+fn RefillLayer(lb: *LayersBase, layer: *Layer, area: *const graphics.Rect) void
+```
+
+**SINCE**
+
+0.13. LVO -136.
+
+**INPUTS**
+
+- `layer` - the layer.
+- `area` - what to paint, in the **layer's** coordinates.
+
+**BEHAVIOR**
+
+For a program whose backfill hook paints what it shows - a desktop's
+ground with its icons on it - and which has changed what the hook
+paints in `area`. The area is cut to the layer.
+
+A layer with no buffer (`LATAG_NoBuffer`) is shown again over the
+area: its hook paints it where it can be seen, and whatever is in front
+of it - a shadow, a window seen through - is laid over that as always.
+Any other layer has the hook called through its RastPort, as when it
+is uncovered: into its buffer when it is composed, which is then
+shown; on the display where it can be seen when it is not, and into
+what it keeps of its covered parts when it is a smart one.
+
+Nothing is painted with `LAYERS_NOBACKFILL`; with no hook, the layer's
+background pen.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the layer - for a layer with no
+  buffer, any layer of its display.
+- Interrupts: no. It may wait.
+- Locks: the layer, or for a layer with no buffer every layer of the
+  display, taken here. Never called from a backfill hook, nor while
+  holding anything such a hook waits for: the hook runs with the
+  layers held, on whichever task shows the layer.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`area` stays the caller's and is only read.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InstallLayerHook`, `DamageLayer`, `CreateLayerTagList` (`LATAG_NoBuffer`)
+
+**EXAMPLES**
+
+```zig
+// An icon picked: the hook paints it on its plate from now on.
+lb.RefillLayer(ground, &icon_box);
 ```
 
 ## ScrollLayer

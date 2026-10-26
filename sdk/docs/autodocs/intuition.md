@@ -5356,7 +5356,8 @@ fn OpenWindowTagList(ib: *IntuitionBase,
   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. Its
   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
   `WA_PointerDelay`, as
-  `SetWindowPointerA` takes them. May be null.
+  `SetWindowPointerA` takes them. Painted by its backfill alone, with no
+  buffer, on a composed screen: `WA_NoBuffer`. May be null.
 
 **RESULT**
 

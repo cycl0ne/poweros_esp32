@@ -16,10 +16,15 @@
 //! signal of its own tells it a program added or removed something
 //! (`app.zig`).
 //!
-//! **It draws with the window's layer held** (`holdRoot`, and a
-//! drawer's own): another window moved meanwhile would rebuild the list
-//! of places a drawing call walks. Only graphics is called while it is
-//! held - intuition takes its own lock before a layer's.
+//! **Its own window it never draws into**: the window's backfill hook
+//! paints the ground, the icons and the box being drawn, wherever the
+//! window is seen (`scene.zig`), and the desktop changes what that is
+//! under `scene_lock` and has the part painted again. On a composed
+//! screen the window has no buffer (`WA_NoBuffer`). **A drawer's window
+//! it draws into with the window's layer held** (`drawer.hold`): another
+//! window moved meanwhile would rebuild the list of places a drawing call
+//! walks. Only graphics is called while it is held - intuition takes its
+//! own lock before a layer's.
 //!
 //! **It follows** `ENV:Sys/anvil.prefs` and `ENV:Sys/font.prefs`
 //! (StartNotify), and the screen's pens (`IDCMP_NEWPREFS`): a change
@@ -77,6 +82,7 @@ const run_area = @import("run.zig");
 const app_area = @import("app.zig");
 const startup_area = @import("startup.zig");
 const about_area = @import("about.zig");
+const scene = @import("scene.zig");
 
 /// How often the title and the disks are looked at, in seconds.
 pub const tick_seconds = 2;
@@ -156,8 +162,7 @@ pub const Desktop = struct {
     /// The desktop's own window: a backdrop across the screen, or with
     /// Backdrop off an ordinary window holding the disks.
     backdrop: ?*intuition.Window = null,
-    backdrop_rp: *graphics.RastPort = undefined,
-    /// Its layer, held while anything is drawn into it.
+    /// Its layer - its inside's, with Backdrop off - which its hook paints.
     backdrop_layer: *sdk.layers.Layer = undefined,
     as_backdrop: bool = true,
     /// Where its inside starts in it: nothing as a backdrop, its borders
@@ -170,11 +175,18 @@ pub const Desktop = struct {
     menu_strip: ?*intuition.Menu = null,
 
     prefs: anvil_prefs.Settings = .{},
-    /// The ground, which the backfill hook paints from on any task: it is
-    /// swapped for a new one under `ground_lock`.
+    /// What the backfill hook paints - the ground, the icons on it
+    /// (`volumes`), their places, which are picked, the look and the box
+    /// being drawn on the ground (`band`) - it reads on any task, with the
+    /// display's layers held. So the desktop changes any of it only while
+    /// holding this (`change`), never across a call that may take a layer
+    /// or take long, and frees what it took away after letting go.
+    scene_lock: exec.SignalSemaphore = .{},
     ground: ?*ground_area.Ground = null,
-    ground_lock: exec.SignalSemaphore = .{},
     ground_hook: utility.Hook = .{},
+    /// A RastPort of the desktop's own, for measuring names in the look's
+    /// font: the window's is the hook's.
+    measure_rp: ?*graphics.RastPort = null,
 
     look: icons.Look = .{},
     /// How icons and rows look in a drawer's window: the screen's text
@@ -226,14 +238,15 @@ pub const Desktop = struct {
         d.pictures.init();
         d.read_signal = sys.AllocSignal(-1);
         if (d.read_signal < 0) return dos.ERROR_NO_FREE_STORE;
-        sys.InitSemaphore(&d.ground_lock);
-        d.ground_hook = .{ .entry = &paintGround, .data = d };
+        sys.InitSemaphore(&d.scene_lock);
+        d.ground_hook = .{ .entry = &paintScene, .data = d };
 
         d.ib = @ptrCast(d.open(.intuition, intuition.INTUITIONNAME, 0) orelse return dos.ERROR_INVALID_RESIDENT_LIBRARY);
         d.gb = @ptrCast(d.open(.graphics, graphics.GRAPHICSNAME, 0) orelse return dos.ERROR_INVALID_RESIDENT_LIBRARY);
         d.ub = @ptrCast(d.open(.utility, sdk.interface.utility.NAME, 0) orelse return dos.ERROR_INVALID_RESIDENT_LIBRARY);
         d.icon_base = @ptrCast(d.open(.icon, icon.ICONNAME, 1) orelse return dos.ERROR_INVALID_RESIDENT_LIBRARY);
         d.lb = @ptrCast(d.open(.layers, sdk.layers.LAYERSNAME, 0) orelse return dos.ERROR_INVALID_RESIDENT_LIBRARY);
+        d.measure_rp = d.gb.CreateRastPortTagList(null) orelse return dos.ERROR_NO_FREE_STORE;
         // A picture and a font of the prefs' choosing: without either
         // library the desktop still comes up, with a colour and the
         // screen's font.
@@ -257,8 +270,8 @@ pub const Desktop = struct {
         d.readPrefs();
         d.ground = d.makeGround();
         if (!d.openBackdrop()) return dos.ERROR_NO_FREE_STORE;
-        d.readFont();
-        d.makeLook();
+        d.own_font = d.readFont();
+        d.setLook(d.makeLook(d.own_font, d.ground));
         d.setMenus();
         d.updateTitle();
         volumes.scan(d);
@@ -294,9 +307,10 @@ pub const Desktop = struct {
     }
 
     /// The desktop's window: the whole screen under its bar - a borderless
-    /// backdrop, or with Backdrop off an ordinary window of the same box
-    /// with its title, gadgets and an inside of its own - painted by the
-    /// ground's hook, on the shared port.
+    /// backdrop with no buffer of its own, or with Backdrop off an
+    /// ordinary window of the same box with its title, gadgets and an
+    /// inside of its own - painted by the scene's hook, on the shared
+    /// port.
     fn openBackdrop(d: *Desktop) bool {
         const top = d.bar_height + 1;
         const plain: usize = @intFromBool(!d.as_backdrop);
@@ -316,7 +330,8 @@ pub const Desktop = struct {
             .{ .tag = wn.WA_MinWidth, .data = 160 },
             .{ .tag = wn.WA_MinHeight, .data = 100 },
             .{ .tag = wn.WA_SimpleRefresh, .data = 1 },
-            .{ .tag = if (d.ground != null) wn.WA_BackFill else utility.TAG_IGNORE, .data = @intFromPtr(&d.ground_hook) },
+            .{ .tag = wn.WA_BackFill, .data = @intFromPtr(&d.ground_hook) },
+            .{ .tag = wn.WA_NoBuffer, .data = 1 - plain },
             .{ .tag = wn.WA_NewLookMenus, .data = 1 },
             .{ .tag = wn.WA_Activate, .data = 1 },
             .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(&d.title) },
@@ -325,9 +340,6 @@ pub const Desktop = struct {
             .{},
         }) orelse return false;
         d.backdrop = window;
-        var rp: usize = 0;
-        d.ib.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = wn.WA_RastPort, .data = @intFromPtr(&rp) }, .{} });
-        d.backdrop_rp = @ptrFromInt(rp);
         var layer: usize = 0;
         d.ib.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = wn.WA_Layer, .data = @intFromPtr(&layer) }, .{} });
         d.backdrop_layer = @ptrFromInt(layer);
@@ -379,7 +391,9 @@ pub const Desktop = struct {
         const window = d.backdrop orelse return;
         if (d.held) |held| if (held.window == window) drag.forget(d, window);
         if (d.band) |band| if (band.window == window) {
+            d.change();
             d.band = null;
+            d.changed();
         };
         d.last_icon = null;
     }
@@ -462,30 +476,29 @@ pub const Desktop = struct {
         d.prefs = settings;
     }
 
-    /// The names' font: `font.prefs`'s ICON, else its DEFAULT, else the
-    /// screen's.
-    fn readFont(d: *Desktop) void {
-        if (d.own_font) |font| d.gb.CloseFont(font);
-        d.own_font = null;
-        const df = d.df orelse return;
-        const read = sdk.prefs.loadWhole(d.sys, d.dl, font_prefs.ENV_FILE) orelse return;
+    /// The names' font, opened: `font.prefs`'s ICON, else its DEFAULT;
+    /// null for the screen's. The one in use is the caller's to close once
+    /// the look has the new one.
+    fn readFont(d: *Desktop) ?*graphics.TextFont {
+        const df = d.df orelse return null;
+        const read = sdk.prefs.loadWhole(d.sys, d.dl, font_prefs.ENV_FILE) orelse return null;
         defer d.sys.FreeVec(read.ptr);
-        const words = sdk.prefs.firstLine(read) orelse return;
+        const words = sdk.prefs.firstLine(read) orelse return null;
         var line: font_prefs.Line = .{};
-        if (font_prefs.parse(words, &line) != null) return;
-        const given = line.get(.icon) orelse line.get(.default) orelse return;
+        if (font_prefs.parse(words, &line) != null) return null;
+        const given = line.get(.icon) orelse line.get(.default) orelse return null;
         var family: [font_prefs.value_len:0]u8 = undefined;
-        const wanted = font_prefs.attrOf(given, &family) orelse return;
-        d.own_font = df.OpenDiskFont(&wanted);
+        const wanted = font_prefs.attrOf(given, &family) orelse return null;
+        return df.OpenDiskFont(&wanted);
     }
 
     /// How icons look on this screen with these prefs: the picture no
     /// larger than an eighth of the screen's height, a cell twice its
     /// width, the names in the font's height under it, black on a light
     /// ground and white on a dark one.
-    fn makeLook(d: *Desktop) void {
-        const rp = d.backdrop_rp;
-        var font = d.own_font;
+    fn makeLook(d: *Desktop, own_font: ?*graphics.TextFont, ground: ?*const ground_area.Ground) icons.Look {
+        const rp = d.measure_rp.?;
+        var font = own_font;
         if (font == null) {
             const draw_info = d.ib.GetScreenDrawInfo(d.screen.?);
             font = draw_info.font;
@@ -500,8 +513,8 @@ pub const Desktop = struct {
             .{},
         });
         const size: u32 = @min(d.prefs.icon_size, @max(24, @as(u32, @intCast(d.screen_height)) / 8));
-        const light = if (d.ground) |g| g.light else ground_area.isLight(d.background);
-        d.look = .{
+        const light = if (ground) |g| g.light else ground_area.isLight(d.background);
+        var look = icons.Look{
             .font = font,
             .font_height = @intCast(font_height),
             .baseline = @intCast(baseline),
@@ -511,12 +524,20 @@ pub const Desktop = struct {
             .shadow = if (light) 0xFFFF_FFFF else 0xFF00_0000,
         };
         const draw_info = d.ib.GetScreenDrawInfo(d.screen.?);
-        d.look.fill = draw_info.pens[sc.FILLPEN];
-        d.look.fill_text = draw_info.pens[sc.FILLTEXTPEN];
-        d.drawer_look = d.look;
+        look.fill = draw_info.pens[sc.FILLPEN];
+        look.fill_text = draw_info.pens[sc.FILLTEXTPEN];
+        d.drawer_look = look;
         d.drawer_look.text = draw_info.pens[sc.TEXTPEN];
         d.drawer_look.shadow = null;
         d.ib.FreeScreenDrawInfo(d.screen.?, draw_info);
+        return look;
+    }
+
+    /// The look the hook draws the icons in.
+    fn setLook(d: *Desktop, look: icons.Look) void {
+        d.change();
+        d.look = look;
+        d.changed();
     }
 
     fn makeGround(d: *Desktop) ?*ground_area.Ground {
@@ -531,19 +552,23 @@ pub const Desktop = struct {
     }
 
     /// The prefs, the font or the pens changed: the ground and the icons
-    /// made anew, and the whole desktop drawn again.
+    /// made anew, and the whole desktop drawn again. All is made before
+    /// it is swapped in, and what it replaces given back after.
     fn renew(d: *Desktop) void {
         d.readPrefs();
-        d.readFont();
-        if (d.makeGround()) |fresh| {
-            d.sys.ObtainSemaphore(&d.ground_lock);
-            const old = d.ground;
-            d.ground = fresh;
-            d.sys.ReleaseSemaphore(&d.ground_lock);
-            ground_area.free(d.groundLibs(), old);
-        }
-        d.makeLook();
+        const font = d.readFont();
+        const fresh = d.makeGround();
+        const look = d.makeLook(font, fresh orelse d.ground);
+        d.change();
+        const old_ground = if (fresh != null) d.ground else null;
+        if (fresh) |made| d.ground = made;
+        const old_font = d.own_font;
+        d.own_font = font;
+        d.look = look;
+        d.changed();
         volumes.forgetAll(d);
+        ground_area.free(d.groundLibs(), old_ground);
+        if (old_font) |held| d.gb.CloseFont(held);
         d.drawWhole();
         volumes.scan(d);
         app_area.showAgain(d);
@@ -560,54 +585,39 @@ pub const Desktop = struct {
 
     // --- drawing -------------------------------------------------------------
 
-    /// The desktop's own window's layer held, for drawing into it; a
-    /// holder may take it again.
-    pub fn holdRoot(d: *Desktop) void {
-        d.lb.LockLayer(d.backdrop_layer);
+    /// What the hook paints about to change: held until `changed`. Only
+    /// the change itself goes between the two - nothing that takes a
+    /// layer, waits, reads a file or frees what the hook may be reading.
+    /// The desktop's own task may take it again inside.
+    pub fn change(d: *Desktop) void {
+        d.sys.ObtainSemaphore(&d.scene_lock);
     }
 
-    pub fn releaseRoot(d: *Desktop) void {
-        d.lb.UnlockLayer(d.backdrop_layer);
+    pub fn changed(d: *Desktop) void {
+        d.sys.ReleaseSemaphore(&d.scene_lock);
     }
 
-    /// Every icon drawn through the backdrop's RastPort.
-    pub fn drawIcons(d: *Desktop) void {
-        d.holdRoot();
-        defer d.releaseRoot();
-        var it = d.volumes.iterator();
-        while (it.next()) |node| {
-            const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
-            ic.draw(d.gb, d.backdrop_rp, &d.look, .{});
-        }
-    }
-
-    /// The ground painted over the whole backdrop, and the icons on it.
+    /// The whole desktop painted again.
     pub fn drawWholeNow(d: *Desktop) void {
         d.drawWhole();
     }
 
     fn drawWhole(d: *Desktop) void {
-        d.holdRoot();
-        defer d.releaseRoot();
-        const whole = Rect{ .min_x = 0, .min_y = 0, .max_x = d.width, .max_y = d.height };
-        d.gb.EraseRect(d.backdrop_rp, &whole);
-        d.drawIcons();
+        d.drawArea(.{ .min_x = 0, .min_y = 0, .max_x = d.width, .max_y = d.height });
     }
 
-    /// `area` of the backdrop painted again: the ground, then every icon
-    /// that reaches into it.
+    /// `area` of the desktop's window painted again by its hook: the
+    /// ground, every icon that reaches into it, the box - as they are now.
+    /// Never while `change` is held: it waits for the display's layers.
     pub fn drawArea(d: *Desktop, area: Rect) void {
-        d.holdRoot();
-        defer d.releaseRoot();
-        d.gb.EraseRect(d.backdrop_rp, &area);
-        var it = d.volumes.iterator();
-        while (it.next()) |node| {
-            const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
-            const b = ic.box(&d.look);
-            if (b.min_x < area.max_x and area.min_x < b.max_x and b.min_y < area.max_y and area.min_y < b.max_y) {
-                ic.draw(d.gb, d.backdrop_rp, &d.look, .{});
-            }
-        }
+        if (d.backdrop == null) return;
+        d.lb.RefillLayer(d.backdrop_layer, &area);
+    }
+
+    /// The edge of a box on the ground painted again: the box drawn there,
+    /// or taken away.
+    pub fn drawEdges(d: *Desktop, box: Rect) void {
+        for (scene.edges(box)) |line| d.drawArea(line);
     }
 
     fn updateTitle(d: *Desktop) void {
@@ -707,13 +717,9 @@ pub const Desktop = struct {
         if (drawer.find(d, window)) |dr| return drawer.refresh(d, dr);
         const backdrop = d.backdrop orelse return;
         if (window != backdrop) return;
-        // Painted first: what is reported uncovered may already have icons
-        // drawn in it, and a name drawn twice comes out heavier.
+        // Nothing to draw: what was uncovered, its hook painted as it was
+        // uncovered, icons and all.
         d.ib.BeginRefresh(backdrop);
-        d.holdRoot();
-        d.gb.EraseRect(d.backdrop_rp, &.{ .min_x = 0, .min_y = 0, .max_x = d.width, .max_y = d.height });
-        d.drawIcons();
-        d.releaseRoot();
         d.ib.EndRefresh(backdrop, true);
     }
 
@@ -785,7 +791,9 @@ pub const Desktop = struct {
     pub fn letGoOf(d: *Desktop, dr: *Drawer) void {
         if (d.held) |held| if (held.drawer == dr) drag.forget(d, held.window);
         if (d.band) |band| if (band.drawer == dr) {
+            d.change();
             d.band = null;
+            d.changed();
             d.ib.ReportMouse(band.window, false);
         };
         d.last_icon = null;
@@ -1070,6 +1078,7 @@ pub const Desktop = struct {
         if (d.libraries[@intFromEnum(Lib.graphics)] != null) {
             ground_area.free(d.groundLibs(), d.ground);
             if (d.own_font) |font| d.gb.CloseFont(font);
+            if (d.measure_rp) |rp| d.gb.FreeRastPort(rp);
         }
         if (d.screen) |screen| d.ib.UnlockPubScreen(null, screen);
         // Whatever is still on a port was sent to the desktop: replied.
@@ -1098,8 +1107,6 @@ pub const Desktop = struct {
     }
 };
 
-/// The backfill hook: a strip of the backdrop painted from the ground.
-/// Called on whichever task uncovered it.
 /// Whether the board says its RAM is one kind (SYSTAG_UnifiedMemory).
 /// No when expansion.library is not there to ask.
 fn unifiedMemory(sys: *ExecBase, ub: *UtilityBase) bool {
@@ -1109,13 +1116,27 @@ fn unifiedMemory(sys: *ExecBase, ub: *UtilityBase) bool {
     return ub.GetTagData(sdk.expansion.systemtags.SYSTAG_UnifiedMemory, 0, eb.SystemTags()) != 0;
 }
 
-fn paintGround(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+/// The backfill hook: a part of the desktop's window painted, ground,
+/// icons and box (`scene.zig`). Called on whichever task shows the part,
+/// with the display's layers held.
+fn paintScene(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const d: *Desktop = @ptrCast(@alignCast(hook.data orelse return 0));
     const rp: *graphics.RastPort = @ptrCast(object orelse return 0);
     const msg: *const graphics.BackFillMsg = @ptrCast(@alignCast(message orelse return 0));
-    d.sys.ObtainSemaphore(&d.ground_lock);
-    defer d.sys.ReleaseSemaphore(&d.ground_lock);
-    if (d.ground) |ground| ground_area.paint(d.gb, ground, rp, msg.area);
+    d.sys.ObtainSemaphore(&d.scene_lock);
+    defer d.sys.ReleaseSemaphore(&d.scene_lock);
+    var band: ?Rect = null;
+    if (d.band) |held| if (held.drawer == null) {
+        band = select.boxOf(&held);
+    };
+    scene.paint(.{
+        .gb = d.gb,
+        .ground = d.ground,
+        .background = d.background,
+        .icons = &d.volumes,
+        .look = &d.look,
+        .band = band,
+    }, rp, msg.area);
     return 0;
 }
 

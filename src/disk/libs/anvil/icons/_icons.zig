@@ -134,6 +134,13 @@ pub const Icon = struct {
         };
     }
 
+    /// All that drawing it may touch on its ground: its box, and round it
+    /// the plate a picked one lies on and its name's shadow.
+    pub fn reach(ic: *const Icon, look: *const Look) Rect {
+        const b = ic.box(look);
+        return .{ .min_x = b.min_x - 4, .min_y = b.min_y - 4, .max_x = b.max_x + 4, .max_y = b.max_y + 4 };
+    }
+
     /// Its box where it shows, from `origin`.
     pub fn shownBox(ic: *const Icon, look: *const Look, origin: Origin) Rect {
         const b = ic.box(look);

@@ -49,6 +49,7 @@ const LayersErrorText = @import("errors/layerserrortext.zig").LayersErrorText;
 const DamageLayer = @import("damage/damagelayer.zig").DamageLayer;
 const ShowLayerPicture = @import("compose/showlayerpicture.zig").ShowLayerPicture;
 const SetLayerAttrsTagList = @import("compose/setlayerattrstaglist.zig").SetLayerAttrsTagList;
+const RefillLayer = @import("backfill/refilllayer.zig").RefillLayer;
 
 /// Its functions, as the SDK has them (sdk/fd/layers_lib.fd).
 const interface = sdk.interface.layers;
@@ -105,6 +106,7 @@ const contract_files = [_][]const u8{
     @embedFile("errors/layerserrortext.zig"),
     @embedFile("damage/damagelayer.zig"),
     @embedFile("layerinfo/newlayerinfotaglist.zig"),
+    @embedFile("backfill/refilllayer.zig"),
 };
 
 fn lvoNewLayerInfo(lb: *LayersBase, rp: *graphics.RastPort) callconv(.c) ?*layers.LayerInfo {
@@ -194,6 +196,9 @@ fn lvoShowLayerPicture(lb: *LayersBase, layer: *layers.Layer, picture: ?*const r
 fn lvoSetLayerAttrsTagList(lb: *LayersBase, layer: *layers.Layer, tags: ?[*]const TagItem) callconv(.c) bool {
     return SetLayerAttrsTagList(lb, @ptrCast(@alignCast(layer)), tags);
 }
+fn lvoRefillLayer(lb: *LayersBase, layer: *layers.Layer, area: *const graphics.Rect) callconv(.c) void {
+    RefillLayer(lb, @ptrCast(@alignCast(layer)), area);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -231,6 +236,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoNewLayerInfoTagList),
     vec(lvoShowLayerPicture),
     vec(lvoSetLayerAttrsTagList),
+    vec(lvoRefillLayer),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -238,7 +244,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the standard four, then this library's own" {
-    try testing.expectEqual(@as(usize, 33), vectors.len);
+    try testing.expectEqual(@as(usize, 34), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

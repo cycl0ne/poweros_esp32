@@ -2809,6 +2809,107 @@ test "screens: composed, the ground has no buffer, and is its pens wherever a wi
     try tearDown(ib);
 }
 
+/// A desktop's ground for the tests: one colour, the program's to change.
+const Painted = struct {
+    hook: utility.Hook,
+    gb: *sdk.interface.graphics.GraphicsBase,
+    pen: graphics.Pen,
+
+    fn paint(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        const p: *Painted = @fieldParentPtr("hook", hook);
+        const rp: *graphics.RastPort = @ptrCast(@alignCast(object.?));
+        const msg: *const graphics.BackFillMsg = @ptrCast(@alignCast(message.?));
+        p.gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = p.pen }, .{} });
+        p.gb.RectFill(rp, &msg.area);
+        return 0;
+    }
+};
+
+test "windows: with no buffer, a window is what its backfill paints, wherever it is seen" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const sc = intuition.screens;
+    const layers = sdk.layers;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 80, 80, .rgb565);
+    display.board.info.flags |= sdk.rtg.boards.RTGBF_COMPOSE;
+    ib.window_fade = 0;
+    ib.window_shadow = 3;
+
+    const screen = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_Title, .data = @intFromPtr("Desk") }, .{} }).?;
+    var ground = Painted{ .hook = .{ .entry = &Painted.paint }, .gb = ib.graphics_base, .pen = graphics.penRGB(0, 0, 0xFF) };
+    const desk = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 80 },
+        .{ .tag = wn.WA_Height, .data = 68 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Backdrop, .data = 1 },
+        .{ .tag = wn.WA_SimpleRefresh, .data = 1 },
+        .{ .tag = wn.WA_BackFill, .data = @intFromPtr(&ground.hook) },
+        .{ .tag = wn.WA_NoBuffer, .data = 1 },
+        .{ .tag = wn.WA_CustomScreen, .data = @intFromPtr(screen) },
+        .{},
+    }).?;
+    var layer: usize = 0;
+    it.GetWindowAttrs(desk, &[_]TagItem{ .{ .tag = wn.WA_Layer, .data = @intFromPtr(&layer) }, .{} });
+    const desk_layer: *layers.Layer = @ptrFromInt(layer);
+    var composed: u32 = 1;
+    ib.layers_base.GetLayerAttrs(desk_layer, &[_]TagItem{ .{ .tag = layers.LATAG_GetComposed, .data = @intFromPtr(&composed) }, .{} });
+    try testing.expectEqual(@as(u32, 0), composed);
+    try testing.expectEqual(@as(u16, 0x001F), display.pixel(40, 40));
+
+    // Drawn into, it shows nothing of it: it is its hook.
+    var rp: usize = 0;
+    it.GetWindowAttrs(desk, &[_]TagItem{ .{ .tag = wn.WA_RastPort, .data = @intFromPtr(&rp) }, .{} });
+    ib.graphics_base.SetRPAttrs(@ptrFromInt(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(0xFF, 0, 0) }, .{} });
+    ib.graphics_base.RectFill(@ptrFromInt(rp), &.{ .max_x = 80, .max_y = 68 });
+    try testing.expectEqual(@as(u16, 0x001F), display.pixel(40, 40));
+
+    // What the hook paints changes; painted again over a part, that part
+    // shows it.
+    ground.pen = graphics.penRGB(0, 0xFF, 0);
+    ib.layers_base.RefillLayer(desk_layer, &.{ .min_x = 0, .min_y = 0, .max_x = 40, .max_y = 30 });
+    try testing.expectEqual(@as(u16, 0x07E0), display.pixel(10, 20));
+    try testing.expectEqual(@as(u16, 0x001F), display.pixel(60, 60));
+
+    // A window with a shadow over it, closed: what it covered is painted
+    // by the hook as it is now.
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 30 },
+        .{ .tag = wn.WA_Top, .data = 30 },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_CustomScreen, .data = @intFromPtr(screen) },
+        .{},
+    }).?;
+    try testing.expect(display.pixel(30, 40) != 0x001F);
+    it.CloseWindow(w);
+    try testing.expectEqual(@as(u16, 0x07E0), display.pixel(31, 31));
+    try testing.expectEqual(@as(u16, 0x07E0), display.pixel(35, 62));
+    try testing.expectEqual(@as(u16, 0x001F), display.pixel(70, 70));
+
+    // With a border, the same tag is no use: it has a buffer.
+    const framed = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 30 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_BackFill, .data = @intFromPtr(&ground.hook) },
+        .{ .tag = wn.WA_NoBuffer, .data = 1 },
+        .{ .tag = wn.WA_CustomScreen, .data = @intFromPtr(screen) },
+        .{},
+    }).?;
+    it.GetWindowAttrs(framed, &[_]TagItem{ .{ .tag = wn.WA_Layer, .data = @intFromPtr(&layer) }, .{} });
+    ib.layers_base.GetLayerAttrs(@ptrFromInt(layer), &[_]TagItem{ .{ .tag = layers.LATAG_GetComposed, .data = @intFromPtr(&composed) }, .{} });
+    try testing.expectEqual(@as(u32, 1), composed);
+    it.CloseWindow(framed);
+
+    it.CloseWindow(desk);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "input: a window that never takes the activation is pressed beside a field being typed into" {
     const ib = try setUp();
     defer kexec.deinit();

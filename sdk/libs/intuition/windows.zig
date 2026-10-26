@@ -346,6 +346,18 @@ pub const WA_Number = WA_Dummy + 0x10E;
 /// (`SA_PixelFormat`): what is drawn into the window, or copied into it
 /// as it is, is in them. `GetWindowAttrs` only.
 pub const WA_PixelFormat = WA_Dummy + 0x10F;
+/// True: on a screen whose windows are composed, the window has no buffer
+/// of its own, and what shows of it is only what its backfill hook
+/// (`WA_BackFill`) paints, wherever it is seen - for a desktop's ground,
+/// whose hook paints the icons too, and which saves a picture of the
+/// window's size. What is drawn into its RastPort lands nowhere, so it
+/// suits only a window its hook paints all of: one with nothing on it
+/// that intuition draws. A program changes what the hook paints and has
+/// it painted again (`layers.RefillLayer` on `WA_Layer`). Taken by a
+/// simple-refresh window with no border, not GimmeZeroZero, and with a
+/// backfill; anywhere else, and on a screen not composed, it is ignored
+/// and the window is as it would be without it. `OpenWindowTagList` only.
+pub const WA_NoBuffer = WA_Dummy + 0x110;
 
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;

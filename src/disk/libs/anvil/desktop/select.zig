@@ -12,7 +12,8 @@
 //!
 //! An icon picked or let go is drawn again where it is: its ground
 //! painted there and every icon that reaches into the place drawn over
-//! it.
+//! it. On the desktop's ground the box is the hook's to draw, with the
+//! rest (`scene.zig`): it is changed, and its edges painted again.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -45,10 +46,14 @@ pub const Band = struct {
 /// An icon picked or let go, and drawn again.
 pub fn set(d: *Desktop, where: ?*Drawer, ic: *Icon, on: bool) void {
     if (ic.selected == on) return;
+    if (where) |dr| {
+        ic.selected = on;
+        return drawer.redrawIcon(d, dr, ic);
+    }
+    d.change();
     ic.selected = on;
-    if (where) |dr| return drawer.redrawIcon(d, dr, ic);
-    const b = ic.box(&d.look);
-    d.drawArea(.{ .min_x = b.min_x - 4, .min_y = b.min_y - 4, .max_x = b.max_x + 4, .max_y = b.max_y + 4 });
+    d.changed();
+    d.drawArea(ic.reach(&d.look));
 }
 
 /// The drawer's view moved by (`dx`, `dy`) - the wheel turned - while a
@@ -58,8 +63,10 @@ pub fn set(d: *Desktop, where: ?*Drawer, ic: *Icon, on: bool) void {
 pub fn scrolled(d: *Desktop, dr: *Drawer, dx: i32, dy: i32) void {
     const band = &(d.band orelse return);
     if (band.drawer != dr) return;
+    d.change();
     band.from.x -= dx;
     band.from.y -= dy;
+    d.changed();
     drawBand(d, band);
 }
 
@@ -116,12 +123,7 @@ pub fn contents(d: *Desktop, where: ?*Drawer) void {
 
 // --- the box ---------------------------------------------------------------------
 
-fn rastPortOf(d: *Desktop, band: *const Band) *graphics.RastPort {
-    if (band.drawer) |dr| return dr.rp;
-    return d.backdrop_rp;
-}
-
-fn boxOf(band: *const Band) Rect {
+pub fn boxOf(band: *const Band) Rect {
     return .{
         .min_x = @min(band.from.x, band.to.x),
         .min_y = @min(band.from.y, band.to.y),
@@ -130,19 +132,23 @@ fn boxOf(band: *const Band) Rect {
     };
 }
 
-/// The box drawn, or taken away again: every pixel of its edge turned
-/// round, so drawing it twice leaves what was there.
+/// The box drawn, or taken away again. In a drawer every pixel of its
+/// edge is turned round, so drawing it twice leaves what was there. On the
+/// desktop's ground its edge is painted again, by the hook, with the box
+/// as `d.band` now says - there, or gone.
 fn drawBand(d: *Desktop, band: *const Band) void {
-    if (band.drawer) |dr| drawer.hold(d, dr) else d.holdRoot();
-    defer if (band.drawer) |dr| drawer.release(d, dr) else d.releaseRoot();
-    const rp = rastPortOf(d, band);
-    d.gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_COMPLEMENT }, .{} });
-    d.gb.DrawRect(rp, &boxOf(band));
-    d.gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} });
+    const dr = band.drawer orelse return d.drawEdges(boxOf(band));
+    drawer.hold(d, dr);
+    defer drawer.release(d, dr);
+    d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_COMPLEMENT }, .{} });
+    d.gb.DrawRect(dr.rp, &boxOf(band));
+    d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} });
 }
 
 fn startBand(d: *Desktop, window: *intuition.Window, where: ?*Drawer, at: icons.Origin) void {
+    d.change();
     d.band = .{ .window = window, .drawer = where, .from = at, .to = at };
+    d.changed();
     d.ib.ReportMouse(window, true);
     drawBand(d, &d.band.?);
 }
@@ -153,8 +159,20 @@ pub fn moved(d: *Desktop, said: Said) void {
     if (said.window != band.window) return;
     const at: icons.Origin = if (band.drawer) |dr| drawer.inside(d, dr, said.x, said.y) else .{ .x = said.x, .y = said.y };
     if (at.x == band.to.x and at.y == band.to.y) return;
+    if (band.drawer == null) {
+        // Where it was, painted again without it; then where it is.
+        const was = boxOf(band);
+        d.change();
+        band.to = at;
+        d.changed();
+        d.drawEdges(was);
+        drawBand(d, band);
+        return;
+    }
     drawBand(d, band);
+    d.change();
     band.to = at;
+    d.changed();
     drawBand(d, band);
 }
 
@@ -162,7 +180,9 @@ pub fn moved(d: *Desktop, said: Said) void {
 /// picked.
 pub fn released(d: *Desktop) void {
     const band = d.band orelse return;
+    d.change();
     d.band = null;
+    d.changed();
     drawBand(d, &band);
     d.ib.ReportMouse(band.window, false);
     const box = boxOf(&band);

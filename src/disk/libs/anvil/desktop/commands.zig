@@ -334,6 +334,8 @@ pub fn newDrawer(d: *Desktop, dr: *Drawer) void {
 /// down its edge - each to be kept by Snapshot.
 pub fn cleanUp(d: *Desktop, where: ?*Drawer) void {
     if (where) |dr| return drawer.cleanUp(d, dr);
+    // The places the hook reads, all changed before it paints any.
+    d.change();
     var it = d.volumes.iterator();
     while (it.next()) |node| {
         const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
@@ -346,6 +348,7 @@ pub fn cleanUp(d: *Desktop, where: ?*Drawer) void {
         volumes.place(d, ic);
         ic.moved = true;
     }
+    d.changed();
     d.drawWholeNow();
 }
 
@@ -365,8 +368,12 @@ pub fn cleanUpBy(d: *Desktop, where: ?*Drawer, sub: u32) void {
     const list = if (where) |dr| &dr.icons else &d.volumes;
     var sorted: exec.List = .{};
     sorted.init(.unknown);
+    // The desktop's ground is the hook's to read: held while its list is
+    // taken apart and put together again.
+    if (where == null) d.change();
     while (d.sys.RemHead(list)) |node| textview.insert(d.sys, &sorted, @alignCast(@fieldParentPtr("node", node)), view);
     while (d.sys.RemHead(&sorted)) |node| d.sys.AddTail(list, node);
+    if (where == null) d.changed();
     cleanUp(d, where);
 }
 

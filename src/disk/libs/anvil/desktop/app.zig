@@ -168,21 +168,18 @@ fn gatherTools(d: *Desktop) void {
 }
 
 /// An icon made for the record, placed where it asked or in the first
-/// free place, and drawn.
+/// free place, and shown.
 fn showIcon(d: *Desktop, record: *App) void {
     const ic = icons.make(d.sys, &d.pictures, &record.object, record.text[0..textLength(&record.text)], &d.look) orelse return;
     ic.app = record;
-    ic.measure(d.gb, d.backdrop_rp, &d.look);
+    ic.measure(d.gb, d.measure_rp.?, &d.look);
     if (record.object.current_x != sdk.icon.NO_ICON_POSITION and record.object.current_y != sdk.icon.NO_ICON_POSITION) {
         ic.x = record.object.current_x;
         ic.y = record.object.current_y;
     } else {
         volumes.place(d, ic);
     }
-    d.sys.AddTail(&d.volumes, &ic.node);
-    d.holdRoot();
-    ic.draw(d.gb, d.backdrop_rp, &d.look, .{});
-    d.releaseRoot();
+    volumes.putOn(d, ic);
 }
 
 /// The record's icon taken off the ground.

@@ -104,7 +104,7 @@ fn read(d: *Desktop) usize {
 }
 
 /// An icon for a volume: its `Disk.info`, or the default disk icon,
-/// placed and drawn.
+/// placed and shown.
 fn add(d: *Desktop, seen: *const Seen) void {
     var path: [icons.label_max + 2:0]u8 = @splat(0);
     @memcpy(path[0..seen.len], seen.name_());
@@ -115,7 +115,7 @@ fn add(d: *Desktop, seen: *const Seen) void {
         return;
     };
     ic.key = seen.node;
-    ic.measure(d.gb, d.backdrop_rp, &d.look);
+    ic.measure(d.gb, d.measure_rp.?, &d.look);
     if (!d.clean_up and object.current_x != icon.NO_ICON_POSITION and object.current_y != icon.NO_ICON_POSITION) {
         ic.x = object.current_x;
         ic.y = object.current_y;
@@ -123,11 +123,16 @@ fn add(d: *Desktop, seen: *const Seen) void {
     } else {
         place(d, ic);
     }
-    d.sys.AddTail(&d.volumes, &ic.node);
-    d.holdRoot();
-    ic.draw(d.gb, d.backdrop_rp, &d.look, .{});
-    d.releaseRoot();
+    putOn(d, ic);
     leaveout.readVolume(d, seen.name_());
+}
+
+/// A new icon, placed, put on the ground and shown there.
+pub fn putOn(d: *Desktop, ic: *Icon) void {
+    d.change();
+    d.sys.AddTail(&d.volumes, &ic.node);
+    d.changed();
+    d.drawArea(ic.reach(&d.look));
 }
 
 /// An icon put in the first cell down the right edge that no other icon
@@ -168,20 +173,22 @@ pub fn snap(d: *Desktop, ic: *Icon) void {
 /// An icon taken off the desktop: the ground painted where it was, and
 /// what else lay there drawn again.
 pub fn remove(d: *Desktop, ic: *Icon) void {
+    d.change();
     d.sys.Remove(&ic.node);
-    // A picked icon's plate reaches a little past its box.
-    const b = ic.box(&d.look);
-    const was = Rect{ .min_x = b.min_x - 4, .min_y = b.min_y - 4, .max_x = b.max_x + 4, .max_y = b.max_y + 4 };
+    d.changed();
+    const was = ic.reach(&d.look);
     icons.free(d.sys, d.icon_base, &d.pictures, ic);
     d.drawArea(was);
 }
 
 /// Every volume's icon let go of, nothing drawn: before the desktop
-/// makes them anew, or as it ends.
+/// makes them anew, or as it ends. Taken off the ground first, and freed
+/// once the hook can no longer be reading them.
 pub fn forgetAll(d: *Desktop) void {
-    while (d.volumes.first()) |node| {
-        const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
-        d.sys.Remove(&ic.node);
-        icons.free(d.sys, d.icon_base, &d.pictures, ic);
-    }
+    var gone: exec.List = .{};
+    gone.init(.unknown);
+    d.change();
+    while (d.sys.RemHead(&d.volumes)) |node| d.sys.AddTail(&gone, node);
+    d.changed();
+    while (d.sys.RemHead(&gone)) |node| icons.free(d.sys, d.icon_base, &d.pictures, @alignCast(@fieldParentPtr("node", node)));
 }

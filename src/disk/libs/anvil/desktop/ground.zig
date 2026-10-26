@@ -2,13 +2,16 @@
 //! The desktop's ground: what `ENV:Sys/anvil.prefs` says lies under the
 //! icons - a colour, two shaded from the top down, a picture over either.
 //!
-//! **It is painted once**, into a bitmap the size of the desktop's window
-//! in the screen's own format, and the window's backfill hook copies from
-//! that bitmap whatever strip is uncovered. So a gradient meets itself
-//! wherever the strips join, a picture is read and scaled once rather
-//! than at every move of a window over it, and the hook - which runs on
-//! whichever task uncovered the desktop - changes nothing in the
-//! RastPort it is handed, the one the desktop draws its icons through.
+//! **It is painted where it is seen**, by the window's backfill hook,
+//! over whatever part it is called for (`scene.zig`), and kept in no more
+//! memory than that needs. A colour and a gradient keep nothing: the
+//! whole ground is filled through a RastPort clipped to the part, so a
+//! gradient meets itself wherever two parts join. A picture tiled or
+//! centred keeps its own pixels, laid over the colour where they reach
+//! the part. Only a picture scaled to cover is painted once, with the
+//! colour under it, into a bitmap the size of the ground in the screen's
+//! own format, which the part is copied from: it is read and scaled once
+//! rather than at every move of a window over it.
 //!
 //! A picture is read through datatypes.library, in any format it knows,
 //! and laid over the colour: tiled from the top-left, centred, or scaled
@@ -31,9 +34,21 @@ const TagItem = utility.TagItem;
 const pic = datatypes.pictureclass;
 
 pub const Ground = struct {
-    surface: *rtg.Surface,
     width: i32,
     height: i32,
+    /// The colour under any picture: `top` shaded down to `bottom`, one
+    /// colour when they are the same.
+    top: Pen,
+    bottom: Pen,
+    /// A picture scaled to cover, painted once with the colour under it;
+    /// null for any other ground.
+    surface: ?*rtg.Surface = null,
+    /// A picture tiled or centred: its own pixels, bgra32, a row after
+    /// another with nothing between; null for any other ground.
+    pixels: ?[*]u8 = null,
+    picture_width: i32 = 0,
+    picture_height: i32 = 0,
+    place: anvil_prefs.Place = .tiled,
     /// Whether it is light on the whole: the names on it are then black.
     light: bool,
 };
@@ -95,54 +110,27 @@ pub fn centred(width: i32, height: i32, ground_width: i32, ground_height: i32) R
 /// without memory for it.
 pub fn make(libs: Libs, settings: *const anvil_prefs.Settings, width: i32, height: i32, friend: *graphics.RastPort, background: Pen) ?*Ground {
     const sys = libs.sys;
-    const gb = libs.gb;
     if (width <= 0 or height <= 0) return null;
     const memory = sys.AllocVec(@sizeOf(Ground), exec.MEMF_CLEAR) orelse return null;
-    const surface = gb.AllocBitMapTagList(&[_]TagItem{
-        .{ .tag = graphics.BMTAG_Width, .data = @intCast(width) },
-        .{ .tag = graphics.BMTAG_Height, .data = @intCast(height) },
-        .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(friend) },
-        .{},
-    }) orelse {
-        sys.FreeVec(memory);
-        return null;
-    };
-    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(surface) }, .{} }) orelse {
-        gb.FreeBitMap(surface);
-        sys.FreeVec(memory);
-        return null;
-    };
-    defer gb.FreeRastPort(rp);
-
+    const ground: *Ground = @ptrCast(@alignCast(memory));
     const top: Pen = if (settings.ground_given) settings.top else background;
     const bottom: Pen = if (settings.ground_given) settings.bottom else background;
-    const whole = Rect{ .min_x = 0, .min_y = 0, .max_x = width, .max_y = height };
-    if (top != bottom) {
-        var fill = graphics.FillStyle{};
-        fill.stops[0].pen = top;
-        fill.stops[1].pen = bottom;
-        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&fill) }, .{} });
-        gb.RectFill(rp, &whole);
-        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = 0 }, .{} });
-    } else {
-        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = top }, .{} });
-        gb.RectFill(rp, &whole);
-    }
-    var light = isLight(between(top, bottom));
+    ground.* = .{ .width = width, .height = height, .top = top, .bottom = bottom, .light = isLight(between(top, bottom)) };
     if (settings.pictureName()) |name| {
-        if (libs.dt) |dt| if (layPicture(dt, gb, rp, settings, name, width, height)) |mean| {
-            light = isLight(mean);
+        if (libs.dt) |dt| if (keepPicture(libs, dt, ground, settings, name, friend)) |mean| {
+            ground.light = isLight(mean);
         };
     }
-
-    const ground: *Ground = @ptrCast(@alignCast(memory));
-    ground.* = .{ .surface = surface, .width = width, .height = height, .light = light };
     return ground;
 }
 
-/// The picture named in the settings laid over the ground, as they say;
-/// its average colour, or null when it could not be read.
-fn layPicture(dt: *DataTypesBase, gb: *GraphicsBase, rp: *graphics.RastPort, settings: *const anvil_prefs.Settings, name: []const u8, width: i32, height: i32) ?Pen {
+/// The picture named in the settings kept as the ground paints it: its
+/// pixels, or scaled into a bitmap of the ground's size with the colour
+/// under it. Its average colour, or null when it could not be read or
+/// there was no memory to keep it.
+fn keepPicture(libs: Libs, dt: *DataTypesBase, ground: *Ground, settings: *const anvil_prefs.Settings, name: []const u8, friend: *graphics.RastPort) ?Pen {
+    const sys = libs.sys;
+    const gb = libs.gb;
     var path: [anvil_prefs.picture_max + 1:0]u8 = @splat(0);
     @memcpy(path[0..name.len], name);
     const object = dt.NewDTObjectA(&path, &[_]TagItem{
@@ -166,30 +154,37 @@ fn layPicture(dt: *DataTypesBase, gb: *GraphicsBase, rp: *graphics.RastPort, set
     if (picture_width == 0 or picture_height == 0) return null;
     // The picture's pens are 0xAARRGGBB words: in memory blue first.
     const bytes: [*]const u8 = @ptrFromInt(pixels);
-    const format = @intFromEnum(rtg.PixelFormat.bgra32);
     const row: u32 = @intCast(pitch);
-    switch (settings.place) {
-        .tiled => {
-            var y: i32 = 0;
-            while (y < height) : (y += picture_height) {
-                var x: i32 = 0;
-                while (x < width) : (x += picture_width) {
-                    const area = Rect{ .min_x = x, .min_y = y, .max_x = @min(x + picture_width, width), .max_y = @min(y + picture_height, height) };
-                    gb.BlendPixelArray(rp, bytes, row, format, 0, 0, &area);
-                }
-            }
-        },
-        .centred => {
-            const at = centred(picture_width, picture_height, width, height);
-            // A picture larger than the ground shows its middle.
-            const area = Rect{ .min_x = @max(at.min_x, 0), .min_y = @max(at.min_y, 0), .max_x = @min(at.max_x, width), .max_y = @min(at.max_y, height) };
-            gb.BlendPixelArray(rp, bytes, row, format, area.min_x - at.min_x, area.min_y - at.min_y, &area);
-        },
-        .scaled => {
-            const source = Rect{ .min_x = 0, .min_y = 0, .max_x = picture_width, .max_y = picture_height };
-            const at = cover(picture_width, picture_height, width, height);
-            gb.ScalePixelArray(rp, bytes, row, format, &source, &at);
-        },
+
+    if (settings.place == .scaled) {
+        const surface = gb.AllocBitMapTagList(&[_]TagItem{
+            .{ .tag = graphics.BMTAG_Width, .data = @intCast(ground.width) },
+            .{ .tag = graphics.BMTAG_Height, .data = @intCast(ground.height) },
+            .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(friend) },
+            .{},
+        }) orelse return null;
+        const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(surface) }, .{} }) orelse {
+            gb.FreeBitMap(surface);
+            return null;
+        };
+        defer gb.FreeRastPort(rp);
+        const whole = Rect{ .max_x = ground.width, .max_y = ground.height };
+        paintColour(gb, ground, rp, whole);
+        const source = Rect{ .max_x = picture_width, .max_y = picture_height };
+        const at = cover(picture_width, picture_height, ground.width, ground.height);
+        gb.ScalePixelArray(rp, bytes, row, @intFromEnum(rtg.PixelFormat.bgra32), &source, &at);
+        ground.surface = surface;
+    } else {
+        const tight: usize = @as(usize, @intCast(picture_width)) * 4;
+        const size = tight * @as(usize, @intCast(picture_height));
+        const kept = sys.AllocVec(@intCast(size), exec.MEMF_ANY) orelse return null;
+        const into: [*]u8 = @ptrCast(kept);
+        var y: usize = 0;
+        while (y < picture_height) : (y += 1) @memcpy(into[y * tight ..][0..tight], bytes[y * row ..][0..tight]);
+        ground.pixels = into;
+        ground.picture_width = picture_width;
+        ground.picture_height = picture_height;
+        ground.place = settings.place;
     }
     return average(bytes, row, picture_width, picture_height);
 }
@@ -218,17 +213,70 @@ fn average(bytes: [*]const u8, pitch: u32, width: i32, height: i32) Pen {
 /// The ground given back.
 pub fn free(libs: Libs, ground: ?*Ground) void {
     const kept = ground orelse return;
-    libs.gb.FreeBitMap(kept.surface);
+    if (kept.surface) |surface| libs.gb.FreeBitMap(surface);
+    if (kept.pixels) |pixels| libs.sys.FreeVec(pixels);
     libs.sys.FreeVec(kept);
 }
 
-/// `area` of a window painted from the ground: copied, the RastPort's
-/// pens and fills left as they were.
+/// `area` of a window painted with the ground, through `rp` - clipped to
+/// the area while it paints, as it was after. Its pens and fill are left
+/// as the ground needed them.
 pub fn paint(gb: *GraphicsBase, ground: *const Ground, rp: *graphics.RastPort, area: Rect) void {
-    const left = @max(area.min_x, 0);
-    const top = @max(area.min_y, 0);
-    const right = @min(area.max_x, ground.width);
-    const bottom = @min(area.max_y, ground.height);
-    if (right <= left or bottom <= top) return;
-    gb.BltBitMapRastPort(ground.surface, left, top, rp, left, top, right - left, bottom - top);
+    const whole = Rect{ .max_x = ground.width, .max_y = ground.height };
+    const part = Rect.intersect(area, whole);
+    if (part.isEmpty()) return;
+    if (ground.surface) |surface| {
+        gb.BltBitMapRastPort(surface, part.min_x, part.min_y, rp, part.min_x, part.min_y, part.width(), part.height());
+        return;
+    }
+    var was: Rect = undefined;
+    gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
+    const within = Rect.intersect(was, part);
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&within) }, .{} });
+    defer gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
+    paintColour(gb, ground, rp, part);
+    const pixels = ground.pixels orelse return;
+    const pw = ground.picture_width;
+    const ph = ground.picture_height;
+    const pitch: u32 = @intCast(pw * 4);
+    const format = @intFromEnum(rtg.PixelFormat.bgra32);
+    switch (ground.place) {
+        // Only the tiles the part meets: a small picture is many of them.
+        .tiled => {
+            var y = @divFloor(part.min_y, ph) * ph;
+            while (y < part.max_y) : (y += ph) {
+                var x = @divFloor(part.min_x, pw) * pw;
+                while (x < part.max_x) : (x += pw) {
+                    const tile = Rect.intersect(.{ .min_x = x, .min_y = y, .max_x = x + pw, .max_y = y + ph }, whole);
+                    gb.BlendPixelArray(rp, pixels, pitch, format, 0, 0, &tile);
+                }
+            }
+        },
+        .centred => {
+            const at = centred(pw, ph, ground.width, ground.height);
+            // A picture larger than the ground shows its middle.
+            const shown = Rect.intersect(at, whole);
+            if (shown.isEmpty()) return;
+            gb.BlendPixelArray(rp, pixels, pitch, format, shown.min_x - at.min_x, shown.min_y - at.min_y, &shown);
+        },
+        // Kept as the bitmap, painted above.
+        .scaled => {},
+    }
+}
+
+/// The ground's colour, or its gradient over the whole ground, through
+/// `rp` - which the caller has clipped to `part`, so a gradient painted a
+/// part at a time comes out as one painted whole.
+fn paintColour(gb: *GraphicsBase, ground: *const Ground, rp: *graphics.RastPort, part: Rect) void {
+    if (ground.top == ground.bottom) {
+        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = ground.top }, .{} });
+        gb.RectFill(rp, &part);
+        return;
+    }
+    var fill = graphics.FillStyle{};
+    fill.stops[0].pen = ground.top;
+    fill.stops[1].pen = ground.bottom;
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&fill) }, .{} });
+    gb.RectFill(rp, &.{ .max_x = ground.width, .max_y = ground.height });
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = 0 }, .{} });
 }

@@ -135,7 +135,9 @@ pub const LIBRARY_VERSION = 0;
 /// (IPREFS_WindowCorners, IPREFS_WindowShadow, IPREFS_WindowFade).
 /// 55: a composed screen's ground has no buffer of its own
 /// (LATAG_NoBuffer): it is painted by its backfill wherever it is seen.
-pub const LIBRARY_REVISION = 55;
+/// 56: WA_NoBuffer - a window with no border painted by its backfill
+/// alone, with no buffer of its own, on a composed screen.
+pub const LIBRARY_REVISION = 56;
 const BUILD_DATE = "26.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

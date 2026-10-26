@@ -44,7 +44,9 @@ pub const LIBRARY_VERSION = 0;
 /// 12: a composed layer with no buffer of its own (LATAG_NoBuffer), only
 /// what its backfill paints wherever it is seen; InstallLayerHook shows
 /// it again.
-pub const LIBRARY_REVISION = 12;
+/// 13: RefillLayer - part of a layer painted again by its backfill, for a
+/// program whose hook paints what it shows.
+pub const LIBRARY_REVISION = 13;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
 const BUILD_DATE = "26.10.2026";
