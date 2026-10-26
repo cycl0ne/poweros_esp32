@@ -57,6 +57,17 @@
 //! a failure, the connection gone with it - is answered by the file's
 //! next WRITE, FLUSH or END, as Linux's cifs and NFS tell it.
 //!
+//! **Small writes are gathered**: a WRITE smaller than a piece is copied
+//! into a buffer of the handler's after the ones before it, and they go
+//! as one WRITE, written behind (`sendGathered`) - once the piece is
+//! full or a write does not follow on, before any packet but a WRITE, a
+//! SEEK and a READ of another file is served, before the file's size is
+//! asked, and at the latest when the handler's timer for it runs out, a
+//! tenth of a second after the first of them. Until then the data is the
+//! handler's alone, as in Linux's page cache. Its failure is answered as
+//! a piece written behind's; a lost connection keeps it, to go on the
+//! new one. Without the buffer every WRITE goes as it comes.
+//!
 //! **A change** is one round trip: the object opened, the change set on
 //! it (SET_INFO: a name, a deletion, attributes, a date) and the handle
 //! closed, compounded. A delete is refused while the object is locked; a
@@ -392,6 +403,12 @@ pub const FileSystem = struct {
     /// The piece written behind while its answer comes: the file's, its
     /// message id and its length. Nothing without a lock.
     behind: struct { lock: ?*Lock = null, id: u64 = 0, length: u32 = 0 } = .{},
+    /// A buffer of `session_area.io_max` bytes to gather small writes in,
+    /// none without: the handler's, which sends them when they have
+    /// waited long enough. What is gathered: the file's `length` bytes
+    /// from `offset`, at `start` in the buffer. Nothing without a lock.
+    gather_buffer: ?[]u8 = null,
+    gathered: struct { lock: ?*Lock = null, offset: u64 = 0, start: usize = 0, length: usize = 0 } = .{},
 
     // --- memory ---------------------------------------------------------------
 
@@ -490,6 +507,7 @@ pub const FileSystem = struct {
         if (fs.cached.lock == lock) fs.cached.lock = null;
         if (fs.coming.lock == lock) fs.coming.lock = null;
         if (fs.behind.lock == lock) fs.behind.lock = null;
+        if (fs.gathered.lock == lock) fs.gathered.lock = null;
         // A file's record locks go with its handle.
         if (fs.records) |records| records.release(lock);
         if (fs.locks == lock) {
@@ -1272,6 +1290,14 @@ pub const FileSystem = struct {
         if (lock.gone) return error.NotFound;
         fs.forgetAhead();
         if (!lock.writable) try fs.makeWritable(lock);
+        if (fs.gather_buffer) |into| {
+            if (length < @min(into.len, fs.session.pieceMax(fs.session.max_write))) return fs.gather(lock, buffer[0..length], into);
+        }
+        // A large one after what was gathered.
+        fs.sendGathered() catch |err| {
+            if (!fs.lost or !fs.recover()) return err;
+            try fs.sendGathered();
+        };
         var recovered = false;
         var done: usize = 0;
         // The piece of this WRITE whose answer is still coming.
@@ -1314,11 +1340,125 @@ pub const FileSystem = struct {
     fn writeBehind(fs: *FileSystem, lock: *Lock, request: *session_area.Request, length: usize) Error!void {
         try fs.settleAhead();
         try failedBehind(lock);
+        try fs.sendBehind(lock, request, length);
+    }
+
+    /// A piece of `lock` sent, its answer left to come; whatever was
+    /// ahead before taken in first.
+    fn sendBehind(fs: *FileSystem, lock: *Lock, request: *session_area.Request, length: usize) Error!void {
         const id = fs.session.sendAhead(request, fs.session.receive_buffer) catch {
             fs.lost = true;
             return error.NotMounted;
         };
         fs.behind = .{ .lock = lock, .id = id, .length = @intCast(length) };
+    }
+
+    /// The answer to the piece written behind taken when it has come,
+    /// without waiting.
+    fn takeWritten(fs: *FileSystem) void {
+        if (fs.behind.lock == null or fs.lost) return;
+        fs.session.pump() catch {
+            fs.lost = true;
+        };
+        fs.taken();
+    }
+
+    /// A small WRITE gathered after the ones before it, into `into`:
+    /// what was gathered sent first when this one does not follow on from
+    /// it - another file, another place, no room left - and a full piece
+    /// sent at once. A failure of a piece written behind is this WRITE's
+    /// answer.
+    fn gather(fs: *FileSystem, lock: *Lock, data: []const u8, into: []u8) Error!usize {
+        fs.takeWritten();
+        try failedBehind(lock);
+        const piece_max: usize = @min(into.len, fs.session.pieceMax(fs.session.max_write));
+        const gathered = &fs.gathered;
+        if (gathered.lock) |other| {
+            if (other != lock or gathered.offset + gathered.length != lock.pos or gathered.start + gathered.length + data.len > piece_max) {
+                fs.sendGathered() catch |err| {
+                    if (!fs.lost or !fs.recover()) return err;
+                    try fs.sendGathered();
+                };
+            }
+        }
+        if (gathered.lock == null) gathered.* = .{ .lock = lock, .offset = lock.pos };
+        @memcpy(into[gathered.start + gathered.length ..][0..data.len], data);
+        gathered.length += data.len;
+        lock.modified = true;
+        lock.unflushed = true;
+        fs.space_stale = true;
+        lock.pos += data.len;
+        if (lock.pos > lock.size) lock.size = lock.pos;
+        // Full: it goes now - or, when it cannot, with the next try.
+        if (gathered.start + gathered.length == piece_max) fs.sendGathered() catch {};
+        return data.len;
+    }
+
+    /// What was gathered written behind, in as many pieces as the credits
+    /// say. Kept when the connection is lost, to go on the next one; let
+    /// go of, as the file's failure, when the file was not there again.
+    pub fn sendGathered(fs: *FileSystem) Error!void {
+        const gathered = &fs.gathered;
+        const lock = gathered.lock orelse return;
+        const into = fs.gather_buffer.?;
+        if (lock.gone) {
+            lock.write_error = @intFromError(error.NotFound);
+            gathered.lock = null;
+            return;
+        }
+        // The piece sent before, while its answer comes.
+        var behind: usize = 0;
+        while (gathered.length > 0) {
+            const piece: usize = @min(gathered.length, fs.session.pieceMax(fs.session.max_write));
+            var request = fs.session.begin(.write);
+            commands.write(&request, &lock.file_id, gathered.offset, into[gathered.start..][0..piece]);
+            fs.settleAhead() catch |err| {
+                // Its answer went with the connection: it goes again on
+                // the next one.
+                if (behind > 0 and lock.write_error != 0) {
+                    lock.write_error = 0;
+                    gathered.offset -= behind;
+                    gathered.start -= behind;
+                    gathered.length += behind;
+                }
+                return err;
+            };
+            try fs.sendBehind(lock, &request, piece);
+            behind = piece;
+            gathered.offset += piece;
+            gathered.start += piece;
+            gathered.length -= piece;
+        }
+        gathered.lock = null;
+    }
+
+    /// Whether anything is gathered: the handler's timer runs while it is.
+    pub fn gathering(fs: *const FileSystem) bool {
+        return fs.gathered.lock != null;
+    }
+
+    /// What was gathered sent, once its time is up: the handler's, when
+    /// its timer runs out. A lost connection is made again for it.
+    pub fn sendDue(fs: *FileSystem) void {
+        if (fs.gathered.lock == null) return;
+        if (fs.lost and !fs.recover()) return;
+        fs.sendGathered() catch {};
+    }
+
+    /// Whether `pkt` leaves what was gathered waiting: a WRITE, which
+    /// sends it itself when it does not follow on; a SEEK, which does when
+    /// it asks the size; and a READ of another file - not of the same file
+    /// through another handle.
+    fn keepsGathered(fs: *FileSystem, pkt: *DosPacket) bool {
+        const lock = fs.gathered.lock orelse return true;
+        return switch (pkt.getAction()) {
+            .write, .seek => true,
+            .read => {
+                const file = fs.fileOf(pkt.args.io.fh) catch return false;
+                return file.key != lock.key;
+            },
+            else => false,
+        };
     }
 
     /// The answer to a piece written behind: a failure, or fewer bytes
@@ -1349,6 +1489,7 @@ pub const FileSystem = struct {
 
     /// The open file's size asked again.
     fn askSize(fs: *FileSystem, lock: *Lock) Error!void {
+        try fs.sendGathered();
         var request = fs.session.begin(.query_info);
         commands.queryInfo(&request, &lock.file_id, commands.INFO_FILE, commands.FILE_STANDARD_INFORMATION, 24);
         var replies = session_area.noReplies();
@@ -1419,6 +1560,16 @@ pub const FileSystem = struct {
         const handle = args.fh orelse return error.InvalidLock;
         const lock: *Lock = @ptrCast(@alignCast(handle.key orelse return error.InvalidLock));
         if (!fs.owns(lock)) return error.InvalidLock;
+        // What was gathered of it goes first, on a new connection if need
+        // be; what cannot go is the file's failure.
+        if (fs.gathered.lock == lock) {
+            if (fs.lost) _ = fs.recover();
+            fs.sendGathered() catch {};
+            if (fs.gathered.lock == lock) {
+                fs.gathered.lock = null;
+                lock.write_error = @intFromError(error.NotMounted);
+            }
+        }
         if (fs.behind.lock == lock) fs.settleAhead() catch {};
         const failed = failedBehind(lock);
         if (lock.open and !lock.gone and !fs.lost) fs.closeHandle(&lock.file_id);
@@ -1769,6 +1920,7 @@ pub const FileSystem = struct {
 
     /// Every lock and file let go of on the server, for a dismount.
     pub fn releaseAll(fs: *FileSystem) void {
+        fs.sendGathered() catch {};
         while (fs.locks) |lock| {
             if (lock.open and !lock.gone and !fs.lost) fs.closeHandle(&lock.file_id);
             fs.freeLock(lock);
@@ -1784,11 +1936,23 @@ pub const FileSystem = struct {
     /// already is not done twice.
     pub fn answer(fs: *FileSystem, pkt: *DosPacket) Answer {
         const action = pkt.getAction();
-        if (!asksServer(action)) return fs.serve(pkt);
+        if (!asksServer(action)) {
+            // What was gathered goes first, as it can: a lock is let go
+            // of all the same.
+            if (!fs.keepsGathered(pkt)) fs.sendGathered() catch {};
+            return fs.serve(pkt);
+        }
         if (fs.lost and !fs.recover()) return no(error.NotMounted);
-        const first = fs.serve(pkt);
+        const first = fs.served(pkt);
         if (!fs.lost or !servedAgain(action) or first.res2 != dos.ERROR_DEVICE_NOT_MOUNTED) return first;
         if (!fs.recover()) return first;
+        return fs.served(pkt);
+    }
+
+    /// A packet that asks the server served after what was gathered has
+    /// gone, unless it leaves that waiting.
+    fn served(fs: *FileSystem, pkt: *DosPacket) Answer {
+        if (!fs.keepsGathered(pkt)) fs.sendGathered() catch |err| return no(err);
         return fs.serve(pkt);
     }
 
