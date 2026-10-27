@@ -503,7 +503,8 @@ pub const CommandLineInterface = extern struct {
     command_dir: ?*PathNode = null,
     /// cli_ReturnCode: the last command's return code.
     return_code: i32 = 0,
-    /// cli_CommandName: the command running (SetProgramName).
+    /// cli_CommandName: the command running (SetProgramName); the shell
+    /// empties it while it waits for one.
     command_name: ?[*:0]u8 = null,
     /// cli_FailLevel: set by FAILAT.
     fail_level: i32 = CLI_INITIAL_FAIL_LEVEL,

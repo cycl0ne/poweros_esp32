@@ -32,6 +32,10 @@
 //!   (a file with the S bit) where the name says, or in the path and C:,
 //!   which Execute runs; a directory's name changes into it (CD). It runs
 //!   through RunCommand with cli_DefaultStack, the line as its arguments.
+//! - While it runs, cli_CommandName is its name as typed (SetProgramName);
+//!   between commands it is empty, so `Status` and `Break NAME` find a
+//!   shell that waits running nothing. The name a new shell gets from its
+//!   parent - NewShell's, Run's - is emptied when it starts.
 //! - Its return code goes to cli_ReturnCode and the local variable RC,
 //!   IoErr to cli_Result2 and Result2; a failure (at or above
 //!   cli_FailLevel) outside a console says "... failed returncode"; a
@@ -61,8 +65,8 @@ const workfile = dos.workfile;
 
 pub const SHELL_NAME = "shell";
 const SHELL_VERSION = 1;
-const SHELL_REVISION = 3;
-const BUILD_DATE = "18.10.2026";
+const SHELL_REVISION = 4;
+const BUILD_DATE = "27.10.2026";
 const SHELL_VERSION_STRING =
     "\x00$VER: " ++ SHELL_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ SHELL_VERSION, SHELL_REVISION }) ++
@@ -175,6 +179,7 @@ fn commandLoop(gv: *Global, mode: dos.ShellMode) void {
     const dl = gv.dl;
     const cli = gv.cli;
     addBuiltins(gv);
+    _ = dl.SetProgramName(""); // the parent's: no command runs yet
     if (cli.set_name == null or cli.set_name.?[0] == 0) {
         if (gv.proc.current_dir) |dir| {
             var name: [dos.path_max]u8 = undefined;
@@ -737,6 +742,7 @@ fn doCommand(gv: *Global, item: i32, name: *[NAMEMAX + 1]u8, failed: *bool) i32 
             rc = runLine(gv, &f.code, f.special);
             ch = gv.last_ch;
             releaseCommand(gv, f);
+            _ = dl.SetProgramName(""); // it has ended
         }
         if (home) |h| {
             gv.proc.home_dir = old_home;

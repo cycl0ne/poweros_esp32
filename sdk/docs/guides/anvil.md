@@ -34,8 +34,9 @@ Quit, in the desktop's menu, asks first, saying how many programs the
 desktop started still run and how many windows, icons and menu items
 programs have added to it. What it started goes on running; what
 programs added goes with it, each program told so
-([below](#programs-on-the-desktop)). CTRL-C to the process quits at once,
-without asking. The process stays, with nothing of it on the screen,
+([below](#programs-on-the-desktop)). CTRL-C to the process - `C:Break NAME
+Anvil`, or `C:Break` with its CLI number, the one `C:Status` shows -
+quits at once, without asking. The process stays, with nothing of it on the screen,
 until the last program it started has ended - their ends come back to
 it - and only then lets go of the library; another desktop may start
 meanwhile.

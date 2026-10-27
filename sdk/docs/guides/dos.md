@@ -449,6 +449,27 @@ if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) {
 }
 ```
 
+From another shell, `C:Break PROCESS/N,NAME/K,ALL/S,C/S,D/S,E/S,F/S`
+raises them in another process: the one with a CLI number - the one
+`Run` prints as `[CLI 3]` - or every one whose command matches the
+pattern `NAME`, as it was started or without its path (`Break NAME
+Copy`). Ctrl-C without a letter, all four with `ALL`. A number or a name
+no process has returns `RETURN_WARN`, so a script that stops a job that
+has ended goes on.
+
+`C:Status PROCESS/N,FULL/S,TCB/S,CLI=ALL/S,COM=COMMAND/K` lists the CLI
+processes and the command each one runs; `COMMAND` prints only the
+numbers of those running it, a line each, which `Break` reads with `?`:
+
+```
+Status >T:job COMMAND=Copy
+Break <T:job >NIL: ?
+```
+
+The command is the CLI's name for it (`SetProgramName`), which the
+shell sets while a command runs and empties when it ends: a shell
+waiting at its prompt runs none.
+
 ## Processes
 
 `CreateNewProc(tags)` starts a process running a `TaskFn`,

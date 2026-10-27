@@ -32,9 +32,9 @@ const Process = dos.Process;
 ///
 /// OWNERSHIP:
 /// The process is not the caller's. It can end at any time after the call,
-/// on either core; a caller that changes it first makes sure, under
-/// Disable, that it is still on exec's task lists or running (as
-/// `C:ChangeTaskPri` does).
+/// on either core; a caller that reads or changes it first makes sure,
+/// under Disable, that it is still on exec's task lists or running (as
+/// `C:ChangeTaskPri`, `C:Break` and `C:Status` do).
 ///
 /// BUGS:
 /// None known.
