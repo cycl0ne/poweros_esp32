@@ -51,6 +51,13 @@
 //! and kept in `landed` once all of it has come. Every other request
 //! takes the rest of it first (`settle`), so answers still come one
 //! request at a time.
+//!
+//! **A WRITE made ready** (`ready`) while the one before it is still
+//! going: its header written and signed before that one's answer is
+//! waited for, when the credits there are pay for it without what the
+//! answer brings, so the handler signs a piece while the stack sends the
+//! one before (`sendReady`). One made ready and not sent gives its
+//! message ids and credits back (`withdraw`).
 
 const sdk = @import("sdk");
 const smb = sdk.dos.smb;
@@ -321,11 +328,38 @@ pub const Session = struct {
     /// of it.
     pub fn sendAhead(session: *Session, request: *Request, buffer: []u8) Error!u64 {
         try session.settle();
-        var ids: [compound_max]u64 = undefined;
-        var replies = noReplies();
-        const encrypt = try session.send(request, &replies, &ids);
-        session.ahead = .{ .buffer = buffer, .id = ids[0], .encrypt = encrypt, .may_stream = session.streamable(request, encrypt) };
-        return ids[0];
+        const made = try session.prepare(request, compound_max);
+        return session.sendReady(&made, buffer);
+    }
+
+    /// `request` made ready to be sent ahead (see the top): signed or
+    /// sealed while the answer ahead may still be coming - unless the
+    /// credits there are do not pay for it, when that answer is taken in
+    /// first for the credits it brings. Nothing else may be sent before
+    /// it goes (`sendReady`) or is withdrawn (`withdraw`).
+    pub fn ready(session: *Session, request: *const Request) Error!Ready {
+        var cost: u32 = 0;
+        for (request.charges[0..request.count]) |charge| cost += charge;
+        if (session.credits < cost) try session.settle();
+        return session.prepare(request, compound_max);
+    }
+
+    /// A request made ready sent ahead, its answer left to come into
+    /// `buffer` as `sendAhead`'s does, whatever was ahead before taken in
+    /// first. Its message id.
+    pub fn sendReady(session: *Session, made: *const Ready, buffer: []u8) Error!u64 {
+        try session.settle();
+        if (!session.connection.send(made.frame)) return error.Network;
+        session.ahead = .{ .buffer = buffer, .id = made.ids[0], .encrypt = made.encrypt, .may_stream = made.may_stream };
+        return made.ids[0];
+    }
+
+    /// A request made ready and not sent: its message ids and credits
+    /// given back, so the next request takes them and the server sees no
+    /// gap. What it was signed or sealed with never left the handler.
+    pub fn withdraw(session: *Session, made: *const Ready) void {
+        session.message_id = made.ids[0];
+        session.credits += made.spent;
     }
 
     /// Whether the answer to the request sent ahead as `id` is still
@@ -495,16 +529,26 @@ pub const Session = struct {
     /// The requests' headers written, signed or sealed, and sent; each
     /// one's message id in `ids`. Whether they went encrypted.
     fn send(session: *Session, request: *Request, replies: []Reply, ids: *[compound_max]u64) Error!bool {
-        if (request.writer.full or request.count == 0 or replies.len < request.count) return error.Protocol;
+        const made = try session.prepare(request, replies.len);
+        ids.* = made.ids;
+        if (!session.connection.send(made.frame)) return error.Network;
+        return made.encrypt;
+    }
+
+    /// The requests' headers written - their message ids and credits
+    /// taken - and signed or sealed: the frame to send. `room` is the
+    /// replies there are for them.
+    fn prepare(session: *Session, request: *const Request, room: usize) Error!Ready {
+        if (request.writer.full or request.count == 0 or room < request.count) return error.Protocol;
         const cb = session.cb;
         const encrypt = session.encrypt_all or (request.on_tree and session.encrypt_tree);
         const sign = session.signer.signs() and !encrypt;
         // Each request's message id, the first of those its charge takes.
-        var spent: u32 = 0;
+        var made: Ready = .{ .frame = undefined, .encrypt = encrypt, .may_stream = session.streamable(request, encrypt) };
         for (0..request.count) |index| {
             const message = request.message(index);
             const charge: u16 = if (session.dialect == smb.SMB2_DIALECT_0202 or request.commands[index] == .negotiate) 0 else request.charges[index];
-            ids[index] = session.message_id;
+            made.ids[index] = session.message_id;
             const header: Header = .{
                 .credit_charge = charge,
                 .command = request.commands[index],
@@ -517,19 +561,21 @@ pub const Session = struct {
             };
             header.write(message);
             session.message_id += @max(charge, 1);
-            spent += @max(charge, 1);
+            made.spent += @max(charge, 1);
             if (sign) session.signer.sign(cb, message);
         }
-        session.credits -|= spent;
+        // No fewer than none: what the credits do not pay for, the server
+        // refuses.
+        made.spent = @min(made.spent, session.credits);
+        session.credits -= made.spent;
 
         const length = request.writer.at;
-        const frame = if (encrypt) blk: {
+        made.frame = if (encrypt) blk: {
             if (!session.keys.encrypts()) return error.Security;
             const sealed = crypt.seal(cb, &session.keys, session.session_id, session.send_buffer[frame_header..], length);
             break :blk session.send_buffer[0 .. frame_header + sealed.len];
         } else session.send_buffer[message_at - frame_header .. message_at + length];
-        if (!session.connection.send(frame)) return error.Network;
-        return encrypt;
+        return made;
     }
 
     /// The answers read into the receive buffer from `room` on, until each
@@ -592,6 +638,17 @@ pub const Session = struct {
             else => false,
         };
     }
+};
+
+/// A request made ready (`Session.ready`): its frame in the send buffer,
+/// the message ids and credits it took, whether it is sealed, and whether
+/// its answer may be streamed.
+pub const Ready = struct {
+    frame: []u8,
+    ids: [compound_max]u64 = undefined,
+    spent: u32 = 0,
+    encrypt: bool,
+    may_stream: bool,
 };
 
 /// A request sent ahead (`Session.sendAhead`) while its answer comes.

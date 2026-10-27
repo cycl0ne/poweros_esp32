@@ -87,8 +87,8 @@ const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 10;
-const BUILD_DATE = "26.10.2026";
+const HANDLER_REVISION = 11;
+const BUILD_DATE = "27.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++

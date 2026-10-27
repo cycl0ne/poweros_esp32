@@ -18,12 +18,18 @@
 //! multiplications, each operand split into parts with empty bits between
 //! their bits so that a carry never reaches a bit that counts, and
 //! Karatsuba on top: 128 by 128 bits in three products of 64 by 64. A
-//! 64-bit chip multiplies those five parts by five (`multiply64Fifths`);
-//! a 32-bit chip does Karatsuba again, 32 by 32 bits four parts by four
-//! (`multiply32`). GCM numbers its bits from the most significant end, so
-//! the 256-bit product of the blocks as they are loaded is the reversed
-//! product shifted by one; it is shifted back and reduced modulo
-//! x^128 + x^7 + x^2 + x + 1 in that reversed order (`block`).
+//! 32-bit chip does Karatsuba again, 32 by 32 bits four parts by four
+//! (`multiply32`). A 64-bit chip takes each product's low half four parts
+//! by four (`lowHalf`) and its high half the same way from the halves'
+//! bits reversed: 96 multiplications a block and about 400 instructions in
+//! all, against 150 and 526 for five parts by five into whole products.
+//! The U74 issues two instructions a cycle, one of them a multiplication,
+//! so the instructions are what count. Four blocks at a time are summed
+//! before the result is reversed back and reduced (`Sum`). GCM
+//! numbers its bits from the most significant end, so the 256-bit product
+//! of the blocks as they are loaded is the reversed product shifted by
+//! one; it is shifted back and reduced modulo x^128 + x^7 + x^2 + x + 1 in
+//! that reversed order (`reduce`).
 //!
 //! Opening checks the tag over the ciphertext before anything is
 //! decrypted, so a forged message never reaches the output.
@@ -63,14 +69,8 @@ fn multiply32(x: u32, y: u32) u64 {
         (z2 & 0x4444_4444_4444_4444) | (z3 & 0x8888_8888_8888_8888);
 }
 
-/// x * y without carries, 64 by 64 bits into 128, the way the chip does it
-/// best. `after`, a product the caller worked out before, only orders the
-/// work (`behind`).
-const multiply64 = if (@sizeOf(usize) == 8) multiply64Fifths else multiply64Halves;
-
 /// 64 by 64 bits on a 32-bit chip: Karatsuba over halves with `multiply32`.
-fn multiply64Halves(x: u64, y: u64, after: u128) u128 {
-    _ = after;
+fn multiply64(x: u64, y: u64) u128 {
     const x_low: u32 = @truncate(x);
     const x_high: u32 = @truncate(x >> 32);
     const y_low: u32 = @truncate(y);
@@ -81,83 +81,206 @@ fn multiply64Halves(x: u64, y: u64, after: u128) u128 {
     return @as(u128, low) ^ (@as(u128, middle) << 32) ^ (@as(u128, high) << 64);
 }
 
-/// Bits 0, 5, 10 ... 60: the first of the five parts `multiply64Fifths`
-/// splits an operand into, the others this shifted up one to four.
-const fifth: u64 = 0x1084_2108_4210_8421;
-
-/// 64 by 64 bits on a 64-bit chip, which multiplies 64 by 64 bits into 128
-/// in two instructions: each operand split into five with four empty bits
-/// between their bits. A column of one part times another holds thirteen
-/// at the most, four bits' worth, so a carry never reaches a bit that
-/// counts.
-///
-/// The twenty-five products are summed a class of the result at a time,
-/// and each class waits for the one before it (`behind`): left to itself
-/// the compiler works all fifty words out first and spills most of them
-/// to the stack, which costs more than the multiplying.
-inline fn multiply64Fifths(x: u64, y: u64, after: u128) u128 {
-    const x_behind = behind(x, after);
-    const y_behind = behind(y, after);
-    var x_parts: [5]u64 = undefined;
-    var y_parts: [5]u64 = undefined;
-    inline for (0..5) |part| {
-        x_parts[part] = x_behind & (fifth << part);
-        y_parts[part] = y_behind & (fifth << part);
-    }
-    var product: u128 = 0;
-    inline for (0..5) |k| {
-        if (k != 0) {
-            inline for (&x_parts) |*part| part.* = behind(part.*, product);
-        }
-        var z: u128 = 0;
-        inline for (0..5) |i| z ^= @as(u128, x_parts[i]) * y_parts[(k + 5 - i) % 5];
-        // The bits of class k: k, k + 5 ... in the low word and, 64 being
-        // 4 more than a multiple of 5, k + 1, k + 6 ... in the high one.
-        const bits = @as(u128, fifth << ((k + 1) % 5)) << 64 | (fifth << k);
-        product |= z & bits;
-    }
-    return product;
-}
-
-/// `value`, which the compiler takes to depend on `after`, so that what is
-/// worked out from it waits for `after`. The asm is empty: it costs no
-/// instruction.
-inline fn behind(value: u64, after: u128) u64 {
-    return asm volatile (""
-        : [out] "=r" (-> u64),
-        : [in] "0" (value),
-          [low] "r" (@as(u64, @truncate(after))),
-          [high] "r" (@as(u64, @truncate(after >> 64))),
-    );
-}
-
 /// x * y in GCM's field, each 128 bits as a block's bytes read most
 /// significant first.
 fn multiply(x: u128, y: u128) u128 {
+    if (quarters) {
+        var sum: Sum = .{};
+        sum.add(Operand.of(x), &Factor.of(y));
+        return sum.total();
+    }
     const x_low: u64 = @truncate(x);
     const x_high: u64 = @truncate(x >> 64);
     const y_low: u64 = @truncate(y);
     const y_high: u64 = @truncate(y >> 64);
-    const low = multiply64(x_low, y_low, 0);
-    const high = multiply64(x_high, y_high, low);
-    const middle = multiply64(x_low ^ x_high, y_low ^ y_high, high) ^ low ^ high;
-    // The 255-bit product, as high and low 128 bits, shifted up one.
-    var product_high = high ^ (middle >> 64);
-    var product_low = low ^ (middle << 64);
-    product_high = product_high << 1 | product_low >> 127;
-    product_low <<= 1;
-    // Reversed, the high half is the product's low 128 coefficients and
-    // the low half its high ones (u), which come down by x^128 =
-    // x^7 + x^2 + x + 1; what that pushes past x^127 comes down again.
-    const u = product_low;
+    const low = multiply64(x_low, y_low);
+    const high = multiply64(x_high, y_high);
+    const middle = multiply64(x_low ^ x_high, y_low ^ y_high) ^ low ^ high;
+    return reduce(high ^ (middle >> 64), low ^ (middle << 64));
+}
+
+/// The 255-bit product of two blocks, as its high and low 128 bits, in
+/// the field.
+inline fn reduce(high: u128, low: u128) u128 {
+    // Shifted up one. Reversed, the high half is the product's low 128
+    // coefficients and the low half its high ones (u), which come down by
+    // x^128 = x^7 + x^2 + x + 1; what that pushes past x^127 comes down
+    // again.
+    const product_high = high << 1 | low >> 127;
+    const u = low << 1;
     const w = (u << 127) ^ (u << 126) ^ (u << 121);
     return product_high ^ u ^ (u >> 1) ^ (u >> 2) ^ (u >> 7) ^ w ^ (w >> 1) ^ (w >> 2) ^ (w >> 7);
 }
 
-/// How a loop over whole blocks calls `multiply`: in place on a 64-bit
-/// chip, which saves twelve registers and restores them for each call
-/// otherwise, and as the compiler likes on a 32-bit one.
-const in_loop: std.builtin.CallModifier = if (@sizeOf(usize) == 8) .always_inline else .auto;
+// --- 64-bit chips: four parts, and the halves reversed --------------------
+
+/// Whether the chip multiplies 64 by 64 bits in one instruction: then
+/// each product of 128 by 128 bits is six of 64 by 64 into their low
+/// halves (`lowHalf`).
+const quarters = @sizeOf(usize) == 8;
+
+/// Bits 0, 4, 8 ... 60: the first of the four parts `lowHalf` splits an
+/// operand into, the others this shifted up one to three.
+const quarter: u64 = 0x1111_1111_1111_1111;
+
+/// The low 64 bits of x * y without carries, in sixteen multiplications
+/// (BearSSL's ctmul64): each operand split into four parts, every fourth
+/// bit. A column of one part times another holds sixteen at the most, and
+/// only from bit 60 on, whose carry leaves the word; below that fifteen,
+/// which stay inside the three bits above it.
+inline fn lowHalf(x: u64, y: u64) u64 {
+    const x0 = x & quarter;
+    const x1 = x & (quarter << 1);
+    const x2 = x & (quarter << 2);
+    const x3 = x & (quarter << 3);
+    const y0 = y & quarter;
+    const y1 = y & (quarter << 1);
+    const y2 = y & (quarter << 2);
+    const y3 = y & (quarter << 3);
+    const z0 = (x0 *% y0) ^ (x1 *% y3) ^ (x2 *% y2) ^ (x3 *% y1);
+    const z1 = (x0 *% y1) ^ (x1 *% y0) ^ (x2 *% y3) ^ (x3 *% y2);
+    const z2 = (x0 *% y2) ^ (x1 *% y1) ^ (x2 *% y0) ^ (x3 *% y3);
+    const z3 = (x0 *% y3) ^ (x1 *% y2) ^ (x2 *% y1) ^ (x3 *% y0);
+    return (z0 & quarter) | (z1 & (quarter << 1)) | (z2 & (quarter << 2)) | (z3 & (quarter << 3));
+}
+
+/// `word`'s bytes the other way round, in three steps of masks and
+/// shifts. Without Zbb's rev8 the compiler's own byte swap takes about
+/// twice the instructions; `hidden` keeps it from seeing one here.
+inline fn swapBytes(word: u64) u64 {
+    const bytes: u64 = 0x00FF_00FF_00FF_00FF;
+    const pairs: u64 = 0x0000_FFFF_0000_FFFF;
+    var value = hidden(word);
+    value = (value & bytes) << 8 | ((value >> 8) & bytes);
+    value = hidden(value);
+    value = (value & pairs) << 16 | ((value >> 16) & pairs);
+    return value << 32 | value >> 32;
+}
+
+/// `word`'s bits the other way round.
+inline fn reverse(word: u64) u64 {
+    return bitsInBytes(swapBytes(word));
+}
+
+/// `value`, which the compiler can see nothing of: what it is worked out
+/// from is not taken for one of its idioms. The asm is empty.
+inline fn hidden(value: u64) u64 {
+    return asm (""
+        : [out] "=r" (-> u64),
+        : [in] "0" (value),
+    );
+}
+
+/// `word`'s bits the other way round inside each byte.
+inline fn bitsInBytes(word: u64) u64 {
+    const ones: u64 = 0x5555_5555_5555_5555;
+    const twos: u64 = 0x3333_3333_3333_3333;
+    const fours: u64 = 0x0F0F_0F0F_0F0F_0F0F;
+    var value = word;
+    value = (value & ones) << 1 | ((value >> 1) & ones);
+    value = (value & twos) << 2 | ((value >> 2) & twos);
+    return (value & fours) << 4 | ((value >> 4) & fours);
+}
+
+/// A block as a multiplication takes it: its halves, and each half's
+/// bits the other way round. The product of two reversed halves has the
+/// product's high half in its low one, reversed (`Sum.total`).
+const Operand = struct {
+    high: u64,
+    low: u64,
+    high_reversed: u64,
+    low_reversed: u64,
+
+    fn of(x: u128) Operand {
+        const high: u64 = @truncate(x >> 64);
+        const low: u64 = @truncate(x);
+        return .{ .high = high, .low = low, .high_reversed = reverse(high), .low_reversed = reverse(low) };
+    }
+
+    /// The block at `bytes`, from the two words the chip loads there,
+    /// least significant byte first: each half is its word's bytes the
+    /// other way round, and the half reversed its word with each byte's
+    /// bits reversed. `aligned`: `bytes` is on an 8-byte boundary, which
+    /// the chip loads as a word instead of byte by byte.
+    inline fn at(comptime aligned: bool, bytes: [*]const u8) Operand {
+        const first = load(aligned, bytes);
+        const second = load(aligned, bytes + 8);
+        return .{ .high = swapBytes(first), .low = swapBytes(second), .high_reversed = bitsInBytes(first), .low_reversed = bitsInBytes(second) };
+    }
+
+    inline fn load(comptime aligned: bool, bytes: [*]const u8) u64 {
+        if (aligned) {
+            const words: [*]const u64 = @ptrCast(@alignCast(bytes));
+            return std.mem.littleToNative(u64, words[0]);
+        }
+        return std.mem.readInt(u64, bytes[0..8], .little);
+    }
+
+    inline fn xor(a: Operand, b: Operand) Operand {
+        return .{ .high = a.high ^ b.high, .low = a.low ^ b.low, .high_reversed = a.high_reversed ^ b.high_reversed, .low_reversed = a.low_reversed ^ b.low_reversed };
+    }
+};
+
+/// H or one of its powers as a multiplication takes it: an operand, and
+/// the sums of its halves for Karatsuba's third product.
+const Factor = struct {
+    high: u64,
+    low: u64,
+    sum: u64,
+    high_reversed: u64,
+    low_reversed: u64,
+    sum_reversed: u64,
+
+    fn of(y: u128) Factor {
+        const operand = Operand.of(y);
+        return .{
+            .high = operand.high,
+            .low = operand.low,
+            .sum = operand.high ^ operand.low,
+            .high_reversed = operand.high_reversed,
+            .low_reversed = operand.low_reversed,
+            .sum_reversed = operand.high_reversed ^ operand.low_reversed,
+        };
+    }
+};
+
+/// Products of blocks summed before they are brought into the field: the
+/// low halves of Karatsuba's three products - low by low, high by high,
+/// sum by sum - and the same of the reversed halves.
+const Sum = struct {
+    low: u64 = 0,
+    high: u64 = 0,
+    middle: u64 = 0,
+    low_reversed: u64 = 0,
+    high_reversed: u64 = 0,
+    middle_reversed: u64 = 0,
+
+    /// x * y added.
+    inline fn add(sum: *Sum, x: Operand, y: *const Factor) void {
+        sum.low ^= lowHalf(x.low, y.low);
+        sum.high ^= lowHalf(x.high, y.high);
+        sum.middle ^= lowHalf(x.low ^ x.high, y.sum);
+        sum.low_reversed ^= lowHalf(x.low_reversed, y.low_reversed);
+        sum.high_reversed ^= lowHalf(x.high_reversed, y.high_reversed);
+        sum.middle_reversed ^= lowHalf(x.low_reversed ^ x.high_reversed, y.sum_reversed);
+    }
+
+    /// The sum in the field. A product of 64 by 64 bits has 127: its high
+    /// half is the reversed product's low half, reversed and shifted down
+    /// one. Reversing and shifting are linear, so the sums are reversed,
+    /// not each product - three times however many products went in.
+    inline fn total(sum: Sum) u128 {
+        const low_high = reverse(sum.low_reversed) >> 1;
+        const high_high = reverse(sum.high_reversed) >> 1;
+        const middle_high = reverse(sum.middle_reversed ^ sum.low_reversed ^ sum.high_reversed) >> 1;
+        const middle_low = sum.middle ^ sum.low ^ sum.high;
+        return reduce(@as(u128, high_high) << 64 | (sum.high ^ middle_high), @as(u128, low_high ^ middle_low) << 64 | sum.low);
+    }
+};
+
+/// Whole blocks go four at a time from this many bytes on, as H's powers
+/// cost three multiplications.
+const aggregate_least: u32 = 16 * AES_BLOCK;
 
 /// `h` to the power `exponent` in GCM's field, by squaring and
 /// multiplying: the steps follow the exponent - a message's length, no
@@ -210,10 +333,43 @@ const Ghash = struct {
 /// GHASH's running value `y` after `length` bytes of whole blocks, taken
 /// where they lie: (y ^ block) * h for each.
 fn wholeBlocks(y: u128, h: u128, data: [*]const u8, length: u32) u128 {
+    if (quarters) {
+        if (@intFromPtr(data) % 8 == 0) return quarterBlocks(true, y, h, data, length);
+        return quarterBlocks(false, y, h, data, length);
+    }
     var value = y;
     var at: u32 = 0;
     while (at < length) : (at += AES_BLOCK) {
-        value = @call(in_loop, multiply, .{ value ^ load128(data[at..][0..AES_BLOCK]), h });
+        value = multiply(value ^ load128(data[at..][0..AES_BLOCK]), h);
+    }
+    return value;
+}
+
+/// `wholeBlocks` on a 64-bit chip, `data` on an 8-byte boundary or not:
+/// four blocks at a time from `aggregate_least` bytes on - (y ^ b1) h^4 ^
+/// b2 h^3 ^ b3 h^2 ^ b4 h, summed and brought into the field once - and
+/// the rest one at a time.
+fn quarterBlocks(comptime aligned: bool, y: u128, h: u128, data: [*]const u8, length: u32) u128 {
+    const by_h = Factor.of(h);
+    var value = y;
+    var at: u32 = 0;
+    if (length >= aggregate_least) {
+        const h2 = multiply(h, h);
+        const h3 = multiply(h2, h);
+        const powers = [4]Factor{ Factor.of(multiply(h3, h)), Factor.of(h3), Factor.of(h2), by_h };
+        while (length - at >= 4 * AES_BLOCK) : (at += 4 * AES_BLOCK) {
+            var sum: Sum = .{};
+            inline for (&powers, 0..) |*by, index| {
+                const block = Operand.at(aligned, data + at + index * AES_BLOCK);
+                sum.add(if (index == 0) block.xor(Operand.of(value)) else block, by);
+            }
+            value = sum.total();
+        }
+    }
+    while (at < length) : (at += AES_BLOCK) {
+        var sum: Sum = .{};
+        sum.add(Operand.at(aligned, data + at).xor(Operand.of(value)), &by_h);
+        value = sum.total();
     }
     return value;
 }

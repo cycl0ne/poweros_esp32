@@ -43,8 +43,11 @@ pub const io_seconds: u32 = 30;
 
 /// The socket's receive ring, and so the window offered.
 const receive_ring: i32 = 64 * 1024;
-/// Its send ring: the stack's own 8 KiB where memory is short.
-const send_ring: ?i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 64 * 1024 else null;
+/// Its send ring: on the 64-bit boards the stack's largest, 1 MiB - a
+/// whole WRITE of `session.io_max` but its header - so that Send is done
+/// once the piece is in the ring and the next is signed while the stack
+/// sends this one; the stack's own 8 KiB where memory is short.
+const send_ring: ?i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else null;
 
 /// What framing takes in front of a message.
 pub const frame_header: usize = 4;

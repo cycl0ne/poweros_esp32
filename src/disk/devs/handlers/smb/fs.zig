@@ -1394,20 +1394,37 @@ pub const FileSystem = struct {
         return done;
     }
 
-    /// One piece of a WRITE sent, its answer left to come - the answer
-    /// to the request before it taken first, and when that was the
-    /// file's piece written behind and it failed, the failure answered
-    /// instead.
+    /// One piece of a WRITE sent, its answer left to come: signed while
+    /// the piece before it may still be going, then sent once that one's
+    /// answer is taken - and when that was the file's piece written
+    /// behind and it failed, not sent, the failure answered instead.
     fn writeBehind(fs: *FileSystem, lock: *Lock, request: *session_area.Request, length: usize) Error!void {
-        try fs.settleAhead();
-        try failedBehind(lock);
-        try fs.sendBehind(lock, request, length);
+        const made = try fs.readyBehind(request);
+        failedBehind(lock) catch |err| {
+            fs.session.withdraw(&made);
+            return err;
+        };
+        try fs.sendBehind(lock, &made, length);
     }
 
-    /// A piece of `lock` sent, its answer left to come; whatever was
-    /// ahead before taken in first.
-    fn sendBehind(fs: *FileSystem, lock: *Lock, request: *session_area.Request, length: usize) Error!void {
-        const id = fs.session.sendAhead(request, fs.session.receive_buffer) catch {
+    /// A piece of a WRITE made ready to go (`Session.ready`), then the
+    /// answer to the request before it taken; a broken connection
+    /// NotMounted.
+    fn readyBehind(fs: *FileSystem, request: *const session_area.Request) Error!session_area.Ready {
+        if (fs.lost) return error.NotMounted;
+        const made = fs.session.ready(request) catch {
+            fs.lost = true;
+            fs.taken();
+            return error.NotMounted;
+        };
+        try fs.settleAhead();
+        return made;
+    }
+
+    /// A piece of `lock` made ready sent, its answer left to come;
+    /// whatever was ahead before taken in first.
+    fn sendBehind(fs: *FileSystem, lock: *Lock, made: *const session_area.Ready, length: usize) Error!void {
+        const id = fs.session.sendReady(made, fs.session.receive_buffer) catch {
             fs.lost = true;
             return error.NotMounted;
         };
@@ -1473,7 +1490,7 @@ pub const FileSystem = struct {
             const piece: usize = @min(gathered.length, fs.session.pieceMax(fs.session.max_write));
             var request = fs.session.begin(.write);
             commands.write(&request, &lock.file_id, gathered.offset, into[gathered.start..][0..piece]);
-            fs.settleAhead() catch |err| {
+            const made = fs.readyBehind(&request) catch |err| {
                 // Its answer went with the connection: it goes again on
                 // the next one.
                 if (behind > 0 and lock.write_error != 0) {
@@ -1484,7 +1501,7 @@ pub const FileSystem = struct {
                 }
                 return err;
             };
-            try fs.sendBehind(lock, &request, piece);
+            try fs.sendBehind(lock, &made, piece);
             behind = piece;
             gathered.offset += piece;
             gathered.start += piece;
