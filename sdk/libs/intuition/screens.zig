@@ -163,6 +163,12 @@ pub const SA_DefaultTitle = SA_Dummy + 0x010B;
 /// display's, the same for each of its buffers and for as long as it is
 /// open. For a program drawing into its buffers itself.
 pub const SA_PixelFormat = SA_Dummy + 0x010C;
+/// Read only: 1 while a picture is dragged across the screen
+/// (`BeginDrag`), by any program, until it is let go (`EndDrag`); else 0.
+/// With `SA_MouseX` and `SA_MouseY`, how a window that takes what is let
+/// go on it - a dock, a bin - shows where it would land while it is
+/// still on its way. `GetScreenAttrs` only.
+pub const SA_Dragging = SA_Dummy + 0x010D;
 
 /// `SA_Type`: a screen of its program's own, or a public one.
 pub const PUBLICSCREEN: u32 = 0x0002;

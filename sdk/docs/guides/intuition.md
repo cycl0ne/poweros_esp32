@@ -394,6 +394,13 @@ another program's, or null over the screen's ground - and with
 from. One drag at a time; a window closed while it drags ends it.
 `C:test/Drag` drags the five default icons.
 
+A window that takes what is let go on it - a dock, a bin - can show
+where it would land while it is still on its way: `SA_Dragging` (read
+with `GetScreenAttrs`) is 1 while a picture is dragged across the
+screen, by whichever program, and `SA_MouseX`/`SA_MouseY` say where.
+The dock looks ten times a second and lights the entry under the
+pointer.
+
 ## A window object
 
 A window object (`classusr.WINDOWCLASS`, as in

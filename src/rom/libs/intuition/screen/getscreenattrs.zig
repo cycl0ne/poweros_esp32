@@ -32,8 +32,9 @@ const _window = @import("../window/_window.zig");
 ///   on the display the screen is), `SA_WBorTop`, `SA_WBorLeft`,
 ///   `SA_WBorRight`, `SA_WBorBottom`, `SA_Top` (how far down its display
 ///   the screen is now), `SA_Left` (0), `SA_Draggable`, `SA_Exclusive`,
-///   `SA_PixelFormat` (since 0.49). A tag it does not know, or a null
-///   data, is passed over.
+///   `SA_PixelFormat` (since 0.49), `SA_Dragging` (since 0.58: whether a
+///   picture is being dragged across it). A tag it does not know, or a
+///   null data, is passed over.
 ///
 /// RESULT:
 /// Nothing; the values are where the tags point.
@@ -90,6 +91,8 @@ pub fn GetScreenAttrs(ib: *IntuitionBase, screen: *Screen, tags: ?[*]const TagIt
             // size: its coordinates are the screen's.
             sc.SA_MouseX => out.* = @bitCast(@as(isize, ib.input.disp_x)),
             sc.SA_MouseY => out.* = @bitCast(@as(isize, ib.input.disp_y - screen.top)),
+            // A drag on another screen's window is not across this one.
+            sc.SA_Dragging => out.* = @intFromBool(if (ib.drag.window) |w| w.screen == screen else false),
             sc.SA_Top => out.* = @bitCast(@as(isize, screen.top)),
             sc.SA_Left => out.* = 0,
             sc.SA_Draggable => out.* = @intFromBool(screen.draggable),

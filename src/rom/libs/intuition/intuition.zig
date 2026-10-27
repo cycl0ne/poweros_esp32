@@ -9935,7 +9935,7 @@ test "the pointer: seen once a mouse is, the active window's, busy now or after 
     try tearDown(ib);
 }
 
-test "a drag: the picture on the board following the pointer, the window under the drop, flown back, ended by a close" {
+test "a drag: the picture on the board following the pointer, the screen saying so, the window under the drop, flown back, ended by a close" {
     const ib = try setUp();
     defer kexec.deinit();
     const wn = intuition.windows;
@@ -9960,11 +9960,19 @@ test "a drag: the picture on the board following the pointer, the window under t
         .{},
     }).?;
     pointerEvent(ib, ie.IECODE_LBUTTON, 10, 20);
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, other, wn.WA_Screen));
+    // Whether a picture is dragged across the screen (SA_Dragging).
+    var dragging: usize = 9;
+    const ask = [_]TagItem{ .{ .tag = intuition.screens.SA_Dragging, .data = @intFromPtr(&dragging) }, .{} };
+    it.GetScreenAttrs(screen, &ask);
+    try testing.expectEqual(@as(usize, 0), dragging);
 
     // A four by four picture, held at its middle.
     var pixels: [16]u32 = @splat(0x00FF00FF);
     const picture = sdk.rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 4, .height = 4, .pitch = 16, .format = .rgba32 };
     try testing.expect(it.BeginDrag(w, &picture, 2, 2));
+    it.GetScreenAttrs(screen, &ask);
+    try testing.expectEqual(@as(usize, 1), dragging);
     try testing.expectEqual(@as(u32, 4), log.overlay_image.?.width);
     try testing.expectEqual(@as(i32, 8), log.overlay_left);
     try testing.expectEqual(@as(i32, 18), log.overlay_top);
@@ -9977,6 +9985,8 @@ test "a drag: the picture on the board following the pointer, the window under t
     // Let go over the other window: that is the answer, the picture gone.
     try testing.expectEqual(other, it.EndDrag(w, 0).?);
     try testing.expect(log.overlay_image == null);
+    it.GetScreenAttrs(screen, &ask);
+    try testing.expectEqual(@as(usize, 0), dragging);
     try testing.expect(it.EndDrag(w, 0) == null); // no drag now
 
     // Flown back: the last place it is put is where it began.
@@ -9991,10 +10001,11 @@ test "a drag: the picture on the board following the pointer, the window under t
     try testing.expect(it.BeginDrag(w, &picture, 0, 0));
     it.CloseWindow(w);
     try testing.expect(log.overlay_image == null);
+    it.GetScreenAttrs(screen, &ask);
+    try testing.expectEqual(@as(usize, 0), dragging);
     try testing.expect(it.BeginDrag(other, &picture, 0, 0));
     pointerEvent(ib, ie.IECODE_NOBUTTON, 40, 25);
     try testing.expectEqual(other, it.EndDrag(other, 0).?);
-    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, other, wn.WA_Screen));
     it.CloseWindow(other);
     try testing.expect(it.CloseScreen(screen));
     display.down(ib);
