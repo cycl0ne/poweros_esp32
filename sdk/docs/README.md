@@ -297,6 +297,25 @@ of its own besides. How a class is written is in
 | scrollgroup.gadget | a layout larger than its room, seen through it and moved by scrollers and the wheel; what lies outside is cut off | [`scrollgroup.zig`](../libs/gadgets/scrollgroup.zig) |
 | listbrowser.gadget | a list in columns under headings that sort it, its rows a tree whose branches open and close | [`listbrowser.zig`](../libs/gadgets/listbrowser.zig) |
 
+## Docklets
+
+The dock's small pictures of the machine, each a library of its own in
+`SYS:classes/docklets/`: opened as `docklets/<name>.docklet`, then made
+with `NewObjectTagList(null, "<name>.docklet", null)`. A docklet is an
+image class: the dock draws it fitted to its entry (`IM_DRAWFRAME`) at
+every size, sets `DOCKLET_Look` as often as it asks, and runs its
+command when it is clicked. What every docklet answers, and the class
+library that makes one from a few functions, are in
+[`docklets.zig`](../libs/docklets/docklets.zig).
+
+| Docklet | What | A click runs |
+|---|---|---|
+| clock.docklet | the time, as a clock face; the date in its words | nothing |
+| battery.docklet | the board's battery (battery.resource), filled to its charge | nothing |
+| volume.docklet | how loud the machine plays, as a speaker and its waves | `SYS:Programs/Volume` |
+| cpu.docklet | how busy each core is, a bar each | `SYS:System/CPULoad` |
+| network.docklet | an arrow for what comes in, one for what goes out | `SYS:System/NetLoad` |
+
 ## Datatype classes
 
 Each a library of its own in `SYS:classes/datatypes/`, opened by
