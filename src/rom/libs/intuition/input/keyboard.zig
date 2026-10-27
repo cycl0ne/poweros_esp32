@@ -8,8 +8,9 @@
 //! screen is being typed into, and so is any gadget that says it takes
 //! text (`GFLG_TYPING`); then, if the keyboard is wanted and not up,
 //! it opens: a borderless window across the bottom of that screen, never
-//! made active (`WA_NoActivate`), holding one keyboard.gadget as large as
-//! the window. Its keys go to input.device, and from there to the field
+//! made active (`WA_NoActivate`), in front of every window - those that
+//! stay in front, a dock, included (`WA_Above`) - holding one
+//! keyboard.gadget as large as the window. Its keys go to input.device, and from there to the field
 //! as any key does. When nothing is being typed into any more - the field
 //! let go, Return pressed - and no key of it is held, it closes again.
 //!
@@ -33,7 +34,8 @@ const st_tags = sdk.expansion.systemtags;
 const kbg = sdk.gadgets.keyboard;
 const TagItem = sdk.utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
-const Window = @import("../window/_window.zig").Window;
+const _window = @import("../window/_window.zig");
+const Window = _window.Window;
 const Screen = @import("../screen/_screen.zig").Screen;
 
 /// The keyboard's part of intuition's input state.
@@ -147,6 +149,7 @@ fn open(ib: *IntuitionBase, screen: *Screen) void {
         .{ .tag = wn.WA_Height, .data = @intCast(height) },
         .{ .tag = wn.WA_Borderless, .data = 1 },
         .{ .tag = wn.WA_NoActivate, .data = 1 },
+        .{ .tag = _window.WA_Above, .data = 1 },
         .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(object) },
         .{},
     }) orelse {

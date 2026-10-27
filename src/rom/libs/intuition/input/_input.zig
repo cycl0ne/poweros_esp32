@@ -54,7 +54,6 @@ const _gadget = @import("../gadget/_gadget.zig");
 const menus = @import("menus.zig");
 const verify = @import("verify.zig");
 const pointer = @import("pointer.zig");
-const _requester = @import("../requester/_requester.zig");
 const rq = sdk.intuition.requesters;
 const gadgetclass = @import("../classes/gadgetclass.zig");
 const _style = @import("../style/_style.zig");
@@ -641,19 +640,10 @@ pub fn forgetScreen(ib: *IntuitionBase, s: *Screen) void {
 
 /// The window whose visible part is at (x, y) on its screen, or null for
 /// the title bar, the ground or nothing.
-/// The window a layer belongs to, if any.
-fn windowOfLayer(s: *Screen, layer: *layers.Layer) ?*Window {
-    var node = s.windows.head;
-    while (node) |n| : (node = n.succ) {
-        if (n.succ == null) break;
-        const w: *Window = @ptrCast(@alignCast(n));
-        // Either of them: a GimmeZeroZero window is two layers, and a point
-        // inside its border is in the inner one. A requester is the
-        // window's too.
-        if (w.layer == layer or w.inner_layer == layer or _requester.owns(w, layer)) return w;
-    }
-    return null;
-}
+/// The window a layer belongs to, if any: either of a GimmeZeroZero
+/// window's two layers - a point inside its border is in the inner one -
+/// and a requester's are the window's too.
+const windowOfLayer = _window.windowOfLayer;
 
 /// The wheel turned: to the gadget under the pointer in the window under
 /// it, active or not (`GM_WHEEL`), and when none takes it to that window's
@@ -1635,37 +1625,33 @@ fn release(ib: *IntuitionBase) void {
     }
 }
 
-/// What a window's depth gadget does: a window another one overlaps from
-/// in front comes to the front, and one nothing covers goes to the back,
-/// so that pressing it again and again goes through every window piled
-/// on one spot. With Shift held it goes to the back whatever covers it.
+/// What a window's depth gadget does: a window another one of its rank
+/// overlaps from in front comes to the front, and one nothing of its rank
+/// covers goes to the back, so that pressing it again and again goes
+/// through every window piled on one spot. A window that stays in front
+/// covering an ordinary one does not count: no change of depth would
+/// uncover it. With Shift held it goes to the back whatever covers it.
 fn depthToggle(ib: *IntuitionBase, w: *Window) void {
     const shifted = stateOf(ib).qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
     if (!shifted and obscured(ib, w)) ib.iface().WindowToFront(@ptrCast(w)) else ib.iface().WindowToBack(@ptrCast(w));
 }
 
-/// Whether another window in front of `w` overlaps it. The layers in
-/// front of its own are walked to the front: its interior and its
-/// requesters are its own, and a layer that is no window's - the
+/// Whether another window of `w`'s rank in front of it overlaps it. The
+/// layers in front of its own are walked to the front: its interior and
+/// its requesters are its own, and a layer that is no window's - the
 /// screen's title bar, a panel - covers nothing.
 fn obscured(ib: *IntuitionBase, w: *Window) bool {
     var layer = layerInFront(ib, w.layer);
     while (layer) |at| : (layer = layerInFront(ib, at)) {
         const other = windowOfLayer(w.screen, at) orelse continue;
-        if (other == w) continue;
+        if (other == w or _window.rankOf(other) != _window.rankOf(w)) continue;
         if (other.left < w.left + w.width and w.left < other.left + other.width and
             other.top < w.top + w.height and w.top < other.top + other.height) return true;
     }
     return false;
 }
 
-/// The layer immediately in front of `layer`, or null for the frontmost.
-fn layerInFront(ib: *IntuitionBase, layer: *layers.Layer) ?*layers.Layer {
-    var next: usize = 0;
-    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetInFront, .data = @intFromPtr(&next) }, .{} };
-    ib.layers_base.GetLayerAttrs(layer, &ask);
-    return @ptrFromInt(next);
-}
+const layerInFront = _window.layerInFront;
 
 /// Which of the window's own gadgets a gadget stands for (`GA_SysGadget`,
 /// `GA_SysGType`), if it stands for one.

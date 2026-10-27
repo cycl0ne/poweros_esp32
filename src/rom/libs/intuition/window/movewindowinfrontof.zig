@@ -5,7 +5,6 @@ const layers = @import("sdk").layers;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _window = @import("_window.zig");
 const Window = _window.Window;
-const WF_BACKDROP = _window.WF_BACKDROP;
 const depthChanged = _window.depthChanged;
 const lock = _window.lock;
 const repairScreen = _window.repairScreen;
@@ -34,7 +33,9 @@ const unlock = _window.unlock;
 ///
 /// Nothing happens when the two are on different screens, are the same
 /// window, or are of different kinds: a backdrop window stays behind every
-/// other window, and an ordinary one in front of every backdrop window.
+/// other window, an ordinary one in front of every backdrop window, and a
+/// window that stays in front (`WA_StayInFront`) in front of every
+/// ordinary one.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
@@ -62,7 +63,7 @@ const unlock = _window.unlock;
 /// ```
 pub fn MoveWindowInFrontOf(ib: *IntuitionBase, window: *Window, behind: *Window) void {
     if (window == behind or window.screen != behind.screen) return;
-    if ((window.flags & WF_BACKDROP) != (behind.flags & WF_BACKDROP)) return;
+    if (_window.rankOf(window) != _window.rankOf(behind)) return;
     lock(ib);
     defer unlock(ib);
     const lb = ib.layers_base;

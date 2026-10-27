@@ -26,8 +26,10 @@ const unlock = _window.unlock;
 ///
 /// BEHAVIOR:
 /// In front of every other window of its kind on the screen: a backdrop
-/// window stays behind the ordinary ones. What it uncovers of itself is
-/// repaired if it is a simple-refresh window.
+/// window stays behind the ordinary ones, and an ordinary one behind the
+/// windows that stay in front (`WA_StayInFront`) and the on-screen
+/// keyboard. What it uncovers of itself is repaired if it is a
+/// simple-refresh window.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
@@ -54,7 +56,7 @@ const unlock = _window.unlock;
 pub fn WindowToFront(ib: *IntuitionBase, window: *Window) void {
     lock(ib);
     defer unlock(ib);
-    _ = ib.layers_base.UpfrontLayer(window.layer);
+    _window.toFront(ib, window);
     // The interior belongs immediately in front of its border, wherever the
     // border has gone.
     if (window.inner_layer) |inner| _ = ib.layers_base.MoveLayerInFrontOf(inner, window.layer);

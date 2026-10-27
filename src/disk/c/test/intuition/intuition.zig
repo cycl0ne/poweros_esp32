@@ -3,7 +3,7 @@
 //! against the SDK only.
 //!
 //!   Intuition WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S,
-//!             EXECALERT/S,PANIC/S,CRASH/S,INFRONT/S
+//!             EXECALERT/S,PANIC/S,CRASH/S,INFRONT/S,STAY/S
 //!
 //! With nothing asked for it locks the default public screen - which opens
 //! it, the first time - prints its size, depth, title bar and pens, and
@@ -87,6 +87,12 @@
 //! they first open a quiet screen of their own, with no title bar, and
 //! fail with it in front, as a game might: the requester has to come out
 //! in front of it.
+//!
+//! STAY opens a window across the bottom of the screen that stays in
+//! front of every ordinary window (WA_StayInFront), as a dock does, and
+//! says so in it: windows opened, dragged over it or brought to the front
+//! go behind it, and its depth gadget sends it back only behind other
+//! such windows. Its close gadget or Ctrl-C closes it.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -105,10 +111,10 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Intuition";
-const VERSION_STRING = "\x00$VER: Intuition 1.12 (19.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Intuition 1.13 (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S,EXECALERT/S,PANIC/S,CRASH/S,INFRONT/S";
+const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S,EXECALERT/S,PANIC/S,CRASH/S,INFRONT/S,STAY/S";
 const arg_windows = 0;
 const arg_gadgets = 1;
 const arg_sliders = 2;
@@ -123,6 +129,7 @@ const arg_execalert = 10;
 const arg_panic = 11;
 const arg_crash = 12;
 const arg_in_front = 13;
+const arg_stay = 14;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display, or it shows another screen\n";
@@ -132,6 +139,7 @@ const MSG_PEN = "  %-16s %08lx\n";
 const MSG_IMAGES = "Images     %d drawn with DrawImage and DrawImageState\n";
 const MSG_WINDOWS = "Windows    3 open - each closes with its close gadget, Ctrl-C closes the rest\n";
 const MSG_NOWINDOWS = "Windows    could not open them\n";
+const MSG_STAY = "Stay       a window across the bottom that %s - its close gadget or Ctrl-C closes it\n";
 const MSG_MESSAGE = "  %s\n";
 const MSG_BUTTON = "  MOUSEBUTTONS %s at %d,%d\n";
 const MSG_KEY = "  RAWKEY %02x qualifier %04x\n";
@@ -316,6 +324,53 @@ fn textDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.Scre
 }
 
 const label = "PowerOS";
+
+/// STAY: a window across the bottom of the screen that stays in front of
+/// every ordinary one, until its close gadget or Ctrl-C.
+fn stayDemo(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, s: *intuition.Screen) i32 {
+    const lay_lib = sys.OpenLibrary(sdk.layers.LAYERSNAME, 0) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(lay_lib);
+    const lb: *LayersBase = @ptrCast(lay_lib);
+    const gfx_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, 0) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(gfx_lib);
+    const gb: *GraphicsBase = @ptrCast(gfx_lib);
+
+    const width = attr(ib, s, sc.SA_Width);
+    const height = attr(ib, s, sc.SA_Height);
+    const tall: usize = 64;
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(s) },
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = height - tall },
+        .{ .tag = wn.WA_Width, .data = width },
+        .{ .tag = wn.WA_Height, .data = tall },
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("Stays in front") },
+        .{ .tag = wn.WA_CloseGadget, .data = 1 },
+        .{ .tag = wn.WA_DepthGadget, .data = 1 },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_StayInFront, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CLOSEWINDOW },
+        .{},
+    }) orelse {
+        _ = Printf(dl, MSG_NOWINDOWS, .{});
+        return dos.RETURN_FAIL;
+    };
+    defer ib.CloseWindow(w);
+    const stays = wattr(ib, w, wn.WA_StayInFront) != 0;
+    say(ib, gb, lb, w, 0, if (stays) "WA_StayInFront: in front of every ordinary window" else "WA_StayInFront not taken: an ordinary window");
+    _ = Printf(dl, MSG_STAY, .{@as([*:0]const u8, if (stays) "stays in front" else "does not stay in front")});
+
+    var running = true;
+    while (running and dl.CheckSignal(exec.SIGBREAKF_CTRL_C) == 0) {
+        while (ib.GetIMsg(w)) |im| {
+            const class = im.class;
+            ib.ReplyIMsg(im);
+            if (class == wn.IDCMP_CLOSEWINDOW) running = false;
+        }
+        dl.Delay(5);
+    }
+    return dos.RETURN_OK;
+}
 
 fn wattr(ib: *IntuitionBase, w: *intuition.Window, tag: sdk.utility.Tag) usize {
     var value: usize = 0;
@@ -1080,7 +1135,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [14]usize = @splat(0);
+    var argv: [15]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -1163,6 +1218,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_request] != 0) return requestDemo(dl, ib, s);
     if (argv[arg_menus] != 0) return menusDemo(dl, ib, s);
     if (argv[arg_requester] != 0) return requesterDemo(dl, ib, s);
+    if (argv[arg_stay] != 0) return stayDemo(sys, dl, ib, s);
 
     const dri = ib.GetScreenDrawInfo(s);
     defer ib.FreeScreenDrawInfo(s, dri);

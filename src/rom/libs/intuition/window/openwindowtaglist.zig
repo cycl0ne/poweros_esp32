@@ -79,7 +79,9 @@ const _fade = @import("_fade.zig");
 ///   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
 ///   `WA_PointerDelay`, as
 ///   `SetWindowPointerA` takes them. Painted by its backfill alone, with no
-///   buffer, on a composed screen: `WA_NoBuffer`. May be null.
+///   buffer, on a composed screen: `WA_NoBuffer`. In front of every
+///   ordinary window, as a dock is: `WA_StayInFront` (since 0.57). May be
+///   null.
 ///
 /// RESULT:
 /// The window, or null: no screen to open it on (the default one could not
@@ -97,6 +99,10 @@ const _fade = @import("_fade.zig");
 /// calling task; with `WA_UserPort` its messages go to the program's port
 /// instead, each saying in `window` whose it is. With `WA_Activate` it
 /// becomes the active window.
+///
+/// It opens in front of the windows of its kind: an ordinary window
+/// behind those that stay in front (`WA_StayInFront`), and behind the
+/// on-screen keyboard; a backdrop window behind every ordinary one.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
@@ -181,6 +187,14 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     // A backdrop window sits behind everything and is not moved, sized or
     // reordered, so it has none of the furniture for doing so.
     if (flags & WF_BACKDROP != 0) flags &= ~(WF_SIZE | WF_DRAG | WF_DEPTH | WF_HASZOOM);
+    var more_flags: u32 = if (ub.GetTagData(wn.WA_MenuHelp, 0, tags) != 0) _window.WMF_MENUHELP else 0;
+    more_flags |= flagIf(ub, wn.WA_StayInFront, tags, _window.WMF_STAYINFRONT);
+    more_flags |= flagIf(ub, _window.WA_Above, tags, _window.WMF_ABOVE);
+    // A window with one of a higher rank on its screen - one that stays in
+    // front, the keyboard - is made behind the ordinary ones and then put
+    // just behind those, never once in front of them.
+    const rank = _window.rankFrom(flags, more_flags);
+    const outranked = rank != .backdrop and _window.outranked(s, rank);
     const title: ?[*:0]const u8 = @ptrFromInt(ub.GetTagData(wn.WA_Title, 0, tags));
     // Without one of its own, the window shows the screen's title.
     const screen_title: ?[*:0]const u8 = @ptrFromInt(ub.GetTagData(wn.WA_ScreenTitle, @intFromPtr(s.default_title), tags));
@@ -313,6 +327,7 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&bounds) },
         .{ .tag = layers.LATAG_Refresh, .data = refresh },
         .{ .tag = layers.LATAG_Backdrop, .data = @intFromBool(flags & WF_BACKDROP != 0) },
+        .{ .tag = layers.LATAG_Behind, .data = @intFromBool(outranked) },
         .{ .tag = layers.LATAG_BackFill, .data = paints_it },
         .{ .tag = layers.LATAG_SuperBitMap, .data = super },
         .{ .tag = layers.LATAG_Opacity, .data = if (fades) 0 else 255 },
@@ -367,9 +382,10 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         .rpt_limit = @intCast(ub.GetTagData(wn.WA_RptQueue, wn.DEFAULTRPTQUEUE, tags)),
         .check_mark = @ptrFromInt(ub.GetTagData(wn.WA_Checkmark, @intFromPtr(s.draw_info.check_mark), tags)),
         .amiga_key = @ptrFromInt(ub.GetTagData(wn.WA_AmigaKey, @intFromPtr(s.draw_info.amiga_key), tags)),
-        .more_flags = if (ub.GetTagData(wn.WA_MenuHelp, 0, tags) != 0) _window.WMF_MENUHELP else 0,
+        .more_flags = more_flags,
     };
     w.reply_port.msg_list.init(.message);
+    if (outranked) _window.toFront(ib, w);
 
     // Where the zoom gadget flips to. A window already at its smallest
     // flips to its largest; anything else flips to its smallest, which is

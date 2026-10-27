@@ -22,6 +22,13 @@
 //! they are freed from there the next time the window sends one, and
 //! when it closes.
 //!
+//! **The depth order** has ranks, from the back: backdrop windows, the
+//! ordinary ones, those that stay in front (`WA_StayInFront`), and the
+//! on-screen keyboard. A window opens, comes to the front and goes to the
+//! back among those of its own rank (`toFront`, `toBack`); menus and a
+//! gadget's list popped up are layers of no window and go in front of
+//! them all.
+//!
 //! Every window and the active one are guarded by the screen list's
 //! semaphore, which nests.
 //!
@@ -378,6 +385,16 @@ pub const WMF_GADGETHELP: u32 = 1 << 3;
 /// its other windows: only its own messages are taken off, and the port
 /// stays.
 pub const WMF_SHARED_PORT: u32 = 1 << 4;
+/// It stays in front of every ordinary window (`WA_StayInFront`).
+pub const WMF_STAYINFRONT: u32 = 1 << 5;
+/// It is intuition's own and in front even of the windows that stay in
+/// front: the on-screen keyboard (`WA_Above`).
+pub const WMF_ABOVE: u32 = 1 << 6;
+
+/// intuition.library's own tag, not in the SDK: true opens a window in
+/// front of every other, those that stay in front included, and keeps it
+/// there. Only the on-screen keyboard is opened with it.
+pub const WA_Above = wn.WA_Dummy + 0x1FF;
 /// Inside BeginRefresh, so EndRefresh has an update to end.
 pub const WF_IN_REFRESH = wn.WFLG_WINDOWREFRESH;
 /// An IDCMP_INTUITICKS is waiting; no second is sent until it is replied.
@@ -1069,6 +1086,127 @@ pub fn disposeParts(ib: *IntuitionBase, w: *Window) void {
 pub fn depthChanged(ib: *IntuitionBase, w: *Window) void {
     if (w.flags & WF_NOTIFYDEPTH == 0) return;
     send(ib, w, wn.IDCMP_CHANGEWINDOW, 0);
+}
+
+/// A window's rank in the depth order, from the back.
+pub const Rank = enum(u8) { backdrop, ordinary, stays, above };
+
+/// The rank of a window with these `flags` and `more_flags`. A backdrop
+/// window is one whatever else it asks for.
+pub fn rankFrom(flags: u32, more_flags: u32) Rank {
+    if (flags & WF_BACKDROP != 0) return .backdrop;
+    if (more_flags & WMF_ABOVE != 0) return .above;
+    if (more_flags & WMF_STAYINFRONT != 0) return .stays;
+    return .ordinary;
+}
+
+pub fn rankOf(w: *const Window) Rank {
+    return rankFrom(w.flags, w.more_flags);
+}
+
+/// Whether a window on `s` ranks higher than `rank`.
+pub fn outranked(s: *Screen, rank: Rank) bool {
+    var node = s.windows.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ == null) break;
+        const w: *Window = @ptrCast(@alignCast(n));
+        if (@intFromEnum(rankOf(w)) > @intFromEnum(rank)) return true;
+    }
+    return false;
+}
+
+/// `w` in front of every window of its rank and behind every window of a
+/// higher one. Under the screen semaphore; the caller puts its interior
+/// and its requesters back in front of it.
+pub fn toFront(ib: *IntuitionBase, w: *Window) void {
+    const lb = ib.layers_base;
+    const place: Place = switch (rankOf(w)) {
+        // layers keeps a backdrop layer behind every ordinary one, and
+        // nothing ranks above the keyboard.
+        .backdrop, .above => .none,
+        .ordinary => placeBehind(ib, w, .stays),
+        .stays => placeBehind(ib, w, .above),
+    };
+    switch (place) {
+        .none => _ = lb.UpfrontLayer(w.layer),
+        .there => {},
+        .in_front_of => |layer| _ = lb.MoveLayerInFrontOf(w.layer, layer),
+    }
+}
+
+/// `w` behind every window of its rank and in front of every window of a
+/// lower one. Under the screen semaphore, as `toFront`.
+pub fn toBack(ib: *IntuitionBase, w: *Window) void {
+    const lb = ib.layers_base;
+    const rank = rankOf(w);
+    // layers puts a layer behind the ordinary ones and in front of the
+    // backdrops: the back of these two ranks.
+    if (rank == .backdrop or rank == .ordinary) {
+        _ = lb.BehindLayer(w.layer);
+        return;
+    }
+    switch (placeBehind(ib, w, rank)) {
+        // The only one of its rank or higher: in front of every lower
+        // one, which is where it is.
+        .none, .there => {},
+        .in_front_of => |layer| _ = lb.MoveLayerInFrontOf(w.layer, layer),
+    }
+}
+
+/// Where `placeBehind` found a window's place.
+const Place = union(enum) {
+    /// No other window of the rank, or of a higher one.
+    none,
+    /// The window is just behind the first of them already.
+    there,
+    /// Just in front of this layer, which is just behind the first of them.
+    in_front_of: *layers.Layer,
+};
+
+/// Where `w` goes to be just behind the backmost window, not `w`, of
+/// `rank` or higher: walked forward from the screen's ground, the layer
+/// before the first that is such a window's. `w`'s own layers - its
+/// interior, its requesters - are passed over. The ranks being in order,
+/// every layer behind that one is a window's of a lower rank or of none.
+fn placeBehind(ib: *IntuitionBase, w: *Window, rank: Rank) Place {
+    const s = w.screen;
+    // The layer before the one looked at, null when that was `w`'s own.
+    var last: ?*layers.Layer = null;
+    var at: ?*layers.Layer = s.ground;
+    while (at) |layer| : (at = layerInFront(ib, layer)) {
+        if (layer == w.layer or layer == w.inner_layer or @import("../requester/_requester.zig").owns(w, layer)) {
+            last = null;
+            continue;
+        }
+        if (windowOfLayer(s, layer)) |other| {
+            if (@intFromEnum(rankOf(other)) >= @intFromEnum(rank)) {
+                return if (last) |behind| .{ .in_front_of = behind } else .there;
+            }
+        }
+        last = layer;
+    }
+    return .none;
+}
+
+/// The layer immediately in front of `layer`, or null for the frontmost.
+pub fn layerInFront(ib: *IntuitionBase, layer: *layers.Layer) ?*layers.Layer {
+    var next: usize = 0;
+    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetInFront, .data = @intFromPtr(&next) }, .{} };
+    ib.layers_base.GetLayerAttrs(layer, &ask);
+    return @ptrFromInt(next);
+}
+
+/// The window on `s` a layer is part of: its own, its interior, or one of
+/// its requesters'. Null for a layer of no window - the screen's bar and
+/// ground, a menu, a gadget's list popped up.
+pub fn windowOfLayer(s: *Screen, layer: *layers.Layer) ?*Window {
+    var node = s.windows.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ == null) break;
+        const w: *Window = @ptrCast(@alignCast(n));
+        if (w.layer == layer or w.inner_layer == layer or @import("../requester/_requester.zig").owns(w, layer)) return w;
+    }
+    return null;
 }
 
 pub fn activate(ib: *IntuitionBase, w: *Window) void {

@@ -36,7 +36,8 @@ const interior = _window.interior;
 ///   `WA_Screen`, `WA_Layer`, `WA_BorderLeft`/`Top`/`Right`/`Bottom`,
 ///   `WA_Active`, `WA_SimpleRefresh`, `WA_Backdrop`, `WA_Checkmark`,
 ///   `WA_AmigaKey`, `WA_MenuHelp`, `WA_Number`, `WA_PixelFormat` (since
-///   0.49, its screen's `SA_PixelFormat`). `WA_Left` and `WA_Top`
+///   0.49, its screen's `SA_PixelFormat`), `WA_StayInFront` (since
+///   0.57). `WA_Left` and `WA_Top`
 ///   are signed, written by their bits: a window past the screen's left
 ///   edge (`IPREFS_OffScreen`) has a negative left.
 ///
@@ -115,6 +116,8 @@ pub fn GetWindowAttrs(ib: *IntuitionBase, window: *Window, tags: ?[*]const TagIt
             wn.WA_Active => out.* = @intFromBool(window.flags & WF_ACTIVE != 0),
             wn.WA_SimpleRefresh => out.* = @intFromBool(window.flags & WF_SIMPLE != 0),
             wn.WA_Backdrop => out.* = @intFromBool(window.flags & WF_BACKDROP != 0),
+            // The keyboard, above them, stays in front as well.
+            wn.WA_StayInFront => out.* = @intFromBool(@intFromEnum(_window.rankOf(window)) >= @intFromEnum(_window.Rank.stays)),
             wn.WA_Checkmark => out.* = @intFromPtr(window.check_mark),
             wn.WA_AmigaKey => out.* = @intFromPtr(window.amiga_key),
             wn.WA_MenuHelp => out.* = @intFromBool(window.more_flags & _window.WMF_MENUHELP != 0),

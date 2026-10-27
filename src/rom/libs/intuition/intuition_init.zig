@@ -137,8 +137,10 @@ pub const LIBRARY_VERSION = 0;
 /// (LATAG_NoBuffer): it is painted by its backfill wherever it is seen.
 /// 56: WA_NoBuffer - a window with no border painted by its backfill
 /// alone, with no buffer of its own, on a composed screen.
-pub const LIBRARY_REVISION = 56;
-const BUILD_DATE = "26.10.2026";
+/// 57: WA_StayInFront - a window in front of every ordinary one, as a
+/// dock is; the on-screen keyboard in front of those too.
+pub const LIBRARY_REVISION = 57;
+const BUILD_DATE = "27.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

@@ -150,6 +150,7 @@ gadgets and hands its messages over as words.
 | `WA_CloseGadget`, `WA_DragBar`, `WA_DepthGadget`, `WA_SizeGadget` | its border gadgets |
 | `WA_Activate` | made the active window as it opens |
 | `WA_SimpleRefresh`, `WA_GimmeZeroZero`, `WA_Borderless`, `WA_Backdrop` | what kind of window |
+| `WA_StayInFront` | in front of every ordinary window, as a dock is |
 | `WA_IDCMP` | the messages it sends; without it, no port |
 | `WA_UserPort` | a port of the program's own its messages go to, shared with its other windows |
 | `WA_Gadgets` | gadgets, linked with `GA_Previous`, added and drawn as it opens |
@@ -167,6 +168,16 @@ showing for work that ends at once. When the active window closes, the
 window on its screen that was active before it is active again - a
 program's window when its requester goes, the desktop when a program it
 started ends.
+
+The windows of a screen are in ranks, from the back: backdrop windows,
+the ordinary ones, the windows that stay in front (`WA_StayInFront`),
+and the on-screen keyboard. A window opens, comes to the front
+(`WindowToFront`, its depth gadget) and goes to the back among those of
+its own rank: an ordinary window opened or brought forward goes behind a
+dock, and a dock sent to the back goes behind the other docks only.
+`MoveWindowInFrontOf` does not mix ranks, and a depth gadget counts only
+the windows of its own rank as covering it. Menus and a gadget's list
+popped up come in front of every rank.
 
 A window is the task's that opened it, and closed with `CloseWindow` by
 that task. One still open when the task ends - its code returned, it

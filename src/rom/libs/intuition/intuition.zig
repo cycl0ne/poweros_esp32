@@ -3199,6 +3199,129 @@ test "input: the depth gadget brings a covered window forward and sends an uncov
     try tearDown(ib);
 }
 
+test "WA_StayInFront: in front of every ordinary window, at the back only behind its own kind, the keyboard above it" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 112, 56, .rgb565);
+    const lb: *sdk.interface.layers.LayersBase = ib.layers_base;
+
+    const At = struct {
+        /// A window on the spot the others are on, of the kind asked for;
+        /// one with a depth gadget further right, so that the others
+        /// leave the gadget clear.
+        fn open(i: anytype, kind: enum { ordinary, depth, gimme, stays, above, backdrop }) *intuition.Window {
+            return i.OpenWindowTagList(&[_]TagItem{
+                .{ .tag = wn.WA_Left, .data = if (kind == .depth) 24 else 2 },
+                .{ .tag = wn.WA_Top, .data = if (kind == .stays) 24 else 12 },
+                .{ .tag = wn.WA_Width, .data = 42 },
+                .{ .tag = wn.WA_Height, .data = if (kind == .stays) 10 else 22 },
+                .{ .tag = wn.WA_DepthGadget, .data = @intFromBool(kind == .depth) },
+                .{ .tag = wn.WA_GimmeZeroZero, .data = @intFromBool(kind == .gimme) },
+                .{ .tag = wn.WA_Borderless, .data = @intFromBool(kind == .stays or kind == .above) },
+                .{ .tag = wn.WA_StayInFront, .data = @intFromBool(kind == .stays or kind == .backdrop) },
+                .{ .tag = _window.WA_Above, .data = @intFromBool(kind == .above) },
+                .{ .tag = wn.WA_Backdrop, .data = @intFromBool(kind == .backdrop) },
+                .{},
+            }).?;
+        }
+        fn layer(w: *intuition.Window) *sdk.layers.Layer {
+            return @as(*_window.Window, @ptrCast(@alignCast(w))).layer;
+        }
+        /// Whether `front` is somewhere in front of `back`.
+        fn before(layers_base: *sdk.interface.layers.LayersBase, front: *intuition.Window, back: *intuition.Window) bool {
+            return inFrontOf(layers_base, layer(front), layer(back));
+        }
+        fn inFrontOf(layers_base: *sdk.interface.layers.LayersBase, front: *sdk.layers.Layer, back: *sdk.layers.Layer) bool {
+            var at: usize = @intFromPtr(back);
+            while (at != 0) {
+                var next: usize = 0;
+                const ask = [_]TagItem{ .{ .tag = sdk.layers.LATAG_GetInFront, .data = @intFromPtr(&next) }, .{} };
+                layers_base.GetLayerAttrs(@ptrFromInt(at), &ask);
+                if (next == @intFromPtr(front)) return true;
+                at = next;
+            }
+            return false;
+        }
+    };
+
+    // An ordinary window opened after the dock goes behind it, and stays
+    // there when it is brought to the front, or put in front of the dock.
+    const dock = At.open(it, .stays);
+    const plain = At.open(it, .ordinary);
+    try testing.expect(At.before(lb, dock, plain));
+    try testing.expectEqual(@as(usize, 1), windowAttr(ib, dock, wn.WA_StayInFront));
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, plain, wn.WA_StayInFront));
+    it.WindowToFront(plain);
+    try testing.expect(At.before(lb, dock, plain));
+    it.MoveWindowInFrontOf(plain, dock);
+    try testing.expect(At.before(lb, dock, plain));
+    // The dock to the back: there is no other of its kind, so it stays.
+    it.WindowToBack(dock);
+    try testing.expect(At.before(lb, dock, plain));
+
+    // A second dock opens in front of the first; to the back it goes
+    // behind the first, in front of the ordinary window still.
+    const second = At.open(it, .stays);
+    try testing.expect(At.before(lb, second, dock));
+    it.WindowToBack(second);
+    try testing.expect(At.before(lb, dock, second));
+    try testing.expect(At.before(lb, second, plain));
+    it.WindowToFront(second);
+    try testing.expect(At.before(lb, second, dock));
+
+    // A GimmeZeroZero window opened now: its interior in front of its
+    // border, both behind the docks.
+    const gimme = At.open(it, .gimme);
+    const gimme_w: *_window.Window = @ptrCast(@alignCast(gimme));
+    try testing.expect(At.inFrontOf(lb, gimme_w.inner_layer.?, gimme_w.layer));
+    try testing.expect(At.inFrontOf(lb, At.layer(dock), gimme_w.inner_layer.?));
+    try testing.expect(At.before(lb, gimme, plain));
+
+    // The keyboard is above them all, and a dock that opens or comes to
+    // the front while it is up goes behind it.
+    const keys = At.open(it, .above);
+    try testing.expect(At.before(lb, keys, second));
+    try testing.expectEqual(@as(usize, 1), windowAttr(ib, keys, wn.WA_StayInFront));
+    const third = At.open(it, .stays);
+    try testing.expect(At.before(lb, keys, third));
+    try testing.expect(At.before(lb, third, second));
+    it.WindowToFront(dock);
+    try testing.expect(At.before(lb, keys, dock));
+    try testing.expect(At.before(lb, dock, third));
+    it.CloseWindow(keys);
+    it.CloseWindow(third);
+    it.CloseWindow(gimme);
+
+    // A backdrop window asking to stay in front is a backdrop window.
+    const back = At.open(it, .backdrop);
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, back, wn.WA_StayInFront));
+    try testing.expect(At.before(lb, plain, back));
+    it.CloseWindow(back);
+
+    // The depth gadget of a window only the docks overlap from in front
+    // sends it to the back: nothing of its kind covers it. Pressed again,
+    // the ordinary window now over its left part brings it forward,
+    // behind the docks still.
+    const deep = At.open(it, .depth);
+    try testing.expect(At.before(lb, deep, plain));
+    click(ib, 24 + 36, 15);
+    try testing.expect(At.before(lb, plain, deep));
+    click(ib, 24 + 36, 15);
+    try testing.expect(At.before(lb, deep, plain));
+    try testing.expect(At.before(lb, dock, deep));
+
+    const s: *intuition.Screen = @ptrFromInt(windowAttr(ib, plain, wn.WA_Screen));
+    it.CloseWindow(deep);
+    it.CloseWindow(second);
+    it.CloseWindow(dock);
+    it.CloseWindow(plain);
+    try testing.expect(it.CloseScreen(s));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 /// A key pressed and let go, as the input chain delivers one.
 fn rawKey(ib: *IntuitionBase, code: u32) void {
     const ie = sdk.devices.inputevent;

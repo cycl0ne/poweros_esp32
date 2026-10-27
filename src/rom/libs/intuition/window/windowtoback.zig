@@ -25,7 +25,9 @@ const unlock = _window.unlock;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// Behind every other window of its kind on the screen. What that
+/// Behind every other window of its kind on the screen: a window that
+/// stays in front (`WA_StayInFront`) stays in front of the ordinary ones,
+/// and an ordinary one in front of the backdrop windows. What that
 /// uncovers of the others is repaired.
 ///
 /// CONTEXT:
@@ -53,7 +55,7 @@ const unlock = _window.unlock;
 pub fn WindowToBack(ib: *IntuitionBase, window: *Window) void {
     lock(ib);
     defer unlock(ib);
-    _ = ib.layers_base.BehindLayer(window.layer);
+    _window.toBack(ib, window);
     if (window.inner_layer) |inner| _ = ib.layers_base.MoveLayerInFrontOf(inner, window.layer);
     @import("../requester/_requester.zig").follow(ib, window);
     repairScreen(ib, window.screen);

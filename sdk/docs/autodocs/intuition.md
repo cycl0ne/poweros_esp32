@@ -3605,7 +3605,8 @@ fn GetWindowAttrs(ib: *IntuitionBase, window: *Window,
   `WA_Screen`, `WA_Layer`, `WA_BorderLeft`/`Top`/`Right`/`Bottom`,
   `WA_Active`, `WA_SimpleRefresh`, `WA_Backdrop`, `WA_Checkmark`,
   `WA_AmigaKey`, `WA_MenuHelp`, `WA_Number`, `WA_PixelFormat` (since
-  0.49, its screen's `SA_PixelFormat`). `WA_Left` and `WA_Top`
+  0.49, its screen's `SA_PixelFormat`), `WA_StayInFront` (since
+  0.57). `WA_Left` and `WA_Top`
   are signed, written by their bits: a window past the screen's left
   edge (`IPREFS_OffScreen`) has a negative left.
 
@@ -4651,7 +4652,9 @@ of those. What that uncovers of other windows is repaired.
 
 Nothing happens when the two are on different screens, are the same
 window, or are of different kinds: a backdrop window stays behind every
-other window, and an ordinary one in front of every backdrop window.
+other window, an ordinary one in front of every backdrop window, and a
+window that stays in front (`WA_StayInFront`) in front of every
+ordinary one.
 
 **CONTEXT**
 
@@ -5357,7 +5360,9 @@ fn OpenWindowTagList(ib: *IntuitionBase,
   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
   `WA_PointerDelay`, as
   `SetWindowPointerA` takes them. Painted by its backfill alone, with no
-  buffer, on a composed screen: `WA_NoBuffer`. May be null.
+  buffer, on a composed screen: `WA_NoBuffer`. In front of every
+  ordinary window, as a dock is: `WA_StayInFront` (since 0.57). May be
+  null.
 
 **RESULT**
 
@@ -5377,6 +5382,10 @@ font. With `WA_IDCMP` it has a message port of its own, made for the
 calling task; with `WA_UserPort` its messages go to the program's port
 instead, each saying in `window` whose it is. With `WA_Activate` it
 becomes the active window.
+
+It opens in front of the windows of its kind: an ordinary window
+behind those that stay in front (`WA_StayInFront`), and behind the
+on-screen keyboard; a backdrop window behind every ordinary one.
 
 **CONTEXT**
 
@@ -8423,7 +8432,9 @@ Nothing.
 
 **BEHAVIOR**
 
-Behind every other window of its kind on the screen. What that
+Behind every other window of its kind on the screen: a window that
+stays in front (`WA_StayInFront`) stays in front of the ordinary ones,
+and an ordinary one in front of the backdrop windows. What that
 uncovers of the others is repaired.
 
 **CONTEXT**
@@ -8480,8 +8491,10 @@ Nothing.
 **BEHAVIOR**
 
 In front of every other window of its kind on the screen: a backdrop
-window stays behind the ordinary ones. What it uncovers of itself is
-repaired if it is a simple-refresh window.
+window stays behind the ordinary ones, and an ordinary one behind the
+windows that stay in front (`WA_StayInFront`) and the on-screen
+keyboard. What it uncovers of itself is repaired if it is a
+simple-refresh window.
 
 **CONTEXT**
 

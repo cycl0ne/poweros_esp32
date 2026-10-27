@@ -358,6 +358,15 @@ pub const WA_PixelFormat = WA_Dummy + 0x10F;
 /// backfill; anywhere else, and on a screen not composed, it is ignored
 /// and the window is as it would be without it. `OpenWindowTagList` only.
 pub const WA_NoBuffer = WA_Dummy + 0x110;
+/// True: the window stays in front of every ordinary window of its
+/// screen - a dock, a panel along an edge. A window that opens or comes to
+/// the front goes behind it; it goes to the back only behind the other
+/// windows that stay in front, and `MoveWindowInFrontOf` does not mix the
+/// two kinds. Among themselves they are ordered as ordinary windows are,
+/// the newest in front. Menus, a gadget's list popped up and the on-screen
+/// keyboard come in front of them all the same. A backdrop window
+/// ignores it. `OpenWindowTagList`, and read back with `GetWindowAttrs`.
+pub const WA_StayInFront = WA_Dummy + 0x111;
 
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;
