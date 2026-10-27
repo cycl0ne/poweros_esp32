@@ -41,8 +41,10 @@ start meanwhile.
   the entry's name and offers **Open** (a drawer's or a disk's window,
   too), **Information** (the entry's icon, its tool types and comment,
   as the desktop shows them), **Remove from Dock**, **Insert
-  Separator**, **Dock Settings...** (Prefs, on its Dock page) and **Quit
-  Dock**.
+  Separator**, **Add Docklet...**, **Dock Settings...** (Prefs, on its
+  Dock page) and **Quit Dock**.
+- **Add Docklet...** lists the docklets in `SYS:classes/docklets`; the
+  one picked is put in after the entry the menu is for, or at the end.
 - **Add to Dock** in the desktop's Tools menu puts the icons picked there
   at the end of the dock.
 
@@ -51,6 +53,21 @@ own icon's tool types, changed with Information.
 
 ## What it shows
 
+- **Docklets**, small pictures of the machine that keep up to date by
+  themselves. Their words - shown by the pointer, or under them - say
+  what they show; a click runs the program that shows more, and they
+  are moved and taken off as any entry is:
+  - **Clock**: the time on a clock face; its words are the time and the
+    date.
+  - **Battery**: the board's battery, filled as far as it is charged -
+    red once it is low - with a bolt while it charges.
+  - **Volume**: a speaker with a wave for each third of the volume; a
+    click runs Volume.
+  - **CPU**: a bar for each core, as busy as it was over the last
+    second; a click runs CPULoad.
+  - **Network**: an arrow down for what comes in and one up for what
+    goes out, lit while something does; its words are the address and
+    the rates. A click runs NetLoad.
 - **A dot** by an entry whose program, started from the dock, still
   runs.
 - **Where dragged files would go**, while they are dragged over the
@@ -73,7 +90,9 @@ magnify.
 ## What is kept
 
 The entries are kept in `ENVARC:Sys/dock.items`, written whenever one is
-added, moved or taken off, so the dock comes back as it was. How it looks
+added, moved or taken off, so the dock comes back as it was - a line
+each: `ITEM="SYS:Programs/Notepad"`, `SEPARATOR`, or
+`DOCKLET="clock.docklet"`. How it looks
 is in `ENVARC:Sys/dock.prefs`, one line:
 
     EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0

@@ -33,6 +33,11 @@
 //! - A click on a drawer or a disk lists what is in it, by the entry - a
 //!   stack - each opened with a click there, and the last row opens its
 //!   window.
+//! - Add Docklet in the menu lists the docklets in SYS:classes/docklets
+//!   (`sdk.docklets`) - the time, the battery, the volume, the cores, the
+//!   network - and puts the one picked in. A docklet is drawn by its
+//!   class at the entry's size, looks at the machine as often as it asks,
+//!   and a click on it runs its program.
 //!
 //! **What it shows on its own:**
 //! - A dot under an entry whose program, started from the dock, still
@@ -65,12 +70,14 @@ const intuition = sdk.intuition;
 const motion = sdk.motion;
 const rtg = sdk.rtg;
 const utility = sdk.utility;
+const docklets = sdk.docklets;
 const notify = dos.notify;
 const prefs = sdk.prefs;
 const dock_prefs = prefs.dock;
 const font_prefs = prefs.font;
 const wn = intuition.windows;
 const sc = intuition.screens;
+const ic = intuition.imageclass;
 const TagItem = utility.TagItem;
 const Rect = graphics.Rect;
 const Pen = graphics.Pen;
@@ -86,7 +93,7 @@ const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dock";
-const VERSION_STRING = "\x00$VER: Dock 1.2 (27.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dock 1.3 (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "QUIT/S";
@@ -178,6 +185,15 @@ const Entry = struct {
     /// Whether a click lists what is in it - a drawer's, a disk's - rather
     /// than opening its window.
     stacks: bool = false,
+    /// A docklet's entry: `path` is its name in the docklets' drawer, and
+    /// this its object - null when it could not be made - and its class's
+    /// library; how many looks pass between its own, and how many are
+    /// left.
+    is_docklet: bool = false,
+    docklet: ?*intuition.Object = null,
+    docklet_lib: ?*exec.Library = null,
+    every: u32 = 1,
+    due: u32 = 1,
     /// Its cell along the dock, where it starts and how long it is - now,
     /// and at rest - and its picture's size now.
     start: i32 = 0,
@@ -188,6 +204,7 @@ const Entry = struct {
 
     fn item(e: *const Entry) dock_prefs.Item {
         const path = e.path orelse return .separator;
+        if (e.is_docklet) return .{ .docklet = sliceOf(path) };
         return .{ .path = sliceOf(path) };
     }
 };
@@ -251,6 +268,10 @@ const Stack = struct {
     rp: *graphics.RastPort = undefined,
     /// The entry it is for.
     index: usize = 0,
+    /// Whether it lists the docklets there are, for Add Docklet, rather
+    /// than a drawer - with no last row, the one chosen put in at `at`.
+    docklets: bool = false,
+    at: usize = 0,
     rows: [stack_max]StackRow = @splat(.{}),
     count: usize = 0,
     width: i32 = 0,
@@ -261,8 +282,8 @@ const Stack = struct {
 };
 
 /// What the entry menu offers.
-const Choice = enum { open, information, remove, separator, settings, quit };
-const choice_names = [_][*:0]const u8{ "Open", "Information", "Remove from Dock", "Insert Separator", "Dock Settings...", "Quit Dock" };
+const Choice = enum { open, information, remove, separator, docklets, settings, quit };
+const choice_names = [_][*:0]const u8{ "Open", "Information", "Remove from Dock", "Insert Separator", "Add Docklet...", "Dock Settings...", "Quit Dock" };
 
 /// What Dock Settings runs: Prefs, on the dock's page.
 const SETTINGS_COMMAND = "SYS:Programs/Prefs PAGE=DOCK";
@@ -272,8 +293,11 @@ const SETTINGS_COMMAND = "SYS:Programs/Prefs PAGE=DOCK";
 const Menu = struct {
     window: ?*intuition.Window = null,
     rp: *graphics.RastPort = undefined,
-    /// The entry it is for; null for the dock's ground.
+    /// The entry it is for; null for the dock's ground. And where it was
+    /// opened on the screen, for a list it opens in turn.
     index: ?usize = null,
+    x: i32 = 0,
+    y: i32 = 0,
     choices: [choice_names.len]Choice = undefined,
     count: usize = 0,
     width: i32 = 0,
@@ -297,6 +321,8 @@ const App = struct {
     mb: *MotionBase,
     df: ?*DiskfontBase,
     screen: *intuition.Screen,
+    /// The screen's pens, which the docklets draw in.
+    draw_info: ?*sc.DrawInfo = null,
     screen_width: i32 = 0,
     screen_height: i32 = 0,
     bar_height: i32 = 0,
@@ -373,7 +399,7 @@ const App = struct {
         var e = Entry{};
         const path = switch (item) {
             .separator => return e,
-            .path => |path| path,
+            .path, .docklet => |text| text,
         };
         if (path.len == 0 or path.len > dos.path_max) return null;
         const memory = app.sys.AllocVec(path.len + 1, exec.MEMF_ANY) orelse return null;
@@ -381,16 +407,45 @@ const App = struct {
         @memcpy(copy[0..path.len], path);
         copy[path.len] = 0;
         e.path = @ptrCast(copy);
+        if (item == .docklet) {
+            app.makeDocklet(&e);
+            return e;
+        }
         e.object = app.iconOf(e.path.?);
         if (e.object) |object| e.stacks = object.kind == icon.WBDRAWER or object.kind == icon.WBDISK or object.kind == icon.WBGARBAGE;
         app.takePicture(&e);
         // The name: the last part, or a disk's before its colon.
         var label = sliceOf(app.dl.FilePart(e.path.?));
         if (label.len == 0) label = if (indexOf(path, ':')) |colon| path[0..colon] else path;
-        const length = @min(label.len, label_max);
-        @memcpy(e.label[0..length], label[0..length]);
-        e.label_len = @intCast(length);
+        setLabel(&e, label);
         return e;
+    }
+
+    /// A docklet's class opened and its object made, as the entry `e`
+    /// names it; named by the docklet's title, or by its file's name
+    /// without `.docklet` when it cannot be made - kept all the same, so
+    /// that its line in dock.items stays.
+    fn makeDocklet(app: *App, e: *Entry) void {
+        e.is_docklet = true;
+        const name = sliceOf(e.path.?);
+        const suffix = docklets.DOCKLET_SUFFIX;
+        const prefix = docklets.DOCKLET_PREFIX;
+        var label = if (name.len > suffix.len and sameText(name[name.len - suffix.len ..], suffix)) name[0 .. name.len - suffix.len] else name;
+        var library: [prefix.len + dos.name_max + 1]u8 = undefined;
+        if (name.len <= dos.name_max) {
+            @memcpy(library[0..prefix.len], prefix);
+            @memcpy(library[prefix.len..][0..name.len], name);
+            library[prefix.len + name.len] = 0;
+            e.docklet_lib = app.sys.OpenLibrary(@ptrCast(&library), 0);
+        }
+        if (e.docklet_lib != null) e.docklet = app.ib.NewObjectTagList(null, e.path.?, null);
+        if (e.docklet) |docklet| {
+            const title: ?[*:0]const u8 = @ptrFromInt(attrOf(app.ib, docklet, docklets.DOCKLET_Title));
+            if (title) |words| label = sliceOf(words);
+            e.every = @max(1, @as(u32, @intCast(attrOf(app.ib, docklet, docklets.DOCKLET_Every))) / look_every);
+            e.due = e.every;
+        }
+        setLabel(e, label);
     }
 
     /// The icon of `path` - a disk's for a name that ends in its colon -
@@ -483,6 +538,8 @@ const App = struct {
     }
 
     fn freeEntry(app: *App, e: *Entry) void {
+        if (e.docklet) |docklet| app.ib.DisposeObject(docklet);
+        app.sys.CloseLibrary(e.docklet_lib);
         if (e.picture) |held| app.icons.ReleaseIconImage(held);
         app.dropBig(e);
         app.icons.FreeDiskObject(e.object);
@@ -890,6 +947,8 @@ const App = struct {
     /// Where an entry's picture is drawn: centred across its square, its
     /// foot on the square's bottom, the line every picture stands on.
     fn pictureOf(app: *const App, e: *const Entry) ?Rect {
+        // A docklet fills its square, at every size.
+        if (e.is_docklet) return if (e.docklet != null) app.pictureBox(e) else null;
         const picture = e.picture orelse return null;
         const box = app.pictureBox(e);
         var w: i32 = @intCast(picture.width);
@@ -976,20 +1035,43 @@ const App = struct {
                 app.pen(rp, (app.look.fill & 0x00FF_FFFF) | 0x8000_0000);
                 app.gb.FillRoundRect(rp, &plate, 6);
             }
-            app.drawPicture(e, area);
+            if (e.docklet) |docklet| app.drawDocklet(docklet, rp, area) else app.drawPicture(e, area);
         }
         if (app.isRunning(e)) app.drawDot(e, cell);
         if (app.settings.labels != .always) return;
         const box = app.pictureBox(e);
         const room = cell.max_x - cell.min_x - 4;
+        const words = app.wordsOf(e);
         var extent: graphics.TextExtent = undefined;
-        const fits = app.gb.TextFit(rp, &e.label, e.label_len, &extent, null, 1, room, app.look.font_height + 8);
-        const width = app.gb.TextLength(rp, &e.label, fits);
+        const fits = app.gb.TextFit(rp, words.ptr, @intCast(words.len), &extent, null, 1, room, app.look.font_height + 8);
+        const width = app.gb.TextLength(rp, words.ptr, fits);
         const x = cell.min_x + @divTrunc(cell.max_x - cell.min_x - width, 2);
         const y = box.max_y + 2;
         app.pen(rp, app.look.text);
         app.gb.Move(rp, x, y + app.look.baseline);
-        app.gb.Text(rp, &e.label, fits);
+        app.gb.Text(rp, words.ptr, fits);
+    }
+
+    /// A docklet drawn by its class, fitted to `area` in `rp`.
+    fn drawDocklet(app: *App, docklet: *intuition.Object, rp: *graphics.RastPort, area: Rect) void {
+        var message = ic.ImpDraw{
+            .method_id = ic.IM_DRAWFRAME,
+            .rast_port = rp,
+            .offset = .{ .x = area.min_x, .y = area.min_y },
+            .draw_info = app.draw_info,
+            .dimensions = .{ .width = area.max_x - area.min_x, .height = area.max_y - area.min_y },
+        };
+        _ = app.ib.SendMessage(docklet, @ptrCast(&message));
+    }
+
+    /// What is said of an entry by it, and under it when names are
+    /// always shown: its name, or what its docklet shows now.
+    fn wordsOf(app: *const App, e: *const Entry) []const u8 {
+        if (e.docklet) |docklet| {
+            const words: ?[*:0]const u8 = @ptrFromInt(attrOf(app.ib, docklet, docklets.DOCKLET_Text));
+            if (words) |text| if (text[0] != 0) return sliceOf(text);
+        }
+        return e.label[0..e.label_len];
     }
 
     /// The picture at its size now: as it was taken at rest, or the large
@@ -1055,7 +1137,7 @@ const App = struct {
     fn targetAt(app: *const App, x: i32, y: i32) ?usize {
         const index = app.entryAt(x, y) orelse return null;
         const e = &app.entries[index];
-        if (e.path == null) return null;
+        if (e.path == null or e.is_docklet) return null;
         const along = if (app.upright()) y else x;
         if (along < e.start + pad or along >= e.start + e.span - pad) return null;
         return index;
@@ -1088,7 +1170,7 @@ const App = struct {
     // --- what the entries do --------------------------------------------------
 
     /// A click on an entry: a drawer or a disk lists what is in it, the
-    /// rest open.
+    /// rest open - a docklet's program, for a docklet.
     fn activate(app: *App, index: usize) void {
         if (app.entries[index].stacks) return app.openStack(index);
         app.openEntry(index, &.{});
@@ -1099,7 +1181,7 @@ const App = struct {
     /// followed until it ends. A drawer's or a disk's window is not.
     fn openEntry(app: *App, index: usize, files: []const TagItem) void {
         const e = &app.entries[index];
-        const path = e.path orelse return;
+        const path = app.openPath(e) orelse return;
         var tags: [anvil.OPEN_FILES_MAX + 2]TagItem = undefined;
         @memcpy(tags[0..files.len], files);
         var n = files.len;
@@ -1139,6 +1221,14 @@ const App = struct {
         app.openEntry(index, tags[0..n]);
     }
 
+    /// What an entry opens: its own full name, or the program its
+    /// docklet runs; null for a separator, or a docklet that runs none.
+    fn openPath(app: *const App, e: *const Entry) ?[*:0]const u8 {
+        if (!e.is_docklet) return e.path;
+        const docklet = e.docklet orelse return null;
+        return @ptrFromInt(attrOf(app.ib, docklet, docklets.DOCKLET_Command));
+    }
+
     // --- what runs ------------------------------------------------------------
 
     /// A run for what `path` starts, its name copied after it; null when
@@ -1171,7 +1261,7 @@ const App = struct {
     /// Whether something started from an entry for the same name runs.
     fn isRunning(app: *const App, e: *const Entry) bool {
         if (app.run_count == 0) return false;
-        const path = sliceOf(e.path orelse return false);
+        const path = sliceOf(app.openPath(e) orelse return false);
         for (app.runs) |slot| if (slot) |run| {
             if (sameText(sliceOf(run.path), path)) return true;
         };
@@ -1234,7 +1324,11 @@ const App = struct {
         if (@abs(x - app.press.x) < drag_after and @abs(y - app.press.y) < drag_after) return;
         const e = &app.entries[index];
         const area = app.pictureOf(e) orelse return;
-        const picture = e.picture.?;
+        // A docklet's picture is drawn for the drag, which keeps none of
+        // it.
+        const drawn = if (e.docklet) |docklet| app.dockletPicture(docklet) else null;
+        defer if (drawn) |made| app.sys.FreeVec(@constCast(made));
+        const picture = drawn orelse e.picture orelse return;
         const surface = rtg.Surface{ .pixels = @constCast(picture.pixels), .width = picture.width, .height = picture.height, .pitch = picture.width * 4, .format = .rgba32 };
         // Where it was taken hold of, on the picture as it was taken: the
         // one shown may be grown.
@@ -1248,6 +1342,35 @@ const App = struct {
             app.press.dragging = true;
         }
         app.redrawEntry(index);
+    }
+
+    /// A docklet drawn at the dock's size into memory of its own - its
+    /// picture after the header, freed with FreeVec - the ground it is
+    /// drawn on left clear; null without memory.
+    fn dockletPicture(app: *App, docklet: *intuition.Object) ?*const icon.IconImage {
+        const size: u32 = @intCast(app.look.size);
+        const bytes = size * size * 4;
+        const memory = app.sys.AllocVec(@sizeOf(icon.IconImage) + bytes, exec.MEMF_ANY) orelse return null;
+        const made: *icon.IconImage = @ptrCast(@alignCast(memory));
+        const pixels: [*]u8 = @as([*]u8, @ptrCast(memory)) + @sizeOf(icon.IconImage);
+        made.* = .{ .width = size, .height = size, .pixels = pixels };
+        var surface = rtg.Surface{ .pixels = pixels, .width = size, .height = size, .pitch = size * 4, .size_bytes = bytes, .format = .rgba32 };
+        const rp = app.gb.CreateRastPortTagList(&[_]TagItem{ pair(graphics.RPTAG_Surface, @intFromPtr(&surface)), .{} }) orelse {
+            app.sys.FreeVec(memory);
+            return null;
+        };
+        defer app.gb.FreeRastPort(rp);
+        const whole = Rect{ .min_x = 0, .min_y = 0, .max_x = @intCast(size), .max_y = @intCast(size) };
+        app.fill(rp, app.look.ground, whole);
+        // What is drawn lands opaque: whatever is still the ground's is
+        // what it left alone.
+        const words: [*]align(1) u32 = @ptrCast(pixels);
+        const ground = words[0];
+        app.drawDocklet(docklet, rp, whole);
+        for (words[0 .. size * size]) |*word| {
+            if (word.* == ground) word.* = 0;
+        }
+        return made;
     }
 
     fn pressUp(app: *App, x: i32, y: i32) void {
@@ -1297,6 +1420,7 @@ const App = struct {
     /// where they go, a dock that hides sent or brought back, the
     /// pictures set growing, and the name by the pointer shown.
     fn ticked(app: *App) void {
+        app.lookDocklets();
         if (app.app_window == null or app.app_item == null) {
             app.desktop_looks += 1;
             if (app.desktop_looks >= desktop_every) {
@@ -1332,6 +1456,26 @@ const App = struct {
             if (named != app.tip_index) {
                 app.closeTip();
                 if (named) |i| app.openTip(i);
+            }
+        }
+    }
+
+    /// Each docklet whose time has come asked to look, and drawn again
+    /// when what it shows changed - its name by the pointer with it.
+    fn lookDocklets(app: *App) void {
+        const look = [_]TagItem{ pair(docklets.DOCKLET_Look, 1), .{} };
+        for (app.entries[0..app.count], 0..) |*e, i| {
+            const docklet = e.docklet orelse continue;
+            if (e.due > 1) {
+                e.due -= 1;
+                continue;
+            }
+            e.due = e.every;
+            if (app.ib.SetAttrsTagList(docklet, &look) == 0) continue;
+            app.redrawEntry(i);
+            if (app.tip_index == i) {
+                app.closeTip();
+                app.openTip(i);
             }
         }
     }
@@ -1493,10 +1637,10 @@ const App = struct {
     // --- the name by the pointer ----------------------------------------------
 
     fn openTip(app: *App, index: usize) void {
-        const e = &app.entries[index];
-        if (e.label_len == 0) return;
+        const words = app.wordsOf(&app.entries[index]);
+        if (words.len == 0) return;
         app.setFont(app.rp);
-        const text_width = app.gb.TextLength(app.rp, &e.label, e.label_len);
+        const text_width = app.gb.TextLength(app.rp, words.ptr, @intCast(words.len));
         const width = text_width + 12;
         const height = app.look.font_height + 6;
         app.tip_width = width;
@@ -1527,7 +1671,7 @@ const App = struct {
         app.bevel(rp, whole);
         app.pen(rp, app.look.text);
         app.gb.Move(rp, 6, 3 + app.look.baseline);
-        app.gb.Text(rp, &e.label, e.label_len);
+        app.gb.Text(rp, words.ptr, @intCast(words.len));
         app.gb.EndDraw(rp);
     }
 
@@ -1591,15 +1735,21 @@ const App = struct {
         app.closeTip();
         app.closeMenu();
         app.closeStack();
-        var m = Menu{ .index = index };
+        var m = Menu{ .index = index, .x = x, .y = y };
         const e: ?*const Entry = if (index) |i| &app.entries[i] else null;
         const is_entry = if (e) |shown| shown.path != null else false;
-        const choices: []const Choice = if (is_entry)
-            &.{ .open, .information, .remove, .separator, .settings, .quit }
+        const is_docklet = if (e) |shown| shown.is_docklet else false;
+        const runs = if (e) |shown| app.openPath(shown) != null else false;
+        const choices: []const Choice = if (is_docklet and runs)
+            &.{ .open, .remove, .separator, .docklets, .settings, .quit }
+        else if (is_docklet)
+            &.{ .remove, .separator, .docklets, .settings, .quit }
+        else if (is_entry)
+            &.{ .open, .information, .remove, .separator, .docklets, .settings, .quit }
         else if (e != null)
             &.{ .remove, .settings, .quit }
         else
-            &.{ .separator, .settings, .quit };
+            &.{ .separator, .docklets, .settings, .quit };
         @memcpy(m.choices[0..choices.len], choices);
         m.count = choices.len;
 
@@ -1750,6 +1900,8 @@ const App = struct {
     fn choose(app: *App, row: usize) void {
         const choice = app.menu.choices[row];
         const index = app.menu.index;
+        const x = app.menu.x;
+        const y = app.menu.y;
         app.closeMenu();
         if (index) |i| if (i >= app.count) return;
         switch (choice) {
@@ -1768,6 +1920,7 @@ const App = struct {
                 app.save();
                 app.reshape();
             },
+            .docklets => app.openDocklets(if (index) |i| i + 1 else app.count, x, y),
             .settings => app.openSettings(),
             .quit => app.running = false,
         }
@@ -1809,6 +1962,7 @@ const App = struct {
         const path = e.path orelse return;
         const s = &app.stack;
         s.index = index;
+        s.docklets = false;
         s.count = 0;
         s.hovered = null;
         s.armed = false;
@@ -1834,7 +1988,7 @@ const App = struct {
             row.picture = app.icons.ObtainIconImage(image, stack_picture);
         }
         s.width = @min(widest + stack_picture + 30, @max(160, @divTrunc(app.screen_width, 3)));
-        const height = s.title_height + @as(i32, @intCast(s.count + 1)) * s.row_height + 4;
+        const height = s.title_height + @as(i32, @intCast(app.stackRows())) * s.row_height + 4;
         const cell = app.cellOf(e);
         const x = app.box.min_x + @divTrunc(cell.min_x + cell.max_x, 2);
         const y = app.box.min_y + @divTrunc(cell.min_y + cell.max_y, 2);
@@ -1843,6 +1997,58 @@ const App = struct {
         s.rp = @ptrFromInt(windowAttr(app.ib, window, wn.WA_RastPort));
         app.setFont(s.rp);
         app.drawStack();
+    }
+
+    /// The docklets in their drawer, listed by the dock where the menu was
+    /// opened (`x`, `y` on the screen), the one chosen put in at `at`.
+    /// With none there, the screen flashes.
+    fn openDocklets(app: *App, at: usize, x: i32, y: i32) void {
+        app.closeTip();
+        app.closeMenu();
+        app.closeStack();
+        const s = &app.stack;
+        s.docklets = true;
+        s.at = at;
+        s.count = 0;
+        const dl = app.dl;
+        if (dl.Lock(docklets.DOCKLETS_DRAWER, dos.ACCESS_READ)) |lock| {
+            defer dl.UnLock(lock);
+            var fib: dos.FileInfoBlock = .{};
+            if (dl.Examine(lock, &fib) and fib.dir_entry_type > 0) {
+                while (dl.ExNext(lock, &fib)) {
+                    const name = sliceOf(@ptrCast(&fib.file_name));
+                    const suffix = docklets.DOCKLET_SUFFIX;
+                    if (fib.dir_entry_type > 0 or name.len <= suffix.len or !sameText(name[name.len - suffix.len ..], suffix)) continue;
+                    app.stackRow(name, false);
+                }
+            }
+        }
+        if (s.count == 0) {
+            app.closeStack();
+            return app.ib.DisplayBeep(app.screen);
+        }
+        app.setFont(app.rp);
+        s.row_height = app.look.font_height + 6;
+        s.title_height = app.look.font_height + 8;
+        var widest = app.gb.TextLength(app.rp, docklets_title, @intCast(sliceOf(docklets_title).len));
+        for (s.rows[0..s.count]) |*row| {
+            var shown: [dos.name_max + 1]u8 = undefined;
+            const name = dockletName(row, &shown);
+            widest = @max(widest, app.gb.TextLength(app.rp, name.ptr, @intCast(name.len)));
+        }
+        s.width = widest + 30;
+        const height = s.title_height + @as(i32, @intCast(app.stackRows())) * s.row_height + 4;
+        const window = app.openBeside(s.width, height, x, y) orelse return app.closeStack();
+        s.window = window;
+        s.rp = @ptrFromInt(windowAttr(app.ib, window, wn.WA_RastPort));
+        app.setFont(s.rp);
+        app.drawStack();
+    }
+
+    /// How many rows the stack has: one for each name, and for a drawer's
+    /// the last, which opens its window.
+    fn stackRows(app: *const App) usize {
+        return app.stack.count + @intFromBool(!app.stack.docklets);
     }
 
     /// The drawer's names read into the stack's rows in order; false when
@@ -1905,6 +2111,7 @@ const App = struct {
         s.count = 0;
         s.hovered = null;
         s.armed = false;
+        s.docklets = false;
     }
 
     fn drawStack(app: *App) void {
@@ -1912,21 +2119,29 @@ const App = struct {
         if (s.window == null) return;
         const rp = s.rp;
         const e = &app.entries[s.index];
-        const whole = Rect{ .min_x = 0, .min_y = 0, .max_x = s.width, .max_y = s.title_height + @as(i32, @intCast(s.count + 1)) * s.row_height + 4 };
-        const text_x = 6 + stack_picture + 6;
+        const whole = Rect{ .min_x = 0, .min_y = 0, .max_x = s.width, .max_y = s.title_height + @as(i32, @intCast(app.stackRows())) * s.row_height + 4 };
+        const text_x: i32 = if (s.docklets) 12 else 6 + stack_picture + 6;
+        const title = if (s.docklets) sliceOf(docklets_title) else e.label[0..e.label_len];
         app.gb.BeginDraw(rp);
         app.fill(rp, app.look.ground, whole);
         app.bevel(rp, whole);
         app.pen(rp, app.look.text);
         app.gb.Move(rp, 12, 2 + 4 + app.look.baseline);
-        app.gb.Text(rp, &e.label, e.label_len);
+        app.gb.Text(rp, title.ptr, @intCast(title.len));
         app.fill(rp, app.look.shadow, .{ .min_x = 4, .min_y = s.title_height, .max_x = s.width - 4, .max_y = s.title_height + 1 });
-        for (0..s.count + 1) |row| {
+        for (0..app.stackRows()) |row| {
             const area = app.stackRowBox(row);
             const hovered = s.hovered == row;
             if (hovered) app.fill(rp, app.look.fill, area);
             const text_y = area.min_y + @divTrunc(s.row_height - app.look.font_height, 2) + app.look.baseline;
             app.pen(rp, if (hovered) app.look.fill_text else app.look.text);
+            if (s.docklets) {
+                var shown: [dos.name_max + 1]u8 = undefined;
+                const name = dockletName(&s.rows[row], &shown);
+                app.gb.Move(rp, text_x, text_y);
+                app.gb.Text(rp, name.ptr, @intCast(name.len));
+                continue;
+            }
             if (row == s.count) {
                 const last = openName(e);
                 app.gb.Move(rp, text_x, text_y);
@@ -1958,7 +2173,7 @@ const App = struct {
     }
 
     fn stackRowAt(app: *const App, x: i32, y: i32) ?usize {
-        for (0..app.stack.count + 1) |row| {
+        for (0..app.stackRows()) |row| {
             const area = app.stackRowBox(row);
             if (x >= area.min_x and x < area.max_x and y >= area.min_y and y < area.max_y) return row;
         }
@@ -2000,6 +2215,16 @@ const App = struct {
     /// the drawer's window.
     fn stackChoose(app: *App, row: usize) void {
         const s = &app.stack;
+        if (s.docklets) {
+            const row_name = &s.rows[row];
+            var name: [dos.name_max + 1]u8 = undefined;
+            @memcpy(name[0..row_name.name_len], row_name.name[0..row_name.name_len]);
+            const at = @min(s.at, app.count);
+            app.closeStack();
+            if (!app.insert(at, .{ .docklet = name[0..row_name.name_len] })) return app.ib.DisplayBeep(app.screen);
+            app.save();
+            return app.reshape();
+        }
         const index = s.index;
         if (index >= app.count) return app.closeStack();
         if (row >= s.count) {
@@ -2014,6 +2239,36 @@ const App = struct {
         if (!app.ab.OpenObject(chosen, null)) app.ib.DisplayBeep(app.screen);
     }
 };
+
+/// The title of the list Add Docklet opens.
+const docklets_title: [*:0]const u8 = "Add Docklet";
+
+/// A docklet as the list shows it: its file's name without `.docklet`,
+/// its first letter large - "Clock" - or all of it, for a name of three
+/// letters or fewer, which is short for something - "CPU" - in `into`.
+fn dockletName(row: *const StackRow, into: *[dos.name_max + 1]u8) []const u8 {
+    const suffix = docklets.DOCKLET_SUFFIX;
+    const length = if (row.name_len > suffix.len) row.name_len - suffix.len else row.name_len;
+    @memcpy(into[0..length], row.name[0..length]);
+    for (into[0..length], 0..) |*c, i| {
+        if ((i == 0 or length <= 3) and c.* >= 'a' and c.* <= 'z') c.* -= 'a' - 'A';
+    }
+    return into[0..length];
+}
+
+/// `label` as an entry's name, cut to `label_max`.
+fn setLabel(e: *Entry, label: []const u8) void {
+    const length = @min(label.len, label_max);
+    @memcpy(e.label[0..length], label[0..length]);
+    e.label_len = @intCast(length);
+}
+
+/// An object's attribute, 0 when it has none.
+fn attrOf(ib: *IntuitionBase, object: *intuition.Object, tag: utility.Tag) usize {
+    var value: usize = 0;
+    _ = ib.GetAttr(tag, object, &value);
+    return value;
+}
 
 /// The stack's last row: what opens the entry's own window.
 fn openName(e: *const Entry) [*:0]const u8 {
@@ -2067,13 +2322,15 @@ fn indexOf(text: []const u8, c: u8) ?usize {
 fn sameItem(a: dock_prefs.Item, b: dock_prefs.Item) bool {
     return switch (a) {
         .separator => b == .separator,
-        .path => |path| switch (b) {
-            .separator => false,
-            .path => |other| path.len == other.len and for (path, other) |x, y| {
-                if (x != y) break false;
-            } else true,
-        },
+        .path => |path| b == .path and sameBytes(path, b.path),
+        .docklet => |name| b == .docklet and sameBytes(name, b.docklet),
     };
+}
+
+fn sameBytes(a: []const u8, b: []const u8) bool {
+    return a.len == b.len and for (a, b) |x, y| {
+        if (x != y) break false;
+    } else true;
 }
 
 /// A file a message carries by its full name, into `into`; null when it
@@ -2229,6 +2486,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     app.screen_width = @intCast(width);
     app.screen_height = @intCast(height);
     app.bar_height = @intCast(bar);
+    app.draw_info = ib.GetScreenDrawInfo(screen);
+    defer ib.FreeScreenDrawInfo(screen, app.draw_info.?);
 
     app.readSettings();
     app.makeLook();

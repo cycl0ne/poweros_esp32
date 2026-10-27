@@ -487,7 +487,7 @@ test "dock.prefs: a line read and written back; what it does not take is told" {
     try utilityDown(ub);
 }
 
-test "dock.items: the entries read a line at a time, written back; a line that is not one is passed over" {
+test "dock.items: the entries and docklets read a line at a time, written back; a line that is not one is passed over" {
     const ub = try utilityUp();
     defer kexec.deinit();
     // A fresh disk's file: the explanation, and the dock's own entries as
@@ -507,6 +507,7 @@ test "dock.items: the entries read a line at a time, written back; a line that i
         switch (want) {
             .path => |path| try testing.expectEqualStrings(path, got.path),
             .separator => try testing.expect(got == .separator),
+            .docklet => |name| try testing.expectEqualStrings(name, got.docklet),
         }
     }
     try testing.expect(items.next() == null);
@@ -523,14 +524,25 @@ test "dock.items: the entries read a line at a time, written back; a line that i
         \\ITEM=Work: SEPARATOR
         \\ITEM="RAM:
         \\ITEM=Work:
+        \\docklet clock.docklet
+        \\DOCKLET="SYS:classes/docklets/cpu.docklet"
     ;
     var mixed = prefs.dock.Items.init(ub, text);
     try testing.expectEqualStrings("Work:My Tools/Edit", mixed.next().?.path);
     try testing.expect(mixed.next().? == .separator);
     try testing.expectEqualStrings("Work:", mixed.next().?.path);
+    // A docklet by its name alone, not by a path.
+    try testing.expectEqualStrings("clock.docklet", mixed.next().?.docklet);
     try testing.expect(mixed.next() == null);
-    try testing.expectEqual(@as(u32, 7), mixed.bad_line);
-    try testing.expectEqualStrings(prefs.Pairs.quote_not_closed, std.mem.span(mixed.problem.?));
+    try testing.expectEqual(@as(u32, 10), mixed.bad_line);
+    try testing.expectEqualStrings("DOCKLET is a docklet's name, \"clock.docklet\"", std.mem.span(mixed.problem.?));
+
+    // A docklet's line, read back as it was.
+    const line_length = prefs.dock.itemLine(.{ .docklet = "battery.docklet" }, &written).?;
+    try testing.expectEqualStrings("DOCKLET=\"battery.docklet\"\n", written[0..line_length]);
+    try testing.expectEqual(prefs.dock.itemLength(.{ .docklet = "battery.docklet" }), line_length);
+    var again = prefs.dock.Items.init(ub, written[0..line_length]);
+    try testing.expectEqualStrings("battery.docklet", again.next().?.docklet);
 
     // A name with a double quote in it has no line.
     try testing.expect(prefs.dock.itemLine(.{ .path = "Work:a\"b" }, &written) == null);

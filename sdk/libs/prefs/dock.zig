@@ -28,6 +28,7 @@
 //!
 //!     ITEM="SYS:Programs/Notepad"
 //!     SEPARATOR
+//!     DOCKLET="clock.docklet"
 //!
 //! `Items` reads them a line at a time, `itemLine` writes one, and
 //! `items_header` is the file's explanation.
@@ -162,11 +163,13 @@ pub const ITEMS_ENV_FILE = "ENV:Sys/dock.items";
 pub const ITEMS_ENVARC_FILE = "ENVARC:Sys/dock.items";
 
 /// An entry of dock.items: what it opens - a program, a file, a drawer or
-/// a disk - by its full name, a disk's being its name and a colon; or a
-/// line between entries.
+/// a disk - by its full name, a disk's being its name and a colon; a line
+/// between entries; or a docklet, by its file's name in
+/// `SYS:classes/docklets` (`sdk.docklets`).
 pub const Item = union(enum) {
     path: []const u8,
     separator,
+    docklet: []const u8,
 };
 
 /// The entries of a dock with no dock.items, which a fresh disk's file
@@ -213,7 +216,7 @@ pub const Items = struct {
 /// One line as an entry; null, with `problem` saying why, when it is not
 /// one.
 fn parseItem(ub: *UtilityBase, text: []const u8, problem: *[*:0]const u8) ?Item {
-    const form = "not in the form ITEM=\"SYS:Programs/Notepad\" or SEPARATOR";
+    const form = "not in the form ITEM=\"SYS:Programs/Notepad\", SEPARATOR or DOCKLET=\"clock.docklet\"";
     var pairs = prefs.Pairs.init(ub, text);
     const first = (pairs.next() catch {
         problem.* = prefs.Pairs.quote_not_closed;
@@ -239,7 +242,22 @@ fn parseItem(ub: *UtilityBase, text: []const u8, problem: *[*:0]const u8) ?Item 
         return .{ .path = first.value };
     }
     if (style.same(first.key, "SEPARATOR") and first.value.len == 0) return .separator;
+    if (style.same(first.key, "DOCKLET")) {
+        // A file's name in the docklets' drawer, not a path.
+        if (first.value.len == 0 or indexOfAny(first.value, ":/") != null) {
+            problem.* = "DOCKLET is a docklet's name, \"clock.docklet\"";
+            return null;
+        }
+        return .{ .docklet = first.value };
+    }
     problem.* = form;
+    return null;
+}
+
+fn indexOfAny(text: []const u8, any: []const u8) ?usize {
+    for (text, 0..) |c, i| {
+        for (any) |a| if (c == a) return i;
+    }
     return null;
 }
 
@@ -248,6 +266,7 @@ pub fn itemLength(item: Item) usize {
     return switch (item) {
         .path => |path| "ITEM=\"\"\n".len + path.len,
         .separator => "SEPARATOR\n".len,
+        .docklet => |name| "DOCKLET=\"\"\n".len + name.len,
     };
 }
 
@@ -255,19 +274,20 @@ pub fn itemLength(item: Item) usize {
 /// how many bytes, newline included; null for a name with a double quote
 /// in it, which the form has no way to write.
 pub fn itemLine(item: Item, into: []u8) ?usize {
-    const text: []const u8 = switch (item) {
-        .separator => "SEPARATOR\n",
-        .path => |path| {
-            for (path) |c| if (c == '"') return null;
-            const n = itemLength(item);
-            @memcpy(into[0..6], "ITEM=\"");
-            @memcpy(into[6..][0..path.len], path);
-            @memcpy(into[6 + path.len ..][0..2], "\"\n");
-            return n;
+    const key: []const u8, const value: []const u8 = switch (item) {
+        .separator => {
+            const text = "SEPARATOR\n";
+            @memcpy(into[0..text.len], text);
+            return text.len;
         },
+        .path => |path| .{ "ITEM=\"", path },
+        .docklet => |name| .{ "DOCKLET=\"", name },
     };
-    @memcpy(into[0..text.len], text);
-    return text.len;
+    for (value) |c| if (c == '"') return null;
+    @memcpy(into[0..key.len], key);
+    @memcpy(into[key.len..][0..value.len], value);
+    @memcpy(into[key.len + value.len ..][0..2], "\"\n");
+    return itemLength(item);
 }
 
 /// dock.items' explanation, every line a comment.
@@ -280,6 +300,9 @@ pub const items_header =
     \\#                              by its full name, a disk's being its
     \\#                              name and a colon: "Work:".
     \\# SEPARATOR                    a line between entries.
+    \\# DOCKLET="clock.docklet"      a docklet - the time, the battery, the
+    \\#                              volume, the cores, the network - by
+    \\#                              its name in SYS:classes/docklets.
     \\#
     \\# How an entry is started - its arguments, stack and priority - is
     \\# in its icon's tool types, not here.
