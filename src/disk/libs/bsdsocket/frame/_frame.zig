@@ -61,8 +61,8 @@ pub const Frame = extern struct {
     /// when it is given back, rather than kept in the pool.
     large: u8 = 0,
     /// The device's checksums (SANA2IOF_CHECKSUM): a packet that came in
-    /// had its IPv4 header's and its TCP or UDP checksum checked by the
-    /// device, and they are right; one going out has both left 0 for the
+    /// had its TCP or UDP checksum checked by the device, and an IPv4
+    /// one its header's, and they are right; one going out has both left 0 for the
     /// device to fill in.
     checked: u8 = 0,
     fill_checksums: u8 = 0,

@@ -60,8 +60,8 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Pa
     if (length < header_bytes or length > datagram.len) return drop(stack, frame, &stack.counts.udp_bad);
     // IPv6 has no datagram without a checksum (RFC 8200, 8.1).
     if (_ip.get16(datagram, 6) == 0 and !packet.source.isV4()) return drop(stack, frame, &stack.counts.udp_bad);
-    // An IPv4 datagram the device checked is not checked again.
-    if (_ip.get16(datagram, 6) != 0 and !(frame.checked != 0 and packet.source.isV4())) {
+    // A datagram the device checked is not checked again.
+    if (_ip.get16(datagram, 6) != 0 and frame.checked == 0) {
         const total = _ip.sum(_inet.pseudoSum(packet.source, packet.destination, protocol, length), datagram[0..length]);
         if (_ip.finish(total) != 0) return drop(stack, frame, &stack.counts.udp_bad);
     }

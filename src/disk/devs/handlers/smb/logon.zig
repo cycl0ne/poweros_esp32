@@ -10,6 +10,12 @@
 //! is the logon's outcome. On 3.1.1 each message but that last answer
 //! goes into the preauth hash the keys are made over.
 //!
+//! **A connection made again** names the session the lost one had
+//! (PreviousSessionId, 3.3.5.5.3): once the user is the same, the server
+//! ends that session and closes the files it had open - which would
+//! otherwise stay open, and a delete of one pending, while the old
+//! connection still stands on the server's side.
+//!
 //! **What is signed.** A session the server took as a guest's or an
 //! anonymous one (SESSION_FLAG_IS_GUEST, IS_NULL) has no key both sides
 //! know, so it is neither signed nor encrypted, and a share that asks for
@@ -67,7 +73,7 @@ pub fn logon(session: *Session, identity: *const ntlm.Identity, inventions: *con
     // NEGOTIATE.
     var request = session.begin(.session_setup);
     request.on_tree = false;
-    const blob_at = setupFields(&request);
+    const blob_at = setupFields(&request, session.previous_id);
     spnego.writeInit(&request.writer, &ntlm.negotiate);
     finishSetup(&request, blob_at);
     var replies = session_area.noReplies();
@@ -85,7 +91,7 @@ pub fn logon(session: *Session, identity: *const ntlm.Identity, inventions: *con
     // AUTHENTICATE.
     request = session.begin(.session_setup);
     request.on_tree = false;
-    const second_blob_at = setupFields(&request);
+    const second_blob_at = setupFields(&request, session.previous_id);
     const response = spnego.beginResponse(&request.writer);
     const session_key = ntlm.authenticate(cb, &request.writer, identity, &challenge, inventions);
     spnego.endResponse(&request.writer, response);
@@ -95,6 +101,7 @@ pub fn logon(session: *Session, identity: *const ntlm.Identity, inventions: *con
     if (hashed) preauth.add(cb, request.message(0));
     reply = &replies[0];
     if (reply.status() != smb.STATUS_SUCCESS) return .{ .status = failure(reply) };
+    session.previous_id = 0;
 
     var fields = reply.body();
     if (fields.uint16() != 9) return error.Protocol;
@@ -120,8 +127,9 @@ pub fn logon(session: *Session, identity: *const ntlm.Identity, inventions: *con
     return .{ .status = smb.STATUS_SUCCESS };
 }
 
-/// SESSION_SETUP's own fields: where its security buffer begins.
-fn setupFields(request: *session_area.Request) usize {
+/// SESSION_SETUP's own fields, naming the session `previous` (0 for
+/// none): where its security buffer begins.
+fn setupFields(request: *session_area.Request, previous: u64) usize {
     const writer = &request.writer;
     writer.uint16(25);
     writer.byte(0); // Flags
@@ -130,7 +138,7 @@ fn setupFields(request: *session_area.Request) usize {
     writer.uint32(0); // Channel
     writer.uint16(@intCast(wire.header_size + 24)); // SecurityBufferOffset
     writer.uint16(0); // SecurityBufferLength, filled in below
-    writer.uint64(0); // PreviousSessionId
+    writer.uint64(previous); // PreviousSessionId
     return writer.at;
 }
 

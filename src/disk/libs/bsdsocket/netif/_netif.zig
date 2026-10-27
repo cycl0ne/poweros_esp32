@@ -55,13 +55,16 @@ pub const Interface = extern struct {
     dhcp: u8 = 0,
     bound: u8 = 0,
     link_local: u8 = 0,
-    /// The checksums its device does (S2OFFLOADF_*): those of IPv4 TCP
-    /// and UDP packets that come in checked, of those that go out filled
-    /// in.
+    /// The checksums its device does (S2OFFLOADF_*): those of TCP and UDP
+    /// packets that come in checked - IPv4's, and IPv6's with their own
+    /// bit - of IPv4's that go out filled in.
     offload: u8 = 0,
     /// Its Ethernet address, for an interface on a device.
     hardware: [6]u8 = @splat(0),
-    pad2: [2]u8 = .{ 0, 0 },
+    /// Its link's queue is nearly full (device.zig): TCP holds back the
+    /// data it would send out of it until the queue has room again.
+    full: u8 = 0,
+    pad2: u8 = 0,
     /// How a frame goes out, and what it goes out through.
     transmit: ?TransmitFn = null,
     device: ?*anyopaque = null,

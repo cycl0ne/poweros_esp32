@@ -21,6 +21,7 @@ const bsd = sdk.bsdsocket;
 const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
 const Frame = @import("../frame/_frame.zig").Frame;
+const Interface = @import("../netif/_netif.zig").Interface;
 const _ip = @import("../ip/_ip.zig");
 const _route = @import("../route/_route.zig");
 const _socket = @import("../socket/_socket.zig");
@@ -48,6 +49,7 @@ pub fn window(tcb: *const Tcb) u32 {
 pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offset: u32, length: u32) i32 {
     const socket = tcb.socket;
     const path = _inet.route(stack, socket.remote_address, socket.scope) orelse return bsd.EHOSTUNREACH;
+    tcb.link = path.interface;
     const frame = stack.frames.take(stack.sys_base) orelse return bsd.ENOBUFS;
     if (length > 0) tcb.send.copyOut(ring_offset, frame.room()[frame.start..][0..length]);
     frame.length = length;
@@ -132,12 +134,13 @@ pub fn localMss(mtu: u32, peer: Address) u32 {
 /// data is in flight, unless TCP_NODELAY or urgent data (Nagle) - the FIN once the data
 /// before it has gone, and an acknowledgement if one is owed and nothing
 /// else carried it. After a timeout SND.NXT is back at SND.UNA, and the
-/// same loop sends everything again, FIN included. A segment the link
-/// has no room for (ENOBUFS) waits for the acknowledgements of those
-/// before it. While a loss is repaired with SACK, what is lost goes
-/// first, and the congestion window holds the pipe rather than all that
-/// was sent; while segments are held beyond a hole, each segment leaves
-/// room for the blocks that name them.
+/// same loop sends everything again, FIN included. Data waits while the
+/// link's queue is full, until `linkRoom`; a segment refused all the same
+/// (ENOBUFS) waits for the acknowledgements of those before it. While a
+/// loss is repaired with SACK, what is lost goes first, and the
+/// congestion window holds the pipe rather than all that was sent; while
+/// segments are held beyond a hole, each segment leaves room for the
+/// blocks that name them.
 pub fn output(stack: *StackBase, tcb: *Tcb) void {
     switch (tcb.state) {
         .closed, .listen, .syn_sent, .time_wait => {
@@ -164,6 +167,11 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
         var length: u32 = @min(unsent, @min(usable, most));
         const small_tail = length > 0 and length < most and length == unsent and in_flight > 0;
         if (small_tail and tcb.flags & (_tcp.no_delay | _tcp.fin_wanted | _tcp.urgent_out) == 0) length = 0;
+        // Data waits while the link's queue is full (`linkRoom`).
+        if (length > 0 and tcb.link != null and tcb.link.?.full != 0) {
+            tcb.flags |= _tcp.link_wait;
+            length = 0;
+        }
         const send_fin = synced and tcb.flags & _tcp.fin_wanted != 0 and length == unsent and tcb.snd_nxt +% length == data_end;
         if (length == 0 and !send_fin and tcb.flags & _tcp.ack_now == 0) break;
         var flags: u8 = _tcp.ACK;
@@ -212,6 +220,22 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
         if (length == 0) break;
     }
     timers.persist(stack, tcb, now);
+}
+
+/// The link's queue has room again: the connections that held data back
+/// for `interface` send it, until the queue is full once more - those
+/// left go at the next room.
+pub fn linkRoom(stack: *StackBase, interface: *const Interface) void {
+    var it = stack.sockets.iterator();
+    while (it.next()) |node| {
+        if (interface.full != 0) return;
+        const socket = _socket.fromNode(node);
+        if (socket.socket_type != bsd.SOCK_STREAM or socket.tcb == null) continue;
+        const tcb = _tcp.of(socket);
+        if (tcb.flags & _tcp.link_wait == 0 or tcb.link != interface) continue;
+        tcb.flags &= ~_tcp.link_wait;
+        output(stack, tcb);
+    }
 }
 
 /// A SYN, or a SYN and ACK answering one: ISS, the MSS option and the

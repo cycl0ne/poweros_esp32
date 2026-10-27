@@ -52,8 +52,8 @@ const Work = _emac.Work;
 
 pub const DEVICE_NAME = _emac.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 8;
-const BUILD_DATE = "27.10.2026";
+const DEVICE_REVISION = 9;
+const BUILD_DATE = "28.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -128,15 +128,18 @@ fn netTask(sys: *ExecBase) callconv(.c) void {
     started(base);
 
     const timer_mask: u32 = if (base.timer_port) |timer_port| timer_port.sigMask() else 0;
+    // Frames are left in the chain: the task goes round again without
+    // waiting, the writes seen to in between.
+    var receiving = false;
     while (true) {
         const raised = takeRaised(base);
         if (raised & mac.int_bus_error != 0) restart(base);
-        if (raised & (mac.int_receive | mac.int_receive_unavailable) != 0) {
-            // What the MAC had no room for - its queue full while the
-            // descriptors were all ours - taken with every pass, not only
-            // when the ring ran dry: the counts hold 2047 at most.
+        if (receiving or raised & (mac.int_receive | mac.int_receive_unavailable) != 0) {
+            // What the MAC had no room for - its receive queue full before
+            // the engine took the frame on - taken with every pass, not
+            // only when the ring ran dry: the counts hold 2047 at most.
             for (0..mac.takeMissed()) |_| base.net.overrun();
-            base.received();
+            receiving = !base.received();
         }
         if (raised & mac.int_send != 0) base.sent();
         if (base.polling != 0 and sys.CheckIO(&base.timer_io.node) != null) {
@@ -145,7 +148,7 @@ fn netTask(sys: *ExecBase) callconv(.c) void {
             pollLink(base);
         }
         while (sys.GetMsg(queue_port)) |msg| base.net.perform(_emac.sanaReq(_emac.requestOf(msg)));
-        _ = sys.Wait(queue_port.sigMask() | base.int_mask | timer_mask);
+        if (!receiving) _ = sys.Wait(queue_port.sigMask() | base.int_mask | timer_mask);
     }
 }
 

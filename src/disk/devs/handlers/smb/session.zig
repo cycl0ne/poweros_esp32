@@ -209,6 +209,11 @@ pub const Session = struct {
     credits: u32 = 1,
     session_id: u64 = 0,
     tree_id: u32 = 0,
+    /// The session a lost connection had, until a logon has named it
+    /// (PreviousSessionId): the server then ends that session and closes
+    /// what it held open, should the old connection still stand there -
+    /// when its reset never reached the server.
+    previous_id: u64 = 0,
     /// How requests are signed and answers checked.
     signer: signing.Signer = .{},
     /// Whether every answer must be signed.
@@ -272,16 +277,19 @@ pub const Session = struct {
         return @intCast(@min(most, @as(u64, @max(session.credits, 1)) * credit_bytes));
     }
 
-    /// Everything a connection had, forgotten: the next one starts again
-    /// from the negotiation.
+    /// Everything a connection had, forgotten, and the connection cut:
+    /// the next one starts again from the negotiation, and its logon
+    /// names the session this one had - the first one lost, while no
+    /// logon since has named it.
     pub fn reset(session: *Session) void {
-        session.connection.close();
+        session.connection.abort();
         const kept: Session = .{
             .cb = session.cb,
             .connection = session.connection,
             .send_buffer = session.send_buffer,
             .receive_buffer = session.receive_buffer,
             .client_guid = session.client_guid,
+            .previous_id = if (session.previous_id != 0) session.previous_id else session.session_id,
         };
         session.* = kept;
     }
@@ -516,9 +524,9 @@ pub const Session = struct {
         return true;
     }
 
-    /// The connection closed, as one that sent what cannot be read.
+    /// The connection cut, as one that sent what cannot be read.
     fn broken(session: *Session) Error!bool {
-        session.connection.close();
+        session.connection.abort();
         return error.Network;
     }
 

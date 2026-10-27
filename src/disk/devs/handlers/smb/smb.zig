@@ -87,8 +87,8 @@ const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 14;
-const BUILD_DATE = "27.10.2026";
+const HANDLER_REVISION = 15;
+const BUILD_DATE = "28.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -232,7 +232,7 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     const connected = connect(st);
     if (connected) st.fs.askSpace() catch {};
     if (!connected or st.fs.lost) {
-        st.session.connection.close();
+        st.session.connection.abort();
         return dl.ReplyPkt(startup_packet, dos.DOSFALSE, dos.ERROR_DEVICE_NOT_MOUNTED);
     }
     st.fs.read_only = readOnly(st);

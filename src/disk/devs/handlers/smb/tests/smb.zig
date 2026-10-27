@@ -4,6 +4,7 @@
 //! RFC 4493, the three signatures, SP800-108's KDF and the transform
 //! header against values from another implementation (Python's
 //! `hmac` and `cryptography`), and the round trips of signing and sealing.
+//! Also which lost session a logon after a reconnection names.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -17,6 +18,7 @@ const wire = @import("../wire.zig");
 const ntlm = @import("../ntlm.zig");
 const signing = @import("../signing.zig");
 const crypt = @import("../crypt.zig");
+const session_area = @import("../session.zig");
 
 const testing = std.testing;
 
@@ -265,4 +267,38 @@ test "a message sealed, as another implementation seals it, and opened again" {
     // The next message has the next nonce.
     _ = crypt.seal(rig.cb, &keys, 0x1122334455667788, &frame, 5);
     try testing.expectEqual(@as(u64, 2), wire.u64At(&frame, 20));
+}
+
+// --- a connection made again ---------------------------------------------------------
+
+test "a reconnection's logon names the first session lost, until a logon has named it" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch {};
+    var send: [16]u8 = undefined;
+    var receive: [16]u8 = undefined;
+    var session: session_area.Session = .{
+        .cb = rig.cb,
+        .connection = .{ .sb = undefined },
+        .send_buffer = &send,
+        .receive_buffer = &receive,
+        .client_guid = @splat(7),
+    };
+    session.session_id = 0x11;
+    session.tree_id = 3;
+    session.reset();
+    try testing.expectEqual(@as(u64, 0x11), session.previous_id);
+    try testing.expectEqual(@as(u64, 0), session.session_id);
+    try testing.expectEqual(@as(u32, 0), session.tree_id);
+    try testing.expectEqual(@as(u8, 7), session.client_guid[0]);
+    // A logon that got a session but failed: the one lost first is named
+    // again.
+    session.session_id = 0x22;
+    session.reset();
+    try testing.expectEqual(@as(u64, 0x11), session.previous_id);
+    // Once a logon has named it, the next loss names the session that
+    // logon made.
+    session.previous_id = 0;
+    session.session_id = 0x33;
+    session.reset();
+    try testing.expectEqual(@as(u64, 0x33), session.previous_id);
 }

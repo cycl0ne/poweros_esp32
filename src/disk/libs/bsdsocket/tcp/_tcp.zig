@@ -41,6 +41,7 @@ const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
 const _socket = @import("../socket/_socket.zig");
 const Socket = _socket.Socket;
+const Interface = @import("../netif/_netif.zig").Interface;
 const _timer = @import("../timer/_timer.zig");
 const Timer = _timer.Timer;
 const timers = @import("timers.zig");
@@ -125,6 +126,9 @@ pub const recovering: u32 = 1 << 11;
 /// The retransmission timer ran out and everything from SND.UNA goes
 /// again: no repair with SACK begins until `recover` is acknowledged.
 pub const timed_out: u32 = 1 << 12;
+/// Data is held back while `link`'s queue is full; `output.linkRoom`
+/// sends it.
+pub const link_wait: u32 = 1 << 13;
 
 /// Where urgent data coming in stands (`oob_state`): none announced; one
 /// announced, its byte not here yet; the byte here, set aside from the
@@ -221,6 +225,8 @@ pub const Ring = extern struct {
 
 pub const Tcb = extern struct {
     socket: *Socket,
+    /// The interface the last segment went out of.
+    link: ?*Interface = null,
     state: State = .closed,
     /// Window scaling: the shift the peer's windows are read with and the
     /// one ours go out with - both 0 unless both SYNs offered it.

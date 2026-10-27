@@ -33,7 +33,9 @@
 //! `receive_batch`th receive descriptor asks for an interrupt; the
 //! engine's watchdog raises one a little after any other frame. At a
 //! gigabit link's rate the task is woken once per batch and hands on the
-//! batch in one pass, instead of being woken for every frame.
+//! batch in one pass, instead of being woken for every frame. A pass
+//! takes `receive_pass` frames at the most; then the task sees to the
+//! writes, and goes round again without waiting while frames are left.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -64,16 +66,23 @@ pub const DEVICE_NAME = "emac.device";
 
 /// Frames that can wait in the receive chain for the task, and frames in
 /// the engine's hands to send. A caller that sends more waits in the
-/// unit's queue. A frame that comes while the chain is full is lost, so
-/// on the JH7110 it holds what a gigabit link brings while the task is
-/// late: a whole 256 KiB TCP window, 180 frames 12 us apart. With 128 a
-/// window of 256 KiB lost a few frames each run; 16 lost the rest of each
-/// 64 KiB one. The ESP32-P4's link is 100 Mbit, and its internal memory
-/// small.
+/// unit's queue; on the JH7110 32 go between two passes of the task, as
+/// many as the acknowledgements of a pass of `receive_pass` frames and
+/// more - with 8 they fell behind a read at link speed. A frame that
+/// comes while the receive chain is full is lost, so on the JH7110 it
+/// holds what a gigabit link brings while the task is late: a whole 256
+/// KiB TCP window, 180 frames 12 us apart. With 128 a window of 256 KiB
+/// lost a few frames each run; 16 lost the rest of each 64 KiB one. The
+/// ESP32-P4's link is 100 Mbit, and its internal memory small.
 pub const receive_count = if (sdk.hardware.chip == .rv64sbi) 256 else 16;
 /// Every how many receive descriptors one asks for an interrupt.
 pub const receive_batch: u32 = if (sdk.hardware.chip == .rv64sbi) 16 else 1;
-pub const send_count = 8;
+/// The most frames the task takes from the chain before it sees to the
+/// writes: while a read comes at link speed the chain is never empty, and
+/// taken all at once - 80 frames and more - its acknowledgements waited
+/// for the device so long that the stack's queue of them ran over.
+pub const receive_pass: u32 = if (sdk.hardware.chip == .rv64sbi) 2 * receive_batch else receive_count;
+pub const send_count = if (sdk.hardware.chip == .rv64sbi) 32 else 8;
 /// A buffer: the longest frame, with its checksum and a VLAN tag, in
 /// whole cache lines.
 pub const buffer_bytes = 1536;
@@ -241,16 +250,19 @@ pub const EmacBase = extern struct {
 
     // --- the task's side of the chains ------------------------------------
 
-    /// Every frame the engine has put in the chain, handed to the unit,
-    /// and its descriptor given back.
-    pub fn received(base: *EmacBase) void {
+    /// The frames the engine has put in the chain handed to the unit, up
+    /// to `receive_pass` of them, and their descriptors given back: true
+    /// when the chain is empty, false when frames are left.
+    pub fn received(base: *EmacBase) bool {
         const work = base.work.?;
         var last: ?*mac.Descriptor = null;
-        while (base.running != 0) {
+        defer if (last) |descriptor| mac.pollReceive(descriptor);
+        for (0..receive_pass) |_| {
+            if (base.running == 0) return true;
             const slot = base.receive_next;
             const descriptor = &work.receive_chain[slot];
             base.invalidate(descriptor, @sizeOf(mac.Descriptor));
-            const frame = mac.received(descriptor, buffer_bytes) orelse break;
+            const frame = mac.received(descriptor, buffer_bytes) orelse return true;
             if (!frame.good) {
                 base.net.damaged();
             } else {
@@ -262,7 +274,7 @@ pub const EmacBase = extern struct {
             base.receive_next = (slot + 1) % receive_count;
             last = descriptor;
         }
-        if (last) |descriptor| mac.pollReceive(descriptor);
+        return false;
     }
 
     /// Whether receive descriptor `slot` asks for an interrupt.

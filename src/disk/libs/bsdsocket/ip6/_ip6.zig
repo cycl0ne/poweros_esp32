@@ -542,6 +542,8 @@ fn walk(stack: *StackBase, interface: *Interface, frame: *Frame, source: Address
                     at += 8;
                     continue;
                 }
+                // A device checks no fragment's transport checksum.
+                frame.checked = 0;
                 stack.counts.ip6_fragments += 1;
                 return reassembly.input(stack, interface, frame, .{
                     .source = source,

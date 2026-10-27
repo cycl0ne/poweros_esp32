@@ -16,6 +16,17 @@
 //! its side - answers STATUS_PENDING first, and each of those starts the
 //! receive's time again.
 //!
+//! **A connection that failed is cut** (`abort`): a send or a receive
+//! that failed or ran out of time, a message that cannot be read in
+//! step, a session given up - the socket goes with SO_LINGER at no time,
+//! a reset, so the server ends the connection at once, and the session
+//! with it and the files it had open. A FIN would wait behind what is
+//! left to send, up to a whole WRITE, which a server that has stopped
+//! taking it never sees: the connection stayed up on both ends, and a
+//! file it had open stayed open on the server - a delete of it pending
+//! until the server found the connection dead. Only the handler's own
+//! end, after LOGOFF, closes with a FIN (`close`).
+//!
 //! **Something to read is told** with the opener's event signal
 //! (SO_EVENTMASK FD_READ; the handler sets the signal), so the handler
 //! can take a READ's answer that comes ahead between packets
@@ -74,7 +85,7 @@ pub const Connection = struct {
     /// takes one: true, or false with why in `failure`.
     pub fn open(connection: *Connection, server: [*:0]const u8, port: u16, failure: *Failure) bool {
         const sb = connection.sb;
-        connection.close();
+        connection.abort();
         const hints: bsd.addrinfo = .{ .ai_socktype = bsd.SOCK_STREAM };
         var list: ?*bsd.addrinfo = null;
         const found = sb.GetAddrInfo(server, null, &hints, &list);
@@ -116,15 +127,26 @@ pub const Connection = struct {
         return false;
     }
 
+    /// The connection closed in order: what is left to send goes, then
+    /// FIN.
     pub fn close(connection: *Connection) void {
         if (connection.socket < 0) return;
         _ = connection.sb.CloseSocket(connection.socket);
         connection.socket = -1;
     }
 
+    /// The connection cut with a reset, and what was left to send dropped:
+    /// the server lets go of the session at once.
+    pub fn abort(connection: *Connection) void {
+        if (connection.socket < 0) return;
+        const cut: bsd.linger = .{ .l_onoff = 1, .l_linger = 0 };
+        _ = connection.sb.SetSockOpt(connection.socket, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+        connection.close();
+    }
+
     /// `frame[frame_header..]` sent as one message, its framing written
     /// into `frame[0..frame_header]`. False when the connection failed,
-    /// which closes it.
+    /// which cuts it.
     pub fn send(connection: *Connection, frame: []u8) bool {
         if (connection.socket < 0) return false;
         const length = frame.len - frame_header;
@@ -136,7 +158,7 @@ pub const Connection = struct {
         while (at < frame.len) {
             const sent = connection.sb.Send(connection.socket, frame[at..].ptr, @intCast(frame.len - at), 0);
             if (sent <= 0) {
-                connection.close();
+                connection.abort();
                 return false;
             }
             at += @intCast(sent);
@@ -146,7 +168,7 @@ pub const Connection = struct {
 
     /// The next message, read whole into `into`: null when the connection
     /// failed, closed or ran out of time, or the message is larger than
-    /// `into` - all of which close it, since nothing after it could be
+    /// `into` - all of which cut it, since nothing after it could be
     /// read in step.
     pub fn receive(connection: *Connection, into: []u8) ?[]u8 {
         const length = connection.frameLength(into.len) orelse return null;
@@ -156,7 +178,7 @@ pub const Connection = struct {
 
     /// The next message's framing read, and its length: null when the
     /// connection failed, or the message is longer than `most` - which
-    /// closes it. The message is then the caller's to read, all of it,
+    /// cuts it. The message is then the caller's to read, all of it,
     /// with `readAll`.
     pub fn frameLength(connection: *Connection, most: usize) ?usize {
         var framing: [frame_header]u8 = undefined;
@@ -164,7 +186,7 @@ pub const Connection = struct {
         const length = @as(usize, framing[1]) << 16 | @as(usize, framing[2]) << 8 | framing[3];
         // Anything but a session message is not SMB's.
         if (framing[0] != 0 or length > most) {
-            connection.close();
+            connection.abort();
             return null;
         }
         return length;
@@ -172,25 +194,25 @@ pub const Connection = struct {
 
     /// As much of `into` as the stream has: with `wait`, at least a byte,
     /// waiting for it; without, 0 when nothing has come. Null when the
-    /// connection failed, closed or ran out of time, which closes it.
+    /// connection failed, closed or ran out of time, which cuts it.
     pub fn readSome(connection: *Connection, into: []u8, wait: bool) ?usize {
         if (connection.socket < 0) return null;
         const got = connection.sb.Recv(connection.socket, into.ptr, @intCast(into.len), if (wait) 0 else bsd.MSG_DONTWAIT);
         if (got > 0) return @intCast(got);
         if (got < 0 and !wait and connection.sb.Errno() == bsd.EWOULDBLOCK) return 0;
-        connection.close();
+        connection.abort();
         return null;
     }
 
     /// `into` filled from the stream: false when the connection failed,
-    /// closed or ran out of time, which closes it.
+    /// closed or ran out of time, which cuts it.
     pub fn readAll(connection: *Connection, into: []u8) bool {
         if (connection.socket < 0) return false;
         var at: usize = 0;
         while (at < into.len) {
             const got = connection.sb.Recv(connection.socket, into[at..].ptr, @intCast(into.len - at), 0);
             if (got <= 0) {
-                connection.close();
+                connection.abort();
                 return false;
             }
             at += @intCast(got);

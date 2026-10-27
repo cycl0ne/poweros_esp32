@@ -21,6 +21,14 @@
 //! beyond that is refused with `ENOBUFS`. A read that finds no frame free
 //! waits idle until one is.
 //!
+//! **TCP does not fill the queue up.** Past `full_mark` packets waiting
+//! the interface is `full`, and connections hold back their data - the
+//! rest of the queue stays for acknowledgements and the other protocols -
+//! until it is down to `room_mark`; then they send (`tcp/output.zig`'s
+//! `linkRoom`). A segment refused with ENOBUFS halved its connection's
+//! congestion window: a 200 MB write over SMB lost it about 80 times,
+//! though nothing was lost on the wire.
+//!
 //! **On and off the link.** One S2_ONEVENT is kept waiting on the device
 //! for the state the link is not in, so a link that goes away or comes
 //! back - by ConfigureInterfaceTagList's IFA_State or by itself - is
@@ -40,8 +48,10 @@
 //!
 //! **Checksums.** A device that checks the checksums of what comes in
 //! answers a read with SANA2IOF_CHECKSUM, and the frame goes up marked
-//! `checked`; a frame going out that the transport left for the device
-//! to fill in (`fill_checksums`) is written with the flag.
+//! `checked` - an IPv6 one only from a device that says it checks IPv6's
+//! too (S2OFFLOADF_RX_CHECKSUMS_IPV6); a frame going out that the
+//! transport left for the device to fill in (`fill_checksums`) is
+//! written with the flag.
 //!
 //! All the answers come to the stack task's port, where `complete` takes
 //! them under the lock.
@@ -60,17 +70,25 @@ const Interface = _netif.Interface;
 const _ip = @import("../ip/_ip.zig");
 const _arp = @import("../arp/_arp.zig");
 const _ip6 = @import("../ip6/_ip6.zig");
+const tcp_output = @import("../tcp/output.zig");
 
 /// The most bytes a read takes: a frame's buffer past its headroom.
 const read_bytes: u32 = _frame.buffer_bytes - _frame.headroom;
 /// Packets that may wait for a write.
 pub const queue_max = 64;
+/// Where the queue is full for TCP, and where it has room again.
+const full_mark = queue_max - 16;
+const room_mark = queue_max / 4;
 /// Reads and writes at the most, whatever the link: a gigabit link takes
 /// all the reads there are - on the 64-bit boards as many as a 256 KiB
 /// window has frames (180), so a window that comes at link speed while
-/// the stack's task is late finds a read for each; elsewhere 128.
+/// the stack's task is late finds a read for each; elsewhere 128. It
+/// takes all the writes too: on the 64-bit boards 32, so a device that
+/// answers its writes between batches of what it received has room for
+/// the acknowledgements of a batch - with 8, a read at link speed made
+/// more of them than went, and the queue ran over; elsewhere 16.
 pub const reads_max = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 256 else 128;
-pub const writes_max = 16;
+pub const writes_max = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 32 else 16;
 
 pub const Kind = enum(u8) { read_ip, read_arp, read_ip6, write, event, control };
 
@@ -379,7 +397,14 @@ pub fn transmit(stack: *StackBase, interface: *Interface, frame: *Frame, to: *co
     }
     sys.AddTail(&device.queue, &frame.node);
     device.queued += 1;
+    if (device.queued >= full_mark) interface.full = 1;
     return 0;
+}
+
+/// The offload bit by which a read of `kind` answered with
+/// SANA2IOF_CHECKSUM was checked: IPv6's is its own.
+fn checksOf(kind: Kind) u32 {
+    return if (kind == .read_ip6) net.S2OFFLOADF_RX_CHECKSUMS_IPV6 else net.S2OFFLOADF_RX_CHECKSUMS;
 }
 
 /// The packet type a read of `kind` takes.
@@ -445,7 +470,7 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
                 stack.frames.give(sys, frame);
                 if (req.req.err == net.S2ERR_OUTOFSERVICE) setLink(stack, device, false);
             } else {
-                frame.checked = @intFromBool(req.req.flags & net.SANA2IOF_CHECKSUM != 0 and device.offload & net.S2OFFLOADF_RX_CHECKSUMS != 0);
+                frame.checked = @intFromBool(req.req.flags & net.SANA2IOF_CHECKSUM != 0 and device.offload & checksOf(request.kind) != 0);
                 _netif.receive(stack, interface, frame, req.src_addr[0..6], req.dst_addr[0..6], packetType(request.kind), now);
             }
             if (device.going != 0) return;
@@ -461,6 +486,10 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
                 write(stack, request, @fieldParentPtr("node", waiting));
             } else {
                 sys.AddTail(&device.idle_writes, &request.req.req.message.node);
+            }
+            if (interface.full != 0 and device.queued <= room_mark) {
+                interface.full = 0;
+                tcp_output.linkRoom(stack, interface);
             }
         },
         .event, .control => unreachable,
@@ -496,4 +525,9 @@ pub fn drain(stack: *StackBase, device: *Device) void {
     while (sys.RemHead(&device.queue)) |node| stack.frames.give(sys, @fieldParentPtr("node", node));
     device.queued = 0;
     device.in_flight = 0;
+    // The connections that waited for the queue hear that the link is gone.
+    if (device.interface.full != 0) {
+        device.interface.full = 0;
+        tcp_output.linkRoom(stack, device.interface);
+    }
 }

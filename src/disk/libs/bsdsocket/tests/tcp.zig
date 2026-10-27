@@ -25,6 +25,7 @@ const _route = @import("../route/_route.zig");
 const _ip = @import("../ip/_ip.zig");
 const _timer = @import("../timer/_timer.zig");
 const _tcp = @import("../tcp/_tcp.zig");
+const tcp_output = @import("../tcp/output.zig");
 const utility_library = @import("host_rom").utility;
 const kexec = @import("host_rom").exec;
 
@@ -1095,6 +1096,33 @@ test "checksums the device does are left 0 going out, and a packet it checked is
     rig.pump();
     const client = _tcp.of(socketOf(&rig.a, pair.client));
     try testing.expectEqual(client.snd_max, client.snd_una);
+    closeAll(&rig, pair);
+    try rig.deinit();
+}
+
+// --- the link's queue full ------------------------------------------------------
+
+test "data waits while the link's queue is full, and goes when it has room, the congestion window kept" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 107);
+    const client = _tcp.of(socketOf(&rig.a, pair.client));
+    const cwnd = client.cwnd;
+    rig.a.interface.full = 1;
+    try testing.expectEqual(@as(i32, 5), rig.a.sb.Send(pair.client, "hello", 5, 0));
+    try testing.expectEqual(@as(usize, 0), wire_count);
+    try testing.expect(client.flags & _tcp.link_wait != 0);
+    // A queue of another interface having room says nothing to it.
+    tcp_output.linkRoom(rig.a.stack, rig.b.interface);
+    try testing.expectEqual(@as(usize, 0), wire_count);
+    rig.a.interface.full = 0;
+    tcp_output.linkRoom(rig.a.stack, rig.a.interface);
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    try testing.expectEqual(@as(u32, 0), client.flags & _tcp.link_wait);
+    try testing.expectEqual(cwnd, client.cwnd);
+    rig.pump();
+    var buffer: [8]u8 = undefined;
+    try testing.expectEqual(@as(i32, 5), rig.b.sb.Recv(pair.server, &buffer, buffer.len, 0));
+    try testing.expectEqualStrings("hello", buffer[0..5]);
     closeAll(&rig, pair);
     try rig.deinit();
 }

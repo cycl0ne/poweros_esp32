@@ -28,8 +28,9 @@
 //! that little.
 //!
 //! **Checksums**: the MAC's checksum engine checks every received IPv4
-//! packet's header checksum and its TCP or UDP checksum, and says what it
-//! found in the descriptor. It could fill both in for a frame sent with
+//! packet's header checksum and its TCP or UDP checksum, and an IPv6
+//! packet's TCP or UDP checksum, and says what it found in the
+//! descriptor. It could fill both in for a frame sent with
 //! `fill`, but `offload` does not offer that: on the JH7110 some TCP
 //! segments it filled in went out with a checksum the peer refused, the
 //! same segment every time it was sent again, so a long write over IPv4
@@ -37,7 +38,8 @@
 //!
 //! It keeps no state but where its registers are (`registers`). The
 //! values follow U-Boot's dwc_eth_qos.c (eqos_start), which runs this
-//! MAC on the VisionFive 2.
+//! MAC on the VisionFive 2, but for the engine's bus and the receive
+//! queue's mode, which follow Linux's device tree for the JH7110.
 
 const sdk = @import("sdk");
 const net = sdk.devices.network;
@@ -136,22 +138,29 @@ const mdio_pa_shift = 21;
 const address_ae: u32 = 1 << 31;
 
 /// MTL_TxQ0_Operation_Mode: whole frames passed on, the queue on, its
-/// size in 256-byte blocks less one. MTL_RxQ0_Operation_Mode: whole
-/// frames, those with a wrong checksum kept rather than dropped, its
-/// size.
+/// size in 256-byte blocks less one. MTL_RxQ0_Operation_Mode: a frame
+/// passed on to the engine as soon as its first 64 bytes are in (RSF
+/// off, RTC 0), those with a wrong checksum kept rather than dropped, its
+/// size. The JH7110's receive queue holds 2 KiB, not two whole frames:
+/// with each frame held whole until the engine took it, the queue ran
+/// over whenever the engine was a little late - about 40 frames in a
+/// 200 MB read - though descriptors were free.
 const txq_tsf: u32 = 1 << 1;
 const txq_enabled: u32 = 2 << 2;
 const txq_tqs_shift = 16;
-const rxq_rsf: u32 = 1 << 5;
+const rxq_rtc_64: u32 = 0;
 const rxq_dis_tcp_ef: u32 = 1 << 6;
 const rxq_rqs_shift = 20;
 
 /// DMA_Mode: the software reset.
 const mode_swr: u32 = 1 << 0;
 
-/// DMA_SysBus_Mode: bursts of 4, 8 and 16 beats, addresses past 32 bits,
-/// two reads outstanding.
-const sysbus_mode: u32 = 1 << 1 | 1 << 2 | 1 << 3 | 1 << 11 | 2 << 16;
+/// DMA_SysBus_Mode: bursts of 4 to 256 beats, addresses past 32 bits,
+/// 16 reads and 16 writes outstanding - as Linux's device tree for the
+/// JH7110 has them. With U-Boot's one write outstanding and bursts of 16
+/// beats at most, the engine wrote a frame out slower than the next came
+/// in while the memory was busy, and the 2 KiB receive queue ran over.
+const sysbus_mode: u32 = 0x7F << 1 | 1 << 11 | 15 << 16 | 15 << 24;
 
 /// DMA_CH0_Control: burst lengths in eights, and the bus words skipped
 /// after each descriptor - 64-bit words, so a descriptor's 16 bytes and
@@ -215,9 +224,9 @@ const receive_ld: u32 = 1 << 28;
 const receive_es: u32 = 1 << 15;
 /// A send descriptor's checksums filled in by the engine, the pseudo
 /// header's sum too. A received one's last word: its second holds what
-/// the checksum engine found - the payload's type (UDP, TCP), an IPv4
-/// header, a wrong header checksum, the engine passed by, a wrong TCP or
-/// UDP checksum.
+/// the checksum engine found - the payload's type (UDP, TCP), a wrong
+/// IPv4 header checksum or a wrong IPv6 length, an IPv4 header, an IPv6
+/// one, the engine passed by, a wrong TCP or UDP checksum.
 const send_cic_full: u32 = 3 << 16;
 const receive_rs1v: u32 = 1 << 26;
 const checks_type_mask: u32 = 0x7;
@@ -225,6 +234,7 @@ const checks_udp: u32 = 1;
 const checks_tcp: u32 = 2;
 const checks_header_error: u32 = 1 << 3;
 const checks_ipv4: u32 = 1 << 4;
+const checks_ipv6: u32 = 1 << 5;
 const checks_bypassed: u32 = 1 << 6;
 const checks_payload_error: u32 = 1 << 7;
 
@@ -276,7 +286,7 @@ pub fn setUp(receive_bytes: u32) void {
     const tx_fifo = @as(u32, 128) << @intCast((features >> 6) & 0x1F);
     const checking = offload() & net.S2OFFLOADF_RX_CHECKSUMS != 0;
     at(mtl_txq0_operation).* = txq_tsf | txq_enabled | (tx_fifo / 256 - 1) << txq_tqs_shift;
-    at(mtl_rxq0_operation).* = rxq_rsf | rxq_dis_tcp_ef | (rx_fifo / 256 - 1) << rxq_rqs_shift;
+    at(mtl_rxq0_operation).* = rxq_rtc_64 | rxq_dis_tcp_ef | (rx_fifo / 256 - 1) << rxq_rqs_shift;
     at(mac_rxq_ctrl0).* = rxq0_enabled;
     at(mac_q0_tx_flow).* = 0xFFFF << tx_flow_pt_shift | tx_flow_tfe;
     at(mac_rx_flow).* = rx_flow_rfe;
@@ -296,14 +306,14 @@ pub fn setUp(receive_bytes: u32) void {
 }
 
 /// The checksums the MAC's engine does, as Sana2DeviceQuery's `offload`
-/// says them: those of what comes in checked, where the MAC has the
-/// engine for it. Never those of what is sent (see the top): of a 1 MiB
+/// says them: those of what comes in checked, IPv4's and IPv6's, where
+/// the MAC has the engine for it. Never those of what is sent (see the top): of a 1 MiB
 /// SMB WRITE over IPv4, about one full segment in four was refused by
 /// the server, each again when sent again, and the same data with the
 /// stack's checksums went through.
 pub fn offload() u32 {
     const features = at(mac_hw_feature0).*;
-    return if (features & feature_rx_coe != 0) net.S2OFFLOADF_RX_CHECKSUMS else 0;
+    return if (features & feature_rx_coe != 0) net.S2OFFLOADF_RX_CHECKSUMS | net.S2OFFLOADF_RX_CHECKSUMS_IPV6 else 0;
 }
 
 /// The line's speed and duplex, as the PHY agreed them.
@@ -365,8 +375,8 @@ pub const Frame = struct {
     length: u32,
     /// Whether it came in whole and without an error.
     good: bool,
-    /// Whether the checksum engine checked its IPv4 header's checksum and
-    /// its TCP or UDP checksum, and found both right.
+    /// Whether the checksum engine checked its TCP or UDP checksum, and an
+    /// IPv4 packet's header checksum, and found them right.
     checked: bool,
 };
 
@@ -380,7 +390,7 @@ pub fn received(descriptor: *const Descriptor, buffer_bytes: u32) ?Frame {
         length > 0 and length <= buffer_bytes;
     const checks = descriptor.words[1];
     const payload = checks & checks_type_mask;
-    const checked = status & receive_rs1v != 0 and checks & checks_ipv4 != 0 and
+    const checked = status & receive_rs1v != 0 and checks & (checks_ipv4 | checks_ipv6) != 0 and
         (payload == checks_udp or payload == checks_tcp) and
         checks & (checks_header_error | checks_bypassed | checks_payload_error) == 0;
     return .{ .length = length, .good = good, .checked = checked };

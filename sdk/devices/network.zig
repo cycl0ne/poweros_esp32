@@ -79,7 +79,10 @@
 //! with SANA2IOF_CHECKSUM when the hardware checked the IPv4 header's
 //! checksum and the TCP or UDP checksum of the packet, and both are
 //! right; a packet with a wrong one, a fragment, ICMP and anything else
-//! comes without it, for the opener to check. S2OFFLOADF_TX_CHECKSUMS: a
+//! comes without it, for the opener to check. S2OFFLOADF_RX_CHECKSUMS_IPV6
+//! as well: an IPv6 packet whose TCP or UDP checksum the hardware checked
+//! and found right comes with it too - without the bit, the flag on an
+//! IPv6 packet's read says nothing. S2OFFLOADF_TX_CHECKSUMS: a
 //! write of an IPv4 packet that carries TCP or UDP, whole and not a
 //! fragment, may set SANA2IOF_CHECKSUM, and the hardware fills in both
 //! checksums, which the opener leaves 0.
@@ -220,6 +223,8 @@ pub const Sana2DeviceQuery = extern struct {
 /// sent packets' filled in, by the hardware.
 pub const S2OFFLOADF_RX_CHECKSUMS: u32 = 1 << 0;
 pub const S2OFFLOADF_TX_CHECKSUMS: u32 = 1 << 1;
+/// Received IPv6 packets' TCP and UDP checksums checked as well.
+pub const S2OFFLOADF_RX_CHECKSUMS_IPV6: u32 = 1 << 2;
 
 /// HardwareType: the kinds of link.
 pub const S2WireType_Ethernet: u32 = 1;

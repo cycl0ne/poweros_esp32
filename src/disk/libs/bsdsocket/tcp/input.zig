@@ -98,9 +98,8 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
     const offset: u32 = @as(u32, bytes[12] >> 4) * 4;
     if (offset < _tcp.header_bytes or offset > bytes.len) return bad(stack);
     const total: u32 = @intCast(bytes.len);
-    // An IPv4 segment the device checked is not checked again.
-    const checked = frame.checked != 0 and header.source.isV4();
-    if (!checked and _ip.finish(_ip.sum(_inet.pseudoSum(header.source, header.destination, protocol, total), bytes)) != 0) return bad(stack);
+    // A segment the device checked is not checked again.
+    if (frame.checked == 0 and _ip.finish(_ip.sum(_inet.pseudoSum(header.source, header.destination, protocol, total), bytes)) != 0) return bad(stack);
     if (header.destination.isV4() and _netif.isBroadcast(stack, header.destination.v4())) return;
     const flags = bytes[13];
     const data = bytes[offset..];
