@@ -23,11 +23,17 @@
 //! two summaries; each stays until it is written back. The MAC's own
 //! causes and its counters' are masked.
 //!
+//! **Checksums**: the MAC's checksum engine checks every received IPv4
+//! packet's header checksum and its TCP or UDP checksum, and says what it
+//! found in the descriptor; it fills both in for a frame sent with
+//! `fill` (`offload`).
+//!
 //! It keeps no state but where its registers are (`registers`). The
 //! values follow U-Boot's dwc_eth_qos.c (eqos_start), which runs this
 //! MAC on the VisionFive 2.
 
 const sdk = @import("sdk");
+const net = sdk.devices.network;
 const reg = sdk.hardware.mmio.reg;
 const systimer = sdk.hardware.systimer;
 
@@ -45,6 +51,7 @@ const mac_q0_tx_flow = 0x070;
 const mac_rx_flow = 0x090;
 const mac_rxq_ctrl0 = 0x0A0;
 const mac_interrupt_enable = 0x0B4;
+const mac_hw_feature0 = 0x11C;
 const mac_hw_feature1 = 0x120;
 const mac_mdio_address = 0x200;
 const mac_mdio_data = 0x204;
@@ -78,8 +85,9 @@ const dma_interrupt_enable = 0x1134;
 const dma_status = 0x1160;
 
 /// MAC_Configuration: receiver and transmitter on, full duplex, the
-/// speed (PS and FES: 1000 neither, 100 both, 10 PS alone), and the
-/// checksum stripped from every received frame.
+/// speed (PS and FES: 1000 neither, 100 both, 10 PS alone), the
+/// checksum stripped from every received frame, and the checksum engine
+/// checking what comes in.
 const config_re: u32 = 1 << 0;
 const config_te: u32 = 1 << 1;
 const config_dm: u32 = 1 << 13;
@@ -87,6 +95,12 @@ const config_fes: u32 = 1 << 14;
 const config_ps: u32 = 1 << 15;
 const config_acs: u32 = 1 << 20;
 const config_cst: u32 = 1 << 21;
+const config_ipc: u32 = 1 << 27;
+
+/// MAC_HW_Feature0: the checksum engine for what is sent, and for what
+/// comes in.
+const feature_tx_coe: u32 = 1 << 14;
+const feature_rx_coe: u32 = 1 << 16;
 
 /// MAC_Packet_Filter: every frame, or every multicast frame, passed.
 const filter_pr: u32 = 1 << 0;
@@ -117,11 +131,13 @@ const address_ae: u32 = 1 << 31;
 
 /// MTL_TxQ0_Operation_Mode: whole frames passed on, the queue on, its
 /// size in 256-byte blocks less one. MTL_RxQ0_Operation_Mode: whole
-/// frames, its size.
+/// frames, those with a wrong checksum kept rather than dropped, its
+/// size.
 const txq_tsf: u32 = 1 << 1;
 const txq_enabled: u32 = 2 << 2;
 const txq_tqs_shift = 16;
 const rxq_rsf: u32 = 1 << 5;
+const rxq_dis_tcp_ef: u32 = 1 << 6;
 const rxq_rqs_shift = 20;
 
 /// DMA_Mode: the software reset.
@@ -185,6 +201,20 @@ const receive_ctxt: u32 = 1 << 30;
 const receive_fd: u32 = 1 << 29;
 const receive_ld: u32 = 1 << 28;
 const receive_es: u32 = 1 << 15;
+/// A send descriptor's checksums filled in by the engine, the pseudo
+/// header's sum too. A received one's last word: its second holds what
+/// the checksum engine found - the payload's type (UDP, TCP), an IPv4
+/// header, a wrong header checksum, the engine passed by, a wrong TCP or
+/// UDP checksum.
+const send_cic_full: u32 = 3 << 16;
+const receive_rs1v: u32 = 1 << 26;
+const checks_type_mask: u32 = 0x7;
+const checks_udp: u32 = 1;
+const checks_tcp: u32 = 2;
+const checks_header_error: u32 = 1 << 3;
+const checks_ipv4: u32 = 1 << 4;
+const checks_bypassed: u32 = 1 << 6;
+const checks_payload_error: u32 = 1 << 7;
 
 /// How long the software reset may take, and a stopping queue or an
 /// MDIO transfer, in microseconds.
@@ -225,14 +255,16 @@ pub fn reset() bool {
 /// stripping checksums, heeding and sending pause frames, its own causes
 /// and its counters' masked, neither receiving nor sending; the engine's
 /// bursts, its descriptors' spacing and the receive buffers' size,
-/// `receive_bytes`. Received frames are not checked for IP checksums: the
-/// network stack checks them itself.
+/// `receive_bytes`. Where the MAC has the checksum engine, it checks
+/// what comes in, and a packet whose checksum is wrong is passed on all
+/// the same, for the network stack to count.
 pub fn setUp(receive_bytes: u32) void {
     const features = at(mac_hw_feature1).*;
     const rx_fifo = @as(u32, 128) << @intCast(features & 0x1F);
     const tx_fifo = @as(u32, 128) << @intCast((features >> 6) & 0x1F);
+    const checking = offload() & net.S2OFFLOADF_RX_CHECKSUMS != 0;
     at(mtl_txq0_operation).* = txq_tsf | txq_enabled | (tx_fifo / 256 - 1) << txq_tqs_shift;
-    at(mtl_rxq0_operation).* = rxq_rsf | (rx_fifo / 256 - 1) << rxq_rqs_shift;
+    at(mtl_rxq0_operation).* = rxq_rsf | rxq_dis_tcp_ef | (rx_fifo / 256 - 1) << rxq_rqs_shift;
     at(mac_rxq_ctrl0).* = rxq0_enabled;
     at(mac_q0_tx_flow).* = 0xFFFF << tx_flow_pt_shift | tx_flow_tfe;
     at(mac_rx_flow).* = rx_flow_rfe;
@@ -240,7 +272,7 @@ pub fn setUp(receive_bytes: u32) void {
     at(mmc_rx_interrupt_mask).* = 0xFFFF_FFFF;
     at(mmc_tx_interrupt_mask).* = 0xFFFF_FFFF;
     at(mmc_ipc_rx_interrupt_mask).* = 0xFFFF_FFFF;
-    at(mac_configuration).* = config_cst | config_acs | config_dm;
+    at(mac_configuration).* = config_cst | config_acs | config_dm | (if (checking) config_ipc else 0);
     at(mac_packet_filter).* = 0;
     at(dma_sysbus_mode).* = sysbus_mode;
     at(dma_control).* = control_pblx8 | control_dsl;
@@ -248,6 +280,15 @@ pub fn setUp(receive_bytes: u32) void {
     at(dma_rx_control).* = pbl | receive_bytes << rx_rbsz_shift;
     at(dma_interrupt_enable).* = 0;
     at(dma_status).* = int_all;
+}
+
+/// The checksums the MAC's engine does, as Sana2DeviceQuery's `offload`
+/// says them: those of what comes in checked, of what is sent filled in,
+/// each where the MAC has the engine for it.
+pub fn offload() u32 {
+    const features = at(mac_hw_feature0).*;
+    return (if (features & feature_rx_coe != 0) net.S2OFFLOADF_RX_CHECKSUMS else 0) |
+        (if (features & feature_tx_coe != 0) net.S2OFFLOADF_TX_CHECKSUMS else 0);
 }
 
 /// The line's speed and duplex, as the PHY agreed them.
@@ -308,6 +349,9 @@ pub const Frame = struct {
     length: u32,
     /// Whether it came in whole and without an error.
     good: bool,
+    /// Whether the checksum engine checked its IPv4 header's checksum and
+    /// its TCP or UDP checksum, and found both right.
+    checked: bool,
 };
 
 /// The frame in a receive descriptor, or null while the engine has it.
@@ -318,17 +362,23 @@ pub fn received(descriptor: *const Descriptor, buffer_bytes: u32) ?Frame {
     const whole = receive_fd | receive_ld;
     const good = status & (receive_es | receive_ctxt) == 0 and status & whole == whole and
         length > 0 and length <= buffer_bytes;
-    return .{ .length = length, .good = good };
+    const checks = descriptor.words[1];
+    const payload = checks & checks_type_mask;
+    const checked = status & receive_rs1v != 0 and checks & checks_ipv4 != 0 and
+        (payload == checks_udp or payload == checks_tcp) and
+        checks & (checks_header_error | checks_bypassed | checks_payload_error) == 0;
+    return .{ .length = length, .good = good, .checked = checked };
 }
 
 /// A send descriptor handed to the engine with the frame of `length`
-/// bytes in `buffer`: its address and length first, OWN last.
-pub fn queueSend(descriptor: *Descriptor, buffer: []u8, length: u32) void {
+/// bytes in `buffer`, its checksums filled in by the engine if `fill`:
+/// its address and length first, OWN last.
+pub fn queueSend(descriptor: *Descriptor, buffer: []u8, length: u32, fill: bool) void {
     const address = @intFromPtr(buffer.ptr);
     descriptor.words[0] = low(address);
     descriptor.words[1] = high(address);
     descriptor.words[2] = send_ioc | length;
-    descriptor.words[3] = own | send_fd | send_ld | length;
+    descriptor.words[3] = own | send_fd | send_ld | (if (fill) send_cic_full else 0) | length;
 }
 
 /// Whether a send descriptor's frame went out, or null while the engine

@@ -25,6 +25,7 @@
 //! path takes is refused over IPv4, and goes in fragments over IPv6.
 
 const sdk = @import("sdk");
+const net = sdk.devices.network;
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
 const _base = @import("../bsdsocket_base.zig");
@@ -59,7 +60,8 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, packet: Pa
     if (length < header_bytes or length > datagram.len) return drop(stack, frame, &stack.counts.udp_bad);
     // IPv6 has no datagram without a checksum (RFC 8200, 8.1).
     if (_ip.get16(datagram, 6) == 0 and !packet.source.isV4()) return drop(stack, frame, &stack.counts.udp_bad);
-    if (_ip.get16(datagram, 6) != 0) {
+    // An IPv4 datagram the device checked is not checked again.
+    if (_ip.get16(datagram, 6) != 0 and !(frame.checked != 0 and packet.source.isV4())) {
         const total = _ip.sum(_inet.pseudoSum(packet.source, packet.destination, protocol, length), datagram[0..length]);
         if (_ip.finish(total) != 0) return drop(stack, frame, &stack.counts.udp_bad);
     }
@@ -233,11 +235,16 @@ pub fn output(stack: *StackBase, socket: *Socket, destination: Address, port: u1
     _ip.put16(header, 2, port);
     _ip.put16(header, 4, length);
     _ip.put16(header, 6, 0);
-    var checksum = _ip.finish(_ip.sum(_inet.pseudoSum(source, destination, protocol, length), frame.bytes()));
-    // A checksum that comes out 0 is sent as its other form, since 0
-    // means none.
-    if (checksum == 0) checksum = 0xFFFF;
-    _ip.put16(header, 6, checksum);
+    if (fits and !group and destination.isV4() and path.interface.offload & net.S2OFFLOADF_TX_CHECKSUMS != 0) {
+        // The device fills it in.
+        frame.fill_checksums = 1;
+    } else {
+        var checksum = _ip.finish(_ip.sum(_inet.pseudoSum(source, destination, protocol, length), frame.bytes()));
+        // A checksum that comes out 0 is sent as its other form, since 0
+        // means none.
+        if (checksum == 0) checksum = 0xFFFF;
+        _ip.put16(header, 6, checksum);
+    }
     stack.counts.udp_sent += 1;
     if (group) {
         // This machine's own members of the group, on the interface it

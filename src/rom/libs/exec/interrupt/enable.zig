@@ -64,6 +64,6 @@ pub fn Enable(base: *ExecBase) void {
     // A Signal or AddTask may have asked for a switch; taken once the
     // interrupts are back.
     const due = _task.switchDue(cpu);
-    _interrupt.interrupt_hardware.restore(cpu.id_saved);
+    _interrupt.unmask(cpu.id_saved);
     if (due) _task.task_hardware.switch_now();
 }

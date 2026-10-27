@@ -33,7 +33,8 @@ test "the address arrays hold the longest address" {
 test "the statistics are whole words with no gaps" {
     try std.testing.expectEqual(24, @offsetOf(net.Sana2DeviceQuery, "bps"));
     try std.testing.expectEqual(36, @offsetOf(net.Sana2DeviceQuery, "raw_mtu"));
-    try std.testing.expectEqual(40, @sizeOf(net.Sana2DeviceQuery));
+    try std.testing.expectEqual(40, @offsetOf(net.Sana2DeviceQuery, "offload"));
+    try std.testing.expectEqual(44, @sizeOf(net.Sana2DeviceQuery));
     try std.testing.expectEqual(16, @offsetOf(net.Sana2PacketTypeStats, "bytes_sent"));
     try std.testing.expectEqual(40, @sizeOf(net.Sana2PacketTypeStats));
     try std.testing.expectEqual(40, @offsetOf(net.Sana2DeviceStats, "reconfigurations"));

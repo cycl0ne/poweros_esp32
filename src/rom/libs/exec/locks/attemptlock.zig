@@ -59,12 +59,7 @@ const Lock = sdk.exec.Lock;
 /// }
 /// ```
 pub fn AttemptLock(base: *ExecBase, lock: *Lock) bool {
-    _locks.holdCore(base, lock);
-    _locks.checkTake(base, lock, false, @returnAddress());
-    if (!_locks.compareAndSet(base, &lock.state, 0, _locks.heldHere(base))) {
-        _locks.releaseCore(base, lock);
-        return false;
-    }
-    _locks.noteTaken(base, lock);
-    return true;
+    if (_locks.takeLock(base, lock, false, @returnAddress())) return true;
+    _locks.releaseCore(base, lock);
+    return false;
 }

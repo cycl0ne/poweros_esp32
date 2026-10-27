@@ -187,6 +187,7 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
         .used = 1,
         .up = 1,
         .no_arp = link.point_to_point,
+        .offload = @truncate(link.offload),
         .dhcp = @intFromBool(dhcp),
         .hardware = link.station,
         .transmit = &device.transmit,
@@ -314,6 +315,8 @@ fn open(stack: *StackBase, link: *device.Device, device_name: [*:0]const u8, uni
     }
     link.point_to_point = @intFromBool(line);
     link.mtu = query.mtu;
+    // A device that answers an older query, without `offload`, does none.
+    if (query.size_supplied >= @offsetOf(net.Sana2DeviceQuery, "offload") + @sizeOf(u32)) link.offload = query.offload;
     link.bps_low = @truncate(query.bps);
     link.bps_high = @truncate(query.bps >> 32);
 

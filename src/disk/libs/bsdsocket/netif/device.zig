@@ -38,6 +38,11 @@
 //! differs from what they ask for, the one control request goes out to
 //! make one group right, and its answer sends the next.
 //!
+//! **Checksums.** A device that checks the checksums of what comes in
+//! answers a read with SANA2IOF_CHECKSUM, and the frame goes up marked
+//! `checked`; a frame going out that the transport left for the device
+//! to fill in (`fill_checksums`) is written with the flag.
+//!
 //! All the answers come to the stack task's port, where `complete` takes
 //! them under the lock.
 
@@ -116,6 +121,8 @@ pub const Device = extern struct {
     bps_high: u32 = 0,
     station: [6]u8 = @splat(0),
     pad2: [2]u8 = .{ 0, 0 },
+    /// The checksums it does, S2OFFLOADF_*.
+    offload: u32 = 0,
     /// The device's name and unit, as the interface was added with them.
     name: [64]u8 = @splat(0),
     unit: u32 = 0,
@@ -391,7 +398,7 @@ fn write(stack: *StackBase, request: *Request, frame: *Frame) void {
     } else true;
     const group = frame.link_address[0] & 1 != 0;
     req.req.command = if (broadcast) net.S2_BROADCAST else if (group) net.S2_MULTICAST else exec.CMD_WRITE;
-    req.req.flags = 0;
+    req.req.flags = if (frame.fill_checksums != 0) net.SANA2IOF_CHECKSUM else 0;
     req.dst_addr = @splat(0);
     req.dst_addr[0..6].* = frame.link_address;
     req.packet_type = frame.link_type;
@@ -436,6 +443,7 @@ pub fn complete(stack: *StackBase, node: *exec.Node, now: u64) void {
                 stack.frames.give(sys, frame);
                 if (req.req.err == net.S2ERR_OUTOFSERVICE) setLink(stack, device, false);
             } else {
+                frame.checked = @intFromBool(req.req.flags & net.SANA2IOF_CHECKSUM != 0 and device.offload & net.S2OFFLOADF_RX_CHECKSUMS != 0);
                 _netif.receive(stack, interface, frame, req.src_addr[0..6], req.dst_addr[0..6], packetType(request.kind), now);
             }
             if (device.going != 0) return;

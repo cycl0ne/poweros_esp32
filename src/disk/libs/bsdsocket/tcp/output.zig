@@ -9,8 +9,12 @@
 //!
 //! Urgent data (MSG_OOB) goes in the ring like any other; SND.UP marks
 //! its end, and each segment before it carries URG and the pointer.
+//!
+//! With SACK, an acknowledgement names what is held beyond a hole, and
+//! while a loss is repaired what is lost goes first (sack.zig).
 
 const sdk = @import("sdk");
+const net = sdk.devices.network;
 const _inet = @import("../inet/_inet.zig");
 const Address = @import("../ip6/address.zig").Address;
 const bsd = sdk.bsdsocket;
@@ -24,6 +28,7 @@ const Socket = _socket.Socket;
 const _tcp = @import("_tcp.zig");
 const Tcb = _tcp.Tcb;
 const timers = @import("timers.zig");
+const sack = @import("sack.zig");
 const _timer = @import("../timer/_timer.zig");
 
 const protocol: u8 = @intCast(bsd.IPPROTO_TCP);
@@ -35,10 +40,11 @@ pub fn window(tcb: *const Tcb) u32 {
 }
 
 /// One segment of `connection`: `length` bytes from `ring_offset` in the
-/// send ring, with `flags`, and on a SYN the MSS option and, where this
-/// end scales its windows, the window scale - in our own SYN always, in
-/// the answer to the peer's only when that offered it too. 0, or the
-/// errno that says why it could not go.
+/// send ring, with `flags`. A SYN has the MSS option and, where this end
+/// scales its windows, the window scale, and offers SACK - in our own
+/// SYN always, in the answer to the peer's only when that offered it
+/// too. Any other acknowledgement names what is held beyond a hole, as
+/// many blocks as fit. 0, or the errno that says why it could not go.
 pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offset: u32, length: u32) i32 {
     const socket = tcb.socket;
     const path = _inet.route(stack, socket.remote_address, socket.scope) orelse return bsd.EHOSTUNREACH;
@@ -47,7 +53,14 @@ pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offs
     frame.length = length;
     const with_mss = flags & _tcp.SYN != 0;
     const with_scale = with_mss and _tcp.window_shift != 0 and (tcb.state == .syn_sent or tcb.rcv_shift != 0);
-    const header_length: u32 = _tcp.header_bytes + @as(u32, if (with_mss) 4 else 0) + @as(u32, if (with_scale) 4 else 0);
+    const with_sack_ok = with_mss and (tcb.state == .syn_sent or tcb.flags & _tcp.sack_ok != 0);
+    var named: [_tcp.sack_blocks_max]_tcp.Range = undefined;
+    const named_count = if (flags & (_tcp.SYN | _tcp.RST | _tcp.ACK) == _tcp.ACK and tcb.flags & _tcp.sack_ok != 0)
+        sack.blocks(tcb, named[0..sack.fitting(tcb, length)])
+    else
+        0;
+    const header_length: u32 = _tcp.header_bytes + @as(u32, if (with_mss) 4 else 0) + @as(u32, if (with_scale) 4 else 0) +
+        @as(u32, if (with_sack_ok) 4 else 0) + sack.optionBytes(named_count);
     // A SYN's window is never scaled (RFC 7323 2.2); any other says the
     // window shifted down, and what it offers is that shifted back up.
     const shift: u5 = if (with_mss) 0 else @intCast(tcb.rcv_shift);
@@ -66,20 +79,38 @@ pub fn segment(stack: *StackBase, tcb: *Tcb, sequence: u32, flags: u8, ring_offs
     _ip.put16(header, 14, @intCast(field));
     _ip.put16(header, 16, 0);
     _ip.put16(header, 18, if (urgent) @intCast(@min(tcb.snd_up -% sequence, 0xFFFF)) else 0);
+    var at: usize = _tcp.header_bytes;
     if (with_mss) {
-        header[20] = _tcp.option_mss;
-        header[21] = 4;
-        _ip.put16(header, 22, @intCast(localMss(path.mtu, socket.remote_address)));
+        header[at] = _tcp.option_mss;
+        header[at + 1] = 4;
+        _ip.put16(header, at + 2, @intCast(localMss(path.mtu, socket.remote_address)));
+        at += 4;
     }
     if (with_scale) {
-        header[24] = _tcp.option_nop;
-        header[25] = _tcp.option_window_scale;
-        header[26] = 3;
-        header[27] = _tcp.window_shift;
+        header[at..][0..4].* = .{ _tcp.option_nop, _tcp.option_window_scale, 3, _tcp.window_shift };
+        at += 4;
     }
-    const total = frame.length;
-    const checksum = _ip.finish(_ip.sum(_inet.pseudoSum(socket.local_address, socket.remote_address, protocol, total), frame.bytes()));
-    _ip.put16(header, 16, checksum);
+    if (with_sack_ok) {
+        header[at..][0..4].* = .{ _tcp.option_nop, _tcp.option_nop, _tcp.option_sack_permitted, 2 };
+        at += 4;
+    }
+    if (named_count > 0) {
+        header[at..][0..4].* = .{ _tcp.option_nop, _tcp.option_nop, _tcp.option_sack, @intCast(2 + 8 * named_count) };
+        at += 4;
+        for (named[0..named_count]) |block| {
+            _ip.put32(header, at, block.start);
+            _ip.put32(header, at + 4, block.end);
+            at += 8;
+        }
+    }
+    // Over IPv4, a device that fills in checksums gets the segment with
+    // its checksum 0.
+    if (path.interface.offload & net.S2OFFLOADF_TX_CHECKSUMS != 0 and socket.remote_address.isV4()) {
+        frame.fill_checksums = 1;
+    } else {
+        const total = frame.length;
+        _ip.put16(header, 16, _ip.finish(_ip.sum(_inet.pseudoSum(socket.local_address, socket.remote_address, protocol, total), frame.bytes())));
+    }
     if (flags & _tcp.ACK != 0) {
         tcb.rcv_adv = tcb.rcv_nxt +% offered;
         tcb.flags &= ~_tcp.ack_now;
@@ -103,7 +134,10 @@ pub fn localMss(mtu: u32, peer: Address) u32 {
 /// else carried it. After a timeout SND.NXT is back at SND.UNA, and the
 /// same loop sends everything again, FIN included. A segment the link
 /// has no room for (ENOBUFS) waits for the acknowledgements of those
-/// before it.
+/// before it. While a loss is repaired with SACK, what is lost goes
+/// first, and the congestion window holds the pipe rather than all that
+/// was sent; while segments are held beyond a hole, each segment leaves
+/// room for the blocks that name them.
 pub fn output(stack: *StackBase, tcb: *Tcb) void {
     switch (tcb.state) {
         .closed, .listen, .syn_sent, .time_wait => {
@@ -113,6 +147,7 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
         else => {},
     }
     const now = _timer.clock(stack);
+    if (tcb.flags & _tcp.recovering != 0) sack.repair(stack, tcb);
     while (true) {
         // Nothing but an acknowledgement goes before our SYN is.
         const synced = _tcp.atOrAfter(tcb.snd_una, tcb.ring_seq);
@@ -120,10 +155,14 @@ pub fn output(stack: *StackBase, tcb: *Tcb) void {
         const unsent: u32 = if (!synced or _tcp.after(tcb.snd_nxt, data_end)) 0 else data_end -% tcb.snd_nxt;
         const offset = tcb.snd_nxt -% tcb.ring_seq;
         const in_flight = tcb.snd_nxt -% tcb.snd_una;
-        const allowed = @min(tcb.snd_wnd, tcb.cwnd);
-        const usable: u32 = if (allowed > in_flight) allowed - in_flight else 0;
-        var length: u32 = @min(unsent, @min(usable, tcb.mss));
-        const small_tail = length > 0 and length < tcb.mss and length == unsent and in_flight > 0;
+        const most = if (tcb.flags & _tcp.sack_ok != 0 and tcb.held_count > 0) tcb.mss - sack.option_max else tcb.mss;
+        // While a loss is repaired, a segment goes only when the
+        // congestion window has room for a whole one (RFC 6675 5).
+        const repairing = tcb.flags & _tcp.recovering != 0;
+        const congestion_room = tcb.cwnd -| (if (repairing) sack.pipe(tcb) else in_flight);
+        const usable = @min(tcb.snd_wnd -| in_flight, if (repairing and congestion_room < most) 0 else congestion_room);
+        var length: u32 = @min(unsent, @min(usable, most));
+        const small_tail = length > 0 and length < most and length == unsent and in_flight > 0;
         if (small_tail and tcb.flags & (_tcp.no_delay | _tcp.fin_wanted | _tcp.urgent_out) == 0) length = 0;
         const send_fin = synced and tcb.flags & _tcp.fin_wanted != 0 and length == unsent and tcb.snd_nxt +% length == data_end;
         if (length == 0 and !send_fin and tcb.flags & _tcp.ack_now == 0) break;

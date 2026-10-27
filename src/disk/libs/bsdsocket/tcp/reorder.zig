@@ -26,10 +26,12 @@ fn sequenceOf(frame: *const Frame) u32 {
     return frame.sequence;
 }
 
-/// `data`, which starts at `sequence` past RCV.NXT, held.
+/// `data`, which starts at `sequence` past RCV.NXT, held; it is the
+/// segment held last, whose block a SACK option names first.
 pub fn hold(stack: *StackBase, tcb: *Tcb, sequence: u32, data: []const u8) void {
     const sys = stack.sys_base;
     const length: u32 = @intCast(data.len);
+    tcb.held_last = sequence;
     if (length == 0 or tcb.held_bytes + length > tcb.receive.space() or tcb.held_count >= held_max) return;
     // Where it goes: before the first held segment that starts after it.
     var before: ?*Frame = null;

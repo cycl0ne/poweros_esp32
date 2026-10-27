@@ -81,8 +81,13 @@ pub const LIBRARY_VERSION = 1;
 /// exec's semaphore lock, which only queueing and handing on take -
 /// 1714 cycles for an Obtain and Release with nothing in the way, and
 /// twice that with the cores busy, before; Procure's grants are counted
-/// in a table of their own (`Task.bid_holds`).
-pub const LIBRARY_REVISION = 22;
+/// in a table of their own (`Task.bid_holds`). 23: a spinlock is taken in
+/// one stretch with the core's interrupts masked and given back in
+/// another - it was five, each two calls through the interrupt table -
+/// and exec's locks, Disable, Enable, FindTask and the cache calls mask
+/// inline; a task's table of holds is kept packed, so a search ends at
+/// its first free entry.
+pub const LIBRARY_REVISION = 23;
 const BUILD_DATE = "26.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -3389,6 +3389,44 @@ fn holdCount(task: *const Task) usize {
     return count;
 }
 
+test "semaphores: a task's table stays packed, its entries in use first" {
+    try setUp();
+    defer deinit();
+    const boot = SysBase.cpu().this_task;
+    var sems: [4]SignalSemaphore = @splat(.{});
+    for (&sems) |*sem| InitSemaphore(SysBase, sem);
+    for (&sems) |*sem| ObtainSemaphore(SysBase, sem);
+
+    // The second given back: the last moved into its place, nothing free
+    // before an entry in use.
+    ReleaseSemaphore(SysBase, &sems[1]);
+    try testing.expectEqual(&sems[0], boot.holds[0].semaphore.?);
+    try testing.expectEqual(&sems[3], boot.holds[1].semaphore.?);
+    try testing.expectEqual(&sems[2], boot.holds[2].semaphore.?);
+    try testing.expect(boot.holds[3].semaphore == null);
+
+    // A nested hold found behind the gap that was, and a new one after
+    // the last entry in use.
+    ObtainSemaphore(SysBase, &sems[2]);
+    try expectHold(boot, &sems[2], 2, false);
+    ObtainSemaphoreShared(SysBase, &sems[1]);
+    try testing.expectEqual(&sems[1], boot.holds[3].semaphore.?);
+
+    // The last entry given back, and then the first.
+    ReleaseSemaphore(SysBase, &sems[1]);
+    try testing.expect(boot.holds[3].semaphore == null);
+    ReleaseSemaphore(SysBase, &sems[0]);
+    try testing.expectEqual(&sems[2], boot.holds[0].semaphore.?);
+    try testing.expectEqual(&sems[3], boot.holds[1].semaphore.?);
+    try testing.expect(boot.holds[2].semaphore == null);
+
+    ReleaseSemaphore(SysBase, &sems[2]);
+    ReleaseSemaphore(SysBase, &sems[2]);
+    ReleaseSemaphore(SysBase, &sems[3]);
+    try testing.expectEqual(@as(usize, 0), holdCount(boot));
+    try expectNoLeaks();
+}
+
 test "semaphores: each task's table of what it holds, and its end giving them back" {
     try setUp();
     defer deinit();

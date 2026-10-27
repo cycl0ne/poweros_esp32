@@ -29,6 +29,12 @@
 //! and when both SYNs had one every later window from the peer is taken
 //! shifted by what its SYN said, held to 14.
 //!
+//! **SACK** (RFC 2018): a SYN's SACK-permitted option is read, and when
+//! both SYNs had one the blocks of every later acknowledgement are kept
+//! for the repair of a loss (sack.zig). An acknowledgement with blocks
+//! counts as a duplicate whatever window it says: the blocks show it
+//! answers a segment that came.
+//!
 //! **Urgent data** (URG): the pointer marks one past the last urgent
 //! byte. That byte is set aside from the stream when it comes, for
 //! Recv with MSG_OOB, and the place it was taken from is the mark.
@@ -53,6 +59,7 @@ const Tcb = _tcp.Tcb;
 const output = @import("output.zig");
 const timers = @import("timers.zig");
 const reorder = @import("reorder.zig");
+const sack = @import("sack.zig");
 const _timer = @import("../timer/_timer.zig");
 
 const protocol: u8 = @intCast(bsd.IPPROTO_TCP);
@@ -68,9 +75,12 @@ const Segment = struct {
     /// The urgent pointer, read with URG.
     urgent: u32,
     /// The MSS option, if it came; the window scale option's shift, if it
-    /// came, on a SYN.
+    /// came, on a SYN; whether a SYN offered SACK; the SACK blocks.
     mss: ?u32,
     shift: ?u8,
+    sack_permitted: bool,
+    blocks: [_tcp.sack_blocks_max]_tcp.Range,
+    block_count: u8,
     /// The data after the header, and what the segment occupies of the
     /// sequence space: the data, and one each for SYN and FIN.
     data: []const u8,
@@ -88,7 +98,9 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
     const offset: u32 = @as(u32, bytes[12] >> 4) * 4;
     if (offset < _tcp.header_bytes or offset > bytes.len) return bad(stack);
     const total: u32 = @intCast(bytes.len);
-    if (_ip.finish(_ip.sum(_inet.pseudoSum(header.source, header.destination, protocol, total), bytes)) != 0) return bad(stack);
+    // An IPv4 segment the device checked is not checked again.
+    const checked = frame.checked != 0 and header.source.isV4();
+    if (!checked and _ip.finish(_ip.sum(_inet.pseudoSum(header.source, header.destination, protocol, total), bytes)) != 0) return bad(stack);
     if (header.destination.isV4() and _netif.isBroadcast(stack, header.destination.v4())) return;
     const flags = bytes[13];
     const data = bytes[offset..];
@@ -103,6 +115,9 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame, header: _i
         .urgent = _ip.get16(bytes, 18),
         .mss = options.mss,
         .shift = if (flags & _tcp.SYN != 0) options.shift else null,
+        .sack_permitted = flags & _tcp.SYN != 0 and options.sack_permitted,
+        .blocks = options.blocks,
+        .block_count = options.block_count,
         .data = data,
         .length = @as(u32, @intCast(data.len)) + @intFromBool(flags & _tcp.SYN != 0) + @intFromBool(flags & _tcp.FIN != 0),
     };
@@ -142,10 +157,13 @@ fn bad(stack: *StackBase) void {
 const Options = struct {
     mss: ?u32 = null,
     shift: ?u8 = null,
+    sack_permitted: bool = false,
+    blocks: [_tcp.sack_blocks_max]_tcp.Range = undefined,
+    block_count: u8 = 0,
 };
 
-/// The MSS and window scale options among `options`, each if it is there
-/// and whole.
+/// The MSS, window scale, SACK-permitted and SACK options among
+/// `options`, each if it is there and whole.
 fn optionsOf(options: []const u8) Options {
     var found: Options = .{};
     var at: usize = 0;
@@ -161,6 +179,15 @@ fn optionsOf(options: []const u8) Options {
         if (length < 2 or at + length > options.len) break;
         if (kind == _tcp.option_mss and length == 4) found.mss = _ip.get16(options, at + 2);
         if (kind == _tcp.option_window_scale and length == 3) found.shift = @min(options[at + 2], _tcp.shift_max);
+        if (kind == _tcp.option_sack_permitted and length == 2) found.sack_permitted = true;
+        if (kind == _tcp.option_sack and length >= 10 and (length - 2) % 8 == 0) {
+            const count = @min((length - 2) / 8, _tcp.sack_blocks_max);
+            for (0..count) |index| {
+                const block = at + 2 + 8 * index;
+                found.blocks[index] = .{ .start = _ip.get32(options, block), .end = _ip.get32(options, block + 4) };
+            }
+            found.block_count = @intCast(count);
+        }
         at += length;
     }
     return found;
@@ -174,6 +201,11 @@ fn agreeScale(tcb: *Tcb, seg: *const Segment) void {
     if (_tcp.window_shift == 0) return;
     tcb.snd_shift = shift;
     tcb.rcv_shift = _tcp.window_shift;
+}
+
+/// SACK used when the peer's SYN offered it: this end always does.
+fn agreeSack(tcb: *Tcb, seg: *const Segment) void {
+    if (seg.sack_permitted) tcb.flags |= _tcp.sack_ok;
 }
 
 /// The MSS to send with: the peer's, if it named one, held to what our
@@ -225,6 +257,7 @@ fn listening(stack: *StackBase, listener: *Socket, seg: *const Segment, header: 
     tcb.snd_wl2 = seg.ack;
     tcb.mss = sendMss(stack, child, seg.mss);
     agreeScale(tcb, seg);
+    agreeSack(tcb, seg);
     tcb.listener = listener;
     stack.sys_base.AddTail(&lt.accept_queue, &tcb.accept_node);
     lt.queued += 1;
@@ -251,6 +284,7 @@ fn synSent(stack: *StackBase, tcb: *Tcb, seg: *const Segment, header: _inet.Pack
     tcb.rcv_nxt = seg.seq +% 1;
     tcb.mss = sendMss(stack, socket, seg.mss);
     agreeScale(tcb, seg);
+    agreeSack(tcb, seg);
     if (ack_acceptable) tcb.snd_una = seg.ack;
     if (_tcp.after(tcb.snd_una, tcb.iss)) {
         tcb.state = .established;
@@ -349,10 +383,11 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
     if (_tcp.after(seg.ack, tcb.snd_max) or _tcp.before(seg.ack, tcb.snd_una -% tcb.max_snd_wnd)) {
         return challenge(stack, tcb, now);
     }
+    if (seg.block_count > 0 and tcb.flags & _tcp.sack_ok != 0) sack.record(tcb, seg.blocks[0..seg.block_count], seg.ack);
     if (_tcp.after(seg.ack, tcb.snd_una)) {
         acknowledged(stack, tcb, seg.ack, now);
     } else if (seg.ack == tcb.snd_una and seg.data.len == 0 and seg.flags & (_tcp.SYN | _tcp.FIN) == 0 and
-        seg.window == tcb.snd_wnd and tcb.snd_una != tcb.snd_max)
+        (seg.window == tcb.snd_wnd or seg.block_count > 0) and tcb.snd_una != tcb.snd_max)
     {
         timers.duplicate(stack, tcb);
     }
@@ -392,15 +427,16 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
 
 /// Header prediction: in ESTABLISHED, with nothing unusual about the
 /// connection - no hole, no recovery, no probe, nothing sent again - a
-/// segment that is exactly the next one, with only ACK (and PSH) set and
-/// the same window, is either a pure acknowledgement of new data or the
+/// segment that is exactly the next one, with only ACK (and PSH) set,
+/// the same window and no SACK blocks, is either a pure acknowledgement of new data or the
 /// next data and nothing else. Those two, most of what comes on a busy
 /// connection, are taken here in a few steps; everything else goes the
 /// whole way. True when the segment was taken.
 fn predicted(stack: *StackBase, tcb: *Tcb, seg: *const Segment) bool {
     if (tcb.state != .established or seg.flags & ~_tcp.PSH != _tcp.ACK) return false;
     if (seg.seq != tcb.rcv_nxt or seg.window != tcb.snd_wnd or tcb.snd_nxt != tcb.snd_max) return false;
-    if (tcb.held_bytes != 0 or tcb.dupacks != 0 or tcb.flags & (_tcp.probing | _tcp.read_shut) != 0) return false;
+    if (seg.block_count != 0 or tcb.held_bytes != 0 or tcb.dupacks != 0) return false;
+    if (tcb.flags & (_tcp.probing | _tcp.read_shut | _tcp.recovering) != 0) return false;
     const now = _timer.clock(stack);
     if (seg.data.len == 0) {
         if (!(_tcp.after(seg.ack, tcb.snd_una) and _tcp.atOrBefore(seg.ack, tcb.snd_max))) return false;
@@ -494,19 +530,21 @@ fn trim(tcb: *const Tcb, seg: *Segment, window: u32) void {
 /// if it was the segment being timed, the congestion window grown (or
 /// recovery ended), that much of the send ring let go of, the program
 /// told there is room, and the retransmission timer started again for
-/// what is still in flight.
+/// what is still in flight. While a loss is repaired with SACK, the
+/// window stays at the threshold until the repair is over.
 fn acknowledged(stack: *StackBase, tcb: *Tcb, ack: u32, now: u64) void {
     if (tcb.timing != 0 and _tcp.after(ack, tcb.rtt_seq)) {
         timers.measured(tcb, now -| tcb.rtt_start);
         tcb.timing = 0;
     }
     tcb.retries = 0;
-    if (tcb.dupacks > 0) {
-        timers.recovered(tcb);
-    } else {
-        timers.grow(tcb, ack -% tcb.snd_una);
+    const repairing = tcb.flags & _tcp.recovering != 0;
+    if (tcb.flags & (_tcp.recovering | _tcp.timed_out) != 0) sack.acknowledged(tcb, ack);
+    if (!repairing) {
+        if (tcb.dupacks > 0) timers.recovered(tcb) else timers.grow(tcb, ack -% tcb.snd_una);
     }
     tcb.snd_una = ack;
+    if (tcb.sacked_count > 0) sack.prune(tcb);
     if (tcb.flags & _tcp.urgent_out != 0 and _tcp.atOrAfter(ack, tcb.snd_up)) tcb.flags &= ~_tcp.urgent_out;
     if (_tcp.after(ack, tcb.ring_seq)) {
         const data_acked: u32 = @min(ack -% tcb.ring_seq, tcb.send.count);
@@ -515,6 +553,7 @@ fn acknowledged(stack: *StackBase, tcb: *Tcb, ack: u32, now: u64) void {
         if (data_acked > 0 or ack == tcb.snd_max) _socket.wake(tcb.socket, bsd.FD_WRITE);
     }
     if (_tcp.before(tcb.snd_nxt, tcb.snd_una)) tcb.snd_nxt = tcb.snd_una;
+    if (tcb.flags & _tcp.recovering != 0) sack.partial(stack, tcb);
     timers.restart(stack, tcb, now);
 }
 

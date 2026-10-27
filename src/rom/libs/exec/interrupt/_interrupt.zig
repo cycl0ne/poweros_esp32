@@ -14,7 +14,9 @@
 //! exec touches no hardware itself. Routing a number to the CPU and masking
 //! interrupts go through `interrupt_hardware`, which the kernel fills in
 //! (src/arch/esp32s3/intmatrix.zig), and the kernel calls `dispatchInterrupt`
-//! when a number fires.
+//! when a number fires. The one exception is the core's own mask, which
+//! exec's locks set and clear inline (`mask`, `unmask`): the same
+//! instruction the kernel's `disable` is, without the call.
 //!
 //! The calls are a file each in this folder; this file is everything else.
 //! What exec needs from the interrupt hardware and the no-hardware stand-in;
@@ -38,6 +40,7 @@
 //! handler's signature is Zig's, and an alert must be raisable from
 //! anywhere.
 
+const builtin = @import("builtin");
 const sdk = @import("sdk");
 const exec = @import("../exec.zig");
 const exec_base = @import("../exec_base.zig");
@@ -127,6 +130,55 @@ pub fn dropSystemInterrupts(base: *ExecBase) void {
 /// the bootstrap; host tests put their own stub here. It is the kernel's
 /// state rather than a module's, like `SysBase` beside it.
 pub var interrupt_hardware: InterruptHardware = no_hardware;
+
+/// This core's interrupts masked, as `interrupt_hardware.disable` masks
+/// them - the same instruction - but inline, without the call through the
+/// table: for exec's own locks and semaphores, which mask for a few
+/// instructions several times a call. Answers what `unmask` puts back.
+/// The only CPU state exec touches itself, beside the core's number
+/// (`exec_base.coreId`). The host tests go through the table, whose
+/// stand-in counts.
+pub inline fn mask() u32 {
+    if (builtin.is_test) return interrupt_hardware.disable();
+    return switch (comptime builtin.cpu.arch) {
+        .xtensa => asm volatile ("rsil %[r], 3"
+            : [r] "=r" (-> u32),
+            :
+            : .{ .memory = true }),
+        .riscv32 => asm volatile ("csrrci %[r], mstatus, 8"
+            : [r] "=r" (-> u32),
+            :
+            : .{ .memory = true }),
+        .riscv64 => @truncate(asm volatile ("csrrci %[r], sstatus, 2"
+            : [r] "=r" (-> u64),
+            :
+            : .{ .memory = true })),
+        .aarch64 => @truncate(asm volatile ("mrs %[r], daif; msr daifset, #2"
+            : [r] "=r" (-> u64),
+            :
+            : .{ .memory = true })),
+        else => interrupt_hardware.disable(),
+    };
+}
+
+/// The interrupts as `mask` found them: on again only if they were on.
+pub inline fn unmask(state: u32) void {
+    if (builtin.is_test) return interrupt_hardware.restore(state);
+    switch (comptime builtin.cpu.arch) {
+        .xtensa => asm volatile (
+            \\wsr %[v], ps
+            \\rsync
+            :
+            : [v] "r" (state),
+            : .{ .memory = true }),
+        // MIE, SIE: on again only if they were; DAIF's I: off again only if
+        // it was off.
+        .riscv32 => if (state & 8 != 0) asm volatile ("csrsi mstatus, 8" ::: .{ .memory = true }),
+        .riscv64 => if (state & 2 != 0) asm volatile ("csrsi sstatus, 2" ::: .{ .memory = true }),
+        .aarch64 => if (state & (1 << 7) == 0) asm volatile ("msr daifclr, #2" ::: .{ .memory = true }),
+        else => interrupt_hardware.restore(state),
+    }
+}
 
 /// No hardware at all: nothing is routed and nothing is masked. What the
 /// host tests run against, and what exec starts with until the kernel puts

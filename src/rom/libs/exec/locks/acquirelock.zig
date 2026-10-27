@@ -52,8 +52,9 @@ const Lock = sdk.exec.Lock;
 /// low-memory handlers expunge libraries.
 ///
 /// NOTES:
-/// A plain lock free to take costs a compare-and-set and two masked
-/// counts; a `LOCKF_INTERRUPT` lock a `Disable` as well.
+/// A plain lock free to take costs a compare-and-set in one stretch with
+/// the core's interrupts masked; a `LOCKF_INTERRUPT` lock a `Disable` as
+/// well.
 ///
 /// BUGS:
 /// None known.
@@ -69,9 +70,8 @@ const Lock = sdk.exec.Lock;
 /// ```
 pub fn AcquireLock(base: *ExecBase, lock: *Lock) void {
     const where = @returnAddress();
-    // Held first, so the rules are checked against this core's locks.
-    _locks.holdCore(base, lock);
-    _locks.checkTake(base, lock, true, where);
+    // Free and taken in the first stretch, as nearly always.
+    if (_locks.takeLock(base, lock, true, where)) return;
     const here = _locks.heldHere(base);
     while (!_locks.compareAndSet(base, &lock.state, 0, here)) {
         // Held on this very core: nothing here can let it go.

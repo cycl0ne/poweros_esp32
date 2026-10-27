@@ -17,6 +17,12 @@
 //! from then on every window but a SYN's is shifted, ours by
 //! `window_shift`, the peer's by what its SYN said.
 //!
+//! **Selective acknowledgements** (SACK, RFC 2018) are offered in every
+//! SYN and used when both SYNs had them: the receiver names the held
+//! segments beyond a hole in each acknowledgement, and the sender keeps
+//! what was named (`sacked`) and sends again only what is missing
+//! (sack.zig).
+//!
 //! **Sequence numbers** wrap at 2^32, so they are compared by the sign of
 //! their difference, never with < on the numbers themselves.
 //!
@@ -56,6 +62,8 @@ pub const option_end: u8 = 0;
 pub const option_nop: u8 = 1;
 pub const option_mss: u8 = 2;
 pub const option_window_scale: u8 = 3;
+pub const option_sack_permitted: u8 = 4;
+pub const option_sack: u8 = 5;
 
 /// The MSS a peer that names none is taken to have (RFC 9293 3.7.1).
 pub const default_mss: u32 = 536;
@@ -108,6 +116,15 @@ pub const passive: u32 = 1 << 7;
 pub const probing: u32 = 1 << 8;
 /// Urgent data is going out: SND.UP lies ahead of SND.UNA.
 pub const urgent_out: u32 = 1 << 9;
+/// Both SYNs offered SACK: acknowledgements name what is held beyond a
+/// hole, and the peer's are read for what it holds.
+pub const sack_ok: u32 = 1 << 10;
+/// A loss is being repaired with what the peer's SACK blocks say, until
+/// `recover` is acknowledged.
+pub const recovering: u32 = 1 << 11;
+/// The retransmission timer ran out and everything from SND.UNA goes
+/// again: no repair with SACK begins until `recover` is acknowledged.
+pub const timed_out: u32 = 1 << 12;
 
 /// Where urgent data coming in stands (`oob_state`): none announced; one
 /// announced, its byte not here yet; the byte here, set aside from the
@@ -131,6 +148,18 @@ pub fn after(a: u32, b: u32) bool {
 pub fn atOrAfter(a: u32, b: u32) bool {
     return atOrBefore(b, a);
 }
+
+// --- SACK ------------------------------------------------------------------------------
+
+/// Sequence numbers from `start` up to, not including, `end`.
+pub const Range = extern struct {
+    start: u32 = 0,
+    end: u32 = 0,
+};
+
+/// The most blocks one segment carries, and the most a sender keeps.
+pub const sack_blocks_max = 4;
+pub const sacked_max = 8;
 
 // --- the rings ------------------------------------------------------------------
 
@@ -248,6 +277,14 @@ pub const Tcb = extern struct {
     cwnd: u32 = 0,
     ssthresh: u32 = 0xFFFF_FFFF,
     dupacks: u32 = 0,
+    /// What the peer's SACK blocks said it holds past SND.UNA, in
+    /// sequence order and none touching another; the sequence number a
+    /// repair ends at (SND.MAX when it began), and where it goes on
+    /// looking for what is missing (sack.zig).
+    sacked: [sacked_max]Range = @splat(.{}),
+    sacked_count: u32 = 0,
+    recover: u32 = 0,
+    resend_next: u32 = 0,
     /// In-order segments not acknowledged yet.
     unacked_segments: u32 = 0,
     /// Segments that came before their turn (reorder.zig), their bytes and
@@ -256,6 +293,9 @@ pub const Tcb = extern struct {
     held_bytes: u32 = 0,
     held_count: u16 = 0,
     pad4: u16 = 0,
+    /// Where the segment held last starts: the block that holds it goes
+    /// first in the SACK option.
+    held_last: u32 = 0,
     /// When a segment last came, for keepalive.
     last_heard: u64 align(4) = 0,
     /// Urgent data going out: one past its last byte (SND.UP), while

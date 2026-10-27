@@ -205,6 +205,40 @@ test "a frame goes to the first read of its type of every opener" {
     try rig.deinit();
 }
 
+test "a read says whether the hardware checked the packet's checksums, and a read after it does not inherit that" {
+    var rig: Rig = undefined;
+    try rig.init();
+    const buffers = byteBuffers();
+    var opener = try rig.open(&buffers, 0);
+    try rig.configure(&opener);
+    var data: [2][64]u8 = undefined;
+    var reads: [2]net.IOSana2Req = .{ opener, opener };
+    for (&reads, &data) |*read, *buffer| {
+        read.packet_type = 0x0806;
+        read.data = buffer;
+        read.data_length = buffer.len;
+        rig.send(read, exec.CMD_READ);
+    }
+    const frame = arpFrame();
+    rig.unit.receiveWith(&frame, net.SANA2IOF_CHECKSUM);
+    try testing.expectEqual(&reads[0], rig.answered().?);
+    try testing.expectEqual(net.SANA2IOF_CHECKSUM | net.SANA2IOF_BCAST, reads[0].req.flags & (net.SANA2IOF_CHECKSUM | net.SANA2IOF_BCAST));
+    // The request sent again with the flag still set from its last answer.
+    reads[1].req.flags |= net.SANA2IOF_CHECKSUM;
+    rig.unit.receive(&frame);
+    try testing.expectEqual(&reads[1], rig.answered().?);
+    try testing.expectEqual(@as(u8, 0), reads[1].req.flags & net.SANA2IOF_CHECKSUM);
+    // A device that does no checksums says so.
+    var query: net.Sana2DeviceQuery = .{ .size_available = @sizeOf(net.Sana2DeviceQuery) };
+    opener.stat_data = &query;
+    rig.send(&opener, net.S2_DEVICEQUERY);
+    _ = rig.answered();
+    try testing.expectEqual(@as(u32, @sizeOf(net.Sana2DeviceQuery)), query.size_supplied);
+    try testing.expectEqual(@as(u32, 0), query.offload);
+    rig.unit.close(&opener);
+    try rig.deinit();
+}
+
 test "a frame no read wants goes to an orphan read, else it is counted" {
     var rig: Rig = undefined;
     try rig.init();
