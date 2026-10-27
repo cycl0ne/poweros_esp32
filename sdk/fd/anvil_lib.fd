@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! anvil.library's functions: the desktop started, a file's information
-//! shown, and the windows, icons and menu items programs add. Open it with
+//! shown, the windows, icons and menu items programs add, and a file
+//! opened as a double click on its icon opens it. Open it with
 //! OpenLibrary("anvil.library", 1).
 //!
 //! The table is this library's own: it starts at the first slot after
@@ -39,4 +40,8 @@ bool RemoveAppIcon(?*anvil.AppIcon app)
 ?*anvil.AppMenuItem AddAppMenuItem(u32 id, usize user_data, [*:0]const u8 text, *exec.MsgPort port, ?[*]const utility.TagItem tags)
 /// The item taken out of the Tools menu.
 bool RemoveAppMenuItem(?*anvil.AppMenuItem app)
+/// The file, drawer or disk `name` opened as a double click on its icon
+/// opens it, with the files the tags name: true once it is, or false with
+/// IoErr. Waits for the desktop.
+bool OpenObject([*:0]const u8 name, ?[*]const utility.TagItem tags)
 ##end

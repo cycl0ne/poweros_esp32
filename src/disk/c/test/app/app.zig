@@ -9,8 +9,9 @@
 //! tool's; ITEM is the Tools menu's item ("Show Picked" unless given);
 //! WINDOW opens a small window as well. Each message is printed as it
 //! comes: what it is for, and the full name of each file it carries - for
-//! a window, where they were let go. Ctrl-C, or the window's close
-//! gadget, takes everything off again.
+//! a window, where they were let go; when the desktop quits, a "quit" for
+//! each thing added. Ctrl-C, or the window's close gadget, takes
+//! everything off again.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -28,7 +29,7 @@ const AnvilBase = sdk.interface.anvil.AnvilBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "App";
-const VERSION_STRING = "\x00$VER: App 1.0 (09.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: App 1.1 (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/K,ITEM/K,WINDOW/S";
@@ -146,6 +147,7 @@ fn print(dl: *DosBase, am: *const anvil.AppMessage) void {
         anvil.AMTYPE_APPICON => "icon",
         anvil.AMTYPE_APPMENUITEM => "menu item",
         anvil.AMTYPE_APPWINDOW => "window",
+        anvil.AMTYPE_QUIT => "quit",
         else => "?",
     };
     _ = Printf(dl, "%s %u: %u files", .{ what, am.id, am.num_args });

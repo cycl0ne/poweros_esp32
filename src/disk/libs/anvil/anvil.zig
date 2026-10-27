@@ -6,12 +6,14 @@
 //! **The desktop** (`desktop/`) is the Workbench screen's ground - a
 //! colour, a gradient or a picture, as `ENV:Sys/anvil.prefs` says - with
 //! an icon for each disk on it (`icons/`), and the screen's title saying
-//! how much memory is free. It runs until it is told to quit, holding the
+//! how much memory is free. It runs until it is told to quit - its process
+//! a while longer, unseen, until what it started has ended - holding the
 //! library open the while: dos closes that count only once its code has
 //! returned, so the library cannot go under it.
 //!
 //! The jump table is anvil_lvo.zig, the ROM tag, init and expunge
-//! anvil_init.zig, the base anvil_base.zig. The calls are under `start/`.
+//! anvil_init.zig, the base anvil_base.zig. The calls are under `start/`,
+//! `info/`, `app/` and `open/`.
 
 const sdk = @import("sdk");
 const ExecBase = sdk.interface.exec.ExecBase;

@@ -15,6 +15,9 @@
 //! block of its own, which comes back to the desktop's port when the
 //! program replies, and is freed then. The desktop waits for the last of
 //! them before it ends.
+//!
+//! **Quitting**, the desktop tells each program, for each thing it added,
+//! that it goes (`AMTYPE_QUIT`), and then lets go of them all.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -72,11 +75,12 @@ pub fn setUp(d: *Desktop) bool {
     return true;
 }
 
-/// No longer the desktop programs add to: every record freed, while the
-/// icons made for them are only let go of after - nothing draws them
-/// again, and freeing one does not read its record. Done before another
-/// desktop may start, and once only: a desktop that never got so far
-/// leaves the list alone.
+/// No longer the desktop programs add to: each program told, for each
+/// thing it has not removed, that it goes (`AMTYPE_QUIT`); every record
+/// freed, while the icons made for them are only let go of after -
+/// nothing draws them again, and freeing one does not read its record.
+/// Done before another desktop may start, and once only: a desktop that
+/// never got so far leaves the list alone.
 pub fn leave(d: *Desktop) void {
     const sys = d.sys;
     const base = d.base;
@@ -87,6 +91,10 @@ pub fn leave(d: *Desktop) void {
     base.app_signals = 0;
     while (base.apps.first()) |node| {
         const record: *App = @fieldParentPtr("node", node);
+        if (record.port) |port| if (begin(d, record, anvil.AMTYPE_QUIT)) |sent| {
+            sys.PutMsg(port, &sent.app.message);
+            d.app_out += 1;
+        };
         sys.Remove(node);
         _app.free(sys, record);
     }
@@ -170,7 +178,7 @@ fn gatherTools(d: *Desktop) void {
 /// An icon made for the record, placed where it asked or in the first
 /// free place, and shown.
 fn showIcon(d: *Desktop, record: *App) void {
-    const ic = icons.make(d.sys, &d.pictures, &record.object, record.text[0..textLength(&record.text)], &d.look) orelse return;
+    const ic = icons.make(d.sys, d.icon_base, &record.object, record.text[0..textLength(&record.text)], &d.look) orelse return;
     ic.app = record;
     ic.measure(d.gb, d.measure_rp.?, &d.look);
     if (record.object.current_x != sdk.icon.NO_ICON_POSITION and record.object.current_y != sdk.icon.NO_ICON_POSITION) {

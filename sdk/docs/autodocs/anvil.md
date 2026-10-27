@@ -1,7 +1,8 @@
 # anvil.library
 
 anvil.library's functions: the desktop started, a file's information
-shown, and the windows, icons and menu items programs add. Open it with
+shown, the windows, icons and menu items programs add, and a file
+opened as a double click on its icon opens it. Open it with
 OpenLibrary("anvil.library", 1).
 
 The table is this library's own: it starts at the first slot after
@@ -15,6 +16,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddAppMenuItem](#addappmenuitem) - Adds an item to the Tools menu.
 - [AddAppWindow](#addappwindow) - Adds a window that files can be dropped on.
 - [Information](#information) - Shows a file's information in a window.
+- [OpenObject](#openobject) - Opens a file, a drawer or a disk as a double click on its icon does.
 - [RemoveAppIcon](#removeappicon) - Removes an icon a program added.
 - [RemoveAppMenuItem](#removeappmenuitem) - Removes an item a program added to the Tools menu.
 - [RemoveAppWindow](#removeappwindow) - Removes a window files could be dropped on.
@@ -59,6 +61,9 @@ of kind `AMTYPE_APPICON` with no files; icons dragged onto it send one
 with their files as lock-and-name pairs. The program replies each.
 The Icons menu opens it; it is not copied, renamed, snapshot, or
 asked about, and it is not dropped on anything.
+
+When the desktop quits, `port` gets one of kind `AMTYPE_QUIT` with no
+files: the icon is gone with the desktop.
 
 **CONTEXT**
 
@@ -131,6 +136,9 @@ while it has none. Choosing it sends `port` an `AppMessage` of kind
 desktop and in its drawers, as lock-and-name pairs. The program
 replies it. The menu holds 32 items; one past them is not shown.
 
+When the desktop quits, `port` gets one of kind `AMTYPE_QUIT` with no
+files: the item is gone with the menu.
+
 **CONTEXT**
 
 - Waits: yes, for the desktop's list.
@@ -197,6 +205,9 @@ with the files of the icons dragged as lock-and-name pairs (a drawer
 or a disk as a lock on itself and an empty name) and where they were
 let go, in the window's own coordinates. The program replies it; the
 pairs go with the reply.
+
+When the desktop quits, `port` gets one of kind `AMTYPE_QUIT` with no
+files: the window is no longer one files are dropped on.
 
 **CONTEXT**
 
@@ -305,6 +316,96 @@ None known.
 
 ```zig
 _ = ab.Information(null, "SYS:Programs/Notepad", null);
+```
+
+## OpenObject
+
+Opens a file, a drawer or a disk as a double click on its icon does.
+
+**SYNOPSIS**
+
+```zig
+fn OpenObject(base: *AnvilBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) bool
+```
+
+**SINCE**
+
+1.16. LVO -52.
+
+**INPUTS**
+
+- `name` - the file, drawer or disk, as the caller's current directory
+  has it: `Work:Notes`, `Pictures`, `SYS:`.
+- `tags`:
+  - ANVO_File ([*:0]const u8, as often as wanted): a file handed on
+    with it, as an icon picked with it is; up to `OPEN_FILES_MAX`, the
+    rest left out.
+  - ANVO_EndMsg (*exec.Message): replied to its `reply_port` once what
+    was opened has ended, as `NP_EndMsg` is; at once for a drawer or a
+    disk.
+
+**RESULT**
+
+True once it is opened: the drawer's window open, the program started.
+False with IoErr: ERROR_OBJECT_NOT_FOUND (a name is not there, or the
+desktop does not run), ERROR_OBJECT_WRONG_TYPE (nothing opens the
+file), ERROR_LINE_TOO_LONG (the names make too long a command line),
+ERROR_OBJECT_IN_USE (the caller is the desktop itself),
+ERROR_NO_FREE_STORE, or what stopped the program from starting.
+
+**BEHAVIOR**
+
+The names are made full on the caller's task, then the desktop opens
+them on its own and answers. A disk or a drawer, the trash among them,
+opens in a window of its own, or comes to the front when it is open;
+the files are not read. Anything else is run as a double click with
+the files picked runs it: a tool among them with the others; else the
+first project's default tool; else the file's type's tool
+(datatypes.library's BROWSE); else a script through `C:IconX` - in a
+shell of its own, its files on its command line and as lock-and-name
+pairs, with the stack and the `TOOLPRI` of its icon. A file that has
+no icon is opened as if it had the default one of its kind.
+
+A program started without `ANVO_EndMsg` is the desktop's to wait for,
+as one started from an icon is. With it, the desktop leaves it to the
+caller.
+
+**CONTEXT**
+
+- Waits: yes, for the desktop, which answers between its other work.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a process; IoErr is set on failure.
+
+**OWNERSHIP**
+
+The names are copied: they may go once the call returns. The end
+message stays the caller's and must stay until it is replied - on a
+false answer it is not replied.
+
+**NOTES**
+
+What is opened is not the caller's: it runs on when the caller ends,
+and its end comes back only by `ANVO_EndMsg`. The desktop's title says
+why a file could not be opened, as it does for a double click.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`StartAnvil`, `SystemTagList`
+
+**EXAMPLES**
+
+```zig
+const files = [_]utility.TagItem{
+    .{ .tag = anvil.ANVO_File, .data = @intFromPtr("Work:Notes") },
+    .{},
+};
+if (!ab.OpenObject("SYS:Programs/Notepad", &files)) _ = dl.PrintFault(dl.IoErr(), "Open");
+_ = ab.OpenObject("Work:", null); // the disk's window
 ```
 
 ## RemoveAppIcon
@@ -539,7 +640,9 @@ close its own opening at once.
 
 **NOTES**
 
-The desktop ends when Quit is picked from its menu, or on CTRL-C.
+The desktop ends when Quit is picked from its menu, or on CTRL-C. What
+it started goes on running, and its process stays, unseen, until that
+has ended; another desktop may be started meanwhile.
 
 **BUGS**
 

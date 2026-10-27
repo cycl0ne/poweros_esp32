@@ -3,7 +3,8 @@
 //! dos.library brought up as the ROM's tests bring them up: nothing added
 //! without a desktop; with one - this task standing in, told by a signal
 //! - each kind added and told, its text cut, an icon's picture copied,
-//! and each removed once.
+//! and each removed once. OpenObject's request goes on the desktop's port
+//! only while it takes them, and the desktop's own process is refused.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -15,12 +16,13 @@ const AnvilBase = sdk.interface.anvil.AnvilBase;
 const anvil_init = @import("../anvil_init.zig");
 const _base = @import("../anvil_base.zig");
 const _app = @import("../app/_app.zig");
+const _open = @import("../open/_open.zig");
 const host = @import("host_rom");
 const kexec = host.exec;
 
 const testing = std.testing;
 
-test "App calls: none without a desktop; added, told, cut, copied and removed once with one" {
+test "App calls: none without a desktop; added, told, cut, copied and removed once with one; a file opened only by another" {
     const db = try host.dos.testSetUp();
     const sys = kexec.SysBase.iface();
     // A process runs the test, as a program would: IoErr is a process's.
@@ -43,6 +45,19 @@ test "App calls: none without a desktop; added, told, cut, copied and removed on
     try testing.expectEqual(dos.ERROR_OBJECT_NOT_FOUND, dl.IoErr());
     try testing.expect(ab.AddAppMenuItem(3, 4, "Item", port, null) == null);
 
+    // A request to open goes on the desktop's port only while it takes
+    // them.
+    const request = try testing.allocator.create(_open.Request);
+    defer testing.allocator.destroy(request);
+    request.* = .{};
+    try testing.expect(!_open.send(base, request));
+    const open_port = sys.CreateMsgPort() orelse return error.NoPort;
+    base.open_port = open_port;
+    try testing.expect(_open.send(base, request));
+    try testing.expect(sys.GetMsg(open_port) == &request.message);
+    base.open_port = null;
+    sys.DeleteMsgPort(open_port);
+
     // This task stands in for the desktop: each addition signals it.
     const signal = sys.AllocSignal(-1);
     try testing.expect(signal >= 0);
@@ -50,6 +65,10 @@ test "App calls: none without a desktop; added, told, cut, copied and removed on
     base.app_task = sys.FindTask(null);
     base.app_signals = mask;
     _ = sys.SetSignal(0, mask);
+
+    // The desktop's own process opening a file would wait for itself.
+    try testing.expect(!ab.OpenObject("SYS:Programs/Notepad", null));
+    try testing.expectEqual(dos.ERROR_OBJECT_IN_USE, dl.IoErr());
 
     const app_window = ab.AddAppWindow(1, 2, window, port, null) orelse return error.NotAdded;
     try testing.expect(sys.SetSignal(0, mask) & mask != 0);

@@ -42,6 +42,9 @@ const _app = @import("_app.zig");
 /// The Icons menu opens it; it is not copied, renamed, snapshot, or
 /// asked about, and it is not dropped on anything.
 ///
+/// When the desktop quits, `port` gets one of kind `AMTYPE_QUIT` with no
+/// files: the icon is gone with the desktop.
+///
 /// CONTEXT:
 /// - Waits: yes, for the desktop's list.
 /// - Interrupts: no.

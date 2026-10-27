@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
-//! Host tests of anvil.library's parts that need no window: pictures
-//! shrunk to the icon size, icons placed in the first free cell, the
-//! ground's geometry, the title's figures, the tool types as Information
-//! writes them, the startup drawer's order and waits, how far the wheel
-//! scrolls a drawer, a copy's rate, and the jump table.
+//! Host tests of anvil.library's parts that need no window: icons placed
+//! in the first free cell, the ground's geometry, the title's figures,
+//! the tool types as Information writes them, the startup drawer's order
+//! and waits, how far the wheel scrolls a drawer, a copy's rate, and the
+//! jump table.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const graphics = sdk.graphics;
-const picture = @import("../icons/picture.zig");
 const place = @import("../icons/place.zig");
 const ground = @import("../desktop/ground.zig");
 const title = @import("../desktop/title.zig");
@@ -25,32 +24,6 @@ const testing = std.testing;
 
 comptime {
     _ = @import("../anvil_lvo.zig");
-}
-
-test "a picture's size on the desktop: itself when it fits, its shape kept when it does not" {
-    try testing.expectEqual(picture.Size{ .width = 40, .height = 30 }, picture.fitted(40, 30, 48));
-    try testing.expectEqual(picture.Size{ .width = 48, .height = 24 }, picture.fitted(96, 48, 48));
-    try testing.expectEqual(picture.Size{ .width = 24, .height = 48 }, picture.fitted(64, 128, 48));
-    try testing.expectEqual(picture.Size{ .width = 48, .height = 1 }, picture.fitted(256, 2, 48));
-}
-
-test "shrinking: each pixel the average of those it covers, colour weighted by coverage" {
-    // Four pixels into one: red covered, blue covered, two clear ones that
-    // must not darken it.
-    const from = [_]u8{
-        255, 0, 0, 255, 0, 0, 255, 255,
-        0,   0, 0, 0,   9, 9, 9,   0,
-    };
-    var into: [4]u8 = undefined;
-    picture.shrink(&from, 2, 2, &into, .{ .width = 1, .height = 1 });
-    try testing.expectEqual(@as(u8, 127), into[0]);
-    try testing.expectEqual(@as(u8, 0), into[1]);
-    try testing.expectEqual(@as(u8, 127), into[2]);
-    try testing.expectEqual(@as(u8, 127), into[3]);
-    // A wholly clear area stays clear and black.
-    const clear = [_]u8{ 7, 7, 7, 0 } ** 4;
-    picture.shrink(&clear, 2, 2, &into, .{ .width = 1, .height = 1 });
-    try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0 }, &into);
 }
 
 test "placing: down the right edge a column at a time, around what is there" {

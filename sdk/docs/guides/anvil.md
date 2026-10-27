@@ -6,7 +6,8 @@ them with the files picked, files moved, copied and thrown away by
 dragging their icons, and the free memory in the screen's title. It runs
 on a process of its own that `LIBS:anvil.library` starts at boot, and it
 follows its settings as they change. Programs take part in it with
-windows, icons and menu items of their own. The calls are in
+windows, icons and menu items of their own, and have it open files. The
+calls are in
 [anvil.md](../autodocs/anvil.md); the constants in `sdk.anvil`.
 
 ## Starting it
@@ -29,10 +30,15 @@ if (!ab.StartAnvil(null)) return; // IoErr says why
 The desktop's process, `Anvil`, has a CLI of its own with the command
 path of whoever started it, and `SYS:` as its current directory. It holds
 anvil.library open while it runs, so the caller may close it at once.
-Quit, in the desktop's menu, asks first, and is refused while programs
-the desktop started still run, or while programs have windows, icons or
-menu items added to it; CTRL-C to the process ends it at once, letting go
-of what programs added.
+Quit, in the desktop's menu, asks first, saying how many programs the
+desktop started still run and how many windows, icons and menu items
+programs have added to it. What it started goes on running; what
+programs added goes with it, each program told so
+([below](#programs-on-the-desktop)). CTRL-C to the process quits at once,
+without asking. The process stays, with nothing of it on the screen,
+until the last program it started has ended - their ends come back to
+it - and only then lets go of the library; another desktop may start
+meanwhile.
 
 ## The startup drawer
 
@@ -167,8 +173,8 @@ guide](dos.md#starting-a-program-with-files)). Its input is NIL:, and its
 output a console that opens only if it prints. It starts in its own
 drawer, with the stack its icon asks for - 24 KiB, the desktop's own, when
 it asks for none - and the priority of its `TOOLPRI` tool type. The
-desktop counts what it started until each has ended, and will not quit
-before then.
+desktop counts what it started until each has ended: after Quit, its
+process stays, unseen, until then.
 
 The icon's `ARGS` tool type gives the program arguments of its own: its
 text goes on the command line after the files, as it would be typed. The
@@ -237,8 +243,8 @@ they are, and Stop; a copy's window says how fast it goes too, the bytes
 of the last second in B/s, KB/s, MB/s or GB/s. A copy first counts what it will copy. When a file of
 the same name is there already, it asks: Replace, Replace All, Skip,
 Stop. A drawer is copied whole, into one of the same name if there is
-one. A file's icon, protection, date and comment go with it. The desktop
-waits for such work before it quits.
+one. A file's icon, protection, date and comment go with it. Such work
+goes on when the desktop quits, and its process waits for it.
 
 The Icons menu works on the icons picked:
 
@@ -325,7 +331,11 @@ shape a program started from the desktop gets its files in. The program
 replies each message; the locks and names are the desktop's and go with
 the reply. Before it deletes its port, it removes what it added - nothing
 reaches the port once `Remove...` has returned - and replies whatever
-came meanwhile:
+came meanwhile. When the desktop quits, each thing a program added is
+gone with it, and its port gets one more message for it, of kind
+`AMTYPE_QUIT` with no files; nothing comes for it after. The program
+removes it as ever - the remove answers false - and may add it to the
+next desktop:
 
 ```zig
 const port = sys.CreateMsgPort() orelse return;
@@ -362,7 +372,8 @@ while (target.next(dl, &name)) |dropped| open(dropped.name);
 
 MultiView shows a file let go on it in place of the one there, Notepad
 and Sheet open it, FontView chooses a font file's family, and asl's file
-requester goes to the file's drawer with its name filled in. `C:test/App
+requester goes to the file's drawer with its name filled in; each
+replies `AMTYPE_QUIT` and finds nothing after it. `C:test/App
 NAME/K,ITEM/K,WINDOW/S` adds an icon, a Tools item and with `WINDOW` a
 window, and prints every message they bring.
 
@@ -389,6 +400,31 @@ if (dl.GetArgList(&count)) |files| {
 
 A program started from a shell has no pairs, and reads its arguments
 only. `SYS:System/Shell` reads its `WINDOW` and `FROM` so.
+
+## Opening a file from a program
+
+`OpenObject` has the desktop open a file, a drawer or a disk as a double
+click on its icon opens it, so a launcher or a dock starts things the
+desktop's way:
+
+```zig
+const files = [_]sdk.utility.TagItem{
+    .{ .tag = sdk.anvil.ANVO_File, .data = @intFromPtr("Work:Notes") },
+    .{},
+};
+if (!ab.OpenObject("SYS:Programs/Notepad", &files)) return; // IoErr says why
+```
+
+The names are the caller's, from its current directory. A disk or a
+drawer opens in its window, or comes to the front; a file runs as a
+double click runs it ([above](#selecting-and-opening)), the files of
+`ANVO_File` - up to 15 - standing for the other icons picked. The call
+waits for the desktop to do it, and answers false with IoErr
+`ERROR_OBJECT_NOT_FOUND` when a name is not there or no desktop runs,
+`ERROR_OBJECT_WRONG_TYPE` when nothing opens the file. `ANVO_EndMsg`
+hands the desktop a message of the program's own, replied once what was
+started has ended - at once for a drawer - as `NP_EndMsg` is; the
+desktop leaves the waiting for such a program to the caller.
 
 ## The menus
 
@@ -418,6 +454,7 @@ Grid is on everywhere, its mark the prefs'.
 |---|---|
 | `C:LoadAnvil CLEANUP/S` | the desktop started, or brought to the front; `CLEANUP` lays the disks out anew |
 | `C:test/App NAME/K,ITEM/K,WINDOW/S` | an icon, a Tools item and a window that take part, every message printed |
+| `C:test/Open NAME/A,FILES/M,WAIT/S` | a file, a drawer or a disk opened as a double click opens it; `WAIT` waits for its end |
 | `C:test/Icon NAME/M,DEFAULTS/S,PUT/K,SHOW/S,SIZE/K/N` | the icons of files, and the defaults; their pictures at a size |
 | `C:IconX SCRIPT/A,FILES/M` | a script run as from its icon |
 | `SYS:System/Shell` | a shell in a window of its own |

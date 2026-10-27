@@ -12,6 +12,11 @@
 //! icon placed by the desktop sits in its cell with its picture's foot on
 //! the cell's line, so the names of a row line up whatever their
 //! pictures' heights.
+//!
+//! **The picture** is icon.library's, at most the look's size each way
+//! (`ObtainIconImage`): the picture itself when it fits, else a copy shrunk
+//! once and shared with every icon - and every program - that shows the
+//! same picture at that size.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -26,7 +31,6 @@ const IconBase = sdk.interface.icon.IconBase;
 const Rect = graphics.Rect;
 const Pen = graphics.Pen;
 const TagItem = utility.TagItem;
-pub const picture = @import("picture.zig");
 pub const place = @import("place.zig");
 
 /// The longest name kept for an icon.
@@ -79,7 +83,11 @@ pub const Icon = struct {
     /// Its icon, and its picture as shown; neither in a drawer viewed as
     /// text.
     object: ?*icon.DiskObject = null,
-    picture: ?picture.Shown = null,
+    picture: ?*const icon.IconImage = null,
+    /// Whether the picture is held, to be given back with the icon: not a
+    /// program's icon's picture that fits, which is its record's own and
+    /// may be freed with the record before the icon is.
+    picture_held: bool = false,
     entry: Entry = .{},
     /// The name, and how many of its bytes are shown and how wide they are.
     label: [label_max + 1]u8 = @splat(0),
@@ -105,12 +113,12 @@ pub const Icon = struct {
 
     pub fn width(ic: *const Icon) i32 {
         const shown = ic.picture orelse return 0;
-        return @intCast(shown.size.width);
+        return @intCast(shown.width);
     }
 
     pub fn height(ic: *const Icon) i32 {
         const shown = ic.picture orelse return 0;
-        return @intCast(shown.size.height);
+        return @intCast(shown.height);
     }
 
     pub fn name(ic: *const Icon) []const u8 {
@@ -187,7 +195,7 @@ pub const Icon = struct {
         }
         if (ic.picture) |shown| {
             const area = Rect{ .min_x = x, .min_y = y, .max_x = x + ic.width(), .max_y = y + ic.height() };
-            gb.BlendPixelArray(rp, shown.pixels, shown.size.width * 4, @intFromEnum(rtg.PixelFormat.rgba32), 0, 0, &area);
+            gb.BlendPixelArray(rp, shown.pixels, shown.width * 4, @intFromEnum(rtg.PixelFormat.rgba32), 0, 0, &area);
         }
         if (ic.shown_len == 0) return;
         const at = ic.labelAt();
@@ -225,17 +233,19 @@ pub const Icon = struct {
 /// An icon made for `object`, named `label`, its picture at the look's
 /// size - or with no object, an entry of a drawer viewed as text; null
 /// without memory. The icon owns the object from here on.
-pub fn make(sys: *ExecBase, pictures: *picture.Pictures, object: ?*icon.DiskObject, label: []const u8, look: *const Look) ?*Icon {
+pub fn make(sys: *ExecBase, ib: *IconBase, object: ?*icon.DiskObject, label: []const u8, look: *const Look) ?*Icon {
     const memory = sys.AllocVec(@sizeOf(Icon), exec.MEMF_CLEAR) orelse return null;
-    var shown: ?picture.Shown = null;
+    var shown: ?*const icon.IconImage = null;
+    var held = false;
     if (object) |given| if (given.image) |image| {
-        shown = pictures.obtain(sys, image, look.icon_size) orelse {
+        shown = ib.ObtainIconImage(image, look.icon_size) orelse {
             sys.FreeVec(memory);
             return null;
         };
+        held = given.kind != icon.WBAPPICON or shown != image;
     };
     const ic: *Icon = @ptrCast(@alignCast(memory));
-    ic.* = .{ .object = object, .picture = shown };
+    ic.* = .{ .object = object, .picture = shown, .picture_held = held };
     const length = @min(label.len, label_max);
     @memcpy(ic.label[0..length], label[0..length]);
     ic.label_len = @intCast(length);
@@ -245,8 +255,8 @@ pub fn make(sys: *ExecBase, pictures: *picture.Pictures, object: ?*icon.DiskObje
 
 /// An icon freed: its picture given back, its object to icon.library -
 /// but a program's icon's, which is its record's.
-pub fn free(sys: *ExecBase, ib: *IconBase, pictures: *picture.Pictures, ic: *Icon) void {
-    if (ic.picture) |shown| pictures.release(sys, shown);
+pub fn free(sys: *ExecBase, ib: *IconBase, ic: *Icon) void {
+    if (ic.picture_held) ib.ReleaseIconImage(ic.picture);
     if (ic.app == null) if (ic.object) |object| ib.FreeDiskObject(object);
     if (ic.path) |held| sys.FreeVec(held);
     sys.FreeVec(ic);

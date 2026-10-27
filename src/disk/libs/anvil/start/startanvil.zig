@@ -67,7 +67,9 @@ pub const usual_stack: u32 = @max(stack_bytes, dos.CLI_DEFAULT_STACK);
 /// close its own opening at once.
 ///
 /// NOTES:
-/// The desktop ends when Quit is picked from its menu, or on CTRL-C.
+/// The desktop ends when Quit is picked from its menu, or on CTRL-C. What
+/// it started goes on running, and its process stays, unseen, until that
+/// has ended; another desktop may be started meanwhile.
 ///
 /// BUGS:
 /// None known.

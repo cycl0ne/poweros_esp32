@@ -94,10 +94,9 @@ fn expectPartsAsWhole(gb: *GraphicsBase, the: scene.Scene, format: rtg.PixelForm
     }
 }
 
-/// An icon with a picture of `size` pixels each way, half see-through at
-/// its edge, named `name`, at (`x`, `y`).
-fn iconAt(gb: *GraphicsBase, rp: *graphics.RastPort, look: *const icons.Look, pixels: []const u8, size: u32, name: []const u8, x: i32, y: i32, picked: bool) icons.Icon {
-    var ic = icons.Icon{ .picture = .{ .pixels = pixels.ptr, .size = .{ .width = size, .height = size }, .shrunk = null }, .x = x, .y = y, .selected = picked };
+/// An icon showing `image`, named `name`, at (`x`, `y`).
+fn iconAt(gb: *GraphicsBase, rp: *graphics.RastPort, look: *const icons.Look, image: *const sdk.icon.IconImage, name: []const u8, x: i32, y: i32, picked: bool) icons.Icon {
+    var ic = icons.Icon{ .picture = image, .x = x, .y = y, .selected = picked };
     @memcpy(ic.label[0..name.len], name);
     ic.label_len = @intCast(name.len);
     ic.shown_len = ic.label_len;
@@ -136,9 +135,10 @@ test "the scene: the ground and its icons painted a part at a time are the scene
     // Two icons that overlap, one picked; a third across the edge.
     var list: exec.List = .{};
     list.init(.unknown);
-    var first = iconAt(gb, measure.rp, &look, &picture, 12, "Work", 6, 4, false);
-    var second = iconAt(gb, measure.rp, &look, &picture, 12, "System", 14, 10, true);
-    var third = iconAt(gb, measure.rp, &look, &picture, 12, "Ram Disk", 60, 30, false);
+    const image = sdk.icon.IconImage{ .width = 12, .height = 12, .pixels = &picture };
+    var first = iconAt(gb, measure.rp, &look, &image, "Work", 6, 4, false);
+    var second = iconAt(gb, measure.rp, &look, &image, "System", 14, 10, true);
+    var third = iconAt(gb, measure.rp, &look, &image, "Ram Disk", 60, 30, false);
     const sys = kexec.SysBase.iface();
     for ([_]*icons.Icon{ &first, &second, &third }) |ic| sys.AddTail(&list, &ic.node);
 

@@ -39,6 +39,9 @@ const _app = @import("_app.zig");
 /// let go, in the window's own coordinates. The program replies it; the
 /// pairs go with the reply.
 ///
+/// When the desktop quits, `port` gets one of kind `AMTYPE_QUIT` with no
+/// files: the window is no longer one files are dropped on.
+///
 /// CONTEXT:
 /// - Waits: yes, for the desktop's list.
 /// - Interrupts: no.

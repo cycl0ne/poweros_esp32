@@ -26,6 +26,9 @@ pub const AnvilBase = extern struct {
     apps: exec.List = .{},
     app_task: ?*exec.Task = null,
     app_signals: u32 = 0,
+    /// The port `OpenObject` puts its requests on (`open/_open.zig`), under
+    /// `app_lock`; null while no desktop takes them.
+    open_port: ?*exec.MsgPort = null,
 };
 
 pub fn anvilBase(lib: *exec.Library) *AnvilBase {

@@ -7,7 +7,9 @@
 //! `signal()` beside its window's, takes each drop with `next`, and gives
 //! it all up before the window closes (`remove`). Without the desktop -
 //! or without anvil.library - `add` does nothing, `signal()` is 0 and
-//! `next` finds nothing, so a program need not ask which it is.
+//! `next` finds nothing, so a program need not ask which it is. When the
+//! desktop quits, `next` replies its word of it (`AMTYPE_QUIT`) and finds
+//! nothing more.
 //!
 //!   var target: sdk.anvil.DropTarget = .{};
 //!   target.add(sys, window);

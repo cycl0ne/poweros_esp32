@@ -110,7 +110,7 @@ fn add(d: *Desktop, seen: *const Seen) void {
     @memcpy(path[0..seen.len], seen.name_());
     path[seen.len] = ':';
     const object = d.icon_base.GetDiskObjectNew(&path) orelse return;
-    const ic = icons.make(d.sys, &d.pictures, object, seen.name_(), &d.look) orelse {
+    const ic = icons.make(d.sys, d.icon_base, object, seen.name_(), &d.look) orelse {
         d.icon_base.FreeDiskObject(object);
         return;
     };
@@ -177,7 +177,7 @@ pub fn remove(d: *Desktop, ic: *Icon) void {
     d.sys.Remove(&ic.node);
     d.changed();
     const was = ic.reach(&d.look);
-    icons.free(d.sys, d.icon_base, &d.pictures, ic);
+    icons.free(d.sys, d.icon_base, ic);
     d.drawArea(was);
 }
 
@@ -190,5 +190,5 @@ pub fn forgetAll(d: *Desktop) void {
     d.change();
     while (d.sys.RemHead(&d.volumes)) |node| d.sys.AddTail(&gone, node);
     d.changed();
-    while (d.sys.RemHead(&gone)) |node| icons.free(d.sys, d.icon_base, &d.pictures, @alignCast(@fieldParentPtr("node", node)));
+    while (d.sys.RemHead(&gone)) |node| icons.free(d.sys, d.icon_base, @alignCast(@fieldParentPtr("node", node)));
 }

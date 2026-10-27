@@ -36,6 +36,9 @@ const _app = @import("_app.zig");
 /// desktop and in its drawers, as lock-and-name pairs. The program
 /// replies it. The menu holds 32 items; one past them is not shown.
 ///
+/// When the desktop quits, `port` gets one of kind `AMTYPE_QUIT` with no
+/// files: the item is gone with the menu.
+///
 /// CONTEXT:
 /// - Waits: yes, for the desktop's list.
 /// - Interrupts: no.

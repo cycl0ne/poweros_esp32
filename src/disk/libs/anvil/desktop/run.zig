@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Opening what was double-clicked: a disk, a drawer or the trash into
 //! its window; anything else by running a program with the icons picked.
+//! A program's request (`OpenObject`) is opened the same way, its file
+//! and the files it names standing for the icons.
 //!
 //! **Which program**, as the original chooses it: a tool among the icons
 //! picked runs with every other picked icon handed to it; else the first
@@ -20,7 +22,10 @@
 //! that opens only if it prints. It starts in the drawer of the program,
 //! with the stack its icon asks for and the priority of its `TOOLPRI`
 //! tool type. The desktop counts it until the message it gave the process
-//! (`NP_EndMsg`) comes back, which is when Quit may go ahead.
+//! (`NP_EndMsg`) comes back: its process stays, unseen, after Quit until
+//! the last has. A program that asked for a file to be opened with an end
+//! message of its own (`ANVO_EndMsg`) has that given to the process
+//! instead, and the desktop does not count it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -36,6 +41,7 @@ const Drawer = drawer.Drawer;
 const drawer_path = @import("../drawer/path.zig");
 const Desktop = @import("_desktop.zig").Desktop;
 const app = @import("app.zig");
+const _open = @import("../open/_open.zig");
 
 /// The most icons handed to one program.
 const chosen_max = 16;
@@ -78,6 +84,13 @@ const Work = struct {
     pair_count: usize = 0,
     line: [line_max]u8 = undefined,
     tool: [dos.path_max + 1:0]u8 = @splat(0),
+    /// A program's own end message for the process, in place of one the
+    /// desktop makes and counts.
+    end_msg: ?*exec.Message = null,
+    /// What came of it: the desktop's end message of the program started,
+    /// or why none was - a dos error.
+    ended: ?*Ended = null,
+    failure: i32 = 0,
 };
 
 /// The full name of an icon on its ground into `into`: `Name:` for a disk
@@ -112,10 +125,64 @@ pub fn open(d: *Desktop, where: ?*Drawer, ic: *Icon) void {
     if (a_disk or kind == icon.WBDISK or kind == icon.WBDRAWER or kind == icon.WBGARBAGE or ic.entry.isDrawer()) {
         const root = length > 0 and full[length - 1] == ':';
         if (where) |dr| if (!root and !d.prefs.new_window) return drawer.browse(d, dr, full[0..length]);
-        drawer.open(d, full[0..length]);
+        _ = drawer.open(d, full[0..length]);
         return;
     }
     runChosen(d, where, ic);
+}
+
+/// A program's request (`OpenObject`) opened as a double click on its
+/// icon opens it: a disk or a drawer into its window, a file run with the
+/// files named. 0, or the dos error why not.
+pub fn openObject(d: *Desktop, request: *const _open.Request) i32 {
+    const dl = d.dl;
+    const path: [*:0]const u8 = &request.path;
+    const fib_memory = d.sys.AllocVec(@sizeOf(dos.FileInfoBlock), exec.MEMF_CLEAR) orelse return dos.ERROR_NO_FREE_STORE;
+    defer d.sys.FreeVec(fib_memory);
+    const fib: *dos.FileInfoBlock = @ptrCast(@alignCast(fib_memory));
+    const lock = dl.Lock(path, dos.SHARED_LOCK) orelse return lost(dl);
+    if (!dl.Examine(lock, fib)) {
+        const failure = lost(dl);
+        dl.UnLock(lock);
+        return failure;
+    }
+    dl.UnLock(lock);
+
+    // A disk or a drawer: its window, and nothing to wait for.
+    if (dos.isDirectory(fib.dir_entry_type)) {
+        if (!drawer.open(d, textOf(path))) return dos.ERROR_NO_FREE_STORE;
+        if (request.end_msg) |message| d.sys.ReplyMsg(message);
+        return 0;
+    }
+    const memory = d.sys.AllocVec(@sizeOf(Work), exec.MEMF_CLEAR) orelse return dos.ERROR_NO_FREE_STORE;
+    defer d.sys.FreeVec(memory);
+    const work: *Work = @ptrCast(@alignCast(memory));
+    work.* = .{ .end_msg = request.end_msg };
+    defer release(d, work);
+    choose(d, work, path, fib.protection);
+    for (request.files[0..request.file_count]) |*file| choose(d, work, file, 0);
+    return if (launch(d, work)) 0 else work.failure;
+}
+
+/// Why a name could not be had, as dos says: never 0, which would say
+/// it was opened.
+fn lost(dl: *sdk.interface.dos.DosBase) i32 {
+    const code = dl.IoErr();
+    return if (code != 0) code else dos.ERROR_OBJECT_NOT_FOUND;
+}
+
+/// A file named added to the work as an icon picked, its icon read for
+/// the purpose.
+fn choose(d: *Desktop, work: *Work, path: [*:0]const u8, protection: u32) void {
+    if (work.count == chosen_max) return;
+    const text = textOf(path);
+    if (text.len > dos.path_max) return;
+    const chosen = &work.chosen[work.count];
+    @memcpy(chosen.path[0..text.len], text);
+    chosen.object = d.icon_base.GetDiskObjectNew(path);
+    chosen.owned = chosen.object != null;
+    chosen.entry_protection = protection;
+    work.count += 1;
 }
 
 /// Every icon picked, on every ground, into `work`; the clicked one
@@ -194,13 +261,13 @@ pub fn runFile(d: *Desktop, path: [*:0]const u8, object: *icon.DiskObject) ?*End
     }
     work.count = 1;
     defer release(d, work);
-    return launch(d, work);
+    return if (launch(d, work)) work.ended else null;
 }
 
-/// The chosen icons run: the end message of the program started, or null
-/// when none was.
-fn launch(d: *Desktop, work: *Work) ?*Ended {
-    if (work.count == 0) return null;
+/// The chosen icons run: whether a program was started - its end message
+/// the work's `ended` when it is the desktop's - or why not (`failure`).
+fn launch(d: *Desktop, work: *Work) bool {
+    if (work.count == 0) return failed(work, dos.ERROR_OBJECT_NOT_FOUND);
 
     // A tool among them: it runs, with the others.
     for (work.chosen[0..work.count], 0..) |*chosen, i| {
@@ -224,7 +291,14 @@ fn launch(d: *Desktop, work: *Work) ?*Ended {
     if (first.entry_protection & dos.FIBF_SCRIPT != 0) return start(d, work, "C:IconX", null, first.object);
     var said: [96]u8 = undefined;
     d.say(sayText(&said, drawer_path.lastPart(first.pathText()), " has no tool to open it"));
-    return null;
+    return failed(work, dos.ERROR_OBJECT_WRONG_TYPE);
+}
+
+/// The run given up, and why: a dos error, never 0 - no memory when dos
+/// said nothing.
+fn failed(work: *Work, code: i32) bool {
+    work.failure = if (code != 0) code else dos.ERROR_NO_FREE_STORE;
+    return false;
 }
 
 fn sayText(into: []u8, name: []const u8, rest: []const u8) []const u8 {
@@ -291,18 +365,18 @@ pub fn pairFor(d: *Desktop, name: [*:0]const u8, spelled: *[dos.name_max + 1]u8)
 }
 
 /// `tool` started with the chosen icons - all but the one at `tool_at`,
-/// which is the tool itself - its stack and priority from `object`: its
-/// end message, or null when it could not be started.
-fn start(d: *Desktop, work: *Work, tool: []const u8, tool_at: ?usize, object: ?*icon.DiskObject) ?*Ended {
+/// which is the tool itself - its stack and priority from `object`:
+/// whether it was, as `launch` says.
+fn start(d: *Desktop, work: *Work, tool: []const u8, tool_at: ?usize, object: ?*icon.DiskObject) bool {
     const dl = d.dl;
     var tool_z: [dos.path_max + 1:0]u8 = @splat(0);
-    if (tool.len > dos.path_max) return null;
+    if (tool.len > dos.path_max) return failed(work, dos.ERROR_LINE_TOO_LONG);
     @memcpy(tool_z[0..tool.len], tool);
 
     // The pairs: the tool, found where it is - on the command path it is
     // only a name, in the desktop's own drawer - then each file.
     if (!pairOf(d, work, &tool_z)) {
-        const here = dl.Lock("", dos.SHARED_LOCK) orelse return null;
+        const here = dl.Lock("", dos.SHARED_LOCK) orelse return failed(work, dl.IoErr());
         const at = work.pair_count;
         const name = dl.FilePart(&tool_z);
         const length = textOf(name).len;
@@ -311,7 +385,7 @@ fn start(d: *Desktop, work: *Work, tool: []const u8, tool_at: ?usize, object: ?*
         work.pairs[at] = .{ .lock = here, .name = @ptrCast(&work.spelled[at]) };
         work.pair_count += 1;
     }
-    var n: usize = dos.rdargs.quote(work.line[0 .. line_max - 2], tool) orelse return null;
+    var n: usize = dos.rdargs.quote(work.line[0 .. line_max - 2], tool) orelse return failed(work, dos.ERROR_LINE_TOO_LONG);
     for (work.chosen[0..work.count], 0..) |*chosen, i| {
         if (tool_at == i) continue;
         if (!pairOf(d, work, &chosen.path)) continue;
@@ -325,7 +399,7 @@ fn start(d: *Desktop, work: *Work, tool: []const u8, tool_at: ?usize, object: ?*
     if (object) |held| if (d.icon_base.FindToolType(held.tool_types, "ARGS")) |given| {
         const text = textOf(given);
         if (text.len > 0) {
-            if (n + 1 + text.len > line_max - 2) return null;
+            if (n + 1 + text.len > line_max - 2) return failed(work, dos.ERROR_LINE_TOO_LONG);
             work.line[n] = ' ';
             @memcpy(work.line[n + 1 ..][0..text.len], text);
             n += 1 + text.len;
@@ -342,18 +416,26 @@ fn start(d: *Desktop, work: *Work, tool: []const u8, tool_at: ?usize, object: ?*
         @memcpy(window[w..][0..piece.len], piece);
         w += piece.len;
     }
-    const output = dl.Open(&window, dos.MODE_NEWFILE) orelse return null;
+    const output = dl.Open(&window, dos.MODE_NEWFILE) orelse return failed(work, dl.IoErr());
     const input = dl.Open("NIL:", dos.MODE_OLDFILE) orelse {
+        const failure = dl.IoErr();
         _ = dl.Close(output);
-        return null;
+        return failed(work, failure);
     };
-    const ended_memory = d.sys.AllocVec(@sizeOf(Ended), exec.MEMF_CLEAR) orelse {
-        _ = dl.Close(input);
-        _ = dl.Close(output);
-        return null;
+    // The process's end message: the program's that asked for it, or
+    // the desktop's own, which it counts.
+    var ended: ?*Ended = null;
+    const end_msg: *exec.Message = work.end_msg orelse own: {
+        const ended_memory = d.sys.AllocVec(@sizeOf(Ended), exec.MEMF_CLEAR) orelse {
+            _ = dl.Close(input);
+            _ = dl.Close(output);
+            return failed(work, dos.ERROR_NO_FREE_STORE);
+        };
+        const made: *Ended = @ptrCast(@alignCast(ended_memory));
+        made.* = .{ .message = .{ .reply_port = d.reply_port, .length = @sizeOf(Ended) } };
+        ended = made;
+        break :own &made.message;
     };
-    const ended: *Ended = @ptrCast(@alignCast(ended_memory));
-    ended.* = .{ .message = .{ .reply_port = d.reply_port, .length = @sizeOf(Ended) } };
     // It starts in the drawer of the program, or of its first file.
     const home: ?*dos.FileLock = if (work.pair_count > 0) dl.DupLock(work.pairs[0].lock) else null;
 
@@ -378,22 +460,24 @@ fn start(d: *Desktop, work: *Work, tool: []const u8, tool_at: ?usize, object: ?*
     put(&tags, &count, dos.SYS_Output, @intFromPtr(output));
     put(&tags, &count, dos.NP_ArgList, @intFromPtr(&work.pairs));
     put(&tags, &count, dos.NP_NumArgs, work.pair_count);
-    put(&tags, &count, dos.NP_EndMsg, @intFromPtr(&ended.message));
+    put(&tags, &count, dos.NP_EndMsg, @intFromPtr(end_msg));
     if (home) |lock| put(&tags, &count, dos.NP_CurrentDir, @intFromPtr(lock));
     if (stack != 0) put(&tags, &count, dos.NP_StackSize, stack);
     if (priority) |pri| put(&tags, &count, dos.NP_Priority, @bitCast(pri));
     tags[count] = .{};
     if (dl.SystemTagList(@ptrCast(&work.line), &tags) < 0) {
+        const failure = dl.IoErr();
         if (home) |lock| dl.UnLock(lock);
         _ = dl.Close(input);
         _ = dl.Close(output);
-        d.sys.FreeVec(ended_memory);
+        if (ended) |made| d.sys.FreeVec(made);
         var said: [96]u8 = undefined;
         d.say(sayText(&said, title, " could not be started"));
-        return null;
+        return failed(work, failure);
     }
-    d.running += 1;
-    return ended;
+    if (ended != null) d.running += 1;
+    work.ended = ended;
+    return true;
 }
 
 /// A command line run in a shell of its own, as Execute Command does: its

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! anvil.library's functions: the desktop started, a file's information
-//! shown, and the windows, icons and menu items programs add. Open it with
+//! shown, the windows, icons and menu items programs add, and a file
+//! opened as a double click on its icon opens it. Open it with
 //! OpenLibrary("anvil.library", 1).
 //!
 //! The table is this library's own: it starts at the first slot after
@@ -30,6 +31,7 @@ pub const LVO = struct {
     pub const RemoveAppIcon = libraries.lvo(9);
     pub const AddAppMenuItem = libraries.lvo(10);
     pub const RemoveAppMenuItem = libraries.lvo(11);
+    pub const OpenObject = libraries.lvo(12);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -43,6 +45,7 @@ pub const Fn = struct {
     pub const RemoveAppIcon = *const fn (*AnvilBase, ?*anvil.AppIcon) callconv(.c) bool;
     pub const AddAppMenuItem = *const fn (*AnvilBase, u32, usize, [*:0]const u8, *exec.MsgPort, ?[*]const utility.TagItem) callconv(.c) ?*anvil.AppMenuItem;
     pub const RemoveAppMenuItem = *const fn (*AnvilBase, ?*anvil.AppMenuItem) callconv(.c) bool;
+    pub const OpenObject = *const fn (*AnvilBase, [*:0]const u8, ?[*]const utility.TagItem) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -99,5 +102,12 @@ pub const AnvilBase = opaque {
     /// The item taken out of the Tools menu.
     pub fn RemoveAppMenuItem(self: *AnvilBase, app: ?*anvil.AppMenuItem) bool {
         return libraries.call(self, LVO.RemoveAppMenuItem, Fn.RemoveAppMenuItem, .{app});
+    }
+
+    /// The file, drawer or disk `name` opened as a double click on its icon
+    /// opens it, with the files the tags name: true once it is, or false with
+    /// IoErr. Waits for the desktop.
+    pub fn OpenObject(self: *AnvilBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) bool {
+        return libraries.call(self, LVO.OpenObject, Fn.OpenObject, .{ name, tags });
     }
 };

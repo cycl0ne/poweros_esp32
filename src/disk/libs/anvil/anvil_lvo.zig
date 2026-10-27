@@ -24,6 +24,7 @@ const AddAppIcon = @import("app/addappicon.zig").AddAppIcon;
 const RemoveAppIcon = @import("app/removeappicon.zig").RemoveAppIcon;
 const AddAppMenuItem = @import("app/addappmenuitem.zig").AddAppMenuItem;
 const RemoveAppMenuItem = @import("app/removeappmenuitem.zig").RemoveAppMenuItem;
+const OpenObject = @import("open/openobject.zig").OpenObject;
 
 /// anvil.library's interface, as the SDK generates it from
 /// sdk/fd/anvil_lib.fd.
@@ -57,6 +58,7 @@ const contract_files = [_][]const u8{
     @embedFile("app/removeappicon.zig"),
     @embedFile("app/addappmenuitem.zig"),
     @embedFile("app/removeappmenuitem.zig"),
+    @embedFile("open/openobject.zig"),
 };
 
 fn lvoStartAnvil(base: *AnvilBase, tags: ?[*]const utility.TagItem) callconv(.c) bool {
@@ -91,6 +93,10 @@ fn lvoRemoveAppMenuItem(base: *AnvilBase, app: ?*anvil.AppMenuItem) callconv(.c)
     return RemoveAppMenuItem(base, app);
 }
 
+fn lvoOpenObject(base: *AnvilBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) callconv(.c) bool {
+    return OpenObject(base, name, tags);
+}
+
 /// The standard four, then the library's own in .fd order.
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -105,6 +111,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRemoveAppIcon),
     vec(lvoAddAppMenuItem),
     vec(lvoRemoveAppMenuItem),
+    vec(lvoOpenObject),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

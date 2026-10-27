@@ -177,15 +177,15 @@ fn follow(d: *Desktop, dr: *Drawer) void {
 
 /// `path` opened into a window: brought to the front when it is open
 /// already. The drawer's icon (`Disk.info` for a volume) gives the box,
-/// the view and what is shown.
-pub fn open(d: *Desktop, wanted: []const u8) void {
+/// the view and what is shown. Whether its window is there.
+pub fn open(d: *Desktop, wanted: []const u8) bool {
     if (findPath(d, wanted)) |dr| {
         d.ib.WindowToFront(dr.window);
         d.ib.ActivateWindow(dr.window);
-        return;
+        return true;
     }
-    if (wanted.len == 0 or wanted.len > dos.path_max) return;
-    const memory = d.sys.AllocVec(@sizeOf(Drawer), exec.MEMF_CLEAR) orelse return;
+    if (wanted.len == 0 or wanted.len > dos.path_max) return false;
+    const memory = d.sys.AllocVec(@sizeOf(Drawer), exec.MEMF_CLEAR) orelse return false;
     const dr: *Drawer = @ptrCast(@alignCast(memory));
     var name: [dos.path_max + 1:0]u8 = @splat(0);
     @memcpy(name[0..wanted.len], wanted);
@@ -225,7 +225,7 @@ pub fn open(d: *Desktop, wanted: []const u8) void {
         .{},
     }) orelse {
         d.sys.FreeVec(memory);
-        return;
+        return false;
     };
     var rp: usize = 0;
     var layer: usize = 0;
@@ -254,6 +254,7 @@ pub fn open(d: *Desktop, wanted: []const u8) void {
     d.showChecks(dr.view, dr.show_all);
     follow(d, dr);
     startReading(d, dr);
+    return true;
 }
 
 /// `dr`'s window turned to the drawer `wanted`, in place of the one it
@@ -511,7 +512,7 @@ fn addEntry(d: *Desktop, dr: *Drawer, name: []const u8, data: *const dos.ExAllDa
         object = if (dr.show_all) d.icon_base.GetDiskObjectNew(&full) else d.icon_base.GetDiskObject(&full);
         if (object == null) return;
     }
-    const ic = icons.make(d.sys, &d.pictures, object, name, &d.drawer_look) orelse {
+    const ic = icons.make(d.sys, d.icon_base, object, name, &d.drawer_look) orelse {
         if (object) |held| d.icon_base.FreeDiskObject(held);
         return;
     };
@@ -605,7 +606,7 @@ fn forgetIcons(d: *Desktop, dr: *Drawer) void {
     while (dr.icons.first()) |node| {
         const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
         d.sys.Remove(&ic.node);
-        icons.free(d.sys, d.icon_base, &d.pictures, ic);
+        icons.free(d.sys, d.icon_base, ic);
     }
 }
 
@@ -951,5 +952,5 @@ pub fn openParent(d: *Desktop, dr: *Drawer) void {
     const up = path.parent(dr.pathText()) orelse return;
     var copy: [dos.path_max]u8 = undefined;
     @memcpy(copy[0..up.len], up);
-    if (d.prefs.new_window) open(d, copy[0..up.len]) else browse(d, dr, copy[0..up.len]);
+    if (d.prefs.new_window) _ = open(d, copy[0..up.len]) else browse(d, dr, copy[0..up.len]);
 }

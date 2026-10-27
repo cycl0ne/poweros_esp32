@@ -12,9 +12,9 @@
 //! one for the notifications of the files it follows; one its own
 //! requests come back to - the clock's two-second tick, which brings the
 //! free memory in the title up to date and looks for disks that came or
-//! went; and one the programs' replies to its messages come back to. A
-//! signal of its own tells it a program added or removed something
-//! (`app.zig`).
+//! went; one the programs' replies to its messages come back to; and one
+//! programs ask it to open files on (`open.zig`). A signal of its own
+//! tells it a program added or removed something (`app.zig`).
 //!
 //! **Its own window it never draws into**: the window's backfill hook
 //! paints the ground, the icons and the box being drawn, wherever the
@@ -33,11 +33,14 @@
 //! **Once it is up** it starts the programs of its startup drawer
 //! (`startup.zig`), and goes on answering while it waits for them.
 //!
-//! **It ends** when Quit is picked, nothing it started still runs and no
-//! program has anything added to it, or on CTRL-C: what programs added
-//! is let go of, everything goes in the reverse of the order it came,
-//! and the library is closed by dos once the process's code has
-//! returned.
+//! **It ends** when Quit is picked and confirmed, or on CTRL-C: each
+//! program is told that what it added goes (`AMTYPE_QUIT`), what it added
+//! is let go of, and everything goes in the reverse of the order it came.
+//! What it started goes on running. Its process stays, unseen, until the
+//! last of those has ended and the programs have replied its messages -
+//! their end messages and replies come to its ports - and the library is
+//! closed by dos once the process's code has returned. Another desktop
+//! may start meanwhile.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -80,6 +83,7 @@ const drag = @import("drag.zig");
 const commands = @import("commands.zig");
 const run_area = @import("run.zig");
 const app_area = @import("app.zig");
+const open_area = @import("open.zig");
 const startup_area = @import("startup.zig");
 const about_area = @import("about.zig");
 const scene = @import("scene.zig");
@@ -194,7 +198,6 @@ pub const Desktop = struct {
     drawer_look: icons.Look = .{},
     /// The names' font when the desktop opened one; the screen's otherwise.
     own_font: ?*graphics.TextFont = null,
-    pictures: icons.picture.Pictures = .{},
     /// The disks' icons, and the drawers open.
     volumes: exec.List = .{},
     drawers: exec.List = .{},
@@ -225,6 +228,8 @@ pub const Desktop = struct {
     app_replies: ?*exec.MsgPort = null,
     app_out: u32 = 0,
     tools: app_area.Tools = .{},
+    /// Where programs ask it to open files (`OpenObject`).
+    open_port: ?*exec.MsgPort = null,
     quit: bool = false,
 
     // --- coming up -------------------------------------------------------
@@ -235,7 +240,6 @@ pub const Desktop = struct {
         const sys = d.sys;
         d.volumes.init(.unknown);
         d.drawers.init(.unknown);
-        d.pictures.init();
         d.read_signal = sys.AllocSignal(-1);
         if (d.read_signal < 0) return dos.ERROR_NO_FREE_STORE;
         sys.InitSemaphore(&d.scene_lock);
@@ -263,6 +267,7 @@ pub const Desktop = struct {
         if (sys.OpenDevice(timer.TIMERNAME, timer.UNIT_VBLANK, &d.clock.node, 0) != 0) return dos.ERROR_INVALID_RESIDENT_LIBRARY;
         d.clock_open = true;
         if (!app_area.setUp(d)) return dos.ERROR_NO_FREE_STORE;
+        if (!open_area.setUp(d)) return dos.ERROR_NO_FREE_STORE;
 
         d.screen = d.ib.LockPubScreen(null) orelse return dos.ERROR_OBJECT_NOT_FOUND;
         d.measureScreen();
@@ -649,16 +654,16 @@ pub const Desktop = struct {
         const more = @as(u32, 1) << @intCast(d.read_signal);
         const apps = @as(u32, 1) << @intCast(d.app_signal);
         const app_replies = d.app_replies.?.sigMask();
+        const opens = d.open_port.?.sigMask();
         while (!d.quit) {
-            const got = sys.Wait(windows | notes | replies | more | apps | app_replies | exec.SIGBREAKF_CTRL_C);
-            // CTRL-C quits without asking - but not while a program it
-            // started runs, whose end comes back to the desktop's port.
-            if (got & exec.SIGBREAKF_CTRL_C != 0) {
-                if (d.running == 0) d.quit = true else d.say("Programs started from the desktop still run");
-            }
+            const got = sys.Wait(windows | notes | replies | more | apps | app_replies | opens | exec.SIGBREAKF_CTRL_C);
+            // CTRL-C quits without asking. What it started runs on, and
+            // the process waits for it after the desktop is gone.
+            if (got & exec.SIGBREAKF_CTRL_C != 0) d.quit = true;
             if (got & replies != 0) d.replied();
             if (got & app_replies != 0) app_area.replied(d);
             if (got & apps != 0) app_area.changed(d);
+            if (got & opens != 0 and !d.quit) open_area.requests(d);
             if (got & notes != 0) d.notified();
             if (got & windows != 0) d.windowMessages();
             // A piece of every drawer still being read, and the loop
@@ -933,37 +938,27 @@ pub const Desktop = struct {
         return item.flags & mn.CHECKED != 0;
     }
 
-    /// Quit asked for: refused while programs it started still run, or
-    /// programs have windows, icons or menu items added to it; confirmed
-    /// otherwise.
+    /// Quit asked for, and confirmed: the question says how many programs
+    /// it started still run, which go on running, and how many windows,
+    /// icons and menu items programs added, which go with it.
     fn askQuit(d: *Desktop) void {
         const added = app_area.count(d);
-        if (added != 0) {
-            const busy = intuition.requesters.EasyStruct{
-                .title = "Anvil",
-                .text_format = "The desktop cannot quit while programs\nhave windows, icons or menu items\nadded to it (%lu now).",
-                .gadget_format = "OK",
-            };
-            const args = [_]u64{added};
-            _ = d.ib.EasyRequestArgs(d.backdrop, &busy, null, &args);
-            return;
-        }
-        if (d.running != 0) {
-            const busy = intuition.requesters.EasyStruct{
-                .title = "Anvil",
-                .text_format = "The desktop cannot quit while programs\nit started still run (%lu now).",
-                .gadget_format = "OK",
-            };
-            const args = [_]u64{d.running};
-            _ = d.ib.EasyRequestArgs(d.backdrop, &busy, null, &args);
-            return;
-        }
+        const running = d.running;
+        const text: [*:0]const u8 = if (running != 0 and added != 0)
+            "Programs started from the desktop still run (%lu).\nThey go on running. Windows, icons and\nmenu items programs added to it (%lu)\ngo with it.\n\nQuit the desktop?"
+        else if (running != 0)
+            "Programs started from the desktop still run (%lu).\nThey go on running.\n\nQuit the desktop?"
+        else if (added != 0)
+            "Windows, icons and menu items programs\nadded to the desktop (%lu) go with it.\n\nQuit the desktop?"
+        else
+            "Quit the desktop?";
         const ask = intuition.requesters.EasyStruct{
             .title = "Anvil",
-            .text_format = "Quit the desktop?",
+            .text_format = text,
             .gadget_format = "Quit|Cancel",
         };
-        if (d.ib.EasyRequestArgs(d.backdrop, &ask, null, null) == 1) d.quit = true;
+        const args = if (running != 0) [_]u64{ running, added } else [_]u64{ added, 0 };
+        if (d.ib.EasyRequestArgs(d.backdrop, &ask, null, &args) == 1) d.quit = true;
     }
 
     /// Requests of its own come back: the clock's tick brings the title
@@ -1052,7 +1047,10 @@ pub const Desktop = struct {
         d.sys.ReleaseSemaphore(&base.start_lock);
     }
 
-    /// Everything given back that `setUp` got, in the reverse order.
+    /// Everything given back that `setUp` got, in the reverse order - save
+    /// the two ports what is still out comes back to, which go last: the
+    /// programs' replies, and the end of each program it started, are
+    /// waited for there with nothing of the desktop left to see.
     fn tearDown(d: *Desktop) void {
         const sys = d.sys;
         for (&d.watching, d.watched) |*request, on| {
@@ -1064,12 +1062,12 @@ pub const Desktop = struct {
         }
         if (d.clock_open) sys.CloseDevice(&d.clock.node);
         app_area.leave(d);
+        open_area.tearDown(d);
         startup_area.finish(d);
         if (d.libraries[@intFromEnum(Lib.icon)] != null) {
             drawer.closeAll(d);
             volumes.forgetAll(d);
         }
-        app_area.tearDown(d);
         if (d.backdrop) |window| {
             if (d.menu_strip != null) d.ib.ClearMenuStrip(window);
             d.ib.CloseWindow(window);
@@ -1086,7 +1084,6 @@ pub const Desktop = struct {
             const port = held orelse continue;
             while (sys.GetMsg(port)) |message| sys.ReplyMsg(message);
         }
-        sys.DeleteMsgPort(d.reply_port);
         sys.DeleteMsgPort(d.notify_port);
         sys.DeleteMsgPort(d.windows_port);
         var i = d.libraries.len;
@@ -1095,6 +1092,22 @@ pub const Desktop = struct {
             if (d.libraries[i]) |lib| sys.CloseLibrary(lib);
         }
         if (d.read_signal >= 0) sys.FreeSignal(d.read_signal);
+        app_area.tearDown(d);
+        d.waitForRunning();
+        sys.DeleteMsgPort(d.reply_port);
+    }
+
+    /// The end of every program and job it started waited for, each end
+    /// message freed as it comes.
+    fn waitForRunning(d: *Desktop) void {
+        const port = d.reply_port orelse return;
+        while (d.running > 0) {
+            _ = d.sys.WaitPort(port);
+            while (d.sys.GetMsg(port)) |message| {
+                d.running -|= 1;
+                d.sys.FreeVec(@as(*run_area.Ended, @fieldParentPtr("message", message)));
+            }
+        }
     }
 
     /// StartAnvil told the desktop is up, or why not. After this, a desktop
@@ -1153,8 +1166,10 @@ pub fn desktopMain(sys: *ExecBase) callconv(.c) void {
     d.tellStarter(0);
     startup_area.begin(d);
     d.run();
-    // What programs added let go of before another desktop may start.
+    // What programs added let go of, and no more files opened, before
+    // another desktop may start.
     app_area.leave(d);
+    open_area.leave(d);
     d.leave();
     d.tearDown();
     sys.FreeVec(d);

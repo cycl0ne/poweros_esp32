@@ -106,7 +106,7 @@ fn put(d: *Desktop, path: []const u8) void {
         return;
     };
     const label = textOf(d.dl.FilePart(full));
-    const ic = icons.make(d.sys, &d.pictures, object, label, &d.look) orelse {
+    const ic = icons.make(d.sys, d.icon_base, object, label, &d.look) orelse {
         d.icon_base.FreeDiskObject(object);
         d.sys.FreeVec(memory);
         return;
