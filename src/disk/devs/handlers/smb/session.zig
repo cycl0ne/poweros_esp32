@@ -101,8 +101,10 @@ pub const compound_max: usize = 4;
 /// READ's own fields.
 const read_lead: usize = wire.header_size + 16;
 
-/// How much of a streamed READ is read before it goes into the signature.
-const stream_piece: usize = 32 * 1024;
+/// How much of a streamed READ, or of a READ's answer read ahead, is
+/// read before it goes into the signature: enough for crypto.library to
+/// share it between the cores.
+const stream_piece: usize = 128 * 1024;
 
 /// Credits each request asks for: more than the most one costs.
 const credits_asked: u16 = 32;
@@ -413,7 +415,7 @@ pub const Session = struct {
                 ahead.looked = true;
                 if (ahead.may_stream) try session.lookAhead(ahead);
             }
-            if (ahead.verify and ahead.hashed < ahead.got) {
+            if (ahead.verify and (ahead.got - ahead.hashed >= stream_piece or (ahead.got == ahead.length and ahead.hashed < ahead.got))) {
                 session.cb.UpdateGmac(&ahead.context, ahead.buffer[ahead.hashed..].ptr, @intCast(ahead.got - ahead.hashed));
                 ahead.hashed = ahead.got;
             }

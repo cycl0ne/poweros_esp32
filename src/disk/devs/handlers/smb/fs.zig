@@ -1410,15 +1410,27 @@ pub const FileSystem = struct {
     /// A piece of a WRITE made ready to go (`Session.ready`), then the
     /// answer to the request before it taken; a broken connection
     /// NotMounted.
+    ///
+    /// It is signed one below the handler's priority, which is the
+    /// network stack's (MountShare's): the stack sending the piece before
+    /// it then outranks the signing - and the cores' workers that
+    /// crypto.library shares a long signature with, which take the
+    /// signer's priority. At the stack's priority the four of them held
+    /// every core for a while each MiB, and the stack waited.
     fn readyBehind(fs: *FileSystem, request: *const session_area.Request) Error!session_area.Ready {
         if (fs.lost) return error.NotMounted;
-        const made = fs.session.ready(request) catch {
+        const sys = fs.sys;
+        const me = sys.FindTask(null).?;
+        const pri = sys.SetTaskPri(me, me.node.pri -| 1);
+        const made = fs.session.ready(request);
+        _ = sys.SetTaskPri(me, pri);
+        const ready = made catch {
             fs.lost = true;
             fs.taken();
             return error.NotMounted;
         };
         try fs.settleAhead();
-        return made;
+        return ready;
     }
 
     /// A piece of `lock` made ready sent, its answer left to come;

@@ -30,17 +30,33 @@ const _gcm = @import("_gcm.zig");
 /// call; whole blocks are hashed where they lie, nothing copied. A
 /// context InitGmac did not set up takes nothing.
 ///
+/// On the 64-bit chips, 64 KiB of whole blocks or more in one call are
+/// cut into up to four parts, at least 16 KiB each, which exec's workers
+/// hash at once on the other cores while the caller does the first
+/// (`ShareWork`); the parts are then put together with powers of the hash
+/// key. Where they are cut follows the length alone, and the data is
+/// only read. When the workers are busy with another job, or the caller
+/// may not wait for them, the caller hashes everything itself, as with
+/// less data.
+///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: for exec's workers, when it shares (see above); never where
+///   the caller may not wait.
 /// - Interrupts: no.
-/// - Locks: none needed.
+/// - Locks: none needed; the parts take none.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// Nothing changes hands; `data` is only read.
+/// Nothing changes hands; `data` is only read, by the workers too, until
+/// the call returns.
 ///
 /// NOTES:
-/// None.
+/// Shared between the cores since 2.7: on the VisionFive 2, 1 MiB in one
+/// call at 415 MB/s against 106 on one core. The workers take the
+/// caller's priority, so while they work, tasks of that priority wait
+/// for a core; a caller whose own work of that priority must go on - a
+/// network stack sending - calls it one below (smb-handler signs a WRITE
+/// so while the one before it is sent).
 ///
 /// BUGS:
 /// None known.
@@ -56,7 +72,7 @@ const _gcm = @import("_gcm.zig");
 ///     received += got;
 /// }
 /// ```
-pub fn UpdateGmac(_: *CryptoBase, context: *GmacContext, data: ?*const anyopaque, length: u32) void {
+pub fn UpdateGmac(cb: *CryptoBase, context: *GmacContext, data: ?*const anyopaque, length: u32) void {
     if (context.key_length == 0 or length == 0) return;
-    _gcm.gmacAbsorb(context, @ptrCast(data orelse return), length);
+    _gcm.gmacAbsorb(cb.sys_base, context, @ptrCast(data orelse return), length);
 }

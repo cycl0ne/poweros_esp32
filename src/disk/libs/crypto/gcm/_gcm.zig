@@ -37,6 +37,13 @@
 //! A GMAC under way keeps H, E(K, J0) and GHASH's running value in its
 //! context, and the bytes short of a block; whole blocks go through
 //! straight from the caller's memory. It is software on every chip.
+//!
+//! GHASH is linear, so on the 64-bit chips a long run of whole blocks
+//! given to a GMAC is cut into parts that the cores hash at once (exec's
+//! ShareWork), each part from zero, and put together after: the GHASH so
+//! far times H to the power of the next part's blocks, and that part's
+//! added, part after part (`sharedBlocks`). Where the parts are cut
+//! follows the length alone.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -45,6 +52,7 @@ const GcmMessage = crypto.GcmMessage;
 const GmacContext = crypto.GmacContext;
 const AES_BLOCK = crypto.AES_BLOCK;
 const CryptoBase = @import("../crypto_base.zig").CryptoBase;
+const ExecBase = sdk.interface.exec.ExecBase;
 const _cipher = @import("../cipher/_cipher.zig");
 const aes = @import("../engine/aes.zig");
 const jh7110 = @import("../engine/jh7110.zig");
@@ -374,6 +382,87 @@ fn quarterBlocks(comptime aligned: bool, y: u128, h: u128, data: [*]const u8, le
     return value;
 }
 
+/// A run of whole blocks is shared between the cores from this many bytes
+/// on, in parts of at least `share_part`, and in no more than
+/// `share_parts_max`; on the 64-bit chips.
+const share_least: u32 = 64 * 1024;
+const share_part: u32 = 16 * 1024;
+const share_parts_max = 4;
+
+/// A GHASH shared out (`sharedBlocks`): H, the running value before it,
+/// the blocks, and each part's GHASH - a cache line each, since the parts
+/// write them at once.
+const Shared = struct {
+    h: u128,
+    y: u128,
+    data: [*]const u8,
+    blocks: u32,
+    results: [share_parts_max]Result = undefined,
+
+    const Result = struct {
+        value: u128 align(64),
+    };
+
+    /// Where part `part` of `parts` begins, in blocks, and how many it
+    /// takes: as many each, part 0 the ones over.
+    fn range(shared: *const Shared, part: u32, parts: u32) struct { u32, u32 } {
+        const each = shared.blocks / parts;
+        const first = shared.blocks - each * (parts - 1);
+        if (part == 0) return .{ 0, first };
+        return .{ first + (part - 1) * each, each };
+    }
+};
+
+/// One part of a GHASH shared out, ShareWork's: its blocks' GHASH from
+/// zero, part 0's from the running value.
+fn hashPart(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
+    const shared: *Shared = @ptrCast(@alignCast(data.?));
+    const start, const count = shared.range(part, parts);
+    const from: u128 = if (part == 0) shared.y else 0;
+    shared.results[part].value = wholeBlocks(from, shared.h, shared.data + start * AES_BLOCK, count * AES_BLOCK);
+}
+
+/// The parts of a GHASH shared out, done in `parts`, put together: each
+/// part after the first has as many blocks, so the value so far is
+/// multiplied by the same power of H before each is added.
+fn fold(shared: *const Shared, parts: u32) u128 {
+    var value = shared.results[0].value;
+    if (parts < 2) return value;
+    const step = power(shared.h, shared.blocks / parts);
+    for (shared.results[1..parts]) |result| value = multiply(value, step) ^ result.value;
+    return value;
+}
+
+/// `wholeBlocks`, the blocks hashed in parts by the cores at once when
+/// there are `share_least` bytes of them or more on a 64-bit chip; alone
+/// when there are fewer, or ShareWork does the job alone.
+fn sharedBlocks(sys: *ExecBase, y: u128, h: u128, data: [*]const u8, length: u32) u128 {
+    if (!quarters or length < share_least) return wholeBlocks(y, h, data, length);
+    var shared: Shared = .{ .h = h, .y = y, .data = data, .blocks = length / AES_BLOCK };
+    const parts = sys.ShareWork(&hashPart, &shared, @min(length / share_part, share_parts_max));
+    return fold(&shared, parts);
+}
+
+test "a GHASH shared out in parts comes to what one pass does" {
+    var bytes: [4097 * AES_BLOCK + 3]u8 = undefined;
+    var random = std.Random.DefaultPrng.init(0x6a09e667);
+    random.random().bytes(&bytes);
+    const h: u128 = 0x66e94bd4_ef8a2c3b_884cfa59_ca342b2e;
+    const y: u128 = 0x0388dace_60b6a392_f328c2b9_71b2fe78;
+    for ([_]usize{ 0, 3 }) |offset| {
+        const data = bytes[offset..].ptr;
+        for ([_]u32{ 1, 4, 4097 }) |blocks| {
+            const whole = wholeBlocks(y, h, data, blocks * AES_BLOCK);
+            for (1..share_parts_max + 1) |parts| {
+                if (parts > blocks) continue;
+                var shared: Shared = .{ .h = h, .y = y, .data = data, .blocks = blocks };
+                for (0..parts) |part| hashPart(&shared, @intCast(part), @intCast(parts));
+                try std.testing.expectEqual(whole, fold(&shared, @intCast(parts)));
+            }
+        }
+    }
+}
+
 fn load128(bytes: *const [AES_BLOCK]u8) u128 {
     return @as(u128, load64(bytes[0..8])) << 64 | load64(bytes[8..16]);
 }
@@ -438,8 +527,9 @@ pub fn gmacBegin(cb: *CryptoBase, context: *GmacContext, key: [*]const u8, key_l
 }
 
 /// `length` bytes of `data` into the GMAC: the bytes before a whole block
-/// gathered in the context, whole blocks taken where they lie.
-pub fn gmacAbsorb(context: *GmacContext, data: [*]const u8, length: u32) void {
+/// gathered in the context, whole blocks taken where they lie - a long
+/// run of them shared between the cores (`sharedBlocks`).
+pub fn gmacAbsorb(sys: *ExecBase, context: *GmacContext, data: [*]const u8, length: u32) void {
     context.total += length;
     const h = load128(&context.hash_key);
     var y = load128(&context.state);
@@ -454,7 +544,7 @@ pub fn gmacAbsorb(context: *GmacContext, data: [*]const u8, length: u32) void {
         context.buffered = 0;
     }
     const whole = (length - at) & ~@as(u32, AES_BLOCK - 1);
-    y = wholeBlocks(y, h, data + at, whole);
+    y = sharedBlocks(sys, y, h, data + at, whole);
     at += whole;
     for (0..length - at) |index| context.partial[index] = data[at + index];
     context.buffered = length - at;

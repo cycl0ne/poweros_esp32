@@ -38,7 +38,7 @@
 //! (the engine's share of GCM) and SHA-256 in bulk - in microseconds an
 //! operation or kilobytes a second, on timer.device's E-clock; and
 //! SHA-256 of messages from 256 bytes to 64 KiB, in one HashPieces and in
-//! steps, and GMAC a piece at a time and in one call.
+//! steps, and GMAC a piece at a time, in one call, and in 1 MiB pieces.
 //! RANDOM puts 20000 bits of RandomBytes through FIPS 140-2's monobit,
 //! poker and long-run tests.
 
@@ -55,7 +55,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Crypto";
-const VERSION_STRING = "\x00$VER: Crypto 1.8 (27.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Crypto 1.9 (27.10.2026)\r\n";
 
 const template = "VERBOSE/S,BENCH/S,RANDOM/S";
 const arg_verbose = 0;
@@ -302,9 +302,10 @@ fn ghashOf(h: u128, aad: []const u8, data: []const u8) u128 {
     return fieldMultiply(y ^ ((@as(u128, aad.len) * 8) << 64) ^ (@as(u128, data.len) * 8), h);
 }
 
-/// GMAC of `data` a piece at a time - 1, 15, 4097 and 65536 bytes in
-/// turn - against SealGcm with `data` as its header, and against the
-/// GHASH worked out here.
+/// GMAC of `data` a piece at a time - 1, 15, 4097, 65536 and 200003
+/// bytes in turn, the last long enough for crypto.library to share it
+/// between the cores - against SealGcm with `data` as its header, and
+/// against the GHASH worked out here.
 fn gmacAgrees(cb: *CryptoBase, key: []const u8, data: []const u8) bool {
     const nonce = hex("cafebabefacedbaddecaf888");
     var sealed: [crypto.GCM_TAG]u8 = undefined;
@@ -312,7 +313,7 @@ fn gmacAgrees(cb: *CryptoBase, key: []const u8, data: []const u8) bool {
     if (cb.SealGcm(&message) != crypto.CRYPTOERR_OK) return false;
     var context: crypto.GmacContext = .{};
     if (cb.InitGmac(&context, key.ptr, @intCast(key.len), &nonce, nonce.len) != crypto.CRYPTOERR_OK) return false;
-    const cuts = [_]usize{ 1, 15, 4097, 65536 };
+    const cuts = [_]usize{ 1, 15, 4097, 65536, 200003 };
     var at: usize = 0;
     var turn: usize = 0;
     while (at < data.len) : (turn += 1) {
@@ -831,7 +832,9 @@ fn bench(run: *Run) void {
 
     // Bulk: 16 KiB, a TLS record's worth.
     const Buffer = struct {
-        var data: [16384]u8 = @splat(0x5A);
+        // On a cache line, so that what is timed does not move with the
+        // program's layout: GHASH takes words whole only 8 bytes apart.
+        var data: [16384]u8 align(64) = @splat(0x5A);
     };
     const key: [16]u8 = @splat(1);
     const nonce: [12]u8 = @splat(2);
@@ -859,7 +862,25 @@ fn bench(run: *Run) void {
     started = micros(run);
     for (0..64) |_| _ = cb.SealGcm(&signed);
     throughput(run, "AES-128-GMAC in one call", started, 64);
+    gmacMegabyte(run);
     sizes(run);
+}
+
+/// GMAC of 1 MiB in one UpdateGmac, 16 times: what crypto.library shares
+/// between the cores.
+fn gmacMegabyte(run: *Run) void {
+    const cb = run.cb;
+    const memory = run.sys.AllocVec(1 << 20, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return;
+    defer run.sys.FreeVec(memory);
+    const key = [_]u8{7} ** 16;
+    const nonce = [_]u8{9} ** 12;
+    var tag: [crypto.GCM_TAG]u8 = undefined;
+    var gmac: crypto.GmacContext = .{};
+    const started = micros(run);
+    _ = cb.InitGmac(&gmac, &key, 16, &nonce, 12);
+    for (0..16) |_| cb.UpdateGmac(&gmac, memory, 1 << 20);
+    _ = cb.FinishGmac(&gmac, &tag);
+    throughput(run, "AES-128-GMAC in 1 MiB pieces", started, 16 * 64);
 }
 
 /// SHA-256 of messages from 256 bytes to 64 KiB, 4 MiB of each, in one

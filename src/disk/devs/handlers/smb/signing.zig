@@ -170,7 +170,8 @@ fn double(block: [16]u8) [16]u8 {
 }
 
 /// AES-128-GMAC: GCM's tag over `message` as additional data, nothing
-/// encrypted.
+/// encrypted - by UpdateGmac, which shares a long message's between the
+/// cores.
 ///
 /// INPUTS:
 /// - `cb` - crypto.library.
@@ -178,17 +179,11 @@ fn double(block: [16]u8) [16]u8 {
 /// - `nonce` - twelve bytes, never used twice with the key.
 /// - `message` - what is authenticated.
 pub fn gmac(cb: *CryptoBase, key: *const [16]u8, nonce: *const [12]u8, message: []const u8) [16]u8 {
-    var tag: [crypto.GCM_TAG]u8 = undefined;
-    const sealed: crypto.GcmMessage = .{
-        .key = key,
-        .key_length = 16,
-        .nonce = nonce,
-        .nonce_length = 12,
-        .aad = message.ptr,
-        .aad_length = @intCast(message.len),
-        .tag = &tag,
-    };
-    _ = cb.SealGcm(&sealed);
+    var tag: [crypto.GCM_TAG]u8 = @splat(0);
+    var context: crypto.GmacContext = .{};
+    if (cb.InitGmac(&context, key, 16, nonce, nonce.len) != crypto.CRYPTOERR_OK) return tag;
+    cb.UpdateGmac(&context, message.ptr, @intCast(message.len));
+    _ = cb.FinishGmac(&context, &tag);
     return tag;
 }
 
