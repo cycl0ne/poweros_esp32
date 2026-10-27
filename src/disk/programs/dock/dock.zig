@@ -19,8 +19,9 @@
 //! **What a hand does with it:**
 //! - A click opens the entry as a double click on its icon does
 //!   (anvil.library's `OpenObject`).
-//! - Files let go on an entry are opened with it; let go between two, or
-//!   on a separator, they are put in as entries there.
+//! - Files let go on an entry are opened with it; let go in the room
+//!   between two pictures, on a separator or at an end of the dock, they
+//!   are put in as entries there.
 //! - An entry dragged along the dock moves there; dragged off it, it is
 //!   taken off.
 //! - A press held still, or the right button while the dock is the active
@@ -67,7 +68,7 @@ const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dock";
-const VERSION_STRING = "\x00$VER: Dock 1.0 (27.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dock 1.1 (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "QUIT/S";
@@ -646,15 +647,16 @@ const App = struct {
         return app.count;
     }
 
-    /// The entry files let go at (`x`, `y`) are opened with: one whose
-    /// middle half they are on - not a separator's.
+    /// The entry files let go at (`x`, `y`) are opened with: the one they
+    /// are on, but for the room round its picture at either end of its
+    /// cell - that, the room between two pictures, is where they are put
+    /// in. Not a separator.
     fn targetAt(app: *const App, x: i32, y: i32) ?usize {
         const index = app.entryAt(x, y) orelse return null;
         const e = &app.entries[index];
         if (e.path == null) return null;
         const along = if (app.upright()) y else x;
-        const quarter = @divTrunc(e.span, 4);
-        if (along < e.start + quarter or along >= e.start + e.span - quarter) return null;
+        if (along < e.start + pad or along >= e.start + e.span - pad) return null;
         return index;
     }
 

@@ -21,8 +21,9 @@ the front; `Dock QUIT` ends it, and so does **Quit Dock** in its menu.
   its window.
 - **Files let go on an entry** - dragged from the desktop or a drawer -
   are opened with it: let go on Notepad, a text opens in Notepad.
-- **Files let go between two entries**, or on a separator, are put in the
-  dock there.
+- **Files let go between two entries** - in the narrow room between
+  their pictures - or on a separator, or at an end of the dock, are put
+  in the dock there.
 - **An entry dragged** along the dock moves there; dragged off the dock
   and let go anywhere else, it is taken off.
 - **The menu** of an entry opens when it is held still for a moment, or -
