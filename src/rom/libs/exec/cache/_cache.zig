@@ -111,11 +111,10 @@ var engine_taken_at: [exec_base.max_cores]u32 = @splat(0);
 /// The engine taken by this core, its interrupts masked meanwhile; answers
 /// the state `dropEngine` puts back. A hold asked meanwhile is answered.
 fn takeEngine() u32 {
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
+    const state = _interrupt.mask();
     const core = exec_base.coreId();
     const before = exec_base.cycles();
-    while (@cmpxchgWeak(u32, &engine_lock, 0, core + 1, .acquire, .monotonic) != null) hardware.park_if_asked();
+    while (@cmpxchgWeak(u32, &engine_lock, 0, core + 1, .acquire, .monotonic) != null) _interrupt.interrupt_hardware.park_if_asked();
     const now = exec_base.cycles();
     engine_wait_max[core] = @max(engine_wait_max[core], now -% before);
     engine_taken_at[core] = now;
@@ -126,7 +125,7 @@ fn dropEngine(state: u32) void {
     const core = exec_base.coreId();
     engine_held_max[core] = @max(engine_held_max[core], exec_base.cycles() -% engine_taken_at[core]);
     @atomicStore(u32, &engine_lock, 0, .release);
-    _interrupt.interrupt_hardware.restore(state);
+    _interrupt.unmask(state);
 }
 
 /// What one hold of the engine covers. On the 7B, with the panel's DMA

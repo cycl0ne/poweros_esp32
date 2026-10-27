@@ -74,7 +74,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// defer sys.Enable();
 /// ```
 pub fn Disable(base: *ExecBase) void {
-    const state = _interrupt.interrupt_hardware.disable();
+    const state = _interrupt.mask();
     // Masked, the caller stays on this core.
     const cpu = base.cpu();
     cpu.id_nest_cnt += 1;

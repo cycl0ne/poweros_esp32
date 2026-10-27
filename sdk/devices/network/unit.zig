@@ -122,6 +122,9 @@ fn fail(req: *net.IOSana2Req, err: i8, wire_error: u32) void {
 ///   setFilter(link, []Group, bool) the groups to take, and whether all
 ///   startWrites(link)              send what `nextWrite` hands out
 ///   now(link) TimeVal              the system time
+///   offload(link) u32              the checksums the hardware does,
+///                                  S2OFFLOADF_* (none if it has no such
+///                                  call)
 ///
 /// **Online** is two things at once: the unit is wanted on line
 /// (configured, and not taken off line by S2_OFFLINE), and the link has a
@@ -398,7 +401,6 @@ pub fn Unit(comptime Link: type) type {
 
         /// S2_DEVICEQUERY, as much of it as the caller has room for.
         pub fn query(unit: *Self, req: *net.IOSana2Req) void {
-            _ = unit;
             const into: *net.Sana2DeviceQuery = @ptrCast(@alignCast(req.stat_data orelse
                 return fail(req, net.S2ERR_BAD_ARGUMENT, net.S2WERR_NULL_POINTER)));
             const room = into.size_available;
@@ -412,6 +414,7 @@ pub fn Unit(comptime Link: type) type {
                 .bps = Link.bps,
                 .hardware_type = if (point) Link.wire_type else net.S2WireType_Ethernet,
                 .raw_mtu = frame_max,
+                .offload = if (@hasDecl(Link, "offload")) Link.offload(unit.link) else 0,
             };
             const from: [*]const u8 = @ptrCast(&full);
             const to: [*]u8 = @ptrCast(into);
@@ -572,6 +575,12 @@ pub fn Unit(comptime Link: type) type {
         /// A frame the hardware received, without its checksum: handed to
         /// the reads that want it.
         pub fn receive(unit: *Self, frame: []const u8) void {
+            unit.receiveWith(frame, 0);
+        }
+
+        /// `receive`, with what the hardware found: SANA2IOF_CHECKSUM if it
+        /// checked the packet's checksums and they are right.
+        pub fn receiveWith(unit: *Self, frame: []const u8, found: u8) void {
             if (point) {
                 if (frame.len == 0 or frame.len > frame_max) return unit.damaged();
                 const packet_type: u32 = switch (frame[0] >> 4) {
@@ -579,16 +588,16 @@ pub fn Unit(comptime Link: type) type {
                     6 => type_ipv6,
                     else => return unit.damaged(),
                 };
-                return unit.deliver(frame, packet_type, null, 0);
+                return unit.deliver(frame, packet_type, null, found);
             }
             const header = ethernet.parse(frame) orelse return unit.damaged();
             if (frame.len > ethernet.frame_max) return unit.damaged();
-            var flags: u8 = 0;
+            var flags: u8 = found;
             if (ethernet.isBroadcast(&header.dst)) {
-                flags = net.SANA2IOF_BCAST;
+                flags |= net.SANA2IOF_BCAST;
             } else if (ethernet.isGroup(&header.dst)) {
                 if (unit.promiscuous == 0 and unit.findGroup(&header.dst) == null) return;
-                flags = net.SANA2IOF_MCAST;
+                flags |= net.SANA2IOF_MCAST;
             }
             unit.deliver(frame, header.type, &header, flags);
         }
@@ -672,7 +681,7 @@ pub fn Unit(comptime Link: type) type {
                 req.src_addr[0..ethernet.address_bytes].* = ether.src;
                 req.dst_addr[0..ethernet.address_bytes].* = ether.dst;
             }
-            req.req.flags = (req.req.flags & ~(net.SANA2IOF_BCAST | net.SANA2IOF_MCAST)) | flags;
+            req.req.flags = (req.req.flags & ~(net.SANA2IOF_BCAST | net.SANA2IOF_MCAST | net.SANA2IOF_CHECKSUM)) | flags;
             const opener = openerOf(req).?;
             if (!opener.copy_to.?(req.data, data.ptr, req.data_length)) {
                 fail(req, net.S2ERR_NO_RESOURCES, net.S2WERR_BUFF_ERROR);

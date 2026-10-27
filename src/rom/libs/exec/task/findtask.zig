@@ -86,9 +86,8 @@ pub fn FindTask(base: *ExecBase, name: ?[*:0]const u8) ?*Task {
 /// masked so that the caller cannot be moved to the other core between
 /// asking which core it is on and reading.
 fn running(base: *ExecBase) *Task {
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
-    defer hardware.restore(state);
+    const state = _interrupt.mask();
+    defer _interrupt.unmask(state);
     return base.cpu().this_task;
 }
 

@@ -13,6 +13,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const bsd = sdk.bsdsocket;
+const net = sdk.devices.network;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const bsdsocket = @import("../bsdsocket_init.zig");
 const _base = @import("../bsdsocket_base.zig");
@@ -42,6 +43,9 @@ const Packet = struct {
     to_b: bool,
     length: usize,
     bytes: [1600]u8,
+    /// Its checksums left for the device to fill in; delivered, it is as
+    /// one the device checked.
+    filled: bool = false,
 };
 
 var wire: [128]Packet = undefined;
@@ -59,7 +63,7 @@ fn onto(to_b: bool, stack: *StackBase, frame: *Frame) i32 {
         return bsd.ENOBUFS;
     }
     const bytes = frame.bytes();
-    wire[wire_count] = .{ .to_b = to_b, .length = bytes.len, .bytes = undefined };
+    wire[wire_count] = .{ .to_b = to_b, .length = bytes.len, .bytes = undefined, .filled = frame.fill_checksums != 0 };
     @memcpy(wire[wire_count].bytes[0..bytes.len], bytes);
     wire_count += 1;
     segments_seen += 1;
@@ -140,6 +144,7 @@ const Rig = struct {
             const frame = target.stack.frames.take(target.stack.sys_base).?;
             @memcpy(frame.room()[frame.start..][0..packet.length], packet.bytes[0..packet.length]);
             frame.length = @intCast(packet.length);
+            frame.checked = @intFromBool(packet.filled);
             _netif.receive(target.stack, target.interface, frame, &station, &station, _ip.ethertype, target.stack.fixed_time);
         }
     }
@@ -199,6 +204,7 @@ const Rig = struct {
         const frame = target.stack.frames.take(target.stack.sys_base) orelse return;
         @memcpy(frame.room()[frame.start..][0..packet.length], packet.bytes[0..packet.length]);
         frame.length = @intCast(packet.length);
+        frame.checked = @intFromBool(packet.filled);
         _netif.receive(target.stack, target.interface, frame, &station, &station, _ip.ethertype, target.stack.fixed_time);
     }
 
@@ -605,8 +611,21 @@ fn transfer(rig: *Rig, pair: anytype, data: []const u8, got: []u8, link: *Lossy,
 }
 
 test "a transfer arrives whole and in order over a link that loses, doubles and reorders" {
+    try lossyTransfer(true);
+}
+
+test "so does one without SACK, repaired by duplicate acknowledgements alone" {
+    try lossyTransfer(false);
+}
+
+fn lossyTransfer(with_sack: bool) !void {
     var rig = try Rig.init();
     const pair = try connected(&rig, 90);
+    if (!with_sack) {
+        // Both ends as if a SYN had not offered it.
+        _tcp.of(socketOf(&rig.a, pair.client)).flags &= ~_tcp.sack_ok;
+        _tcp.of(socketOf(&rig.b, pair.server)).flags &= ~_tcp.sack_ok;
+    }
     const data = try testing.allocator.alloc(u8, 256 * 1024);
     defer testing.allocator.free(data);
     const got = try testing.allocator.alloc(u8, data.len);
@@ -1043,6 +1062,251 @@ test "a peer whose SYN offers no window scale gets none, and windows stay 16 bit
     _ = rig.b.sb.CloseSocket(server);
     _ = rig.b.sb.CloseSocket(listener);
     wire_count = 0;
+    try rig.deinit();
+}
+
+// --- checksums the device does -----------------------------------------------------
+
+test "checksums the device does are left 0 going out, and a packet it checked is not checked again" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 106);
+    for ([_]*Interface{ rig.a.interface, rig.b.interface }) |interface| {
+        interface.offload = net.S2OFFLOADF_RX_CHECKSUMS | net.S2OFFLOADF_TX_CHECKSUMS;
+    }
+    _ = rig.a.sb.Send(pair.client, "hello", 5, 0);
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    try testing.expect(wire[0].filled);
+    try testing.expectEqual(@as(u16, 0), _ip.get16(&wire[0].bytes, 10));
+    try testing.expectEqual(@as(u16, 0), _ip.get16(wire[0].bytes[20..], 16));
+    // From a device that checked nothing, it is checked, and dropped.
+    var unchecked = wire[0];
+    unchecked.filled = false;
+    const bad_before = rig.b.stack.counts.ip_bad_checksum;
+    rig.deliver(&unchecked);
+    try testing.expectEqual(bad_before + 1, rig.b.stack.counts.ip_bad_checksum);
+    // From one that did, it is taken, and its acknowledgement comes back
+    // the same way.
+    rig.pump();
+    var buffer: [8]u8 = undefined;
+    try testing.expectEqual(@as(i32, 5), rig.b.sb.Recv(pair.server, &buffer, buffer.len, 0));
+    try testing.expectEqualStrings("hello", buffer[0..5]);
+    rig.advance(rig.earliest().?);
+    try testing.expect(wire_count > 0 and wire[0].filled);
+    rig.pump();
+    const client = _tcp.of(socketOf(&rig.a, pair.client));
+    try testing.expectEqual(client.snd_max, client.snd_una);
+    closeAll(&rig, pair);
+    try rig.deinit();
+}
+
+// --- SACK ---------------------------------------------------------------------------
+
+test "SACK is used when both SYNs offer it, and not with a peer whose SYN does not" {
+    var rig = try Rig.init();
+    const listener = try stream(rig.b.sb);
+    var here = at(address_b, 102);
+    _ = rig.b.sb.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in));
+    _ = rig.b.sb.Listen(listener, 2);
+    // Our SYN offers it after the MSS and the window scale: a header of 32
+    // bytes.
+    const client = try stream(rig.a.sb);
+    _ = rig.a.sb.Connect(client, here.anyConst(), @sizeOf(bsd.sockaddr_in));
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    const syn = wire[0].bytes[20..];
+    try testing.expectEqual(@as(u8, (32 / 4) << 4), syn[12]);
+    try testing.expectEqualSlices(u8, &.{ _tcp.option_nop, _tcp.option_nop, _tcp.option_sack_permitted, 2 }, syn[28..32]);
+    rig.pump();
+    const server = rig.b.sb.Accept(listener, null, null);
+    try testing.expect(server >= 0);
+    try testing.expect(_tcp.of(socketOf(&rig.a, client)).flags & _tcp.sack_ok != 0);
+    try testing.expect(_tcp.of(socketOf(&rig.b, server)).flags & _tcp.sack_ok != 0);
+    // A SYN with the MSS and the window scale only: the answer offers no
+    // SACK either, in a header of 28 bytes, and the connection has none.
+    const options = [_]u8{ _tcp.option_mss, 4, 0x05, 0xB4, _tcp.option_nop, _tcp.option_window_scale, 3, 2 };
+    forge(&rig, 4001, 102, .{ .seq = 1000, .ack = 0, .flags = _tcp.SYN, .options = &options });
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    const answer = wire[0].bytes[20..];
+    try testing.expectEqual(@as(u8, (28 / 4) << 4), answer[12]);
+    const iss = _ip.get32(answer, 4);
+    wire_count = 0;
+    forge(&rig, 4001, 102, .{ .seq = 1001, .ack = iss +% 1, .flags = _tcp.ACK });
+    const plain = rig.b.sb.Accept(listener, null, null);
+    try testing.expect(plain >= 0);
+    try testing.expectEqual(@as(u32, 0), _tcp.of(socketOf(&rig.b, plain)).flags & _tcp.sack_ok);
+    const cut: bsd.linger = .{ .l_onoff = 1, .l_linger = 0 };
+    for ([_]i32{ server, plain }) |each| {
+        _ = rig.b.sb.SetSockOpt(each, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+        _ = rig.b.sb.CloseSocket(each);
+    }
+    _ = rig.b.sb.CloseSocket(listener);
+    _ = rig.a.sb.SetSockOpt(client, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.a.sb.CloseSocket(client);
+    wire_count = 0;
+    try rig.deinit();
+}
+
+/// The SACK blocks of a segment on the wire, as pairs of numbers.
+fn blocksOf(packet: *const Packet, into: *[_tcp.sack_blocks_max][2]u32) usize {
+    const tcp = packet.bytes[20..packet.length];
+    const length = @as(usize, tcp[12] >> 4) * 4;
+    var at_option: usize = _tcp.header_bytes;
+    while (at_option < length and tcp[at_option] != _tcp.option_end) {
+        if (tcp[at_option] == _tcp.option_nop) {
+            at_option += 1;
+            continue;
+        }
+        const size = tcp[at_option + 1];
+        if (tcp[at_option] == _tcp.option_sack) {
+            const count = (size - 2) / 8;
+            for (0..count) |index| {
+                const block = at_option + 2 + 8 * index;
+                into[index] = .{ _ip.get32(tcp, block), _ip.get32(tcp, block + 4) };
+            }
+            return count;
+        }
+        at_option += size;
+    }
+    return 0;
+}
+
+/// One acknowledgement on the wire, of `ack`, with `expected` blocks in
+/// that order; taken off.
+fn expectAck(ack: u32, expected: []const [2]u32) !void {
+    try testing.expectEqual(@as(usize, 1), wire_count);
+    try testing.expectEqual(ack, _ip.get32(wire[0].bytes[20..], 8));
+    var got: [_tcp.sack_blocks_max][2]u32 = undefined;
+    const count = blocksOf(&wire[0], &got);
+    try testing.expectEqualSlices([2]u32, expected, got[0..count]);
+    if (count == 0) try testing.expectEqual(@as(u8, (20 / 4) << 4), wire[0].bytes[20 + 12]);
+    wire_count = 0;
+}
+
+test "acknowledgements name what is held beyond a hole, the block of the newest first" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 104);
+    const server = _tcp.of(socketOf(&rig.b, pair.server));
+    const client_port = socketOf(&rig.a, pair.client).local_port;
+    const n = server.rcv_nxt;
+    const steps = [_]struct { at: u32, byte: []const u8, ack: u32, blocks: []const [2]u32 }{
+        .{ .at = 2, .byte = "c", .ack = 0, .blocks = &.{.{ n +% 2, n +% 3 }} },
+        .{ .at = 4, .byte = "e", .ack = 0, .blocks = &.{ .{ n +% 4, n +% 5 }, .{ n +% 2, n +% 3 } } },
+        .{ .at = 3, .byte = "d", .ack = 0, .blocks = &.{.{ n +% 2, n +% 5 }} },
+        .{ .at = 8, .byte = "i", .ack = 0, .blocks = &.{ .{ n +% 8, n +% 9 }, .{ n +% 2, n +% 5 } } },
+        .{ .at = 6, .byte = "g", .ack = 0, .blocks = &.{ .{ n +% 6, n +% 7 }, .{ n +% 8, n +% 9 }, .{ n +% 2, n +% 5 } } },
+        // In order: the front of the hole filled, what is held still named.
+        .{ .at = 0, .byte = "a", .ack = 1, .blocks = &.{ .{ n +% 6, n +% 7 }, .{ n +% 8, n +% 9 }, .{ n +% 2, n +% 5 } } },
+        .{ .at = 1, .byte = "b", .ack = 5, .blocks = &.{ .{ n +% 6, n +% 7 }, .{ n +% 8, n +% 9 } } },
+        .{ .at = 5, .byte = "f", .ack = 7, .blocks = &.{.{ n +% 8, n +% 9 }} },
+        .{ .at = 7, .byte = "h", .ack = 9, .blocks = &.{} },
+    };
+    for (steps) |step| {
+        forge(&rig, client_port, 104, .{ .seq = n +% step.at, .ack = server.snd_una, .flags = _tcp.ACK, .data = step.byte });
+        try expectAck(n +% step.ack, step.blocks);
+    }
+    var buffer: [16]u8 = undefined;
+    try testing.expectEqual(@as(i32, 9), rig.b.sb.Recv(pair.server, &buffer, buffer.len, 0));
+    try testing.expectEqualStrings("abcdefghi", buffer[0..9]);
+    const cut: bsd.linger = .{ .l_onoff = 1, .l_linger = 0 };
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.b.sb.CloseSocket(pair.server);
+    _ = rig.b.sb.CloseSocket(pair.listener);
+    _ = rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.a.sb.CloseSocket(pair.client);
+    wire_count = 0;
+    try rig.deinit();
+}
+
+/// The data segments A sent, each by where it starts and how often it went.
+const Sent = struct {
+    starts: [256]u32 = undefined,
+    times: [256]u32 = undefined,
+    count: usize = 0,
+
+    fn note(sent: *Sent, start: u32) u32 {
+        for (sent.starts[0..sent.count], sent.times[0..sent.count]) |each, *times| {
+            if (each == start) {
+                times.* += 1;
+                return times.*;
+            }
+        }
+        sent.starts[sent.count] = start;
+        sent.times[sent.count] = 1;
+        sent.count += 1;
+        return 1;
+    }
+};
+
+/// One pass over the wire, as `pumpLossy`'s: each data segment from A
+/// noted, and lost if it is new and one of the `drops`, counting new
+/// segments in the order they went.
+fn pumpDropping(rig: *Rig, sent: *Sent, drops: []const usize) void {
+    var batch: [128]Packet = undefined;
+    const count = wire_count;
+    @memcpy(batch[0..count], wire[0..count]);
+    wire_count = 0;
+    for (batch[0..count]) |*packet| {
+        if (packet.to_b) {
+            const tcp = packet.bytes[20..packet.length];
+            if (tcp.len > @as(usize, tcp[12] >> 4) * 4) {
+                if (sent.note(_ip.get32(tcp, 4)) == 1 and std.mem.indexOfScalar(usize, drops, sent.count - 1) != null) continue;
+            }
+        }
+        rig.deliver(packet);
+    }
+}
+
+test "a sender with SACK sends again only the segments the blocks say are missing, without a timeout" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 105);
+    const client = _tcp.of(socketOf(&rig.a, pair.client));
+    const size: i32 = 256 * 1024;
+    _ = rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_SNDBUF, &size, @sizeOf(i32));
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &size, @sizeOf(i32));
+    // A byte from B tells A the window.
+    _ = rig.b.sb.Send(pair.server, "x", 1, 0);
+    rig.pump();
+    var one: [1]u8 = undefined;
+    _ = rig.a.sb.Recv(pair.client, &one, 1, 0);
+    const data = try testing.allocator.alloc(u8, 120 * 1460);
+    defer testing.allocator.free(data);
+    const got = try testing.allocator.alloc(u8, data.len);
+    defer testing.allocator.free(got);
+    for (data, 0..) |*byte, index| byte.* = @truncate(index *% 13 +% index / 300);
+    // Two holes in the first window, three in a later one.
+    const drops = [_]usize{ 3, 5, 30, 31, 35 };
+    try testing.expectEqual(@as(i32, @intCast(data.len)), rig.a.sb.Send(pair.client, data.ptr, @intCast(data.len), 0));
+    var sent: Sent = .{};
+    var received: usize = 0;
+    var now: u64 = rig.a.stack.fixed_time;
+    var rounds: usize = 0;
+    while (received < data.len and rounds < 2000) : (rounds += 1) {
+        pumpDropping(&rig, &sent, &drops);
+        while (true) {
+            const taken = rig.b.sb.Recv(pair.server, got[received..].ptr, @intCast(got.len - received), 0);
+            if (taken <= 0) break;
+            received += @intCast(taken);
+        }
+        if (received == data.len) break;
+        now += 1000;
+        if (wire_count == 0) {
+            if (rig.earliest()) |deadline| now = @max(now, deadline);
+        }
+        rig.advance(now);
+    }
+    try testing.expectEqual(data.len, received);
+    try testing.expectEqualSlices(u8, data, got);
+    // Each lost segment went twice, every other once, and the timer never
+    // ran out.
+    try testing.expect(sent.count > 35);
+    for (sent.times[0..sent.count], 0..) |times, index| {
+        const lost = std.mem.indexOfScalar(usize, &drops, index) != null;
+        try testing.expectEqual(@as(u32, if (lost) 2 else 1), times);
+    }
+    const counts = rig.a.stack.counts;
+    try testing.expectEqual(@as(u32, 0), counts.tcp_retransmits);
+    try testing.expectEqual(@as(u32, 2), counts.tcp_fast_retransmits);
+    try testing.expectEqual(@as(u32, 0), client.flags & _tcp.recovering);
+    closeAll(&rig, pair);
     try rig.deinit();
 }
 

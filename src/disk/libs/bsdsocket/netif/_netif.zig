@@ -55,7 +55,10 @@ pub const Interface = extern struct {
     dhcp: u8 = 0,
     bound: u8 = 0,
     link_local: u8 = 0,
-    pad3: u8 = 0,
+    /// The checksums its device does (S2OFFLOADF_*): those of IPv4 TCP
+    /// and UDP packets that come in checked, of those that go out filled
+    /// in.
+    offload: u8 = 0,
     /// Its Ethernet address, for an interface on a device.
     hardware: [6]u8 = @splat(0),
     pad2: [2]u8 = .{ 0, 0 },

@@ -247,6 +247,9 @@ pub const Frame = struct {
     length: u32,
     /// Whether it came in whole and without an error.
     good: bool,
+    /// Whether the MAC checked its checksums: this one has no engine for
+    /// them.
+    checked: bool = false,
 };
 
 /// The frame in a receive descriptor, or null while the engine has it.
@@ -264,9 +267,10 @@ pub fn received(descriptor: *const Descriptor, buffer_bytes: u32) ?Frame {
 }
 
 /// A send descriptor handed to the engine with the frame of `length`
-/// bytes in its buffer.
-pub fn queueSend(descriptor: *Descriptor, buffer: []u8, length: u32) void {
+/// bytes in its buffer. The MAC fills in no checksums (`fill`).
+pub fn queueSend(descriptor: *Descriptor, buffer: []u8, length: u32, fill: bool) void {
     _ = buffer;
+    _ = fill;
     descriptor.control = length & send_length_mask;
     descriptor.status = own | send_ic | send_ls | send_fs | send_tch;
 }

@@ -147,9 +147,8 @@ pub fn obtain(base: *ExecBase, sem: *SignalSemaphore, shared: bool) void {
 /// True when it is the task's; false, and nothing changed, when it would
 /// have to wait.
 pub fn obtainNow(base: *ExecBase, sem: *SignalSemaphore, shared: bool) bool {
-    const hardware = _interrupt.interrupt_hardware;
-    const mask = hardware.disable();
-    defer hardware.restore(mask);
+    const masked = _interrupt.mask();
+    defer _interrupt.unmask(masked);
     const task = base.cpu().this_task;
     if (!take(base, sem, task, shared)) return false;
     noteHold(task, sem, shared);
@@ -261,11 +260,10 @@ pub fn enter(base: *ExecBase, sem: *SignalSemaphore, request: *SemaphoreRequest)
 /// it, or when it is not the task's: what `leave` does, or alerts, under
 /// the lock.
 pub fn releaseNow(base: *ExecBase, sem: *SignalSemaphore) bool {
-    const hardware = _interrupt.interrupt_hardware;
-    const mask = hardware.disable();
-    defer hardware.restore(mask);
+    const masked = _interrupt.mask();
+    defer _interrupt.unmask(masked);
     const task = base.cpu().this_task;
-    const hold = findHold(&task.holds, sem) orelse return false;
+    const at = findHold(&task.holds, sem) orelse return false;
     var state = load(sem);
     while (true) : (state = load(sem)) {
         const holds = state & SEM_HOLDS;
@@ -277,8 +275,9 @@ pub fn releaseNow(base: *ExecBase, sem: *SignalSemaphore) bool {
             if (free(base, sem, state, task)) break;
         }
     }
+    const hold = &task.holds[at];
     hold.count -|= 1;
-    if (hold.count == 0 or state & SEM_HOLDS == 1) hold.* = .{};
+    if (hold.count == 0 or state & SEM_HOLDS == 1) removeHold(&task.holds, at);
     return true;
 }
 
@@ -490,28 +489,39 @@ pub fn noteBidHold(task: *Task, sem: *SignalSemaphore, shared: bool) void {
     note(&task.bid_holds, &task.bid_holds_lost, sem, shared);
 }
 
+/// A table is kept packed: its entries in use first, the free ones
+/// after - so a search ends at the first free entry, which for a task
+/// holding a semaphore or two is the second or the third, not the end.
 fn note(table: []SemaphoreHold, lost: *u16, sem: *SignalSemaphore, shared: bool) void {
-    var free_entry: ?*SemaphoreHold = null;
     for (table) |*hold| {
         if (hold.semaphore == sem) {
             hold.count +|= 1;
             return;
         }
-        if (hold.semaphore == null and free_entry == null) free_entry = hold;
+        if (hold.semaphore == null) {
+            hold.* = .{ .semaphore = sem, .count = 1, .shared = shared };
+            return;
+        }
     }
-    const entry = free_entry orelse {
-        lost.* +|= 1;
-        return;
-    };
-    entry.* = .{ .semaphore = sem, .count = 1, .shared = shared };
+    lost.* +|= 1;
 }
 
-/// `sem`'s entry in `table`, or null.
-fn findHold(table: []SemaphoreHold, sem: *SignalSemaphore) ?*SemaphoreHold {
-    for (table) |*hold| {
-        if (hold.semaphore == sem) return hold;
+/// Where `sem`'s entry is in `table`, or null.
+fn findHold(table: []SemaphoreHold, sem: *SignalSemaphore) ?usize {
+    for (table, 0..) |hold, at| {
+        if (hold.semaphore == sem) return at;
+        if (hold.semaphore == null) return null;
     }
     return null;
+}
+
+/// The entry at `at` freed, and the table packed again: its last entry in
+/// use moved into the gap.
+fn removeHold(table: []SemaphoreHold, at: usize) void {
+    var last = at;
+    while (last + 1 < table.len and table[last + 1].semaphore != null) last += 1;
+    table[at] = table[last];
+    table[last] = .{};
 }
 
 /// One hold of `sem` by `task` let go: its entry counted down, and freed
@@ -543,9 +553,10 @@ pub fn dropBidHold(task: *Task, sem: *SignalSemaphore, free_now: bool) void {
 }
 
 fn drop(table: []SemaphoreHold, sem: *SignalSemaphore, free_now: bool) bool {
-    const hold = findHold(table, sem) orelse return false;
+    const at = findHold(table, sem) orelse return false;
+    const hold = &table[at];
     hold.count -|= 1;
-    if (hold.count == 0 or free_now) hold.* = .{};
+    if (hold.count == 0 or free_now) removeHold(table, at);
     return true;
 }
 
@@ -663,9 +674,8 @@ pub fn compareAndSetOrdered(base: *ExecBase, word: *u32, expected: u32, new: u32
     if (builtin.is_test or inInternalMemory(@intFromPtr(word))) {
         return @cmpxchgStrong(u32, word, expected, new, order, .monotonic) == null;
     }
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
-    defer hardware.restore(state);
+    const state = _interrupt.mask();
+    defer _interrupt.unmask(state);
     if (@cmpxchgStrong(u32, &base.lock_guard, 0, 1, .acquire, .monotonic) != null) return false;
     defer @atomicStore(u32, &base.lock_guard, 0, .release);
     const value: *volatile u32 = word;
@@ -674,30 +684,114 @@ pub fn compareAndSetOrdered(base: *ExecBase, word: *u32, expected: u32, new: u32
     return true;
 }
 
-/// Task switching on this core stopped for as long as `lock` is held or
-/// tried - on this core alone: the holder keeps its core, the other core
-/// goes on. A LOCKF_INTERRUPT lock is taken inside Disable as well, which
-/// masks the core's interrupts and takes the system's interrupt lock: a
-/// holder that signals a task takes that lock anyway, and an interrupt on
-/// the other core that wants this lock holds it already, so it comes
-/// first, always.
-pub fn holdCore(base: *ExecBase, lock: *const Lock) void {
+/// The first try at `lock`, everything in one stretch with this core's
+/// interrupts masked: task switching on this core stopped - on this core
+/// alone: the holder keeps its core, the others go on - the rules checked
+/// against the locks the core holds, and the lock taken, on the core's
+/// list and its holder noted, if it is free. A LOCKF_INTERRUPT lock is
+/// taken inside Disable as well, which masks the core's interrupts and
+/// takes the system's interrupt lock: a holder that signals a task takes
+/// that lock anyway, and an interrupt on another core that wants this
+/// lock holds it already, so it comes first, always.
+///
+/// The rules: in an interrupt only a LOCKF_INTERRUPT lock, and - for a
+/// lock that is waited for (`ordered`) - only after every lock the core
+/// holds in the lock order. A broken one is a recoverable alert naming
+/// the locks, said with the interrupts on again - it prints - and before
+/// the lock is taken, which it is all the same.
+///
+/// It was five masked stretches a take and a release, each two calls
+/// through the interrupt table.
+///
+/// INPUTS:
+/// - `ordered` - whether the lock is waited for (AcquireLock), so the
+///   lock order counts.
+/// - `where` - the caller's address, for an alert.
+///
+/// RESULT:
+/// True when the lock is the caller's. False when it is held: task
+/// switching stays stopped, for the caller to try again or to undo
+/// (`releaseCore`).
+pub fn takeLock(base: *ExecBase, lock: *Lock, ordered: bool, where: usize) bool {
     if (lock.flags & lk.LOCKF_INTERRUPT != 0) base.iface().Disable();
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
-    base.cpu().hold_count += 1;
-    hardware.restore(state);
+    const state = _interrupt.mask();
+    const cpu = base.cpu();
+    cpu.hold_count += 1;
+    const wrong_place = cpu.int_depth != 0 and lock.flags & lk.LOCKF_INTERRUPT == 0;
+    const full = cpu.lock_count == lk.LOCKS_HELD_MAX;
+    var later: ?*const Lock = null;
+    if (ordered and !full) {
+        for (cpu.locks_held[0..cpu.lock_count]) |entry| {
+            const held = entry orelse continue;
+            if (held.order < lock.order) continue;
+            later = held;
+            break;
+        }
+    }
+    const broken = wrong_place or full or later != null;
+    if (!broken and compareAndSet(base, &lock.state, 0, heldHere(base))) {
+        noteTakenOn(cpu, lock);
+        _interrupt.unmask(state);
+        return true;
+    }
+    _interrupt.unmask(state);
+    if (!broken) return false;
+
+    if (wrong_place) {
+        ruleBroken(base, "%.40s taken in an interrupt, without LOCKF_INTERRUPT", .{nameOf(lock)}, where);
+    }
+    if (full) {
+        ruleBroken(base, "%.40s taken while the core holds %u locks already", .{ nameOf(lock), @as(u32, lk.LOCKS_HELD_MAX) }, where);
+    } else if (later) |held| {
+        ruleBroken(base, "%.40s (order %u) taken while %.40s (order %u) is held", .{
+            nameOf(lock),
+            @as(u32, lock.order),
+            nameOf(held),
+            @as(u32, held.order),
+        }, where);
+    }
+    if (!compareAndSet(base, &lock.state, 0, heldHere(base))) return false;
+    noteTaken(base, lock);
+    return true;
 }
 
-/// What `holdCore` stopped, going again, and a switch that came due
-/// meanwhile taken.
+/// `lock` given back by this core, in one stretch with its interrupts
+/// masked: off the core's list, its holder forgotten, the word cleared -
+/// everything written while it was held seen before it is free - and task
+/// switching on the core going again once it holds no lock. Then a
+/// LOCKF_INTERRUPT lock's Enable, matching the take's Disable, or a
+/// switch that came due meanwhile.
+///
+/// RESULT:
+/// False, and nothing changed, when this core does not hold `lock`.
+pub fn giveLock(base: *ExecBase, lock: *Lock) bool {
+    const state = _interrupt.mask();
+    const cpu = base.cpu();
+    if (@atomicLoad(u32, &lock.state, .monotonic) != heldHere(base) or !unlist(cpu, lock)) {
+        _interrupt.unmask(state);
+        return false;
+    }
+    lock.owner = null;
+    @atomicStore(u32, &lock.state, 0, .release);
+    cpu.hold_count -= 1;
+    const due = _task.switchDue(cpu);
+    _interrupt.unmask(state);
+    if (lock.flags & lk.LOCKF_INTERRUPT != 0) {
+        base.iface().Enable(); // which takes a switch due itself
+    } else if (due) {
+        _task.task_hardware.switch_now();
+    }
+    return true;
+}
+
+/// What `takeLock` stopped, going again, for a lock not taken after all,
+/// and a switch that came due meanwhile taken.
 pub fn releaseCore(base: *ExecBase, lock: *const Lock) void {
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
+    const state = _interrupt.mask();
     const cpu = base.cpu();
     cpu.hold_count -= 1;
     const due = _task.switchDue(cpu);
-    hardware.restore(state);
+    _interrupt.unmask(state);
     if (lock.flags & lk.LOCKF_INTERRUPT != 0) {
         base.iface().Enable(); // which takes a switch due itself
     } else if (due) {
@@ -710,55 +804,17 @@ fn nameOf(lock: *const Lock) [*:0]const u8 {
     return lock.node.name orelse "a lock";
 }
 
-/// The rules for taking `lock` now: in an interrupt only a
-/// LOCKF_INTERRUPT lock, and - for a lock that is waited for (`ordered`)
-/// - only after every lock the core holds in the lock order. A broken
-/// rule is a recoverable alert naming the locks; the lock is taken all the
-/// same.
-///
-/// INPUTS:
-/// - `where` - the caller's address, for the alert.
-pub fn checkTake(base: *ExecBase, lock: *const Lock, ordered: bool, where: usize) void {
-    // Read with the interrupts masked, alerted with them on: the alert
-    // prints.
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
-    const cpu = base.cpu();
-    const in_interrupt = cpu.int_depth != 0;
-    const full = cpu.lock_count == lk.LOCKS_HELD_MAX;
-    var later: ?*const Lock = null;
-    if (ordered and !full) {
-        for (cpu.locks_held[0..cpu.lock_count]) |entry| {
-            const held = entry orelse continue;
-            if (held.order < lock.order) continue;
-            later = held;
-            break;
-        }
-    }
-    hardware.restore(state);
-
-    if (in_interrupt and lock.flags & lk.LOCKF_INTERRUPT == 0) {
-        ruleBroken(base, "%.40s taken in an interrupt, without LOCKF_INTERRUPT", .{nameOf(lock)}, where);
-    }
-    if (full) {
-        ruleBroken(base, "%.40s taken while the core holds %u locks already", .{ nameOf(lock), @as(u32, lk.LOCKS_HELD_MAX) }, where);
-        return;
-    }
-    const held = later orelse return;
-    ruleBroken(base, "%.40s (order %u) taken while %.40s (order %u) is held", .{
-        nameOf(lock),
-        @as(u32, lock.order),
-        nameOf(held),
-        @as(u32, held.order),
-    }, where);
+/// `lock` taken after a spin: on the core's list, and its holder noted.
+pub fn noteTaken(base: *ExecBase, lock: *Lock) void {
+    const state = _interrupt.mask();
+    defer _interrupt.unmask(state);
+    noteTakenOn(base.cpu(), lock);
 }
 
-/// `lock` taken: on the core's list, and its holder noted.
-pub fn noteTaken(base: *ExecBase, lock: *Lock) void {
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
-    defer hardware.restore(state);
-    const cpu = base.cpu();
+/// `lock` on `cpu`'s list - unless it is full, which its take alerted -
+/// and its holder noted: the running task, or nobody in an interrupt.
+/// The core's interrupts are masked.
+fn noteTakenOn(cpu: *exec_base.CpuState, lock: *Lock) void {
     if (cpu.lock_count < lk.LOCKS_HELD_MAX) {
         cpu.locks_held[cpu.lock_count] = lock;
         cpu.lock_count += 1;
@@ -766,12 +822,9 @@ pub fn noteTaken(base: *ExecBase, lock: *Lock) void {
     lock.owner = if (cpu.int_depth == 0) cpu.this_task else null;
 }
 
-/// `lock` off the core's list; false when it was not on it.
-pub fn noteReleased(base: *ExecBase, lock: *Lock) bool {
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
-    defer hardware.restore(state);
-    const cpu = base.cpu();
+/// `lock` off `cpu`'s list, the later ones moved up; false when it was
+/// not on it. The core's interrupts are masked.
+fn unlist(cpu: *exec_base.CpuState, lock: *Lock) bool {
     var at: usize = 0;
     while (at < cpu.lock_count) : (at += 1) {
         if (cpu.locks_held[at] == lock) break;
@@ -779,7 +832,6 @@ pub fn noteReleased(base: *ExecBase, lock: *Lock) bool {
     while (at + 1 < cpu.lock_count) : (at += 1) cpu.locks_held[at] = cpu.locks_held[at + 1];
     cpu.lock_count -= 1;
     cpu.locks_held[cpu.lock_count] = null;
-    lock.owner = null;
     return true;
 }
 
@@ -788,12 +840,11 @@ pub fn noteReleased(base: *ExecBase, lock: *Lock) bool {
 /// good. The core's state is read with its interrupts masked: a task that
 /// holds no lock may be moved to the other core between two reads.
 pub fn checkWait(base: *ExecBase, where: usize) void {
-    const hardware = _interrupt.interrupt_hardware;
-    const state = hardware.disable();
+    const state = _interrupt.mask();
     const cpu = base.cpu();
     const in_interrupt = cpu.int_depth != 0;
     const held = if (cpu.lock_count == 0) null else cpu.locks_held[cpu.lock_count - 1];
-    hardware.restore(state);
+    _interrupt.unmask(state);
     if (in_interrupt) @panic("Wait called from an interrupt");
     const lock = held orelse return;
     // A dead end: the core's count of locks held is the core's, not the

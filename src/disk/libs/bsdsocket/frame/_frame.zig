@@ -24,8 +24,8 @@ const Interface = @import("../netif/_netif.zig").Interface;
 
 /// Room in front for the headers of a packet going out: the link's (14 on
 /// Ethernet), IPv6's (40; IPv4's is 20) and the transport's (8 for UDP,
-/// 20 for TCP, 28 with the MSS and window scale options), rounded up.
-pub const headroom = 96;
+/// 20 for TCP, 56 with four SACK blocks), rounded up to two cache lines.
+pub const headroom = 128;
 /// A frame's buffer: the headroom and the largest packet a link takes,
 /// 1500 bytes of IP and a 14-byte header, with its checksum.
 pub const buffer_bytes = headroom + 1536;
@@ -60,6 +60,12 @@ pub const Frame = extern struct {
     /// A large frame, allocated to its size for one datagram and freed
     /// when it is given back, rather than kept in the pool.
     large: u8 = 0,
+    /// The device's checksums (SANA2IOF_CHECKSUM): a packet that came in
+    /// had its IPv4 header's and its TCP or UDP checksum checked by the
+    /// device, and they are right; one going out has both left 0 for the
+    /// device to fill in.
+    checked: u8 = 0,
+    fill_checksums: u8 = 0,
     pad: u8 = 0,
     /// The bytes `buffer` holds: `buffer_bytes`, more for a large frame.
     capacity: u32 = buffer_bytes,
@@ -138,6 +144,8 @@ pub const Pool = extern struct {
         frame.sequence = 0;
         frame.link_type = 0;
         frame.large = 0;
+        frame.checked = 0;
+        frame.fill_checksums = 0;
         frame.capacity = buffer_bytes;
         return frame;
     }
@@ -156,6 +164,8 @@ pub const Pool = extern struct {
         frame.sequence = 0;
         frame.link_type = 0;
         frame.large = 1;
+        frame.checked = 0;
+        frame.fill_checksums = 0;
         frame.capacity = @max(capacity, buffer_bytes);
         pool.large_out += 1;
         return frame;

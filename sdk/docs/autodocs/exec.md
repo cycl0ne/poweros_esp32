@@ -263,8 +263,9 @@ low-memory handlers expunge libraries.
 
 **NOTES**
 
-A plain lock free to take costs a compare-and-set and two masked
-counts; a `LOCKF_INTERRUPT` lock a `Disable` as well.
+A plain lock free to take costs a compare-and-set in one stretch with
+the core's interrupts masked; a `LOCKF_INTERRUPT` lock a `Disable` as
+well.
 
 **BUGS**
 

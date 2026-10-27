@@ -148,6 +148,11 @@ pub const EmacBase = extern struct {
     /// that came up slower runs slower all the same.
     pub const bps: u64 = if (mac.gigabit) 1_000_000_000 else 100_000_000;
 
+    /// The checksums the MAC does, if it has the engine for them.
+    pub fn offload(_: *EmacBase) u32 {
+        return if (@hasDecl(mac, "offload")) mac.offload() else 0;
+    }
+
     pub fn setStation(_: *EmacBase, address: *const ethernet.Address) void {
         mac.setStation(address);
     }
@@ -202,7 +207,7 @@ pub const EmacBase = extern struct {
             base.send_busy += 1;
             base.writeBack(&work.send[slot], length);
             const descriptor = &work.send_chain[slot];
-            mac.queueSend(descriptor, &work.send[slot], length);
+            mac.queueSend(descriptor, &work.send[slot], length, req.req.flags & net.SANA2IOF_CHECKSUM != 0);
             base.writeBack(descriptor, @sizeOf(mac.Descriptor));
             started = true;
         }
@@ -241,7 +246,7 @@ pub const EmacBase = extern struct {
                 base.net.damaged();
             } else {
                 base.invalidate(&work.receive[slot], frame.length);
-                base.net.receive(work.receive[slot][0..frame.length]);
+                base.net.receiveWith(work.receive[slot][0..frame.length], if (frame.checked) net.SANA2IOF_CHECKSUM else 0);
             }
             mac.giveBack(descriptor, &work.receive[slot]);
             base.writeBack(descriptor, @sizeOf(mac.Descriptor));

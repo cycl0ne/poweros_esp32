@@ -161,7 +161,7 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame) void {
     if (header_length < header_bytes or header_length > packet.len or total < header_length or total > packet.len) {
         return drop(stack, frame, &stack.counts.ip_bad_header);
     }
-    if (finish(sum(0, packet[0..header_length])) != 0) return drop(stack, frame, &stack.counts.ip_bad_checksum);
+    if (frame.checked == 0 and finish(sum(0, packet[0..header_length])) != 0) return drop(stack, frame, &stack.counts.ip_bad_checksum);
     const header: Header = .{
         .source = get32(packet, 12),
         .destination = get32(packet, 16),
@@ -174,6 +174,8 @@ pub fn input(stack: *StackBase, interface: *Interface, frame: *Frame) void {
     frame.trim(total);
     const fragment = get16(packet, 6);
     if (fragment & (flag_more_fragments | offset_mask) != 0) {
+        // A device checks no fragment's transport checksum.
+        frame.checked = 0;
         stack.counts.ip_fragments += 1;
         return reassembly.input(stack, interface, frame, header, fragment);
     }
@@ -241,7 +243,9 @@ pub fn outputWith(stack: *StackBase, frame: *Frame, source: u32, destination: u3
     put32(header, 12, source);
     put32(header, 16, destination);
     if (options.router_alert) header[header_bytes..][0..router_alert_option.len].* = router_alert_option;
-    put16(header, 10, finish(sum(0, header)));
+    // A transport that left its checksum to the device leaves this one
+    // to it too.
+    put16(header, 10, if (frame.fill_checksums != 0) 0 else finish(sum(0, header)));
     stack.counts.ip_sent += 1;
     return _netif.output(stack, hop.interface, frame, if (group) destination else hop.next_hop);
 }

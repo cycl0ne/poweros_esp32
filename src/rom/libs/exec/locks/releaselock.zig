@@ -56,10 +56,5 @@ const Lock = sdk.exec.Lock;
 /// defer sys.ReleaseLock(&unit.lock);
 /// ```
 pub fn ReleaseLock(base: *ExecBase, lock: *Lock) void {
-    if (@atomicLoad(u32, &lock.state, .monotonic) != _locks.heldHere(base) or !_locks.noteReleased(base, lock)) {
-        _locks.notHeld(base, lock, @returnAddress());
-        return;
-    }
-    @atomicStore(u32, &lock.state, 0, .release);
-    _locks.releaseCore(base, lock);
+    if (!_locks.giveLock(base, lock)) _locks.notHeld(base, lock, @returnAddress());
 }

@@ -17,7 +17,8 @@
 //! beyond the threshold. A timeout sends from the oldest unacknowledged
 //! byte again with a window of one segment; three duplicate
 //! acknowledgements send the missing segment at once and halve the window
-//! (Reno's fast retransmit and recovery).
+//! (Reno's fast retransmit and recovery) - or, with a peer that SACKs,
+//! begin the repair of what its blocks say is missing (sack.zig).
 //!
 //! **Persist**: a peer that shut its window is asked, one byte at a time,
 //! backing off as the timeout does, so a lost window update cannot stall
@@ -33,6 +34,7 @@ const Timer = _timer.Timer;
 const _tcp = @import("_tcp.zig");
 const Tcb = _tcp.Tcb;
 const output = @import("output.zig");
+const sack = @import("sack.zig");
 
 pub const rto_initial_us: u32 = 1_000_000;
 pub const rto_min_us: u32 = 200_000;
@@ -101,14 +103,16 @@ pub fn grow(tcb: *Tcb, acked: u32) void {
 
 /// Half of what is in flight, and never less than two segments: the
 /// threshold after a loss.
-fn halved(tcb: *const Tcb) u32 {
+pub fn halved(tcb: *const Tcb) u32 {
     return @max((tcb.snd_max -% tcb.snd_una) / 2, 2 * tcb.mss);
 }
 
 /// A duplicate acknowledgement: the third sends the missing segment at
 /// once and halves the window; each after it lets one more segment out.
+/// A peer that SACKs says more than that (sack.zig).
 pub fn duplicate(stack: *StackBase, tcb: *Tcb) void {
     tcb.dupacks += 1;
+    if (tcb.flags & _tcp.sack_ok != 0) return sack.duplicate(stack, tcb);
     if (tcb.dupacks == 3) {
         tcb.ssthresh = halved(tcb);
         resendFirst(stack, tcb);
@@ -154,6 +158,7 @@ pub fn retransmitExpired(stack: *StackBase, fired: *Timer, now: u64) void {
     tcb.cwnd = tcb.mss;
     tcb.dupacks = 0;
     tcb.timing = 0;
+    sack.timedOut(tcb);
     _ = _timer.set(stack, &tcb.timer_retransmit, now + tcb.rto);
     if (syn_state and _tcp.before(tcb.snd_una, tcb.ring_seq)) {
         _ = output.sendSyn(stack, tcb);

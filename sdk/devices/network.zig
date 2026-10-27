@@ -13,10 +13,12 @@
 //!                           and destination address, ios2_DataLength, and
 //!                           SANA2IOF_BCAST or _MCAST if it was sent to
 //!                           many. With SANA2IOF_RAW, the whole frame,
-//!                           header included.
+//!                           header included. SANA2IOF_CHECKSUM when the
+//!                           hardware checked the packet's checksums.
 //!   CMD_WRITE               ios2_DataLength bytes of ios2_PacketType to
 //!                           ios2_DstAddr. With SANA2IOF_RAW, ios2_Data is
-//!                           the whole frame.
+//!                           the whole frame. With SANA2IOF_CHECKSUM the
+//!                           hardware fills the packet's checksums in.
 //!   CMD_FLUSH               aborts every queued request of this opener
 //!                           (IOERR_ABORTED).
 //!   S2_DEVICEQUERY          fills the Sana2DeviceQuery in ios2_StatData.
@@ -72,6 +74,16 @@
 //! is polled from a timer.device request, and only while the unit is
 //! online.
 //!
+//! **Checksums the hardware does** (`offload` in Sana2DeviceQuery, 0 for
+//! a device that does none). S2OFFLOADF_RX_CHECKSUMS: a read is answered
+//! with SANA2IOF_CHECKSUM when the hardware checked the IPv4 header's
+//! checksum and the TCP or UDP checksum of the packet, and both are
+//! right; a packet with a wrong one, a fragment, ICMP and anything else
+//! comes without it, for the opener to check. S2OFFLOADF_TX_CHECKSUMS: a
+//! write of an IPv4 packet that carries TCP or UDP, whole and not a
+//! fragment, may set SANA2IOF_CHECKSUM, and the hardware fills in both
+//! checksums, which the opener leaves 0.
+//!
 //! A request that has to wait needs a reply port; without one it fails
 //! with IOERR_NOREPLYPORT.
 
@@ -124,6 +136,10 @@ pub const SANA2IOB_BCAST = 6;
 pub const SANA2IOF_BCAST: u8 = 1 << SANA2IOB_BCAST;
 pub const SANA2IOB_MCAST = 5;
 pub const SANA2IOF_MCAST: u8 = 1 << SANA2IOB_MCAST;
+/// A read's packet had its checksums checked by the hardware, and they
+/// are right; a write's has them filled in by the hardware (`offload`).
+pub const SANA2IOB_CHECKSUM = 3;
+pub const SANA2IOF_CHECKSUM: u8 = 1 << SANA2IOB_CHECKSUM;
 pub const SANA2IOB_QUICK = 0;
 pub const SANA2IOF_QUICK: u8 = exec.IOF_QUICK;
 
@@ -196,7 +212,14 @@ pub const Sana2DeviceQuery = extern struct {
     hardware_type: u32 = 0,
     /// RawMTU: the most bytes of one frame, header included.
     raw_mtu: u32 = 0,
+    /// The checksums the hardware does: S2OFFLOADF_*.
+    offload: u32 = 0,
 };
+
+/// Sana2DeviceQuery's `offload`: received packets' checksums checked, and
+/// sent packets' filled in, by the hardware.
+pub const S2OFFLOADF_RX_CHECKSUMS: u32 = 1 << 0;
+pub const S2OFFLOADF_TX_CHECKSUMS: u32 = 1 << 1;
 
 /// HardwareType: the kinds of link.
 pub const S2WireType_Ethernet: u32 = 1;
