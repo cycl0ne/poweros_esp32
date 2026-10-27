@@ -87,7 +87,7 @@ const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 12;
+const HANDLER_REVISION = 13;
 const BUILD_DATE = "27.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
@@ -181,7 +181,8 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     defer sys.FreeVec(block);
     // Reading ahead and gathering writes, when there is the memory for
     // them, and a signal that says when a READ's answer comes.
-    const ahead_block = sys.AllocVec(2 * session_area.receive_size + session_area.io_max, exec.MEMF_ANY);
+    const ahead_room = fs_area.ahead_buffer_count * session_area.receive_size;
+    const ahead_block = sys.AllocVec(ahead_room + session_area.io_max, exec.MEMF_ANY);
     defer if (ahead_block) |ahead| sys.FreeVec(ahead);
     const event_signal = sys.AllocSignal(-1);
     defer if (event_signal >= 0) sys.FreeSignal(event_signal);
@@ -220,7 +221,9 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
         const tags = [_]TagItem{ .{ .tag = bsd.SBTM_SETVAL(bsd.SBTC_SIGEVENTMASK), .data = event_mask }, .{} };
         if (sb.SocketBaseTagList(&tags) == 0) {
             const bytes: [*]u8 = @ptrCast(ahead_block.?);
-            st.fs.ahead_buffers = .{ bytes[0..session_area.receive_size], bytes[session_area.receive_size..][0..session_area.receive_size] };
+            var buffers: [fs_area.ahead_buffer_count][]u8 = undefined;
+            for (&buffers, 0..) |*one, index| one.* = bytes[index * session_area.receive_size ..][0..session_area.receive_size];
+            st.fs.ahead_buffers = buffers;
         }
     }
 
@@ -238,7 +241,7 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
     // Writes are gathered only where a timer sends them.
     if (st.fs.ahead_buffers != null and st.clock_port != null) {
         const bytes: [*]u8 = @ptrCast(ahead_block.?);
-        st.fs.gather_buffer = bytes[2 * session_area.receive_size ..][0..session_area.io_max];
+        st.fs.gather_buffer = bytes[ahead_room..][0..session_area.io_max];
     }
     if (st.records.init(sys, dl)) st.fs.records = &st.records;
     if (st.watchers.init(sys)) st.fs.watchers = &st.watchers;

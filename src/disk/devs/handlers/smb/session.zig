@@ -44,13 +44,17 @@
 //! the file's. Any other answer is read whole and taken as `exchange`
 //! takes it.
 //!
-//! **A request sent ahead** (`sendAhead`) - a READ reading ahead, a
-//! WRITE writing behind - is not waited for: its answer is read off the
-//! connection as it comes, into the buffer it was given, by `pump`
+//! **Requests sent ahead** (`sendAhead`) - READs reading ahead, WRITEs
+//! writing behind - are not waited for: up to `ahead_max` of them at
+//! once, their answers read off the connection as they come by `pump`
 //! between packets - a READ's checked as it comes when it would stream -
-//! and kept in `landed` once all of it has come. Every other request
-//! takes the rest of it first (`settle`), so answers still come one
-//! request at a time.
+//! and kept in `landed` once all of one has come, until taken
+//! (`takeLanded`). A message's header says which request it answers, so
+//! it goes into that one's buffer whichever comes first; a sealed one
+//! says nothing until it is opened, so a session that seals sends one
+//! ahead at a time. With `ahead_max` coming, the next waits for the
+//! oldest's answer (`makeRoom`). Every other request takes the rest of
+//! them first (`settle`), so its answers come alone.
 //!
 //! **A WRITE made ready** (`ready`) while the one before it is still
 //! going: its header written and signed before that one's answer is
@@ -105,6 +109,12 @@ const read_lead: usize = wire.header_size + 16;
 /// read before it goes into the signature: enough for crypto.library to
 /// share it between the cores.
 const stream_piece: usize = 128 * 1024;
+
+/// How many requests may be sent ahead at once: two where memory is
+/// plenty, so the server's work on one - signing or checking a MiB, its
+/// disk - is hidden behind the other's data on the wire; one on the
+/// ESP32s.
+pub const ahead_max: usize = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 2 else 1;
 
 /// Credits each request asks for: more than the most one costs.
 const credits_asked: u16 = 32;
@@ -236,10 +246,14 @@ pub const Session = struct {
     share_flags: u32 = 0,
     maximal_access: u32 = 0,
 
-    /// The request sent ahead while its answer comes, and the answer once
-    /// all of it has, until it is taken.
-    ahead: ?Ahead = null,
-    landed: ?Landed = null,
+    /// The requests sent ahead whose answers are still coming, oldest
+    /// first, and the message coming now; the answers that have all come,
+    /// until they are taken.
+    aheads: [ahead_max]Ahead = undefined,
+    ahead_count: usize = 0,
+    incoming: Incoming = .{},
+    landed: [ahead_max]Landed = undefined,
+    landed_count: usize = 0,
 
     /// Requests begun: the send buffer's message room.
     pub fn begin(session: *Session, command: Command) Request {
@@ -324,12 +338,12 @@ pub const Session = struct {
     }
 
     /// One request sent ahead - a READ or a WRITE - its answer left to
-    /// come into `buffer` (`receive_size` bytes) while the handler goes on,
-    /// whatever was ahead before taken in first. Its message id: `landed`
-    /// has its answer, with that id, once `pump` or `settle` has read all
-    /// of it.
+    /// come into `buffer` (`receive_size` bytes at most, and no other
+    /// answer's coming or landed) while the handler goes on, room made for
+    /// it first (`makeRoom`). Its message id: `landed` has its answer,
+    /// with that id, once `pump` or `settle` has read all of it.
     pub fn sendAhead(session: *Session, request: *Request, buffer: []u8) Error!u64 {
-        try session.settle();
+        try session.makeRoom();
         const made = try session.prepare(request, compound_max);
         return session.sendReady(&made, buffer);
     }
@@ -347,12 +361,17 @@ pub const Session = struct {
     }
 
     /// A request made ready sent ahead, its answer left to come into
-    /// `buffer` as `sendAhead`'s does, whatever was ahead before taken in
-    /// first. Its message id.
+    /// `buffer` as `sendAhead`'s does, room made for it first. Its message
+    /// id. A failure ends the requests ahead: their answers will not come.
     pub fn sendReady(session: *Session, made: *const Ready, buffer: []u8) Error!u64 {
-        try session.settle();
-        if (!session.connection.send(made.frame)) return error.Network;
-        session.ahead = .{ .buffer = buffer, .id = made.ids[0], .encrypt = made.encrypt, .may_stream = made.may_stream };
+        try session.makeRoom();
+        if (!session.connection.send(made.frame)) {
+            session.ahead_count = 0;
+            session.incoming = .{};
+            return error.Network;
+        }
+        session.aheads[session.ahead_count] = .{ .buffer = buffer, .id = made.ids[0], .encrypt = made.encrypt, .may_stream = made.may_stream };
+        session.ahead_count += 1;
         return made.ids[0];
     }
 
@@ -367,65 +386,152 @@ pub const Session = struct {
     /// Whether the answer to the request sent ahead as `id` is still
     /// coming.
     pub fn aheadOf(session: *const Session, id: u64) bool {
-        const ahead = session.ahead orelse return false;
-        return ahead.id == id;
-    }
-
-    /// What has come of the answer ahead taken in, without waiting.
-    pub fn pump(session: *Session) Error!void {
-        try session.advance(false);
-    }
-
-    /// All of the answer ahead taken in, waiting for what has not come.
-    pub fn settle(session: *Session) Error!void {
-        try session.advance(true);
-    }
-
-    /// The answer ahead read on - with `wait` to its end, without as far
-    /// as it has come - and kept in `landed` when all of it is there. An
-    /// interim answer is passed over for the one after it. A failure ends
-    /// it: the connection is gone or not to be trusted.
-    fn advance(session: *Session, wait: bool) Error!void {
-        if (session.ahead == null) return;
-        errdefer session.ahead = null;
-        const ahead = &session.ahead.?;
-        while (true) {
-            if (ahead.framed < frame_header) {
-                const got = try session.some(ahead.framing[ahead.framed..], wait);
-                if (got == 0) return;
-                ahead.framed += got;
-                if (ahead.framed < frame_header) continue;
-                ahead.length = @as(usize, ahead.framing[1]) << 16 | @as(usize, ahead.framing[2]) << 8 | ahead.framing[3];
-                // Anything but a session message is not SMB's.
-                if (ahead.framing[0] != 0 or ahead.length > ahead.buffer.len) {
-                    session.connection.close();
-                    return error.Network;
-                }
-                continue;
-            }
-            // The lead first, to know whether it streams; then the rest.
-            const lead_end = @min(ahead.length, read_lead);
-            const until = if (ahead.looked) ahead.length else lead_end;
-            if (ahead.got < until) {
-                const got = try session.some(ahead.buffer[ahead.got..until], wait);
-                if (got == 0) return;
-                ahead.got += got;
-            }
-            if (!ahead.looked and ahead.got == lead_end) {
-                ahead.looked = true;
-                if (ahead.may_stream) try session.lookAhead(ahead);
-            }
-            if (ahead.verify and (ahead.got - ahead.hashed >= stream_piece or (ahead.got == ahead.length and ahead.hashed < ahead.got))) {
-                session.cb.UpdateGmac(&ahead.context, ahead.buffer[ahead.hashed..].ptr, @intCast(ahead.got - ahead.hashed));
-                ahead.hashed = ahead.got;
-            }
-            if (ahead.got < ahead.length) continue;
-            if (try session.land(ahead)) {
-                session.ahead = null;
-                return;
-            }
-            ahead.* = .{ .buffer = ahead.buffer, .id = ahead.id, .encrypt = ahead.encrypt, .may_stream = ahead.may_stream };
+        for (session.aheads[0..session.ahead_count]) |ahead| {
+            if (ahead.id == id) return true;
         }
+        return false;
+    }
+
+    /// Whether an answer still coming, or landed and not taken, is to be
+    /// or is in `buffer`.
+    pub fn busy(session: *const Session, buffer: []const u8) bool {
+        for (session.aheads[0..session.ahead_count]) |ahead| {
+            if (ahead.buffer.ptr == buffer.ptr) return true;
+        }
+        for (session.landed[0..session.landed_count]) |landed| {
+            if (landed.buffer.ptr == buffer.ptr) return true;
+        }
+        return false;
+    }
+
+    /// The oldest answer that has all come, taken; null when none has.
+    pub fn takeLanded(session: *Session) ?Landed {
+        if (session.landed_count == 0) return null;
+        const landed = session.landed[0];
+        session.landed_count -= 1;
+        for (0..session.landed_count) |index| session.landed[index] = session.landed[index + 1];
+        return landed;
+    }
+
+    /// What has come of the answers ahead taken in, without waiting.
+    pub fn pump(session: *Session) Error!void {
+        try session.advance(false, .all);
+    }
+
+    /// All of the answers ahead taken in, waiting for what has not come.
+    pub fn settle(session: *Session) Error!void {
+        try session.advance(true, .all);
+    }
+
+    /// The answer to the request sent ahead as `id` taken in, waiting for
+    /// it - and for the others' that come before it.
+    pub fn settleFor(session: *Session, id: u64) Error!void {
+        try session.advance(true, .{ .one = id });
+    }
+
+    /// Room for one more request ahead: the oldest answer waited for
+    /// while `ahead_max` are coming - while one is, in a session that
+    /// seals.
+    pub fn makeRoom(session: *Session) Error!void {
+        try session.advance(true, .room);
+    }
+
+    /// What `advance` waits for: every answer ahead, one, or room for
+    /// another request.
+    const Until = union(enum) {
+        all,
+        one: u64,
+        room,
+
+        fn met(until: Until, session: *const Session) bool {
+            return switch (until) {
+                .all => session.ahead_count == 0,
+                .one => |id| !session.aheadOf(id),
+                .room => session.ahead_count < if (session.encrypt_all or session.encrypt_tree) 1 else ahead_max,
+            };
+        }
+    };
+
+    /// The answers ahead read on - with `wait` until `until` is met,
+    /// without as far as they have come - each kept in `landed` when all
+    /// of it is there. A failure ends them all: the connection is gone or
+    /// not to be trusted.
+    fn advance(session: *Session, wait: bool, until: Until) Error!void {
+        errdefer {
+            session.ahead_count = 0;
+            session.incoming = .{};
+        }
+        while (!until.met(session)) {
+            if (session.ahead_count == 0) return;
+            if (!try session.readOn(wait)) return;
+        }
+    }
+
+    /// The message coming read on, one step: its framing, its lead - which
+    /// says the request it answers, and whether it streams - or the rest.
+    /// False when nothing more has come, without `wait`. Once all of it
+    /// has, it is kept in `landed` when it is its request's answer, and
+    /// passed over when it is not: an interim answer, a message for no
+    /// request.
+    fn readOn(session: *Session, wait: bool) Error!bool {
+        const in = &session.incoming;
+        if (in.framed < frame_header) {
+            const got = try session.some(in.framing[in.framed..], wait);
+            if (got == 0) return false;
+            in.framed += got;
+            if (in.framed < frame_header) return true;
+            in.length = @as(usize, in.framing[1]) << 16 | @as(usize, in.framing[2]) << 8 | in.framing[3];
+            // Anything but a session message is not SMB's.
+            if (in.framing[0] != 0 or in.length > receive_size) return session.broken();
+            return true;
+        }
+        const lead_end = @min(in.length, read_lead);
+        if (in.target == null) {
+            if (in.got < lead_end) {
+                const got = try session.some(in.lead[in.got..lead_end], wait);
+                if (got == 0) return false;
+                in.got += got;
+                if (in.got < lead_end) return true;
+            }
+            const index = session.answering(in.lead[0..lead_end]);
+            const ahead = &session.aheads[index];
+            if (in.length > ahead.buffer.len) return session.broken();
+            @memcpy(ahead.buffer[0..lead_end], in.lead[0..lead_end]);
+            in.target = index;
+            if (ahead.may_stream) try session.lookAhead(ahead, in);
+        }
+        const ahead = &session.aheads[in.target.?];
+        if (in.got < in.length) {
+            const got = try session.some(ahead.buffer[in.got..in.length], wait);
+            if (got == 0) return false;
+            in.got += got;
+        }
+        if (in.verify and (in.got - in.hashed >= stream_piece or (in.got == in.length and in.hashed < in.got))) {
+            session.cb.UpdateGmac(&in.context, ahead.buffer[in.hashed..].ptr, @intCast(in.got - in.hashed));
+            in.hashed = in.got;
+        }
+        if (in.got < in.length) return true;
+        try session.land(in.target.?);
+        session.incoming = .{};
+        return true;
+    }
+
+    /// The connection closed, as one that sent what cannot be read.
+    fn broken(session: *Session) Error!bool {
+        session.connection.close();
+        return error.Network;
+    }
+
+    /// Which request ahead the message whose lead is `lead` answers: the
+    /// one its message id names - or, when it names none, is sealed or is
+    /// shorter than a header, the oldest, whose `take` passes it over
+    /// when it is not its answer.
+    fn answering(session: *const Session, lead: []const u8) usize {
+        const header = Header.read(lead) orelse return 0;
+        for (session.aheads[0..session.ahead_count], 0..) |ahead, index| {
+            if (ahead.id == header.message_id) return index;
+        }
+        return 0;
     }
 
     /// Of the stream into `into`, as `Connection.readSome` reads it.
@@ -433,38 +539,46 @@ pub const Session = struct {
         return session.connection.readSome(into, wait) orelse error.Network;
     }
 
-    /// The answer ahead's lead come: whether it streams, as `streams`
-    /// says, and when it is to be checked, its GMAC begun.
-    fn lookAhead(session: *Session, ahead: *Ahead) Error!void {
-        const lead = ahead.buffer[0..ahead.got];
-        ahead.streamed = session.streams(lead, ahead.length, ahead.id, ahead.buffer.len) orelse return;
+    /// The lead of a message for `ahead` come: whether it streams, as
+    /// `streams` says, and when it is to be checked, its GMAC begun.
+    fn lookAhead(session: *Session, ahead: *const Ahead, in: *Incoming) Error!void {
+        const lead = ahead.buffer[0..in.got];
+        in.streamed = session.streams(lead, in.length, ahead.id, ahead.buffer.len) orelse return;
         const header = Header.read(lead).?;
-        ahead.verify = header.flags & wire.FLAGS_SIGNED != 0 and session.signer.signs();
-        if (!ahead.verify) return;
-        @memcpy(&ahead.given, lead[wire.signature_at..][0..16]);
+        in.verify = header.flags & wire.FLAGS_SIGNED != 0 and session.signer.signs();
+        if (!in.verify) return;
+        @memcpy(&in.given, lead[wire.signature_at..][0..16]);
         @memset(lead[wire.signature_at..][0..16], 0);
         const nonce = signing.gmacNonce(lead);
-        if (session.cb.InitGmac(&ahead.context, &session.signer.key, 16, &nonce, nonce.len) != crypto.CRYPTOERR_OK) return error.Security;
+        if (session.cb.InitGmac(&in.context, &session.signer.key, 16, &nonce, nonce.len) != crypto.CRYPTOERR_OK) return error.Security;
     }
 
-    /// The answer ahead, all of it come, checked and kept in `landed`:
-    /// true, or false when it was not the request's answer yet - an
-    /// interim one, or a message for no request.
-    fn land(session: *Session, ahead: *Ahead) Error!bool {
-        const message = ahead.buffer[0..ahead.length];
-        if (ahead.streamed) |count| {
+    /// The message for the request ahead at `index`, all of it come:
+    /// checked and kept in `landed`, the request no longer ahead - or
+    /// passed over when it was not the request's answer yet, an interim
+    /// one or a message for no request.
+    fn land(session: *Session, index: usize) Error!void {
+        const ahead = session.aheads[index];
+        const in = &session.incoming;
+        const message = ahead.buffer[0..in.length];
+        const landed: Landed = if (in.streamed) |count| blk: {
             const header = Header.read(message).?;
-            if (ahead.verify and !session.gmacRight(&ahead.context, &ahead.given)) return error.Security;
+            if (in.verify and !session.gmacRight(&in.context, &in.given)) return error.Security;
             session.credits += header.credits;
-            session.landed = .{ .id = ahead.id, .reply = .{ .header = header, .message = message[0..read_lead] }, .data = message[read_lead..][0..count] };
-            return true;
-        }
-        var replies = noReplies();
-        var answered: usize = 0;
-        try session.take(message, (&ahead.id)[0..1], &replies, ahead.encrypt, &answered);
-        if (answered == 0) return false;
-        session.landed = .{ .id = ahead.id, .reply = replies[0], .data = null };
-        return true;
+            break :blk .{ .id = ahead.id, .buffer = ahead.buffer, .reply = .{ .header = header, .message = message[0..read_lead] }, .data = message[read_lead..][0..count] };
+        } else blk: {
+            var replies = noReplies();
+            var answered: usize = 0;
+            try session.take(message, (&ahead.id)[0..1], &replies, ahead.encrypt, &answered);
+            if (answered == 0) return;
+            break :blk .{ .id = ahead.id, .buffer = ahead.buffer, .reply = replies[0], .data = null };
+        };
+        // Taken before more are sent, so there is always room.
+        if (session.landed_count == ahead_max) return error.Protocol;
+        session.landed[session.landed_count] = landed;
+        session.landed_count += 1;
+        session.ahead_count -= 1;
+        for (index..session.ahead_count) |at| session.aheads[at] = session.aheads[at + 1];
     }
 
     /// Whether the GMAC taken in `context` is `given`, every byte
@@ -653,22 +767,29 @@ pub const Ready = struct {
     may_stream: bool,
 };
 
-/// A request sent ahead (`Session.sendAhead`) while its answer comes.
+/// A request sent ahead (`Session.sendAhead`) while its answer comes:
+/// where the answer comes, the request's message id, whether it went
+/// sealed, and whether its answer may be streamed.
 pub const Ahead = struct {
-    /// Where the answer comes, the request's message id, whether it went
-    /// sealed, and whether its answer may be streamed.
     buffer: []u8,
     id: u64,
     encrypt: bool,
     may_stream: bool,
-    /// The message's framing as it comes, then its length, and how much
-    /// of it has come.
+};
+
+/// The message coming on the connection while requests are ahead.
+const Incoming = struct {
+    /// Its framing as it comes, then its length, and how much of it has
+    /// come.
     framing: [frame_header]u8 = undefined,
     framed: usize = 0,
     length: usize = 0,
     got: usize = 0,
-    /// Its lead looked at; the data's length when it streams.
-    looked: bool = false,
+    /// Its lead, until it says which request ahead the message answers:
+    /// then that one's index, the lead and the rest in its buffer.
+    lead: [read_lead]u8 = undefined,
+    target: ?usize = null,
+    /// The data's length when it streams.
     streamed: ?usize = null,
     /// Checked as it comes: the signature it came with, and the GMAC over
     /// the first `hashed` bytes.
@@ -678,11 +799,12 @@ pub const Ahead = struct {
     hashed: usize = 0,
 };
 
-/// The answer to a request sent ahead: the request's message id, its
-/// reply, and a READ's data when it streamed, both in the buffer it came
-/// into.
+/// The answer to a request sent ahead: the request's message id, the
+/// buffer it came into, its reply, and a READ's data when it streamed,
+/// both in that buffer.
 pub const Landed = struct {
     id: u64,
+    buffer: []u8,
     reply: Reply,
     data: ?[]u8,
 };
