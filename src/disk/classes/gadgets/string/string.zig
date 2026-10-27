@@ -8,6 +8,10 @@
 //! after the ridge. Its `ICA_TARGET` is this gadget, which tells its own
 //! target the text and the number in its own name.
 //!
+//! It says it takes text (`GFLG_TYPING`): intuition sees this gadget, not
+//! the strgclass one, as what has the input, and brings the on-screen
+//! keyboard up for it as for any field.
+//!
 //! The `STRINGA_` attributes and `GA_Disabled` go to the strgclass gadget
 //! when this one is made and set, and the `STRINGA_` ones are read from
 //! it. How it ends is strgclass's: Return, Tab, Help, a press elsewhere;
@@ -40,7 +44,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = st.STRING_CLASS,
     .version = 1,
-    .date = "25.09.2026",
+    .revision = 1,
+    .date = "27.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -168,6 +173,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             }
             // Its own style is the inner one's too.
             support.passStyle(ib, base.utility_base, new.attr_list, own.inner.?);
+            gc.gadget(obj).flags |= gc.GFLG_TYPING;
             // Reported as the line is; made without a size, as big as a
             // line needs.
             const sized = ub.FindTagItem(gc.GA_Width, new.attr_list) != null or ub.FindTagItem(gc.GA_Height, new.attr_list) != null;

@@ -397,8 +397,8 @@ keyboard up at the bottom of the screen whenever a field gets the input,
 and takes it away when the field lets go: a program does nothing for
 it. A field is a string gadget, or a gadget of any class that sets
 `GFLG_TYPING` in its flags as it is made - which is how a class of a
-program's own that takes text, `textedit.gadget` among them, gets the
-keyboard too. `IPREFS_Keyboard` says when - `KEYBOARD_AUTO` (no keyboard on
+program's own that takes text, `textedit.gadget`, `string.gadget` and
+`integer.gadget` among them, gets the keyboard too. `IPREFS_Keyboard` says when - `KEYBOARD_AUTO` (no keyboard on
 the board, the default), `KEYBOARD_ALWAYS` or `KEYBOARD_NEVER`.
 `C:test/Keyboard` turns it on and opens a field to try it with.
 The setting is kept in `ENVARC:Sys/intuition.prefs` with intuition's

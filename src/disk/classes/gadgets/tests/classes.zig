@@ -340,6 +340,8 @@ test "string.gadget: a line in a ridge, and a number field that takes digits onl
     try testing.expectEqualStrings("Amiga", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, line, gc.STRINGA_TextVal)))));
     // A line of the font high inside its ridge, taller than the line alone.
     try testing.expect(attr(ib, line, gc.GA_Height) > 12);
+    // It takes text, so the on-screen keyboard comes up for it.
+    try testing.expect(gc.gadget(line).flags & gc.GFLG_TYPING != 0);
     ib.DisposeObject(line);
 
     // A number field.
@@ -2150,6 +2152,8 @@ test "integer.gadget: the arrows step the number, and a number typed is brought 
     var down = input(gc.GM_GOACTIVE, &press, width - 2, 1, &termination);
     try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(field, @ptrCast(&down)));
     try testing.expectEqual(@as(usize, 17), attr(ib, field, ig.INTEGER_Number));
+    // Stepped, it takes no text: no on-screen keyboard for it.
+    try testing.expect(g.flags & gc.GFLG_TYPING == 0);
     var up = input(gc.GM_HANDLEINPUT, &release, width - 2, 1, &termination);
     try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(field, @ptrCast(&up)));
     try testing.expectEqual(@as(i32, 17), termination);
@@ -2187,6 +2191,8 @@ test "integer.gadget: the arrows step the number, and a number typed is brought 
     var in_field = input(gc.GM_GOACTIVE, &press, 2, 1, &termination);
     _ = ib.SendMessage(field, @ptrCast(&in_field));
     try testing.expectEqual(before, attr(ib, field, ig.INTEGER_Number));
+    // Typed into, it takes text: the on-screen keyboard comes up for it.
+    try testing.expect(g.flags & gc.GFLG_TYPING != 0);
     var gone = gc.GpGoInactive{ .gadget_info = null, .abort = 0 };
     _ = ib.SendMessage(field, @ptrCast(&gone));
 

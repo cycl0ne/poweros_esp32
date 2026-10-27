@@ -8,6 +8,10 @@
 //! hands on the input with the pointer moved into its box. Its
 //! `ICA_TARGET` is this gadget, which hears the number as it is typed.
 //!
+//! A press on the field says the gadget takes text (`GFLG_TYPING`), so
+//! the on-screen keyboard comes up for it; a press on an arrow says it
+//! does not, so the keyboard stays away while the number is stepped.
+//!
 //! The number this gadget keeps is the one that counts: a number typed is
 //! taken when the field is done with - brought into the range first - and
 //! the field is told the number back whenever it is set from anywhere
@@ -37,8 +41,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = ig.INTEGER_CLASS,
     .version = 1,
-    .revision = 1,
-    .date = "08.10.2026",
+    .revision = 2,
+    .date = "27.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -396,10 +400,13 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o.?);
             if (in.event == null) return gc.GMR_NOREUSE;
             const which = partsOf(own, o.?, in.gadget_info).arrowAt(own, in.mouse.x, in.mouse.y);
+            const g = gc.gadget(o.?);
             if (which == NONE) {
+                g.flags |= gc.GFLG_TYPING;
                 const at = placeInner(base, own, o.?, in.gadget_info);
                 return support.handOnInput(ib, own.inner.?, in, at);
             }
+            g.flags &= ~gc.GFLG_TYPING;
             own.held = which;
             own.over = 1;
             own.ticks = 0;

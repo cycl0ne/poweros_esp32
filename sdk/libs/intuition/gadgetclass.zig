@@ -287,8 +287,9 @@ pub const GFLG_STILL: u32 = 1 << 13;
 pub const GFLG_REFRESH: u32 = 1 << 14;
 /// It is typed into while it has the input, as a line of text is: on a
 /// board without a keyboard the on-screen one comes up for it. Set by a
-/// class that takes text, as it makes the gadget; strgclass and the
-/// classes made from it need not.
+/// class that takes text, as it makes the gadget - or, for one that is
+/// typed into only in a part of it, as it goes active there; strgclass
+/// and the classes made from it need not.
 pub const GFLG_TYPING: u32 = 1 << 15;
 
 /// Whether a class should move a gadget rather than change it at once:
