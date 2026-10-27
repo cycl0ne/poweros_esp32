@@ -29,8 +29,11 @@
 //!
 //! **Checksums**: the MAC's checksum engine checks every received IPv4
 //! packet's header checksum and its TCP or UDP checksum, and says what it
-//! found in the descriptor; it fills both in for a frame sent with
-//! `fill` (`offload`).
+//! found in the descriptor. It could fill both in for a frame sent with
+//! `fill`, but `offload` does not offer that: on the JH7110 some TCP
+//! segments it filled in went out with a checksum the peer refused, the
+//! same segment every time it was sent again, so a long write over IPv4
+//! stalled for good. The stack fills them in itself.
 //!
 //! It keeps no state but where its registers are (`registers`). The
 //! values follow U-Boot's dwc_eth_qos.c (eqos_start), which runs this
@@ -102,9 +105,7 @@ const config_acs: u32 = 1 << 20;
 const config_cst: u32 = 1 << 21;
 const config_ipc: u32 = 1 << 27;
 
-/// MAC_HW_Feature0: the checksum engine for what is sent, and for what
-/// comes in.
-const feature_tx_coe: u32 = 1 << 14;
+/// MAC_HW_Feature0: the checksum engine for what comes in.
 const feature_rx_coe: u32 = 1 << 16;
 
 /// MAC_Packet_Filter: every frame, or every multicast frame, passed.
@@ -295,12 +296,14 @@ pub fn setUp(receive_bytes: u32) void {
 }
 
 /// The checksums the MAC's engine does, as Sana2DeviceQuery's `offload`
-/// says them: those of what comes in checked, of what is sent filled in,
-/// each where the MAC has the engine for it.
+/// says them: those of what comes in checked, where the MAC has the
+/// engine for it. Never those of what is sent (see the top): of a 1 MiB
+/// SMB WRITE over IPv4, about one full segment in four was refused by
+/// the server, each again when sent again, and the same data with the
+/// stack's checksums went through.
 pub fn offload() u32 {
     const features = at(mac_hw_feature0).*;
-    return (if (features & feature_rx_coe != 0) net.S2OFFLOADF_RX_CHECKSUMS else 0) |
-        (if (features & feature_tx_coe != 0) net.S2OFFLOADF_TX_CHECKSUMS else 0);
+    return if (features & feature_rx_coe != 0) net.S2OFFLOADF_RX_CHECKSUMS else 0;
 }
 
 /// The line's speed and duplex, as the PHY agreed them.
