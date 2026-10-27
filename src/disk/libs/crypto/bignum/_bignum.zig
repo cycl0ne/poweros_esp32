@@ -16,10 +16,18 @@
 //!
 //! The doublings take the same steps whatever the bits: a subtraction is
 //! always worked out and kept or dropped by a mask.
+//!
+//! An exponentiation in software or on the JH7110's PKA goes through the
+//! exponent a window at a time (`windowBits`, `digit`), each window's
+//! entry picked from a table of the base's powers by `pick`, which reads
+//! every entry whatever the window holds.
 
 const sdk = @import("sdk");
 const crypto = sdk.crypto;
 const Number = crypto.Number;
+
+/// The words of the longest number ModExp takes.
+pub const number_words = crypto.NUMBER_MAX / 4;
 
 /// The bytes of `number` after its leading zeroes.
 pub fn significantBytes(number: *const Number) u32 {
@@ -167,6 +175,42 @@ pub fn below(value: []const u32, modulus: []const u32) bool {
         if (value[index] != modulus[index]) return value[index] < modulus[index];
     }
     return false;
+}
+
+/// The most entries of an exponentiation's table: a window of 4 bits.
+pub const window_entries = 16;
+
+/// The window's width, 1, 2 or 4 bits, that takes the fewest
+/// multiplications for an exponent of `bits`: each bit a squaring, each
+/// window a multiplication, and the table one for each entry.
+pub fn windowBits(bits: u32) u5 {
+    var best: u5 = 1;
+    var fewest: u32 = 0xFFFF_FFFF;
+    for ([_]u5{ 1, 2, 4 }) |width| {
+        const cost = bits + (bits + width - 1) / width + (@as(u32, 1) << width);
+        if (cost < fewest) {
+            fewest = cost;
+            best = width;
+        }
+    }
+    return best;
+}
+
+/// The exponent's window `index`, `width` bits; the width divides 32.
+pub fn digit(exponent: []const u32, index: u32, width: u5) u32 {
+    const at = index * width;
+    return (exponent[at / 32] >> @intCast(at % 32)) & ((@as(u32, 1) << width) - 1);
+}
+
+/// `table[index]` into `out`, as many words as `out` has: every entry
+/// read and none chosen by a branch or an address.
+pub fn pick(table: []const [number_words]u32, index: u32, out: []u32) void {
+    @memset(out, 0);
+    for (table, 0..) |*entry, at| {
+        const differs = @as(u32, @intCast(at)) ^ index;
+        const mask = ((differs | (0 -% differs)) >> 31) -% 1;
+        for (out, entry[0..out.len]) |*word, value| word.* |= value & mask;
+    }
 }
 
 /// `out` = `value` mod `modulus`; `value` may have more words.

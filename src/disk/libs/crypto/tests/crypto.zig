@@ -431,6 +431,20 @@ test "GCM of every length as std.crypto has it, and a nonce that is not 12 bytes
         try testing.expectEqualSlices(u8, expected[0..length], out[0..length]);
         try testing.expectEqualSlices(u8, &expected_tag, &tag);
     }
+    // Longer ones, header and data.
+    var long: [1100]u8 = undefined;
+    for (&long, 0..) |*byte, index| byte.* = @truncate(index *% 11 +% 7);
+    for ([_]usize{ 256, 300, 1100 }) |length| {
+        var expected: [1100]u8 = undefined;
+        var expected_tag: [16]u8 = undefined;
+        Gcm.encrypt(expected[0..length], &expected_tag, long[0..length], long[0 .. length / 2 + 128], nonce, key);
+        var out: [1100]u8 = undefined;
+        var tag: [16]u8 = undefined;
+        const message: crypto.GcmMessage = .{ .key = &key, .key_length = 32, .nonce = &nonce, .nonce_length = 12, .aad = &long, .aad_length = @intCast(length / 2 + 128), .input = &long, .output = &out, .length = @intCast(length), .tag = &tag };
+        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
+        try testing.expectEqualSlices(u8, expected[0..length], out[0..length]);
+        try testing.expectEqualSlices(u8, &expected_tag, &tag);
+    }
     // The GCM paper's test case 6: a 60-byte nonce, hashed into J0.
     const key6 = hex("feffe9928665731c6d6a8f9467308308");
     const nonce6 = hex("9313225df88406e555909c5aff5269aa6a7a9538534f7da1e4c303d2a318a728c3c0c95156809539fcf0e2429a6b525416aedbf5a0de6a57a637b39b");
@@ -477,6 +491,23 @@ test "GMAC a piece at a time: std.crypto's tag however the data is cut, a long n
             // Wiped: the context takes nothing more until InitGmac.
             try testing.expectEqual(@as(u32, 0), context.key_length);
             try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.FinishGmac(&context, &tag));
+        }
+    }
+
+    // Longer data, in one piece and in two, against std.crypto.
+    var long: [1100]u8 = undefined;
+    for (&long, 0..) |*byte, index| byte.* = @truncate(index *% 29 +% 3);
+    for ([_]usize{ 255, 256, 257, 271, 320, 333, 1024, 1100 }) |length| {
+        var expected: [16]u8 = undefined;
+        std.crypto.aead.aes_gcm.Aes128Gcm.encrypt(&.{}, &expected, &.{}, long[0..length], nonce, key[0..16].*);
+        for ([_]usize{ length, length / 3 + 1 }) |first| {
+            var context: crypto.GmacContext = .{};
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, 16, &nonce, nonce.len));
+            cb.UpdateGmac(&context, long[0..].ptr, @intCast(first));
+            cb.UpdateGmac(&context, long[first..].ptr, @intCast(length - first));
+            var tag: [16]u8 = undefined;
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
+            try testing.expectEqualSlices(u8, &expected, &tag);
         }
     }
 
@@ -555,6 +586,34 @@ test "ModExp on 2048-bit numbers, as std.crypto.ff works them out" {
         try testing.expectEqual(crypto.CRYPTOERR_OK, cb.ModExp(&result, &.{ .bytes = &base_value, .length = 256 }, &.{ .bytes = &public, .length = 3 }, &.{ .bytes = &modulus, .length = 256 }));
         try testing.expectEqualSlices(u8, &expected, &result);
     }
+}
+
+test "ModExp on a 4096-bit modulus with a 300-bit exponent, as std.crypto.ff works it out" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    const M = std.crypto.ff.Modulus(4096);
+    var prng = std.Random.DefaultPrng.init(4096);
+    const random = prng.random();
+    var modulus: [512]u8 = undefined;
+    random.bytes(&modulus);
+    modulus[0] |= 0x80;
+    modulus[511] |= 1;
+    var base_value: [512]u8 = undefined;
+    random.bytes(&base_value);
+    base_value[0] &= 0x7F;
+    // 37 bytes and 4 bits: windows of 4 bits, every entry of the table.
+    var exponent: [38]u8 = undefined;
+    random.bytes(&exponent);
+    exponent[0] = (exponent[0] & 0x0F) | 0x08;
+    const m = try M.fromBytes(&modulus, .big);
+    const x = try M.Fe.fromBytes(m, &base_value, .big);
+    const expected_fe = try m.powWithEncodedExponent(x, &exponent, .big);
+    var expected: [512]u8 = undefined;
+    try expected_fe.toBytes(&expected, .big);
+    var result: [512]u8 = undefined;
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.ModExp(&result, &.{ .bytes = &base_value, .length = 512 }, &.{ .bytes = &exponent, .length = exponent.len }, &.{ .bytes = &modulus, .length = 512 }));
+    try testing.expectEqualSlices(u8, &expected, &result);
 }
 
 // --- random ----------------------------------------------------------------

@@ -65,6 +65,7 @@ const _base = @import("../crypto_base.zig");
 const CryptoBase = _base.CryptoBase;
 const Numbers = _base.Numbers;
 const _engine = @import("_engine.zig");
+const _bignum = @import("../bignum/_bignum.zig");
 
 /// Whether this chip can have the engine: the RISC-V 64 boards, of which
 /// the board's parts say whether this one does.
@@ -595,8 +596,6 @@ pub const pka_words = 64;
 /// The fewest it is given: 512 bits. On one word it answers wrong, and a
 /// short number is quick in software.
 const pka_fewest = 16;
-/// The most entries of `modExp`'s table: a window of 4 bits.
-pub const table_entries = if (compiled) 16 else 0;
 
 /// The PKA's registers for `modulus`, null where there is none, it has
 /// failed, or it does not take the modulus: one of 16 to 64 words whose
@@ -647,39 +646,6 @@ const Unit = struct {
     }
 };
 
-/// The window's width, 1, 2 or 4 bits, that takes the fewest commands
-/// for an exponent of `bits`: each bit a squaring, each window a
-/// multiplication, and the table one for each entry.
-fn windowBits(bits: u32) u5 {
-    var best: u5 = 1;
-    var fewest: u32 = 0xFFFF_FFFF;
-    for ([_]u5{ 1, 2, 4 }) |width| {
-        const cost = bits + (bits + width - 1) / width + (@as(u32, 1) << width);
-        if (cost < fewest) {
-            fewest = cost;
-            best = width;
-        }
-    }
-    return best;
-}
-
-/// The exponent's window `index`, `width` bits; the width divides 32.
-fn digit(exponent: []const u32, index: u32, width: u5) u32 {
-    const at = index * width;
-    return (exponent[at / 32] >> @intCast(at % 32)) & ((@as(u32, 1) << width) - 1);
-}
-
-/// `table[index]` into `out`, every entry read and none chosen by a
-/// branch or an address.
-fn pick(table: []const [pka_words]u32, index: u32, out: *[pka_words]u32, words: u32) void {
-    @memset(out[0..words], 0);
-    for (table, 0..) |*entry, at| {
-        const differs = @as(u32, @intCast(at)) ^ index;
-        const mask = ((differs | (0 -% differs)) >> 31) -% 1;
-        for (out[0..words], entry[0..words]) |*word, value| word.* |= value & mask;
-    }
-}
-
 /// `numbers.result` = base ^ exponent mod modulus on the PKA, the
 /// operands `words` long, at most `pka_words`, and the exponent `bits`
 /// long, at least 1. The table - x^i R mod N for every value i a window
@@ -689,7 +655,7 @@ fn pick(table: []const [pka_words]u32, index: u32, out: *[pka_words]u32, words: 
 /// were, for software.
 pub fn modExp(cb: *CryptoBase, regs: usize, numbers: *Numbers, words: u32, bits: u32) bool {
     const unit: Unit = .{ .regs = regs, .words = words };
-    const width = windowBits(bits);
+    const width = _bignum.windowBits(bits);
     const table = numbers.table[0 .. @as(u32, 1) << width];
     const one = [1]u32{1};
     var picked: [pka_words]u32 = undefined;
@@ -722,14 +688,14 @@ pub fn modExp(cb: *CryptoBase, regs: usize, numbers: *Numbers, words: u32, bits:
         unit.get(PKA_A, entry);
     }
     var window = (bits + width - 1) / width - 1;
-    pick(table, digit(numbers.exponent[0..words], window, width), &picked, words);
+    _bignum.pick(table, _bignum.digit(numbers.exponent[0..words], window, width), picked[0..words]);
     unit.put(PKA_A, picked[0..words]);
     while (window > 0) {
         window -= 1;
         for (0..width) |_| {
             if (!unit.run(.square, 0)) return pkaBroken(cb);
         }
-        pick(table, digit(numbers.exponent[0..words], window, width), &picked, words);
+        _bignum.pick(table, _bignum.digit(numbers.exponent[0..words], window, width), picked[0..words]);
         unit.put(PKA_E, picked[0..words]);
         if (!unit.run(.multiply, 0)) return pkaBroken(cb);
     }

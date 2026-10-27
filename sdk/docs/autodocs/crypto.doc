@@ -886,17 +886,17 @@ crypto.library/VerifySignature
 	first reduces a base that is not less than it. An exponent of 0
 	answers 1.
 
-	The engine runs in its constant-time mode: each exponent bit costs the
-	same, 0 or 1. It starts from the exponent's highest 1 bit, which gives
-	away only how long the exponent is - a public exponent of 17 bits
-	takes 17 steps, a private one is as long as its modulus in any case.
-	On the JH7110 a modulus of 512 to 2048 bits whose top bit is set - an
-	RSA key's - goes to its PKA, which multiplies while the CPU goes
-	through the exponent a window at a time, every window - 1, 2 or 4
-	bits, whichever takes fewest steps for the exponent's length -
+	The S3's engine runs in its constant-time mode: each exponent bit
+	costs the same, 0 or 1. It starts from the exponent's highest 1 bit,
+	which gives away only how long the exponent is - a public exponent of
+	17 bits takes 17 steps, a private one is as long as its modulus in any
+	case. On the JH7110 a modulus of 512 to 2048 bits whose top bit is
+	set - an RSA key's - goes to its PKA, which multiplies while the CPU
+	goes through the exponent a window at a time, every window - 1, 2 or
+	4 bits, whichever takes fewest steps for the exponent's length -
 	costing the same. Any other modulus there, and any on the P4, is done
-	in software, which multiplies for the 1 bits only: not in constant
-	time.
+	in software the same way: there too only the exponent's length shows
+	in the time it takes.
 
    CONTEXT
 	- Waits: yes, for the RSA engine while another task has it; the

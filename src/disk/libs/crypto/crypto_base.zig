@@ -9,9 +9,11 @@ const exec = sdk.exec;
 const crypto = sdk.crypto;
 const ExecBase = sdk.interface.exec.ExecBase;
 const jh7110 = @import("engine/jh7110.zig");
+const _engine = @import("engine/_engine.zig");
+const _bignum = @import("bignum/_bignum.zig");
 
 /// The words of the longest number ModExp takes.
-pub const number_words = crypto.NUMBER_MAX / 4;
+pub const number_words = _bignum.number_words;
 
 /// ModExp's working numbers, in the engine's form: 32-bit words, least
 /// significant first.
@@ -22,9 +24,10 @@ pub const Numbers = extern struct {
     /// R squared modulo the modulus, R being 2 to the engine's bits.
     rinv: [number_words]u32 = @splat(0),
     result: [number_words]u32 = @splat(0),
-    /// The JH7110's PKA's table of the base's powers (jh7110.zig's
-    /// `modExp`); none elsewhere.
-    table: [jh7110.table_entries][jh7110.pka_words]u32 = @splat(@splat(0)),
+    /// The table of the base's powers an exponentiation in software or
+    /// on the JH7110's PKA picks from; none on the S3, whose engine
+    /// needs none.
+    table: [if (_engine.on_chip) 0 else _bignum.window_entries][number_words]u32 = @splat(@splat(0)),
 };
 
 pub const CryptoBase = extern struct {
