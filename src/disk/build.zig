@@ -65,8 +65,8 @@ const tests = [_][]const u8{
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "mountshare", "git" };
 
 /// Programs with windows, in SYS:Programs and - the system's own tools -
-/// SYS:System: started by their full name or from a shell there, not on
-/// the command path.
+/// SYS:System, and the dock: started by their full name or from a shell
+/// there, not on the command path.
 const window_programs = [_]Program{
     .{ .disk = "programs/FontView", .source = "programs/fontview/fontview.zig", .name = "fontview" },
     .{ .disk = "programs/MultiView", .source = "programs/multiview/multiview.zig", .name = "multiview" },
@@ -77,6 +77,9 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal" },
     .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player" },
     .{ .disk = "programs/Volume", .source = "programs/volume/volume.zig", .name = "volume" },
+    // The dock, one program in either place (`builtFor`).
+    .{ .disk = "programs/Dock", .source = "programs/dock/dock.zig", .name = "dock" },
+    .{ .disk = "WBStartup/Dock", .source = "programs/dock/dock.zig", .name = "dock" },
     .{ .disk = "System/Shell", .source = "system/shell/shell.zig", .name = "shell" },
     .{ .disk = "System/HDToolBox", .source = "system/hdtoolbox/hdtoolbox.zig", .name = "hdtoolbox" },
     .{ .disk = "System/CPULoad", .source = "system/cpuload/cpuload.zig", .name = "cpuload" },
@@ -203,15 +206,19 @@ const s3_only = [_][]const u8{ "rs485.device", "openeth.device" };
 /// ESP32-S3 does not: an Ethernet MAC of the chip's own.
 const mac_only = [_][]const u8{"emac.device"};
 /// Drivers of hardware both ESP32s have and a RISC-V 64 machine under SBI
-/// does not: the DWC2 USB controller, the SD host.
-const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device" };
+/// does not: the DWC2 USB controller, the SD host. And the dock in
+/// SYS:Programs, started by hand: on their small screens it is not
+/// wanted from the start.
+const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock" };
 /// What a RISC-V 64 machine under SBI and an AArch64 machine under PSCI
 /// have and the ESP32s do not: PCI, the command that lists it, and the
-/// USB controllers and SSDs on it.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device" };
+/// USB controllers and SSDs on it. And the dock in SYS:WBStartup, started
+/// with the desktop.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "WBStartup/Dock" };
 
-/// Whether `program` is built for `chip`. The AArch64 machines have no
-/// Ethernet MAC driven yet.
+/// Whether `program` is built for `chip`. The lists name a program by its
+/// name, or by its place on the disk where one program has two. The
+/// AArch64 machines have no Ethernet MAC driven yet.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     const others = switch (chip) {
         .esp32s3 => &(mac_only ++ rv64_only),
@@ -220,7 +227,7 @@ pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
         .a64psci => &(s3_only ++ esp_only ++ mac_only),
     };
     for (others) |name| {
-        if (std.mem.eql(u8, program.name, name)) return false;
+        if (std.mem.eql(u8, program.name, name) or std.mem.eql(u8, program.disk, name)) return false;
     }
     return true;
 }
@@ -320,6 +327,8 @@ pub const files = [_]File{
     .{ .disk = "prefs/env-archive/Sys/anvil.prefs", .source = "prefs/env-archive/Sys/anvil.prefs" },
     .{ .disk = "prefs/env-archive/Sys/sound.prefs", .source = "prefs/env-archive/Sys/sound.prefs" },
     .{ .disk = "prefs/env-archive/Sys/audio.prefs", .source = "prefs/env-archive/Sys/audio.prefs" },
+    .{ .disk = "prefs/env-archive/Sys/dock.prefs", .source = "prefs/env-archive/Sys/dock.prefs" },
+    .{ .disk = "prefs/env-archive/Sys/dock.items", .source = "prefs/env-archive/Sys/dock.items" },
     // The looks the preferences editor offers, a style file each.
     .{ .disk = "prefs/presets/styles/Classic.prefs", .source = "prefs/presets/styles/Classic.prefs" },
     .{ .disk = "prefs/presets/styles/Rounded.prefs", .source = "prefs/presets/styles/Rounded.prefs" },
@@ -360,6 +369,7 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Reading.md", .source = "tests/datatypes/Reading.md" },
     // SYS:Programs/Docs - what each program is and how it is used.
     .{ .disk = "programs/Docs/Battery.md", .source = "programs/battery/README.md" },
+    .{ .disk = "programs/Docs/Dock.md", .source = "programs/dock/README.md" },
     .{ .disk = "programs/Docs/FontView.md", .source = "programs/fontview/README.md" },
     .{ .disk = "programs/Docs/MultiView.md", .source = "programs/multiview/README.md" },
     .{ .disk = "programs/Docs/Notepad.md", .source = "programs/notepad/README.md" },

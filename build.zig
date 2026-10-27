@@ -130,9 +130,10 @@ const image_dirs = [_][]const u8{
 };
 
 /// An icon the build writes onto the image: where it goes, the picture
-/// scripts/fetch-icons.sh drew for it, and its fields as tools/mkicon
-/// takes them.
-const DiskIcon = struct { path: []const u8, picture: []const u8, fields: []const []const u8 = &.{} };
+/// scripts/fetch-icons.sh drew for it, its fields as tools/mkicon takes
+/// them, and - for an icon only some disks have - the pointer size of the
+/// chips whose disks have it.
+const DiskIcon = struct { path: []const u8, picture: []const u8, fields: []const []const u8 = &.{}, pointer_bytes: ?u32 = null };
 
 /// The stack every icon that starts a program asks for: what a command
 /// gets in a shell (`CLI_DEFAULT_STACK`), so a program has the same stack
@@ -197,9 +198,15 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/Terminal.info", .picture = "utilities-terminal", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Player.info", .picture = "multimedia-player", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Volume.info", .picture = "audio-card", .fields = &.{ "KIND=TOOL", icon_stack } },
+    // The dock: on the ESP32s in SYS:Programs, started by hand; on the
+    // 64-bit machines in SYS:WBStartup, started with the desktop, which
+    // does not wait for it to end.
+    .{ .path = "programs/Dock.info", .picture = "preferences-desktop", .fields = &.{ "KIND=TOOL", icon_stack }, .pointer_bytes = 4 },
+    .{ .path = "WBStartup/Dock.info", .picture = "preferences-desktop", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=DONOTWAIT" }, .pointer_bytes = 8 },
     // What each program is, in SYS:Programs/Docs: read in MultiView.
     .{ .path = "programs/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "programs/Docs/Battery.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "programs/Docs/Dock.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/FontView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/MultiView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Notepad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
@@ -615,14 +622,16 @@ pub fn build(b: *std.Build) void {
             const sized = for (one.fields) |field| {
                 if (std.mem.eql(u8, field, icon_stack)) break true;
             } else false;
-            if (!sized) {
+            if (!sized and one.pointer_bytes == null) {
                 disks.addPrefixedFileArg(prefix, makeIcon(b, mkicon, picture, one, ""));
                 continue;
             }
             // An icon that asks for a command's stack: made once for each
-            // size of pointer, and each disk given its chip's.
+            // size of pointer, and each disk given its chip's - each disk
+            // that has it.
             var by_width: [2]?std.Build.LazyPath = @splat(null);
             for (disks.runs, DiskImages.pointer_bytes) |run, bytes| {
+                if (one.pointer_bytes) |only| if (only != bytes) continue;
                 const slot = &by_width[bytes / 8];
                 if (slot.* == null) slot.* = makeIcon(b, mkicon, picture, one, iconStack(b, bytes));
                 run.addPrefixedFileArg(prefix, slot.*.?);

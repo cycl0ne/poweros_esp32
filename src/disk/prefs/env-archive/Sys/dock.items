@@ -1,0 +1,18 @@
+# ENVARC:Sys/dock.items - what the dock shows, in order, which the
+# dock writes whenever an entry is added, moved or taken off, and
+# reads again when the file changes. A line for each entry:
+#
+# ITEM="SYS:Programs/Notepad"  a program, a file, a drawer or a disk
+#                              by its full name, a disk's being its
+#                              name and a colon: "Work:".
+# SEPARATOR                    a line between entries.
+#
+# How an entry is started - its arguments, stack and priority - is
+# in its icon's tool types, not here.
+
+ITEM="SYS:System/Shell"
+ITEM="SYS:Programs/Notepad"
+ITEM="SYS:Programs/MultiView"
+ITEM="SYS:Programs/Player"
+SEPARATOR
+ITEM="SYS:Programs/Prefs"

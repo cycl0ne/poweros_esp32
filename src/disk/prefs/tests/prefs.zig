@@ -212,6 +212,7 @@ test "the settings files of a fresh disk: the explanation the SDK writes" {
     try testing.expectEqualStrings(prefs.palette.header, @embedFile("../env-archive/Sys/palette.prefs"));
     try testing.expectEqualStrings(prefs.sound.header, @embedFile("../env-archive/Sys/sound.prefs"));
     try testing.expectEqualStrings(prefs.audio.header, @embedFile("../env-archive/Sys/audio.prefs"));
+    try testing.expectEqualStrings(prefs.dock.header, @embedFile("../env-archive/Sys/dock.prefs"));
     const fonts = @embedFile("../env-archive/Sys/font.prefs");
     try testing.expect(std.mem.startsWith(u8, fonts, prefs.font.header));
     // Every commented line of the style's default reads as a line.
@@ -483,6 +484,56 @@ test "dock.prefs: a line read and written back; what it does not take is told" {
     try testing.expect(prefs.dock.parse(ub, "MAGNIFY=200", &bad) != null);
     try testing.expect(prefs.dock.parse(ub, "WIDTH=3", &bad) != null);
     try testing.expectEqualStrings(prefs.Pairs.quote_not_closed, std.mem.span(prefs.dock.parse(ub, "EDGE=\"LEFT", &bad).?));
+    try utilityDown(ub);
+}
+
+test "dock.items: the entries read a line at a time, written back; a line that is not one is passed over" {
+    const ub = try utilityUp();
+    defer kexec.deinit();
+    // A fresh disk's file: the explanation, and the dock's own entries as
+    // itemLine writes them.
+    const fresh = @embedFile("../env-archive/Sys/dock.items");
+    try testing.expect(std.mem.startsWith(u8, fresh, prefs.dock.items_header));
+    var written: [512]u8 = undefined;
+    var n: usize = 0;
+    for (prefs.dock.default_items) |item| {
+        try testing.expect(prefs.dock.itemLength(item) <= written.len - n);
+        n += prefs.dock.itemLine(item, written[n..]).?;
+    }
+    try testing.expectEqualStrings(written[0..n], std.mem.trimStart(u8, fresh[prefs.dock.items_header.len..], "\n"));
+    var items = prefs.dock.Items.init(ub, fresh);
+    for (prefs.dock.default_items) |want| {
+        const got = items.next().?;
+        switch (want) {
+            .path => |path| try testing.expectEqualStrings(path, got.path),
+            .separator => try testing.expect(got == .separator),
+        }
+    }
+    try testing.expect(items.next() == null);
+    try testing.expectEqual(@as(u32, 0), items.bad_line);
+
+    // Any case, KEY value, a name with blanks in quotes; lines that are
+    // not entries passed over, the last of them told.
+    const text =
+        \\item "Work:My Tools/Edit"
+        \\# a comment
+        \\SEPARATOR=1
+        \\separator
+        \\ITEM=
+        \\ITEM=Work: SEPARATOR
+        \\ITEM="RAM:
+        \\ITEM=Work:
+    ;
+    var mixed = prefs.dock.Items.init(ub, text);
+    try testing.expectEqualStrings("Work:My Tools/Edit", mixed.next().?.path);
+    try testing.expect(mixed.next().? == .separator);
+    try testing.expectEqualStrings("Work:", mixed.next().?.path);
+    try testing.expect(mixed.next() == null);
+    try testing.expectEqual(@as(u32, 7), mixed.bad_line);
+    try testing.expectEqualStrings(prefs.Pairs.quote_not_closed, std.mem.span(mixed.problem.?));
+
+    // A name with a double quote in it has no line.
+    try testing.expect(prefs.dock.itemLine(.{ .path = "Work:a\"b" }, &written) == null);
     try utilityDown(ub);
 }
 

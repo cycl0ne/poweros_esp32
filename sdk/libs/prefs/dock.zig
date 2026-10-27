@@ -20,9 +20,17 @@
 //!
 //! One left out keeps the value it has. `parse` reads the line into
 //! `Settings`, `write` writes them as the line, and `header` is the
-//! explanation a program that writes the file puts before it. The entries
-//! themselves are not here: the dock keeps them in a file of their own,
-//! dock.items, so that the dock and Prefs never write over each other.
+//! explanation a program that writes the file puts before it.
+//!
+//! The entries are in a file of their own, dock.items, which the dock
+//! writes and Prefs does not, so that the two never write over each
+//! other - a line for each entry, in order:
+//!
+//!     ITEM="SYS:Programs/Notepad"
+//!     SEPARATOR
+//!
+//! `Items` reads them a line at a time, `itemLine` writes one, and
+//! `items_header` is the file's explanation.
 
 const style = @import("style.zig");
 const prefs = @import("prefs.zig");
@@ -147,5 +155,133 @@ pub const header =
     \\# One left out keeps the dock's own. These are its own:
     \\#
     \\# EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0
+    \\
+;
+
+pub const ITEMS_ENV_FILE = "ENV:Sys/dock.items";
+pub const ITEMS_ENVARC_FILE = "ENVARC:Sys/dock.items";
+
+/// An entry of dock.items: what it opens - a program, a file, a drawer or
+/// a disk - by its full name, a disk's being its name and a colon; or a
+/// line between entries.
+pub const Item = union(enum) {
+    path: []const u8,
+    separator,
+};
+
+/// The entries of a dock with no dock.items, which a fresh disk's file
+/// lists as well.
+pub const default_items = [_]Item{
+    .{ .path = "SYS:System/Shell" },
+    .{ .path = "SYS:Programs/Notepad" },
+    .{ .path = "SYS:Programs/MultiView" },
+    .{ .path = "SYS:Programs/Player" },
+    .separator,
+    .{ .path = "SYS:Programs/Prefs" },
+};
+
+/// dock.items' entries, a line at a time. Blank lines and comments are
+/// passed over, and so is a line that is not an entry - the last of them
+/// told by `bad_line` and `problem` - so that one line gone wrong costs
+/// that entry and no other.
+pub const Items = struct {
+    ub: *UtilityBase,
+    lines: prefs.Lines,
+    /// The number of the last line passed over as not an entry, and what
+    /// is wrong with it; 0 and null while there is none.
+    bad_line: u32 = 0,
+    problem: ?[*:0]const u8 = null,
+
+    pub fn init(ub: *UtilityBase, text: []const u8) Items {
+        return .{ .ub = ub, .lines = .{ .text = text } };
+    }
+
+    /// The next entry, null at the end of the file. A path is in the
+    /// text, which the caller keeps while it uses it.
+    pub fn next(items: *Items) ?Item {
+        while (items.lines.next()) |line| {
+            if (!style.hasWords(line.text)) continue;
+            var problem: [*:0]const u8 = undefined;
+            if (parseItem(items.ub, line.text, &problem)) |item| return item;
+            items.bad_line = line.number;
+            items.problem = problem;
+        }
+        return null;
+    }
+};
+
+/// One line as an entry; null, with `problem` saying why, when it is not
+/// one.
+fn parseItem(ub: *UtilityBase, text: []const u8, problem: *[*:0]const u8) ?Item {
+    const form = "not in the form ITEM=\"SYS:Programs/Notepad\" or SEPARATOR";
+    var pairs = prefs.Pairs.init(ub, text);
+    const first = (pairs.next() catch {
+        problem.* = prefs.Pairs.quote_not_closed;
+        return null;
+    }) orelse {
+        problem.* = form;
+        return null;
+    };
+    // One entry a line, nothing after it.
+    const more = pairs.next() catch {
+        problem.* = prefs.Pairs.quote_not_closed;
+        return null;
+    };
+    if (more != null) {
+        problem.* = "one entry a line";
+        return null;
+    }
+    if (style.same(first.key, "ITEM")) {
+        if (first.value.len == 0) {
+            problem.* = "ITEM is a full name, \"Work:Tools/Editor\"";
+            return null;
+        }
+        return .{ .path = first.value };
+    }
+    if (style.same(first.key, "SEPARATOR") and first.value.len == 0) return .separator;
+    problem.* = form;
+    return null;
+}
+
+/// The bytes `itemLine` writes for `item`, newline included.
+pub fn itemLength(item: Item) usize {
+    return switch (item) {
+        .path => |path| "ITEM=\"\"\n".len + path.len,
+        .separator => "SEPARATOR\n".len,
+    };
+}
+
+/// `item` written as its line into `into` (`itemLength` bytes will do):
+/// how many bytes, newline included; null for a name with a double quote
+/// in it, which the form has no way to write.
+pub fn itemLine(item: Item, into: []u8) ?usize {
+    const text: []const u8 = switch (item) {
+        .separator => "SEPARATOR\n",
+        .path => |path| {
+            for (path) |c| if (c == '"') return null;
+            const n = itemLength(item);
+            @memcpy(into[0..6], "ITEM=\"");
+            @memcpy(into[6..][0..path.len], path);
+            @memcpy(into[6 + path.len ..][0..2], "\"\n");
+            return n;
+        },
+    };
+    @memcpy(into[0..text.len], text);
+    return text.len;
+}
+
+/// dock.items' explanation, every line a comment.
+pub const items_header =
+    \\# ENVARC:Sys/dock.items - what the dock shows, in order, which the
+    \\# dock writes whenever an entry is added, moved or taken off, and
+    \\# reads again when the file changes. A line for each entry:
+    \\#
+    \\# ITEM="SYS:Programs/Notepad"  a program, a file, a drawer or a disk
+    \\#                              by its full name, a disk's being its
+    \\#                              name and a colon: "Work:".
+    \\# SEPARATOR                    a line between entries.
+    \\#
+    \\# How an entry is started - its arguments, stack and priority - is
+    \\# in its icon's tool types, not here.
     \\
 ;

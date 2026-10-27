@@ -1,0 +1,20 @@
+# ENVARC:Sys/dock.prefs - the dock's look and what it does, which the
+# dock reads when it starts and follows while it runs. One line:
+#
+# EDGE      the edge of the screen the dock lies along: BOTTOM, LEFT,
+#           RIGHT or TOP.
+# ICONSIZE  the most pixels an entry is shown at each way, 16 to 128;
+#           no more than an eighth of the screen's height is taken.
+# LABELS    an entry's name NEVER shown, shown under the POINTER, or
+#           ALWAYS.
+# HIDE      AUTO for a dock that goes when the pointer leaves it and
+#           comes back at the edge, NO for one that stays.
+# KEEPCLEAR YES to keep the dock's edge free of windows that zoom or
+#           open, NO to let them cover it.
+# MAGNIFY   0 for entries that keep their size under the pointer,
+#           else the pixels the one under it grows to, more than
+#           ICONSIZE and at most 128.
+#
+# One left out keeps the dock's own. These are its own:
+#
+# EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0
