@@ -21,7 +21,11 @@
 //!
 //! **What the engine raises** is in DMA_CH0_Status, a bit per cause and
 //! two summaries; each stays until it is written back. The MAC's own
-//! causes and its counters' are masked.
+//! causes and its counters' are masked. A received frame raises one only
+//! if its descriptor asks (`giveBack`'s `interrupt`); for the others the
+//! engine's watchdog raises it a little after they came (`rx_watchdog`),
+//! so a burst of frames is one interrupt, and a frame alone waits only
+//! that little.
 //!
 //! **Checksums**: the MAC's checksum engine checks every received IPv4
 //! packet's header checksum and its TCP or UDP checksum, and says what it
@@ -82,6 +86,7 @@ const dma_rx_tail = 0x1128;
 const dma_tx_ring_length = 0x112C;
 const dma_rx_ring_length = 0x1130;
 const dma_interrupt_enable = 0x1134;
+const dma_rx_watchdog = 0x1138;
 const dma_status = 0x1160;
 
 /// MAC_Configuration: receiver and transmitter on, full duplex, the
@@ -175,6 +180,12 @@ const int_wanted: u32 = int_send | int_receive | int_receive_unavailable |
     int_bus_error | int_abnormal | int_normal;
 /// Every cause DMA_CH0_Status keeps until it is written back.
 const int_all: u32 = 0x3F_FFFF;
+
+/// DMA_CH0_Rx_Interrupt_Watchdog_Timer: how long after a frame whose
+/// descriptor asked for no interrupt the engine raises one all the same,
+/// in 256 cycles of its clock: about 17 us on the VisionFive 2, by what
+/// it adds to ping's round trip.
+const rx_watchdog: u32 = 0x10;
 
 /// The MAC runs at 1000 Mbit/s.
 pub const gigabit = true;
@@ -279,6 +290,7 @@ pub fn setUp(receive_bytes: u32) void {
     at(dma_tx_control).* = pbl | tx_osf;
     at(dma_rx_control).* = pbl | receive_bytes << rx_rbsz_shift;
     at(dma_interrupt_enable).* = 0;
+    at(dma_rx_watchdog).* = rx_watchdog;
     at(dma_status).* = int_all;
 }
 
@@ -324,9 +336,9 @@ pub fn setFilter(promiscuous: bool, multicast: bool) void {
 
 /// A receive descriptor set up with its buffer and handed to the engine.
 /// The ring needs no `next`: the engine goes on to the descriptor after.
-pub fn prepareReceive(descriptor: *Descriptor, buffer: []u8, next: *Descriptor) void {
+pub fn prepareReceive(descriptor: *Descriptor, buffer: []u8, next: *Descriptor, interrupt: bool) void {
     _ = next;
-    giveBack(descriptor, buffer);
+    giveBack(descriptor, buffer, interrupt);
 }
 
 /// A send descriptor set up empty, the driver's.
@@ -337,10 +349,11 @@ pub fn prepareSend(descriptor: *Descriptor, buffer: []u8, next: *Descriptor) voi
 }
 
 /// A filled receive descriptor handed back to the engine, its buffer
-/// given it again.
-pub fn giveBack(descriptor: *Descriptor, buffer: []u8) void {
+/// given it again, asking for an interrupt when it is filled if
+/// `interrupt`; else the watchdog raises one.
+pub fn giveBack(descriptor: *Descriptor, buffer: []u8, interrupt: bool) void {
     const address = @intFromPtr(buffer.ptr);
-    descriptor.words = .{ low(address), high(address), 0, own | receive_ioc | receive_buf1v };
+    descriptor.words = .{ low(address), high(address), 0, own | (if (interrupt) receive_ioc else 0) | receive_buf1v };
 }
 
 /// What a receive descriptor holds once the engine has given it back.

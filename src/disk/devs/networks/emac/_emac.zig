@@ -28,6 +28,12 @@
 //! Writes go out in order too: `sending` holds the request of each send
 //! descriptor still in the engine's hands, from `send_done` on, and a
 //! write is answered when its descriptor comes back.
+//!
+//! **Interrupts in batches.** On the JH7110 only every
+//! `receive_batch`th receive descriptor asks for an interrupt; the
+//! engine's watchdog raises one a little after any other frame. At a
+//! gigabit link's rate the task is woken once per batch and hands on the
+//! batch in one pass, instead of being woken for every frame.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -64,6 +70,8 @@ pub const DEVICE_NAME = "emac.device";
 /// rest of each one. The ESP32-P4's link is 100 Mbit, and its internal
 /// memory small.
 pub const receive_count = if (sdk.hardware.chip == .rv64sbi) 128 else 16;
+/// Every how many receive descriptors one asks for an interrupt.
+pub const receive_batch: u32 = if (sdk.hardware.chip == .rv64sbi) 16 else 1;
 pub const send_count = 8;
 /// A buffer: the longest frame, with its checksum and a VLAN tag, in
 /// whole cache lines.
@@ -169,7 +177,7 @@ pub const EmacBase = extern struct {
             return;
         }
         for (&work.receive_chain, 0..) |*descriptor, slot| {
-            mac.prepareReceive(descriptor, &work.receive[slot], &work.receive_chain[(slot + 1) % receive_count]);
+            mac.prepareReceive(descriptor, &work.receive[slot], &work.receive_chain[(slot + 1) % receive_count], interrupts(slot));
         }
         for (&work.send_chain, 0..) |*descriptor, slot| {
             mac.prepareSend(descriptor, &work.send[slot], &work.send_chain[(slot + 1) % send_count]);
@@ -248,12 +256,17 @@ pub const EmacBase = extern struct {
                 base.invalidate(&work.receive[slot], frame.length);
                 base.net.receiveWith(work.receive[slot][0..frame.length], if (frame.checked) net.SANA2IOF_CHECKSUM else 0);
             }
-            mac.giveBack(descriptor, &work.receive[slot]);
+            mac.giveBack(descriptor, &work.receive[slot], interrupts(slot));
             base.writeBack(descriptor, @sizeOf(mac.Descriptor));
             base.receive_next = (slot + 1) % receive_count;
             last = descriptor;
         }
         if (last) |descriptor| mac.pollReceive(descriptor);
+    }
+
+    /// Whether receive descriptor `slot` asks for an interrupt.
+    fn interrupts(slot: usize) bool {
+        return slot % receive_batch == receive_batch - 1;
     }
 
     /// Every write whose descriptor the engine has given back, answered,

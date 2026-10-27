@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 //! The RSA engine's modular exponentiation: Z = X ^ Y mod M, on numbers
-//! of up to 128 words (4096 bits), in Montgomery form.
+//! of up to 128 words (4096 bits), in Montgomery form. On the JH7110 a
+//! modulus the PKA takes - 512 to 2048 bits, its top bit set - goes to
+//! the PKA (`jh7110.zig`) instead, which works out its constants itself;
+//! another, or one the PKA did not finish, goes to software.
 //!
-//! The engine takes the modulus M, the base X (already less than M), the
-//! exponent Y, R^2 mod M in Z (R being 2 to the operands' bits) and
-//! M' = -M^-1 mod 2^32, all four operands of the same number of words;
-//! the caller works the last two out (`../bignum/_bignum.zig`). It
+//! The S3's engine takes the modulus M, the base X (already less than
+//! M), the exponent Y, R^2 mod M in Z (R being 2 to the operands' bits)
+//! and M' = -M^-1 mod 2^32, all four operands of the same number of
+//! words; this file works the last two out (`../bignum/_bignum.zig`). It
 //! answers in Z.
 //!
 //! Its constant-time option is on: every exponent bit costs the same,
@@ -22,8 +25,11 @@ const sdk = @import("sdk");
 const hardware = sdk.hardware;
 const reg = hardware.mmio.reg;
 const _base = @import("../crypto_base.zig");
+const CryptoBase = _base.CryptoBase;
 const Numbers = _base.Numbers;
+const _bignum = @import("../bignum/_bignum.zig");
 const _engine = @import("_engine.zig");
+const jh7110 = @import("jh7110.zig");
 const soft = @import("soft_rsa.zig");
 
 const m_mem = hardware.map.RSA + 0x000;
@@ -42,7 +48,13 @@ const interrupt_enable = hardware.map.RSA + 0x82C;
 
 /// `numbers.result` = base ^ exponent mod modulus, each `words` long.
 /// `exponent_bits`: the exponent's length in bits, at least 1.
-pub fn modExp(numbers: *Numbers, words: u32, mprime: u32, exponent_bits: u32) void {
+pub fn modExp(cb: *CryptoBase, numbers: *Numbers, words: u32, exponent_bits: u32) void {
+    const m = numbers.modulus[0..words];
+    if (jh7110.pka(cb, m)) |regs| {
+        if (jh7110.modExp(cb, regs, numbers, words, exponent_bits)) return;
+    }
+    _bignum.rSquared(numbers.rinv[0..words], m);
+    const mprime = _bignum.mPrime(m[0]);
     if (!_engine.on_chip) return soft.modExp(numbers, words, mprime, exponent_bits);
     reg(interrupt_enable).* = 0;
     reg(length).* = words - 1;

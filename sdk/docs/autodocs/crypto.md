@@ -1132,6 +1132,13 @@ The engine runs in its constant-time mode: each exponent bit costs the
 same, 0 or 1. It starts from the exponent's highest 1 bit, which gives
 away only how long the exponent is - a public exponent of 17 bits
 takes 17 steps, a private one is as long as its modulus in any case.
+On the JH7110 a modulus of 512 to 2048 bits whose top bit is set - an
+RSA key's - goes to its PKA, which multiplies while the CPU goes
+through the exponent a window at a time, every window - 1, 2 or 4
+bits, whichever takes fewest steps for the exponent's length -
+costing the same. Any other modulus there, and any on the P4, is done
+in software, which multiplies for the 1 bits only: not in constant
+time.
 
 **CONTEXT**
 
@@ -1150,8 +1157,9 @@ exponent in the engine are cleared before the call returns.
 
 The engine's constants are worked out in software on every call: R^2
 mod M a word at a time (a 2048-bit modulus, 128 steps of 64 words
-each), and a base not below the modulus reduced bit by bit. A base
-below it - a signature, a ciphertext - is taken as it is.
+each), and a base not below the modulus reduced bit by bit; the
+JH7110's PKA works out its own. A base below the modulus - a
+signature, a ciphertext - is taken as it is.
 
 **BUGS**
 

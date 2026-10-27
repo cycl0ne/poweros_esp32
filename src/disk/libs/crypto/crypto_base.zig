@@ -22,6 +22,9 @@ pub const Numbers = extern struct {
     /// R squared modulo the modulus, R being 2 to the engine's bits.
     rinv: [number_words]u32 = @splat(0),
     result: [number_words]u32 = @splat(0),
+    /// The JH7110's PKA's table of the base's powers (jh7110.zig's
+    /// `modExp`); none elsewhere.
+    table: [jh7110.table_entries][jh7110.pka_words]u32 = @splat(@splat(0)),
 };
 
 pub const CryptoBase = extern struct {

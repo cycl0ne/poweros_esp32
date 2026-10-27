@@ -214,8 +214,10 @@ pub fn setFilter(promiscuous: bool, multicast: bool) void {
 // --- the descriptors ------------------------------------------------------
 
 /// A receive descriptor set up with its buffer and the next in the chain,
-/// and handed to the engine.
-pub fn prepareReceive(descriptor: *Descriptor, buffer: []u8, next: *Descriptor) void {
+/// and handed to the engine. Every frame raises an interrupt: the 100
+/// Mbit link's come seldom enough (`interrupt`).
+pub fn prepareReceive(descriptor: *Descriptor, buffer: []u8, next: *Descriptor, interrupt: bool) void {
+    _ = interrupt;
     descriptor.* = .{
         .status = own,
         .control = receive_rch | @as(u32, @intCast(buffer.len)),
@@ -235,9 +237,10 @@ pub fn prepareSend(descriptor: *Descriptor, buffer: []u8, next: *Descriptor) voi
 }
 
 /// A filled receive descriptor handed back to the engine: it keeps its
-/// buffer.
-pub fn giveBack(descriptor: *Descriptor, buffer: []u8) void {
+/// buffer, and raises an interrupt when filled.
+pub fn giveBack(descriptor: *Descriptor, buffer: []u8, interrupt: bool) void {
     _ = buffer;
+    _ = interrupt;
     descriptor.status = own;
 }
 

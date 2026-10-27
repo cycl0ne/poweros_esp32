@@ -9,12 +9,12 @@
 //! message of several blocks, two hashes interleaved (the engine taking
 //! turns between them), RFC 4231's HMAC, FIPS 197's AES blocks both
 //! ways, SP 800-38A's CBC and CTR, the GCM paper's test case 4 and a
-//! forged tag, modular exponentiation on 2048-bit numbers, RFC 5869's
-//! HKDF, RFC 7748's X25519, RFC 8032's Ed25519, key agreement on P-256
-//! and P-384, and ECDSA (P-256, P-384) and RSA-PSS signatures openssl
-//! made. On the
-//! chip the hashes, AES and the exponentiations go through the SHA, AES
-//! and RSA engines; the curves are software.
+//! forged tag, modular exponentiation on numbers of 2048, 1024 and 1000
+//! bits, RFC 5869's HKDF, RFC 7748's X25519, RFC 8032's Ed25519, key
+//! agreement on P-256 and P-384, and ECDSA (P-256, P-384) and RSA-PSS
+//! signatures openssl made. On the chip the hashes, AES and the exponentiations go
+//! through the SHA, AES and RSA engines (on the JH7110 its PKA); the
+//! curves are software.
 //!
 //! Long data checks what only long data reaches - the JH7110's engine
 //! takes 64 bytes of AES, or 512 of GMAC, and more: ECB, CBC and CTR in
@@ -33,8 +33,9 @@
 //! any fails, 20 when the library cannot be opened.
 //!
 //! BENCH times each kind of work after the checks - a key pair, a shared
-//! secret, a signature checked and made, AES-GCM, AES-CTR alone (the
-//! engine's share of GCM) and SHA-256 in bulk - in microseconds an
+//! secret, a signature checked and made, a 2048-bit exponentiation with
+//! a 2048-bit exponent (an RSA private key's), AES-GCM, AES-CTR alone
+//! (the engine's share of GCM) and SHA-256 in bulk - in microseconds an
 //! operation or kilobytes a second, on timer.device's E-clock; and
 //! SHA-256 of messages from 256 bytes to 64 KiB, in one HashPieces and in
 //! steps, and GMAC a piece at a time and in one call.
@@ -54,7 +55,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Crypto";
-const VERSION_STRING = "\x00$VER: Crypto 1.7 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Crypto 1.8 (27.10.2026)\r\n";
 
 const template = "VERBOSE/S,BENCH/S,RANDOM/S";
 const arg_verbose = 0;
@@ -526,6 +527,12 @@ fn modexp(run: *Run) void {
     run.check("2048 bits, a 2048-bit exponent", private == crypto.CRYPTOERR_OK and same(&result, &x_to_d));
     const public = run.cb.ModExp(&result, &x, &e, &n);
     run.check("2048 bits, exponent 65537", public == crypto.CRYPTOERR_OK and same(&result, &x_to_e));
+    var result_1000: [modulus_1000.len]u8 = undefined;
+    const odd = run.cb.ModExp(&result_1000, &.{ .bytes = &base_1000, .length = base_1000.len }, &.{ .bytes = &exponent_1000, .length = exponent_1000.len }, &.{ .bytes = &modulus_1000, .length = modulus_1000.len });
+    run.check("1000 bits, a 1000-bit exponent", odd == crypto.CRYPTOERR_OK and same(&result_1000, &power_1000));
+    var result_1024: [modulus_1024.len]u8 = undefined;
+    const full = run.cb.ModExp(&result_1024, &.{ .bytes = &base_1024, .length = base_1024.len }, &.{ .bytes = &exponent_1024, .length = exponent_1024.len }, &.{ .bytes = &modulus_1024, .length = modulus_1024.len });
+    run.check("1024 bits, a 1024-bit exponent", full == crypto.CRYPTOERR_OK and same(&result_1024, &power_1024));
 }
 
 // 2048-bit numbers and their powers, worked out elsewhere (Python's pow).
@@ -568,6 +575,50 @@ const x_to_e = hex(
         "cf6a330755645aea02bd532988f1737f2aad565933e19500c60082788e7d2d96df7299018bab180dfed90807892d4fe4" ++
         "df51a282e7f9d16a73ef41f6fd63cafc0832d53df90c966a7d438bde6d9dfa0f0e529562f8775d1c59e655c3b2c96734" ++
         "84f0f79413e81d69a9fa571dde9ed822",
+);
+
+// 1024-bit numbers, the modulus's top bit set (Python's pow).
+const modulus_1024 = hex(
+    "e8dd7cad1a2fb79863b7e6c6cc32d94a23e12368dfaab154beaf95ccb620d9a01894934cfb6e77edcb46d03f636e22c5" ++
+        "5e6b64bfb749bdeece9af45cb8c92a67ced7384bf4eac10f5dab7e5e834c0f2571f36ec219b61d4485106fdcded4b961" ++
+        "cae9a673d45434de52be468a63b18a93d991a72b7bc694eb04e5f7cfcc0b9271",
+);
+const base_1024 = hex(
+    "175b16734d035f4ded2fd4695eec1f7d00de9e7bdf3d3d2bf762e4455597b2acb07272715cafab7b1a367a2a15039697" ++
+        "fc35550bc51c92fca2ed11a5156277cdf52869d00900ac8416996d5a9b9ec6e3e7716097fb3775e09dd574d258df6f5a" ++
+        "ebf7d37fd7db4b8b866255d2bc1a8608723b24877954d7616fab642227b2554d",
+);
+const exponent_1024 = hex(
+    "d40a12ace62a8097c08ae60f3f3b5a6fe0cd47c8e90775f6057dc7a1d3c38e09f95fef100583ea1fce5035b76913ae13" ++
+        "f5152890b29e37580611eecd8fcbadf7e7b3a0f1ae8a338775a18ce31ef94d6495256c52d2010ae33aa023f41742d4bf" ++
+        "f95e7a2edd832fb9293c016e492caf2e639f969eea35d95b28dd86112284e8bc",
+);
+const power_1024 = hex(
+    "a45f18b9bd9d56ceacb04d645d56a2e7d6a066b456f8987d566b8f417472d83a9ee54888a7b3352b6d9f3c2f3bb3c665" ++
+        "2ef8b32f2ebcc6b90ef9008a792a45001db7fa8c7aaf569953d66224e27a6de0ee5c385216e988fe1f4a6271b1a1dd44" ++
+        "20dbc5cb6af48d4cefc1fbf039cc702ac5ed01444ee365b166423aa9f237e02f",
+);
+
+// 1000-bit numbers, the top word not full (Python's pow).
+const modulus_1000 = hex(
+    "e2417ae7fb3500f48ab489cb10e25c7c4ae65cb5dbbe6fa6127ea696c3c6c4ee2e3b9efad56ede80a3ba89e31d141337" ++
+        "acf1e2b4410a727244d2a652278de424016b820fe46be1e08a7e114e68071674ee0693e0d93a31aadc19e3ecbf6889c9" ++
+        "1e3005a70699363c9930cf43ac2120fc8ccee55fe90cc65817272b53a5",
+);
+const base_1000 = hex(
+    "0a451163b33056dfada05552be8a97bb29a59b03d79063204d4e6752c1eb03a85e443884fcf18d6c4deb6af13436f2f5" ++
+        "03a871dff91e0e94dacdca2a59d64a860802f385331674844a519aabecf428d119e3dff1335e4c955942756822213b6d" ++
+        "a5685f71ae53976270c78e175d7c3c2f9f335b53e52c442a3ad00f1436",
+);
+const exponent_1000 = hex(
+    "a4e931a56f9aa80f8a49b4fa90a087cc556f4be6e85a875486e99ed6aec83e8baf538499d9c02aedeba2f6aa9efd2526" ++
+        "88627fd848a52dd713b80a40b6b49f8d70989da94a91782a4f625e555518b2bf46ee11e99295e30255b5d45d275db160" ++
+        "8995ccb6a05298e4bb63fe5590c0450c5c86166dec2641940b4df62868",
+);
+const power_1000 = hex(
+    "67447a5a8e6e1286cfc37d12f4ff63ce8b86d5e6204cc664afa5d61038833d594e532c77a9b1dfc75969b5374ab787dc" ++
+        "eec416e1a772faad904d4db2e0b0e49e2f74f4a24a99149cc5b9c94d6a1e8ed1cb346c46966aa7a80c3ba482f7aefcca" ++
+        "7814dc1d453fc6f63d0783f2b60a1cdc78be27a4f9ac432c9080f2189f",
 );
 
 // --- 1.1: key derivation, agreement and signatures -----------------------------
@@ -762,6 +813,10 @@ fn bench(run: *Run) void {
     started = micros(run);
     for (0..20) |_| _ = cb.VerifySignature(crypto.SIG_RSA_PSS_SHA256, &rsa_key, &Bytes.of(&signed_digest), &Bytes.of(&pss_signature));
     report(run, "RSA-2048 PSS verify", started, 20);
+    var power: [modulus.len]u8 = undefined;
+    started = micros(run);
+    for (0..5) |_| _ = cb.ModExp(&power, &.{ .bytes = &base_value, .length = base_value.len }, &.{ .bytes = &exponent, .length = exponent.len }, &.{ .bytes = &modulus, .length = modulus.len });
+    report(run, "ModExp 2048, a 2048-bit exponent", started, 5);
     const seed = hex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
     var signature: [crypto.SIGNATURE_ED25519]u8 = undefined;
     started = micros(run);

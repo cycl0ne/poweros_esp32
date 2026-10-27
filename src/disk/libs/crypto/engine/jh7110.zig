@@ -4,7 +4,8 @@
 //! by two of dma.resource's PL080 channels - not a block at a time through
 //! registers, as the S3's engine in `aes.zig` is - and SHA-224, SHA-256,
 //! SHA-384 and SHA-512, plain or as HMAC, over any number of buffers fed
-//! by the first channel alone.
+//! by the first channel alone; and the PKA's Montgomery multiplications,
+//! for ModExp on numbers of up to 2048 bits.
 //!
 //! The data goes through two buffers of the library's, `room` bytes each
 //! and below 4 GiB, as the PL080 needs: the caller copies its input into
@@ -31,6 +32,22 @@
 //! sleeping until the interrupt, with a second of timer.device as the
 //! limit.
 //!
+//! **The PKA** multiplies two numbers of up to 64 words in Montgomery
+//! form, one product a command, ~12.5 us for 2048 bits; the
+//! exponentiation around it is the CPU's (`modExp`). Every window of the
+//! exponent costs the same - its squarings and one multiplication by its
+//! entry in a table, picked without a branch or an address that depends
+//! on it - whatever its bits are. It is given a modulus of 16 to 64
+//! words whose top bit is set, an RSA key's: with that bit clear its
+//! set-up does not finish, and on one word its answers are wrong. A
+//! set-up (~140 us for 2048 bits) wants the control cleared and N
+//! written again, so `modExp` makes one, and works R mod N out itself.
+//! It needs nothing of the engine's set-up but the registers, and runs
+//! under ModExp's lock beside whatever AES or SHA does meanwhile. A PKA
+//! that once stops answering leaves ModExp to software, and the rest of
+//! the engine as it was. After Linux's jh7110-rsa.c, which multiplies
+//! only for the exponent's 1 bits.
+//!
 //! After Linux's jh7110-aes.c and jh7110-hash.c - the registers, and the
 //! order they are written in - and what the board measured through the
 //! library: 42 MB/s through AES-CTR or GCM, against 2.6 MB/s for the
@@ -44,7 +61,9 @@ const timer = sdk.devices.timer;
 const dmares = sdk.resources.dma;
 const st = sdk.expansion.systemtags;
 const ExecBase = sdk.interface.exec.ExecBase;
-const CryptoBase = @import("../crypto_base.zig").CryptoBase;
+const _base = @import("../crypto_base.zig");
+const CryptoBase = _base.CryptoBase;
+const Numbers = _base.Numbers;
 const _engine = @import("_engine.zig");
 
 /// Whether this chip can have the engine: the RISC-V 64 boards, of which
@@ -80,6 +99,8 @@ pub const State = extern struct {
     /// status_unknown until the first call looks; then status_ready, or
     /// status_absent for good.
     status: u32 = status_unknown,
+    /// Nonzero once the PKA has stopped answering.
+    pka_broken: u32 = 0,
     /// The engine's registers and the PL080's.
     regs: usize = 0,
     pl: usize = 0,
@@ -539,4 +560,187 @@ pub fn hashEnd(state: *State, digest: [*]u8, length: u32, hmac: bool) bool {
     if (hmac and !waitFor(state, SHA_CSR, SHA_HMAC_DONE, true)) return broken(state);
     for (0..length / 4) |index| _engine.storeLittle(digest + 4 * index, read(state, SHA_RDR));
     return true;
+}
+
+// --- the PKA ------------------------------------------------------------------
+
+// The PKA's, from 0x400: the control, the status, and the operands A, E
+// and N, 64 words each, the least significant first and each word's
+// bytes the other way round.
+const PKA_CACR = 0x400;
+const PKA_CASR = 0x404;
+const PKA_A = 0x408;
+const PKA_E = 0x508;
+const PKA_N = 0x608;
+
+/// PKA_CACR: start, the unit's reset, R^2 mod N worked out with the
+/// set-up, the command (8-11), the last one's done cleared, the operands'
+/// words less one (16-21) and the exponent's (24-29). PKA_CASR: done.
+const PKA_START: u32 = 1 << 0;
+const PKA_RESET: u32 = 1 << 1;
+const PKA_PRE_EXPF: u32 = 1 << 7;
+const PKA_CMD_SHIFT: u5 = 8;
+const PKA_CLEAN_DONE: u32 = 1 << 15;
+const PKA_OPSIZE_SHIFT: u5 = 16;
+const PKA_EXPOSIZE_SHIFT: u5 = 24;
+const PKA_DONE: u32 = 1 << 0;
+
+/// The PKA's commands, R being 2 to the operands' bits, each answer in
+/// A: the set-up for N; E R mod N, with R^2 from the set-up; A E / R mod
+/// N; A A / R mod N.
+const Command = enum(u32) { set_up = 0x0, into = 0x5, multiply = 0x6, square = 0x7 };
+
+/// The most words of a number the PKA takes: 2048 bits.
+pub const pka_words = 64;
+/// The fewest it is given: 512 bits. On one word it answers wrong, and a
+/// short number is quick in software.
+const pka_fewest = 16;
+/// The most entries of `modExp`'s table: a window of 4 bits.
+pub const table_entries = if (compiled) 16 else 0;
+
+/// The PKA's registers for `modulus`, null where there is none, it has
+/// failed, or it does not take the modulus: one of 16 to 64 words whose
+/// top bit is set - with that bit clear, its set-up does not finish. The
+/// first call sets the engine up.
+pub fn pka(cb: *CryptoBase, modulus: []const u32) ?usize {
+    if (comptime !compiled) return null;
+    if (modulus.len < pka_fewest or modulus.len > pka_words) return null;
+    if (modulus[modulus.len - 1] >> 31 == 0) return null;
+    const state = &cb.sec;
+    if (@atomicLoad(u32, &state.status, .acquire) == status_unknown) {
+        if (take(cb)) |taken| give(cb, taken);
+    }
+    if (@atomicLoad(u32, &state.status, .acquire) != status_ready) return null;
+    if (@atomicLoad(u32, &state.pka_broken, .acquire) != 0) return null;
+    return state.regs;
+}
+
+/// The PKA for operands of `words` words.
+const Unit = struct {
+    regs: usize,
+    words: u32,
+
+    fn control(unit: Unit, value: u32) void {
+        reg(unit.regs + PKA_CACR).* = value;
+    }
+
+    /// `number` into an operand, 0 past its end.
+    fn put(unit: Unit, operand: usize, number: []const u32) void {
+        for (0..unit.words) |index| {
+            reg(unit.regs + operand + 4 * index).* = @byteSwap(if (index < number.len) number[index] else 0);
+        }
+    }
+
+    fn get(unit: Unit, operand: usize, number: []u32) void {
+        for (number[0..unit.words], 0..) |*word, index| word.* = @byteSwap(reg(unit.regs + operand + 4 * index).*);
+    }
+
+    /// One command, waited for: false if the PKA did not finish it.
+    fn run(unit: Unit, command: Command, flags: u32) bool {
+        const size = (unit.words - 1) << PKA_OPSIZE_SHIFT | (unit.words - 1) << PKA_EXPOSIZE_SHIFT;
+        unit.control(PKA_CLEAN_DONE | size | @intFromEnum(command) << PKA_CMD_SHIFT | flags | PKA_START);
+        var reads: u32 = 0;
+        while (reads < 1_000_000) : (reads += 1) {
+            if (reg(unit.regs + PKA_CASR).* & PKA_DONE != 0) return true;
+        }
+        return false;
+    }
+};
+
+/// The window's width, 1, 2 or 4 bits, that takes the fewest commands
+/// for an exponent of `bits`: each bit a squaring, each window a
+/// multiplication, and the table one for each entry.
+fn windowBits(bits: u32) u5 {
+    var best: u5 = 1;
+    var fewest: u32 = 0xFFFF_FFFF;
+    for ([_]u5{ 1, 2, 4 }) |width| {
+        const cost = bits + (bits + width - 1) / width + (@as(u32, 1) << width);
+        if (cost < fewest) {
+            fewest = cost;
+            best = width;
+        }
+    }
+    return best;
+}
+
+/// The exponent's window `index`, `width` bits; the width divides 32.
+fn digit(exponent: []const u32, index: u32, width: u5) u32 {
+    const at = index * width;
+    return (exponent[at / 32] >> @intCast(at % 32)) & ((@as(u32, 1) << width) - 1);
+}
+
+/// `table[index]` into `out`, every entry read and none chosen by a
+/// branch or an address.
+fn pick(table: []const [pka_words]u32, index: u32, out: *[pka_words]u32, words: u32) void {
+    @memset(out[0..words], 0);
+    for (table, 0..) |*entry, at| {
+        const differs = @as(u32, @intCast(at)) ^ index;
+        const mask = ((differs | (0 -% differs)) >> 31) -% 1;
+        for (out[0..words], entry[0..words]) |*word, value| word.* |= value & mask;
+    }
+}
+
+/// `numbers.result` = base ^ exponent mod modulus on the PKA, the
+/// operands `words` long, at most `pka_words`, and the exponent `bits`
+/// long, at least 1. The table - x^i R mod N for every value i a window
+/// can have - is worked out first, then each window from the top: its
+/// squarings and a multiplication by its entry. False if the PKA stopped
+/// answering, which leaves it alone from then on: the numbers are as they
+/// were, for software.
+pub fn modExp(cb: *CryptoBase, regs: usize, numbers: *Numbers, words: u32, bits: u32) bool {
+    const unit: Unit = .{ .regs = regs, .words = words };
+    const width = windowBits(bits);
+    const table = numbers.table[0 .. @as(u32, 1) << width];
+    const one = [1]u32{1};
+    var picked: [pka_words]u32 = undefined;
+    defer {
+        const bytes: [*]volatile u8 = @ptrCast(&picked);
+        for (0..@sizeOf(@TypeOf(picked))) |index| bytes[index] = 0;
+        unit.put(PKA_A, &.{});
+        unit.put(PKA_E, &.{});
+        unit.control(PKA_RESET);
+    }
+    unit.control(PKA_RESET);
+    // R mod N, which is 1 in Montgomery form: R - N, N being more than
+    // R / 2. Then x R mod N, from the set-up, and each entry after it the
+    // one before times x.
+    var borrow: u64 = 0;
+    for (table[0][0..words], numbers.modulus[0..words]) |*word, subtract| {
+        const difference = 0 -% @as(u64, subtract) -% borrow;
+        word.* = @truncate(difference);
+        borrow = (difference >> 32) & 1;
+    }
+    unit.control(0);
+    unit.put(PKA_N, numbers.modulus[0..words]);
+    if (!unit.run(.set_up, PKA_PRE_EXPF)) return pkaBroken(cb);
+    unit.put(PKA_E, numbers.base_value[0..words]);
+    if (!unit.run(.into, 0)) return pkaBroken(cb);
+    unit.get(PKA_A, &table[1]);
+    unit.put(PKA_E, table[1][0..words]);
+    for (table[2..]) |*entry| {
+        if (!unit.run(.multiply, 0)) return pkaBroken(cb);
+        unit.get(PKA_A, entry);
+    }
+    var window = (bits + width - 1) / width - 1;
+    pick(table, digit(numbers.exponent[0..words], window, width), &picked, words);
+    unit.put(PKA_A, picked[0..words]);
+    while (window > 0) {
+        window -= 1;
+        for (0..width) |_| {
+            if (!unit.run(.square, 0)) return pkaBroken(cb);
+        }
+        pick(table, digit(numbers.exponent[0..words], window, width), &picked, words);
+        unit.put(PKA_E, picked[0..words]);
+        if (!unit.run(.multiply, 0)) return pkaBroken(cb);
+    }
+    // Out of Montgomery form: times 1, over R.
+    unit.put(PKA_E, &one);
+    if (!unit.run(.multiply, 0)) return pkaBroken(cb);
+    unit.get(PKA_A, numbers.result[0..words]);
+    return true;
+}
+
+fn pkaBroken(cb: *CryptoBase) bool {
+    @atomicStore(u32, &cb.sec.pka_broken, 1, .release);
+    return false;
 }

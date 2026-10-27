@@ -52,8 +52,8 @@ const Work = _emac.Work;
 
 pub const DEVICE_NAME = _emac.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 5;
-const BUILD_DATE = "26.10.2026";
+const DEVICE_REVISION = 6;
+const BUILD_DATE = "27.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
