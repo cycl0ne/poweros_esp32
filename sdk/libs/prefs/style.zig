@@ -17,6 +17,7 @@
 //! both their sides.
 
 const utility = @import("../utility/utility.zig");
+const prefs = @import("prefs.zig");
 const graphics = @import("../graphics/graphics.zig");
 const intuition = @import("../intuition/intuition.zig");
 const style = intuition.style;
@@ -263,27 +264,15 @@ pub fn hasWords(text: []const u8) bool {
 
 /// A line of the file read into `line`: null when it is taken, else what
 /// is wrong with it. Each value is checked.
-pub fn parse(text: []const u8, line: *Line) ?[*:0]const u8 {
+pub fn parse(ub: *utility.UtilityBase, text: []const u8, line: *Line) ?[*:0]const u8 {
     line.* = .{};
-    var i: usize = 0;
-    while (true) {
-        while (i < text.len and (text[i] == ' ' or text[i] == '\t' or text[i] == '\r' or text[i] == '\n')) i += 1;
-        if (i >= text.len) break;
-        var end = i;
-        while (end < text.len and text[end] != ' ' and text[end] != '\t' and text[end] != '=' and text[end] != '\r' and text[end] != '\n') end += 1;
-        const word = text[i..end];
+    var pairs = prefs.Pairs.init(ub, text);
+    while (pairs.next() catch return prefs.Pairs.quote_not_closed) |pair| {
+        const word = pair.key;
+        const value = pair.value;
         const key: Key = for (key_names, 0..) |name, k| {
             if (same(word, name)) break @enumFromInt(k);
         } else return "not in the form PART=name KEY=value ...";
-        // `KEY=value`, or `KEY value`.
-        i = end;
-        if (i < text.len and text[i] == '=') i += 1 else {
-            while (i < text.len and (text[i] == ' ' or text[i] == '\t')) i += 1;
-        }
-        var value_end = i;
-        while (value_end < text.len and text[value_end] != ' ' and text[value_end] != '\t' and text[value_end] != '\r' and text[value_end] != '\n') value_end += 1;
-        const value = text[i..value_end];
-        i = value_end;
         if (value.len == 0) return "not in the form PART=name KEY=value ...";
         if (check(key, value)) |wrong| return wrong;
         if (!line.set(key, value)) return "a value too long";

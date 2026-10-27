@@ -91,6 +91,7 @@ test {
     _ = @import("strings/strlcpy.zig");
     _ = @import("strings/strchr.zig");
     _ = @import("strings/strrchr.zig");
+    _ = @import("strings/nextsetting.zig");
     _ = @import("strings/strlen.zig");
     _ = @import("strings/strnicmp.zig");
     _ = @import("strings/tolower.zig");
@@ -156,7 +157,7 @@ test "utility.library: made from its ROM tag, opened by name, never expunged" {
     defer kexec.deinit();
     try testing.expectEqual(&ub.lib, kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 1).?);
     try testing.expectEqual(@as(u16, 1), ub.lib.version);
-    try testing.expectEqual(@as(u16, 1), ub.lib.revision);
+    try testing.expectEqual(@as(u16, 2), ub.lib.revision);
     try testing.expect(kexec.OpenLibrary(kexec.SysBase, LIBRARY_NAME, 2) == null);
     kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     _ = kexec.RemLibrary(kexec.SysBase, &ub.lib);
@@ -215,6 +216,14 @@ test "hooks, dates, math, strings and GetUniqueID through the jump table" {
     try testing.expectEqual(@as(i32, 0), call(ub, "Strnicmp", .{ "abc", "xyz", 0 }));
     try testing.expectEqual(@as(u8, 'Q'), call(ub, "ToUpper", .{'q'}));
     try testing.expectEqual(@as(u8, 0xE9), call(ub, "ToLower", .{0xC9})); // É
+
+    const line = "VIEW=NAME PICTURE=\"Sea Side.png\"";
+    var scan: sdk.utility.SettingScan = .{ .text = line.ptr, .length = line.len };
+    try testing.expectEqual(@as(i32, 1), call(ub, "NextSetting", .{&scan}));
+    try testing.expectEqualStrings("VIEW", scan.keyText());
+    try testing.expectEqual(@as(i32, 1), call(ub, "NextSetting", .{&scan}));
+    try testing.expectEqualStrings("Sea Side.png", scan.valueText());
+    try testing.expectEqual(@as(i32, 0), call(ub, "NextSetting", .{&scan}));
 
     const first = call(ub, "GetUniqueID", .{});
     try testing.expectEqual(@as(u32, 1), first);

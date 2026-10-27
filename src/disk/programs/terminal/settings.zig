@@ -17,10 +17,14 @@
 //!   end that ends its lines with LF alone.
 //!
 //! A word left out keeps the value it has, so the same words given to the
-//! command change only what they name. Nothing here opens or draws: the
-//! host tests hold all of it.
+//! command change only what they name. The words are read as every
+//! settings file's are (`sdk.prefs.Pairs`, through utility.library);
+//! nothing here opens or draws: the host tests hold all of it.
 
-const style = @import("sdk").prefs.style;
+const sdk = @import("sdk");
+const prefs = sdk.prefs;
+const style = prefs.style;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 
 pub const ENV_FILE = "ENV:Terminal.prefs";
 pub const ENVARC_FILE = "ENVARC:Terminal.prefs";
@@ -117,30 +121,11 @@ fn indexOf(names: []const []const u8, text: []const u8) ?usize {
 /// The words of `text` read into `settings`: null when they all made
 /// sense, else what was wrong with the first that did not, which leaves
 /// the words after it unread.
-pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
-    var i: usize = 0;
-    while (true) {
-        while (i < text.len and (text[i] == ' ' or text[i] == '\t' or text[i] == '\r' or text[i] == '\n')) i += 1;
-        if (i >= text.len) return null;
-        var end = i;
-        while (end < text.len and text[end] != ' ' and text[end] != '\t' and text[end] != '=' and text[end] != '\r' and text[end] != '\n') end += 1;
-        const word = text[i..end];
-        i = end;
-        if (i < text.len and text[i] == '=') i += 1;
-        // A value in quotes may have spaces in it.
-        var value: []const u8 = undefined;
-        if (i < text.len and text[i] == '"') {
-            var close = i + 1;
-            while (close < text.len and text[close] != '"') close += 1;
-            if (close >= text.len) return "a quote is not closed";
-            value = text[i + 1 .. close];
-            i = close + 1;
-        } else {
-            var value_end = i;
-            while (value_end < text.len and text[value_end] != ' ' and text[value_end] != '\t' and text[value_end] != '\r' and text[value_end] != '\n') value_end += 1;
-            value = text[i..value_end];
-            i = value_end;
-        }
+pub fn parse(ub: *UtilityBase, text: []const u8, settings: *Settings) ?[*:0]const u8 {
+    var pairs = prefs.Pairs.init(ub, text);
+    while (pairs.next() catch return prefs.Pairs.quote_not_closed) |pair| {
+        const word = pair.key;
+        const value = pair.value;
         if (style.same(word, "DEVICE")) {
             if (!settings.setDevice(value)) return "DEVICE's name is too long";
         } else if (style.same(word, "UNIT")) {
@@ -167,6 +152,7 @@ pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
             return "a word that is not DEVICE, UNIT, BAUD, FRAME, HANDSHAKE, RETURN, ECHO or LFNEWLINE";
         }
     }
+    return null;
 }
 
 /// Text put into `into` from `at`, as far as it fits; where it ends.
@@ -178,17 +164,7 @@ fn put(into: []u8, at: usize, text: []const u8) usize {
 
 fn putNumber(into: []u8, at: usize, value: u32) usize {
     var digits: [10]u8 = undefined;
-    var count: usize = 0;
-    var left = value;
-    while (true) {
-        digits[count] = '0' + @as(u8, @intCast(left % 10));
-        count += 1;
-        left /= 10;
-        if (left == 0) break;
-    }
-    var reversed: [10]u8 = undefined;
-    for (0..count) |k| reversed[k] = digits[count - 1 - k];
-    return put(into, at, reversed[0..count]);
+    return put(into, at, digits[0..prefs.number(value, &digits)]);
 }
 
 /// The settings as their line, with a newline at the end; how many bytes

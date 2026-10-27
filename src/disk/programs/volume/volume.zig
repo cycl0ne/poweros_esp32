@@ -38,6 +38,7 @@ const prefs = sdk.prefs;
 const audio_file = prefs.audio;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const MotionBase = sdk.interface.motion.MotionBase;
 const Object = intuition.Object;
@@ -55,8 +56,8 @@ const ch = sdk.gadgets.chooser;
 const tx = sdk.gadgets.text;
 
 pub const COMMAND_NAME = "Volume";
-const VERSION = "1.2";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (26.10.2026)\r\n";
+const VERSION = "1.3";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -85,6 +86,7 @@ fn pair(t: sdk.utility.Tag, data: usize) TagItem {
 
 const App = struct {
     dl: *DosBase,
+    ub: *UtilityBase,
     ib: *IntuitionBase,
     control: audiocontrol.Control,
     outputs: audiocontrol.Outputs = .{},
@@ -365,7 +367,7 @@ const App = struct {
     fn save(app: *App) void {
         var text: [audio_file.max_file]u8 = undefined;
         var settings: audio_file.Settings = .{};
-        if (prefs.load(app.dl, audio_file.ENV_FILE, &text)) |read| _ = settings.load(read);
+        if (prefs.load(app.dl, audio_file.ENV_FILE, &text)) |read| _ = settings.load(app.ub, read);
         audio_file.gather(&app.control, &settings);
         const length = audio_file.write(&settings, &text);
         for ([_][*:0]const u8{ audio_file.ENV_FILE, audio_file.ENVARC_FILE }) |path| {
@@ -397,9 +399,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var libraries: [5]?*exec.Library = @splat(null);
+    var libraries: [6]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
-    const wanted = [_][*:0]const u8{ intuition.INTUITIONNAME, motion.MOTIONNAME, sl.SLIDER_LIBRARY, ch.CHOOSER_LIBRARY, tx.TEXT_LIBRARY };
+    const wanted = [_][*:0]const u8{ intuition.INTUITIONNAME, motion.MOTIONNAME, sl.SLIDER_LIBRARY, ch.CHOOSER_LIBRARY, tx.TEXT_LIBRARY, sdk.utility.UTILITYNAME };
     for (wanted, 0..) |name, i| {
         libraries[i] = sys.OpenLibrary(name, 0) orelse {
             _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, name });
@@ -411,6 +413,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var app = App{
         .dl = dl,
+        .ub = @ptrCast(libraries[5].?),
         .ib = ib,
         .control = audiocontrol.Control.open(sys) orelse {
             _ = Printf(dl, MSG_NODEVICE, .{ COMMAND_NAME, @as([*:0]const u8, audio.AUDIONAME) });

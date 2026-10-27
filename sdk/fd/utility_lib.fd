@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 //! multiplication and division, Latin-1 case, pack tables, named objects,
-//! unique IDs, pattern matching, strings and alignment. The reserved slots
-//! are kept free so that the slots after them stay where they are.
+//! unique IDs, pattern matching, strings, alignment and lines of settings.
+//! The reserved slots are kept free so that the slots after them stay
+//! where they are.
 ##include libs/exec/exec as exec
 ##include libs/utility/utility as utility
 ##basetype UtilityBase
@@ -113,4 +114,9 @@ i32 DateJoin(*const utility.ClockData date)
 /// they are the same, else below or above 0 as the first byte that differs
 /// is lower or higher at `first`.
 i32 CompareMem(*const anyopaque first, *const anyopaque second, usize length)
+// Settings
+/// The next `KEY=value` pair of a line of settings, from `scan.at` on: 1
+/// with `scan.key` and `scan.value` pointing at it in the text, 0 at the
+/// text's end, -1 for a value whose quote is not closed.
+i32 NextSetting(*utility.SettingScan scan)
 ##end

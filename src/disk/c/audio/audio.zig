@@ -52,11 +52,12 @@ const prefs = sdk.prefs;
 const audio_file = prefs.audio;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Audio";
-const VERSION_STRING = "\x00$VER: Audio 1.3 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Audio 1.4 (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "OUTPUT/K,VOLUME/K/N,EQ/K,PREFER/K,LIST/S,SAVE/S";
@@ -163,19 +164,19 @@ fn listed(outputs: *const audiocontrol.Outputs, wanted: []const u8) ?u32 {
 
 /// The settings file's outputs, as ENV: has them now; none when it is not
 /// there.
-fn loadFile(dl: *DosBase, settings: *audio_file.Settings, text: []u8) void {
+fn loadFile(dl: *DosBase, ub: *UtilityBase, settings: *audio_file.Settings, text: []u8) void {
     const read = prefs.load(dl, audio_file.ENV_FILE, text) orelse return;
-    _ = settings.load(read);
+    _ = settings.load(ub, read);
 }
 
 /// The output PREFER names: one listed, a number of one not there, a name
 /// the settings file has, or 0 for NONE; null for none of those.
-fn preferredNamed(dl: *DosBase, outputs: *const audiocontrol.Outputs, wanted: []const u8, text: []u8) ?u32 {
+fn preferredNamed(dl: *DosBase, ub: *UtilityBase, outputs: *const audiocontrol.Outputs, wanted: []const u8, text: []u8) ?u32 {
     if (sameName(wanted, "NONE")) return 0;
     if (listed(outputs, wanted)) |id| return id;
     if (audio_file.numberOf(wanted)) |id| return id;
     var settings: audio_file.Settings = .{};
-    loadFile(dl, &settings, text);
+    loadFile(dl, ub, &settings, text);
     for (settings.outputs[0..settings.count]) |*output| {
         if (sameName(output.nameText(), wanted)) return output.id;
     }
@@ -184,9 +185,9 @@ fn preferredNamed(dl: *DosBase, outputs: *const audiocontrol.Outputs, wanted: []
 
 /// The name the settings file gives the output of that number, NUL after
 /// it, into `into`; null when it gives none.
-fn filedName(dl: *DosBase, id: u32, text: []u8, into: *[audio.AUDIO_NAME_LEN:0]u8) ?[*:0]const u8 {
+fn filedName(dl: *DosBase, ub: *UtilityBase, id: u32, text: []u8, into: *[audio.AUDIO_NAME_LEN:0]u8) ?[*:0]const u8 {
     var settings: audio_file.Settings = .{};
-    loadFile(dl, &settings, text);
+    loadFile(dl, ub, &settings, text);
     const output = settings.find(id) orelse return null;
     const name = output.nameText();
     if (name.len == 0) return null;
@@ -196,7 +197,7 @@ fn filedName(dl: *DosBase, id: u32, text: []u8, into: *[audio.AUDIO_NAME_LEN:0]u
 }
 
 /// What plays: the output, the one preferred, the streams, the way in.
-fn showState(dl: *DosBase, control: *audiocontrol.Control, text: []u8) void {
+fn showState(dl: *DosBase, ub: *UtilityBase, control: *audiocontrol.Control, text: []u8) void {
     var device: audio.AudioInfo = .{};
     _ = control.query(&device);
     var info: audio.AudioOutputInfo = .{};
@@ -219,7 +220,7 @@ fn showState(dl: *DosBase, control: *audiocontrol.Control, text: []u8) void {
             _ = Printf(dl, MSG_PREFERRED, .{ outputs.labels[at].?, hex(&number, device.preferred_id), @as([*:0]const u8, "") });
         } else {
             var name: [audio.AUDIO_NAME_LEN:0]u8 = undefined;
-            if (filedName(dl, device.preferred_id, text, &name)) |filed| {
+            if (filedName(dl, ub, device.preferred_id, text, &name)) |filed| {
                 _ = Printf(dl, MSG_PREFERRED_FILED, .{ filed, hex(&number, device.preferred_id), @as([*:0]const u8, NOT_THERE) });
             } else _ = Printf(dl, MSG_PREFERRED_NUMBER, .{ hex(&number, device.preferred_id), @as([*:0]const u8, NOT_THERE) });
         }
@@ -242,7 +243,7 @@ fn showEqualizer(dl: *DosBase, bands: *const audiocontrol.Bands) void {
 
 /// Every output, a line each, and the preferred one when it is not there
 /// - by the name the settings file gives it, if it gives one.
-fn listOutputs(dl: *DosBase, control: *audiocontrol.Control, text: []u8) void {
+fn listOutputs(dl: *DosBase, ub: *UtilityBase, control: *audiocontrol.Control, text: []u8) void {
     var outputs: audiocontrol.Outputs = .{};
     outputs.read(control);
     var number: [8:0]u8 = undefined;
@@ -257,16 +258,16 @@ fn listOutputs(dl: *DosBase, control: *audiocontrol.Control, text: []u8) void {
     var device: audio.AudioInfo = .{};
     if (control.query(&device) and device.preferred_id != 0 and outputs.indexOf(device.preferred_id) == null) {
         var name: [audio.AUDIO_NAME_LEN:0]u8 = undefined;
-        const filed = filedName(dl, device.preferred_id, text, &name) orelse "";
+        const filed = filedName(dl, ub, device.preferred_id, text, &name) orelse "";
         _ = Printf(dl, MSG_ABSENT, .{ filed, hex(&number, device.preferred_id) });
     }
 }
 
 /// What the device has now, over the file's outputs, written to ENV: and
 /// ENVARC:. Whether both were.
-fn save(dl: *DosBase, control: *audiocontrol.Control, text: []u8) bool {
+fn save(dl: *DosBase, ub: *UtilityBase, control: *audiocontrol.Control, text: []u8) bool {
     var settings: audio_file.Settings = .{};
-    loadFile(dl, &settings, text);
+    loadFile(dl, ub, &settings, text);
     audio_file.gather(control, &settings);
     const length = audio_file.write(&settings, text);
     var ok = true;
@@ -284,6 +285,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
+    const util_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(util_lib);
+    const ub: *UtilityBase = @ptrCast(util_lib);
 
     var argv: [arg_count]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
@@ -329,7 +333,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
     }
     if (prefer) |wanted| {
-        const id = preferredNamed(dl, &outputs, span(wanted), &text) orelse {
+        const id = preferredNamed(dl, ub, &outputs, span(wanted), &text) orelse {
             _ = Printf(dl, MSG_NOOUTPUT, .{ COMMAND_NAME, wanted });
             return dos.RETURN_ERROR;
         };
@@ -343,10 +347,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
         _ = control.setEqualizer(0, wanted);
     }
-    if (argv[arg_save] != 0 and !save(dl, &control, &text)) return dos.RETURN_ERROR;
+    if (argv[arg_save] != 0 and !save(dl, ub, &control, &text)) return dos.RETURN_ERROR;
 
     if (argv[arg_list] != 0) {
-        listOutputs(dl, &control, &text);
-    } else if (!acted) showState(dl, &control, &text);
+        listOutputs(dl, ub, &control, &text);
+    } else if (!acted) showState(dl, ub, &control, &text);
     return dos.RETURN_OK;
 }

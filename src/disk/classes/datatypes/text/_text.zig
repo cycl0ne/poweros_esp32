@@ -210,7 +210,7 @@ pub fn chooseFamilies(base: *Base, own: *Data, given: ?*const graphics.TextAttr)
         if (sdk.prefs.loadWhole(base.sys_base, dl, font_prefs.ENV_FILE)) |read| {
             defer base.sys_base.FreeVec(read.ptr);
             if (sdk.prefs.firstLine(read)) |words| {
-                if (font_prefs.parse(words, &line) != null) line = .{};
+                if (font_prefs.parse(base.utility_base, words, &line) != null) line = .{};
             }
         }
     }

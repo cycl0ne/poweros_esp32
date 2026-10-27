@@ -32,6 +32,8 @@
 
 const graphics = @import("../graphics/graphics.zig");
 const style = @import("style.zig");
+const prefs = @import("prefs.zig");
+const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
 const Pen = graphics.Pen;
 
 pub const ENV_FILE = "ENV:Sys/anvil.prefs";
@@ -121,32 +123,11 @@ pub fn groundOf(text: []const u8) ?[2]Pen {
 
 /// The line read into `settings`, which keeps what it leaves out: null
 /// when it is taken, else what is wrong with it.
-pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
-    var i: usize = 0;
-    while (true) {
-        while (i < text.len and (text[i] == ' ' or text[i] == '\t' or text[i] == '\r' or text[i] == '\n')) i += 1;
-        if (i >= text.len) break;
-        var end = i;
-        while (end < text.len and text[end] != ' ' and text[end] != '\t' and text[end] != '=' and text[end] != '\r' and text[end] != '\n') end += 1;
-        const word = text[i..end];
-        i = end;
-        if (i < text.len and text[i] == '=') i += 1 else {
-            while (i < text.len and (text[i] == ' ' or text[i] == '\t')) i += 1;
-        }
-        // A value in quotes may have spaces in it.
-        var value: []const u8 = undefined;
-        if (i < text.len and text[i] == '"') {
-            var close = i + 1;
-            while (close < text.len and text[close] != '"') close += 1;
-            if (close >= text.len) return "a quote is not closed";
-            value = text[i + 1 .. close];
-            i = close + 1;
-        } else {
-            var value_end = i;
-            while (value_end < text.len and text[value_end] != ' ' and text[value_end] != '\t' and text[value_end] != '\r' and text[value_end] != '\n') value_end += 1;
-            value = text[i..value_end];
-            i = value_end;
-        }
+pub fn parse(ub: *UtilityBase, text: []const u8, settings: *Settings) ?[*:0]const u8 {
+    var pairs = prefs.Pairs.init(ub, text);
+    while (pairs.next() catch return prefs.Pairs.quote_not_closed) |pair| {
+        const word = pair.key;
+        const value = pair.value;
         if (style.same(word, "GROUND")) {
             const colours = groundOf(value) orelse return "GROUND is #RRGGBB, or #top..#bottom";
             settings.top = colours[0];
@@ -168,18 +149,11 @@ pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
                 if (style.same(value, name)) break @enumFromInt(k);
             } else return "VIEW is ICON, NAME, DATE or SIZE";
         } else if (style.same(word, "SNAP")) {
-            settings.snap = yesOrNo(value) orelse return "SNAP is YES or NO";
+            settings.snap = prefs.yesOrNo(value) orelse return "SNAP is YES or NO";
         } else if (style.same(word, "NEWWINDOW")) {
-            settings.new_window = yesOrNo(value) orelse return "NEWWINDOW is YES or NO";
+            settings.new_window = prefs.yesOrNo(value) orelse return "NEWWINDOW is YES or NO";
         } else return "not in the form GROUND=#RRGGBB PICTURE=name PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO";
     }
-    return null;
-}
-
-/// YES or NO, as true or false; null for anything else.
-fn yesOrNo(value: []const u8) ?bool {
-    if (style.same(value, snap_names[1])) return true;
-    if (style.same(value, snap_names[0])) return false;
     return null;
 }
 
@@ -192,20 +166,6 @@ fn hex(into: []u8, value: Pen) void {
         c.* = digits[(value >> shift) & 0xF];
         shift -%= 4;
     }
-}
-
-fn number(value: u32, into: []u8) usize {
-    var digits: [10]u8 = undefined;
-    var n: usize = 0;
-    var left = value;
-    while (true) {
-        digits[n] = '0' + @as(u8, @intCast(left % 10));
-        n += 1;
-        left /= 10;
-        if (left == 0) break;
-    }
-    for (0..n) |i| into[i] = digits[n - 1 - i];
-    return n;
 }
 
 /// `settings` written as the line, into `into` (240 bytes will do); how
@@ -242,7 +202,7 @@ pub fn write(settings: *const Settings, into: []u8) usize {
     put(into, &n, " PLACE=");
     put(into, &n, place_names[@intFromEnum(settings.place)]);
     put(into, &n, " ICONSIZE=");
-    n += number(settings.icon_size, into[n..]);
+    n += prefs.number(settings.icon_size, into[n..]);
     put(into, &n, " VIEW=");
     put(into, &n, view_names[@intFromEnum(settings.view)]);
     put(into, &n, " SNAP=");

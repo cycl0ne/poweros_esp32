@@ -13,6 +13,8 @@
 const graphics = @import("../graphics/graphics.zig");
 const sc = @import("../intuition/screens.zig");
 const style = @import("style.zig");
+const prefs = @import("prefs.zig");
+const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
 const Pen = graphics.Pen;
 
 pub const ENV_FILE = "ENV:Sys/palette.prefs";
@@ -26,22 +28,11 @@ pub const Palette = struct {
 
 /// The line read into `palette`, which keeps the pens it leaves out: null
 /// when it is taken, else what is wrong with it.
-pub fn parse(text: []const u8, palette: *Palette) ?[*:0]const u8 {
-    var i: usize = 0;
-    while (true) {
-        while (i < text.len and (text[i] == ' ' or text[i] == '\t' or text[i] == '\r' or text[i] == '\n')) i += 1;
-        if (i >= text.len) break;
-        var end = i;
-        while (end < text.len and text[end] != ' ' and text[end] != '\t' and text[end] != '=' and text[end] != '\r' and text[end] != '\n') end += 1;
-        const word = text[i..end];
-        i = end;
-        if (i < text.len and text[i] == '=') i += 1 else {
-            while (i < text.len and (text[i] == ' ' or text[i] == '\t')) i += 1;
-        }
-        var value_end = i;
-        while (value_end < text.len and text[value_end] != ' ' and text[value_end] != '\t' and text[value_end] != '\r' and text[value_end] != '\n') value_end += 1;
-        const value = text[i..value_end];
-        i = value_end;
+pub fn parse(ub: *UtilityBase, text: []const u8, palette: *Palette) ?[*:0]const u8 {
+    var pairs = prefs.Pairs.init(ub, text);
+    while (pairs.next() catch return prefs.Pairs.quote_not_closed) |pair| {
+        const word = pair.key;
+        const value = pair.value;
         const pen = style.lookUp(&style.pens, word) orelse return "not in the form BACKGROUND=#RRGGBB TEXT=#RRGGBB ...";
         const colour = style.rgb(value) orelse return "a pen's colour is #RRGGBB";
         palette.pens[pen] = colour;
@@ -98,9 +89,22 @@ pub const default_line = "DETAIL=#AAAAAA BLOCK=#000000 TEXT=#000000 SHINE=#FFFFF
 
 /// The built-in pens: what every screen without pens of its own has until
 /// something sets others.
+/// Read from `default_line` as the compiler builds, where no library can
+/// be called: its pairs are `PEN=#RRGGBB`, a space between each.
 pub const defaults: [sc.NUMDRIPENS]Pen = made: {
     @setEvalBranchQuota(20000);
-    var palette: Palette = .{};
-    if (parse(default_line, &palette) != null) @compileError("palette.default_line");
-    break :made palette.pens;
+    var pens: [sc.NUMDRIPENS]Pen = @splat(0);
+    var at: usize = 0;
+    while (at < default_line.len) {
+        var end = at;
+        while (end < default_line.len and default_line[end] != ' ') end += 1;
+        const pair = default_line[at..end];
+        const equals = for (pair, 0..) |c, k| {
+            if (c == '=') break k;
+        } else @compileError("palette.default_line");
+        const pen = style.lookUp(&style.pens, pair[0..equals]) orelse @compileError("palette.default_line");
+        pens[pen] = style.rgb(pair[equals + 1 ..]) orelse @compileError("palette.default_line");
+        at = end + 1;
+    }
+    break :made pens;
 };

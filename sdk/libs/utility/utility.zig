@@ -8,6 +8,7 @@ pub const date = @import("date.zig");
 pub const name = @import("name.zig");
 pub const pack = @import("pack.zig");
 pub const pattern = @import("pattern.zig");
+pub const setting = @import("setting.zig");
 
 /// The name to open it by.
 pub const UTILITYNAME = "utility.library";
@@ -34,6 +35,8 @@ pub const Hook = hooks.Hook;
 pub const HookFn = hooks.HookFn;
 
 pub const ClockData = date.ClockData;
+
+pub const SettingScan = setting.SettingScan;
 
 pub const P_ANY = pattern.P_ANY;
 pub const P_SINGLE = pattern.P_SINGLE;

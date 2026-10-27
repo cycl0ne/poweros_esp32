@@ -89,6 +89,7 @@ const sdt = datatypes.soundclass;
 const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const ColorWheelBase = sdk.interface.colorwheel.ColorWheelBase;
 const Object = intuition.Object;
@@ -119,8 +120,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.16";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (26.10.2026)\r\n";
+const VERSION = "1.17";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -197,12 +198,12 @@ const Model = struct {
     /// Lines the file had that could not be read.
     skipped: u32 = 0,
 
-    fn load(m: *Model, text: []const u8) void {
+    fn load(m: *Model, ub: *UtilityBase, text: []const u8) void {
         var lines = prefs.Lines{ .text = text };
         while (lines.next()) |l| {
             if (!style_file.hasWords(l.text)) continue;
             if (m.count == max_lines) break;
-            if (style_file.parse(l.text, &m.lines[m.count]) == null) m.count += 1 else m.skipped += 1;
+            if (style_file.parse(ub, l.text, &m.lines[m.count]) == null) m.count += 1 else m.skipped += 1;
         }
     }
 
@@ -342,6 +343,7 @@ const shape_fields = [_]Field{
 const Editor = struct {
     ib: *IntuitionBase,
     dl: *DosBase,
+    ub: *UtilityBase,
     sys: *ExecBase,
     model: Model = .{},
     part: usize = 0,
@@ -508,7 +510,7 @@ const Editor = struct {
         };
         defer e.sys.FreeVec(text.ptr);
         e.model = .{};
-        e.model.load(text);
+        e.model.load(e.ub, text);
         // What it is: its first comment.
         var said: []const u8 = "";
         var lines = prefs.Lines{ .text = text };
@@ -892,7 +894,7 @@ const Editor = struct {
     fn readAudio(e: *Editor) void {
         if (prefs.loadWhole(e.sys, e.dl, audio_file.ENV_FILE)) |read| {
             defer e.sys.FreeVec(read.ptr);
-            _ = e.audio.load(read);
+            _ = e.audio.load(e.ub, read);
         }
         const control = if (e.control) |*opened| opened else return;
         audio_file.gather(control, &e.audio);
@@ -2121,6 +2123,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(int_lib);
     const ib: *IntuitionBase = @ptrCast(int_lib);
+    const util_lib = sys.OpenLibrary(sdk.utility.UTILITYNAME, 1) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{sdk.utility.UTILITYNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(util_lib);
 
     const wanted = [_][*:0]const u8{
         ct.CLICKTAB_LIBRARY, pgc.PAGE_LIBRARY,  ch.CHOOSER_LIBRARY,  st.STRING_LIBRARY,
@@ -2144,21 +2151,21 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.FreeVec(memory);
     const e: *Editor = @ptrCast(@alignCast(memory));
     // The wheel's library, last, is also where its conversions are.
-    e.* = .{ .ib = ib, .dl = dl, .sys = sys, .wheel_base = @ptrCast(libraries[wanted.len - 1]) };
+    e.* = .{ .ib = ib, .dl = dl, .ub = @ptrCast(util_lib), .sys = sys, .wheel_base = @ptrCast(libraries[wanted.len - 1]) };
 
     // What is in force now: the files in ENV:, each read whole.
     if (prefs.loadWhole(sys, dl, style_file.ENV_FILE)) |text| {
         defer sys.FreeVec(text.ptr);
-        e.model.load(text);
+        e.model.load(e.ub, text);
     }
     if (prefs.loadWhole(sys, dl, font_file.ENV_FILE)) |text| {
         defer sys.FreeVec(text.ptr);
-        if (prefs.firstLine(text)) |line| _ = font_file.parse(line, &e.font_line);
+        if (prefs.firstLine(text)) |line| _ = font_file.parse(e.ub, line, &e.font_line);
     }
     if (prefs.loadWhole(sys, dl, anvil_file.ENV_FILE)) |text| {
         defer sys.FreeVec(text.ptr);
         var desktop: anvil_file.Settings = .{};
-        if (prefs.firstLine(text)) |line| if (anvil_file.parse(line, &desktop) == null) {
+        if (prefs.firstLine(text)) |line| if (anvil_file.parse(e.ub, line, &desktop) == null) {
             e.desktop = desktop;
         };
     }
@@ -2173,7 +2180,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (prefs.loadWhole(sys, dl, palette_file.ENV_FILE)) |text| {
         defer sys.FreeVec(text.ptr);
         var palette = palette_file.Palette{ .pens = e.pens };
-        if (prefs.firstLine(text)) |line| if (palette_file.parse(line, &palette) == null) {
+        if (prefs.firstLine(text)) |line| if (palette_file.parse(e.ub, line, &palette) == null) {
             e.pens = palette.pens;
         };
     }
@@ -2181,7 +2188,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (prefs.loadWhole(sys, dl, sound_file.ENV_FILE)) |text| {
         defer sys.FreeVec(text.ptr);
         var beep: sound_file.Settings = .{};
-        if (prefs.firstLine(text)) |line| if (sound_file.parse(line, &beep) == null) {
+        if (prefs.firstLine(text)) |line| if (sound_file.parse(e.ub, line, &beep) == null) {
             e.beep = beep;
         };
     }

@@ -475,7 +475,7 @@ pub const Desktop = struct {
         if (sdk.prefs.loadWhole(d.sys, d.dl, anvil_prefs.ENV_FILE)) |read| {
             defer d.sys.FreeVec(read.ptr);
             if (sdk.prefs.firstLine(read)) |line| {
-                if (anvil_prefs.parse(line, &settings) != null) settings = .{};
+                if (anvil_prefs.parse(d.ub, line, &settings) != null) settings = .{};
             }
         }
         d.prefs = settings;
@@ -490,7 +490,7 @@ pub const Desktop = struct {
         defer d.sys.FreeVec(read.ptr);
         const words = sdk.prefs.firstLine(read) orelse return null;
         var line: font_prefs.Line = .{};
-        if (font_prefs.parse(words, &line) != null) return null;
+        if (font_prefs.parse(d.ub, words, &line) != null) return null;
         const given = line.get(.icon) orelse line.get(.default) orelse return null;
         var family: [font_prefs.value_len:0]u8 = undefined;
         const wanted = font_prefs.attrOf(given, &family) orelse return null;

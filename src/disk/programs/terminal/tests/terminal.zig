@@ -6,8 +6,23 @@ const std = @import("std");
 const testing = std.testing;
 const settings_file = @import("../settings.zig");
 const Settings = settings_file.Settings;
+const UtilityBase = @import("sdk").interface.utility.UtilityBase;
+const kexec = @import("host_rom").exec;
+const utility_library = @import("host_rom").utility;
+
+/// utility.library on the host: the line is read through its NextSetting.
+fn utilityUp() !*UtilityBase {
+    return @ptrCast(try utility_library.setUp());
+}
+
+/// utility.library taken down again, and nothing of it left.
+fn utilityDown(ub: *UtilityBase) !void {
+    try utility_library.tearDown(@ptrCast(@alignCast(ub)));
+}
 
 test "the settings' line read back as it was written" {
+    const ub = try utilityUp();
+    defer kexec.deinit();
     var settings: Settings = .{};
     try testing.expect(settings.setDevice("usb/ftdi.device"));
     settings.unit = 2;
@@ -24,7 +39,7 @@ test "the settings' line read back as it was written" {
         text[0..n],
     );
     var back: Settings = .{};
-    try testing.expectEqual(@as(?[*:0]const u8, null), settings_file.parse(text[0..n], &back));
+    try testing.expectEqual(@as(?[*:0]const u8, null), settings_file.parse(ub, text[0..n], &back));
     try testing.expect(back.sameLine(&settings));
     try testing.expectEqual(settings.baud, back.baud);
     try testing.expectEqual(settings.frame, back.frame);
@@ -32,26 +47,33 @@ test "the settings' line read back as it was written" {
     try testing.expectEqual(settings.send_return, back.send_return);
     try testing.expectEqual(settings.echo, back.echo);
     try testing.expectEqual(settings.lf_newline, back.lf_newline);
+    try utilityDown(ub);
 }
 
 test "a word left out keeps its value; case does not matter" {
+    const ub = try utilityUp();
+    defer kexec.deinit();
     var settings: Settings = .{};
     _ = settings.setDevice("serial.device");
     settings.unit = 1;
-    try testing.expectEqual(@as(?[*:0]const u8, null), settings_file.parse("baud=57600 frame=8o1", &settings));
+    try testing.expectEqual(@as(?[*:0]const u8, null), settings_file.parse(ub, "baud=57600 frame=8o1", &settings));
     try testing.expectEqualStrings("serial.device", settings.deviceName().?);
     try testing.expectEqual(@as(u32, 1), settings.unit);
     try testing.expectEqual(@as(u32, 57600), settings.baud);
     try testing.expectEqualStrings("8O1", settings.frameOf().name);
+    try utilityDown(ub);
 }
 
 test "words that make no sense are told" {
+    const ub = try utilityUp();
+    defer kexec.deinit();
     var settings: Settings = .{};
-    try testing.expect(settings_file.parse("FRAME=9X1", &settings) != null);
-    try testing.expect(settings_file.parse("BAUD=fast", &settings) != null);
-    try testing.expect(settings_file.parse("COLOUR=RED", &settings) != null);
-    try testing.expect(settings_file.parse("DEVICE=\"serial.device", &settings) != null);
+    try testing.expect(settings_file.parse(ub, "FRAME=9X1", &settings) != null);
+    try testing.expect(settings_file.parse(ub, "BAUD=fast", &settings) != null);
+    try testing.expect(settings_file.parse(ub, "COLOUR=RED", &settings) != null);
+    try testing.expect(settings_file.parse(ub, "DEVICE=\"serial.device", &settings) != null);
     try testing.expectEqual(@as(?[:0]const u8, null), settings.deviceName());
+    try utilityDown(ub);
 }
 
 test "Return as the settings say" {

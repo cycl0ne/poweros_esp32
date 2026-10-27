@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! The system's settings as files in ENV:Sys and ENVARC:Sys: their forms
-//! (`style`, `font`, `intuition`, `palette`, `anvil`, `sound`, `audio`) - each read, checked
-//! and written back by the one definition every command and editor uses -
-//! and reading and writing a whole file (`loadWhole`, `save`).
+//! (`style`, `font`, `intuition`, `palette`, `anvil`, `sound`, `audio`,
+//! `dock`) - each read, checked and written back by the one definition
+//! every command and editor uses - and reading and writing a whole file
+//! (`loadWhole`, `save`).
+//!
+//! Every form is lines of `KEY=value` pairs, read with `Pairs`, which goes
+//! through utility.library's NextSetting: so they all take `KEY value` as
+//! well, and a value in quotes with blanks in it.
 //!
 //! A setting is in force from ENV:, which is in RAM; ENVARC: keeps it
 //! across a boot, and S:Startup-Sequence copies it to ENV: and hands it to
@@ -16,11 +21,65 @@ pub const palette = @import("palette.zig");
 pub const anvil = @import("anvil.zig");
 pub const sound = @import("sound.zig");
 pub const audio = @import("audio.zig");
+pub const dock = @import("dock.zig");
 
 const exec = @import("../exec/exec.zig");
 const dos = @import("../dos/dos.zig");
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 const DosBase = @import("../../interface/dos.zig").DosBase;
+const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
+const SettingScan = @import("../utility/setting.zig").SettingScan;
+
+/// A line's `KEY=value` pairs, one at a time, as utility.library's
+/// NextSetting reads them.
+pub const Pairs = struct {
+    ub: *UtilityBase,
+    scan: SettingScan,
+
+    pub const Pair = struct { key: []const u8, value: []const u8 };
+
+    /// What a form says of a value whose quote is not closed.
+    pub const quote_not_closed = "a quote is not closed";
+
+    pub fn init(ub: *UtilityBase, text: []const u8) Pairs {
+        return .{ .ub = ub, .scan = .{ .text = text.ptr, .length = text.len } };
+    }
+
+    /// The next pair, null at the line's end; error.QuoteNotClosed for a
+    /// value whose quote is not closed, which ends the line.
+    pub fn next(pairs: *Pairs) error{QuoteNotClosed}!?Pair {
+        return switch (pairs.ub.NextSetting(&pairs.scan)) {
+            0 => null,
+            1 => .{ .key = pairs.scan.keyText(), .value = pairs.scan.valueText() },
+            else => error.QuoteNotClosed,
+        };
+    }
+};
+
+/// The words of a setting that is on or off, by their value.
+pub const yes_no = [2][]const u8{ "NO", "YES" };
+
+/// YES or NO, any case, as true or false; null for anything else.
+pub fn yesOrNo(value: []const u8) ?bool {
+    if (style.same(value, yes_no[1])) return true;
+    if (style.same(value, yes_no[0])) return false;
+    return null;
+}
+
+/// `value` in decimal digits, into `into`; how many.
+pub fn number(value: u32, into: []u8) usize {
+    var digits: [10]u8 = undefined;
+    var n: usize = 0;
+    var left = value;
+    while (true) {
+        digits[n] = '0' + @as(u8, @intCast(left % 10));
+        n += 1;
+        left /= 10;
+        if (left == 0) break;
+    }
+    for (0..n) |i| into[i] = digits[n - 1 - i];
+    return n;
+}
 
 /// A file read whole, however long, into memory of its own, which the
 /// caller gives back with `FreeVec`; null when it is not there, is empty,

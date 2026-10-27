@@ -86,12 +86,13 @@ const DosBase = sdk.interface.dos.DosBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const TagItem = utility.TagItem;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.8 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.9 (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";
@@ -160,6 +161,7 @@ fn pathOf(into: *[128:0]u8, dir: [*:0]const u8, name: []const u8) [*:0]const u8 
 const Libs = struct {
     sys: *ExecBase,
     dl: *DosBase,
+    ub: *UtilityBase,
     gb: *GraphicsBase,
     ib: *IntuitionBase,
 };
@@ -172,7 +174,7 @@ fn readSettings(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     defer l.sys.FreeVec(text.ptr);
     const words = prefs.firstLine(text) orelse return dos.RETURN_OK;
     var settings: intuition_file.Settings = .{};
-    if (intuition_file.parse(words, &settings)) |wrong| {
+    if (intuition_file.parse(l.ub, words, &settings)) |wrong| {
         _ = Printf(l.dl, MSG_BAD, .{ from, wrong });
         return dos.RETURN_WARN;
     }
@@ -189,7 +191,7 @@ fn readPens(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     const words = prefs.firstLine(text) orelse return dos.RETURN_OK;
     var palette: palette_file.Palette = .{};
     _ = l.ib.GetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Pens, .data = @intFromPtr(&palette.pens) }, .{} });
-    if (palette_file.parse(words, &palette)) |wrong| {
+    if (palette_file.parse(l.ub, words, &palette)) |wrong| {
         _ = Printf(l.dl, MSG_BAD, .{ from, wrong });
         return dos.RETURN_WARN;
     }
@@ -207,7 +209,7 @@ fn readFonts(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     defer l.sys.FreeVec(text.ptr);
     const words = prefs.firstLine(text) orelse return dos.RETURN_OK;
     var line: font_file.Line = .{};
-    if (font_file.parse(words, &line)) |wrong| {
+    if (font_file.parse(l.ub, words, &line)) |wrong| {
         _ = Printf(l.dl, MSG_BAD, .{ from, wrong });
         return dos.RETURN_WARN;
     }
@@ -287,7 +289,7 @@ fn readStyle(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
             continue;
         }
         var parsed: style_file.Line = undefined;
-        if (style_file.parse(line.text, &parsed)) |wrong| {
+        if (style_file.parse(l.ub, line.text, &parsed)) |wrong| {
             _ = Printf(l.dl, MSG_BADLINE, .{ from, number, wrong });
             result = dos.RETURN_WARN;
             continue;
@@ -308,7 +310,7 @@ fn readSound(l: Libs, dir: [*:0]const u8, g: *Gathered) i32 {
     defer l.sys.FreeVec(text.ptr);
     const words = prefs.firstLine(text) orelse return dos.RETURN_OK;
     var settings: sound_file.Settings = .{};
-    if (sound_file.parse(words, &settings)) |wrong| {
+    if (sound_file.parse(l.ub, words, &settings)) |wrong| {
         _ = Printf(l.dl, MSG_BAD, .{ from, wrong });
         return dos.RETURN_WARN;
     }
@@ -351,7 +353,7 @@ fn readAudio(l: Libs, dir: [*:0]const u8, _: *Gathered) i32 {
     while (lines.next()) |line| {
         if (!style_file.hasWords(line.text)) continue;
         var output: audio_file.Output = .{};
-        if (audio_file.parseLine(line.text, &output)) |wrong| {
+        if (audio_file.parseLine(l.ub, line.text, &output)) |wrong| {
             _ = Printf(l.dl, MSG_BADLINE, .{ from, @as(u64, line.number), wrong });
             result = dos.RETURN_WARN;
             continue;
@@ -574,6 +576,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer dl.FreeArgs(rda);
 
+    const util_lib = sys.OpenLibrary(utility.UTILITYNAME, 1) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(util_lib);
     const gfx_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, graphics.GRAPHICS_VERSION) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(gfx_lib);
     const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, intuition.INTUITION_VERSION) orelse {
@@ -581,7 +585,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(int_lib);
-    const l = Libs{ .sys = sys, .dl = dl, .gb = @ptrCast(gfx_lib), .ib = @ptrCast(int_lib) };
+    const l = Libs{ .sys = sys, .dl = dl, .ub = @ptrCast(util_lib), .gb = @ptrCast(gfx_lib), .ib = @ptrCast(int_lib) };
 
     const from = rdargs.string(argv[arg_from]);
     const reset = argv[arg_reset] != 0;

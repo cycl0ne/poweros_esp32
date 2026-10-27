@@ -26,6 +26,8 @@ const intuition = @import("../intuition/intuition.zig");
 const audio = @import("../../devices/audio.zig");
 const audiocontrol = @import("../../devices/audiocontrol.zig");
 const style = @import("style.zig");
+const prefs = @import("prefs.zig");
+const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
 
 /// What a beep sounds like: `Settings.sound`.
 pub const SOUND_NONE: u32 = 0;
@@ -64,32 +66,11 @@ pub const beep_rate: u32 = 48_000;
 
 /// The line read into `settings`: null when it is taken, else what is
 /// wrong with it.
-pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
-    var i: usize = 0;
-    while (true) {
-        while (i < text.len and blank(text[i])) i += 1;
-        if (i >= text.len) break;
-        var end = i;
-        while (end < text.len and !blank(text[end]) and text[end] != '=') end += 1;
-        const word = text[i..end];
-        i = end;
-        if (i < text.len and text[i] == '=') i += 1 else {
-            while (i < text.len and (text[i] == ' ' or text[i] == '\t')) i += 1;
-        }
-        var value: []const u8 = undefined;
-        if (i < text.len and text[i] == '"') {
-            const from = i + 1;
-            var close = from;
-            while (close < text.len and text[close] != '"') close += 1;
-            if (close >= text.len) return "a quoted value has no closing quote";
-            value = text[from..close];
-            i = close + 1;
-        } else {
-            var value_end = i;
-            while (value_end < text.len and !blank(text[value_end])) value_end += 1;
-            value = text[i..value_end];
-            i = value_end;
-        }
+pub fn parse(ub: *UtilityBase, text: []const u8, settings: *Settings) ?[*:0]const u8 {
+    var pairs = prefs.Pairs.init(ub, text);
+    while (pairs.next() catch return prefs.Pairs.quote_not_closed) |pair| {
+        const word = pair.key;
+        const value = pair.value;
         if (style.same(word, "FLASH")) {
             settings.flash = for (flash_names, 0..) |name, k| {
                 if (style.same(value, name)) break @intCast(k);
@@ -114,28 +95,10 @@ pub fn parse(text: []const u8, settings: *Settings) ?[*:0]const u8 {
     return null;
 }
 
-fn blank(char: u8) bool {
-    return char == ' ' or char == '\t' or char == '\r' or char == '\n';
-}
-
 /// A number from `low` to `high`, or null.
 fn within(value: []const u8, low: u32, high: u32) ?u32 {
     const got = style.decimal(value) orelse return null;
     return if (got < low or got > high) null else got;
-}
-
-fn number(value: u32, into: []u8) usize {
-    var digits: [10]u8 = undefined;
-    var n: usize = 0;
-    var left = value;
-    while (true) {
-        digits[n] = '0' + @as(u8, @intCast(left % 10));
-        n += 1;
-        left /= 10;
-        if (left == 0) break;
-    }
-    for (0..n) |i| into[i] = digits[n - 1 - i];
-    return n;
 }
 
 /// `settings` written as the line, SAMPLE only when it names a file,
@@ -153,11 +116,11 @@ pub fn write(settings: *const Settings, into: []u8) usize {
     put(into, &n, " SOUND=");
     put(into, &n, sound_names[@min(settings.sound, 2)]);
     put(into, &n, " VOLUME=");
-    n += number(settings.volume, into[n..]);
+    n += prefs.number(settings.volume, into[n..]);
     put(into, &n, " TONE=");
-    n += number(settings.tone, into[n..]);
+    n += prefs.number(settings.tone, into[n..]);
     put(into, &n, " DURATION=");
-    n += number(settings.duration, into[n..]);
+    n += prefs.number(settings.duration, into[n..]);
     var length: usize = 0;
     while (length < sample_len and settings.sample[length] != 0) length += 1;
     if (length != 0) {

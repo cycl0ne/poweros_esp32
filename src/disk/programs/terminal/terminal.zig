@@ -41,6 +41,7 @@ const wn = intuition.windows;
 const mn = intuition.menus;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const AslBase = sdk.interface.asl.AslBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const TagItem = sdk.utility.TagItem;
@@ -53,8 +54,8 @@ const Line = @import("line.zig").Line;
 const Setup = @import("setup.zig").Setup;
 
 pub const COMMAND_NAME = "Terminal";
-const VERSION = "1.0";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (12.10.2026)\r\n";
+const VERSION = "1.1";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -502,12 +503,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_ERROR;
     };
     defer dl.FreeArgs(rda);
+    const util_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return dos.RETURN_FAIL;
+    defer sys.CloseLibrary(util_lib);
+    const ub: *UtilityBase = @ptrCast(util_lib);
 
     // The settings: the saved ones, then what the arguments change.
     var settings: Settings = .{};
     var saved: [512]u8 = undefined;
     if (prefs.load(dl, settings_file.ENV_FILE, &saved)) |text| {
-        if (settings_file.parse(text, &settings)) |why| {
+        if (settings_file.parse(ub, text, &settings)) |why| {
             _ = Printf(dl, MSG_BADSETTINGS, .{ COMMAND_NAME, @as([*:0]const u8, settings_file.ENV_FILE), why });
         }
     }
@@ -527,7 +531,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         @memcpy(words[0..head.len], head);
         var n: usize = 0;
         while (frame[n] != 0 and head.len + n < words.len) : (n += 1) words[head.len + n] = frame[n];
-        if (settings_file.parse(words[0 .. head.len + n], &settings)) |why| {
+        if (settings_file.parse(ub, words[0 .. head.len + n], &settings)) |why| {
             _ = Printf(dl, "%s: %s\n", .{ COMMAND_NAME, why });
             return dos.RETURN_ERROR;
         }

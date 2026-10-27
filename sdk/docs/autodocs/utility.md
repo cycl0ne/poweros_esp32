@@ -2,8 +2,9 @@
 
 utility.library's jump table: tag lists, hooks, dates, 32- and 64-bit
 multiplication and division, Latin-1 case, pack tables, named objects,
-unique IDs, pattern matching, strings and alignment. The reserved slots
-are kept free so that the slots after them stay where they are.
+unique IDs, pattern matching, strings, alignment and lines of settings.
+The reserved slots are kept free so that the slots after them stay
+where they are.
 
 Generated from the source by `./zig build autodoc`.
 
@@ -36,6 +37,7 @@ Generated from the source by `./zig build autodoc`.
 - [MatchPattern](#matchpattern) - Tells whether a string matches a pattern made by `ParsePattern`.
 - [MatchPatternNoCase](#matchpatternnocase) - Tells whether a string matches a pattern made by `ParsePatternNoCase`, without regard to case.
 - [NamedObjectName](#namedobjectname) - Returns the name of a named object.
+- [NextSetting](#nextsetting) - Reads the next `KEY=value` pair of a line of settings.
 - [NextTagItem](#nexttagitem) - Returns the next item a tag list holds, and moves the caller's place in the list past it.
 - [PackBoolTags](#packbooltags) - Sets and clears flag bits from the boolean tags of a list.
 - [PackStructureTags](#packstructuretags) - Copies the data of a tag list into the fields of a structure, as a pack table lays them out.
@@ -1695,6 +1697,84 @@ None known.
 
 ```zig
 const name = ub.NamedObjectName(obj).?;
+```
+
+## NextSetting
+
+Reads the next `KEY=value` pair of a line of settings.
+
+**SYNOPSIS**
+
+```zig
+fn NextSetting(_: *UtilityBase, scan: *SettingScan) i32
+```
+
+**SINCE**
+
+1.2. LVO -260.
+
+**INPUTS**
+
+- `scan` - the text and its length, and where to go on from: `at`,
+  0 for the first pair.
+
+**RESULT**
+
+1 with the pair in `scan.key` and `scan.value`, which point into the
+text, and their lengths. 0 at the text's end, with `key` and `value`
+null. -1 for a value whose opening quote has no closing one; `key`
+is that value's key, `value` is null.
+
+**BEHAVIOR**
+
+Blanks - spaces, tabs, carriage returns and line feeds - part the
+pairs. A pair is `KEY=value`, or `KEY value` with spaces or tabs
+between the two. The key ends at a blank or an '='. A value that
+starts with a double quote runs to the next one, blanks and '=' in it,
+and is handed out without them; there are no escapes. Any other value
+runs to the next blank. `KEY=` before a blank, and a key alone at the
+end, have an empty value.
+
+`at` is left after the pair, so the next call reads the one after
+it; at the text's end, and after a quote that is not closed, it is
+`length`, and every call after answers 0.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It reads only the text and writes only `scan`.
+- Locks: none taken, none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated or copied: `key` and `value` point into the
+caller's text, and are good as long as it is.
+
+**NOTES**
+
+It knows no keys: which there are, and what their values may be, is
+the caller's. The settings files in ENV:Sys are lines of these pairs,
+and SDK's `prefs.Pairs` reads them through this call.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+dos.library `ReadArgs`, `ReadItem` (a command line, with the shell's
+escapes); `Strnicmp`
+
+**EXAMPLES**
+
+```zig
+var scan: utility.SettingScan = .{ .text = line.ptr, .length = line.len };
+while (true) {
+    const got = ub.NextSetting(&scan);
+    if (got <= 0) break; // -1: a quote not closed
+    use(scan.keyText(), scan.valueText());
+}
 ```
 
 ## NextTagItem

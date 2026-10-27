@@ -5,7 +5,7 @@ modules lean on: tag lists, the way options are handed to almost every
 call in the system; hooks, the way a library calls a program back; dates;
 32- and 64-bit multiplication and division; strings and Latin-1 case; the
 patterns names are matched against; named objects; unique numbers; pack
-tables; and comparing records. This guide goes through them by what a
+tables; comparing records; and reading the lines of settings files. This guide goes through them by what a
 program wants to do. Every call is in full in the
 [autodocs](../autodocs/utility.md).
 
@@ -23,11 +23,12 @@ defer sys.CloseLibrary(lib);
 const ub: *UtilityBase = @ptrCast(lib);
 ```
 
-Version 1 has every call here; `CompareMem` came with revision 1 (1.1),
-which `ub.lib().revision` tells. The structures and constants are in
-`sdk.utility`, a file per area (`tagitem`, `hooks`, `date`, `name`,
-`pack`, `pattern`), most of them by name in `sdk.utility` itself; the
-pack-table ones only in `sdk.utility.pack`. No call needs a process: a
+Version 1 has every call here; `CompareMem` came with revision 1 (1.1)
+and `NextSetting` with revision 2 (1.2), which `ub.lib().revision`
+tells. The structures and constants are in `sdk.utility`, a file per
+area (`tagitem`, `hooks`, `date`, `name`, `pack`, `pattern`, `setting`),
+most of them by name in `sdk.utility` itself; the pack-table ones only
+in `sdk.utility.pack`. No call needs a process: a
 task will do.
 
 ## Tag lists
@@ -506,11 +507,42 @@ if (ub.CompareMem(&now, &told, @sizeOf(Told)) != 0) {
 }
 ```
 
+## Lines of settings
+
+`NextSetting(scan)` reads a line of `KEY=value` pairs a pair at a time -
+the form every settings file in ENV:Sys is written in:
+
+```
+ICONSIZE=48 PICTURE="SYS:Prefs/Sea Side.png" VIEW NAME
+```
+
+Blanks - spaces, tabs, carriage returns, line feeds - part the pairs. A
+pair is `KEY=value`, or `KEY value`. A value in double quotes runs to
+the next quote, blanks and `=` in it, with no escapes; any other value to
+the next blank. The call answers 1 with the pair in the `SettingScan`,
+0 at the end, -1 for a quote that is not closed. Nothing is copied:
+`key` and `value` point into the caller's text, so the call needs no
+buffer and can run anywhere.
+
+```zig
+var scan: utility.SettingScan = .{ .text = line.ptr, .length = line.len };
+while (ub.NextSetting(&scan) > 0) {
+    if (std.ascii.eqlIgnoreCase(scan.keyText(), "ICONSIZE")) size = scan.valueText();
+}
+```
+
+It knows no keys: which there are, and what their values may be, is the
+caller's. The forms in `sdk.prefs` read their lines through it
+(`sdk.prefs.Pairs`, which hands out slices), so every settings file
+takes the same words the same way. A command line is another matter:
+dos.library's `ReadArgs` and `ReadItem` read the shell's form, with its
+`*` escapes in quotes and `;` comments.
+
 ## Where each call may run
 
 | Calls | Waits | In an interrupt |
 |---|---|---|
-| tag lists read or changed in place, pack tables, dates, arithmetic, strings and case, `CompareMem`, `GetUniqueID`, `SetWildStar`, `NamedObjectName` | no | yes; a list is the caller's to keep others off |
+| tag lists read or changed in place, pack tables, dates, arithmetic, strings and case, `CompareMem`, `NextSetting`, `GetUniqueID`, `SetWildStar`, `NamedObjectName` | no | yes; a list is the caller's to keep others off |
 | `AllocateTagItems`, `CloneTagItems`, `FreeTagItems`, `AllocNamedObjectA`, `ReleaseNamedObject` | no | no: they allocate, free or take a lock |
 | `ParsePattern`, `MatchPattern` and their `NoCase` forms | no | no: they may allocate, and report through IoErr, which only a process has |
 | `AddNamedObject`, `FindNamedObject`, `RemNamedObject`, `AttemptRemNamedObject`, `FreeNamedObject` | for a name space's semaphore | no |

@@ -50,6 +50,7 @@ const Strrchr = @import("strings/strrchr.zig").Strrchr;
 const DateSplit = @import("date/datesplit.zig").DateSplit;
 const DateJoin = @import("date/datejoin.zig").DateJoin;
 const CompareMem = @import("utils/comparemem.zig").CompareMem;
+const NextSetting = @import("strings/nextsetting.zig").NextSetting;
 const PackStructureTags = @import("pack/packstructuretags.zig").PackStructureTags;
 const UnpackStructureTags = @import("pack/unpackstructuretags.zig").UnpackStructureTags;
 const AddNamedObject = @import("namedobjects/addnamedobject.zig").AddNamedObject;
@@ -76,6 +77,7 @@ const ClockData = sdk.utility.ClockData;
 const SDivMod32Result = sdk.utility.SDivMod32Result;
 const UDivMod32Result = sdk.utility.UDivMod32Result;
 const NamedObject = sdk.utility.NamedObject;
+const SettingScan = sdk.utility.SettingScan;
 
 /// utility.library's interface, as the SDK generates it from
 /// sdk/fd/utility_lib.fd.
@@ -154,6 +156,7 @@ const contract_files = [_][]const u8{
     @embedFile("utils/alignup.zig"),
     @embedFile("utils/aligndown.zig"),
     @embedFile("utils/comparemem.zig"),
+    @embedFile("strings/nextsetting.zig"),
     @embedFile("strings/strlcpy.zig"),
     @embedFile("strings/strchr.zig"),
     @embedFile("strings/strrchr.zig"),
@@ -324,6 +327,9 @@ fn lvoDateJoin(ub: *UtilityBase, date: *const ClockData) callconv(.c) i32 {
 fn lvoCompareMem(ub: *UtilityBase, first: *const anyopaque, second: *const anyopaque, length: usize) callconv(.c) i32 {
     return CompareMem(ub, first, second, length);
 }
+fn lvoNextSetting(ub: *UtilityBase, scan: *SettingScan) callconv(.c) i32 {
+    return NextSetting(ub, scan);
+}
 
 fn lvoGetUniqueID(ub: *UtilityBase) callconv(.c) u32 {
     return GetUniqueID(ub);
@@ -397,6 +403,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoDateSplit),
     vec(lvoDateJoin),
     vec(lvoCompareMem),
+    vec(lvoNextSetting),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -404,7 +411,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: every slot, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 64), vectors.len);
+    try testing.expectEqual(@as(usize, 65), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

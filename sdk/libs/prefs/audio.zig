@@ -30,7 +30,9 @@
 const audio = @import("../../devices/audio.zig");
 const audiocontrol = @import("../../devices/audiocontrol.zig");
 const style = @import("style.zig");
-const Lines = @import("prefs.zig").Lines;
+const prefs = @import("prefs.zig");
+const Lines = prefs.Lines;
+const UtilityBase = @import("../../interface/utility.zig").UtilityBase;
 
 pub const ENV_FILE = "ENV:Sys/audio.prefs";
 pub const ENVARC_FILE = "ENVARC:Sys/audio.prefs";
@@ -117,13 +119,13 @@ pub const Settings = struct {
 
     /// Every line of a file that reads, a line for a number already there
     /// taking its place; how many were passed over.
-    pub fn load(settings: *Settings, text: []const u8) u32 {
+    pub fn load(settings: *Settings, ub: *UtilityBase, text: []const u8) u32 {
         var skipped: u32 = 0;
         var lines = Lines{ .text = text };
         while (lines.next()) |line| {
             if (!style.hasWords(line.text)) continue;
             var output: Output = .{};
-            if (parseLine(line.text, &output) != null) {
+            if (parseLine(ub, line.text, &output) != null) {
                 skipped += 1;
                 continue;
             }
@@ -141,10 +143,6 @@ pub const Settings = struct {
         if (output.preferred) settings.prefer(output.id);
     }
 };
-
-fn blank(char: u8) bool {
-    return char == ' ' or char == '\t' or char == '\r' or char == '\n';
-}
 
 fn hexDigit(char: u8) ?u32 {
     return switch (char) {
@@ -188,31 +186,12 @@ pub fn numberOf(text: []const u8) ?u32 {
 
 /// A line read into `output`: null when it is taken, else what is wrong
 /// with it.
-pub fn parseLine(text: []const u8, output: *Output) ?[*:0]const u8 {
+pub fn parseLine(ub: *UtilityBase, text: []const u8, output: *Output) ?[*:0]const u8 {
     var given = false;
-    var i: usize = 0;
-    while (true) {
-        while (i < text.len and blank(text[i])) i += 1;
-        if (i >= text.len) break;
-        var end = i;
-        while (end < text.len and !blank(text[end]) and text[end] != '=') end += 1;
-        const word = text[i..end];
-        i = end;
-        if (i < text.len and text[i] == '=') i += 1;
-        var value: []const u8 = undefined;
-        if (i < text.len and text[i] == '"') {
-            const from = i + 1;
-            var close = from;
-            while (close < text.len and text[close] != '"') close += 1;
-            if (close >= text.len) return "a quoted value has no closing quote";
-            value = text[from..close];
-            i = close + 1;
-        } else {
-            var value_end = i;
-            while (value_end < text.len and !blank(text[value_end])) value_end += 1;
-            value = text[i..value_end];
-            i = value_end;
-        }
+    var pairs = prefs.Pairs.init(ub, text);
+    while (pairs.next() catch return prefs.Pairs.quote_not_closed) |pair| {
+        const word = pair.key;
+        const value = pair.value;
         if (style.same(word, "OUTPUT")) {
             output.id = numberOf(value) orelse return "OUTPUT is an output's number, as Audio LIST shows it";
             given = true;
@@ -240,20 +219,6 @@ fn put(into: []u8, at: *usize, text: []const u8) void {
     at.* += text.len;
 }
 
-fn decimalText(into: []u8, at: *usize, value: u32) void {
-    var digits: [10]u8 = undefined;
-    var n: usize = 0;
-    var left = value;
-    while (true) {
-        digits[n] = '0' + @as(u8, @intCast(left % 10));
-        n += 1;
-        left /= 10;
-        if (left == 0) break;
-    }
-    for (0..n) |k| into[at.* + k] = digits[n - 1 - k];
-    at.* += n;
-}
-
 /// An equalizer's bands as EQ has them - each band's dB, split by commas -
 /// into `into` (40 bytes will do); how many bytes.
 pub fn bandsText(bands: *const audiocontrol.Bands, into: []u8) usize {
@@ -261,7 +226,7 @@ pub fn bandsText(bands: *const audiocontrol.Bands, into: []u8) usize {
     for (bands, 0..) |band, at| {
         if (at != 0) put(into, &n, ",");
         if (band < 0) put(into, &n, "-");
-        decimalText(into, &n, @abs(band));
+        n += prefs.number(@abs(band), into[n..]);
     }
     return n;
 }
@@ -282,7 +247,7 @@ pub fn writeLine(output: *const Output, into: []u8) usize {
     hexText(&number, output.id);
     put(into, &n, &number);
     put(into, &n, " VOLUME=");
-    decimalText(into, &n, @min(output.volume, 100));
+    n += prefs.number(@min(output.volume, 100), into[n..]);
     if (!output.flat()) {
         put(into, &n, " EQ=");
         n += bandsText(&output.bands, into[n..]);
