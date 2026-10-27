@@ -4,9 +4,12 @@
 //! settings, the colours of the screens, and the sound - changed, and
 //! saved. Built against the SDK only.
 //!
-//!   SYS:Programs/Prefs
+//!   SYS:Programs/Prefs [PAGE=<name>]
 //!
-//! Seven pages under tabs:
+//! PAGE opens it on a page, named as its tab is - PAGE=DOCK, say - which
+//! is how the dock's menu opens it on the dock's page.
+//!
+//! Eight pages under tabs:
 //!
 //! - **Style**: the looks there are to pick from - a style file each in
 //!   SYS:Prefs/Presets/Styles, its first comment saying what it is - and a
@@ -50,6 +53,14 @@
 //!   flashes, and what is heard - nothing, a tone of a pitch, a loudness
 //!   and a length, or a sound file - with a button that plays it as the
 //!   page has it.
+//! - **Dock**: the edge of the screen the dock lies along, the most pixels
+//!   its pictures are shown at, when an entry's name is shown, and
+//!   whether the dock goes when the pointer leaves it. On the 64-bit
+//!   machines also whether - and to how many pixels - the entry under the
+//!   pointer grows, and whether the dock starts with the desktop: it and
+//!   its icon are moved into SYS:WBStartup, or out of it into
+//!   SYS:Programs, which Save does and Use does not. Its entries are not
+//!   here: they are changed on the dock itself.
 //!
 //! **Save** writes the files to ENV:Sys and ENVARC:Sys, **Use** to
 //! ENV:Sys alone - in force until the machine starts again - and both then
@@ -79,6 +90,7 @@ const font_file = prefs.font;
 const intuition_file = prefs.intuition;
 const palette_file = prefs.palette;
 const anvil_file = prefs.anvil;
+const dock_file = prefs.dock;
 const sound_file = prefs.sound;
 const audio_file = prefs.audio;
 const audio = sdk.devices.audio;
@@ -120,7 +132,7 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.17";
+const VERSION = "1.18";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
@@ -130,6 +142,11 @@ const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOMEMORY = "No memory for the settings\n";
 const MSG_NOWINDOW = "No window\n";
 const MSG_NOTSAVED = "%s could not be written\n";
+const MSG_NOTMOVED = "The dock could not be moved to %s\n";
+const MSG_BADPAGE = "%s: PAGE is STYLE, ADVANCED, COLOURS, FONTS, DESKTOP, SYSTEM, SOUND or DOCK\n";
+
+const template = "PAGE/K";
+const arg_page = 0;
 
 // --- the gadgets' IDs ----------------------------------------------------------------
 
@@ -279,7 +296,7 @@ const joins_labels = [_:null]?[*:0]const u8{ "Default", "None", "Angled" };
 const keyboard_labels = [_:null]?[*:0]const u8{ "When the board has none", "Always", "Never" };
 const place_labels = [_:null]?[*:0]const u8{ "Tiled", "Centred", "Scaled to cover" };
 const view_labels = [_:null]?[*:0]const u8{ "Icons", "Names", "Dates", "Sizes" };
-const tab_names = [_:null]?[*:0]const u8{ "Style", "Advanced", "Colours", "Fonts", "Desktop", "System", "Sound" };
+const tab_names = [_:null]?[*:0]const u8{ "Style", "Advanced", "Colours", "Fonts", "Desktop", "System", "Sound", "Dock" };
 const page_style = 0;
 const page_advanced = 1;
 const page_colours = 2;
@@ -287,6 +304,20 @@ const page_fonts = 3;
 const page_desktop = 4;
 const page_system = 5;
 const page_sound = 6;
+const page_dock = 7;
+
+const edge_labels = [_:null]?[*:0]const u8{ "Bottom", "Left", "Right", "Top" };
+const dock_label_labels = [_:null]?[*:0]const u8{ "Never", "Under the pointer", "Always" };
+/// The dock's checkboxes for growing under the pointer and starting with
+/// the desktop: on the 64-bit machines alone, whose screens are composed -
+/// the ESP32s' are not, and small.
+const dock_big_machine = @sizeOf(usize) == 8;
+/// The dock and its icon where they start with the desktop, and where
+/// they rest when they do not.
+const dock_places = [2][2][*:0]const u8{
+    .{ "SYS:Programs/Dock", "SYS:Programs/Dock.info" },
+    .{ "SYS:WBStartup/Dock", "SYS:WBStartup/Dock.info" },
+};
 /// What a beep sounds like, in `sound_file.SOUND_`'s order.
 const beep_sound_labels = [_:null]?[*:0]const u8{ "Nothing", "A tone", "A sound file" };
 
@@ -390,6 +421,8 @@ const Editor = struct {
     window: ?*intuition.Window = null,
     object: *Object = undefined,
     tabs: *Object = undefined,
+    /// The page shown first: PAGE's, else the first.
+    page: usize = 0,
     wheel_base: *ColorWheelBase = undefined,
     /// The fonts as the file had them, and whether each was picked anew.
     font_line: font_file.Line = .{},
@@ -444,6 +477,24 @@ const Editor = struct {
     sample: *Object = undefined,
     sound_status: *Object = undefined,
     sound_status_text: [80:0]u8 = @splat(0),
+    /// The dock's settings as the file had them - KEEPCLEAR, which the
+    /// page does not show, kept as it was - and the page's gadgets: the
+    /// magnified size's beside the checkbox that turns it on.
+    dock: dock_file.Settings = .{},
+    dock_edge: *Object = undefined,
+    dock_size: *Object = undefined,
+    dock_labels: *Object = undefined,
+    dock_hide: *Object = undefined,
+    dock_magnify: ?*Object = null,
+    dock_grow: ?*Object = null,
+    /// Whether the dock is in SYS:WBStartup, as the page opened or Save
+    /// last moved it, and its checkbox, where there is one.
+    dock_starts: bool = false,
+    dock_start: ?*Object = null,
+    dock_status: *Object = undefined,
+    dock_status_text: [80:0]u8 = @splat(0),
+    /// The pages, to turn to the one a problem is on.
+    book: *Object = undefined,
     /// What Test plays: a tone on a request of its own, sent, and its
     /// samples; or a sound file's object. datatypes.library once a file
     /// was played.
@@ -1162,6 +1213,43 @@ const Editor = struct {
         e.control = null;
     }
 
+    // --- the dock page ----------------------------------------------------
+
+    fn sayDock(e: *Editor, text: []const u8) void {
+        const n = @min(text.len, e.dock_status_text.len);
+        @memcpy(e.dock_status_text[0..n], text[0..n]);
+        e.dock_status_text[n] = 0;
+        e.set(page_dock, e.dock_status, &.{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&e.dock_status_text) }, .{} });
+    }
+
+    /// The dock's settings as the page has them.
+    fn dockPrefs(e: *Editor) dock_file.Settings {
+        var d = e.dock;
+        var value: usize = 0;
+        _ = e.ib.GetAttr(ch.CHOOSER_Active, e.dock_edge, &value);
+        d.edge = @enumFromInt(@min(value, dock_file.edge_names.len - 1));
+        _ = e.ib.GetAttr(ig.INTEGER_Number, e.dock_size, &value);
+        d.icon_size = @intCast(@min(@max(@as(isize, @bitCast(value)), dock_file.icon_size_min), dock_file.icon_size_max));
+        _ = e.ib.GetAttr(ch.CHOOSER_Active, e.dock_labels, &value);
+        d.labels = @enumFromInt(@min(value, dock_file.label_names.len - 1));
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.dock_hide, &value);
+        d.hide = value != 0;
+        const magnify = e.dock_magnify orelse return d;
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, magnify, &value);
+        d.magnify = 0;
+        if (value != 0) {
+            _ = e.ib.GetAttr(ig.INTEGER_Number, e.dock_grow.?, &value);
+            d.magnify = @intCast(@min(@max(@as(isize, @bitCast(value)), 0), dock_file.icon_size_max));
+        }
+        return d;
+    }
+
+    /// The page shown turned to `page`.
+    fn turnTo(e: *Editor, page: usize) void {
+        const w = e.window orelse return;
+        _ = e.ib.SetGadgetAttrsTagList(e.book, w, &[_]TagItem{ pair(pgc.PAGE_Current, page), .{} });
+    }
+
     /// The files written to ENV:, and to ENVARC: too when kept, and
     /// handed to the system. Whether all were written.
     fn apply(e: *Editor, keep: bool) bool {
@@ -1207,6 +1295,28 @@ const Editor = struct {
         n += 1;
         ok = e.saveBoth(sound_file.ENV_FILE, sound_file.ENVARC_FILE, text[0..n], keep) and ok;
 
+        n = dock_file.header.len;
+        @memcpy(text[0..n], dock_file.header);
+        const dock = e.dockPrefs();
+        n += dock_file.write(&dock, text[n..room]);
+        text[n] = '\n';
+        n += 1;
+        ok = e.saveBoth(dock_file.ENV_FILE, dock_file.ENVARC_FILE, text[0..n], keep) and ok;
+        // Where the dock is is kept on the disk: Save moves it, Use not.
+        if (keep) if (e.dock_start) |o| {
+            var value: usize = 0;
+            _ = e.ib.GetAttr(cb.CHECKBOX_Checked, o, &value);
+            const start = value != 0;
+            if (start != e.dock_starts) {
+                if (moveDock(e.dl, start)) {
+                    e.dock_starts = start;
+                } else {
+                    _ = Printf(e.dl, MSG_NOTMOVED, .{dock_places[@intFromBool(start)][0]});
+                    ok = false;
+                }
+            }
+        };
+
         if (e.control != null) {
             n = audio_file.write(&e.audio, text[0..room]);
             ok = e.saveBoth(audio_file.ENV_FILE, audio_file.ENVARC_FILE, text[0..n], keep) and ok;
@@ -1238,6 +1348,27 @@ const Editor = struct {
         return ok;
     }
 };
+
+/// Whether there is a file of that name.
+fn exists(dl: *DosBase, name: [*:0]const u8) bool {
+    const lock = dl.Lock(name, dos.ACCESS_READ) orelse return false;
+    dl.UnLock(lock);
+    return true;
+}
+
+/// The dock and its icon moved into SYS:WBStartup when it is to start
+/// with the desktop, else out of it into SYS:Programs: the program first,
+/// and moved back when its icon could not follow. Whether it was moved.
+fn moveDock(dl: *DosBase, start: bool) bool {
+    const from = dock_places[@intFromBool(!start)];
+    const to = dock_places[@intFromBool(start)];
+    if (!dl.Rename(from[0], to[0])) return false;
+    if (exists(dl, from[1]) and !dl.Rename(from[1], to[1])) {
+        _ = dl.Rename(to[0], from[0]);
+        return false;
+    }
+    return true;
+}
 
 /// A table's entry for a value given as text, as a chooser's place: 0 for
 /// the default, the entry's place after it otherwise.
@@ -1405,6 +1536,15 @@ fn sameText(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| if (x != y) return false;
     return true;
+}
+
+/// Whether `a` is `b`, letters' case aside.
+fn sameWord(a: [*:0]const u8, b: [*:0]const u8) bool {
+    var i: usize = 0;
+    while (style_file.upper(a[i]) == style_file.upper(b[i])) : (i += 1) {
+        if (a[i] == 0) return true;
+    }
+    return false;
 }
 
 /// Whether `a` comes before `b`, letters' case aside.
@@ -1923,6 +2063,7 @@ noinline fn build(e: *Editor) ?*Object {
         .{},
     }) orelse return null;
     pages[page_sound] = column(ib, null, &.{ sound_groups, e.sound_status }, &.{}) orelse return null;
+    pages[page_dock] = buildDock(e) orelse return null;
 
     e.tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_TABS),
@@ -1932,8 +2073,10 @@ noinline fn build(e: *Editor) ?*Object {
     const book = ib.NewObjectTagList(null, pgc.PAGE_CLASS, &[_]TagItem{
         pair(pgc.PAGE_Pages, @intFromPtr(&pages)),
         pair(pgc.PAGE_Tabs, @intFromPtr(e.tabs)),
+        pair(pgc.PAGE_Current, e.page),
         .{},
     }) orelse return null;
+    e.book = book;
     const buttons = row(ib, &.{
         button(ib, "_Save", ID_SAVE),
         button(ib, "_Use", ID_USE),
@@ -1947,6 +2090,70 @@ noinline fn build(e: *Editor) ?*Object {
         pair(lg.CHILDA_WeightHeight, 0),
         .{},
     });
+}
+
+/// The dock page, apart from `build` so that its tag lists take a frame
+/// of their own.
+noinline fn buildDock(e: *Editor) ?*Object {
+    const ib = e.ib;
+    e.dock_edge = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(ch.CHOOSER_Labels, @intFromPtr(&edge_labels)),
+        pair(ch.CHOOSER_Active, @intFromEnum(e.dock.edge)),
+        .{},
+    }) orelse return null;
+    e.dock_size = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
+        pair(ig.INTEGER_Min, dock_file.icon_size_min),
+        pair(ig.INTEGER_Max, dock_file.icon_size_max),
+        pair(ig.INTEGER_Step, 8),
+        pair(ig.INTEGER_Number, e.dock.icon_size),
+        .{},
+    }) orelse return null;
+    e.dock_labels = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(ch.CHOOSER_Labels, @intFromPtr(&dock_label_labels)),
+        pair(ch.CHOOSER_Active, @intFromEnum(e.dock.labels)),
+        .{},
+    }) orelse return null;
+    e.dock_hide = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(cb.CHECKBOX_Checked, @intFromBool(e.dock.hide)),
+        .{},
+    }) orelse return null;
+    var gadgets: [7]?*Object = .{ e.dock_edge, e.dock_size, e.dock_labels, e.dock_hide, null, null, null };
+    var labels: [7]?[*:0]const u8 = .{ "_Edge", "Icon si_ze", "_Names", "_Hide when the pointer leaves", null, null, null };
+    var count: usize = 4;
+    if (dock_big_machine) {
+        e.dock_magnify = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+            pair(cb.CHECKBOX_Checked, @intFromBool(e.dock.magnify != 0)),
+            .{},
+        }) orelse return null;
+        // Not magnified, the size offered is half as much again.
+        const grow = if (e.dock.magnify != 0) e.dock.magnify else @min(e.dock.icon_size * 3 / 2, dock_file.icon_size_max);
+        e.dock_grow = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
+            pair(ig.INTEGER_Min, dock_file.icon_size_min),
+            pair(ig.INTEGER_Max, dock_file.icon_size_max),
+            pair(ig.INTEGER_Step, 8),
+            pair(ig.INTEGER_Number, grow),
+            .{},
+        }) orelse return null;
+        e.dock_start = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+            pair(cb.CHECKBOX_Checked, @intFromBool(e.dock_starts)),
+            .{},
+        }) orelse return null;
+        gadgets[4..7].* = .{ e.dock_magnify, e.dock_grow, e.dock_start };
+        labels[4..7].* = .{ "_Magnify under the pointer", "Magnified _to", "Start with the des_ktop" };
+        count = 7;
+    }
+    const group = column(ib, "Dock", gadgets[0..count], labels[0..count]) orelse return null;
+    const note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Wrap, 1),
+        pair(tx.TEXT_Text, @intFromPtr("Its entries are changed on the dock itself: an icon let go on it is put in, an entry dragged off it taken off.")),
+        .{},
+    }) orelse return null;
+    e.dock_status = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Text, @intFromPtr(&e.dock_status_text)),
+        pair(tx.TEXT_Clipped, 1),
+        .{},
+    }) orelse return null;
+    return column(ib, null, &.{ group, note, e.dock_status }, &.{});
 }
 
 fn stringField(ib: *IntuitionBase, key: style_file.Key) ?*Object {
@@ -2117,6 +2324,23 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
+
+    var argv: [1]usize = @splat(0);
+    const rda = dl.ReadArgs(template, &argv, null) orelse {
+        _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
+        return dos.RETURN_FAIL;
+    };
+    defer dl.FreeArgs(rda);
+    var first_page: usize = 0;
+    if (argv[arg_page] != 0) {
+        const name: [*:0]const u8 = @ptrFromInt(argv[arg_page]);
+        first_page = for (tab_names, 0..) |tab, i| {
+            if (sameWord(name, tab.?)) break i;
+        } else {
+            _ = Printf(dl, MSG_BADPAGE, .{COMMAND_NAME});
+            return dos.RETURN_ERROR;
+        };
+    }
     const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse {
         _ = Printf(dl, MSG_NOLIBRARY, .{intuition.INTUITIONNAME});
         return dos.RETURN_FAIL;
@@ -2151,7 +2375,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.FreeVec(memory);
     const e: *Editor = @ptrCast(@alignCast(memory));
     // The wheel's library, last, is also where its conversions are.
-    e.* = .{ .ib = ib, .dl = dl, .ub = @ptrCast(util_lib), .sys = sys, .wheel_base = @ptrCast(libraries[wanted.len - 1]) };
+    e.* = .{ .ib = ib, .dl = dl, .ub = @ptrCast(util_lib), .sys = sys, .wheel_base = @ptrCast(libraries[wanted.len - 1]), .page = first_page };
 
     // What is in force now: the files in ENV:, each read whole.
     if (prefs.loadWhole(sys, dl, style_file.ENV_FILE)) |text| {
@@ -2169,6 +2393,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             e.desktop = desktop;
         };
     }
+
+    if (prefs.loadWhole(sys, dl, dock_file.ENV_FILE)) |text| {
+        defer sys.FreeVec(text.ptr);
+        var dock: dock_file.Settings = .{};
+        if (prefs.firstLine(text)) |line| if (dock_file.parse(e.ub, line, &dock) == null) {
+            e.dock = dock;
+        };
+    }
+    e.dock_starts = dock_big_machine and exists(dl, dock_places[1][0]);
 
     // The system's pens: as the default screen has them, as the file says.
     if (ib.LockPubScreen(null)) |screen| {
@@ -2262,6 +2495,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                             const beep = e.beepPrefs();
                             if (beep.sound == sound_file.SOUND_SAMPLE and beep.sample[0] == 0) {
                                 e.saySound("A sound file for the beep: pick one, or another sound");
+                                continue;
+                            }
+                            const dock = e.dockPrefs();
+                            if (dock.magnify != 0 and dock.magnify <= dock.icon_size) {
+                                e.turnTo(page_dock);
+                                e.sayDock("Magnified to more pixels than the icon size, or not magnified");
                                 continue;
                             }
                             if (e.apply(id == ID_SAVE)) return dos.RETURN_OK;

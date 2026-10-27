@@ -2,15 +2,17 @@
 
 Prefs holds the system's settings in one window: the style that gadgets,
 windows and menus are drawn in, the colours of the screens, the fonts,
-the desktop, the sound and a few of the system's own settings.
+the desktop, the sound, the dock and a few of the system's own settings.
 
 ## Starting it
 
 Double-click its icon, or type `SYS:Programs/Prefs` in a shell.
+`SYS:Programs/Prefs PAGE=DOCK` opens it on a page, named as its tab is -
+which is what **Dock Settings...** in the dock's menu does.
 
 ## The pages
 
-The settings are on seven pages, under tabs:
+The settings are on eight pages, under tabs:
 
 - **Style:** the looks there are to choose from - one style file each in
   SYS:Prefs/Presets/Styles - and a few gadgets drawn in the one chosen.
@@ -55,6 +57,15 @@ The settings are on seven pages, under tabs:
   played with it - none, a tone of a pitch and a length, or a sound
   file - at what volume. Test plays the beep as it is set; a line at
   the bottom says what came of it.
+- **Dock:** the edge of the screen the dock lies along, the most pixels
+  its pictures are shown at, when the entries' names are shown - never,
+  by the one under the pointer, or always - and whether the dock goes
+  when the pointer leaves it. On the 64-bit machines also whether the
+  entries near the pointer grow, and to how many pixels - more than the
+  icon size - and whether the dock starts with the desktop: Save moves
+  it and its icon into SYS:WBStartup, or out into SYS:Programs, where
+  it is started by hand; Use leaves it where it is. The entries
+  themselves are changed on the dock.
 
 The colour wheel opens in a window of its own over the editor: the wheel,
 its brightness beside it, the colour shown on a button and typed in a
