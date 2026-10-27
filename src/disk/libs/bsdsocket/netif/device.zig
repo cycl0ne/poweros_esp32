@@ -66,8 +66,10 @@ const read_bytes: u32 = _frame.buffer_bytes - _frame.headroom;
 /// Packets that may wait for a write.
 pub const queue_max = 64;
 /// Reads and writes at the most, whatever the link: a gigabit link takes
-/// all the reads there are.
-pub const reads_max = 128;
+/// all the reads there are - on the 64-bit boards as many as a 256 KiB
+/// window has frames (180), so a window that comes at link speed while
+/// the stack's task is late finds a read for each; elsewhere 128.
+pub const reads_max = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 256 else 128;
 pub const writes_max = 16;
 
 pub const Kind = enum(u8) { read_ip, read_arp, read_ip6, write, event, control };

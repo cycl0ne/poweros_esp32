@@ -166,7 +166,7 @@ pub fn AddInterfaceTagList(sb: *SocketBase, name: [*:0]const u8, tags: ?[*]const
     @memcpy(link.name[0..device_length], device_name.?[0..device_length]);
     link.unit = unit;
     const bps = link.bps();
-    link.reads = @min(@as(u32, @truncate(ub.GetTagData(bsd.IFA_Reads, if (bps >= 1_000_000_000) 128 else if (bps >= 100_000_000) 32 else if (bps >= 10_000_000) 24 else 8, tags))), device.reads_max);
+    link.reads = @min(@as(u32, @truncate(ub.GetTagData(bsd.IFA_Reads, if (bps >= 1_000_000_000) device.reads_max else if (bps >= 100_000_000) 32 else if (bps >= 10_000_000) 24 else 8, tags))), device.reads_max);
     link.writes = @min(@as(u32, @truncate(ub.GetTagData(bsd.IFA_Writes, if (bps >= 100_000_000) 8 else if (bps >= 10_000_000) 4 else 2, tags))), device.writes_max);
     if (link.reads == 0) link.reads = 1;
     if (link.writes == 0) link.writes = 1;

@@ -197,11 +197,60 @@ test "a frame goes to the first read of its type of every opener" {
     try testing.expectEqualSlices(u8, frame[ethernet.header_bytes..], data[0][0..28]);
     try testing.expectEqual(@as(u64, 1), rig.unit.stats.packets_received);
 
+    // The two still waiting answered as aborted, in either order: an
+    // opener's reads wait in a list for each type.
     rig.unit.close(&first);
-    try testing.expectEqual(&reads[1], rig.answered().?);
+    const one = rig.answered().?;
+    const other = rig.answered().?;
+    try testing.expect((one == &reads[1] and other == &reads[2]) or (one == &reads[2] and other == &reads[1]));
     try testing.expectEqual(exec.IOERR_ABORTED, reads[1].req.err);
-    try testing.expectEqual(&reads[2], rig.answered().?);
+    try testing.expectEqual(exec.IOERR_ABORTED, reads[2].req.err);
     rig.unit.close(&second);
+    try rig.deinit();
+}
+
+test "a frame looks only at reads of its own type, however many of another wait" {
+    var rig: Rig = undefined;
+    try rig.init();
+    const buffers = byteBuffers();
+    var opener = try rig.open(&buffers, 0);
+    try rig.configure(&opener);
+
+    // Three IPv6 reads first, then IPv4's, then two of types that share
+    // a list.
+    var data: [6][64]u8 = @splat(@splat(0));
+    var reads: [6]net.IOSana2Req = @splat(opener);
+    const types = [6]u32{ 0x86DD, 0x86DD, 0x86DD, 0x0800, 0x88B6, 0x88B5 };
+    for (&reads, 0..) |*read, i| {
+        read.packet_type = types[i];
+        read.data = &data[i];
+        read.data_length = 64;
+        rig.send(read, exec.CMD_READ);
+    }
+    try testing.expectEqual(null, rig.answered());
+
+    var frame: [ethernet.header_bytes + 28]u8 = @splat(0x5A);
+    ethernet.write(&frame, &ethernet.broadcast, &peer, 0x0800);
+    rig.unit.receive(&frame);
+    try testing.expectEqual(&reads[3], rig.answered().?);
+    try testing.expectEqual(null, rig.answered());
+    try testing.expectEqual(@as(u32, 0x0800), reads[3].packet_type);
+
+    ethernet.write(&frame, &ethernet.broadcast, &peer, 0x88B5);
+    rig.unit.receive(&frame);
+    try testing.expectEqual(&reads[5], rig.answered().?);
+    try testing.expectEqual(null, rig.answered());
+
+    ethernet.write(&frame, &ethernet.broadcast, &peer, 0x86DD);
+    rig.unit.receive(&frame);
+    try testing.expectEqual(&reads[0], rig.answered().?);
+    try testing.expectEqual(null, rig.answered());
+
+    // The rest answered as aborted.
+    rig.unit.close(&opener);
+    var aborted: usize = 0;
+    while (rig.answered()) |read| : (aborted += 1) try testing.expectEqual(exec.IOERR_ABORTED, read.req.err);
+    try testing.expectEqual(@as(usize, 3), aborted);
     try rig.deinit();
 }
 

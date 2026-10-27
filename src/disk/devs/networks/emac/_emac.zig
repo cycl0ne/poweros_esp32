@@ -66,10 +66,11 @@ pub const DEVICE_NAME = "emac.device";
 /// the engine's hands to send. A caller that sends more waits in the
 /// unit's queue. A frame that comes while the chain is full is lost, so
 /// on the JH7110 it holds what a gigabit link brings while the task is
-/// late: a 64 KiB TCP window is 45 frames, 12 us apart, and 16 lost the
-/// rest of each one. The ESP32-P4's link is 100 Mbit, and its internal
-/// memory small.
-pub const receive_count = if (sdk.hardware.chip == .rv64sbi) 128 else 16;
+/// late: a whole 256 KiB TCP window, 180 frames 12 us apart. With 128 a
+/// window of 256 KiB lost a few frames each run; 16 lost the rest of each
+/// 64 KiB one. The ESP32-P4's link is 100 Mbit, and its internal memory
+/// small.
+pub const receive_count = if (sdk.hardware.chip == .rv64sbi) 256 else 16;
 /// Every how many receive descriptors one asks for an interrupt.
 pub const receive_batch: u32 = if (sdk.hardware.chip == .rv64sbi) 16 else 1;
 pub const send_count = 8;

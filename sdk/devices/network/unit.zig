@@ -22,7 +22,10 @@
 //! **Where a frame goes.** To the first read of its type in each opener's
 //! queue that the opener's filter accepts; if no opener has one, to the
 //! first S2_READORPHAN of each opener that has one; else it is counted as
-//! unknown. A frame sent to a group nobody here joined, which the
+//! unknown. An opener's reads of IPv4, ARP and IPv6 wait in a list each
+//! (`read_types`), so a frame looks only at reads of its own type,
+//! however many of another type wait: a stack keeps reads of all three,
+//! and those of the type that does not come gather at the front. A frame sent to a group nobody here joined, which the
 //! hardware's hash filter let through, is dropped unless the unit is
 //! promiscuous.
 //!
@@ -50,6 +53,10 @@ pub const Framing = enum { ethernet, point_to_point };
 pub const type_ipv4: u32 = 0x0800;
 pub const type_ipv6: u32 = 0x86DD;
 
+/// The packet types whose reads an opener keeps a list of their own; the
+/// reads of every other type share one more (`Opener.readsOf`).
+const read_types = [_]u32{ type_ipv4, 0x0806, type_ipv6 };
+
 /// How many packet types S2_TRACKTYPE can count at once, and how many
 /// multicast groups the unit can join.
 pub const tracked_max = 8;
@@ -65,12 +72,21 @@ pub const Opener = extern struct {
     copy_from: ?net.CopyFn = null,
     /// Its S2_PacketFilter, if it gave one.
     filter: ?*Hook = null,
-    /// Its CMD_READs, S2_READORPHANs and S2_ONEVENTs, oldest first.
-    reads: exec.List = .{},
+    /// Its CMD_READs - a list for each of `read_types` and one for the
+    /// rest - S2_READORPHANs and S2_ONEVENTs, oldest first.
+    reads: [read_types.len + 1]exec.List = @splat(.{}),
     orphans: exec.List = .{},
     events: exec.List = .{},
     /// OpenDevice's flags: SANA2OPF_*.
     flags: u32 = 0,
+
+    /// The list its reads of `packet_type` wait in.
+    fn readsOf(opener: *Opener, packet_type: u32) *exec.List {
+        for (read_types, 0..) |one, index| {
+            if (one == packet_type) return &opener.reads[index];
+        }
+        return &opener.reads[read_types.len];
+    }
 };
 
 /// A packet type S2_TRACKTYPE counts.
@@ -199,7 +215,7 @@ pub fn Unit(comptime Link: type) type {
                 .filter = @ptrFromInt(filter),
                 .flags = flags,
             };
-            opener.reads.init(.message);
+            for (&opener.reads) |*list| list.init(.message);
             opener.orphans.init(.message);
             opener.events.init(.message);
             // The device's task walks the openers as a frame comes in.
@@ -240,8 +256,8 @@ pub fn Unit(comptime Link: type) type {
             const opener = openerOf(req) orelse return false;
             const node = nodeOf(req);
             sys.AcquireLock(&unit.lock);
-            const found = holds(&opener.reads, node) or holds(&opener.orphans, node) or
-                holds(&opener.events, node) or holds(&unit.writes, node);
+            var found = holds(&opener.orphans, node) or holds(&opener.events, node) or holds(&unit.writes, node);
+            for (&opener.reads) |*list| found = found or holds(list, node);
             if (found) sys.Remove(node);
             sys.ReleaseLock(&unit.lock);
             if (!found) return false;
@@ -328,7 +344,7 @@ pub fn Unit(comptime Link: type) type {
             const opener = openerOf(req) orelse return unit.answer(req, net.S2ERR_BAD_ARGUMENT, net.S2WERR_BUFF_ERROR);
             const sys = unit.sys;
             sys.AcquireLock(&unit.lock);
-            sys.AddTail(if (orphan) &opener.orphans else &opener.reads, nodeOf(req));
+            sys.AddTail(if (orphan) &opener.orphans else opener.readsOf(req.packet_type), nodeOf(req));
             sys.ReleaseLock(&unit.lock);
         }
 
@@ -375,7 +391,7 @@ pub fn Unit(comptime Link: type) type {
             var taken: exec.List = .{};
             taken.init(.message);
             sys.AcquireLock(&unit.lock);
-            moveAll(sys, &opener.reads, &taken);
+            for (&opener.reads) |*list| moveAll(sys, list, &taken);
             moveAll(sys, &opener.orphans, &taken);
             moveAll(sys, &opener.events, &taken);
             var it = unit.writes.iterator();
@@ -467,7 +483,7 @@ pub fn Unit(comptime Link: type) type {
             var it = unit.openers.iterator();
             while (it.next()) |node| {
                 const opener: *Opener = @fieldParentPtr("node", node);
-                moveAll(sys, &opener.reads, &taken);
+                for (&opener.reads) |*list| moveAll(sys, list, &taken);
                 moveAll(sys, &opener.orphans, &taken);
             }
             moveAll(sys, &unit.writes, &taken);
@@ -657,7 +673,7 @@ pub fn Unit(comptime Link: type) type {
         /// The first of `opener`'s reads of `packet_type` its filter
         /// accepts, taken off its queue. Under the unit's lock.
         fn claimRead(sys: *ExecBase, opener: *Opener, packet_type: u32, frame: []const u8) ?*net.IOSana2Req {
-            var it = opener.reads.iterator();
+            var it = opener.readsOf(packet_type).iterator();
             while (it.next()) |node| {
                 const req = requestOf(node);
                 if (req.packet_type != packet_type) continue;
