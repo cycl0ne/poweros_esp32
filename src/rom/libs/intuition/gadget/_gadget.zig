@@ -181,8 +181,9 @@ pub fn toDomainFor(ib: *IntuitionBase, w: *Window, o: *Object, x: i32, y: i32) s
 }
 
 /// One gadget drawn. Drawn whole or for what changed, it is drawn aside
-/// (`renderAside`); drawn for a mark or toggled, in place, since what it
-/// draws then may be nothing, or depend on what is there.
+/// (`renderAside`), or over the border for a gadget in the border
+/// (`renderOverBorder`); drawn for a mark or toggled, in place, since what
+/// it draws then may be nothing, or depend on what is there.
 pub fn render(ib: *IntuitionBase, w: *Window, o: *Object, redraw: u32) void {
     var gi = infoFor(ib, w, o);
     const it = ib.iface();
@@ -190,8 +191,70 @@ pub fn render(ib: *IntuitionBase, w: *Window, o: *Object, redraw: u32) void {
     defer it.ReleaseGIRPort(rp);
     var msg = gc.GpRender{ .gadget_info = &gi, .rast_port = rp, .redraw = redraw };
     const whole_or_update = redraw == gc.GREDRAW_REDRAW or redraw == gc.GREDRAW_UPDATE;
-    if (whole_or_update and renderAside(ib, o, &gi, rp, &msg)) return;
+    if (whole_or_update) {
+        const drawn = if (inBorder(ib, w, o)) renderOverBorder(ib, w, o, &gi, rp, &msg) else renderAside(ib, o, &gi, rp, &msg);
+        if (drawn) return;
+    }
     _ = it.SendMessage(o, @ptrCast(&msg));
+}
+
+/// A gadget in the border drawn over the border without ever showing half
+/// of it, as the border itself is drawn (`_window.drawBorder`): through a
+/// RastPort that draws in the window's own coordinates and sends what
+/// falls in the gadget's box to a picture of the box's size, the border
+/// painted there first and the gadget over it, and the picture put on the
+/// window in one copy. A border gadget paints only its own shapes, so
+/// whatever it drew before and draws no longer - a pressed look let go -
+/// goes with the border painted under it. The picture is the gadget's
+/// size, whatever the window's.
+/// False, and nothing drawn, when the picture cannot be had: the caller
+/// draws in place.
+fn renderOverBorder(ib: *IntuitionBase, w: *Window, o: *Object, gi: *classusr.GadgetInfo, rp: *graphics.RastPort, msg: *gc.GpRender) bool {
+    const gb = ib.graphics_base;
+    const place = boxIn(gadgetOf(ib, o), gi.domain_width, gi.domain_height);
+    if (place.width <= 0 or place.height <= 0) return false;
+    const area = graphics.Rect{ .min_x = place.left, .min_y = place.top, .max_x = place.left + place.width, .max_y = place.top + place.height };
+    const surface = gb.AllocBitMapTagList(&[_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = @intCast(place.width) },
+        .{ .tag = graphics.BMTAG_Height, .data = @intCast(place.height) },
+        .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(rp) },
+        .{},
+    }) orelse return false;
+    defer gb.FreeBitMap(surface);
+
+    // The window's font and pens, as the gadget would find them in place.
+    var font: usize = 0;
+    var front: usize = 0;
+    var back: usize = 0;
+    var mode: usize = 0;
+    gb.GetRPAttrs(rp, &[_]TagItem{
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) },
+        .{ .tag = graphics.RPTAG_APen, .data = @intFromPtr(&front) },
+        .{ .tag = graphics.RPTAG_BPen, .data = @intFromPtr(&back) },
+        .{ .tag = graphics.RPTAG_DrMd, .data = @intFromPtr(&mode) },
+        .{},
+    });
+    // Its own surface is the display's, as a window's RastPort's is: what
+    // bounds its clip and says its format. Every write goes to the target.
+    var target = graphics.ClipTarget{ .rect = area, .surface = surface, .dx = -place.left, .dy = -place.top };
+    const whole = graphics.Rect{ .max_x = w.width, .max_y = w.height };
+    const over = gb.CreateRastPortTagList(&[_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = w.screen.surface },
+        .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&whole) },
+        .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&target) },
+        .{ .tag = graphics.RPTAG_Font, .data = font },
+        .{ .tag = graphics.RPTAG_APen, .data = front },
+        .{ .tag = graphics.RPTAG_BPen, .data = back },
+        .{ .tag = graphics.RPTAG_DrMd, .data = mode },
+        .{},
+    }) orelse return false;
+    defer gb.FreeRastPort(over);
+
+    _window.paintBorder(ib, w, over);
+    msg.rast_port = over;
+    _ = ib.iface().SendMessage(o, @ptrCast(msg));
+    gb.BltBitMapRastPort(surface, 0, 0, rp, place.left, place.top, place.width, place.height);
+    return true;
 }
 
 /// A gadget drawn over itself without ever showing half of it: drawn
@@ -200,10 +263,8 @@ pub fn render(ib: *IntuitionBase, w: *Window, o: *Object, redraw: u32) void {
 /// corner, so the gadget draws at its own coordinates exactly as on the
 /// window; only the box is filled, drawn and copied, and a clip holds the
 /// drawing to it. The box starts as what the gadget is drawn over in
-/// place: the window's ground, painted as its layer paints it, or for a
-/// gadget in the border the border itself - its colour, active or not, and
-/// its frame - since a border gadget is drawn over the border and paints
-/// only its own shapes.
+/// place: the window's ground, painted as its layer paints it. A gadget
+/// in the border is drawn by `renderOverBorder` instead.
 /// False, and nothing drawn, when the picture cannot be had or would be
 /// larger than `aside_most`: the caller draws in place.
 fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *graphics.RastPort, msg: *gc.GpRender) bool {
@@ -252,11 +313,6 @@ fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *gr
         .{ .tag = graphics.RPTAG_BackFill, .data = graphics.BACKFILL_NONE },
         .{},
     });
-
-    // A gadget in the border: the border under it, as drawBorder puts it
-    // there before every one of its gadgets.
-    const w: *Window = @ptrCast(@alignCast(gi.window));
-    if (inBorder(ib, w, o)) _window.paintBorder(ib, w, aside);
 
     msg.rast_port = aside;
     _ = ib.iface().SendMessage(o, @ptrCast(msg));

@@ -140,8 +140,10 @@ pub const LIBRARY_VERSION = 0;
 /// 57: WA_StayInFront - a window in front of every ordinary one, as a
 /// dock is; the on-screen keyboard in front of those too.
 /// 58: SA_Dragging - whether a picture is dragged across a screen.
-pub const LIBRARY_REVISION = 58;
-const BUILD_DATE = "27.10.2026";
+/// 59: a gadget in the border redrawn over the border in a picture of
+/// its own size, in a window of any size.
+pub const LIBRARY_REVISION = 59;
+const BUILD_DATE = "28.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
