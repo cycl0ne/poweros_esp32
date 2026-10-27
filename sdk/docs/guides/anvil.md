@@ -418,6 +418,6 @@ Grid is on everywhere, its mark the prefs'.
 |---|---|
 | `C:LoadAnvil CLEANUP/S` | the desktop started, or brought to the front; `CLEANUP` lays the disks out anew |
 | `C:test/App NAME/K,ITEM/K,WINDOW/S` | an icon, a Tools item and a window that take part, every message printed |
-| `C:test/Icon NAME/M,DEFAULTS/S,PUT/K,SHOW/S` | the icons of files, and the defaults |
+| `C:test/Icon NAME/M,DEFAULTS/S,PUT/K,SHOW/S,SIZE/K/N` | the icons of files, and the defaults; their pictures at a size |
 | `C:IconX SCRIPT/A,FILES/M` | a script run as from its icon |
 | `SYS:System/Shell` | a shell in a window of its own |

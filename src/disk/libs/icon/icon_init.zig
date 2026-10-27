@@ -16,8 +16,10 @@ pub const LIBRARY_NAME = icon.ICONNAME;
 pub const LIBRARY_VERSION = 1;
 /// 1: a default for the files of `GID_MODEL`, ENV:Sys/def_model.info.
 /// 2: pictures unpacked by compression.library.
-pub const LIBRARY_REVISION = 2;
-const BUILD_DATE = "25.10.2026";
+/// 3: ObtainIconImage and ReleaseIconImage, a picture shrunk to a size
+/// and shared.
+pub const LIBRARY_REVISION = 3;
+const BUILD_DATE = "27.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

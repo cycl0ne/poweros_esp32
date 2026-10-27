@@ -22,6 +22,8 @@ const PutDefDiskObject = @import("default/putdefdiskobject.zig").PutDefDiskObjec
 const FindToolType = @import("tooltype/findtooltype.zig").FindToolType;
 const MatchToolValue = @import("tooltype/matchtoolvalue.zig").MatchToolValue;
 const BumpRevision = @import("name/bumprevision.zig").BumpRevision;
+const ObtainIconImage = @import("picture/obtainiconimage.zig").ObtainIconImage;
+const ReleaseIconImage = @import("picture/releaseiconimage.zig").ReleaseIconImage;
 
 /// icon.library's interface, as the SDK generates it from
 /// sdk/fd/icon_lib.fd.
@@ -57,6 +59,8 @@ const contract_files = [_][]const u8{
     @embedFile("tooltype/findtooltype.zig"),
     @embedFile("tooltype/matchtoolvalue.zig"),
     @embedFile("name/bumprevision.zig"),
+    @embedFile("picture/obtainiconimage.zig"),
+    @embedFile("picture/releaseiconimage.zig"),
 };
 
 fn lvoGetDiskObject(base: *IconBase, name: ?[*:0]const u8) callconv(.c) ?*icon.DiskObject {
@@ -89,6 +93,12 @@ fn lvoMatchToolValue(base: *IconBase, value: [*:0]const u8, wanted: [*:0]const u
 fn lvoBumpRevision(base: *IconBase, into: [*]u8, name: [*:0]const u8) callconv(.c) [*:0]u8 {
     return BumpRevision(base, into, name);
 }
+fn lvoObtainIconImage(base: *IconBase, image: *const icon.IconImage, most: u32) callconv(.c) ?*const icon.IconImage {
+    return ObtainIconImage(base, image, most);
+}
+fn lvoReleaseIconImage(base: *IconBase, image: ?*const icon.IconImage) callconv(.c) void {
+    return ReleaseIconImage(base, image);
+}
 
 /// The standard four, then the library's own in .fd order.
 pub const vectors = [_]*const anyopaque{
@@ -106,6 +116,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoFindToolType),
     vec(lvoMatchToolValue),
     vec(lvoBumpRevision),
+    vec(lvoObtainIconImage),
+    vec(lvoReleaseIconImage),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

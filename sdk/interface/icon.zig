@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! icon.library's functions: icons read, written and freed, the default
-//! icon of each kind, and the tool types. Open it with
-//! OpenLibrary("icon.library", 1).
+//! icon of each kind, the tool types, and an icon's picture at a size.
+//! Open it with OpenLibrary("icon.library", 1).
 //!
 //! The table is this library's own: it starts at the first slot after
 //! the standard four and holds only what is here.
@@ -27,6 +27,8 @@ pub const LVO = struct {
     pub const FindToolType = libraries.lvo(11);
     pub const MatchToolValue = libraries.lvo(12);
     pub const BumpRevision = libraries.lvo(13);
+    pub const ObtainIconImage = libraries.lvo(14);
+    pub const ReleaseIconImage = libraries.lvo(15);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -42,6 +44,8 @@ pub const Fn = struct {
     pub const FindToolType = *const fn (*IconBase, ?[*]const ?[*:0]const u8, [*:0]const u8) callconv(.c) ?[*:0]const u8;
     pub const MatchToolValue = *const fn (*IconBase, [*:0]const u8, [*:0]const u8) callconv(.c) bool;
     pub const BumpRevision = *const fn (*IconBase, [*]u8, [*:0]const u8) callconv(.c) [*:0]u8;
+    pub const ObtainIconImage = *const fn (*IconBase, *const icon.IconImage, u32) callconv(.c) ?*const icon.IconImage;
+    pub const ReleaseIconImage = *const fn (*IconBase, ?*const icon.IconImage) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -106,5 +110,19 @@ pub const IconBase = opaque {
     /// `Copy_of_x`, then `Copy_2_of_x`. `into` back.
     pub fn BumpRevision(self: *IconBase, into: [*]u8, name: [*:0]const u8) [*:0]u8 {
         return libraries.call(self, LVO.BumpRevision, Fn.BumpRevision, .{ into, name });
+    }
+
+    /// `image` at most `most` pixels each way: itself when it fits, else a
+    /// copy shrunk with its shape kept, shared with every caller that asks
+    /// for the same picture at the same size. Null without the memory. Given
+    /// back with ReleaseIconImage.
+    pub fn ObtainIconImage(self: *IconBase, image: *const icon.IconImage, most: u32) ?*const icon.IconImage {
+        return libraries.call(self, LVO.ObtainIconImage, Fn.ObtainIconImage, .{ image, most });
+    }
+
+    /// An image from ObtainIconImage given back: a shrunk copy goes with the
+    /// last that holds it. Null does nothing.
+    pub fn ReleaseIconImage(self: *IconBase, image: ?*const icon.IconImage) void {
+        return libraries.call(self, LVO.ReleaseIconImage, Fn.ReleaseIconImage, .{image});
     }
 };

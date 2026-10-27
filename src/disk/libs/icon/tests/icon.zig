@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
-//! Host tests of icon.library: the fields as text both ways; then the
-//! library made from its ROM tag on the ROM's exec, utility and dos, with
-//! a RAM disk as WORK: and ENV: assigned to a drawer on it - icons
-//! written, read back and deleted, pictures plain and interlaced, the
-//! defaults built in and from ENV: with their pictures shared, the kinds
-//! a file without an icon gets, the tool types and the names of copies.
+//! Host tests of icon.library: the fields as text both ways, and a
+//! picture's size and shrinking; then the library made from its ROM tag
+//! on the ROM's exec, utility and dos, with a RAM disk as WORK: and ENV:
+//! assigned to a drawer on it - icons written, read back and deleted,
+//! pictures plain and interlaced, the defaults built in and from ENV:
+//! with their pictures shared, the kinds a file without an icon gets, the
+//! tool types and the names of copies, and pictures at a size, shrunk
+//! once and shared.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -15,6 +17,7 @@ const iconfile = icon.file;
 const host = @import("host_rom");
 const kexec = host.exec;
 const icon_init = @import("../icon_init.zig");
+const shrunk = @import("../picture/_shrunk.zig");
 const compression_init = @import("../../compression/compression_init.zig");
 
 const testing = std.testing;
@@ -56,6 +59,39 @@ test "the fields: an icon's written as text and read back, unknown lines passed 
     try testing.expect(iconfile.numbers(4, "1,2") == null);
     try testing.expect(iconfile.number("99999999999") == null);
     try testing.expectEqual(@as(?u32, icon.DDVM_BYSIZE), iconfile.viewOf("size"));
+}
+
+// --- a picture at a size ----------------------------------------------------
+
+test "a picture's size: itself when it fits, its shape kept when it does not" {
+    try testing.expectEqual(shrunk.Size{ .width = 40, .height = 30 }, shrunk.fitted(40, 30, 48));
+    try testing.expectEqual(shrunk.Size{ .width = 48, .height = 24 }, shrunk.fitted(96, 48, 48));
+    try testing.expectEqual(shrunk.Size{ .width = 24, .height = 48 }, shrunk.fitted(64, 128, 48));
+    try testing.expectEqual(shrunk.Size{ .width = 48, .height = 1 }, shrunk.fitted(256, 2, 48));
+    try testing.expectEqual(shrunk.Size{ .width = 5, .height = 4 }, shrunk.fitted(13, 11, 5));
+}
+
+test "shrinking: each pixel the average of those it covers, colour weighted by coverage" {
+    // Four pixels into one: red covered, blue covered, two clear ones that
+    // must not darken it.
+    const from = [_]u8{
+        255, 0, 0, 255, 0, 0, 255, 255,
+        0,   0, 0, 0,   9, 9, 9,   0,
+    };
+    var into: [4]u8 = undefined;
+    shrunk.shrink(&from, 2, 2, &into, .{ .width = 1, .height = 1 });
+    try testing.expectEqualSlices(u8, &.{ 127, 0, 127, 127 }, &into);
+    // A wholly clear area stays clear and black.
+    const clear = [_]u8{ 7, 7, 7, 0 } ** 4;
+    shrunk.shrink(&clear, 2, 2, &into, .{ .width = 1, .height = 1 });
+    try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0 }, &into);
+    // The largest picture an icon has, fully covered and white, into one
+    // pixel: the sums do not overflow.
+    const white = try testing.allocator.alloc(u8, 256 * 256 * 4);
+    defer testing.allocator.free(white);
+    @memset(white, 255);
+    shrunk.shrink(white, 256, 256, &into, .{ .width = 1, .height = 1 });
+    try testing.expectEqualSlices(u8, &.{ 255, 255, 255, 255 }, &into);
 }
 
 // --- the library on a RAM disk -------------------------------------------------
@@ -435,4 +471,139 @@ test "the tool types and the names of copies, as 3.1's examples have them" {
     const bumped = std.mem.span(ib.BumpRevision(&into, &long));
     try testing.expectEqual(@as(usize, 255), bumped.len);
     try testing.expectEqualStrings("Copy_of_nnn", bumped[0..11]);
+}
+
+/// The test picture's pixel at x, y of it shrunk to `to`: the average of
+/// the pixels the shrunk one covers, worked out from `testPixel`.
+fn shrunkTestPixel(x: u32, y: u32, to: shrunk.Size) [4]u8 {
+    const left = x * 13 / to.width;
+    const right = @max(left + 1, (x + 1) * 13 / to.width);
+    const top = y * 11 / to.height;
+    const bottom = @max(top + 1, (y + 1) * 11 / to.height);
+    var sums: [4]u32 = @splat(0);
+    var count: u32 = 0;
+    for (top..bottom) |sy| for (left..right) |sx| {
+        const pixel = testPixel(@intCast(sx), @intCast(sy));
+        for (0..3) |c| sums[c] += @as(u32, pixel[c]) * pixel[3];
+        sums[3] += pixel[3];
+        count += 1;
+    };
+    if (sums[3] == 0) return .{ 0, 0, 0, 0 };
+    return .{
+        @intCast(sums[0] / sums[3]),
+        @intCast(sums[1] / sums[3]),
+        @intCast(sums[2] / sums[3]),
+        @intCast(sums[3] / count),
+    };
+}
+
+test "a picture at a size: itself when it fits, held past its icon; shrunk once, shared, let go with the last" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const ib = rig.ib;
+    try rig.write("WORK:Plain.info", plain_png);
+
+    // It fits: the picture itself, held - the icon may go first.
+    const plain = ib.GetDiskObject("WORK:Plain") orelse return error.NoIcon;
+    const whole = ib.ObtainIconImage(plain.image.?, 13) orelse return error.NoImage;
+    try testing.expectEqual(plain.image.?, whole);
+    const larger = ib.ObtainIconImage(plain.image.?, 200) orelse return error.NoImage;
+    try testing.expectEqual(plain.image.?, larger);
+    ib.ReleaseIconImage(larger);
+
+    // Shrunk: 13 by 11 into 5 by 4, each pixel the average of its part.
+    const small = ib.ObtainIconImage(plain.image.?, 5) orelse return error.NoImage;
+    try testing.expect(small != plain.image.?);
+    try testing.expectEqual(@as(u32, 5), small.width);
+    try testing.expectEqual(@as(u32, 4), small.height);
+    const size = shrunk.Size{ .width = 5, .height = 4 };
+    for (0..4) |y| for (0..5) |x| {
+        const at = (y * 5 + x) * 4;
+        try testing.expectEqualSlices(u8, &shrunkTestPixel(@intCast(x), @intCast(y), size), small.pixels[at..][0..4]);
+    };
+    // The same size again is the same copy; another size another.
+    const again = ib.ObtainIconImage(plain.image.?, 5) orelse return error.NoImage;
+    try testing.expectEqual(small, again);
+    const other = ib.ObtainIconImage(plain.image.?, 6) orelse return error.NoImage;
+    try testing.expect(other != small);
+    try testing.expectEqual(@as(u32, 6), other.width);
+    try testing.expectEqual(@as(u32, 5), other.height);
+
+    // The icon given back: the picture stays for the images held.
+    ib.FreeDiskObject(plain);
+    try expectTestPicture(whole);
+    try testing.expectEqualSlices(u8, &shrunkTestPixel(4, 3, size), small.pixels[(3 * 5 + 4) * 4 ..][0..4]);
+
+    // A copy asked for at its own size is itself, held once more; smaller
+    // still, a copy of its own.
+    const same = ib.ObtainIconImage(small, 5) orelse return error.NoImage;
+    try testing.expectEqual(small, same);
+    const smaller = ib.ObtainIconImage(small, 3) orelse return error.NoImage;
+    try testing.expectEqual(@as(u32, 3), smaller.width);
+    try testing.expectEqual(@as(u32, 2), smaller.height);
+    ib.ReleaseIconImage(smaller);
+    ib.ReleaseIconImage(same);
+
+    ib.ReleaseIconImage(again);
+    ib.ReleaseIconImage(small);
+    ib.ReleaseIconImage(other);
+    ib.ReleaseIconImage(whole);
+    ib.ReleaseIconImage(null);
+    // Every copy and the picture are gone: rig.deinit finds all of the
+    // memory lent back.
+}
+
+test "a default's picture at a size is one copy for every icon made from it" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const ib = rig.ib;
+
+    const first = ib.GetDefDiskObject(icon.WBDRAWER) orelse return error.NoIcon;
+    const second = ib.GetDefDiskObject(icon.WBDRAWER) orelse return error.NoIcon;
+    try testing.expectEqual(first.image.?, second.image.?);
+    const one = ib.ObtainIconImage(first.image.?, 24) orelse return error.NoImage;
+    const two = ib.ObtainIconImage(second.image.?, 24) orelse return error.NoImage;
+    try testing.expectEqual(one, two);
+    try testing.expectEqual(@as(u32, 24), one.width);
+    try testing.expectEqual(@as(u32, 24), one.height);
+    ib.FreeDiskObject(first);
+    ib.FreeDiskObject(second);
+    ib.ReleaseIconImage(one);
+    // The copy is the default's still, while one holds it.
+    const third = ib.GetDefDiskObject(icon.WBDRAWER) orelse return error.NoIcon;
+    defer ib.FreeDiskObject(third);
+    const three = ib.ObtainIconImage(third.image.?, 24) orelse return error.NoImage;
+    try testing.expectEqual(two, three);
+    ib.ReleaseIconImage(three);
+    ib.ReleaseIconImage(two);
+}
+
+test "an image of the program's own: itself and not held when it fits, else a copy of its own" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const ib = rig.ib;
+
+    // Four by two: a red column, a clear one, a blue one, a white one.
+    const pixels = [_]u8{ 255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255 } ** 2;
+    const own = icon.IconImage{ .width = 4, .height = 2, .pixels = &pixels };
+    const whole = ib.ObtainIconImage(&own, 4) orelse return error.NoImage;
+    try testing.expectEqual(&own, whole);
+    ib.ReleaseIconImage(whole);
+
+    const half = ib.ObtainIconImage(&own, 2) orelse return error.NoImage;
+    try testing.expectEqual(@as(u32, 2), half.width);
+    try testing.expectEqual(@as(u32, 1), half.height);
+    try testing.expectEqualSlices(u8, &.{ 255, 0, 0, 127, 127, 127, 255, 255 }, half.pixels[0..8]);
+    const another = ib.ObtainIconImage(&own, 2) orelse return error.NoImage;
+    try testing.expect(another != half);
+    // 0 is taken as 1.
+    const dot = ib.ObtainIconImage(&own, 0) orelse return error.NoImage;
+    try testing.expectEqual(@as(u32, 1), dot.width);
+    try testing.expectEqual(@as(u32, 1), dot.height);
+    ib.ReleaseIconImage(dot);
+    ib.ReleaseIconImage(another);
+    ib.ReleaseIconImage(half);
 }

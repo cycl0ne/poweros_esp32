@@ -6,8 +6,9 @@
 //! **An icon** is `<name>.info` beside the file, drawer or volume it
 //! belongs to: a PNG whose `icOn` chunk holds its fields as text
 //! (`sdk.icon.file`). Its picture is decoded once into four bytes a pixel
-//! (`picture/`), counted by its users and shared; its fields are made
-//! into a `DiskObject` in one block with their strings (`object/`).
+//! (`picture/`), counted by its users and shared, and shrunk to a size
+//! once for whoever shows it smaller; its fields are made into a
+//! `DiskObject` in one block with their strings (`object/`).
 //!
 //! **The defaults** (`default/`) are a disk's, a drawer's, a tool's, a
 //! project's and the trash's - built in, and each replaced by
@@ -17,7 +18,7 @@
 //!
 //! The jump table is icon_lvo.zig, the ROM tag, init and expunge
 //! icon_init.zig, the base icon_base.zig. The calls are under `object/`,
-//! `default/`, `tooltype/` and `name/`.
+//! `default/`, `tooltype/`, `name/` and `picture/`.
 
 const sdk = @import("sdk");
 const ExecBase = sdk.interface.exec.ExecBase;

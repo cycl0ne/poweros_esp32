@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! icon.library's functions: icons read, written and freed, the default
-//! icon of each kind, and the tool types. Open it with
-//! OpenLibrary("icon.library", 1).
+//! icon of each kind, the tool types, and an icon's picture at a size.
+//! Open it with OpenLibrary("icon.library", 1).
 //!
 //! The table is this library's own: it starts at the first slot after
 //! the standard four and holds only what is here.
@@ -36,4 +36,12 @@ bool MatchToolValue([*:0]const u8 value, [*:0]const u8 wanted)
 /// The name for a copy of `name` written into `into` (256 bytes):
 /// `Copy_of_x`, then `Copy_2_of_x`. `into` back.
 [*:0]u8 BumpRevision([*]u8 into, [*:0]const u8 name)
+/// `image` at most `most` pixels each way: itself when it fits, else a
+/// copy shrunk with its shape kept, shared with every caller that asks
+/// for the same picture at the same size. Null without the memory. Given
+/// back with ReleaseIconImage.
+?*const icon.IconImage ObtainIconImage(*const icon.IconImage image, u32 most)
+/// An image from ObtainIconImage given back: a shrunk copy goes with the
+/// last that holds it. Null does nothing.
+void ReleaseIconImage(?*const icon.IconImage image)
 ##end

@@ -57,9 +57,33 @@ The picture is `rgba32`: red, green, blue and coverage, a row
 shared - every file without an icon of a kind shows the same one - and
 read only.
 
-`C:test/Icon NAME/M,DEFAULTS/S,PUT/K,SHOW/S` prints the icons of names
-and the defaults, writes the first as another name's icon with `PUT`,
-and shows the pictures in a window with `SHOW`.
+### A picture at a size
+
+A program that shows icons smaller than their pictures - a desktop, a
+dock, a list with an icon on each row - asks for the picture at the
+size it shows them:
+
+```zig
+const image = ib.ObtainIconImage(object.image.?, 32) orelse return; // no memory
+defer ib.ReleaseIconImage(image);
+// image.width and image.height at most 32, the shape kept
+```
+
+A picture that fits comes back as it is; a larger one as a copy shrunk
+to fit, each pixel the average of those it covers, the colour weighted
+by coverage so a soft edge stays soft. The copy is kept with the picture
+and shared: every icon that shows the same picture - each file without
+an icon of a kind - and every program that asks for it at the same size
+gets the one copy, shrunk once. The answer holds the picture, so the
+icon may be given back with `FreeDiskObject` while the image is still
+shown; `ReleaseIconImage` lets go of it, and the last to let go of a
+copy frees it. An image of the program's own goes in as well, and its
+copy is the program's alone.
+
+`C:test/Icon NAME/M,DEFAULTS/S,PUT/K,SHOW/S,SIZE/K/N` prints the icons of
+names and the defaults, writes the first as another name's icon with
+`PUT`, and shows the pictures in a window with `SHOW` - at most `SIZE`
+pixels each way, through `ObtainIconImage`, when it is given.
 
 ## Tool types
 

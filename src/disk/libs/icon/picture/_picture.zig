@@ -10,7 +10,8 @@
 //!
 //! **A picture counts its users**, under a spinlock in the base: a
 //! default's picture is held by the base and by every icon made from it,
-//! and goes with the last.
+//! and by each copy of it shrunk to a size (`_shrunk.zig`), which hang on
+//! it; it goes with the last.
 //!
 //! The file is decoded with the SDK's PNG decoder (`sdk.datatypes.png`):
 //! the `IDAT` chunks unpacked whole by compression.library, which the
@@ -27,6 +28,7 @@ const decode = sdk.datatypes.png.decode;
 const compression = sdk.compression;
 const CompressionBase = sdk.interface.compression.CompressionBase;
 const IconBase = @import("../icon_base.zig").IconBase;
+const Shrunk = @import("_shrunk.zig").Shrunk;
 
 /// What a picture is checked by when an icon hands one back: an image
 /// that is not one of these was not made here.
@@ -39,8 +41,11 @@ pub const Picture = extern struct {
     /// What `DiskObject.image` points at.
     image: icon.IconImage,
     magic: u32 = MAGIC,
-    /// How many hold it: the base for a default, and each icon.
+    /// How many hold it: the base for a default, each icon, each copy
+    /// of it shrunk, and each ObtainIconImage that answered it whole.
     users: u32 = 1,
+    /// Its copies shrunk to a size, under the base's `users_lock`.
+    shrunk: ?*Shrunk = null,
     /// `IHDR` whole, and the size of the chunks after it, which follow
     /// this struct.
     header: [HEADER_BYTES]u8 = @splat(0),

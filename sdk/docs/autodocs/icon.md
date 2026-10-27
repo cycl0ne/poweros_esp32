@@ -1,8 +1,8 @@
 # icon.library
 
 icon.library's functions: icons read, written and freed, the default
-icon of each kind, and the tool types. Open it with
-OpenLibrary("icon.library", 1).
+icon of each kind, the tool types, and an icon's picture at a size.
+Open it with OpenLibrary("icon.library", 1).
 
 The table is this library's own: it starts at the first slot after
 the standard four and holds only what is here.
@@ -19,8 +19,10 @@ Generated from the source by `./zig build autodoc`.
 - [GetDiskObject](#getdiskobject) - Reads the icon of `name` from `<name>.info`.
 - [GetDiskObjectNew](#getdiskobjectnew) - The icon of `name`, read as `GetDiskObject` reads it, or else the default icon that fits what `name` is.
 - [MatchToolValue](#matchtoolvalue) - Whether `value` names `wanted` among its alternatives.
+- [ObtainIconImage](#obtainiconimage) - `image` at most `most` pixels each way, shrunk when it is larger.
 - [PutDefDiskObject](#putdefdiskobject) - Makes `object` the default icon of its kind.
 - [PutDiskObject](#putdiskobject) - Writes `object` to `<name>.info`.
+- [ReleaseIconImage](#releaseiconimage) - Gives back an image from `ObtainIconImage`.
 
 ## BumpRevision
 
@@ -547,6 +549,83 @@ if (ib.FindToolType(object.tool_types, "FILETYPE")) |kind| {
 }
 ```
 
+## ObtainIconImage
+
+`image` at most `most` pixels each way, shrunk when it is larger.
+
+**SYNOPSIS**
+
+```zig
+fn ObtainIconImage(base: *IconBase, image: *const IconImage, most: u32) ?*const IconImage
+```
+
+**SINCE**
+
+1.3. LVO -60.
+
+**INPUTS**
+
+- `image` - an icon's picture (`DiskObject.image`), or an image of the
+  program's own in the same form: rgba32, a row `width * 4` bytes.
+- `most` - the largest width and height wanted, in pixels; 0 is taken
+  as 1.
+
+**RESULT**
+
+The picture to show, in the same form as `image`: `image` itself when
+it is no larger than `most` either way, else a copy shrunk to the
+largest size that fits with its shape kept, at least a pixel each way.
+Null without the memory for the copy.
+
+**BEHAVIOR**
+
+Each pixel of a copy is the average of the pixels of `image` it
+covers, red, green and blue weighted by their coverage, so a soft edge
+stays soft and a pixel nothing covers stays clear.
+
+A copy of a picture the library made is kept with that picture and
+shared: whoever asks for the same picture at the same size - from the
+same icon, another icon that shows it, as every file without an icon
+of a kind does, or another program - gets the same copy, shrunk once.
+A copy of an image of the program's own is made for this call alone.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The answer is held for the caller until `ReleaseIconImage` and is read
+only. One of the library's pictures stays while it is held, so the icon
+it came from may be given back first. An image of the program's own is
+not held: when it is answered whole, the program keeps it until then.
+
+**NOTES**
+
+`BlendPixelArray` draws the answer, as it draws an icon's picture.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseIconImage`, `GetDiskObjectNew`, `FreeDiskObject`
+
+**EXAMPLES**
+
+```zig
+const object = ib.GetDiskObjectNew("SYS:Programs/Notepad") orelse return;
+const shown = ib.ObtainIconImage(object.image.?, 32);
+ib.FreeDiskObject(object); // the picture is held by `shown`
+const image = shown orelse return;
+defer ib.ReleaseIconImage(image);
+// image.width and image.height at most 32
+```
+
 ## PutDefDiskObject
 
 Makes `object` the default icon of its kind.
@@ -686,4 +765,65 @@ defer ib.FreeDiskObject(object);
 object.current_x = 20;
 object.current_y = 10;
 _ = ib.PutDiskObject("RAM:Work", object);
+```
+
+## ReleaseIconImage
+
+Gives back an image from `ObtainIconImage`.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseIconImage(base: *IconBase, image: ?*const IconImage) void
+```
+
+**SINCE**
+
+1.3. LVO -64.
+
+**INPUTS**
+
+- `image` - an answer of `ObtainIconImage`; null does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The hold `ObtainIconImage` took is let go of: a shrunk copy is freed
+with the last that holds it, and then lets go of the picture it was
+shrunk from, which goes with the last icon that shows it. An image of
+the program's own that was answered whole was not held, and nothing
+is done.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The image may not be used after.
+
+**NOTES**
+
+Each answer is given back once, however many times the same image was
+answered.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainIconImage`
+
+**EXAMPLES**
+
+```zig
+const image = ib.ObtainIconImage(object.image.?, 48) orelse return;
+ib.ReleaseIconImage(image);
 ```

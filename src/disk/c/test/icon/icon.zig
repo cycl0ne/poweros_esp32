@@ -2,14 +2,15 @@
 //! Icon: prints the icons of names, as icon.library gives them, and shows
 //! their pictures. Built against the SDK only.
 //!
-//!   Icon NAME/M,DEFAULTS/S,PUT/K,SHOW/S
+//!   Icon NAME/M,DEFAULTS/S,PUT/K,SHOW/S,SIZE/K/N
 //!
 //! Each NAME's icon - its own, or the default that fits it
 //! (GetDiskObjectNew) - is printed: its kind, its place, its default tool,
 //! its tool types, its stack, a drawer's window, and its picture's size.
 //! DEFAULTS prints the five defaults too. PUT writes the first icon as the
 //! icon of the name it gives, and prints it read back. SHOW opens a window
-//! with every picture in a row, until it is closed or Ctrl-C.
+//! with every picture in a row, until it is closed or Ctrl-C - with SIZE
+//! each at most that many pixels each way, as ObtainIconImage gives it.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -27,14 +28,15 @@ const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Icon";
-const VERSION_STRING = "\x00$VER: Icon 1.0 (08.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Icon 1.1 (27.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "NAME/M,DEFAULTS/S,PUT/K,SHOW/S";
+const template = "NAME/M,DEFAULTS/S,PUT/K,SHOW/S,SIZE/K/N";
 const arg_name = 0;
 const arg_defaults = 1;
 const arg_put = 2;
 const arg_show = 3;
+const arg_size = 4;
 
 /// The most icons held at once.
 const icons_max = 24;
@@ -55,7 +57,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(icon_lib);
     const ib: *IconBase = @ptrCast(icon_lib);
 
-    var argv: [4]usize = @splat(0);
+    var argv: [5]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -106,7 +108,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     _ = dl.Flush(dl.Output());
 
     if (argv[arg_show] != 0 and count > 0) {
-        if (!picture(sys, dl, held[0..count])) return dos.RETURN_FAIL;
+        const size: u32 = if (argv[arg_size] != 0) @intCast(@max(0, @as(*const i32, @ptrFromInt(argv[arg_size])).*)) else 0;
+        if (!picture(sys, dl, ib, held[0..count], size)) return dos.RETURN_FAIL;
     }
     return result;
 }
@@ -134,8 +137,9 @@ fn show(dl: *DosBase, ib: *IconBase, name: [*:0]const u8, object: *const icon.Di
     }
 }
 
-/// A window with every picture in a row, until it is closed.
-fn picture(sys: *ExecBase, dl: *DosBase, objects: []const *icon.DiskObject) bool {
+/// A window with every picture in a row, each at most `size` pixels each
+/// way when `size` is not 0, until it is closed.
+fn picture(sys: *ExecBase, dl: *DosBase, icons: *IconBase, objects: []const *icon.DiskObject, size: u32) bool {
     const intuition_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse return false;
     defer sys.CloseLibrary(intuition_lib);
     const graphics_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, 0) orelse return false;
@@ -143,10 +147,31 @@ fn picture(sys: *ExecBase, dl: *DosBase, objects: []const *icon.DiskObject) bool
     const ib: *IntuitionBase = @ptrCast(intuition_lib);
     const gb: *GraphicsBase = @ptrCast(graphics_lib);
 
+    // The pictures as drawn: each icon's own, or with a size each as
+    // ObtainIconImage gives it, held until the window has closed.
+    var obtained: [icons_max]?*const icon.IconImage = @splat(null);
+    defer for (obtained[0..objects.len]) |image| icons.ReleaseIconImage(image);
+    var shown: [icons_max]?*const icon.IconImage = @splat(null);
+    for (objects, 0..) |object, at| {
+        const image = object.image orelse continue;
+        if (size == 0) {
+            shown[at] = image;
+            continue;
+        }
+        obtained[at] = icons.ObtainIconImage(image, size);
+        shown[at] = obtained[at];
+        const got = obtained[at] orelse {
+            _ = Printf(dl, "%s: no memory for a %lu-pixel picture\n", .{ COMMAND_NAME, @as(u64, size) });
+            continue;
+        };
+        _ = Printf(dl, "%lux%lu shown at %lux%lu\n", .{ @as(u64, image.width), @as(u64, image.height), @as(u64, got.width), @as(u64, got.height) });
+    }
+    const images = shown[0..objects.len];
+
     var width: i32 = 16;
     var height: i32 = 16;
-    for (objects) |object| {
-        const image = object.image orelse continue;
+    for (images) |maybe| {
+        const image = maybe orelse continue;
         width += @as(i32, @intCast(image.width)) + 16;
         height = @max(height, @as(i32, @intCast(image.height)) + 32);
     }
@@ -173,8 +198,8 @@ fn picture(sys: *ExecBase, dl: *DosBase, objects: []const *icon.DiskObject) bool
     const top: i32 = @intCast(attr(ib, window, wn.WA_BorderTop));
 
     var x: i32 = left + 16;
-    for (objects) |object| {
-        const image = object.image orelse continue;
+    for (images) |maybe| {
+        const image = maybe orelse continue;
         const w: i32 = @intCast(image.width);
         const h: i32 = @intCast(image.height);
         const area = graphics.Rect{ .min_x = x, .min_y = top + 16, .max_x = x + w, .max_y = top + 16 + h };
