@@ -691,6 +691,11 @@ came out is known once the window is open - which is when a window
 opened without an object has its bars made, added with `AddGList` and
 drawn with `RefreshWindowFrame`.
 
+A scroll bar there is part of the frame: no channel behind the knob,
+the border's colour down both sides of it, its arrows their triangles
+on the border. An arrow held sinks, its whole box, as the close and
+depth gadgets do when pressed, and comes up again when it is let go.
+
 A window object makes the two scroll bars itself. `WINDOWA_VertScroller`
 and `WINDOWA_HorizScroller` each take the tags of a scroller.gadget
 besides its place - its `GA_ID`, `ICA_TARGET` and `ICA_MAP`, its

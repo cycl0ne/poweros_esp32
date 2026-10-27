@@ -17,6 +17,13 @@
 //! press ends the way that counts. The top is the code of the window's
 //! `IDCMP_GADGETUP`, and every change is told to the target.
 //!
+//! In a window's border an arrow is its triangle alone, on the border's
+//! colour, and held its whole box sinks, as a border gadget's does when
+//! it is pressed: the title bar's pressed ground, a pixel of shadow along
+//! the top and left and of shine along the bottom and right, and the
+//! triangle as it was. Let go, the gadget is drawn again over the border,
+//! which puts the border back.
+//!
 //! **A top set from outside glides there.** `SCROLLER_Top` more than one
 //! thing away, set while it is in a window, takes the top at once but
 //! moves the knob there over a little under a fifth of a second on
@@ -41,6 +48,8 @@ const MotionBase = sdk.interface.motion.MotionBase;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const sr = gadgets.scroller;
+const style = intuition.style;
+const Pen = graphics.Pen;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -49,7 +58,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = sr.SCROLLER_CLASS,
     .version = 1,
-    .date = "25.09.2026",
+    .revision = 1,
+    .date = "27.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -265,13 +275,13 @@ fn partsOf(own: *const Data, o: *Object, gi: ?*const classusr.GadgetInfo) Parts 
     return Parts.of(own, .{ .width = b.width, .height = b.height });
 }
 
-/// The bar put where it belongs; its place in the gadget's box.
 /// Whether the bar lives in a window's border, where what is behind it
 /// is the border itself.
 fn inBorder(o: *Object) bool {
     return gc.gadget(o).activation & gc.GACT_BORDER != 0;
 }
 
+/// The bar put where it belongs; its place in the gadget's box.
 fn placeInner(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const classusr.GadgetInfo) gc.Box {
     const b = gc.boxFor(gc.gadget(o), gi);
     const at = partsOf(own, o, gi).bar;
@@ -327,14 +337,40 @@ fn placeInner(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*const cla
 /// One arrow: its frame, pressed while it is held with the pointer on
 /// it, and a triangle pointing the way it steps.
 fn drawArrow(base: *gadgets.Base, own: *const Data, o: *Object, rp: *graphics.RastPort, info: *classusr.GadgetInfo, at: gc.Box, which: u8) void {
-    // In a border the arrow is its shape alone, on the border's colour.
-    // Anywhere else it is a button, and has a face to press.
-    support.drawArrow(base.intuition_base, base.graphics_base, if (inBorder(o)) null else own.frame.?, rp, info.draw_info, .{
+    const pressed = own.held == which and own.over != 0;
+    // In a border the arrow is its shape alone, on the border's colour:
+    // held, its box sinks and the shape stays as it is. Anywhere else it
+    // is a button, and has a face to press.
+    const border = inBorder(o);
+    if (border and pressed) drawSunk(base, o, rp, info, at);
+    support.drawArrow(base.intuition_base, base.graphics_base, if (border) null else own.frame.?, rp, info.draw_info, .{
         .at = at,
         .vertical = own.vertical != 0,
         .forward = which == FORWARD,
-        .pressed = own.held == which and own.over != 0,
+        .pressed = pressed and !border,
     });
+}
+
+/// A held arrow's box `at` in a border, sunk as a border gadget is when
+/// it is pressed, in the title bar's pressed colours: the ground, then a
+/// pixel of shadow along the top and down the left and of shine along the
+/// bottom and up the right.
+fn drawSunk(base: *gadgets.Base, o: *Object, rp: *graphics.RastPort, info: *classusr.GadgetInfo, at: gc.Box) void {
+    if (at.width < 3 or at.height < 3) return;
+    const ib = base.intuition_base;
+    const gb = base.graphics_base;
+    const dri = info.draw_info;
+    const mine = gc.gadget(o).style;
+    const ground: Pen = @truncate(ib.GetStyleAttr(dri, mine, style.PART_TITLE, style.STATE_PRESSED, style.STYLE_Background));
+    const shine: Pen = @truncate(ib.GetStyleAttr(dri, mine, style.PART_TITLE, style.STATE_PRESSED, style.STYLE_ShinePen));
+    const shadow: Pen = @truncate(ib.GetStyleAttr(dri, mine, style.PART_TITLE, style.STATE_PRESSED, style.STYLE_ShadowPen));
+    const right = at.left + at.width - 1;
+    const bottom = at.top + at.height - 1;
+    support.fill(gb, rp, at, ground);
+    support.fill(gb, rp, .{ .left = at.left, .top = at.top, .width = at.width, .height = 1 }, shadow);
+    support.fill(gb, rp, .{ .left = at.left, .top = at.top, .width = 1, .height = at.height - 1 }, shadow);
+    support.fill(gb, rp, .{ .left = at.left, .top = bottom, .width = at.width, .height = 1 }, shine);
+    support.fill(gb, rp, .{ .left = right, .top = at.top + 1, .width = 1, .height = at.height - 1 }, shine);
 }
 
 fn drawArrows(base: *gadgets.Base, own: *const Data, o: *Object, rp: *graphics.RastPort, info: *classusr.GadgetInfo) void {
@@ -360,10 +396,13 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(gb, r.rast_port, gc.boxFor(gc.gadget(o), info), info.block_pen);
 }
 
-/// The arrows drawn again, if it is in a window.
+/// The arrows drawn again, if it is in a window. In a border the whole
+/// gadget is, by intuition over the border: an arrow let go has to give
+/// the border back where it was sunk.
 fn redrawArrows(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo) void {
     const info = gi orelse return;
     const ib = base.intuition_base;
+    if (inBorder(o)) return support.redraw(ib, o, gi);
     const rp = ib.ObtainGIRPort(gi) orelse return;
     defer ib.ReleaseGIRPort(rp);
     const saved = support.Saved.of(base.graphics_base, rp);

@@ -6,10 +6,12 @@
 //! is. Dragged, it moves the top with it; a press beside it pages, keeping
 //! one thing of the old view in the new one. With `SCROLLER_Arrows` it has
 //! two arrow buttons at its end, that many pixels long each: held, one
-//! steps the top by one, and after a moment keeps stepping. The target
-//! hears `SCROLLER_Top` with the gadget's `GA_ID` at every change - which
-//! is what a view follows - and when a press ends, the window hears
-//! `IDCMP_GADGETUP` with the top as the code.
+//! is drawn pressed and steps the top by one, and after a moment keeps
+//! stepping. In a window's border the arrows are their triangles on the
+//! border, and a held one's box sinks, as a border gadget's does when it
+//! is pressed. The target hears `SCROLLER_Top` with the gadget's
+//! `GA_ID` at every change - which is what a view follows - and when a
+//! press ends, the window hears `IDCMP_GADGETUP` with the top as the code.
 //!
 //! Across (`PGA_Freedom` `FREEHORIZ`, the default) or up and down
 //! (`FREEVERT`).
