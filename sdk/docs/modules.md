@@ -542,6 +542,7 @@ flowchart TB
     m_png_datatype --> m_dos_library
     m_png_datatype --> m_picture_datatype
     m_ribbon_gadget --> m_command_image
+    m_ribbon_gadget --> m_layers_library
     m_ribbon_gadget --> m_toolbutton_gadget
     m_scroller_gadget --> m_motion_library
     m_scrollgroup_gadget --> m_scroller_gadget

@@ -3734,6 +3734,118 @@ fn ribbonLayout(ib: *IntuitionBase, o: *Object, info: *classusr.GadgetInfo, widt
     _ = ib.SendMessage(o, @ptrCast(&lay));
 }
 
+test "ribbon.gadget: the tabs the row has no room for are behind a », which drops them down; the tab in front stays in the row" {
+    var heard = Heard{ .tag = rbn.RIBBON_Current, .ib = undefined };
+    var rig = try Rig.upAfter(&ribbon.Library.resident_tag, &heard, &ribbon_needs);
+    const ib = rig.ib;
+    // The ribbon is larger than the display, as in the tests before; the
+    // list the » drops down is kept on the screen.
+    const display = try Display.up(rig.kib);
+    const wn = intuition.windows;
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
+    const dri = ib.GetScreenDrawInfo(screen);
+    var info = infoOf(ib, w, dri);
+
+    // Five tabs of a small button each, the last contextual.
+    var tools: [5]*Object = undefined;
+    var items: [5][1:null]?*Object = undefined;
+    var groups: [5][2]rbn.RibbonGroup = undefined;
+    const names = [_][*:0]const u8{ "_Home", "_Insert", "_View", "_Data", "T_able" };
+    const plain = [_][]const u8{ "Home", "Insert", "View", "Data", "Table" };
+    var tabs: [6]rbn.RibbonTab = undefined;
+    for (0..5) |i| {
+        tools[i] = ribbonTool(ib, 10 + i, names[i], tbg.TBSIZE_SMALL);
+        items[i] = .{tools[i]};
+        groups[i] = .{ .{ .label = "Group", .items = &items[i] }, .{} };
+        tabs[i] = .{ .label = names[i], .groups = &groups[i] };
+    }
+    tabs[4].id = 7;
+    tabs[4].contextual = 1;
+    tabs[5] = .{};
+    const bar = ib.NewObjectTagList(null, rbn.RIBBON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 3 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{ .tag = rbn.RIBBON_Tabs, .data = @intFromPtr(&tabs) },
+        .{},
+    }).?;
+    const own = classes.instData(ribbon.Data, ib.FindClass(rbn.RIBBON_CLASS).?, bar);
+    _ = ib.AddGList(w, bar, -1, 1);
+
+    // As wide as it looks right, every tab stands in the row and there is
+    // no »: just before the mark is the row's end.
+    const looks = ribbonDomain(ib, bar, &info, gc.GDOMAIN_NOMINAL);
+    const least = ribbonDomain(ib, bar, &info, gc.GDOMAIN_MINIMUM);
+    try testing.expect(least.width < looks.width);
+    ribbonLayout(ib, bar, &info, looks.width);
+    const before_mark = looks.width - ribbon.fold_width - 2;
+    var at_end = gc.GpHitTest{ .gadget_info = &info, .mouse = .{ .x = before_mark, .y = 3 } };
+    try testing.expectEqual(@as(usize, 0), ib.SendMessage(bar, @ptrCast(&at_end)));
+
+    // As narrow as it gets, the » stands there; pressed, it drops down
+    // the tabs out of the row by their names, the key's `_` left out, and
+    // the ribbon keeps the events.
+    ribbonLayout(ib, bar, &info, least.width);
+    const more_x = least.width - ribbon.fold_width - @divTrunc(ribbon.more_width, 2);
+    var on_more = gc.GpHitTest{ .gadget_info = &info, .mouse = .{ .x = more_x, .y = 3 } };
+    try testing.expectEqual(gc.GMR_GADGETHIT, ib.SendMessage(bar, @ptrCast(&on_more)));
+    var termination: i32 = 99;
+    var down = input(gc.GM_GOACTIVE, &press, more_x, 3, &termination);
+    down.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(bar, @ptrCast(&down)));
+    try testing.expect(own.panel.isUp());
+    const listed = own.panel.count;
+    try testing.expect(listed >= 1 and listed <= 3);
+    const first_tab = own.more_tabs.?[0];
+    try testing.expect(first_tab != 0);
+    for (0..listed) |k| try testing.expectEqualStrings(plain[own.more_tabs.?[k]], std.mem.span(own.panel.labels.?[k].?));
+
+    // Let go over its first line: that tab is in front - in the row now -
+    // reported with its number, and the list is gone.
+    const p = own.panel;
+    const line_y = p.box.top + p.inset.top + @divTrunc(p.line_height, 2);
+    var pick = input(gc.GM_HANDLEINPUT, &release, p.box.left + @divTrunc(p.box.width, 2), line_y, &termination);
+    pick.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(bar, @ptrCast(&pick)));
+    try testing.expectEqual(@as(i32, @intCast(first_tab)), termination);
+    try testing.expectEqual(@as(usize, first_tab), attr(ib, bar, rbn.RIBBON_Current));
+    try testing.expectEqual(@as(?usize, first_tab), heard.value);
+    try testing.expect(!own.panel.isUp() and own.more_block == null);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(bar, @ptrCast(&down)));
+    for (0..own.panel.count) |k| try testing.expect(own.more_tabs.?[k] != first_tab);
+
+    // Made inactive with the list down, it goes and nothing is taken.
+    var gone = gc.GpGoInactive{ .gadget_info = &info, .abort = 1 };
+    _ = ib.SendMessage(bar, @ptrCast(&gone));
+    try testing.expect(!own.panel.isUp() and own.more_block == null);
+    try testing.expectEqual(@as(usize, first_tab), attr(ib, bar, rbn.RIBBON_Current));
+
+    // The contextual tab shown is out of the row too, and in the list.
+    _ = ib.SetGadgetAttrsTagList(bar, w, &[_]TagItem{ .{ .tag = rbn.RIBBON_ShowTab, .data = 7 }, .{} });
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(bar, @ptrCast(&down)));
+    var found = false;
+    for (0..own.panel.count) |k| {
+        if (std.mem.eql(u8, std.mem.span(own.panel.labels.?[k].?), "Table")) found = own.more_tabs.?[k] == 4;
+    }
+    try testing.expect(found);
+    _ = ib.SendMessage(bar, @ptrCast(&gone));
+
+    _ = ib.RemoveGList(w, bar, 1);
+    ib.FreeScreenDrawInfo(screen, dri);
+    ib.CloseWindow(w);
+    try testing.expect(ib.CloseScreen(screen));
+    display.down(rig.kib);
+    ib.DisposeObject(bar);
+    try rig.down();
+}
+
 test "ribbon.gadget: too narrow, a group folds into a button that drops it down; the mark minimizes it, and a tab then drops its page down; a contextual tab comes and goes" {
     var heard = Heard{ .tag = rbn.RIBBON_Minimized, .ib = undefined };
     var rig = try Rig.upAfter(&ribbon.Library.resident_tag, &heard, &ribbon_needs);

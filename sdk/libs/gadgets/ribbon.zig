@@ -44,6 +44,14 @@
 //! and goes again with `RIBBON_HideTab`. A strip of its colour runs along
 //! its top.
 //!
+//! **Tabs the row has no room for** are behind a » before the mark at its
+//! end: a press on it drops down a list of their names, and the one taken
+//! is turned to as a pressed tab is, with its number as the code. The tab
+//! in front always stands in the row, the others from the left making
+//! room for it. A contextual tab out of the row gives the » its strip.
+//! Since 1.2; the ribbon is no narrower than its widest tab, the » and
+//! the mark.
+//!
 //! Every entry reports in its own name, as it would in a layout: a tool
 //! button pressed reaches the window as `IDCMP_GADGETUP` with the
 //! button's `GA_ID`, which is the command. A press on a tab turns the page

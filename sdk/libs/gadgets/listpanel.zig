@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! A list popped up under a gadget to pick a label from: chooser.gadget's
-//! panel, and the one a tool button that drops a list down opens.
+//! panel, the one a tool button that drops a list down opens, and the
+//! tabs a ribbon's row has no room for, under the » at its end - a part
+//! of the gadget (`openFrom`).
 //!
 //! **The panel is a layer over the screen**, made when the press comes
 //! and deleted when the pick is over, exactly as a menu's panel is: the
@@ -68,6 +70,9 @@ pub const Panel = extern struct {
     /// The first label shown in the panel, and how many are shown.
     first: u32 = 0,
     visible: u32 = 0,
+    /// The part of the gadget it drops from, from the gadget's corner:
+    /// the whole gadget when it has no width.
+    from: gc.Box = .{},
     /// The label under the pointer, `NONE` for none: the one taken when
     /// the pick is over.
     hot: u32 = NONE,
@@ -77,6 +82,13 @@ pub const Panel = extern struct {
 
     pub fn isUp(p: *const Panel) bool {
         return p.layer != null;
+    }
+
+    /// The part it drops from, from the gadget's corner, in a gadget
+    /// `width` by `height`.
+    fn fromIn(p: *const Panel, width: i32, height: i32) gc.Box {
+        if (p.from.width > 0) return p.from;
+        return .{ .width = width, .height = height };
     }
 
     fn labelAt(p: *const Panel, which: u32) ?[*:0]const u8 {
@@ -247,6 +259,13 @@ pub const Panel = extern struct {
     /// `active` in view and under the pointer to begin with. False when
     /// there is no room or no memory for the layer.
     pub fn open(p: *Panel, base: *Base, lb: *LayersBase, frame: ?*Object, o: *Object, info: *classusr.GadgetInfo, labels: ?[*]const ?[*:0]const u8, count: u32, max_lines: u32, active: u32) bool {
+        return p.openFrom(base, lb, frame, o, info, .{}, labels, count, max_lines, active);
+    }
+
+    /// The same, under the part `from` of the gadget - from its corner;
+    /// the whole gadget when it has no width - and at least as wide as
+    /// that part. Letting go over that part leaves the panel up.
+    pub fn openFrom(p: *Panel, base: *Base, lb: *LayersBase, frame: ?*Object, o: *Object, info: *classusr.GadgetInfo, from: gc.Box, labels: ?[*]const ?[*:0]const u8, count: u32, max_lines: u32, active: u32) bool {
         const ib = base.intuition_base;
         const gb = base.graphics_base;
         if (count == 0) return false;
@@ -274,7 +293,10 @@ pub const Panel = extern struct {
         const screen_w: i32 = @intCast(screen_width);
         const screen_h: i32 = @intCast(screen_height);
 
-        const at = screenBox(base, o, info);
+        p.from = from;
+        const gadget = screenBox(base, o, info);
+        const part = p.fromIn(gadget.width, gadget.height);
+        const at = gc.Box{ .left = gadget.left + part.left, .top = gadget.top + part.top, .width = part.width, .height = part.height };
         // Whether the bar is needed is not known until it is known how
         // many labels fit, so the room for it is kept whenever there is a
         // list to scroll at all.
@@ -369,8 +391,10 @@ pub const Panel = extern struct {
         // nothing and the panel closes.
         if (e.code == ie.IECODE_LBUTTON) return if (p.sticky == 0) .more else .over;
         if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
-            // Let go over the gadget itself, the panel stays up.
-            if (p.sticky == 0 and support.inside(in.mouse.x, in.mouse.y, at.width, at.height)) {
+            // Let go over the gadget itself - over what it dropped from -
+            // the panel stays up.
+            const part = p.fromIn(at.width, at.height);
+            if (p.sticky == 0 and support.inside(in.mouse.x - part.left, in.mouse.y - part.top, part.width, part.height)) {
                 p.sticky = 1;
                 return .more;
             }

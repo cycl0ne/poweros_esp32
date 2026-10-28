@@ -16,6 +16,13 @@
 //! code (`_gadget.reporter` finds no member under it). So is the mark at
 //! the row's right end, which minimizes the ribbon and brings it back.
 //!
+//! **Tabs the row has no room for** are in a list the » before that mark
+//! drops down (`RowPlan`, a `listpanel` under the »): their names, and the
+//! one taken is turned to as a pressed tab is. The tab in front always
+//! stands in the row, the others from the left making room for it, and a
+//! contextual tab out of the row gives the » its strip, so that a tab the
+//! program has just shown is not missed.
+//!
 //! The tabs stand flat, their names and nothing more, but the one in
 //! front: it has edges in the style's look for a button (`PART_MAIN`),
 //! its top corners rounded by the style's radius or `tab_radius`, open at
@@ -66,6 +73,7 @@ const st = intuition.style;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const shapes = gadgets.shapes;
+const listpanel = gadgets.listpanel;
 const rb = gadgets.ribbon;
 const tb = gadgets.toolbutton;
 const command = sdk.images.command;
@@ -75,19 +83,20 @@ const TagItem = utility.TagItem;
 const Pen = graphics.Pen;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
+const LayersBase = sdk.interface.layers.LayersBase;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
 pub const Library = gadgets.ClassLibrary(.{
     .name = rb.RIBBON_CLASS,
     .version = 1,
-    .revision = 1,
+    .revision = 2,
     .date = "28.10.2026",
     .super = classusr.GROUPGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
     // A folded group is a tool button, a launcher's picture a command
-    // image.
-    .opens = &.{ tb.TOOLBUTTON_LIBRARY, command.COMMAND_LIBRARY },
+    // image; the list of the tabs out of the row is a layer of its own.
+    .opens = &.{ tb.TOOLBUTTON_LIBRARY, command.COMMAND_LIBRARY, "layers.library" },
 });
 comptime {
     _ = Library;
@@ -122,7 +131,14 @@ const label_air = 1;
 const strip_height = 3;
 /// The mark that minimizes the ribbon: how wide, and the room round it.
 const fold_mark = 9;
-const fold_width = fold_mark + 2 * 6;
+pub const fold_width = fold_mark + 2 * 6;
+/// The » that drops down the tabs out of the row: how tall and how wide
+/// its two chevrons are, and the room round them.
+const more_mark = 7;
+const more_drawn = 9;
+pub const more_width = more_drawn + 2 * 6;
+/// How many tabs the row and its » list: the first 64.
+const row_most = 64;
 /// Room between the frame's border and padding and the groups.
 const frame_air = 3;
 /// Room either side of the line between two groups.
@@ -189,7 +205,18 @@ pub const Data = extern struct {
     popup: rq.Requester = .{},
     popup_tabs: [2]rb.RibbonTab = .{ .{}, .{} },
     popup_groups: [2]rb.RibbonGroup = .{ .{}, .{} },
+    /// The list of the tabs out of the row while it is down: its edge, the
+    /// panel, and one block holding the names it lists - without their
+    /// `_` - and which tab each is (`more_tabs`).
+    list_frame: ?*Object = null,
+    panel: listpanel.Panel = .{},
+    more_block: ?*anyopaque = null,
+    more_tabs: ?[*]u32 = null,
 };
+
+fn layersOf(base: *gadgets.Base) *LayersBase {
+    return @ptrCast(base.opened[2].?);
+}
 
 // --- where the entries go -------------------------------------------------------
 
@@ -327,7 +354,7 @@ fn tabAt(own: *const Data, which: u32) ?*const rb.RibbonTab {
 /// Whether a tab is in the row: every one but a contextual tab not shown.
 fn showsTab(own: *const Data, which: u32) bool {
     if (which >= own.count) return false;
-    return which >= 64 or own.hidden & (@as(u64, 1) << @intCast(which)) == 0;
+    return which >= row_most or own.hidden & bit(which) == 0;
 }
 
 /// The first tab in the row, from `from` on - `by` 1 - or back - `by` -1;
@@ -338,6 +365,100 @@ fn nextShown(own: *const Data, from: i64, by: i64) u32 {
         if (showsTab(own, @intCast(i))) return @intCast(i);
     }
     return NONE;
+}
+
+/// How many tabs the row and its » have to do with: the first
+/// `row_most`.
+fn rowTabs(own: *const Data) usize {
+    return @min(own.count, row_most);
+}
+
+fn bit(which: usize) u64 {
+    return @as(u64, 1) << @intCast(which);
+}
+
+/// Which tabs stand in a row `width` wide: every one shown, when they fit
+/// before the mark at its end; otherwise the tab in front and as many of
+/// the others from the left as fit before the » that drops down the rest.
+const RowPlan = struct {
+    /// A bit for each tab that stands in the row.
+    in_row: u64 = 0,
+    /// Whether some do not: the » stands then, at `more_left` from the
+    /// row's left.
+    more: bool = false,
+    more_left: i32 = 0,
+
+    fn of(ib: *IntuitionBase, own: *const Data, m: Measures, width: i32) RowPlan {
+        const end = width - fold_width;
+        var plan = RowPlan{};
+        var x: i32 = tab_indent;
+        for (0..rowTabs(own)) |i| {
+            if (!showsTab(own, @intCast(i))) continue;
+            const w = m.tabWidth(ib, own.tabs.?[i].label);
+            if (x + w > end) break;
+            plan.in_row |= bit(i);
+            x += w + tab_gap;
+        } else return plan;
+        plan = .{ .more = true, .more_left = end - more_width };
+        // The tab in front first, wherever it stands, then the others from
+        // the left until one does not fit.
+        x = tab_indent;
+        if (own.current < rowTabs(own) and showsTab(own, own.current)) {
+            const w = m.tabWidth(ib, own.tabs.?[own.current].label);
+            if (x + w <= plan.more_left) {
+                plan.in_row |= bit(own.current);
+                x += w + tab_gap;
+            }
+        }
+        for (0..rowTabs(own)) |i| {
+            if (i == own.current or !showsTab(own, @intCast(i))) continue;
+            const w = m.tabWidth(ib, own.tabs.?[i].label);
+            if (x + w > plan.more_left) break;
+            plan.in_row |= bit(i);
+            x += w + tab_gap;
+        }
+        return plan;
+    }
+
+    fn has(plan: RowPlan, which: usize) bool {
+        return which < row_most and plan.in_row & bit(which) != 0;
+    }
+
+    /// Whether a tab is in the »'s list: shown, and not in the row.
+    fn dropped(plan: RowPlan, own: *const Data, which: usize) bool {
+        return which < rowTabs(own) and showsTab(own, @intCast(which)) and !plan.has(which);
+    }
+};
+
+/// The tabs standing in the row, from the left, each with where it is
+/// from the row's left.
+const RowWalk = struct {
+    ib: *IntuitionBase,
+    own: *const Data,
+    m: Measures,
+    plan: RowPlan,
+    which: usize = 0,
+    x: i32 = tab_indent,
+
+    const Tab = struct { which: u32, left: i32, width: i32 };
+
+    fn next(walk: *RowWalk) ?Tab {
+        while (walk.which < rowTabs(walk.own)) {
+            const i = walk.which;
+            walk.which += 1;
+            if (!walk.plan.has(i)) continue;
+            const width = walk.m.tabWidth(walk.ib, walk.own.tabs.?[i].label);
+            const at = Tab{ .which = @intCast(i), .left = walk.x, .width = width };
+            walk.x += width + tab_gap;
+            return at;
+        }
+        return null;
+    }
+};
+
+/// A contextual tab's strip colour.
+fn stripOf(tab: *const rb.RibbonTab) Pen {
+    return if (tab.colour != 0) tab.colour else shapes.tones(.orange).base;
 }
 
 /// A tab's groups, up to the one whose `label` is null.
@@ -483,13 +604,12 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, made: bool
                 if (below != own.minimize_below) changed = true;
                 own.minimize_below = below;
             },
-            rb.RIBBON_ShowTab, rb.RIBBON_HideTab => for (0..@min(own.count, 64)) |t| {
+            rb.RIBBON_ShowTab, rb.RIBBON_HideTab => for (0..rowTabs(own)) |t| {
                 const tab = own.tabs.?[t];
                 if (tab.contextual == 0 or tab.id != item.data) continue;
-                const bit = @as(u64, 1) << @intCast(t);
                 const hide = item.tag == rb.RIBBON_HideTab;
-                if (hide != (own.hidden & bit != 0)) changed = true;
-                if (hide) own.hidden |= bit else own.hidden &= ~bit;
+                if (hide != (own.hidden & bit(t) != 0)) changed = true;
+                if (hide) own.hidden |= bit(t) else own.hidden &= ~bit(t);
             },
             rb.RIBBON_Row => if (made) {
                 own.row = @intFromBool(item.data != 0);
@@ -603,11 +723,21 @@ const Measures = struct {
         return plainWidth(ib, m.measure, name) + 2 * tab_margin;
     }
 
+    /// How narrow the row can be: the widest tab, the » and the mark at
+    /// its end - or every tab, when that is narrower.
+    fn leastRowWidth(m: Measures, ib: *IntuitionBase, own: *const Data) i32 {
+        var widest: i32 = 0;
+        for (0..rowTabs(own)) |i| {
+            if (showsTab(own, @intCast(i))) widest = @max(widest, m.tabWidth(ib, own.tabs.?[i].label));
+        }
+        return @min(m.rowWidth(ib, own), 2 * tab_indent + widest + more_width + fold_width);
+    }
+
     /// How wide the row is with every tab in it, and the mark at its end.
     fn rowWidth(m: Measures, ib: *IntuitionBase, own: *const Data) i32 {
         var width: i32 = 2 * tab_indent + fold_width;
         var first = true;
-        for (0..own.count) |i| {
+        for (0..rowTabs(own)) |i| {
             if (!showsTab(own, @intCast(i))) continue;
             if (!first) width += tab_gap;
             first = false;
@@ -747,14 +877,19 @@ fn placesIn(m: Measures, room: i32, box: gc.Box) Places {
 
 /// Its size: as tall as the row, the frame and the page - the row alone
 /// when it is folded - as wide as the row and the widest page, and at the
-/// least as the row and the narrowest any tab's first group gets, so that
-/// every tab shows a group.
+/// least as the row with its » and the narrowest any tab's first group
+/// gets, so that every tab shows a group.
 noinline fn domain(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*classusr.GadgetInfo, which: u32) gc.Box {
     const ib = base.intuition_base;
     const m = Measures.of(base, own, g, gi);
     defer m.done(ib);
     const row = if (own.row != 0) m.rowWidth(ib, own) else 0;
-    if (folded(own, gi)) return .{ .width = if (which == gc.GDOMAIN_MAXIMUM) gc.GDOMAIN_UNLIMITED else row, .height = m.row };
+    const least_row = if (own.row != 0) m.leastRowWidth(ib, own) else 0;
+    if (folded(own, gi)) return .{ .width = switch (which) {
+        gc.GDOMAIN_MAXIMUM => gc.GDOMAIN_UNLIMITED,
+        gc.GDOMAIN_MINIMUM => least_row,
+        else => row,
+    }, .height = m.row };
     const room = roomOf(base, own, m, gi);
     var widest = PageWidth{};
     var laid: Laid = .{};
@@ -765,7 +900,7 @@ noinline fn domain(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, g
     }
     const height = m.row + m.inset.height + m.page(room);
     return switch (which) {
-        gc.GDOMAIN_MINIMUM => .{ .width = @max(row, widest.least + m.inset.width), .height = height },
+        gc.GDOMAIN_MINIMUM => .{ .width = @max(least_row, widest.least + m.inset.width), .height = height },
         gc.GDOMAIN_NOMINAL => .{ .width = @max(row, widest.whole + m.inset.width), .height = height },
         else => .{ .width = gc.GDOMAIN_UNLIMITED, .height = height },
     };
@@ -1080,9 +1215,25 @@ fn drawFoldMark(gb: *GraphicsBase, rp: *graphics.RastPort, box: gc.Box, ink: Pen
     }
 }
 
+/// The » that drops down the tabs out of the row, in `ink` in the middle
+/// of `box`: two chevrons pointing right.
+fn drawMoreMark(gb: *GraphicsBase, rp: *graphics.RastPort, box: gc.Box, ink: Pen) void {
+    support.setPen(gb, rp, ink);
+    const half = @divTrunc(more_mark, 2);
+    const left = box.left + @divTrunc(box.width - more_drawn, 2);
+    const top = box.top + @divTrunc(box.height - more_mark, 2);
+    var row: i32 = 0;
+    while (row < more_mark) : (row += 1) {
+        const in = if (row <= half) row else more_mark - 1 - row;
+        gb.DrawHLine(rp, left + in, top + row, 2);
+        gb.DrawHLine(rp, left + in + 4, top + row, 2);
+    }
+}
+
 /// The row of tabs: the ground under it, each name in the middle of its
 /// tab, a contextual tab's strip, the edges of the tab `front` - none for
-/// `NONE` - the line the rest stand on, and the mark at its end.
+/// `NONE` - the line the rest stand on, the » when some tabs are not in
+/// it, and the mark at its end.
 noinline fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, look: Look, m: Measures, row: gc.Box, ink: Pen, front_tab: u32, down: bool) void {
     const ib = base.intuition_base;
     const gb = base.graphics_base;
@@ -1091,18 +1242,15 @@ noinline fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPor
     const edges = look.edges;
     const line_top = row.top + row.height - edges.y;
     const end = row.left + row.width - fold_width;
+    const plan = RowPlan.of(ib, own, m, row.width);
     var front: ?gc.Box = null;
-    var x = row.left + tab_indent;
-    for (0..own.count) |i| {
-        if (!showsTab(own, @intCast(i))) continue;
-        const tab = own.tabs.?[i];
-        const at = gc.Box{ .left = x, .top = row.top, .width = m.tabWidth(ib, tab.label), .height = row.height };
-        x += at.width + tab_gap;
-        if (at.left + at.width > end) break;
-        if (i == front_tab) front = at;
+    var walk = RowWalk{ .ib = ib, .own = own, .m = m, .plan = plan };
+    while (walk.next()) |t| {
+        const tab = &own.tabs.?[t.which];
+        const at = gc.Box{ .left = row.left + t.left, .top = row.top, .width = t.width, .height = row.height };
+        if (t.which == front_tab) front = at;
         if (tab.contextual != 0) {
-            const colour: Pen = if (tab.colour != 0) tab.colour else shapes.tones(.orange).base;
-            support.fill(gb, rp, .{ .left = at.left + edges.x, .top = at.top, .width = at.width - 2 * edges.x, .height = strip_height }, colour);
+            support.fill(gb, rp, .{ .left = at.left + edges.x, .top = at.top, .width = at.width - 2 * edges.x, .height = strip_height }, stripOf(tab));
         }
         const text = tab.label orelse continue;
         const inside = at.top + edges.y;
@@ -1117,6 +1265,17 @@ noinline fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPor
         support.drawOpenBox(gb, rp, look.tab_edges, at, .bottom);
     } else {
         support.fill(gb, rp, .{ .left = row.left, .top = line_top, .width = row.width, .height = edges.y }, light);
+    }
+    if (plan.more) {
+        const at = gc.Box{ .left = row.left + plan.more_left, .top = row.top, .width = more_width, .height = line_top - row.top };
+        // The strip of the first contextual tab out of the row.
+        for (0..rowTabs(own)) |i| {
+            const tab = &own.tabs.?[i];
+            if (tab.contextual == 0 or !plan.dropped(own, i)) continue;
+            support.fill(gb, rp, .{ .left = at.left + edges.x, .top = at.top, .width = at.width - 2 * edges.x, .height = strip_height }, stripOf(tab));
+            break;
+        }
+        if (at.left >= row.left) drawMoreMark(gb, rp, at, ink);
     }
     if (end >= row.left) drawFoldMark(gb, rp, .{ .left = end, .top = row.top, .width = fold_width, .height = line_top - row.top }, ink, down);
 }
@@ -1224,7 +1383,7 @@ fn minimize(base: *gadgets.Base, cl: *Class, o: *Object, own: *Data, gi: ?*class
 }
 
 /// The tab under a point of the row, counted from the gadget's corner;
-/// `NONE` between and after them, and below the row.
+/// `NONE` between and after them, on the », and below the row.
 fn tabUnder(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo, x: i32, y: i32) u32 {
     const ib = base.intuition_base;
     const g = gc.gadget(o);
@@ -1232,15 +1391,30 @@ fn tabUnder(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.Ga
     const m = Measures.of(base, own, g, gi);
     defer m.done(ib);
     if (y < 0 or y >= m.row) return NONE;
-    var left: i32 = tab_indent;
-    for (0..own.count) |i| {
-        if (!showsTab(own, @intCast(i))) continue;
-        const width = m.tabWidth(ib, own.tabs.?[i].label);
-        if (left + width > b.width - fold_width) return NONE;
-        if (x >= left and x < left + width) return @intCast(i);
-        left += width + tab_gap;
+    var walk = RowWalk{ .ib = ib, .own = own, .m = m, .plan = RowPlan.of(ib, own, m, b.width) };
+    while (walk.next()) |t| {
+        if (x >= t.left and x < t.left + t.width) return t.which;
     }
     return NONE;
+}
+
+/// Where the » is, from the gadget's corner; null when every tab stands
+/// in the row.
+fn moreBox(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo) ?gc.Box {
+    if (own.row == 0) return null;
+    const ib = base.intuition_base;
+    const g = gc.gadget(o);
+    const m = Measures.of(base, own, g, gi);
+    defer m.done(ib);
+    const plan = RowPlan.of(ib, own, m, gc.boxFor(g, gi).width);
+    if (!plan.more) return null;
+    return .{ .left = plan.more_left, .top = 0, .width = more_width, .height = m.row };
+}
+
+/// Whether a point of the row, from the gadget's corner, is on the ».
+fn onMore(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo, x: i32) bool {
+    const at = moreBox(base, own, o, gi) orelse return false;
+    return x >= at.left and x < at.left + at.width;
 }
 
 /// Whether a point, counted from the gadget's corner, is in the row.
@@ -1373,6 +1547,76 @@ fn closePopup(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.Gadget
     }
 }
 
+/// The tabs out of the row dropped down under the », their names without
+/// the `_` in a block of their own. False when there are none, or no
+/// memory or room.
+noinline fn openMore(base: *gadgets.Base, own: *Data, o: *Object, info: *classusr.GadgetInfo) bool {
+    const ib = base.intuition_base;
+    const g = gc.gadget(o);
+    const m = Measures.of(base, own, g, info);
+    defer m.done(ib);
+    const plan = RowPlan.of(ib, own, m, gc.boxFor(g, info).width);
+    if (!plan.more or own.panel.isUp()) return false;
+    var count: u32 = 0;
+    var bytes: usize = 0;
+    for (0..rowTabs(own)) |i| {
+        if (!plan.dropped(own, i)) continue;
+        count += 1;
+        bytes += support.textLen(own.tabs.?[i].label orelse "") + 1;
+    }
+    if (count == 0) return false;
+    // The labels, a null after them; which tab each is; the names.
+    const labels_size = (count + 1) * @sizeOf(?[*:0]const u8);
+    const tabs_size = count * @sizeOf(u32);
+    const block: [*]u8 = @ptrCast(base.sys_base.AllocVec(@intCast(labels_size + tabs_size + bytes), exec.MEMF_ANY) orelse return false);
+    const labels: [*]?[*:0]const u8 = @ptrCast(@alignCast(block));
+    const tabs: [*]u32 = @ptrCast(@alignCast(block + labels_size));
+    var name = block + labels_size + tabs_size;
+    var k: u32 = 0;
+    for (0..rowTabs(own)) |i| {
+        if (!plan.dropped(own, i)) continue;
+        const text = own.tabs.?[i].label orelse "";
+        const mark = gc.labelMark(text);
+        labels[k] = @ptrCast(name);
+        tabs[k] = @intCast(i);
+        var at: usize = 0;
+        while (text[at] != 0) : (at += 1) {
+            if (mark != null and at + 1 == mark.?) continue;
+            name[0] = text[at];
+            name += 1;
+        }
+        name[0] = 0;
+        name += 1;
+        k += 1;
+    }
+    labels[count] = null;
+    own.more_block = block;
+    own.more_tabs = tabs;
+    const from = gc.Box{ .left = plan.more_left, .top = 0, .width = more_width, .height = m.row };
+    if (!own.panel.openFrom(base, layersOf(base), own.list_frame, o, info, from, labels, count, 0, listpanel.NONE)) {
+        _ = closeMore(base, own);
+        return false;
+    }
+    return true;
+}
+
+/// The list of the tabs out of the row taken away; the tab picked from it,
+/// `NONE` for none.
+fn closeMore(base: *gadgets.Base, own: *Data) u32 {
+    const picked = own.panel.hot;
+    const up = own.panel.isUp();
+    own.panel.close(layersOf(base));
+    const tabs = own.more_tabs;
+    var which: u32 = NONE;
+    if (up and picked != listpanel.NONE) {
+        if (tabs) |list| which = list[picked];
+    }
+    if (own.more_block) |block| base.sys_base.FreeVec(block);
+    own.more_block = null;
+    own.more_tabs = null;
+    return which;
+}
+
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const cl: *Class = @ptrCast(hook);
     const base = gadgets.baseOf(cl);
@@ -1401,6 +1645,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 ib.DisposeObject(obj);
                 return 0;
             }
+            // The edge of the list the » drops down, a button's as a
+            // chooser's list has; without it the list has a plain one.
+            if (own.row != 0) {
+                const list_tags = [_]TagItem{ .{ .tag = ic.IA_FrameType, .data = ic.FRAME_BUTTON }, .{} };
+                own.list_frame = ib.NewObjectTagList(null, classusr.FRAMEICLASS, &list_tags);
+            }
             // A group starts with no size; the ribbon is as big as it
             // looks right, or as it was asked to be.
             const size = domain(base, own, gc.gadget(obj), null, gc.GDOMAIN_NOMINAL);
@@ -1421,6 +1671,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o orelse return 0);
             endPopup(base, own);
             closePopup(base, own, o.?, null);
+            _ = closeMore(base, own);
+            ib.DisposeObject(own.list_frame);
+            own.list_frame = null;
             // Out of the group first, so that every entry is disposed of
             // once, here, member or not - or left to the ribbon whose it
             // is.
@@ -1496,21 +1749,24 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             return 0;
         },
         // The group first, which names the member under the point or none;
-        // in the row no member stands, and a tab and the mark at its end
-        // are the ribbon's own.
+        // in the row no member stands, and a tab, the » and the mark at its
+        // end are the ribbon's own.
         gc.GM_HITTEST => {
             const ht: *gc.GpHitTest = @ptrCast(@alignCast(msg));
             const over = ib.SendSuperMessage(cl, o, msg);
             const own = classes.instData(Data, cl, o.?);
             if (!inRow(base, own, o.?, ht.gadget_info, ht.mouse.y)) return over;
             if (onFoldMark(own, o.?, ht.gadget_info, ht.mouse.x)) return gc.GMR_GADGETHIT;
+            if (onMore(base, own, o.?, ht.gadget_info, ht.mouse.x)) return gc.GMR_GADGETHIT;
             return if (tabUnder(base, own, o.?, ht.gadget_info, ht.mouse.x, ht.mouse.y) == NONE) 0 else gc.GMR_GADGETHIT;
         },
         // A press on a tab turns to it at once and is done with; its
         // number is the code. Minimized, its page drops down as well. A
         // second press on it soon after, and the one on the mark at the
-        // row's end, minimize the ribbon or bring it back. A press
-        // anywhere else is a member's.
+        // row's end, minimize the ribbon or bring it back. One on the »
+        // drops down the tabs out of the row, and the ribbon has the
+        // events until one is taken or none. A press anywhere else is a
+        // member's.
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
@@ -1520,6 +1776,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 minimize(base, cl, o.?, own, in.gadget_info);
                 in.termination.* = rb.RBCODE_MINIMIZED;
                 return gc.GMR_NOREUSE | gc.GMR_VERIFY;
+            }
+            if (onMore(base, own, o.?, in.gadget_info, in.mouse.x)) {
+                own.pressed_tab = NONE;
+                const info = in.gadget_info orelse return gc.GMR_NOREUSE;
+                return if (openMore(base, own, o.?, info)) gc.GMR_MEACTIVE else gc.GMR_NOREUSE;
             }
             const which = tabUnder(base, own, o.?, in.gadget_info, in.mouse.x, in.mouse.y);
             if (which == NONE) return gc.GMR_NOREUSE;
@@ -1536,6 +1797,36 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (fold) openPage(base, own, o.?, in.gadget_info);
             in.termination.* = @intCast(own.current);
             return gc.GMR_NOREUSE | gc.GMR_VERIFY;
+        },
+        // With the » list down, the list has the events until the pick is
+        // over: the tab taken is turned to - its page dropped down when
+        // minimized - and its number is the code. Otherwise they are the
+        // member's that has the input.
+        gc.GM_HANDLEINPUT => {
+            const in: *gc.GpInput = @ptrCast(@alignCast(msg));
+            const own = classes.instData(Data, cl, o.?);
+            if (!own.panel.isUp()) return ib.SendSuperMessage(cl, o, msg);
+            const info = in.gadget_info orelse {
+                _ = closeMore(base, own);
+                return gc.GMR_NOREUSE;
+            };
+            switch (own.panel.input(base, layersOf(base), own.list_frame, o.?, info, in)) {
+                .more => return gc.GMR_MEACTIVE,
+                .over => {
+                    const which = closeMore(base, own);
+                    if (which == NONE) return gc.GMR_NOREUSE;
+                    take(base, cl, o.?, own, info, which);
+                    if (folded(own, info)) openPage(base, own, o.?, info);
+                    in.termination.* = @intCast(own.current);
+                    return gc.GMR_NOREUSE | gc.GMR_VERIFY;
+                },
+            }
+        },
+        gc.GM_GOINACTIVE => {
+            const own = classes.instData(Data, cl, o.?);
+            if (!own.panel.isUp()) return ib.SendSuperMessage(cl, o, msg);
+            _ = closeMore(base, own);
+            return 0;
         },
         // The key a tab's name marks turns to that tab - and drops its
         // page down when minimized; any other is the front page's
