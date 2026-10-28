@@ -511,8 +511,8 @@ fn blendRowAs(
 /// The colour a picture has at a place between its pixels: the four
 /// pixels round it mixed by how near each is, every channel and the alpha
 /// alike. What a scale into a smooth RastPort takes for each pixel instead
-/// of the nearest one, so a picture made larger is soft rather than
-/// blocky and one made smaller keeps its thin lines.
+/// of the nearest one where the picture is made larger, so it is soft
+/// rather than blocky; one made smaller takes `sampleOver`.
 ///
 /// INPUTS:
 /// - `pixels` - the picture's first byte.
@@ -560,4 +560,101 @@ pub fn sampleBetween(pixels: [*]const u8, pitch: u32, format: rtg.bitmaps.PixelF
 pub fn sourceOf(dest: i32, dest_start: i32, dest_size: i32, src_start: i32, src_size: i32) i64 {
     const offset: i64 = @as(i64, dest - dest_start) * 2 + 1;
     return @as(i64, src_start) * 256 + @divFloor(offset * src_size * 256, 2 * @as(i64, dest_size)) - 128;
+}
+
+// --- the mean of what a pixel covers -----------------------------------------
+
+/// A stretch of a picture along one axis, from `from` up to `to`, in
+/// 256ths of a pixel with a pixel's middle at its whole number - so pixel
+/// `s` reaches from `s * 256 - 128` up to `s * 256 + 128`.
+pub const Span = struct {
+    from: i64,
+    to: i64,
+
+    /// How much of pixel `s` lies in the stretch, in 256ths.
+    pub fn share(span: Span, s: i32) u64 {
+        const middle = @as(i64, s) * 256;
+        const lo = @max(span.from, middle - 128);
+        const hi = @min(span.to, middle + 128);
+        return if (hi > lo) @intCast(hi - lo) else 0;
+    }
+
+    /// The first pixel some of which lies in it.
+    pub fn first(span: Span) i32 {
+        return @intCast(@divFloor(span.from + 128, 256));
+    }
+
+    /// The last.
+    pub fn last(span: Span) i32 {
+        return @intCast(@divFloor(span.to + 127, 256));
+    }
+};
+
+/// The stretch of the source a destination pixel takes along one axis of
+/// a smooth scale. Where the picture is made smaller along it, it is the
+/// destination pixel's own part of the source, the two lined up by their
+/// edges as `sourceOf` lines them up: every source pixel counts, by how
+/// much of it the destination pixel covers. Elsewhere it is a source
+/// pixel's width round where the destination pixel's middle falls, which
+/// takes the two pixels either side by how near each is, as
+/// `sampleBetween` does.
+pub fn spanOf(dest: i32, dest_start: i32, dest_size: i32, src_start: i32, src_size: i32) Span {
+    if (src_size <= dest_size) {
+        const middle = sourceOf(dest, dest_start, dest_size, src_start, src_size);
+        return .{ .from = middle - 128, .to = middle + 128 };
+    }
+    const offset: i64 = dest - dest_start;
+    const start = @as(i64, src_start) * 256 - 128;
+    return .{
+        .from = start + @divFloor(offset * src_size * 256, dest_size),
+        .to = start + @divFloor((offset + 1) * src_size * 256, dest_size),
+    };
+}
+
+/// The colour of a picture over `across` by `down`: every pixel of it
+/// inside `area` that lies in the two stretches, each by how much of it
+/// does, every channel and the alpha alike, added and divided by the sum
+/// of the shares, rounded. What a smooth scale takes for each pixel where
+/// the picture is made smaller, so that nothing of it is skipped: a
+/// thin line or a fine pattern turns into its share of the colour rather
+/// than coming and going with where the pixels fall. Made no smaller
+/// either way, it is what `sampleBetween` answers.
+///
+/// INPUTS:
+/// - `pixels` - the picture's first byte.
+/// - `pitch` - bytes from one of its rows to the next.
+/// - `format` - its pixel format.
+/// - `area` - the part of it being taken: nothing outside it is read or
+///   counted.
+/// - `across` - the stretch across, from `spanOf`.
+/// - `down` - the stretch down.
+pub fn sampleOver(pixels: [*]const u8, pitch: u32, format: rtg.bitmaps.PixelFormat, area: Rect, across: Span, down: Span) graphics.Pen {
+    const bytes = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+    const first_x = @max(across.first(), area.min_x);
+    const last_x = @min(across.last(), area.max_x - 1);
+    const first_y = @max(down.first(), area.min_y);
+    const last_y = @min(down.last(), area.max_y - 1);
+    var sums: [4]u64 = @splat(0);
+    var total: u64 = 0;
+    var y = first_y;
+    while (y <= last_y) : (y += 1) {
+        const weight_y = down.share(y);
+        if (weight_y == 0) continue;
+        const line = pixels + @as(usize, @intCast(y)) * pitch;
+        var row: [4]u64 = @splat(0);
+        var row_total: u64 = 0;
+        var x = first_x;
+        while (x <= last_x) : (x += 1) {
+            const weight_x = across.share(x);
+            const pen = rastport.unpackPen(format, drawing.getPixel(line + @as(usize, @intCast(x)) * bytes, bytes));
+            for (&row, 0..) |*channel, i| channel.* += (pen >> @intCast(i * 8) & 0xFF) * weight_x;
+            row_total += weight_x;
+        }
+        for (&sums, row) |*sum, part| sum.* += part * weight_y;
+        total += row_total * weight_y;
+    }
+    if (total == 0) return 0;
+    var mixed: graphics.Pen = 0;
+    for (sums, 0..) |sum, i| mixed |= @as(graphics.Pen, @intCast((sum + total / 2) / total)) << @intCast(i * 8);
+    return mixed;
 }

@@ -21,6 +21,7 @@ pub const LVO = struct {
     pub const AllocAslRequest = libraries.lvo(4);
     pub const FreeAslRequest = libraries.lvo(5);
     pub const AslRequest = libraries.lvo(6);
+    pub const AbortAslRequest = libraries.lvo(7);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -29,6 +30,7 @@ pub const Fn = struct {
     pub const AllocAslRequest = *const fn (*AslBase, u32, ?[*]const utility.TagItem) callconv(.c) ?*anyopaque;
     pub const FreeAslRequest = *const fn (*AslBase, ?*anyopaque) callconv(.c) void;
     pub const AslRequest = *const fn (*AslBase, *anyopaque, ?[*]const utility.TagItem) callconv(.c) bool;
+    pub const AbortAslRequest = *const fn (*AslBase, *anyopaque) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -54,8 +56,17 @@ pub const AslBase = opaque {
 
     /// The requester put up, `tags` changing it for this once; true when it
     /// was answered, false when it was given up or could not be shown. The
-    /// answer is in the request structure until the next call on it.
+    /// answer is in the request structure until the next call on it. With
+    /// ASLFR_ReplyPort it returns at once, true when the requester is up, and
+    /// the answer comes as a message on that port.
     pub fn AslRequest(self: *AslBase, requester: *anyopaque, tags: ?[*]const utility.TagItem) bool {
         return libraries.call(self, LVO.AslRequest, Fn.AslRequest, .{ requester, tags });
+    }
+
+    /// A requester put up with ASLFR_ReplyPort taken down as if it was given
+    /// up; its message arrives as for any other end. Nothing for one that is
+    /// not up.
+    pub fn AbortAslRequest(self: *AslBase, requester: *anyopaque) void {
+        return libraries.call(self, LVO.AbortAslRequest, Fn.AbortAslRequest, .{requester});
     }
 };

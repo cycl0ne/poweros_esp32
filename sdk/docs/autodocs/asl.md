@@ -11,9 +11,85 @@ Generated from the source by `./zig build autodoc`.
 
 ## Index
 
+- [AbortAslRequest](#abortaslrequest) - A requester up on a process of its own taken down before it is answered.
 - [AllocAslRequest](#allocaslrequest) - A requester of `kind`, set up from `tags`.
 - [AslRequest](#aslrequest) - A requester put up, and answered or given up.
 - [FreeAslRequest](#freeaslrequest) - A requester given back, with everything it was answered with.
+
+## AbortAslRequest
+
+A requester up on a process of its own taken down before it is answered.
+
+**SYNOPSIS**
+
+```zig
+fn AbortAslRequest(ab: *AslBase, requester: *anyopaque) void
+```
+
+**SINCE**
+
+1.4. LVO -32.
+
+**INPUTS**
+
+- `ab` - asl.library's base.
+- `requester` - what `AllocAslRequest` made, put up with
+  `ASLFR_ReplyPort`.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The requester's process is given Ctrl-C, which a requester takes as
+being given up: its window closes and its message arrives on its port
+as for any other end, with `answered` 0 - or 1, if the user answered
+it just before. A file requester still reading a drawer stops at the
+next piece of it.
+
+A requester that is not up - never put up on a port, or ended
+already - is left alone, so a program ending calls this for a
+requester it may have asked with and then waits for the message only
+if one is owed.
+
+**CONTEXT**
+
+- Waits: only for the requester's semaphore, held briefly by its
+  process as it ends.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The requester stays the library's until its message has arrived.
+
+**NOTES**
+
+It returns before the requester has gone: the message is what says it
+has. A requester asked and waited for on the caller's own process is
+ended the same way by Ctrl-C to that process.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AslRequest`, `FreeAslRequest`, exec's `AbortIO`
+
+**EXAMPLES**
+
+```zig
+// Ending with a requester up: take it down and wait for its message.
+if (asking) {
+    ab.AbortAslRequest(req);
+    _ = sys.WaitPort(port);
+    _ = sys.GetMsg(port);
+}
+ab.FreeAslRequest(req);
+```
 
 ## AllocAslRequest
 
@@ -119,6 +195,8 @@ fn AslRequest(ab: *AslBase, requester: *anyopaque, tags: ?[*]const TagItem) bool
 
 True when the requester was answered, false when it was given up -
 the Cancel button, the close gadget, Ctrl-C - or could not be shown.
+With `ASLFR_ReplyPort`: true when it is up, false when it could not be
+started or is up already.
 
 **BEHAVIOR**
 
@@ -134,6 +212,15 @@ the user has answered: it does not come back to the program in
 between, which is why a program with a window of its own hands one in
 (`ASLFR_Window`) rather than leaving it to look stopped.
 
+**Given a port** (`ASLFR_ReplyPort`) it runs the requester on a
+process of its own, which holds the library open while it runs, and
+returns at once. When the requester is answered or given up, its
+message (`asl.AslMessage`) goes to the port, saying which requester and
+whether it was answered; the program takes it with GetMsg and does not
+reply it. The process starts in the caller's current drawer, so a
+drawer named relative to it is found. `AbortAslRequest` takes it down
+before it is answered.
+
 A drawer is read while the requester is up rather than before it
 shows, so a drawer of some thousands of entries can be answered as
 soon as the wanted one is there. A device requester lists the units
@@ -146,17 +233,22 @@ the next call on that requester or until `FreeAslRequest`.
 
 **CONTEXT**
 
-- Waits: for input, for the screen, and for the drawer to be read.
+- Waits: for input, for the screen, and for the drawer to be read;
+  with a port, only for the process to be started.
 - Interrupts: no.
 - Locks: no spinlock may be held.
 - Process: a Process, not a bare Task: it opens a window and reads a
-  drawer.
+  drawer, or starts the process that does.
 
 **OWNERSHIP**
 
 Everything the requester makes is its own and goes at the next request
 or at `FreeAslRequest`. The locks of a multi-select answer are the
-library's: they are not to be unlocked by the program.
+library's: they are not to be unlocked by the program. A requester up
+on its own process is the library's until its message has arrived:
+the program reads nothing in it, asks nothing of it and does not free
+it, and the port, the window and the screen it was given stay until
+then.
 
 **NOTES**
 
@@ -164,7 +256,7 @@ The screen mode requester is not built yet and answers false.
 
 **SEE ALSO**
 
-`AllocAslRequest`, `FreeAslRequest`
+`AllocAslRequest`, `FreeAslRequest`, `AbortAslRequest`
 
 **EXAMPLES**
 
@@ -174,6 +266,13 @@ if (ab.AslRequest(req, &.{
     .{ .tag = asl.ASLFR_DoSaveMode, .data = 1 },
     .{},
 })) save(req.drawer, req.file);
+
+// Asked without waiting; the answer comes on `port`.
+_ = ab.AslRequest(req, &.{
+    .{ .tag = asl.ASLFR_Window, .data = @intFromPtr(window) },
+    .{ .tag = asl.ASLFR_ReplyPort, .data = @intFromPtr(port) },
+    .{},
+});
 ```
 
 ## FreeAslRequest
@@ -206,6 +305,10 @@ of it - the file, the drawer, the pattern, the names of a multi-select
 answer and the locks with them - is gone once this returns, so a
 program that wants to keep an answer copies it first.
 
+A requester still up on a process of its own (`ASLFR_ReplyPort`) is
+left as it is, since its process is using it: the program takes it
+down with `AbortAslRequest`, waits for its message and frees it then.
+
 **CONTEXT**
 
 - Waits: for memory to be given back.
@@ -219,9 +322,15 @@ program that wants to keep an answer copies it first.
 What the tags handed the requester stays the caller's and is not
 touched.
 
+**BUGS**
+
+A requester whose message has been sent but not yet taken off the
+port cannot be told from one that is the program's again: freed then,
+the message on the port is gone with it.
+
 **SEE ALSO**
 
-`AllocAslRequest`, `AslRequest`
+`AllocAslRequest`, `AslRequest`, `AbortAslRequest`
 
 **EXAMPLES**
 

@@ -4,6 +4,12 @@
 //! through datatypes.library and scaled to fill a square, what overhangs
 //! cut equally from both sides, so a wide picture shows its middle.
 //!
+//! A song's cover is read once, into a bitmap of its own as large as the
+//! cover is ever shown (`Kept`), and shown from there at whatever size the
+//! window gives it, scaled down (`BitMapScale`) - so a window being sized
+//! never reads the picture again. The kept bitmap is in the format of the
+//! RastPort it is shown in, which a scale between bitmaps needs.
+//!
 //! datatypes.library reads a picture from a file, so a picture held in
 //! the tags is written to `T:` first, under a name of this task's own, and
 //! the file deleted once it is read. The name ends as a file of its kind
@@ -23,6 +29,8 @@ const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const TagItem = sdk.utility.TagItem;
 const Rect = graphics.Rect;
+const RastPort = graphics.RastPort;
+const Surface = sdk.rtg.Surface;
 const PixelFormat = sdk.rtg.bitmaps.PixelFormat;
 const pic = datatypes.pictureclass;
 
@@ -40,22 +48,68 @@ const ground: graphics.Pen = 0xFF20_2028;
 /// Pictures looked for beside a song whose tags hold none.
 const beside = [_][*:0]const u8{ "cover.jpg", "folder.jpg", "front.jpg", "cover.png", "folder.png" };
 
-/// The square `size` pixels each way at `rp`'s top left: the song's
-/// picture, one beside it, or the dark ground. Whether a picture was
-/// drawn.
-pub fn draw(libs: Libraries, rp: *graphics.RastPort, size: i32, picture: ?*const ac.AudioPicture, song: [*:0]const u8) bool {
-    const gb = libs.gb;
+/// How large a cover is kept, in pixels each way: the most it is shown.
+pub const kept_size = 160;
+
+/// The cover of the song shown, kept at `kept_size` - the picture, or the
+/// dark ground where there is none.
+pub const Kept = struct {
+    bitmap: ?*Surface = null,
+    rast_port: ?*RastPort = null,
+
+    /// The song's picture read and kept: the one its tags hold, one beside
+    /// it, or the ground. `friend` is a RastPort it is to be shown in. The
+    /// bitmap is made the first time; without the memory nothing is kept
+    /// and the cover is shown as the ground. Whether a picture was found.
+    pub fn read(kept: *Kept, libs: Libraries, friend: *RastPort, picture: ?*const ac.AudioPicture, song: [*:0]const u8) bool {
+        const gb = libs.gb;
+        if (kept.bitmap == null) {
+            kept.bitmap = gb.AllocBitMapTagList(&[_]TagItem{
+                .{ .tag = graphics.BMTAG_Width, .data = kept_size },
+                .{ .tag = graphics.BMTAG_Height, .data = kept_size },
+                .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(friend) },
+                .{},
+            });
+            const bitmap = kept.bitmap orelse return false;
+            kept.rast_port = gb.CreateRastPortTagList(&[_]TagItem{
+                .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(bitmap) },
+                .{ .tag = graphics.RPTAG_Smooth, .data = 1 },
+                .{},
+            });
+        }
+        const rp = kept.rast_port orelse return false;
+        fill(gb, rp, kept_size);
+        const dt = libs.dt orelse return false;
+        if (picture) |held| {
+            if (fromTags(libs, dt, rp, kept_size, held)) return true;
+        }
+        return fromFolder(libs, dt, rp, kept_size, song);
+    }
+
+    /// The square `size` pixels each way at `rp`'s top left: what is kept,
+    /// scaled to it, smoothly.
+    pub fn show(kept: *const Kept, gb: *GraphicsBase, rp: *RastPort, size: i32) void {
+        const bitmap = kept.bitmap orelse return fill(gb, rp, size);
+        if (kept.rast_port == null) return fill(gb, rp, size);
+        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });
+        gb.BitMapScale(bitmap, &.{ .max_x = kept_size, .max_y = kept_size }, rp, &.{ .max_x = size, .max_y = size });
+    }
+
+    pub fn free(kept: *Kept, gb: *GraphicsBase) void {
+        gb.FreeRastPort(kept.rast_port);
+        gb.FreeBitMap(kept.bitmap);
+        kept.* = .{};
+    }
+};
+
+/// The square `size` pixels each way at `rp`'s top left in the ground.
+fn fill(gb: *GraphicsBase, rp: *RastPort, size: i32) void {
     gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = ground }, .{} });
     gb.RectFill(rp, &.{ .max_x = size, .max_y = size });
-    const dt = libs.dt orelse return false;
-    if (picture) |held| {
-        if (fromTags(libs, dt, rp, size, held)) return true;
-    }
-    return fromFolder(libs, dt, rp, size, song);
 }
 
 /// The picture the tags hold, through a file in T:.
-fn fromTags(libs: Libraries, dt: *DataTypesBase, rp: *graphics.RastPort, size: i32, held: *const ac.AudioPicture) bool {
+fn fromTags(libs: Libraries, dt: *DataTypesBase, rp: *RastPort, size: i32, held: *const ac.AudioPicture) bool {
     const dl = libs.dl;
     var name: [48:0]u8 = @splat(0);
     const task: u32 = @truncate(@intFromPtr(libs.sys.FindTask(null)));
@@ -84,7 +138,7 @@ fn extensionOf(held: *const ac.AudioPicture) [*:0]const u8 {
 }
 
 /// A picture lying in the song's own drawer.
-fn fromFolder(libs: Libraries, dt: *DataTypesBase, rp: *graphics.RastPort, size: i32, song: [*:0]const u8) bool {
+fn fromFolder(libs: Libraries, dt: *DataTypesBase, rp: *RastPort, size: i32, song: [*:0]const u8) bool {
     if (song[0] == 0) return false;
     const dl = libs.dl;
     var path: [dos.path_max + 1:0]u8 = @splat(0);
@@ -102,7 +156,7 @@ fn fromFolder(libs: Libraries, dt: *DataTypesBase, rp: *graphics.RastPort, size:
 }
 
 /// The picture file `name` read and scaled into the square.
-fn load(libs: Libraries, dt: *DataTypesBase, rp: *graphics.RastPort, size: i32, name: [*:0]const u8) bool {
+fn load(libs: Libraries, dt: *DataTypesBase, rp: *RastPort, size: i32, name: [*:0]const u8) bool {
     const object = dt.NewDTObjectA(name, &[_]TagItem{
         .{ .tag = datatypes.datatypesclass.DTA_GroupID, .data = datatypes.GID_PICTURE },
         .{},

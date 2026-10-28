@@ -99,6 +99,12 @@ pub const Window = extern struct {
     min_height: i32,
     max_width: i32,
     max_height: i32,
+    /// The smallest size the layouts sized by the window said, in the
+    /// layout pass that set it, they fit in: more than the window has when
+    /// a row of one wrapped, and `fitLayout` grows the window to it. 0
+    /// with no such layout.
+    layout_width: i32 = 0,
+    layout_height: i32 = 0,
     border_left: i32 = 0,
     border_top: i32 = 0,
     border_right: i32 = 0,
@@ -524,6 +530,18 @@ fn textLen(s: [*:0]const u8) u32 {
     var n: u32 = 0;
     while (s[n] != 0) n += 1;
     return n;
+}
+
+/// The window grown to what its layouts said in the last layout pass they
+/// need, when that is more than it has - a row that wraps went deeper as
+/// the window got narrower, or the window was squeezed onto its screen -
+/// as far as its largest size and the screen let it. A window that fits
+/// is left alone.
+pub fn fitLayout(ib: *IntuitionBase, window: *Window) void {
+    const width = @max(window.width, window.layout_width);
+    const height = @max(window.height, window.layout_height);
+    if (width == window.width and height == window.height) return;
+    ib.iface().ChangeWindowBox(@ptrCast(window), window.left, window.top, width, height);
 }
 
 pub fn lock(ib: *IntuitionBase) void {

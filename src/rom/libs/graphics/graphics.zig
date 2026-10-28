@@ -1006,6 +1006,44 @@ test "RPTAG_Smooth: a picture made larger is mixed between its pixels" {
     try tearDown(gb);
 }
 
+test "RPTAG_Smooth: a picture made smaller is the mean of all it covers" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [8 * 4 * 4]u8 = @splat(0);
+    var surface = memorySurface(&pixels, .bgra32);
+    const rp = try onMemory(gb, &surface, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });
+
+    // Five greys into two: each takes two and a half of them, the middle
+    // one half each - (0 + 100 + 200 / 2) / 2.5 and (200 / 2 + 40 + 80) / 2.5.
+    var greys: [5]u32 = undefined;
+    for (&greys, [_]u32{ 0, 100, 200, 40, 80 }) |*grey, level| grey.* = 0xFF00_0000 | level * 0x01_0101;
+    base(gb).ScalePixelArray(@ptrCast(rp), @ptrCast(&greys), 5 * 4, @intFromEnum(rtg.bitmaps.PixelFormat.bgra32), &.{ .max_x = 5, .max_y = 1 }, &.{ .max_x = 2, .max_y = 1 });
+    try testing.expectEqual(@as(u8, 80), pixels[0]);
+    try testing.expectEqual(@as(u8, 88), pixels[4]);
+    try testing.expectEqual(@as(u8, 255), pixels[3]);
+
+    // A checkerboard of eight by four into two by one, both ways smaller:
+    // half of each sixteen white, 127.5 rounded up - where the nearest
+    // pixel would be black or white.
+    var board: [8 * 4 * 4]u8 = undefined;
+    var checks = memorySurface(&board, .bgra32);
+    for (0..4) |y| for (0..8) |x| {
+        const white = (x + y) % 2 == 1;
+        @memset(board[(y * 8 + x) * 4 ..][0..4], if (white) 255 else 0);
+        board[(y * 8 + x) * 4 + 3] = 255;
+    };
+    base(gb).BitMapScale(&checks, &.{ .max_x = 8, .max_y = 4 }, @ptrCast(rp), &.{ .min_y = 2, .max_x = 2, .max_y = 3 });
+    const row = 2 * 8 * 4;
+    for ([_]usize{ 0, 4 }) |at| {
+        try testing.expectEqual(@as(u8, 128), pixels[row + at]);
+        try testing.expectEqual(@as(u8, 128), pixels[row + at + 2]);
+    }
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
 test "RectFill: half-open, so max is one past the last pixel" {
     const gb = try setUp();
     defer kexec.deinit();

@@ -7,10 +7,12 @@
 //! It opens a window on the default public screen through windowclass,
 //! holding one layout: a column of a line to type a name in and a slider,
 //! each labelled; a row of three buttons that takes whatever height is
-//! spare; a button kept to its own width in the middle of the column and
-//! one at its right end (`CHILDA_Align`); and OK and Cancel along the
-//! bottom, kept at least two lines of
-//! the screen's font high so that a finger finds them. Nothing in it is
+//! spare; a sunk row (`LAYOUTA_FrameRecessed`) of two buttons that keep
+//! their shape as it grows (`CHILDA_Aspect`), one square and one twice as
+//! wide as it is tall; a button kept to its own width in the middle of
+//! the column and one at its right end (`CHILDA_Align`); and OK and
+//! Cancel along the bottom, kept at least two lines of the screen's font
+//! high so that a finger finds them. Nothing in it is
 //! given a place: the window opens in the middle of the screen at half its
 //! size (a `WA_` tag handed on to the window) or the layout's nominal
 //! size, whichever is larger, and everything is placed again as the window
@@ -21,7 +23,7 @@
 //! GRID lays the same window out as a grid of two columns: Name and
 //! Volume side by side, Place and Balance under them, each column's
 //! fields after its own labels and lined up with the row above; the
-//! buttons across both columns.
+//! buttons and the shapes across both columns.
 //!
 //! Every gadget let go is printed with its ID - the button itself, not
 //! the layout it is in - as WM_HANDLEINPUT answers it. OK prints the name
@@ -39,6 +41,7 @@ const gc = intuition.gadgetclass;
 const pg = intuition.propgclass;
 const lg = intuition.layoutgclass;
 const wc = intuition.windowclass;
+const ic = intuition.imageclass;
 const classusr = intuition.classusr;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
@@ -49,7 +52,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Layout";
-const VERSION_STRING = "\x00$VER: Layout 1.3 (2.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Layout 1.4 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "MARGIN/N,SPACING/N,GRID/S";
@@ -77,6 +80,8 @@ const ID_CENTRED = 8;
 const ID_HELP = 9;
 const ID_PLACE = 10;
 const ID_BALANCE = 11;
+const ID_SQUARE = 12;
+const ID_WIDE = 13;
 
 const default_margin = 6;
 const default_spacing = 4;
@@ -130,6 +135,31 @@ fn row(ib: *IntuitionBase, spacing: usize, least: u32, children: []const ?*Objec
     return layout;
 }
 
+/// A sunk row of two buttons that keep their shape - one square, one
+/// twice as wide as it is tall - and grow with the row's height; null,
+/// with both freed, when one could not be made or the row not.
+fn shapes(ib: *IntuitionBase, spacing: usize) ?*Object {
+    const square = button(ib, "Square", ID_SQUARE);
+    const wide = button(ib, "Wide", ID_WIDE);
+    const layout = if (square != null and wide != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = spacing },
+        .{ .tag = lg.LAYOUTA_Margin, .data = spacing },
+        .{ .tag = lg.LAYOUTA_FrameType, .data = ic.FRAME_BUTTON },
+        .{ .tag = lg.LAYOUTA_FrameRecessed, .data = 1 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(square) },
+        .{ .tag = lg.CHILDA_Aspect, .data = lg.aspect(1, 1) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(wide) },
+        .{ .tag = lg.CHILDA_Aspect, .data = lg.aspect(2, 1) },
+        .{},
+    }) else null;
+    if (layout == null) {
+        ib.DisposeObject(square);
+        ib.DisposeObject(wide);
+    }
+    return layout;
+}
+
 /// The whole of it. A gadget that could not be made takes the others
 /// with it: whatever the layout already holds goes when it does, and the
 /// rest are freed here.
@@ -154,6 +184,7 @@ fn build(ib: *IntuitionBase, line: u32, margin: usize, spacing: usize, grid: boo
     // Wide enough for a finger each: the row the window wraps first.
     const middle = row(ib, spacing, 6 * line, &.{ button(ib, "One", ID_ONE), button(ib, "Two", ID_TWO), button(ib, "Three", ID_THREE) });
     const bottom = row(ib, spacing, 0, &.{ button(ib, "OK", ID_OK), button(ib, "Cancel", ID_CANCEL) });
+    const shaped = shapes(ib, spacing);
     const centred = button(ib, "Centred", ID_CENTRED);
     const help = button(ib, "Help", ID_HELP);
     // The grid's second row.
@@ -175,13 +206,14 @@ fn build(ib: *IntuitionBase, line: u32, margin: usize, spacing: usize, grid: boo
         .{ .tag = gc.GA_RelVerify, .data = 1 },
         .{},
     }) else null;
-    if (name == null or volume == null or middle == null or bottom == null or centred == null or help == null or
+    if (name == null or volume == null or middle == null or bottom == null or shaped == null or centred == null or help == null or
         (grid and (place == null or balance == null)))
     {
         ib.DisposeObject(name);
         ib.DisposeObject(volume);
         ib.DisposeObject(middle);
         ib.DisposeObject(bottom);
+        ib.DisposeObject(shaped);
         ib.DisposeObject(centred);
         ib.DisposeObject(help);
         ib.DisposeObject(place);
@@ -204,6 +236,8 @@ fn build(ib: *IntuitionBase, line: u32, margin: usize, spacing: usize, grid: boo
         .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Balance") },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(middle) },
+        .{ .tag = lg.CHILDA_ColumnSpan, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(shaped) },
         .{ .tag = lg.CHILDA_ColumnSpan, .data = 2 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(centred) },
         .{ .tag = lg.CHILDA_ColumnSpan, .data = 2 },
@@ -230,6 +264,7 @@ fn build(ib: *IntuitionBase, line: u32, margin: usize, spacing: usize, grid: boo
         .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Volume") },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(middle) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(shaped) },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(centred) },
         .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
@@ -247,6 +282,7 @@ fn build(ib: *IntuitionBase, line: u32, margin: usize, spacing: usize, grid: boo
         ib.DisposeObject(volume);
         ib.DisposeObject(middle);
         ib.DisposeObject(bottom);
+        ib.DisposeObject(shaped);
         ib.DisposeObject(centred);
         ib.DisposeObject(help);
         ib.DisposeObject(place);
@@ -273,6 +309,8 @@ fn nameOf(id: usize) [*:0]const u8 {
         ID_CENTRED => "Centred",
         ID_HELP => "Help",
         ID_PLACE => "Place",
+        ID_SQUARE => "Square",
+        ID_WIDE => "Wide",
         else => "?",
     };
 }

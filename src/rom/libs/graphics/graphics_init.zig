@@ -56,9 +56,12 @@ pub const LIBRARY_VERSION = 0;
 /// crosses, and rows are filled a machine word at a time and copied by
 /// exec's copy. 32: `AreaEnd` takes `RPTAG_Smooth` - a shape's slanted
 /// edges laid over by how much of each pixel they cover, its straight
-/// ones as hard as before. The version stays 0 until there is something to
-/// demand of it.
-pub const LIBRARY_REVISION = 32;
+/// ones as hard as before. 33: a smooth scale that makes a picture
+/// smaller takes for each pixel the mean of all the source it covers,
+/// each source pixel by how much of it is covered (`sampleOver`), rather
+/// than the four round its place. The version stays 0 until there is
+/// something to demand of it.
+pub const LIBRARY_REVISION = 33;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

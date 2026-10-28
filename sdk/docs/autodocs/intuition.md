@@ -977,7 +977,10 @@ first. Where the ground went back is the window's damage, as is what
 the size added: what the program drew there is gone. The program is
 told `IDCMP_NEWSIZE`; either way it is told `IDCMP_CHANGEWINDOW`.
 Whatever the change uncovered is repaired, and the damage is the
-program's `IDCMP_REFRESHWINDOW`.
+program's `IDCMP_REFRESHWINDOW`. When a layout in the window then needs
+more room than the size gives it - a row that wraps went deeper at the
+new width - the window grows to that room in a second step, as far as
+the screen lets it, and the program hears a second `IDCMP_NEWSIZE`.
 
 **CONTEXT**
 

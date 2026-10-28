@@ -145,7 +145,11 @@ pub const LIBRARY_VERSION = 0;
 /// 60: PART_TOOL, a tool's button flat until the pointer is over it, and
 /// GFLG_HOVERLOOK - a gadget drawn again under the pointer whatever the
 /// style.
-pub const LIBRARY_REVISION = 60;
+/// 61: layoutgclass's CHILDA_Aspect - a child that keeps its shape - and
+/// LAYOUTA_FrameRecessed, a sunk frame; a window grows to what its layout
+/// needs once a row of it wrapped deeper or it was squeezed onto a small
+/// screen.
+pub const LIBRARY_REVISION = 61;
 const BUILD_DATE = "28.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

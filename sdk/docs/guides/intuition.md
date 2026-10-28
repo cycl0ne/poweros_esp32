@@ -604,13 +604,18 @@ with weight 0 keeps its own size.
 | `CHILDA_WeightWidth`, `CHILDA_WeightHeight` | its share of the spare room in a row, in a column (100) |
 | `CHILDA_MinWidth` ... `CHILDA_MaxHeight` | its smallest and largest size - a button big enough for a finger; the largest is also the most it asks for, so an editor that wants a page can be kept to a few lines |
 | `CHILDA_Align` | `CALIGN_` across and down, for a child smaller than its room |
+| `CHILDA_Aspect` | its shape kept, `lg.aspect(1, 1)` for a square: in a row its width follows its height, in a column its height its width - a cover that grows with the window |
 | `LAYOUTA_Frame`, `LAYOUTA_FrameTitle` | a frame round it, with a title in its top edge |
+| `LAYOUTA_FrameRecessed` | the frame sunk: a groove, or with `LAYOUTA_FrameType` `FRAME_BUTTON` a hollow round a picture or a list |
 | `LAYOUTA_Columns`, `CHILDA_Column`, `CHILDA_Row`, `CHILDA_ColumnSpan` | a grid's columns and cells |
 | `LAYOUTA_Wrap` | a row too narrow for its children goes on in rows beneath |
 
 What a child reports reaches the window in its own name: a button in a
 layout in a layout is `WMHI_GADGETUP` with that button's `GA_ID`. A
-window object sets its layout to fill the window. In a window from
+window object sets its layout to fill the window, and the window is never
+made smaller than the layout fits in; a row that wraps once the window is
+narrower needs more height, and the window grows to it - a second
+`IDCMP_NEWSIZE` after the first. In a window from
 tags, a layout fills it when it is given `GA_Left` and `GA_Top` at the
 border and `GA_RelWidth` and `GA_RelHeight` less the borders.
 
@@ -1007,9 +1012,34 @@ keeps the window from taking input while it is up, and
 ready for `OpenDiskFont` ([Choosing and opening a font](fonts.md#choosing-and-opening-a-font)).
 In a window of gadgets, getfile.gadget and getfont.gadget are a field
 with a button beside it that opens these requesters
-([More than buttons](programs.md#more-than-buttons)). While the desktop
-runs, a file dragged from it and let go on the file requester goes to
-its drawer with its name in the File field
+([More than buttons](programs.md#more-than-buttons)).
+
+`AslRequest` holds its caller until the requester is answered. A
+program that must go on meanwhile - drawing, playing a sound - gives it
+a port (`ASLFR_ReplyPort`): the requester runs on a process of its own,
+the call returns at once, and an `asl.AslMessage` arrives on the port
+when it is answered or given up, its `answered` saying which. Until
+then the requester is the library's. `AbortAslRequest` takes it down
+early - a program ending with one up calls it and waits for the message
+before `FreeAslRequest`:
+
+```zig
+_ = ab.AslRequest(request, &[_]TagItem{
+    .{ .tag = asl.ASLFR_Window, .data = @intFromPtr(window) },
+    .{ .tag = asl.ASLFR_ReplyPort, .data = @intFromPtr(port) },
+    .{},
+});
+// The port's signal among what the program waits for:
+while (sys.GetMsg(port)) |message| {
+    const reply: *asl.AslMessage = @ptrCast(@alignCast(message));
+    if (reply.answered != 0) {
+        // the answer is in the request structure, as after a waiting call
+    }
+}
+```
+
+While the desktop runs, a file dragged from it and let go on the file
+requester goes to its drawer with its name in the File field
 ([Programs on the desktop](anvil.md#programs-on-the-desktop)).
 
 ## Trying it
@@ -1018,11 +1048,11 @@ its drawer with its name in the File field
 |---|---|
 | `C:test/Intuition` | the default screen's size and pens; `WINDOWS` refresh, `GADGETS`, `SLIDERS`, `TEXT`, `MENUS`, `REQUEST`, `REQUESTER` |
 | `C:test/Screens SWITCH` | two screens, a window on each, switched with buttons |
-| `C:test/Layout` | weights, alignment, labels, wrapping and `GRID` |
+| `C:test/Layout` | weights, alignment, labels, wrapping, shapes kept in a sunk frame, and `GRID` |
 | `C:test/Gadgets` | the gadget classes in one layout, each worked by its key |
 | `C:test/Settings` | tabs along a page gadget's top, its pages framed below them (`PAGE_Tabs`), framed groups |
 | `C:test/Widgets` | meters, a canvas drawn into and queued, codes, a chart |
-| `C:test/Asl` | the file and font requesters |
+| `C:test/Asl` | the file and font requesters; `ASYNC` asked without waiting, `ABORT` taken down |
 | `SYS:Programs/Notepad` | a window object with menus, border scroll bars, a second window, requesters |
 | `SYS:Programs/Sheet` | a canvas drawn into and pressed on, a line of text with an edit hook of its own, border scroll bars telling the window |
 | `SYS:Programs/MultiView` | border scroll bars joined to a picture through a model |

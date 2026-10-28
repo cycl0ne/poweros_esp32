@@ -594,6 +594,45 @@ fn between(f: i64, min: i64, max: i64) Column {
     return .{ .x0 = @intCast(first), .x1 = @intCast(second), .w = @intCast(w) };
 }
 
+/// graphics.library's `Span`: a stretch of the source along one axis,
+/// in 256ths with a pixel's middle at its whole number, and the first and
+/// last pixel of the part taken that some of it covers.
+const Span = struct {
+    from: i64,
+    to: i64,
+    first: i32,
+    last: i32,
+
+    /// How much of pixel `s` lies in the stretch, in 256ths.
+    fn share(span: Span, s: i32) u64 {
+        const middle = @as(i64, s) * 256;
+        const lo = @max(span.from, middle - 128);
+        const hi = @min(span.to, middle + 128);
+        return if (hi > lo) @intCast(hi - lo) else 0;
+    }
+};
+
+/// graphics.library's `spanOf`, its pixels kept inside `min` to `max`:
+/// the destination pixel's own part of the source where the picture is
+/// made smaller along the axis, else a source pixel's width round where
+/// its middle falls.
+fn spanOf(dest: i64, dest_start: i64, dest_size: i64, src_start: i64, src_size: i64, min: i32, max: i32) Span {
+    var span: Span = undefined;
+    if (src_size <= dest_size) {
+        const middle = sourceOf(dest, dest_start, dest_size, src_start, src_size);
+        span.from = middle - 128;
+        span.to = middle + 128;
+    } else {
+        const offset = dest - dest_start;
+        const start = src_start * 256 - 128;
+        span.from = start + @divFloor(offset * src_size * 256, dest_size);
+        span.to = start + @divFloor((offset + 1) * src_size * 256, dest_size);
+    }
+    span.first = @max(@as(i32, @intCast(@divFloor(span.from + 128, 256))), min);
+    span.last = @min(@as(i32, @intCast(@divFloor(span.to + 127, 256))), max - 1);
+    return span;
+}
+
 const Scale = struct {
     rows: Rows,
     target: Target,
@@ -605,9 +644,19 @@ const Scale = struct {
     src_bottom: i32,
     dest_top: i32,
     dest_height: i32,
-    columns: [*]const Column,
+    /// Per destination column: the two pixels it mixes, or, where the
+    /// picture is made smaller either way, the stretch it averages.
+    columns: union(enum) { between: [*]const Column, over: [*]const Span },
 
     fn band(job: *const Scale, lo: u32, hi: u32) void {
+        switch (job.columns) {
+            .between => |columns| job.mixed(lo, hi, columns),
+            .over => |spans| job.averaged(lo, hi, spans),
+        }
+    }
+
+    /// Rows `lo` to `hi`, each pixel mixed from the four round its place.
+    fn mixed(job: *const Scale, lo: u32, hi: u32, columns: [*]const Column) void {
         const src_height: i64 = job.src_bottom - job.src_top;
         var y = lo;
         while (y < hi) : (y += 1) {
@@ -617,23 +666,69 @@ const Scale = struct {
             const bottom: [*]const u32 = @ptrCast(@alignCast(job.picture + @as(usize, rows.x1) * job.picture_pitch));
             const wy = rows.w;
             const out = job.target.row(y);
-            for (out[0..job.target.width], job.columns[0..job.target.width]) |*pixel, column| {
+            for (out[0..job.target.width], columns[0..job.target.width]) |*pixel, column| {
                 const wx = column.w;
-                const pen = sample(
+                lay(pixel, sample(
                     .{ top[column.x0], top[column.x1], bottom[column.x0], bottom[column.x1] },
                     .{ (256 - wx) * (256 - wy), wx * (256 - wy), (256 - wx) * wy, wx * wy },
-                );
-                const alpha = pen >> 24;
-                if (alpha == 0xFF) {
-                    pixel.* = pen;
-                } else if (alpha != 0) {
-                    const parts = mixOf(pen, alpha);
-                    pixel.* = mix(pixel.*, parts.rb, parts.g, 255 - alpha);
-                }
+                ));
             }
         }
     }
+
+    /// Rows `lo` to `hi`, each pixel the mean of the source it covers.
+    fn averaged(job: *const Scale, lo: u32, hi: u32, spans: [*]const Span) void {
+        const src_height: i64 = job.src_bottom - job.src_top;
+        var y = lo;
+        while (y < hi) : (y += 1) {
+            const down = spanOf(y, job.dest_top, job.dest_height, job.src_top, src_height, job.src_top, job.src_bottom);
+            const out = job.target.row(y);
+            for (out[0..job.target.width], spans[0..job.target.width]) |*pixel, across| {
+                lay(pixel, job.over(across, down));
+            }
+        }
+    }
+
+    /// graphics.library's `sampleOver`: every pixel in the two stretches,
+    /// by how much of it lies in them, each channel added and divided by
+    /// the sum of the shares, rounded.
+    fn over(job: *const Scale, across: Span, down: Span) u32 {
+        var sums: [4]u64 = @splat(0);
+        var total: u64 = 0;
+        var y = down.first;
+        while (y <= down.last) : (y += 1) {
+            const weight_y = down.share(y);
+            if (weight_y == 0) continue;
+            const line: [*]const u32 = @ptrCast(@alignCast(job.picture + @as(usize, @intCast(y)) * job.picture_pitch));
+            var row: [4]u64 = @splat(0);
+            var row_total: u64 = 0;
+            var x = across.first;
+            while (x <= across.last) : (x += 1) {
+                const weight_x = across.share(x);
+                const pixel = line[@intCast(x)];
+                inline for (&row, 0..) |*channel, i| channel.* += (pixel >> (i * 8) & 0xFF) * weight_x;
+                row_total += weight_x;
+            }
+            for (&sums, row) |*sum, part| sum.* += part * weight_y;
+            total += row_total * weight_y;
+        }
+        if (total == 0) return 0;
+        var mean: u32 = 0;
+        inline for (sums, 0..) |sum, i| mean |= @as(u32, @intCast((sum + total / 2) / total)) << (i * 8);
+        return mean;
+    }
 };
+
+/// A pixel of a scaled picture laid over the buffer by its coverage.
+inline fn lay(pixel: *u32, pen: u32) void {
+    const alpha = pen >> 24;
+    if (alpha == 0xFF) {
+        pixel.* = pen;
+    } else if (alpha != 0) {
+        const parts = mixOf(pen, alpha);
+        pixel.* = mix(pixel.*, parts.rb, parts.g, 255 - alpha);
+    }
+}
 
 /// Four pixels mixed by their weights, which make 65536: each channel the
 /// weighted sum, rounded - two channels at a time, a word each.
@@ -662,14 +757,29 @@ pub fn scale(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, 
     if (pixels.x < 0 or pixels.y < 0) return err.RTGERR_NOT_SUPPORTED;
     const sys = engine.sys orelse return err.RTGERR_NOT_SUPPORTED;
     const dest_width: u32 = @intCast(area.width);
-    const table = sys.AllocVec(@as(usize, dest_width) * @sizeOf(Column), exec.MEMF_ANY) orelse return err.RTGERR_NOT_SUPPORTED;
+    // Made smaller either way, each pixel is the mean of what it covers.
+    const shrinks = width > dest_width or height > area.height;
+    const entry: usize = if (shrinks) @sizeOf(Span) else @sizeOf(Column);
+    const table = sys.AllocVec(@as(usize, dest_width) * entry, exec.MEMF_ANY) orelse return err.RTGERR_NOT_SUPPORTED;
     defer sys.FreeVec(table);
-    const columns: [*]Column = @ptrCast(@alignCast(table));
     const left: i64 = pixels.x;
-    for (columns[0..dest_width], 0..) |*column, i| {
-        const fx = sourceOf(area.x + @as(i64, @intCast(i)), area.x, area.width, left, width);
-        column.* = between(fx, left, left + width);
-    }
+    const right: i32 = pixels.x + @as(i32, @intCast(width));
+    const columns: @FieldType(Scale, "columns") = if (shrinks) spans: {
+        const spans: [*]Span = @ptrCast(@alignCast(table));
+        for (spans[0..dest_width], 0..) |*span, i| {
+            span.* = spanOf(area.x + @as(i64, @intCast(i)), area.x, area.width, left, width, pixels.x, right);
+        }
+        break :spans .{ .over = spans };
+    } else mixed: {
+        const mixed: [*]Column = @ptrCast(@alignCast(table));
+        for (mixed[0..dest_width], 0..) |*column, i| {
+            const fx = sourceOf(area.x + @as(i64, @intCast(i)), area.x, area.width, left, width);
+            column.* = between(fx, left, left + width);
+        }
+        break :mixed .{ .between = mixed };
+    };
+    // Made smaller, the work is the picture's pixels, not the rectangle's.
+    const work = if (shrinks) @max(pixelsOf(area) * 4, @as(u64, width) * height) else pixelsOf(area) * 4;
     share(engine, .{ .scale = .{
         .rows = rowsOf(bitmap, area),
         .target = targetOf(bitmap, area),
@@ -680,7 +790,7 @@ pub fn scale(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, 
         .dest_top = area.y,
         .dest_height = area.height,
         .columns = columns,
-    } }, partsFor(pixelsOf(area) * 4));
+    } }, partsFor(work));
     return err.RTGERR_OK;
 }
 
@@ -805,6 +915,7 @@ pub fn template(engine: *Engine, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRec
 // a time, with every job cut into parts that run one after another.
 
 const testing = std.testing;
+const kexec = @import("../../exec/exec.zig");
 
 /// A buffer of the test's own, `width` by `height`, its rows a cache
 /// line apart as a board's are.
@@ -899,6 +1010,75 @@ test "a picture laid over: by each pixel's coverage, at a strength, either way r
             try testing.expectEqual(want, pixelOf(&bitmap, @intCast(x), @intCast(y)).*);
         };
     };
+}
+
+/// graphics.library's smooth scale of pixel `x`, `y` of a destination
+/// `dest_width` by `dest_height`, from the part of `picture` at `left`,
+/// `top`, `width` by `height`, put the plain way: along each axis a
+/// stretch in 256ths from the part's left (or top) edge - the destination
+/// pixel's share of the source where the picture is made smaller that
+/// way, else a source pixel's width round its middle - and every pixel of
+/// the part by how much of it lies in both.
+fn slowScale(picture: []const u32, pitch: usize, left: usize, top: usize, width: u64, height: u64, x: u64, y: u64, dest_width: u64, dest_height: u64) u32 {
+    const Stretch = struct {
+        lo: i64,
+        hi: i64,
+
+        fn of(at: u64, dest: u64, src: u64) @This() {
+            if (src > dest) return .{ .lo = @intCast(at * src * 256 / dest), .hi = @intCast((at + 1) * src * 256 / dest) };
+            const middle: i64 = @intCast((2 * at + 1) * src * 256 / (2 * dest));
+            return .{ .lo = middle - 128, .hi = middle + 128 };
+        }
+
+        fn share(stretch: @This(), s: u64) u64 {
+            const lo = @max(stretch.lo, @as(i64, @intCast(s * 256)));
+            const hi = @min(stretch.hi, @as(i64, @intCast(s * 256 + 256)));
+            return if (hi > lo) @intCast(hi - lo) else 0;
+        }
+    };
+    const across = Stretch.of(x, dest_width, width);
+    const down = Stretch.of(y, dest_height, height);
+    var sums: [4]u64 = @splat(0);
+    var total: u64 = 0;
+    for (0..height) |sy| for (0..width) |sx| {
+        const weight = across.share(sx) * down.share(sy);
+        const pixel = picture[(top + sy) * pitch + left + sx];
+        for (&sums, 0..) |*sum, i| sum.* += (pixel >> @intCast(i * 8) & 0xFF) * weight;
+        total += weight;
+    };
+    var mean: u32 = 0;
+    for (sums, 0..) |sum, i| mean |= @as(u32, @intCast((sum + total / 2) / total)) << @intCast(i * 8);
+    return mean;
+}
+
+test "a picture scaled: mixed between pixels made larger, the mean of what each covers made smaller" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    test_parts = 3;
+    defer test_parts = 0;
+    var engine = Engine{};
+    setUp(&engine, kexec.SysBase.iface());
+    var memory: [64 * 16 * 4]u8 align(64) = undefined;
+    var bitmap = testBitMap(&memory, 40, 16);
+    const pitch = 30;
+    var picture: [pitch * 20]u32 = undefined;
+    var prng = std.Random.DefaultPrng.init(11);
+    for (&picture) |*p| p.* = prng.random().int(u32) | 0xFF00_0000;
+    // Smaller both ways, by ratios that are not whole; smaller across and
+    // larger down; the same size; larger both ways.
+    const sizes = [_][4]u32{ .{ 23, 17, 9, 7 }, .{ 23, 5, 9, 12 }, .{ 6, 4, 6, 4 }, .{ 5, 3, 13, 8 } };
+    for (sizes) |size| {
+        const width, const height, const dest_width, const dest_height = size;
+        scramble(&bitmap, width);
+        const area = rtg.RtgRect{ .x = 4, .y = 2, .width = @intCast(dest_width), .height = @intCast(dest_height) };
+        const pixels = rtg.RtgPixels{ .pixels = @ptrCast(&picture), .pitch = pitch * 4, .format = .bgra32, .x = 3, .y = 1 };
+        try testing.expectEqual(err.RTGERR_OK, scale(&engine, &bitmap, &area, &pixels, width, height));
+        for (0..dest_height) |y| for (0..dest_width) |x| {
+            const want = slowScale(&picture, pitch, 3, 1, width, height, x, y, dest_width, dest_height);
+            try testing.expectEqual(want, pixelOf(&bitmap, @intCast(4 + x), @intCast(2 + y)).*);
+        };
+    }
+    try kexec.expectNoLeaks();
 }
 
 test "a copy, between buffers and within one, whichever way the rectangles overlap" {

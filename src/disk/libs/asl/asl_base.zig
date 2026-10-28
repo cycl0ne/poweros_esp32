@@ -55,6 +55,17 @@ pub fn aslBase(lib: *exec.Library) *AslBase {
     return @fieldParentPtr("lib", lib);
 }
 
+/// The open count raised or lowered by one, under the library's lock: a
+/// requester's own process holds the library open while it runs, handed
+/// to dos with `NP_HoldLibrary`, which lets it go once the process's code
+/// has returned.
+pub fn holdLibrary(ab: *AslBase, by: i32) void {
+    const sys = ab.sys_base;
+    sys.ObtainSemaphore(&ab.lib.lock);
+    defer sys.ReleaseSemaphore(&ab.lib.lock);
+    if (by > 0) ab.lib.open_cnt += 1 else ab.lib.open_cnt -= 1;
+}
+
 /// diskfont.library, opened the first time a font requester wants it and
 /// kept until the last opener of this library has gone. Null when it
 /// cannot be opened, which is a font requester that cannot be shown.

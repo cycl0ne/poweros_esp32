@@ -11,6 +11,13 @@
 //! program's: the program is told where they are and they hold until the
 //! next request on that requester or until it is freed, which is what
 //! lets a requester open again where it was left.
+//!
+//! A requester put up on a process of its own (`ASLFR_ReplyPort`) names
+//! that process (`asker`) for as long as it is up, under a semaphore of
+//! the requester's: `AbortAslRequest` signals the process only while it
+//! is named, and the process lets the name go under the same semaphore
+//! before it sends its message, so no signal reaches a process that has
+//! ended.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -110,6 +117,15 @@ pub const Requester = extern struct {
     /// the one drawer; it is the library's and is let go here.
     args: ?*anyopaque = null,
     arg_lock: ?*dos.FileLock = null,
+    /// `ASLFR_ReplyPort`: where the message goes when a requester put up
+    /// on its own process ends; null to ask and wait.
+    reply_port: ?*exec.MsgPort = null,
+    /// The process the requester is up on, null when it is not; and the
+    /// semaphore it is named and let go under.
+    asker: ?*exec.Task = null,
+    asker_lock: exec.SignalSemaphore = .{},
+    /// The message sent when it ends.
+    message: asl.AslMessage = .{},
 };
 
 /// The answer a request left behind, given back: a requester asked again
@@ -184,6 +200,7 @@ fn takeCommonTag(r: *Requester, item: *const TagItem) bool {
             r.filter_func = @ptrFromInt(v);
             setFlag(&r.flags1, asl.FRF_FILTERFUNC, v != 0);
         },
+        asl.ASLFR_ReplyPort => r.reply_port = @ptrFromInt(v),
         else => return false,
     }
     return true;

@@ -15,6 +15,7 @@ const asl_init = @import("asl_init.zig");
 const AllocAslRequest = @import("request/allocaslrequest.zig").AllocAslRequest;
 const FreeAslRequest = @import("request/freeaslrequest.zig").FreeAslRequest;
 const AslRequest = @import("request/aslrequest.zig").AslRequest;
+const AbortAslRequest = @import("request/abortaslrequest.zig").AbortAslRequest;
 
 /// asl.library's interface, as the SDK generates it from
 /// sdk/fd/asl_lib.fd.
@@ -43,6 +44,7 @@ const contract_files = [_][]const u8{
     @embedFile("request/allocaslrequest.zig"),
     @embedFile("request/freeaslrequest.zig"),
     @embedFile("request/aslrequest.zig"),
+    @embedFile("request/abortaslrequest.zig"),
 };
 
 fn lvoAllocAslRequest(ab: *AslBase, kind: u32, tags: ?[*]const utility.TagItem) callconv(.c) ?*anyopaque {
@@ -54,6 +56,9 @@ fn lvoFreeAslRequest(ab: *AslBase, requester: ?*anyopaque) callconv(.c) void {
 fn lvoAslRequest(ab: *AslBase, requester: *anyopaque, tags: ?[*]const utility.TagItem) callconv(.c) bool {
     return AslRequest(ab, requester, tags);
 }
+fn lvoAbortAslRequest(ab: *AslBase, requester: *anyopaque) callconv(.c) void {
+    return AbortAslRequest(ab, requester);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(asl_init.openVector),
@@ -63,6 +68,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoAllocAslRequest),
     vec(lvoFreeAslRequest),
     vec(lvoAslRequest),
+    vec(lvoAbortAslRequest),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

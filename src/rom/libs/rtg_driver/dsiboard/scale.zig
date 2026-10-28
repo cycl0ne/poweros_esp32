@@ -14,9 +14,16 @@
 //! are written back before the scaler runs and dropped after, so what the
 //! CPU then reads of it is what the scaler wrote.
 //!
-//! Anything else - a ratio between the steps, a format the scaler has no
-//! mode for, a picture the 2D-DMA cannot read, no memory for the block,
-//! a job too small to be worth it - is answered RTGERR_NOT_SUPPORTED.
+//! The scaler mixes the pixels either side of each place, which is a
+//! smooth scale's rule only where the picture is made larger: made
+//! smaller, a smooth scale takes the mean of all the pixels each covers,
+//! which the scaler would skip. So it takes a job that makes the picture
+//! no smaller either way.
+//!
+//! Anything else - a picture made smaller, a ratio between the steps, a
+//! format the scaler has no mode for, a picture the 2D-DMA cannot read,
+//! no memory for the block, a job too small to be worth it - is answered
+//! RTGERR_NOT_SUPPORTED.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -41,7 +48,7 @@ pub fn scalePixels(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: 
     if (out_width * 16 % width != 0 or out_height * 16 % height != 0) return err.RTGERR_NOT_SUPPORTED;
     const x16 = out_width * 16 / width;
     const y16 = out_height * 16 / height;
-    if (x16 == 0 or y16 == 0 or x16 > largest_sixteenths or y16 > largest_sixteenths) return err.RTGERR_NOT_SUPPORTED;
+    if (x16 < 16 or y16 < 16 or x16 > largest_sixteenths or y16 > largest_sixteenths) return err.RTGERR_NOT_SUPPORTED;
     if (out_width * out_height < engine.smallest_blend) return err.RTGERR_NOT_SUPPORTED;
     if (out_width > dma2d.field_max or out_height > dma2d.field_max) return err.RTGERR_NOT_SUPPORTED;
     const picture = blend.pictureOf(pixels, width, height, 255) orelse return err.RTGERR_NOT_SUPPORTED;

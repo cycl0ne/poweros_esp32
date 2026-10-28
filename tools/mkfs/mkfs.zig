@@ -4,7 +4,7 @@
 //! shell copying programs into RAM: at every start.
 //!
 //! usage: mkfs [--tree=<dir>] [--manifest=<file>]
-//!            [--gpt=<file> --gpt-bytes=<bytes>]
+//!            [--gpt=<file> --gpt-bytes=<bytes> [--gpt-file=<path>=<host-file> ...]]
 //!            <out.bin> <volume> <partition> <sectors> <partition-sectors>
 //!            <sector-size> <page-size> <rdb-sectors>
 //!            [<path-in-image>[=<host-file>] ...]
@@ -43,7 +43,11 @@
 //! handler's own code too (`src/disk/devs/handlers/posfs`, through the
 //! `posfs` module), sent the same packets, over the image file itself.
 //! The file is as long as the disk, but only what was written takes room
-//! on the host: the rest is a hole, which reads as zeroes.
+//! on the host: the rest is a hole, which reads as zeroes. A
+//! `--gpt-file` goes on this disk alone, after everything else: a file
+//! too large for the flash disk - a song to try a player with - on the
+//! SSD that has room for it. The drawer it goes in must be made by a
+//! path of the ordinary list.
 //!
 //! **A blank disk** (`--blank`): only that disk, with an empty volume
 //! and its partition not bootable - a disk to keep work on. Its only
@@ -312,6 +316,7 @@ pub fn main(init: std.process.Init) !void {
     var gpt_path: ?[]const u8 = null;
     var gpt_bytes: u64 = 0;
     var blank = false;
+    var gpt_only: std.ArrayList([]const u8) = .empty;
     var kept: std.ArrayList([:0]const u8) = .empty;
     for (all_args, 0..) |arg, index| {
         if (index == 0 or !mem.startsWith(u8, arg, "--")) {
@@ -325,6 +330,8 @@ pub fn main(init: std.process.Init) !void {
         } else if (mem.startsWith(u8, arg, "--gpt-bytes=")) {
             const text = arg["--gpt-bytes=".len..];
             gpt_bytes = std.fmt.parseInt(u64, text, 0) catch fatal("{s}: not a number", .{text});
+        } else if (mem.startsWith(u8, arg, "--gpt-file=")) {
+            try gpt_only.append(arena, arg["--gpt-file=".len..]);
         } else if (mem.eql(u8, arg, "--blank")) {
             blank = true;
         } else fatal("{s}: no such option", .{arg});
@@ -332,6 +339,7 @@ pub fn main(init: std.process.Init) !void {
     const args = kept.items;
     const cwd = std.Io.Dir.cwd();
     if (gpt_path != null and gpt_bytes == 0) fatal("--gpt: --gpt-bytes says how large the disk is", .{});
+    if (gpt_path == null and gpt_only.items.len != 0) fatal("--gpt-file: there is no --gpt disk to put it on", .{});
     if (blank) {
         if (args.len != 3 or gpt_path == null) fatal("usage: mkfs --blank --gpt=<file> --gpt-bytes=<bytes> <volume> <partition>", .{});
         checkDrive(args[2]);
@@ -354,17 +362,18 @@ pub fn main(init: std.process.Init) !void {
     if (part_sectors < 2 or part_sectors > sectors - rdb_blocks) fatal("{d} sectors: the disk has {d} past its RDB blocks", .{ part_sectors, sectors - rdb_blocks });
     checkDrive(drive);
 
-    // Everything the volume gets, read first.
+    // Everything the volume gets, read first; then what the GPT disk
+    // gets besides.
     var entries: std.ArrayList(Entry) = .empty;
-    for (args[9..]) |entry| {
-        const split = mem.indexOfScalar(u8, entry, '=');
-        const path = try arena.dupeZ(u8, if (split) |at| entry[0..at] else entry);
-        const content: ?[]const u8 = if (split) |at| try cwd.readFileAlloc(io, entry[at + 1 ..], arena, .unlimited) else null;
-        try entries.append(arena, .{ .path = path, .content = content });
+    for (args[9..]) |entry| try entries.append(arena, try entryOf(io, cwd, entry, arena));
+    const shared = entries.items.len;
+    for (gpt_only.items) |entry| {
+        if (mem.indexOfScalar(u8, entry, '=') == null) fatal("--gpt-file={s}: it is <path>=<host-file>", .{entry});
+        try entries.append(arena, try entryOf(io, cwd, entry, arena));
     }
 
-    if (tree_path) |path| try writeTree(io, cwd, path, entries.items);
-    if (manifest_path) |path| try writeManifest(io, cwd, path, entries.items, arena);
+    if (tree_path) |path| try writeTree(io, cwd, path, entries.items[0..shared]);
+    if (manifest_path) |path| try writeManifest(io, cwd, path, entries.items[0..shared], arena);
 
     const store = try arena.alloc(u8, sectors * sector_size);
     @memset(store, 0xFF);
@@ -408,9 +417,18 @@ pub fn main(init: std.process.Init) !void {
     putBlock(store, rdb_block, sector_size, &rdb);
     putBlock(store, partition_block, sector_size, &part);
 
-    const used = flashfsVolume(store, rdb_blocks, part_sectors, sector_size, page_size, label, entries.items, arena);
+    const used = flashfsVolume(store, rdb_blocks, part_sectors, sector_size, page_size, label, entries.items[0..shared], arena);
     try cwd.writeFile(io, .{ .sub_path = out_path, .data = store[0..used] });
     if (gpt_path) |path| gptDisk(io, cwd, path, gpt_bytes, label, drive, true, entries.items, arena);
+}
+
+/// One path on the command line: a directory to make, or with `=` a file
+/// and the host file it is read from.
+fn entryOf(io: std.Io, cwd: std.Io.Dir, entry: []const u8, arena: mem.Allocator) !Entry {
+    const split = mem.indexOfScalar(u8, entry, '=');
+    const path = try arena.dupeZ(u8, if (split) |at| entry[0..at] else entry);
+    const content: ?[]const u8 = if (split) |at| try cwd.readFileAlloc(io, entry[at + 1 ..], arena, .unlimited) else null;
+    return .{ .path = path, .content = content };
 }
 
 /// A partition's name that fits its PartitionBlock.

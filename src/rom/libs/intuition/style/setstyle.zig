@@ -123,9 +123,13 @@ fn redraw(ib: *IntuitionBase, s: *Screen) void {
     while (node) |n| : (node = n.succ) {
         if (n.succ == null) break;
         const w: *Window = @ptrCast(@alignCast(n));
+        w.layout_width = 0;
+        w.layout_height = 0;
         _gadget.layout(ib, w, w.gadgets, false);
         _window.drawBorder(ib, w);
         _gadget.renderAll(ib, w);
         _window.send(ib, w, wn.IDCMP_NEWPREFS, 0);
+        // A larger font may need more room than the window has.
+        _window.fitLayout(ib, w);
     }
 }

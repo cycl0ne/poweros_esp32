@@ -20,6 +20,12 @@
 void FreeAslRequest(?*anyopaque requester)
 /// The requester put up, `tags` changing it for this once; true when it
 /// was answered, false when it was given up or could not be shown. The
-/// answer is in the request structure until the next call on it.
+/// answer is in the request structure until the next call on it. With
+/// ASLFR_ReplyPort it returns at once, true when the requester is up, and
+/// the answer comes as a message on that port.
 bool AslRequest(*anyopaque requester, ?[*]const utility.TagItem tags)
+/// A requester put up with ASLFR_ReplyPort taken down as if it was given
+/// up; its message arrives as for any other end. Nothing for one that is
+/// not up.
+void AbortAslRequest(*anyopaque requester)
 ##end

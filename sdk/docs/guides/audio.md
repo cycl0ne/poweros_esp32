@@ -377,7 +377,7 @@ Three places set it:
   (**Volume...**): the output played through, its volume and its
   equalizer, kept when the window closes.
 
-Player has an Output chooser of its own, beside its file, which plays
+Player has an Output chooser of its own, beside its volume, which plays
 every sound through the output picked.
 
 ## Sounds for a moment: triggers
