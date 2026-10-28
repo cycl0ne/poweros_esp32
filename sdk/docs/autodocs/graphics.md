@@ -617,6 +617,21 @@ The fill is solid. A line pattern belongs to a line, and the inside of a
 shape is not one; the pens and the draw mode apply as everywhere else,
 so a shape can be filled by inverting what is under it.
 
+A row takes the columns from one crossing up to and including the
+next: a square from corner 10 to corner 60 fills columns 10 to 60 and
+rows 10 to 59.
+
+With `RPTAG_Smooth` the edges are smooth. Each row is asked four times,
+a quarter of a pixel apart, and each of its pixels at four points
+across, so an edge pixel is laid over what is there by how many of its
+sixteen points are inside - as a smooth `FillArc` lays its edge. The
+shape is the same one: a row still reaches the column of its right
+crossing, so the same corners fill the same box either way, and an edge
+along a row or a column is exactly as hard. Pixels wholly inside go
+down as the hard fill puts them, through the pen or the fill style; an
+edge pixel takes its colour from the fill style too, and is laid over
+whatever the draw mode.
+
 **CONTEXT**
 
 - Waits: yes, while another task holds the RastPort's lock

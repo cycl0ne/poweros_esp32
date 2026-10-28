@@ -54,13 +54,15 @@ pub const LIBRARY_VERSION = 0;
 /// (`Brush`, `Stencil`) - colours are mixed without dividing, a picture
 /// is laid over a row at a time, AreaEnd walks only the edges a row
 /// crosses, and rows are filled a machine word at a time and copied by
-/// exec's copy. The version stays 0 until there is something to demand of
-/// it.
-pub const LIBRARY_REVISION = 31;
+/// exec's copy. 32: `AreaEnd` takes `RPTAG_Smooth` - a shape's slanted
+/// edges laid over by how much of each pixel they cover, its straight
+/// ones as hard as before. The version stays 0 until there is something to
+/// demand of it.
+pub const LIBRARY_REVISION = 32;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
-const BUILD_DATE = "25.10.2026";
+const BUILD_DATE = "28.10.2026";
 
 /// The `$VER:` string, NUL first so that a scan of the image finds it and
 /// `id_string` can start one byte in as a plain C string.

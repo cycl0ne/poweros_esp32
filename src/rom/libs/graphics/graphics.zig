@@ -2718,6 +2718,103 @@ test "areas: a filled shape, a hole in it, and room given back" {
     try tearDown(gb);
 }
 
+test "areas: smooth edges on a slant, the same box as the hard fill, holes, the clip and a fill style" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    const size = 24;
+    var pixels: [size * size * 4]u8 = @splat(0);
+    var hard: [size * size * 4]u8 = undefined;
+    var surface = sizedSurface(&pixels, .bgra32, size, size);
+    const white = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) }, .{} };
+    const rp = try onMemory(gb, &surface, &white);
+    try testing.expect(base(gb).InitArea(@ptrCast(rp), 64));
+    const smooth = [_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} };
+    const at = struct {
+        fn grey(px: []const u8, x: usize, y: usize) u8 {
+            return px[(y * size + x) * 4];
+        }
+        fn between(px: []const u8) bool {
+            for (0..size) |x| for (0..size) |y| {
+                const g = grey(px, x, y);
+                if (g != 0 and g != 255) return true;
+            };
+            return false;
+        }
+        fn shape(g: *interface.GraphicsBase, r: *rastport.RastPort, corners: []const [2]i32) !void {
+            try testing.expect(g.AreaMove(@ptrCast(r), corners[0][0], corners[0][1]));
+            for (corners[1..]) |c| try testing.expect(g.AreaDraw(@ptrCast(r), c[0], c[1]));
+        }
+    };
+    const square = [_][2]i32{ .{ 4, 4 }, .{ 19, 4 }, .{ 19, 19 }, .{ 4, 19 } };
+    const triangle = [_][2]i32{ .{ 2, 2 }, .{ 22, 2 }, .{ 2, 22 } };
+
+    // A square has no slant: smooth, it is the hard one to the pixel - up
+    // to and including the column of its right corners, short of the row
+    // of its bottom ones.
+    try at.shape(base(gb), rp, &square);
+    try testing.expect(base(gb).AreaEnd(@ptrCast(rp)));
+    hard = pixels;
+    base(gb).SetRPAttrs(@ptrCast(rp), &smooth);
+    @memset(&pixels, 0);
+    try at.shape(base(gb), rp, &square);
+    try testing.expect(base(gb).AreaEnd(@ptrCast(rp)));
+    try testing.expectEqualSlices(u8, &hard, &pixels);
+    try testing.expectEqual(@as(u8, 255), at.grey(&pixels, 19, 18));
+    try testing.expectEqual(@as(u8, 0), at.grey(&pixels, 19, 19));
+    try testing.expectEqual(@as(u8, 0), at.grey(&pixels, 20, 10));
+
+    // A triangle's slant lands part-way. Its rows reach a column past the
+    // slant, as the hard fill's do: 220 pixels' worth in all, a little
+    // over or under by where the samples fall.
+    @memset(&pixels, 0);
+    try at.shape(base(gb), rp, &triangle);
+    try testing.expect(base(gb).AreaEnd(@ptrCast(rp)));
+    try testing.expectEqual(@as(u8, 255), at.grey(&pixels, 5, 5));
+    try testing.expectEqual(@as(u8, 0), at.grey(&pixels, 21, 21));
+    try testing.expect(at.between(&pixels));
+    var total: u32 = 0;
+    for (0..size) |x| for (0..size) |y| {
+        total += at.grey(&pixels, x, y);
+    };
+    try testing.expect(total >= 215 * 255 and total <= 225 * 255);
+
+    // A slanted hole in a square: nothing in the middle, solid at the
+    // corners, and the hole's edge part-way.
+    @memset(&pixels, 0);
+    try at.shape(base(gb), rp, &.{ .{ 2, 2 }, .{ 21, 2 }, .{ 21, 21 }, .{ 2, 21 } });
+    try at.shape(base(gb), rp, &.{ .{ 11, 5 }, .{ 17, 11 }, .{ 11, 17 }, .{ 5, 11 } });
+    try testing.expect(base(gb).AreaEnd(@ptrCast(rp)));
+    try testing.expectEqual(@as(u8, 0), at.grey(&pixels, 11, 11));
+    try testing.expectEqual(@as(u8, 255), at.grey(&pixels, 3, 3));
+    try testing.expect(at.between(&pixels));
+
+    // A fill style colours the edge too: the slant's pixel on a row is
+    // the row's colour, laid over by its part. Black at the top to white
+    // at the bottom, undithered, so every pixel of a row is one colour.
+    @memset(&pixels, 0);
+    var fill = graphics.FillStyle{ .flags = graphics.FILLF_NODITHER };
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = @intFromPtr(&fill) }, .{} });
+    try at.shape(base(gb), rp, &triangle);
+    try testing.expect(base(gb).AreaEnd(@ptrCast(rp)));
+    const row = at.grey(&pixels, 3, 19);
+    try testing.expect(row > at.grey(&pixels, 3, 4));
+    try testing.expect(at.grey(&pixels, 5, 19) > 0 and at.grey(&pixels, 5, 19) < row);
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_FillStyle, .data = 0 }, .{} });
+
+    // The clip holds, edge pixels and runs alike.
+    @memset(&pixels, 0);
+    const clip = graphics.Rect{ .min_x = 0, .min_y = 0, .max_x = 8, .max_y = size };
+    base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&clip) }, .{} });
+    try at.shape(base(gb), rp, &triangle);
+    try testing.expect(base(gb).AreaEnd(@ptrCast(rp)));
+    try testing.expectEqual(@as(u8, 255), at.grey(&pixels, 6, 4));
+    for (8..size) |x| for (0..size) |y| try testing.expectEqual(@as(u8, 0), at.grey(&pixels, x, y));
+
+    base(gb).FreeRastPort(@ptrCast(rp));
+    try tearDown(gb);
+}
+
 test "fonts: two Pospaz in the ROM, told apart by height" {
     const gb = try setUp();
     defer kexec.deinit();

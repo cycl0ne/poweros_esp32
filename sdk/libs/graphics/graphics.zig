@@ -545,13 +545,14 @@ pub const RPTAG_FillStyle = RPTAG_Dummy + 23;
 /// one wide.
 pub const RPTAG_LineWidth = RPTAG_Dummy + 24;
 
-/// 1 for smooth edges: a curve's edge pixels laid over what is there by
-/// how much of each the shape covers, so circles, rings, wedges and round
-/// corners come out without stairs - in `FillRoundRect`, `FillArc`,
-/// `DrawRoundRect`, `DrawCircle`, `DrawEllipse`, `DrawArc` and a `Draw` one
-/// pixel wide with a solid pattern. 0, the default, for hard edges, which
-/// is what every pixel-exact drawing wants. Straight edges along the rows
-/// and columns are the same either way.
+/// 1 for smooth edges: a curve's or a slant's edge pixels laid over what
+/// is there by how much of each the shape covers, so circles, rings,
+/// wedges, round corners and slanted sides come out without stairs - in
+/// `FillRoundRect`, `FillArc`, `AreaEnd`, `DrawRoundRect`, `DrawCircle`,
+/// `DrawEllipse`, `DrawArc` and a `Draw` one pixel wide with a solid
+/// pattern. 0, the default, for hard edges, which is what every
+/// pixel-exact drawing wants. Straight edges along the rows and columns are
+/// the same either way.
 pub const RPTAG_Smooth = RPTAG_Dummy + 25;
 
 /// A `*exec.SignalSemaphore` every drawing call on this RastPort holds for

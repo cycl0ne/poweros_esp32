@@ -297,8 +297,9 @@ fn coverage(shape: anytype, x: i32, y: i32) u32 {
 
 /// The pixel's own colour - the fill style's for a fill that has one, the
 /// pen otherwise - laid over what is there by how much of it the shape
-/// covers.
-fn edgePixel(rp: *RastPort, x: i32, y: i32, covered: u32, styled: bool, bound: *Rect, any: *bool) void {
+/// covers, `covered` sixteenths. AreaEnd's smooth fill lays its edge
+/// pixels with it too.
+pub fn edgePixel(rp: *RastPort, x: i32, y: i32, covered: u32, styled: bool, bound: *Rect, any: *bool) void {
     if (covered == 0) return;
     const piece = _draw.pieceAt(rp, x, y) orelse return;
     const pen = if (styled) _draw.fillColour(rp, x, y, piece.surface.format) else rp.fg_pen;
