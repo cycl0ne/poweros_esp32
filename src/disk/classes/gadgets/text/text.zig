@@ -13,7 +13,9 @@
 //!
 //! Given `TEXT_CopyText`, it keeps a copy of each text it is given, in
 //! memory of its own, freed with the gadget. Given `TEXT_Font`, it draws
-//! in that font and not the window's.
+//! in that font and not the window's. Its width is that of what it shows
+//! or of `TEXT_RoomFor`'s text, whichever is wider, measured the same
+//! way.
 //!
 //! **Rich text** is `_runs.zig`'s: runs given (`TEXT_Runs`) or parsed from
 //! markup (`TEXT_Markup`) are laid out a line at a time and drawn on each
@@ -49,7 +51,7 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tx.TEXT_CLASS,
     .version = 1,
-    .revision = 3,
+    .revision = 4,
     .date = "28.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
@@ -91,6 +93,9 @@ const Data = extern struct {
     markup: u8 = 0,
     wrap: u8 = 0,
     pad2: [2]u8 = .{ 0, 0 },
+    /// `TEXT_RoomFor`: the text whose width it keeps at the least, the
+    /// caller's.
+    room_for: ?[*:0]const u8 = null,
 };
 
 /// Markup parsed into runs of its own, what was parsed before let go.
@@ -207,6 +212,10 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
             },
             tx.TEXT_Font => {
                 own.font = @ptrFromInt(item.data);
+                changed = true;
+            },
+            tx.TEXT_RoomFor => {
+                own.room_for = @ptrFromInt(item.data);
                 changed = true;
             },
             else => {},
@@ -410,15 +419,24 @@ fn measureRuns(base: *gadgets.Base, own: *const Data, runs: [*]const tx.TextRun,
 }
 
 /// Its size: a line of the font, the text's width, and the frame.
+/// How wide `text` is in the gadget's font: measured in the window's, a
+/// character each in a font of its own.
+fn widthOf(base: *gadgets.Base, own: *const Data, measure: support.Measure, text: [*:0]const u8) i32 {
+    if (own.font) |font| return @intCast(textLen(text) * font.image.x_size);
+    return measure.width(base.intuition_base, text);
+}
+
 fn domain(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo, which: u32) gc.Box {
     const ib = base.intuition_base;
     const measure = support.Measure.of(ib, g, gi);
     defer measure.done(ib);
+    // The room `TEXT_RoomFor` keeps, whatever is shown.
+    const kept: i32 = if (own.room_for) |text| widthOf(base, own, measure, text) else 0;
     var box = gc.Box{ .width = if (shown(base, own)) |text| measure.width(ib, text) else 0, .height = measure.lineHeight(base.graphics_base) };
     if (own.runs) |runs| {
         const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info, g.style);
         const measured = measureRuns(base, own, runs, own.font orelse measure.font, if (own.wrap != 0) g.given_width - room.width else 0x7FFF);
-        const lines = gc.Box{ .width = measured.width + room.width, .height = @max(measured.height, 1) + room.height };
+        const lines = gc.Box{ .width = @max(measured.width, kept) + room.width, .height = @max(measured.height, 1) + room.height };
         return switch (which) {
             gc.GDOMAIN_MINIMUM => .{ .width = if (own.wrap != 0 or own.clipped != 0) 0 else lines.width, .height = lines.height },
             gc.GDOMAIN_NOMINAL => .{ .width = @max(lines.width, g.given_width), .height = lines.height },
@@ -431,6 +449,7 @@ fn domain(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, gi: ?*const clas
         box.height = font.image.height;
         if (shown(base, own)) |text| box.width = @intCast(textLen(text) * font.image.x_size);
     }
+    box.width = @max(box.width, kept);
     const room = frameRoom(base, own, if (gi) |info| info.draw_info else g.draw_info, g.style);
     box.width += room.width;
     box.height += room.height;

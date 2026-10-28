@@ -17,7 +17,8 @@
 //! The small picture is as tall as a line of the font, even, and never
 //! under 16 pixels. Without a picture the label is all there is. What it
 //! shows is in the middle of its box - a medium one's at the left of it,
-//! since a column of them lines up there.
+//! since a column of them lines up there. The label's room is its own
+//! width or that of `TOOLBUTTON_RoomFor`'s text, whichever is wider.
 //!
 //! It is drawn as `imageclass.PART_TOOL`, by a frameiclass frame of that
 //! part, in the style state its press, its toggle and the pointer put it
@@ -50,6 +51,7 @@ const IconBase = sdk.interface.icon.IconBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tb.TOOLBUTTON_CLASS,
     .version = 1,
+    .revision = 1,
     .date = "28.10.2026",
     .super = classusr.BUTTONGCLASS,
     .Instance = Data,
@@ -76,6 +78,9 @@ const Data = extern struct {
     /// Whether it was made with a size of its own (`GA_Width`,
     /// `GA_Height`), which it then keeps, if what it shows fits.
     sized: u32 = 0,
+    /// `TOOLBUTTON_RoomFor`: the text whose width the label keeps at the
+    /// least, the caller's.
+    room_for: ?[*:0]const u8 = null,
 };
 
 /// Room between the picture and the label: under a large one's, beside a
@@ -175,6 +180,9 @@ fn contents(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, m: suppo
     var widest: i32 = 0;
     if (label) |text| for (linesOf(text, under(own, picture))) |maybe| {
         if (maybe) |l| widest = @max(widest, measuredWidth(ib, m, text, l));
+    };
+    if (label != null) if (own.room_for) |kept| {
+        widest = @max(widest, m.width(ib, kept));
     };
     if (under(own, picture)) {
         if (label == null) return .{ .width = picture, .height = picture };
@@ -462,6 +470,10 @@ fn setAttrs(base: *gadgets.Base, o: *Object, own: *Data, tags: ?[*]const TagItem
         changed = true;
     }
     if (ub.FindTagItem(tb.TOOLBUTTON_Hint, tags)) |item| own.hint = @ptrFromInt(item.data);
+    if (ub.FindTagItem(tb.TOOLBUTTON_RoomFor, tags)) |item| {
+        own.room_for = @ptrFromInt(item.data);
+        changed = true;
+    }
     if (ub.FindTagItem(tb.TOOLBUTTON_Checked, tags)) |item| {
         const g = gc.gadget(o);
         if (item.data != 0) g.flags |= gc.GFLG_SELECTED else g.flags &= ~gc.GFLG_SELECTED;
@@ -535,6 +547,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const ub = base.utility_base;
             const resized = ub.FindTagItem(tb.TOOLBUTTON_Size, set.attr_list) != null or
                 ub.FindTagItem(tb.TOOLBUTTON_Image, set.attr_list) != null or
+                ub.FindTagItem(tb.TOOLBUTTON_RoomFor, set.attr_list) != null or
                 ub.FindTagItem(gc.GA_Text, set.attr_list) != null;
             if (resized and classes.objectClass(o.?) == cl) fit(base, cl, o.?);
             if (changed != 0 and classes.objectClass(o.?) == cl and set.gadget_info != null) {

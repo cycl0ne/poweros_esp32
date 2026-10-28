@@ -406,6 +406,31 @@ test "text.gadget: a text or a number through its format, never pressed" {
     try testing.expectEqual(@as(usize, 0), ib.SendMessage(status, @ptrCast(&hit)));
     ib.DisposeObject(status);
 
+    // Room kept for a wider text: a time as wide as "-00:00" whatever it
+    // shows, and wider only for a text wider than that. Measured in a font
+    // the DrawInfo names, as on a screen.
+    const graphics = sdk.graphics;
+    const gb = rig.kib.graphics_base;
+    const font = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }).?;
+    var pens: [sdk.intuition.screens.NUMDRIPENS]graphics.Pen = @splat(0);
+    var dri = sdk.intuition.screens.DrawInfo{ .pens = &pens, .font = font };
+    var times: [3]*Object = undefined;
+    const shown = [_][*:0]const u8{ "1:05", "1:05", "-00:00" };
+    for (&times, shown, 0..) |*time, words, i| time.* = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_DrawInfo, .data = @intFromPtr(&dri) },
+        .{ .tag = tx.TEXT_Text, .data = @intFromPtr(words) },
+        .{ .tag = if (i == 1) tx.TEXT_RoomFor else utility.TAG_IGNORE, .data = @intFromPtr("-00:00") },
+        .{},
+    }).?;
+    const kept = domainOf(ib, times[2], gc.GDOMAIN_NOMINAL).width;
+    try testing.expect(domainOf(ib, times[0], gc.GDOMAIN_NOMINAL).width < kept);
+    try testing.expectEqual(kept, domainOf(ib, times[1], gc.GDOMAIN_NOMINAL).width);
+    try testing.expectEqual(kept, domainOf(ib, times[1], gc.GDOMAIN_MINIMUM).width);
+    _ = ib.SetAttrsTagList(times[1], &[_]TagItem{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr("-12:34:56") }, .{} });
+    try testing.expect(domainOf(ib, times[1], gc.GDOMAIN_NOMINAL).width > kept);
+    for (times) |time| ib.DisposeObject(time);
+    gb.CloseFont(font);
+
     // A number through a format: %ld takes all of it, %d its low half.
     var into: [32]u8 = undefined;
     const sys = kexec.SysBase.iface();
@@ -1570,6 +1595,30 @@ test "tapedeck.gadget: a tape deck's modes and pause, the song before and after,
     try testing.expectEqual(@as(usize, td.BUT_FORWARD), attr(ib, deck, td.TDECK_Mode));
     ib.DisposeObject(deck);
 
+    // With tracks: the song before first and the song after last. A press
+    // on either leaves the mode, and the code says which, paused or not.
+    const tracks = ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
+        .{ .tag = td.TDECK_Tape, .data = 1 },
+        .{ .tag = td.TDECK_Tracks, .data = 1 },
+        .{ .tag = td.TDECK_Mode, .data = td.BUT_PLAY },
+        .{},
+    }).?;
+    const round = tapedeck.Buttons.ofTape(true, height);
+    try testing.expectEqual(@as(usize, 7), round.count);
+    try testing.expectEqual(td.BUT_PREVIOUS, round.ids[0]);
+    try testing.expectEqual(td.BUT_NEXT, round.ids[6]);
+    try testing.expectEqual(@as(usize, @intCast(round.right)), attr(ib, tracks, gc.GA_Width));
+    var before = input(gc.GM_GOACTIVE, &press, 4, 7, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(tracks, @ptrCast(&before)));
+    try testing.expectEqual(@as(i32, td.BUT_PREVIOUS), termination);
+    try testing.expectEqual(@as(usize, td.BUT_PLAY), attr(ib, tracks, td.TDECK_Mode));
+    _ = ib.SetAttrsTagList(tracks, &[_]TagItem{ .{ .tag = td.TDECK_Paused, .data = 1 }, .{} });
+    var after = input(gc.GM_GOACTIVE, &press, @intCast(round.right - 4), 7, &termination);
+    _ = ib.SendMessage(tracks, @ptrCast(&after));
+    try testing.expectEqual(@as(i32, td.BUT_NEXT | td.TDECK_PAUSED_CODE), termination);
+    try testing.expectEqual(@as(usize, td.BUT_PLAY), attr(ib, tracks, td.TDECK_Mode));
+    ib.DisposeObject(tracks);
+
     // An animation control, 202 wide: rewind 27, play 48, fast forward 27,
     // the frames in the rest.
     const buttons = tapedeck.Buttons.of(false, false, 202, 16);
@@ -1595,30 +1644,6 @@ test "tapedeck.gadget: a tape deck's modes and pause, the song before and after,
     _ = ib.SendMessage(anim, @ptrCast(&off));
     try testing.expectEqual(@as(usize, td.BUT_STOP), attr(ib, anim, td.TDECK_Mode));
     var back_on = input(gc.GM_HANDLEINPUT, &moving, 10, 7, &termination);
-    // With tracks: the song before first and the song after last. A press
-    // on either leaves the mode, and the code says which, paused or not.
-    const tracks = ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
-        .{ .tag = td.TDECK_Tape, .data = 1 },
-        .{ .tag = td.TDECK_Tracks, .data = 1 },
-        .{ .tag = td.TDECK_Mode, .data = td.BUT_PLAY },
-        .{},
-    }).?;
-    const round = tapedeck.Buttons.ofTape(true, height);
-    try testing.expectEqual(@as(usize, 7), round.count);
-    try testing.expectEqual(td.BUT_PREVIOUS, round.ids[0]);
-    try testing.expectEqual(td.BUT_NEXT, round.ids[6]);
-    try testing.expectEqual(@as(usize, @intCast(round.right)), attr(ib, tracks, gc.GA_Width));
-    var before = input(gc.GM_GOACTIVE, &press, 4, 7, &termination);
-    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(tracks, @ptrCast(&before)));
-    try testing.expectEqual(@as(i32, td.BUT_PREVIOUS), termination);
-    try testing.expectEqual(@as(usize, td.BUT_PLAY), attr(ib, tracks, td.TDECK_Mode));
-    _ = ib.SetAttrsTagList(tracks, &[_]TagItem{ .{ .tag = td.TDECK_Paused, .data = 1 }, .{} });
-    var after = input(gc.GM_GOACTIVE, &press, @intCast(round.right - 4), 7, &termination);
-    _ = ib.SendMessage(tracks, @ptrCast(&after));
-    try testing.expectEqual(@as(i32, td.BUT_NEXT | td.TDECK_PAUSED_CODE), termination);
-    try testing.expectEqual(@as(usize, td.BUT_PLAY), attr(ib, tracks, td.TDECK_Mode));
-    ib.DisposeObject(tracks);
-
     _ = ib.SendMessage(anim, @ptrCast(&back_on));
     try testing.expectEqual(@as(usize, td.BUT_REWIND), attr(ib, anim, td.TDECK_Mode));
     var let_go = input(gc.GM_HANDLEINPUT, &release, 10, 7, &termination);
@@ -3061,6 +3086,32 @@ test "toolbutton.gadget: three sizes to the font, a large label in two lines, th
     try testing.expectEqual(gc.Box{ .width = measure.width(ib, "Find") + 8, .height = 8 + 4 }, domainOf(ib, plain, gc.GDOMAIN_NOMINAL));
     ib.DisposeObject(plain);
 
+    // A label that changes, with room kept for the widest of them: as wide
+    // for "3:58" as for "-3:16" or "-00:00", and made that wide. Measured
+    // in a font the DrawInfo names, as on a screen.
+    const graphics = sdk.graphics;
+    const gb = rig.kib.graphics_base;
+    const font = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }).?;
+    var pens: [sdk.intuition.screens.NUMDRIPENS]graphics.Pen = @splat(0);
+    var dri = sdk.intuition.screens.DrawInfo{ .pens = &pens, .font = font };
+    var lengths: [3]*Object = undefined;
+    const labels = [_][*:0]const u8{ "3:58", "3:58", "-00:00" };
+    for (&lengths, labels, 0..) |*length, words, i| length.* = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_DrawInfo, .data = @intFromPtr(&dri) },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr(words) },
+        .{ .tag = if (i == 1) tbg.TOOLBUTTON_RoomFor else utility.TAG_IGNORE, .data = @intFromPtr("-00:00") },
+        .{ .tag = tbg.TOOLBUTTON_Size, .data = tbg.TBSIZE_SMALL },
+        .{},
+    }).?;
+    const kept = domainOf(ib, lengths[2], gc.GDOMAIN_NOMINAL).width;
+    try testing.expect(domainOf(ib, lengths[0], gc.GDOMAIN_NOMINAL).width < kept);
+    try testing.expectEqual(kept, domainOf(ib, lengths[1], gc.GDOMAIN_NOMINAL).width);
+    _ = ib.SetAttrsTagList(lengths[1], &[_]TagItem{ .{ .tag = gc.GA_Text, .data = @intFromPtr("-3:16") }, .{} });
+    try testing.expectEqual(kept, domainOf(ib, lengths[1], gc.GDOMAIN_NOMINAL).width);
+    try testing.expectEqual(@as(usize, @intCast(kept)), attr(ib, lengths[1], gc.GA_Width));
+    for (lengths) |length| ib.DisposeObject(length);
+    gb.CloseFont(font);
+
     // Drawn in a window: the picture asked for at the small size, in the
     // middle of a small button and at the left of a medium one.
     const display = try Display.up(rig.kib);
@@ -3104,7 +3155,7 @@ test "toolbutton.gadget: three sizes to the font, a large label in two lines, th
     try rig.down();
 }
 
-test "toolbutton.gadget: flat at rest, its border under the pointer, sunk while on" {
+test "toolbutton.gadget: flat at rest; under the pointer and on, an edge round a ground of its own" {
     var heard = Heard{ .tag = tbg.TOOLBUTTON_Checked, .ib = undefined };
     var rig = try Rig.up(&toolbutton.Library.resident_tag, &heard);
     const ib = rig.ib;
@@ -3133,21 +3184,25 @@ test "toolbutton.gadget: flat at rest, its border under the pointer, sunk while 
     ib.RefreshGList(button, w, 1);
     try testing.expectEqual(background, display.pixel(4, 12));
     try testing.expectEqual(background, display.pixel(33, 19));
-    // Under the pointer: raised, the shine on the left, the shadow at the
-    // bottom.
+    // Under the pointer: one colour all round, a ground of another inside
+    // it (the row between the edge and the label), the round corner the
+    // window's.
     gc.gadget(button).flags |= gc.GFLG_HOVERED;
     ib.RefreshGList(button, w, 1);
-    const shine = display.pixel(4, 12);
-    const shadow = display.pixel(20, 19);
-    try testing.expect(shine != background);
-    try testing.expect(shadow != background and shadow != shine);
-    // On: sunk, the shadow on the left now, and the fill inside.
+    const edge = display.pixel(4, 12);
+    const ground = display.pixel(20, 5);
+    try testing.expectEqual(edge, display.pixel(20, 19));
+    try testing.expect(edge != background and ground != background and ground != edge);
+    try testing.expectEqual(background, display.pixel(4, 4));
+    // On: the same frame, a stronger edge and a ground of its own.
     gc.gadget(button).flags &= ~gc.GFLG_HOVERED;
     _ = ib.SetAttrsTagList(button, &[_]TagItem{ .{ .tag = tbg.TOOLBUTTON_Checked, .data = 1 }, .{} });
     ib.RefreshGList(button, w, 1);
-    try testing.expectEqual(shadow, display.pixel(4, 12));
-    try testing.expectEqual(shine, display.pixel(20, 19));
-    try testing.expect(display.pixel(7, 6) != background);
+    const strong = display.pixel(4, 12);
+    try testing.expectEqual(strong, display.pixel(20, 19));
+    try testing.expect(strong != edge and strong != background);
+    const on = display.pixel(20, 5);
+    try testing.expect(on != ground and on != background and on != strong);
 
     const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
     ib.CloseWindow(w);

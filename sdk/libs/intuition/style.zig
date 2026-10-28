@@ -43,13 +43,16 @@
 //! **A pen or a colour.** Every property that is a colour has two tags: the
 //! one ending in `Pen` takes a screen pen index (`screens.SHINEPEN` and its
 //! like), so a style written in pens follows its screen's colours; the one
-//! ending in `RGB` takes a colour of its own, 0xAARRGGBB.
+//! ending in `RGB` takes a colour of its own, 0xAARRGGBB. A `Pen` tag also
+//! takes a blend of up to three pens (`blend`): a tone between the screen's
+//! colours that follows them as a single pen does.
 //!
 //! **A tag that is not known is passed over**, so a style written for a
 //! newer system still works on an older one, and a new property is only
 //! ever a new tag.
 
 const utility = @import("../utility/utility.zig");
+const graphics = @import("../graphics/graphics.zig");
 
 /// A style as intuition keeps it once given: what `DrawPart` and
 /// `GetStyleAttr` read. Only intuition knows what is in it.
@@ -125,6 +128,86 @@ pub fn mixAmount(state: u32) u8 {
     return @truncate(state >> 16);
 }
 
+// --- a blend of pens -------------------------------------------------------
+
+/// One pen of a blend, and how many parts of it the blend takes.
+pub const BlendPen = struct { pen: u32, weight: u32 = 1 };
+
+/// The mark of a blend among the values a `Pen` tag takes.
+pub const BLEND: u32 = 1 << 31;
+/// The most pens a blend holds.
+pub const blend_pens = 3;
+/// The highest pen index and the highest weight a blend holds.
+pub const blend_max_pen: u32 = 31;
+pub const blend_max_weight: u32 = 31;
+
+/// A colour mixed from up to three of the screen's pens, as the value of
+/// a tag ending in `Pen`: each channel, alpha too, is the mean of the
+/// pens' channels with each pen counted `weight` times, so it follows the
+/// screen's pens as a single pen does.
+///
+/// ```zig
+/// // Halfway from the background to the shine, a sixteenth of the fill.
+/// .{ .tag = STYLE_Background, .data = style.blend(&.{
+///     .{ .pen = screens.BACKGROUNDPEN, .weight = 8 },
+///     .{ .pen = screens.SHINEPEN, .weight = 7 },
+///     .{ .pen = screens.FILLPEN },
+/// }) },
+/// ```
+///
+/// Pens past the third, a pen index above `blend_max_pen` and a weight
+/// above `blend_max_weight` are cut to what is kept; a pen of weight 0
+/// counts for nothing. A pen the screen does not have is its first, as
+/// for a single pen.
+pub fn blend(pens: []const BlendPen) u32 {
+    var value: u32 = BLEND;
+    for (pens[0..@min(pens.len, blend_pens)], 0..) |one, i| {
+        const pen: u32 = @min(one.pen, blend_max_pen);
+        const weight: u32 = @min(one.weight, blend_max_weight);
+        value |= (pen | weight << 5) << @intCast(i * 10);
+    }
+    return value;
+}
+
+/// Whether a `Pen` tag's value is a blend.
+pub fn isBlend(value: u32) bool {
+    return value & BLEND != 0;
+}
+
+/// The colour a blend is among a screen's `pens`, `num_pens` of them.
+/// One whose weights are all 0 is the first pen.
+pub fn blendColour(value: u32, pens: [*]const graphics.Pen, num_pens: u32) graphics.Pen {
+    var sums: [4]u32 = @splat(0);
+    var total: u32 = 0;
+    for (0..blend_pens) |i| {
+        const slot = value >> @intCast(i * 10);
+        const weight = slot >> 5 & blend_max_weight;
+        if (weight == 0) continue;
+        const index = slot & blend_max_pen;
+        const colour = pens[if (index < num_pens) index else 0];
+        for (&sums, 0..) |*sum, c| sum.* += (colour >> @intCast(c * 8) & 0xFF) * weight;
+        total += weight;
+    }
+    if (total == 0) return pens[0];
+    var mixed: graphics.Pen = 0;
+    for (sums, 0..) |sum, c| mixed |= (sum + total / 2) / total << @intCast(c * 8);
+    return mixed;
+}
+
+/// The pens of a blend, in the order given, those of weight 0 left out:
+/// into `into`; how many.
+pub fn blendPens(value: u32, into: *[blend_pens]BlendPen) usize {
+    var n: usize = 0;
+    for (0..blend_pens) |i| {
+        const slot = value >> @intCast(i * 10);
+        const weight = slot >> 5 & blend_max_weight;
+        if (weight == 0) continue;
+        into[n] = .{ .pen = slot & blend_max_pen, .weight = weight };
+        n += 1;
+    }
+    return n;
+}
+
 // --- the tags ---------------------------------------------------------------
 
 pub const STYLE_Dummy = utility.TAG_USER + 0x3A000;
@@ -142,7 +225,7 @@ pub const STYLE_State = STYLE_Dummy + 0x02;
 /// with this and nothing else is a style too, and looks like the default.
 pub const STYLE_Alone = STYLE_Dummy + 0x03;
 
-/// What fills the inside: a screen pen index.
+/// What fills the inside: a screen pen index, or a blend of pens (`blend`).
 pub const STYLE_Background = STYLE_Dummy + 0x10;
 /// What fills the inside: 0xAARRGGBB.
 pub const STYLE_BackgroundRGB = STYLE_Dummy + 0x11;
@@ -154,15 +237,15 @@ pub const STYLE_BackgroundFill = STYLE_Dummy + 0x12;
 
 /// What kind of border: `BORDER_`.
 pub const STYLE_Border = STYLE_Dummy + 0x20;
-/// A flat border's colour: a screen pen index.
+/// A flat border's colour: a screen pen index, or a blend of pens (`blend`).
 pub const STYLE_BorderPen = STYLE_Dummy + 0x21;
 /// A flat border's colour: 0xAARRGGBB.
 pub const STYLE_BorderRGB = STYLE_Dummy + 0x22;
-/// The light side of a bevel: a screen pen index.
+/// The light side of a bevel: a screen pen index, or a blend of pens (`blend`).
 pub const STYLE_ShinePen = STYLE_Dummy + 0x23;
 /// The light side of a bevel: 0xAARRGGBB.
 pub const STYLE_ShineRGB = STYLE_Dummy + 0x24;
-/// The dark side of a bevel: a screen pen index.
+/// The dark side of a bevel: a screen pen index, or a blend of pens (`blend`).
 pub const STYLE_ShadowPen = STYLE_Dummy + 0x25;
 /// The dark side of a bevel: 0xAARRGGBB.
 pub const STYLE_ShadowRGB = STYLE_Dummy + 0x26;
@@ -183,7 +266,7 @@ pub const STYLE_BorderGap = STYLE_Dummy + 0x2B;
 /// How far the corners are rounded, in pixels.
 pub const STYLE_Radius = STYLE_Dummy + 0x30;
 
-/// The colour of text drawn on it: a screen pen index.
+/// The colour of text drawn on it: a screen pen index, or a blend of pens (`blend`).
 pub const STYLE_TextPen = STYLE_Dummy + 0x40;
 /// The colour of text drawn on it: 0xAARRGGBB.
 pub const STYLE_TextRGB = STYLE_Dummy + 0x41;

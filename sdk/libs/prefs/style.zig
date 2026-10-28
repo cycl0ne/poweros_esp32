@@ -124,8 +124,9 @@ pub const joins = [_]Name{
     .{ .name = "ANGLED", .value = style.JOINS_ANGLED },
 };
 
-/// The longest value kept, and the longest line read.
-pub const value_len = 24;
+/// The longest value kept, and the longest line read. A blend of three
+/// pens with the longest names and weights is 50.
+pub const value_len = 52;
 pub const max_line = 256;
 
 /// One line: each key's value as its text, empty where the line has none.
@@ -212,6 +213,30 @@ pub fn rgb(text: []const u8) ?u32 {
     return if (text.len == 7) 0xFF00_0000 | value else value;
 }
 
+/// A blend of pens (`style.blend`): up to three pens' names joined by
+/// `+`, each with its weight after a `:` - 1 to 31, 1 when left out -
+/// as in `BACKGROUND:8+SHINE:7+FILL`. Null when it is not one.
+pub fn blendOf(text: []const u8) ?u32 {
+    var chosen: [style.blend_pens]style.BlendPen = undefined;
+    var count: usize = 0;
+    var start: usize = 0;
+    while (start <= text.len) {
+        var end = start;
+        while (end < text.len and text[end] != '+') end += 1;
+        if (count == style.blend_pens) return null;
+        const one = text[start..end];
+        var colon: usize = 0;
+        while (colon < one.len and one[colon] != ':') colon += 1;
+        const pen = lookUp(&pens, one[0..colon]) orelse return null;
+        const weight: u32 = if (colon == one.len) 1 else decimal(one[colon + 1 ..]) orelse return null;
+        if (weight == 0 or weight > style.blend_max_weight) return null;
+        chosen[count] = .{ .pen = pen, .weight = weight };
+        count += 1;
+        start = end + 1;
+    }
+    return style.blend(chosen[0..count]);
+}
+
 /// States joined by `+`.
 pub fn stateOf(text: []const u8) ?u32 {
     var value: u32 = 0;
@@ -239,6 +264,13 @@ fn dotsIn(text: []const u8) ?usize {
     return null;
 }
 
+/// Whether `text` is a colour: a pen's name, a blend of pens or `#RRGGBB`.
+fn isColour(text: []const u8) bool {
+    return lookUp(&pens, text) != null or blendOf(text) != null or rgb(text) != null;
+}
+
+const wrong_colour = "a colour is a pen, PEN:n+PEN:n, #RRGGBB or #AARRGGBB";
+
 /// What is wrong with a value for a key, or null when it means something.
 pub fn check(key: Key, text: []const u8) ?[*:0]const u8 {
     switch (key) {
@@ -248,8 +280,8 @@ pub fn check(key: Key, text: []const u8) ?[*:0]const u8 {
         .joins => if (lookUp(&joins, text) == null) return "no such joins",
         .background => if (dotsIn(text)) |at| {
             if (rgb(text[0..at]) == null or rgb(text[at + 2 ..]) == null) return "a shaded background is two colours, #RRGGBB..#RRGGBB";
-        } else if (lookUp(&pens, text) == null and rgb(text) == null) return "a colour is a pen's name, #RRGGBB or #AARRGGBB",
-        .border_colour, .shine, .shadow, .text => if (lookUp(&pens, text) == null and rgb(text) == null) return "a colour is a pen's name, #RRGGBB or #AARRGGBB",
+        } else if (!isColour(text)) return wrong_colour,
+        .border_colour, .shine, .shadow, .text => if (!isColour(text)) return wrong_colour,
         else => if (decimal(text) == null) return "a number of 0 or more",
     }
     return null;
@@ -355,6 +387,8 @@ pub fn toTags(line: *const Line, out: []TagItem, fill: *graphics.FillStyle) usiz
                     out[n] = .{ .tag = style.STYLE_BackgroundFill, .data = @intFromPtr(fill) };
                 } else if (lookUp(&pens, text)) |pen| {
                     out[n] = .{ .tag = tags[0], .data = pen };
+                } else if (blendOf(text)) |blended| {
+                    out[n] = .{ .tag = tags[0], .data = blended };
                 } else {
                     out[n] = .{ .tag = tags[1], .data = rgb(text).? };
                 }
@@ -412,6 +446,8 @@ pub const header =
     \\# BACKGROUND, BORDERCOLOUR, SHINE, SHADOW, TEXT
     \\#          a screen pen - DETAIL BLOCK TEXT SHINE SHADOW FILL FILLTEXT
     \\#          BACKGROUND HIGHLIGHTTEXT BARDETAIL BARBLOCK BARTRIM DIMTEXT -
+    \\#          a blend of up to three pens, each with its weight after a
+    \\#          colon (1 to 31; 1 when there is none): BACKGROUND:8+SHINE:7+FILL -
     \\#          or a colour, #RRGGBB or #AARRGGBB. BACKGROUND may be shaded from the
     \\#          top down: #FAFBFC..#D8DCE2.
     \\# BORDER   NONE FLAT RAISED RECESSED RIDGE GROOVE
@@ -446,10 +482,10 @@ pub const header =
     \\# PART=SCREENBAR BACKGROUND=BARBLOCK TEXT=BARDETAIL BORDERCOLOUR=BARTRIM
     \\# PART=MENU BORDER=FLAT BORDERCOLOUR=BARDETAIL BORDERX=2 BORDERY=1 BACKGROUND=BARBLOCK TEXT=BARDETAIL
     \\# PART=WINDOWBORDER BORDER=RAISED BORDERWIDTH=1 JOINS=NONE
-    \\# PART=TOOL BORDER=NONE PADDINGX=4 PADDINGY=2
-    \\# PART=TOOL STATE=HOVERED BORDER=RAISED PADDINGX=2 PADDINGY=1
-    \\# PART=TOOL STATE=PRESSED BORDER=RECESSED PADDINGX=2 PADDINGY=1
-    \\# PART=TOOL STATE=CHECKED BORDER=RECESSED PADDINGX=2 PADDINGY=1
+    \\# PART=TOOL BORDER=NONE RADIUS=3 PADDINGX=4 PADDINGY=2
+    \\# PART=TOOL STATE=HOVERED BORDER=FLAT BORDERWIDTH=1 BORDERCOLOUR=BACKGROUND:10+TEXT:6 BACKGROUND=BACKGROUND:8+SHINE:7+FILL PADDINGX=3 PADDINGY=1
+    \\# PART=TOOL STATE=PRESSED BORDER=FLAT BORDERWIDTH=1 BORDERCOLOUR=FILL+TEXT BACKGROUND=BACKGROUND:10+SHINE:2+FILL:4 TEXT=TEXT PADDINGX=3 PADDINGY=1
+    \\# PART=TOOL STATE=CHECKED BORDER=FLAT BORDERWIDTH=1 BORDERCOLOUR=FILL+TEXT BACKGROUND=BACKGROUND:6+SHINE:6+FILL:4 TEXT=TEXT PADDINGX=3 PADDINGY=1
     \\# PART=INDICATOR BORDER=NONE BACKGROUND=FILL TEXT=FILLTEXT
     \\# PART=KNOB BORDER=RAISED BACKGROUND=FILL BORDERWIDTH=1 JOINS=NONE
     \\# PART=TRACK BORDER=RECESSED BACKGROUND=BACKGROUND BORDERWIDTH=1 JOINS=NONE

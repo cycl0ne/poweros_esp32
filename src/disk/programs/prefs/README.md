@@ -25,8 +25,9 @@ The settings are on eight pages, under tabs:
   field left empty is the system's default; a value that means nothing
   is refused, and the line at the bottom says why. Beside each colour a
   chooser picks the default, one of the screen's pens, or a colour of
-  its own; the field beside it takes a pen's name, `#RRGGBB`, `#AARRGGBB`
-  or, for a background, two colours `#top..#bottom`.
+  its own; the field beside it takes a pen's name, a blend of up to three
+  pens (`BACKGROUND:8+SHINE:7+FILL`), `#RRGGBB`, `#AARRGGBB` or, for a
+  background, two colours `#top..#bottom`.
 - **Colours:** the system's twelve pens, which every screen without pens
   of its own is drawn in, each typed as `#RRGGBB` or picked on the colour
   wheel, and a button for the built-in ones.

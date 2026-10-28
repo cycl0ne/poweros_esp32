@@ -294,11 +294,13 @@ pub const Look = struct {
         return l.values[@intFromEnum(p)];
     }
 
-    /// A colour property as a pen: its own colour, or the screen pen it
-    /// names. A pen index the screen does not have is its first pen.
+    /// A colour property as a pen: its own colour, the screen pen it
+    /// names, or the screen pens it blends (`style.blend`). A pen index
+    /// the screen does not have is its first pen.
     pub fn colour(l: *const Look, p: Prop, pens: [*]const Pen, num_pens: u32) Pen {
         const value = l.get(p);
         if (l.rgb & @as(u32, 1) << @intFromEnum(p) != 0) return value;
+        if (style.isBlend(value)) return style.blendColour(value, pens, num_pens);
         return pens[if (value < num_pens) value else 0];
     }
 };
@@ -522,6 +524,15 @@ const default_kept = blk: {
     break :blk Block{ .count = count, .fills_at = 0, .alone = 0, .entries = entries[0..count].* };
 };
 
+/// A tool's grounds and edges, blended from the screen's pens: on the
+/// built-in grey, #CBCDD0 under the pointer, #A4ACB9 pressed, #B9C1CE on,
+/// edges #6A6A6A and #33445E.
+const tool_hovered = style.blend(&.{ .{ .pen = sc.BACKGROUNDPEN, .weight = 8 }, .{ .pen = sc.SHINEPEN, .weight = 7 }, .{ .pen = sc.FILLPEN } });
+const tool_pressed = style.blend(&.{ .{ .pen = sc.BACKGROUNDPEN, .weight = 10 }, .{ .pen = sc.SHINEPEN, .weight = 2 }, .{ .pen = sc.FILLPEN, .weight = 4 } });
+const tool_checked = style.blend(&.{ .{ .pen = sc.BACKGROUNDPEN, .weight = 6 }, .{ .pen = sc.SHINEPEN, .weight = 6 }, .{ .pen = sc.FILLPEN, .weight = 4 } });
+const tool_edge = style.blend(&.{ .{ .pen = sc.BACKGROUNDPEN, .weight = 10 }, .{ .pen = sc.TEXTPEN, .weight = 6 } });
+const tool_edge_strong = style.blend(&.{ .{ .pen = sc.FILLPEN }, .{ .pen = sc.TEXTPEN } });
+
 fn pair(t: utility.Tag, data: usize) TagItem {
     return .{ .tag = t, .data = data };
 }
@@ -646,24 +657,42 @@ pub const default_tags = complete(style.PART_MAIN, style.BORDER_RAISED, sc.BACKG
     pair(style.STYLE_BorderX, 1),
     pair(style.STYLE_BorderY, 1),
     pair(style.STYLE_Joins, style.JOINS_NONE),
-    // A tool's button: flat at rest, a button's border under the pointer,
-    // sunk pressed and on. Without a border the room it takes is padding,
-    // so what is inside stays where it is as the border comes and goes.
+    // A tool's button: flat at rest; under the pointer, pressed and on, a
+    // one-pixel edge round a ground blended from the screen's pens - the
+    // background lifted toward the shine with some of the fill in it, light
+    // enough that a coloured picture keeps its colours, its text the
+    // text's. Without a border the room it takes is padding, so what is
+    // inside stays where it is as the border comes and goes.
     pair(style.STYLE_Part, ic.PART_TOOL),
     pair(style.STYLE_Border, style.BORDER_NONE),
+    pair(style.STYLE_Radius, 3),
     pair(style.STYLE_PaddingX, 4),
     pair(style.STYLE_PaddingY, 2),
     pair(style.STYLE_State, style.STATE_HOVERED),
-    pair(style.STYLE_Border, style.BORDER_RAISED),
-    pair(style.STYLE_PaddingX, 2),
+    pair(style.STYLE_Border, style.BORDER_FLAT),
+    pair(style.STYLE_BorderX, 1),
+    pair(style.STYLE_BorderY, 1),
+    pair(style.STYLE_BorderPen, tool_edge),
+    pair(style.STYLE_Background, tool_hovered),
+    pair(style.STYLE_PaddingX, 3),
     pair(style.STYLE_PaddingY, 1),
     pair(style.STYLE_State, style.STATE_PRESSED),
-    pair(style.STYLE_Border, style.BORDER_RECESSED),
-    pair(style.STYLE_PaddingX, 2),
+    pair(style.STYLE_Border, style.BORDER_FLAT),
+    pair(style.STYLE_BorderX, 1),
+    pair(style.STYLE_BorderY, 1),
+    pair(style.STYLE_BorderPen, tool_edge_strong),
+    pair(style.STYLE_Background, tool_pressed),
+    pair(style.STYLE_TextPen, sc.TEXTPEN),
+    pair(style.STYLE_PaddingX, 3),
     pair(style.STYLE_PaddingY, 1),
     pair(style.STYLE_State, style.STATE_CHECKED),
-    pair(style.STYLE_Border, style.BORDER_RECESSED),
-    pair(style.STYLE_PaddingX, 2),
+    pair(style.STYLE_Border, style.BORDER_FLAT),
+    pair(style.STYLE_BorderX, 1),
+    pair(style.STYLE_BorderY, 1),
+    pair(style.STYLE_BorderPen, tool_edge_strong),
+    pair(style.STYLE_Background, tool_checked),
+    pair(style.STYLE_TextPen, sc.TEXTPEN),
+    pair(style.STYLE_PaddingX, 3),
     pair(style.STYLE_PaddingY, 1),
     pair(style.STYLE_State, style.STATE_DISABLED),
     pair(style.STYLE_Border, style.BORDER_NONE),

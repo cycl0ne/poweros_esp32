@@ -367,7 +367,21 @@ A layout groups what belongs together: `LAYOUTA_Frame` draws a frame
 round it and `LAYOUTA_FrameTitle` puts a title in the frame's top edge,
 both taking their room before the children are placed. `C:test/Settings`
 is a window of all of this - tabs over pages, framed groups, a number
-field, a chooser and a fuel gauge.
+field, a chooser and a fuel gauge. `LAYOUTA_AddSpace` puts a space in a
+row that takes what room is spare, so what follows it stands at the far
+end; and a line whose text changes - a time, a count - keeps the room of
+its widest with `TEXT_RoomFor` (or `TOOLBUTTON_RoomFor` on a button), so
+the gadgets beside it never move:
+
+```zig
+const tx = sdk.gadgets.text;
+
+const time = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
+    .{ .tag = tx.TEXT_Text, .data = @intFromPtr("0:42") },
+    .{ .tag = tx.TEXT_RoomFor, .data = @intFromPtr("-00:00") },
+    .{},
+});
+```
 
 ### Text in more than one look
 
