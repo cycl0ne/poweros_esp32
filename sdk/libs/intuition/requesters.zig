@@ -55,13 +55,18 @@ pub const EasyStruct = extern struct {
 /// the structure, the gadgets and the image, and must leave them alone
 /// while the requester is up. Clear one with `InitRequester` before filling
 /// it in.
+///
+/// A gadget may put one up as a popup (`POPUPREQ`), from where it is
+/// pressed: a panel of gadgets over the screen that goes once it has been
+/// used or looked away from, its `owner` told.
 pub const Requester = extern struct {
     /// OlderRequest: the requester up before this one in the same window.
     /// intuition.library's own.
     older: ?*Requester = null,
     /// LeftEdge, TopEdge, Width, Height: where in the window and how big -
     /// from the window's corner, or from the interior's in a GimmeZeroZero
-    /// window. It is cut at the window's inner edges.
+    /// window. It is cut at the window's inner edges; a popup at the
+    /// screen's.
     left: i32 = 0,
     top: i32 = 0,
     width: i32 = 0,
@@ -88,6 +93,9 @@ pub const Requester = extern struct {
     layer: ?*layers.Layer = null,
     /// RWindow: the window it is up in. intuition.library's own.
     window: ?*windows.Window = null,
+    /// A popup's owner: the gadget that put it up, told with
+    /// `GM_POPDOWN` when it comes down. Read only with `POPUPREQ`.
+    owner: ?*classes.Object = null,
 };
 
 /// Placed at the middle of the window, moved by `rel_left` and `rel_top` -
@@ -100,6 +108,14 @@ pub const NOISYREQ: u32 = 0x0004;
 pub const SIMPLEREQ: u32 = 0x0010;
 /// The box is not filled before the image is drawn.
 pub const NOREQBACKFILL: u32 = 0x0040;
+/// A popup, which a gadget puts up from where it is pressed and which goes
+/// as soon as it has been used: any gadget of it used the way that counts
+/// takes it down, as an end gadget does, and so does a press anywhere but
+/// on it - which goes no further - the menu button, Escape, and another
+/// window taking the activation. Its `owner` is told (`GM_POPDOWN`). It
+/// lies over the screen, in front of every window, and is not cut at its
+/// own window's edges; one that would go off the screen is moved onto it.
+pub const POPUPREQ: u32 = 0x0080;
 /// Some of it is outside the window. intuition.library's own.
 pub const REQOFFWINDOW: u32 = 0x1000;
 /// It is up. intuition.library's own.

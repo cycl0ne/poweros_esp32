@@ -29,8 +29,15 @@
 //! then its own, reported in its name, and not the last member's.
 //!
 //! **A clip on the group is a clip on its members** (`GA_ClipRect`): set
-//! on the group, it is set on each of them, and a member that joins takes
-//! the group's.
+//! on the group, it is set on each of them, a member that joins takes the
+//! group's, and one that leaves is unclipped again.
+//!
+//! **So is its window, and its requester.** A member that joins a group
+//! already added to a window, or put up in a requester, is that window's
+//! or that requester's gadget from then on - drawn there when the pointer
+//! passes over it, and one `ActivateGadget` can give the keys to - and one
+//! that leaves is the program's again. A class that makes its members as
+//! it lays itself out, a ribbon folding its groups, needs nothing more.
 //!
 //! Disposing of the group disposes of its members, since they are its.
 
@@ -253,6 +260,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             group.height = @max(group.height, b.top + b.height);
             moveTo(ib, member, null, group.left + b.left, group.top + b.top);
             clipOne(ib, member, &group.clip);
+            // A group already in a window or a requester takes the member
+            // there with it, as adding the group took the ones it had.
+            _gadget.claim(ib, member, group.window, group.requester);
             return 1;
         },
         classusr.OM_REMMEMBER => {
@@ -270,8 +280,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 const group = cornerOf(ib, o.?, null);
                 const b = cornerOf(ib, member, null);
                 moveTo(ib, member, null, b.left - group.left, b.top - group.top);
+                // Nor is it cut to a group it is no longer in.
+                const unclip = [_]TagItem{ .{ .tag = gc.GA_ClipRect, .data = 0 }, .{} };
+                _ = it.SetAttrsTagList(member, &unclip);
                 var off = classusr.Msg{ .method_id = classusr.OM_REMOVE };
                 _ = it.SendMessage(member, &off);
+                _gadget.claim(ib, member, null, null);
                 if (p.active == m.object) p.active = null;
                 return 1;
             }

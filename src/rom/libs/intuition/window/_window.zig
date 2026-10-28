@@ -1254,6 +1254,9 @@ pub fn activate(ib: *IntuitionBase, w: *Window) void {
         _screen.drawBar(ib, w.screen);
     }
     if (old) |o| {
+        // A popup goes when its window stops being the active one.
+        const requests = @import("../requester/_requester.zig");
+        if (requests.popupOf(o)) |popup| _ = requests.take(ib, o, popup, true, sdk.intuition.gadgetclass.POPDOWN_DISMISSED);
         o.flags &= ~WF_ACTIVE;
         drawBorder(ib, o);
         send(ib, o, wn.IDCMP_INACTIVEWINDOW, 0);

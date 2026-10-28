@@ -162,7 +162,20 @@ pub const LIBRARY_VERSION = 0;
 /// 66: a style's colour may be a blend of up to three screen pens
 /// (`style.blend`); PART_TOOL's grounds and edges are blends, its frame
 /// one pixel flat with round corners.
-pub const LIBRARY_REVISION = 66;
+/// 67: the popup requester (POPUPREQ) a gadget puts up from where it is
+/// pressed, over the screen - in front of every window, cut only at the
+/// screen's edges and moved onto it where it would go off it - and taken
+/// down by any of its gadgets used, a press beside it, the menu button,
+/// Escape or the window losing the activation, one used in a popup put up
+/// from a popup taking both down; GM_POPDOWN, which tells the gadget it is
+/// down; GM_DOMAIN's attrs (gpd_Attrs), attributes to answer for as if
+/// they were set; a member that joins a group in a window or a requester
+/// is that window's or that requester's gadget too, and one that leaves is
+/// neither, nor cut to the group's clip; a requester's layer paints its
+/// fill as its ground, so a gadget in it that erases, or is drawn aside,
+/// stands on the fill and not on junk; and a gadget on a layer that paints
+/// no ground is drawn in place.
+pub const LIBRARY_REVISION = 67;
 const BUILD_DATE = "28.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

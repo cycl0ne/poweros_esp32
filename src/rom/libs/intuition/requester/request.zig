@@ -42,11 +42,25 @@ const _requester = @import("_requester.zig");
 /// as `IDCMP_MOUSEBUTTONS`, `IDCMP_RAWKEY` and the rest. The requester moves
 /// with the window and stays in front of it.
 ///
+/// A popup (`POPUPREQ`) is one a gadget puts up from where it is pressed,
+/// its `owner`: a gadget of it used the way that counts takes it down
+/// after the window has had its `IDCMP_GADGETUP`, and so do a press
+/// anywhere but on it - which does nothing else - the menu button, Escape,
+/// and the window losing the activation. The owner is told with
+/// `GM_POPDOWN` once what the popup covered is back. An owner can be a
+/// gadget of a popup itself: a gadget used in the popup it put up takes
+/// that one down too, while a press beside the newer one, Escape and the
+/// menu button take down that one alone. A popup is not cut at the
+/// window: it lies in front of every window, cut only at the screen's
+/// edges, and is moved onto the screen - its `left` and `top` changed - as
+/// it is put up where some of it would be off it.
+///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore and the layers' locks.
 /// - Interrupts: no.
 /// - Locks: none needed.
-/// - Process: a Task will do.
+/// - Process: a Task will do; intuition's own too, from a gadget's
+///   `GM_GOACTIVE`, which is where a popup is put up.
 ///
 /// OWNERSHIP:
 /// The requester, its gadgets and its image stay the caller's and must

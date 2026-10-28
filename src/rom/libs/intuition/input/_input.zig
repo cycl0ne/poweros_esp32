@@ -59,6 +59,7 @@ const gadgetclass = @import("../classes/gadgetclass.zig");
 const _style = @import("../style/_style.zig");
 const gc = sdk.intuition.gadgetclass;
 const Object = sdk.intuition.Object;
+const _requester = @import("../requester/_requester.zig");
 
 /// Where on the chain: above anything that wants what intuition leaves.
 const handler_pri = 50;
@@ -979,11 +980,40 @@ fn finish(ib: *IntuitionBase, w: *Window, o: *Object, result: usize, termination
     if (result & gc.GMR_VERIFY != 0) {
         if (up) |reported| _ = _window.sendWith(ib, w, wn.IDCMP_GADGETUP, @bitCast(termination), reported);
     }
-    // An end gadget used the way that counts takes its requester down.
-    if (result & gc.GMR_VERIFY != 0 and ends) {
-        if (gadgetclass.gadgetOf(ib, o).requester) |req| ib.iface().EndRequest(req, @ptrCast(w));
+    // An end gadget used the way that counts takes its requester down, and
+    // in a popup every gadget is one.
+    if (result & gc.GMR_VERIFY != 0) {
+        if (gadgetclass.gadgetOf(ib, o).requester) |req| {
+            if (req.flags & rq.POPUPREQ != 0) {
+                _requester.takeUsed(ib, w, req);
+            } else if (ends) {
+                ib.iface().EndRequest(req, @ptrCast(w));
+            }
+        }
     }
 }
+
+/// The active window's popup taken down, when it has one in front - a
+/// press beside it, the menu button, Escape - and true when it had.
+fn dismissPopup(ib: *IntuitionBase) bool {
+    const w = ib.active_window orelse return false;
+    const req = _requester.popupOf(w) orelse return false;
+    _ = _requester.take(ib, w, req, true, gc.POPDOWN_DISMISSED);
+    return true;
+}
+
+/// Whether the pointer is on the active window's popup.
+fn onPopup(ib: *IntuitionBase) bool {
+    const st = stateOf(ib);
+    const w = ib.active_window orelse return false;
+    const req = _requester.popupOf(w) orelse return false;
+    const layer = req.layer orelse return false;
+    if (screenAt(ib) != w.screen) return false;
+    return ib.layers_base.WhichLayer(w.screen.layer_info, st.x, st.y) == layer;
+}
+
+/// The raw key Escape is.
+const raw_escape = 0x45;
 
 /// A press on a gadget of the window's own: it goes active if it will.
 fn pressGadget(ib: *IntuitionBase, w: *Window, o: *Object, e: *const InputEvent) void {
@@ -1019,8 +1049,10 @@ fn pressGadget(ib: *IntuitionBase, w: *Window, o: *Object, e: *const InputEvent)
 /// and the key makes one character through the default keymap, the
 /// character in `code`; IDCMP_RAWKEY otherwise.
 fn key(ib: *IntuitionBase, w: *Window, e: *const InputEvent) void {
-    // A requester up takes the keys from the window - its shortcuts too -
-    // unless it is a noisy one, which passes them on.
+    // Escape takes a popup down. A requester up takes the keys from the
+    // window - its shortcuts too - unless it is a noisy one, which passes
+    // them on.
+    if (e.code == raw_escape and dismissPopup(ib)) return;
     if (w.first_request) |req| {
         if (req.flags & rq.NOISYREQ == 0) return;
     } else if (menus.shortcut(ib, w, e)) return;
@@ -1042,6 +1074,9 @@ fn press(ib: *IntuitionBase, e: *const InputEvent) void {
     st.slop = st.finger;
     st.press_disp_x = st.disp_x;
     st.press_disp_y = st.disp_y;
+    // A press anywhere but on the active window's popup takes the popup
+    // down, and that is all it does.
+    if (!onPopup(ib) and dismissPopup(ib)) return;
     const s = screenAt(ib) orelse return;
     // The screen's depth gadget, where no window covers it: pressed until
     // the button goes up.
@@ -1507,6 +1542,8 @@ fn focus(ib: *IntuitionBase, o: ?*Object) void {
 /// something - and let go is always told.
 fn otherButton(ib: *IntuitionBase, code: u32) void {
     const w = ib.active_window orelse return;
+    // The menu button takes a popup down, and does nothing else.
+    if (code == ie.IECODE_RBUTTON and dismissPopup(ib)) return;
     // A requester up takes the menu button from the window, and from its
     // menus, unless it is a noisy one.
     if (w.first_request) |req| {

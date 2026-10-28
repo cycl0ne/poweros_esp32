@@ -263,10 +263,14 @@ fn renderOverBorder(ib: *IntuitionBase, w: *Window, o: *Object, gi: *classusr.Ga
 /// corner, so the gadget draws at its own coordinates exactly as on the
 /// window; only the box is filled, drawn and copied, and a clip holds the
 /// drawing to it. The box starts as what the gadget is drawn over in
-/// place: the window's ground, painted as its layer paints it. A gadget
-/// in the border is drawn by `renderOverBorder` instead.
-/// False, and nothing drawn, when the picture cannot be had or would be
-/// larger than `aside_most`: the caller draws in place.
+/// place: the window's ground - or its requester's fill - painted as its
+/// layer paints it. A layer that paints no ground leaves the gadget to
+/// draw on what is there, and nothing but the place itself has that: such
+/// a gadget is drawn in place. A gadget in the border is drawn by
+/// `renderOverBorder` instead.
+/// False, and nothing drawn, when the picture cannot be had, would be
+/// larger than `aside_most` or the layer paints no ground: the caller
+/// draws in place.
 fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *graphics.RastPort, msg: *gc.GpRender) bool {
     const gb = ib.graphics_base;
     const place = boxIn(gadgetOf(ib, o), gi.domain_width, gi.domain_height);
@@ -274,16 +278,6 @@ fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *gr
     const right = place.left + place.width;
     const bottom = place.top + place.height;
     if (@as(u64, @intCast(right)) * @as(u64, @intCast(bottom)) * 4 > aside_most) return false;
-    const area = graphics.Rect{ .min_x = place.left, .min_y = place.top, .max_x = right, .max_y = bottom };
-    const surface = gb.AllocBitMapTagList(&[_]TagItem{
-        .{ .tag = graphics.BMTAG_Width, .data = @intCast(right) },
-        .{ .tag = graphics.BMTAG_Height, .data = @intCast(bottom) },
-        .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(rp) },
-        .{},
-    }) orelse return false;
-    defer gb.FreeBitMap(surface);
-    const aside = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(surface) }, .{} }) orelse return false;
-    defer gb.FreeRastPort(aside);
 
     // The window's ground, font and pens; the clip holds the drawing to
     // the box.
@@ -300,6 +294,18 @@ fn renderAside(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo, rp: *gr
         .{ .tag = graphics.RPTAG_DrMd, .data = @intFromPtr(&mode) },
         .{},
     });
+    if (ground == graphics.BACKFILL_NONE) return false;
+
+    const area = graphics.Rect{ .min_x = place.left, .min_y = place.top, .max_x = right, .max_y = bottom };
+    const surface = gb.AllocBitMapTagList(&[_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = @intCast(right) },
+        .{ .tag = graphics.BMTAG_Height, .data = @intCast(bottom) },
+        .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(rp) },
+        .{},
+    }) orelse return false;
+    defer gb.FreeBitMap(surface);
+    const aside = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(surface) }, .{} }) orelse return false;
+    defer gb.FreeRastPort(aside);
     gb.SetRPAttrs(aside, &[_]TagItem{ .{ .tag = graphics.RPTAG_BackFill, .data = ground }, .{} });
     gb.EraseRect(aside, &area);
     gb.SetRPAttrs(aside, &[_]TagItem{

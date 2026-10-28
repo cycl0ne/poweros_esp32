@@ -30,8 +30,9 @@ const _requester = @import("_requester.zig");
 /// has lost it; its layer goes, and what it covered comes back - a
 /// smart-refresh window's pixels, a simple one told to draw the part again.
 /// The window gets `IDCMP_REQCLEAR` with the requester in `iaddress`, and
-/// `WFLG_INREQUEST` is cleared when it was the last. A requester that is
-/// not up in this window is left alone.
+/// `WFLG_INREQUEST` is cleared when it was the last; a popup's owner gets
+/// `GM_POPDOWN` with `POPDOWN_ENDED`. A requester that is not up in this
+/// window is left alone.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore and the layers' locks.
@@ -59,5 +60,5 @@ const _requester = @import("_requester.zig");
 pub fn EndRequest(ib: *IntuitionBase, requester: *Requester, window: *Window) void {
     _window.lock(ib);
     defer _window.unlock(ib);
-    _ = _requester.take(ib, window, requester, true);
+    _ = _requester.take(ib, window, requester, true, sdk.intuition.gadgetclass.POPDOWN_ENDED);
 }

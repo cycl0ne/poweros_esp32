@@ -397,6 +397,12 @@ pub const GM_KEY: MethodID = 8;
 /// `GMWR_NOTHING` to leave it to the window, which tells its program
 /// (`IDCMP_MOUSEWHEEL`). It never makes a gadget active.
 pub const GM_WHEEL: MethodID = 9;
+/// A popup the gadget put up has come down (`GpPopDown`): a requester
+/// made with `POPUPREQ` whose `owner` it is, taken down however that came
+/// - a gadget of it used, a press beside it, Escape, `EndRequest`, its
+/// window closing. Its gadgets are the gadget's to take back. The answer
+/// is not read.
+pub const GM_POPDOWN: MethodID = 10;
 
 /// GM_DOMAIN's `which`: the smallest a gadget can be and still work, the
 /// size it looks right at, and the largest it is any use at.
@@ -420,6 +426,11 @@ pub const GpDomain = extern struct {
     /// `GDOMAIN_*`.
     which: u32,
     domain: Box = .{},
+    /// gpd_Attrs: attributes to answer for as if they were set - the size
+    /// a tool button would be at another of its sizes - without setting
+    /// them. A class reads the ones it knows and leaves the rest; null for
+    /// the gadget as it is.
+    attrs: ?[*]const utility.TagItem = null,
 };
 
 /// GM_HELPTEST: nothing here worth saying anything about.
@@ -509,6 +520,27 @@ pub const GpWheel = extern struct {
     /// message on, so that the window can name it.
     gadget: ?*classusr.Object = null,
 };
+
+/// GM_POPDOWN.
+pub const GpPopDown = extern struct {
+    method_id: MethodID = GM_POPDOWN,
+    /// The window the gadget is in, to draw itself again; null when the
+    /// window is closing, or the gadget is in none.
+    gadget_info: ?*GadgetInfo = null,
+    /// The popup, down: its gadgets are the program's again.
+    requester: *@import("requesters.zig").Requester,
+    /// Why: `POPDOWN_USED`, `POPDOWN_DISMISSED` or `POPDOWN_ENDED`.
+    how: u32,
+};
+
+/// GpPopDown's `how`: a gadget of the popup was used the way that counts,
+/// and the window has had its `IDCMP_GADGETUP`.
+pub const POPDOWN_USED: u32 = 0;
+/// A press beside it, the menu button, Escape, or another window taking
+/// the activation.
+pub const POPDOWN_DISMISSED: u32 = 1;
+/// `EndRequest`, or its window closing.
+pub const POPDOWN_ENDED: u32 = 2;
 
 /// GM_WHEEL's answers: not this gadget's - the window's program hears of
 /// the turn - ...

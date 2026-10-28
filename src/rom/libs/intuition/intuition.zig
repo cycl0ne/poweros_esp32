@@ -4581,7 +4581,7 @@ test "ObtainGIRPort: a gadget draws in its own RastPort, and the lock comes back
     try tearDown(ib);
 }
 
-test "GA_ClipRect: a gadget draws only inside its clip, which a group hands on to its members" {
+test "GA_ClipRect: a gadget draws only inside its clip, which a group hands on to its members while they are in it - and its window" {
     const ib = try setUp();
     defer kexec.deinit();
     const wn = intuition.windows;
@@ -4633,6 +4633,21 @@ test "GA_ClipRect: a gadget draws only inside its clip, which a group hands on t
     _ = it.SetAttrsTagList(group, &[_]TagItem{ .{ .tag = gc.GA_ClipRect, .data = 0 }, .{} });
     _gadget.renderAll(ib, win);
     try testing.expectEqual(@as(u16, 0xF800), display.pixel(19, 12));
+
+    // Clipped again and the member taken out: it is cut to nothing now,
+    // and no gadget of the window.
+    _ = it.SetAttrsTagList(group, &[_]TagItem{ .{ .tag = gc.GA_ClipRect, .data = @intFromPtr(&half) }, .{} });
+    try testing.expectEqual(win, gadgetclass.gadgetOf(ib, g).window.?);
+    var take = classusr.OpMember{ .method_id = classusr.OM_REMMEMBER, .object = g };
+    try testing.expect(it.SendMessage(group, @ptrCast(&take)) != 0);
+    _ = it.GetAttr(gc.GA_ClipRect, g, &kept);
+    try testing.expectEqual(classusr.unclipped, @as(*const graphics.Rect, @ptrFromInt(kept)).*);
+    try testing.expect(gadgetclass.gadgetOf(ib, g).window == null);
+    // Back in while the group is in the window: the window's again, and
+    // drawn where it is when the pointer passes over it.
+    try testing.expect(it.SendMessage(group, @ptrCast(&add)) != 0);
+    try testing.expectEqual(win, gadgetclass.gadgetOf(ib, g).window.?);
+    try testing.expect(gadgetclass.gadgetOf(ib, g).requester == null);
 
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     it.CloseWindow(w);
@@ -9987,6 +10002,497 @@ test "requesters: a double-click of the menu button puts up the double-click req
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     it.CloseWindow(w);
     try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+/// A gadget that draws nothing but its ground: it erases its box, as a
+/// button flat at rest does.
+fn eraserDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const cl: *Class = @ptrCast(hook);
+    const ib: *IntuitionBase = @ptrFromInt(cl.user_data);
+    const msg: *Msg = @ptrCast(@alignCast(message.?));
+    const o: ?*Object = @ptrCast(object);
+    const gc = intuition.gadgetclass;
+    if (msg.method_id != gc.GM_RENDER) return ib.iface().SendSuperMessage(cl, o, msg);
+    const r: *gc.GpRender = @ptrCast(@alignCast(msg));
+    const gi = r.gadget_info orelse return 0;
+    const b = _gadget.boxIn(gadgetclass.gadgetOf(ib, o.?), gi.domain_width, gi.domain_height);
+    ib.graphics_base.EraseRect(r.rast_port, &.{ .min_x = b.left, .min_y = b.top, .max_x = b.left + b.width, .max_y = b.top + b.height });
+    return 0;
+}
+
+test "requesters: a gadget in one stands on its fill - what it erases is the fill - and without a fill on what is there" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const rq = intuition.requesters;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 96, 64, .rgb565);
+
+    // A window at (10, 10), 60 by 40; a requester at (20, 10) in it, 30 by
+    // 20, filled in white, with an eraser at (2, 2), 10 by 8.
+    const eraser_class = it.MakeClass(null, classusr.GADGETCLASS, null, 0).?;
+    eraser_class.dispatcher.entry = &eraserDispatch;
+    eraser_class.user_data = @intFromPtr(ib);
+    const eraser = it.NewObjectTagList(eraser_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 2 },
+        .{ .tag = gc.GA_Width, .data = 10 },
+        .{ .tag = gc.GA_Height, .data = 8 },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 10 },
+        .{ .tag = wn.WA_Top, .data = 10 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    var box: intuition.Requester = undefined;
+    it.InitRequester(&box);
+    box.left = 20;
+    box.top = 10;
+    box.width = 30;
+    box.height = 20;
+    box.back_fill = graphics.penRGB(0xFF, 0xFF, 0xFF);
+    box.gadgets = eraser;
+    const in_eraser = .{ 10 + 20 + 2 + 5, 10 + 10 + 2 + 4 };
+    const under = display.pixel(in_eraser[0], in_eraser[1]);
+    try testing.expect(under != 0xFFFF);
+
+    // Drawn with the requester, and again by itself: white both times.
+    try testing.expect(it.Request(&box, w));
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(in_eraser[0], in_eraser[1]));
+    it.RefreshGList(eraser, w, 1);
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(in_eraser[0], in_eraser[1]));
+    it.EndRequest(&box, w);
+    try testing.expectEqual(under, display.pixel(in_eraser[0], in_eraser[1]));
+
+    // Without a fill, the requester is what was there, and so is the
+    // eraser.
+    box.flags = rq.NOREQBACKFILL;
+    try testing.expect(it.Request(&box, w));
+    try testing.expectEqual(under, display.pixel(in_eraser[0], in_eraser[1]));
+    it.RefreshGList(eraser, w, 1);
+    try testing.expectEqual(under, display.pixel(in_eraser[0], in_eraser[1]));
+    it.EndRequest(&box, w);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(eraser);
+    try testing.expect(it.FreeClass(eraser_class));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+/// A gadget that puts a popup up when it is pressed, and counts the times
+/// it is told the popup is down, and why.
+const Opener = extern struct {
+    popup: ?*intuition.Requester = null,
+    downs: u32 = 0,
+    how: u32 = 0,
+    told_in_window: u32 = 0,
+};
+
+fn openerDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const cl: *Class = @ptrCast(hook);
+    const ib: *IntuitionBase = @ptrFromInt(cl.user_data);
+    const msg: *Msg = @ptrCast(@alignCast(message.?));
+    const o: ?*Object = @ptrCast(object);
+    const gc = intuition.gadgetclass;
+    switch (msg.method_id) {
+        gc.GM_HITTEST => return gc.GMR_GADGETHIT,
+        gc.GM_GOACTIVE => {
+            const in: *gc.GpInput = @ptrCast(@alignCast(msg));
+            const own = intuition.instData(Opener, cl, o.?);
+            _ = ib.iface().Request(own.popup.?, in.gadget_info.?.window);
+            return gc.GMR_NOREUSE;
+        },
+        gc.GM_POPDOWN => {
+            const down: *gc.GpPopDown = @ptrCast(@alignCast(msg));
+            const own = intuition.instData(Opener, cl, o.?);
+            own.downs += 1;
+            own.how = down.how;
+            own.told_in_window = @intFromBool(down.gadget_info != null);
+            return 0;
+        },
+        else => return ib.iface().SendSuperMessage(cl, o, msg),
+    }
+}
+
+test "requesters: a popup a gadget puts up goes when used, on a press beside it, the menu button, Escape, another window active, and its owner is told" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const rq = intuition.requesters;
+    const gc = intuition.gadgetclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 96, 64, .rgb565);
+
+    // A window at (10, 10), 60 by 40, with the opener at its top left; the
+    // popup at (20, 10) in it, 30 by 20, with a button at its top left.
+    const opener_class = it.MakeClass(null, classusr.GADGETCLASS, null, @sizeOf(Opener)).?;
+    opener_class.dispatcher.entry = &openerDispatch;
+    opener_class.user_data = @intFromPtr(ib);
+    const opener = it.NewObjectTagList(opener_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 2 },
+        .{ .tag = gc.GA_Width, .data = 16 },
+        .{ .tag = gc.GA_Height, .data = 8 },
+        .{},
+    }).?;
+    const own = intuition.instData(Opener, opener_class, opener);
+    own.* = .{};
+    const button = testButton(ib, 7, 2, 2, false);
+    var popup: intuition.Requester = undefined;
+    it.InitRequester(&popup);
+    popup.left = 20;
+    popup.top = 10;
+    popup.width = 30;
+    popup.height = 20;
+    popup.flags = rq.POPUPREQ;
+    popup.owner = opener;
+    popup.gadgets = button;
+    own.popup = &popup;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 10 },
+        .{ .tag = wn.WA_Top, .data = 10 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(opener) },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETUP | wn.IDCMP_REQSET | wn.IDCMP_REQCLEAR | wn.IDCMP_RAWKEY | wn.IDCMP_MOUSEBUTTONS },
+        .{},
+    }).?;
+    var got: [4]intuition.IntuiMessage = undefined;
+    const opener_x = 10 + 5;
+    const opener_y = 10 + 5;
+    const under = display.pixel(10 + 20 + 25, 10 + 10 + 15);
+
+    // Pressed, the opener puts it up from intuition's own task.
+    click(ib, opener_x, opener_y);
+    try testing.expect(popup.flags & rq.REQACTIVE != 0);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_REQSET, got[0].class);
+
+    // Its button used: the window hears it, then the popup is down and
+    // what it covered back, and the opener told so.
+    click(ib, 10 + 20 + 2 + 5, 10 + 10 + 2 + 4);
+    try testing.expectEqual(@as(usize, 2), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_GADGETUP, got[0].class);
+    try testing.expectEqual(@intFromPtr(button), @intFromPtr(got[0].iaddress));
+    try testing.expectEqual(wn.IDCMP_REQCLEAR, got[1].class);
+    try testing.expect(popup.flags & rq.REQACTIVE == 0 and popup.layer == null);
+    try testing.expectEqual(under, display.pixel(10 + 20 + 25, 10 + 10 + 15));
+    try testing.expectEqual(@as(u32, 1), own.downs);
+    try testing.expectEqual(gc.POPDOWN_USED, own.how);
+    try testing.expectEqual(@as(u32, 1), own.told_in_window);
+
+    // A press beside it takes it down and does nothing else: not even on
+    // the opener, which would put it up again.
+    click(ib, opener_x, opener_y);
+    _ = drainMessages(ib, w, &got);
+    click(ib, opener_x, opener_y);
+    try testing.expect(popup.flags & rq.REQACTIVE == 0);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_REQCLEAR, got[0].class);
+    try testing.expectEqual(@as(u32, 2), own.downs);
+    try testing.expectEqual(gc.POPDOWN_DISMISSED, own.how);
+    // Nor in the window where nothing is: no MOUSEBUTTONS.
+    click(ib, opener_x, opener_y);
+    _ = drainMessages(ib, w, &got);
+    click(ib, 10 + 5, 10 + 35);
+    try testing.expect(popup.flags & rq.REQACTIVE == 0);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_REQCLEAR, got[0].class);
+    try testing.expectEqual(@as(u32, 3), own.downs);
+
+    // A press on it, but on none of its gadgets, leaves it up.
+    click(ib, opener_x, opener_y);
+    _ = drainMessages(ib, w, &got);
+    click(ib, 10 + 20 + 25, 10 + 10 + 15);
+    try testing.expect(popup.flags & rq.REQACTIVE != 0);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+
+    // Escape, and the menu button.
+    rawKey(ib, 0x45);
+    try testing.expect(popup.flags & rq.REQACTIVE == 0);
+    try testing.expectEqual(@as(u32, 4), own.downs);
+    try testing.expectEqual(gc.POPDOWN_DISMISSED, own.how);
+    _ = drainMessages(ib, w, &got);
+    click(ib, opener_x, opener_y);
+    pointerEvent(ib, ie.IECODE_RBUTTON, 10 + 5, 10 + 35);
+    pointerEvent(ib, ie.IECODE_RBUTTON | ie.IECODE_UP_PREFIX, 10 + 5, 10 + 35);
+    try testing.expect(popup.flags & rq.REQACTIVE == 0);
+    try testing.expectEqual(@as(u32, 5), own.downs);
+    _ = drainMessages(ib, w, &got);
+
+    // EndRequest: ended, not dismissed.
+    click(ib, opener_x, opener_y);
+    it.EndRequest(&popup, w);
+    try testing.expectEqual(@as(u32, 6), own.downs);
+    try testing.expectEqual(gc.POPDOWN_ENDED, own.how);
+    _ = drainMessages(ib, w, &got);
+
+    // Another window active.
+    click(ib, opener_x, opener_y);
+    const other = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 72 },
+        .{ .tag = wn.WA_Top, .data = 10 },
+        .{ .tag = wn.WA_Width, .data = 20 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    it.ActivateWindow(other);
+    try testing.expect(popup.flags & rq.REQACTIVE == 0);
+    try testing.expectEqual(@as(u32, 7), own.downs);
+    try testing.expectEqual(gc.POPDOWN_DISMISSED, own.how);
+    it.CloseWindow(other);
+    it.ActivateWindow(w);
+    _ = drainMessages(ib, w, &got);
+
+    // Its window closing: ended, with no window to draw in.
+    click(ib, opener_x, opener_y);
+    try testing.expect(popup.flags & rq.REQACTIVE != 0);
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expectEqual(@as(u32, 8), own.downs);
+    try testing.expectEqual(gc.POPDOWN_ENDED, own.how);
+    try testing.expectEqual(@as(u32, 0), own.told_in_window);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(button);
+    it.DisposeObject(opener);
+    try testing.expect(it.FreeClass(opener_class));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "requesters: a popup lies over the screen - past its window's edges, in front of a window that stays in front - and is moved onto it" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const rq = intuition.requesters;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 96, 64, .rgb565);
+
+    // A window at (10, 10), 40 by 30, with the opener at its top left; the
+    // popup at (30, 5) in it, 40 by 20 and white, so from 40 to 80 across
+    // the screen, with a button at (22, 2) in it - outside the window. A
+    // window that stays in front at (60, 8), 30 by 40, under the popup's
+    // right half.
+    const opener_class = it.MakeClass(null, classusr.GADGETCLASS, null, @sizeOf(Opener)).?;
+    opener_class.dispatcher.entry = &openerDispatch;
+    opener_class.user_data = @intFromPtr(ib);
+    const opener = it.NewObjectTagList(opener_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 2 },
+        .{ .tag = gc.GA_Width, .data = 16 },
+        .{ .tag = gc.GA_Height, .data = 8 },
+        .{},
+    }).?;
+    const own = intuition.instData(Opener, opener_class, opener);
+    own.* = .{};
+    const button = testButton(ib, 7, 22, 2, false);
+    var popup: intuition.Requester = undefined;
+    it.InitRequester(&popup);
+    popup.left = 30;
+    popup.top = 5;
+    popup.width = 40;
+    popup.height = 20;
+    popup.back_fill = graphics.penRGB(0xFF, 0xFF, 0xFF);
+    popup.flags = rq.POPUPREQ;
+    popup.owner = opener;
+    popup.gadgets = button;
+    own.popup = &popup;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 10 },
+        .{ .tag = wn.WA_Top, .data = 10 },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(opener) },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETUP | wn.IDCMP_REQSET | wn.IDCMP_REQCLEAR },
+        .{},
+    }).?;
+    const stays = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 60 },
+        .{ .tag = wn.WA_Top, .data = 8 },
+        .{ .tag = wn.WA_Width, .data = 30 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_StayInFront, .data = 1 },
+        .{},
+    }).?;
+    it.ActivateWindow(w);
+    var got: [4]intuition.IntuiMessage = undefined;
+    _ = drainMessages(ib, w, &got);
+    const opener_x = 10 + 5;
+    const opener_y = 10 + 5;
+    const beside = display.pixel(55, 30);
+    const on_stays = display.pixel(70, 30);
+    try testing.expect(beside != 0xFFFF and on_stays != 0xFFFF);
+
+    // Up, it is whole: beside the window and over the one in front.
+    click(ib, opener_x, opener_y);
+    try testing.expect(popup.flags & rq.REQACTIVE != 0);
+    try testing.expect(popup.flags & rq.REQOFFWINDOW != 0);
+    try testing.expectEqual(@as(i32, 30), popup.left);
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(55, 30));
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(70, 30));
+    _ = drainMessages(ib, w, &got);
+
+    // Its button outside the window is pressed like any: the window hears
+    // it, the popup goes, and what it covered is back.
+    click(ib, 10 + 30 + 22 + 5, 10 + 5 + 2 + 4);
+    try testing.expectEqual(@as(usize, 2), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_GADGETUP, got[0].class);
+    try testing.expectEqual(@intFromPtr(button), @intFromPtr(got[0].iaddress));
+    try testing.expectEqual(wn.IDCMP_REQCLEAR, got[1].class);
+    try testing.expect(popup.flags & rq.REQACTIVE == 0);
+    try testing.expectEqual(gc.POPDOWN_USED, own.how);
+    try testing.expectEqual(beside, display.pixel(55, 30));
+    try testing.expectEqual(on_stays, display.pixel(70, 30));
+
+    // Asked for at 60, it would reach 110 on a screen 96 wide: it is moved
+    // 14 to the left, to end at the screen's edge.
+    popup.left = 60;
+    click(ib, opener_x, opener_y);
+    try testing.expect(popup.flags & rq.REQACTIVE != 0);
+    try testing.expectEqual(@as(i32, 46), popup.left);
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(95, 30));
+    rawKey(ib, 0x45);
+    try testing.expect(popup.flags & rq.REQACTIVE == 0);
+    try testing.expectEqual(on_stays, display.pixel(70, 30));
+    _ = drainMessages(ib, w, &got);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(stays);
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(button);
+    it.DisposeObject(opener);
+    try testing.expect(it.FreeClass(opener_class));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "requesters: a popup put up from a popup goes with it when one of its gadgets is used, and alone on a press beside it" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const rq = intuition.requesters;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 96, 64, .rgb565);
+
+    // The window at (10, 10), 60 by 40, with an opener at its top left. Its
+    // popup at (20, 10), 30 by 20, holds a second opener at its own top
+    // left, whose popup is at (24, 22), 30 by 16, with a button in it.
+    const opener_class = it.MakeClass(null, classusr.GADGETCLASS, null, @sizeOf(Opener)).?;
+    opener_class.dispatcher.entry = &openerDispatch;
+    opener_class.user_data = @intFromPtr(ib);
+    const box = [_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 2 },
+        .{ .tag = gc.GA_Width, .data = 16 },
+        .{ .tag = gc.GA_Height, .data = 8 },
+        .{},
+    };
+    const opener = it.NewObjectTagList(opener_class, null, &box).?;
+    const inner = it.NewObjectTagList(opener_class, null, &box).?;
+    const outer_own = intuition.instData(Opener, opener_class, opener);
+    const inner_own = intuition.instData(Opener, opener_class, inner);
+    outer_own.* = .{};
+    inner_own.* = .{};
+    const button = testButton(ib, 7, 2, 2, false);
+    var first: intuition.Requester = undefined;
+    it.InitRequester(&first);
+    first.left = 20;
+    first.top = 10;
+    first.width = 30;
+    first.height = 20;
+    first.flags = rq.POPUPREQ;
+    first.owner = opener;
+    first.gadgets = inner;
+    outer_own.popup = &first;
+    var second: intuition.Requester = undefined;
+    it.InitRequester(&second);
+    second.left = 24;
+    second.top = 22;
+    second.width = 30;
+    second.height = 16;
+    second.flags = rq.POPUPREQ;
+    second.owner = inner;
+    second.gadgets = button;
+    inner_own.popup = &second;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 10 },
+        .{ .tag = wn.WA_Top, .data = 10 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(opener) },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETUP | wn.IDCMP_REQSET | wn.IDCMP_REQCLEAR },
+        .{},
+    }).?;
+    var got: [4]intuition.IntuiMessage = undefined;
+    const opener_at = .{ 10 + 5, 10 + 5 };
+    const inner_at = .{ 10 + 20 + 5, 10 + 10 + 5 };
+    const button_at = .{ 10 + 24 + 2 + 5, 10 + 22 + 2 + 4 };
+
+    // Both up, the second in front.
+    click(ib, opener_at[0], opener_at[1]);
+    click(ib, inner_at[0], inner_at[1]);
+    try testing.expect(first.flags & rq.REQACTIVE != 0 and second.flags & rq.REQACTIVE != 0);
+    try testing.expectEqual(&second, @as(*_window.Window, @ptrCast(@alignCast(w))).first_request.?);
+    _ = drainMessages(ib, w, &got);
+
+    // The button used: the window hears it, then both go, the newer first,
+    // and each opener is told it was used.
+    click(ib, button_at[0], button_at[1]);
+    try testing.expectEqual(@as(usize, 3), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_GADGETUP, got[0].class);
+    try testing.expectEqual(wn.IDCMP_REQCLEAR, got[1].class);
+    try testing.expectEqual(@intFromPtr(&second), @intFromPtr(got[1].iaddress));
+    try testing.expectEqual(wn.IDCMP_REQCLEAR, got[2].class);
+    try testing.expectEqual(@intFromPtr(&first), @intFromPtr(got[2].iaddress));
+    try testing.expect(first.flags & rq.REQACTIVE == 0 and second.flags & rq.REQACTIVE == 0);
+    try testing.expectEqual(@as(u32, 1), inner_own.downs);
+    try testing.expectEqual(gc.POPDOWN_USED, inner_own.how);
+    try testing.expectEqual(@as(u32, 1), outer_own.downs);
+    try testing.expectEqual(gc.POPDOWN_USED, outer_own.how);
+
+    // Up again; a press on the first, beside the second: the second goes
+    // alone, and Escape then takes the first.
+    click(ib, opener_at[0], opener_at[1]);
+    click(ib, inner_at[0], inner_at[1]);
+    click(ib, 10 + 20 + 25, 10 + 10 + 4);
+    try testing.expect(first.flags & rq.REQACTIVE != 0 and second.flags & rq.REQACTIVE == 0);
+    try testing.expectEqual(gc.POPDOWN_DISMISSED, inner_own.how);
+    try testing.expectEqual(@as(u32, 1), outer_own.downs);
+    rawKey(ib, 0x45);
+    try testing.expect(first.flags & rq.REQACTIVE == 0);
+    try testing.expectEqual(@as(u32, 2), outer_own.downs);
+    try testing.expectEqual(gc.POPDOWN_DISMISSED, outer_own.how);
+    _ = drainMessages(ib, w, &got);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(button);
+    it.DisposeObject(inner);
+    it.DisposeObject(opener);
+    try testing.expect(it.FreeClass(opener_class));
     display.down(ib);
     try tearDown(ib);
 }

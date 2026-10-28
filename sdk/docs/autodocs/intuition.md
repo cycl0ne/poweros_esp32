@@ -2396,8 +2396,9 @@ newest, or one behind it. A gadget of it that had the input is told it
 has lost it; its layer goes, and what it covered comes back - a
 smart-refresh window's pixels, a simple one told to draw the part again.
 The window gets `IDCMP_REQCLEAR` with the requester in `iaddress`, and
-`WFLG_INREQUEST` is cleared when it was the last. A requester that is
-not up in this window is left alone.
+`WFLG_INREQUEST` is cleared when it was the last; a popup's owner gets
+`GM_POPDOWN` with `POPDOWN_ENDED`. A requester that is not up in this
+window is left alone.
 
 **CONTEXT**
 
@@ -6160,12 +6161,26 @@ reach a gadget of the requester that has the input, and with
 as `IDCMP_MOUSEBUTTONS`, `IDCMP_RAWKEY` and the rest. The requester moves
 with the window and stays in front of it.
 
+A popup (`POPUPREQ`) is one a gadget puts up from where it is pressed,
+its `owner`: a gadget of it used the way that counts takes it down
+after the window has had its `IDCMP_GADGETUP`, and so do a press
+anywhere but on it - which does nothing else - the menu button, Escape,
+and the window losing the activation. The owner is told with
+`GM_POPDOWN` once what the popup covered is back. An owner can be a
+gadget of a popup itself: a gadget used in the popup it put up takes
+that one down too, while a press beside the newer one, Escape and the
+menu button take down that one alone. A popup is not cut at the
+window: it lies in front of every window, cut only at the screen's
+edges, and is moved onto the screen - its `left` and `top` changed - as
+it is put up where some of it would be off it.
+
 **CONTEXT**
 
 - Waits: for the screen list's semaphore and the layers' locks.
 - Interrupts: no.
 - Locks: none needed.
-- Process: a Task will do.
+- Process: a Task will do; intuition's own too, from a gadget's
+  `GM_GOACTIVE`, which is where a popup is put up.
 
 **OWNERSHIP**
 
