@@ -58,6 +58,8 @@ pub const TestMedia = struct {
     read_only: bool = false,
     /// Allocations still out.
     live: usize = 0,
+    /// Allocations made in all.
+    allocs: usize = 0,
     clock: u64 = 1_000_000_000,
     rng: std.Random.DefaultPrng,
     serial: u64 = 1,
@@ -296,6 +298,7 @@ pub const TestMedia = struct {
         const memory = std.testing.allocator.alignedAlloc(u8, .@"8", len) catch return null;
         @memset(memory, 0);
         m.live += 1;
+        m.allocs += 1;
         return memory;
     }
 
@@ -305,6 +308,7 @@ pub const TestMedia = struct {
         const memory = std.testing.allocator.alignedAlloc(u8, .@"8", len) catch return null;
         @memset(memory, 0xA5);
         m.live += 1;
+        m.allocs += 1;
         return memory;
     }
 

@@ -522,10 +522,11 @@ pub const FileSystem = struct {
         try journal.flush(&fs.vol);
     }
 
-    /// Whether changes wait for a checkpoint, an orphan for its job, or a
-    /// check for its next slice: what an idle handler is woken for.
+    /// Whether changes wait for a checkpoint, an orphan for its job, a
+    /// check for its next slice, or spare buffers to be given back: what an
+    /// idle handler is woken for.
     pub fn pending(fs: *const FileSystem) bool {
-        return fs.checking != null or fs.jobsWait() or fs.changesWait();
+        return fs.checking != null or fs.jobsWait() or fs.changesWait() or fs.vol.spares != null;
     }
 
     fn jobsWait(fs: *const FileSystem) bool {
@@ -541,9 +542,10 @@ pub const FileSystem = struct {
     }
 
     /// What an idle handler does: a check no slice came for in a while
-    /// ended, a slice's time of the orphans' jobs, and a checkpoint when
-    /// changes wait.
+    /// ended, a slice's time of the orphans' jobs, a checkpoint when
+    /// changes wait, and the spare buffers given back.
     pub fn idle(fs: *FileSystem) Error!void {
+        defer fs.vol.releaseSpares();
         if (fs.checking != null and fs.vol.now() -% fs.check_touched > check_timeout) fs.endCheck();
         if (fs.jobsWait()) try fs.trimOrphans(fs.vol.now() + fs.check_slice);
         if (!fs.changesWait()) return;

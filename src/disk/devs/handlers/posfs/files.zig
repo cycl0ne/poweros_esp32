@@ -706,9 +706,9 @@ fn unpack(vol: *Volume, ov: *Overlay, index: usize) Error!void {
     if (space.available(vol) + run.blocks(vol) < count) return error.DiskFull;
     const made = ov.pending[ov.pending_count..][0..count];
     var taken: usize = 0;
-    errdefer for (made[0..taken]) |entry| vol.free(entry.buffer);
+    errdefer for (made[0..taken]) |entry| vol.giveBlock(entry.buffer);
     while (taken < count) : (taken += 1) {
-        made[taken] = .{ .file_block = run.file_block + taken, .buffer = try vol.allocRaw(vol.block_size) };
+        made[taken] = .{ .file_block = run.file_block + taken, .buffer = try vol.takeBlock() };
     }
     const plain = try compress.read(vol, run.chunk(vol), run.count << vol.block_shift);
     for (made) |entry| @memcpy(entry.buffer, plain[@intCast((entry.file_block - run.file_block) << vol.block_shift)..][0..vol.block_size]);
@@ -727,8 +727,8 @@ fn newPending(vol: *Volume, ov: *Overlay, node: *const Inode, file_block: u64, f
     if (ov.pending_count >= pendingMax(vol)) try spill(vol, ov, false);
     try room(vol);
     try reservePending(vol, ov, 1);
-    const buffer = try vol.allocRaw(vol.block_size);
-    errdefer vol.free(buffer);
+    const buffer = try vol.takeBlock();
+    errdefer vol.giveBlock(buffer);
     if (fills) |count| {
         @memset(buffer[count..], 0);
     } else try readThrough(vol, ov, node, file_block << vol.block_shift, buffer);
@@ -794,7 +794,7 @@ pub fn setSize(vol: *Volume, ov: *Overlay, node: *const Inode, size: u64) Error!
     var index: usize = 0;
     while (index < ov.pending_count) {
         if (ov.pending[index].file_block >= kept_blocks) {
-            vol.free(ov.pending[index].buffer);
+            vol.giveBlock(ov.pending[index].buffer);
             ov.pending[index] = ov.pending[ov.pending_count - 1];
             ov.pending_count -= 1;
             vol.space.promised -= 1;
@@ -978,7 +978,7 @@ fn writeRaw(vol: *Volume, ov: *Overlay, entries: []Pending, checksums: bool) Err
     }
     try placeRun(vol, ov, .{ .file_block = entries[0].file_block, .block = run.start, .count = run.count, .crc_first = crc_first });
     for (entries[0..count]) |*entry| {
-        vol.free(entry.buffer);
+        vol.giveBlock(entry.buffer);
         entry.buffer = &.{};
     }
     return count;
@@ -1025,7 +1025,7 @@ fn packChunk(vol: *Volume, ov: *Overlay, entries: []Pending) Error!bool {
     };
     try placeRun(vol, ov, .{ .file_block = entries[0].file_block, .block = run.start, .count = entries.len, .stored = result.stored, .crc = result.crc });
     for (entries) |*entry| {
-        vol.free(entry.buffer);
+        vol.giveBlock(entry.buffer);
         entry.buffer = &.{};
     }
     return true;
@@ -1048,7 +1048,7 @@ fn discardData(vol: *Volume, ov: *Overlay) Error!void {
     for (ov.runs[0..ov.run_count]) |run| try space.releaseHeld(vol, run.block, run.blocks(vol));
     ov.run_count = 0;
     ov.crc_count = 0;
-    for (ov.pending[0..ov.pending_count]) |entry| vol.free(entry.buffer);
+    for (ov.pending[0..ov.pending_count]) |entry| vol.giveBlock(entry.buffer);
     vol.space.promised -= ov.pending_count;
     ov.pending_count = 0;
 }
@@ -1067,7 +1067,7 @@ pub fn discard(vol: *Volume, ov: *Overlay) void {
 /// The overlay's memory freed and nothing else: for a medium that has
 /// gone, whose space the volume keeps no more.
 pub fn forget(vol: *Volume, ov: *Overlay) void {
-    for (ov.pending[0..ov.pending_count]) |entry| vol.free(entry.buffer);
+    for (ov.pending[0..ov.pending_count]) |entry| vol.giveBlock(entry.buffer);
     ov.pending_count = 0;
     ov.run_count = 0;
     ov.crc_count = 0;

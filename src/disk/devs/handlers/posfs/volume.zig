@@ -93,6 +93,13 @@ pub const no_block: u64 = ~@as(u64, 0);
 /// How deep a tree may grow.
 pub const max_height: u32 = 16;
 
+/// A block's buffer kept for the next one (`Volume.spares`): its first
+/// bytes link it to the next.
+const Spare = struct { next: ?*Spare };
+
+/// The most the spare buffers of file blocks hold together.
+const spare_bytes = 256 * 1024;
+
 pub const Volume = struct {
     dev: media.Device,
     label: layout.Label = .{},
@@ -125,6 +132,13 @@ pub const Volume = struct {
     /// the medium in one command (files.zig): made the first time, and
     /// empty when there was no memory for it.
     gather: []u8 = &.{},
+    /// Buffers of file blocks that went to the medium, kept to be taken
+    /// again (`takeBlock`, `giveBlock`): a stream of writes takes a block's
+    /// buffer and gives it back for every block, and the machine's
+    /// allocator is not asked each time. At most `spare_bytes`' worth,
+    /// given back when the volume is idle.
+    spares: ?*Spare = null,
+    spare_count: u32 = 0,
     /// The last block of checksummed file data read in part, checked, and
     /// its address (`no_block` for none): on a medium not read as memory.
     checked: []u8 = &.{},
@@ -200,6 +214,36 @@ pub const Volume = struct {
         if (memory.len != 0) vol.dev.free(memory);
     }
 
+    /// A buffer of a block, not cleared: a spare one when there is.
+    pub fn takeBlock(vol: *Volume) Error![]u8 {
+        const spare = vol.spares orelse return vol.allocRaw(vol.block_size);
+        vol.spares = spare.next;
+        vol.spare_count -= 1;
+        const bytes: [*]u8 = @ptrCast(spare);
+        return bytes[0..vol.block_size];
+    }
+
+    /// A buffer `takeBlock` gave, given back: kept while the spares hold
+    /// less than `spare_bytes`, freed when they are full.
+    pub fn giveBlock(vol: *Volume, buffer: []u8) void {
+        if (buffer.len != vol.block_size or (vol.spare_count + 1) * vol.block_size > spare_bytes) return vol.free(buffer);
+        const spare: *Spare = @ptrCast(@alignCast(buffer.ptr));
+        spare.* = .{ .next = vol.spares };
+        vol.spares = spare;
+        vol.spare_count += 1;
+    }
+
+    /// The spare buffers freed: when the volume is idle, and before its
+    /// blocks change size.
+    pub fn releaseSpares(vol: *Volume) void {
+        while (vol.spares) |spare| {
+            vol.spares = spare.next;
+            const bytes: [*]u8 = @ptrCast(spare);
+            vol.dev.free(bytes[0..vol.block_size]);
+        }
+        vol.spare_count = 0;
+    }
+
     pub fn allocSlice(vol: *Volume, comptime T: type, count: usize) Error![]T {
         if (count == 0) return &.{};
         const bytes = try vol.alloc(count * @sizeOf(T));
@@ -222,6 +266,7 @@ pub const Volume = struct {
     /// What the label says made the volume's own: its sizes, its id, its
     /// buffers.
     pub fn takeLabel(vol: *Volume, label: *const layout.Label) Error!void {
+        vol.releaseSpares();
         vol.label = label.*;
         vol.block_size = label.block_size;
         vol.block_shift = @intCast(log2(label.block_size));
@@ -273,6 +318,7 @@ pub const Volume = struct {
     /// Everything the volume holds in memory given back.
     pub fn release(vol: *Volume) void {
         vol.dropDirty();
+        vol.releaseSpares();
         vol.freeSlice([]u8, vol.dirty);
         vol.dirty = &.{};
         space_area.release(vol);

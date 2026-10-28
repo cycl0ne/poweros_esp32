@@ -495,6 +495,36 @@ test "a full volume says so at the write, and deletes free it again" {
     try setup.remount();
 }
 
+test "a stream of writes takes its blocks' buffers again, and gives them back when idle" {
+    var setup: Setup = undefined;
+    try setup.init(.sd, 4 * 1024 * 1024, 4096);
+    defer setup.deinit();
+    const fs = &setup.fs;
+    var chunk: [64 * 1024]u8 = undefined;
+    var fh: FileHandle = .{};
+    try testing.expectEqual(dos.DOSTRUE, openFile(fs, &fh, .findoutput, "stream").res1);
+    const before = setup.m.allocs;
+    for (0..32) |index| try testing.expectEqual(@as(isize, chunk.len), writeTo(fs, &fh, pattern(index, &chunk)).res1);
+    try testing.expectEqual(dos.DOSTRUE, closeFile(fs, &fh).res1);
+    // 2 MiB is 512 blocks; their buffers came from at most 256 KiB's worth.
+    try testing.expect(setup.m.allocs - before < 128);
+    try testing.expect(fs.vol.spare_count > 0 and fs.vol.spare_count * 4096 <= 256 * 1024);
+    // An idle handler gives them back (and `deinit` finds none out).
+    try testing.expect(fs.pending());
+    try fs.idle();
+    try testing.expectEqual(@as(u32, 0), fs.vol.spare_count);
+    try expectClean(fs);
+    // Every block holds its own bytes, not a buffer's earlier ones.
+    try setup.remount();
+    var back: [64 * 1024]u8 = undefined;
+    try testing.expectEqual(dos.DOSTRUE, openFile(&setup.fs, &fh, .findinput, "stream").res1);
+    for (0..32) |index| {
+        try testing.expectEqual(@as(isize, back.len), readFrom(&setup.fs, &fh, &back).res1);
+        try testing.expectEqualSlices(u8, pattern(index, &chunk), &back);
+    }
+    try testing.expectEqual(dos.DOSTRUE, closeFile(&setup.fs, &fh).res1);
+}
+
 test "a file past 4 GiB: a hole, and bytes at its far end" {
     for (kinds) |kind| {
         var setup: Setup = undefined;
