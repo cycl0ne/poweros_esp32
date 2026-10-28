@@ -167,5 +167,6 @@ test {
     _ = @import("classes/datatypes/font/sheet.zig");
     _ = @import("classes/gadgets/tests/classes.zig");
     _ = @import("classes/docklets/tests/docklets.zig");
+    _ = @import("classes/images/tests/images.zig");
     _ = @import("classes/gadgets/colorwheel/_colour.zig");
 }

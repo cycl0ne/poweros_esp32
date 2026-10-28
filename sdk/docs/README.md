@@ -317,6 +317,23 @@ library that makes one from a few functions, are in
 | cpu.docklet | how busy each core is, a bar each | `SYS:System/CPULoad` |
 | network.docklet | an arrow for what comes in, one for what goes out | `SYS:System/NetLoad` |
 
+## Image classes
+
+Pictures drawn to any size, each a library of its own in
+`SYS:classes/images/`: opened as `images/<name>.image`, then made with
+`NewObjectTagList(null, "<name>.image", tags)`. An image class draws in
+its own box (`IM_DRAW`) or fitted to the one it is given
+(`IM_DRAWFRAME`), so one image serves a menu's 16 pixels and a large
+button's 48. What they draw with - smooth shapes in a square, a palette
+of eleven hues in three tones, a shadow, shading and gloss - is
+[`shapes.zig`](../libs/gadgets/shapes.zig), which the docklets draw on
+too; their tags start at `IMAGES_Dummy` in
+[`images.zig`](../libs/images/images.zig).
+
+| Class | What | Header |
+|---|---|---|
+| command.image | the pictures of a program's commands - new, open, save, cut, copy, paste, undo, find, bold, align, sort, rows and columns - in colour, for tool buttons and ribbons | [`command.zig`](../libs/images/command.zig) |
+
 ## Datatype classes
 
 Each a library of its own in `SYS:classes/datatypes/`, opened by

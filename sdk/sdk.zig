@@ -31,6 +31,9 @@ pub const gadgets = @import("libs/gadgets/gadgets.zig");
 /// The dock's docklets: what every one answers, and the class library
 /// that makes one.
 pub const docklets = @import("libs/docklets/docklets.zig");
+/// The image classes on the disk: pictures drawn to any size, the
+/// command images a tool bar has.
+pub const images = @import("libs/images/images.zig");
 pub const bsdsocket = @import("libs/bsdsocket/bsdsocket.zig");
 pub const crypto = @import("libs/crypto/crypto.zig");
 pub const compression = @import("libs/compression/compression.zig");

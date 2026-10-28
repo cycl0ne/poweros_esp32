@@ -6,10 +6,11 @@
 //!
 //! It opens the gadget classes of `SYS:classes/gadgets/` - checkbox,
 //! cycle, radiobutton, string, text, slider, palette and toolbutton - and
-//! a window object on the default public screen holding one layout, each
-//! gadget labelled by it: a row of tool buttons with the system's default
-//! icons as their pictures - "New" and "Folder" large, "Picture", "Sound"
-//! and a disabled "Trash" medium in a column, and "Wrap" a small toggle
+//! command.image from `SYS:classes/images/`, and a window object on the
+//! default public screen holding one layout, each gadget labelled by it:
+//! a row of tool buttons - "New" large with its command picture and
+//! "Folder" large with the system's default drawer icon, "Cut", "Copy"
+//! and a disabled "Paste" medium in a column, and "Wrap" a small toggle
 //! whose label is its hint - then a line to type a name in, a number
 //! field, a check box "Backups", a
 //! second one "Locked" that is ticked and disabled, a cycle "Level" of Low,
@@ -27,7 +28,8 @@
 //! Every label has an `_` before the letter that works its gadget, and
 //! that letter is underlined: `b` turns the check box over, `e` steps the
 //! cycle gadget on and Shift-`e` back, `v` moves the slider, `o` presses
-//! OK, `n` gives the name field the keyboard, `a` turns Wrap over. `Locked`
+//! OK, `n` gives the name field the keyboard, `t` and `y` cut and copy,
+//! `a` turns Wrap over. `Locked`
 //! is disabled, so its `l` does nothing and the key reaches the program
 //! instead. A tool button's code is 0, a toggle's its new state.
 //!
@@ -52,6 +54,7 @@ const tx = sdk.gadgets.text;
 const sl = sdk.gadgets.slider;
 const pa = sdk.gadgets.palette;
 const tb = sdk.gadgets.toolbutton;
+const command = sdk.images.command;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
@@ -60,7 +63,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Gadgets";
-const VERSION_STRING = "\x00$VER: Gadgets 1.5 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gadgets 1.6 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOUCH/S";
@@ -86,9 +89,9 @@ const ID_LAST = 9;
 const ID_COLOUR = 10;
 const ID_NEW = 11;
 const ID_FOLDER = 12;
-const ID_PICTURE = 13;
-const ID_SOUND = 14;
-const ID_TRASH = 15;
+const ID_CUT = 13;
+const ID_COPY = 14;
+const ID_PASTE = 15;
 const ID_WRAP = 16;
 
 /// The palette's colours.
@@ -113,9 +116,9 @@ fn nameOf(id: usize) [*:0]const u8 {
         ID_COLOUR => "Colour",
         ID_NEW => "New",
         ID_FOLDER => "Folder",
-        ID_PICTURE => "Picture",
-        ID_SOUND => "Sound",
-        ID_TRASH => "Trash",
+        ID_CUT => "Cut",
+        ID_COPY => "Copy",
+        ID_PASTE => "Paste",
         ID_WRAP => "Wrap",
         else => "?",
     };
@@ -129,12 +132,17 @@ const Shown = struct {
     last: *Object,
 };
 
-/// A tool button with an icon of the system's defaults as its picture.
-fn tool(ib: *IntuitionBase, id: u32, label: [*:0]const u8, icon: [*:0]const u8, size: u32, more: []const TagItem) ?*Object {
+/// The command pictures the tool buttons show, in the order of `Pictures`.
+const commands = [_]u32{ command.CMD_NEW, command.CMD_CUT, command.CMD_COPY, command.CMD_PASTE, command.CMD_WRAP };
+const Pictures = struct { new: *Object, cut: *Object, copy: *Object, paste: *Object, wrap: *Object };
+
+/// A tool button whose picture is a command image (`TOOLBUTTON_Image`)
+/// or an icon of the system's defaults (`TOOLBUTTON_IconName`).
+fn tool(ib: *IntuitionBase, id: u32, label: [*:0]const u8, picture: TagItem, size: u32, more: []const TagItem) ?*Object {
     var tags = [_]TagItem{
         .{ .tag = gc.GA_ID, .data = id },
         .{ .tag = gc.GA_Text, .data = @intFromPtr(label) },
-        .{ .tag = tb.TOOLBUTTON_IconName, .data = @intFromPtr(icon) },
+        picture,
         .{ .tag = tb.TOOLBUTTON_Size, .data = size },
         .{ .tag = sdk.utility.TAG_MORE, .data = @intFromPtr(more.ptr) },
     };
@@ -142,31 +150,35 @@ fn tool(ib: *IntuitionBase, id: u32, label: [*:0]const u8, icon: [*:0]const u8, 
     return ib.NewObjectTagList(null, tb.TOOLBUTTON_CLASS, &tags);
 }
 
+fn image(picture: *Object) TagItem {
+    return .{ .tag = tb.TOOLBUTTON_Image, .data = @intFromPtr(picture) };
+}
+
 /// The row of tool buttons: two large ones, a column of three medium ones
 /// and a small toggle. Null, with whatever was made freed, when one of
-/// them could not be made.
-fn toolRow(ib: *IntuitionBase) ?*Object {
-    const new = tool(ib, ID_NEW, "Ne_w", "ENV:Sys/def_document", tb.TBSIZE_LARGE, &.{});
-    const folder = tool(ib, ID_FOLDER, "_Folder", "ENV:Sys/def_drawer", tb.TBSIZE_LARGE, &.{});
-    const picture = tool(ib, ID_PICTURE, "P_icture", "ENV:Sys/def_picture", tb.TBSIZE_MEDIUM, &.{});
-    const sound = tool(ib, ID_SOUND, "_Sound", "ENV:Sys/def_sound", tb.TBSIZE_MEDIUM, &.{});
-    const trash = tool(ib, ID_TRASH, "_Trash", "ENV:Sys/def_trashcan", tb.TBSIZE_MEDIUM, &.{
+/// them could not be made; the pictures stay the caller's.
+fn toolRow(ib: *IntuitionBase, pictures: Pictures) ?*Object {
+    const new = tool(ib, ID_NEW, "Ne_w", image(pictures.new), tb.TBSIZE_LARGE, &.{});
+    const folder = tool(ib, ID_FOLDER, "_Folder", .{ .tag = tb.TOOLBUTTON_IconName, .data = @intFromPtr("ENV:Sys/def_drawer") }, tb.TBSIZE_LARGE, &.{});
+    const cut = tool(ib, ID_CUT, "Cu_t", image(pictures.cut), tb.TBSIZE_MEDIUM, &.{});
+    const copy = tool(ib, ID_COPY, "Cop_y", image(pictures.copy), tb.TBSIZE_MEDIUM, &.{});
+    const paste = tool(ib, ID_PASTE, "Pa_ste", image(pictures.paste), tb.TBSIZE_MEDIUM, &.{
         .{ .tag = gc.GA_Disabled, .data = 1 },
         .{},
     });
-    const wrap = tool(ib, ID_WRAP, "Wr_ap", "ENV:Sys/def_text", tb.TBSIZE_SMALL, &.{
+    const wrap = tool(ib, ID_WRAP, "Wr_ap", image(pictures.wrap), tb.TBSIZE_SMALL, &.{
         .{ .tag = tb.TOOLBUTTON_Kind, .data = tb.TBKIND_TOGGLE },
         .{ .tag = tb.TOOLBUTTON_Hint, .data = @intFromPtr("Wrap the lines at the window's edge") },
         .{},
     });
-    const parts = [_]?*Object{ new, folder, picture, sound, trash, wrap };
+    const parts = [_]?*Object{ new, folder, cut, copy, paste, wrap };
     var whole = true;
     for (parts) |part| whole = whole and part != null;
     const column = if (whole) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(picture) },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(sound) },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(trash) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(cut) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(copy) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(paste) },
         .{},
     }) else null;
     const row = if (column) |c| ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
@@ -196,8 +208,8 @@ fn toolRow(ib: *IntuitionBase) ?*Object {
 
 /// The layout and everything in it; null, with whatever was made freed,
 /// when one of them could not be made.
-fn build(ib: *IntuitionBase, touch: bool) ?Shown {
-    const tools = toolRow(ib);
+fn build(ib: *IntuitionBase, touch: bool, pictures: Pictures) ?Shown {
+    const tools = toolRow(ib, pictures);
     const name = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_NAME },
         .{ .tag = gc.STRINGA_MaxChars, .data = 40 },
@@ -338,7 +350,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const wanted = [_][*:0]const u8{
         cb.CHECKBOX_LIBRARY, cy.CYCLE_LIBRARY,      rb.RADIO_LIBRARY,
         st.STRING_LIBRARY,   tx.TEXT_LIBRARY,       sl.SLIDER_LIBRARY,
-        pa.PALETTE_LIBRARY,  tb.TOOLBUTTON_LIBRARY,
+        pa.PALETTE_LIBRARY,  tb.TOOLBUTTON_LIBRARY, command.COMMAND_LIBRARY,
     };
     var libraries: [wanted.len]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
@@ -355,7 +367,19 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer ib.UnlockPubScreen(null, screen);
 
-    const shown = build(ib, touch) orelse {
+    // The tool buttons' pictures, the program's: disposed of after the
+    // window object and its buttons, before command.image is closed.
+    var made: [commands.len]?*Object = @splat(null);
+    defer for (made) |picture| ib.DisposeObject(picture);
+    for (commands, 0..) |which, i| {
+        made[i] = ib.NewObjectTagList(null, command.COMMAND_CLASS, &[_]TagItem{ .{ .tag = command.COMMAND_Glyph, .data = which }, .{} }) orelse {
+            _ = Printf(dl, MSG_NOMEMORY, .{});
+            return dos.RETURN_FAIL;
+        };
+    }
+    const pictures = Pictures{ .new = made[0].?, .cut = made[1].?, .copy = made[2].?, .paste = made[3].?, .wrap = made[4].? };
+
+    const shown = build(ib, touch, pictures) orelse {
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };

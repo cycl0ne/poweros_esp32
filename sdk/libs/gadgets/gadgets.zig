@@ -37,6 +37,9 @@ pub const support = @import("support.zig");
 pub const moving = @import("moving.zig");
 /// Degrees without floating point, for the round classes (`angles.zig`).
 pub const angles = @import("angles.zig");
+/// What the drawn pictures - the docklets, the command images - draw
+/// with: smooth shapes in a square, and a palette (`shapes.zig`).
+pub const shapes = @import("shapes.zig");
 
 /// The classes' tags and names, a file each.
 pub const checkbox = @import("checkbox.zig");

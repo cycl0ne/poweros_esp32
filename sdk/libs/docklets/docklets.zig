@@ -37,12 +37,9 @@ const graphics = @import("../graphics/graphics.zig");
 const classes = @import("../intuition/classes.zig");
 const classusr = @import("../intuition/classusr.zig");
 const ic = @import("../intuition/imageclass.zig");
-const sc = @import("../intuition/screens.zig");
 const gadgets = @import("../gadgets/gadgets.zig");
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
-const GraphicsBase = @import("../../interface/graphics.zig").GraphicsBase;
 const TagItem = utility.TagItem;
-const Pen = graphics.Pen;
 const Class = classes.Class;
 const Object = classes.Object;
 
@@ -85,108 +82,10 @@ pub const DOCKLET_Every = DOCKLET_Dummy + 0x04;
 /// non-zero when what it shows changed.
 pub const DOCKLET_Look = DOCKLET_Dummy + 0x05;
 
-/// The pens a docklet draws in: the screen's, and a track between its
-/// text and its ground for what is empty.
-pub const Pens = struct {
-    text: Pen = 0xFF00_0000,
-    shine: Pen = 0xFFFF_FFFF,
-    shadow: Pen = 0xFF00_0000,
-    fill: Pen = 0xFF66_88BB,
-    ground: Pen = 0xFFAA_AAAA,
-    track: Pen = 0xFF80_8080,
-    /// What warns: a battery nearly empty.
-    alarm: Pen = 0xFFD0_3030,
-
-    pub fn of(dri: ?*const sc.DrawInfo) Pens {
-        const info = dri orelse return .{};
-        const p = info.pens;
-        return .{
-            .text = p[sc.TEXTPEN],
-            .shine = p[sc.SHINEPEN],
-            .shadow = p[sc.SHADOWPEN],
-            .fill = p[sc.FILLPEN],
-            .ground = p[sc.BACKGROUNDPEN],
-            .track = gadgets.support.mixPens(p[sc.TEXTPEN], p[sc.BACKGROUNDPEN], 5),
-        };
-    }
-};
-
-/// The square a docklet draws in, and what draws there: every shape with
-/// smooth edges, in the frame's own coordinates - 0 to `size` each way -
-/// so a docklet draws the same at every size.
-pub const Frame = struct {
-    gb: *GraphicsBase,
-    rp: *graphics.RastPort,
-    /// The square's left and top in the RastPort, and how big it is.
-    x: i32,
-    y: i32,
-    size: i32,
-    pens: Pens,
-
-    /// `n` of `d` parts of the size, rounded.
-    pub fn part(f: *const Frame, n: i32, d: i32) i32 {
-        return @divTrunc(f.size * n + @divTrunc(d, 2), d);
-    }
-
-    pub fn pen(f: *const Frame, colour: Pen) void {
-        gadgets.support.setPen(f.gb, f.rp, colour);
-    }
-
-    /// A box from (`x0`, `y0`) up to but not including (`x1`, `y1`).
-    pub fn box(f: *const Frame, x0: i32, y0: i32, x1: i32, y1: i32, colour: Pen) void {
-        if (x1 <= x0 or y1 <= y0) return;
-        f.pen(colour);
-        f.gb.RectFill(f.rp, &.{ .min_x = f.x + x0, .min_y = f.y + y0, .max_x = f.x + x1, .max_y = f.y + y1 });
-    }
-
-    /// The same with corners rounded by `radius`.
-    pub fn roundBox(f: *const Frame, x0: i32, y0: i32, x1: i32, y1: i32, radius: i32, colour: Pen) void {
-        if (x1 <= x0 or y1 <= y0) return;
-        f.pen(colour);
-        f.gb.FillRoundRect(f.rp, &.{ .min_x = f.x + x0, .min_y = f.y + y0, .max_x = f.x + x1, .max_y = f.y + y1 }, @intCast(@max(radius, 0)));
-    }
-
-    /// Its outline, `width` thick, growing inward.
-    pub fn roundOutline(f: *const Frame, x0: i32, y0: i32, x1: i32, y1: i32, radius: i32, width: i32, colour: Pen) void {
-        if (x1 <= x0 or y1 <= y0) return;
-        f.pen(colour);
-        f.gb.SetRPAttrs(f.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = @intCast(@max(width, 1)) }, .{} });
-        defer f.gb.SetRPAttrs(f.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_LineWidth, .data = 1 }, .{} });
-        f.gb.DrawRoundRect(f.rp, &.{ .min_x = f.x + x0, .min_y = f.y + y0, .max_x = f.x + x1, .max_y = f.y + y1 }, @intCast(@max(radius, 0)));
-    }
-
-    /// A wedge of a circle round (`cx`, `cy`) from `from` to `to`
-    /// degrees - 0 to the right, anticlockwise up - out to `radius` and
-    /// in to `inner`: a disc, a pie, a ring or a part of one.
-    pub fn arc(f: *const Frame, cx: i32, cy: i32, radius: i32, inner: i32, from: i32, to: i32, colour: Pen) void {
-        if (radius <= 0) return;
-        f.pen(colour);
-        f.gb.FillArc(f.rp, &.{ .cx = f.x + cx, .cy = f.y + cy, .radius = radius, .inner = @max(inner, 0), .from = from, .to = to });
-    }
-
-    pub fn disc(f: *const Frame, cx: i32, cy: i32, radius: i32, colour: Pen) void {
-        f.arc(cx, cy, radius, 0, 0, 360, colour);
-    }
-
-    /// A shape of straight edges through `points`, filled; its edges are
-    /// not smoothed.
-    pub fn polygon(f: *const Frame, points: []const [2]i32, colour: Pen) void {
-        if (points.len < 3) return;
-        if (!f.gb.InitArea(f.rp, @intCast(points.len + 1))) return;
-        defer _ = f.gb.InitArea(f.rp, 0);
-        f.pen(colour);
-        _ = f.gb.AreaMove(f.rp, f.x + points[0][0], f.y + points[0][1]);
-        for (points[1..]) |p| _ = f.gb.AreaDraw(f.rp, f.x + p[0], f.y + p[1]);
-        _ = f.gb.AreaEnd(f.rp);
-    }
-
-    /// A line one pixel wide.
-    pub fn line(f: *const Frame, x0: i32, y0: i32, x1: i32, y1: i32, colour: Pen) void {
-        f.pen(colour);
-        f.gb.Move(f.rp, f.x + x0, f.y + y0);
-        f.gb.Draw(f.rp, f.x + x1, f.y + y1);
-    }
-};
+/// The pens a docklet draws in, and the square it draws in: the drawn
+/// pictures' own, in `gadgets.shapes`.
+pub const Pens = gadgets.shapes.Pens;
+pub const Frame = gadgets.shapes.Frame;
 
 /// What a docklet is, for `DockletClass`.
 pub fn Spec(comptime Instance: type) type {

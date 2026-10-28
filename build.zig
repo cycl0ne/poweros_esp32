@@ -78,11 +78,13 @@ const image_dirs = [_][]const u8{
     // The classes, opened through LIBS: (the startup-sequence adds this
     // directory to it): gadgets/ for the gadget classes, datatypes/ for
     // the classes that read a file's contents, docklets/ for the dock's
-    // docklets, which it lists from there.
+    // docklets, which it lists from there, images/ for the pictures drawn
+    // to any size.
     "classes",
     "classes/gadgets",
     "classes/datatypes",
     "classes/docklets",
+    "classes/images",
     "devs",
     // The network drivers, opened as networks/<name>.device, and the
     // interfaces C:net/AddNetInterface brings up.

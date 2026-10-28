@@ -61,6 +61,7 @@ const tests = [_][]const u8{
     "engine",      "jpeg",       "keysource",   "usbdevice", "scsi",
     "sound",       "memowner",   "records",     "exall",     "disktest",
     "filetest",    "speed2d",    "windraw",     "semtest",   "membench",
+    "glyphs",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "mountshare", "git" };
 
@@ -158,6 +159,8 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/scrollgroup.gadget", .source = "classes/gadgets/scrollgroup/scrollgroup.zig", .name = "scrollgroup.gadget" },
     .{ .disk = "classes/gadgets/listbrowser.gadget", .source = "classes/gadgets/listbrowser/listbrowser.zig", .name = "listbrowser.gadget" },
     .{ .disk = "classes/gadgets/toolbutton.gadget", .source = "classes/gadgets/toolbutton/toolbutton.zig", .name = "toolbutton.gadget" },
+    // The image classes: pictures drawn to any size.
+    .{ .disk = "classes/images/command.image", .source = "classes/images/command/command.zig", .name = "command.image" },
     // The dock's docklets, in their own drawer: the dock lists it.
     .{ .disk = "classes/docklets/clock.docklet", .source = "classes/docklets/clock/clock.zig", .name = "clock.docklet" },
     .{ .disk = "classes/docklets/battery.docklet", .source = "classes/docklets/battery/battery.zig", .name = "battery.docklet" },
