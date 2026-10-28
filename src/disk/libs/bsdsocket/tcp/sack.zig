@@ -16,18 +16,26 @@
 //! 2883) or past what was sent is not kept.
 //!
 //! A repair begins at the third duplicate acknowledgement, or as soon as
-//! SND.UNA's segment counts as lost: the threshold is halved, the
-//! congestion window set to it, and that segment sent again at once. A
-//! byte counts as lost when more than two segments' worth, or three
-//! blocks, are SACKed past it. From then on what goes out is held to the
-//! window by the pipe - what is still in flight: what was sent past
-//! SND.UNA, less what the peer holds, less what is lost and was not sent
-//! again. Each acknowledgement that shrinks the pipe lets the next lost
-//! stretch go, or new data when nothing lost is left; one that
-//! acknowledges part of what was sent shows SND.UNA's segment missing
-//! too, and sends it at once if it has not gone (RFC 6582). The repair
-//! ends when everything up to where it began (`recover`) is
-//! acknowledged, and the window stays at the threshold.
+//! SND.UNA's segment counts as lost. A duplicate is an acknowledgement
+//! whose blocks name bytes none named before (RFC 6675's), not one that
+//! tells of a segment that came twice: each segment sent again for
+//! nothing brings one of those, and three of them began a repair for
+//! nothing again - close to 800 repairs in three writes of 200 MB to a
+//! NAS whose path puts a segment behind the next now and then. The
+//! threshold is halved, the congestion window set to it, and that
+//! segment sent again at once. A byte counts as lost when more than two
+//! segments' worth, or three blocks, are SACKed past it. From then on
+//! what goes out is held to the window by the pipe - what is still in
+//! flight: what was sent past SND.UNA, less what the peer holds, less
+//! what is lost and was not sent again. Each acknowledgement that
+//! shrinks the pipe lets the next lost stretch go, or new data when
+//! nothing lost is left; one that acknowledges part of what was sent,
+//! while the peer holds bytes past it, shows SND.UNA's segment missing
+//! too, and sends it at once if it has not gone (RFC 6582). With nothing
+//! held past it, the segment that began the repair came late rather than
+//! not at all, and SND.UNA's is only on its way. The repair ends when
+//! everything up to where it began (`recover`) is acknowledged, and the
+//! window stays at the threshold.
 //!
 //! A timeout forgets the blocks - the peer may have let go of what it
 //! held - and everything from SND.UNA goes again; no repair begins until
@@ -109,13 +117,28 @@ pub fn blocks(tcb: *Tcb, into: []Range) usize {
 // --- sending ---------------------------------------------------------------------------
 
 /// The blocks a segment from the peer named, kept: what of each lies
-/// past what `ack` acknowledges, if it ends no later than SND.MAX.
-pub fn record(tcb: *Tcb, named: []const Range, ack: u32) void {
+/// past what `ack` acknowledges, if it ends no later than SND.MAX. True
+/// when one of them names bytes no block named before, which is what
+/// makes an acknowledgement a duplicate one (RFC 6675).
+pub fn record(tcb: *Tcb, named: []const Range, ack: u32) bool {
     const floor = if (_tcp.after(ack, tcb.snd_una)) ack else tcb.snd_una;
+    var more = false;
     for (named) |block| {
         if (!_tcp.before(block.start, block.end) or _tcp.after(block.end, tcb.snd_max) or _tcp.atOrBefore(block.end, floor)) continue;
-        keep(tcb, .{ .start = if (_tcp.before(block.start, floor)) floor else block.start, .end = block.end });
+        const range: Range = .{ .start = if (_tcp.before(block.start, floor)) floor else block.start, .end = block.end };
+        if (!held(tcb, range)) more = true;
+        keep(tcb, range);
     }
+    return more;
+}
+
+/// Whether a block kept holds all of `range`: the blocks are merged, so
+/// one does if they do.
+fn held(tcb: *const Tcb, range: Range) bool {
+    for (tcb.sacked[0..tcb.sacked_count]) |have| {
+        if (_tcp.atOrBefore(have.start, range.start) and _tcp.atOrBefore(range.end, have.end)) return true;
+    }
+    return false;
 }
 
 /// A range merged into what is kept, which stays in order.
@@ -249,12 +272,15 @@ pub fn repair(stack: *StackBase, tcb: *Tcb) void {
     }
 }
 
-/// A partial acknowledgement during a repair: SND.UNA's segment is
-/// missing too, whatever the blocks say (RFC 6582's rule), and is sent at
-/// once unless it has been.
+/// A partial acknowledgement during a repair, while the peer holds bytes
+/// past it: SND.UNA's segment is missing too (RFC 6582's rule), and is
+/// sent at once unless it has been. With nothing held past it, SND.UNA's
+/// segment is only on its way: after a segment that came late rather
+/// than not at all, every acknowledgement until the repair ends is a
+/// partial one.
 pub fn partial(stack: *StackBase, tcb: *Tcb) void {
-    if (_tcp.after(tcb.resend_next, tcb.snd_una)) return;
-    _ = resend(stack, tcb, tcb.snd_una, if (tcb.sacked_count > 0) tcb.sacked[0].start else tcb.snd_max);
+    if (tcb.sacked_count == 0 or _tcp.after(tcb.resend_next, tcb.snd_una)) return;
+    _ = resend(stack, tcb, tcb.snd_una, tcb.sacked[0].start);
 }
 
 /// New data acknowledged during a repair or after a timeout: either is

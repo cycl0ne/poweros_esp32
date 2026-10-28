@@ -1338,6 +1338,112 @@ test "a sender with SACK sends again only the segments the blocks say are missin
     try rig.deinit();
 }
 
+/// One pass over the wire, as `pumpDropping`'s, but each new segment
+/// that is one of `late` comes at the end of the pass, behind the
+/// others - late, not lost - and each that is one of `twice` comes in
+/// its place and again at the end.
+fn pumpReordering(rig: *Rig, sent: *Sent, late: []const usize, twice: []const usize) void {
+    var batch: [128]Packet = undefined;
+    const count = wire_count;
+    @memcpy(batch[0..count], wire[0..count]);
+    wire_count = 0;
+    var held: [8]Packet = undefined;
+    var held_count: usize = 0;
+    for (batch[0..count]) |*packet| {
+        if (packet.to_b) {
+            const tcp = packet.bytes[20..packet.length];
+            if (tcp.len > @as(usize, tcp[12] >> 4) * 4 and sent.note(_ip.get32(tcp, 4)) == 1) {
+                const index = sent.count - 1;
+                const is_late = std.mem.indexOfScalar(usize, late, index) != null;
+                if (is_late or std.mem.indexOfScalar(usize, twice, index) != null) {
+                    held[held_count] = packet.*;
+                    held_count += 1;
+                    if (is_late) continue;
+                }
+            }
+        }
+        rig.deliver(packet);
+    }
+    for (held[0..held_count]) |*packet| rig.deliver(packet);
+}
+
+/// A sends 120 segments to B over a link that `pumpReordering` with
+/// `late` and `twice`: B gets them all, and what A sent is in `sent`.
+fn reorderedTransfer(rig: *Rig, pair: anytype, sent: *Sent, late: []const usize, twice: []const usize) !void {
+    const size: i32 = 256 * 1024;
+    _ = rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_SNDBUF, &size, @sizeOf(i32));
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_RCVBUF, &size, @sizeOf(i32));
+    _ = rig.b.sb.Send(pair.server, "x", 1, 0);
+    rig.pump();
+    var one: [1]u8 = undefined;
+    _ = rig.a.sb.Recv(pair.client, &one, 1, 0);
+    const data = try testing.allocator.alloc(u8, 120 * 1460);
+    defer testing.allocator.free(data);
+    const got = try testing.allocator.alloc(u8, data.len);
+    defer testing.allocator.free(got);
+    for (data, 0..) |*byte, index| byte.* = @truncate(index *% 11 +% index / 200);
+    try testing.expectEqual(@as(i32, @intCast(data.len)), rig.a.sb.Send(pair.client, data.ptr, @intCast(data.len), 0));
+    var received: usize = 0;
+    var now: u64 = rig.a.stack.fixed_time;
+    var rounds: usize = 0;
+    while (received < data.len and rounds < 2000) : (rounds += 1) {
+        pumpReordering(rig, sent, late, twice);
+        while (true) {
+            const taken = rig.b.sb.Recv(pair.server, got[received..].ptr, @intCast(got.len - received), 0);
+            if (taken <= 0) break;
+            received += @intCast(taken);
+        }
+        if (received == data.len) break;
+        now += 1000;
+        if (wire_count == 0) {
+            if (rig.earliest()) |deadline| now = @max(now, deadline);
+        }
+        rig.advance(now);
+    }
+    try testing.expectEqual(data.len, received);
+    try testing.expectEqualSlices(u8, data, got);
+}
+
+test "a segment that comes late goes again once at most, and the repair sends nothing else again" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 108);
+    const client = _tcp.of(socketOf(&rig.a, pair.client));
+    // Behind a dozen others, while more than the window it was in is
+    // sent: the acknowledgement it brings is a partial one.
+    const late = [_]usize{25};
+    var sent: Sent = .{};
+    try reorderedTransfer(&rig, pair, &sent, &late, &.{});
+    // The late one may have gone twice, before it came; every other
+    // segment once. The acknowledgements of the copy began no repair.
+    try testing.expect(sent.count > late[0] + 12);
+    for (sent.times[0..sent.count], 0..) |times, index| {
+        try testing.expectEqual(@as(u32, if (index == late[0]) times else 1), times);
+    }
+    try testing.expect(sent.times[late[0]] <= 2);
+    const counts = rig.a.stack.counts;
+    try testing.expectEqual(@as(u32, 0), counts.tcp_retransmits);
+    try testing.expect(counts.tcp_fast_retransmits <= 1);
+    try testing.expectEqual(@as(u32, 0), client.flags & _tcp.recovering);
+    closeAll(&rig, pair);
+    try rig.deinit();
+}
+
+test "what the peer says of segments that came twice begins no repair" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 109);
+    // Each copy brings an acknowledgement of what was already
+    // acknowledged, while more is in flight.
+    const twice = [_]usize{ 30, 31, 32, 33 };
+    var sent: Sent = .{};
+    try reorderedTransfer(&rig, pair, &sent, &.{}, &twice);
+    for (sent.times[0..sent.count]) |times| try testing.expectEqual(@as(u32, 1), times);
+    const counts = rig.a.stack.counts;
+    try testing.expectEqual(@as(u32, 0), counts.tcp_retransmits);
+    try testing.expectEqual(@as(u32, 0), counts.tcp_fast_retransmits);
+    closeAll(&rig, pair);
+    try rig.deinit();
+}
+
 test "SipHash-2-4 gives the reference answers" {
     const isn = @import("../tcp/isn.zig");
     var key: [16]u8 = undefined;

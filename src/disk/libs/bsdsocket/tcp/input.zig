@@ -382,11 +382,16 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
     if (_tcp.after(seg.ack, tcb.snd_max) or _tcp.before(seg.ack, tcb.snd_una -% tcb.max_snd_wnd)) {
         return challenge(stack, tcb, now);
     }
-    if (seg.block_count > 0 and tcb.flags & _tcp.sack_ok != 0) sack.record(tcb, seg.blocks[0..seg.block_count], seg.ack);
+    const sack_ok = tcb.flags & _tcp.sack_ok != 0;
+    const sacked_more = seg.block_count > 0 and sack_ok and sack.record(tcb, seg.blocks[0..seg.block_count], seg.ack);
+    // A duplicate acknowledgement: with SACK, one that names bytes no
+    // block named before (RFC 6675) - not one that tells of a segment
+    // that came twice (RFC 2883), which a segment sent again for nothing
+    // brings, and three of which began a repair for nothing again.
     if (_tcp.after(seg.ack, tcb.snd_una)) {
         acknowledged(stack, tcb, seg.ack, now);
     } else if (seg.ack == tcb.snd_una and seg.data.len == 0 and seg.flags & (_tcp.SYN | _tcp.FIN) == 0 and
-        (seg.window == tcb.snd_wnd or seg.block_count > 0) and tcb.snd_una != tcb.snd_max)
+        (if (sack_ok) sacked_more else seg.window == tcb.snd_wnd) and tcb.snd_una != tcb.snd_max)
     {
         timers.duplicate(stack, tcb);
     }
