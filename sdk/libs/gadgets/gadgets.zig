@@ -78,3 +78,4 @@ pub const textedit = @import("textedit.zig");
 pub const scrollgroup = @import("scrollgroup.zig");
 pub const listbrowser = @import("listbrowser.zig");
 pub const toolbutton = @import("toolbutton.zig");
+pub const ribbon = @import("ribbon.zig");

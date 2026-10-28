@@ -65,6 +65,8 @@ const scrollgroup = @import("../scrollgroup/scrollgroup.zig");
 const listbrowser = @import("../listbrowser/listbrowser.zig");
 const toolbutton = @import("../toolbutton/toolbutton.zig");
 const tbg = sdk.gadgets.toolbutton;
+const ribbon = @import("../ribbon/ribbon.zig");
+const rbn = sdk.gadgets.ribbon;
 const lbr = sdk.gadgets.listbrowser;
 const sgc = sdk.gadgets.scrollgroup;
 const pgc = sdk.gadgets.page;
@@ -3118,5 +3120,202 @@ test "toolbutton.gadget: flat at rest, its border under the pointer, sunk while 
     try testing.expect(ib.CloseScreen(screen));
     display.down(rig.kib);
     ib.DisposeObject(button);
+    try rig.down();
+}
+
+test "ribbon.gadget: a large tool button the whole height, the rest in columns of three, each as wide as its widest" {
+    // A large button; two medium ones that can be wider and a small one
+    // that cannot, three to a column; one more small one in a column of
+    // its own.
+    const entries = [_]ribbon.Entry{
+        .{ .width = 40, .height = 60, .most = 40, .large = true },
+        .{ .width = 50, .height = 18, .most = gc.GDOMAIN_UNLIMITED },
+        .{ .width = 70, .height = 18, .most = gc.GDOMAIN_UNLIMITED },
+        .{ .width = 20, .height = 18, .most = 20 },
+        .{ .width = 24, .height = 18, .most = 24 },
+    };
+    // Three rows of 18 and the room between them are 58: the large button
+    // is taller, and the room is its height.
+    try testing.expectEqual(@as(i32, 3 * 18 + 2 * ribbon.row_gap), ribbon.roomHeight(30, 18));
+    const room = ribbon.roomHeight(60, 18);
+    try testing.expectEqual(@as(i32, 60), room);
+    var spots: [entries.len]gc.Box = undefined;
+    const width = ribbon.arrange(&entries, room, &spots);
+    const gap = ribbon.column_gap;
+    try testing.expectEqual(gc.Box{ .left = 0, .top = 0, .width = 40, .height = 60 }, spots[0]);
+    // Each in the middle of its third of the height - 10, 30 and 50 - the
+    // medium ones as wide as the column, the small one as it is.
+    try testing.expectEqual(gc.Box{ .left = 40 + gap, .top = 1, .width = 70, .height = 18 }, spots[1]);
+    try testing.expectEqual(gc.Box{ .left = 40 + gap, .top = 21, .width = 70, .height = 18 }, spots[2]);
+    try testing.expectEqual(gc.Box{ .left = 40 + gap, .top = 41, .width = 20, .height = 18 }, spots[3]);
+    // Alone in its column: in the middle of the whole height.
+    try testing.expectEqual(gc.Box{ .left = 40 + gap + 70 + gap, .top = 21, .width = 24, .height = 18 }, spots[4]);
+    try testing.expectEqual(@as(i32, 40 + gap + 70 + gap + 24), width);
+}
+
+fn ribbonTool(ib: *IntuitionBase, id: usize, label: [*:0]const u8, size: u32) *Object {
+    return ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = id },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr(label) },
+        .{ .tag = tbg.TOOLBUTTON_Size, .data = size },
+        .{},
+    }).?;
+}
+
+test "ribbon.gadget: the groups of the tab in front that fit are its members, below the row; a tab is the ribbon's to press, and its key and the wheel turn to it" {
+    var heard = Heard{ .tag = rbn.RIBBON_Current, .ib = undefined };
+    var rig = try Rig.up(&ribbon.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const tools_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &toolbutton.Library.resident_tag, null).?));
+    // The window first, so that there is a screen and its font to measure
+    // in. The ribbon is larger than the display: what lies outside the
+    // window is not drawn, and is laid out and pressed all the same.
+    const display = try Display.up(rig.kib);
+    const wn = intuition.windows;
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+
+    // Home: a large button and two medium ones, then a group of one wide
+    // button; Insert: a framed button, as any gadget can be an entry.
+    const paste = ribbonTool(ib, 10, "_Paste", tbg.TBSIZE_LARGE);
+    const cut = ribbonTool(ib, 11, "Cu_t", tbg.TBSIZE_MEDIUM);
+    const copy = ribbonTool(ib, 12, "_Copy", tbg.TBSIZE_MEDIUM);
+    const bold = ribbonTool(ib, 13, "_Bold letters, as wide as a group gets", tbg.TBSIZE_MEDIUM);
+    const sum = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("Sum") },
+        .{ .tag = gc.GA_ID, .data = 20 },
+        .{ .tag = gc.GA_Key, .data = 's' },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{},
+    }).?;
+    const clipboard = [_:null]?*Object{ paste, cut, copy };
+    const font = [_:null]?*Object{bold};
+    const data = [_:null]?*Object{sum};
+    const home = [_]rbn.RibbonGroup{ .{ .label = "Clipboard", .items = &clipboard }, .{ .label = "Font", .items = &font }, .{} };
+    const insert = [_]rbn.RibbonGroup{ .{ .label = "Data", .items = &data }, .{} };
+    const tabs = [_]rbn.RibbonTab{ .{ .label = "_Home", .groups = &home }, .{ .label = "I_nsert", .groups = &insert }, .{} };
+    const bar = ib.NewObjectTagList(null, rbn.RIBBON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 7 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{ .tag = rbn.RIBBON_Tabs, .data = @intFromPtr(&tabs) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 2), attr(ib, bar, rbn.RIBBON_NumTabs));
+    try testing.expectEqual(@as(usize, 0), attr(ib, bar, rbn.RIBBON_Current));
+
+    // Made the size it looks right at, as tall with either tab in front.
+    // At the least it is as wide as the row of tabs and the widest first
+    // group, which leaves the second group of Home out.
+    const looks = domainOf(ib, bar, gc.GDOMAIN_NOMINAL);
+    const least = domainOf(ib, bar, gc.GDOMAIN_MINIMUM);
+    try testing.expectEqual(@as(usize, @intCast(looks.width)), attr(ib, bar, gc.GA_Width));
+    try testing.expectEqual(@as(usize, @intCast(looks.height)), attr(ib, bar, gc.GA_Height));
+    try testing.expectEqual(looks.height, least.height);
+    try testing.expect(least.width < looks.width);
+    _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = rbn.RIBBON_Current, .data = 1 }, .{} });
+    try testing.expectEqual(looks, domainOf(ib, bar, gc.GDOMAIN_NOMINAL));
+    _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = rbn.RIBBON_Current, .data = 0 }, .{} });
+
+    // Put in the window at its least width, and laid out there.
+    _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = gc.GA_Width, .data = @intCast(least.width) }, .{} });
+    _ = ib.AddGList(w, bar, -1, 1);
+    // The large button stands the whole room high, below the row; the
+    // medium ones in a column beside it, as wide as each other and inside
+    // its height.
+    const p = gc.gadget(paste).*;
+    const c = gc.gadget(cut).*;
+    const y = gc.gadget(copy).*;
+    try testing.expect(p.top > 8);
+    try testing.expect(p.height > 2 * c.height);
+    try testing.expectEqual(c.left, y.left);
+    try testing.expectEqual(c.width, y.width);
+    try testing.expect(c.left > p.left + p.width);
+    try testing.expect(c.top >= p.top and y.top + y.height <= p.top + p.height);
+    try testing.expect(c.top + c.height <= y.top);
+
+    // Only Clipboard fits: its keys work, Font's and Insert's do not.
+    var termination: i32 = -1;
+    var key_p = keyed('p', 0, &termination);
+    var key_b = keyed('b', 0, &termination);
+    var key_s = keyed('s', 0, &termination);
+    try testing.expect(ib.SendMessage(bar, @ptrCast(&key_p)) != gc.GMKR_NOTHING);
+    try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(bar, @ptrCast(&key_b)));
+    try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(bar, @ptrCast(&key_s)));
+
+    // A point over Cut is Cut's; along the row, only the tabs are the
+    // ribbon's. The second tab is where the second run of them starts.
+    var over_cut = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = c.left + 2, .y = c.top + 2 } };
+    try testing.expectEqual(gc.GMR_GADGETHIT, ib.SendMessage(bar, @ptrCast(&over_cut)));
+    var second: i32 = -1;
+    var runs: u32 = 0;
+    var was = false;
+    var x: i32 = 0;
+    while (x < least.width) : (x += 1) {
+        var along = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = x, .y = 3 } };
+        const is = ib.SendMessage(bar, @ptrCast(&along)) == gc.GMR_GADGETHIT;
+        if (is and !was) {
+            runs += 1;
+            if (runs == 2) {
+                second = x;
+                break;
+            }
+        }
+        was = is;
+    }
+    try testing.expect(second > 0);
+
+    // A press on it turns to Insert at once and is done with: the tab's
+    // number is the code, and the target hears it with the ribbon's ID.
+    termination = -1;
+    var down = input(gc.GM_GOACTIVE, &press, second + 1, 3, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(bar, @ptrCast(&down)));
+    try testing.expectEqual(@as(i32, 1), termination);
+    try testing.expectEqual(@as(usize, 1), attr(ib, bar, rbn.RIBBON_Current));
+    try testing.expectEqual(@as(?usize, 1), heard.value);
+    try testing.expectEqual(@as(?usize, 7), heard.id);
+    var done = gc.GpGoInactive{ .gadget_info = null, .abort = 0 };
+    _ = ib.SendMessage(bar, @ptrCast(&done));
+    // Insert's entries are the members now.
+    try testing.expect(ib.SendMessage(bar, @ptrCast(&key_s)) != gc.GMKR_NOTHING);
+    try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(bar, @ptrCast(&key_p)));
+
+    // The wheel over the row: up, back to Home; up again, nothing before
+    // the first. Over the page it is the page's.
+    var code: i32 = -1;
+    var wheel_up = gc.GpWheel{ .mouse = .{ .x = 2, .y = 3 }, .down = -1, .termination = &code };
+    try testing.expectEqual(gc.GMWR_VERIFY, ib.SendMessage(bar, @ptrCast(&wheel_up)));
+    try testing.expectEqual(@as(i32, 0), code);
+    try testing.expectEqual(gc.GMWR_TAKEN, ib.SendMessage(bar, @ptrCast(&wheel_up)));
+    try testing.expectEqual(@as(usize, 0), attr(ib, bar, rbn.RIBBON_Current));
+
+    // The key a tab's name marks turns to it, and is the ribbon's.
+    termination = -1;
+    var key_n = keyed('n', 0, &termination);
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(bar, @ptrCast(&key_n)));
+    try testing.expectEqual(@as(i32, 1), termination);
+    try testing.expectEqual(@as(usize, 1), attr(ib, bar, rbn.RIBBON_Current));
+
+    // Set in the window: Home put where it was and drawn.
+    _ = ib.SetGadgetAttrsTagList(bar, w, &[_]TagItem{ .{ .tag = rbn.RIBBON_Current, .data = 0 }, .{} });
+    try testing.expectEqual(p.top, gc.gadget(paste).top);
+    try testing.expectEqual(c.left, gc.gadget(cut).left);
+    ib.RefreshGList(bar, w, 1);
+
+    _ = ib.RemoveGList(w, bar, 1);
+    const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
+    ib.CloseWindow(w);
+    try testing.expect(ib.CloseScreen(screen));
+    display.down(rig.kib);
+    // Every entry goes with it, of either tab, member or not: the tool
+    // buttons' class has no objects left, so its library goes.
+    ib.DisposeObject(bar);
+    _ = kexec.SysBase.iface().RemLibrary(tools_lib);
+    try testing.expect(ib.FindClass(tools_lib.name().ptr) == null);
     try rig.down();
 }
