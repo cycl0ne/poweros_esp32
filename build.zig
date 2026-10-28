@@ -646,7 +646,16 @@ pub fn build(b: *std.Build) void {
         disks.addPrefixedFileArg(b.fmt("{s}=", .{file.path}), b.path(file.host));
     }
     for (extras) |extra| {
-        disks.addPrefixedFileArg(b.fmt("{s}=", .{extra.path}), .{ .cwd_relative = extra.host });
+        const host: std.Build.LazyPath = .{ .cwd_relative = extra.host };
+        for (disks.runs, DiskImages.chips, DiskImages.virt_disks) |run, chip, virt| {
+            if (extra.only) |only| {
+                if (only.contains(chip)) {
+                    run.addPrefixedFileArg(b.fmt("{s}=", .{extra.path}), host);
+                } else if (extra.virt and virt) {
+                    run.addPrefixedFileArg(b.fmt("--gpt-file={s}=", .{extra.path}), host);
+                }
+            } else run.addPrefixedFileArg(b.fmt("{s}=", .{extra.path}), host);
+        }
     }
     b.getInstallStep().dependOn(&b.addInstallBinFile(disk_bin, "disk.bin").step);
     b.getInstallStep().dependOn(&b.addInstallBinFile(p4_disk_bin, "disk-esp32p4.bin").step);
@@ -1108,12 +1117,18 @@ pub fn build(b: *std.Build) void {
 }
 
 /// One `-Dextra` file: where it goes on the disk image, which file on
-/// the host it is, and the directories that have to be made for it.
+/// the host it is, the chips whose images take it, and the directories
+/// that have to be made for it.
 const Extra = struct {
     /// Its path in the volume's root, e.g. "c/dm" or "dm/GRAPHICS.DAT".
     path: []const u8,
     /// The file on the host, as the option gave it.
     host: []const u8,
+    /// The chips whose disk images it goes on; null for every image.
+    only: ?std.EnumSet(Chip) = null,
+    /// `virt:`: on the virt machines' system disks as well, and on
+    /// nothing else of their chips.
+    virt: bool = false,
     /// The directories above `path` that the image does not have yet,
     /// outermost first. Only the first file that needs one names it.
     dirs: []const []const u8,
@@ -1126,31 +1141,72 @@ const Extra = struct {
 /// -Dextra=dm/GRAPHICS.DAT=../dmzig/assets/GRAPHICS.DAT` - without this
 /// tree knowing anything about it.
 ///
+/// A file goes on every chip's image unless the entry starts with the
+/// images it is for and a colon: chips by `Chip`'s names, and `virt` for
+/// the virt machines' system disks alone (`system-rv64.bin`,
+/// `system-a64.bin`, mkfs's `--gpt-file`).
+/// `-Dextra=rv64sbi:c/tool=<file>` puts a program on the RISC-V 64 disks
+/// only; `-Dextra=virt:Music/song.mp3=<file>` a song on the SSDs QEMU
+/// starts from, which have room where the boards' flash disks have none.
+///
 /// The directories a path needs are made for it, and the ones the image
-/// already has are left alone.
+/// already has are left alone. They are made on every image, whichever
+/// the file is for: an empty drawer costs a block, and one path then
+/// never needs a drawer on one image that another file made on another.
 fn extraFiles(b: *std.Build, made: *std.ArrayList([]const u8)) []const Extra {
     const given = b.option(
         []const []const u8,
         "extra",
-        "A file from outside this tree on the disk image: <path on the disk>=<file on the host>, given once per file",
+        "A file from outside this tree on the disk image: [<chip>|virt,...:]<path on the disk>=<file on the host>, given once per file",
     ) orelse return &.{};
 
     var extras: std.ArrayList(Extra) = .empty;
     for (given) |entry| {
         const split = std.mem.indexOfScalar(u8, entry, '=') orelse
             std.debug.panic("-Dextra={s}: no '=' between the path on the disk and the file on the host", .{entry});
-        const path = std.mem.trim(u8, entry[0..split], "/");
+        // The chips it is for, before a colon in what comes before the '='.
+        var only: ?std.EnumSet(Chip) = null;
+        var virt = false;
+        var start: usize = 0;
+        if (std.mem.indexOfScalar(u8, entry[0..split], ':')) |colon| {
+            var chips = std.EnumSet(Chip).initEmpty();
+            var names = std.mem.splitScalar(u8, entry[0..colon], ',');
+            while (names.next()) |name| {
+                if (std.mem.eql(u8, name, "virt")) {
+                    virt = true;
+                    continue;
+                }
+                const chip = std.meta.stringToEnum(Chip, name) orelse
+                    std.debug.panic("-Dextra={s}: no image '{s}' - virt, or a chip: {s}", .{ entry, name, chipNames(b) });
+                chips.insert(chip);
+            }
+            only = chips;
+            start = colon + 1;
+        }
+        const path = std.mem.trim(u8, entry[start..split], "/");
         const host = entry[split + 1 ..];
         if (path.len == 0 or host.len == 0)
-            std.debug.panic("-Dextra={s}: it is <path on the disk>=<file on the host>", .{entry});
+            std.debug.panic("-Dextra={s}: it is [<chip>|virt,...:]<path on the disk>=<file on the host>", .{entry});
 
         extras.append(b.allocator, .{
             .path = path,
             .host = host,
+            .only = only,
+            .virt = virt,
             .dirs = dirsFor(b, made, path, false),
         }) catch @panic("OOM");
     }
     return extras.toOwnedSlice(b.allocator) catch @panic("OOM");
+}
+
+/// `Chip`'s names, for a message.
+fn chipNames(b: *std.Build) []const u8 {
+    var names: std.ArrayList(u8) = .empty;
+    for (std.enums.values(Chip), 0..) |chip, i| {
+        if (i != 0) names.appendSlice(b.allocator, ", ") catch @panic("OOM");
+        names.appendSlice(b.allocator, @tagName(chip)) catch @panic("OOM");
+    }
+    return names.items;
 }
 
 /// The directories `path` needs that nothing has made yet, outermost
@@ -1439,6 +1495,10 @@ const DiskImages = struct {
     /// How long a pointer is on each run's chip, in the order of `runs`:
     /// the ESP32-S3's and the ESP32-P4's, then RISC-V 64's and AArch64's.
     const pointer_bytes = [4]u32{ 4, 4, 8, 8 };
+    /// Each run's chip, and whether it writes a virt machine's system
+    /// disk as well (`--gpt`), in the same order.
+    const chips = [4]Chip{ .esp32s3, .esp32p4, .rv64sbi, .a64psci };
+    const virt_disks = [4]bool{ false, false, true, true };
 
     fn addArg(images: DiskImages, arg: []const u8) void {
         for (images.runs) |run| run.addArg(arg);
