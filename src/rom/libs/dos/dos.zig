@@ -844,6 +844,8 @@ const FakeFs = struct {
     var args: [7]isize = @splat(0);
     /// The last SEEK or SET_FILE_SIZE's arguments, read through its view.
     var seek: dos.SeekArgs = .{ .fh = null, .position = 0, .mode = 0 };
+    /// The last COPY_FH's arguments, read through its view.
+    var copied: dos.CopyArgs = .{ .to = null, .from = null, .length = 0 };
     /// The last LOCK_RECORD's arguments, read through its view.
     var record_args: dos.LockRecordArgs = undefined;
     /// The LOCK_RECORDs and FREE_RECORDs that came, in order.
@@ -854,7 +856,7 @@ const FakeFs = struct {
     var refuse_at: u64 = ~@as(u64, 0);
     /// ACTION_SAME_LOCK's answer; null: not known.
     var same: ?bool = null;
-    /// READ, WRITE, SEEK, SET_FILE_SIZE and END fail.
+    /// READ, WRITE, SEEK, SET_FILE_SIZE, END and COPY_FH fail.
     var io_fail: bool = false;
     /// INHIBIT and FORMAT are refused ERROR_OBJECT_IN_USE.
     var in_use: bool = false;
@@ -982,6 +984,13 @@ const FakeFs = struct {
             .end => if (io_fail) {
                 res2 = dos.ERROR_DISK_FULL;
             } else {
+                res1 = dos.DOSTRUE;
+            },
+            .copy_fh => if (io_fail) {
+                res2 = dos.ERROR_DISK_FULL;
+            } else {
+                copied = pkt.args.copy;
+                pkt.args.copy.answer = pkt.args.copy.length; // all of it
                 res1 = dos.DOSTRUE;
             },
             .lock_record, .free_record => {
@@ -1267,6 +1276,70 @@ test "Read, Write, Seek: the handler's answers; -1 with IoErr; Close" {
     try testing.expectEqual(dos.ERROR_INVALID_LOCK, dl.IoErr());
     try testing.expect(!dl.Close(fh)); // END fails; the handle is freed all the same
     try testing.expectEqual(dos.ERROR_DISK_FULL, dl.IoErr());
+    try tearDown(db);
+}
+
+test "CopyFH: both handles and the length to their handler, the buffers flushed first; -1 with IoErr" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try FakeFs.mount(db, &tp);
+    const in = dl.Open("FS:a", dos.MODE_OLDFILE).?;
+    const out = dl.Open("FS:b", dos.MODE_NEWFILE).?;
+
+    // A byte waiting in the buffer is written before the copy, and a
+    // length past 32 bits goes to the handler whole.
+    try testing.expectEqual(@as(i32, 'x'), dl.FPutC(out, 'x'));
+    var calls = FakeFs.calls;
+    try testing.expectEqual(@as(i64, 6 << 30), dl.CopyFH(out, in, 6 << 30));
+    try testing.expectEqual(calls + 2, FakeFs.calls); // WRITE, then COPY_FH
+    try testing.expectEqual(dos.ActionCode.copy_fh, FakeFs.action);
+    try testing.expectEqual(@as(?*FileHandle, out), FakeFs.copied.to);
+    try testing.expectEqual(@as(?*FileHandle, in), FakeFs.copied.from);
+    try testing.expectEqual(@as(u64, 6 << 30), FakeFs.copied.length);
+
+    // Nothing to copy, a bad length, no handle, a handle on another
+    // handler: no packet.
+    calls = FakeFs.calls;
+    try testing.expectEqual(@as(i64, 0), dl.CopyFH(out, in, 0));
+    try testing.expectEqual(@as(i64, -1), dl.CopyFH(out, in, -1));
+    try testing.expectEqual(dos.ERROR_BAD_NUMBER, dl.IoErr());
+    try testing.expectEqual(@as(i64, -1), dl.CopyFH(null, in, 1));
+    try testing.expectEqual(dos.ERROR_INVALID_LOCK, dl.IoErr());
+    var elsewhere: MsgPort = undefined;
+    var stray: FileHandle = .{ .task = &elsewhere };
+    try testing.expectEqual(@as(i64, -1), dl.CopyFH(&stray, in, 1));
+    try testing.expectEqual(dos.ERROR_ACTION_NOT_KNOWN, dl.IoErr());
+    try testing.expectEqual(calls, FakeFs.calls);
+
+    FakeFs.io_fail = true;
+    try testing.expectEqual(@as(i64, -1), dl.CopyFH(out, in, 10));
+    try testing.expectEqual(dos.ERROR_DISK_FULL, dl.IoErr());
+    FakeFs.io_fail = false;
+    try testing.expect(dl.Close(out));
+    try testing.expect(dl.Close(in));
+    try tearDown(db);
+}
+
+test "CopyFH: a handler without COPY_FH leaves the copy to the caller" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    try makeFile(dl, "RAMT:a", 100);
+    const in = dl.Open("RAMT:a", dos.MODE_OLDFILE).?;
+    const out = dl.Open("RAMT:b", dos.MODE_NEWFILE).?;
+    try testing.expectEqual(@as(i64, -1), dl.CopyFH(out, in, 100));
+    try testing.expectEqual(dos.ERROR_ACTION_NOT_KNOWN, dl.IoErr());
+    try testing.expect(dl.Close(out));
+    try testing.expect(dl.Close(in));
+    RamFs.disk.deinit();
     try tearDown(db);
 }
 

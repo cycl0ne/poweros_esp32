@@ -99,6 +99,22 @@ bytes than asked without being the end. `OpenFromLock`, `DupLockFromFH`,
 `ParentOfFH`, `ExamineFH` and `NameFromFH` lead from a lock to an open
 file and back; `SetFileSize` cuts or grows a file.
 
+`CopyFH(to, from, length)` asks the handler both files are on to copy
+the bytes itself: on a network share (smb-handler) the server copies
+them, and they never cross the network. It answers the bytes copied, 0
+at `from`'s end, or -1; `ERROR_ACTION_NOT_KNOWN` means it cannot - the
+files are on two handlers, or theirs does not copy - and the caller
+copies them with `Read` and `Write`, from the positions it stopped at.
+C:Copy and the desktop ask in pieces of 16 MiB, so Ctrl-C and Stop are
+seen between them.
+
+```zig
+const copied = dl.CopyFH(to, from, 16 << 20);
+if (copied < 0 and dl.IoErr() == dos.ERROR_ACTION_NOT_KNOWN) {
+    // Read and Write, as above
+}
+```
+
 ### A file's digest: C:Hash
 
 `C:Hash FILE/M,ALGO/K,CHECK/S,TO/K,ALL/S,QUIET/S` writes a line for each

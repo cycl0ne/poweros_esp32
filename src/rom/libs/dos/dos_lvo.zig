@@ -172,6 +172,7 @@ const Format = @import("lock/format.zig").Format;
 const MakeLink = @import("lock/makelink.zig").MakeLink;
 const ReadLink = @import("lock/readlink.zig").ReadLink;
 const FormatTags = @import("lock/formattags.zig").FormatTags;
+const CopyFH = @import("file/copyfh.zig").CopyFH;
 
 /// dos.library's interface, as the SDK generates it from sdk/fd/dos_lib.fd.
 const interface = sdk.interface.dos;
@@ -350,6 +351,7 @@ const contract_files = [_][]const u8{
     @embedFile("lock/makelink.zig"),
     @embedFile("lock/readlink.zig"),
     @embedFile("lock/formattags.zig"),
+    @embedFile("file/copyfh.zig"),
 };
 
 fn lvoDoPkt(db: *DosBase, port: *MsgPort, action: i32, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize) callconv(.c) isize {
@@ -793,6 +795,9 @@ fn lvoReadLink(db: *DosBase, port: *MsgPort, lock: ?*FileLock, path: [*:0]const 
 fn lvoFormatTags(db: *DosBase, drive: [*:0]const u8, name: ?[*:0]const u8, dos_type: u32, tags: ?[*]const TagItem) callconv(.c) bool {
     return FormatTags(db, drive, name, dos_type, tags);
 }
+fn lvoCopyFH(db: *DosBase, to: ?*FileHandle, from: ?*FileHandle, length: i64) callconv(.c) i64 {
+    return CopyFH(db, to, from, length);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -948,6 +953,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoMakeLink),
     vec(lvoReadLink),
     vec(lvoFormatTags),
+    vec(lvoCopyFH),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -955,7 +961,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 151), vectors.len);
+    try testing.expectEqual(@as(usize, 152), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

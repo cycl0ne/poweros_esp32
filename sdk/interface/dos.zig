@@ -165,6 +165,7 @@ pub const LVO = struct {
     pub const MakeLink = libraries.lvo(148);
     pub const ReadLink = libraries.lvo(149);
     pub const FormatTags = libraries.lvo(150);
+    pub const CopyFH = libraries.lvo(151);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -317,6 +318,7 @@ pub const Fn = struct {
     pub const MakeLink = *const fn (*DosBase, [*:0]const u8, usize, bool) callconv(.c) bool;
     pub const ReadLink = *const fn (*DosBase, *exec.MsgPort, ?*dos.FileLock, [*:0]const u8, [*]u8, u32) callconv(.c) i32;
     pub const FormatTags = *const fn (*DosBase, [*:0]const u8, ?[*:0]const u8, u32, ?[*]const utility.TagItem) callconv(.c) bool;
+    pub const CopyFH = *const fn (*DosBase, ?*dos.FileHandle, ?*dos.FileHandle, i64) callconv(.c) i64;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1234,5 +1236,14 @@ pub const DosBase = opaque {
     /// IoErr.
     pub fn FormatTags(self: *DosBase, drive: [*:0]const u8, name: ?[*:0]const u8, dos_type: u32, tags: ?[*]const utility.TagItem) bool {
         return libraries.call(self, LVO.FormatTags, Fn.FormatTags, .{ drive, name, dos_type, tags });
+    }
+
+    /// Up to `length` bytes from `from`'s position into `to`'s, both on one
+    /// handler, copied by it without passing through the caller; both
+    /// positions move on. The bytes copied, 0 at `from`'s end, or -1 with
+    /// IoErr - ERROR_ACTION_NOT_KNOWN when the handler cannot, and the caller
+    /// copies them itself. 64 bits on every machine.
+    pub fn CopyFH(self: *DosBase, to: ?*dos.FileHandle, from: ?*dos.FileHandle, length: i64) i64 {
+        return libraries.call(self, LVO.CopyFH, Fn.CopyFH, .{ to, from, length });
     }
 };

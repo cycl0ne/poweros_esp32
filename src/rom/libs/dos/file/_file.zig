@@ -6,7 +6,8 @@
 //! Open and OpenFromLock make a FileHandle and ask the file's handler to
 //! fill it in; Close gives it back. Read, Write and Seek send one packet
 //! each - ACTION_READ, ACTION_WRITE, ACTION_SEEK - and so do SetFileSize,
-//! DupLockFromFH and ParentOfFH. Every packet about an open file carries
+//! DupLockFromFH, ParentOfFH and CopyFH, which has a file's handler copy
+//! bytes into another of its files. Every packet about an open file carries
 //! the FileHandle, so a handler with many files open knows which one is
 //! meant. Read and Write answer a count (0 at the end) or -1, Seek the old
 //! position or -1, and IoErr() holds the reason for a -1. A position is 64
@@ -41,8 +42,8 @@
 //! be read.
 //!
 //! The unbuffered calls keep to the same buffer: Read gives the
-//! buffered bytes first, Write, Seek, SetFileSize, ExamineFH and Close
-//! flush. So buffered and unbuffered calls mix on one handle, and
+//! buffered bytes first, Write, Seek, SetFileSize, CopyFH, ExamineFH and
+//! Close flush. So buffered and unbuffered calls mix on one handle, and
 //! Seek(fh, 0, OFFSET_CURRENT) is always the caller's position.
 //!
 //! Line buffering (BUF_LINE, where every handle starts) writes out at '\n'

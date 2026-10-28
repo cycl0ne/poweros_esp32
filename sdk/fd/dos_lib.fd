@@ -514,4 +514,11 @@ i32 ReadLink(*exec.MsgPort port, ?*dos.FileLock lock, [*:0]const u8 path, [*]u8 
 /// Format with a tag list (FORMAT_*), null for none: true, or false with
 /// IoErr.
 bool FormatTags([*:0]const u8 drive, ?[*:0]const u8 name, u32 dos_type, ?[*]const utility.TagItem tags)
+// Files, copied by their handler
+/// Up to `length` bytes from `from`'s position into `to`'s, both on one
+/// handler, copied by it without passing through the caller; both
+/// positions move on. The bytes copied, 0 at `from`'s end, or -1 with
+/// IoErr - ERROR_ACTION_NOT_KNOWN when the handler cannot, and the caller
+/// copies them itself. 64 bits on every machine.
+i64 CopyFH(?*dos.FileHandle to, ?*dos.FileHandle from, i64 length)
 ##end

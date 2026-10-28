@@ -43,6 +43,7 @@ const spnego = @import("spnego.zig");
 const signing = @import("signing.zig");
 const negotiate_area = @import("negotiate.zig");
 const session_area = @import("session.zig");
+const commands = @import("commands.zig");
 const Session = session_area.Session;
 const Reply = session_area.Reply;
 
@@ -244,18 +245,7 @@ fn validateNegotiate(session: *Session) session_area.Error!bool {
     const writer = &request.writer;
     const dialects = negotiate_area.dialects;
     const input_length: u32 = 4 + 16 + 2 + 2 + 2 * dialects.len;
-    writer.uint16(57);
-    writer.uint16(0);
-    writer.uint32(0x0014_0204); // FSCTL_VALIDATE_NEGOTIATE_INFO
-    writer.raw(&session_area.related_file);
-    writer.uint32(wire.header_size + 56); // InputOffset
-    writer.uint32(input_length);
-    writer.uint32(0); // MaxInputResponse
-    writer.uint32(0); // OutputOffset
-    writer.uint32(0); // OutputCount
-    writer.uint32(24); // MaxOutputResponse
-    writer.uint32(1); // Flags: an FSCTL
-    writer.uint32(0);
+    commands.ioctl(&request, commands.FSCTL_VALIDATE_NEGOTIATE_INFO, &session_area.related_file, input_length, 24);
     writer.uint32(negotiate_area.capabilities);
     writer.raw(&session.client_guid);
     writer.uint16(negotiate_area.SIGNING_ENABLED);
@@ -265,10 +255,7 @@ fn validateNegotiate(session: *Session) session_area.Error!bool {
     try session.exchange(&request, &replies);
     const reply = &replies[0];
     if (reply.failed()) return true;
-    var fields = reply.body();
-    const head = fields.take(48) orelse return error.Protocol;
-    if (wire.u16At(head, 0) != 49) return error.Protocol;
-    const out = fields.bufferAt(wire.u32At(head, 32), wire.u32At(head, 36)) orelse return error.Protocol;
+    const out = commands.ioctlOutput(reply) orelse return error.Protocol;
     if (out.len < 24) return false;
     return wire.u32At(out, 0) == session.server_capabilities and
         wire.same(out[4..20], &session.server_guid) and

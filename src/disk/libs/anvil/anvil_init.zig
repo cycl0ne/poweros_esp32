@@ -13,7 +13,7 @@ const anvil_lvo = @import("anvil_lvo.zig");
 
 pub const LIBRARY_NAME = anvil.ANVILNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 17;
+pub const LIBRARY_REVISION = 18;
 pub const BUILD_DATE = "27.10.2026";
 /// The version as About shows it: "1.2 (12.10.2026)".
 pub const VERSION_TEXT = std.fmt.comptimePrint("{d}.{d} ({s})", .{ LIBRARY_VERSION, LIBRARY_REVISION, BUILD_DATE });

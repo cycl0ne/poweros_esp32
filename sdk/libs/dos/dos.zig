@@ -374,6 +374,7 @@ pub const LockRecordArgs = dosextens.LockRecordArgs;
 pub const FreeRecordArgs = dosextens.FreeRecordArgs;
 pub const ExamineArgs = dosextens.ExamineArgs;
 pub const FileHandleArgs = dosextens.FileHandleArgs;
+pub const CopyArgs = dosextens.CopyArgs;
 pub const ExamineFHArgs = dosextens.ExamineFHArgs;
 pub const ExAllArgs = dosextens.ExAllArgs;
 pub const RenameArgs = dosextens.RenameArgs;

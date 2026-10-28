@@ -34,6 +34,12 @@
 //! read and a big one does not cost the whole of memory. NOREQ is taken
 //! and does nothing: there are no requesters to turn off.
 //!
+//! A file's bytes go by its handler first (dos's CopyFH), a piece at a
+//! time so that Ctrl-C is seen: on a network share the server copies them,
+//! and they never cross the network. A handler that cannot - the two
+//! files on two handlers, or one that does not copy - leaves them to Read
+//! and Write, from where it stopped.
+//!
 //! Copying a directory into itself would never end, so before stepping
 //! into one the destination's parents are walked: if the source is among
 //! them it stops with "Infinite loop".
@@ -48,7 +54,7 @@ const Printf = dos.stdio.Printf;
 const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "Copy";
-const VERSION_STRING = "\x00$VER: Copy 1.4 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Copy 1.5 (28.10.2026)\r\n";
 
 const template = "FROM/M,TO/A,ALL/S,QUIET/S,BUF=BUFFER/K/N,CLONE/S,DATES/S,NOPRO/S,COM/S,NOREQ/S";
 const arg_from = 0;
@@ -86,6 +92,9 @@ const tab_size = 8;
 /// The most a buffer takes when its size was not asked for.
 const max_buffer: usize = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else 64 * 1024;
 const min_buffer = 1024;
+/// What one CopyFH asks its handler for: as much as a share's server
+/// copies at once.
+const handler_piece: i64 = 16 << 20;
 /// How deep it goes; each level costs a lock, not a stack frame.
 const max_depth = 32;
 
@@ -430,6 +439,8 @@ fn copyFile(run: *Run, ap: *dos.AnchorPath) void {
 
     var reading = true;
     var failed = false;
+    // By the handler, until it says it cannot.
+    var by_handler = true;
     while (true) {
         if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) {
             _ = dl.PrintFault(dos.ERROR_BREAK, null);
@@ -437,6 +448,17 @@ fn copyFile(run: *Run, ap: *dos.AnchorPath) void {
             failed = true;
             run.stop = true;
             break;
+        }
+        if (by_handler) {
+            const copied = dl.CopyFH(out, in, handler_piece);
+            if (copied > 0) continue;
+            if (copied == 0) break;
+            if (dl.IoErr() != dos.ERROR_ACTION_NOT_KNOWN) {
+                reading = false;
+                failed = true;
+                break;
+            }
+            by_handler = false;
         }
         const got = dl.Read(in, bytes, @intCast(size));
         if (got < 0) {

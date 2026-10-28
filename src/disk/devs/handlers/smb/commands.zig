@@ -2,8 +2,8 @@
 //! The commands on files ([MS-SMB2] 2.2.13 to 2.2.38, [MS-FSCC]): each
 //! request written into a `Request` after its header's room, each answer
 //! read from its reply - CREATE, CLOSE, READ, WRITE, FLUSH,
-//! QUERY_DIRECTORY, QUERY_INFO, SET_INFO, ECHO - and the information
-//! classes the handler asks for and sets.
+//! QUERY_DIRECTORY, QUERY_INFO, SET_INFO, IOCTL, ECHO - and the
+//! information classes the handler asks for and sets.
 //!
 //! A path is the share's own: UTF-16LE, `\` between its names, no `\` in
 //! front; the share's root is the empty path. A time is a FILETIME, 100 ns
@@ -308,6 +308,73 @@ pub fn output(reply: *const Reply) ?[]const u8 {
     return reader.bufferAt(wire.u16At(fields, 2), wire.u32At(fields, 4));
 }
 
+// --- IOCTL ([MS-SMB2] 2.2.31, 2.2.32) ---------------------------------------------
+
+/// The FSCTLs a copy on the server takes: a key that names the source,
+/// and the chunks copied from it into the open file.
+pub const FSCTL_SRV_REQUEST_RESUME_KEY: u32 = 0x0014_0078;
+pub const FSCTL_SRV_COPYCHUNK_WRITE: u32 = 0x0014_80F2;
+pub const FSCTL_VALIDATE_NEGOTIATE_INFO: u32 = 0x0014_0204;
+
+/// A resume key's bytes, and what its answer carries: the key, then a
+/// context nobody reads.
+pub const resume_key_bytes = 24;
+pub const resume_key_answer: u32 = 32;
+/// What a COPYCHUNK's answer carries: the chunks written, the bytes of
+/// the last one, and the bytes in all.
+pub const copied_bytes: u32 = 12;
+
+/// IOCTL: the FSCTL `code` on the open object, its `input_length` bytes
+/// of input to be written after it, and up to `output_max` asked back.
+/// Without input a byte stands in for it, as the structure's size says.
+pub fn ioctl(request: *Request, code: u32, file_id: *const [16]u8, input_length: u32, output_max: u32) void {
+    const writer = &request.writer;
+    writer.uint16(57);
+    writer.uint16(0);
+    writer.uint32(code);
+    writer.raw(file_id);
+    writer.uint32(wire.header_size + 56); // InputOffset
+    writer.uint32(input_length);
+    writer.uint32(0); // MaxInputResponse
+    writer.uint32(0); // OutputOffset
+    writer.uint32(0); // OutputCount
+    writer.uint32(output_max);
+    writer.uint32(1); // Flags: an FSCTL
+    writer.uint32(0);
+    if (input_length == 0) writer.byte(0);
+}
+
+/// FSCTL_SRV_COPYCHUNK_WRITE: `length` bytes of the file `key` names,
+/// from `source`, written into the open file at `target`, in chunks of
+/// `chunk` bytes ([MS-SMB2] 2.2.31.1).
+pub fn copyChunks(request: *Request, file_id: *const [16]u8, key: *const [resume_key_bytes]u8, source: u64, target: u64, length: u64, chunk: u32) void {
+    const count: u32 = @intCast((length + chunk - 1) / chunk);
+    ioctl(request, FSCTL_SRV_COPYCHUNK_WRITE, file_id, resume_key_bytes + 8 + count * 24, copied_bytes);
+    const writer = &request.writer;
+    writer.raw(key);
+    writer.uint32(count);
+    writer.uint32(0);
+    var done: u64 = 0;
+    while (done < length) {
+        const piece: u32 = @intCast(@min(length - done, chunk));
+        writer.uint64(source + done);
+        writer.uint64(target + done);
+        writer.uint32(piece);
+        writer.uint32(0);
+        done += piece;
+    }
+}
+
+/// What an IOCTL's answer carries back - when it failed too, as a
+/// COPYCHUNK that asked for more than the server copies at once has the
+/// server's limits there; null when the answer is not an IOCTL's.
+pub fn ioctlOutput(reply: *const Reply) ?[]const u8 {
+    var reader = reply.body();
+    const fields = reader.take(48) orelse return null;
+    if (wire.u16At(fields, 0) != 49) return null;
+    return reader.bufferAt(wire.u32At(fields, 32), wire.u32At(fields, 36));
+}
+
 /// ECHO: is the server there.
 pub fn echo(request: *Request) void {
     request.writer.uint16(4);
@@ -418,6 +485,33 @@ test "WRITE carries its data right after its fields" {
     try testing.expectEqual(@as(u64, 0x1_0000_0002), wire.u64At(fields, 8));
     try testing.expectEqualSlices(u8, &id, fields[16..32]);
     try testing.expectEqualStrings("hello", fields[48..]);
+}
+
+test "IOCTL: a COPYCHUNK's chunks after the key, the last one short; a byte for no input" {
+    var buffer: [512]u8 = undefined;
+    const id: [16]u8 = @splat(0x22);
+    const key: [resume_key_bytes]u8 = @splat(0x5A);
+    const copy = writtenBy(&buffer, .ioctl, copyChunks, .{ &id, &key, 0x1_0000_0000, 7, (5 << 20) / 2, 1 << 20 });
+    try testing.expectEqual(@as(u16, 57), wire.u16At(copy, 0));
+    try testing.expectEqual(FSCTL_SRV_COPYCHUNK_WRITE, wire.u32At(copy, 4));
+    try testing.expectEqualSlices(u8, &id, copy[8..24]);
+    try testing.expectEqual(@as(u32, 64 + 56), wire.u32At(copy, 24));
+    try testing.expectEqual(@as(u32, 24 + 8 + 3 * 24), wire.u32At(copy, 28));
+    try testing.expectEqual(copied_bytes, wire.u32At(copy, 44));
+    try testing.expectEqual(@as(u32, 1), wire.u32At(copy, 48));
+    const input = copy[56..];
+    try testing.expectEqual(@as(usize, 24 + 8 + 3 * 24), input.len);
+    try testing.expectEqualSlices(u8, &key, input[0..24]);
+    try testing.expectEqual(@as(u32, 3), wire.u32At(input, 24));
+    const last = input[32 + 2 * 24 ..];
+    try testing.expectEqual(@as(u64, 0x1_0000_0000 + (2 << 20)), wire.u64At(last, 0));
+    try testing.expectEqual(@as(u64, 7 + (2 << 20)), wire.u64At(last, 8));
+    try testing.expectEqual(@as(u32, 1 << 19), wire.u32At(last, 16));
+
+    const asked = writtenBy(&buffer, .ioctl, ioctl, .{ FSCTL_SRV_REQUEST_RESUME_KEY, &id, 0, resume_key_answer });
+    try testing.expectEqual(@as(usize, 57), asked.len);
+    try testing.expectEqual(@as(u32, 0), wire.u32At(asked, 28));
+    try testing.expectEqual(resume_key_answer, wire.u32At(asked, 44));
 }
 
 test "SET_INFO: its buffer where its offset says, for each class" {

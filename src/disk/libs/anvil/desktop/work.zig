@@ -8,7 +8,10 @@
 //! and how far along it is, and a Stop button that ends it between two
 //! pieces. A copy's window says how fast it goes as well: the bytes of
 //! the last second, measured on timer.device's E-clock, which a clock
-//! set meanwhile does not move. A copy asks before it puts a file where one is already
+//! set meanwhile does not move. A file's bytes go by its handler first
+//! (dos's CopyFH), a piece at a time: on a network share the server
+//! copies them, and they never cross the network; a handler that cannot
+//! leaves them to Read and Write. A copy asks before it puts a file where one is already
 //! (Replace, Replace All, Skip, Stop); a drawer that is there already is
 //! copied into. A file's icon goes with it, and its protection, date and
 //! comment are kept. A soft link in a drawer is never gone through: a
@@ -60,6 +63,9 @@ const chunk = 32768;
 /// a network share answers a read in one round trip, and a disk writes
 /// it in one go.
 const chunk_most: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else chunk;
+/// What one CopyFH asks a file's handler for: as much as a share's
+/// server copies at once, so the window moves and Stop is seen between.
+const handler_piece: i64 = 16 << 20;
 /// How deep a copy or a delete goes into drawers within drawers.
 const depth_max = 24;
 /// How long a copy's rate is measured over, in microseconds.
@@ -578,7 +584,23 @@ fn copyFile(job: *Job, source: [*:0]const u8, target: [*:0]const u8) bool {
     const to = dl.Open(target, dos.MODE_NEWFILE) orelse return false;
     const bytes: [*]u8 = job.pieces orelse &job.buffer;
     var whole = true;
+    // By the handler, until it says it cannot.
+    var by_handler = true;
     while (!job.stopped) {
+        if (by_handler) {
+            const copied = dl.CopyFH(to, from, handler_piece);
+            if (copied > 0) {
+                job.done += @intCast(copied);
+                show(job, textOf(dl.FilePart(source)));
+                continue;
+            }
+            if (copied == 0) break;
+            if (dl.IoErr() != dos.ERROR_ACTION_NOT_KNOWN) {
+                whole = false;
+                break;
+            }
+            by_handler = false;
+        }
         const got = dl.Read(from, bytes, @intCast(job.piece_size));
         if (got <= 0) {
             whole = got == 0;

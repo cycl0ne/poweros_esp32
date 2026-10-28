@@ -86,6 +86,11 @@ pub const ActionCode = enum(i32) {
     examine_fh = 1034,
     examine_all_end = 1035,
     set_owner = 1036,
+    /// Bytes copied from one open file into another on the same handler,
+    /// without passing through the caller (CopyArgs). A handler that
+    /// cannot answers ERROR_ACTION_NOT_KNOWN, and the caller copies them
+    /// itself.
+    copy_fh = 1040,
     /// Text a console is to read as though it had been typed into it, put
     /// in front of whatever is already waiting and started at once
     /// (dp_Arg2 the characters, dp_Arg3 how many; the answer is how many
@@ -281,6 +286,19 @@ pub const FileHandleArgs = extern struct {
     fh: ?*FileHandle,
 };
 
+/// COPY_FH's arguments: up to `length` bytes from `from`'s position into
+/// `to`'s, both handles the handler's own. The length is 64 bits on every
+/// machine. The handler answers DOSTRUE with `answer` the bytes copied - 0
+/// when `from` is at its end - and both positions moved on by them, or
+/// DOSFALSE with the error in dp_Res2.
+pub const CopyArgs = extern struct {
+    to: ?*FileHandle,
+    from: ?*FileHandle,
+    length: u64 align(4),
+    /// Written by the handler: the bytes copied.
+    answer: u64 align(4) = 0,
+};
+
 /// dp_Arg1..dp_Arg7, raw or as an action's layout. Every packet about an
 /// open file carries its FileHandle.
 pub const PacketArgs = extern union {
@@ -298,6 +316,7 @@ pub const PacketArgs = extern union {
     examine_fh: ExamineFHArgs,
     examine_all: ExAllArgs,
     file: FileHandleArgs,
+    copy: CopyArgs,
     rename: RenameArgs,
     property: PropertyArgs,
     change_mode: ChangeModeArgs,

@@ -79,6 +79,20 @@
 //! a piece written behind's; a lost connection keeps it, to go on the
 //! new one. Without the buffer every WRITE goes as it comes.
 //!
+//! **A copy is the server's** (COPY_FH, dos's CopyFH): from one open
+//! file into another, the bytes never cross the network. The source's
+//! size and a resume key that names it (FSCTL_SRV_REQUEST_RESUME_KEY)
+//! come in one round trip, then one FSCTL_SRV_COPYCHUNK_WRITE copies as
+//! much as the server copies at once - 16 chunks of 1 MiB, Windows's and
+//! Samba's limits, or the server's own once it has said them - from the
+//! source's position to the destination's, which move on by what it
+//! copied. What was gathered or written behind goes first. A copy that
+//! fails - but for a full disk, or a volume that may not be written -
+//! answers ERROR_ACTION_NOT_KNOWN, and the caller copies the bytes
+//! itself, from the same positions; a server that does not copy at all is
+//! not asked again. A lost connection copies the same bytes again on the
+//! next one: the positions move only once it is done.
+//!
 //! **A change** is one round trip: the object opened, the change set on
 //! it (SET_INFO: a name, a deletion, attributes, a date) and the handle
 //! closed, compounded. A delete is refused while the object is locked; a
@@ -443,6 +457,13 @@ pub const FileSystem = struct {
     /// from `offset`, at `start` in the buffer. Nothing without a lock.
     gather_buffer: ?[]u8 = null,
     gathered: struct { lock: ?*Lock = null, offset: u64 = 0, start: usize = 0, length: usize = 0 } = .{},
+    /// What the server copies in one COPYCHUNK: how many chunks, how
+    /// large each, and how many bytes in all - Windows's and Samba's
+    /// defaults until it says its own. It said it copies nothing.
+    copy_chunks: u32 = 16,
+    copy_chunk: u32 = 1 << 20,
+    copy_total: u32 = 16 << 20,
+    copy_refused: bool = false,
 
     // --- memory ---------------------------------------------------------------
 
@@ -1846,6 +1867,99 @@ pub const FileSystem = struct {
         }
     }
 
+    /// COPY_FH: up to `args.length` bytes from `from`'s position into
+    /// `to`'s, copied by the server, as much as one COPYCHUNK copies; the
+    /// bytes copied, 0 at the source's end. NotImplemented, for the
+    /// caller to copy them itself, when the server does not copy - and
+    /// for a file into itself, whose pieces may overlap.
+    fn copy(fs: *FileSystem, args: dos.CopyArgs) Error!u64 {
+        const to = try fs.fileOf(args.to);
+        const from = try fs.fileOf(args.from);
+        if (fs.copy_refused or to.key == from.key) return error.NotImplemented;
+        if (fs.read_only) return error.WriteProtected;
+        if (to.gone or from.gone) return error.NotFound;
+        try failedBehind(to);
+        fs.forgetAhead();
+        if (!to.writable) try fs.makeWritable(to);
+        var key: [commands.resume_key_bytes]u8 = undefined;
+        try fs.resumeKey(from, &key);
+        var asked_again = false;
+        while (true) {
+            if (from.pos >= from.size) return 0;
+            const most: u64 = @min(fs.copy_total, @as(u64, fs.copy_chunks) * fs.copy_chunk);
+            const length = @min(args.length, from.size - from.pos, most);
+            var request = fs.session.begin(.ioctl);
+            commands.copyChunks(&request, &to.file_id, &key, from.pos, to.pos, length, fs.copy_chunk);
+            var replies = session_area.noReplies();
+            try fs.exchange(&request, &replies);
+            const reply = &replies[0];
+            const out = commands.ioctlOutput(reply);
+            if (reply.failed()) {
+                const status = reply.status();
+                // More than it copies at once: its limits are the answer,
+                // and the copy is asked again within them.
+                if (status == smb.STATUS_INVALID_PARAMETER and !asked_again) {
+                    if (out) |limits| if (limits.len >= commands.copied_bytes) {
+                        const chunks = wire.u32At(limits, 0);
+                        const chunk = wire.u32At(limits, 4);
+                        const total = wire.u32At(limits, 8);
+                        if (chunks != 0 and chunk != 0 and total != 0) {
+                            fs.copy_chunks = chunks;
+                            fs.copy_chunk = chunk;
+                            fs.copy_total = total;
+                            asked_again = true;
+                            continue;
+                        }
+                    };
+                }
+                return fs.copyErrorOf(status);
+            }
+            const result = out orelse return error.NotMounted;
+            if (result.len < commands.copied_bytes) return error.NotMounted;
+            const copied: u64 = @min(wire.u32At(result, 8), length);
+            from.pos += copied;
+            to.pos += copied;
+            if (to.pos > to.size) to.size = to.pos;
+            to.modified = true;
+            to.unflushed = true;
+            fs.space_stale = true;
+            return copied;
+        }
+    }
+
+    /// The open file's size asked again and a key that names it to a
+    /// COPYCHUNK, in one round trip.
+    fn resumeKey(fs: *FileSystem, lock: *Lock, key: *[commands.resume_key_bytes]u8) Error!void {
+        var request = fs.session.begin(.query_info);
+        commands.queryInfo(&request, &lock.file_id, commands.INFO_FILE, commands.FILE_STANDARD_INFORMATION, 24);
+        request.add(.ioctl);
+        commands.ioctl(&request, commands.FSCTL_SRV_REQUEST_RESUME_KEY, &lock.file_id, 0, commands.resume_key_answer);
+        var replies = session_area.noReplies();
+        try fs.exchange(&request, &replies);
+        const standard = commands.output(&replies[0]) orelse return errorOf(replies[0].status());
+        lock.size = commands.standardSize(standard) orelse return error.NotMounted;
+        if (replies[1].failed()) return fs.copyErrorOf(replies[1].status());
+        const out = commands.ioctlOutput(&replies[1]) orelse return error.NotMounted;
+        if (out.len < key.len) return error.NotMounted;
+        @memcpy(key, out[0..key.len]);
+    }
+
+    /// The error for a copy that failed: a full disk and a volume that
+    /// may not be written as they are; anything else leaves the copy to
+    /// the caller, whose READs and WRITEs say what is wrong - from the
+    /// same positions, which move only with a copy done. A server that
+    /// does not copy is not asked again.
+    fn copyErrorOf(fs: *FileSystem, status: u32) Error {
+        return switch (changeErrorOf(status)) {
+            error.DiskFull, error.WriteProtected => |err| err,
+            error.NotImplemented => {
+                fs.copy_refused = true;
+                return error.NotImplemented;
+            },
+            else => error.NotImplemented,
+        };
+    }
+
     /// FH_FROM_LOCK: the lock's file opened to be read, and the lock made
     /// the handle's.
     fn fhFromLock(fs: *FileSystem, args: dos.FhFromLockArgs) Error!void {
@@ -2267,6 +2381,10 @@ pub const FileSystem = struct {
                 fs.close(pkt.args.file) catch |err| return no(err);
                 return yes();
             },
+            .copy_fh => {
+                pkt.args.copy.answer = fs.copy(pkt.args.copy) catch |err| return no(err);
+                return yes();
+            },
             .flush => {
                 fs.flush() catch |err| return no(err);
                 return yes();
@@ -2350,6 +2468,7 @@ fn asksServer(action: dos.ActionCode) bool {
         .write,
         .seek,
         .set_file_size,
+        .copy_fh,
         .flush,
         .fh_from_lock,
         .create_dir,
