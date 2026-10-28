@@ -4,11 +4,12 @@
 //! use. At startup it adds the volume "Ram Disk" and sets the device node's
 //! port.
 //!
-//! It keeps a tree of nodes (a directory's entries in a list, new
-//! ones first, looked up by name in any case), file data in 1K blocks, and
-//! locks that are a FileLock with the handler's fields after it (fl_Key is
-//! the node). Shared locks go together, an exclusive one wants the node to
-//! itself; COPY_DIR and PARENT give shared locks. Names are walked from the
+//! It keeps a tree of nodes (a directory's entries in a list, new ones
+//! first, looked up by name in any case), file data in pieces that grow
+//! with the file (pieces.zig), and locks that are a FileLock with the
+//! handler's fields after it (fl_Key is the node). Shared locks go
+//! together, an exclusive one wants the node to itself; COPY_DIR and
+//! PARENT give shared locks. Names are walked from the
 //! lock's directory after the device ("RAM:") is dropped: "a/b", "/" for
 //! the parent, "" for the directory itself.
 //!
@@ -25,14 +26,15 @@
 //! Names are C strings, and a path part over 30 characters is
 //! ERROR_INVALID_COMPONENT_NAME; the root is ST_ROOT; deleting the root is
 //! ERROR_OBJECT_WRONG_TYPE; FINDOUTPUT empties an existing file in place
-//! and keeps its protection; an empty file has no data block; a failed
-//! data block is ERROR_DISK_FULL; SAME_LOCK answers DOSTRUE; the property
-//! packets are (lock, name, value); SET_OWNER is answered; a null date for
-//! SET_DATE is now; SET_FILE_SIZE moves the handles past the new end back
-//! to it; SEEK and SET_FILE_SIZE answer DOSTRUE with the old position or
-//! the new size in the packet's SeekArgs; INFO counts free memory as free
-//! space and refuses a bad lock with ERROR_INVALID_LOCK; a name with ':'
-//! is refused. No hard or soft links yet.
+//! and keeps its protection; an empty file has no piece; a piece there is
+//! no memory for is ERROR_DISK_FULL, the bytes before it written;
+//! SAME_LOCK answers DOSTRUE; the property packets are (lock, name,
+//! value); SET_OWNER is answered; a null date for SET_DATE is now;
+//! SET_FILE_SIZE moves the handles past the new end back to it; SEEK and
+//! SET_FILE_SIZE answer DOSTRUE with the old position or the new size in
+//! the packet's SeekArgs; INFO counts what the pieces hold as used, in
+//! kilobytes, and free memory as free space, and refuses a bad lock with
+//! ERROR_INVALID_LOCK; a name with ':' is refused. No hard or soft links yet.
 //!
 //! **Record locks** (LOCK_RECORD, FREE_RECORD) are a `dos.record.Records`,
 //! keyed by node, a handle's lock its owner; END gives back what the
@@ -63,11 +65,12 @@ const FileInfoBlock = dos.FileInfoBlock;
 const MsgPort = exec.MsgPort;
 const notify = dos.notify;
 const record = dos.record;
+const pieces = @import("pieces.zig");
 
 pub const HANDLER_NAME = "ram-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 4;
-const BUILD_DATE = "17.10.2026";
+const HANDLER_REVISION = 5;
+const BUILD_DATE = "28.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -75,20 +78,14 @@ const HANDLER_VERSION_STRING =
 
 /// The volume's name, and the root's.
 pub const VOLUME_NAME = "Ram Disk";
+/// The block INFO and EXAMINE count in.
 const block_size = 1024;
 /// The longest name of a file or directory: dos's limit. A node carries
 /// its name whole, which costs what the name would cost anywhere else -
-/// the nodes are in whatever memory MEMF_ANY finds, and a file with
-/// anything in it already holds a block of a kilobyte.
+/// the nodes are in whatever memory MEMF_ANY finds.
 const max_name = dos.name_max;
 /// The longest comment.
 const max_comment = 79;
-
-/// A piece of a file's data.
-const Block = struct {
-    next: ?*Block,
-    data: [block_size]u8,
-};
 
 /// A file or directory.
 const Node = struct {
@@ -97,8 +94,8 @@ const Node = struct {
     parent: ?*Node = null,
     /// A directory's entries, the newest first.
     children: ?*Node = null,
-    /// A file's data; null while it is empty.
-    data: ?*Block = null,
+    /// A file's data; no piece while it is empty.
+    data: pieces.Pieces = .{},
     /// ST_ROOT, ST_USERDIR or ST_FILE.
     kind: i32,
     size: u64 align(4) = 0,
@@ -125,9 +122,6 @@ const Node = struct {
 /// file is. An open file's FileHandle keeps it as its key.
 const RamLock = extern struct {
     lock: FileLock,
-    /// The block holding `pos`, and its number, to go on from.
-    block: ?*Block = null,
-    block_index: u64 align(4) = 0,
     /// The position in an open file.
     pos: u64 align(4) = 0,
     /// Written to: END dates the file.
@@ -242,8 +236,8 @@ pub const RamDisk = struct {
     root: *Node,
     /// The locks, through their fl_Link.
     locks: ?*RamLock = null,
-    /// The data blocks there are, for INFO.
-    blocks: u64 align(4) = 0,
+    /// Where the files' pieces come from, and what they hold, for INFO.
+    store: pieces.Store,
     /// Who watches what (notification); null when there was no memory.
     watchers: ?*notify.Watchers = null,
     /// The record locks; null when there was no memory.
@@ -252,7 +246,7 @@ pub const RamDisk = struct {
     label: dos.volumename.VolumeName = .{},
 
     pub fn init(sys: *ExecBase, dl: *DosLib, ub: *UtilityBase, port: ?*MsgPort) Error!RamDisk {
-        var disk: RamDisk = .{ .sys = sys, .dl = dl, .ub = ub, .port = port, .root = undefined };
+        var disk: RamDisk = .{ .sys = sys, .dl = dl, .ub = ub, .port = port, .root = undefined, .store = .{ .sys = sys } };
         const root = disk.alloc(Node) orelse return error.NoMemory;
         root.* = .{ .kind = dos.ST_ROOT, .date = disk.now() };
         @memcpy(root.name[0..VOLUME_NAME.len], VOLUME_NAME);
@@ -372,13 +366,7 @@ pub const RamDisk = struct {
     }
 
     fn freeData(disk: *RamDisk, n: *Node) void {
-        var b = n.data;
-        while (b) |it| {
-            b = it.next;
-            disk.free(it);
-            disk.blocks -= 1;
-        }
-        n.data = null;
+        n.data.free(&disk.store);
         n.size = 0;
     }
 
@@ -598,73 +586,31 @@ pub const RamDisk = struct {
         fh.interactive = false;
     }
 
-    /// The block holding `pos` (the one after the last with `grow`).
-    fn blockAt(disk: *RamDisk, l: *RamLock, n: *Node, pos: u64, grow: bool) Error!?*Block {
-        const index = pos / block_size;
-        var b: ?*Block = n.data;
-        var i: u64 = 0;
-        if (l.block) |cached| {
-            if (l.block_index <= index) {
-                b = cached;
-                i = l.block_index;
-            }
-        }
-        var cur = b orelse blk: {
-            if (!grow or index != 0) return null;
-            const first = disk.alloc(Block) orelse return error.DiskFull;
-            n.data = first;
-            disk.blocks += 1;
-            break :blk first;
-        };
-        while (i < index) : (i += 1) {
-            cur = cur.next orelse blk: {
-                if (!grow or i + 1 != index) return null;
-                const more = disk.alloc(Block) orelse return error.DiskFull;
-                cur.next = more;
-                disk.blocks += 1;
-                break :blk more;
-            };
-        }
-        l.block = cur;
-        l.block_index = index;
-        return cur;
-    }
-
     fn read(disk: *RamDisk, args: dos.IOArgs) Error!usize {
         const l = try disk.fileOf(args.fh);
         const n = l.node();
         const buf = args.buffer orelse return 0;
         const len: usize = if (args.length > 0) @intCast(args.length) else 0;
-        var done: usize = 0;
-        while (done < len and l.pos < n.size) {
-            const b = try disk.blockAt(l, n, l.pos, false) orelse break;
-            const off: usize = @intCast(l.pos % block_size);
-            const count: usize = @intCast(@min(@as(u64, len - done), block_size - off, n.size - l.pos));
-            @memcpy(buf[done..][0..count], b.data[off..][0..count]);
-            done += count;
-            l.pos += count;
-        }
-        return done;
+        const count: usize = @intCast(@min(@as(u64, len), n.size -| l.pos));
+        n.data.read(l.pos, buf[0..count]);
+        l.pos += count;
+        return count;
     }
 
+    /// The bytes at the handle's position; when memory runs out, those
+    /// that went in stay and the write is ERROR_DISK_FULL.
     fn write(disk: *RamDisk, args: dos.IOArgs) Error!usize {
         const l = try disk.fileOf(args.fh);
         const n = l.node();
         const buf = args.buffer orelse return 0;
         const len: usize = if (args.length > 0) @intCast(args.length) else 0;
-        var done: usize = 0;
-        defer if (done > 0) {
+        const done = n.data.write(&disk.store, l.pos, buf[0..len]);
+        if (done > 0) {
             l.modified = true;
-        };
-        while (done < len) {
-            const b = try disk.blockAt(l, n, l.pos, true) orelse return error.DiskFull;
-            const off: usize = @intCast(l.pos % block_size);
-            const count = @min(len - done, block_size - off);
-            @memcpy(b.data[off..][0..count], buf[done..][0..count]);
-            done += count;
-            l.pos += count;
+            l.pos += done;
             if (l.pos > n.size) n.size = l.pos;
         }
+        if (done < len) return error.DiskFull;
         return done;
     }
 
@@ -688,13 +634,16 @@ pub const RamDisk = struct {
         return old;
     }
 
-    /// END: the file dated if written to, its watchers and its
-    /// directory's told, and its lock freed.
+    /// END: the file dated if written to and its last piece trimmed, its
+    /// watchers and its directory's told, and its lock freed.
     fn close(disk: *RamDisk, args: dos.FileHandleArgs) Error!void {
         const l = try disk.fileOf(args.fh);
         const n = l.node();
         const written = l.modified;
-        if (written) n.date = disk.now();
+        if (written) {
+            n.data.trim(&disk.store, n.size);
+            n.date = disk.now();
+        }
         if (disk.records) |records| records.release(l);
         disk.freeLock(l);
         args.fh.?.key = null;
@@ -841,51 +790,6 @@ pub const RamDisk = struct {
         n.comment = copy;
     }
 
-    /// Blocks for `size` bytes, the new ones zeroed (and the unused end of
-    /// the last one, which may hold old data).
-    fn growTo(disk: *RamDisk, n: *Node, size: u64) Error!void {
-        var count: u64 = 0;
-        var last: ?*Block = null;
-        var b = n.data;
-        while (b) |it| : (b = it.next) {
-            count += 1;
-            last = it;
-        }
-        if (last) |it| {
-            const start = (count - 1) * block_size;
-            const used: usize = if (n.size > start) @intCast(n.size - start) else 0;
-            @memset(it.data[used..], 0);
-        }
-        const needed = (size + block_size - 1) / block_size;
-        while (count < needed) : (count += 1) {
-            const more = disk.alloc(Block) orelse return error.DiskFull;
-            if (last) |it| it.next = more else n.data = more;
-            last = more;
-            disk.blocks += 1;
-        }
-    }
-
-    /// Only the blocks `size` bytes need stay.
-    fn cutTo(disk: *RamDisk, n: *Node, size: u64) void {
-        const keep = (size + block_size - 1) / block_size;
-        if (keep == 0) return disk.freeData(n);
-        var b = n.data;
-        var i: u64 = 1;
-        while (b) |it| : (i += 1) {
-            if (i == keep) {
-                var rest = it.next;
-                it.next = null;
-                while (rest) |r| {
-                    rest = r.next;
-                    disk.free(r);
-                    disk.blocks -= 1;
-                }
-                return;
-            }
-            b = it.next;
-        }
-    }
-
     /// SET_FILE_SIZE: the file cut or grown to the size the offset and mode
     /// give; handles past the new end move back to it. The new size.
     fn setFileSize(disk: *RamDisk, args: dos.SeekArgs) Error!u64 {
@@ -902,14 +806,13 @@ pub const RamDisk = struct {
         const target = sum[0];
         if (target < 0) return error.SeekError;
         const size: u64 = @intCast(target);
-        if (size > n.size) try disk.growTo(n, size) else disk.cutTo(n, size);
+        if (size > n.size) {
+            if (!n.data.grow(&disk.store, n.size, size)) return error.DiskFull;
+        } else n.data.cut(&disk.store, size);
         n.size = size;
         var it = disk.locks;
         while (it) |x| : (it = x.nextLock()) {
-            if (x.node() != n) continue;
-            x.block = null;
-            x.block_index = 0;
-            if (x.pos > size) x.pos = size;
+            if (x.node() == n and x.pos > size) x.pos = size;
         }
         l.modified = true;
         return size;
@@ -921,8 +824,6 @@ pub const RamDisk = struct {
         const l = try disk.lockArg(lockValue(args.lock)) orelse return error.InvalidLock;
         if (l.node().isDir()) return error.WrongType;
         l.pos = 0;
-        l.block = null;
-        l.block_index = 0;
         fh.key = l;
         fh.interactive = false;
     }
@@ -949,16 +850,18 @@ pub const RamDisk = struct {
     }
 
     /// INFO and DISK_INFO: RAM:'s InfoData. It grows as long as memory
-    /// lasts, so free memory is its free space.
+    /// lasts, so free memory is its free space; what the files' pieces
+    /// hold, slack included, is used.
     fn info(disk: *RamDisk, data: ?*dos.InfoData) Error!void {
         const d = data orelse return error.InvalidLock;
         const free_blocks: u64 = disk.sys.AvailMem(exec.MEMF_ANY) / block_size;
+        const used = (disk.store.held + block_size - 1) / block_size;
         d.* = .{
             .num_soft_errors = 0,
             .unit_number = -1,
             .disk_state = dos.ID_VALIDATED,
-            .num_blocks = disk.blocks + free_blocks,
-            .num_blocks_used = disk.blocks,
+            .num_blocks = used + free_blocks,
+            .num_blocks_used = used,
             .bytes_per_block = block_size,
             .disk_type = dos.ID_DOS_DISK,
             .volume_node = disk.volume,
@@ -1249,7 +1152,7 @@ test "RAM: directories: create, locate, locks, parent, delete, names" {
     try kdos.testTearDown(db);
 }
 
-test "RAM: files: write across blocks, seek, read back, open modes" {
+test "RAM: files: write across pieces, seek, read back, open modes" {
     const db = try kdos.testSetUp();
     defer kexec.deinit();
     var disk = try diskFor(db);
@@ -1301,6 +1204,289 @@ test "RAM: files: write across blocks, seek, read back, open modes" {
 
     disk.deinit();
     try kdos.testTearDown(db);
+}
+
+/// WRITE through a packet.
+fn put(disk: *RamDisk, fh: *FileHandle, bytes: []const u8) Answer {
+    return send(disk, .write, .{ arg(fh), arg(bytes.ptr), @intCast(bytes.len), 0 });
+}
+
+/// READ through a packet.
+fn get(disk: *RamDisk, fh: *FileHandle, out: []u8) Answer {
+    return send(disk, .read, .{ arg(fh), arg(out.ptr), @intCast(out.len), 0 });
+}
+
+/// What a READ or WRITE of `count` bytes answers.
+fn moved(count: usize) Answer {
+    return .{ .res1 = @intCast(count), .res2 = 0 };
+}
+
+/// The file's bytes, read through a handle of its own, are `expected`.
+fn expectFile(disk: *RamDisk, name: [*:0]const u8, expected: []const u8) !void {
+    var in: FileHandle = .{};
+    try testing.expectEqual(yes(), send(disk, .findinput, .{ arg(&in), 0, arg(name), 0 }));
+    var back: [16000]u8 = undefined;
+    try testing.expectEqual(moved(expected.len), get(disk, &in, back[0 .. expected.len + 1]));
+    try testing.expectEqualSlices(u8, expected, back[0..expected.len]);
+    try testing.expectEqual(yes(), send(disk, .end, .{ arg(&in), 0, 0, 0 }));
+}
+
+/// A test's bytes: none the same as its neighbours, nor a piece's length
+/// apart.
+fn testBytes(out: []u8, seed: usize) void {
+    for (out, 0..) |*b, i| b.* = @truncate((i + seed) * 7 + (i + seed) / 251);
+}
+
+test "RAM: files in pieces: written in odd lengths, read in others, at random places both ways" {
+    const db = try kdos.testSetUp();
+    defer kexec.deinit();
+    var disk = try diskFor(db);
+    var model: [14000]u8 = undefined;
+    testBytes(&model, 0);
+    var size: usize = 12000;
+
+    var fh: FileHandle = .{};
+    try testing.expectEqual(yes(), send(&disk, .findoutput, .{ arg(&fh), 0, arg("RAM:big"), 0 }));
+    const lengths = [_]usize{ 1, 63, 64, 65, 127, 300, 511, 512, 513, 1000, 7 };
+    var at: usize = 0;
+    var i: usize = 0;
+    while (at < size) : (i += 1) {
+        const count = @min(lengths[i % lengths.len], size - at);
+        try testing.expectEqual(moved(count), put(&disk, &fh, model[at..][0..count]));
+        at += count;
+    }
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = @intCast(size) }, sendSeek(&disk, .seek, &fh, 0, dos.OFFSET_BEGINNING));
+    var back: [14000]u8 = undefined;
+    const others = [_]usize{ 5, 448, 449, 1024, 2, 777 };
+    at = 0;
+    i = 0;
+    while (at < size) : (i += 1) {
+        const count = @min(others[i % others.len], size - at);
+        try testing.expectEqual(moved(count), get(&disk, &fh, back[at..][0..count]));
+        at += count;
+    }
+    try testing.expectEqualSlices(u8, model[0..size], back[0..size]);
+
+    // Seeks from each end and from where it is, back and forth, then a
+    // read or a write over what is there and past the end.
+    var prng = std.Random.DefaultPrng.init(0x5241_4d3a);
+    const random = prng.random();
+    const modes = [_]i32{ dos.OFFSET_BEGINNING, dos.OFFSET_CURRENT, dos.OFFSET_END };
+    var here: usize = size;
+    for (0..300) |step| {
+        const to = random.uintAtMost(usize, size);
+        const mode = modes[step % modes.len];
+        const from: i64 = switch (mode) {
+            dos.OFFSET_BEGINNING => 0,
+            dos.OFFSET_CURRENT => @intCast(here),
+            else => @intCast(size),
+        };
+        try testing.expectEqual(Moved{ .reply = yes(), .answer = @intCast(here) }, sendSeek(&disk, .seek, &fh, @as(i64, @intCast(to)) - from, mode));
+        here = to;
+        const count = @min(random.intRangeAtMost(usize, 1, 700), model.len - here);
+        if (random.boolean()) {
+            const kept = @min(count, size - here);
+            if (kept == 0) continue;
+            try testing.expectEqual(moved(kept), get(&disk, &fh, back[0..count]));
+            try testing.expectEqualSlices(u8, model[here..][0..kept], back[0..kept]);
+            here += kept;
+        } else {
+            if (count == 0) continue;
+            testBytes(model[here..][0..count], step * 13);
+            try testing.expectEqual(moved(count), put(&disk, &fh, model[here..][0..count]));
+            here += count;
+            size = @max(size, here);
+        }
+    }
+    try testing.expectEqual(yes(), send(&disk, .end, .{ arg(&fh), 0, 0, 0 }));
+    try expectFile(&disk, "RAM:big", model[0..size]);
+    try testing.expectEqual(yes(), send(&disk, .delete_object, .{ 0, arg("RAM:big"), 0, 0 }));
+    try testing.expectEqual(@as(u64, 0), disk.store.held);
+
+    disk.deinit();
+    try kdos.testTearDown(db);
+}
+
+test "RAM: SET_FILE_SIZE: cut inside a piece and at its start, grown with zeroes, the handles moved back" {
+    const db = try kdos.testSetUp();
+    defer kexec.deinit();
+    var disk = try diskFor(db);
+    var model: [3000]u8 = undefined;
+    testBytes(&model, 0);
+    var back: [5000]u8 = undefined;
+    var one: FileHandle = .{};
+    var two: FileHandle = .{};
+    try testing.expectEqual(yes(), send(&disk, .findupdate, .{ arg(&one), 0, arg("RAM:sized"), 0 }));
+    try testing.expectEqual(moved(3000), put(&disk, &one, &model));
+    try testing.expectEqual(yes(), send(&disk, .findupdate, .{ arg(&two), 0, arg("RAM:sized"), 0 }));
+    _ = sendSeek(&disk, .seek, &two, 2900, dos.OFFSET_BEGINNING);
+
+    // Cut inside a piece: the handles past the end moved back to it.
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 1000 }, sendSeek(&disk, .set_file_size, &one, 1000, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 1000 }, sendSeek(&disk, .seek, &two, 0, dos.OFFSET_CURRENT));
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 1000 }, sendSeek(&disk, .seek, &one, 0, dos.OFFSET_BEGINNING));
+    // Grown: the bytes it had, then zeroes, not what was cut.
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 5000 }, sendSeek(&disk, .set_file_size, &one, 5000, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(moved(5000), get(&disk, &one, &back));
+    try testing.expectEqualSlices(u8, model[0..1000], back[0..1000]);
+    try testing.expect(std.mem.allEqual(u8, back[1000..5000], 0));
+
+    // Cut where a piece starts, then just past it, and the handle that
+    // wrote closed: its last piece trimmed to its bytes.
+    // Its first write was longer than a whole file's: pieces from the
+    // first of all.
+    const boundary = pieces.Schedule(pieces.most).init(pieces.first_piece).start(5);
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = @intCast(boundary) }, sendSeek(&disk, .set_file_size, &one, @intCast(boundary), dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(u64, boundary), disk.store.held);
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = @intCast(boundary + 10) }, sendSeek(&disk, .set_file_size, &one, 10, dos.OFFSET_END));
+    try testing.expectEqual(yes(), send(&disk, .end, .{ arg(&one), 0, 0, 0 }));
+    try testing.expectEqual(@as(u64, boundary + 10), disk.store.held);
+    // The other handle grows it past the trimmed piece: zeroes again.
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 2000 }, sendSeek(&disk, .set_file_size, &two, 2000, dos.OFFSET_BEGINNING));
+    _ = sendSeek(&disk, .seek, &two, 0, dos.OFFSET_BEGINNING);
+    try testing.expectEqual(moved(2000), get(&disk, &two, &back));
+    try testing.expectEqualSlices(u8, model[0..1000], back[0..1000]);
+    try testing.expect(std.mem.allEqual(u8, back[1000..2000], 0));
+
+    // Cut to nothing, and written again.
+    try testing.expectEqual(Moved{ .reply = yes(), .answer = 0 }, sendSeek(&disk, .set_file_size, &two, 0, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(u64, 0), disk.store.held);
+    try testing.expectEqual(moved(3), put(&disk, &two, "abc"));
+    try testing.expectEqual(dos.ERROR_SEEK_ERROR, sendSeek(&disk, .set_file_size, &two, -1, dos.OFFSET_BEGINNING).reply.res2);
+    try testing.expectEqual(yes(), send(&disk, .end, .{ arg(&two), 0, 0, 0 }));
+    try expectFile(&disk, "RAM:sized", "abc");
+    try testing.expectEqual(@as(u64, 3), disk.store.held);
+
+    disk.deinit();
+    try kdos.testTearDown(db);
+}
+
+test "RAM: appended after each reopen: the last piece trimmed at each close and grown again by the next write" {
+    const db = try kdos.testSetUp();
+    defer kexec.deinit();
+    var disk = try diskFor(db);
+    var model: [6000]u8 = undefined;
+    testBytes(&model, 3);
+    var size: usize = 0;
+    for ([_]usize{ 10, 1, 53, 100, 300, 31, 512, 600, 2, 1000, 77, 1500, 64, 1750 }) |count| {
+        var fh: FileHandle = .{};
+        try testing.expectEqual(yes(), send(&disk, .findupdate, .{ arg(&fh), 0, arg("RAM:log"), 0 }));
+        _ = sendSeek(&disk, .seek, &fh, 0, dos.OFFSET_END);
+        try testing.expectEqual(moved(count), put(&disk, &fh, model[size..][0..count]));
+        try testing.expectEqual(yes(), send(&disk, .end, .{ arg(&fh), 0, 0, 0 }));
+        size += count;
+        // All its bytes, and at most an eighth of a piece more.
+        const held = disk.store.held;
+        try testing.expect(held >= size and held - size <= pieces.most / 8);
+        try expectFile(&disk, "RAM:log", model[0..size]);
+    }
+
+    disk.deinit();
+    try kdos.testTearDown(db);
+}
+
+test "RAM: two handles on a file: one closed, its last piece trimmed, while the other goes on writing" {
+    const db = try kdos.testSetUp();
+    defer kexec.deinit();
+    var disk = try diskFor(db);
+    var model: [1600]u8 = undefined;
+    testBytes(&model, 5);
+    var back: [1600]u8 = undefined;
+    var one: FileHandle = .{};
+    var two: FileHandle = .{};
+    try testing.expectEqual(yes(), send(&disk, .findupdate, .{ arg(&one), 0, arg("RAM:both"), 0 }));
+    try testing.expectEqual(yes(), send(&disk, .findupdate, .{ arg(&two), 0, arg("RAM:both"), 0 }));
+    try testing.expectEqual(moved(700), put(&disk, &one, model[0..700]));
+    try testing.expectEqual(yes(), send(&disk, .end, .{ arg(&one), 0, 0, 0 }));
+    try testing.expectEqual(@as(u64, 700), disk.store.held); // trimmed
+
+    try testing.expectEqual(moved(700), get(&disk, &two, back[0..700]));
+    try testing.expectEqualSlices(u8, model[0..700], back[0..700]);
+    try testing.expectEqual(moved(900), put(&disk, &two, model[700..1600]));
+    try testing.expectEqual(yes(), send(&disk, .findupdate, .{ arg(&one), 0, arg("RAM:both"), 0 }));
+    _ = sendSeek(&disk, .seek, &one, 650, dos.OFFSET_BEGINNING);
+    testBytes(model[650..750], 99);
+    try testing.expectEqual(moved(100), put(&disk, &one, model[650..750]));
+    try testing.expectEqual(yes(), send(&disk, .end, .{ arg(&one), 0, 0, 0 }));
+    _ = sendSeek(&disk, .seek, &two, 0, dos.OFFSET_BEGINNING);
+    try testing.expectEqual(moved(1600), get(&disk, &two, &back));
+    try testing.expectEqualSlices(u8, &model, &back);
+    try testing.expectEqual(yes(), send(&disk, .end, .{ arg(&two), 0, 0, 0 }));
+    try expectFile(&disk, "RAM:both", &model);
+
+    disk.deinit();
+    try kdos.testTearDown(db);
+}
+
+test "RAM: INFO: what the pieces hold is used, in kilobytes, and a delete gives it back" {
+    const db = try kdos.testSetUp();
+    defer kexec.deinit();
+    var disk = try diskFor(db);
+    var data: dos.InfoData = .{};
+    try testing.expectEqual(yes(), send(&disk, .disk_info, .{ arg(&data), 0, 0, 0 }));
+    try testing.expectEqual(@as(u64, 0), data.num_blocks_used);
+    try testing.expectEqual(@as(u32, block_size), data.bytes_per_block);
+
+    var model: [3000]u8 = undefined;
+    testBytes(&model, 0);
+    try writeFile(&disk, "RAM:counted", &model);
+    try writeFile(&disk, "RAM:small", "five!");
+    // The small one a piece of its own length; the other's pieces from the
+    // first of all, its last of 512 with 504 of them, so it stays.
+    try testing.expectEqual(@as(u64, 3008 + 5), disk.store.held);
+    try testing.expectEqual(yes(), send(&disk, .disk_info, .{ arg(&data), 0, 0, 0 }));
+    try testing.expectEqual(@as(u64, 3), data.num_blocks_used);
+    try testing.expectEqual(data.num_blocks_used + db.sys_base.AvailMem(exec.MEMF_ANY) / block_size, data.num_blocks);
+
+    try testing.expectEqual(yes(), send(&disk, .delete_object, .{ 0, arg("RAM:counted"), 0, 0 }));
+    try testing.expectEqual(yes(), send(&disk, .disk_info, .{ arg(&data), 0, 0, 0 }));
+    try testing.expectEqual(@as(u64, 1), data.num_blocks_used);
+    try testing.expectEqual(yes(), send(&disk, .delete_object, .{ 0, arg("RAM:small"), 0, 0 }));
+    try testing.expectEqual(yes(), send(&disk, .disk_info, .{ arg(&data), 0, 0, 0 }));
+    try testing.expectEqual(@as(u64, 0), data.num_blocks_used);
+
+    disk.deinit();
+    try kdos.testTearDown(db);
+}
+
+test "RAM: out of memory: ERROR_DISK_FULL, and the file keeps the bytes that went in" {
+    const db = try kdos.testSetUp();
+    defer kexec.deinit();
+    var disk = try diskFor(db);
+    var chunk: [1000]u8 = undefined;
+    testBytes(&chunk, 0);
+    var fh: FileHandle = .{};
+    try testing.expectEqual(yes(), send(&disk, .findoutput, .{ arg(&fh), 0, arg("RAM:full"), 0 }));
+    var whole: usize = 0;
+    const full = for (0..1000) |_| {
+        const reply = put(&disk, &fh, &chunk);
+        if (reply.res1 != chunk.len) break reply;
+        whole += 1;
+    } else unreachable;
+    try testing.expectEqual(minusOne(error.DiskFull), full);
+    try testing.expect(whole > 0);
+
+    // The handle is past what went in: the file's end.
+    const size: usize = @intCast(sendSeek(&disk, .seek, &fh, 0, dos.OFFSET_BEGINNING).answer);
+    try testing.expect(size >= whole * chunk.len and size < (whole + 1) * chunk.len);
+    var back: [1000]u8 = undefined;
+    var at: usize = 0;
+    while (at < size) {
+        const count = @min(chunk.len, size - at);
+        try testing.expectEqual(moved(count), get(&disk, &fh, back[0..count]));
+        try testing.expectEqualSlices(u8, chunk[0..count], back[0..count]);
+        at += count;
+    }
+    try testing.expectEqual(yes(), send(&disk, .end, .{ arg(&fh), 0, 0, 0 }));
+    try testing.expectEqual(yes(), send(&disk, .delete_object, .{ 0, arg("RAM:full"), 0, 0 }));
+    try testing.expectEqual(@as(u64, 0), disk.store.held);
+
+    disk.deinit();
+    try kdos.testTearDown(db);
+}
+
+test {
+    _ = pieces;
 }
 
 test "RAM: examine: the object, the entries, a delete in between" {
