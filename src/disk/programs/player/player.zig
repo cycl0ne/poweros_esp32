@@ -24,12 +24,20 @@
 //! as tall as the room beside it, from 64 to 160 pixels: it grows with the
 //! window, read once for each song and scaled each time the window is
 //! sized. Then a slider
-//! across that is where the song is, with the time beside it, which a drag
-//! moves; the buttons of a tape deck - rewind and fast forward jump ten
-//! seconds, pause holds the sound where it is, stop goes back to the
-//! start - the volume and the output the sound comes out of, in a row
-//! that breaks in two where the window is too narrow for it. Under them, as big as the window lets it be and sunk in a frame, the
-//! picture:
+//! across that is where the song is, which a drag moves, the time heard
+//! before it and the song's length after it - a press on the length shows
+//! what is left instead (`-3:16`); both keep the room their widest text
+//! needs (`TEXT_RoomFor`, `TOOLBUTTON_RoomFor`), with hours for a song of
+//! an hour or more. Under it one row, which breaks where the window is too
+//! narrow for it: the buttons of a tape deck - the song before (within
+//! three seconds of a song's start; later, the start of this one), rewind
+//! and fast forward ten seconds, play, stop back to the start, pause, the
+//! song after - then shuffle and repeat; a space (`LAYOUTA_AddSpace`);
+//! then the sound off, the volume and the output the sound comes out of.
+//! Shuffle, repeat and the sound off are toolbuttons with media.image's
+//! pictures: repeat goes round off, the whole list, the one song, its
+//! picture with a 1 for the last. Under them, as big as the window lets it
+//! be and sunk in a frame, the picture:
 //!
 //! - **Plasma** - waves of colour, driven faster by the bass, turned by
 //!   the treble, lit by the loudness.
@@ -38,6 +46,15 @@
 //!
 //! A press on the picture goes to the next; the Picture menu picks one.
 //! The space bar pauses and goes on; the Project menu's Quit ends.
+//!
+//! **The order.** The list is played in an order of its own - its own
+//! order, or shuffled from the song playing on, with the chip's random
+//! number generator (`sdk.hardware.rng`); the list as given stays. At the
+//! end of it the sound stops; with repeat it starts again, shuffled anew,
+//! and repeat one plays the song again. The song after, the song before
+//! and a file picked follow the deck: they play when it played, wait
+//! paused at their start when it was paused, and are only shown when it
+//! was stopped.
 //!
 //! **Open...** puts up asl.library's file requester without waiting for
 //! it (`ASLFR_ReplyPort`): it runs on a process of its own, the window and
@@ -98,6 +115,8 @@ const ie = sdk.devices.inputevent;
 const tx = sdk.gadgets.text;
 const sl = sdk.gadgets.slider;
 const td = sdk.gadgets.tapedeck;
+const tb = sdk.gadgets.toolbutton;
+const media = sdk.images.media;
 const asl = sdk.asl;
 const mn = intuition.menus;
 const cv = sdk.gadgets.canvas;
@@ -114,7 +133,7 @@ const Visual = visual.Visual;
 const cover = @import("cover.zig");
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.7";
+const VERSION = "1.8";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
@@ -135,6 +154,10 @@ const ID_POSITION = 2;
 const ID_VOLUME = 3;
 const ID_PICTURE = 6;
 const ID_OUTPUT = 7;
+const ID_SHUFFLE = 8;
+const ID_REPEAT = 9;
+const ID_MUTE = 10;
+const ID_LENGTH = 11;
 
 /// A look every 40 ms; the time beside the slider every sixth.
 const look_period = 40;
@@ -144,6 +167,23 @@ const looks_per_time = 6;
 const settle_looks = 50;
 /// How far rewind and fast forward jump, in seconds.
 const jump_seconds = 10;
+/// Within this many seconds of a song's start, the song before is the one
+/// before; later, it is the start of this one.
+const back_seconds = 3;
+/// The volume slider's width, with its level beside it.
+const volume_width = 120;
+/// The room the times beside the slider keep: minutes, or hours for a
+/// song of an hour or more.
+const room_short = "-00:00";
+const room_long = "-0:00:00";
+const hour = 3600;
+
+/// What repeat does: nothing, the whole list, the one song.
+const Repeat = enum { off, all, one };
+
+/// How a song shown is started: played, held paused at its start, or not
+/// at all.
+const Start = enum { play, pause, stop };
 /// Looks between two readings of the outputs: a second.
 const looks_per_outputs = 25;
 
@@ -271,8 +311,16 @@ const App = struct {
     /// The song's cover as read, shown from there at the cover's size.
     kept: cover.Kept = .{},
     position: *Object = undefined,
-    clock: *Object = undefined,
+    /// The time heard, before the slider, and the length after it.
+    time: *Object = undefined,
+    length: *Object = undefined,
     deck: *Object = undefined,
+    shuffle_button: *Object = undefined,
+    repeat_button: *Object = undefined,
+    mute_button: *Object = undefined,
+    /// The pictures on repeat and the sound off, which change with them.
+    repeat_picture: *Object = undefined,
+    mute_picture: *Object = undefined,
     volume: *Object = undefined,
     picture: *Object = undefined,
     /// audio.device's outputs, the chooser that shows them, and the
@@ -298,6 +346,21 @@ const App = struct {
     list: [*]const ?[*:0]const u8 = undefined,
     count: usize = 0,
     current: usize = 0,
+    /// The order they are played in, a file's index each - the list's
+    /// own, or shuffled; `step` is where in it the song is. Without the
+    /// memory for it, the list's own.
+    order: ?[*]u32 = null,
+    order_room: usize = 0,
+    step: usize = 0,
+    shuffled: bool = false,
+    repeat: Repeat = .off,
+    /// The sound off, and the volume it comes back at.
+    muted: bool = false,
+    level: u32 = 100,
+    /// The length after the slider says what is left instead.
+    show_left: bool = false,
+    /// The song is an hour or more: its times with hours.
+    long: bool = false,
     /// A file picked or dropped: the list is then this one.
     picked: [dos.path_max + 1]u8 = @splat(0),
     picked_list: [1]?[*:0]const u8 = .{null},
@@ -323,7 +386,8 @@ const App = struct {
     chapters: ?[*]const ac.AudioChapter = null,
     chapter_count: u32 = 0,
     chapter_shown: u32 = no_chapter,
-    clock_text: [32:0]u8 = @splat(0),
+    time_text: [16:0]u8 = @splat(0),
+    length_text: [16:0]u8 = @splat(0),
     /// The window's title: the song's, and the program's name.
     window_title: [96:0]u8 = @splat(0),
     /// The menus while they are on the window.
@@ -336,8 +400,8 @@ const App = struct {
 
     // --- the song --------------------------------------------------------------
 
-    /// File `index` of the list: shown, then played from its start.
-    fn playAt(app: *App, index: usize) void {
+    /// File `index` of the list shown, then started as `how` says.
+    fn playAt(app: *App, index: usize, how: Start) void {
         app.current = index;
         const name = app.list[index] orelse return;
         const err = app.engine.load(name);
@@ -359,13 +423,160 @@ const App = struct {
             return;
         }
         app.showSong(name, err == engine_file.no_sound);
-        if (err == engine_file.no_sound) {
+        if (err == engine_file.no_sound or how == .stop) {
             app.showDeck(td.BUT_STOP, false);
+        } else if (how == .pause) {
+            // Started by the deck's pause let go, or the space bar.
+            app.showDeck(td.BUT_PLAY, true);
         } else {
             app.engine.start();
             app.showDeck(td.BUT_PLAY, false);
         }
         app.wake();
+    }
+
+    // --- the order -----------------------------------------------------------
+
+    /// The file at `step` of the order.
+    fn indexAt(app: *const App, step: usize) usize {
+        const order = app.order orelse return step;
+        return order[step];
+    }
+
+    /// The song at `step` of the order shown, and started as `how` says.
+    fn goTo(app: *App, step: usize, how: Start) void {
+        app.step = step;
+        app.playAt(app.indexAt(step), how);
+    }
+
+    /// How the song after or before is started: as the one playing is.
+    fn startNow(app: *const App) Start {
+        return switch (app.engine.state) {
+            .playing => .play,
+            .paused => .pause,
+            .idle, .ended => .stop,
+        };
+    }
+
+    /// The order made for a new list: room for it, and the list's own
+    /// order or a shuffled one with the first song first.
+    fn newOrder(app: *App) void {
+        if (app.count > app.order_room) {
+            if (app.order) |old| app.sys.FreeVec(old);
+            app.order = null;
+            app.order_room = 0;
+            const memory = app.sys.AllocVec(app.count * @sizeOf(u32), exec.MEMF_ANY) orelse return;
+            app.order = @ptrCast(@alignCast(memory));
+            app.order_room = app.count;
+        }
+        app.step = 0;
+        if (app.shuffled) app.shuffleOrder(0) else app.listOrder();
+    }
+
+    /// The list's own order, the song at the step it has there.
+    fn listOrder(app: *App) void {
+        const order = app.order orelse return;
+        for (0..app.count) |i| order[i] = @intCast(i);
+        app.step = app.current;
+    }
+
+    /// A number from 0 to `below` less one, from the chip's generator.
+    fn random(below: usize) usize {
+        return sdk.hardware.rng.read() % below;
+    }
+
+    /// The order shuffled: with `first` at its start and the rest after
+    /// it, or - with none - all of it, the song just played not first.
+    fn shuffleOrder(app: *App, first: ?usize) void {
+        const order = app.order orelse return;
+        const n = app.count;
+        for (0..n) |i| order[i] = @intCast(i);
+        app.step = 0;
+        if (n < 2) return;
+        var from: usize = 0;
+        if (first) |song| {
+            order[0] = @intCast(song);
+            order[song] = 0;
+            from = 1;
+        }
+        var at = n - 1;
+        while (at > from) : (at -= 1) {
+            const other = from + random(at - from + 1);
+            const held = order[at];
+            order[at] = order[other];
+            order[other] = held;
+        }
+        if (first == null and order[0] == app.current) {
+            const other = 1 + random(n - 1);
+            order[0] = order[other];
+            order[other] = @intCast(app.current);
+        }
+    }
+
+    /// The song after: the next of the order, round to the first with
+    /// repeat.
+    fn next(app: *App) void {
+        if (app.count == 0) return;
+        const how = app.startNow();
+        if (app.step + 1 < app.count) return app.goTo(app.step + 1, how);
+        if (app.repeat == .off) return;
+        if (app.shuffled) app.shuffleOrder(null);
+        app.goTo(0, how);
+    }
+
+    /// The song before - or, a few seconds into this one, its start.
+    fn previous(app: *App) void {
+        if (app.count == 0) return;
+        const engine = app.engine;
+        const going = engine.state == .playing or engine.state == .paused;
+        const rate = @max(engine.info.rate, 1);
+        const late = going and engine.songFrame() >= back_seconds * rate;
+        if (!late) {
+            const how = app.startNow();
+            if (app.step > 0) return app.goTo(app.step - 1, how);
+            if (app.repeat != .off) return app.goTo(app.count - 1, how);
+        }
+        if (!going) return;
+        engine.seek(0);
+        app.visual.quiet();
+        app.showTime();
+    }
+
+    /// Shuffle turned on or off: an order from the song playing on, or
+    /// the list's own.
+    fn shuffleTurned(app: *App, on: bool) void {
+        app.shuffled = on;
+        if (on) app.shuffleOrder(app.current) else app.listOrder();
+    }
+
+    /// Repeat pressed: off, the whole list, the one song, and round; the
+    /// button on for the two, its picture with a 1 for the one song.
+    fn repeatTurned(app: *App) void {
+        app.repeat = switch (app.repeat) {
+            .off => .all,
+            .all => .one,
+            .one => .off,
+        };
+        const picture = if (app.repeat == .one) media.MEDIA_REPEAT_ONE else media.MEDIA_REPEAT;
+        _ = app.ib.SetAttrsTagList(app.repeat_picture, &[_]TagItem{ pair(media.MEDIA_Glyph, picture), .{} });
+        app.set(app.repeat_button, &.{ pair(tb.TOOLBUTTON_Checked, @intFromBool(app.repeat != .off)), .{} });
+    }
+
+    /// The sound off or on again, at the volume the slider says; the
+    /// button and its picture with it.
+    fn mute(app: *App, off: bool) void {
+        app.muted = off;
+        const picture = if (off) media.MEDIA_MUTE else media.MEDIA_SPEAKER;
+        _ = app.ib.SetAttrsTagList(app.mute_picture, &[_]TagItem{ pair(media.MEDIA_Glyph, picture), .{} });
+        app.set(app.mute_button, &.{ pair(tb.TOOLBUTTON_Checked, @intFromBool(off)), .{} });
+        app.engine.setVolume(if (off) 0 else app.level);
+    }
+
+    /// The volume slider moved: the sound at that level, and on again
+    /// when it was off.
+    fn volumeTo(app: *App, value: usize) void {
+        app.level = @intCast(@max(@as(i32, @bitCast(@as(u32, @truncate(value)))), 0));
+        if (app.muted) app.mute(false) else app.engine.setVolume(app.level);
     }
 
     /// What the song's tags say, as far as the library hands it out.
@@ -464,7 +675,28 @@ const App = struct {
         app.showLines();
         app.showCover(tags.picture, name);
         app.set(app.position, &.{ pair(sl.SLIDER_Max, @max(app.seconds(info.frames), 1)), pair(sl.SLIDER_Level, 0), .{} });
+        app.keepRoom(app.seconds(info.frames) >= hour);
         app.showTime();
+    }
+
+    /// The times keep the room for hours when `long`, or for minutes; the
+    /// layout measured again when that changed.
+    fn keepRoom(app: *App, long: bool) void {
+        if (long == app.long) return;
+        app.long = long;
+        const room: [*:0]const u8 = if (long) room_long else room_short;
+        app.set(app.time, &.{ pair(tx.TEXT_RoomFor, @intFromPtr(room)), .{} });
+        app.set(app.length, &.{ pair(tb.TOOLBUTTON_RoomFor, @intFromPtr(room)), .{} });
+        app.rethink();
+    }
+
+    /// The layout measured again, and the cover and the picture fitted to
+    /// where it put them.
+    fn rethink(app: *App) void {
+        var rethink_message = wc.WmRethink{};
+        _ = app.ib.SendMessage(app.object, @ptrCast(&rethink_message));
+        app.fitCover();
+        app.fitPicture();
     }
 
     /// One number through a RawDoFmt format into `into`.
@@ -495,10 +727,7 @@ const App = struct {
         app.set(app.block, &.{ pair(tx.TEXT_Runs, @intFromPtr(&app.runs)), .{} });
         if (count == app.shown_lines) return;
         app.shown_lines = count;
-        var rethink = wc.WmRethink{};
-        _ = app.ib.SendMessage(app.object, @ptrCast(&rethink));
-        app.fitCover();
-        app.fitPicture();
+        app.rethink();
     }
 
     /// The runs of the lines that say something: the title large and
@@ -592,13 +821,34 @@ const App = struct {
         return frames / @max(app.engine.info.rate, 1);
     }
 
-    /// The time beside the slider: `at` of the song's length.
-    fn writeClock(app: *App, at: u32) void {
+    /// `seconds` as a time into `into`: minutes and seconds, hours before
+    /// them for a long song, after a `-` for what is `left`.
+    fn formatTime(app: *App, into: *[16:0]u8, seconds_in: u32, left: bool) void {
+        const sign: [*:0]const u8 = if (left) "-" else "";
+        if (app.long) {
+            const stream = exec.fmtStream(.{ sign, seconds_in / hour, seconds_in / 60 % 60, seconds_in % 60 });
+            comptime exec.checkFormat("%s%u:%02u:%02u", @TypeOf(.{ sign, @as(u32, 0), @as(u32, 0), @as(u32, 0) }));
+            _ = app.sys.RawDoFmt("%s%u:%02u:%02u", &stream, null, into);
+        } else {
+            const stream = exec.fmtStream(.{ sign, seconds_in / 60, seconds_in % 60 });
+            comptime exec.checkFormat("%s%u:%02u", @TypeOf(.{ sign, @as(u32, 0), @as(u32, 0) }));
+            _ = app.sys.RawDoFmt("%s%u:%02u", &stream, null, into);
+        }
+    }
+
+    /// The times' texts: `at` before the slider; after it the song's
+    /// length, or what is left after `at`.
+    fn clockTexts(app: *App, at: u32) void {
         const total = app.seconds(app.engine.info.frames);
-        const stream = exec.fmtStream(.{ at / 60, at % 60, total / 60, total % 60 });
-        comptime exec.checkFormat("%u:%02u / %u:%02u", @TypeOf(.{ @as(u32, 0), @as(u32, 0), @as(u32, 0), @as(u32, 0) }));
-        _ = app.sys.RawDoFmt("%u:%02u / %u:%02u", &stream, null, &app.clock_text);
-        app.set(app.clock, &.{ pair(tx.TEXT_Text, @intFromPtr(&app.clock_text)), .{} });
+        app.formatTime(&app.time_text, at, false);
+        if (app.show_left) app.formatTime(&app.length_text, total -| at, true) else app.formatTime(&app.length_text, total, false);
+    }
+
+    /// The times beside the slider written and shown.
+    fn writeClock(app: *App, at: u32) void {
+        app.clockTexts(at);
+        app.set(app.time, &.{ pair(tx.TEXT_Text, @intFromPtr(&app.time_text)), .{} });
+        app.set(app.length, &.{ pair(gc.GA_Text, @intFromPtr(&app.length_text)), .{} });
     }
 
     /// The slider and the time brought to where the sound is, when it has
@@ -613,11 +863,20 @@ const App = struct {
         app.writeClock(at);
     }
 
-    /// The end of a song: the next one, or back to the start and still.
+    /// The end of a song: the same again with repeat one; the next of the
+    /// order, round to the first with repeat; or back to the start and
+    /// still.
     fn ended(app: *App) void {
-        if (app.current + 1 < app.count) {
-            app.playAt(app.current + 1);
+        if (app.repeat == .one) {
+            app.engine.start();
+            app.visual.quiet();
+            app.showTime();
             return;
+        }
+        if (app.step + 1 < app.count) return app.goTo(app.step + 1, .play);
+        if (app.repeat == .all and app.count > 0) {
+            if (app.shuffled) app.shuffleOrder(null);
+            return app.goTo(0, .play);
         }
         app.engine.stop();
         app.showDeck(td.BUT_STOP, false);
@@ -644,7 +903,7 @@ const App = struct {
         switch (mode) {
             td.BUT_PLAY => {
                 if (engine.stream == null) {
-                    if (app.count > 0) app.playAt(app.current);
+                    if (app.count > 0) app.playAt(app.current, .play);
                 } else {
                     engine.start();
                 }
@@ -664,6 +923,9 @@ const App = struct {
                 const playing = engine.state == .playing or engine.state == .paused;
                 app.showDeck(if (playing) td.BUT_PLAY else td.BUT_STOP, engine.state == .paused);
             },
+            // The deck's mode stays as it was; the song follows it.
+            td.BUT_PREVIOUS => app.previous(),
+            td.BUT_NEXT => app.next(),
             else => {},
         }
     }
@@ -676,7 +938,7 @@ const App = struct {
             .paused => engine.pause(false),
             .idle, .ended => {
                 if (engine.stream == null) {
-                    if (app.count > 0) app.playAt(app.current);
+                    if (app.count > 0) app.playAt(app.current, .play);
                     return;
                 }
                 engine.start();
@@ -838,7 +1100,9 @@ const App = struct {
         app.picked_list[0] = @ptrCast(&app.picked);
         app.list = &app.picked_list;
         app.count = 1;
-        app.playAt(0);
+        app.current = 0;
+        app.newOrder();
+        app.goTo(0, .play);
     }
 
     fn gadgetUp(app: *App, id: usize, code: u32) void {
@@ -857,12 +1121,17 @@ const App = struct {
                 app.shown_second = ~@as(u32, 0);
                 app.showTime();
             },
-            ID_VOLUME => {
-                const level: i32 = @bitCast(code);
-                app.engine.setVolume(@intCast(@max(level, 0)));
-            },
+            ID_VOLUME => app.volumeTo(code),
             ID_PICTURE => app.cycleLook(),
             ID_OUTPUT => app.pickOutput(code),
+            ID_SHUFFLE => app.shuffleTurned(code != 0),
+            ID_REPEAT => app.repeatTurned(),
+            ID_MUTE => app.mute(code != 0),
+            ID_LENGTH => {
+                app.show_left = !app.show_left;
+                app.shown_second = ~@as(u32, 0);
+                app.showTime();
+            },
             else => {},
         }
     }
@@ -883,7 +1152,7 @@ const App = struct {
             },
             ID_VOLUME => {
                 _ = app.ib.GetAttr(sl.SLIDER_Level, app.volume, &value);
-                app.engine.setVolume(@intCast(@max(@as(i32, @bitCast(@as(u32, @truncate(value)))), 0)));
+                app.volumeTo(value);
             },
             else => {},
         }
@@ -1055,9 +1324,10 @@ const Loose = struct {
     }
 };
 
-/// A child of a layout, with what it is told about its room.
+/// A child of a layout, with what it is told about its room; with no
+/// object, a space that takes the spare room (`LAYOUTA_AddSpace`).
 const Child = struct {
-    object: *Object,
+    object: ?*Object = null,
     weight_width: ?u32 = null,
     weight_height: ?u32 = null,
     /// Never smaller than this, whatever the window's size.
@@ -1081,7 +1351,7 @@ fn group(ib: *IntuitionBase, loose: *Loose, tags: []const TagItem, children: []c
         n += 1;
     }
     for (children) |child| {
-        list[n] = pair(lg.LAYOUTA_AddChild, @intFromPtr(child.object));
+        list[n] = if (child.object) |object| pair(lg.LAYOUTA_AddChild, @intFromPtr(object)) else pair(lg.LAYOUTA_AddSpace, 0);
         n += 1;
         if (child.weight_width) |weight| {
             list[n] = pair(lg.CHILDA_WeightWidth, weight);
@@ -1114,7 +1384,7 @@ fn group(ib: *IntuitionBase, loose: *Loose, tags: []const TagItem, children: []c
     }
     list[n] = .{};
     const made = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &list) orelse return null;
-    for (children) |child| loose.take(child.object);
+    for (children) |child| if (child.object) |object| loose.take(object);
     return loose.add(made);
 }
 
@@ -1135,6 +1405,26 @@ fn noWindow(dl: *DosBase) i32 {
     return dos.RETURN_FAIL;
 }
 
+/// A small toggle of the transport row: its picture, its key in `label`
+/// and what it does in `hint`.
+fn toggle(ib: *IntuitionBase, id: u32, label: [*:0]const u8, hint: [*:0]const u8, image: *Object) ?*Object {
+    return ib.NewObjectTagList(null, tb.TOOLBUTTON_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, id),
+        pair(gc.GA_Text, @intFromPtr(label)),
+        pair(tb.TOOLBUTTON_Image, @intFromPtr(image)),
+        pair(tb.TOOLBUTTON_Size, tb.TBSIZE_SMALL),
+        pair(tb.TOOLBUTTON_Kind, tb.TBKIND_TOGGLE),
+        pair(tb.TOOLBUTTON_Hint, @intFromPtr(hint)),
+        .{},
+    });
+}
+
+/// One of media.image's pictures; the program's, disposed of after the
+/// button it is on.
+fn mediaPicture(ib: *IntuitionBase, glyph: u32) ?*Object {
+    return ib.NewObjectTagList(null, media.MEDIA_CLASS, &[_]TagItem{ pair(media.MEDIA_Glyph, glyph), .{} });
+}
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
@@ -1150,12 +1440,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
     const percent: u32 = @intCast(@min(@max(rdargs.number(argv[arg_volume]) orelse 100, 0), 200));
 
-    var libraries: [9]?*exec.Library = @splat(null);
+    var libraries: [11]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
     const wanted = [_][*:0]const u8{
-        intuition.INTUITIONNAME, graphics.GRAPHICSNAME, motion.MOTIONNAME, ac.AUDIOCODECNAME,
-        tx.TEXT_LIBRARY,         sl.SLIDER_LIBRARY,     td.TDECK_LIBRARY,  cv.CANVAS_LIBRARY,
-        ch.CHOOSER_LIBRARY,
+        intuition.INTUITIONNAME, graphics.GRAPHICSNAME, motion.MOTIONNAME,   ac.AUDIOCODECNAME,
+        tx.TEXT_LIBRARY,         sl.SLIDER_LIBRARY,     td.TDECK_LIBRARY,    cv.CANVAS_LIBRARY,
+        ch.CHOOSER_LIBRARY,      tb.TOOLBUTTON_LIBRARY, media.MEDIA_LIBRARY,
     };
     for (wanted, 0..) |name, i| {
         libraries[i] = sys.OpenLibrary(name, 0) orelse {
@@ -1201,13 +1491,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .has_attrs = acb.lib().revision >= 1,
         .engine = engine,
         .visual = look,
+        .level = percent,
     };
     defer if (app.pixels) |pixels| sys.FreeVec(pixels);
+    defer if (app.order) |order| sys.FreeVec(order);
     defer app.kept.free(app.gb);
     if (argv[arg_files] != 0) {
         app.list = @ptrFromInt(argv[arg_files]);
         while (app.list[app.count] != null) app.count += 1;
     }
+    app.newOrder();
+    app.clockTexts(0);
     app.line_text[line_title].add("No song");
     if (!engine.opened) app.line_text[line_format].add(soundTrouble(engine));
     // The title's font, kept open - and the library that made it - until
@@ -1217,6 +1511,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     app.title_font = titleFont(ib, app.gb, @ptrCast(diskfont_lib));
     defer if (app.title_font) |font| app.gb.CloseFont(font);
     app.shown_lines = app.makeRuns();
+
+    // The toggles' pictures, the program's: made before the gadgets, so
+    // they are disposed of after them.
+    const shuffle_picture = mediaPicture(ib, media.MEDIA_SHUFFLE) orelse return noWindow(dl);
+    defer ib.DisposeObject(shuffle_picture);
+    app.repeat_picture = mediaPicture(ib, media.MEDIA_REPEAT) orelse return noWindow(dl);
+    defer ib.DisposeObject(app.repeat_picture);
+    app.mute_picture = mediaPicture(ib, media.MEDIA_SPEAKER) orelse return noWindow(dl);
+    defer ib.DisposeObject(app.mute_picture);
 
     // The gadgets: each loose until a layout takes it, and whatever is
     // still loose given back when the window cannot be made.
@@ -1240,18 +1543,30 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
         .{},
     })) orelse return noWindow(dl);
-    app.clock = loose.add(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
-        pair(tx.TEXT_Text, @intFromPtr("0:00 / 0:00")),
+    app.time = loose.add(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Text, @intFromPtr(&app.time_text)),
+        pair(tx.TEXT_RoomFor, @intFromPtr(room_short)),
         pair(tx.TEXT_Justification, tx.TEXT_JUSTIFY_RIGHT),
-        pair(gc.GA_Width, 110),
+        .{},
+    })) orelse return noWindow(dl);
+    app.length = loose.add(ib.NewObjectTagList(null, tb.TOOLBUTTON_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_LENGTH),
+        pair(gc.GA_Text, @intFromPtr(&app.length_text)),
+        pair(tb.TOOLBUTTON_RoomFor, @intFromPtr(room_short)),
+        pair(tb.TOOLBUTTON_Size, tb.TBSIZE_SMALL),
+        pair(tb.TOOLBUTTON_Hint, @intFromPtr("The song's length, or what is left of it")),
         .{},
     })) orelse return noWindow(dl);
     app.deck = loose.add(ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_DECK),
         pair(td.TDECK_Tape, 1),
+        pair(td.TDECK_Tracks, 1),
         pair(td.TDECK_Mode, td.BUT_STOP),
         .{},
     })) orelse return noWindow(dl);
+    app.shuffle_button = loose.add(toggle(ib, ID_SHUFFLE, "_Shuffle", "Play the songs in an order of their own", shuffle_picture)) orelse return noWindow(dl);
+    app.repeat_button = loose.add(toggle(ib, ID_REPEAT, "_Repeat", "Play the list again, or the one song", app.repeat_picture)) orelse return noWindow(dl);
+    app.mute_button = loose.add(toggle(ib, ID_MUTE, "_Mute", "The sound off, and on again", app.mute_picture)) orelse return noWindow(dl);
     app.volume = loose.add(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_VOLUME),
         pair(sl.SLIDER_Max, 200),
@@ -1259,7 +1574,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(sl.SLIDER_LevelFormat, @intFromPtr("%ld%%")),
         pair(sl.SLIDER_MaxLevelLen, 4),
         pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
-        pair(gc.GA_Width, 80),
+        pair(gc.GA_Width, volume_width),
         .{},
     })) orelse return noWindow(dl);
     app.control = audiocontrol.Control.open(sys);
@@ -1282,20 +1597,26 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     })) orelse return noWindow(dl);
 
     // The cover beside its lines, square and as tall as the row; the
-    // slider with the time beside it; the deck, the volume and the output
-    // in a row, which breaks where the window is narrow; the picture in a
-    // sunk frame, taking what is left.
+    // slider between the time and the length; the deck, shuffle and
+    // repeat, and after the space the sound off, the volume and the
+    // output, in a row that breaks where the window is narrow; the picture
+    // in a sunk frame, taking what is left.
     const info_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 8) }, &.{
         .{ .object = app.cover, .aspect = lg.aspect(1, 1), .min_height = cover_least, .max_height = cover.kept_size },
         .{ .object = app.block },
     }) orelse return noWindow(dl);
     const seek_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
+        .{ .object = app.time, .weight_width = 0 },
         .{ .object = app.position },
-        .{ .object = app.clock, .weight_width = 0 },
+        .{ .object = app.length, .weight_width = 0 },
     }) orelse return noWindow(dl);
     const control_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 8), pair(lg.LAYOUTA_Wrap, 1) }, &.{
         .{ .object = app.deck, .weight_width = 0 },
-        .{ .object = app.volume, .label = "_Volume" },
+        .{ .object = app.shuffle_button, .weight_width = 0 },
+        .{ .object = app.repeat_button, .weight_width = 0 },
+        .{},
+        .{ .object = app.mute_button, .weight_width = 0 },
+        .{ .object = app.volume, .weight_width = 0 },
         .{ .object = app.output, .weight_width = 0, .label = "_Output" },
     }) orelse return noWindow(dl);
     const framed = group(ib, &loose, &.{ pair(lg.LAYOUTA_FrameType, ic.FRAME_BUTTON), pair(lg.LAYOUTA_FrameRecessed, 1) }, &.{
@@ -1379,7 +1700,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer app.dropRequest();
 
     _ = sys.SetSignal(0, exec.SIGBREAKF_CTRL_C);
-    if (app.count > 0) app.playAt(0) else app.wake();
+    if (app.count > 0) app.goTo(0, .play) else app.wake();
     app.run();
     return dos.RETURN_OK;
 }
