@@ -79,7 +79,7 @@ part's look. Intuition's own (`sdk/libs/intuition/imageclass.zig`):
 | `PART_CHECK`, `PART_RADIO` | MAIN | a check box's box, a radio button's ring |
 | `PART_FIELD` | MAIN | the line a string gadget edits |
 | `PART_MENU` | MAIN | a menu's panel |
-| `PART_TOOL` | MAIN | a button in a tool bar or a ribbon: flat at rest; under the pointer, pressed and on, a one-pixel edge with round corners on a light ground blended from the pens, so a coloured picture keeps its colours |
+| `PART_TOOL` | MAIN | a button in a tool bar or a ribbon: flat at rest; under the pointer, pressed and on, a one-pixel edge with round corners on a light ground blended from the pens, so a coloured picture keeps its colours; disabled, its text faded into the ground as its picture is |
 | `PART_FRAME_DROPBOX` | GROUP | an icon's drop box |
 | `PART_REQUESTER` | GROUP | a requester's ground |
 | `PART_CHECKMARK`, `PART_RADIOMARK` | INDICATOR | the tick, the dot |

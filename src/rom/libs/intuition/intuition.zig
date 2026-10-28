@@ -7652,6 +7652,9 @@ test "styles: a tool's button is flat at rest and framed under the pointer, what
         it.GetStyleAttr(null, null, tool, style.STATE_NORMAL, style.STYLE_TextPen),
         it.GetStyleAttr(null, null, tool, style.STATE_CHECKED, style.STYLE_TextPen),
     );
+    // Disabled, its text faded into the ground, as a disabled command
+    // picture is.
+    try testing.expectEqual(@as(usize, 0xFF606060), it.GetStyleAttr(null, null, tool, style.STATE_DISABLED, style.STYLE_TextPen));
     // On a dark screen the same blends are dark: the ground under the
     // pointer between the background and the shine.
     var dark: [sc.NUMDRIPENS]graphics.Pen = @splat(0xFF000000);
@@ -7662,6 +7665,7 @@ test "styles: a tool's button is flat at rest and framed under the pointer, what
     const dark_info = sc.DrawInfo{ .pens = &dark };
     try testing.expectEqual(@as(usize, 0xFF3C4552), it.GetStyleAttr(&dark_info, null, tool, style.STATE_HOVERED, style.STYLE_Background));
     try testing.expectEqual(@as(usize, 0xFF435773), it.GetStyleAttr(&dark_info, null, tool, style.STATE_CHECKED, style.STYLE_Background));
+    try testing.expectEqual(@as(usize, 0xFF7C7F85), it.GetStyleAttr(&dark_info, null, tool, style.STATE_DISABLED, style.STYLE_TextPen));
 
     // The room inside is the same in every state: the border, where there
     // is one, takes what is padding without it.

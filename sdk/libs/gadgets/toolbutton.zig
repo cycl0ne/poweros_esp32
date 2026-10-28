@@ -24,7 +24,10 @@
 //! one-pixel edge with round corners round a light ground blended from
 //! the screen's pens, so a coloured picture keeps its colours. A style
 //! may give it a border at rest - which a touch screen, with no pointer
-//! to hover, may want.
+//! to hover, may want. Disabled (`GA_Disabled`), its picture is drawn
+//! disabled - in grey, faded into the ground - and its label in the
+//! part's disabled text pen, which fades it as far; since 1.3, before
+//! which a ghost was laid over the whole button.
 //!
 //! Two kinds drop a list down (`TOOLBUTTON_Labels`), with a mark - a
 //! triangle pointing down - after the label. A drop-down button is the

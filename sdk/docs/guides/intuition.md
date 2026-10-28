@@ -965,6 +965,84 @@ was pressed (a row, an icon) needs only `DoubleClick`.
 `C:test/Tap X Y` taps at a place, `TOX TOY` drags there, for a display
 with no touch panel; `C:test/Tap DEMO` opens a screen with menus to tap.
 
+## A ribbon
+
+A ribbon (ribbon.gadget) is a program's commands across the top of its
+window, as an office program has them: a row of tabs, and under it the
+page of the tab in front, its commands in named groups of tool buttons
+(toolbutton.gadget) with command.image's pictures. It goes in the
+window's layout like any gadget, beside the menus or instead of them.
+
+`sdk.gadgets.ribbon.build` makes one from a table, as `CreateMenusA`
+makes menus: a line for each tab, each group after its tab, and each
+entry after its group. It makes the buttons, their pictures and the
+ribbon showing them, and keeps the tabs and groups the ribbon reads in
+one block of memory, which `free` gives back with the pictures after the
+window object has disposed of the ribbon. toolbutton.gadget,
+command.image and ribbon.gadget are opened first.
+
+```zig
+const rb = sdk.gadgets.ribbon;
+const tb = sdk.gadgets.toolbutton;
+const command = sdk.images.command;
+
+const table = [_]rb.NewRibbon{
+    .{ .type = rb.RB_TAB, .label = "_Home" },
+    .{ .type = rb.RB_GROUP, .label = "Clipboard", .glyph = command.CMD_PASTE },
+    .{ .type = rb.RB_LARGE, .id = ID_PASTE, .label = "_Paste", .glyph = command.CMD_PASTE, .flags = rb.RBF_DISABLED },
+    .{ .type = rb.RB_MEDIUM, .id = ID_CUT, .label = "Cu_t", .glyph = command.CMD_CUT },
+    .{ .type = rb.RB_MEDIUM, .id = ID_COPY, .label = "_Copy", .glyph = command.CMD_COPY },
+    .{ .type = rb.RB_GROUP, .label = "Font", .glyph = command.CMD_BOLD, .id = ID_FONT },
+    .{ .type = rb.RB_SMALL, .id = ID_BOLD, .label = "_Bold", .glyph = command.CMD_BOLD, .kind = tb.TBKIND_TOGGLE },
+    .{ .type = rb.RB_SMALL, .id = ID_ITALIC, .label = "_Italic", .glyph = command.CMD_ITALIC, .kind = tb.TBKIND_TOGGLE },
+    .{ .type = rb.RB_TAB, .label = "T_able", .id = TAB_TABLE, .flags = rb.RBF_CONTEXTUAL },
+    .{ .type = rb.RB_GROUP, .label = "Rows", .glyph = command.CMD_INSERT_ROW },
+    .{ .type = rb.RB_MEDIUM, .id = ID_INSERT_ROW, .label = "Insert _row", .glyph = command.CMD_INSERT_ROW },
+    .{ .type = rb.RB_END },
+};
+const built = rb.build(sys, ib, &table, &.{ .{ .tag = gc.GA_ID, .data = ID_RIBBON }, .{} }) orelse return dos.RETURN_FAIL;
+defer built.free(sys, ib); // after the window object, which disposes of the ribbon
+// built.ribbon goes into the window's layout with CHILDA_WeightHeight 0.
+```
+
+| Line | What it reads |
+|---|---|
+| `RB_TAB` | `label`; for a tab out of the row until the program shows it, `RBF_CONTEXTUAL`, the `id` it is shown by and the `colour` of its strip |
+| `RB_GROUP` | `label`; `glyph`, the picture of the button it is folded into; `id`, its launcher's - the small button at the right of its name for the dialog with more of the same - and `reduce` |
+| `RB_LARGE`, `RB_MEDIUM`, `RB_SMALL` | a tool button of that size: `id`, `label`, `glyph`, `kind` (`TBKIND_`), `labels` for a drop-down or a split button, `hint`, and `RBF_CHECKED` and `RBF_DISABLED` to begin with |
+| `RB_GADGET` | `gadget`, one the program made - a chooser, a number, a check box in a layout with its label - and the `id` to find it by; it is the ribbon's from the call on, made or not |
+| `RB_END` | the end |
+
+A button reports as it would in any layout: `WMHI_GADGETUP` with its
+`id`, which is the command - the IDs may be the `user_data` of the menu
+items for the same commands, so one switch serves both. A toggle's code
+is its new state, a drop-down's the label taken, a split button's
+`TBCODE_MAIN` for its own command. A tab turned reports with the
+ribbon's `GA_ID` and the tab's number; `RBCODE_MINIMIZED` means the
+ribbon was minimized to its row, or brought back, and the window object
+is sent `WM_RETHINK` for its new height.
+
+`built.entry(id)` finds a button again, to show what the program knows
+of: Bold checked while the text under the cursor is bold, Paste disabled
+while there is nothing to paste. A button the ribbon does not show at
+the moment - on another tab, or in a group folded up - is changed all
+the same, and shows it once it is shown.
+
+```zig
+_ = ib.SetGadgetAttrsTagList(built.entry(ID_BOLD).?, window, &.{ .{ .tag = tb.TOOLBUTTON_Checked, .data = @intFromBool(bold) }, .{} });
+_ = ib.SetGadgetAttrsTagList(built.entry(ID_PASTE).?, window, &.{ .{ .tag = gc.GA_Disabled, .data = 0 }, .{} });
+// A table picked: its tab comes, and goes again with RIBBON_HideTab.
+_ = ib.SetGadgetAttrsTagList(built.ribbon, window, &.{ .{ .tag = rb.RIBBON_ShowTab, .data = TAB_TABLE }, .{} });
+```
+
+Made narrower, a ribbon makes its groups smaller rather than cutting
+them off: large buttons become medium, then every button small, and last
+a group folds into one button with its picture, which drops the group
+down. Tabs the row has no room for stand behind a », which drops their
+names down. On a small screen `RIBBON_MinimizeBelow` keeps it minimized,
+a tab then dropping its page down over the window. `C:test/Ribbon` shows
+all of it.
+
 ## Requesters
 
 `EasyRequestArgs` puts up a window with a message and a row of buttons

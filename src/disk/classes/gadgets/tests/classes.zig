@@ -2992,9 +2992,9 @@ test "clicktab.gadget: a press takes the tab under it at once, and the key steps
     try rig.down();
 }
 
-/// An image that keeps where and how big it was last asked to draw itself
-/// as a frame.
-const Asked = extern struct { left: i32 = 0, top: i32 = 0, width: i32 = 0, height: i32 = 0, times: u32 = 0 };
+/// An image that keeps where, how big and in which state it was last asked
+/// to draw itself as a frame.
+const Asked = extern struct { left: i32 = 0, top: i32 = 0, width: i32 = 0, height: i32 = 0, times: u32 = 0, state: u32 = 0 };
 
 fn askedDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const cl: *classes.Class = @ptrCast(hook);
@@ -3003,7 +3003,7 @@ fn askedDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque)
     if (msg.method_id == intuition.imageclass.IM_DRAWFRAME) {
         const draw: *intuition.imageclass.ImpDraw = @ptrCast(@alignCast(msg));
         const asked = classes.instData(Asked, cl, @ptrCast(object.?));
-        asked.* = .{ .left = draw.offset.x, .top = draw.offset.y, .width = draw.dimensions.width, .height = draw.dimensions.height, .times = asked.times + 1 };
+        asked.* = .{ .left = draw.offset.x, .top = draw.offset.y, .width = draw.dimensions.width, .height = draw.dimensions.height, .times = asked.times + 1, .state = draw.state };
         return 1;
     }
     return ib.SendSuperMessage(cl, @ptrCast(object), msg);
@@ -3244,6 +3244,75 @@ test "toolbutton.gadget: flat at rest; under the pointer and on, an edge round a
     try testing.expect(ib.CloseScreen(screen));
     display.down(rig.kib);
     ib.DisposeObject(button);
+    try rig.down();
+}
+
+test "toolbutton.gadget: disabled, its picture is drawn disabled and its label faded, with no ghost over it" {
+    var heard = Heard{ .tag = tbg.TOOLBUTTON_Checked, .ib = undefined };
+    var rig = try Rig.up(&toolbutton.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const display = try Display.up(rig.kib);
+    const wn = intuition.windows;
+    const asked_class = ib.MakeClass(null, classusr.IMAGECLASS, null, @sizeOf(Asked)).?;
+    asked_class.dispatcher.entry = &askedDispatch;
+    asked_class.user_data = @intFromPtr(ib);
+    const picture = ib.NewObjectTagList(asked_class, null, null).?;
+    const button = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 4 },
+        .{ .tag = gc.GA_Width, .data = 40 },
+        .{ .tag = gc.GA_Height, .data = 20 },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("W") },
+        .{ .tag = tbg.TOOLBUTTON_Image, .data = @intFromPtr(picture) },
+        .{},
+    }).?;
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(button) },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    const background = display.pixel(60, 36);
+    const asked = classes.instData(Asked, asked_class, picture);
+
+    // Enabled: the picture drawn as it is, the label in the text pen - the
+    // only colour in the box but the ground, the picture drawing nothing.
+    ib.RefreshGList(button, w, 1);
+    try testing.expectEqual(@as(u32, intuition.imageclass.IDS_NORMAL), asked.state);
+    var ink: ?@TypeOf(background) = null;
+    var inked: usize = 0;
+    for (4..44) |x| for (4..24) |y| {
+        const at = display.pixel(@intCast(x), @intCast(y));
+        if (at == background) continue;
+        ink = at;
+        inked += 1;
+    };
+    try testing.expect(ink != null and inked > 0);
+
+    // Disabled: the picture asked to draw itself disabled, the same
+    // letter in a colour of its own, and nothing else - no ghost.
+    _ = ib.SetAttrsTagList(button, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = 1 }, .{} });
+    ib.RefreshGList(button, w, 1);
+    try testing.expectEqual(@as(u32, intuition.imageclass.IDS_DISABLED), asked.state);
+    var faded: usize = 0;
+    for (4..44) |x| for (4..24) |y| {
+        const at = display.pixel(@intCast(x), @intCast(y));
+        if (at == background) continue;
+        try testing.expect(at != ink.?);
+        faded += 1;
+    };
+    try testing.expectEqual(inked, faded);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
+    ib.CloseWindow(w);
+    try testing.expect(ib.CloseScreen(screen));
+    display.down(rig.kib);
+    ib.DisposeObject(button);
+    ib.DisposeObject(picture);
+    try testing.expect(ib.FreeClass(asked_class));
     try rig.down();
 }
 
@@ -3843,6 +3912,106 @@ test "ribbon.gadget: the tabs the row has no room for are behind a », which dro
     try testing.expect(ib.CloseScreen(screen));
     display.down(rig.kib);
     ib.DisposeObject(bar);
+    try rig.down();
+}
+
+test "ribbon.build: a table made into a ribbon - its tabs, groups, buttons and their pictures, a gadget of the program's - each entry found by its ID; out of order, nothing" {
+    var heard = Heard{ .tag = rbn.RIBBON_Current, .ib = undefined };
+    var rig = try Rig.upAfter(&ribbon.Library.resident_tag, &heard, &ribbon_needs);
+    const ib = rig.ib;
+    const sys = kexec.SysBase.iface();
+    const cmd = sdk.images.command;
+
+    const pastes = [_:null]?[*:0]const u8{ "Paste as text", "Paste special" };
+    const mine = ribbonTool(ib, 77, "_Mine", tbg.TBSIZE_SMALL);
+    const table = [_]rbn.NewRibbon{
+        .{ .type = rbn.RB_TAB, .label = "_Home" },
+        .{ .type = rbn.RB_GROUP, .label = "Clipboard", .glyph = cmd.CMD_PASTE, .id = 90, .reduce = 2 },
+        .{ .type = rbn.RB_LARGE, .id = 10, .label = "_Paste", .glyph = cmd.CMD_PASTE, .kind = tbg.TBKIND_SPLIT, .labels = &pastes },
+        .{ .type = rbn.RB_MEDIUM, .id = 11, .label = "Cu_t", .glyph = cmd.CMD_CUT, .flags = rbn.RBF_DISABLED },
+        .{ .type = rbn.RB_GROUP, .label = "Font" },
+        .{ .type = rbn.RB_SMALL, .id = 20, .label = "_Bold", .glyph = cmd.CMD_BOLD, .kind = tbg.TBKIND_TOGGLE, .flags = rbn.RBF_CHECKED, .hint = "Make it bold" },
+        .{ .type = rbn.RB_GADGET, .id = 77, .gadget = mine },
+        .{ .type = rbn.RB_TAB, .label = "T_able", .id = 7, .flags = rbn.RBF_CONTEXTUAL, .colour = 0xFFF28C28 },
+        .{ .type = rbn.RB_GROUP, .label = "Rows" },
+        .{ .type = rbn.RB_MEDIUM, .id = 40, .label = "Insert _row" },
+        .{},
+    };
+    const built = rbn.build(sys, ib, &table, &[_]TagItem{ .{ .tag = gc.GA_ID, .data = 3 }, .{} }).?;
+    try testing.expectEqual(@as(u32, 3), gc.gadget(built.ribbon).id);
+    try testing.expectEqual(@as(usize, 2), attr(ib, built.ribbon, rbn.RIBBON_NumTabs));
+
+    // The tabs, each one's groups ending in an empty one and each group's
+    // entries in a null.
+    try testing.expectEqual(table[0].label, built.tabs[0].label);
+    try testing.expectEqual(@as(u32, 0), built.tabs[0].contextual);
+    try testing.expectEqual(table[7].label, built.tabs[1].label);
+    try testing.expectEqual(@as(u32, 1), built.tabs[1].contextual);
+    try testing.expectEqual(@as(u32, 7), built.tabs[1].id);
+    try testing.expectEqual(@as(u32, 0xFFF28C28), built.tabs[1].colour);
+    try testing.expect(built.tabs[2].label == null);
+    const home = built.tabs[0].groups.?;
+    try testing.expectEqual(table[1].label, home[0].label);
+    try testing.expectEqual(@as(u32, 90), home[0].launcher);
+    try testing.expectEqual(@as(u32, 2), home[0].reduce);
+    try testing.expect(home[0].image != null);
+    try testing.expectEqual(table[4].label, home[1].label);
+    try testing.expect(home[1].image == null);
+    try testing.expect(home[2].label == null);
+    const clipboard = home[0].items.?;
+    try testing.expect(clipboard[0] != null and clipboard[0] == built.entry(10));
+    try testing.expect(clipboard[1] != null and clipboard[1] == built.entry(11));
+    try testing.expect(clipboard[2] == null);
+    const font = home[1].items.?;
+    try testing.expect(font[0] != null and font[0] == built.entry(20));
+    try testing.expect(font[1] == mine and built.entry(77) == mine);
+    try testing.expect(font[2] == null);
+    const rows = built.tabs[1].groups.?;
+    try testing.expectEqual(table[8].label, rows[0].label);
+    try testing.expect(rows[0].items.?[0] == built.entry(40) and rows[0].items.?[1] == null);
+    try testing.expect(rows[1].label == null);
+    try testing.expect(built.entry(999) == null);
+
+    // The buttons as their lines say: a picture each of the folded group
+    // and the buttons with a glyph, in the order of the lines.
+    try testing.expectEqual(@as(usize, 4), built.picture_count);
+    try testing.expect(home[0].image == built.pictures[0]);
+    try testing.expectEqual(@intFromPtr(built.pictures[1]), attr(ib, built.entry(10).?, tbg.TOOLBUTTON_Image));
+    try testing.expectEqual(@intFromPtr(built.pictures[2]), attr(ib, built.entry(11).?, tbg.TOOLBUTTON_Image));
+    try testing.expectEqual(@intFromPtr(built.pictures[3]), attr(ib, built.entry(20).?, tbg.TOOLBUTTON_Image));
+    try testing.expectEqual(@as(usize, 0), attr(ib, built.entry(40).?, tbg.TOOLBUTTON_Image));
+    try testing.expectEqual(@as(usize, cmd.CMD_CUT), attr(ib, built.pictures[2].?, cmd.COMMAND_Glyph));
+    try testing.expect(gc.gadget(built.entry(11).?).flags & gc.GFLG_DISABLED != 0);
+    try testing.expect(gc.gadget(built.entry(10).?).flags & gc.GFLG_DISABLED == 0);
+    try testing.expectEqual(@as(usize, 1), attr(ib, built.entry(20).?, tbg.TOOLBUTTON_Checked));
+    try testing.expectEqual(@as(usize, 0), attr(ib, built.entry(40).?, tbg.TOOLBUTTON_Checked));
+    const hint: [*:0]const u8 = @ptrFromInt(attr(ib, built.entry(20).?, tbg.TOOLBUTTON_Hint));
+    try testing.expectEqualStrings("Make it bold", std.mem.span(hint));
+    try testing.expectEqual(@as(u32, 10), gc.gadget(built.entry(10).?).id);
+
+    // The ribbon takes the entries with it, the pictures go after it.
+    ib.DisposeObject(built.ribbon);
+    built.free(sys, ib);
+
+    // An entry before any group, and a null gadget: nothing made, and the
+    // gadgets given disposed of - the classes are expunged below only
+    // when none of their objects is left.
+    const stray = ribbonTool(ib, 78, "_Stray", tbg.TBSIZE_SMALL);
+    const unordered = [_]rbn.NewRibbon{
+        .{ .type = rbn.RB_TAB, .label = "_Home" },
+        .{ .type = rbn.RB_GADGET, .id = 78, .gadget = stray },
+        .{},
+    };
+    try testing.expect(rbn.build(sys, ib, &unordered, null) == null);
+    const given = ribbonTool(ib, 79, "_Given", tbg.TBSIZE_SMALL);
+    const missing = [_]rbn.NewRibbon{
+        .{ .type = rbn.RB_TAB, .label = "_Home" },
+        .{ .type = rbn.RB_GROUP, .label = "Group", .glyph = cmd.CMD_CUT },
+        .{ .type = rbn.RB_GADGET, .id = 79, .gadget = given },
+        .{ .type = rbn.RB_GADGET, .id = 80, .gadget = null },
+        .{},
+    };
+    try testing.expect(rbn.build(sys, ib, &missing, null) == null);
     try rig.down();
 }
 

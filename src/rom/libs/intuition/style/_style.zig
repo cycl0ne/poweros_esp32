@@ -532,6 +532,9 @@ const tool_pressed = style.blend(&.{ .{ .pen = sc.BACKGROUNDPEN, .weight = 10 },
 const tool_checked = style.blend(&.{ .{ .pen = sc.BACKGROUNDPEN, .weight = 6 }, .{ .pen = sc.SHINEPEN, .weight = 6 }, .{ .pen = sc.FILLPEN, .weight = 4 } });
 const tool_edge = style.blend(&.{ .{ .pen = sc.BACKGROUNDPEN, .weight = 10 }, .{ .pen = sc.TEXTPEN, .weight = 6 } });
 const tool_edge_strong = style.blend(&.{ .{ .pen = sc.FILLPEN }, .{ .pen = sc.TEXTPEN } });
+/// A disabled tool's text, faded into the ground as far as its picture is
+/// (command.image's disabled look): #606060 on the built-in grey.
+const tool_text_disabled = style.blend(&.{ .{ .pen = sc.BACKGROUNDPEN, .weight = 9 }, .{ .pen = sc.TEXTPEN, .weight = 7 } });
 
 fn pair(t: utility.Tag, data: usize) TagItem {
     return .{ .tag = t, .data = data };
@@ -661,8 +664,10 @@ pub const default_tags = complete(style.PART_MAIN, style.BORDER_RAISED, sc.BACKG
     // one-pixel edge round a ground blended from the screen's pens - the
     // background lifted toward the shine with some of the fill in it, light
     // enough that a coloured picture keeps its colours, its text the
-    // text's. Without a border the room it takes is padding, so what is
-    // inside stays where it is as the border comes and goes.
+    // text's. Disabled, flat, its text faded into the ground as its
+    // picture is - no ghost laid over it. Without a border the room it
+    // takes is padding, so what is inside stays where it is as the border
+    // comes and goes.
     pair(style.STYLE_Part, ic.PART_TOOL),
     pair(style.STYLE_Border, style.BORDER_NONE),
     pair(style.STYLE_Radius, 3),
@@ -696,6 +701,7 @@ pub const default_tags = complete(style.PART_MAIN, style.BORDER_RAISED, sc.BACKG
     pair(style.STYLE_PaddingY, 1),
     pair(style.STYLE_State, style.STATE_DISABLED),
     pair(style.STYLE_Border, style.BORDER_NONE),
+    pair(style.STYLE_TextPen, tool_text_disabled),
     pair(style.STYLE_PaddingX, 4),
     pair(style.STYLE_PaddingY, 2),
 } ++ complete(style.PART_INDICATOR, style.BORDER_NONE, sc.FILLPEN, sc.FILLTEXTPEN, 0, 0, 0, 0, style.JOINS_ANGLED) ++

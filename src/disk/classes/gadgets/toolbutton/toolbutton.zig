@@ -25,8 +25,10 @@
 //! in: pressed while held, checked while on, hovered under the pointer
 //! (`GFLG_HOVERLOOK`, so that intuition draws it again as the pointer
 //! comes and goes). The room inside the frame is measured at rest. The
-//! label's `_` marks its key, underlined. Disabled, the ghost goes over
-//! the whole button.
+//! label's `_` marks its key, underlined. Disabled, the picture is drawn
+//! disabled (`IDS_DISABLED`) - a command image's in grey, faded into the
+//! ground - an icon's in grey at under half its strength, and the label
+//! and the mark in the part's disabled text pen; no ghost goes over it.
 //!
 //! A drop-down or a split button has a mark after its label - beside the
 //! second line of a large one's, or where that line would be - and its
@@ -69,8 +71,8 @@ const LayersBase = sdk.interface.layers.LayersBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tb.TOOLBUTTON_CLASS,
     .version = 1,
-    .revision = 2,
-    .date = "28.10.2026",
+    .revision = 3,
+    .date = "29.10.2026",
     .super = classusr.BUTTONGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -314,14 +316,16 @@ fn takeIcon(base: *gadgets.Base, own: *Data, name: [*:0]const u8) void {
     own.disk_object = object;
 }
 
-/// The picture, `size` square at (`left`, `top`).
+/// The picture, `size` square at (`left`, `top`): disabled as the button
+/// is.
 fn drawPicture(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, rp: *graphics.RastPort, info: *classusr.GadgetInfo, left: i32, top: i32, size: i32) void {
+    const disabled = g.flags & gc.GFLG_DISABLED != 0;
     if (own.image) |image| {
         var draw = ic.ImpDraw{
             .method_id = ic.IM_DRAWFRAME,
             .rast_port = rp,
             .offset = .{ .x = left, .y = top },
-            .state = ic.IDS_NORMAL,
+            .state = if (disabled) ic.IDS_DISABLED else ic.IDS_NORMAL,
             .draw_info = info.draw_info,
             .dimensions = .{ .width = size, .height = size },
             .style = g.style,
@@ -344,12 +348,38 @@ fn drawPicture(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, rp: *graphi
     };
     const gb = base.graphics_base;
     const format = @intFromEnum(sdk.rtg.bitmaps.PixelFormat.rgba32);
+    // Disabled, a grey copy of it, which is drawn instead when there is
+    // the memory for it.
+    const grey = if (disabled) greyed(base, picture) else null;
+    defer if (grey) |pixels| base.sys_base.FreeVec(pixels);
+    const pixels: [*]const u8 = if (grey) |copy| copy else picture.pixels;
     if (pw == w and ph == h) {
-        gb.BlendPixelArray(rp, picture.pixels, picture.width * 4, format, 0, 0, &at);
+        gb.BlendPixelArray(rp, pixels, picture.width * 4, format, 0, 0, &at);
     } else {
         const whole = graphics.Rect{ .max_x = pw, .max_y = ph };
-        gb.ScalePixelArray(rp, picture.pixels, picture.width * 4, format, &whole, &at);
+        gb.ScalePixelArray(rp, pixels, picture.width * 4, format, &whole, &at);
     }
+}
+
+/// How strong a disabled icon's grey is, of 256: what is left of a
+/// command image's colour as it fades into the ground.
+const grey_strength = 116;
+
+/// An icon's picture as a disabled button shows it: each pixel's
+/// brightness as a grey, at `grey_strength` of its cover, so that it
+/// fades into whatever ground it is laid on. Null without the memory.
+fn greyed(base: *gadgets.Base, picture: *const icon.IconImage) ?[*]u8 {
+    const count = @as(usize, picture.width) * picture.height;
+    const copy: [*]u8 = @ptrCast(base.sys_base.AllocVec(count * 4, sdk.exec.MEMF_ANY) orelse return null);
+    for (0..count) |i| {
+        const from = picture.pixels + i * 4;
+        const y = (30 * @as(u32, from[0]) + 59 * @as(u32, from[1]) + 11 * @as(u32, from[2]) + 50) / 100;
+        copy[i * 4] = @intCast(y);
+        copy[i * 4 + 1] = @intCast(y);
+        copy[i * 4 + 2] = @intCast(y);
+        copy[i * 4 + 3] = @intCast((@as(u32, from[3]) * grey_strength + 128) >> 8);
+    }
+    return copy;
 }
 
 /// How wide a line of the label is drawn, without its `_`.
@@ -411,6 +441,7 @@ fn drawLine(gb: *GraphicsBase, rp: *graphics.RastPort, left: i32, top: i32, text
 /// marked it.
 fn statesOf(g: *const gc.Gadget) u32 {
     var states = gc.styleStates(g.flags);
+    if (g.flags & gc.GFLG_DISABLED != 0) states |= style.STATE_DISABLED;
     if (g.flags & gc.GFLG_SELECTED != 0) {
         states |= if (g.activation & gc.GACT_TOGGLESELECT != 0) style.STATE_CHECKED else style.STATE_PRESSED;
     }
@@ -549,7 +580,6 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo
             gb.DrawVLine(rp, b.left + split, b.top + room.top, b.height - room.height);
         }
     };
-    if (g.flags & gc.GFLG_DISABLED != 0) support.ghost(gb, rp, b, info.block_pen);
 }
 
 /// The mark: a triangle pointing down, in `ink`, in the middle of `box`.

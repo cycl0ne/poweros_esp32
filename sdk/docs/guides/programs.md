@@ -325,8 +325,11 @@ requester), and
 finding, line numbers and highlighting through a hook that labels each
 line - what `SYS:Programs/Notepad` is made of), and
 `scrollgroup` (a layout larger than the window, scrolled; `C:test/Scroll`),
-and `listbrowser` (a list in columns, sorted by a heading, its rows a
-tree; `C:test/ListBrowser`). Each
+`listbrowser` (a list in columns, sorted by a heading, its rows a
+tree; `C:test/ListBrowser`), `toolbutton` (a button with a picture and a
+label, as a tool bar has; `C:test/Gadgets`) and `ribbon` (a program's
+commands in tabs and named groups, made from a table;
+[A ribbon](intuition.md#a-ribbon), `C:test/Ribbon`). Each
 has its tags in `sdk/libs/gadgets/<name>.zig`, named after the class:
 
 ```zig
