@@ -14,11 +14,14 @@
 //! a child with a weight fills the layout's height or width up to its
 //! maximum; one with weight 0 keeps its nominal size, centred in a row and
 //! against the left of a column unless `CHILDA_Align` puts it elsewhere.
+//! A child that keeps its shape (`CHILDA_Aspect`) is as long along as its
+//! size across makes it: a cover stays square as the window grows.
 //!
 //! A layout can be drawn in a frame with a title in its top edge
-//! (`LAYOUTA_Frame`, `LAYOUTA_FrameTitle`): the frame and the title take
-//! their room off the layout before the children are placed, so a window
-//! of framed groups is written as layouts inside layouts.
+//! (`LAYOUTA_Frame`, `LAYOUTA_FrameTitle`), sunk rather than raised
+//! (`LAYOUTA_FrameRecessed`): the frame and the title take their room off
+//! the layout before the children are placed, so a window of framed
+//! groups is written as layouts inside layouts.
 //!
 //! A child may have a label: text beside it on the left, in the window's
 //! text pen and font. The labels of a column share one column of their
@@ -43,7 +46,10 @@
 //! or it is added (`AddGList`), the window's smallest size becomes the one
 //! the layout fits in (`WindowLimits`) - or the window's size then, if
 //! that is smaller. A program that wants a larger smallest size sets it
-//! afterwards.
+//! afterwards. A layout that needs more room than its window has - a row
+//! that wraps (`LAYOUTA_Wrap`) is deeper once the window is narrower, a
+//! window opened on a small screen was squeezed - grows the window to
+//! fit, as far as the screen lets it.
 //!
 //! A layout made without a size is its nominal size, from the first time
 //! it is laid out. Inside another layout its box is that layout's to set.
@@ -111,6 +117,12 @@ pub const LAYOUTA_Columns = LAYOUTA_Dummy + 0x0009;
 /// its lines are: it answers `GM_DOMAIN` for the length it was last
 /// given, and is asked again when that changes.
 pub const LAYOUTA_Wrap = LAYOUTA_Dummy + 0x000A;
+/// Bool: the layout's frame drawn sunk (`IA_Recessed`): a ridge becomes a
+/// groove, a button's frame (`FRAME_BUTTON`) a hollow as a field's is -
+/// for something the layout shows rather than groups, a picture or a
+/// list. It holds for the frame the layout has and any it is given later;
+/// on its own it gives none.
+pub const LAYOUTA_FrameRecessed = LAYOUTA_Dummy + 0x000B;
 
 pub const LORIENT_HORIZ: u32 = 1;
 pub const LORIENT_VERT: u32 = 2;
@@ -162,3 +174,17 @@ pub const CHILDA_Row = CHILDA_Dummy + 0x0A;
 /// In a grid, how many columns and rows its cell covers (1 unless told).
 pub const CHILDA_ColumnSpan = CHILDA_Dummy + 0x0B;
 pub const CHILDA_RowSpan = CHILDA_Dummy + 0x0C;
+/// Its shape kept, `aspect(width, height)`: in a row its width follows the
+/// height it is given there, in a column its height the width - a cover
+/// kept square as the window grows. Across, its sizes and its weight work
+/// as ever; where its smallest or largest size along does not allow the
+/// shape, or the row is too short for it at that height, the size across
+/// gives way - down to its smallest - and the child sits in its room as
+/// `CHILDA_Align` says. 0, the default, keeps no shape. A grid and a row or
+/// column that wraps leave it alone.
+pub const CHILDA_Aspect = CHILDA_Dummy + 0x0D;
+
+/// A shape for `CHILDA_Aspect`: `width` to `height`, 1 to 1 for a square.
+pub fn aspect(width: u16, height: u16) u32 {
+    return @as(u32, width) << 16 | height;
+}

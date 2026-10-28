@@ -47,6 +47,7 @@ const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
+const _window = @import("../window/_window.zig");
 
 /// windowclass's part of an object.
 pub const Data = extern struct {
@@ -160,6 +161,9 @@ fn open(ib: *IntuitionBase, p: *Data) ?*intuition.Window {
     _ = it.SetAttrsTagList(layout, &fill);
     _ = it.AddGList(window, layout, -1, 1);
     it.RefreshGList(layout, window, 1);
+    // Squeezed onto a small screen, the layout may need more than the
+    // window was given - its rows wrapped deeper: the window grows to it.
+    _window.fitLayout(ib, @ptrCast(@alignCast(window)));
     return window;
 }
 

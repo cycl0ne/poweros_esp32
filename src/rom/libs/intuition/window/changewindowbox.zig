@@ -51,7 +51,10 @@ const unlock = _window.unlock;
 /// the size added: what the program drew there is gone. The program is
 /// told `IDCMP_NEWSIZE`; either way it is told `IDCMP_CHANGEWINDOW`.
 /// Whatever the change uncovered is repaired, and the damage is the
-/// program's `IDCMP_REFRESHWINDOW`.
+/// program's `IDCMP_REFRESHWINDOW`. When a layout in the window then needs
+/// more room than the size gives it - a row that wraps went deeper at the
+/// new width - the window grows to that room in a second step, as far as
+/// the screen lets it, and the program hears a second `IDCMP_NEWSIZE`.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
@@ -132,8 +135,13 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
 
     // The room every gadget is measured against has changed. Their boxes
     // are worked out afresh each time they are used, so this is for a
-    // class that arranges something of its own.
-    if (sized) _gadget.layout(ib, window, window.gadgets, false);
+    // class that arranges something of its own - and a layout says again
+    // what it needs, for `fitLayout` below.
+    if (sized) {
+        window.layout_width = 0;
+        window.layout_height = 0;
+        _gadget.layout(ib, window, window.gadgets, false);
+    }
 
     if (sized) {
         // Where the right and bottom border were is inside the window now,
@@ -152,4 +160,7 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
     }
     send(ib, window, wn.IDCMP_CHANGEWINDOW, 0);
     repairScreen(ib, s);
+    // A row that wraps may need more height at the new width than the
+    // window has: the window grows to it, a second step of its own.
+    if (sized) _window.fitLayout(ib, window);
 }

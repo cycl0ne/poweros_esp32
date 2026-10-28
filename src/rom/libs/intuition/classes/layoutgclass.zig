@@ -23,7 +23,18 @@
 //! time, by the layout it is in; a layout does not pass `GM_LAYOUT` on to
 //! its children as a plain group does, since it places them itself.
 //! The first time, a layout sized by its window also makes the window's
-//! smallest size the one it fits in.
+//! smallest size the one it fits in, and says that size to the window
+//! (`layout_width`, `layout_height`), which grows to it where it is
+//! smaller (`_window.fitLayout`).
+//!
+//! **A child that keeps its shape** (`CHILDA_Aspect`) is measured and
+//! placed along the row or column from its size across: in a row its
+//! height comes first, by the rule for across, and its width is that
+//! height in its shape - its nominal and its most, so the sharing gives
+//! it no more. Its least is what its smallest height makes it: a row too
+//! short for every child's nominal width takes it narrower with the
+//! others. Its width cut short so, or by its own largest or smallest
+//! width, its height gives way the other way and the shape holds.
 //!
 //! **A child is sized in place.** Its box is written, not set through
 //! `OM_SET`: set, its `GA_Width` would become the size it asks for next
@@ -32,7 +43,8 @@
 //!
 //! **A frame round it.** `LAYOUTA_Frame` puts a frameiclass frame round
 //! the layout and `LAYOUTA_FrameTitle` a title in its top edge, which
-//! breaks the frame's top line. Both take their room off the layout
+//! breaks the frame's top line; `LAYOUTA_FrameRecessed` sinks it, the
+//! frame image's `IA_Recessed`. Both take their room off the layout
 //! before anything is placed, so that what a framed layout asks for
 //! (`GM_DOMAIN`) is what its children need with the frame added, and a
 //! window of framed groups is layouts inside layouts and nothing else.
@@ -94,6 +106,9 @@ pub const Child = extern struct {
     /// `CHILDA_Align`: `CALIGN_` across and down; 0 either way is where a
     /// child sits without it.
     alignment: u32 = 0,
+    /// `CHILDA_Aspect`: its width in the top half, its height in the
+    /// bottom; 0 keeps no shape.
+    aspect: u32 = 0,
     /// In a grid: the cell it asked for (-1 for the next free one), how
     /// many it covers, and the cell it was given.
     column: i32 = -1,
@@ -133,6 +148,9 @@ pub const Data = extern struct {
     /// top edge.
     frame: ?*Object = null,
     title: ?[*:0]const u8 = null,
+    /// `LAYOUTA_FrameRecessed`: the frame, this one and any made later,
+    /// sunk.
+    frame_recessed: u32 = 0,
 };
 
 /// How far in from the frame's left edge a title starts, and the room
@@ -255,26 +273,27 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
                 if (addChild(ib, cl, o, @ptrFromInt(v))) changed = 1;
             },
             lg.LAYOUTA_Frame, lg.LAYOUTA_FrameType => {
-                if (item.tag == lg.LAYOUTA_Frame and v == 0) {
-                    ib.iface().DisposeObject(p.frame);
-                    p.frame = null;
-                } else {
-                    const kind: usize = if (item.tag == lg.LAYOUTA_FrameType) v else ic.FRAME_RIDGE;
-                    ib.iface().DisposeObject(p.frame);
-                    const made = [_]TagItem{ .{ .tag = ic.IA_FrameType, .data = kind }, .{} };
-                    p.frame = ib.iface().NewObjectTagList(ib.frame_class, null, &made);
+                ib.iface().DisposeObject(p.frame);
+                p.frame = null;
+                if (item.tag == lg.LAYOUTA_FrameType or v != 0) {
+                    p.frame = makeFrame(ib, p, if (item.tag == lg.LAYOUTA_FrameType) v else ic.FRAME_RIDGE);
                 }
                 changed = 1;
             },
             lg.LAYOUTA_FrameTitle => {
                 p.title = @ptrFromInt(v);
-                if (p.frame == null and v != 0) {
-                    const made = [_]TagItem{ .{ .tag = ic.IA_FrameType, .data = ic.FRAME_RIDGE }, .{} };
-                    p.frame = ib.iface().NewObjectTagList(ib.frame_class, null, &made);
+                if (p.frame == null and v != 0) p.frame = makeFrame(ib, p, ic.FRAME_RIDGE);
+                changed = 1;
+            },
+            lg.LAYOUTA_FrameRecessed => {
+                p.frame_recessed = @intFromBool(v != 0);
+                if (p.frame) |frame| {
+                    const sunk = [_]TagItem{ .{ .tag = ic.IA_Recessed, .data = p.frame_recessed }, .{} };
+                    _ = ib.iface().SetAttrsTagList(frame, &sunk);
                 }
                 changed = 1;
             },
-            lg.CHILDA_Label, lg.CHILDA_WeightWidth, lg.CHILDA_WeightHeight, lg.CHILDA_MinWidth, lg.CHILDA_MinHeight, lg.CHILDA_MaxWidth, lg.CHILDA_MaxHeight, lg.CHILDA_Align, lg.CHILDA_Column, lg.CHILDA_Row, lg.CHILDA_ColumnSpan, lg.CHILDA_RowSpan => {
+            lg.CHILDA_Label, lg.CHILDA_WeightWidth, lg.CHILDA_WeightHeight, lg.CHILDA_MinWidth, lg.CHILDA_MinHeight, lg.CHILDA_MaxWidth, lg.CHILDA_MaxHeight, lg.CHILDA_Align, lg.CHILDA_Column, lg.CHILDA_Row, lg.CHILDA_ColumnSpan, lg.CHILDA_RowSpan, lg.CHILDA_Aspect => {
                 const record = p.last orelse continue;
                 switch (item.tag) {
                     lg.CHILDA_Label => {
@@ -298,6 +317,8 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
                     lg.CHILDA_Row => record.row = @max(n, 0),
                     lg.CHILDA_ColumnSpan => record.column_span = @max(n, 1),
                     lg.CHILDA_RowSpan => record.row_span = @max(n, 1),
+                    // A shape with a side of 0 is none.
+                    lg.CHILDA_Aspect => record.aspect = if (v >> 16 & 0xFFFF != 0 and v & 0xFFFF != 0) @truncate(v) else 0,
                     else => record.max_height = @max(n, 0),
                 }
                 changed = 1;
@@ -309,6 +330,17 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
 }
 
 // --- the frame ---------------------------------------------------------------
+
+/// A frame of `kind` for the layout, sunk when the layout says so; null
+/// without the memory.
+fn makeFrame(ib: *IntuitionBase, p: *const Data, kind: usize) ?*Object {
+    const made = [_]TagItem{
+        .{ .tag = ic.IA_FrameType, .data = kind },
+        .{ .tag = ic.IA_Recessed, .data = p.frame_recessed },
+        .{},
+    };
+    return ib.iface().NewObjectTagList(ib.frame_class, null, &made);
+}
 
 /// What the frame takes round the layout: how far in from its edges its
 /// contents sit, and how much it takes in all each way. Nothing without
@@ -445,6 +477,34 @@ fn indent(record: *const Child, column: i32) i32 {
     return if (record.label != null) column else 0;
 }
 
+/// A size along the row or column in the child's shape, from its size
+/// across: a width from a height in a row, a height from a width in a
+/// column.
+fn alongOf(record: *const Child, across_size: i32, horiz: bool) i32 {
+    const wide: i64 = record.aspect >> 16;
+    const high: i64 = record.aspect & 0xFFFF;
+    const size: i64 = if (horiz) @divTrunc(@as(i64, across_size) * wide, high) else @divTrunc(@as(i64, across_size) * high, wide);
+    return @intCast(@min(size, gc.GDOMAIN_UNLIMITED));
+}
+
+/// What a child needs along the row or column: for one that keeps its
+/// shape, each size across in its shape - never below its own smallest
+/// along, and the three in order; any other as it says.
+fn shaped(record: *const Child, need: Need, horiz: bool) Need {
+    if (record.aspect == 0) return need;
+    var out = need;
+    if (horiz) {
+        out.min.width = @max(alongOf(record, need.min.height, true), need.min.width);
+        out.nominal.width = @max(alongOf(record, need.nominal.height, true), out.min.width);
+        out.max.width = @max(alongOf(record, need.max.height, true), out.nominal.width);
+    } else {
+        out.min.height = @max(alongOf(record, need.min.width, false), need.min.height);
+        out.nominal.height = @max(alongOf(record, need.nominal.width, false), out.min.height);
+        out.max.height = @max(alongOf(record, need.max.width, false), out.nominal.height);
+    }
+    return out;
+}
+
 /// What the whole layout needs, from what its children need.
 fn layoutNeed(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo) Need {
     const p = own(cl, o);
@@ -474,7 +534,7 @@ fn layoutNeed(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetI
     var walk = Walk.over(p);
     while (!whole) {
         const record = walk.next() orelse break;
-        const child = childNeed(ib, record, gi);
+        const child = shaped(record, childNeed(ib, record, gi), horiz);
         count += 1;
         // A labelled child is at least as tall as its label.
         const floor = if (record.label != null) labels.height else 0;
@@ -702,11 +762,26 @@ fn place(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, 
             record.least = need.min.width;
             record.nominal = need.nominal.width;
             record.most = need.max.width;
+            if (record.aspect != 0) {
+                // As wide as the height it gets makes it, and no wider;
+                // in a row too short for that, as narrow as its smallest
+                // height makes it at the least, its height following.
+                const h = across(inner_h, need.min.height, need.nominal.height, need.max.height, record.weight_height);
+                record.least = @min(@max(alongOf(record, need.min.height, true), need.min.width), need.max.width);
+                record.nominal = @max(@min(@max(alongOf(record, h, true), need.min.width), need.max.width), record.least);
+                record.most = record.nominal;
+            }
             used += labelRoom(&labels, ib, p, record);
         } else {
             record.least = @max(need.min.height, floor);
             record.nominal = @max(need.nominal.height, floor);
             record.most = @max(need.max.height, floor);
+            if (record.aspect != 0) {
+                const w = across(inner_w - indent(record, column), need.min.width, need.nominal.width, need.max.width, record.weight_width);
+                record.least = @max(@min(@max(alongOf(record, need.min.width, false), need.min.height), need.max.height), floor);
+                record.nominal = @max(@min(@max(alongOf(record, w, false), need.min.height), need.max.height), record.least);
+                record.most = record.nominal;
+            }
         }
         used += record.least;
         count += 1;
@@ -722,16 +797,19 @@ fn place(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, 
         var box: _gadget.Box = undefined;
         if (horiz) {
             const room = labelRoom(&labels, ib, p, record);
-            const h = across(inner_h, need.min.height, need.nominal.height, need.max.height, record.weight_height);
+            var h = across(inner_h, need.min.height, need.nominal.height, need.max.height, record.weight_height);
+            // Its width cut short by its own limits: its height follows.
+            if (record.aspect != 0) h = @min(h, alongOf(record, record.length, false));
             const down = alignedAt((record.alignment >> 4) & 3, align_centre, inner_h, h);
             box = .{ .left = at + room, .top = top + down, .width = record.length, .height = h };
             record.label_x = at;
             at += room + record.length + p.spacing;
         } else {
             const in = indent(record, column);
-            const w = across(inner_w - in, need.min.width, need.nominal.width, need.max.width, record.weight_width);
+            var w = across(inner_w - in, need.min.width, need.nominal.width, need.max.width, record.weight_width);
             // A child shorter than its label's line sits in the middle of it.
             const h = @min(record.length, need.max.height);
+            if (record.aspect != 0) w = @min(w, alongOf(record, h, true));
             const along = alignedAt(record.alignment & 3, align_start, inner_w - in, w);
             const down = alignedAt((record.alignment >> 4) & 3, align_centre, record.length, h);
             box = .{ .left = left + in + along, .top = at + down, .width = w, .height = h };
@@ -771,9 +849,12 @@ fn hint(ib: *IntuitionBase, p: *Data, labels: *const Labels, horiz: bool, room: 
 
 /// A layout sized by its window makes the window no smaller than it fits
 /// in - once, when the window opens with it or it is added, and after
-/// every resize when something in it wraps. A window
-/// already smaller than that is held where it is. The layout's word is the
-/// last: a program that wants a larger smallest size sets it afterwards.
+/// every resize when something in it wraps. A window already smaller than
+/// that keeps its size as its smallest, which `WindowLimits` would refuse
+/// to make larger, and is told the size it needs (`layout_width`,
+/// `layout_height`): the resize or the open that laid it out grows it
+/// then (`_window.fitLayout`). The layout's word is the last: a program
+/// that wants a larger smallest size sets it afterwards.
 fn limitWindow(ib: *IntuitionBase, cl: *Class, o: *Object, gi: *classusr.GadgetInfo) void {
     if (gi.requester != null) return;
     const g = gadgetclass.gadgetOf(ib, o);
@@ -786,6 +867,8 @@ fn limitWindow(ib: *IntuitionBase, cl: *Class, o: *Object, gi: *classusr.GadgetI
     // what the layout's own size is less than that room.
     const min_w = need.min.width - g.width + (w.width - gi.domain_width);
     const min_h = need.min.height - g.height + (w.height - gi.domain_height);
+    if (rel_w) w.layout_width = @max(w.layout_width, min_w);
+    if (rel_h) w.layout_height = @max(w.layout_height, min_h);
     _ = ib.iface().WindowLimits(
         @ptrCast(w),
         if (rel_w) @min(min_w, w.width) else 0,

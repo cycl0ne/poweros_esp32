@@ -142,7 +142,11 @@ pub const LIBRARY_VERSION = 0;
 /// 58: SA_Dragging - whether a picture is dragged across a screen.
 /// 59: a gadget in the border redrawn over the border in a picture of
 /// its own size, in a window of any size.
-pub const LIBRARY_REVISION = 59;
+/// 61: layoutgclass's CHILDA_Aspect - a child that keeps its shape - and
+/// LAYOUTA_FrameRecessed, a sunk frame; a window grows to what its layout
+/// needs once a row of it wrapped deeper or it was squeezed onto a small
+/// screen.
+pub const LIBRARY_REVISION = 61;
 const BUILD_DATE = "28.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
