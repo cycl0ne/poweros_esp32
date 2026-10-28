@@ -291,6 +291,17 @@ fn copyFrom(src: *const rtg.Surface, p: drawing.Piece, sx: i32, sy: i32, dx: i32
     rows.store(to, bytes, rows.load(at, bytes));
 }
 
+/// Which pixels of a blit are copied: one bit to a pixel, as the caller
+/// gave it, and where in it the copied rectangle's corner falls - not at
+/// its own corner when the rectangle is a piece of a larger one.
+pub const Mask = struct {
+    bits: [*]const u8,
+    /// Bytes from one row to the next.
+    pitch: u32,
+    left: i32 = 0,
+    top: i32 = 0,
+};
+
 /// What BltBitMapRastPort and BltMaskBitMapRastPort both do, with the mask
 /// left out of the first.
 ///
@@ -304,8 +315,7 @@ fn copyFrom(src: *const rtg.Surface, p: drawing.Piece, sx: i32, sy: i32, dx: i32
 /// - `dest_y` - where the top edge lands.
 /// - `width` - how wide the rectangle is.
 /// - `height` - how tall.
-/// - `mask` - one bit to a pixel, or null for every pixel.
-/// - `mask_pitch` - bytes from one row of the mask to the next.
+/// - `mask` - which pixels, or null for every pixel.
 pub fn blitInto(
     gb: *GraphicsBase,
     src: *const rtg.Surface,
@@ -316,8 +326,7 @@ pub fn blitInto(
     dest_y: i32,
     width: i32,
     height: i32,
-    mask: ?[*]const u8,
-    mask_pitch: u32,
+    mask: ?Mask,
 ) void {
     dest.last_error = graphics.GERR_OK;
     if (src.format != dest.surface.format) {
@@ -424,10 +433,10 @@ pub fn blitInto(
                 const x = if (back_cols) r.rect.max_x - 1 - j else r.rect.min_x + j;
                 const sx = x - dx;
                 const sy = y - dy;
-                if (mask) |bits| {
+                if (mask) |m| {
                     // Read from the source's corner, so the mask travels
                     // with the shape rather than with where it lands.
-                    const set = bitAt(bits, mask_pitch, sx - src_x, sy - src_y);
+                    const set = bitAt(m.bits, m.pitch, sx - src_x + m.left, sy - src_y + m.top);
                     if (if (inverse) set else !set) continue;
                 }
                 copyFrom(src, r, sx, sy, x, y);
@@ -436,6 +445,79 @@ pub fn blitInto(
         }
     }
     if (any) drawing.handOn(gb, dest, drawing.written(request, bound));
+}
+
+/// What BltRastPort and BltMaskRastPort both do: `area` of `src` moved to
+/// `dest`. A RastPort with targets - a layer's - is read through them, as
+/// it is written: each part from wherever that part is kept, the display
+/// where the layer shows and a keeping surface where it is covered, at the
+/// offset the target gives. Its surface at the same coordinates is the
+/// display at the layer's coordinates, not the layer, when the layers
+/// share the display's buffer. A part no target covers is kept nowhere,
+/// and nothing lands for it.
+///
+/// INPUTS:
+/// - `gb` - the library, to hand the rows on.
+/// - `src` - where the pixels come from.
+/// - `area` - what to take, in the source's coordinates.
+/// - `dest` - the RastPort they go to.
+/// - `dest_x` - where the left edge lands.
+/// - `dest_y` - where the top edge lands.
+/// - `mask` - which pixels, its corner at `area`'s, or null for every
+///   pixel.
+pub fn blitFrom(gb: *GraphicsBase, src: *const RastPort, area: Rect, dest: *RastPort, dest_x: i32, dest_y: i32, mask: ?Mask) void {
+    const list = src.clip_list orelse
+        return blitInto(gb, src.surface, area.min_x, area.min_y, dest, dest_x, dest_y, area.width(), area.height(), mask);
+    // A layer moved over itself takes its pieces in the direction of
+    // travel, as ScrollRaster does - and where it lands too, a piece of
+    // the destination at a time, since one piece written may be what
+    // another is still to read. The lists are in order of min_y, then
+    // min_x, so a move down or to the right takes them from the end.
+    const backwards = dest_y > area.min_y or (dest_y == area.min_y and dest_x > area.min_x);
+    const into = if (backwards) dest.clip_list else null;
+    var went_wrong = graphics.GERR_OK;
+    for (0..lengthOf(list)) |i| {
+        const t = nth(list, i, backwards);
+        const part = Rect.intersect(area, t.rect);
+        if (part.isEmpty()) continue;
+        const shift_x = dest_x - area.min_x;
+        const shift_y = dest_y - area.min_y;
+        const pieces = if (into) |landing| lengthOf(landing) else 1;
+        for (0..pieces) |j| {
+            // What of the part lands in this piece of the destination,
+            // as it stands in the source.
+            const sub = if (into) |landing|
+                Rect.intersect(part, nth(landing, j, true).rect.offset(-shift_x, -shift_y))
+            else
+                part;
+            if (sub.isEmpty()) continue;
+            var moved = mask;
+            if (moved) |*m| {
+                m.left += sub.min_x - area.min_x;
+                m.top += sub.min_y - area.min_y;
+            }
+            blitInto(gb, t.surface, sub.min_x + t.dx, sub.min_y + t.dy, dest, sub.min_x + shift_x, sub.min_y + shift_y, sub.width(), sub.height(), moved);
+            if (dest.last_error != graphics.GERR_OK) went_wrong = dest.last_error;
+        }
+    }
+    dest.last_error = went_wrong;
+}
+
+/// How many targets a list has.
+fn lengthOf(list: *graphics.ClipTarget) usize {
+    var count: usize = 0;
+    var at: ?*graphics.ClipTarget = list;
+    while (at) |t| : (at = t.next) count += 1;
+    return count;
+}
+
+/// The `i`th target of a list, from its end when `backwards`. A list is a
+/// handful of targets, so it is walked again each time.
+fn nth(list: *graphics.ClipTarget, i: usize, backwards: bool) *graphics.ClipTarget {
+    const at = if (backwards) lengthOf(list) - 1 - i else i;
+    var t = list;
+    for (0..at) |_| t = t.next.?;
+    return t;
 }
 
 // --- pixels laid over what is already there ---------------------------------

@@ -65,5 +65,5 @@ const blitInto = _blit.blitInto;
 pub fn BltBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *RastPort, dest_x: i32, dest_y: i32, width: i32, height: i32) void {
     const held = rastport.hold(gb, dest);
     defer rastport.letGo(gb, held);
-    blitInto(gb, src, src_x, src_y, dest, dest_x, dest_y, width, height, null, 0);
+    blitInto(gb, src, src_x, src_y, dest, dest_x, dest_y, width, height, null);
 }

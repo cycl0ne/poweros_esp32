@@ -108,7 +108,7 @@ pub fn ScrollRaster(gb: *GraphicsBase, rp: *RastPort, dx: i32, dy: i32, area: *c
         var read = drawing.visible(rp, from);
         while (read.next()) |piece| {
             const on = piece.on(piece.rect);
-            blitInto(gb, piece.surface, on.min_x, on.min_y, rp, piece.rect.min_x - dx, piece.rect.min_y - dy, piece.rect.width(), piece.rect.height(), null, 0);
+            blitInto(gb, piece.surface, on.min_x, on.min_y, rp, piece.rect.min_x - dx, piece.rect.min_y - dy, piece.rect.width(), piece.rect.height(), null);
         }
     }
     return true;

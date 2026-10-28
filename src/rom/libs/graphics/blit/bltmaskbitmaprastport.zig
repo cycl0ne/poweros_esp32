@@ -66,5 +66,5 @@ const blitInto = _blit.blitInto;
 pub fn BltMaskBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *RastPort, dest_x: i32, dest_y: i32, width: i32, height: i32, mask: [*]const u8, mask_pitch: u32) void {
     const held = rastport.hold(gb, dest);
     defer rastport.letGo(gb, held);
-    blitInto(gb, src, src_x, src_y, dest, dest_x, dest_y, width, height, mask, mask_pitch);
+    blitInto(gb, src, src_x, src_y, dest, dest_x, dest_y, width, height, .{ .bits = mask, .pitch = mask_pitch });
 }

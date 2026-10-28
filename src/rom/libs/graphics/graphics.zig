@@ -1849,6 +1849,96 @@ test "BltRastPort: clipped by the destination, and safe over itself" {
     try tearDown(gb);
 }
 
+/// A pixel of a 16-bit surface set, as `pixelAt` reads it.
+fn putPixel(surface: *rtg.Surface, x: u32, y: u32, value: u16) void {
+    const at = surface.pixels.? + @as(usize, y) * surface.pitch + x * 2;
+    at[0] = @truncate(value);
+    at[1] = @truncate(value >> 8);
+}
+
+test "BltRastPort: a layer's RastPort is read through its targets - each part from where it is kept, a mask with it, and over itself in the direction of travel" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    // The display's buffer, which the layers share, and where the covered
+    // part of one is kept.
+    var screen_pixels: [16 * 8 * 2]u8 = @splat(0);
+    var screen = sizedSurface(&screen_pixels, .rgb565, 16, 8);
+    var kept_pixels: [8 * 4 * 2]u8 = @splat(0);
+    var kept = memorySurface(&kept_pixels, .rgb565);
+
+    // A layer 8 by 4 at (8,2), its right half covered and kept: as in
+    // "clip targets" above. Its left half red on the display, its right
+    // half blue where it is kept, and the display's corner - where the
+    // layer's own coordinates fall on the display - green.
+    var covered = graphics.ClipTarget{ .rect = .{ .min_x = 4, .min_y = 0, .max_x = 8, .max_y = 4 }, .surface = &kept, .dx = -4, .dy = 0 };
+    var shown = graphics.ClipTarget{ .rect = .{ .min_x = 0, .min_y = 0, .max_x = 4, .max_y = 4 }, .surface = &screen, .dx = 8, .dy = 2, .next = &covered };
+    const whole = graphics.Rect{ .min_x = 0, .min_y = 0, .max_x = 8, .max_y = 4 };
+    const layer_tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&whole) },
+        .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&shown) },
+        .{},
+    };
+    const layer = try onMemory(gb, &screen, &layer_tags);
+    const red = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 0, 0) }, .{} };
+    const blue = [_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(0, 0, 255) }, .{} };
+    base(gb).SetRPAttrs(@ptrCast(layer), &red);
+    base(gb).RectFill(@ptrCast(layer), &.{ .min_x = 0, .min_y = 0, .max_x = 4, .max_y = 4 });
+    base(gb).SetRPAttrs(@ptrCast(layer), &blue);
+    base(gb).RectFill(@ptrCast(layer), &.{ .min_x = 4, .min_y = 0, .max_x = 8, .max_y = 4 });
+    for (0..8) |x| for (0..4) |y| putPixel(&screen, @intCast(x), @intCast(y), 0x07E0);
+
+    // Kept aside whole, as intuition keeps what is under a gadget: the
+    // red and the blue, never the green.
+    var aside_pixels: [8 * 4 * 2]u8 = @splat(0);
+    var aside = memorySurface(&aside_pixels, .rgb565);
+    const aside_rp = try onMemory(gb, &aside, null);
+    base(gb).BltRastPort(@ptrCast(layer), @ptrCast(aside_rp), &whole, 0, 0);
+    for (0..8) |x| for (0..4) |y| {
+        const want: u16 = if (x < 4) 0xF800 else 0x001F;
+        try testing.expectEqual(want, pixelAt(&aside, @intCast(x), @intCast(y)));
+    };
+    // A part across both, landing elsewhere.
+    @memset(&aside_pixels, 0);
+    base(gb).BltRastPort(@ptrCast(layer), @ptrCast(aside_rp), &.{ .min_x = 2, .min_y = 1, .max_x = 6, .max_y = 3 }, 1, 0);
+    try testing.expectEqual(@as(u16, 0), pixelAt(&aside, 0, 0));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&aside, 1, 0));
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&aside, 2, 1));
+    try testing.expectEqual(@as(u16, 0x001F), pixelAt(&aside, 3, 0));
+    try testing.expectEqual(@as(u16, 0x001F), pixelAt(&aside, 4, 1));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&aside, 5, 0));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&aside, 1, 2));
+
+    // A mask read at each piece's place in it: the first and the last
+    // pixel of the top row, one from each piece.
+    @memset(&aside_pixels, 0);
+    const ends = [_]u8{0b1000_0001};
+    base(gb).BltMaskRastPort(@ptrCast(layer), @ptrCast(aside_rp), &.{ .min_x = 0, .min_y = 0, .max_x = 8, .max_y = 1 }, 0, 0, &ends, 1);
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&aside, 0, 0));
+    for (1..7) |x| try testing.expectEqual(@as(u16, 0), pixelAt(&aside, @intCast(x), 0));
+    try testing.expectEqual(@as(u16, 0x001F), pixelAt(&aside, 7, 0));
+
+    // A part kept nowhere - a simple layer's covered half - lands nothing.
+    shown.next = null;
+    @memset(&aside_pixels, 0);
+    base(gb).BltRastPort(@ptrCast(layer), @ptrCast(aside_rp), &whole, 0, 0);
+    try testing.expectEqual(@as(u16, 0xF800), pixelAt(&aside, 3, 0));
+    try testing.expectEqual(@as(u16, 0), pixelAt(&aside, 4, 0));
+
+    // Shown in two pieces on the display, moved right over itself: the
+    // right piece is read before the left one writes over it.
+    var right = graphics.ClipTarget{ .rect = .{ .min_x = 4, .min_y = 0, .max_x = 8, .max_y = 4 }, .surface = &screen, .dx = 8, .dy = 2 };
+    shown.next = &right;
+    for (0..8) |x| putPixel(&screen, @intCast(8 + x), 2, @intCast(x + 1));
+    base(gb).BltRastPort(@ptrCast(layer), @ptrCast(layer), &.{ .min_x = 0, .min_y = 0, .max_x = 6, .max_y = 1 }, 2, 0);
+    const moved = [_]u16{ 1, 2, 1, 2, 3, 4, 5, 6 };
+    for (moved, 0..) |want, x| try testing.expectEqual(want, pixelAt(&screen, @intCast(8 + x), 2));
+
+    base(gb).FreeRastPort(@ptrCast(aside_rp));
+    base(gb).FreeRastPort(@ptrCast(layer));
+    try tearDown(gb);
+}
+
 test "Move and Draw: both ends drawn, and the point follows the line" {
     const gb = try setUp();
     defer kexec.deinit();

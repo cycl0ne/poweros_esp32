@@ -1442,7 +1442,8 @@ fn BltMaskRastPort(gb: *GraphicsBase, src: *RastPort, dest: *RastPort, area: *co
 
 **INPUTS**
 
-- `src` - where the pixels come from.
+- `src` - where the pixels come from. A layer's is read through its
+  targets, as `BltRastPort` reads it.
 - `dest` - where they go. Both must be in one format.
 - `area` - what to take, in the source's coordinates.
 - `dest_x` - where its top-left lands, across.
@@ -1463,6 +1464,9 @@ moved over a background it does not cover.
 
 No engine: an engine copies rectangles, and this is a rectangle with
 holes in it.
+
+A layer read in pieces reads the mask at each piece's place in it, so
+the shape stays whole wherever its parts are kept (since 0.34).
 
 **CONTEXT**
 
@@ -1572,7 +1576,8 @@ fn BltRastPort(gb: *GraphicsBase, src: *RastPort, dest: *RastPort, area: *const 
 **INPUTS**
 
 - `src` - where the pixels come from. Its clip is not consulted: a clip
-  says what may be *written*.
+  says what may be *written*. A RastPort with targets - a layer's - is
+  read through them, as it is written.
 - `dest` - where they go. Its clip decides what lands.
 - `area` - what to take, in the source's coordinates, half-open.
 - `dest_x`, `dest_y` - where `area`'s top left lands in the
@@ -1589,6 +1594,15 @@ destination's clip - none of which is an error.
 The area is first cut to what the source actually has, then moved to
 where it would land and clipped there, and only then copied - which is
 the only order that gets a partly-clipped copy right.
+
+A layer's RastPort keeps its pixels where its targets say: each part of
+the area is read from wherever that part is kept - the display where
+the layer shows, a keeping surface where it is covered - at the target's
+offset, so a layer reads in its own coordinates. A part no target
+covers is kept nowhere and nothing lands for it. Before 0.34 the
+RastPort's surface was read at the layer's coordinates, which, where
+the layers share the display's buffer, is the display's corner and not
+the layer.
 
 The two RastPorts may be the same one and the rectangles may overlap:
 rows are taken from the end when moving down and bytes from the end

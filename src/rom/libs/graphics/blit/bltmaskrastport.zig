@@ -11,7 +11,7 @@ const rastport = @import("../rastport/_rastport.zig");
 const _blit = @import("_blit.zig");
 const Rect = graphics.Rect;
 const RastPort = rastport.RastPort;
-const blitInto = _blit.blitInto;
+const blitFrom = _blit.blitFrom;
 
 /// Moves a rectangle, leaving alone the pixels the mask does not cover.
 ///
@@ -23,7 +23,8 @@ const blitInto = _blit.blitInto;
 /// SINCE: 0.12. LVO -148.
 ///
 /// INPUTS:
-/// - `src` - where the pixels come from.
+/// - `src` - where the pixels come from. A layer's is read through its
+///   targets, as `BltRastPort` reads it.
 /// - `dest` - where they go. Both must be in one format.
 /// - `area` - what to take, in the source's coordinates.
 /// - `dest_x` - where its top-left lands, across.
@@ -42,6 +43,9 @@ const blitInto = _blit.blitInto;
 ///
 /// No engine: an engine copies rectangles, and this is a rectangle with
 /// holes in it.
+///
+/// A layer read in pieces reads the mask at each piece's place in it, so
+/// the shape stays whole wherever its parts are kept (since 0.34).
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the RastPort's lock
@@ -67,5 +71,5 @@ const blitInto = _blit.blitInto;
 pub fn BltMaskRastPort(gb: *GraphicsBase, src: *RastPort, dest: *RastPort, area: *const Rect, dest_x: i32, dest_y: i32, mask: [*]const u8, mask_pitch: u32) void {
     const held = rastport.holdBoth(gb, src, dest);
     defer rastport.letGoBoth(gb, held);
-    blitInto(gb, src.surface, area.min_x, area.min_y, dest, dest_x, dest_y, area.width(), area.height(), mask, mask_pitch);
+    blitFrom(gb, src, area.*, dest, dest_x, dest_y, .{ .bits = mask, .pitch = mask_pitch });
 }

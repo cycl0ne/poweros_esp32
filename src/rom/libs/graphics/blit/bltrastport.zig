@@ -11,7 +11,7 @@ const rastport = @import("../rastport/_rastport.zig");
 const _blit = @import("_blit.zig");
 const Rect = graphics.Rect;
 const RastPort = rastport.RastPort;
-const blitInto = _blit.blitInto;
+const blitFrom = _blit.blitFrom;
 
 /// Moves a rectangle from one RastPort to another.
 ///
@@ -24,7 +24,8 @@ const blitInto = _blit.blitInto;
 ///
 /// INPUTS:
 /// - `src` - where the pixels come from. Its clip is not consulted: a clip
-///   says what may be *written*.
+///   says what may be *written*. A RastPort with targets - a layer's - is
+///   read through them, as it is written.
 /// - `dest` - where they go. Its clip decides what lands.
 /// - `area` - what to take, in the source's coordinates, half-open.
 /// - `dest_x`, `dest_y` - where `area`'s top left lands in the
@@ -39,6 +40,15 @@ const blitInto = _blit.blitInto;
 /// The area is first cut to what the source actually has, then moved to
 /// where it would land and clipped there, and only then copied - which is
 /// the only order that gets a partly-clipped copy right.
+///
+/// A layer's RastPort keeps its pixels where its targets say: each part of
+/// the area is read from wherever that part is kept - the display where
+/// the layer shows, a keeping surface where it is covered - at the target's
+/// offset, so a layer reads in its own coordinates. A part no target
+/// covers is kept nowhere and nothing lands for it. Before 0.34 the
+/// RastPort's surface was read at the layer's coordinates, which, where
+/// the layers share the display's buffer, is the display's corner and not
+/// the layer.
 ///
 /// The two RastPorts may be the same one and the rectangles may overlap:
 /// rows are taken from the end when moving down and bytes from the end
@@ -86,5 +96,5 @@ const blitInto = _blit.blitInto;
 pub fn BltRastPort(gb: *GraphicsBase, src: *RastPort, dest: *RastPort, area: *const Rect, dest_x: i32, dest_y: i32) void {
     const held = rastport.holdBoth(gb, src, dest);
     defer rastport.letGoBoth(gb, held);
-    blitInto(gb, src.surface, area.min_x, area.min_y, dest, dest_x, dest_y, area.width(), area.height(), null, 0);
+    blitFrom(gb, src, area.*, dest, dest_x, dest_y, null);
 }
