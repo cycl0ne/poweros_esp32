@@ -1528,20 +1528,30 @@ test "gradientslider.gadget: the knob along the gradient, skips beside it, a dra
     try rig.down();
 }
 
-test "tapedeck.gadget: a tape deck's modes and pause, an animation control's buttons and frames" {
+test "tapedeck.gadget: a tape deck's modes and pause, the song before and after, an animation control's buttons and frames" {
     var heard = Heard{ .tag = td.TDECK_Mode, .ib = undefined };
     var rig = try Rig.up(&tapedeck.Library.resident_tag, &heard);
     const ib = rig.ib;
     var termination: i32 = -1;
 
-    // A tape deck: 202 by 16, five buttons.
+    // A tape deck: five buttons, as wide as they are at its height - a
+    // line of the font and the bevel, 16 at the least.
     const deck = ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = 13 },
         .{ .tag = td.TDECK_Tape, .data = 1 },
         .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
         .{},
     }).?;
-    try testing.expectEqual(@as(usize, 202), attr(ib, deck, gc.GA_Width));
+    const height: i32 = @intCast(attr(ib, deck, gc.GA_Height));
+    try testing.expect(height >= 16);
+    const tape = tapedeck.Buttons.ofTape(false, height);
+    try testing.expectEqual(@as(usize, 5), tape.count);
+    try testing.expectEqual(@as(usize, @intCast(tape.right)), attr(ib, deck, gc.GA_Width));
+    // Play twice the height wide, rewind one and a half; stop a gap after
+    // fast forward.
+    try testing.expectEqual(2 * height, tape.boxes[1].width);
+    try testing.expectEqual(@divTrunc(3 * height, 2), tape.boxes[0].width);
+    try testing.expect(tape.boxes[3].left > tape.boxes[2].left + tape.boxes[2].width);
     try testing.expectEqual(@as(usize, td.BUT_STOP), attr(ib, deck, td.TDECK_Mode));
     // Play: the mode, done at once, and the code.
     var play = input(gc.GM_GOACTIVE, &press, 40, 7, &termination);
@@ -1550,7 +1560,7 @@ test "tapedeck.gadget: a tape deck's modes and pause, an animation control's but
     try testing.expectEqual(@as(?usize, td.BUT_PLAY), heard.value);
     try testing.expectEqual(@as(?usize, 13), heard.id);
     // Pause turns over, and the mode stays with the paused code added.
-    var pause = input(gc.GM_GOACTIVE, &press, 170, 7, &termination);
+    var pause = input(gc.GM_GOACTIVE, &press, @intCast(tape.boxes[4].left + 4), 7, &termination);
     _ = ib.SendMessage(deck, @ptrCast(&pause));
     try testing.expectEqual(@as(i32, td.BUT_PLAY | td.TDECK_PAUSED_CODE), termination);
     try testing.expectEqual(@as(usize, 1), attr(ib, deck, td.TDECK_Paused));
@@ -1562,12 +1572,12 @@ test "tapedeck.gadget: a tape deck's modes and pause, an animation control's but
 
     // An animation control, 202 wide: rewind 27, play 48, fast forward 27,
     // the frames in the rest.
-    const buttons = tapedeck.Buttons.of(false, 202, 16);
+    const buttons = tapedeck.Buttons.of(false, false, 202, 16);
     try testing.expectEqual(@as(i32, 27), buttons.boxes[0].width);
     try testing.expectEqual(@as(i32, 48), buttons.boxes[1].width);
     try testing.expectEqual(@as(i32, 102), buttons.boxes[3].left);
     // Narrower than 80: no rewind nor fast forward.
-    try testing.expectEqual(@as(i32, 0), tapedeck.Buttons.of(false, 70, 16).boxes[0].width);
+    try testing.expectEqual(@as(i32, 0), tapedeck.Buttons.of(false, false, 70, 16).boxes[0].width);
 
     const anim = ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = 14 },
@@ -1585,6 +1595,30 @@ test "tapedeck.gadget: a tape deck's modes and pause, an animation control's but
     _ = ib.SendMessage(anim, @ptrCast(&off));
     try testing.expectEqual(@as(usize, td.BUT_STOP), attr(ib, anim, td.TDECK_Mode));
     var back_on = input(gc.GM_HANDLEINPUT, &moving, 10, 7, &termination);
+    // With tracks: the song before first and the song after last. A press
+    // on either leaves the mode, and the code says which, paused or not.
+    const tracks = ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
+        .{ .tag = td.TDECK_Tape, .data = 1 },
+        .{ .tag = td.TDECK_Tracks, .data = 1 },
+        .{ .tag = td.TDECK_Mode, .data = td.BUT_PLAY },
+        .{},
+    }).?;
+    const round = tapedeck.Buttons.ofTape(true, height);
+    try testing.expectEqual(@as(usize, 7), round.count);
+    try testing.expectEqual(td.BUT_PREVIOUS, round.ids[0]);
+    try testing.expectEqual(td.BUT_NEXT, round.ids[6]);
+    try testing.expectEqual(@as(usize, @intCast(round.right)), attr(ib, tracks, gc.GA_Width));
+    var before = input(gc.GM_GOACTIVE, &press, 4, 7, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(tracks, @ptrCast(&before)));
+    try testing.expectEqual(@as(i32, td.BUT_PREVIOUS), termination);
+    try testing.expectEqual(@as(usize, td.BUT_PLAY), attr(ib, tracks, td.TDECK_Mode));
+    _ = ib.SetAttrsTagList(tracks, &[_]TagItem{ .{ .tag = td.TDECK_Paused, .data = 1 }, .{} });
+    var after = input(gc.GM_GOACTIVE, &press, @intCast(round.right - 4), 7, &termination);
+    _ = ib.SendMessage(tracks, @ptrCast(&after));
+    try testing.expectEqual(@as(i32, td.BUT_NEXT | td.TDECK_PAUSED_CODE), termination);
+    try testing.expectEqual(@as(usize, td.BUT_PLAY), attr(ib, tracks, td.TDECK_Mode));
+    ib.DisposeObject(tracks);
+
     _ = ib.SendMessage(anim, @ptrCast(&back_on));
     try testing.expectEqual(@as(usize, td.BUT_REWIND), attr(ib, anim, td.TDECK_Mode));
     var let_go = input(gc.GM_HANDLEINPUT, &release, 10, 7, &termination);

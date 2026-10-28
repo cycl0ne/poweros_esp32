@@ -5,7 +5,16 @@
 //! and pause: a press on one of the first four makes it the mode, which
 //! stays shown pressed; pause turns over on its own. The press ends at
 //! once, and the window's `IDCMP_GADGETUP` code is the mode, with
-//! `TDECK_PAUSED_CODE` added while paused.
+//! `TDECK_PAUSED_CODE` added while paused. With `TDECK_Tracks` the song
+//! before stands at its left and the song after at its right: a press on
+//! one leaves the mode as it is, and the code is `BUT_PREVIOUS` or
+//! `BUT_NEXT`, with `TDECK_PAUSED_CODE` added while paused.
+//!
+//! It is a line of its font high and its buttons' bevels, as a chooser or
+//! a string gadget is, so they stand in a row at one height; a tape deck
+//! is as wide as its buttons at that height. The buttons show
+//! media.image's pictures (`sdk.images.media`), as large as the height
+//! leaves room for.
 //!
 //! As an animation control (the default) it has rewind, play and fast
 //! forward, and a frame slider in the rest of its width. Rewind and fast
@@ -32,6 +41,9 @@ pub const TDECK_Mode = TDECK_Dummy + 1;
 pub const TDECK_Paused = TDECK_Dummy + 2;
 /// Bool, made only: a tape deck rather than an animation control.
 pub const TDECK_Tape = TDECK_Dummy + 3;
+/// Bool, made only: a tape deck with the song before and after round it
+/// (`BUT_PREVIOUS`, `BUT_NEXT`).
+pub const TDECK_Tracks = TDECK_Dummy + 4;
 /// How many frames the animation has; 10 unless given. Made, set and read.
 pub const TDECK_Frames = TDECK_Dummy + 11;
 /// The frame shown, from 0. Made, set and read.
@@ -46,6 +58,10 @@ pub const BUT_PAUSE: u32 = 4;
 pub const BUT_BEGIN: u32 = 5;
 pub const BUT_FRAME: u32 = 6;
 pub const BUT_END: u32 = 7;
+/// The song before and after, round a tape deck with `TDECK_Tracks`: the
+/// code of a press on them, never a mode.
+pub const BUT_PREVIOUS: u32 = 8;
+pub const BUT_NEXT: u32 = 9;
 
 /// Added to a tape deck's code while it is paused.
 pub const TDECK_PAUSED_CODE: u32 = 0x1000;

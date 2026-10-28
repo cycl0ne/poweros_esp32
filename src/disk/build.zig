@@ -162,6 +162,7 @@ const modules = [_]Program{
     .{ .disk = "classes/gadgets/ribbon.gadget", .source = "classes/gadgets/ribbon/ribbon.zig", .name = "ribbon.gadget" },
     // The image classes: pictures drawn to any size.
     .{ .disk = "classes/images/command.image", .source = "classes/images/command/command.zig", .name = "command.image" },
+    .{ .disk = "classes/images/media.image", .source = "classes/images/media/media.zig", .name = "media.image" },
     // The dock's docklets, in their own drawer: the dock lists it.
     .{ .disk = "classes/docklets/clock.docklet", .source = "classes/docklets/clock/clock.zig", .name = "clock.docklet" },
     .{ .disk = "classes/docklets/battery.docklet", .source = "classes/docklets/battery/battery.zig", .name = "battery.docklet" },

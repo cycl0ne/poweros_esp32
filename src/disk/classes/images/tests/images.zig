@@ -14,6 +14,8 @@ const intuition = sdk.intuition;
 const ic = intuition.imageclass;
 const shapes = sdk.gadgets.shapes;
 const command = sdk.images.command;
+const media = sdk.images.media;
+const sc = intuition.screens;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const Object = intuition.classes.Object;
 const TagItem = utility.TagItem;
@@ -21,6 +23,7 @@ const Pen = graphics.Pen;
 const kexec = host_rom.exec;
 
 const command_image = @import("../command/command.zig");
+const media_image = @import("../media/media.zig");
 
 test "shapes: a shape of straight edges set in keeps its edges parallel, whichever way round it goes" {
     const square = [_][2]f32{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
@@ -251,6 +254,112 @@ test "command.image: drawn in its own box, and in the middle of a box that is no
     };
 
     gb.FreeRastPort(canvas.rp);
+    ib.DisposeObject(o);
+    _ = kexec.SysBase.iface().RemLibrary(lib);
+    try host_rom.intuition.tearDown(kib);
+}
+
+test "media.image: every picture drawn at every size, over part of its square; none drawn as nothing" {
+    const kib = try host_rom.intuition.setUp();
+    const ib = kib.iface();
+    const gb = kib.graphics_base;
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &media_image.Library.resident_tag, null) orelse return error.NoClassLibrary));
+    const o = ib.NewObjectTagList(null, media.MEDIA_CLASS, &[_]TagItem{ .{ .tag = media.MEDIA_Glyph, .data = media.MEDIA_PLAY }, .{} }) orelse return error.NoObject;
+    try testing.expectEqual(@as(usize, media.MEDIA_PLAY), attr(ib, o, media.MEDIA_Glyph));
+    try testing.expectEqual(@as(usize, 24), attr(ib, o, ic.IA_Width));
+    try testing.expectEqual(@as(usize, 24), attr(ib, o, ic.IA_Height));
+
+    var small: Canvas(16) = .{};
+    var middle: Canvas(24) = .{};
+    var large: Canvas(48) = .{};
+    var glyph: u32 = media.MEDIA_NONE;
+    while (glyph <= media.MEDIA_LAST + 1) : (glyph += 1) {
+        try testing.expect(ib.SetAttrsTagList(o, &[_]TagItem{ .{ .tag = media.MEDIA_Glyph, .data = glyph }, .{} }) != 0);
+        try small.up(gb, 0xFF90_9090);
+        try middle.up(gb, 0xFF90_9090);
+        try large.up(gb, 0xFF90_9090);
+        defer gb.FreeRastPort(small.rp);
+        defer gb.FreeRastPort(middle.rp);
+        defer gb.FreeRastPort(large.rp);
+        const counts = [_]usize{ try drawn(ib, o, &small, 16, ic.IDS_NORMAL), try drawn(ib, o, &middle, 24, ic.IDS_NORMAL), try drawn(ib, o, &large, 48, ic.IDS_NORMAL) };
+        for (counts, [_]usize{ 16 * 16, 24 * 24, 48 * 48 }) |count, all| {
+            if (glyph == media.MEDIA_NONE or glyph > media.MEDIA_LAST) {
+                try testing.expectEqual(@as(usize, 0), count);
+            } else {
+                testing.expect(count > all / 10) catch |err| {
+                    std.debug.print("glyph {d}: {d} of {d}\n", .{ glyph, count, all });
+                    return err;
+                };
+                try testing.expect(count < all);
+            }
+        }
+    }
+    ib.DisposeObject(o);
+    _ = kexec.SysBase.iface().RemLibrary(lib);
+    try testing.expect(ib.FindClass(media.MEDIA_CLASS) == null);
+    try host_rom.intuition.tearDown(kib);
+}
+
+test "media.image: play in the text pen, in the fill-text pen selected; the arrows blue, sound off red; grey disabled" {
+    const kib = try host_rom.intuition.setUp();
+    const ib = kib.iface();
+    const gb = kib.graphics_base;
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &media_image.Library.resident_tag, null) orelse return error.NoClassLibrary));
+    const o = ib.NewObjectTagList(null, media.MEDIA_CLASS, &[_]TagItem{ .{ .tag = media.MEDIA_Glyph, .data = media.MEDIA_PLAY }, .{} }) orelse return error.NoObject;
+    const ground: Pen = 0xFF90_9090;
+    var pens: [sc.NUMDRIPENS]Pen = @splat(0xFF80_8080);
+    pens[sc.TEXTPEN] = 0xFF10_2030;
+    pens[sc.BACKGROUNDPEN] = ground;
+    pens[sc.FILLPEN] = 0xFF33_66AA;
+    pens[sc.FILLTEXTPEN] = 0xFFF0_E0D0;
+    var dri = sc.DrawInfo{ .pens = &pens };
+
+    // The triangle's middle, in the text pen; selected, in the fill-text
+    // pen, on whatever the button was filled with.
+    var canvas: Canvas(48) = .{};
+    try canvas.up(gb, ground);
+    var draw = ic.ImpDraw{ .method_id = ic.IM_DRAWFRAME, .rast_port = canvas.rp, .state = ic.IDS_NORMAL, .draw_info = &dri, .dimensions = .{ .width = 48, .height = 48 } };
+    try testing.expectEqual(@as(usize, 1), ib.SendMessage(o, @ptrCast(&draw)));
+    try testing.expectEqual(pens[sc.TEXTPEN], canvas.at(gb, 24, 24));
+    try testing.expectEqual(ground, canvas.at(gb, 4, 4));
+    gb.FreeRastPort(canvas.rp);
+    try canvas.up(gb, pens[sc.FILLPEN]);
+    draw.rast_port = canvas.rp;
+    draw.state = ic.IDS_SELECTED;
+    try testing.expectEqual(@as(usize, 1), ib.SendMessage(o, @ptrCast(&draw)));
+    try testing.expectEqual(pens[sc.FILLTEXTPEN], canvas.at(gb, 24, 24));
+    gb.FreeRastPort(canvas.rp);
+
+    // Shuffle's arrows blue where they cross; sound off's badge red.
+    _ = ib.SetAttrsTagList(o, &[_]TagItem{ .{ .tag = media.MEDIA_Glyph, .data = media.MEDIA_SHUFFLE }, .{} });
+    try canvas.up(gb, ground);
+    draw.rast_port = canvas.rp;
+    draw.state = ic.IDS_NORMAL;
+    _ = ib.SendMessage(o, @ptrCast(&draw));
+    const crossing = canvas.at(gb, 22, 24);
+    try testing.expect(blue(crossing) > red(crossing) + 60);
+    gb.FreeRastPort(canvas.rp);
+    _ = ib.SetAttrsTagList(o, &[_]TagItem{ .{ .tag = media.MEDIA_Glyph, .data = media.MEDIA_MUTE }, .{} });
+    try canvas.up(gb, ground);
+    draw.rast_port = canvas.rp;
+    _ = ib.SendMessage(o, @ptrCast(&draw));
+    // Inside the badge, between its cross's arms.
+    const badge = canvas.at(gb, 36, 27);
+    try testing.expect(red(badge) > blue(badge) + 60);
+    gb.FreeRastPort(canvas.rp);
+
+    // Disabled, every pixel grey, none darker than half the ground.
+    try canvas.up(gb, ground);
+    draw.rast_port = canvas.rp;
+    draw.state = ic.IDS_DISABLED;
+    _ = ib.SendMessage(o, @ptrCast(&draw));
+    for (0..48) |y| for (0..48) |x| {
+        const c = canvas.at(gb, @intCast(x), @intCast(y));
+        try testing.expect(@abs(red(c) - green(c)) <= 2 and @abs(green(c) - blue(c)) <= 2);
+        try testing.expect(red(c) > @divTrunc(red(ground), 2));
+    };
+    gb.FreeRastPort(canvas.rp);
+
     ib.DisposeObject(o);
     _ = kexec.SysBase.iface().RemLibrary(lib);
     try host_rom.intuition.tearDown(kib);
