@@ -96,5 +96,9 @@ pub const CMD_ZOOM_OUT: u32 = 24;
 pub const CMD_INSERT_COLUMN: u32 = 25;
 /// The same in red with a red cross.
 pub const CMD_DELETE_COLUMN: u32 = 26;
+/// The corner of a box and an arrow pointing out of it, down and right:
+/// more of the same in a dialog of its own - what a ribbon group's name
+/// line has at its end. In the ink, as a mark on the ground is.
+pub const CMD_LAUNCHER: u32 = 27;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_DELETE_COLUMN;
+pub const CMD_LAST: u32 = CMD_LAUNCHER;

@@ -66,6 +66,7 @@ const listbrowser = @import("../listbrowser/listbrowser.zig");
 const toolbutton = @import("../toolbutton/toolbutton.zig");
 const tbg = sdk.gadgets.toolbutton;
 const ribbon = @import("../ribbon/ribbon.zig");
+const command_image = @import("../../images/command/command.zig");
 const rbn = sdk.gadgets.ribbon;
 const lbr = sdk.gadgets.listbrowser;
 const sgc = sdk.gadgets.scrollgroup;
@@ -120,27 +121,44 @@ const Rig = struct {
     listener_class: *classes.Class,
     listener: *Object,
     heard: *Heard,
+    /// The class libraries the class opens, made before it.
+    needs: [2]?*exec.Library = .{ null, null },
 
     fn up(tag: *const exec.Resident, heard: *Heard) !Rig {
+        return upAfter(tag, heard, &.{});
+    }
+
+    /// The class libraries of `needs` made first, which the class's own
+    /// opens by their paths, as ramlib takes them.
+    fn upAfter(tag: *const exec.Resident, heard: *Heard, needs: []const *const exec.Resident) !Rig {
         const kib = try host_rom.intuition.setUp();
         const ib = kib.iface();
         heard.ib = ib;
+        var made: [2]?*exec.Library = .{ null, null };
+        if (needs.len > 0) ByTail.install();
+        for (needs, 0..) |need, i| made[i] = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, need, null) orelse return error.NoClassLibrary));
         const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, tag, null) orelse return error.NoClassLibrary));
         const listener_class = ib.MakeClass(null, classusr.ROOTCLASS, null, 0) orelse return error.NoListener;
         listener_class.dispatcher.entry = &listen;
         listener_class.user_data = @intFromPtr(heard);
         const listener = ib.NewObjectTagList(listener_class, null, null) orelse return error.NoListener;
-        return .{ .kib = kib, .ib = ib, .lib = lib, .listener_class = listener_class, .listener = listener, .heard = heard };
+        return .{ .kib = kib, .ib = ib, .lib = lib, .listener_class = listener_class, .listener = listener, .heard = heard, .needs = made };
     }
 
     /// The class library expunged - which it refuses while its class has
-    /// objects - and everything else given back.
+    /// objects - and those it needed after it, and everything else given
+    /// back.
     fn down(rig: *Rig) !void {
         rig.ib.DisposeObject(rig.listener);
         try testing.expect(rig.ib.FreeClass(rig.listener_class));
         const sys = kexec.SysBase.iface();
         _ = sys.RemLibrary(rig.lib);
         try testing.expect(rig.ib.FindClass(rig.lib.name().ptr) == null);
+        for (rig.needs) |maybe| if (maybe) |need| {
+            _ = sys.RemLibrary(need);
+            try testing.expect(rig.ib.FindClass(need.name().ptr) == null);
+        };
+        if (rig.needs[0] != null) ByTail.remove();
         try host_rom.intuition.tearDown(rig.kib);
     }
 };
@@ -2905,6 +2923,23 @@ fn windowAttrOf(ib: *IntuitionBase, w: *intuition.Window, tag: utility.Tag) usiz
     return value;
 }
 
+/// What intuition tells a gadget of a borderless window, whose room is
+/// all of it; `dri` from the window's screen, which the caller frees.
+fn infoOf(ib: *IntuitionBase, w: *intuition.Window, dri: *intuition.DrawInfo) classusr.GadgetInfo {
+    const wn = intuition.windows;
+    return .{
+        .screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen)),
+        .window = w,
+        .draw_info = dri,
+        .rast_port = @ptrFromInt(windowAttrOf(ib, w, wn.WA_RastPort)),
+        .layer = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Layer)),
+        .domain_left = 0,
+        .domain_top = 0,
+        .domain_width = @intCast(windowAttrOf(ib, w, wn.WA_Width)),
+        .domain_height = @intCast(windowAttrOf(ib, w, wn.WA_Height)),
+    };
+}
+
 test "clicktab.gadget: a press takes the tab under it at once, and the key steps them" {
     var heard = Heard{ .tag = ct.CLICKTAB_Current, .ib = undefined };
     var rig = try Rig.up(&clicktab.Library.resident_tag, &heard);
@@ -3212,6 +3247,248 @@ test "toolbutton.gadget: flat at rest; under the pointer and on, an edge round a
     try rig.down();
 }
 
+test "toolbutton.gadget: the mark of a list, a split button's own command, what a target drops down, and a size asked about without being set" {
+    var heard = Heard{ .tag = tbg.TOOLBUTTON_Dropped, .ib = undefined };
+    var rig = try Rig.up(&toolbutton.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const sides = [_:null]?[*:0]const u8{ "Left", "Centre", "Right" };
+
+    const push = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("_Align") },
+        .{},
+    }).?;
+    const align_list = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("_Align") },
+        .{ .tag = tbg.TOOLBUTTON_Kind, .data = tbg.TBKIND_DROPDOWN },
+        .{ .tag = tbg.TOOLBUTTON_Labels, .data = @intFromPtr(&sides) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, tbg.TBKIND_DROPDOWN), attr(ib, align_list, tbg.TOOLBUTTON_Kind));
+    try testing.expectEqual(@intFromPtr(&sides), attr(ib, align_list, tbg.TOOLBUTTON_Labels));
+    // The mark after the label, and the room before it, make it wider.
+    const plain = domainOf(ib, push, gc.GDOMAIN_NOMINAL);
+    const marked = domainOf(ib, align_list, gc.GDOMAIN_NOMINAL);
+    try testing.expectEqual(plain.width + 3 + 9, marked.width);
+    try testing.expectEqual(plain.height, marked.height);
+    // Its key does nothing - the list is the pointer's - and without a
+    // window to drop it down on, a press lets go.
+    var termination: i32 = 99;
+    var typed = keyed('a', 0, &termination);
+    try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(align_list, @ptrCast(&typed)));
+    var down = input(gc.GM_GOACTIVE, &press, 2, 2, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(align_list, @ptrCast(&down)));
+    try testing.expect(gc.gadget(align_list).flags & gc.GFLG_SELECTED == 0);
+
+    // A split button: the label is the command, its code TBCODE_MAIN, and
+    // so is the key; the mark at the right end is the list's.
+    const paste = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("_Align") },
+        .{ .tag = tbg.TOOLBUTTON_Kind, .data = tbg.TBKIND_SPLIT },
+        .{ .tag = tbg.TOOLBUTTON_Labels, .data = @intFromPtr(&sides) },
+        .{},
+    }).?;
+    try testing.expectEqual(marked, domainOf(ib, paste, gc.GDOMAIN_NOMINAL));
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(paste, @ptrCast(&down)));
+    var up = input(gc.GM_HANDLEINPUT, &release, 2, 2, &termination);
+    try testing.expect(ib.SendMessage(paste, @ptrCast(&up)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(tbg.TBCODE_MAIN, termination);
+    termination = 99;
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(paste, @ptrCast(&typed)));
+    try testing.expectEqual(tbg.TBCODE_MAIN, termination);
+    var on_mark = input(gc.GM_GOACTIVE, &press, marked.width - 3, 2, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(paste, @ptrCast(&on_mark)));
+    ib.DisposeObject(paste);
+
+    // Without labels, a drop-down drops what its target puts up: the press
+    // marks it dropped, drawn pressed, and tells the target which it is;
+    // the window hears nothing. The target sets it back.
+    const colours = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 9 },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("Colour") },
+        .{ .tag = tbg.TOOLBUTTON_Kind, .data = tbg.TBKIND_DROPDOWN },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(colours, @ptrCast(&down)));
+    try testing.expectEqual(@as(?usize, 1), heard.value);
+    try testing.expectEqual(@as(?usize, 9), heard.id);
+    try testing.expectEqual(@as(usize, 1), attr(ib, colours, tbg.TOOLBUTTON_Dropped));
+    try testing.expect(gc.gadget(colours).flags & gc.GFLG_SELECTED != 0);
+    _ = ib.SetAttrsTagList(colours, &[_]TagItem{ .{ .tag = tbg.TOOLBUTTON_Dropped, .data = 0 }, .{} });
+    try testing.expectEqual(@as(usize, 0), attr(ib, colours, tbg.TOOLBUTTON_Dropped));
+    try testing.expect(gc.gadget(colours).flags & gc.GFLG_SELECTED == 0);
+    ib.DisposeObject(colours);
+    ib.DisposeObject(align_list);
+    ib.DisposeObject(push);
+
+    // Asked about another size - as a ribbon does that makes its groups
+    // smaller - a medium button answers for that one, and is still medium.
+    const asked_class = ib.MakeClass(null, classusr.IMAGECLASS, null, @sizeOf(Asked)).?;
+    asked_class.dispatcher.entry = &askedDispatch;
+    asked_class.user_data = @intFromPtr(ib);
+    const picture = ib.NewObjectTagList(asked_class, null, null).?;
+    const button = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("Format Painter") },
+        .{ .tag = tbg.TOOLBUTTON_Image, .data = @intFromPtr(picture) },
+        .{},
+    }).?;
+    const measure = sdk.gadgets.support.Measure.of(ib, gc.gadget(button), null);
+    defer measure.done(ib);
+    const small = [_]TagItem{ .{ .tag = tbg.TOOLBUTTON_Size, .data = tbg.TBSIZE_SMALL }, .{} };
+    const large = [_]TagItem{ .{ .tag = tbg.TOOLBUTTON_Size, .data = tbg.TBSIZE_LARGE }, .{} };
+    var ask = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL, .attrs = &small };
+    _ = ib.SendMessage(button, @ptrCast(&ask));
+    try testing.expectEqual(gc.Box{ .width = 24, .height = 20 }, ask.domain);
+    ask = .{ .which = gc.GDOMAIN_MAXIMUM, .attrs = &small };
+    _ = ib.SendMessage(button, @ptrCast(&ask));
+    try testing.expectEqual(@as(i32, 24), ask.domain.width);
+    ask = .{ .which = gc.GDOMAIN_NOMINAL, .attrs = &large };
+    _ = ib.SendMessage(button, @ptrCast(&ask));
+    try testing.expectEqual(gc.Box{ .width = @max(32, measure.width(ib, "Painter")) + 8, .height = 32 + 2 + 16 + 4 }, ask.domain);
+    try testing.expectEqual(@as(usize, tbg.TBSIZE_MEDIUM), attr(ib, button, tbg.TOOLBUTTON_Size));
+    try testing.expectEqual(gc.GDOMAIN_UNLIMITED, domainOf(ib, button, gc.GDOMAIN_MAXIMUM).width);
+    ib.DisposeObject(button);
+    ib.DisposeObject(picture);
+    try testing.expect(ib.FreeClass(asked_class));
+    try rig.down();
+}
+
+test "toolbutton.gadget: a list dropped down under it while held or left open; the label let go over is the code" {
+    var heard = Heard{ .tag = tbg.TOOLBUTTON_Checked, .ib = undefined };
+    var rig = try Rig.up(&toolbutton.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const display = try Display.up(rig.kib);
+    const wn = intuition.windows;
+    const sides = [_:null]?[*:0]const u8{ "Left", "Centre", "Right" };
+    const button = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 2 },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("_Align") },
+        .{ .tag = tbg.TOOLBUTTON_Kind, .data = tbg.TBKIND_DROPDOWN },
+        .{ .tag = tbg.TOOLBUTTON_Labels, .data = @intFromPtr(&sides) },
+        .{},
+    }).?;
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(button) },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
+    const dri = ib.GetScreenDrawInfo(screen);
+    var info = infoOf(ib, w, dri);
+    ib.RefreshGList(button, w, 1);
+    const height: i32 = @intCast(attr(ib, button, gc.GA_Height));
+    // Below the button, on the panel's first label: its frame is no more
+    // than four pixels and a line of the font eight.
+    const first_line = 2 + height + 5 - 2;
+    // The panel's edge, a button's, is just under the button.
+    const edge: usize = @intCast(2 + height);
+    const under_panel = display.pixel(20, edge);
+
+    // Held: the list under it, the button drawn pressed; let go over the
+    // first label, that is the code.
+    var termination: i32 = 99;
+    var down = input(gc.GM_GOACTIVE, &press, 2, 2, &termination);
+    down.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(button, @ptrCast(&down)));
+    try testing.expect(gc.gadget(button).flags & gc.GFLG_SELECTED != 0);
+    try testing.expect(display.pixel(20, edge) != under_panel);
+    var over_first = input(gc.GM_HANDLEINPUT, &release, 8, first_line, &termination);
+    over_first.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(button, @ptrCast(&over_first)));
+    try testing.expectEqual(@as(i32, 0), termination);
+    try testing.expect(gc.gadget(button).flags & gc.GFLG_SELECTED == 0);
+    try testing.expectEqual(under_panel, display.pixel(20, edge));
+
+    // Let go over the button, the list stands open; a press beside it is
+    // nothing taken.
+    termination = 99;
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(button, @ptrCast(&down)));
+    var on_button = input(gc.GM_HANDLEINPUT, &release, 2, 2, &termination);
+    on_button.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(button, @ptrCast(&on_button)));
+    var beside = input(gc.GM_HANDLEINPUT, &press, 60, -1, &termination);
+    beside.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(button, @ptrCast(&beside)));
+    try testing.expectEqual(@as(i32, 99), termination);
+    try testing.expect(gc.gadget(button).flags & gc.GFLG_SELECTED == 0);
+
+    // Made inactive with the list down - another window, the menu button -
+    // it goes, and the button is at rest.
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(button, @ptrCast(&down)));
+    var gone = gc.GpGoInactive{ .gadget_info = &info, .abort = 1 };
+    _ = ib.SendMessage(button, @ptrCast(&gone));
+    try testing.expect(gc.gadget(button).flags & gc.GFLG_SELECTED == 0);
+    try testing.expectEqual(under_panel, display.pixel(20, edge));
+
+    ib.FreeScreenDrawInfo(screen, dri);
+    ib.CloseWindow(w);
+    try testing.expect(ib.CloseScreen(screen));
+    display.down(rig.kib);
+    ib.DisposeObject(button);
+    try rig.down();
+}
+
+test "toolbutton.gadget: a list that fits under it drops down, though there is more room over it" {
+    var heard = Heard{ .tag = tbg.TOOLBUTTON_Checked, .ib = undefined };
+    var rig = try Rig.up(&toolbutton.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const display = try Display.up(rig.kib);
+    const wn = intuition.windows;
+    const only = [_:null]?[*:0]const u8{"Only"};
+    const button = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("_Align") },
+        .{ .tag = tbg.TOOLBUTTON_Kind, .data = tbg.TBKIND_DROPDOWN },
+        .{ .tag = tbg.TOOLBUTTON_Labels, .data = @intFromPtr(&only) },
+        .{},
+    }).?;
+    // Low on the screen, 40 high: a line of eight and a frame of no more
+    // than four fit under it, and over it there is more room than that.
+    const height: i32 = @intCast(attr(ib, button, gc.GA_Height));
+    const top = 40 - height - 12;
+    try testing.expect(top > 12);
+    _ = ib.SetAttrsTagList(button, &[_]TagItem{ .{ .tag = gc.GA_Top, .data = @intCast(top) }, .{} });
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(button) },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
+    const dri = ib.GetScreenDrawInfo(screen);
+    var info = infoOf(ib, w, dri);
+    ib.RefreshGList(button, w, 1);
+    const under: usize = @intCast(top + height);
+    const over: usize = @intCast(top - 1);
+    const below_it = display.pixel(20, under);
+    const above_it = display.pixel(20, over);
+
+    var termination: i32 = 99;
+    var down = input(gc.GM_GOACTIVE, &press, 2, 2, &termination);
+    down.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(button, @ptrCast(&down)));
+    try testing.expect(display.pixel(20, under) != below_it);
+    try testing.expectEqual(above_it, display.pixel(20, over));
+    var gone = gc.GpGoInactive{ .gadget_info = &info, .abort = 1 };
+    _ = ib.SendMessage(button, @ptrCast(&gone));
+    try testing.expectEqual(below_it, display.pixel(20, under));
+
+    ib.FreeScreenDrawInfo(screen, dri);
+    ib.CloseWindow(w);
+    try testing.expect(ib.CloseScreen(screen));
+    display.down(rig.kib);
+    ib.DisposeObject(button);
+    try rig.down();
+}
+
 test "ribbon.gadget: a large tool button the whole height, the rest in columns of three, each as wide as its widest" {
     // A large button; two medium ones that can be wider and a small one
     // that cannot, three to a column; one more small one in a column of
@@ -3242,6 +3519,41 @@ test "ribbon.gadget: a large tool button the whole height, the rest in columns o
     try testing.expectEqual(@as(i32, 40 + gap + 70 + gap + 24), width);
 }
 
+test "ribbon.gadget: groups made smaller a step at a time, the rightmost first, until they fit; folded and still too wide, those that fit" {
+    // What a tool button is shown at on each level.
+    const L: u8 = @intCast(tbg.TBSIZE_LARGE);
+    const M: u8 = @intCast(tbg.TBSIZE_MEDIUM);
+    const S: u8 = @intCast(tbg.TBSIZE_SMALL);
+    try testing.expectEqual(L, ribbon.sizeAt(0, L));
+    try testing.expectEqual(M, ribbon.sizeAt(1, L));
+    try testing.expectEqual(S, ribbon.sizeAt(1, S));
+    try testing.expectEqual(S, ribbon.sizeAt(2, L));
+    try testing.expectEqual(M, ribbon.sizeAt(ribbon.level_folded, M));
+    try testing.expectEqual(ribbon.not_tool, ribbon.sizeAt(1, ribbon.not_tool));
+
+    // Three groups 100 wide, 10 between them: 320. The middle one saves
+    // nothing at the first step.
+    const widths = [_][ribbon.levels]i32{ .{ 100, 80, 60, 40 }, .{ 100, 100, 70, 40 }, .{ 100, 80, 60, 40 } };
+    const even = [_]u32{ 0, 0, 0 };
+    var out: [3]u32 = undefined;
+    try testing.expectEqual(@as(usize, 3), ribbon.reduce(&widths, &even, 320, 10, &out));
+    try testing.expectEqual([3]u32{ 0, 0, 0 }, out);
+    // 20 too wide: the rightmost takes the first step, and that is enough.
+    try testing.expectEqual(@as(usize, 3), ribbon.reduce(&widths, &even, 300, 10, &out));
+    try testing.expectEqual([3]u32{ 0, 0, 1 }, out);
+    // 50 too wide: the first step round all three - the middle one has
+    // nothing to give - then the second from the right again.
+    try testing.expectEqual(@as(usize, 3), ribbon.reduce(&widths, &even, 270, 10, &out));
+    try testing.expectEqual([3]u32{ 1, 0, 2 }, out);
+    // The order given goes first: the first group made smaller instead.
+    const first_goes = [_]u32{ 5, 0, 0 };
+    try testing.expectEqual(@as(usize, 3), ribbon.reduce(&widths, &first_goes, 300, 10, &out));
+    try testing.expectEqual([3]u32{ 1, 0, 0 }, out);
+    // All folded is 140: in 100 the first two fit.
+    try testing.expectEqual(@as(usize, 2), ribbon.reduce(&widths, &even, 100, 10, &out));
+    try testing.expectEqual([3]u32{ 3, 3, 3 }, out);
+}
+
 fn ribbonTool(ib: *IntuitionBase, id: usize, label: [*:0]const u8, size: u32) *Object {
     return ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = id },
@@ -3251,11 +3563,14 @@ fn ribbonTool(ib: *IntuitionBase, id: usize, label: [*:0]const u8, size: u32) *O
     }).?;
 }
 
+/// The class libraries ribbon.gadget opens: its folded groups' buttons
+/// and its launchers' pictures.
+const ribbon_needs = [_]*const exec.Resident{ &toolbutton.Library.resident_tag, &command_image.Library.resident_tag };
+
 test "ribbon.gadget: the groups of the tab in front that fit are its members, below the row; a tab is the ribbon's to press, and its key and the wheel turn to it" {
     var heard = Heard{ .tag = rbn.RIBBON_Current, .ib = undefined };
-    var rig = try Rig.up(&ribbon.Library.resident_tag, &heard);
+    var rig = try Rig.upAfter(&ribbon.Library.resident_tag, &heard, &ribbon_needs);
     const ib = rig.ib;
-    const tools_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &toolbutton.Library.resident_tag, null).?));
     // The window first, so that there is a screen and its font to measure
     // in. The ribbon is larger than the display: what lies outside the
     // window is not drawn, and is laid out and pressed all the same.
@@ -3299,8 +3614,8 @@ test "ribbon.gadget: the groups of the tab in front that fit are its members, be
     try testing.expectEqual(@as(usize, 0), attr(ib, bar, rbn.RIBBON_Current));
 
     // Made the size it looks right at, as tall with either tab in front.
-    // At the least it is as wide as the row of tabs and the widest first
-    // group, which leaves the second group of Home out.
+    // At the least it is narrower: as wide as the row of tabs, or the
+    // narrowest any tab's first group gets.
     const looks = domainOf(ib, bar, gc.GDOMAIN_NOMINAL);
     const least = domainOf(ib, bar, gc.GDOMAIN_MINIMUM);
     try testing.expectEqual(@as(usize, @intCast(looks.width)), attr(ib, bar, gc.GA_Width));
@@ -3311,8 +3626,7 @@ test "ribbon.gadget: the groups of the tab in front that fit are its members, be
     try testing.expectEqual(looks, domainOf(ib, bar, gc.GDOMAIN_NOMINAL));
     _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = rbn.RIBBON_Current, .data = 0 }, .{} });
 
-    // Put in the window at its least width, and laid out there.
-    _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = gc.GA_Width, .data = @intCast(least.width) }, .{} });
+    // Put in the window and laid out there, as wide as it looks right.
     _ = ib.AddGList(w, bar, -1, 1);
     // The large button stands the whole room high, below the row; the
     // medium ones in a column beside it, as wide as each other and inside
@@ -3328,13 +3642,13 @@ test "ribbon.gadget: the groups of the tab in front that fit are its members, be
     try testing.expect(c.top >= p.top and y.top + y.height <= p.top + p.height);
     try testing.expect(c.top + c.height <= y.top);
 
-    // Only Clipboard fits: its keys work, Font's and Insert's do not.
+    // Home's entries are the members: their keys work; Insert's do not.
     var termination: i32 = -1;
     var key_p = keyed('p', 0, &termination);
     var key_b = keyed('b', 0, &termination);
     var key_s = keyed('s', 0, &termination);
     try testing.expect(ib.SendMessage(bar, @ptrCast(&key_p)) != gc.GMKR_NOTHING);
-    try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(bar, @ptrCast(&key_b)));
+    try testing.expect(ib.SendMessage(bar, @ptrCast(&key_b)) != gc.GMKR_NOTHING);
     try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(bar, @ptrCast(&key_s)));
 
     // A point over Cut is Cut's; along the row, only the tabs are the
@@ -3401,10 +3715,209 @@ test "ribbon.gadget: the groups of the tab in front that fit are its members, be
     ib.CloseWindow(w);
     try testing.expect(ib.CloseScreen(screen));
     display.down(rig.kib);
-    // Every entry goes with it, of either tab, member or not: the tool
-    // buttons' class has no objects left, so its library goes.
+    // Every entry goes with it, of either tab, member or not, and every
+    // button it made: the tool buttons' class has no objects left, so its
+    // library goes after the ribbon's.
     ib.DisposeObject(bar);
-    _ = kexec.SysBase.iface().RemLibrary(tools_lib);
-    try testing.expect(ib.FindClass(tools_lib.name().ptr) == null);
+    try rig.down();
+}
+
+fn ribbonDomain(ib: *IntuitionBase, o: *Object, info: *classusr.GadgetInfo, which: u32) gc.Box {
+    var ask = gc.GpDomain{ .gadget_info = info, .which = which };
+    _ = ib.SendMessage(o, @ptrCast(&ask));
+    return ask.domain;
+}
+
+fn ribbonLayout(ib: *IntuitionBase, o: *Object, info: *classusr.GadgetInfo, width: i32) void {
+    _ = ib.SetAttrsTagList(o, &[_]TagItem{ .{ .tag = gc.GA_Width, .data = @intCast(width) }, .{} });
+    var lay = gc.GpLayout{ .gadget_info = info, .initial = 0 };
+    _ = ib.SendMessage(o, @ptrCast(&lay));
+}
+
+test "ribbon.gadget: too narrow, a group folds into a button that drops it down; the mark minimizes it, and a tab then drops its page down; a contextual tab comes and goes" {
+    var heard = Heard{ .tag = rbn.RIBBON_Minimized, .ib = undefined };
+    var rig = try Rig.upAfter(&ribbon.Library.resident_tag, &heard, &ribbon_needs);
+    const ib = rig.ib;
+    // The ribbon is larger than the display, as in the test before; so is
+    // a popup put up from it, which has no layer then and is up all the
+    // same.
+    const display = try Display.up(rig.kib);
+    const wn = intuition.windows;
+    const rq = intuition.requesters;
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
+    const dri = ib.GetScreenDrawInfo(screen);
+    var info = infoOf(ib, w, dri);
+
+    // Home: Clipboard, and Font with a launcher; Table, contextual, with a
+    // group of its own.
+    const paste = ribbonTool(ib, 10, "_Paste", tbg.TBSIZE_LARGE);
+    const cut = ribbonTool(ib, 11, "Cu_t", tbg.TBSIZE_MEDIUM);
+    const copy = ribbonTool(ib, 12, "_Copy", tbg.TBSIZE_MEDIUM);
+    const bold = ribbonTool(ib, 13, "_Bold", tbg.TBSIZE_MEDIUM);
+    const italic = ribbonTool(ib, 14, "_Italic", tbg.TBSIZE_MEDIUM);
+    const under = ribbonTool(ib, 15, "_Underline", tbg.TBSIZE_MEDIUM);
+    const rows = ribbonTool(ib, 16, "_Rows", tbg.TBSIZE_LARGE);
+    const clipboard = [_:null]?*Object{ paste, cut, copy };
+    const font = [_:null]?*Object{ bold, italic, under };
+    const layout = [_:null]?*Object{rows};
+    const home = [_]rbn.RibbonGroup{ .{ .label = "Clipboard", .items = &clipboard }, .{ .label = "Font", .items = &font, .launcher = 50 }, .{} };
+    const table = [_]rbn.RibbonGroup{ .{ .label = "Layout", .items = &layout }, .{} };
+    const tabs = [_]rbn.RibbonTab{ .{ .label = "_Home", .groups = &home }, .{ .label = "T_able", .groups = &table, .id = 7, .contextual = 1 }, .{} };
+    const bar = ib.NewObjectTagList(null, rbn.RIBBON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 7 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{ .tag = rbn.RIBBON_Tabs, .data = @intFromPtr(&tabs) },
+        .{},
+    }).?;
+    const own = classes.instData(ribbon.Data, ib.FindClass(rbn.RIBBON_CLASS).?, bar);
+    const looks = domainOf(ib, bar, gc.GDOMAIN_NOMINAL);
+    const least = domainOf(ib, bar, gc.GDOMAIN_MINIMUM);
+    _ = ib.AddGList(w, bar, -1, 1);
+    ib.RefreshGList(bar, w, 1);
+
+    // As wide as it looks right, every group whole: Font's launcher at the
+    // right of its name, under its entries, a member to press.
+    const launcher = own.parts.?[1].launcher.?;
+    try testing.expectEqual(@as(usize, 50), attr(ib, launcher, gc.GA_ID));
+    const l = gc.gadget(launcher).*;
+    const u = gc.gadget(under).*;
+    try testing.expect(l.top >= u.top + u.height);
+    try testing.expect(l.left + l.width <= looks.width);
+    try testing.expect(l.left > gc.gadget(bold).left);
+    var on_launcher = gc.GpHitTest{ .gadget_info = &info, .mouse = .{ .x = l.left + 2, .y = l.top + 2 } };
+    try testing.expectEqual(gc.GMR_GADGETHIT, ib.SendMessage(bar, @ptrCast(&on_launcher)));
+    try testing.expect(gc.gadget(launcher).window == w);
+
+    // Narrower a pixel at a time, until Font is folded: at the right, it
+    // goes before Clipboard does. Its button is the member then, and its
+    // entries are not, nor its window's.
+    var width = looks.width;
+    while (width > least.width and own.parts.?[1].level != ribbon.level_folded) {
+        width -= 1;
+        ribbonLayout(ib, bar, &info, width);
+    }
+    try testing.expectEqual(@as(u32, ribbon.level_folded), own.parts.?[1].level);
+    try testing.expect(own.parts.?[0].level < ribbon.level_folded);
+    const folded = own.parts.?[1].button.?;
+    try testing.expect(gc.gadget(folded).window == w);
+    try testing.expect(gc.gadget(bold).window == null);
+    ib.RefreshGList(bar, w, 1);
+
+    // Its button pressed - found by the hit test first, as intuition asks
+    // one before a press: the group dropped down under it in a popup, its
+    // entries there; the button stays down while it is.
+    const fb = gc.gadget(folded).*;
+    var on_button = gc.GpHitTest{ .gadget_info = &info, .mouse = .{ .x = fb.left + 2, .y = fb.top + 2 } };
+    try testing.expectEqual(gc.GMR_GADGETHIT, ib.SendMessage(bar, @ptrCast(&on_button)));
+    var termination: i32 = 99;
+    var on_folded = input(gc.GM_GOACTIVE, &press, fb.left + 2, fb.top + 2, &termination);
+    on_folded.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(bar, @ptrCast(&on_folded)));
+    var done = gc.GpGoInactive{ .gadget_info = &info, .abort = 0 };
+    _ = ib.SendMessage(bar, @ptrCast(&done));
+    try testing.expect(own.popup_ribbon != null);
+    try testing.expect(own.popup.flags & rq.REQACTIVE != 0);
+    // Under it, moved onto the screen - 64 by 40 - as far as it must be.
+    try testing.expectEqual(@max(@min(fb.left, 64 - own.popup.width), 0), own.popup.left);
+    try testing.expectEqual(@max(@min(fb.top + fb.height, 40 - own.popup.height), 0), own.popup.top);
+    try testing.expectEqual(@as(usize, 1), attr(ib, folded, tbg.TOOLBUTTON_Dropped));
+    try testing.expect(gc.gadget(folded).flags & gc.GFLG_SELECTED != 0);
+    try testing.expect(gc.gadget(bold).requester == &own.popup);
+    const pb = gc.gadget(bold).*;
+    try testing.expect(pb.left >= 0 and pb.left + pb.width <= own.popup.width);
+    try testing.expect(pb.top >= 0 and pb.top + pb.height <= own.popup.height);
+    // Down again: the entries are nobody's, the button at rest.
+    ib.EndRequest(&own.popup, w);
+    try testing.expect(own.popup_ribbon == null);
+    try testing.expectEqual(@as(usize, 0), attr(ib, folded, tbg.TOOLBUTTON_Dropped));
+    try testing.expect(gc.gadget(folded).flags & gc.GFLG_SELECTED == 0);
+    try testing.expect(gc.gadget(bold).requester == null and gc.gadget(bold).window == null);
+
+    // The mark at the row's right end minimizes it: the row alone, nothing
+    // on the page to press, and the target told.
+    const whole = ribbonDomain(ib, bar, &info, gc.GDOMAIN_NOMINAL);
+    termination = 99;
+    var on_mark = input(gc.GM_GOACTIVE, &press, width - 4, 3, &termination);
+    on_mark.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(bar, @ptrCast(&on_mark)));
+    try testing.expectEqual(rbn.RBCODE_MINIMIZED, termination);
+    try testing.expectEqual(@as(usize, 1), attr(ib, bar, rbn.RIBBON_Minimized));
+    try testing.expectEqual(@as(?usize, 1), heard.value);
+    const row = ribbonDomain(ib, bar, &info, gc.GDOMAIN_NOMINAL).height;
+    try testing.expect(row < whole.height);
+    var key_p = keyed('p', 0, &termination);
+    try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(bar, @ptrCast(&key_p)));
+    ib.RefreshGList(bar, w, 1);
+
+    // A press on Home then drops its page down under the row, as wide as
+    // the ribbon.
+    termination = 99;
+    var on_home = input(gc.GM_GOACTIVE, &press, 6, 3, &termination);
+    on_home.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(bar, @ptrCast(&on_home)));
+    try testing.expectEqual(@as(i32, 0), termination);
+    try testing.expect(own.popup.flags & rq.REQACTIVE != 0);
+    try testing.expectEqual(@as(u32, 0), own.popup_tab);
+    try testing.expectEqual(width, own.popup.width);
+    try testing.expectEqual(@max(@min(row, 40 - own.popup.height), 0), own.popup.top);
+    try testing.expect(gc.gadget(paste).requester == &own.popup);
+    ib.EndRequest(&own.popup, w);
+    try testing.expect(own.popup_ribbon == null and gc.gadget(paste).requester == null);
+
+    // The mark again: back, and told so.
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(bar, @ptrCast(&on_mark)));
+    try testing.expectEqual(@as(usize, 0), attr(ib, bar, rbn.RIBBON_Minimized));
+    try testing.expectEqual(@as(?usize, 0), heard.value);
+    try testing.expect(ib.SendMessage(bar, @ptrCast(&key_p)) != gc.GMKR_NOTHING);
+
+    // Two presses on a tab in time minimize it as well.
+    const first_press = ie.InputEvent{ .class = ie.IECLASS_RAWMOUSE, .code = ie.IECODE_LBUTTON, .time = .{ .secs = 10, .micro = 0 } };
+    const second_press = ie.InputEvent{ .class = ie.IECLASS_RAWMOUSE, .code = ie.IECODE_LBUTTON, .time = .{ .secs = 10, .micro = 100000 } };
+    var once = input(gc.GM_GOACTIVE, &first_press, 6, 3, &termination);
+    once.gadget_info = &info;
+    _ = ib.SendMessage(bar, @ptrCast(&once));
+    try testing.expectEqual(@as(usize, 0), attr(ib, bar, rbn.RIBBON_Minimized));
+    var twice = input(gc.GM_GOACTIVE, &second_press, 6, 3, &termination);
+    twice.gadget_info = &info;
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(bar, @ptrCast(&twice)));
+    try testing.expectEqual(rbn.RBCODE_MINIMIZED, termination);
+    try testing.expectEqual(@as(usize, 1), attr(ib, bar, rbn.RIBBON_Minimized));
+    _ = ib.SendMessage(bar, @ptrCast(&on_mark));
+    try testing.expectEqual(@as(usize, 0), attr(ib, bar, rbn.RIBBON_Minimized));
+
+    // Table is out of the row until it is shown: its key does nothing,
+    // then turns to it; hidden again, Home is in front.
+    var key_a = keyed('a', 0, &termination);
+    try testing.expectEqual(gc.GMKR_NOTHING, ib.SendMessage(bar, @ptrCast(&key_a)));
+    _ = ib.SetGadgetAttrsTagList(bar, w, &[_]TagItem{ .{ .tag = rbn.RIBBON_ShowTab, .data = 7 }, .{} });
+    try testing.expectEqual(gc.GMKR_VERIFY, ib.SendMessage(bar, @ptrCast(&key_a)));
+    try testing.expectEqual(@as(usize, 1), attr(ib, bar, rbn.RIBBON_Current));
+    try testing.expect(gc.gadget(rows).window == w);
+    ib.RefreshGList(bar, w, 1);
+    _ = ib.SetGadgetAttrsTagList(bar, w, &[_]TagItem{ .{ .tag = rbn.RIBBON_HideTab, .data = 7 }, .{} });
+    try testing.expectEqual(@as(usize, 0), attr(ib, bar, rbn.RIBBON_Current));
+    try testing.expect(gc.gadget(rows).window == null);
+
+    // In a window lower than it is told, it is its row alone by itself.
+    _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = rbn.RIBBON_MinimizeBelow, .data = 300 }, .{} });
+    try testing.expectEqual(row, ribbonDomain(ib, bar, &info, gc.GDOMAIN_NOMINAL).height);
+    try testing.expectEqual(@as(usize, 0), attr(ib, bar, rbn.RIBBON_Minimized));
+    _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = rbn.RIBBON_MinimizeBelow, .data = 0 }, .{} });
+    try testing.expectEqual(whole.height, ribbonDomain(ib, bar, &info, gc.GDOMAIN_NOMINAL).height);
+
+    _ = ib.RemoveGList(w, bar, 1);
+    ib.FreeScreenDrawInfo(screen, dri);
+    ib.CloseWindow(w);
+    try testing.expect(ib.CloseScreen(screen));
+    display.down(rig.kib);
+    ib.DisposeObject(bar);
     try rig.down();
 }

@@ -13,7 +13,8 @@
 //! there. Its hit test asks the group first, which so names no member
 //! under a tab, and then says whether a tab is there: a press on one is
 //! the ribbon's, reported in its own name with the tab's number as the
-//! code (`_gadget.reporter` finds no member under it).
+//! code (`_gadget.reporter` finds no member under it). So is the mark at
+//! the row's right end, which minimizes the ribbon and brings it back.
 //!
 //! The tabs stand flat, their names and nothing more, but the one in
 //! front: it has edges in the style's look for a button (`PART_MAIN`),
@@ -21,28 +22,53 @@
 //! the bottom into the page below, whose frame is the same box open at the
 //! top - as clicktab.gadget's row and page.gadget's frame are drawn. The
 //! line the tabs stand on is the frame's top edge, broken under the tab in
-//! front.
+//! front. A contextual tab has a strip of its colour along its top.
 //!
 //! In the page the groups stand side by side from the left, a line between
 //! each two and each group's name under its entries in the dim text pen.
 //! A group's entries are placed by `arrange`; the room they have is as tall
 //! on every tab (`roomHeight`), so the ribbon never changes height when
-//! the tab does. A group that does not fit whole in the ribbon's width is
-//! not shown, nor any after it, so nothing is ever cut.
+//! the tab does.
+//!
+//! **Too narrow, groups are made smaller** by `reduce`, from what each
+//! measures at every step (`levels`): its large tool buttons medium, then
+//! every tool button small - asked of the buttons with `GM_DOMAIN`'s
+//! `attrs`, and set on them while they are shown so - and last the group
+//! folded into its button. What the ribbon makes for a group is its
+//! `Part`: that button, a large drop-down tool button with no list of its
+//! own, whose press tells the ribbon (`TOOLBUTTON_Dropped`); the launcher
+//! at the right of its name, a buttongclass with command.image's picture;
+//! and the sizes its tool buttons were made at, which an entry has again
+//! whenever it is not a member.
+//!
+//! **What drops down is a popup requester** (`POPUPREQ`) over the screen,
+//! whose one gadget is a second ribbon of this class without a row
+//! (`RIBBON_Row`) and without the entries being its own
+//! (`RIBBON_OwnsEntries`): the folded group as it would stand, under its
+//! button, or the page of a minimized ribbon's tab under the row. Its
+//! entries report to the window as they do on the page, and one used takes
+//! the popup down; the ribbon hears it is down (`GM_POPDOWN`) and disposes
+//! of the second ribbon, whose members the entries were until then.
 
 const sdk = @import("sdk");
+const exec = sdk.exec;
 const utility = sdk.utility;
 const graphics = sdk.graphics;
 const intuition = sdk.intuition;
 const classes = intuition.classes;
 const classusr = intuition.classusr;
 const gc = intuition.gadgetclass;
+const icc = intuition.icclass;
+const ic = intuition.imageclass;
+const rq = intuition.requesters;
 const sc = intuition.screens;
 const st = intuition.style;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
+const shapes = gadgets.shapes;
 const rb = gadgets.ribbon;
 const tb = gadgets.toolbutton;
+const command = sdk.images.command;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -54,21 +80,33 @@ const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = rb.RIBBON_CLASS,
     .version = 1,
+    .revision = 1,
     .date = "28.10.2026",
     .super = classusr.GROUPGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
+    // A folded group is a tool button, a launcher's picture a command
+    // image.
+    .opens = &.{ tb.TOOLBUTTON_LIBRARY, command.COMMAND_LIBRARY },
 });
 comptime {
     _ = Library;
 }
 
-/// No tab.
+/// No tab, no group.
 const NONE: u32 = 0xFFFF_FFFF;
 
 /// How many entries of a group are shown; any after them are not, and go
 /// with the ribbon all the same.
 pub const max_entries = 24;
+/// How many of a tab's groups are shown at the most.
+pub const max_groups = 16;
+/// How small a group is shown: as it was made, its large tool buttons
+/// medium, every tool button small, folded into its button.
+pub const levels = 4;
+pub const level_folded = 3;
+/// In a part's `sizes`: an entry that is not a tool button.
+pub const not_tool: u8 = 0xFF;
 /// Room either side of a tab's name, its edges included.
 const tab_margin = 10;
 /// From the ribbon's left edge to the first tab.
@@ -80,6 +118,11 @@ const tab_gap = 2;
 const tab_radius = 6;
 /// Room above and below a tab's name, past the style's padding.
 const label_air = 1;
+/// How tall a contextual tab's strip is.
+const strip_height = 3;
+/// The mark that minimizes the ribbon: how wide, and the room round it.
+const fold_mark = 9;
+const fold_width = fold_mark + 2 * 6;
 /// Room between the frame's border and padding and the groups.
 const frame_air = 3;
 /// Room either side of the line between two groups.
@@ -92,16 +135,60 @@ pub const column_gap = 3;
 pub const row_gap = 2;
 /// Between a group's entries and its name.
 const name_gap = 2;
+/// Between a group's name and its launcher, and the launcher and the
+/// group's edge.
+const launcher_gap = 2;
+
+/// What the ribbon makes and keeps for each group of each tab, tab by tab.
+const Part = extern struct {
+    /// The button the group is folded into.
+    button: ?*Object = null,
+    /// Its launcher and the launcher's picture; none without a `launcher`.
+    launcher: ?*Object = null,
+    picture: ?*Object = null,
+    /// How small it is to be shown, and how small it was when its parts
+    /// became members; `NONE` while they are not.
+    level: u32 = 0,
+    joined: u32 = NONE,
+    /// The size each entry was made at, `not_tool` for one that is not a
+    /// tool button.
+    sizes: [max_entries]u8 = @splat(not_tool),
+};
 
 /// ribbon.gadget's part of an object.
 pub const Data = extern struct {
     tabs: ?[*]const rb.RibbonTab = null,
     count: u32 = 0,
     current: u32 = 0,
-    /// The tab whose entries are the group's members now, and how many of
-    /// its groups, from the left: the ones that fit.
+    /// The tab whose groups are the members now, and how many of them,
+    /// from the left: the ones that fit.
     shown_tab: u32 = NONE,
     shown_groups: u32 = 0,
+    /// A part for every group of every tab.
+    parts: ?[*]Part = null,
+    part_count: u32 = 0,
+    /// `RIBBON_Row`, `RIBBON_OwnsEntries`, `RIBBON_Minimized`,
+    /// `RIBBON_MinimizeBelow`.
+    row: u32 = 1,
+    owns: u32 = 1,
+    minimized: u32 = 0,
+    minimize_below: u32 = 0,
+    /// The tabs out of the row: a bit for each of the first 64.
+    hidden: u64 = 0,
+    /// The last press on a tab, which and when: the first of a
+    /// double-click.
+    pressed_tab: u32 = NONE,
+    pressed_seconds: u32 = 0,
+    pressed_micros: u32 = 0,
+    /// What is dropped down: a folded group's part, or a minimized
+    /// ribbon's tab; the ribbon that shows it and the requester it is in,
+    /// with the one tab and the one group that ribbon is given.
+    popup_part: u32 = NONE,
+    popup_tab: u32 = NONE,
+    popup_ribbon: ?*Object = null,
+    popup: rq.Requester = .{},
+    popup_tabs: [2]rb.RibbonTab = .{ .{}, .{} },
+    popup_groups: [2]rb.RibbonGroup = .{ .{}, .{} },
 };
 
 // --- where the entries go -------------------------------------------------------
@@ -157,22 +244,76 @@ pub fn arrange(entries: []const Entry, height: i32, spots: []gc.Box) i32 {
     return x;
 }
 
-/// An entry as `arrange` needs it, asked of the gadget: a tool button is
-/// large when it says so (`TOOLBUTTON_Size`); a gadget of another class
-/// does not know the attribute and is never large.
-fn entryOf(base: *gadgets.Base, item: *Object, gi: ?*classusr.GadgetInfo) Entry {
+/// The size a tool button made at `made` is shown at in a group at
+/// `level`: large ones medium at the first step, every one small at the
+/// second, and as made otherwise - a folded group's are not shown at all.
+pub fn sizeAt(level: u32, made: u8) u8 {
+    if (made == not_tool) return not_tool;
+    return switch (level) {
+        1 => if (made == tb.TBSIZE_LARGE) @intCast(tb.TBSIZE_MEDIUM) else made,
+        2 => @intCast(tb.TBSIZE_SMALL),
+        else => made,
+    };
+}
+
+/// How small each group is shown, from 0 to `level_folded`, so that they
+/// fit in `room` side by side with `gap` between each two: `widths[i][l]`
+/// is how wide group `i` is at level `l`. The groups are made smaller a
+/// step at a time, each step taken by every group in turn before the next
+/// - the one with the highest `order` first, and among equal ones the one
+/// furthest right - until they fit; a step that saves nothing is passed
+/// over. Folded and still too wide, the groups that fit from the left are
+/// shown: how many.
+pub fn reduce(widths: []const [levels]i32, order: []const u32, room: i32, gap: i32, out: []u32) usize {
+    const n = @min(widths.len, max_groups);
+    for (out[0..n]) |*level| level.* = 0;
+    var total: i32 = 0;
+    for (0..n) |i| total += widths[i][0] + (if (i > 0) gap else 0);
+    var step: u32 = 1;
+    while (step < levels and total > room) : (step += 1) {
+        var done: [max_groups]bool = @splat(false);
+        var turns: usize = 0;
+        while (turns < n and total > room) : (turns += 1) {
+            var pick: usize = 0;
+            var found = false;
+            for (0..n) |i| {
+                if (done[i]) continue;
+                if (!found or order[i] > order[pick] or (order[i] == order[pick] and i > pick)) pick = i;
+                found = true;
+            }
+            done[pick] = true;
+            const now = widths[pick][out[pick]];
+            if (widths[pick][step] < now) {
+                total -= now - widths[pick][step];
+                out[pick] = step;
+            }
+        }
+    }
+    var x: i32 = 0;
+    for (0..n) |i| {
+        const next = x + (if (i > 0) gap else 0) + widths[i][out[i]];
+        if (next > room) return i;
+        x = next;
+    }
+    return n;
+}
+
+/// An entry as `arrange` needs it, asked of the gadget: at `size` when it
+/// is a tool button, which is large at that size; a gadget of another
+/// class is as it is, and never large.
+fn entryOf(base: *gadgets.Base, item: *Object, gi: ?*classusr.GadgetInfo, size: u8) Entry {
     const ib = base.intuition_base;
-    var looks = gc.GpDomain{ .gadget_info = gi, .which = gc.GDOMAIN_NOMINAL };
+    const attrs = [_]TagItem{ .{ .tag = tb.TOOLBUTTON_Size, .data = size }, .{} };
+    const asked: ?[*]const TagItem = if (size == not_tool) null else &attrs;
+    var looks = gc.GpDomain{ .gadget_info = gi, .which = gc.GDOMAIN_NOMINAL, .attrs = asked };
     _ = ib.SendMessage(item, @ptrCast(&looks));
-    var most = gc.GpDomain{ .gadget_info = gi, .which = gc.GDOMAIN_MAXIMUM };
+    var most = gc.GpDomain{ .gadget_info = gi, .which = gc.GDOMAIN_MAXIMUM, .attrs = asked };
     _ = ib.SendMessage(item, @ptrCast(&most));
-    var size: usize = 0;
-    const large = ib.GetAttr(tb.TOOLBUTTON_Size, item, &size) != 0 and size == tb.TBSIZE_LARGE;
     return .{
         .width = @min(looks.domain.width, gc.GDOMAIN_UNLIMITED),
         .height = @min(looks.domain.height, gc.GDOMAIN_UNLIMITED),
         .most = @min(most.domain.width, gc.GDOMAIN_UNLIMITED),
-        .large = large,
+        .large = size == tb.TBSIZE_LARGE,
     };
 }
 
@@ -181,6 +322,22 @@ fn entryOf(base: *gadgets.Base, item: *Object, gi: ?*classusr.GadgetInfo) Entry 
 fn tabAt(own: *const Data, which: u32) ?*const rb.RibbonTab {
     if (which >= own.count) return null;
     return &own.tabs.?[which];
+}
+
+/// Whether a tab is in the row: every one but a contextual tab not shown.
+fn showsTab(own: *const Data, which: u32) bool {
+    if (which >= own.count) return false;
+    return which >= 64 or own.hidden & (@as(u64, 1) << @intCast(which)) == 0;
+}
+
+/// The first tab in the row, from `from` on - `by` 1 - or back - `by` -1;
+/// `NONE` when there is none.
+fn nextShown(own: *const Data, from: i64, by: i64) u32 {
+    var i = from;
+    while (i >= 0 and i < own.count) : (i += by) {
+        if (showsTab(own, @intCast(i))) return @intCast(i);
+    }
+    return NONE;
 }
 
 /// A tab's groups, up to the one whose `label` is null.
@@ -199,6 +356,25 @@ fn entriesOf(group: *const rb.RibbonGroup) []const ?*Object {
     return items[0..n];
 }
 
+/// The parts of a tab's groups.
+fn partsOf(own: *const Data, which: u32) []Part {
+    const parts = own.parts orelse return &.{};
+    var first: usize = 0;
+    for (0..which) |t| first += groupsOf(&own.tabs.?[t]).len;
+    return parts[first .. first + groupsOf(&own.tabs.?[which]).len];
+}
+
+/// The group of the part counted `index` over every tab's groups.
+fn groupOfPart(own: *const Data, index: u32) ?*const rb.RibbonGroup {
+    var first: usize = 0;
+    for (0..own.count) |t| {
+        const groups = groupsOf(&own.tabs.?[t]);
+        if (index < first + groups.len) return &groups[index - first];
+        first += groups.len;
+    }
+    return null;
+}
+
 /// Every entry of every tab disposed of, those after `max_entries` too.
 fn disposeEntries(ib: *IntuitionBase, tabs: ?[*]const rb.RibbonTab) void {
     const list = tabs orelse return;
@@ -212,7 +388,70 @@ fn disposeEntries(ib: *IntuitionBase, tabs: ?[*]const rb.RibbonTab) void {
     }
 }
 
-/// The attributes among `tags`: whether the tab in front changed.
+/// The parts made for every group: the sizes its tool buttons were made
+/// at, the button it folds into, which tells the ribbon when it is
+/// pressed and is numbered by the part, and its launcher. False when one
+/// could not be made; what was made is the ribbon's to dispose of then.
+noinline fn makeParts(base: *gadgets.Base, o: *Object, own: *Data) bool {
+    const ib = base.intuition_base;
+    var n: usize = 0;
+    for (0..own.count) |t| n += groupsOf(&own.tabs.?[t]).len;
+    if (n == 0) return true;
+    const memory = base.sys_base.AllocVec(n * @sizeOf(Part), exec.MEMF_ANY) orelse return false;
+    const parts: [*]Part = @ptrCast(@alignCast(memory));
+    for (parts[0..n]) |*part| part.* = .{};
+    own.parts = parts;
+    own.part_count = @intCast(n);
+    var k: usize = 0;
+    for (0..own.count) |t| {
+        for (groupsOf(&own.tabs.?[t])) |*group| {
+            const part = &parts[k];
+            for (entriesOf(group), 0..) |item, i| {
+                var size: usize = 0;
+                part.sizes[i] = if (ib.GetAttr(tb.TOOLBUTTON_Size, item.?, &size) != 0) @intCast(size) else not_tool;
+            }
+            const button_tags = [_]TagItem{
+                .{ .tag = gc.GA_ID, .data = k },
+                .{ .tag = gc.GA_Text, .data = @intFromPtr(group.label) },
+                .{ .tag = tb.TOOLBUTTON_Kind, .data = tb.TBKIND_DROPDOWN },
+                .{ .tag = tb.TOOLBUTTON_Size, .data = tb.TBSIZE_LARGE },
+                .{ .tag = tb.TOOLBUTTON_Image, .data = @intFromPtr(group.image) },
+                .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(o) },
+                .{},
+            };
+            part.button = ib.NewObjectTagList(null, tb.TOOLBUTTON_CLASS, &button_tags) orelse return false;
+            if (group.launcher != 0) {
+                const picture_tags = [_]TagItem{ .{ .tag = command.COMMAND_Glyph, .data = command.CMD_LAUNCHER }, .{} };
+                part.picture = ib.NewObjectTagList(null, command.COMMAND_CLASS, &picture_tags) orelse return false;
+                const launcher_tags = [_]TagItem{
+                    .{ .tag = gc.GA_ID, .data = group.launcher },
+                    .{ .tag = gc.GA_Image, .data = @intFromPtr(part.picture) },
+                    .{ .tag = gc.GA_RelVerify, .data = 1 },
+                    .{},
+                };
+                part.launcher = ib.NewObjectTagList(null, classusr.BUTTONGCLASS, &launcher_tags) orelse return false;
+            }
+            k += 1;
+        }
+    }
+    return true;
+}
+
+fn disposeParts(base: *gadgets.Base, own: *Data) void {
+    const ib = base.intuition_base;
+    const parts = own.parts orelse return;
+    for (parts[0..own.part_count]) |*part| {
+        ib.DisposeObject(part.launcher);
+        ib.DisposeObject(part.picture);
+        ib.DisposeObject(part.button);
+    }
+    base.sys_base.FreeVec(parts);
+    own.parts = null;
+    own.part_count = 0;
+}
+
+/// The attributes among `tags`: whether the tab in front, or what is
+/// shown, changed.
 fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, made: bool) bool {
     const ub = base.utility_base;
     var changed = false;
@@ -223,8 +462,10 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, made: bool
                 const tabs: ?[*]const rb.RibbonTab = @ptrFromInt(item.data);
                 own.tabs = tabs;
                 own.count = 0;
-                if (tabs) |list| while (list[own.count].label != null) {
-                    own.count += 1;
+                own.hidden = 0;
+                if (tabs) |list| while (list[own.count].label != null) : (own.count += 1) {
+                    // A contextual tab is out of the row to begin with.
+                    if (own.count < 64 and list[own.count].contextual != 0) own.hidden |= @as(u64, 1) << @intCast(own.count);
                 };
             },
             rb.RIBBON_Current => {
@@ -232,21 +473,65 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, made: bool
                 if (which != own.current) changed = true;
                 own.current = which;
             },
+            rb.RIBBON_Minimized => {
+                const on: u32 = @intFromBool(item.data != 0);
+                if (on != own.minimized) changed = true;
+                own.minimized = on;
+            },
+            rb.RIBBON_MinimizeBelow => {
+                const below: u32 = @truncate(item.data);
+                if (below != own.minimize_below) changed = true;
+                own.minimize_below = below;
+            },
+            rb.RIBBON_ShowTab, rb.RIBBON_HideTab => for (0..@min(own.count, 64)) |t| {
+                const tab = own.tabs.?[t];
+                if (tab.contextual == 0 or tab.id != item.data) continue;
+                const bit = @as(u64, 1) << @intCast(t);
+                const hide = item.tag == rb.RIBBON_HideTab;
+                if (hide != (own.hidden & bit != 0)) changed = true;
+                if (hide) own.hidden |= bit else own.hidden &= ~bit;
+            },
+            rb.RIBBON_Row => if (made) {
+                own.row = @intFromBool(item.data != 0);
+            },
+            rb.RIBBON_OwnsEntries => if (made) {
+                own.owns = @intFromBool(item.data != 0);
+            },
             else => {},
         }
     }
-    if (own.count == 0) own.current = 0 else if (own.current >= own.count) own.current = own.count - 1;
+    // The tab in front is one in the row.
+    if (own.count == 0) {
+        own.current = 0;
+    } else {
+        if (own.current >= own.count) own.current = own.count - 1;
+        if (!showsTab(own, own.current)) {
+            const first = nextShown(own, 0, 1);
+            own.current = if (first == NONE) 0 else first;
+        }
+    }
     return changed;
 }
 
-/// The target told which tab is in front.
+/// The target told which tab is in front and whether the ribbon is
+/// minimized.
 fn tell(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo) void {
     const tags = [_]TagItem{
         .{ .tag = rb.RIBBON_Current, .data = own.current },
+        .{ .tag = rb.RIBBON_Minimized, .data = own.minimized },
         .{ .tag = gc.GA_ID, .data = gc.gadget(o).id },
         .{},
     };
     support.notify(base.intuition_base, o, gi, &tags, 0);
+}
+
+/// Whether the ribbon is its row alone: minimized, or in a window whose
+/// room is lower than `RIBBON_MinimizeBelow`.
+fn folded(own: *const Data, gi: ?*const classusr.GadgetInfo) bool {
+    if (own.row == 0) return false;
+    if (own.minimized != 0) return true;
+    const info = gi orelse return false;
+    return own.minimize_below != 0 and info.domain_height < @as(i32, @intCast(own.minimize_below));
 }
 
 // --- the look and the measures -------------------------------------------------
@@ -277,13 +562,13 @@ const Measures = struct {
     measure: support.Measure,
     /// How tall a line of the font is.
     line: i32,
-    /// The row of tabs' height.
+    /// The row of tabs' height; 0 without a row.
     row: i32,
     /// What the frame takes round the page on each side, `frame_air`
     /// included; `width` and `height` are both sides together.
     inset: gc.Box,
 
-    fn of(base: *gadgets.Base, g: *const gc.Gadget, gi: ?*classusr.GadgetInfo) Measures {
+    fn of(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*classusr.GadgetInfo) Measures {
         const ib = base.intuition_base;
         const dri: ?*const intuition.DrawInfo = if (gi) |info| info.draw_info else g.draw_info;
         const measure = support.Measure.of(ib, g, gi);
@@ -292,7 +577,7 @@ const Measures = struct {
         return .{
             .measure = measure,
             .line = line,
-            .row = line + 2 * (look.padding + label_air) + 2 * look.edges.y,
+            .row = if (own.row != 0) line + 2 * (look.padding + label_air) + 2 * look.edges.y else 0,
             .inset = frameInset(ib, dri, g.style),
         };
     }
@@ -307,17 +592,25 @@ const Measures = struct {
         return room + name_gap + m.line;
     }
 
+    /// How big a launcher is: a line of the font square.
+    fn launcher(m: Measures) i32 {
+        return @max(m.line, 8);
+    }
+
     /// How wide a tab is: its name, without the `_`, and its margins.
     fn tabWidth(m: Measures, ib: *IntuitionBase, text: ?[*:0]const u8) i32 {
         const name = text orelse return 2 * tab_margin;
         return plainWidth(ib, m.measure, name) + 2 * tab_margin;
     }
 
-    /// How wide the row is with every tab in it.
+    /// How wide the row is with every tab in it, and the mark at its end.
     fn rowWidth(m: Measures, ib: *IntuitionBase, own: *const Data) i32 {
-        var width: i32 = 2 * tab_indent;
+        var width: i32 = 2 * tab_indent + fold_width;
+        var first = true;
         for (0..own.count) |i| {
-            if (i > 0) width += tab_gap;
+            if (!showsTab(own, @intCast(i))) continue;
+            if (!first) width += tab_gap;
+            first = false;
             width += m.tabWidth(ib, own.tabs.?[i].label);
         }
         return width;
@@ -352,38 +645,60 @@ fn plainWidth(ib: *IntuitionBase, m: support.Measure, text: [*:0]const u8) i32 {
     return m.width(ib, @ptrCast(&buffer));
 }
 
-/// How tall the entries' room is: the same on every tab.
-fn roomOf(base: *gadgets.Base, own: *const Data, gi: ?*classusr.GadgetInfo) i32 {
+/// How tall the entries' room is: the same on every tab, and enough for
+/// a folded group's button with the name line under the room.
+fn roomOf(base: *gadgets.Base, own: *const Data, m: Measures, gi: ?*classusr.GadgetInfo) i32 {
     var large: i32 = 0;
     var small: i32 = 0;
     for (0..own.count) |t| {
-        for (groupsOf(&own.tabs.?[t])) |*group| {
-            for (entriesOf(group)) |item| {
-                const e = entryOf(base, item.?, gi);
+        const parts = partsOf(own, @intCast(t));
+        for (groupsOf(&own.tabs.?[t]), parts) |*group, *part| {
+            for (entriesOf(group), 0..) |item, i| {
+                const e = entryOf(base, item.?, gi, part.sizes[i]);
                 if (e.large) large = @max(large, e.height) else small = @max(small, e.height);
             }
+            if (part.button) |button| large = @max(large, entryOf(base, button, gi, not_tool).height - name_gap - m.line);
         }
     }
     return roomHeight(large, small);
 }
 
-/// A group worked out: where its entries go, from the top left of the
-/// room the group's entries have, and how wide it is.
+/// A group worked out at a level: where its entries go, from the top left
+/// of the room the group's entries have, and how wide it is.
 const Laid = struct {
     items: []const ?*Object = &.{},
     spots: [max_entries]gc.Box = undefined,
-    /// The entries' width together, and the group's, its name included.
+    /// The entries' width together, and the group's, its name and its
+    /// launcher included.
     entries: i32 = 0,
     width: i32 = 0,
+    /// Folded: the one item is its button, as tall as the page.
+    folded: bool = false,
+    launcher: ?*Object = null,
 
-    fn of(base: *gadgets.Base, group: *const rb.RibbonGroup, m: Measures, gi: ?*classusr.GadgetInfo, room: i32) Laid {
-        var laid = Laid{ .items = entriesOf(group) };
+    /// Worked out in place, as it is too big to hand about.
+    fn set(laid: *Laid, base: *gadgets.Base, group: *const rb.RibbonGroup, part: *const Part, level: u32, m: Measures, gi: ?*classusr.GadgetInfo, room: i32) void {
+        if (level == level_folded) {
+            const e = entryOf(base, part.button.?, gi, not_tool);
+            laid.items = @as([*]const ?*Object, @ptrCast(&part.button))[0..1];
+            laid.spots[0] = .{ .width = e.width, .height = m.page(room) };
+            laid.entries = e.width;
+            laid.width = e.width;
+            laid.folded = true;
+            laid.launcher = null;
+            return;
+        }
+        laid.items = entriesOf(group);
+        laid.folded = false;
+        laid.launcher = part.launcher;
         var entries: [max_entries]Entry = undefined;
-        for (laid.items, 0..) |item, i| entries[i] = entryOf(base, item.?, gi);
+        for (laid.items, 0..) |item, i| entries[i] = entryOf(base, item.?, gi, sizeAt(level, part.sizes[i]));
         laid.entries = arrange(entries[0..laid.items.len], room, laid.spots[0..laid.items.len]);
-        const name: i32 = if (group.label) |text| m.measure.width(base.intuition_base, text) else 0;
+        var name: i32 = if (group.label) |text| m.measure.width(base.intuition_base, text) else 0;
+        // The launcher at the right of the name, and as much room at its
+        // left, so that the name stays in the middle.
+        if (part.launcher != null) name += 2 * (m.launcher() + 2 * launcher_gap);
         laid.width = @max(laid.entries, name);
-        return laid;
     }
 
     /// How far in from the group's left its entries stand: in the middle,
@@ -393,15 +708,23 @@ const Laid = struct {
     }
 };
 
-/// How wide a tab's page is with all its groups, and with only its first.
-const PageWidth = struct { whole: i32 = 0, first: i32 = 0 };
+/// How wide a tab's page is with all its groups as they were made, and
+/// how narrow its first group gets.
+const PageWidth = struct { whole: i32 = 0, least: i32 = 0 };
 
-fn pageWidth(base: *gadgets.Base, tab: *const rb.RibbonTab, m: Measures, gi: ?*classusr.GadgetInfo, room: i32) PageWidth {
+fn pageWidth(base: *gadgets.Base, own: *const Data, which: u32, m: Measures, gi: ?*classusr.GadgetInfo, room: i32, laid: *Laid) PageWidth {
     var width = PageWidth{};
-    for (groupsOf(tab), 0..) |*group, i| {
-        const laid = Laid.of(base, group, m, gi, room);
-        if (i == 0) width.first = laid.width else width.whole += group_gap;
+    const parts = partsOf(own, which);
+    for (groupsOf(&own.tabs.?[which]), parts, 0..) |*group, *part, i| {
+        laid.set(base, group, part, 0, m, gi, room);
+        if (i > 0) width.whole += group_gap;
         width.whole += laid.width;
+        if (i > 0) continue;
+        width.least = laid.width;
+        for (1..levels) |level| {
+            laid.set(base, group, part, @intCast(level), m, gi, room);
+            width.least = @min(width.least, laid.width);
+        }
     }
     return width;
 }
@@ -422,61 +745,79 @@ fn placesIn(m: Measures, room: i32, box: gc.Box) Places {
     };
 }
 
-/// Its size: as tall as the row, the frame and the page; as wide as the
-/// row and the widest page, and at the least as the row and the widest
-/// first group, so that every tab shows a group.
-fn domain(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*classusr.GadgetInfo, which: u32) gc.Box {
+/// Its size: as tall as the row, the frame and the page - the row alone
+/// when it is folded - as wide as the row and the widest page, and at the
+/// least as the row and the narrowest any tab's first group gets, so that
+/// every tab shows a group.
+noinline fn domain(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*classusr.GadgetInfo, which: u32) gc.Box {
     const ib = base.intuition_base;
-    const m = Measures.of(base, g, gi);
+    const m = Measures.of(base, own, g, gi);
     defer m.done(ib);
-    const room = roomOf(base, own, gi);
+    const row = if (own.row != 0) m.rowWidth(ib, own) else 0;
+    if (folded(own, gi)) return .{ .width = if (which == gc.GDOMAIN_MAXIMUM) gc.GDOMAIN_UNLIMITED else row, .height = m.row };
+    const room = roomOf(base, own, m, gi);
     var widest = PageWidth{};
+    var laid: Laid = .{};
     for (0..own.count) |t| {
-        const width = pageWidth(base, &own.tabs.?[t], m, gi, room);
+        const width = pageWidth(base, own, @intCast(t), m, gi, room, &laid);
         widest.whole = @max(widest.whole, width.whole);
-        widest.first = @max(widest.first, width.first);
+        widest.least = @max(widest.least, width.least);
     }
-    const row = m.rowWidth(ib, own);
     const height = m.row + m.inset.height + m.page(room);
     return switch (which) {
-        gc.GDOMAIN_MINIMUM => .{ .width = @max(row, widest.first + m.inset.width), .height = height },
+        gc.GDOMAIN_MINIMUM => .{ .width = @max(row, widest.least + m.inset.width), .height = height },
         gc.GDOMAIN_NOMINAL => .{ .width = @max(row, widest.whole + m.inset.width), .height = height },
         else => .{ .width = gc.GDOMAIN_UNLIMITED, .height = height },
     };
 }
 
-/// How many of the front tab's groups fit whole in the ribbon's width,
-/// from the left. Without a window to measure in, all of them: the
-/// ribbon is laid out again when it is in one.
-fn fitting(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo) u32 {
+/// How small each of the front tab's groups is shown, into their parts,
+/// and how many of them are, from the left. Without a window to measure
+/// in, all of them as they were made: the ribbon is laid out again when
+/// it is in one. Folded, none.
+noinline fn fit(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo) u32 {
     const tab = tabAt(own, own.current) orelse return 0;
+    if (folded(own, gi)) return 0;
     const groups = groupsOf(tab);
-    const info = gi orelse return @intCast(groups.len);
+    const n = @min(groups.len, max_groups);
+    const parts = partsOf(own, own.current);
+    const info = gi orelse {
+        for (parts) |*part| part.level = 0;
+        return @intCast(n);
+    };
     const ib = base.intuition_base;
     const g = gc.gadget(o);
-    const m = Measures.of(base, g, info);
+    const m = Measures.of(base, own, g, info);
     defer m.done(ib);
-    const room = roomOf(base, own, info);
+    const room = roomOf(base, own, m, info);
     const page = placesIn(m, room, gc.boxFor(g, info)).page;
-    var x: i32 = 0;
-    for (groups, 0..) |*group, i| {
-        const laid = Laid.of(base, group, m, info, room);
-        const next = x + (if (i > 0) @as(i32, group_gap) else 0) + laid.width;
-        if (next > page.width) return @intCast(i);
-        x = next;
+    var widths: [max_groups][levels]i32 = undefined;
+    var order: [max_groups]u32 = undefined;
+    var out: [max_groups]u32 = undefined;
+    var laid: Laid = .{};
+    for (groups[0..n], parts[0..n], 0..) |*group, *part, i| {
+        for (0..levels) |level| {
+            laid.set(base, group, part, @intCast(level), m, info, room);
+            widths[i][level] = laid.width;
+        }
+        order[i] = group.reduce;
     }
-    return @intCast(groups.len);
+    const shown = reduce(widths[0..n], order[0..n], page.width, group_gap, out[0..n]);
+    for (parts[0..n], out[0..n]) |*part, level| part.level = level;
+    return @intCast(shown);
 }
 
 // --- the members ------------------------------------------------------------------
 
-/// The entries of the groups shown, each passed to `each`.
-fn eachShown(base: *gadgets.Base, cl: *Class, o: *Object, own: *const Data, each: *const fn (*gadgets.Base, *Class, *Object, *Object) void) void {
-    const tab = tabAt(own, own.shown_tab) orelse return;
-    const groups = groupsOf(tab);
-    for (groups[0..@min(own.shown_groups, groups.len)]) |*group| {
-        for (entriesOf(group)) |item| each(base, cl, o, item.?);
+/// What a group shows at `level`, each passed to `each`: its button when
+/// it is folded, its entries and its launcher when it is not.
+fn eachOf(base: *gadgets.Base, cl: *Class, o: *Object, group: *const rb.RibbonGroup, part: *const Part, level: u32, each: *const fn (*gadgets.Base, *Class, *Object, *Object) void) void {
+    if (level == level_folded) {
+        if (part.button) |button| each(base, cl, o, button);
+        return;
     }
+    for (entriesOf(group)) |item| each(base, cl, o, item.?);
+    if (part.launcher) |launcher| each(base, cl, o, launcher);
 }
 
 /// An entry made a member. A group grows round a member as it joins; a
@@ -497,14 +838,58 @@ fn leave(base: *gadgets.Base, cl: *Class, o: *Object, item: *Object) void {
     _ = base.intuition_base.SendSuperMessage(cl, o, @ptrCast(&off));
 }
 
-/// The members made the entries of the front tab's first `groups`
-/// groups, when they are not that already.
-fn show(base: *gadgets.Base, cl: *Class, o: *Object, own: *Data, groups: u32) void {
-    if (own.shown_tab == own.current and own.shown_groups == groups) return;
-    eachShown(base, cl, o, own, &leave);
+/// A group's tool buttons set to the size they are shown at on `level`.
+fn resize(base: *gadgets.Base, group: *const rb.RibbonGroup, part: *const Part, level: u32) void {
+    for (entriesOf(group), 0..) |item, i| {
+        const size = sizeAt(level, part.sizes[i]);
+        if (size == not_tool) continue;
+        const tags = [_]TagItem{ .{ .tag = tb.TOOLBUTTON_Size, .data = size }, .{} };
+        _ = base.intuition_base.SetAttrsTagList(item.?, &tags);
+    }
+}
+
+/// Every member out, and each entry the size it was made at again.
+fn leaveAll(base: *gadgets.Base, cl: *Class, o: *Object, own: *Data) void {
+    const tab = tabAt(own, own.shown_tab) orelse return;
+    const groups = groupsOf(tab);
+    const parts = partsOf(own, own.shown_tab);
+    for (groups[0..@min(own.shown_groups, groups.len)], parts[0..@min(own.shown_groups, groups.len)]) |*group, *part| {
+        if (part.joined == NONE) continue;
+        eachOf(base, cl, o, group, part, part.joined, &leave);
+        if (part.joined != 0 and part.joined != level_folded) resize(base, group, part, 0);
+        part.joined = NONE;
+    }
+    own.shown_tab = NONE;
+    own.shown_groups = 0;
+}
+
+/// The front tab's first `groups` groups made the members, each at its
+/// level.
+fn joinAll(base: *gadgets.Base, cl: *Class, o: *Object, own: *Data, groups: u32) void {
+    const tab = tabAt(own, own.current) orelse return;
+    const all = groupsOf(tab);
+    const n = @min(groups, all.len);
+    const parts = partsOf(own, own.current);
     own.shown_tab = own.current;
-    own.shown_groups = groups;
-    eachShown(base, cl, o, own, &join);
+    own.shown_groups = @intCast(n);
+    for (all[0..n], parts[0..n]) |*group, *part| {
+        if (part.level != 0 and part.level != level_folded) resize(base, group, part, part.level);
+        eachOf(base, cl, o, group, part, part.level, &join);
+        part.joined = part.level;
+    }
+}
+
+/// The members made the front tab's first `groups` groups, each at its
+/// level, when they are not that already.
+fn show(base: *gadgets.Base, cl: *Class, o: *Object, own: *Data, groups: u32) void {
+    same: {
+        if (own.shown_tab != own.current or own.shown_groups != groups) break :same;
+        const parts = partsOf(own, own.current);
+        for (parts[0..@min(groups, parts.len)]) |part| if (part.joined != part.level) break :same;
+        return;
+    }
+    leaveAll(base, cl, o, own);
+    joinAll(base, cl, o, own, groups);
 }
 
 /// An entry given its box and laid out in it. The box is written rather
@@ -531,24 +916,30 @@ fn placeEntry(base: *gadgets.Base, item: *Object, box: gc.Box, lay: *gc.GpLayout
 const Walk = struct {
     base: *gadgets.Base,
     groups: []const rb.RibbonGroup,
+    parts: []const Part,
     m: Measures,
     info: *classusr.GadgetInfo,
     room: i32,
     page: gc.Box,
     x: i32,
     which: usize = 0,
+    /// The group `next` came to, worked out: kept here rather than handed
+    /// back, which would take a copy of it.
+    laid: Laid = .{},
 
-    const Group = struct { group: *const rb.RibbonGroup, laid: Laid, left: i32, last: bool };
+    const Group = struct { group: *const rb.RibbonGroup, part: *const Part, left: i32, last: bool };
 
     fn of(base: *gadgets.Base, own: *const Data, o: *Object, info: *classusr.GadgetInfo) ?Walk {
         const tab = tabAt(own, own.shown_tab) orelse return null;
         const groups = groupsOf(tab);
-        const m = Measures.of(base, gc.gadget(o), info);
-        const room = roomOf(base, own, info);
+        const n = @min(own.shown_groups, groups.len);
+        const m = Measures.of(base, own, gc.gadget(o), info);
+        const room = roomOf(base, own, m, info);
         const page = placesIn(m, room, gc.boxFor(gc.gadget(o), info)).page;
         return .{
             .base = base,
-            .groups = groups[0..@min(own.shown_groups, groups.len)],
+            .groups = groups[0..n],
+            .parts = partsOf(own, own.shown_tab)[0..n],
             .m = m,
             .info = info,
             .room = room,
@@ -560,15 +951,22 @@ const Walk = struct {
     fn next(w: *Walk) ?Group {
         if (w.which >= w.groups.len) return null;
         const group = &w.groups[w.which];
+        const part = &w.parts[w.which];
+        w.laid.set(w.base, group, part, part.level, w.m, w.info, w.room);
         const one = Group{
             .group = group,
-            .laid = Laid.of(w.base, group, w.m, w.info, w.room),
+            .part = part,
             .left = w.x,
             .last = w.which + 1 == w.groups.len,
         };
-        w.x += one.laid.width + group_gap;
+        w.x += w.laid.width + group_gap;
         w.which += 1;
         return one;
+    }
+
+    /// Where the groups' names stand.
+    fn nameTop(w: *const Walk) i32 {
+        return w.page.top + w.room + name_gap;
     }
 
     fn done(w: Walk) void {
@@ -576,20 +974,44 @@ const Walk = struct {
     }
 };
 
-/// The entries shown put where they go.
-fn placeShown(base: *gadgets.Base, own: *const Data, o: *Object, lay: *gc.GpLayout) void {
+/// The members put where they go: a folded group's button the whole
+/// height of the page, a launcher at the right of its group's name.
+noinline fn placeShown(base: *gadgets.Base, own: *const Data, o: *Object, lay: *gc.GpLayout) void {
     const info = lay.gadget_info orelse return;
     var walk = Walk.of(base, own, o, info) orelse return;
     defer walk.done();
+    const size = walk.m.launcher();
     while (walk.next()) |one| {
-        const left = one.left + one.laid.offset();
-        for (one.laid.items, 0..) |item, i| {
-            const spot = one.laid.spots[i];
+        const laid = &walk.laid;
+        if (laid.folded) {
+            const spot = laid.spots[0];
+            placeEntry(base, laid.items[0].?, .{ .left = one.left, .top = walk.page.top, .width = spot.width, .height = spot.height }, lay);
+            continue;
+        }
+        const left = one.left + laid.offset();
+        for (laid.items, 0..) |item, i| {
+            const spot = laid.spots[i];
             placeEntry(base, item.?, .{
                 .left = left + spot.left,
                 .top = walk.page.top + spot.top,
                 .width = spot.width,
                 .height = spot.height,
+            }, lay);
+        }
+        if (laid.launcher) |launcher| {
+            if (one.part.picture) |picture| {
+                const tags = [_]TagItem{
+                    .{ .tag = ic.IA_Width, .data = @intCast(size) },
+                    .{ .tag = ic.IA_Height, .data = @intCast(size) },
+                    .{},
+                };
+                _ = base.intuition_base.SetAttrsTagList(picture, &tags);
+            }
+            placeEntry(base, launcher, .{
+                .left = one.left + laid.width - size - launcher_gap,
+                .top = walk.nameTop(),
+                .width = size,
+                .height = size,
             }, lay);
         }
     }
@@ -643,23 +1065,45 @@ fn drawnWidth(gb: *GraphicsBase, rp: *graphics.RastPort, text: [*:0]const u8) i3
     return width;
 }
 
+/// The mark at the row's end, in `ink` in the middle of `box`: a triangle
+/// pointing up while the page is there to be put away, down while it is
+/// not.
+fn drawFoldMark(gb: *GraphicsBase, rp: *graphics.RastPort, box: gc.Box, ink: Pen, down: bool) void {
+    support.setPen(gb, rp, ink);
+    const rows = @divTrunc(fold_mark, 2) + 1;
+    const left = box.left + @divTrunc(box.width - fold_mark, 2);
+    const top = box.top + @divTrunc(box.height - rows, 2);
+    var row: i32 = 0;
+    while (row < rows) : (row += 1) {
+        const from_wide = if (down) row else rows - 1 - row;
+        gb.DrawHLine(rp, left + from_wide, top + row, fold_mark - 2 * from_wide);
+    }
+}
+
 /// The row of tabs: the ground under it, each name in the middle of its
-/// tab, the tab in front's edges and the line the rest stand on.
-fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, look: Look, m: Measures, row: gc.Box, ink: Pen) void {
+/// tab, a contextual tab's strip, the edges of the tab `front` - none for
+/// `NONE` - the line the rest stand on, and the mark at its end.
+noinline fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, look: Look, m: Measures, row: gc.Box, ink: Pen, front_tab: u32, down: bool) void {
     const ib = base.intuition_base;
     const gb = base.graphics_base;
     const ground = graphics.Rect{ .min_x = row.left, .min_y = row.top, .max_x = row.left + row.width, .max_y = row.top + row.height };
     gb.EraseRect(rp, &ground);
     const edges = look.edges;
     const line_top = row.top + row.height - edges.y;
+    const end = row.left + row.width - fold_width;
     var front: ?gc.Box = null;
     var x = row.left + tab_indent;
     for (0..own.count) |i| {
+        if (!showsTab(own, @intCast(i))) continue;
         const tab = own.tabs.?[i];
         const at = gc.Box{ .left = x, .top = row.top, .width = m.tabWidth(ib, tab.label), .height = row.height };
         x += at.width + tab_gap;
-        if (at.left + at.width > row.left + row.width) break;
-        if (i == own.current) front = at;
+        if (at.left + at.width > end) break;
+        if (i == front_tab) front = at;
+        if (tab.contextual != 0) {
+            const colour: Pen = if (tab.colour != 0) tab.colour else shapes.tones(.orange).base;
+            support.fill(gb, rp, .{ .left = at.left + edges.x, .top = at.top, .width = at.width - 2 * edges.x, .height = strip_height }, colour);
+        }
         const text = tab.label orelse continue;
         const inside = at.top + edges.y;
         const top = inside + @divTrunc(line_top - inside - m.line, 2);
@@ -674,10 +1118,11 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, look: 
     } else {
         support.fill(gb, rp, .{ .left = row.left, .top = line_top, .width = row.width, .height = edges.y }, light);
     }
+    if (end >= row.left) drawFoldMark(gb, rp, .{ .left = end, .top = row.top, .width = fold_width, .height = line_top - row.top }, ink, down);
 }
 
 /// The ribbon's own parts: the row of tabs, the frame round the page, the
-/// line between each two groups and each group's name. The entries draw
+/// line between each two groups and each group's name. The members draw
 /// themselves.
 ///
 /// Apart from `dispatch`, so that its walk over the groups takes a frame
@@ -699,23 +1144,33 @@ noinline fn render(base: *gadgets.Base, own: *const Data, o: *Object, r: *gc.GpR
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
 
-    const m = Measures.of(base, g, info);
+    const m = Measures.of(base, own, g, info);
     defer m.done(ib);
-    drawRow(base, own, rp, look, m, .{ .left = b.left, .top = b.top, .width = b.width, .height = m.row }, ink);
+    // Folded, the tab whose page is dropped down is the one in front.
+    const fold = folded(own, info);
+    if (own.row != 0) {
+        const front = if (fold) own.popup_tab else own.current;
+        drawRow(base, own, rp, look, m, .{ .left = b.left, .top = b.top, .width = b.width, .height = m.row }, ink, front, fold);
+    }
+    if (fold) return;
     const below = b.top + m.row;
-    support.drawOpenBox(gb, rp, look.edges, .{ .left = b.left, .top = below, .width = b.width, .height = b.top + b.height - below }, .top);
+    const frame = gc.Box{ .left = b.left, .top = below, .width = b.width, .height = b.top + b.height - below };
+    support.drawOpenBox(gb, rp, look.edges, frame, .top);
+    // Without a row, the frame is closed along the top too.
+    if (own.row == 0) support.fill(gb, rp, .{ .left = frame.left, .top = frame.top, .width = frame.width - look.edges.x, .height = look.edges.y }, look.edges.light);
 
     var walk = Walk.of(base, own, o, info) orelse return;
     defer walk.done();
     const line = support.mixPens(dim, info.draw_info.pens[sc.BACKGROUNDPEN], 8);
-    const name_top = walk.page.top + walk.room + name_gap;
     while (walk.next()) |one| {
-        if (one.group.label) |text| {
+        // A folded group's name is its button's.
+        const laid = &walk.laid;
+        if (!laid.folded) if (one.group.label) |text| {
             const width = gb.TextLength(rp, text, support.textLen(text));
-            support.drawText(gb, rp, one.left + @divTrunc(one.laid.width - width, 2), name_top, text, dim);
-        }
+            support.drawText(gb, rp, one.left + @divTrunc(laid.width - width, 2), walk.nameTop(), text, dim);
+        };
         if (!one.last) support.fill(gb, rp, .{
-            .left = one.left + one.laid.width + group_air,
+            .left = one.left + laid.width + group_air,
             .top = walk.page.top,
             .width = 1,
             .height = walk.page.height,
@@ -723,34 +1178,47 @@ noinline fn render(base: *gadgets.Base, own: *const Data, o: *Object, r: *gc.GpR
     }
 }
 
-/// The front tab's entries made the members, put where they go and, in a
-/// window, the whole ribbon drawn again: the page cleared of what the last
-/// tab left, its row and every entry of the new tab drawn whole.
-fn turn(base: *gadgets.Base, cl: *Class, o: *Object, own: *Data, gi: ?*classusr.GadgetInfo, draw: bool) void {
-    show(base, cl, o, own, fitting(base, own, o, gi));
-    const info = gi orelse return;
-    var lay = gc.GpLayout{ .gadget_info = info, .initial = 0 };
-    placeShown(base, own, o, &lay);
-    if (!draw) return;
+/// The ribbon drawn whole in a window: what is under its row cleared
+/// first, as the window paints it - the page is a stretch of the window,
+/// not a part with a look of its own - so that nothing of what was shown
+/// before stays.
+noinline fn redrawWhole(base: *gadgets.Base, own: *const Data, o: *Object, info: *classusr.GadgetInfo) void {
     const ib = base.intuition_base;
     const rp = ib.ObtainGIRPort(info) orelse return;
     defer ib.ReleaseGIRPort(rp);
     const g = gc.gadget(o);
-    const m = Measures.of(base, g, info);
-    const page = placesIn(m, roomOf(base, own, info), gc.boxFor(g, info)).page;
+    const b = gc.boxFor(g, info);
+    const m = Measures.of(base, own, g, info);
     m.done(ib);
-    // The window's ground under the page, as the window paints it: the
-    // page is a stretch of the window, not a part with a look of its own.
-    const ground = graphics.Rect{ .min_x = page.left, .min_y = page.top, .max_x = page.left + page.width, .max_y = page.top + page.height };
+    const ground = graphics.Rect{ .min_x = b.left, .min_y = b.top + m.row, .max_x = b.left + b.width, .max_y = b.top + b.height };
     base.graphics_base.EraseRect(rp, &ground);
     var msg = gc.GpRender{ .gadget_info = info, .rast_port = rp, .redraw = gc.GREDRAW_REDRAW };
     _ = ib.SendMessage(o, @ptrCast(&msg));
 }
 
+/// The groups that fit made the members, put where they go and, in a
+/// window, the whole ribbon drawn again.
+fn turn(base: *gadgets.Base, cl: *Class, o: *Object, own: *Data, gi: ?*classusr.GadgetInfo, draw: bool) void {
+    show(base, cl, o, own, fit(base, own, o, gi));
+    const info = gi orelse return;
+    var lay = gc.GpLayout{ .gadget_info = info, .initial = 0 };
+    placeShown(base, own, o, &lay);
+    if (draw) redrawWhole(base, own, o, info);
+}
+
 /// The tab taken: in front from now on, turned to and told.
 fn take(base: *gadgets.Base, cl: *Class, o: *Object, own: *Data, gi: ?*classusr.GadgetInfo, which: u32) void {
-    if (which >= own.count or which == own.current) return;
+    if (!showsTab(own, which) or which == own.current) return;
     own.current = which;
+    turn(base, cl, o, own, gi, true);
+    tell(base, own, o, gi);
+}
+
+/// Minimized, or brought back: drawn so and told.
+fn minimize(base: *gadgets.Base, cl: *Class, o: *Object, own: *Data, gi: ?*classusr.GadgetInfo) void {
+    endPopup(base, own);
+    own.minimized = @intFromBool(own.minimized == 0);
+    own.pressed_tab = NONE;
     turn(base, cl, o, own, gi, true);
     tell(base, own, o, gi);
 }
@@ -761,13 +1229,14 @@ fn tabUnder(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.Ga
     const ib = base.intuition_base;
     const g = gc.gadget(o);
     const b = gc.boxFor(g, gi);
-    const m = Measures.of(base, g, gi);
+    const m = Measures.of(base, own, g, gi);
     defer m.done(ib);
     if (y < 0 or y >= m.row) return NONE;
     var left: i32 = tab_indent;
     for (0..own.count) |i| {
+        if (!showsTab(own, @intCast(i))) continue;
         const width = m.tabWidth(ib, own.tabs.?[i].label);
-        if (left + width > b.width) return NONE;
+        if (left + width > b.width - fold_width) return NONE;
         if (x >= left and x < left + width) return @intCast(i);
         left += width + tab_gap;
     }
@@ -775,10 +1244,133 @@ fn tabUnder(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.Ga
 }
 
 /// Whether a point, counted from the gadget's corner, is in the row.
-fn inRow(base: *gadgets.Base, o: *Object, gi: ?*classusr.GadgetInfo, y: i32) bool {
-    const m = Measures.of(base, gc.gadget(o), gi);
+fn inRow(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo, y: i32) bool {
+    const m = Measures.of(base, own, gc.gadget(o), gi);
     defer m.done(base.intuition_base);
     return y >= 0 and y < m.row;
+}
+
+/// Whether a point of the row is on the mark at its end.
+fn onFoldMark(own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo, x: i32) bool {
+    if (own.row == 0) return false;
+    const width = gc.boxFor(gc.gadget(o), gi).width;
+    return x >= width - fold_width and x < width;
+}
+
+// --- what drops down ----------------------------------------------------------------
+
+/// The popup up taken down, and what it showed given back.
+fn endPopup(base: *gadgets.Base, own: *Data) void {
+    if (own.popup.flags & rq.REQACTIVE == 0) return;
+    const w = own.popup.window orelse return;
+    base.intuition_base.EndRequest(&own.popup, w);
+}
+
+/// A ribbon without a row that shows `popup_tabs` - and not as its own -
+/// put up in a popup at (`left`, `top`) of the window, as wide as it
+/// looks right or `width`. False when it could not be.
+fn put(base: *gadgets.Base, own: *Data, o: *Object, info: *classusr.GadgetInfo, left: i32, top: i32, width: ?i32) bool {
+    const ib = base.intuition_base;
+    const tags = [_]TagItem{
+        .{ .tag = rb.RIBBON_Tabs, .data = @intFromPtr(&own.popup_tabs) },
+        .{ .tag = rb.RIBBON_Row, .data = 0 },
+        .{ .tag = rb.RIBBON_OwnsEntries, .data = 0 },
+        .{},
+    };
+    const page = ib.NewObjectTagList(base.class, null, &tags) orelse return false;
+    var ask = gc.GpDomain{ .gadget_info = info, .which = gc.GDOMAIN_NOMINAL };
+    _ = ib.SendMessage(page, @ptrCast(&ask));
+    const size = gc.Box{ .width = width orelse ask.domain.width, .height = ask.domain.height };
+    const box = [_]TagItem{
+        .{ .tag = gc.GA_Width, .data = @intCast(size.width) },
+        .{ .tag = gc.GA_Height, .data = @intCast(size.height) },
+        .{},
+    };
+    _ = ib.SetAttrsTagList(page, &box);
+    own.popup = .{
+        .left = left,
+        .top = top,
+        .width = size.width,
+        .height = size.height,
+        .gadgets = page,
+        .flags = rq.POPUPREQ,
+        // The window's ground, as the page has under it in the ribbon.
+        .back_fill = info.draw_info.pens[sc.BACKGROUNDPEN],
+        .owner = o,
+    };
+    own.popup_ribbon = page;
+    if (!ib.Request(&own.popup, info.window)) {
+        own.popup_ribbon = null;
+        ib.DisposeObject(page);
+        return false;
+    }
+    return true;
+}
+
+/// The folded group whose button tells it was pressed dropped down under
+/// it, as it would stand; the button set back when it cannot be.
+noinline fn openGroup(base: *gadgets.Base, own: *Data, o: *Object, index: u32, gi: ?*classusr.GadgetInfo) void {
+    const ib = base.intuition_base;
+    const parts = own.parts orelse return;
+    if (index >= own.part_count) return;
+    const button = parts[index].button orelse return;
+    opened: {
+        const info = gi orelse break :opened;
+        if (own.popup_ribbon != null) break :opened;
+        const group = groupOfPart(own, index) orelse break :opened;
+        own.popup_groups = .{ group.*, .{} };
+        own.popup_tabs = .{ .{ .label = "", .groups = &own.popup_groups }, .{} };
+        const b = gc.boxFor(gc.gadget(button), info);
+        // A requester's place is from the window's corner; a gadget in a
+        // requester counts from the requester's.
+        const req_left = if (info.requester) |req| req.left else 0;
+        const req_top = if (info.requester) |req| req.top else 0;
+        if (!put(base, own, o, info, req_left + b.left, req_top + b.top + b.height, null)) break :opened;
+        own.popup_part = index;
+        return;
+    }
+    const back = [_]TagItem{ .{ .tag = tb.TOOLBUTTON_Dropped, .data = 0 }, .{} };
+    var set = classusr.OpSet{ .method_id = classusr.OM_SET, .attr_list = &back, .gadget_info = gi };
+    _ = ib.SendMessage(button, @ptrCast(&set));
+}
+
+/// A minimized ribbon's front tab's page dropped down under the row, as
+/// wide as the ribbon, and the tab drawn in front while it is.
+noinline fn openPage(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo) void {
+    const info = gi orelse return;
+    if (own.popup_ribbon != null) return;
+    const tab = tabAt(own, own.current) orelse return;
+    own.popup_tabs = .{ tab.*, .{} };
+    own.popup_tabs[0].contextual = 0;
+    const g = gc.gadget(o);
+    const b = gc.boxFor(g, info);
+    const m = Measures.of(base, own, g, info);
+    m.done(base.intuition_base);
+    if (!put(base, own, o, info, b.left, b.top + m.row, b.width)) return;
+    own.popup_tab = own.current;
+    redrawWhole(base, own, o, info);
+}
+
+/// The popup is down: the ribbon that showed it disposed of - its members
+/// are given back first, and they were not its to dispose of - and the
+/// folded group's button or the minimized ribbon's row drawn at rest.
+fn closePopup(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo) void {
+    const ib = base.intuition_base;
+    if (own.popup_ribbon) |page| ib.DisposeObject(page);
+    own.popup_ribbon = null;
+    own.popup.gadgets = null;
+    if (own.popup_part != NONE) {
+        if (own.parts.?[own.popup_part].button) |button| {
+            const back = [_]TagItem{ .{ .tag = tb.TOOLBUTTON_Dropped, .data = 0 }, .{} };
+            var set = classusr.OpSet{ .method_id = classusr.OM_SET, .attr_list = &back, .gadget_info = gi };
+            _ = ib.SendMessage(button, @ptrCast(&set));
+        }
+        own.popup_part = NONE;
+    }
+    if (own.popup_tab != NONE) {
+        own.popup_tab = NONE;
+        if (gi) |info| redrawWhole(base, own, o, info);
+    }
 }
 
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
@@ -795,14 +1387,20 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const made = ib.SendSuperMessage(cl, o, msg);
             if (made == 0) {
                 // The entries are the ribbon's from when it is asked for,
-                // made or not.
-                if (ub.FindTagItem(rb.RIBBON_Tabs, new.attr_list)) |item| disposeEntries(ib, @ptrFromInt(item.data));
+                // made or not - unless they are another's.
+                if (ub.GetTagData(rb.RIBBON_OwnsEntries, 1, new.attr_list) != 0) {
+                    if (ub.FindTagItem(rb.RIBBON_Tabs, new.attr_list)) |item| disposeEntries(ib, @ptrFromInt(item.data));
+                }
                 return 0;
             }
             const obj: *Object = @ptrFromInt(made);
             const own = classes.instData(Data, cl, obj);
             own.* = .{};
             _ = setAttrs(base, own, new.attr_list, true);
+            if (!makeParts(base, obj, own)) {
+                ib.DisposeObject(obj);
+                return 0;
+            }
             // A group starts with no size; the ribbon is as big as it
             // looks right, or as it was asked to be.
             const size = domain(base, own, gc.gadget(obj), null, gc.GDOMAIN_NOMINAL);
@@ -816,16 +1414,19 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             };
             var set = classusr.OpSet{ .method_id = classusr.OM_SET, .attr_list = &tags };
             _ = ib.SendSuperMessage(cl, obj, @ptrCast(&set));
-            show(base, cl, obj, own, fitting(base, own, obj, null));
+            show(base, cl, obj, own, fit(base, own, obj, null));
             return made;
         },
         classusr.OM_DISPOSE => {
             const own = classes.instData(Data, cl, o orelse return 0);
+            endPopup(base, own);
+            closePopup(base, own, o.?, null);
             // Out of the group first, so that every entry is disposed of
-            // once, here, member or not.
-            eachShown(base, cl, o.?, own, &leave);
-            own.shown_tab = NONE;
-            disposeEntries(ib, own.tabs);
+            // once, here, member or not - or left to the ribbon whose it
+            // is.
+            leaveAll(base, cl, o.?, own);
+            if (own.owns != 0) disposeEntries(ib, own.tabs);
+            disposeParts(base, own);
             own.tabs = null;
             own.count = 0;
             return ib.SendSuperMessage(cl, o, msg);
@@ -833,8 +1434,18 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         classusr.OM_SET, classusr.OM_UPDATE => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
+            // A folded group's button pressed: its group drops down. The
+            // rest of what it says - its ID - is not the ribbon's.
+            if (msg.method_id == classusr.OM_UPDATE) {
+                const ub = base.utility_base;
+                if (ub.FindTagItem(tb.TOOLBUTTON_Dropped, set.attr_list)) |item| {
+                    if (item.data != 0) openGroup(base, own, o.?, @truncate(ub.GetTagData(gc.GA_ID, NONE, set.attr_list)), set.gadget_info);
+                    return 0;
+                }
+            }
             var changed = ib.SendSuperMessage(cl, o, msg);
             if (setAttrs(base, own, set.attr_list, false)) {
+                endPopup(base, own);
                 const draw = set.gadget_info != null and classes.objectClass(o.?) == cl;
                 turn(base, cl, o.?, own, set.gadget_info, draw);
                 if (draw) return 0;
@@ -849,6 +1460,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 rb.RIBBON_Current => get.storage.* = own.current,
                 rb.RIBBON_NumTabs => get.storage.* = own.count,
                 rb.RIBBON_Tabs => get.storage.* = @intFromPtr(own.tabs),
+                rb.RIBBON_Minimized => get.storage.* = own.minimized,
                 else => return ib.SendSuperMessage(cl, o, msg),
             }
             return 1;
@@ -860,11 +1472,14 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             ask.domain = domain(base, classes.instData(Data, cl, o.?), gc.gadget(o.?), ask.gadget_info, ask.which);
             return 1;
         },
-        // The groups that fit made the members and put where they go.
+        // The groups that fit made the members, each as small as it has
+        // to be, and put where they go. Whatever was dropped down goes
+        // first: what it shows may be on the page now.
         gc.GM_LAYOUT => {
             const lay: *gc.GpLayout = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
-            show(base, cl, o.?, own, fitting(base, own, o.?, lay.gadget_info));
+            endPopup(base, own);
+            show(base, cl, o.?, own, fit(base, own, o.?, lay.gadget_info));
             placeShown(base, own, o.?, lay);
             return 0;
         },
@@ -881,36 +1496,59 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             return 0;
         },
         // The group first, which names the member under the point or none;
-        // in the row no member stands, and a tab is the ribbon's own.
+        // in the row no member stands, and a tab and the mark at its end
+        // are the ribbon's own.
         gc.GM_HITTEST => {
             const ht: *gc.GpHitTest = @ptrCast(@alignCast(msg));
             const over = ib.SendSuperMessage(cl, o, msg);
-            if (!inRow(base, o.?, ht.gadget_info, ht.mouse.y)) return over;
             const own = classes.instData(Data, cl, o.?);
+            if (!inRow(base, own, o.?, ht.gadget_info, ht.mouse.y)) return over;
+            if (onFoldMark(own, o.?, ht.gadget_info, ht.mouse.x)) return gc.GMR_GADGETHIT;
             return if (tabUnder(base, own, o.?, ht.gadget_info, ht.mouse.x, ht.mouse.y) == NONE) 0 else gc.GMR_GADGETHIT;
         },
         // A press on a tab turns to it at once and is done with; its
-        // number is the code. A press anywhere else is a member's.
+        // number is the code. Minimized, its page drops down as well. A
+        // second press on it soon after, and the one on the mark at the
+        // row's end, minimize the ribbon or bring it back. A press
+        // anywhere else is a member's.
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
-            if (in.event == null or !inRow(base, o.?, in.gadget_info, in.mouse.y)) return ib.SendSuperMessage(cl, o, msg);
             const own = classes.instData(Data, cl, o.?);
+            const e = in.event orelse return ib.SendSuperMessage(cl, o, msg);
+            if (!inRow(base, own, o.?, in.gadget_info, in.mouse.y)) return ib.SendSuperMessage(cl, o, msg);
+            if (onFoldMark(own, o.?, in.gadget_info, in.mouse.x)) {
+                minimize(base, cl, o.?, own, in.gadget_info);
+                in.termination.* = rb.RBCODE_MINIMIZED;
+                return gc.GMR_NOREUSE | gc.GMR_VERIFY;
+            }
             const which = tabUnder(base, own, o.?, in.gadget_info, in.mouse.x, in.mouse.y);
             if (which == NONE) return gc.GMR_NOREUSE;
+            const fold = folded(own, in.gadget_info);
+            if (!fold and which == own.pressed_tab and ib.DoubleClick(own.pressed_seconds, own.pressed_micros, e.time.secs, e.time.micro)) {
+                minimize(base, cl, o.?, own, in.gadget_info);
+                in.termination.* = rb.RBCODE_MINIMIZED;
+                return gc.GMR_NOREUSE | gc.GMR_VERIFY;
+            }
+            own.pressed_tab = which;
+            own.pressed_seconds = e.time.secs;
+            own.pressed_micros = e.time.micro;
             take(base, cl, o.?, own, in.gadget_info, which);
+            if (fold) openPage(base, own, o.?, in.gadget_info);
             in.termination.* = @intCast(own.current);
             return gc.GMR_NOREUSE | gc.GMR_VERIFY;
         },
-        // The key a tab's name marks turns to that tab; any other is the
-        // front page's entries'.
+        // The key a tab's name marks turns to that tab - and drops its
+        // page down when minimized; any other is the front page's
+        // entries'.
         gc.GM_KEY => {
             const k: *gc.GpKey = @ptrCast(@alignCast(msg));
             if (gc.gadget(o.?).flags & gc.GFLG_DISABLED != 0) return gc.GMKR_NOTHING;
             const own = classes.instData(Data, cl, o.?);
             const typed = gc.keyOf(k.key);
-            if (typed != 0) for (0..own.count) |i| {
-                if (gc.labelKey(own.tabs.?[i].label) != typed) continue;
+            if (typed != 0 and own.row != 0) for (0..own.count) |i| {
+                if (!showsTab(own, @intCast(i)) or gc.labelKey(own.tabs.?[i].label) != typed) continue;
                 take(base, cl, o.?, own, k.gadget_info, @intCast(i));
+                if (folded(own, k.gadget_info)) openPage(base, own, o.?, k.gadget_info);
                 k.termination.* = @intCast(own.current);
                 return gc.GMKR_VERIFY;
             };
@@ -918,17 +1556,30 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         // The wheel over the row turns the tabs, down to the next and up
         // to the one before, and stops at either end; over the page it is
-        // the entry's under the pointer.
+        // the entry's under the pointer. Minimized, there is no page to
+        // turn.
         gc.GM_WHEEL => {
             const wh: *gc.GpWheel = @ptrCast(@alignCast(msg));
-            if (!inRow(base, o.?, wh.gadget_info, wh.mouse.y)) return ib.SendSuperMessage(cl, o, msg);
             const own = classes.instData(Data, cl, o.?);
-            if (own.count == 0) return gc.GMWR_NOTHING;
-            const wanted = @as(i64, own.current) + gc.wheelNotches(wh, true);
-            const which: u32 = @intCast(@max(@min(wanted, own.count - 1), 0));
+            if (!inRow(base, own, o.?, wh.gadget_info, wh.mouse.y)) return ib.SendSuperMessage(cl, o, msg);
+            if (own.count == 0 or folded(own, wh.gadget_info)) return gc.GMWR_NOTHING;
+            const notches = gc.wheelNotches(wh, true);
+            var which = own.current;
+            var left = @abs(notches);
+            while (left > 0) : (left -= 1) {
+                const next = nextShown(own, @as(i64, which) + @as(i64, if (notches > 0) 1 else -1), if (notches > 0) 1 else -1);
+                if (next == NONE) break;
+                which = next;
+            }
             if (which == own.current) return gc.GMWR_TAKEN;
             take(base, cl, o.?, own, wh.gadget_info, which);
             return gc.wheelVerify(wh, @intCast(own.current));
+        },
+        // What was dropped down is down.
+        gc.GM_POPDOWN => {
+            const down: *gc.GpPopDown = @ptrCast(@alignCast(msg));
+            closePopup(base, classes.instData(Data, cl, o.?), o.?, down.gadget_info);
+            return 0;
         },
         else => return ib.SendSuperMessage(cl, o, msg),
     }

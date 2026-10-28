@@ -121,6 +121,14 @@ pub fn draw(p: *Painter, glyph: u32) void {
             p.solid(&cog, .metal, .{ .flat = true });
             p.solid(&.{p.ring(50, 50, 22, 15, 0, 360)}, .teal, .{ .no_shadow = true });
         },
+        // The box's top and left edge, and the arrow out of its corner,
+        // its head filling the opposite one.
+        command.CMD_LAUNCHER => p.ink(&.{
+            p.rr(8, 8, 62, 21, 0),
+            p.rr(8, 8, 21, 62, 0),
+            p.poly(&shapes.bar(34, 34, 74, 74, 13)),
+            p.poly(&.{ .{ 92, 46 }, .{ 92, 92 }, .{ 46, 92 } }),
+        }),
         else => {},
     }
 }

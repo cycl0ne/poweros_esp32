@@ -7,25 +7,36 @@
 //! It opens toolbutton.gadget, checkbox.gadget, text.gadget and
 //! ribbon.gadget from `SYS:classes/gadgets/` and command.image from
 //! `SYS:classes/images/`, and a window object on the default public screen
-//! holding a ribbon of three tabs over a text line that names the last
-//! command:
+//! holding a ribbon of three tabs and a contextual one over a text line
+//! that names the last command:
 //!
-//! - Home: Clipboard - Paste large, Cut and Copy medium; Font - Bold,
-//!   Italic and Underline, small toggles; Paragraph - left, centred and
-//!   right, small, and Wrap a medium toggle.
-//! - Insert: Table - inserting and deleting a row and a column, medium;
-//!   Data - Sum large and Sort medium.
+//! - Home: Clipboard - Paste, a large split button whose list has two more
+//!   ways to paste, Cut and Copy medium; Font - Bold, Italic and Underline,
+//!   small toggles, and a launcher; Paragraph - left, centred and right,
+//!   small, Wrap a medium toggle, Spacing a drop-down, and a launcher.
+//! - Insert: Data - Sum large and Sort medium; Table - Table tools, a
+//!   large toggle that shows the contextual tab while it is on.
 //! - View: Zoom - in and out, large; Find, large; Show - a check box
 //!   "Grid" in a layout of its own, which a ribbon holds as it holds any
 //!   gadget, and Settings, medium.
+//! - Table, contextual: Rows - inserting and deleting one; Columns - the
+//!   same, medium.
 //!
 //! Every command let go is printed with its ID, its name and its code - a
-//! toggle's and the check box's new state - and the text line names it. A
+//! toggle's and the check box's new state, the label taken from a list,
+//! -1 for a split button's own command - and the text line names it,
+//! with the label taken from a list after the name. A
 //! tab taken by a press, its key or the wheel over the row is printed
-//! with its number. `h`, `n` and `v` turn to the tabs; the other keys
-//! underlined work only on the tab in front. Made narrower, the window
-//! shows the groups that fit whole, from the left. The close gadget or
-//! Ctrl-C end it.
+//! with its number. `h`, `n`, `v` and, while it is there, `a` turn to the
+//! tabs; the other keys underlined work only on the tab in front.
+//!
+//! Made narrower, the window shows the groups smaller, the rightmost
+//! first: large buttons medium, then every button small, then a group
+//! folded into a button with its picture, which drops the group down. The
+//! mark at the row's right end, or a double-click on a tab, minimizes the
+//! ribbon to its row - a tab then drops its page down - and the window is
+//! laid out again for it (`WM_RETHINK`). The close gadget or Ctrl-C end
+//! it.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -49,7 +60,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Ribbon";
-const VERSION_STRING = "\x00$VER: Ribbon 1.0 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Ribbon 1.1 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const MSG_NOLIBRARY = "No %s\n";
@@ -59,86 +70,139 @@ const MSG_NOWINDOW = "No window\n";
 const MSG_HELLO = "Press the commands and the tabs. The close gadget or Ctrl-C end it\n";
 const MSG_GADGET = "Command %lu (%s): code %ld\n";
 const MSG_TAB = "Tab %ld\n";
+const MSG_MINIMIZED = "Minimized\n";
+const MSG_BACK = "Back again\n";
 
 const ID_RIBBON = 1;
 const ID_LAST = 2;
 
 /// What an entry of the ribbon is.
-const Kind = enum { large, medium, small, toggle_medium, toggle_small, check };
+const Kind = enum { large, medium, small, toggle_large, toggle_medium, toggle_small, split_large, dropdown_medium, check };
 
 /// An entry: its ID - the command - its picture, its label with the `_`
-/// before its key, and how it is made.
-const Entry = struct { id: u32, glyph: u32 = command.CMD_NONE, label: [*:0]const u8, kind: Kind };
-const Group = struct { label: [*:0]const u8, entries: []const Entry };
-const Tab = struct { label: [*:0]const u8, groups: []const Group };
+/// before its key, how it is made, and the list a split or a drop-down
+/// button has.
+const Entry = struct {
+    id: u32,
+    glyph: u32 = command.CMD_NONE,
+    label: [*:0]const u8,
+    kind: Kind,
+    labels: ?[*:null]const ?[*:0]const u8 = null,
+};
+/// A group: its name, the picture of the button it is folded into, and
+/// its launcher's ID and what that opens, when it has one.
+const Group = struct {
+    label: [*:0]const u8,
+    glyph: u32 = command.CMD_NONE,
+    launcher: u32 = 0,
+    opens: [*:0]const u8 = "",
+    entries: []const Entry,
+};
+const Tab = struct { label: [*:0]const u8, groups: []const Group, contextual: u32 = 0 };
 
 const ID_GRID = 100;
+/// The toggle that shows the contextual tab, and the tab's `id`.
+const ID_TABLE_TOOLS = 45;
+const TAB_TABLE = 7;
+
+const pastes = [_:null]?[*:0]const u8{ "Paste as text", "Paste special" };
+const spacings = [_:null]?[*:0]const u8{ "Single", "One and a half", "Double" };
 
 const tabs = [_]Tab{
     .{ .label = "_Home", .groups = &.{
-        .{ .label = "Clipboard", .entries = &.{
-            .{ .id = 10, .glyph = command.CMD_PASTE, .label = "_Paste", .kind = .large },
+        .{ .label = "Clipboard", .glyph = command.CMD_PASTE, .entries = &.{
+            .{ .id = 10, .glyph = command.CMD_PASTE, .label = "_Paste", .kind = .split_large, .labels = &pastes },
             .{ .id = 11, .glyph = command.CMD_CUT, .label = "Cu_t", .kind = .medium },
             .{ .id = 12, .glyph = command.CMD_COPY, .label = "_Copy", .kind = .medium },
         } },
-        .{ .label = "Font", .entries = &.{
+        .{ .label = "Font", .glyph = command.CMD_BOLD, .launcher = 90, .opens = "Font settings", .entries = &.{
             .{ .id = 20, .glyph = command.CMD_BOLD, .label = "_Bold", .kind = .toggle_small },
             .{ .id = 21, .glyph = command.CMD_ITALIC, .label = "_Italic", .kind = .toggle_small },
             .{ .id = 22, .glyph = command.CMD_UNDERLINE, .label = "_Underline", .kind = .toggle_small },
         } },
-        .{ .label = "Paragraph", .entries = &.{
+        .{ .label = "Paragraph", .glyph = command.CMD_ALIGN_LEFT, .launcher = 91, .opens = "Paragraph settings", .entries = &.{
             .{ .id = 30, .glyph = command.CMD_ALIGN_LEFT, .label = "_Left", .kind = .small },
             .{ .id = 31, .glyph = command.CMD_ALIGN_CENTRE, .label = "C_entre", .kind = .small },
             .{ .id = 32, .glyph = command.CMD_ALIGN_RIGHT, .label = "_Right", .kind = .small },
             .{ .id = 33, .glyph = command.CMD_WRAP, .label = "_Wrap", .kind = .toggle_medium },
+            .{ .id = 34, .label = "_Spacing", .kind = .dropdown_medium, .labels = &spacings },
         } },
     } },
     .{ .label = "I_nsert", .groups = &.{
-        .{ .label = "Table", .entries = &.{
-            .{ .id = 40, .glyph = command.CMD_INSERT_ROW, .label = "Insert _row", .kind = .medium },
-            .{ .id = 41, .glyph = command.CMD_DELETE_ROW, .label = "_Delete row", .kind = .medium },
-            .{ .id = 42, .glyph = command.CMD_INSERT_COLUMN, .label = "Insert co_lumn", .kind = .medium },
-            .{ .id = 43, .glyph = command.CMD_DELETE_COLUMN, .label = "Delete colu_mn", .kind = .medium },
-        } },
-        .{ .label = "Data", .entries = &.{
+        .{ .label = "Data", .glyph = command.CMD_SUM, .entries = &.{
             .{ .id = 50, .glyph = command.CMD_SUM, .label = "_Sum", .kind = .large },
             .{ .id = 51, .glyph = command.CMD_SORT, .label = "S_ort", .kind = .medium },
         } },
+        .{ .label = "Table", .glyph = command.CMD_INSERT_COLUMN, .entries = &.{
+            .{ .id = ID_TABLE_TOOLS, .glyph = command.CMD_INSERT_COLUMN, .label = "_Table tools", .kind = .toggle_large },
+        } },
     } },
     .{ .label = "_View", .groups = &.{
-        .{ .label = "Zoom", .entries = &.{
+        .{ .label = "Zoom", .glyph = command.CMD_ZOOM_IN, .entries = &.{
             .{ .id = 60, .glyph = command.CMD_ZOOM_IN, .label = "Zoom _in", .kind = .large },
             .{ .id = 61, .glyph = command.CMD_ZOOM_OUT, .label = "Zoom _out", .kind = .large },
         } },
-        .{ .label = "Find", .entries = &.{
+        .{ .label = "Find", .glyph = command.CMD_FIND, .entries = &.{
             .{ .id = 70, .glyph = command.CMD_FIND, .label = "_Find", .kind = .large },
         } },
-        .{ .label = "Show", .entries = &.{
+        .{ .label = "Show", .glyph = command.CMD_SETTINGS, .entries = &.{
             .{ .id = ID_GRID, .label = "_Grid", .kind = .check },
             .{ .id = 80, .glyph = command.CMD_SETTINGS, .label = "S_ettings", .kind = .medium },
+        } },
+    } },
+    .{ .label = "T_able", .contextual = TAB_TABLE, .groups = &.{
+        .{ .label = "Rows", .glyph = command.CMD_INSERT_ROW, .entries = &.{
+            .{ .id = 40, .glyph = command.CMD_INSERT_ROW, .label = "Insert _row", .kind = .medium },
+            .{ .id = 41, .glyph = command.CMD_DELETE_ROW, .label = "_Delete row", .kind = .medium },
+        } },
+        .{ .label = "Columns", .glyph = command.CMD_INSERT_COLUMN, .entries = &.{
+            .{ .id = 42, .glyph = command.CMD_INSERT_COLUMN, .label = "Insert co_lumn", .kind = .medium },
+            .{ .id = 43, .glyph = command.CMD_DELETE_COLUMN, .label = "Delete colu_mn", .kind = .medium },
         } },
     } },
 };
 
 const max_groups = 3;
-const max_entries = 4;
+const max_entries = 5;
 
 /// The name of the entry `id` as it is shown: its label without the `_`,
-/// in `buffer`.
-fn nameOf(id: usize, buffer: *[32:0]u8) [*:0]const u8 {
+/// in `buffer` - or what a launcher opens.
+fn nameOf(id: usize, value: i32, buffer: *[48:0]u8) [*:0]const u8 {
+    for (tabs) |tab| for (tab.groups) |group| {
+        if (group.launcher != 0 and group.launcher == id) return group.opens;
+    };
     for (tabs) |tab| for (tab.groups) |group| for (group.entries) |entry| {
         if (entry.id != id) continue;
         var n: usize = 0;
-        var i: usize = 0;
-        while (entry.label[i] != 0 and n < buffer.len) : (i += 1) {
-            if (entry.label[i] == '_') continue;
-            buffer[n] = entry.label[i];
-            n += 1;
-        }
+        n = put(buffer, n, entry.label);
+        // The label taken from its list after it.
+        if (entry.labels) |list| if (value >= 0) {
+            const taken: usize = @intCast(value);
+            var i: usize = 0;
+            while (list[i]) |label| : (i += 1) {
+                if (i != taken) continue;
+                n = put(buffer, n, ": ");
+                n = put(buffer, n, label);
+                break;
+            }
+        };
         buffer[n] = 0;
         return buffer;
     };
     return "?";
+}
+
+/// `text` put in `buffer` from `n` on without its `_`, as far as there is
+/// room; where it ends.
+fn put(buffer: *[48:0]u8, n: usize, text: [*:0]const u8) usize {
+    var at = n;
+    var i: usize = 0;
+    while (text[i] != 0 and at < buffer.len) : (i += 1) {
+        if (text[i] == '_') continue;
+        buffer[at] = text[i];
+        at += 1;
+    }
+    return at;
 }
 
 /// What the program makes for the ribbon: the gadgets, in the lists the
@@ -148,6 +212,8 @@ fn nameOf(id: usize, buffer: *[32:0]u8) [*:0]const u8 {
 const Made = struct {
     entries: [tabs.len][max_groups][max_entries + 1]?*Object = @splat(@splat(@splat(null))),
     pictures: [tabs.len][max_groups][max_entries]?*Object = @splat(@splat(@splat(null))),
+    /// The pictures of the buttons the groups are folded into.
+    folded: [tabs.len][max_groups]?*Object = @splat(@splat(null)),
     groups: [tabs.len][max_groups + 1]rb.RibbonGroup = @splat(@splat(.{})),
     tabs: [tabs.len + 1]rb.RibbonTab = @splat(.{}),
 
@@ -165,9 +231,25 @@ const Made = struct {
                     }
                     m.entries[t][g][e] = gadget(ib, entry, m.pictures[t][g][e]) orelse return false;
                 }
-                m.groups[t][g] = .{ .label = group.label, .items = &m.entries[t][g] };
+                if (group.glyph != command.CMD_NONE) {
+                    m.folded[t][g] = ib.NewObjectTagList(null, command.COMMAND_CLASS, &[_]TagItem{
+                        .{ .tag = command.COMMAND_Glyph, .data = group.glyph },
+                        .{},
+                    }) orelse return false;
+                }
+                m.groups[t][g] = .{
+                    .label = group.label,
+                    .items = &m.entries[t][g],
+                    .launcher = group.launcher,
+                    .image = m.folded[t][g],
+                };
             }
-            m.tabs[t] = .{ .label = tab.label, .groups = &m.groups[t] };
+            m.tabs[t] = .{
+                .label = tab.label,
+                .groups = &m.groups[t],
+                .id = tab.contextual,
+                .contextual = @intFromBool(tab.contextual != 0),
+            };
         }
         return true;
     }
@@ -183,6 +265,10 @@ const Made = struct {
     /// The pictures, after the gadgets showing them.
     fn freePictures(m: *Made, ib: *IntuitionBase) void {
         for (&m.pictures) |*tab| for (tab) |*group| for (group) |*picture| {
+            ib.DisposeObject(picture.*);
+            picture.* = null;
+        };
+        for (&m.folded) |*tab| for (tab) |*picture| {
             ib.DisposeObject(picture.*);
             picture.* = null;
         };
@@ -208,17 +294,23 @@ fn gadget(ib: *IntuitionBase, entry: Entry, picture: ?*Object) ?*Object {
         };
     }
     const size: u32 = switch (entry.kind) {
-        .large => tb.TBSIZE_LARGE,
+        .large, .toggle_large, .split_large => tb.TBSIZE_LARGE,
         .small, .toggle_small => tb.TBSIZE_SMALL,
         else => tb.TBSIZE_MEDIUM,
     };
-    const toggle = entry.kind == .toggle_small or entry.kind == .toggle_medium;
+    const kind: u32 = switch (entry.kind) {
+        .toggle_large, .toggle_medium, .toggle_small => tb.TBKIND_TOGGLE,
+        .split_large => tb.TBKIND_SPLIT,
+        .dropdown_medium => tb.TBKIND_DROPDOWN,
+        else => tb.TBKIND_PUSH,
+    };
     return ib.NewObjectTagList(null, tb.TOOLBUTTON_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = entry.id },
         .{ .tag = gc.GA_Text, .data = @intFromPtr(entry.label) },
         .{ .tag = tb.TOOLBUTTON_Image, .data = @intFromPtr(picture) },
         .{ .tag = tb.TOOLBUTTON_Size, .data = size },
-        .{ .tag = tb.TOOLBUTTON_Kind, .data = if (toggle) tb.TBKIND_TOGGLE else tb.TBKIND_PUSH },
+        .{ .tag = tb.TOOLBUTTON_Kind, .data = kind },
+        .{ .tag = if (entry.labels != null) tb.TOOLBUTTON_Labels else sdk.utility.TAG_IGNORE, .data = @intFromPtr(entry.labels) },
         .{},
     });
 }
@@ -334,7 +426,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var code: u32 = 0;
     var handle = wc.WmHandleInput{ .code = &code };
     // The last command's name, which the line under the ribbon shows.
-    var shown: [32:0]u8 = undefined;
+    var shown: [48:0]u8 = undefined;
     while (true) {
         const got = ib.WaitIMsg(window, exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_WARN;
@@ -347,10 +439,28 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                     const id = word & wc.WMHI_GADGETMASK;
                     const value: i32 = @bitCast(code);
                     if (id == ID_RIBBON) {
-                        _ = Printf(dl, MSG_TAB, .{@as(i64, value)});
+                        if (value != rb.RBCODE_MINIMIZED) {
+                            _ = Printf(dl, MSG_TAB, .{@as(i64, value)});
+                            continue;
+                        }
+                        // Its height has changed: the window laid out
+                        // again round it.
+                        var minimized: usize = 0;
+                        _ = ib.GetAttr(rb.RIBBON_Minimized, ribbon.?, &minimized);
+                        _ = if (minimized != 0) Printf(dl, MSG_MINIMIZED, .{}) else Printf(dl, MSG_BACK, .{});
+                        var rethink = wc.WmRethink{};
+                        _ = ib.SendMessage(object, @ptrCast(&rethink));
                         continue;
                     }
-                    const name = nameOf(id, &shown);
+                    // The contextual tab comes with its toggle and goes
+                    // with it.
+                    if (id == ID_TABLE_TOOLS) {
+                        _ = ib.SetGadgetAttrsTagList(ribbon.?, window, &[_]TagItem{
+                            .{ .tag = if (value != 0) rb.RIBBON_ShowTab else rb.RIBBON_HideTab, .data = TAB_TABLE },
+                            .{},
+                        });
+                    }
+                    const name = nameOf(id, value, &shown);
                     _ = Printf(dl, MSG_GADGET, .{ @as(u64, id), name, @as(i64, value) });
                     _ = ib.SetGadgetAttrsTagList(last.?, window, &[_]TagItem{
                         .{ .tag = tx.TEXT_Text, .data = @intFromPtr(name) },

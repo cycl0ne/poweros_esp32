@@ -2,11 +2,11 @@
 //! chooser.gadget: a button that pops up a list to pick from.
 //!
 //! It shows one of `CHOOSER_Labels` and a mark at its right end. A press
-//! opens a panel under it - over it when there is more room there -
-//! listing the labels, with the one it shows already picked out. Dragging
-//! over the panel moves the pick, letting go takes it; letting go on the
-//! button itself leaves the panel up, so that a press on a line takes it
-//! instead. A press anywhere else closes the panel and takes nothing.
+//! opens a panel under it - over it when the list does not fit under it
+//! and there is more room there - listing the labels, with the one it
+//! shows already picked out. Dragging over the panel moves the pick,
+//! letting go takes it; letting go on the button itself leaves the panel
+//! up, so that a press on a line takes it instead. A press anywhere else closes the panel and takes nothing.
 //! A list longer than the panel shows has a bar down its right side, and
 //! dragging in that bar is what scrolls it.
 //!

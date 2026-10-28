@@ -3,43 +3,25 @@
 //!
 //! The button is a frameiclass button frame with the label it shows in it
 //! and a mark - a triangle pointing down - at its right end, drawn as a
-//! cycle gadget is. What makes it a chooser is the panel.
-//!
-//! **The panel is a layer over the screen**, made when the press comes
-//! and deleted when the pick is over, exactly as a menu's panel is: the
-//! layer keeps what it covers, so nothing has to be drawn again to put
-//! the screen back, and a program drawing into a window while the panel
-//! is over it draws around the panel rather than under it. It is drawn in
-//! the layer's own coordinates, whose corner is the panel's.
-//!
-//! The panel goes under the button, or over it when there is more room
-//! there, and is cut to the screen. A list too long for the room shows
-//! as many labels as fit and has a bar down its right side: how far down
-//! the knob sits and how long it is say where in the list the panel is
-//! looking, and dragging in the bar moves it. That is the only thing
-//! that scrolls it - the pointer resting anywhere moves nothing, so a
-//! hand held still over the list never loses the label it was over.
-//!
-//! **Two ways to pick.** Pressed and dragged, the label the pointer is
-//! over when the button is let go is the one taken. Pressed and let go
-//! over the button itself, the panel stays up and the next press takes
-//! the label under it - or closes the panel, taking nothing, if it is
-//! somewhere else.
+//! cycle gadget is. What makes it a chooser is the panel, a layer over the
+//! screen under the button that lists the labels (`sdk.gadgets.listpanel`):
+//! pressed and dragged, the label let go over is taken; let go over the
+//! button, the panel stays up for a press on a label - or anywhere else,
+//! which takes nothing. The panel's edge is the button's frame.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
 const graphics = sdk.graphics;
-const layers = sdk.layers;
 const intuition = sdk.intuition;
 const classes = intuition.classes;
 const classusr = intuition.classusr;
 const gc = intuition.gadgetclass;
 const ic = intuition.imageclass;
 const sc = intuition.screens;
-const wn = intuition.windows;
 const ie = sdk.devices.inputevent;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
+const listpanel = gadgets.listpanel;
 const ch = gadgets.chooser;
 const Class = classes.Class;
 const Object = classes.Object;
@@ -50,7 +32,8 @@ const LayersBase = sdk.interface.layers.LayersBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = ch.CHOOSER_CLASS,
     .version = 1,
-    .date = "28.09.2026",
+    .revision = 1,
+    .date = "28.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -61,16 +44,10 @@ comptime {
     _ = Library;
 }
 
-/// No label: nothing under the pointer, and nothing picked.
-const NONE: u32 = 0xFFFF_FFFF;
-
-/// Room either side of a label, in the button and in the panel.
-const text_margin = 6;
+/// Room either side of a label, in the button as in the panel.
+const text_margin = listpanel.text_margin;
 /// How wide the mark's box is beside the button's text.
 const mark_width = 12;
-/// How wide the bar down the panel's right side is, when the list is
-/// longer than the panel shows.
-const bar_width = 10;
 
 /// chooser.gadget's part of an object.
 pub const Data = extern struct {
@@ -81,22 +58,8 @@ pub const Data = extern struct {
     max_lines: u32 = 0,
     /// The button's frame, which the panel's edge is drawn with too.
     frame: ?*Object = null,
-
-    // --- the panel, while it is up ---
-    layer: ?*layers.Layer = null,
-    /// Where the panel is on the screen, and how tall a line in it is.
-    panel: gc.Box = .{},
-    line_height: i32 = 8,
-    /// What the frame takes off the panel's sides.
-    inset: gc.Box = .{},
-    /// The first label shown in the panel, and how many are shown.
-    first: u32 = 0,
-    visible: u32 = 0,
-    /// The label under the pointer, `NONE` for none.
-    hot: u32 = NONE,
-    /// The button has been let go of once, so the panel stays up.
-    sticky: u8 = 0,
-    pad: [3]u8 = @splat(0),
+    /// The panel, while it is up.
+    panel: listpanel.Panel = .{},
 };
 
 fn layersOf(base: *gadgets.Base) *LayersBase {
@@ -182,7 +145,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const pens: [*]const graphics.Pen = &styled;
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
-    const pressed = own.layer != null;
+    const pressed = own.panel.isUp();
     if (own.frame) |frame| support.drawGadgetFrame(ib, o, frame, rp, b, if (pressed) ic.IDS_SELECTED else ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_MAIN);
     const inset = if (own.frame) |frame| support.frameInset(ib, frame, info.draw_info, gc.gadget(o).style) else gc.Box{ .left = 2, .top = 2, .width = 4, .height = 4 };
     const inner = gc.Box{
@@ -230,287 +193,15 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
 
 // --- the panel --------------------------------------------------------------
 
-/// Where the gadget is on the screen: its box in the room it is measured
-/// in, that room's corner in the window, and the window's on the screen.
-fn screenBox(base: *gadgets.Base, o: *Object, info: *classusr.GadgetInfo) gc.Box {
-    const b = gc.boxFor(gc.gadget(o), info);
-    var left: usize = 0;
-    var top: usize = 0;
-    const ask = [_]TagItem{
-        .{ .tag = wn.WA_Left, .data = @intFromPtr(&left) },
-        .{ .tag = wn.WA_Top, .data = @intFromPtr(&top) },
-        .{},
-    };
-    base.intuition_base.GetWindowAttrs(info.window, &ask);
-    return .{
-        .left = @as(i32, @bitCast(@as(u32, @truncate(left)))) + info.domain_left + b.left,
-        .top = @as(i32, @bitCast(@as(u32, @truncate(top)))) + info.domain_top + b.top,
-        .width = b.width,
-        .height = b.height,
-    };
-}
-
-/// How wide the bar is; 0 when every label is shown.
-fn barOf(own: *const Data) i32 {
-    return if (own.count > own.visible) bar_width else 0;
-}
-
-/// Where the labels are drawn, in the panel's own coordinates.
-fn linesIn(own: *const Data) gc.Box {
-    return .{
-        .left = own.inset.left,
-        .top = own.inset.top,
-        .width = own.panel.width - own.inset.width - barOf(own),
-        .height = @as(i32, @intCast(own.visible)) * own.line_height,
-    };
-}
-
-/// Where the bar is, in the panel's own coordinates; no width when there
-/// is none.
-fn barIn(own: *const Data) gc.Box {
-    const width = barOf(own);
-    const lines = linesIn(own);
-    return .{
-        .left = lines.left + lines.width,
-        .top = lines.top,
-        .width = width,
-        .height = lines.height,
-    };
-}
-
-/// The label a point on the screen is over, `NONE` for none.
-fn lineAt(own: *const Data, x: i32, y: i32) u32 {
-    const at = linesIn(own);
-    const lines = gc.Box{
-        .left = own.panel.left + at.left,
-        .top = own.panel.top + at.top,
-        .width = at.width,
-        .height = at.height,
-    };
-    if (!support.inside(x - lines.left, y - lines.top, lines.width, lines.height)) return NONE;
-    const row: u32 = @intCast(@divTrunc(y - lines.top, own.line_height));
-    const which = own.first + row;
-    return if (which < own.count) which else NONE;
-}
-
-fn panelRastPort(base: *gadgets.Base, own: *const Data) ?*graphics.RastPort {
-    const layer = own.layer orelse return null;
-    var where: usize = 0;
-    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetRastPort, .data = @intFromPtr(&where) }, .{} };
-    layersOf(base).GetLayerAttrs(layer, &ask);
-    return @ptrFromInt(where);
-}
-
-/// One label in the panel, in the layer's own coordinates: the picked one
-/// on the fill pen, the rest on the background.
-fn paintLine(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, dri: *intuition.DrawInfo, which: u32) void {
-    const gb = base.graphics_base;
-    const styled = support.pensFor(base.intuition_base, dri, null, sdk.intuition.style.PART_MAIN, sdk.intuition.style.PART_SELECTION);
-    const pens: [*]const graphics.Pen = &styled;
-    const row: i32 = @intCast(which - own.first);
-    const lines = linesIn(own);
-    const at = gc.Box{
-        .left = lines.left,
-        .top = lines.top + row * own.line_height,
-        .width = lines.width,
-        .height = own.line_height,
-    };
-    const picked = which == own.hot;
-    support.fill(gb, rp, at, if (picked) pens[sc.FILLPEN] else pens[sc.BACKGROUNDPEN]);
-    const text = labelAt(own, which) orelse return;
-    var count = support.textLen(text);
-    const room = at.width - 2 * text_margin;
-    if (gb.TextLength(rp, text, count) > room) {
-        var extent: graphics.TextExtent = .{};
-        count = gb.TextFit(rp, text, count, &extent, null, 1, @max(room, 0), 0);
-    }
-    var line: u32 = 0;
-    var baseline: u32 = 0;
-    const ask = [_]TagItem{
-        .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&line) },
-        .{ .tag = graphics.RPTAG_FontBaseline, .data = @intFromPtr(&baseline) },
-        .{},
-    };
-    gb.GetRPAttrs(rp, &ask);
-    const tags = [_]TagItem{
-        .{ .tag = graphics.RPTAG_APen, .data = if (picked) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN] },
-        .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
-        .{},
-    };
-    gb.SetRPAttrs(rp, &tags);
-    const top = at.top + @divTrunc(at.height - @as(i32, @intCast(line)), 2);
-    gb.Move(rp, at.left + text_margin, top + @as(i32, @intCast(baseline)));
-    gb.Text(rp, text, count);
-}
-
-/// The whole panel drawn: its edge and every label in it.
-fn paintPanel(base: *gadgets.Base, own: *const Data, info: *classusr.GadgetInfo) void {
-    const layer = own.layer orelse return;
-    const rp = panelRastPort(base, own) orelse return;
-    const lb = layersOf(base);
-    lb.LockLayer(layer);
-    defer lb.UnlockLayer(layer);
-    if (info.draw_info.font) |font| graphics.SetFont(base.graphics_base, rp, font);
-    if (own.frame) |frame| {
-        support.drawFrame(base.intuition_base, frame, rp, .{ .width = own.panel.width, .height = own.panel.height }, ic.IDS_NORMAL, info.draw_info, null);
-    }
-    var which = own.first;
-    while (which < own.first + own.visible and which < own.count) : (which += 1) {
-        paintLine(base, own, rp, info.draw_info, which);
-    }
-    paintBar(base, own, rp, info.draw_info);
-}
-
-/// The bar down the panel's right side: a sunk track with a knob as long
-/// a part of it as is shown, as far down it as the panel has come.
-fn paintBar(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, dri: *intuition.DrawInfo) void {
-    const at = barIn(own);
-    if (at.width == 0 or own.count == 0) return;
-    const gb = base.graphics_base;
-    const styled = support.pensFor(base.intuition_base, dri, null, sdk.intuition.style.PART_MAIN, null);
-    const pens: [*]const graphics.Pen = &styled;
-    support.fill(gb, rp, at, support.mixPens(pens[sc.BACKGROUNDPEN], pens[sc.SHADOWPEN], 13));
-    // The knob: never shorter than it can be seen and taken hold of.
-    const shown: i64 = @intCast(own.visible);
-    const whole: i64 = @intCast(own.count);
-    var knob: i32 = @intCast(@divTrunc(shown * at.height, whole));
-    knob = @max(knob, @min(@as(i32, 8), at.height));
-    const travel = at.height - knob;
-    const last: i64 = whole - shown;
-    const down: i32 = if (last > 0) @intCast(@divTrunc(@as(i64, own.first) * travel, last)) else 0;
-    const box = gc.Box{ .left = at.left + 1, .top = at.top + down, .width = at.width - 2, .height = knob };
-    support.fill(gb, rp, box, pens[sc.BACKGROUNDPEN]);
-    support.setPen(gb, rp, pens[sc.SHINEPEN]);
-    gb.DrawHLine(rp, box.left, box.top, box.width);
-    gb.DrawVLine(rp, box.left, box.top, box.height);
-    support.setPen(gb, rp, pens[sc.SHADOWPEN]);
-    gb.DrawHLine(rp, box.left, box.top + box.height - 1, box.width);
-    gb.DrawVLine(rp, box.left + box.width - 1, box.top, box.height);
-}
-
-/// The panel moved so that what the pointer points at in the bar is the
-/// middle of what is shown. True when it moved.
-fn dragBar(own: *Data, y: i32) bool {
-    if (own.count <= own.visible) return false;
-    const at = barIn(own);
-    if (at.height <= 0) return false;
-    const in = @max(@min(y - (own.panel.top + at.top), at.height - 1), 0);
-    const whole: i64 = @intCast(own.count);
-    const shown: i64 = @intCast(own.visible);
-    var first: i64 = @divTrunc(@as(i64, in) * whole, at.height) - @divTrunc(shown, 2);
-    first = @max(@min(first, whole - shown), 0);
-    const wanted: u32 = @intCast(first);
-    if (wanted == own.first) return false;
-    own.first = wanted;
-    return true;
-}
-
-/// Whether a point on the screen is in the bar.
-fn inBar(own: *const Data, x: i32, y: i32) bool {
-    const at = barIn(own);
-    if (at.width == 0) return false;
-    return support.inside(x - (own.panel.left + at.left), y - (own.panel.top + at.top), at.width, at.height);
-}
-
-/// The panel opened under the button, or over it when there is more room
-/// there. False when there is no room or no memory for the layer.
-fn openPanel(base: *gadgets.Base, own: *Data, o: *Object, info: *classusr.GadgetInfo) bool {
-    const ib = base.intuition_base;
-    const gb = base.graphics_base;
-    const g = gc.gadget(o);
-    const measure = support.Measure.of(ib, g, info);
-    var widest: i32 = 0;
-    for (0..own.count) |i| widest = @max(widest, measure.width(ib, own.labels.?[i].?));
-    own.line_height = @max(measure.lineHeight(gb), 1);
-    measure.done(ib);
-    own.inset = if (own.frame) |frame| support.frameInset(ib, frame, info.draw_info, gc.gadget(o).style) else gc.Box{ .left = 2, .top = 2, .width = 4, .height = 4 };
-
-    var screen_width: usize = 0;
-    var screen_height: usize = 0;
-    var layer_info: usize = 0;
-    const ask = [_]TagItem{
-        .{ .tag = sc.SA_Width, .data = @intFromPtr(&screen_width) },
-        .{ .tag = sc.SA_Height, .data = @intFromPtr(&screen_height) },
-        .{ .tag = sc.SA_LayerInfo, .data = @intFromPtr(&layer_info) },
-        .{},
-    };
-    ib.GetScreenAttrs(info.screen, &ask);
-    if (layer_info == 0) return false;
-    const screen_w: i32 = @intCast(screen_width);
-    const screen_h: i32 = @intCast(screen_height);
-
-    const at = screenBox(base, o, info);
-    // Whether the bar is needed is not known until it is known how many
-    // labels fit, so the room for it is kept whenever there is a list to
-    // scroll at all.
-    const room_for_bar: i32 = if (own.count > 1) bar_width else 0;
-    const width = @min(@max(at.width, widest + 2 * text_margin + own.inset.width + room_for_bar), screen_w);
-    // As many labels as there is room for, under the button or over it,
-    // whichever has more.
-    const below = screen_h - (at.top + at.height);
-    const above = at.top;
-    const under = below >= above;
-    const room = (if (under) below else above) - own.inset.height;
-    var lines: u32 = @intCast(@max(@divTrunc(room, own.line_height), 0));
-    if (lines == 0) return false;
-    lines = @min(lines, own.count);
-    if (own.max_lines != 0) lines = @min(lines, own.max_lines);
-    const height = @as(i32, @intCast(lines)) * own.line_height + own.inset.height;
-    const left = @max(@min(at.left, screen_w - width), 0);
-    const top = if (under) at.top + at.height else at.top - height;
-    own.panel = .{ .left = left, .top = top, .width = width, .height = height };
-    own.visible = lines;
-    // The label it shows is in view, and is the one under the pointer to
-    // begin with.
-    own.first = if (own.active < lines) 0 else @min(own.active - lines / 2, own.count - lines);
-    own.hot = own.active;
-
-    const bounds = graphics.Rect{
-        .min_x = own.panel.left,
-        .min_y = own.panel.top,
-        .max_x = own.panel.left + own.panel.width,
-        .max_y = own.panel.top + own.panel.height,
-    };
-    const tags = [_]TagItem{
-        .{ .tag = layers.LATAG_Bounds, .data = @intFromPtr(&bounds) },
-        .{ .tag = layers.LATAG_Refresh, .data = layers.LAYERSMART },
-        .{ .tag = layers.LATAG_BackFill, .data = layers.LAYERS_NOBACKFILL },
-        .{},
-    };
-    own.layer = layersOf(base).CreateLayerTagList(@ptrFromInt(layer_info), &tags);
-    if (own.layer == null) return false;
-    paintPanel(base, own, info);
-    return true;
-}
-
-/// The panel taken away; what it covered comes back with the layer. The
-/// button is drawn again by whoever closed it, since it is no longer
-/// drawn pressed.
-fn closePanel(base: *gadgets.Base, own: *Data) void {
-    const layer = own.layer orelse return;
-    layersOf(base).DeleteLayer(layer);
-    own.layer = null;
-    own.sticky = 0;
-    own.hot = NONE;
-}
-
-/// The label under the pointer taken note of, and the panel drawn again
-/// when it changed.
-fn hover(base: *gadgets.Base, own: *Data, info: *classusr.GadgetInfo, x: i32, y: i32) void {
-    const which = lineAt(own, x, y);
-    if (which == own.hot) return;
-    own.hot = which;
-    paintPanel(base, own, info);
-}
-
-/// The label under the pointer taken: the one the gadget shows from now
-/// on, reported to the window and told to the target.
+/// The label under the pointer when the pick is over taken: the one the
+/// gadget shows from now on, reported to the window and told to the
+/// target.
 fn take(base: *gadgets.Base, own: *Data, o: *Object, info: *classusr.GadgetInfo, termination: *i32) usize {
-    const picked = own.hot;
-    closePanel(base, own);
-    if (picked != NONE) own.active = picked;
+    const picked = own.panel.hot;
+    own.panel.close(layersOf(base));
+    if (picked != listpanel.NONE) own.active = picked;
     support.redraw(base.intuition_base, o, info);
-    if (picked == NONE) return gc.GMR_NOREUSE;
+    if (picked == listpanel.NONE) return gc.GMR_NOREUSE;
     termination.* = @intCast(picked);
     tell(base, own, o, info);
     return gc.GMR_NOREUSE | gc.GMR_VERIFY;
@@ -551,8 +242,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         classusr.OM_DISPOSE => {
             const own = classes.instData(Data, cl, o orelse return 0);
-            if (own.layer) |layer| layersOf(base).DeleteLayer(layer);
-            own.layer = null;
+            own.panel.close(layersOf(base));
             ib.DisposeObject(own.frame);
             return ib.SendSuperMessage(cl, o, msg);
         },
@@ -615,7 +305,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o.?);
             const info = in.gadget_info orelse return gc.GMR_NOREUSE;
             if (in.event == null or own.count == 0) return gc.GMR_NOREUSE;
-            if (!openPanel(base, own, o.?, info)) return gc.GMR_NOREUSE;
+            if (!own.panel.open(base, layersOf(base), own.frame, o.?, info, own.labels, own.count, own.max_lines, own.active)) return gc.GMR_NOREUSE;
             // Pressed: the button is drawn pressed while the panel is up.
             support.redraw(ib, o.?, info);
             return gc.GMR_MEACTIVE;
@@ -624,51 +314,17 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
             const info = in.gadget_info orelse return gc.GMR_NOREUSE;
-            if (own.layer == null) return gc.GMR_NOREUSE;
-            const e = in.event orelse return gc.GMR_MEACTIVE;
-            // The pointer, which comes in relative to the gadget, on the
-            // screen the panel is on.
-            const at = screenBox(base, o.?, info);
-            const x = at.left + in.mouse.x;
-            const y = at.top + in.mouse.y;
-            // Time passing moves nothing: the bar is the only way the
-            // panel scrolls, so a pointer resting anywhere leaves the
-            // list where it is.
-            if (e.class == ie.IECLASS_TIMER) return gc.GMR_MEACTIVE;
-            // The bar is dragged, not picked from.
-            if (inBar(own, x, y)) {
-                var drawn = false;
-                if (own.hot != NONE) {
-                    own.hot = NONE;
-                    drawn = true;
-                }
-                if (dragBar(own, y)) drawn = true;
-                if (drawn) paintPanel(base, own, info);
-                if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX and own.sticky == 0) own.sticky = 1;
-                return gc.GMR_MEACTIVE;
-            }
-            hover(base, own, info, x, y);
-            // A press while the panel stands open: the label under it, or
-            // nothing and the panel closes.
-            if (e.code == ie.IECODE_LBUTTON) {
-                if (own.sticky == 0) return gc.GMR_MEACTIVE;
-                return take(base, own, o.?, info, in.termination);
-            }
-            if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
-                // Let go over the button itself, the panel stays up.
-                if (own.sticky == 0 and support.inside(in.mouse.x, in.mouse.y, at.width, at.height)) {
-                    own.sticky = 1;
-                    return gc.GMR_MEACTIVE;
-                }
-                return take(base, own, o.?, info, in.termination);
-            }
-            return gc.GMR_MEACTIVE;
+            if (!own.panel.isUp()) return gc.GMR_NOREUSE;
+            return switch (own.panel.input(base, layersOf(base), own.frame, o.?, info, in)) {
+                .more => gc.GMR_MEACTIVE,
+                .over => take(base, own, o.?, info, in.termination),
+            };
         },
         gc.GM_GOINACTIVE => {
             const gone: *gc.GpGoInactive = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
-            if (own.layer != null) {
-                closePanel(base, own);
+            if (own.panel.isUp()) {
+                own.panel.close(layersOf(base));
                 support.redraw(ib, o.?, gone.gadget_info);
             }
             return 0;

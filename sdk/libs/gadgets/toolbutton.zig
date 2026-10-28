@@ -26,6 +26,16 @@
 //! may give it a border at rest - which a touch screen, with no pointer
 //! to hover, may want.
 //!
+//! Two kinds drop a list down (`TOOLBUTTON_Labels`), with a mark - a
+//! triangle pointing down - after the label. A drop-down button is the
+//! list's way in and nothing else: a press opens it, and the label taken
+//! is the command, its number the code. A split button is a command of
+//! its own as well: the part with the mark opens the list, a large one's
+//! label with it, and the rest is the command, its code `TBCODE_MAIN`.
+//! The list is a panel over the screen, as a chooser's is. Without labels
+//! the button drops down what its target puts up - a popup requester of
+//! the target's own, as a ribbon's folded group has (`TOOLBUTTON_Dropped`).
+//!
 //!   const lib = sys.OpenLibrary(tb.TOOLBUTTON_LIBRARY, 0) orelse return;
 //!   defer sys.CloseLibrary(lib);
 //!   const bold = ib.NewObjectTagList(null, tb.TOOLBUTTON_CLASS, &.{
@@ -46,6 +56,8 @@ pub const TOOLBUTTON_CLASS = "toolbutton.gadget";
 
 pub const TOOLBUTTON_Dummy = gadgets.GADGETS_Dummy + 33 * gadgets.GADGETS_Step;
 /// `TBSIZE_`: how big it is. Made and set; `TBSIZE_MEDIUM` without.
+/// Among a `GM_DOMAIN`'s `attrs`, the size to answer for instead of its
+/// own - what a ribbon asks as it makes its groups smaller.
 pub const TOOLBUTTON_Size = TOOLBUTTON_Dummy + 0x01;
 /// `*Object`: the picture, an imageclass image, drawn to the picture's
 /// size with `IM_DRAWFRAME`. It stays the program's, which disposes of it
@@ -55,8 +67,8 @@ pub const TOOLBUTTON_Image = TOOLBUTTON_Dummy + 0x02;
 /// without `.info` - when there is no `TOOLBUTTON_Image`. Read when it is
 /// made; the icon is kept until the button goes. Made only.
 pub const TOOLBUTTON_IconName = TOOLBUTTON_Dummy + 0x03;
-/// `TBKIND_`: whether it is a command or a toggle. Made only;
-/// `TBKIND_PUSH` without.
+/// `TBKIND_`: a command, a toggle, a drop-down or a split button. Made
+/// only; `TBKIND_PUSH` without.
 pub const TOOLBUTTON_Kind = TOOLBUTTON_Dummy + 0x04;
 /// `[*:0]const u8`: what it does, in a sentence, for the tip shown while
 /// the pointer rests on it. Not copied. Read back without one, it is the
@@ -73,6 +85,19 @@ pub const TOOLBUTTON_Checked = TOOLBUTTON_Dummy + 0x06;
 /// keeps the room the widest of them needs. Only where the label is shown.
 /// Not copied. Made and set.
 pub const TOOLBUTTON_RoomFor = TOOLBUTTON_Dummy + 0x07;
+/// The list a drop-down or a split button drops down: an array of C
+/// strings ending in a null (`[*:null]const ?[*:0]const u8`), not copied,
+/// which the program keeps for as long as the button has it. The label
+/// taken is the window's code. Made and set.
+pub const TOOLBUTTON_Labels = TOOLBUTTON_Dummy + 0x08;
+/// Bool: a drop-down or a split button without labels has dropped down
+/// what its target puts up. A press on the part with the mark sets it and
+/// tells the target, with the gadget's `GA_ID` and while the press is
+/// handled, so that the target can put a popup requester up from there;
+/// the window hears nothing of that press. The button is drawn pressed
+/// until the target sets it back to 0 - when its popup comes down. Set
+/// and read.
+pub const TOOLBUTTON_Dropped = TOOLBUTTON_Dummy + 0x09;
 
 /// `TOOLBUTTON_Size`.
 pub const TBSIZE_LARGE: u32 = 0;
@@ -82,3 +107,11 @@ pub const TBSIZE_SMALL: u32 = 2;
 /// `TOOLBUTTON_Kind`.
 pub const TBKIND_PUSH: u32 = 0;
 pub const TBKIND_TOGGLE: u32 = 1;
+/// A press drops the list down; the label taken is the command.
+pub const TBKIND_DROPDOWN: u32 = 2;
+/// A command, with a part that drops the list down.
+pub const TBKIND_SPLIT: u32 = 3;
+
+/// The code a split button's window hears when the button's own command
+/// was used, not a label of its list.
+pub const TBCODE_MAIN: i32 = -1;

@@ -40,6 +40,9 @@ pub const angles = @import("angles.zig");
 /// What the drawn pictures - the docklets, the command images - draw
 /// with: smooth shapes in a square, and a palette (`shapes.zig`).
 pub const shapes = @import("shapes.zig");
+/// A list popped up under a gadget to pick a label from: a chooser's, a
+/// tool button's that drops one down (`listpanel.zig`).
+pub const listpanel = @import("listpanel.zig");
 
 /// The classes' tags and names, a file each.
 pub const checkbox = @import("checkbox.zig");
