@@ -21,9 +21,12 @@
 //! The sine table and the plasma's rows and columns are kept here, so a
 //! look costs table lookups and additions - no sine per point. A ring's
 //! distance is a square root, which comes from a table too: the squared
-//! distance across and down are worked out per column and per row, scaled
-//! so their sum fits the table, which holds the root of each. Nothing
-//! here touches the system: the host tests hold it.
+//! distances across and down are worked out per column and per row, and
+//! the root of their sum looked up. Near the centre, where the root
+//! changes fastest, a table holds it for every squared distance; further
+//! out one holds it for every share of the farthest, which near the centre
+//! would be too coarse - a flat square round it with a step at its edge.
+//! Nothing here touches the system: the host tests hold it.
 
 const spectrum = @import("spectrum.zig");
 
@@ -39,6 +42,9 @@ const half_height = max_height / 2;
 /// the sine table the farthest corner is from the centre: four rings.
 const root_size = 4096;
 const ring_steps = 1024;
+/// The squared distances, in the plasma's points, whose root is held
+/// exactly (`Visual.near`).
+const near_size = 4096;
 
 /// Samples a look takes from the sound: the spectrum's run, which the
 /// wave takes too - half of it to find where to start, half to draw.
@@ -56,10 +62,17 @@ pub const Visual = struct {
     bend_y: [half_height]u8 = @splat(0),
     diagonal: [half_width + half_height]u16 = @splat(0),
     /// The rings: the squared distance from the centre per column and per
-    /// row, each a share of `root`'s length, and the root of every sum.
-    square_x: [half_width]u16 = @splat(0),
-    square_y: [half_height]u16 = @splat(0),
+    /// row, in the plasma's points; the root of every share of the
+    /// farthest (`root_size` of them), and of every squared distance below
+    /// `near_size` for the farthest the area has (`reach`), which is worked
+    /// out again when that changes. A squared distance is `share` 65536ths
+    /// of a share.
+    square_x: [half_width]u32 = @splat(0),
+    square_y: [half_height]u32 = @splat(0),
     root: [root_size]u16 = @splat(0),
+    near: [near_size]u16 = @splat(0),
+    reach: u64 = 0,
+    share: u32 = 0,
     /// The plasma's phases, in steps of the sine table: the wave across,
     /// the rings, the diagonal, the bend's two, then the centre across and
     /// down.
@@ -167,20 +180,21 @@ pub const Visual = struct {
         const cx = centre_x + @divTrunc(swing_x * centre_x, 256);
         const cy = centre_y + @divTrunc(swing_y * centre_y, 256);
         const reach: u64 = @as(u64, cols) * cols + @as(u64, rows) * rows + 1;
+        if (reach != v.reach) v.reachTo(reach);
         for (0..cols) |x| {
             const dx: i64 = @as(i64, @intCast(x)) - cx;
-            v.square_x[x] = @intCast(@as(u64, @intCast(dx * dx)) * (root_size - 1) / reach);
+            v.square_x[x] = @intCast(dx * dx);
         }
         for (0..rows) |y| {
             const dy: i64 = @as(i64, @intCast(y)) - cy;
-            v.square_y[y] = @intCast(@as(u64, @intCast(dy * dy)) * (root_size - 1) / reach);
+            v.square_y[y] = @intCast(dy * dy);
         }
         for (0..rows) |y| {
             const top = pixels + y * 2 * stride;
             const second = y * 2 + 1 < h;
             for (0..cols) |x| {
                 const bend = v.sine[(@as(u32, v.bend_x[x]) + v.bend_y[y]) & 255];
-                const ring = v.sine[(@as(u32, v.root[v.square_x[x] + v.square_y[y]]) + p1) & 255];
+                const ring = v.sine[(v.ringDistance(v.square_x[x] + v.square_y[y]) + p1) & 255];
                 const sum = @as(u32, v.across[x]) + v.diagonal[x + y] + bend + ring;
                 const colour = v.palette[(sum >> 2) & 255];
                 const left = x * 2;
@@ -192,6 +206,26 @@ pub const Visual = struct {
                 }
             }
         }
+    }
+
+    /// The rings' tables for an area whose farthest squared distance is
+    /// `reach`: the root of every squared distance up to `near_size`, and
+    /// how much of a share of `root` a squared distance is.
+    fn reachTo(v: *Visual, reach: u64) void {
+        v.reach = reach;
+        v.share = @intCast((root_size - 1) * 65536 / reach);
+        for (&v.near, 0..) |*n, i| {
+            const part = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(reach));
+            n.* = @intFromFloat(@sqrt(part) * ring_steps);
+        }
+    }
+
+    /// How many steps of the sine table a point is from the rings'
+    /// centre, `square` its squared distance from it in points - below
+    /// the area's farthest.
+    fn ringDistance(v: *const Visual, square: u32) u32 {
+        if (square < near_size) return v.near[square];
+        return v.root[square * v.share >> 16];
     }
 
     /// The palette for this look: the colour wheel - three sines a third
@@ -361,4 +395,24 @@ test "the wave stands still where the sound crosses zero going up" {
     var same: usize = 0;
     for (first, second) |a, b| same += @intFromBool(a == b);
     try testing.expect(same > w * h * 9 / 10);
+}
+
+test "a ring's distance is the distance from its centre, close to it too" {
+    const v = try testing.allocator.create(Visual);
+    defer testing.allocator.destroy(v);
+    v.* = .{};
+    v.init();
+    for ([_][2]u32{ .{ 300, 88 }, .{ 60, 30 }, .{ half_width, half_height } }) |size| {
+        const cols, const rows = size;
+        const reach = @as(u64, cols) * cols + @as(u64, rows) * rows + 1;
+        v.reachTo(reach);
+        for (0..rows) |dy| {
+            for (0..cols) |dx| {
+                const square: u32 = @intCast(dx * dx + dy * dy);
+                const exact = @sqrt(@as(f64, @floatFromInt(square)) / @as(f64, @floatFromInt(reach))) * ring_steps;
+                const looked_up: f64 = @floatFromInt(v.ringDistance(square));
+                try testing.expect(@abs(looked_up - exact) < 2.5);
+            }
+        }
+    }
 }

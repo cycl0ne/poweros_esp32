@@ -7,19 +7,23 @@
 //!
 //! FILES are played one after another; VOLUME is in percent of as
 //! recorded (100), LOOK the picture to start with: PLASMA, WAVE or BARS.
-//! A file picked in the window, typed into its line or dropped on it from
-//! the desktop is played at once instead.
+//! A file picked with Project > Open... or dropped on the window from the
+//! desktop is played at once instead.
 //!
-//! At the top of the window, the song's cover beside what its tags say:
+//! The window's title is the song's. At its top, the song's cover beside
+//! what its tags say:
 //! the title, the artist, the album and its year, the genre, the track and
 //! the composer, the chapter of a mix or a book that is playing - or a
 //! comment - and what kind of file it is. The cover is the picture the
-//! tags hold, or one lying beside the file (cover.zig). Then a slider
+//! tags hold, or one lying beside the file (cover.zig), kept square and
+//! as tall as the room beside it, from 64 to 160 pixels: it grows with the
+//! window, read once for each song and scaled each time the window is
+//! sized. Then a slider
 //! across that is where the song is, with the time beside it, which a drag
 //! moves; the buttons of a tape deck - rewind and fast forward jump ten
 //! seconds, pause holds the sound where it is, stop goes back to the
-//! start; the volume; which picture; the file, and the output the sound
-//! comes out of. Under them, as big as the window lets it be, the
+//! start - the volume and the output the sound comes out of, in a row
+//! that breaks in two where the window is too narrow for it. Under them, as big as the window lets it be and sunk in a frame, the
 //! picture:
 //!
 //! - **Plasma** - waves of colour, driven faster by the bass, turned by
@@ -27,8 +31,13 @@
 //! - **Wave** - the sound itself, a hundredth of a second of it.
 //! - **Bars** - the spectrum, from 40 Hz at the left to 16 kHz.
 //!
-//! A press on the picture, or the gadget above it, goes to the next. The
-//! space bar pauses and goes on.
+//! A press on the picture goes to the next; the Picture menu picks one.
+//! The space bar pauses and goes on; the Project menu's Quit ends.
+//!
+//! **Open...** puts up asl.library's file requester without waiting for
+//! it (`ASLFR_ReplyPort`): it runs on a process of its own, the window and
+//! the sound go on meanwhile, and its answer arrives as a message on a
+//! port the window's loop waits on with everything else.
 //!
 //! **The output** is audio.device's, for every sound of the machine: one
 //! picked moves them all over as they play. The list follows the device -
@@ -66,6 +75,7 @@ const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const MotionBase = sdk.interface.motion.MotionBase;
 const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
+const AslBase = sdk.interface.asl.AslBase;
 const Object = intuition.Object;
 const Window = intuition.Window;
 const TagItem = sdk.utility.TagItem;
@@ -77,13 +87,14 @@ const lg = intuition.layoutgclass;
 const wn = intuition.windows;
 const wc = intuition.windowclass;
 const icc = intuition.icclass;
+const ic = intuition.imageclass;
 const classusr = intuition.classusr;
 const ie = sdk.devices.inputevent;
 const tx = sdk.gadgets.text;
 const sl = sdk.gadgets.slider;
 const td = sdk.gadgets.tapedeck;
-const cy = sdk.gadgets.cycle;
-const gf = sdk.gadgets.getfile;
+const asl = sdk.asl;
+const mn = intuition.menus;
 const cv = sdk.gadgets.canvas;
 const ch = sdk.gadgets.chooser;
 const audiocontrol = sdk.devices.audiocontrol;
@@ -95,8 +106,8 @@ const Visual = visual.Visual;
 const cover = @import("cover.zig");
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.5";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (25.10.2026)\r\n";
+const VERSION = "1.6";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -114,8 +125,6 @@ const MSG_NOWINDOW = "%s: no window\n";
 const ID_DECK = 1;
 const ID_POSITION = 2;
 const ID_VOLUME = 3;
-const ID_LOOK = 4;
-const ID_FILE = 5;
 const ID_PICTURE = 6;
 const ID_OUTPUT = 7;
 
@@ -130,7 +139,8 @@ const jump_seconds = 10;
 /// Looks between two readings of the outputs: a second.
 const looks_per_outputs = 25;
 
-/// The lines beside the cover, and the cover's size.
+/// The lines beside the cover; the cover's size at first, and the least
+/// it is shown at - the most is what cover.zig keeps.
 const line_title = 0;
 const line_artist = 1;
 const line_album = 2;
@@ -139,6 +149,7 @@ const line_chapter = 4;
 const line_format = 5;
 const line_count = 6;
 const cover_size = 112;
+const cover_least = 64;
 /// No chapter shown yet.
 const no_chapter = ~@as(u32, 0);
 
@@ -168,8 +179,31 @@ fn soundTrouble(engine: *const Engine) [*:0]const u8 {
     };
 }
 
-/// The pictures' names, in `visual.Mode`'s order.
-const look_labels = [_:null]?[*:0]const u8{ "Plasma", "Wave", "Bars" };
+/// The menus: the Project's Open... and Quit, and the Picture's looks in
+/// `visual.Mode`'s order, one ticked at a time.
+const MENU_PROJECT = 0;
+const ITEM_OPEN = 0;
+const ITEM_QUIT = 2;
+const MENU_PICTURE = 1;
+
+fn lookItem(label: [*:0]const u8, which: visual.Mode) mn.NewMenu {
+    const self_bit = @as(u32, 1) << @intFromEnum(which);
+    return .{ .type = mn.NM_ITEM, .label = label, .flags = mn.CHECKIT, .mutual_exclude = ((@as(u32, 1) << visual.mode_count) - 1) & ~self_bit };
+}
+
+const menus = [_]mn.NewMenu{
+    .{ .type = mn.NM_TITLE, .label = "Project" },
+    .{ .type = mn.NM_ITEM, .label = "Open...", .comm_key = "O" },
+    .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL },
+    .{ .type = mn.NM_ITEM, .label = "Quit", .comm_key = "Q" },
+    .{ .type = mn.NM_TITLE, .label = "Picture" },
+    lookItem("Plasma", .plasma),
+    lookItem("Wave", .wave),
+    lookItem("Bars", .bars),
+    .{},
+};
+/// Where the looks start in `menus`.
+const first_look = 5;
 
 fn pair(t: sdk.utility.Tag, data: usize) TagItem {
     return .{ .tag = t, .data = data };
@@ -224,12 +258,12 @@ const App = struct {
     has_attrs: bool = false,
     lines: [line_count]*Object = undefined,
     cover: *Object = undefined,
+    /// The song's cover as read, shown from there at the cover's size.
+    kept: cover.Kept = .{},
     position: *Object = undefined,
     clock: *Object = undefined,
     deck: *Object = undefined,
     volume: *Object = undefined,
-    look: *Object = undefined,
-    file: *Object = undefined,
     picture: *Object = undefined,
     /// audio.device's outputs, the chooser that shows them, and the
     /// device opened to ask - none without sound.
@@ -257,6 +291,12 @@ const App = struct {
     /// A file picked or dropped: the list is then this one.
     picked: [dos.path_max + 1]u8 = @splat(0),
     picked_list: [1]?[*:0]const u8 = .{null},
+    /// Open...'s file requester, made the first time, and the port its
+    /// answer comes to; `asking` while it is up. None without asl.library.
+    al: ?*AslBase = null,
+    request: ?*anyopaque = null,
+    asl_port: ?*exec.MsgPort = null,
+    asking: bool = false,
 
     /// The position slider held: the time shows where it would go.
     dragging: bool = false,
@@ -269,6 +309,10 @@ const App = struct {
     chapter_count: u32 = 0,
     chapter_shown: u32 = no_chapter,
     clock_text: [32:0]u8 = @splat(0),
+    /// The window's title: the song's, and the program's name.
+    window_title: [96:0]u8 = @splat(0),
+    /// The menus while they are on the window.
+    strip: ?*intuition.Menu = null,
     drop: sdk.anvil.DropTarget = .{},
 
     fn set(app: *App, gadget: *Object, tags: []const TagItem) void {
@@ -290,6 +334,7 @@ const App = struct {
             title.add(app.dl.FilePart(name));
             title.add(": ");
             title.add(app.acb.AudioErrorText(err));
+            app.showTitle(app.dl.FilePart(name));
             app.chapters = null;
             app.chapter_count = 0;
             app.showLines();
@@ -346,6 +391,7 @@ const App = struct {
         for (&app.line_text) |*line| line.clear();
 
         app.line_text[line_title].add(tags.title);
+        app.showTitle(tags.title);
         app.line_text[line_artist].add(if (tags.artist[0] != 0) tags.artist else tags.album_artist);
         const album = &app.line_text[line_album];
         album.add(tags.album);
@@ -413,6 +459,19 @@ const App = struct {
         _ = app.sys.RawDoFmt(pattern, &stream, null, into);
     }
 
+    /// The window's title: `song` and the program's name after it.
+    fn showTitle(app: *App, song: [*:0]const u8) void {
+        const after = " - " ++ COMMAND_NAME;
+        var used: usize = 0;
+        while (song[used] != 0 and used < app.window_title.len - after.len) : (used += 1) app.window_title[used] = song[used];
+        for (after) |byte| {
+            app.window_title[used] = byte;
+            used += 1;
+        }
+        app.window_title[used] = 0;
+        _ = app.ib.SetAttrsTagList(app.object, &[_]TagItem{ pair(wn.WA_Title, @intFromPtr(&app.window_title)), .{} });
+    }
+
     /// Every line beside the cover drawn as it now reads.
     fn showLines(app: *App) void {
         app.title_runs[0] = .{ .text = &app.line_text[line_title].text, .style = graphics.FSF_BOLD };
@@ -422,14 +481,35 @@ const App = struct {
         }
     }
 
-    /// The cover drawn: the picture the tags hold, one beside the song, or
-    /// the dark ground.
+    /// The cover read and drawn: the picture the tags hold, one beside
+    /// the song, or the dark ground.
     fn showCover(app: *App, picture: ?*const ac.AudioPicture, name: [*:0]const u8) void {
         var value: usize = 0;
         _ = app.ib.GetAttr(cv.CANVAS_RastPort, app.cover, &value);
         if (value == 0) return;
-        const rp: *graphics.RastPort = @ptrFromInt(value);
-        _ = cover.draw(.{ .sys = app.sys, .dl = app.dl, .gb = app.gb, .dt = app.dt }, rp, cover_size, picture, name);
+        _ = app.kept.read(.{ .sys = app.sys, .dl = app.dl, .gb = app.gb, .dt = app.dt }, @ptrFromInt(value), picture, name);
+        app.drawCover();
+    }
+
+    /// The canvas made as big as the cover's box, and the cover drawn into
+    /// it again.
+    fn fitCover(app: *App) void {
+        app.set(app.cover, &.{ pair(cv.CANVAS_Width, 0), pair(cv.CANVAS_Height, 0), .{} });
+        app.drawCover();
+    }
+
+    /// The kept cover scaled into the canvas, as large as its box.
+    fn drawCover(app: *App) void {
+        var value: usize = 0;
+        var width: usize = 0;
+        var height: usize = 0;
+        _ = app.ib.GetAttr(cv.CANVAS_RastPort, app.cover, &value);
+        _ = app.ib.GetAttr(cv.CANVAS_Width, app.cover, &width);
+        _ = app.ib.GetAttr(cv.CANVAS_Height, app.cover, &height);
+        if (value == 0) return;
+        const side: i32 = @intCast(@min(width, height, cover.kept_size));
+        if (side == 0) return;
+        app.kept.show(app.gb, @ptrFromInt(value), side);
         app.ib.QueueGadgetRefresh(app.cover);
     }
 
@@ -593,11 +673,116 @@ const App = struct {
 
     fn cycleLook(app: *App) void {
         app.visual.cycle();
-        app.set(app.look, &.{ pair(cy.CYCLE_Active, @intFromEnum(app.visual.mode)), .{} });
+        app.showLookMenu();
         app.wake();
     }
 
-    /// A file picked in the getfile line: the list is that one now.
+    /// The Picture menu's tick on the look shown.
+    fn showLookMenu(app: *App) void {
+        const strip = app.strip orelse return;
+        app.ib.ClearMenuStrip(app.window);
+        for (0..visual.mode_count) |at| {
+            const entry = app.ib.ItemAddress(strip, mn.FULLMENUNUM(MENU_PICTURE, @intCast(at), mn.NOSUB)) orelse continue;
+            if (at == @intFromEnum(app.visual.mode)) entry.flags |= mn.CHECKED else entry.flags &= ~mn.CHECKED;
+        }
+        _ = app.ib.ResetMenuStrip(app.window, strip);
+    }
+
+    /// A menu item picked: false when it is Quit.
+    fn menuPicked(app: *App, number: u32) bool {
+        switch (mn.MENUNUM(number)) {
+            MENU_PROJECT => switch (mn.ITEMNUM(number)) {
+                ITEM_OPEN => app.askFile(),
+                ITEM_QUIT => return false,
+                else => {},
+            },
+            MENU_PICTURE => {
+                const which = mn.ITEMNUM(number);
+                if (which < visual.mode_count) {
+                    app.visual.mode = @enumFromInt(which);
+                    app.visual.width = 0;
+                    app.wake();
+                }
+            },
+            else => {},
+        }
+        return true;
+    }
+
+    /// The file requester put up, without waiting for it: it starts in
+    /// the drawer of the song playing the first time, and where it was
+    /// left after that. Nothing while it is up already.
+    fn askFile(app: *App) void {
+        const al = app.al orelse return;
+        const port = app.asl_port orelse return;
+        if (app.asking) return;
+        const request = app.request orelse made: {
+            var drawer: [dos.path_max + 1:0]u8 = @splat(0);
+            app.songDrawer(&drawer);
+            app.request = al.AllocAslRequest(asl.ASL_FileRequest, &[_]TagItem{
+                pair(asl.ASLFR_TitleText, @intFromPtr("Which song?")),
+                pair(asl.ASLFR_InitialDrawer, @intFromPtr(&drawer)),
+                pair(asl.ASLFR_InitialPattern, @intFromPtr("#?.(mp3|wav|flac|ogg|oga)")),
+                pair(asl.ASLFR_DoPatterns, 1),
+                pair(asl.ASLFR_ReplyPort, @intFromPtr(port)),
+                .{},
+            });
+            break :made app.request orelse return;
+        };
+        app.asking = al.AslRequest(request, &[_]TagItem{ pair(asl.ASLFR_Window, @intFromPtr(app.window)), .{} });
+    }
+
+    /// The drawer the song playing is in, or `SYS:` with none.
+    fn songDrawer(app: *App, into: *[dos.path_max + 1:0]u8) void {
+        const fallback = "SYS:";
+        const song: [*:0]const u8 = if (app.count > 0) app.list[app.current] orelse fallback else fallback;
+        var length: usize = 0;
+        while (song[length] != 0 and length < dos.path_max) : (length += 1) into[length] = song[length];
+        into[length] = 0;
+        if (song != @as([*:0]const u8, fallback)) {
+            const end = @intFromPtr(app.dl.PathPart(into)) - @intFromPtr(into);
+            into[end] = 0;
+        }
+    }
+
+    /// The file requester's answer: the song picked played, as a file
+    /// dropped is.
+    fn answered(app: *App) void {
+        const port = app.asl_port orelse return;
+        while (app.sys.GetMsg(port)) |message| {
+            const reply: *asl.AslMessage = @ptrCast(@alignCast(message));
+            app.asking = false;
+            if (reply.answered == 0) continue;
+            const answer: *asl.FileRequester = @ptrCast(@alignCast(reply.requester orelse continue));
+            var path: [dos.path_max + 1:0]u8 = @splat(0);
+            _ = app.dl.AddPart(&path, answer.drawer orelse continue, path.len);
+            if (!app.dl.AddPart(&path, answer.file orelse continue, path.len)) continue;
+            app.pickedFile(&path);
+        }
+    }
+
+    /// A requester still up taken down, its message waited for, and it
+    /// and its port given back.
+    fn dropRequest(app: *App) void {
+        const al = app.al orelse return;
+        if (app.request) |request| {
+            if (app.asking) {
+                al.AbortAslRequest(request);
+                if (app.asl_port) |port| {
+                    while (app.asking) {
+                        _ = app.sys.WaitPort(port);
+                        if (app.sys.GetMsg(port) != null) app.asking = false;
+                    }
+                }
+            }
+            al.FreeAslRequest(request);
+            app.request = null;
+        }
+        app.sys.DeleteMsgPort(app.asl_port);
+        app.asl_port = null;
+    }
+
+    /// A file picked or dropped: the list is that one now.
     fn pickedFile(app: *App, name: [*:0]const u8) void {
         var i: usize = 0;
         while (name[i] != 0 and i < dos.path_max) : (i += 1) app.picked[i] = name[i];
@@ -629,11 +814,6 @@ const App = struct {
                 const level: i32 = @bitCast(code);
                 app.engine.setVolume(@intCast(@max(level, 0)));
             },
-            ID_LOOK => {
-                app.visual.mode = @enumFromInt(@min(code, visual.mode_count - 1));
-                app.visual.width = 0;
-                app.wake();
-            },
             ID_PICTURE => app.cycleLook(),
             ID_OUTPUT => app.pickOutput(code),
             else => {},
@@ -658,10 +838,6 @@ const App = struct {
                 _ = app.ib.GetAttr(sl.SLIDER_Level, app.volume, &value);
                 app.engine.setVolume(@intCast(@max(@as(i32, @bitCast(@as(u32, @truncate(value)))), 0)));
             },
-            ID_FILE => {
-                _ = app.ib.GetAttr(gf.GETFILE_FullFile, app.file, &value);
-                if (value != 0) app.pickedFile(@ptrFromInt(value));
-            },
             else => {},
         }
     }
@@ -676,9 +852,14 @@ const App = struct {
             switch (word & wc.WMHI_CLASSMASK) {
                 wc.WMHI_CLOSEWINDOW => return false,
                 wc.WMHI_GADGETUP => app.gadgetUp(word & wc.WMHI_GADGETMASK, code),
+                wc.WMHI_MENUPICK => {
+                    const number: u32 = @truncate(word & wc.WMHI_MENUMASK);
+                    if (number != mn.MENUNULL and !app.menuPicked(number)) return false;
+                },
                 wc.WMHI_IDCMPUPDATE => app.updated(),
                 wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == ' ') app.togglePause(),
                 wc.WMHI_NEWSIZE => {
+                    app.fitCover();
                     app.fitPicture();
                     app.wake();
                 },
@@ -779,10 +960,12 @@ const App = struct {
             _ = app.ib.GetAttr(wc.WINDOWA_SigMask, app.object, &window_mask);
             const sound_mask = app.engine.signal();
             const drop_mask = app.drop.signal();
-            const got = app.sys.Wait(@as(u32, @truncate(window_mask)) | sound_mask | app.tick_mask | drop_mask | exec.SIGBREAKF_CTRL_C);
+            const asl_mask: u32 = if (app.asl_port) |port| port.sigMask() else 0;
+            const got = app.sys.Wait(@as(u32, @truncate(window_mask)) | sound_mask | app.tick_mask | drop_mask | asl_mask | exec.SIGBREAKF_CTRL_C);
             if (got & exec.SIGBREAKF_CTRL_C != 0) return;
             if (got & sound_mask != 0) app.serviceSound();
             if (got & drop_mask != 0) app.dropped();
+            if (got & asl_mask != 0) app.answered();
             if (!app.windowMessages()) return;
             if (got & app.tick_mask != 0) app.tick();
         }
@@ -833,6 +1016,10 @@ const Child = struct {
     /// Never smaller than this, whatever the window's size.
     min_width: ?u32 = null,
     min_height: ?u32 = null,
+    /// Never taller than this.
+    max_height: ?u32 = null,
+    /// Its shape kept as it grows: `lg.aspect`.
+    aspect: ?u32 = null,
     label: ?[*:0]const u8 = null,
 };
 
@@ -863,6 +1050,14 @@ fn group(ib: *IntuitionBase, loose: *Loose, tags: []const TagItem, children: []c
         }
         if (child.min_height) |size| {
             list[n] = pair(lg.CHILDA_MinHeight, size);
+            n += 1;
+        }
+        if (child.max_height) |size| {
+            list[n] = pair(lg.CHILDA_MaxHeight, size);
+            n += 1;
+        }
+        if (child.aspect) |shape| {
+            list[n] = pair(lg.CHILDA_Aspect, shape);
             n += 1;
         }
         if (child.label) |label| {
@@ -896,12 +1091,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
     const percent: u32 = @intCast(@min(@max(rdargs.number(argv[arg_volume]) orelse 100, 0), 200));
 
-    var libraries: [11]?*exec.Library = @splat(null);
+    var libraries: [9]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
     const wanted = [_][*:0]const u8{
-        intuition.INTUITIONNAME, graphics.GRAPHICSNAME, motion.MOTIONNAME,  ac.AUDIOCODECNAME,
-        tx.TEXT_LIBRARY,         sl.SLIDER_LIBRARY,     td.TDECK_LIBRARY,   cy.CYCLE_LIBRARY,
-        gf.GETFILE_LIBRARY,      cv.CANVAS_LIBRARY,     ch.CHOOSER_LIBRARY,
+        intuition.INTUITIONNAME, graphics.GRAPHICSNAME, motion.MOTIONNAME, ac.AUDIOCODECNAME,
+        tx.TEXT_LIBRARY,         sl.SLIDER_LIBRARY,     td.TDECK_LIBRARY,  cv.CANVAS_LIBRARY,
+        ch.CHOOSER_LIBRARY,
     };
     for (wanted, 0..) |name, i| {
         libraries[i] = sys.OpenLibrary(name, 0) orelse {
@@ -914,6 +1109,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // Wanted for the covers only: without it there are none.
     const dt_lib = sys.OpenLibrary(sdk.datatypes.DATATYPESNAME, 0);
     defer if (dt_lib) |lib| sys.CloseLibrary(lib);
+    // Wanted for Open... only, and opened now rather than then: loading
+    // it from the disk while the sound plays would starve the sound.
+    const asl_lib = sys.OpenLibrary(asl.ASLNAME, 1);
+    defer if (asl_lib) |lib| sys.CloseLibrary(lib);
 
     const engine = Engine.create(sys, acb) orelse {
         _ = Printf(dl, MSG_NOBUFFERS, .{COMMAND_NAME});
@@ -939,11 +1138,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .mb = @ptrCast(libraries[2].?),
         .acb = acb,
         .dt = @ptrCast(dt_lib),
+        .al = @ptrCast(asl_lib),
         .has_attrs = acb.lib().revision >= 1,
         .engine = engine,
         .visual = look,
     };
     defer if (app.pixels) |pixels| sys.FreeVec(pixels);
+    defer app.kept.free(app.gb);
     if (argv[arg_files] != 0) {
         app.list = @ptrFromInt(argv[arg_files]);
         while (app.list[app.count] != null) app.count += 1;
@@ -998,20 +1199,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(gc.GA_Width, 80),
         .{},
     })) orelse return noWindow(dl);
-    app.look = loose.add(ib.NewObjectTagList(null, cy.CYCLE_CLASS, &[_]TagItem{
-        pair(gc.GA_ID, ID_LOOK),
-        pair(cy.CYCLE_Labels, @intFromPtr(&look_labels)),
-        pair(cy.CYCLE_Active, @intFromEnum(look.mode)),
-        .{},
-    })) orelse return noWindow(dl);
-    app.file = loose.add(ib.NewObjectTagList(null, gf.GETFILE_CLASS, &[_]TagItem{
-        pair(gc.GA_ID, ID_FILE),
-        pair(gf.GETFILE_TitleText, @intFromPtr("Which song?")),
-        pair(gf.GETFILE_Drawer, @intFromPtr("SYS:")),
-        pair(gf.GETFILE_Pattern, @intFromPtr("#?.(mp3|wav|flac|ogg|oga)")),
-        pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
-        .{},
-    })) orelse return noWindow(dl);
     app.control = audiocontrol.Control.open(sys);
     defer if (app.control) |*control| control.close();
     if (app.control) |*control| app.outputs.read(control);
@@ -1031,37 +1218,42 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{},
     })) orelse return noWindow(dl);
 
-    // The cover beside its lines; the slider with the time beside it; the
-    // deck, the volume and the picture's name in a row; the file; the
-    // picture taking what is left.
+    // The cover beside its lines, square and as tall as the row; the
+    // slider with the time beside it; the deck, the volume and the output
+    // in a row, which breaks where the window is narrow; the picture in a
+    // sunk frame, taking what is left.
     var line_children: [line_count]Child = undefined;
     for (&line_children, app.lines) |*child, line| child.* = .{ .object = line, .weight_height = 0 };
     const lines = group(ib, &loose, &.{pair(lg.LAYOUTA_Spacing, 1)}, &line_children) orelse return noWindow(dl);
     const info_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 8) }, &.{
-        .{ .object = app.cover, .weight_width = 0, .weight_height = 0, .min_width = cover_size, .min_height = cover_size },
+        .{ .object = app.cover, .aspect = lg.aspect(1, 1), .min_height = cover_least, .max_height = cover.kept_size },
         .{ .object = lines },
     }) orelse return noWindow(dl);
     const seek_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
         .{ .object = app.position },
         .{ .object = app.clock, .weight_width = 0 },
     }) orelse return noWindow(dl);
-    const control_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 8) }, &.{
+    const control_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 8), pair(lg.LAYOUTA_Wrap, 1) }, &.{
         .{ .object = app.deck, .weight_width = 0 },
         .{ .object = app.volume, .label = "_Volume" },
-        .{ .object = app.look, .weight_width = 0 },
-    }) orelse return noWindow(dl);
-    const file_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 8) }, &.{
-        .{ .object = app.file },
         .{ .object = app.output, .weight_width = 0, .label = "_Output" },
     }) orelse return noWindow(dl);
-    const layout = group(ib, &loose, &.{ pair(lg.LAYOUTA_Margin, 6), pair(lg.LAYOUTA_Spacing, 6) }, &.{
-        .{ .object = info_row, .weight_height = 0 },
-        .{ .object = seek_row, .weight_height = 0 },
-        .{ .object = control_row, .weight_height = 0 },
-        .{ .object = file_row, .weight_height = 0 },
+    const framed = group(ib, &loose, &.{ pair(lg.LAYOUTA_FrameType, ic.FRAME_BUTTON), pair(lg.LAYOUTA_FrameRecessed, 1) }, &.{
         .{ .object = app.picture },
     }) orelse return noWindow(dl);
+    // The tags' row grows half as fast as the picture, until the cover
+    // is as large as it is kept.
+    const layout = group(ib, &loose, &.{ pair(lg.LAYOUTA_Margin, 6), pair(lg.LAYOUTA_Spacing, 6) }, &.{
+        .{ .object = info_row, .weight_height = 50, .max_height = cover.kept_size },
+        .{ .object = seek_row, .weight_height = 0 },
+        .{ .object = control_row, .weight_height = 0 },
+        .{ .object = framed },
+    }) orelse return noWindow(dl);
+    // The screen the window opens on, which the menus are laid out for.
+    const screen = ib.LockPubScreen(null) orelse return noWindow(dl);
+    defer ib.UnlockPubScreen(null, screen);
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        pair(wn.WA_PubScreen, @intFromPtr(screen)),
         pair(wn.WA_Title, @intFromPtr(COMMAND_NAME)),
         pair(wn.WA_ScreenTitle, @intFromPtr(SCREEN_TITLE)),
         pair(wn.WA_CloseGadget, 1),
@@ -1085,7 +1277,25 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     app.window = @ptrFromInt(opened);
     app.fitPicture();
+    app.set(app.cover, &.{ pair(cv.CANVAS_Width, 0), pair(cv.CANVAS_Height, 0), .{} });
     app.showCover(null, "");
+
+    // The menus, the look started with ticked; the window plays without
+    // them when they will not go on.
+    var table = menus;
+    table[first_look + @intFromEnum(look.mode)].flags |= mn.CHECKED;
+    app.strip = blk: {
+        const made = ib.CreateMenusA(&table, null) orelse break :blk null;
+        if (!ib.LayoutMenusA(made, screen, null) or !ib.SetMenuStrip(app.window, made)) {
+            ib.FreeMenus(made);
+            break :blk null;
+        }
+        break :blk made;
+    };
+    defer if (app.strip) |made| {
+        ib.ClearMenuStrip(app.window);
+        ib.FreeMenus(made);
+    };
 
     // The clock the pictures are drawn by.
     const bit = sys.AllocSignal(-1);
@@ -1102,6 +1312,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     app.drop.add(sys, app.window);
     defer app.drop.remove();
+
+    // Open...'s port; the requester is made the first time it is asked
+    // for, and taken down before the window closes.
+    if (app.al != null) app.asl_port = sys.CreateMsgPort();
+    defer app.dropRequest();
 
     _ = sys.SetSignal(0, exec.SIGBREAKF_CTRL_C);
     if (app.count > 0) app.playAt(0) else app.wake();

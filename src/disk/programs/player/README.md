@@ -19,15 +19,19 @@ Player FILES/M,VOLUME/K/N,LOOK/K
   twice as loud as recorded.
 - `LOOK` is the picture to start with: `PLASMA`, `WAVE` or `BARS`.
 
-A file dropped on the window from the desktop, picked with the button at
-the end of its file line, or typed into that line is played at once, in
-place of the files it was playing.
+A file dropped on the window from the desktop, or picked with
+**Project > Open...**, is played at once, in place of the files it was
+playing. The file requester starts in the drawer of the song playing;
+the sound and the picture go on while it is up.
 
 ## What the window shows
 
+The window's title is the song's: `Fire - Player`.
+
 - The song's cover: the picture its tags hold, or one lying beside the
   file - `cover.jpg`, `folder.jpg`, `front.jpg`, `cover.png` or
-  `folder.png`. A picture that is not square shows its middle.
+  `folder.png`. A picture that is not square shows its middle. The cover
+  grows with the window, square, from 64 to 160 pixels.
 - Beside it what the tags say: the title, in bold - or the file's name -
   the artist, the album and its year, the genre, the track and the
   composer; the chapter that is playing when the song is marked in
@@ -39,13 +43,15 @@ place of the files it was playing.
 - The buttons of a tape deck. Play starts, pause holds the sound and goes
   on, stop goes back to the start; rewind and fast forward jump ten
   seconds back or on.
-- The volume.
-- Which picture is shown.
-- The file, and beside it the output the machine plays through - its
+- The volume, and beside it the output the machine plays through - its
   speaker, headphones, a USB speaker. Picking another plays every sound
-  through it from then on; one plugged in or out shows in the list.
+  through it from then on; one plugged in or out shows in the list. In
+  a window too narrow for the tape deck, the volume and the output side
+  by side, they stand one under the other, and the window grows to keep
+  everything in it.
 
-Under them, as big as the window lets it be, the picture:
+Under them, as big as the window lets it be and sunk in a frame, the
+picture:
 
 - **Plasma**: waves of colour that move faster with the bass, turn their
   colours with the treble and light up with the loudness.
@@ -55,9 +61,10 @@ Under them, as big as the window lets it be, the picture:
 - **Bars**: the spectrum from 40 Hz at the left to 16 kHz at the right,
   each bar a share of an octave, with a mark where its peak was.
 
-A press on the picture goes to the next one. The picture keeps in step
-with what is heard, not with what has been decoded: the sound card's own
-delay is taken off. When the sound stops, the picture settles for two
+A press on the picture goes to the next one; the **Picture** menu picks
+one and ticks the one shown. The picture keeps in step with what is
+heard, not with what has been decoded: the sound card's own delay is
+taken off. When the sound stops, the picture settles for two
 seconds and then rests until something plays.
 
 A song is shown before it is heard: its names and its cover first, then
@@ -71,7 +78,10 @@ sixteen of the sound's streams are in use.
 ## Keys
 
 - Space pauses and goes on; when nothing plays, it starts.
+- Right-Amiga O opens a song.
+- Right-Amiga Q ends it.
 
 ## Ending it
 
-The window's close gadget, or Ctrl-C in the shell it was started from.
+The window's close gadget, **Project > Quit**, or Ctrl-C in the shell it
+was started from.
