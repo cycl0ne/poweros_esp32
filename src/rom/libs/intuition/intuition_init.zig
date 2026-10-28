@@ -154,7 +154,10 @@ pub const LIBRARY_VERSION = 0;
 /// 63: windowclass's WM_RETHINK - the layout measured and placed again
 /// after a gadget in it changed size, the window grown to it; a window
 /// grown to its layout is no smaller than it from then on.
-pub const LIBRARY_REVISION = 63;
+/// 64: groupgclass's hit test names the member under the point or none,
+/// keeping nothing from an earlier one - the pointer passing over a
+/// member no longer leaves it the one a later press goes to.
+pub const LIBRARY_REVISION = 64;
 const BUILD_DATE = "28.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

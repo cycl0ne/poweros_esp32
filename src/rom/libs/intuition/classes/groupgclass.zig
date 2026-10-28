@@ -18,6 +18,16 @@
 //! `IDCMP_GADGETUP`, not the group, which reports only for a member that
 //! did not ask to (`activeMember`, and `_gadget.reporter`).
 //!
+//! **A hit test names the member under the point, or none.** The member
+//! it finds is the one a press that follows goes to; a point over no
+//! member leaves none, whatever an earlier hit test found - intuition asks
+//! one each time the pointer passes from gadget to gadget, so the member
+//! last passed over would otherwise still be the one with the input. A
+//! class made from this one that answers for a part of its box itself,
+//! where no member stands - a row of tabs - asks this class's hit test
+//! first and then says whether the point is its own: a press there is
+//! then its own, reported in its name, and not the last member's.
+//!
 //! **A clip on the group is a clip on its members** (`GA_ClipRect`): set
 //! on the group, it is set on each of them, and a member that joins takes
 //! the group's.
@@ -46,7 +56,8 @@ pub const Data = extern struct {
     /// fixed few, so that a group holds what it is given and anything that
     /// can walk a list of objects can walk this one.
     members: exec.MinList = .{},
-    /// The member a hit test last landed in: the one that goes active.
+    /// The member under the point of the last hit test, null when it was
+    /// over none: the one that goes active.
     active: ?*Object = null,
 };
 
@@ -88,9 +99,9 @@ pub fn memberList(ib: *IntuitionBase, o: *Object) ?*exec.MinList {
     return null;
 }
 
-/// The member of a group that has the input - the one the last hit test
-/// landed in, until it is done - or null, and null for anything that is
-/// not a group.
+/// The member of a group that has the input - the one under the point of
+/// the last hit test, until it is done - or null, and null for anything
+/// that is not a group.
 pub fn activeMember(ib: *IntuitionBase, o: *Object) ?*Object {
     var cl: ?*Class = classes.objectClass(o);
     while (cl) |c| : (cl = c.super) {
@@ -135,10 +146,13 @@ fn clipOne(ib: *IntuitionBase, member: *Object, clip: *const graphics.Rect) void
 }
 
 /// The member a point in the group is over, and the point in its own
-/// coordinates. The point comes in relative to the group.
+/// coordinates. The point comes in relative to the group. It is the
+/// member with the input from now on, and a point over none leaves none:
+/// nothing stays from an earlier hit test.
 fn propagateHit(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo, x: i32, y: i32) ?*Object {
     const it = ib.iface();
     const p = own(cl, o);
+    p.active = null;
     const group = cornerOf(ib, o, gi);
     // Back to the window's coordinates, which is what a member's own left
     // and top are counted in once it has joined.

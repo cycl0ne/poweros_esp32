@@ -5161,6 +5161,56 @@ test "a group tells the member that had the input that it is done, and that the 
     try tearDown(ib);
 }
 
+test "a group's hit test names the member under the point, and one over none forgets the last" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const told_class = toldClass(ib);
+
+    // Two members with room between them.
+    const group = it.NewObjectTagList(null, classusr.GROUPGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 10 },
+        .{ .tag = gc.GA_Top, .data = 10 },
+        .{},
+    }).?;
+    var members: [2]*Object = undefined;
+    for (&members, 0..) |*slot, i| {
+        slot.* = it.NewObjectTagList(told_class, null, &[_]TagItem{
+            .{ .tag = gc.GA_Left, .data = @as(usize, i) * 20 },
+            .{ .tag = gc.GA_Top, .data = 0 },
+            .{ .tag = gc.GA_Width, .data = 10 },
+            .{ .tag = gc.GA_Height, .data = 10 },
+            .{},
+        }).?;
+        var add = classusr.OpMember{ .method_id = classusr.OM_ADDMEMBER, .object = slot.* };
+        try testing.expect(it.SendMessage(group, @ptrCast(&add)) != 0);
+    }
+
+    // The pointer over the first, as intuition asks while it passes: that
+    // one would take a press.
+    var over = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 5, .y = 5 } };
+    try testing.expectEqual(gc.GMR_GADGETHIT, it.SendMessage(group, @ptrCast(&over)));
+    try testing.expectEqual(@as(?*Object, members[0]), groupgclass.activeMember(ib, group));
+
+    // Between them: none, and nothing left of the first. A class made
+    // from a group that answers for such a place itself - a row of tabs -
+    // is then pressed in its own name, not the first member's.
+    var between = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 15, .y = 5 } };
+    try testing.expectEqual(@as(usize, 0), it.SendMessage(group, @ptrCast(&between)));
+    try testing.expectEqual(@as(?*Object, null), groupgclass.activeMember(ib, group));
+    try testing.expectEqual(group, _gadget.innermost(ib, group));
+
+    // Over the second: that one.
+    var second = gc.GpHitTest{ .gadget_info = null, .mouse = .{ .x = 25, .y = 5 } };
+    try testing.expectEqual(gc.GMR_GADGETHIT, it.SendMessage(group, @ptrCast(&second)));
+    try testing.expectEqual(@as(?*Object, members[1]), groupgclass.activeMember(ib, group));
+
+    it.DisposeObject(group); // its members go with it
+    try testing.expect(ib.iface().FreeClass(told_class));
+    try tearDown(ib);
+}
+
 /// Where a gadget is, as its own attributes say.
 fn boxOf(ib: *IntuitionBase, o: *Object) _gadget.Box {
     const gc = intuition.gadgetclass;
