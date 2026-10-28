@@ -11,7 +11,8 @@
 //! set meanwhile does not move. A file's bytes go by its handler first
 //! (dos's CopyFH), a piece at a time: on a network share the server
 //! copies them, and they never cross the network; a handler that cannot
-//! leaves them to Read and Write. A copy asks before it puts a file where one is already
+//! leaves them to Read and Write, the next piece read (dos's StartRead)
+//! while this one is written, so the two handlers work at once. A copy asks before it puts a file where one is already
 //! (Replace, Replace All, Skip, Stop); a drawer that is there already is
 //! copied into. A file's icon goes with it, and its protection, date and
 //! comment are kept. A soft link in a drawer is never gone through: a
@@ -55,10 +56,11 @@ pub const Kind = enum(u8) { copy, delete, empty };
 
 /// The most files one job is given.
 pub const sources_max = 16;
-/// The buffer in the job's own block: what a copy reads at a time on the
-/// ESP32s, and where memory for a larger one is short.
+/// The buffer in the job's own block, two pieces of half its size: what a
+/// copy reads at a time on the ESP32s, and where memory for a larger one
+/// is short.
 const chunk = 32768;
-/// The most a copy reads at a time: a buffer of the largest file's size,
+/// The most a copy reads at a time: a piece of the largest file's size,
 /// up to 1 MiB where memory is plenty, so a big file costs a read a MiB -
 /// a network share answers a read in one round trip, and a disk writes
 /// it in one go.
@@ -114,10 +116,14 @@ pub const Job = extern struct {
     shown_percent: u32 = 101,
     stopped: bool = false,
     replace_all: bool = false,
-    /// The copy's buffer, allocated for the job; null for `buffer`.
+    /// The copy's buffer, two pieces - one read while the other is
+    /// written - allocated for the job; null for `buffer`.
     pieces: ?[*]u8 = null,
-    piece_size: u32 = chunk,
+    piece_size: u32 = chunk / 2,
     buffer: [chunk]u8 = undefined,
+    /// The read of the next piece, out while this one is written; null
+    /// without the memory, and the next is read after.
+    ahead: ?*dos.DosRequest = null,
 };
 
 /// A job started on its process: the files `sources`, copied into `into`
@@ -185,6 +191,8 @@ fn workMain(sys: *ExecBase) callconv(.c) void {
     for (job.sources[0..job.count]) |*source| measure(job, source, 0);
     if (job.kind == .copy) allocatePieces(job);
     defer if (job.pieces) |pieces| sys.FreeVec(pieces);
+    if (job.kind == .copy) job.ahead = @ptrCast(@alignCast(job.dl.AllocDosObject(dos.DOS_REQUEST, null)));
+    defer if (job.ahead) |request| job.dl.FreeDosObject(dos.DOS_REQUEST, request);
     restartRate(job);
     for (job.sources[0..job.count]) |*source| {
         if (job.stopped) break;
@@ -464,12 +472,13 @@ fn counted(job: *Job, size: u64) void {
 
 // --- copying --------------------------------------------------------------------------
 
-/// The copy's buffer: the largest file's size, between the job's own 32
-/// KiB and `chunk_most`. Without the memory the job's own will do.
+/// The copy's two pieces: each the largest file's size, between half the
+/// job's own 32 KiB and `chunk_most`. Without the memory the job's own
+/// will do.
 fn allocatePieces(job: *Job) void {
     const size: u32 = @intCast(@min(job.largest, chunk_most));
-    if (size <= chunk) return;
-    const memory = job.sys.AllocVec(size, exec.MEMF_ANY) orelse return;
+    if (size <= chunk / 2) return;
+    const memory = job.sys.AllocVec(2 * size, exec.MEMF_ANY) orelse return;
     job.pieces = @ptrCast(memory);
     job.piece_size = size;
 }
@@ -583,9 +592,14 @@ fn copyFile(job: *Job, source: [*:0]const u8, target: [*:0]const u8) bool {
     defer _ = dl.Close(from);
     const to = dl.Open(target, dos.MODE_NEWFILE) orelse return false;
     const bytes: [*]u8 = job.pieces orelse &job.buffer;
+    const size: isize = @intCast(job.piece_size);
+    const pieces = [2][*]u8{ bytes, bytes + job.piece_size };
     var whole = true;
     // By the handler, until it says it cannot.
     var by_handler = true;
+    // The bytes in pieces[at]; null before the first read.
+    var got: ?isize = null;
+    var at: usize = 0;
     while (!job.stopped) {
         if (by_handler) {
             const copied = dl.CopyFH(to, from, handler_piece);
@@ -601,17 +615,24 @@ fn copyFile(job: *Job, source: [*:0]const u8, target: [*:0]const u8) bool {
             }
             by_handler = false;
         }
-        const got = dl.Read(from, bytes, @intCast(job.piece_size));
-        if (got <= 0) {
-            whole = got == 0;
+        const have = got orelse dl.Read(from, pieces[at], size);
+        if (have <= 0) {
+            whole = have == 0;
             break;
         }
-        if (dl.Write(to, bytes, got) != got) {
+        // The next piece into the other half while this one is written:
+        // the two handlers at work at once. Without a request, after it.
+        const ahead = if (job.ahead) |request| dl.StartRead(from, pieces[at ^ 1], size, request) else false;
+        const written = dl.Write(to, pieces[at], have);
+        const next = if (ahead) dl.WaitRequest(job.ahead) else if (written == have) dl.Read(from, pieces[at ^ 1], size) else 0;
+        if (written != have) {
             whole = false;
             break;
         }
-        job.done += @intCast(got);
+        job.done += @intCast(have);
         show(job, textOf(dl.FilePart(source)));
+        got = next;
+        at ^= 1;
     }
     _ = dl.Close(to);
     if (!whole or job.stopped) {

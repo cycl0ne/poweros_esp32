@@ -8,6 +8,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 const packets = @import("../packet/_packet.zig");
 const locks = @import("../lock/_lock.zig");
 const buffered = @import("_file.zig");
+const _request = @import("_request.zig");
 const ActionCode = dos.ActionCode;
 const FileHandle = dos.FileHandle;
 
@@ -67,6 +68,7 @@ pub fn Close(db: *DosBase, file: ?*FileHandle) bool {
     const sys = db.sys_base;
     const fh = file orelse return false;
     defer dos_lib.FreeDosObject(dos.DOS_FILEHANDLE, fh);
+    _request.settle(db, fh);
     const saved = dos_lib.IoErr();
     const written = buffered.release(db, fh);
     const write_error = dos_lib.IoErr();

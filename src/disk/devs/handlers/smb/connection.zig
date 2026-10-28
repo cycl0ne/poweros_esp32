@@ -35,9 +35,8 @@
 //! **Its rings are set before it connects**, so that the SYN already
 //! offers the receive ring: the ring is the window the server may send
 //! into, and a stream socket's 8 KiB took a 64 KiB READ's answer eight
-//! round trips. On the 64-bit boards the receive ring is 512 KiB and the
-//! send ring 1 MiB (`receive_ring`, `send_ring`); elsewhere 64 KiB and
-//! the stack's own.
+//! round trips. On the 64-bit boards both rings are 1 MiB
+//! (`receive_ring`, `send_ring`); elsewhere 64 KiB and the stack's own.
 
 const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
@@ -48,15 +47,16 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 pub const connect_seconds: u32 = 10;
 pub const io_seconds: u32 = 30;
 
-/// The socket's receive ring, and so the window offered: 512 KiB on the
+/// The socket's receive ring, and so the window offered: 1 MiB on the
 /// 64-bit boards, where emac.device and the stack hold a window that
 /// comes at link speed; 64 KiB elsewhere. With 64 KiB the server waited
 /// for the window to open, and reads stayed at 79 MB/s. With 256 KiB the
 /// NAS's path lost a burst of its segments some 85 times a 200 MB read,
 /// and the NAS repaired a few of them only when its 200 ms timeout ran
 /// out - one read in two 0.2-0.8 s slower; with 512 KiB, or 1 MiB, it
-/// repaired every one from the SACK blocks at once.
-const receive_ring: i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 512 * 1024 else 64 * 1024;
+/// repaired every one from the SACK blocks at once. A sealed READ's answer
+/// of 1 MiB comes into it whole while the one before is opened.
+const receive_ring: i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else 64 * 1024;
 /// Its send ring: on the 64-bit boards the stack's largest, 1 MiB - a
 /// whole WRITE of `session.io_max` but its header - so that Send is done
 /// once the piece is in the ring and the next is signed while the stack

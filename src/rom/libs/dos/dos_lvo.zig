@@ -19,6 +19,7 @@ const Process = dos.Process;
 const Segment = dos.Segment;
 const FileLock = dos.FileLock;
 const FileHandle = dos.FileHandle;
+const DosRequest = dos.DosRequest;
 const DosList = dos.DosList;
 const DevProc = dos.DevProc;
 const vec = exec.vec;
@@ -173,6 +174,10 @@ const MakeLink = @import("lock/makelink.zig").MakeLink;
 const ReadLink = @import("lock/readlink.zig").ReadLink;
 const FormatTags = @import("lock/formattags.zig").FormatTags;
 const CopyFH = @import("file/copyfh.zig").CopyFH;
+const StartRead = @import("file/startread.zig").StartRead;
+const StartWrite = @import("file/startwrite.zig").StartWrite;
+const CheckRequest = @import("file/checkrequest.zig").CheckRequest;
+const WaitRequest = @import("file/waitrequest.zig").WaitRequest;
 
 /// dos.library's interface, as the SDK generates it from sdk/fd/dos_lib.fd.
 const interface = sdk.interface.dos;
@@ -352,6 +357,10 @@ const contract_files = [_][]const u8{
     @embedFile("lock/readlink.zig"),
     @embedFile("lock/formattags.zig"),
     @embedFile("file/copyfh.zig"),
+    @embedFile("file/startread.zig"),
+    @embedFile("file/startwrite.zig"),
+    @embedFile("file/checkrequest.zig"),
+    @embedFile("file/waitrequest.zig"),
 };
 
 fn lvoDoPkt(db: *DosBase, port: *MsgPort, action: i32, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize) callconv(.c) isize {
@@ -798,6 +807,18 @@ fn lvoFormatTags(db: *DosBase, drive: [*:0]const u8, name: ?[*:0]const u8, dos_t
 fn lvoCopyFH(db: *DosBase, to: ?*FileHandle, from: ?*FileHandle, length: i64) callconv(.c) i64 {
     return CopyFH(db, to, from, length);
 }
+fn lvoStartRead(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, length: isize, request: ?*DosRequest) callconv(.c) bool {
+    return StartRead(db, file, buffer, length, request);
+}
+fn lvoStartWrite(db: *DosBase, file: ?*FileHandle, buffer: [*]const u8, length: isize, request: ?*DosRequest) callconv(.c) bool {
+    return StartWrite(db, file, buffer, length, request);
+}
+fn lvoCheckRequest(db: *DosBase, request: ?*DosRequest) callconv(.c) bool {
+    return CheckRequest(db, request);
+}
+fn lvoWaitRequest(db: *DosBase, request: ?*DosRequest) callconv(.c) isize {
+    return WaitRequest(db, request);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -954,6 +975,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoReadLink),
     vec(lvoFormatTags),
     vec(lvoCopyFH),
+    vec(lvoStartRead),
+    vec(lvoStartWrite),
+    vec(lvoCheckRequest),
+    vec(lvoWaitRequest),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -961,7 +986,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 152), vectors.len);
+    try testing.expectEqual(@as(usize, 156), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

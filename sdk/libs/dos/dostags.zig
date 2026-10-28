@@ -97,3 +97,10 @@ pub const FORMAT_Dummy = TAG_USER + 3000;
 /// choice. A size the file system or the medium cannot have is refused
 /// with ERROR_INVALID_ARGUMENT before anything is written.
 pub const FORMAT_BlockSize = FORMAT_Dummy + 1;
+
+// AllocDosObject's tags, after the Amiga's.
+pub const ADO_Dummy = TAG_USER + 2000;
+/// DOS_REQUEST: the port it comes back to, which other requests and the
+/// program's own messages may share. Without it the request has a port of
+/// its own, and a signal with it.
+pub const ADO_ReplyPort = ADO_Dummy + 20;

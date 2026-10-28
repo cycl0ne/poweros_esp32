@@ -27,18 +27,21 @@
 //! with COM or CLONE. A handler that does not know one of those packets is
 //! not an error - not every file system keeps all three.
 //!
-//! BUFFER is the copy buffer in bytes. Without it the buffer is the file's
-//! own size, at least 1024 and at most 64 KiB - 1 MiB on the RISC-V 64
-//! and AArch64 boards, whose memory is plenty and whose network shares
-//! answer a read of a MiB in one round trip - so a small file costs one
-//! read and a big one does not cost the whole of memory. NOREQ is taken
-//! and does nothing: there are no requesters to turn off.
+//! BUFFER is the size of the copy's piece in bytes; it has two, one read
+//! while the other is written. Without it a piece is the file's own size,
+//! at least 1024 and at most 64 KiB - 1 MiB on the RISC-V 64 and AArch64
+//! boards, whose memory is plenty and whose network shares answer a read
+//! of a MiB in one round trip - so a small file costs one read and a big
+//! one does not cost the whole of memory. NOREQ is taken and does
+//! nothing: there are no requesters to turn off.
 //!
 //! A file's bytes go by its handler first (dos's CopyFH), a piece at a
 //! time so that Ctrl-C is seen: on a network share the server copies them,
 //! and they never cross the network. A handler that cannot - the two
 //! files on two handlers, or one that does not copy - leaves them to Read
-//! and Write, from where it stopped.
+//! and Write, from where it stopped. Then the next piece is read (dos's
+//! StartRead) while this one is written, so the two handlers work at
+//! once.
 //!
 //! Copying a directory into itself would never end, so before stepping
 //! into one the destination's parents are walked: if the source is among
@@ -54,7 +57,7 @@ const Printf = dos.stdio.Printf;
 const FPrintf = dos.stdio.FPrintf;
 
 pub const COMMAND_NAME = "Copy";
-const VERSION_STRING = "\x00$VER: Copy 1.5 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Copy 1.6 (28.10.2026)\r\n";
 
 const template = "FROM/M,TO/A,ALL/S,QUIET/S,BUF=BUFFER/K/N,CLONE/S,DATES/S,NOPRO/S,COM/S,NOREQ/S";
 const arg_from = 0;
@@ -129,6 +132,8 @@ const Run = struct {
     rc: i32 = dos.RETURN_OK,
     res2: i32 = 0,
     stop: bool = false,
+    /// The read of the next piece, out while this one is written.
+    ahead: *dos.DosRequest = undefined,
 };
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -170,6 +175,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.FreeVec(anchor_block);
     const anchor: *Anchor = @ptrCast(@alignCast(anchor_block));
+    run.ahead = @ptrCast(@alignCast(dl.AllocDosObject(dos.DOS_REQUEST, null) orelse {
+        _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, COMMAND_NAME);
+        return dos.RETURN_FAIL;
+    }));
+    defer dl.FreeDosObject(dos.DOS_REQUEST, run.ahead);
 
     // With no FROM at all the current directory is the source, which is
     // what "Copy TO ram:" means.
@@ -421,13 +431,14 @@ fn copyFile(run: *Run, ap: *dos.AnchorPath) void {
     }
 
     // The file's own size, within reason: a small file costs one read and
-    // a big one does not cost the whole of memory.
+    // a big one does not cost the whole of memory. Two pieces, one read
+    // while the other is written.
     var size: usize = run.buffer;
     if (size == 0) {
         size = @intCast(@min(ap.info.size, max_buffer));
         if (size < min_buffer) size = min_buffer;
     }
-    const block = sys.AllocVec(size, exec.MEMF_ANY) orelse {
+    const block = sys.AllocVec(2 * size, exec.MEMF_ANY) orelse {
         _ = dl.Close(in);
         _ = dl.Close(out);
         failWith(run, dos.ERROR_NO_FREE_STORE, name);
@@ -436,11 +447,15 @@ fn copyFile(run: *Run, ap: *dos.AnchorPath) void {
     };
     defer sys.FreeVec(block);
     const bytes: [*]u8 = @ptrCast(block);
+    const pieces = [2][*]u8{ bytes, bytes + size };
 
     var reading = true;
     var failed = false;
     // By the handler, until it says it cannot.
     var by_handler = true;
+    // The bytes in pieces[at]; null before the first read.
+    var got: ?isize = null;
+    var at: usize = 0;
     while (true) {
         if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) {
             _ = dl.PrintFault(dos.ERROR_BREAK, null);
@@ -460,18 +475,30 @@ fn copyFile(run: *Run, ap: *dos.AnchorPath) void {
             }
             by_handler = false;
         }
-        const got = dl.Read(in, bytes, @intCast(size));
-        if (got < 0) {
+        const have = got orelse dl.Read(in, pieces[at], @intCast(size));
+        if (have < 0) {
             failed = true;
             break;
         }
-        if (got == 0) break;
+        if (have == 0) break;
+        // The next piece into the other half while this one is written:
+        // the two handlers at work at once.
+        if (!dl.StartRead(in, pieces[at ^ 1], @intCast(size), run.ahead)) {
+            failed = true;
+            break;
+        }
         reading = false;
-        if (dl.Write(out, bytes, got) != got) {
+        const written = dl.Write(out, pieces[at], have);
+        const write_error = dl.IoErr();
+        const next = dl.WaitRequest(run.ahead);
+        if (written != have) {
+            _ = dl.SetIoErr(write_error);
             failed = true;
             break;
         }
         reading = true;
+        got = next;
+        at ^= 1;
     }
     const code = if (failed) dl.IoErr() else 0;
     _ = dl.Close(out);

@@ -21,6 +21,7 @@ Generated from the source by `./zig build autodoc`.
 - [AssignPath](#assignpath) - Makes a name a non-binding assign to a path.
 - [AttemptLockDosList](#attemptlockdoslist) - Locks the device list only if that can be done without waiting.
 - [ChangeMode](#changemode) - Changes a lock or an open file between shared and exclusive access.
+- [CheckRequest](#checkrequest) - Says whether a read or write started with StartRead or StartWrite is back.
 - [CheckSignal](#checksignal) - Tells which of some signals have come, and clears them.
 - [Cli](#cli) - Returns the running process's CommandLineInterface, or null when it has none.
 - [Close](#close) - Closes a file and frees its handle.
@@ -142,6 +143,8 @@ Generated from the source by `./zig build autodoc`.
 - [SetVar](#setvar) - Sets or deletes a local variable or alias, or a global variable.
 - [SplitName](#splitname) - Copies one component of a path into a buffer.
 - [StartNotify](#startnotify) - Starts watching a file or a directory: the program is told whenever it changes.
+- [StartRead](#startread) - Starts a read of an open file, and does not wait for it.
+- [StartWrite](#startwrite) - Starts a write to an open file, and does not wait for it.
 - [StrToDate](#strtodate) - Reads a date and a time from text into a DateStamp.
 - [StrToLong](#strtolong) - Reads a decimal number from the start of a string.
 - [SystemTagList](#systemtaglist) - Runs a command line, or an interactive shell, in a new shell process.
@@ -156,6 +159,7 @@ Generated from the source by `./zig build autodoc`.
 - [VPrintf](#vprintf) - Writes formatted text to the process's output.
 - [WaitForChar](#waitforchar) - Tells whether a console has input within a time.
 - [WaitPkt](#waitpkt) - Waits for a packet at the running process's msg_port and takes it off.
+- [WaitRequest](#waitrequest) - Waits for a read or write started with StartRead or StartWrite, and gives its answer.
 - [Write](#write) - Writes `length` bytes to a file.
 - [WriteChars](#writechars) - Writes bytes to the process's output.
 
@@ -414,9 +418,9 @@ fn AllocDosObject(db: *DosBase, obj_type: u32, tags: ?[*]const TagItem) ?*anyopa
 **INPUTS**
 
 - `obj_type` - what to make: DOS_STDPKT, DOS_FILEHANDLE, DOS_FIB,
-  DOS_EXALLCONTROL, DOS_CLI or DOS_RDARGS.
-- `tags` - options for the object; none are read yet, so null will
-  do.
+  DOS_EXALLCONTROL, DOS_CLI, DOS_RDARGS or DOS_REQUEST.
+- `tags` - options for the object, null for none. Only DOS_REQUEST
+  reads one: `ADO_ReplyPort`, the port it comes back to.
 
 **RESULT**
 
@@ -430,17 +434,24 @@ Each type is made as the area's header lists: cleared, with its
 defaults, and for a CLI with its name buffers in the same block. A
 DosPacket's message length is set so it can be sent at once.
 
+A DosRequest (StartRead, StartWrite) comes back to the port
+`ADO_ReplyPort` names, which other requests and the caller's own
+messages may share; without the tag it gets a port of its own, made
+with CreateMsgPort - a signal of the caller's - and freed with it.
+
 **CONTEXT**
 
 - Waits: no.
 - Interrupts: not safe; it allocates.
 - Locks: none needed.
-- Process: a Task will do.
+- Process: a Task will do. A DosRequest's own port signals the task
+  that allocated it.
 
 **OWNERSHIP**
 
 The object is the caller's, to give back with FreeDosObject and the
-same type.
+same type. A port `ADO_ReplyPort` names stays the caller's, and must
+outlive the request.
 
 **BUGS**
 
@@ -455,6 +466,9 @@ None known.
 ```zig
 const fib: *dos.FileInfoBlock = @ptrCast(@alignCast(dos_lib.AllocDosObject(dos.DOS_FIB, null) orelse return null));
 defer dos_lib.FreeDosObject(dos.DOS_FIB, fib);
+
+const request: *dos.DosRequest = @ptrCast(@alignCast(dos_lib.AllocDosObject(dos.DOS_REQUEST, null) orelse return null));
+defer dos_lib.FreeDosObject(dos.DOS_REQUEST, request);
 ```
 
 ## AssignAdd
@@ -811,6 +825,62 @@ None known.
 
 ```zig
 if (!dos_lib.ChangeMode(dos.CHANGE_LOCK, lock, dos.EXCLUSIVE_LOCK)) return error.InUse;
+```
+
+## CheckRequest
+
+Says whether a read or write started with StartRead or StartWrite is back.
+
+**SYNOPSIS**
+
+```zig
+fn CheckRequest(db: *DosBase, request: ?*DosRequest) bool
+```
+
+**SINCE**
+
+1.14. LVO -620.
+
+**INPUTS**
+
+- `request` - the request.
+
+**RESULT**
+
+True when it is back - or was never out - so WaitRequest answers at
+once; false while the handler still has it, and for a null request.
+
+**BEHAVIOR**
+
+A request that is back is taken off its port: only its own message,
+what came before it on a shared port put back as it was, the port's
+signal set again. Its answer stays in it for WaitRequest.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none taken.
+- Process: the task that allocated the request.
+
+**OWNERSHIP**
+
+Nothing changes hands; the request is free to start again only after
+WaitRequest.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`WaitRequest`, `StartRead`, `StartWrite`
+
+**EXAMPLES**
+
+```zig
+while (!dos_lib.CheckRequest(request)) drawProgress();
+const got = dos_lib.WaitRequest(request);
 ```
 
 ## CheckSignal
@@ -3576,9 +3646,13 @@ The object's block is freed. Nothing it points to is: a FileHandle's
 buffer, a CLI's streams and an RDArgs' memory are their owners' to
 free first (Close, FreeArgs). An unknown type does nothing.
 
+A DosRequest still out is waited for first - its handler has its
+packet - and the port dos made for it is deleted; a port
+`ADO_ReplyPort` named is left to its owner.
+
 **CONTEXT**
 
-- Waits: no.
+- Waits: only for a DosRequest still out.
 - Interrupts: not safe; it frees memory.
 - Locks: none needed.
 - Process: a Task will do.
@@ -8334,6 +8408,157 @@ defer dos_lib.EndNotify(&request);
 // ... a NotifyMessage on `port`: read the file again, then ReplyMsg it.
 ```
 
+## StartRead
+
+Starts a read of an open file, and does not wait for it.
+
+**SYNOPSIS**
+
+```zig
+fn StartRead(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, length: isize, request: ?*DosRequest) bool
+```
+
+**SINCE**
+
+1.14. LVO -612.
+
+**INPUTS**
+
+- `file` - the handle.
+- `buffer` - where the bytes go.
+- `length` - how many are wanted.
+- `request` - from AllocDosObject(DOS_REQUEST), not out.
+
+**RESULT**
+
+True when the read is out; WaitRequest then gives what Read would
+have: the count, 0 at the end, or -1 with `IoErr()`. False with
+`IoErr()` set and nothing sent: `ERROR_INVALID_LOCK` without a handle,
+`ERROR_REQUIRED_ARG_MISSING` without a request, `ERROR_OBJECT_IN_USE`
+for a request still out, or the error of giving up the handle's
+buffer.
+
+**BEHAVIOR**
+
+ACTION_READ goes to the handle's handler and the request is put last
+on the handle's requests out. The handler serves them in the order
+they were started, so each reads from where the one before ended. The
+handle's buffer is given up first, as Seek gives it up: waiting bytes
+are written, bytes read ahead seeked back over. On a console, what was
+typed ahead is the answer instead - the request back at once, without
+a packet, as Read gives it first.
+
+Every other call that reads, writes, moves, asks about or closes the
+handle - Read, Write, the buffered calls, Seek, SetFileSize, CopyFH,
+ExamineFH, Flush, Close - waits for the handle's requests first, and
+leaves their answers in them for WaitRequest.
+
+**CONTEXT**
+
+- Waits: no, unless the handle's buffer has bytes to write or to seek
+  back over first.
+- Interrupts: no.
+- Locks: none taken.
+- Process: a Task will do; the request answers at its own port.
+
+**OWNERSHIP**
+
+`buffer` and `request` are the caller's, and must stay until the
+request is back: WaitRequest, or CheckRequest answering true.
+
+**NOTES**
+
+- A read started on a console waits for a line as Read does; a Close
+  of the console waits for that line too.
+- Two handles on two handlers work at once: a copy reads the next piece
+  while it writes this one.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`StartWrite`, `CheckRequest`, `WaitRequest`, `Read`
+
+**EXAMPLES**
+
+```zig
+if (!dos_lib.StartRead(in, next.ptr, next.len, request)) return dos_lib.IoErr();
+_ = dos_lib.Write(out, this.ptr, this.len); // while the next is read
+const got = dos_lib.WaitRequest(request);
+```
+
+## StartWrite
+
+Starts a write to an open file, and does not wait for it.
+
+**SYNOPSIS**
+
+```zig
+fn StartWrite(db: *DosBase, file: ?*FileHandle, buffer: [*]const u8, length: isize, request: ?*DosRequest) bool
+```
+
+**SINCE**
+
+1.14. LVO -616.
+
+**INPUTS**
+
+- `file` - the handle.
+- `buffer` - the bytes.
+- `length` - how many.
+- `request` - from AllocDosObject(DOS_REQUEST), not out.
+
+**RESULT**
+
+True when the write is out; WaitRequest then gives what Write would
+have: the count written, or -1 with `IoErr()`. False with `IoErr()` set
+and nothing sent, as StartRead.
+
+**BEHAVIOR**
+
+ACTION_WRITE goes to the handle's handler and the request is put last
+on the handle's requests out, which the handler serves in the order
+they were started. What the handle's buffer holds goes first: waiting
+bytes are written, bytes read ahead seeked back over (a console keeps
+them). Every other call on the handle waits for its requests first, as
+StartRead says.
+
+**CONTEXT**
+
+- Waits: no, unless the handle's buffer has bytes to write or to seek
+  back over first.
+- Interrupts: no.
+- Locks: none taken.
+- Process: a Task will do; the request answers at its own port.
+
+**OWNERSHIP**
+
+`buffer` and `request` are the caller's, and must stay until the
+request is back.
+
+**NOTES**
+
+- A count short of `length` is a write that failed part way, as
+  Write's is: the disk full, for one.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`StartRead`, `CheckRequest`, `WaitRequest`, `Write`
+
+**EXAMPLES**
+
+```zig
+if (!dos_lib.StartWrite(out, piece.ptr, piece.len, request)) return dos_lib.IoErr();
+// ... the next piece read meanwhile ...
+if (dos_lib.WaitRequest(request) != piece.len) return dos_lib.IoErr();
+```
+
 ## StrToDate
 
 Reads a date and a time from text into a DateStamp.
@@ -9167,6 +9392,66 @@ None known.
 while (dos_lib.WaitPkt()) |pkt| {
     dos_lib.ReplyPkt(pkt, dos.DOSFALSE, dos.ERROR_ACTION_NOT_KNOWN);
 }
+```
+
+## WaitRequest
+
+Waits for a read or write started with StartRead or StartWrite, and gives its answer.
+
+**SYNOPSIS**
+
+```zig
+fn WaitRequest(db: *DosBase, request: ?*DosRequest) isize
+```
+
+**SINCE**
+
+1.14. LVO -624.
+
+**INPUTS**
+
+- `request` - the request.
+
+**RESULT**
+
+What Read or Write would have answered: the count (0 at a read's
+end), or -1 with `IoErr()` set. A request not out answers what it
+answered last, 0 for one never started; null answers -1 with
+`ERROR_REQUIRED_ARG_MISSING`.
+
+**BEHAVIOR**
+
+Waits for the request's message at its port and takes only that one
+off: what came before it on a shared port goes back as it was, the
+port's signal set again. A port that is the process's msg_port is
+waited at through pr_PktWait when the process has one. The request is
+then free to start again.
+
+**CONTEXT**
+
+- Waits: yes, until the handler has served the request.
+- Interrupts: no. It waits.
+- Locks: none taken; no spinlock may be held around it.
+- Process: the task that allocated the request, whose signal its port
+  has.
+
+**OWNERSHIP**
+
+The request's buffer is the caller's again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CheckRequest`, `StartRead`, `StartWrite`
+
+**EXAMPLES**
+
+```zig
+const got = dos_lib.WaitRequest(request);
+if (got < 0) return dos_lib.IoErr();
 ```
 
 ## Write

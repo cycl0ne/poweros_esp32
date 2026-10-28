@@ -7,6 +7,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 const _lock = @import("_lock.zig");
 const packets = @import("../packet/_packet.zig");
 const buffered = @import("../file/_file.zig");
+const _request = @import("../file/_request.zig");
 const asArg = _lock.asArg;
 const ActionCode = dos.ActionCode;
 const clearOwner = _lock.clearOwner;
@@ -60,6 +61,7 @@ const FileHandle = dos.FileHandle;
 pub fn ExamineFH(db: *DosBase, file: ?*FileHandle, fib: *dos.FileInfoBlock) bool {
     const fh = file orelse return fail(db, dos.ERROR_INVALID_LOCK);
     const port = fh.task orelse return fail(db, dos.ERROR_INVALID_LOCK);
+    _request.settle(db, fh);
     if (!buffered.flush(db, fh)) return false;
     clearOwner(fib);
     const answer = packets.exchange(db.sys_base, port, @intFromEnum(ActionCode.examine_fh), .{ asArg(fh), asArg(fib), 0, 0, 0 }) orelse

@@ -6,6 +6,7 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const DosBase = @import("../dos_base.zig").DosBase;
 const _file = @import("_file.zig");
+const _request = @import("_request.zig");
 const beforeWrite = _file.beforeWrite;
 const failWith = _file.failWith;
 const FileHandle = dos.FileHandle;
@@ -60,5 +61,6 @@ const FileHandle = dos.FileHandle;
 /// ```
 pub fn Flush(db: *DosBase, file: ?*FileHandle) bool {
     const fh = file orelse return failWith(db, dos.ERROR_INVALID_LOCK, 0) != 0;
+    _request.settle(db, fh);
     return beforeWrite(db, fh);
 }

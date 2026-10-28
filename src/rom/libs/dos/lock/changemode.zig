@@ -6,6 +6,7 @@ const dos = sdk.dos;
 const DosBase = @import("../dos_base.zig").DosBase;
 const _lock = @import("_lock.zig");
 const packets = @import("../packet/_packet.zig");
+const _request = @import("../file/_request.zig");
 const asArg = _lock.asArg;
 const ActionCode = dos.ActionCode;
 const FileHandle = dos.FileHandle;
@@ -65,6 +66,7 @@ pub fn ChangeMode(db: *DosBase, kind: i32, object: ?*anyopaque, mode: i32) bool 
         else => return failZero(db, dos.ERROR_OBJECT_WRONG_TYPE) != 0,
     };
     const port = target orelse return failZero(db, dos.ERROR_INVALID_LOCK) != 0;
+    if (kind == dos.CHANGE_FH) _request.settle(db, @ptrCast(@alignCast(obj)));
     const answer = packets.exchange(db.sys_base, port, @intFromEnum(ActionCode.change_mode), .{ kind, asArg(obj), mode, 0, 0 }) orelse
         return failZero(db, dos.ERROR_NO_FREE_STORE) != 0;
     if (answer.res1 == 0) return failZero(db, answer.res2) != 0;

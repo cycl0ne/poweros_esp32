@@ -87,7 +87,7 @@ const FileSystem = fs_area.FileSystem;
 
 pub const HANDLER_NAME = smb.SMB_HANDLER;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 17;
+const HANDLER_REVISION = 18;
 const BUILD_DATE = "28.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++

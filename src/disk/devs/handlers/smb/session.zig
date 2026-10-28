@@ -50,9 +50,11 @@
 //! between packets - a READ's checked as it comes when it would stream -
 //! and kept in `landed` once all of one has come, until taken
 //! (`takeLanded`). A message's header says which request it answers, so
-//! it goes into that one's buffer whichever comes first; a sealed one
-//! says nothing until it is opened, so a session that seals sends one
-//! ahead at a time. With `ahead_max` coming, the next waits for the
+//! it goes into that one's buffer whichever comes first. A sealed one
+//! says nothing until it is opened: it comes into the oldest's buffer,
+//! and one that turns out to answer another is moved into that one's -
+//! the NAS answers in order nearly always - so the next answer comes
+//! while this one is opened. With `ahead_max` coming, the next waits for the
 //! oldest's answer (`makeRoom`). Every other request takes the rest of
 //! them first (`settle`), so its answers come alone.
 //!
@@ -438,8 +440,7 @@ pub const Session = struct {
     }
 
     /// Room for one more request ahead: the oldest answer waited for
-    /// while `ahead_max` are coming - while one is, in a session that
-    /// seals.
+    /// while `ahead_max` are coming.
     pub fn makeRoom(session: *Session) Error!void {
         try session.advance(true, .room);
     }
@@ -455,7 +456,7 @@ pub const Session = struct {
             return switch (until) {
                 .all => session.ahead_count == 0,
                 .one => |id| !session.aheadOf(id),
-                .room => session.ahead_count < if (session.encrypt_all or session.encrypt_tree) 1 else ahead_max,
+                .room => session.ahead_count < ahead_max,
             };
         }
     };
@@ -561,32 +562,49 @@ pub const Session = struct {
         if (session.cb.InitGmac(&in.context, &session.signer.key, 16, &nonce, nonce.len) != crypto.CRYPTOERR_OK) return error.Security;
     }
 
-    /// The message for the request ahead at `index`, all of it come:
-    /// checked and kept in `landed`, the request no longer ahead - or
-    /// passed over when it was not the request's answer yet, an interim
-    /// one or a message for no request.
+    /// The message come into the buffer of the request ahead at `index`,
+    /// all of it: checked and kept in `landed` for the request it answers,
+    /// that one no longer ahead - or passed over when it was no request's
+    /// answer yet, an interim one or a message for none. A sealed one says
+    /// which it answers only once opened; one for another request than
+    /// the oldest's is moved into that one's buffer.
     fn land(session: *Session, index: usize) Error!void {
         const ahead = session.aheads[index];
         const in = &session.incoming;
         const message = ahead.buffer[0..in.length];
+        var at = index;
         const landed: Landed = if (in.streamed) |count| blk: {
             const header = Header.read(message).?;
             if (in.verify and !session.gmacRight(&in.context, &in.given)) return error.Security;
             session.credits += header.credits;
             break :blk .{ .id = ahead.id, .buffer = ahead.buffer, .reply = .{ .header = header, .message = message[0..read_lead] }, .data = message[read_lead..][0..count] };
         } else blk: {
+            var ids: [ahead_max]u64 = undefined;
+            for (session.aheads[0..session.ahead_count], 0..) |one, which| ids[which] = one.id;
             var replies = noReplies();
             var answered: usize = 0;
-            try session.take(message, (&ahead.id)[0..1], &replies, ahead.encrypt, &answered);
+            try session.take(message, ids[0..session.ahead_count], &replies, ahead.encrypt, &answered);
             if (answered == 0) return;
-            break :blk .{ .id = ahead.id, .buffer = ahead.buffer, .reply = replies[0], .data = null };
+            at = for (replies[0..session.ahead_count], 0..) |reply, which| {
+                if (reply.message.len != 0) break which;
+            } else unreachable;
+            var reply = replies[at];
+            if (at != index) {
+                // Its own request's buffer has nothing in it while its
+                // answer is coming; the oldest's is left for its own.
+                const own = session.aheads[at].buffer;
+                if (in.length > own.len) return error.Protocol;
+                @memcpy(own[0..in.length], message);
+                reply.message = own[@intFromPtr(reply.message.ptr) - @intFromPtr(message.ptr) ..][0..reply.message.len];
+            }
+            break :blk .{ .id = session.aheads[at].id, .buffer = session.aheads[at].buffer, .reply = reply, .data = null };
         };
         // Taken before more are sent, so there is always room.
         if (session.landed_count == ahead_max) return error.Protocol;
         session.landed[session.landed_count] = landed;
         session.landed_count += 1;
         session.ahead_count -= 1;
-        for (index..session.ahead_count) |at| session.aheads[at] = session.aheads[at + 1];
+        for (at..session.ahead_count) |which| session.aheads[which] = session.aheads[which + 1];
     }
 
     /// Whether the GMAC taken in `context` is `given`, every byte

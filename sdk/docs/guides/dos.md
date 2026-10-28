@@ -115,6 +115,46 @@ if (copied < 0 and dl.IoErr() == dos.ERROR_ACTION_NOT_KNOWN) {
 }
 ```
 
+### Reading and writing without waiting
+
+`Read` and `Write` wait for the handler's answer. `StartRead(fh, buffer,
+length, request)` and `StartWrite` send the same packet and return at once;
+`WaitRequest(request)` waits for it and gives what Read or Write would
+have - the count, 0 at a read's end, or -1 with IoErr - and
+`CheckRequest(request)` says whether it is back without waiting. A program
+that reads one file and writes another lets both handlers work at once
+this way: the next piece is read while this one is written.
+
+A request comes from `AllocDosObject(DOS_REQUEST, tags)` and goes back
+with `FreeDosObject`, which waits for one still out. It answers at a port
+of its own - a signal of the task that allocated it - unless the tag
+`ADO_ReplyPort` names one, which several requests and the program's own
+messages may share; WaitRequest takes only its own message off it and
+leaves the rest as they were. The buffer is the caller's again once the
+request is back.
+
+The requests on one handle run in the order they were started, each from
+where the one before ended. Starting one gives up the handle's buffer as
+Seek does, so it reads or writes from the caller's position; on a console
+a read takes what was typed ahead and is back at once. Every other call
+on the handle - Read, Write, the buffered calls, Seek, SetFileSize,
+CopyFH, ExamineFH, Flush, Close - waits for its requests first, and their
+answers stay in them for WaitRequest. A handler cannot give a packet
+back, so a program that stops waits for what is out.
+
+```zig
+const next: *dos.DosRequest = @ptrCast(@alignCast(dl.AllocDosObject(dos.DOS_REQUEST, null) orelse return error.NoMemory));
+defer dl.FreeDosObject(dos.DOS_REQUEST, next);
+var got = dl.Read(from, &piece[0], piece_len);
+var at: usize = 0;
+while (got > 0) : (at ^= 1) {
+    if (!dl.StartRead(from, &piece[at ^ 1], piece_len, next)) return dl.IoErr();
+    const written = dl.Write(to, &piece[at], got); // while the next is read
+    got = dl.WaitRequest(next);
+    if (written < 0) return dl.IoErr();
+}
+```
+
 ### A file's digest: C:Hash
 
 `C:Hash FILE/M,ALGO/K,CHECK/S,TO/K,ALL/S,QUIET/S` writes a line for each

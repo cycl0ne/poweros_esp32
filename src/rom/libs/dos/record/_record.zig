@@ -7,6 +7,7 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const DosBase = @import("../dos_base.zig").DosBase;
 const packets = @import("../packet/_packet.zig");
+const _request = @import("../file/_request.zig");
 const FileHandle = dos.FileHandle;
 
 /// Sends LOCK_RECORD or FREE_RECORD about `file` to its handler.
@@ -25,6 +26,7 @@ pub fn send(db: *DosBase, file: ?*FileHandle, action: dos.ActionCode, args: dos.
     const dos_lib = db.iface();
     const fh = file orelse return refuse(db, dos.ERROR_INVALID_LOCK);
     const port = fh.task orelse return refuse(db, dos.ERROR_INVALID_LOCK);
+    _request.settle(db, fh);
     const answer = packets.exchangeArgs(db.sys_base, port, @intFromEnum(action), args) orelse
         return refuse(db, dos.ERROR_NO_FREE_STORE);
     if (answer.res1 == dos.DOSFALSE) {

@@ -1343,6 +1343,103 @@ test "CopyFH: a handler without COPY_FH leaves the copy to the caller" {
     try tearDown(db);
 }
 
+/// A DosRequest from AllocDosObject, coming back to `port` (null: a port
+/// of its own).
+fn allocRequest(dl: *interface.DosBase, port: ?*MsgPort) !*dos.DosRequest {
+    const tags = [_]TagItem{ .{ .tag = dos.ADO_ReplyPort, .data = @intFromPtr(port) }, .{} };
+    const object = dl.AllocDosObject(dos.DOS_REQUEST, if (port != null) &tags else null) orelse return error.NoMemory;
+    return @ptrCast(@alignCast(object));
+}
+
+test "StartRead, StartWrite, WaitRequest: sent in order, not waited for; strays on a shared port kept" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try FakeFs.mount(db, &tp);
+    const fh = dl.Open("FS:file", dos.MODE_READWRITE).?;
+    const first = try allocRequest(dl, &tp.proc.msg_port);
+    const second = try allocRequest(dl, &tp.proc.msg_port);
+    try testing.expect(!first.own_port);
+    var buf: [16]u8 = undefined;
+
+    // Both out, in the order they were started, and nothing waited for.
+    var calls = FakeFs.calls;
+    try testing.expect(dl.StartRead(fh, &buf, buf.len, first));
+    try testing.expect(dl.StartWrite(fh, "hello", 5, second));
+    try testing.expectEqual(calls, FakeFs.calls);
+    try testing.expectEqual(@as(?*exec.Node, &first.packet.msg.node), FakeFs.port.msg_list.first());
+    try testing.expectEqual(@as(?*exec.Node, &second.packet.msg.node), first.packet.msg.node.succ);
+    try testing.expectEqual(dos.ActionCode.write, second.packet.getAction());
+    try testing.expectEqual(@as(?*FileHandle, fh), second.packet.args.io.fh);
+    try testing.expectEqual(@as(?*dos.DosRequest, first), fh.requests);
+    try testing.expectEqual(@as(?*dos.DosRequest, second), first.next);
+    try testing.expect(!dl.StartRead(fh, &buf, buf.len, first)); // still out
+    try testing.expectEqual(dos.ERROR_OBJECT_IN_USE, dl.IoErr());
+    try testing.expect(!dl.CheckRequest(first));
+
+    // The later one waited for first: the earlier answer comes before it
+    // and is kept on the port, the program's own message too.
+    var mine: exec.Message = .{};
+    kexec.PutMsg(kexec.SysBase, &tp.proc.msg_port, &mine);
+    try testing.expectEqual(@as(isize, 5), dl.WaitRequest(second));
+    try testing.expectEqual(calls + 2, FakeFs.calls);
+    try testing.expectEqual(dos.RequestState.out, first.state);
+    try testing.expect(dl.CheckRequest(first));
+    try testing.expectEqual(dos.RequestState.back, first.state);
+    try testing.expectEqual(@as(?*dos.DosRequest, null), fh.requests);
+    try testing.expectEqual(@as(isize, 7), dl.WaitRequest(first));
+    try testing.expectEqual(dos.RequestState.idle, first.state);
+    try testing.expectEqual(@as(?*exec.Message, &mine), kexec.GetMsg(kexec.SysBase, &tp.proc.msg_port));
+    try testing.expectEqual(@as(?*exec.Message, null), kexec.GetMsg(kexec.SysBase, &tp.proc.msg_port));
+    try testing.expectEqual(@as(isize, 7), dl.WaitRequest(first)); // not out: its last answer
+
+    // Seek waits for the handle's requests; their answers stay in them.
+    calls = FakeFs.calls;
+    try testing.expect(dl.StartRead(fh, &buf, buf.len, first));
+    _ = dl.Seek(fh, 0, dos.OFFSET_BEGINNING);
+    try testing.expectEqual(calls + 2, FakeFs.calls); // READ, then SEEK
+    try testing.expectEqual(dos.ActionCode.seek, FakeFs.action);
+    try testing.expectEqual(dos.RequestState.back, first.state);
+    try testing.expectEqual(@as(isize, 7), dl.WaitRequest(first));
+
+    // A failure is the request's answer: -1 with IoErr.
+    FakeFs.io_fail = true;
+    try testing.expect(dl.StartWrite(fh, "x", 1, second));
+    _ = dl.SetIoErr(0);
+    try testing.expectEqual(@as(isize, -1), dl.WaitRequest(second));
+    try testing.expectEqual(dos.ERROR_DISK_FULL, dl.IoErr());
+    FakeFs.io_fail = false;
+
+    // What they refuse, before anything is sent.
+    calls = FakeFs.calls;
+    try testing.expect(!dl.StartRead(null, &buf, 1, first));
+    try testing.expectEqual(dos.ERROR_INVALID_LOCK, dl.IoErr());
+    try testing.expect(!dl.StartWrite(fh, "x", 1, null));
+    try testing.expectEqual(dos.ERROR_REQUIRED_ARG_MISSING, dl.IoErr());
+    try testing.expectEqual(@as(isize, -1), dl.WaitRequest(null));
+    try testing.expectEqual(dos.ERROR_REQUIRED_ARG_MISSING, dl.IoErr());
+    try testing.expect(!dl.CheckRequest(null));
+    try testing.expectEqual(calls, FakeFs.calls);
+
+    // Close waits for them, and so does FreeDosObject for one still out.
+    try testing.expect(dl.StartRead(fh, &buf, buf.len, first));
+    try testing.expect(dl.Close(fh));
+    try testing.expectEqual(dos.RequestState.back, first.state);
+    try testing.expectEqual(@as(isize, 7), first.result);
+    const other = dl.Open("FS:other", dos.MODE_OLDFILE).?;
+    try testing.expect(dl.StartRead(other, &buf, buf.len, second));
+    calls = FakeFs.calls;
+    dl.FreeDosObject(dos.DOS_REQUEST, second);
+    try testing.expectEqual(calls + 1, FakeFs.calls);
+    try testing.expectEqual(@as(?*dos.DosRequest, null), other.requests);
+    try testing.expect(dl.Close(other));
+    dl.FreeDosObject(dos.DOS_REQUEST, first);
+    try tearDown(db);
+}
+
 test "LockRecord, UnLockRecord, LockRecords, UnLockRecords: the packets, the unwinding, the error kept" {
     const db = try setUp();
     defer kexec.deinit();
@@ -1641,10 +1738,17 @@ const RamFs = struct {
     var dl: *interface.DosBase = undefined;
 
     fn wait(proc: *Process, sys: *ExecBase) callconv(.c) *exec.Message {
-        const pkt = DosPacket.fromMessage(sys.GetMsg(&port).?);
+        serveOne();
+        return sys.GetMsg(&proc.msg_port).?;
+    }
+
+    /// The oldest packet at the port answered, back to where it was sent
+    /// from: the handler's turn, for a request that waits at a port of its
+    /// own.
+    fn serveOne() void {
+        const pkt = DosPacket.fromMessage(kexec.GetMsg(kexec.SysBase, &port).?);
         const reply = disk.answer(pkt);
         dl.ReplyPkt(pkt, reply.res1, reply.res2);
-        return sys.GetMsg(&proc.msg_port).?;
     }
 
     /// A RAM: disk as "RAMT", the test process waiting through it.
@@ -3286,6 +3390,97 @@ test "a console keeps what it read ahead when it is written to" {
     fh.interactive = false;
     try testing.expect(dl.Close(fh));
     try expectContents(dl, "RAMT:c", "abcXYZ");
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
+test "StartRead, StartWrite on a RAM: disk: reads one after another, writes in order, ports of their own, read-ahead given up" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    var data: [1500]u8 = undefined;
+    for (&data, 0..) |*b, i| b.* = @truncate(i * 7 + 1);
+    try fileWith(dl, "RAMT:a", &data);
+    const in = dl.Open("RAMT:a", dos.MODE_OLDFILE).?;
+    const out = dl.Open("RAMT:b", dos.MODE_NEWFILE).?;
+    const one = try allocRequest(dl, null);
+    const two = try allocRequest(dl, null);
+    try testing.expect(one.own_port and two.own_port);
+    try testing.expect(one.port != two.port);
+    var piece: [2][500]u8 = undefined;
+
+    // Two reads out on one handle: the second from where the first ends.
+    try testing.expect(dl.StartRead(in, &piece[0], 500, one));
+    try testing.expect(dl.StartRead(in, &piece[1], 500, two));
+    RamFs.serveOne();
+    RamFs.serveOne();
+    try testing.expectEqual(@as(isize, 500), dl.WaitRequest(two));
+    try testing.expectEqual(@as(isize, 500), dl.WaitRequest(one));
+    try testing.expectEqualSlices(u8, data[0..500], &piece[0]);
+    try testing.expectEqualSlices(u8, data[500..1000], &piece[1]);
+
+    // Two writes out: in order. Then the rest with Read and Write, which
+    // come after them.
+    try testing.expect(dl.StartWrite(out, &piece[0], 500, one));
+    try testing.expect(dl.StartWrite(out, &piece[1], 500, two));
+    RamFs.serveOne();
+    RamFs.serveOne();
+    try testing.expectEqual(@as(isize, 500), dl.WaitRequest(one));
+    try testing.expectEqual(@as(isize, 500), dl.WaitRequest(two));
+    try testing.expectEqual(@as(isize, 500), dl.Read(in, &piece[0], 500));
+    try testing.expectEqual(@as(isize, 500), dl.Write(out, &piece[0], 500));
+    try testing.expect(dl.StartRead(in, &piece[1], 500, one)); // the end
+    RamFs.serveOne();
+    try testing.expectEqual(@as(isize, 0), dl.WaitRequest(one));
+    try testing.expect(dl.Close(out));
+    try testing.expect(dl.Close(in));
+    const copy = dl.Open("RAMT:b", dos.MODE_OLDFILE).?;
+    var back: [1600]u8 = undefined;
+    try testing.expectEqual(@as(isize, 1500), dl.Read(copy, &back, back.len));
+    try testing.expectEqualSlices(u8, &data, back[0..1500]);
+
+    // What the buffer read ahead is given up, so a request reads all it
+    // asks for from the caller's position.
+    try testing.expectEqual(@as(i64, 1500), dl.Seek(copy, 0, dos.OFFSET_BEGINNING));
+    try testing.expectEqual(@as(i32, data[0]), dl.FGetC(copy));
+    try testing.expect(dl.StartRead(copy, &piece[0], 500, two));
+    RamFs.serveOne();
+    try testing.expectEqual(@as(isize, 500), dl.WaitRequest(two));
+    try testing.expectEqualSlices(u8, data[1..501], &piece[0]);
+    try testing.expect(dl.Close(copy));
+
+    dl.FreeDosObject(dos.DOS_REQUEST, one);
+    dl.FreeDosObject(dos.DOS_REQUEST, two);
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
+test "StartRead on a console: what was typed ahead is the answer, at once" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    try fileWith(dl, "RAMT:c", "abc");
+    const fh = dl.Open("RAMT:c", dos.MODE_READWRITE).?;
+    fh.interactive = true; // as if a console
+    const request = try allocRequest(dl, null);
+    var buf: [8]u8 = undefined;
+    try testing.expectEqual(@as(i32, 'a'), dl.FGetC(fh));
+    try testing.expect(dl.StartRead(fh, &buf, buf.len, request));
+    try testing.expectEqual(@as(?*exec.Node, null), RamFs.port.msg_list.first()); // no packet
+    try testing.expect(dl.CheckRequest(request));
+    try testing.expectEqual(@as(isize, 2), dl.WaitRequest(request));
+    try testing.expectEqualStrings("bc", buf[0..2]);
+    fh.interactive = false;
+    try testing.expect(dl.Close(fh));
+    dl.FreeDosObject(dos.DOS_REQUEST, request);
     RamFs.disk.deinit();
     try tearDown(db);
 }

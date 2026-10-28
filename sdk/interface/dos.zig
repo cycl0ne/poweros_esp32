@@ -166,6 +166,10 @@ pub const LVO = struct {
     pub const ReadLink = libraries.lvo(149);
     pub const FormatTags = libraries.lvo(150);
     pub const CopyFH = libraries.lvo(151);
+    pub const StartRead = libraries.lvo(152);
+    pub const StartWrite = libraries.lvo(153);
+    pub const CheckRequest = libraries.lvo(154);
+    pub const WaitRequest = libraries.lvo(155);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -319,6 +323,10 @@ pub const Fn = struct {
     pub const ReadLink = *const fn (*DosBase, *exec.MsgPort, ?*dos.FileLock, [*:0]const u8, [*]u8, u32) callconv(.c) i32;
     pub const FormatTags = *const fn (*DosBase, [*:0]const u8, ?[*:0]const u8, u32, ?[*]const utility.TagItem) callconv(.c) bool;
     pub const CopyFH = *const fn (*DosBase, ?*dos.FileHandle, ?*dos.FileHandle, i64) callconv(.c) i64;
+    pub const StartRead = *const fn (*DosBase, ?*dos.FileHandle, [*]u8, isize, ?*dos.DosRequest) callconv(.c) bool;
+    pub const StartWrite = *const fn (*DosBase, ?*dos.FileHandle, [*]const u8, isize, ?*dos.DosRequest) callconv(.c) bool;
+    pub const CheckRequest = *const fn (*DosBase, ?*dos.DosRequest) callconv(.c) bool;
+    pub const WaitRequest = *const fn (*DosBase, ?*dos.DosRequest) callconv(.c) isize;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1245,5 +1253,28 @@ pub const DosBase = opaque {
     /// copies them itself. 64 bits on every machine.
     pub fn CopyFH(self: *DosBase, to: ?*dos.FileHandle, from: ?*dos.FileHandle, length: i64) i64 {
         return libraries.call(self, LVO.CopyFH, Fn.CopyFH, .{ to, from, length });
+    }
+
+    /// ACTION_READ of `length` bytes into `buffer` sent to `file`'s handler on
+    /// `request` (AllocDosObject(DOS_REQUEST)), not waited for; the handle's
+    /// read-ahead bytes answer it at once. True, or false with IoErr.
+    pub fn StartRead(self: *DosBase, file: ?*dos.FileHandle, buffer: [*]u8, length: isize, request: ?*dos.DosRequest) bool {
+        return libraries.call(self, LVO.StartRead, Fn.StartRead, .{ file, buffer, length, request });
+    }
+
+    /// The same with ACTION_WRITE; the handle's waiting bytes go first.
+    pub fn StartWrite(self: *DosBase, file: ?*dos.FileHandle, buffer: [*]const u8, length: isize, request: ?*dos.DosRequest) bool {
+        return libraries.call(self, LVO.StartWrite, Fn.StartWrite, .{ file, buffer, length, request });
+    }
+
+    /// Whether `request` is back, without waiting.
+    pub fn CheckRequest(self: *DosBase, request: ?*dos.DosRequest) bool {
+        return libraries.call(self, LVO.CheckRequest, Fn.CheckRequest, .{request});
+    }
+
+    /// `request`'s answer, waited for: Read's or Write's, the count or -1
+    /// with IoErr.
+    pub fn WaitRequest(self: *DosBase, request: ?*dos.DosRequest) isize {
+        return libraries.call(self, LVO.WaitRequest, Fn.WaitRequest, .{request});
     }
 };

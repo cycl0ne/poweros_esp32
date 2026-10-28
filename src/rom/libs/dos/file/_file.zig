@@ -46,6 +46,12 @@
 //! Close flush. So buffered and unbuffered calls mix on one handle, and
 //! Seek(fh, 0, OFFSET_CURRENT) is always the caller's position.
 //!
+//! StartRead and StartWrite send a READ or a WRITE without waiting
+//! (_request.zig). Every call here that sends the handler a packet about
+//! the handle waits for the handle's requests out first, so its packet
+//! comes after theirs, and Close, CopyFH, ExamineFH, Flush and ChangeMode
+//! wait for them before anything else.
+//!
 //! Line buffering (BUF_LINE, where every handle starts) writes out at '\n'
 //! or '\r' - on consoles only, where someone is waiting to see the line; to
 //! a file it is BUF_FULL. The end isn't sticky: FGetC asks the handler
@@ -62,6 +68,7 @@ const sdk = @import("sdk");
 const packets = @import("../packet/_packet.zig");
 const process = @import("../process/_process.zig");
 const locks = @import("../lock/_lock.zig");
+const _request = @import("_request.zig");
 const DosBase = @import("../dos_base.zig").DosBase;
 const dos = sdk.dos;
 const FileHandle = dos.FileHandle;
@@ -142,6 +149,7 @@ pub fn fileAction(db: *DosBase, file: ?*FileHandle, action: ActionCode, arg2: is
     const dos_lib = db.iface();
     const fh = file orelse return failWith(db, dos.ERROR_INVALID_LOCK, -1);
     const port = fh.task orelse return failWith(db, dos.ERROR_INVALID_LOCK, -1);
+    _request.settle(db, fh);
     const answer = packets.exchange(db.sys_base, port, @intFromEnum(action), .{ locks.asArg(fh), arg2, arg3, 0, 0 }) orelse
         return failWith(db, dos.ERROR_NO_FREE_STORE, -1);
     if (answer.res1 < 0) _ = dos_lib.SetIoErr(answer.res2);
@@ -208,6 +216,7 @@ pub fn rawSeek(db: *DosBase, fh: *FileHandle, position: i64, mode: i32) i64 {
 /// `ERROR_NO_FREE_STORE` when no packet can be sent.
 pub fn positionAction(db: *DosBase, fh: *FileHandle, action: ActionCode, position: i64, mode: i32) i64 {
     const port = fh.task orelse return failWith(db, dos.ERROR_INVALID_LOCK, -1);
+    _request.settle(db, fh);
     var sent: dos.PacketArgs = .{ .raw = @splat(0) };
     sent.seek = .{ .fh = fh, .position = position, .mode = mode };
     const answer = packets.exchangeArgs(db.sys_base, port, @intFromEnum(action), sent) orelse
@@ -232,6 +241,7 @@ pub fn positionAction(db: *DosBase, fh: *FileHandle, action: ActionCode, positio
 pub fn consoleAction(db: *DosBase, fh: *FileHandle, action: ActionCode, arg: isize) bool {
     const dos_lib = db.iface();
     const port = fh.task orelse return failWith(db, dos.ERROR_INVALID_LOCK, 0) != 0;
+    _request.settle(db, fh);
     const answer = packets.exchange(db.sys_base, port, @intFromEnum(action), .{ arg, 0, 0, 0, 0 }) orelse
         return failWith(db, dos.ERROR_NO_FREE_STORE, 0) != 0;
     if (answer.res1 == 0 and answer.res2 != 0) _ = dos_lib.SetIoErr(answer.res2);
@@ -252,6 +262,7 @@ pub fn handleLock(db: *DosBase, file: ?*FileHandle, action: ActionCode) ?*dos.Fi
     const dos_lib = db.iface();
     const fh = file orelse return @ptrFromInt(@as(usize, @bitCast(failWith(db, dos.ERROR_INVALID_LOCK, 0))));
     const port = fh.task orelse return @ptrFromInt(@as(usize, @bitCast(failWith(db, dos.ERROR_INVALID_LOCK, 0))));
+    _request.settle(db, fh);
     const answer = packets.exchange(db.sys_base, port, @intFromEnum(action), .{ locks.asArg(fh), 0, 0, 0, 0 }) orelse
         return @ptrFromInt(@as(usize, @bitCast(failWith(db, dos.ERROR_NO_FREE_STORE, 0))));
     if (answer.res1 == 0) _ = dos_lib.SetIoErr(answer.res2);

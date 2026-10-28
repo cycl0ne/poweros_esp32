@@ -387,6 +387,10 @@ pub const FileHandle = extern struct {
     /// The last character given (-1: the end), for UnGetC(-1); NO_CHAR
     /// when there is none to push back.
     last: i16 = NO_CHAR,
+    /// The requests out on the handle (StartRead, StartWrite), the oldest
+    /// first: every other call that reads, writes, moves, asks about or
+    /// closes it waits for them.
+    requests: ?*DosRequest = null,
 
     pub const NO_CHAR: i16 = -2;
 };
@@ -423,6 +427,38 @@ pub const DosPacket = extern struct {
     pub fn getAction(pkt: *const DosPacket) ActionCode {
         return @enumFromInt(pkt.action);
     }
+};
+
+/// Where a DosRequest is.
+pub const RequestState = enum(u8) {
+    /// Never started, or back and waited for.
+    idle,
+    /// Sent to the handler, its answer not taken yet.
+    out,
+    /// Its answer taken off its port - by CheckRequest, or by a call that
+    /// waited for the handle's requests - for WaitRequest to give.
+    back,
+};
+
+/// A read or a write started on an open file and waited for later
+/// (StartRead, StartWrite, CheckRequest, WaitRequest), from
+/// AllocDosObject(DOS_REQUEST). It is the allocating task's: its own port
+/// signals that task.
+pub const DosRequest = extern struct {
+    /// What the handler gets; it comes back to `port`.
+    packet: DosPacket = .{},
+    /// Where it comes back: ADO_ReplyPort's, or one dos made for it.
+    port: ?*MsgPort = null,
+    /// The handle it is out on, and the next of that handle's requests
+    /// out, in the order they were started.
+    fh: ?*FileHandle = null,
+    next: ?*DosRequest = null,
+    /// Its answer once back: Read's or Write's count, or -1 with `code`.
+    result: isize = 0,
+    code: i32 = 0,
+    state: RequestState = .idle,
+    /// dos made `port`, and FreeDosObject deletes it.
+    own_port: bool = false,
 };
 
 /// pr_PktWait: waits for the next message at the process's msg_port and

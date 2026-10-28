@@ -521,4 +521,16 @@ bool FormatTags([*:0]const u8 drive, ?[*:0]const u8 name, u32 dos_type, ?[*]cons
 /// IoErr - ERROR_ACTION_NOT_KNOWN when the handler cannot, and the caller
 /// copies them itself. 64 bits on every machine.
 i64 CopyFH(?*dos.FileHandle to, ?*dos.FileHandle from, i64 length)
+// Files, read and written without waiting
+/// ACTION_READ of `length` bytes into `buffer` sent to `file`'s handler on
+/// `request` (AllocDosObject(DOS_REQUEST)), not waited for; the handle's
+/// read-ahead bytes answer it at once. True, or false with IoErr.
+bool StartRead(?*dos.FileHandle file, [*]u8 buffer, isize length, ?*dos.DosRequest request)
+/// The same with ACTION_WRITE; the handle's waiting bytes go first.
+bool StartWrite(?*dos.FileHandle file, [*]const u8 buffer, isize length, ?*dos.DosRequest request)
+/// Whether `request` is back, without waiting.
+bool CheckRequest(?*dos.DosRequest request)
+/// `request`'s answer, waited for: Read's or Write's, the count or -1
+/// with IoErr.
+isize WaitRequest(?*dos.DosRequest request)
 ##end

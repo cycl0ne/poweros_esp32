@@ -225,6 +225,8 @@ pub const DOS_FIB: u32 = 2;
 pub const DOS_STDPKT: u32 = 3;
 pub const DOS_CLI: u32 = 4;
 pub const DOS_RDARGS: u32 = 5;
+/// A DosRequest, for StartRead and StartWrite (ADO_ReplyPort).
+pub const DOS_REQUEST: u32 = 6;
 
 // Errors from IoErr().
 pub const ERROR_NO_FREE_STORE: i32 = 103;
@@ -322,6 +324,8 @@ pub const RETURN_ERROR: i32 = 10;
 pub const RETURN_FAIL: i32 = 20;
 
 pub const DosPacket = dosextens.DosPacket;
+pub const DosRequest = dosextens.DosRequest;
+pub const RequestState = dosextens.RequestState;
 pub const PacketArgs = dosextens.PacketArgs;
 pub const ActionCode = dosextens.ActionCode;
 pub const WaitArgs = dosextens.WaitArgs;
@@ -527,3 +531,5 @@ pub const SYS_ScriptFile = dostags.SYS_ScriptFile;
 pub const SYS_Window = dostags.SYS_Window;
 pub const FORMAT_Dummy = dostags.FORMAT_Dummy;
 pub const FORMAT_BlockSize = dostags.FORMAT_BlockSize;
+pub const ADO_Dummy = dostags.ADO_Dummy;
+pub const ADO_ReplyPort = dostags.ADO_ReplyPort;

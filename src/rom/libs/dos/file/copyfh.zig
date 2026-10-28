@@ -6,6 +6,7 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const DosBase = @import("../dos_base.zig").DosBase;
 const _file = @import("_file.zig");
+const _request = @import("_request.zig");
 const packets = @import("../packet/_packet.zig");
 const failWith = _file.failWith;
 const FileHandle = dos.FileHandle;
@@ -79,6 +80,8 @@ pub fn CopyFH(db: *DosBase, to: ?*FileHandle, from: ?*FileHandle, length: i64) i
     if (length < 0) return failWith(db, dos.ERROR_BAD_NUMBER, -1);
     if (in.task != port) return failWith(db, dos.ERROR_ACTION_NOT_KNOWN, -1);
     if (length == 0) return 0;
+    _request.settle(db, in);
+    _request.settle(db, out);
     if (!_file.flush(db, in) or !_file.flush(db, out)) return -1;
     var sent: dos.PacketArgs = .{ .raw = @splat(0) };
     sent.copy = .{ .to = out, .from = in, .length = @intCast(length) };
