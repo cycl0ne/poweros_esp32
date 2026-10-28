@@ -5,9 +5,9 @@
 //! An imageclass subclass whose one attribute is which picture it is.
 //! It draws in the largest square that fits the box it is given, in the
 //! middle, with smooth edges, through a `shapes.Painter` - the pictures
-//! themselves are in `glyphs.zig`. The painter's shadows are made for
-//! each drawing and given back after it; without the memory for them the
-//! picture is drawn without its shadow.
+//! themselves are in `glyphs.zig`. The painter's buffer is made for each
+//! drawing and given back after it; without the memory for it nothing is
+//! drawn.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -32,6 +32,7 @@ pub const Data = extern struct {
 pub const Library = gadgets.ClassLibrary(.{
     .name = command.COMMAND_CLASS,
     .version = 1,
+    .revision = 1,
     .date = "28.10.2026",
     .super = classusr.IMAGECLASS,
     .Instance = Data,

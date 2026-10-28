@@ -238,28 +238,6 @@ pub const Shape = union(enum) {
     /// Straight edges through its corners, even-odd.
     poly: struct { corners: [max_corners][2]f32, count: u8 },
 
-    /// The shape moved by (`dx`, `dy`).
-    pub fn moved(s: Shape, dx: f32, dy: f32) Shape {
-        var out = s;
-        switch (out) {
-            .box => |*b| {
-                b.x0 += dx;
-                b.x1 += dx;
-                b.y0 += dy;
-                b.y1 += dy;
-            },
-            .arc => |*a| {
-                a.cx += dx;
-                a.cy += dy;
-            },
-            .poly => |*p| for (p.corners[0..p.count]) |*c| {
-                c[0] += dx;
-                c[1] += dy;
-            },
-        }
-        return out;
-    }
-
     /// The shape set in by `d` pixels all round: a ring's band narrower
     /// and a part of one shorter at its ends, a straight edge moved in
     /// along its normal and the corners where the moved edges meet.
@@ -343,76 +321,74 @@ fn normal(a: [2]f32, b: [2]f32, sign: f32) [2]f32 {
     return .{ -sign * ey / length, sign * ex / length };
 }
 
-/// A shape made ready to be asked of many points: an arc's ends turned
-/// into directions once.
-const Ready = struct {
-    shape: Shape,
-    /// The arc's sweep: all the way round, more than half of it, and the
-    /// directions of its ends, with y upward.
+/// An arc's sweep worked out once, to be asked of many points: all the
+/// way round, more than half of it, and the directions of its ends, with y
+/// upward. Every other shape needs nothing worked out.
+const Turn = struct {
     whole: bool = true,
     wide: bool = false,
     start: [2]f32 = .{ 0, 0 },
     end: [2]f32 = .{ 0, 0 },
 
-    fn of(s: Shape) Ready {
-        var r = Ready{ .shape = s };
-        if (s == .arc) {
+    fn of(s: *const Shape) Turn {
+        var t = Turn{};
+        if (s.* == .arc) {
             const sweep = s.arc.to - s.arc.from;
             if (sweep < 360) {
                 const from = s.arc.from * (pi / 180.0);
                 const to = s.arc.to * (pi / 180.0);
-                r.whole = false;
-                r.wide = sweep > 180;
-                r.start = .{ @cos(from), @sin(from) };
-                r.end = .{ @cos(to), @sin(to) };
+                t.whole = false;
+                t.wide = sweep > 180;
+                t.start = .{ @cos(from), @sin(from) };
+                t.end = .{ @cos(to), @sin(to) };
             }
         }
-        return r;
-    }
-
-    /// Whether the point (`x`, `y`) is inside.
-    fn contains(r: *const Ready, x: f32, y: f32) bool {
-        switch (r.shape) {
-            .box => |b| {
-                if (x < b.x0 or x >= b.x1 or y < b.y0 or y >= b.y1) return false;
-                const radius = @min(b.radius, @min(b.x1 - b.x0, b.y1 - b.y0) / 2);
-                if (radius <= 0) return true;
-                // Nearer a corner than its radius, inside its quarter circle.
-                const dx = x - @min(@max(x, b.x0 + radius), b.x1 - radius);
-                const dy = y - @min(@max(y, b.y0 + radius), b.y1 - radius);
-                return dx * dx + dy * dy <= radius * radius;
-            },
-            .arc => |a| {
-                if (a.to <= a.from) return false;
-                const dx = x - a.cx;
-                const dy = a.cy - y;
-                const d2 = dx * dx + dy * dy;
-                if (d2 > a.radius * a.radius or d2 < a.inner * a.inner) return false;
-                if (r.whole) return true;
-                const after_start = r.start[0] * dy - r.start[1] * dx;
-                const before_end = dx * r.end[1] - dy * r.end[0];
-                if (!r.wide) return after_start >= 0 and before_end >= 0;
-                // More than half way round: outside only what lies between
-                // the end and the start, the short way.
-                return !(after_start < 0 and before_end < 0);
-            },
-            .poly => |p| {
-                if (p.count < 3) return false;
-                var inside = false;
-                var j: usize = p.count - 1;
-                for (p.corners[0..p.count], 0..) |a, i| {
-                    const b = p.corners[j];
-                    if ((a[1] > y) != (b[1] > y)) {
-                        const cross = a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
-                        if (x < cross) inside = !inside;
-                    }
-                    j = i;
-                }
-                return inside;
-            },
-        }
+        return t;
     }
 };
+
+/// Whether the point (`x`, `y`) is inside `s`, whose arc's sweep is `t`.
+fn contains(s: *const Shape, t: *const Turn, x: f32, y: f32) bool {
+    switch (s.*) {
+        .box => |*b| {
+            if (x < b.x0 or x >= b.x1 or y < b.y0 or y >= b.y1) return false;
+            const radius = @min(b.radius, @min(b.x1 - b.x0, b.y1 - b.y0) / 2);
+            if (radius <= 0) return true;
+            // Nearer a corner than its radius, inside its quarter circle.
+            const dx = x - @min(@max(x, b.x0 + radius), b.x1 - radius);
+            const dy = y - @min(@max(y, b.y0 + radius), b.y1 - radius);
+            return dx * dx + dy * dy <= radius * radius;
+        },
+        .arc => |*a| {
+            if (a.to <= a.from) return false;
+            const dx = x - a.cx;
+            const dy = a.cy - y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 > a.radius * a.radius or d2 < a.inner * a.inner) return false;
+            if (t.whole) return true;
+            const after_start = t.start[0] * dy - t.start[1] * dx;
+            const before_end = dx * t.end[1] - dy * t.end[0];
+            if (!t.wide) return after_start >= 0 and before_end >= 0;
+            // More than half way round: outside only what lies between
+            // the end and the start, the short way.
+            return !(after_start < 0 and before_end < 0);
+        },
+        .poly => |*p| {
+            if (p.count < 3) return false;
+            var inside = false;
+            var j: usize = p.count - 1;
+            for (p.corners[0..p.count], 0..) |a, i| {
+                const b = p.corners[j];
+                if ((a[1] > y) != (b[1] > y)) {
+                    const cross = a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
+                    if (x < cross) inside = !inside;
+                }
+                j = i;
+            }
+            return inside;
+        },
+    }
+}
 
 /// What a shape is filled with: a colour, or a gradient laid in the
 /// shape's own box, as `graphics.FillStyle` lays one. Either may be
@@ -616,12 +592,12 @@ pub const Painter = struct {
 
     /// A shape put down in `paint`.
     pub fn fill(p: *Painter, s: Shape, paint: Paint) void {
-        p.lay(&.{s}, paint);
+        p.lay(&.{s}, paint, 0, 0);
     }
 
     /// Shapes in the ink: what stands on the ground.
     pub fn ink(p: *Painter, list: []const Shape) void {
-        p.lay(list, .{ .colour = p.look.ink });
+        p.lay(list, .{ .colour = p.look.ink }, 0, 0);
     }
 
     /// A line of text on paper, or a stroke: a bar from `x0` to `x1` at
@@ -646,39 +622,42 @@ pub const Painter = struct {
         const rim: f32 = @floatFromInt(p.rim);
         if (p.detail and !how.no_shadow and !p.look.disabled) {
             const n = p.frame.size;
-            const dx: f32 = @floatFromInt(@divTrunc(n + 24, 48));
-            const dy: f32 = @floatFromInt(@max(1, @divTrunc(n + 12, 24)));
-            var moved: [max_shapes]Shape = undefined;
-            const count = @min(list.len, max_shapes);
-            for (list[0..count], moved[0..count]) |s, *m| m.* = s.moved(dx, dy);
-            p.lay(moved[0..count], .{ .colour = shadow_colour });
+            const dx = @divTrunc(n + 24, 48);
+            const dy = @max(1, @divTrunc(n + 12, 24));
+            p.lay(list, .{ .colour = shadow_colour }, dx, dy);
         }
-        p.lay(list, .{ .colour = rim_colour });
-        for (list) |s| p.lay(&.{s.inset(rim)}, body);
+        p.lay(list, .{ .colour = rim_colour }, 0, 0);
+        for (list) |*s| p.lay(&.{s.inset(rim)}, body, 0, 0);
         if (p.detail and !how.no_gloss and !how.flat and !p.look.disabled) {
-            for (list) |s| p.lay(&.{s.inset(rim)}, gloss);
+            for (list) |*s| p.lay(&.{s.inset(rim)}, gloss, 0, 0);
         }
     }
 
     /// The most shapes laid down together.
     pub const max_shapes = 16;
 
-    /// `list` laid down in `paint` as one: a pixel is covered by the share
-    /// of its sixteen points inside any of the shapes, so where two meet
-    /// nothing is laid twice, and a gradient runs over the box round all
-    /// of them.
-    fn lay(p: *Painter, list: []const Shape, paint: Paint) void {
+    /// `list` laid down in `paint` as one, moved by (`dx`, `dy`) pixels: a
+    /// pixel is covered by the share of its sixteen points inside any of
+    /// the shapes, so where two meet nothing is laid twice, and a gradient
+    /// runs over the box round all of them.
+    ///
+    /// The shapes are read where they are, not copied: the painter draws
+    /// in a gadget's GM_RENDER, deep in intuition's input task.
+    fn lay(p: *Painter, list: []const Shape, paint: Paint, dx: i32, dy: i32) void {
         if (list.len == 0) return;
         const buffer = p.bufferOf() orelse return;
         const n = p.frame.size;
-        var ready: [max_shapes]Ready = undefined;
+        const shift_x: f32 = @floatFromInt(dx);
+        const shift_y: f32 = @floatFromInt(dy);
+        var turns: [max_shapes]Turn = undefined;
         const count = @min(list.len, max_shapes);
         var box = list[0].bounds();
-        for (list[0..count], ready[0..count]) |s, *r| {
-            r.* = Ready.of(s);
+        for (list[0..count], turns[0..count]) |*s, *t| {
+            t.* = Turn.of(s);
             const b = s.bounds();
             box = .{ @min(box[0], b[0]), @min(box[1], b[1]), @max(box[2], b[2]), @max(box[3], b[3]) };
         }
+        box = .{ box[0] + shift_x, box[1] + shift_y, box[2] + shift_x, box[3] + shift_y };
         // The pixels the box touches, within the square.
         const left: i32 = @max(0, @as(i32, @intFromFloat(@floor(box[0]))));
         const top: i32 = @max(0, @as(i32, @intFromFloat(@floor(box[1]))));
@@ -694,9 +673,9 @@ pub const Painter = struct {
             while (x < right) : (x += 1) {
                 var inside: u32 = 0;
                 for (0..4) |j| for (0..4) |i| {
-                    const sx = @as(f32, @floatFromInt(x)) + @as(f32, @floatFromInt(2 * i + 1)) / 8;
-                    const sy = @as(f32, @floatFromInt(y)) + @as(f32, @floatFromInt(2 * j + 1)) / 8;
-                    for (ready[0..count]) |*r| if (r.contains(sx, sy)) {
+                    const sx = @as(f32, @floatFromInt(x - dx)) + @as(f32, @floatFromInt(2 * i + 1)) / 8;
+                    const sy = @as(f32, @floatFromInt(y - dy)) + @as(f32, @floatFromInt(2 * j + 1)) / 8;
+                    for (list[0..count], turns[0..count]) |*s, *t| if (contains(s, t, sx, sy)) {
                         inside += 1;
                         break;
                     };
