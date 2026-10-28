@@ -22,8 +22,10 @@
 //! room ends in three dots. The cover is the picture the
 //! tags hold, or one lying beside the file (cover.zig), kept square and
 //! as tall as the room beside it, from 64 to 160 pixels: it grows with the
-//! window, read once for each song and scaled each time the window is
-//! sized. Then a slider
+//! window, read once for each song and scaled again when a sizing gives it
+//! another size, with round corners in a sunk edge - and where a song has none,
+//! a note on the ground (media.image's `MEDIA_NOTE`). A press on it shows
+//! the cover at its own size in a window of its own (big.zig). Then a slider
 //! across that is where the song is, which a drag moves, the time heard
 //! before it and the song's length after it - a press on the length shows
 //! what is left instead (`-3:16`); both keep the room their widest text
@@ -76,6 +78,13 @@
 //! WritePixelArray, which converts it to the display's form, and shown
 //! with QueueGadgetRefresh. While nothing plays it settles for two seconds
 //! and then rests.
+//!
+//! **The sound is the window's to keep going**: its buffers are refilled
+//! by the window's loop, so nothing the loop does may take long. A sizing
+//! says `IDCMP_NEWSIZE` at every step, and a step can come while the last
+//! one is still being drawn; the canvases follow the last size once the
+//! messages there are have been read, and the loop is back at the sound
+//! between one step and the next.
 //!
 //! **A song is shown before it is heard**: its names and its cover first,
 //! then its sound - reading a large cover takes the S3 a moment, which
@@ -131,9 +140,10 @@ const Engine = engine_file.Engine;
 const visual = @import("visual.zig");
 const Visual = visual.Visual;
 const cover = @import("cover.zig");
+const big_window = @import("big.zig");
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.8";
+const VERSION = "1.9";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
@@ -158,6 +168,7 @@ const ID_SHUFFLE = 8;
 const ID_REPEAT = 9;
 const ID_MUTE = 10;
 const ID_LENGTH = 11;
+const ID_COVER = 12;
 
 /// A look every 40 ms; the time beside the slider every sixth.
 const look_period = 40;
@@ -310,6 +321,15 @@ const App = struct {
     cover: *Object = undefined,
     /// The song's cover as read, shown from there at the cover's size.
     kept: cover.Kept = .{},
+    /// How many covers have been read: which one the large window shows.
+    covers: usize = 0,
+    /// The cover large, while its window is open.
+    big: big_window.Big = .{},
+    /// The note where a song has no cover, if it could be made.
+    note: ?*Object = null,
+    /// The screen the window is on, and its pens.
+    screen: *intuition.Screen = undefined,
+    dri: ?*sc.DrawInfo = null,
     position: *Object = undefined,
     /// The time heard, before the slider, and the length after it.
     time: *Object = undefined,
@@ -758,8 +778,9 @@ const App = struct {
     }
 
     /// The cover read and drawn: the picture the tags hold, one beside
-    /// the song, or the dark ground.
+    /// the song, or the note.
     fn showCover(app: *App, picture: ?*const ac.AudioPicture, name: [*:0]const u8) void {
+        app.covers +%= 1;
         var value: usize = 0;
         _ = app.ib.GetAttr(cv.CANVAS_RastPort, app.cover, &value);
         if (value == 0) return;
@@ -768,10 +789,23 @@ const App = struct {
     }
 
     /// The canvas made as big as the cover's box, and the cover drawn into
-    /// it again.
+    /// it again when that changed its size: the canvas keeps its picture
+    /// otherwise.
     fn fitCover(app: *App) void {
+        const before = app.canvasSize(app.cover);
         app.set(app.cover, &.{ pair(cv.CANVAS_Width, 0), pair(cv.CANVAS_Height, 0), .{} });
+        const after = app.canvasSize(app.cover);
+        if (after.width == before.width and after.height == before.height) return;
         app.drawCover();
+    }
+
+    /// How large a canvas's picture is.
+    fn canvasSize(app: *App, canvas: *Object) struct { width: usize, height: usize } {
+        var width: usize = 0;
+        var height: usize = 0;
+        _ = app.ib.GetAttr(cv.CANVAS_Width, canvas, &width);
+        _ = app.ib.GetAttr(cv.CANVAS_Height, canvas, &height);
+        return .{ .width = width, .height = height };
     }
 
     /// The kept cover scaled into the canvas, as large as its box.
@@ -785,8 +819,42 @@ const App = struct {
         if (value == 0) return;
         const side: i32 = @intCast(@min(width, height, cover.kept_size));
         if (side == 0) return;
-        app.kept.show(app.gb, @ptrFromInt(value), side);
+        app.kept.show(app.gb, @ptrFromInt(value), side, .{ .ib = app.ib, .dri = app.dri, .note = app.note });
         app.ib.QueueGadgetRefresh(app.cover);
+    }
+
+    /// The cover let go of: shown at its own size in a window of its own,
+    /// when there is one to show and the press ended on it.
+    fn coverPressed(app: *App) void {
+        const dt = app.dt orelse return;
+        var x: usize = 0;
+        var y: usize = 0;
+        var width: usize = 0;
+        var height: usize = 0;
+        _ = app.ib.GetAttr(cv.CANVAS_X, app.cover, &x);
+        _ = app.ib.GetAttr(cv.CANVAS_Y, app.cover, &y);
+        _ = app.ib.GetAttr(cv.CANVAS_Width, app.cover, &width);
+        _ = app.ib.GetAttr(cv.CANVAS_Height, app.cover, &height);
+        const side: isize = @intCast(@min(width, height, cover.kept_size));
+        const at_x: isize = @bitCast(x);
+        const at_y: isize = @bitCast(y);
+        if (at_x < 0 or at_y < 0 or at_x >= side or at_y >= side) return;
+        if (app.count == 0) return;
+        const name = app.list[app.current] orelse return;
+        const tags = app.tagsOf(name);
+        const source: cover.Source = switch (app.kept.from) {
+            .none => return,
+            .tags => .{ .held = tags.picture orelse return },
+            .beside => .{ .file = app.kept.file() orelse return },
+        };
+        const title = if (tags.album[0] != 0) tags.album else tags.title;
+        if (!app.big.show(.{ .ib = app.ib, .dt = dt, .screen = app.screen }, app.covers, source, title)) app.ib.DisplayBeep(app.screen);
+    }
+
+    /// What the large cover's window says; it is closed when it asks.
+    fn bigMessages(app: *App) void {
+        const dt = app.dt orelse return;
+        if (!app.big.messages(.{ .ib = app.ib, .dt = dt, .screen = app.screen })) app.big.close(app.ib);
     }
 
     /// The chapter being heard, when the song has chapters and it is
@@ -1132,6 +1200,7 @@ const App = struct {
                 app.shown_second = ~@as(u32, 0);
                 app.showTime();
             },
+            ID_COVER => app.coverPressed(),
             else => {},
         }
     }
@@ -1158,13 +1227,16 @@ const App = struct {
         }
     }
 
-    /// Every message the window has: false when it is to close.
+    /// Every message the window has: false when it is to close. The
+    /// canvases follow a new size once, after the messages: a sizing
+    /// sends one at every step.
     fn windowMessages(app: *App) bool {
         var code: u32 = 0;
         var handle = wc.WmHandleInput{ .code = &code };
+        var sized = false;
         while (true) {
             const word = app.ib.SendMessage(app.object, @ptrCast(&handle));
-            if (word == wc.WMHI_LASTMSG) return true;
+            if (word == wc.WMHI_LASTMSG) break;
             switch (word & wc.WMHI_CLASSMASK) {
                 wc.WMHI_CLOSEWINDOW => return false,
                 wc.WMHI_GADGETUP => app.gadgetUp(word & wc.WMHI_GADGETMASK, code),
@@ -1174,15 +1246,17 @@ const App = struct {
                 },
                 wc.WMHI_IDCMPUPDATE => app.updated(),
                 wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == ' ') app.togglePause(),
-                wc.WMHI_NEWSIZE => {
-                    app.fitCover();
-                    app.fitPicture();
-                    app.wake();
-                },
+                wc.WMHI_NEWSIZE => sized = true,
                 wc.WMHI_ACTIVE => app.readOutputs(),
                 else => {},
             }
         }
+        if (sized) {
+            app.fitCover();
+            app.fitPicture();
+            app.wake();
+        }
+        return true;
     }
 
     fn dropped(app: *App) void {
@@ -1277,11 +1351,13 @@ const App = struct {
             const sound_mask = app.engine.signal();
             const drop_mask = app.drop.signal();
             const asl_mask: u32 = if (app.asl_port) |port| port.sigMask() else 0;
-            const got = app.sys.Wait(@as(u32, @truncate(window_mask)) | sound_mask | app.tick_mask | drop_mask | asl_mask | exec.SIGBREAKF_CTRL_C);
+            const big_mask = app.big.signal(app.ib);
+            const got = app.sys.Wait(@as(u32, @truncate(window_mask)) | sound_mask | app.tick_mask | drop_mask | asl_mask | big_mask | exec.SIGBREAKF_CTRL_C);
             if (got & exec.SIGBREAKF_CTRL_C != 0) return;
             if (got & sound_mask != 0) app.serviceSound();
             if (got & drop_mask != 0) app.dropped();
             if (got & asl_mask != 0) app.answered();
+            if (got & big_mask != 0) app.bigMessages();
             if (!app.windowMessages()) return;
             if (got & app.tick_mask != 0) app.tick();
         }
@@ -1520,6 +1596,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer ib.DisposeObject(app.repeat_picture);
     app.mute_picture = mediaPicture(ib, media.MEDIA_SPEAKER) orelse return noWindow(dl);
     defer ib.DisposeObject(app.mute_picture);
+    // Drawn into the cover where there is none; the ground alone without.
+    app.note = mediaPicture(ib, media.MEDIA_NOTE);
+    defer if (app.note) |note| ib.DisposeObject(note);
 
     // The gadgets: each loose until a layout takes it, and whatever is
     // still loose given back when the window cannot be made.
@@ -1532,6 +1611,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{},
     })) orelse return noWindow(dl);
     app.cover = loose.add(ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_COVER),
+        pair(gc.GA_RelVerify, 1),
         pair(cv.CANVAS_Width, cover_size),
         pair(cv.CANVAS_Height, cover_size),
         .{},
@@ -1633,6 +1714,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // The screen the window opens on, which the menus are laid out for.
     const screen = ib.LockPubScreen(null) orelse return noWindow(dl);
     defer ib.UnlockPubScreen(null, screen);
+    app.screen = screen;
+    app.dri = ib.GetScreenDrawInfo(screen);
+    defer ib.FreeScreenDrawInfo(screen, app.dri);
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         pair(wn.WA_PubScreen, @intFromPtr(screen)),
         pair(wn.WA_Title, @intFromPtr(COMMAND_NAME)),
@@ -1657,6 +1741,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
     app.window = @ptrFromInt(opened);
+    // The large cover's window, closed before this one.
+    defer app.big.close(ib);
     app.fitPicture();
     app.set(app.cover, &.{ pair(cv.CANVAS_Width, 0), pair(cv.CANVAS_Height, 0), .{} });
     app.showCover(null, "");
