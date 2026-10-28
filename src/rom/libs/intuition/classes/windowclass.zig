@@ -15,6 +15,9 @@
 //! what is inside it (`GA_RelWidth`, `GA_RelHeight`) and added, which lays
 //! it out and gives the window its smallest size. Closing the window gives
 //! the layout back to the object, to be added again at the next open.
+//! `WM_RETHINK` lays it out again in the open window as its first
+//! layout did - so the smallest size is set again - and draws the room
+//! aside, in one copy, as a size does.
 //!
 //! `WM_HANDLEINPUT` turns one message into one word and replies to it
 //! there and then - the program never holds a message, so there is
@@ -48,6 +51,7 @@ const Object = classes.Object;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _window = @import("../window/_window.zig");
+const _gadget = @import("../gadget/_gadget.zig");
 
 /// windowclass's part of an object.
 pub const Data = extern struct {
@@ -264,6 +268,24 @@ fn dropBars(ib: *IntuitionBase, p: *Data) void {
     p.scroller_lib = null;
 }
 
+/// The layout measured and placed again in the open window, as when it
+/// was added - so the window's smallest size is the one it fits in now -
+/// the room drawn again in one copy, and the window grown to it where it
+/// is smaller.
+fn rethink(ib: *IntuitionBase, p: *Data) bool {
+    const window = p.window orelse return false;
+    const layout = p.layout orelse return false;
+    const w: *_window.Window = @ptrCast(@alignCast(window));
+    _window.lock(ib);
+    defer _window.unlock(ib);
+    w.layout_width = 0;
+    w.layout_height = 0;
+    _gadget.layoutRange(ib, w, layout, layout, true);
+    _gadget.redrawRoom(ib, w, &.{});
+    _window.fitLayout(ib, w);
+    return true;
+}
+
 /// The window closed; the layout stays the object's.
 fn close(ib: *IntuitionBase, p: *Data) bool {
     const window = p.window orelse return false;
@@ -432,6 +454,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         wc.WM_OPEN => return @intFromPtr(open(ib, own(cl, o.?))),
         wc.WM_CLOSE => return @intFromBool(close(ib, own(cl, o.?))),
+        wc.WM_RETHINK => return @intFromBool(rethink(ib, own(cl, o.?))),
         wc.WM_HANDLEINPUT => {
             const handle: *wc.WmHandleInput = @ptrCast(@alignCast(msg));
             return handleInput(ib, own(cl, o.?), handle.code);

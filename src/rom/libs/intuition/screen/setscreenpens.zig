@@ -33,7 +33,8 @@ const Screen = _screen.Screen;
 ///   them at open; null for the system's.
 /// - `pens` - `NUMDRIPENS` colours, by the `DrawInfo` pens' indexes, read
 ///   and copied; null for the system's pens (a screen) or the built-in
-///   ones (the system).
+///   ones (the system). A `DIMTEXTPEN` of 0 is mixed from the text and
+///   the background, and follows them.
 ///
 /// RESULT:
 /// Nothing.
@@ -79,6 +80,7 @@ const Screen = _screen.Screen;
 /// // A darker ground for every screen, the rest as they are.
 /// var pens: [sc.NUMDRIPENS]Pen = (ib.GetScreenDrawInfo(screen)).pens[0..sc.NUMDRIPENS].*;
 /// pens[sc.BACKGROUNDPEN] = graphics.penRGB(0x80, 0x84, 0x88);
+/// pens[sc.DIMTEXTPEN] = 0; // mixed again, on the new ground
 /// ib.SetScreenPens(null, &pens);
 /// ```
 pub fn SetScreenPens(ib: *IntuitionBase, screen: ?*Screen, pens: ?[*]const Pen) void {
@@ -86,7 +88,7 @@ pub fn SetScreenPens(ib: *IntuitionBase, screen: ?*Screen, pens: ?[*]const Pen) 
     defer _window.unlock(ib);
     if (screen) |s| {
         s.own_pens = pens != null;
-        s.pens = if (pens) |given| given[0..sc.NUMDRIPENS].* else ib.system_pens;
+        s.pens = _screen.drawnPens(if (pens) |given| given[0..sc.NUMDRIPENS].* else ib.system_pens);
     } else {
         // Read by a prefs copy under the look's lock.
         ib.sys_base.AcquireLock(&ib.look_lock);
@@ -103,7 +105,7 @@ pub fn SetScreenPens(ib: *IntuitionBase, screen: ?*Screen, pens: ?[*]const Pen) 
             if (s != only) continue;
         } else {
             if (s.own_pens) continue;
-            s.pens = ib.system_pens;
+            s.pens = _screen.drawnPens(ib.system_pens);
         }
         paint(ib, s);
     }

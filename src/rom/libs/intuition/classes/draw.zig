@@ -13,7 +13,9 @@ const TagItem = sdk.utility.TagItem;
 const Pen = graphics.Pen;
 const sc = sdk.intuition.screens;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
-const default_pens = @import("../screen/_screen.zig").default_pens;
+const _screen = @import("../screen/_screen.zig");
+/// The built-in pens as a screen draws in them.
+const default_pens = _screen.drawnPens(_screen.default_pens);
 
 /// What a RastPort was set to before an image borrowed it.
 ///

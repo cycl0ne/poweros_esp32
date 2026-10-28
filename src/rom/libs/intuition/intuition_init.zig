@@ -149,7 +149,12 @@ pub const LIBRARY_VERSION = 0;
 /// LAYOUTA_FrameRecessed, a sunk frame; a window grows to what its layout
 /// needs once a row of it wrapped deeper or it was squeezed onto a small
 /// screen.
-pub const LIBRARY_REVISION = 61;
+/// 62: DIMTEXTPEN, the thirteenth pen (DRI_VERSION 4): text that says
+/// less, mixed from TEXTPEN and BACKGROUNDPEN unless given.
+/// 63: windowclass's WM_RETHINK - the layout measured and placed again
+/// after a gadget in it changed size, the window grown to it; a window
+/// grown to its layout is no smaller than it from then on.
+pub const LIBRARY_REVISION = 63;
 const BUILD_DATE = "28.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

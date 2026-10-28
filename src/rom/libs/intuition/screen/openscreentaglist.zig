@@ -53,7 +53,8 @@ const unlock = _screen.unlock;
 /// - `tags` - the `SA_` names: `SA_Title` (not copied), `SA_Font` (a
 ///   TextFont the caller keeps open while the screen is), `SA_PubName`
 ///   (copied; makes it public), `SA_ShowTitle` (true by default),
-///   `SA_Pens` (a `*const [NUMDRIPENS]Pen`, copied), and `SA_ErrorCode`, a
+///   `SA_Pens` (a `*const [NUMDRIPENS]Pen`, copied; a `DIMTEXTPEN` of 0
+///   mixed from its text and background), and `SA_ErrorCode`, a
 ///   `*u32` for the reason when it fails. May be null.
 ///
 /// RESULT:
@@ -189,7 +190,7 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
         .width = bounds.width(),
         .height = bounds.height(),
         .depth = sdk.rtg.bitmaps.formatBits(@enumFromInt(format)),
-        .pens = ib.system_pens,
+        .pens = _screen.drawnPens(ib.system_pens),
         .draw_info = undefined,
         .pub_node = .{ .screen = @ptrCast(s) },
         .screen_type = if (pub_name != null) sc.PUBLICSCREEN else sc.CUSTOMSCREEN,
@@ -204,7 +205,7 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
         s.own_pens = true;
     }
     if (ub.FindTagItem(sc.SA_Pens, tags)) |item| {
-        s.pens = @as(*const [sc.NUMDRIPENS]Pen, @ptrFromInt(item.data)).*;
+        s.pens = _screen.drawnPens(@as(*const [sc.NUMDRIPENS]Pen, @ptrFromInt(item.data)).*);
         s.own_pens = true;
     }
     s.draw_info = .{ .pens = &s.pens, .font = font, .depth = s.depth };

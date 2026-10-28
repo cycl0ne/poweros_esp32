@@ -33,7 +33,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Styles";
-const VERSION_STRING = "\x00$VER: Styles 1.0 (1.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Styles 1.1 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DARK/S";
@@ -193,6 +193,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         0xFFE8_EAED, // BARDETAILPEN
         0xFF1E_2228, // BARBLOCKPEN
         0xFF10_1214, // BARTRIMPEN
+        0, // DIMTEXTPEN, mixed from the text and the ground
     };
     const dark = [_]TagItem{
         pair(style.STYLE_Part, style.PART_MAIN),

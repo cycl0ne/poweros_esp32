@@ -535,13 +535,17 @@ fn textLen(s: [*:0]const u8) u32 {
 /// The window grown to what its layouts said in the last layout pass they
 /// need, when that is more than it has - a row that wraps went deeper as
 /// the window got narrower, or the window was squeezed onto its screen -
-/// as far as its largest size and the screen let it. A window that fits
-/// is left alone.
+/// as far as its largest size and the screen let it - and no smaller than
+/// that from then on: the smallest size the layout set was the size the
+/// window had. A window that fits is left alone.
 pub fn fitLayout(ib: *IntuitionBase, window: *Window) void {
-    const width = @max(window.width, window.layout_width);
-    const height = @max(window.height, window.layout_height);
+    const need_width = window.layout_width;
+    const need_height = window.layout_height;
+    const width = @max(window.width, need_width);
+    const height = @max(window.height, need_height);
     if (width == window.width and height == window.height) return;
     ib.iface().ChangeWindowBox(@ptrCast(window), window.left, window.top, width, height);
+    _ = ib.iface().WindowLimits(@ptrCast(window), @min(need_width, window.width), @min(need_height, window.height), 0, 0);
 }
 
 pub fn lock(ib: *IntuitionBase) void {

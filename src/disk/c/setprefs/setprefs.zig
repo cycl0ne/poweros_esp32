@@ -17,8 +17,8 @@
 //!   gadgets, and of consoles - each opened with diskfont.library, so any
 //!   size of any family in FONTS: will do; one left out is pospaz from the
 //!   ROM, and a console font that is not fixed-width is refused.
-//! - palette.prefs: the system's twelve pens; one left out keeps its
-//!   colour.
+//! - palette.prefs: the system's pens; one left out keeps its colour,
+//!   except the dim text, which is mixed from the text and the ground.
 //! - style.prefs: the system's style, a line per part in a state; a line
 //!   that cannot be read is reported with its number and passed over.
 //! - sound.prefs: what a beep does - whether the display flashes, and the
@@ -92,7 +92,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.9 (27.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.10 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";

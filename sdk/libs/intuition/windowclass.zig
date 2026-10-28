@@ -17,6 +17,13 @@
 //! the lower - `WMHI_LASTMSG` when there is nothing more. A message of a
 //! class it has no word for is replied and passed over.
 //!
+//! A layout measures its gadgets when the window opens and when it changes
+//! size. A program that sets a gadget to something of another size - a
+//! text of more lines, a longer label - sends `WM_RETHINK`: the layout is
+//! measured and placed again and drawn there at once, the window's
+//! smallest size becomes what it now fits in, and a window too small for
+//! it grows, as after a row wrapped.
+//!
 //! The window listens for `IDCMP_CLOSEWINDOW`, `IDCMP_GADGETUP`,
 //! `IDCMP_GADGETDOWN`, `IDCMP_MENUPICK` and `IDCMP_VANILLAKEY` whatever it
 //! is told; `WA_IDCMP` adds to them - `IDCMP_RAWKEY`, `IDCMP_NEWSIZE`,
@@ -130,6 +137,14 @@ pub const WM_OPEN: MethodID = 0x0702;
 /// `WmClose`: close the window, keep the object. The answer is 1, or 0
 /// when it was not open.
 pub const WM_CLOSE: MethodID = 0x0703;
+/// `WmRethink`: the layout measured and placed again, after a gadget in
+/// it was set to something of another size, and drawn there at once;
+/// the window's smallest size becomes what it now fits in, and a window
+/// smaller than that grows to it, as far as the screen lets it. A gadget
+/// that drew something of its own at its old size is the program's to
+/// draw again, as after `IDCMP_NEWSIZE`. The answer is 1, or 0 when the
+/// window is not open or has no layout.
+pub const WM_RETHINK: MethodID = 0x0704;
 
 pub const WmOpen = extern struct {
     method_id: MethodID = WM_OPEN,
@@ -137,6 +152,10 @@ pub const WmOpen = extern struct {
 
 pub const WmClose = extern struct {
     method_id: MethodID = WM_CLOSE,
+};
+
+pub const WmRethink = extern struct {
+    method_id: MethodID = WM_RETHINK,
 };
 
 pub const WmHandleInput = extern struct {

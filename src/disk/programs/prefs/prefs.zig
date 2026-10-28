@@ -132,8 +132,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.18";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (27.10.2026)\r\n";
+const VERSION = "1.19";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -328,6 +328,7 @@ const max_rows = 6;
 const pen_labels = [sc.NUMDRIPENS]?[*:0]const u8{
     "Detail",    "Block",      "Text",           "Shine",      "Shadow",    "Fill",
     "Fill text", "Background", "Highlight text", "Bar detail", "Bar block", "Bar trim",
+    "Dim text",
 };
 /// A colour field's chooser: the default, a pen, or a colour of its own.
 const pen_choice_labels = labels: {
@@ -708,7 +709,7 @@ const Editor = struct {
     /// The colour a field's text is, as near as one colour says it: a
     /// pen's own, the first of two, or the background's when it is none.
     fn colourOf(e: *const Editor, text: []const u8) Pen {
-        if (style_file.lookUp(&style_file.pens, text)) |pen| return e.pens[pen];
+        if (style_file.lookUp(&style_file.pens, text)) |pen| return e.penColour(pen);
         const first = if (text.len >= 7) text[0..7] else text;
         return style_file.rgb(text) orelse style_file.rgb(first) orelse e.pens[sc.BACKGROUNDPEN];
     }
@@ -716,25 +717,44 @@ const Editor = struct {
     /// A system pen shown: its field, and its button in its colour.
     fn showPen(e: *Editor, pen: usize) void {
         var text: [8:0]u8 = @splat(0);
-        _ = colourText(&text, e.pens[pen]);
+        _ = e.penText(pen, &text);
         e.set(page_colours, e.pen_fields[pen], &.{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(&text) }, .{} });
-        e.pen_looks[pen] = buttonLooks(e.pens[pen]);
+        e.pen_looks[pen] = buttonLooks(e.penColour(pen));
         e.set(page_colours, e.pen_buttons[pen], &.{ .{ .tag = gc.GA_Style, .data = @intFromPtr(&e.pen_looks[pen]) }, .{} });
     }
 
-    /// A system pen's field taken; what is not `#RRGGBB` is put back.
+    /// A system pen's colour as a screen shows it: the dim text, while it
+    /// is mixed, mixed from the text and the ground on the page.
+    fn penColour(e: *const Editor, pen: usize) Pen {
+        if (e.pens[pen] == 0) return sc.dimText(e.pens[sc.TEXTPEN], e.pens[sc.BACKGROUNDPEN]);
+        return e.pens[pen];
+    }
+
+    /// A system pen's field text: `#RRGGBB`, or nothing for the dim text
+    /// while it is mixed.
+    fn penText(e: *const Editor, pen: usize, into: []u8) usize {
+        if (e.pens[pen] == 0) return 0;
+        return colourText(into, e.pens[pen]);
+    }
+
+    /// A system pen's field taken; what is not `#RRGGBB` is put back. The
+    /// dim text's field emptied mixes it again.
     fn takePen(e: *Editor, pen: usize) void {
         const text = e.fieldText(e.pen_fields[pen]);
         if (text.len == 7) if (style_file.rgb(text)) |colour| {
             e.pens[pen] = colour;
             e.pens_changed = true;
         };
+        if (text.len == 0 and pen == sc.DIMTEXTPEN and e.pens[pen] != 0) {
+            e.pens[pen] = 0;
+            e.pens_changed = true;
+        }
         e.showPen(pen);
     }
 
     /// A system pen picked on the wheel.
     fn pickPen(e: *Editor, pen: usize) void {
-        const picked = e.pickColour(e.pens[pen]) orelse return;
+        const picked = e.pickColour(e.penColour(pen)) orelse return;
         e.pens[pen] = picked;
         e.pens_changed = true;
         e.showPen(pen);
@@ -1753,8 +1773,8 @@ noinline fn build(e: *Editor) ?*Object {
     var pen_rows: [sc.NUMDRIPENS]?*Object = undefined;
     for (0..sc.NUMDRIPENS) |pen| {
         var text: [8:0]u8 = @splat(0);
-        _ = colourText(&text, e.pens[pen]);
-        e.pen_looks[pen] = buttonLooks(e.pens[pen]);
+        _ = e.penText(pen, &text);
+        e.pen_looks[pen] = buttonLooks(e.penColour(pen));
         e.pen_fields[pen] = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
             pair(gc.GA_ID, ID_PEN_FIELD + pen),
             pair(gc.GA_RelVerify, 1),
@@ -1778,7 +1798,7 @@ noinline fn build(e: *Editor) ?*Object {
     const groups = row(ib, &.{ drawing, ground }) orelse return null;
     const note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         pair(tx.TEXT_Wrap, 1),
-        pair(tx.TEXT_Text, @intFromPtr("Every screen without colours of its own draws in these. Save or Use puts them in force.")),
+        pair(tx.TEXT_Text, @intFromPtr("Every screen without colours of its own draws in these. Dim text left empty is mixed from Text and Background. Save or Use puts them in force.")),
         .{},
     }) orelse return null;
     const builtin = row(ib, &.{button(ib, "_Built-in colours", ID_BUILTIN)}) orelse return null;
@@ -2403,13 +2423,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     e.dock_starts = dock_big_machine and exists(dl, dock_places[1][0]);
 
-    // The system's pens: as the default screen has them, as the file says.
-    if (ib.LockPubScreen(null)) |screen| {
-        const dri = ib.GetScreenDrawInfo(screen);
-        for (&e.pens, 0..) |*pen, i| pen.* = dri.pens[i];
-        ib.FreeScreenDrawInfo(screen, dri);
-        ib.UnlockPubScreen(null, screen);
-    }
+    // The system's pens: as intuition has them - the dim text 0 while it
+    // is mixed - and as the file says.
+    _ = ib.GetPrefs(&[_]TagItem{ pair(intuition.IPREFS_Pens, @intFromPtr(&e.pens)), .{} });
     if (prefs.loadWhole(sys, dl, palette_file.ENV_FILE)) |text| {
         defer sys.FreeVec(text.ptr);
         var palette = palette_file.Palette{ .pens = e.pens };

@@ -49,7 +49,9 @@
 //! afterwards. A layout that needs more room than its window has - a row
 //! that wraps (`LAYOUTA_Wrap`) is deeper once the window is narrower, a
 //! window opened on a small screen was squeezed - grows the window to
-//! fit, as far as the screen lets it.
+//! fit, as far as the screen lets it, and the window's smallest size with
+//! it. A program that set a child to something of another size asks a
+//! window object to measure the layout again (`WM_RETHINK`).
 //!
 //! A layout made without a size is its nominal size, from the first time
 //! it is laid out. Inside another layout its box is that layout's to set.

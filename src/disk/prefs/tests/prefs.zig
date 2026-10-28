@@ -423,6 +423,15 @@ test "palette.prefs: the pens read and written back" {
     try testing.expect(prefs.palette.parse(ub, line, &again) == null);
     try testing.expectEqual(palette.pens[sc.BACKGROUNDPEN] & 0xFFFFFF, again.pens[sc.BACKGROUNDPEN] & 0xFFFFFF);
     try testing.expectEqual(@as(u32, 0xFFF), again.given);
+    // The dim text: mixed while the line leaves it out, whatever it was;
+    // given, written back.
+    again.pens[sc.DIMTEXTPEN] = 0xFF12_3456;
+    try testing.expect(prefs.palette.parse(ub, "TEXT=#000000", &again) == null);
+    try testing.expectEqual(@as(sdk.graphics.Pen, 0), again.pens[sc.DIMTEXTPEN]);
+    try testing.expect(prefs.palette.parse(ub, "DIMTEXT=#123456", &again) == null);
+    try testing.expectEqual(@as(sdk.graphics.Pen, 0xFF12_3456), again.pens[sc.DIMTEXTPEN]);
+    const dim_line = out[0..prefs.palette.write(&again.pens, &out)];
+    try testing.expect(std.mem.indexOf(u8, dim_line, "DIMTEXT=#123456") != null);
     try testing.expect(prefs.palette.parse(ub, "BACKGROUND=blue", &again) != null);
     // The built-in pens the header writes out read as a line.
     var lines = prefs.Lines{ .text = prefs.palette.header };
