@@ -53,7 +53,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "font.datatype",
     .version = 1,
-    .date = "25.10.2026",
+    .revision = 1,
+    .date = "28.10.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, sdk.diskfont.DISKFONTNAME, sdk.dos.DOSNAME },
     .Instance = Data,
@@ -300,6 +301,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 return 0;
             });
 
+            // The sizes lie beside the contents file: not in memory.
+            if (subclass.superAsk(ib, cl, obj, dtc.DTA_SourceType) != dtc.DTST_FILE) {
+                _ = dl.SetIoErr(datatypes.DTERROR_COULDNT_OPEN);
+                ib.DisposeObject(obj);
+                return 0;
+            }
             const lock: ?*dos.FileLock = @ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_Handle));
             const bytes = switch (subclass.readWhole(base.sys_base, dl, lock)) {
                 .got => |read| read,

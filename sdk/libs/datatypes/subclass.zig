@@ -9,7 +9,9 @@
 //! **The object's source is a lock, not an open file.** The lock stays
 //! the object's - datatypesclass closes it when the object goes - so
 //! `readWhole` opens a copy of it and closes that, and the object is
-//! left as it was found.
+//! left as it was found. A class that reads its source whole asks
+//! `readSource`, which reads a file the same way and copies bytes the
+//! object was made from in memory, so the class reads both alike.
 
 const exec = @import("../exec/exec.zig");
 const dos = @import("../dos/dos.zig");
@@ -18,6 +20,7 @@ const intuition = @import("../intuition/intuition.zig");
 const classes = intuition.classes;
 const classusr = intuition.classusr;
 const pictureclass = @import("pictureclass.zig");
+const dtc = @import("datatypesclass.zig");
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 const DosBase = @import("../../interface/dos.zig").DosBase;
 const IntuitionBase = @import("../../interface/intuition.zig").IntuitionBase;
@@ -48,7 +51,7 @@ pub fn superAsk(ib: *IntuitionBase, cl: *Class, o: *Object, attr: utility.Tag) u
     return storage;
 }
 
-/// What `readWhole` found.
+/// What `readWhole` and `readSource` found.
 pub const Read = union(enum) {
     /// The file, the caller's to `FreeVec`.
     got: []u8,
@@ -89,6 +92,29 @@ pub fn readWhole(sys: *ExecBase, dl: *DosBase, lock: ?*dos.FileLock) Read {
         return .no_file;
     }
     return .{ .got = bytes[0..length] };
+}
+
+/// The whole of the object's source, in memory of its own: the file its
+/// lock names (`readWhole`), or a copy of the bytes in memory it was made
+/// from (`DTST_MEMORY`), which are the program's and are read only while
+/// the object is made. `no_file` for the clipboard, or for anything
+/// else that is not read whole.
+pub fn readSource(sys: *ExecBase, dl: *DosBase, ib: *IntuitionBase, cl: *Class, o: *Object) Read {
+    const handle = superAsk(ib, cl, o, dtc.DTA_Handle);
+    switch (superAsk(ib, cl, o, dtc.DTA_SourceType)) {
+        dtc.DTST_FILE => return readWhole(sys, dl, @ptrFromInt(handle)),
+        dtc.DTST_MEMORY => {
+            const length = superAsk(ib, cl, o, dtc.DTA_SourceSize);
+            if (handle == 0 or length == 0) return .no_file;
+            if (!roomFor(sys, length)) return .too_large;
+            const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return .too_large;
+            const bytes: [*]u8 = @ptrCast(memory);
+            const given: [*]const u8 = @ptrFromInt(handle);
+            @memcpy(bytes[0..length], given[0..length]);
+            return .{ .got = bytes[0..length] };
+        },
+        else => return .no_file,
+    }
 }
 
 /// Whether a block of `bytes` could be had, with a little room to

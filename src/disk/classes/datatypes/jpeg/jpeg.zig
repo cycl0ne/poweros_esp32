@@ -57,8 +57,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "jpeg.datatype",
     .version = 1,
-    .revision = 1,
-    .date = "10.10.2026",
+    .revision = 2,
+    .date = "28.10.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{pic.PICTURE_LIBRARY},
     .Instance = Data,
@@ -335,8 +335,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const dl: *DosBase = @ptrCast(dos_lib);
             defer base.sys_base.CloseLibrary(dos_lib);
 
-            const lock: ?*dos.FileLock = @ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_Handle));
-            const bytes = switch (subclass.readWhole(base.sys_base, dl, lock)) {
+            const bytes = switch (subclass.readSource(base.sys_base, dl, ib, cl, obj)) {
                 .got => |read| read,
                 .too_large => {
                     _ = dl.SetIoErr(datatypes.DTERROR_TOO_LARGE);

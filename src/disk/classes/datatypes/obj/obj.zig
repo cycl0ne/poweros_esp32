@@ -50,7 +50,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "obj.datatype",
     .version = 1,
-    .date = "20.10.2026",
+    .revision = 1,
+    .date = "28.10.2026",
     .super = mdt.MODELDTCLASS,
     .opens = &.{ mdt.MODEL_LIBRARY, datatypes.DATATYPESNAME, dos.DOSNAME },
     .Instance = Data,
@@ -262,8 +263,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const obj: *Object = @ptrFromInt(made);
             classes.instData(Data, cl, obj).* = .{};
             const dl = dosOf(base);
-            const lock: ?*dos.FileLock = @ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_Handle));
-            const text = switch (subclass.readWhole(sys, dl, lock)) {
+            const text = switch (subclass.readSource(sys, dl, ib, cl, obj)) {
                 .got => |read| read,
                 .too_large => {
                     _ = dl.SetIoErr(datatypes.DTERROR_TOO_LARGE);
@@ -277,7 +277,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 },
             };
             defer sys.FreeVec(text.ptr);
-            const dir = dl.ParentDir(lock);
+            // The drawer its materials lie in: none for bytes in memory.
+            const lock: ?*dos.FileLock = if (subclass.superAsk(ib, cl, obj, dtc.DTA_SourceType) == dtc.DTST_FILE)
+                @ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_Handle))
+            else
+                null;
+            const dir = if (lock) |model| dl.ParentDir(model) else null;
             defer dl.UnLock(dir);
             const failure = readFile(base, cl, obj, text, dir);
             if (failure != 0) {

@@ -17,19 +17,24 @@ const DataTypesBase = _base.DataTypesBase;
 /// fn ObtainDataTypeA(db: *DataTypesBase, source_type: u32, handle: ?*anyopaque, attrs: ?[*]const utility.TagItem) ?*datatypes.DataType
 /// ```
 ///
-/// SINCE: 1.0. LVO -20.
+/// SINCE: 1.0; `DTST_MEMORY` 1.2. LVO -20.
 ///
 /// INPUTS:
 /// - `source_type` - `DTST_FILE` with a `*dos.FileLock` as the handle,
-///   or `DTST_CLIPBOARD` with an `*IFFHandle` already opened for
-///   reading and walked as far as its first form.
-/// - `handle` - the lock or the handle.
-/// - `attrs` - `DTA_GroupID` refuses anything not of that group; null
+///   `DTST_CLIPBOARD` with an `*IFFHandle` already opened for reading
+///   and walked as far as its first form, or `DTST_MEMORY` with the
+///   first of the bytes.
+/// - `handle` - the lock, the handle or the bytes.
+/// - `attrs` - `DTA_GroupID` refuses anything not of that group. For
+///   memory, `DTA_SourceSize` says how many bytes there are - it is
+///   needed - and `DTA_Name` what they would be called as a file. Null
 ///   for no conditions.
 ///
 /// RESULT:
 /// The data type, or null when nothing recognises it - `IoErr` is then
 /// `DTERROR_UNKNOWN_DATATYPE` - or when `C:AddDataTypes` has not run.
+/// `DTERROR_COULDNT_OPEN` when the source cannot be read at all, or
+/// bytes in memory come without their size.
 ///
 /// BEHAVIOR:
 /// The descriptors are tried in the order they were sorted into, highest
@@ -46,14 +51,20 @@ const DataTypesBase = _base.DataTypesBase;
 /// The file is opened and read once and every descriptor is tried
 /// against that one reading.
 ///
+/// Bytes in memory are looked at as a file's would be. With a name, a
+/// descriptor's pattern is matched against it; without one, the pattern
+/// is not asked and what the bytes start with decides - a JPEG is known
+/// by its first bytes whether or not it is called `.jpg`.
+///
 /// CONTEXT:
 /// - Waits: on the file, and on the list's lock.
 /// - Interrupts: no.
 /// - Locks: none needed.
-/// - Process: needed - the file is reached through dos.
+/// - Process: needed - a file is reached through dos.
 ///
 /// OWNERSHIP:
-/// The lock or handle stays the caller's. What is answered is the
+/// The lock, the handle or the bytes stay the caller's; the bytes are
+/// not needed once this returns. What is answered is the
 /// system's and is held until `ReleaseDataType`; a descriptor being
 /// held cannot be taken off the list.
 ///
@@ -84,7 +95,7 @@ pub fn ObtainDataTypeA(db: *DataTypesBase, source_type: u32, handle: ?*anyopaque
     const wanted_group: u32 = @truncate(db.utility_base.GetTagData(dtc.DTA_GroupID, 0, attrs));
 
     var source: _type.Source = undefined;
-    if (!_type.open(db, &source, source_type, handle)) {
+    if (!_type.open(db, &source, source_type, handle, attrs)) {
         _ = dl.SetIoErr(datatypes.DTERROR_COULDNT_OPEN);
         return null;
     }
