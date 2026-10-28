@@ -87,8 +87,9 @@ pub const DTA_Repeat = DTA_Dummy + 38;
 pub const DTA_Name = DTA_Dummy + 100;
 /// `DTST_`: where the contents came from.
 pub const DTA_SourceType = DTA_Dummy + 101;
-/// What the source is: a `*dos.FileHandle` for a file, a
-/// `*ClipboardHandle` for the clipboard, a `[*]u8` for memory.
+/// What the source is: a `*dos.FileLock` for a file, an `*IFFHandle`
+/// for the clipboard, the first of the bytes (`[*]const u8`) for memory -
+/// which the object reads while it is made and never after.
 pub const DTA_Handle = DTA_Dummy + 102;
 /// The `*DataType` the file was recognised as. Read only.
 pub const DTA_DataType = DTA_Dummy + 103;
@@ -108,11 +109,16 @@ pub const DTA_FrameInfo = DTA_Dummy + 116;
 /// The size the object would like to be, in units.
 pub const DTA_NominalVert = DTA_Dummy + 124;
 pub const DTA_NominalHoriz = DTA_Dummy + 125;
+/// How many bytes a source in memory (`DTST_MEMORY`) has. Made and read.
+pub const DTA_SourceSize = DTA_Dummy + 126;
 
 /// Where an object's contents come from.
 pub const DTST_RAM: u32 = 1;
 pub const DTST_FILE: u32 = 2;
 pub const DTST_CLIPBOARD: u32 = 3;
+/// Bytes in memory: `DTA_Handle` the first of them, `DTA_SourceSize`
+/// how many - a picture a song's tags hold, say, read without a file.
+pub const DTST_MEMORY: u32 = 4;
 
 // --- the scroll numbers, as the class keeps them ----------------------------
 

@@ -50,7 +50,8 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "lottie.datatype",
     .version = 1,
-    .date = "03.10.2026",
+    .revision = 1,
+    .date = "28.10.2026",
     .super = adt.ANIMATIONDTCLASS,
     .opens = &.{adt.ANIMATION_LIBRARY},
     .Instance = Data,
@@ -204,17 +205,27 @@ fn freeAll(sys: *ExecBase, own: *const Data) void {
 fn recognise(base: *Base, context: *datatypes.DTHookContext) callconv(.c) bool {
     const sys = base.sys_base;
     const dl: *DosBase = @ptrCast(@alignCast(context.dos_base));
-    const file = context.file orelse return false;
     const fib = context.fib orelse return false;
     if (fib.size == 0 or fib.size > recognise_most) return false;
     const length: usize = @intCast(fib.size);
+    // Bytes in memory are in the buffer, whole.
+    const file = context.file orelse {
+        const whole = context.buffer orelse return false;
+        if (context.buffer_length != length) return false;
+        return isLottie(sys, whole[0..length]);
+    };
     const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return false;
     defer sys.FreeVec(memory);
     const text: [*]u8 = @ptrCast(memory);
     if (dl.Read(file, text, @intCast(length)) != @as(isize, @intCast(length))) return false;
-    const tape = tapeFor(sys, text[0..length]) orelse return false;
+    return isLottie(sys, text[0..length]);
+}
+
+/// Whether a text is JSON with a Lottie animation's top.
+fn isLottie(sys: *ExecBase, text: []const u8) bool {
+    const tape = tapeFor(sys, text) orelse return false;
     defer sys.FreeVec(tape.nodes);
-    return headerOf(.{ .text = text[0..length], .nodes = tape.nodes[0..tape.count] }) != null;
+    return headerOf(.{ .text = text, .nodes = tape.nodes[0..tape.count] }) != null;
 }
 
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
@@ -238,8 +249,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             };
             const dl: *DosBase = @ptrCast(dos_lib);
             defer sys.CloseLibrary(dos_lib);
-            const lock: ?*dos.FileLock = @ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_Handle));
-            const bytes = switch (subclass.readWhole(sys, dl, lock)) {
+            const bytes = switch (subclass.readSource(sys, dl, ib, cl, obj)) {
                 .got => |read| read,
                 .too_large => {
                     _ = dl.SetIoErr(datatypes.DTERROR_TOO_LARGE);

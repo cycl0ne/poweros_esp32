@@ -197,6 +197,10 @@ pub const DTRECOGNISE_LVO = libraries.lvo(4);
 
 /// struct DTHookContext: what a recognise function is told about the
 /// file. Everything in it is open and is the library's to close.
+///
+/// A source in memory (`DTST_MEMORY`) has no lock and no file: `buffer`
+/// is the whole of it then, `buffer_length` and `fib.size` how long it
+/// is, and `fib.file_name` the name it was given, or empty.
 pub const DTHookContext = extern struct {
     /// The libraries it may use without opening them.
     sys_base: *anyopaque,
@@ -212,7 +216,8 @@ pub const DTHookContext = extern struct {
     /// The file as IFF, walked as far as the first form's type; null
     /// when it is not IFF.
     iff: ?*iffparse.IFFHandle = null,
-    /// The first bytes of the file, and how many were read.
+    /// The first bytes of the file, and how many were read; all of a
+    /// source in memory.
     buffer: ?[*]const u8 = null,
     buffer_length: u32 = 0,
 };

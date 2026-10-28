@@ -334,7 +334,7 @@ too; their tags start at `IMAGES_Dummy` in
 | Class | What | Header |
 |---|---|---|
 | command.image | the pictures of a program's commands - new, open, save, cut, copy, paste, undo, find, bold, align, sort, rows and columns - in colour, for tool buttons and ribbons | [`command.zig`](../libs/images/command.zig) |
-| media.image | the pictures of a player's controls - play, pause, stop, wind, the song before and after, shuffle, repeat, the speaker and its sound off - for a tape deck and tool buttons | [`media.zig`](../libs/images/media.zig) |
+| media.image | the pictures of a player's controls - play, pause, stop, wind, the song before and after, shuffle, repeat, the speaker and its sound off - for a tape deck and tool buttons, and a note for a song without a cover | [`media.zig`](../libs/images/media.zig) |
 
 ## Datatype classes
 

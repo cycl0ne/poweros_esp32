@@ -423,7 +423,13 @@ adds to them. `WM_HANDLEINPUT` takes the next message, replies to it and
 answers what it was as one word: the kind in the upper half
 (`WMHI_CLASSMASK`), a number in the lower, or `WMHI_LASTMSG` when there
 is nothing more. The message's whole `code` goes where `WmHandleInput`'s
-`code` points.
+`code` points. `IDCMP_NEWSIZE` alone is replied at the next
+`WM_HANDLEINPUT`. A sizing takes its next step once the last step's
+message is back, so a program that draws on `WMHI_NEWSIZE` is never a step
+behind its window. A program that keeps something else going from the
+same loop, such as sound, notes `WMHI_NEWSIZE` and draws once, after
+`WMHI_LASTMSG`. A sizing sends one at every step, and drawing each one in
+turn keeps the loop from getting back to its other work.
 
 | Word | What | Lower half |
 |---|---|---|

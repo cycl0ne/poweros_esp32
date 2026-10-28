@@ -541,24 +541,28 @@ fn NewDTObjectA(db: *DataTypesBase, name: ?[*:0]const u8, attrs: ?[*]const utili
 
 **SINCE**
 
-1.0. LVO -28.
+1.0; `DTST_MEMORY` 1.2. LVO -28.
 
 **INPUTS**
 
 - `name` - the file's name, or null when `DTA_Handle` says where the
-  contents are.
+  contents are. For bytes in memory, the name they would have as a
+  file, or null.
 - `attrs` - `DTA_SourceType` (`DTST_FILE` unless given),
   `DTA_GroupID` to refuse anything of another group, `DTA_Handle`,
-  and any attribute of the object's own class. `GA_Left` and its
-  like place the object in the window it will be added to.
+  `DTA_SourceSize` for memory, and any attribute of the object's own
+  class. `GA_Left` and its like place the object in the window it
+  will be added to.
 
 **RESULT**
 
 The object, or null with `IoErr` saying why:
 `DTERROR_UNKNOWN_DATATYPE` when nothing recognises the file or its
 class cannot be loaded, `DTERROR_COULDNT_OPEN` when the file cannot
-be opened, `ERROR_OBJECT_WRONG_TYPE` when it is not of the group
-that was asked for.
+be opened or its class does not read from memory,
+`ERROR_OBJECT_WRONG_TYPE` when it is not of the group that was asked
+for, `ERROR_REQUIRED_ARG_MISSING` when bytes in memory come without
+their size, `ERROR_NOT_IMPLEMENTED` for any other source type.
 
 **BEHAVIOR**
 
@@ -570,6 +574,13 @@ clipboard, and it closes them when it is disposed of.
 `DTST_CLIPBOARD` takes the clipboard's unit number in place of a
 name, and the object reads the IFF that is on it.
 
+`DTST_MEMORY` takes bytes a program holds - a picture a song's tags
+carry, one fetched over the network - with `DTA_Handle` the first of
+them and `DTA_SourceSize` how many. They are recognised as a file's
+are (`ObtainDataTypeA`), by `name` too when one is given, and the
+object reads them while it is made: once this returns they are the
+caller's again, to free or to change.
+
 The class library is closed again straight away. It stays loaded
 because it has an object, and goes when the last one is disposed of.
 
@@ -578,17 +589,23 @@ because it has an object, and goes when the last one is disposed of.
 - Waits: on the file, for memory, and for the class library to load.
 - Interrupts: no.
 - Locks: none needed.
-- Process: needed - the file is reached through dos.
+- Process: needed - a file is reached through dos, and a class is
+  loaded through it.
 
 **OWNERSHIP**
 
 The object is the caller's, to give back with `DisposeDTObject`.
-`name` is copied.
+`name` is copied; bytes in memory are read and not kept.
 
 **NOTES**
 
-The object is a gadget: it is not shown until `AddDTObject` puts it
-in a window, or until a layout it was put in is laid out.
+- The object is a gadget: it is not shown until `AddDTObject` puts it
+  in a window, or until a layout it was put in is laid out.
+- The classes that read the whole of their source at once read from
+  memory: JPEG, PNG, GIF, BMP, text, models, Markdown, Lottie. ILBM,
+  8SVX and the sound of an audio codec read a file as they go, and a
+  font's sizes are files beside its contents file: they refuse bytes
+  in memory with `DTERROR_COULDNT_OPEN`.
 
 **SEE ALSO**
 
@@ -604,6 +621,16 @@ const picture = dt.NewDTObjectA("SYS:Tests/a.iff", &.{
     .{},
 }) orelse return;
 defer dt.DisposeDTObject(picture);
+
+// A picture held in memory, `bytes` long.
+const cover = dt.NewDTObjectA(null, &.{
+    .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_MEMORY },
+    .{ .tag = dtc.DTA_Handle, .data = @intFromPtr(bytes.ptr) },
+    .{ .tag = dtc.DTA_SourceSize, .data = bytes.len },
+    .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_PICTURE },
+    .{},
+}) orelse return;
+defer dt.DisposeDTObject(cover);
 ```
 
 ## ObtainDTDrawInfoA
@@ -674,21 +701,26 @@ fn ObtainDataTypeA(db: *DataTypesBase, source_type: u32, handle: ?*anyopaque, at
 
 **SINCE**
 
-1.0. LVO -20.
+1.0; `DTST_MEMORY` 1.2. LVO -20.
 
 **INPUTS**
 
 - `source_type` - `DTST_FILE` with a `*dos.FileLock` as the handle,
-  or `DTST_CLIPBOARD` with an `*IFFHandle` already opened for
-  reading and walked as far as its first form.
-- `handle` - the lock or the handle.
-- `attrs` - `DTA_GroupID` refuses anything not of that group; null
+  `DTST_CLIPBOARD` with an `*IFFHandle` already opened for reading
+  and walked as far as its first form, or `DTST_MEMORY` with the
+  first of the bytes.
+- `handle` - the lock, the handle or the bytes.
+- `attrs` - `DTA_GroupID` refuses anything not of that group. For
+  memory, `DTA_SourceSize` says how many bytes there are - it is
+  needed - and `DTA_Name` what they would be called as a file. Null
   for no conditions.
 
 **RESULT**
 
 The data type, or null when nothing recognises it - `IoErr` is then
 `DTERROR_UNKNOWN_DATATYPE` - or when `C:AddDataTypes` has not run.
+`DTERROR_COULDNT_OPEN` when the source cannot be read at all, or
+bytes in memory come without their size.
 
 **BEHAVIOR**
 
@@ -706,16 +738,22 @@ says has already matched.
 The file is opened and read once and every descriptor is tried
 against that one reading.
 
+Bytes in memory are looked at as a file's would be. With a name, a
+descriptor's pattern is matched against it; without one, the pattern
+is not asked and what the bytes start with decides - a JPEG is known
+by its first bytes whether or not it is called `.jpg`.
+
 **CONTEXT**
 
 - Waits: on the file, and on the list's lock.
 - Interrupts: no.
 - Locks: none needed.
-- Process: needed - the file is reached through dos.
+- Process: needed - a file is reached through dos.
 
 **OWNERSHIP**
 
-The lock or handle stays the caller's. What is answered is the
+The lock, the handle or the bytes stay the caller's; the bytes are
+not needed once this returns. What is answered is the
 system's and is held until `ReleaseDataType`; a descriptor being
 held cannot be taken off the list.
 

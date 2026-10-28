@@ -26,8 +26,10 @@ const _class = @import("class/_class.zig");
 pub const LIBRARY_NAME = datatypes.DATATYPESNAME;
 pub const LIBRARY_VERSION = 1;
 /// 1: `GID_MODEL`, a model in three dimensions, named by GetDTString.
-pub const LIBRARY_REVISION = 1;
-const BUILD_DATE = "20.10.2026";
+/// 2: `DTST_MEMORY`, an object made from bytes in memory, `DTA_SourceSize`
+/// how many.
+pub const LIBRARY_REVISION = 2;
+const BUILD_DATE = "28.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

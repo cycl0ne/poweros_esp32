@@ -41,7 +41,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "8svx.datatype",
     .version = 1,
-    .date = "13.10.2026",
+    .revision = 1,
+    .date = "28.10.2026",
     .super = sdt.SOUNDDTCLASS,
     .opens = &.{ sdt.SOUND_LIBRARY, iffparse.IFFPARSENAME, dos.DOSNAME },
     .Instance = Data,
@@ -185,6 +186,8 @@ fn readSource(base: *Base, cl: *Class, o: *Object, own: *Data) i32 {
         const iff: *iffparse.IFFHandle = @ptrCast(@alignCast(handle orelse return datatypes.DTERROR_COULDNT_OPEN));
         return readForm(base, cl, o, own, iff);
     }
+    // A form is walked from a file as it goes: not from memory.
+    if (source != dtc.DTST_FILE) return datatypes.DTERROR_COULDNT_OPEN;
     const lock: ?*dos.FileLock = @ptrCast(@alignCast(handle));
     const copy = dl.DupLock(lock orelse return datatypes.DTERROR_COULDNT_OPEN) orelse return datatypes.DTERROR_COULDNT_OPEN;
     const file = dl.OpenFromLock(copy) orelse {

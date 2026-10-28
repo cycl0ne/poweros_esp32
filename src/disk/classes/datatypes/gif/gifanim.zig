@@ -52,7 +52,8 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "gifanim.datatype",
     .version = 1,
-    .date = "03.10.2026",
+    .revision = 1,
+    .date = "28.10.2026",
     .super = adt.ANIMATIONDTCLASS,
     .opens = &.{adt.ANIMATION_LIBRARY},
     .Instance = Data,
@@ -276,16 +277,26 @@ fn freeAll(sys: *ExecBase, own: *const Data) void {
 fn recognise(base: *Base, context: *datatypes.DTHookContext) callconv(.c) bool {
     const sys = base.sys_base;
     const dl: *DosBase = @ptrCast(@alignCast(context.dos_base));
-    const file = context.file orelse return false;
     const fib = context.fib orelse return false;
     if (fib.size == 0 or fib.size > recognise_most) return false;
     const length: usize = @intCast(fib.size);
+    // Bytes in memory are in the buffer, whole.
+    const file = context.file orelse {
+        const whole = context.buffer orelse return false;
+        if (context.buffer_length != length) return false;
+        return isAnimation(whole[0..length]);
+    };
     const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return false;
     defer sys.FreeVec(memory);
     const bytes: [*]u8 = @ptrCast(memory);
     if (dl.Read(file, bytes, @intCast(length)) != @as(isize, @intCast(length))) return false;
-    const screen = decode.readScreen(bytes[0..length]) catch return false;
-    const count = decode.countPictures(bytes[0..length], screen, 2) catch return false;
+    return isAnimation(bytes[0..length]);
+}
+
+/// Whether a GIF holds more than one picture.
+fn isAnimation(bytes: []const u8) bool {
+    const screen = decode.readScreen(bytes) catch return false;
+    const count = decode.countPictures(bytes, screen, 2) catch return false;
     return count >= 2;
 }
 
@@ -310,8 +321,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             };
             const dl: *DosBase = @ptrCast(dos_lib);
             defer sys.CloseLibrary(dos_lib);
-            const lock: ?*dos.FileLock = @ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_Handle));
-            const bytes = switch (subclass.readWhole(sys, dl, lock)) {
+            const bytes = switch (subclass.readSource(sys, dl, ib, cl, obj)) {
                 .got => |read| read,
                 .too_large => {
                     _ = dl.SetIoErr(datatypes.DTERROR_TOO_LARGE);

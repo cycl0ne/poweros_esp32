@@ -192,7 +192,7 @@ from `LIBS:` when first opened. Every module, with its reference, is in
 | Files | `dos` processes, files, handlers, the shell's `ReadArgs`; `rdb` partitions on any drive; `compression` DEFLATE, zlib and gzip |
 | Displays | **`rtg`**; `graphics` drawing; `layers`; `intuition` screens, windows, gadgets, styles; `keymap`; `motion` animations and timers |
 | Sound | **`rta`**; `audiocodec` WAV, MP3, FLAC, Ogg Vorbis |
-| Desktop | `anvil` the desktop; `asl` requesters; `icon`; `datatypes` pictures, text, animations and sounds by what is in them; `iffparse`; `diskfont` and `truetype` fonts; `facet` 3D in Vulkan's model, on the cores |
+| Desktop | `anvil` the desktop; `asl` requesters; `icon`; `datatypes` pictures, text, animations and sounds by what is in them, from a file or from memory; `iffparse`; `diskfont` and `truetype` fonts; `facet` 3D in Vulkan's model, on the cores |
 | Network | `bsdsocket` TCP/IP, IPv4 and IPv6; `tls` 1.3 and 1.2; `http` HTTP/1.1 requests, connections kept; `crypto`; `wpa` WPA2; `filter` a packet filter |
 | Buses | `usb` the USB host stack; `pci` PCI Express; `modbus` RTU and TCP |
 

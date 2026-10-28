@@ -14,7 +14,9 @@
 //! a file or as an open IFF handle for the clipboard, and from then on
 //! the object owns it: a subclass reads it in `OM_NEW` and the object
 //! closes whatever is left at `OM_DISPOSE`. That is why a program hands
-//! a file name to `NewDTObjectA` and never opens anything itself.
+//! a file name to `NewDTObjectA` and never opens anything itself. Bytes
+//! in memory (`DTST_MEMORY`, `DTA_SourceSize` of them) stay the
+//! program's: a subclass reads them in `OM_NEW`, and nothing is closed.
 //!
 //! **Laying out is not done where it is asked for.** `GM_LAYOUT` comes
 //! from intuition's input, which may not wait, and reflowing a long text
@@ -89,6 +91,8 @@ pub const Data = extern struct {
     /// pass measures against the size the window has now and not the one
     /// it had when the work started.
     layout_job: ?*anyopaque = null,
+    /// How many bytes a source in memory has.
+    source_size: usize = 0,
 };
 
 /// A string copied into memory of its own, and the old copy given back.
@@ -190,6 +194,7 @@ fn setAttrs(db: *DataTypesBase, own: *Data, tags: ?[*]const TagItem, new: bool) 
                 dtc.DTA_Name => takeString(db, &own.name, @ptrFromInt(item.data)),
                 dtc.DTA_SourceType => own.source_type = @truncate(item.data),
                 dtc.DTA_Handle => own.handle = @ptrFromInt(item.data),
+                dtc.DTA_SourceSize => own.source_size = item.data,
                 dtc.DTA_DataType => own.data_type = @ptrFromInt(item.data),
                 else => {},
             },
@@ -220,6 +225,7 @@ fn getAttr(own: *Data, attr: utility.Tag, storage: *usize) bool {
         dtc.DTA_ObjVersion => @intFromPtr(own.obj_version),
         dtc.DTA_SourceType => own.source_type,
         dtc.DTA_Handle => @intFromPtr(own.handle),
+        dtc.DTA_SourceSize => own.source_size,
         dtc.DTA_DataType => @intFromPtr(own.data_type),
         dtc.DTA_BaseName => if (own.data_type) |dt| @intFromPtr(dt.header.base_name) else 0,
         dtc.DTA_GroupID => if (own.data_type) |dt| dt.header.group_id else 0,

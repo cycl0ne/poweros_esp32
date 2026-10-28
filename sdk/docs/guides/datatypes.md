@@ -34,6 +34,33 @@ when it is more than the machine can hold, and dos's
 `GetDTString(@intCast(IoErr()))` gives the words for a `DTERROR_`
 number, dos's `Fault` those for the rest.
 
+## Bytes in memory
+
+What a program already holds - a cover a song's tags carry, a picture
+fetched over the network - becomes an object without a file:
+`DTST_MEMORY` (datatypes.library 1.2), `DTA_Handle` the first byte and
+`DTA_SourceSize` how many.
+
+```zig
+const cover = dt.NewDTObjectA(null, &.{
+    .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_MEMORY },
+    .{ .tag = dtc.DTA_Handle, .data = @intFromPtr(bytes.ptr) },
+    .{ .tag = dtc.DTA_SourceSize, .data = bytes.len },
+    .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_PICTURE },
+    .{},
+}) orelse return;
+defer dt.DisposeDTObject(cover);
+```
+
+The bytes are recognised as a file's are, by what they start with; a
+name handed to `NewDTObjectA` is matched against the descriptors'
+patterns too, and without one the patterns are not asked. The object
+reads the bytes while it is made: when the call returns they are the
+program's again. JPEG, PNG, GIF, BMP, text, models, Markdown and Lottie
+read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
+and a font's sizes are files beside its contents file, so these refuse
+bytes in memory with `DTERROR_COULDNT_OPEN`.
+
 ## What a file is
 
 The kinds of file the system knows are text files in `DEVS:DataTypes`,

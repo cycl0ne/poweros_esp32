@@ -2,9 +2,12 @@
 //! Recognising a file: what is looked at, and what each descriptor says
 //! about it.
 //!
-//! A source is opened once (`Source.of`) and every descriptor is then
+//! A source is opened once (`open`) and every descriptor is then
 //! tried against the one reading: the file's name, the first bytes of
-//! it, and, when it is IFF, the type of its outermost form. A
+//! it, and, when it is IFF, the type of its outermost form. A source in
+//! memory is the same reading made from the bytes, with the name it was
+//! given - or none, and then a descriptor's pattern is not asked and its
+//! bytes decide. A
 //! descriptor that names a `RECOGNISE` class is asked last, and only
 //! when whatever else it says has already matched, so that opening a
 //! class library is the rare case and not the rule.
@@ -26,15 +29,19 @@ const DataTypesBase = _base.DataTypesBase;
 /// What is known about the thing being recognised.
 pub const Source = extern struct {
     kind: u32 = dtc.DTST_FILE,
-    /// The lock, for a file; the open IFF handle, for the clipboard.
+    /// The lock, for a file; the open IFF handle, for the clipboard; the
+    /// bytes, for memory, `fib.size` of them.
     lock: ?*dos.FileLock = null,
     file: ?*dos.FileHandle = null,
     iff: ?*iffparse.IFFHandle = null,
+    memory: ?[*]const u8 = null,
     /// Whether this library opened the IFF handle and must close it.
     owns_iff: u8 = 0,
+    /// Whether a source in memory was given a name.
+    named: u8 = 0,
     /// The outermost form's type, 0 when it is not IFF.
     form_type: u32 = 0,
-    pad: [3]u8 = @splat(0),
+    pad: [2]u8 = @splat(0),
     fib: dos.FileInfoBlock = .{},
     /// The first bytes of it, and how many were read.
     buffer: [_base.sniff_bytes]u8 = @splat(0),
@@ -47,9 +54,10 @@ pub fn nameOf(source: *const Source) [*:0]const u8 {
 }
 
 /// A source opened and looked at: what `ObtainDataTypeA` was handed,
-/// made ready for every descriptor to be tried against. False when it
-/// cannot be read at all.
-pub fn open(db: *DataTypesBase, source: *Source, kind: u32, handle: ?*anyopaque) bool {
+/// made ready for every descriptor to be tried against. `attrs` give a
+/// source in memory its size (`DTA_SourceSize`) and its name
+/// (`DTA_Name`). False when it cannot be read at all.
+pub fn open(db: *DataTypesBase, source: *Source, kind: u32, handle: ?*anyopaque, attrs: ?[*]const utility.TagItem) bool {
     const dl = db.dos_base;
     const ip = db.iffparse_base;
     source.* = .{ .kind = kind };
@@ -76,9 +84,44 @@ pub fn open(db: *DataTypesBase, source: *Source, kind: u32, handle: ?*anyopaque)
             const chunk = ip.CurrentChunk(source.iff.?) orelse return false;
             source.form_type = chunk.type;
         },
+        dtc.DTST_MEMORY => {
+            const ub = db.utility_base;
+            const bytes: [*]const u8 = @ptrCast(handle orelse return false);
+            const size = ub.GetTagData(dtc.DTA_SourceSize, 0, attrs);
+            if (size == 0) return false;
+            source.memory = bytes;
+            source.fib.size = size;
+            source.fib.dir_entry_type = dos.ST_FILE;
+            const name: ?[*:0]const u8 = @ptrFromInt(ub.GetTagData(dtc.DTA_Name, 0, attrs));
+            if (name) |given| {
+                const into = &source.fib.file_name;
+                var length: usize = 0;
+                while (given[length] != 0 and length < into.len - 1) : (length += 1) into[length] = given[length];
+                into[length] = 0;
+                source.named = 1;
+            }
+            const first: usize = @min(size, source.buffer.len);
+            @memcpy(source.buffer[0..first], bytes[0..first]);
+            source.buffer_length = @intCast(first);
+            source.form_type = formTypeOfBytes(source.buffer[0..first]);
+        },
         else => return false,
     }
     return true;
+}
+
+/// The outermost form's type from the bytes a source starts with; 0 when
+/// it is not IFF.
+pub fn formTypeOfBytes(bytes: []const u8) u32 {
+    if (bytes.len < 12) return 0;
+    const group = idAt(bytes[0..4]);
+    if (group != iffparse.ID_FORM and group != iffparse.ID_LIST and group != iffparse.ID_CAT) return 0;
+    return idAt(bytes[8..12]);
+}
+
+/// Four bytes as an IFF id.
+fn idAt(bytes: *const [4]u8) u32 {
+    return @as(u32, bytes[0]) << 24 | @as(u32, bytes[1]) << 16 | @as(u32, bytes[2]) << 8 | bytes[3];
 }
 
 pub fn close(db: *DataTypesBase, source: *Source) void {
@@ -139,8 +182,10 @@ pub fn matches(db: *DataTypesBase, dt: *datatypes.DataType, source: *Source) boo
         if (!maskMatches(header, source)) return false;
         said_something = true;
     }
-    if (header.pattern) |pattern| {
-        if (source.kind != dtc.DTST_FILE) return false;
+    if (header.pattern) |pattern| pattern: {
+        // Bytes in memory without a name are known by what they hold.
+        if (source.kind == dtc.DTST_MEMORY and source.named == 0) break :pattern;
+        if (source.kind != dtc.DTST_FILE and source.kind != dtc.DTST_MEMORY) return false;
         const name = nameOf(source);
         const ub = db.utility_base;
         // The pattern was parsed when the descriptor was read, with or
@@ -190,8 +235,8 @@ fn asksTheClass(db: *DataTypesBase, dt: *datatypes.DataType, source: *Source) bo
         .fib = &source.fib,
         .file = source.file,
         .iff = source.iff,
-        .buffer = &source.buffer,
-        .buffer_length = source.buffer_length,
+        .buffer = source.memory orelse &source.buffer,
+        .buffer_length = if (source.memory != null) @intCast(@min(source.fib.size, 0xFFFF_FFFF)) else source.buffer_length,
     };
     const answer = recognise(@ptrCast(lib), &context);
     if (source.file) |file| _ = db.dos_base.Seek(file, 0, dos.OFFSET_BEGINNING);

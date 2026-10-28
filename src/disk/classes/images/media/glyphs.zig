@@ -63,6 +63,17 @@ pub fn draw(p: *Painter, glyph: u32) void {
             speaker(p);
             badge(p, 76, 68, 21, .red);
         },
+        media.MEDIA_NOTE => {
+            // Two heads leaning up to the right, a stem up from the right
+            // of each, and the beam over both, falling as the heads do.
+            p.ink(&.{
+                p.poly(&comptime oval(30, 78, 14, 10, 20)),
+                p.poly(&comptime oval(74, 68, 14, 10, 20)),
+                p.rr(37, 24, 43, 77, 0),
+                p.rr(81, 14, 87, 67, 0),
+                p.poly(&.{ .{ 37, 22 }, .{ 87, 12 }, .{ 87, 24 }, .{ 37, 34 } }),
+            });
+        },
         else => {},
     }
 }
@@ -120,6 +131,22 @@ fn headAt(cx: f32, cy: f32, mid: f32, angle: f32, half: f32, reach: f32) [3][2]f
         .{ x + on_x * reach, y + on_y * reach },
         .{ x - out_x * half, y - out_y * half },
     };
+}
+
+/// An oval round (`cx`, `cy`), `rx` across and `ry` up and down, leaning
+/// up to the right by `tilt` degrees: as many corners as a polygon holds.
+fn oval(cx: f32, cy: f32, rx: f32, ry: f32, tilt: f32) [shapes.max_corners][2]f32 {
+    @setEvalBranchQuota(10_000);
+    const lean = tilt * (3.14159265 / 180.0);
+    var corners: [shapes.max_corners][2]f32 = undefined;
+    for (&corners, 0..) |*corner, i| {
+        const a = @as(f32, @floatFromInt(i)) * (2.0 * 3.14159265 / @as(f32, shapes.max_corners));
+        const x = rx * @cos(a);
+        const y = ry * @sin(a);
+        // Turned against the clock; the picture's y grows downward.
+        corner.* = .{ cx + x * @cos(lean) + y * @sin(lean), cy - x * @sin(lean) + y * @cos(lean) };
+    }
+    return corners;
 }
 
 /// The speaker: a box and the cone before it, in metal.

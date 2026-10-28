@@ -204,6 +204,92 @@ test "datatypes: what is left over is text if it reads as text, and bytes if not
     try rig.down();
 }
 
+test "datatypes: bytes in memory are known by what they start with, and by a name when they have one" {
+    var rig = Rig{};
+    try rig.up();
+    const db = &rig.base;
+    const ub = rig.ub.iface();
+
+    var tokens: [64]u8 = @splat(0);
+    try testing.expect(ub.ParsePatternNoCase("#?.(jpg|jpeg)", &tokens, tokens.len) >= 0);
+    const start = [_]u8{ 0xFF, 0xD8, 0xFF };
+    const any = [_]u8{ 0, 0, 0 };
+    var jpeg = Kind.of(.{
+        .name = "JPEG",
+        .base_name = "jpeg",
+        .group_id = datatypes.GID_PICTURE,
+        .id = ID("JPEG"),
+        .flags = datatypes.DTF_BINARY,
+        .mask = &start,
+        .mask_any = &any,
+        .mask_len = 3,
+        .pattern = @ptrCast(&tokens),
+    });
+    const picture = [_]u8{ 0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 'J', 'F', 'I', 'F' };
+
+    // No name: the bytes decide.
+    var unnamed: _type.Source = undefined;
+    try testing.expect(_type.open(db, &unnamed, dtc.DTST_MEMORY, @constCast(&picture), &[_]utility.TagItem{
+        .{ .tag = dtc.DTA_SourceSize, .data = picture.len },
+        .{},
+    }));
+    try testing.expectEqual(@as(u64, picture.len), unnamed.fib.size);
+    try testing.expect(_type.matches(db, jpeg.ptr(), &unnamed));
+
+    // A name is matched as a file's.
+    var named: _type.Source = undefined;
+    try testing.expect(_type.open(db, &named, dtc.DTST_MEMORY, @constCast(&picture), &[_]utility.TagItem{
+        .{ .tag = dtc.DTA_SourceSize, .data = picture.len },
+        .{ .tag = dtc.DTA_Name, .data = @intFromPtr("cover.jpg") },
+        .{},
+    }));
+    try testing.expect(_type.matches(db, jpeg.ptr(), &named));
+    var misnamed: _type.Source = undefined;
+    try testing.expect(_type.open(db, &misnamed, dtc.DTST_MEMORY, @constCast(&picture), &[_]utility.TagItem{
+        .{ .tag = dtc.DTA_SourceSize, .data = picture.len },
+        .{ .tag = dtc.DTA_Name, .data = @intFromPtr("cover.png") },
+        .{},
+    }));
+    try testing.expect(!_type.matches(db, jpeg.ptr(), &misnamed));
+
+    // Other bytes are not a JPEG, and bytes without their size are not
+    // a source at all.
+    var other: _type.Source = undefined;
+    try testing.expect(_type.open(db, &other, dtc.DTST_MEMORY, @constCast("GIF89a"), &[_]utility.TagItem{
+        .{ .tag = dtc.DTA_SourceSize, .data = 6 },
+        .{},
+    }));
+    try testing.expect(!_type.matches(db, jpeg.ptr(), &other));
+    var sizeless: _type.Source = undefined;
+    try testing.expect(!_type.open(db, &sizeless, dtc.DTST_MEMORY, @constCast(&picture), null));
+    try rig.down();
+}
+
+test "datatypes: an IFF form in memory is known by its type" {
+    var rig = Rig{};
+    try rig.up();
+    const db = &rig.base;
+
+    var ilbm = Kind.of(.{
+        .name = "ILBM",
+        .base_name = "ilbm",
+        .group_id = datatypes.GID_PICTURE,
+        .id = ID("ILBM"),
+        .flags = datatypes.DTF_IFF,
+    });
+    const form = "FORM\x00\x00\x00\x10ILBMBMHD";
+    var source: _type.Source = undefined;
+    try testing.expect(_type.open(db, &source, dtc.DTST_MEMORY, @constCast(form), &[_]utility.TagItem{
+        .{ .tag = dtc.DTA_SourceSize, .data = form.len },
+        .{},
+    }));
+    try testing.expectEqual(ID("ILBM"), source.form_type);
+    try testing.expect(_type.matches(db, ilbm.ptr(), &source));
+    try testing.expectEqual(@as(u32, 0), _type.formTypeOfBytes("FORM\x00\x00"));
+    try testing.expectEqual(@as(u32, 0), _type.formTypeOfBytes("JUNK\x00\x00\x00\x10ILBM"));
+    try rig.down();
+}
+
 test "datatypes: the class library's name from a base name" {
     var name: [64]u8 = @splat(0);
     try testing.expect(_type.className("ilbm", &name));

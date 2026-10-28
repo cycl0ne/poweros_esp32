@@ -1251,7 +1251,8 @@ fn moved(ib: *IntuitionBase, last: bool) void {
 // between. So while the input task sizes a window, the pointer's moves
 // only say that a step is owed, and the task's loop takes it when two
 // things are true: the program has replied the last step's IDCMP_NEWSIZE
-// - or had `size_answer_ticks` to - and a frame has passed since the last
+// - a windowclass window's when its program asks for the next message -
+// or had `size_answer_ticks` to, and a frame has passed since the last
 // step began. The pointer's place is read when the step is taken, so the
 // moves in between cost nothing. A program that does not listen for the
 // class is not waited for, and letting go of the size gadget takes the

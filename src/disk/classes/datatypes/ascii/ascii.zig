@@ -41,8 +41,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "ascii.datatype",
     .version = 1,
-    .revision = 1,
-    .date = "25.10.2026",
+    .revision = 2,
+    .date = "28.10.2026",
     .super = tdc.TEXTDTCLASS,
     .opens = &.{ tdc.TEXT_LIBRARY, iffparse.IFFPARSENAME },
     .Instance = Data,
@@ -221,7 +221,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 else
                     .no_file)
             else
-                subclass.readWhole(base.sys_base, dl, @ptrCast(@alignCast(handle)));
+                subclass.readSource(base.sys_base, dl, ib, cl, obj);
             const read = switch (found) {
                 .got => |bytes| bytes,
                 .too_large => {

@@ -31,7 +31,12 @@ The window's title is the song's: `Fire - Player`.
 - The song's cover: the picture its tags hold, or one lying beside the
   file - `cover.jpg`, `folder.jpg`, `front.jpg`, `cover.png` or
   `folder.png`. A picture that is not square shows its middle. The cover
-  grows with the window, square, from 64 to 160 pixels.
+  grows with the window, square, from 64 to 160 pixels, with round
+  corners in a sunk edge; a song without one shows a note. A click on the
+  cover shows it at its own size in a window of its own - as much of it
+  as the screen holds, kept in its shape when the window is sized - which
+  its close gadget or Esc closes. That window stays with the cover it
+  shows; a click on the next song's cover shows that one in its place.
 - Beside it, one block of lines in the middle of the room, what the tags
   say: the title, large and bold - or the file's name - and the artist;
   under them, dimmer, the album and its year, the genre, the track and

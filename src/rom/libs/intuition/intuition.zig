@@ -6359,6 +6359,55 @@ test "windowclass: opened at its layout's size in the middle, answered a word at
     try tearDown(ib);
 }
 
+test "windowclass: a size is replied at the next WM_HANDLEINPUT, or when the window closes" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const lg = intuition.layoutgclass;
+    const wc = intuition.windowclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 112, 56, .rgb565);
+
+    const layout = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(framedButton(ib, "OK", 1)) },
+        .{},
+    }).?;
+    const object = it.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("W") },
+        .{ .tag = wn.WA_SizeGadget, .data = 1 },
+        .{ .tag = wn.WA_SimpleRefresh, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_NEWSIZE },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+        .{},
+    }).?;
+    var open = wc.WmOpen{};
+    const w: *intuition.Window = @ptrFromInt(it.SendMessage(object, @ptrCast(&open)));
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    try testing.expect(it.LockPubScreen(null) == screen); // held open past the window
+    var code: u32 = 0;
+    var handle = wc.WmHandleInput{ .code = &code };
+    try testing.expectEqual(wc.WMHI_LASTMSG, it.SendMessage(object, @ptrCast(&handle)));
+
+    // Sized: the word, and the message still out until the program asks
+    // for the next - which is when a sizing's next step may come.
+    it.SizeWindow(w, 8, 4);
+    try testing.expectEqual(wc.WMHI_NEWSIZE, it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expect(win.reply_port.msg_list.isEmpty());
+    try testing.expectEqual(wc.WMHI_LASTMSG, it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expect(!win.reply_port.msg_list.isEmpty());
+
+    // Sized again and disposed of with the message held: replied as the
+    // window closes, so nothing is left over.
+    it.SizeWindow(w, -8, -4);
+    try testing.expectEqual(wc.WMHI_NEWSIZE, it.SendMessage(object, @ptrCast(&handle)));
+    it.DisposeObject(object);
+    it.UnlockPubScreen(null, screen);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windowclass: WM_RETHINK - the layout measured again once something in it grew, the window grown to it" {
     const ib = try setUp();
     defer kexec.deinit();
