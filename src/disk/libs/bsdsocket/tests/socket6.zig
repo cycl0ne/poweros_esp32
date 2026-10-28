@@ -530,3 +530,119 @@ test "RecvMsg on a stream fills its buffers in turn" {
     rig.pass(4 * @import("../tcp/_tcp.zig").msl_us);
     try rig.deinit();
 }
+
+/// `count` messages, each with its own buffer of `size` and room for its
+/// sender, for RecvMMsg.
+fn Batch(comptime count: usize, comptime size: usize) type {
+    return struct {
+        data: [count][size]u8 = undefined,
+        vectors: [count]bsd.iovec = undefined,
+        from: [count]bsd.sockaddr_in6 = undefined,
+        messages: [count]bsd.mmsghdr = undefined,
+
+        fn ready(batch: *@This()) void {
+            for (&batch.data, &batch.vectors, &batch.from, &batch.messages) |*data, *vector, *from, *message| {
+                vector.* = .{ .iov_base = data, .iov_len = size };
+                from.* = .{};
+                message.* = .{ .msg_hdr = .{ .msg_name = from, .msg_namelen = @sizeOf(bsd.sockaddr_in6), .msg_iov = @ptrCast(vector), .msg_iovlen = 1 } };
+            }
+        }
+
+        fn got(batch: *const @This(), index: usize) []const u8 {
+            return batch.data[index][0..batch.messages[index].msg_len];
+        }
+    };
+}
+
+test "RecvMMsg: the datagrams waiting, each into its own message, then nothing; the flags it refuses" {
+    var rig = try Rig.init();
+    const sb = rig.sb;
+    const receiver = try rig.socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
+    const sender = try rig.socket(bsd.PF_INET6, bsd.SOCK_DGRAM, 0);
+    var bound = any6(7002);
+    try testing.expectEqual(@as(i32, 0), sb.Bind(receiver, bound.anyConst(), @sizeOf(bsd.sockaddr_in6)));
+    var here = loopback6(7002);
+    for ([_][]const u8{ "one", "two!", "three" }) |text| {
+        try testing.expectEqual(@as(i32, @intCast(text.len)), sb.SendTo(sender, text.ptr, @intCast(text.len), 0, here.anyConst(), @sizeOf(bsd.sockaddr_in6)));
+    }
+    var batch: Batch(4, 8) = .{};
+    batch.ready();
+    // Three waiting, room for four: three, each its own, with its sender.
+    try testing.expectEqual(@as(i32, 3), sb.RecvMMsg(receiver, &batch.messages, 4, 0));
+    try testing.expectEqualStrings("one", batch.got(0));
+    try testing.expectEqualStrings("two!", batch.got(1));
+    try testing.expectEqualStrings("three", batch.got(2));
+    for (batch.from[0..3], batch.messages[0..3]) |from, message| {
+        try testing.expect(std.mem.eql(u8, &from.sin6_addr.s6_addr, &bsd.in6addr_loopback.s6_addr));
+        try testing.expectEqual(@as(u32, @sizeOf(bsd.sockaddr_in6)), message.msg_hdr.msg_namelen);
+        try testing.expectEqual(@as(u32, 0), message.msg_hdr.msg_flags);
+    }
+
+    // Room for one: one a call, in the order they came; a datagram
+    // longer than its buffer is cut, as RecvMsg cuts it.
+    _ = sb.SendTo(sender, "a", 1, 0, here.anyConst(), @sizeOf(bsd.sockaddr_in6));
+    _ = sb.SendTo(sender, "far too long", 12, 0, here.anyConst(), @sizeOf(bsd.sockaddr_in6));
+    batch.ready();
+    try testing.expectEqual(@as(i32, 1), sb.RecvMMsg(receiver, &batch.messages, 1, 0));
+    try testing.expectEqualStrings("a", batch.got(0));
+    try testing.expectEqual(@as(i32, 1), sb.RecvMMsg(receiver, &batch.messages, 1, 0));
+    try testing.expectEqualStrings("far too ", batch.got(0));
+    try testing.expectEqual(bsd.MSG_TRUNC, batch.messages[0].msg_hdr.msg_flags);
+
+    // Nothing waiting, and the socket does not wait; no room, nothing
+    // asked; a peek or urgent data is not for a batch.
+    try testing.expectEqual(@as(i32, -1), sb.RecvMMsg(receiver, &batch.messages, 4, 0));
+    try testing.expectEqual(bsd.EWOULDBLOCK, sb.Errno());
+    try testing.expectEqual(@as(i32, 0), sb.RecvMMsg(receiver, &batch.messages, 0, 0));
+    _ = sb.SendTo(sender, "kept", 4, 0, here.anyConst(), @sizeOf(bsd.sockaddr_in6));
+    try testing.expectEqual(@as(i32, -1), sb.RecvMMsg(receiver, &batch.messages, 4, bsd.MSG_PEEK));
+    try testing.expectEqual(bsd.EINVAL, sb.Errno());
+    try testing.expectEqual(@as(i32, -1), sb.RecvMMsg(receiver, &batch.messages, 4, bsd.MSG_OOB));
+    try testing.expectEqual(bsd.EINVAL, sb.Errno());
+    batch.ready();
+    try testing.expectEqual(@as(i32, 1), sb.RecvMMsg(receiver, &batch.messages, 4, 0));
+    try testing.expectEqualStrings("kept", batch.got(0));
+    try testing.expectEqual(@as(i32, -1), sb.RecvMMsg(99, &batch.messages, 4, 0));
+    try testing.expectEqual(bsd.EBADF, sb.Errno());
+    _ = sb.CloseSocket(sender);
+    _ = sb.CloseSocket(receiver);
+    try rig.deinit();
+}
+
+test "RecvMMsg on a stream: each message what has come, until nothing more has; the end a call of its own" {
+    var rig = try Rig.init();
+    const sb = rig.sb;
+    const listener = try rig.socket(bsd.PF_INET6, bsd.SOCK_STREAM, 0);
+    var here = loopback6(7003);
+    try testing.expectEqual(@as(i32, 0), sb.Bind(listener, here.anyConst(), @sizeOf(bsd.sockaddr_in6)));
+    try testing.expectEqual(@as(i32, 0), sb.Listen(listener, 1));
+    const client = try rig.socket(bsd.PF_INET6, bsd.SOCK_STREAM, 0);
+    _ = sb.Connect(client, here.anyConst(), @sizeOf(bsd.sockaddr_in6));
+    rig.pass(100_000);
+    const server = sb.Accept(listener, null, null);
+    try testing.expect(server >= 0);
+    try testing.expectEqual(@as(i32, 10), sb.Send(client, "0123456789", 10, 0));
+    rig.pass(100_000);
+    var batch: Batch(4, 4) = .{};
+    batch.ready();
+    try testing.expectEqual(@as(i32, 3), sb.RecvMMsg(server, &batch.messages, 4, 0));
+    try testing.expectEqualStrings("0123", batch.got(0));
+    try testing.expectEqualStrings("4567", batch.got(1));
+    try testing.expectEqualStrings("89", batch.got(2));
+    // The far end closes after two more bytes: those, and its end only
+    // in the next call.
+    try testing.expectEqual(@as(i32, 2), sb.Send(client, "ab", 2, 0));
+    _ = sb.CloseSocket(client);
+    rig.pass(100_000);
+    batch.ready();
+    try testing.expectEqual(@as(i32, 1), sb.RecvMMsg(server, &batch.messages, 4, 0));
+    try testing.expectEqualStrings("ab", batch.got(0));
+    batch.ready();
+    try testing.expectEqual(@as(i32, 1), sb.RecvMMsg(server, &batch.messages, 4, 0));
+    try testing.expectEqual(@as(u32, 0), batch.messages[0].msg_len);
+    _ = sb.CloseSocket(server);
+    _ = sb.CloseSocket(listener);
+    // TIME_WAIT waited out.
+    rig.pass(4 * @import("../tcp/_tcp.zig").msl_us);
+    try rig.deinit();
+}

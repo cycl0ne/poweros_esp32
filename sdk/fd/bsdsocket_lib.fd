@@ -144,4 +144,8 @@ i32 RecvMsg(i32 socket, *bsd.msghdr message, u32 flags)
 i32 AddPacketHook(*utility.Hook hook, ?[*]const utility.TagItem tags)
 /// `hook` taken out of its chain; when this returns it is called no more.
 void RemPacketHook(*utility.Hook hook)
+/// Up to `count` datagrams in at once, each into its own msghdr as
+/// RecvMsg reads one: waits for the first, then takes only what is
+/// there; how many, or -1.
+i32 RecvMMsg(i32 socket, [*]bsd.mmsghdr messages, u32 count, u32 flags)
 ##end

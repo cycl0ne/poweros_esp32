@@ -248,6 +248,13 @@ pub const msghdr = extern struct {
     msg_flags: u32 = 0,
 };
 
+/// struct mmsghdr: one of the datagrams RecvMMsg takes - the msghdr it is
+/// read into, as RecvMsg reads one, and the bytes put in its buffers.
+pub const mmsghdr = extern struct {
+    msg_hdr: msghdr = .{},
+    msg_len: u32 = 0,
+};
+
 /// struct cmsghdr: a control message's header - its length, the header
 /// counted, and its level and type (IPPROTO_IPV6, IPV6_HOPLIMIT) - with
 /// its data behind it at `cmsgData`.

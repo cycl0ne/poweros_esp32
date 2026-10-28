@@ -44,6 +44,7 @@ const GetNameInfo = @import("names/getnameinfo.zig").GetNameInfo;
 const RecvMsg = @import("socket/recvmsg.zig").RecvMsg;
 const AddPacketHook = @import("hook/addpackethook.zig").AddPacketHook;
 const RemPacketHook = @import("hook/rempackethook.zig").RemPacketHook;
+const RecvMMsg = @import("socket/recvmmsg.zig").RecvMMsg;
 const Inet_Addr = @import("socket/inet_addr.zig").Inet_Addr;
 const SocketBaseTagList = @import("socket/socketbasetaglist.zig").SocketBaseTagList;
 const AddInterfaceTagList = @import("netif/addinterfacetaglist.zig").AddInterfaceTagList;
@@ -295,6 +296,9 @@ fn lvoAddPacketHook(sb: *SocketBase, hook: *utility.Hook, tags: ?[*]const utilit
 fn lvoRemPacketHook(sb: *SocketBase, hook: *utility.Hook) callconv(.c) void {
     return RemPacketHook(sb, hook);
 }
+fn lvoRecvMMsg(sb: *SocketBase, socket: i32, messages: [*]bsd.mmsghdr, count: u32, flags: u32) callconv(.c) i32 {
+    return RecvMMsg(sb, socket, messages, count, flags);
+}
 fn lvoGetNetworkStatistics(sb: *SocketBase, kind: u32, buffer: ?*anyopaque, size: u32) callconv(.c) i32 {
     return GetNetworkStatistics(sb, kind, buffer, size);
 }
@@ -357,6 +361,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRecvMsg),
     vec(lvoAddPacketHook),
     vec(lvoRemPacketHook),
+    vec(lvoRecvMMsg),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

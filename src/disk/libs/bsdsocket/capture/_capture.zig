@@ -13,6 +13,12 @@
 //! device reads of frames; what does not fit is counted and told with the
 //! next frame that does. With no capture socket open nothing is looked
 //! at: the taps cost a compare.
+//!
+//! **At a gigabit** frames come every 11 us, and each read of one waits
+//! for the stack's lock, which the stack's task and the other readers
+//! hold most of the time: a capture keeps up only by taking many frames
+//! at once (RecvMMsg), so the 64-bit boards keep 64 for it - with a
+//! gigabit link's 128 reads and 32 writes, 224 of the pool's 512.
 
 const sdk = @import("sdk");
 const bsd = sdk.bsdsocket;
@@ -25,9 +31,13 @@ const _timer = @import("../timer/_timer.zig");
 const _frame = @import("../frame/_frame.zig");
 
 /// The most frames a capture socket keeps unread.
-pub const queue_max = 16;
+pub const queue_max = if (@sizeOf(usize) == 8) 64 else 16;
 
 const header_bytes = @sizeOf(bsd.CaptureHeader);
+/// What a copy, a frame of the pool's, costs in a queue: what the socket's
+/// `receive_bytes` counts, so `queue_max` of them is a sum, not a walk of
+/// the queue for every frame.
+const copy_cost = @offsetOf(_frame.Frame, "buffer") + _frame.buffer_bytes;
 const ethernet_bytes = 14;
 const null_bytes = 4;
 
@@ -51,10 +61,7 @@ pub fn tap(stack: *StackBase, interface: *Interface, packet: []const u8, directi
         if (socket.capture_interface) |watched| {
             if (watched != interface) continue;
         }
-        var queued: u32 = 0;
-        var frames = socket.receive.iterator();
-        while (frames.next()) |_| queued += 1;
-        const copy = if (queued < queue_max) stack.frames.take(sys) else null;
+        const copy = if (socket.receive_bytes < queue_max * copy_cost) stack.frames.take(sys) else null;
         const frame = copy orelse {
             socket.capture_dropped +|= 1;
             continue;

@@ -45,6 +45,7 @@ Generated from the source by `./zig build autodoc`.
 - [QueryInterfaceTagList](#queryinterfacetaglist) - What an interface is, each answer where its tag points.
 - [Recv](#recv) - The next datagram waiting on the socket, into `buffer`.
 - [RecvFrom](#recvfrom) - The next datagram waiting on the socket, into `buffer`, and the address it came from; for a stream socket, what has come on its connection.
+- [RecvMMsg](#recvmmsg) - Up to `count` datagrams, each into its own message as RecvMsg reads one: it waits for the first, as RecvMsg does, then takes only those already there.
 - [RecvMsg](#recvmsg) - The next datagram waiting on the socket, spread over `message`'s buffers in turn, the address it came from, and control messages about it; for a stream socket, what has come on its connection.
 - [ReleaseInterfaceList](#releaseinterfacelist) - A list of interface names freed.
 - [ReleaseSocket](#releasesocket) - The socket taken out of the opener's table and left with the stack, under an id, for ObtainSocket.
@@ -2504,6 +2505,81 @@ var from_length: u32 = @sizeOf(bsd.sockaddr_in);
 const got = sb.RecvFrom(socket, &buffer, buffer.len, 0, from.any(), &from_length);
 ```
 
+## RecvMMsg
+
+Up to `count` datagrams, each into its own message as RecvMsg reads one: it waits for the first, as RecvMsg does, then takes only those already there.
+
+**SYNOPSIS**
+
+```zig
+fn RecvMMsg(base: *SocketBase, socket: i32, messages: [*]mmsghdr, count: u32, flags: u32) i32
+```
+
+**SINCE**
+
+1.20. LVO -224.
+
+**INPUTS**
+
+- `socket` - a descriptor from Socket.
+- `messages` - `count` mmsghdrs: each one's `msg_hdr` as RecvMsg's
+  `message` - its buffers, room for the sender and for control
+  messages.
+- `count` - how many there are room for.
+- `flags` - 0, or `MSG_DONTWAIT`: not even the first is waited for.
+
+**RESULT**
+
+How many messages were filled - 0 when `count` is 0 - or -1 with
+Errno() when the first could not be: as RecvMsg's, and `EINVAL` for
+`MSG_PEEK` or `MSG_OOB`. Each filled one has its bytes in `msg_len`
+and its `msg_hdr` as RecvMsg leaves it.
+
+**BEHAVIOR**
+
+Past the first it stops at the first message nothing is waiting for,
+and at an error, which the next call tells. A stream socket fills each
+message with what has come, as RecvMsg does, and stops when nothing
+more has; its end is a message of 0 bytes, the first of a call.
+
+**CONTEXT**
+
+- Waits: for the first datagram, unless the socket does not wait.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do; it must be the one that opened the base,
+  whose signals the wait is on.
+
+**OWNERSHIP**
+
+Each datagram is copied into its message's buffers and its frame given
+back; `messages` and what they point to stay the caller's.
+
+**NOTES**
+
+Linux's recvmmsg, without its timeout: SO_RCVTIMEO bounds the wait
+for the first, as it does RecvMsg's.
+
+**SEE ALSO**
+
+`RecvMsg`, `WaitSelect`
+
+**EXAMPLES**
+
+```zig
+var data: [8][2048]u8 = undefined;
+var vectors: [8]bsd.iovec = undefined;
+var messages: [8]bsd.mmsghdr = undefined;
+for (&data, &vectors, &messages) |*each, *vector, *message| {
+    vector.* = .{ .iov_base = each, .iov_len = each.len };
+    message.* = .{ .msg_hdr = .{ .msg_iov = @ptrCast(vector), .msg_iovlen = 1 } };
+}
+const got = sb.RecvMMsg(socket, &messages, messages.len, 0);
+for (messages[0..@intCast(@max(got, 0))]) |message| {
+    _ = message.msg_len; // the bytes in its buffer
+}
+```
+
 ## RecvMsg
 
 The next datagram waiting on the socket, spread over `message`'s buffers in turn, the address it came from, and control messages about it; for a stream socket, what has come on its connection.
@@ -2568,7 +2644,7 @@ A stream socket read with `MSG_PEEK` fills only the first buffer.
 
 **SEE ALSO**
 
-`RecvFrom`, `SetSockOpt`, `WaitSelect`
+`RecvFrom`, `RecvMMsg`, `SetSockOpt`, `WaitSelect`
 
 **EXAMPLES**
 

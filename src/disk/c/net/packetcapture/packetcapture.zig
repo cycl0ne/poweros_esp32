@@ -20,6 +20,11 @@
 //! system clock's, which keeps local time: a reader shows it as UTC.
 //! The file is written behind in halves of 32 KiB (BUF_ASYNC, dos.library
 //! 1.15), not a packet to its handler for each frame.
+//!
+//! The frames are taken as many at once as the stack keeps for the
+//! socket (RecvMMsg, bsdsocket.library 1.20): each Recv of one waits for
+//! the stack's lock, ~45 us of it on a busy gigabit link, where frames
+//! come every 11 us. An older stack is read a frame at a time.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -34,7 +39,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "PacketCapture";
-const VERSION_STRING = "\x00$VER: PacketCapture 1.3 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: PacketCapture 1.4 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "INTERFACE/A,TO/K/A,COUNT/K/N,TIME/K/N,SNAPLEN/K/N,QUIET/S,FILTERED/S";
@@ -54,6 +59,17 @@ const MSG_DONE = "%lu frames, %lu bytes; %lu had no room\n";
 
 /// The largest frame, its capture header, and some.
 const buffer_bytes = 2048;
+/// The frames taken at once: as many as the stack keeps unread for a
+/// capture socket.
+const batch_max = if (@sizeOf(usize) == 8) 64 else 16;
+/// The first bsdsocket.library with RecvMMsg.
+const BATCH_REVISION = 20;
+/// Where a batch of frames is read to: each frame into its own buffer.
+const Batch = extern struct {
+    messages: [batch_max]bsd.mmsghdr,
+    vectors: [batch_max]bsd.iovec,
+    data: [batch_max][buffer_bytes]u8,
+};
 /// TO's buffer, both halves.
 const file_buffer_bytes = 64 * 1024;
 const snaplen_most: u32 = 65535;
@@ -135,9 +151,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseDevice(&clock.node);
     const timer_base: *TimerBase = @ptrCast(@alignCast(clock.node.device.?));
 
-    const memory = sys.AllocVec(buffer_bytes, exec.MEMF_ANY) orelse return dos.RETURN_FAIL;
+    const memory = sys.AllocVec(@sizeOf(Batch), exec.MEMF_ANY) orelse return dos.RETURN_FAIL;
     defer sys.FreeVec(memory);
-    const buffer = @as([*]u8, @ptrCast(memory))[0..buffer_bytes];
+    const batch: *Batch = @ptrCast(@alignCast(memory));
+    for (&batch.messages, &batch.vectors, &batch.data) |*message, *vector, *data| {
+        vector.* = .{ .iov_base = data, .iov_len = buffer_bytes };
+        message.* = .{ .msg_hdr = .{ .msg_iov = @ptrCast(vector), .msg_iovlen = 1 } };
+    }
+    const batched = socket_lib.version > 1 or socket_lib.revision >= BATCH_REVISION;
 
     const file = dl.Open(to, dos.MODE_NEWFILE) orelse {
         _ = dl.PrintFault(dl.IoErr(), to);
@@ -158,7 +179,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var bytes: u64 = 0;
     var dropped: u64 = 0;
     const capture_bytes = @sizeOf(bsd.CaptureHeader);
-    while (count == 0 or frames < count) {
+    // The last batch was full: more may be waiting, and nothing is
+    // waited for before taking them.
+    var more = false;
+    capturing: while (count == 0 or frames < count) {
+        // Under a steady stream the socket is never waited at, where
+        // Ctrl-C would be seen.
+        if (sys.SetSignal(0, exec.SIGBREAKF_CTRL_C) & exec.SIGBREAKF_CTRL_C != 0) break;
         var patience: timer.TimeVal = .{};
         var patience_pointer: ?*timer.TimeVal = null;
         if (deadline) |until| {
@@ -167,42 +194,63 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             patience = timer.TimeVal.fromMicros(until - now);
             patience_pointer = &patience;
         }
-        var read: bsd.fd_set = .{};
-        read.set(capture);
-        const ready = sb.WaitSelect(capture + 1, &read, null, null, patience_pointer, null);
-        if (ready < 0) {
-            if (sb.Errno() == bsd.EINTR) break;
-            return failed(dl, sb, "WaitSelect");
+        if (!more) {
+            var read: bsd.fd_set = .{};
+            read.set(capture);
+            const ready = sb.WaitSelect(capture + 1, &read, null, null, patience_pointer, null);
+            if (ready < 0) {
+                if (sb.Errno() == bsd.EINTR) break;
+                return failed(dl, sb, "WaitSelect");
+            }
+            if (ready == 0) continue;
         }
-        if (ready == 0) continue;
-        const got = sb.Recv(capture, buffer.ptr, buffer_bytes, 0);
+        const got = take(sb, capture, batch, batched);
         if (got < 0) {
+            if (sb.Errno() == bsd.EWOULDBLOCK) {
+                more = false;
+                continue;
+            }
             if (sb.Errno() == bsd.EINTR) break;
             return failed(dl, sb, "Recv");
         }
-        if (got < capture_bytes) continue;
-        const seen: *align(1) const bsd.CaptureHeader = @ptrCast(buffer.ptr);
-        // A packet a hook stopped comes as a second copy: kept with
-        // FILTERED, and only then.
-        if ((seen.flags & bsd.CAPTURE_FILTERED != 0) != filtered) continue;
-        const frame = buffer[capture_bytes..@intCast(got)];
-        const kept: u32 = @min(@as(u32, @intCast(frame.len)), snaplen);
-        const record: RecordHeader = .{
-            .secs = seen.secs +% unix_to_system,
-            .micro = seen.micro,
-            .kept = kept,
-            .length = seen.length,
-        };
-        if (!write(dl, file, bytesOf(&record)) or !write(dl, file, frame[0..kept])) return writeFailed(dl);
-        frames += 1;
-        bytes += seen.length;
-        dropped += seen.dropped;
+        more = got == @as(i32, if (batched) batch_max else 1);
+        const taken: usize = @intCast(got);
+        for (batch.messages[0..taken], batch.data[0..taken]) |message, *data| {
+            if (count != 0 and frames >= count) break :capturing;
+            if (message.msg_len < capture_bytes) continue;
+            const seen: *align(1) const bsd.CaptureHeader = @ptrCast(data);
+            // A packet a hook stopped comes as a second copy: kept with
+            // FILTERED, and only then.
+            if ((seen.flags & bsd.CAPTURE_FILTERED != 0) != filtered) continue;
+            const frame = data[capture_bytes..message.msg_len];
+            const kept: u32 = @min(@as(u32, @intCast(frame.len)), snaplen);
+            const record: RecordHeader = .{
+                .secs = seen.secs +% unix_to_system,
+                .micro = seen.micro,
+                .kept = kept,
+                .length = seen.length,
+            };
+            if (!write(dl, file, bytesOf(&record)) or !write(dl, file, frame[0..kept])) return writeFailed(dl);
+            frames += 1;
+            bytes += seen.length;
+            dropped += seen.dropped;
+        }
     }
     // The last frames go, and a write behind that failed is told.
     open = false;
     if (!dl.Close(file)) return writeFailed(dl);
     if (!quiet) _ = Printf(dl, MSG_DONE, .{ frames, bytes, dropped });
     return dos.RETURN_OK;
+}
+
+/// The frames waiting, without waiting: up to a batch at once, or with an
+/// older stack one; how many, or -1 with Errno().
+fn take(sb: *SocketBase, capture: i32, batch: *Batch, batched: bool) i32 {
+    if (batched) return sb.RecvMMsg(capture, &batch.messages, batch_max, bsd.MSG_DONTWAIT);
+    const got = sb.Recv(capture, &batch.data[0], buffer_bytes, bsd.MSG_DONTWAIT);
+    if (got < 0) return -1;
+    batch.messages[0].msg_len = @intCast(got);
+    return 1;
 }
 
 fn number(arg: usize, default: u32) u32 {

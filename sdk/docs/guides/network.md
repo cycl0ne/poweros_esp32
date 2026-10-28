@@ -94,7 +94,10 @@ const got = sb.Recv(fd, &reply, reply.len, 0);
   `Connect`, `Send`/`SendTo`, `Recv`/`RecvFrom` (`MSG_PEEK`,
   `MSG_DONTWAIT`, `MSG_OOB`), `RecvMsg` (several buffers, and control
   messages: `IPV6_RECVHOPLIMIT` gives each IPv6 datagram's hop limit,
-  walked with `cmsgFirst`/`cmsgNext`/`cmsgData`), `Shutdown`, `CloseSocket`, `GetSockName`,
+  walked with `cmsgFirst`/`cmsgNext`/`cmsgData`), `RecvMMsg` (the
+  datagrams waiting, several in one call: each read of one waits for the
+  stack's lock, which on a busy gigabit link costs more than the read -
+  PacketCapture keeps up only this way), `Shutdown`, `CloseSocket`, `GetSockName`,
   `GetPeerName`, `SetSockOpt`/`GetSockOpt`, `IoctlSocket` (`FIONBIO`,
   `SIOCATMARK`).
 - **Errors:** a call that fails answers -1; `Errno()` gives the reason, and

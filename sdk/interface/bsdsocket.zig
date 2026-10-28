@@ -69,6 +69,7 @@ pub const LVO = struct {
     pub const RecvMsg = libraries.lvo(52);
     pub const AddPacketHook = libraries.lvo(53);
     pub const RemPacketHook = libraries.lvo(54);
+    pub const RecvMMsg = libraries.lvo(55);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -125,6 +126,7 @@ pub const Fn = struct {
     pub const RecvMsg = *const fn (*SocketBase, i32, *bsd.msghdr, u32) callconv(.c) i32;
     pub const AddPacketHook = *const fn (*SocketBase, *utility.Hook, ?[*]const utility.TagItem) callconv(.c) i32;
     pub const RemPacketHook = *const fn (*SocketBase, *utility.Hook) callconv(.c) void;
+    pub const RecvMMsg = *const fn (*SocketBase, i32, [*]bsd.mmsghdr, u32, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -419,5 +421,12 @@ pub const SocketBase = opaque {
     /// `hook` taken out of its chain; when this returns it is called no more.
     pub fn RemPacketHook(self: *SocketBase, hook: *utility.Hook) void {
         return libraries.call(self, LVO.RemPacketHook, Fn.RemPacketHook, .{hook});
+    }
+
+    /// Up to `count` datagrams in at once, each into its own msghdr as
+    /// RecvMsg reads one: waits for the first, then takes only what is
+    /// there; how many, or -1.
+    pub fn RecvMMsg(self: *SocketBase, socket: i32, messages: [*]bsd.mmsghdr, count: u32, flags: u32) i32 {
+        return libraries.call(self, LVO.RecvMMsg, Fn.RecvMMsg, .{ socket, messages, count, flags });
     }
 };

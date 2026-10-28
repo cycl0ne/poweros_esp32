@@ -25,6 +25,7 @@ const _route = @import("../route/_route.zig");
 const _ip = @import("../ip/_ip.zig");
 const _timer = @import("../timer/_timer.zig");
 const _tcp = @import("../tcp/_tcp.zig");
+const _capture = @import("../capture/_capture.zig");
 const tcp_output = @import("../tcp/output.zig");
 const utility_library = @import("host_rom").utility;
 const kexec = @import("host_rom").exec;
@@ -1611,10 +1612,11 @@ test "a capture socket sees what goes out and what comes in, and counts what it 
     var no_wait: bsd.timeval = .{};
     try testing.expectEqual(@as(i32, 0), a.WaitSelect(capture + 1, &ready, null, null, &no_wait, null));
 
-    // Ten echoes both ways, unread: sixteen kept, four counted.
-    for (0..10) |sequence| try echoToB(a, raw, @intCast(sequence + 2));
+    // Echoes both ways, unread, two more than a capture socket keeps:
+    // as many kept as it keeps, four counted.
+    for (0.._capture.queue_max / 2 + 2) |sequence| try echoToB(a, raw, @intCast(sequence + 2));
     rig.pump();
-    for (0..16) |_| try testing.expect(a.Recv(capture, &buffer, buffer.len, 0) > 0);
+    for (0.._capture.queue_max) |_| try testing.expect(a.Recv(capture, &buffer, buffer.len, 0) > 0);
     try echoToB(a, raw, 99);
     try testing.expect(a.Recv(capture, &buffer, buffer.len, 0) > 0);
     const header: *align(1) const bsd.CaptureHeader = @ptrCast(&buffer);

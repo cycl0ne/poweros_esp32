@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! RecvMsg: the next datagram in, spread over several buffers, with its
 //! sender and what the stack knows of it as control messages. RecvFrom
-//! and Recv are this with one buffer.
+//! and Recv are this with one buffer; RecvMMsg is it for several
+//! datagrams under one take of the lock (`receive`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -67,7 +68,7 @@ const tcp_user = @import("../tcp/user.zig");
 /// A stream socket read with `MSG_PEEK` fills only the first buffer.
 ///
 /// SEE ALSO:
-/// `RecvFrom`, `SetSockOpt`, `WaitSelect`
+/// `RecvFrom`, `RecvMMsg`, `SetSockOpt`, `WaitSelect`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -85,29 +86,36 @@ const tcp_user = @import("../tcp/user.zig");
 /// }
 /// ```
 pub fn RecvMsg(sb: *SocketBase, descriptor: i32, message: *bsd.msghdr, flags: u32) i32 {
+    // The timer is stopped after the lock is let go: stopping it waits
+    // for its request to come back.
+    defer _socket.stopTimer(sb);
+    var held = _lock.take(sb.stack);
+    defer _lock.give(sb.stack, held);
+    // A readiness signal from before this call says nothing about it.
+    _ = sb.sys_base.SetSignal(0, sb.ready_mask);
+    return receive(sb, &held, descriptor, message, flags, "RecvMsg");
+}
+
+/// RecvMsg's work, under the lock (`held`, let go while it waits): one
+/// datagram, or what a stream has, into `message`. RecvMMsg's too, named
+/// `call` in what fails.
+pub fn receive(sb: *SocketBase, held: *_lock.Held, descriptor: i32, message: *bsd.msghdr, flags: u32, call: [*:0]const u8) i32 {
     const sys = sb.sys_base;
     const stack = sb.stack;
     const vectors: []const bsd.iovec = if (message.msg_iov) |many| many[0..message.msg_iovlen] else &.{};
     var room: u64 = 0;
     for (vectors) |vector| room += vector.iov_len;
-    if (room > 0x7FFF_FFFF) return _socket.fail(sb, bsd.EINVAL, "RecvMsg");
+    if (room > 0x7FFF_FFFF) return _socket.fail(sb, bsd.EINVAL, call);
     const from: ?*bsd.sockaddr = @ptrCast(@alignCast(message.msg_name));
     const control_room = message.msg_controllen;
     message.msg_flags = 0;
     message.msg_controllen = 0;
-    // The timer is stopped after the lock is let go: stopping it waits
-    // for its request to come back.
-    defer _socket.stopTimer(sb);
-    var held = _lock.take(stack);
-    defer _lock.give(stack, held);
-    // A readiness signal from before this call says nothing about it.
-    _ = sys.SetSignal(0, sb.ready_mask);
     while (true) {
-        const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, "RecvMsg");
+        const socket = _socket.lookup(sb, descriptor) orelse return _socket.fail(sb, bsd.EBADF, call);
         if (flags & bsd.MSG_OOB != 0) {
-            if (socket.socket_type != bsd.SOCK_STREAM) return _socket.fail(sb, bsd.EOPNOTSUPP, "RecvMsg");
+            if (socket.socket_type != bsd.SOCK_STREAM) return _socket.fail(sb, bsd.EOPNOTSUPP, call);
             switch (tcp_user.receiveUrgent(socket, flags & bsd.MSG_PEEK != 0)) {
-                .errno => |errno| return _socket.fail(sb, errno, "RecvMsg"),
+                .errno => |errno| return _socket.fail(sb, errno, call),
                 .byte => |byte| {
                     const first = firstBuffer(vectors) orelse return 0;
                     first[0] = byte;
@@ -118,10 +126,10 @@ pub fn RecvMsg(sb: *SocketBase, descriptor: i32, message: *bsd.msghdr, flags: u3
         if (socket.pending_error != 0) {
             const errno = socket.pending_error;
             socket.pending_error = 0;
-            return _socket.fail(sb, errno, "RecvMsg");
+            return _socket.fail(sb, errno, call);
         }
         if (socket.socket_type == bsd.SOCK_STREAM) {
-            if (tcp_user.unconnected(socket)) return _socket.fail(sb, bsd.ENOTCONN, "RecvMsg");
+            if (tcp_user.unconnected(socket)) return _socket.fail(sb, bsd.ENOTCONN, call);
             if (receiveStream(stack, socket, vectors, flags & bsd.MSG_PEEK != 0)) |taken| {
                 if (from) |address| _socket.addressOut(stack, socket, socket.remote_address, socket.remote_port, socket.scope, address, &message.msg_namelen);
                 return @intCast(taken);
@@ -150,15 +158,15 @@ pub fn RecvMsg(sb: *SocketBase, descriptor: i32, message: *bsd.msghdr, flags: u3
             return @intCast(taken);
         }
         if (socket.flags & _socket.nonblocking != 0 or flags & bsd.MSG_DONTWAIT != 0) {
-            return _socket.fail(sb, bsd.EWOULDBLOCK, "RecvMsg");
+            return _socket.fail(sb, bsd.EWOULDBLOCK, call);
         }
         if (sb.timer_armed == 0 and !_socket.isZero(socket.receive_timeout)) {
             _ = _socket.startTimer(sb, socket.receive_timeout);
         }
         var came: u32 = 0;
-        switch (_socket.wait(sb, &held, 0, &came)) {
-            .broken => return _socket.fail(sb, bsd.EINTR, "RecvMsg"),
-            .timed_out => return _socket.fail(sb, bsd.EWOULDBLOCK, "RecvMsg"),
+        switch (_socket.wait(sb, held, 0, &came)) {
+            .broken => return _socket.fail(sb, bsd.EINTR, call),
+            .timed_out => return _socket.fail(sb, bsd.EWOULDBLOCK, call),
             .changed, .signalled => {},
         }
     }
