@@ -2,10 +2,12 @@
 //! palette.prefs: the system's pens as a file - one line, a pen's name and
 //! its colour for each: `BACKGROUND=#AAAAAA TEXT=#000000 SHINE=#FFFFFF`.
 //! The names are the screen pens' (`style.pens`), the colours `#RRGGBB`.
-//! A pen left out keeps the colour it has.
+//! A pen left out keeps the colour it has - but `DIMTEXT`, left out, is
+//! mixed from `TEXT` and `BACKGROUND` (a 0 among the pens), so a line
+//! that changes the ground changes the dim text with it.
 //!
-//! `parse` reads the line into twelve colours and which of them it gave,
-//! `write` writes twelve colours as the line, and `header` is the
+//! `parse` reads the line into the pens and which of them it gave,
+//! `write` writes the pens as the line, and `header` is the
 //! explanation a program that writes the file puts before it; `defaults`
 //! are the built-in pens. C:SetPrefs
 //! hands the file to intuition at boot (`SetScreenPens`).
@@ -38,6 +40,7 @@ pub fn parse(ub: *UtilityBase, text: []const u8, palette: *Palette) ?[*:0]const 
         palette.pens[pen] = colour;
         palette.given |= @as(u32, 1) << @intCast(pen);
     }
+    if (palette.given & @as(u32, 1) << sc.DIMTEXTPEN == 0) palette.pens[sc.DIMTEXTPEN] = 0;
     return null;
 }
 
@@ -50,11 +53,13 @@ fn hex(into: []u8, value: u32) void {
     }
 }
 
-/// Twelve pens written as the line, into `into` (256 bytes will do); how
-/// many bytes, no newline.
+/// The pens written as the line, into `into` (256 bytes will do); how
+/// many bytes, no newline. The dim text while it is mixed (0) is left
+/// out.
 pub fn write(pens: *const [sc.NUMDRIPENS]Pen, into: []u8) usize {
     var n: usize = 0;
     for (style.pens) |entry| {
+        if (entry.value == sc.DIMTEXTPEN and pens[entry.value] == 0) continue;
         if (n > 0) {
             into[n] = ' ';
             n += 1;
@@ -76,10 +81,11 @@ pub const header =
     \\# to intuition at boot. One line, a pen's name and its colour for each:
     \\#
     \\# DETAIL BLOCK TEXT SHINE SHADOW FILL FILLTEXT BACKGROUND HIGHLIGHTTEXT
-    \\# BARDETAIL BARBLOCK BARTRIM, each =#RRGGBB.
+    \\# BARDETAIL BARBLOCK BARTRIM DIMTEXT, each =#RRGGBB.
     \\#
-    \\# A pen left out keeps the colour it has. With no line, the built-in
-    \\# pens: these.
+    \\# A pen left out keeps the colour it has, except DIMTEXT, the colour of
+    \\# text that says less: left out, it is mixed from TEXT and BACKGROUND.
+    \\# With no line, the built-in pens: these.
     \\#
     \\
 ++ "# " ++ default_line ++ "\n";

@@ -32,11 +32,18 @@ The window's title is the song's: `Fire - Player`.
   file - `cover.jpg`, `folder.jpg`, `front.jpg`, `cover.png` or
   `folder.png`. A picture that is not square shows its middle. The cover
   grows with the window, square, from 64 to 160 pixels.
-- Beside it what the tags say: the title, in bold - or the file's name -
-  the artist, the album and its year, the genre, the track and the
-  composer; the chapter that is playing when the song is marked in
+- Beside it, one block of lines in the middle of the room, what the tags
+  say: the title, large and bold - or the file's name - and the artist;
+  under them, dimmer, the album and its year, the genre, the track and
+  the composer; the chapter that is playing when the song is marked in
   chapters, as a DJ mix or an audiobook is, or else a comment; and the
-  kind of file, its rate, mono or stereo, and its bit rate.
+  kind of file, its rate, mono or stereo, and its bit rate. A line the
+  tags have nothing for is left out, and the window grows when a song
+  needs more lines than it has room for. A line too long for the room
+  ends in three dots. The title is in the window's font, half again as
+  tall, when diskfont.library can render it so; the dim lines are in
+  the screen's dim text colour, which **Prefs > Colours** sets as
+  *Dim text*.
 - A slider across that is where the song is, with the time and the
   song's length beside it. Drag it to go to another place; the time shows
   where while it is held.

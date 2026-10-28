@@ -11,10 +11,15 @@
 //! desktop is played at once instead.
 //!
 //! The window's title is the song's. At its top, the song's cover beside
-//! what its tags say:
-//! the title, the artist, the album and its year, the genre, the track and
-//! the composer, the chapter of a mix or a book that is playing - or a
-//! comment - and what kind of file it is. The cover is the picture the
+//! what its tags say, one block of lines in the middle of the room: the
+//! title, half again as large as the window's font and bold, the artist,
+//! and dimmer (the screen's `DIMTEXTPEN`) the album and its year, the
+//! genre, the track and the composer, the chapter of a mix or a book that
+//! is playing - or a comment - and what kind of file it is. A line with
+//! nothing to say takes no room; when a song has more lines or fewer than
+//! the one before, the window measures its layout again (`WM_RETHINK`),
+//! and grows when the block needs more height. A line too long for the
+//! room ends in three dots. The cover is the picture the
 //! tags hold, or one lying beside the file (cover.zig), kept square and
 //! as tall as the room beside it, from 64 to 160 pixels: it grows with the
 //! window, read once for each song and scaled each time the window is
@@ -97,6 +102,9 @@ const asl = sdk.asl;
 const mn = intuition.menus;
 const cv = sdk.gadgets.canvas;
 const ch = sdk.gadgets.chooser;
+const sc = intuition.screens;
+const diskfont = sdk.diskfont;
+const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const audiocontrol = sdk.devices.audiocontrol;
 
 const engine_file = @import("engine.zig");
@@ -106,7 +114,7 @@ const Visual = visual.Visual;
 const cover = @import("cover.zig");
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.6";
+const VERSION = "1.7";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
@@ -139,8 +147,9 @@ const jump_seconds = 10;
 /// Looks between two readings of the outputs: a second.
 const looks_per_outputs = 25;
 
-/// The lines beside the cover; the cover's size at first, and the least
-/// it is shown at - the most is what cover.zig keeps.
+/// The lines beside the cover, in the order they are shown; the cover's
+/// size at first, and the least it is shown at - the most is what
+/// cover.zig keeps.
 const line_title = 0;
 const line_artist = 1;
 const line_album = 2;
@@ -256,7 +265,8 @@ const App = struct {
     dt: ?*DataTypesBase = null,
     /// Whether audiocodec.library hands out the whole of the tags (1.1).
     has_attrs: bool = false,
-    lines: [line_count]*Object = undefined,
+    /// The lines beside the cover: one text gadget of runs.
+    block: *Object = undefined,
     cover: *Object = undefined,
     /// The song's cover as read, shown from there at the cover's size.
     kept: cover.Kept = .{},
@@ -302,8 +312,13 @@ const App = struct {
     dragging: bool = false,
     shown_second: u32 = ~@as(u32, 0),
     line_text: [line_count]Line(160) = [_]Line(160){.{}} ** line_count,
-    /// The title in bold: a run of the first line's text.
-    title_runs: [2]tx.TextRun = .{ .{}, .{} },
+    /// The lines that say something as runs: each line's, and a line
+    /// break between two; and the null run that ends them.
+    runs: [2 * line_count]tx.TextRun = @splat(.{}),
+    /// How many lines the runs hold, which the layout was measured for.
+    shown_lines: u32 = 0,
+    /// The title's font, or null for the window's.
+    title_font: ?*graphics.TextFont = null,
     /// The song's chapters, and the one shown.
     chapters: ?[*]const ac.AudioChapter = null,
     chapter_count: u32 = 0,
@@ -472,13 +487,45 @@ const App = struct {
         _ = app.ib.SetAttrsTagList(app.object, &[_]TagItem{ pair(wn.WA_Title, @intFromPtr(&app.window_title)), .{} });
     }
 
-    /// Every line beside the cover drawn as it now reads.
+    /// The lines beside the cover drawn as they now read; the layout
+    /// measured again, and the cover and the picture fitted to where it
+    /// put them, when there are more of them or fewer than before.
     fn showLines(app: *App) void {
-        app.title_runs[0] = .{ .text = &app.line_text[line_title].text, .style = graphics.FSF_BOLD };
-        app.set(app.lines[line_title], &.{ pair(tx.TEXT_Runs, @intFromPtr(&app.title_runs)), .{} });
-        for (app.lines[1..], app.line_text[1..]) |line, *text| {
-            app.set(line, &.{ pair(tx.TEXT_Text, @intFromPtr(&text.text)), .{} });
+        const count = app.makeRuns();
+        app.set(app.block, &.{ pair(tx.TEXT_Runs, @intFromPtr(&app.runs)), .{} });
+        if (count == app.shown_lines) return;
+        app.shown_lines = count;
+        var rethink = wc.WmRethink{};
+        _ = app.ib.SendMessage(app.object, @ptrCast(&rethink));
+        app.fitCover();
+        app.fitPicture();
+    }
+
+    /// The runs of the lines that say something: the title large and
+    /// bold, the artist in the front pen, the rest dim. The answer is how
+    /// many lines that is.
+    fn makeRuns(app: *App) u32 {
+        var n: usize = 0;
+        var count: u32 = 0;
+        for (&app.line_text, 0..) |*line, which| {
+            if (line.empty()) continue;
+            if (n != 0) {
+                // The break in the look of the line it ends, so it is no
+                // taller than that line.
+                app.runs[n] = app.runs[n - 1];
+                app.runs[n].text = "\n";
+                n += 1;
+            }
+            app.runs[n] = switch (which) {
+                line_title => .{ .text = &line.text, .font = app.title_font, .style = graphics.FSF_BOLD },
+                line_artist => .{ .text = &line.text },
+                else => .{ .text = &line.text, .colour = tx.screenPen(sc.DIMTEXTPEN) },
+            };
+            n += 1;
+            count += 1;
         }
+        app.runs[n] = .{};
+        return count;
     }
 
     /// The cover read and drawn: the picture the tags hold, one beside
@@ -533,7 +580,7 @@ const App = struct {
         _ = app.sys.RawDoFmt("Chapter %u of %u: ", &stream, null, &place);
         line.add(&place);
         line.add(@ptrCast(&list[which].title));
-        app.set(app.lines[line_chapter], &.{ pair(tx.TEXT_Text, @intFromPtr(&line.text)), .{} });
+        app.showLines();
     }
 
     fn showDeck(app: *App, mode: u32, paused: bool) void {
@@ -1071,6 +1118,18 @@ fn group(ib: *IntuitionBase, loose: *Loose, tags: []const TagItem, children: []c
     return loose.add(made);
 }
 
+/// The window's font at half again its height, rendered by
+/// diskfont.library; null without it, and then the title is in the
+/// window's font.
+fn titleFont(ib: *IntuitionBase, gb: *GraphicsBase, dfb: ?*DiskfontBase) ?*graphics.TextFont {
+    const fonts = dfb orelse return null;
+    const font = ib.OpenSystemFont(sc.SYSFONT_DEFAULT) orelse return null;
+    defer gb.CloseFont(font);
+    const name = font.node.name orelse return null;
+    const rows: u32 = font.image.height;
+    return fonts.OpenDiskFont(&.{ .name = name, .y_size = @intCast(rows * 3 / 2) });
+}
+
 fn noWindow(dl: *DosBase) i32 {
     _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
     return dos.RETURN_FAIL;
@@ -1151,20 +1210,24 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     app.line_text[line_title].add("No song");
     if (!engine.opened) app.line_text[line_format].add(soundTrouble(engine));
-    app.title_runs[0] = .{ .text = &app.line_text[line_title].text, .style = graphics.FSF_BOLD };
+    // The title's font, kept open - and the library that made it - until
+    // the gadgets that draw in it are gone.
+    const diskfont_lib = sys.OpenLibrary(diskfont.DISKFONTNAME, 0);
+    defer if (diskfont_lib) |lib| sys.CloseLibrary(lib);
+    app.title_font = titleFont(ib, app.gb, @ptrCast(diskfont_lib));
+    defer if (app.title_font) |font| app.gb.CloseFont(font);
+    app.shown_lines = app.makeRuns();
 
     // The gadgets: each loose until a layout takes it, and whatever is
     // still loose given back when the window cannot be made.
     var loose: Loose = .{};
     defer loose.dispose(ib);
-    for (&app.lines, &app.line_text, 0..) |*line, *text, i| {
-        line.* = loose.add(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
-            if (i == line_title) pair(tx.TEXT_Runs, @intFromPtr(&app.title_runs)) else pair(tx.TEXT_Text, @intFromPtr(&text.text)),
-            pair(tx.TEXT_Clipped, 1),
-            pair(gc.GA_Width, 240),
-            .{},
-        })) orelse return noWindow(dl);
-    }
+    app.block = loose.add(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Runs, @intFromPtr(&app.runs)),
+        pair(tx.TEXT_Clipped, 1),
+        pair(gc.GA_Width, 240),
+        .{},
+    })) orelse return noWindow(dl);
     app.cover = loose.add(ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
         pair(cv.CANVAS_Width, cover_size),
         pair(cv.CANVAS_Height, cover_size),
@@ -1222,12 +1285,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // slider with the time beside it; the deck, the volume and the output
     // in a row, which breaks where the window is narrow; the picture in a
     // sunk frame, taking what is left.
-    var line_children: [line_count]Child = undefined;
-    for (&line_children, app.lines) |*child, line| child.* = .{ .object = line, .weight_height = 0 };
-    const lines = group(ib, &loose, &.{pair(lg.LAYOUTA_Spacing, 1)}, &line_children) orelse return noWindow(dl);
     const info_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 8) }, &.{
         .{ .object = app.cover, .aspect = lg.aspect(1, 1), .min_height = cover_least, .max_height = cover.kept_size },
-        .{ .object = lines },
+        .{ .object = app.block },
     }) orelse return noWindow(dl);
     const seek_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
         .{ .object = app.position },

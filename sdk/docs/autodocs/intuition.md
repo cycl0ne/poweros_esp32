@@ -3469,8 +3469,9 @@ fn GetScreenDrawInfo(_: *IntuitionBase, screen: *Screen) *sc.DrawInfo
 
 **RESULT**
 
-The screen's DrawInfo: `pens` indexed by `DETAILPEN`...`BARTRIMPEN`,
-each an ARGB pen; `font`; `depth` in bits per pixel.
+The screen's DrawInfo: `pens` indexed by `DETAILPEN`...`DIMTEXTPEN`,
+each an ARGB pen - the dim text's colour too, mixed or given; `font`;
+`depth` in bits per pixel.
 
 **BEHAVIOR**
 
@@ -5217,7 +5218,8 @@ fn OpenScreenTagList(ib: *IntuitionBase,
 - `tags` - the `SA_` names: `SA_Title` (not copied), `SA_Font` (a
   TextFont the caller keeps open while the screen is), `SA_PubName`
   (copied; makes it public), `SA_ShowTitle` (true by default),
-  `SA_Pens` (a `*const [NUMDRIPENS]Pen`, copied), and `SA_ErrorCode`, a
+  `SA_Pens` (a `*const [NUMDRIPENS]Pen`, copied; a `DIMTEXTPEN` of 0
+  mixed from its text and background), and `SA_ErrorCode`, a
   `*u32` for the reason when it fails. May be null.
 
 **RESULT**
@@ -7335,7 +7337,8 @@ fn SetScreenPens(ib: *IntuitionBase, screen: ?*Screen,
   them at open; null for the system's.
 - `pens` - `NUMDRIPENS` colours, by the `DrawInfo` pens' indexes, read
   and copied; null for the system's pens (a screen) or the built-in
-  ones (the system).
+  ones (the system). A `DIMTEXTPEN` of 0 is mixed from the text and
+  the background, and follows them.
 
 **RESULT**
 
@@ -7389,6 +7392,7 @@ The pens stay the caller's; the screen keeps a copy.
 // A darker ground for every screen, the rest as they are.
 var pens: [sc.NUMDRIPENS]Pen = (ib.GetScreenDrawInfo(screen)).pens[0..sc.NUMDRIPENS].*;
 pens[sc.BACKGROUNDPEN] = graphics.penRGB(0x80, 0x84, 0x88);
+pens[sc.DIMTEXTPEN] = 0; // mixed again, on the new ground
 ib.SetScreenPens(null, &pens);
 ```
 
@@ -7852,7 +7856,7 @@ Nothing; the pens are in `pens`, as 0xAARRGGBB.
 
 **BEHAVIOR**
 
-Every pen is the screen's, except six:
+Every pen is the screen's, except seven:
 
 | pen | from the part |
 |---|---|
@@ -7862,9 +7866,10 @@ Every pen is the screen's, except six:
 | `FILLTEXTPEN` | its text, pressed |
 | `SHINEPEN` | its bevel's light side |
 | `SHADOWPEN` | its bevel's dark side |
+| `DIMTEXTPEN` | the screen's, or where the part's text or background is not the screen's, mixed from those two (`dimText`) |
 
 Each is found as `DrawPart` finds a property. With the system's default
-style and `style.PART_MAIN`, all six are the screen's own pens again,
+style and `style.PART_MAIN`, all seven are the screen's own pens again,
 so a class that draws with these instead of the screen's draws exactly
 as it did - and follows whatever style its screen or the gadget has.
 

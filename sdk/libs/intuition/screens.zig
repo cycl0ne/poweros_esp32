@@ -279,11 +279,29 @@ pub const BARDETAILPEN = 9;
 pub const BARBLOCKPEN = 10;
 /// The line under the title bar.
 pub const BARTRIMPEN = 11;
-pub const NUMDRIPENS = 12;
+/// Text that says less than the text round it, on the background: an
+/// album under its title, a hint under a field. In a set of pens given -
+/// `SA_Pens`, `SetScreenPens`, `IPREFS_Pens` - 0 has it mixed from
+/// `TEXTPEN` and `BACKGROUNDPEN` (`dimText`), so it follows them; a
+/// screen's DrawInfo always holds the colour.
+pub const DIMTEXTPEN = 12;
+pub const NUMDRIPENS = 13;
+
+/// `DIMTEXTPEN` as a screen mixes it: six parts of `text` to four of
+/// `background`, a channel at a time, whole.
+pub fn dimText(text: Pen, background: Pen) Pen {
+    var mixed: Pen = 0xFF00_0000;
+    inline for ([_]u5{ 0, 8, 16 }) |shift| {
+        const ink: u32 = text >> shift & 0xFF;
+        const ground: u32 = background >> shift & 0xFF;
+        mixed |= (ink * 6 + ground * 4 + 5) / 10 << shift;
+    }
+    return mixed;
+}
 
 /// The DrawInfo layout this SDK describes. Anything added later goes
-/// after the fields here and raises it.
-pub const DRI_VERSION: u32 = 3;
+/// after the fields here and raises it. 4 has `DIMTEXTPEN`.
+pub const DRI_VERSION: u32 = 4;
 
 /// `DrawInfo.flags`: nothing on the screen moves (`SA_Animate` false).
 pub const DRIF_STILL: u32 = 1 << 0;

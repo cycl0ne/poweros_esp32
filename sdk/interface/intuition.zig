@@ -998,10 +998,11 @@ pub const IntuitionBase = opaque {
         return libraries.call(self, LVO.GetStyleAttr, Fn.GetStyleAttr, .{ draw_info, own, part, state, attr });
     }
 
-    /// The screen's pens, NUMDRIPENS of them, with the six that stand for a
+    /// The screen's pens, NUMDRIPENS of them, with the seven that stand for a
     /// gadget's look taken from a part of the style: its background and text
     /// at rest, its fill and fill text from the part pressed, its shine and
-    /// shadow. What a class that draws with pens asks for instead of the
+    /// shadow, and its dim text mixed from its own text and background where
+    /// those are not the screen's. What a class that draws with pens asks for instead of the
     /// screen's own, so that a style reaches it without its drawing changing.
     pub fn StylePens(self: *IntuitionBase, draw_info: ?*const intuition.DrawInfo, own: ?*const intuition.Style, part: u32, pens: [*]graphics.Pen) void {
         return libraries.call(self, LVO.StylePens, Fn.StylePens, .{ draw_info, own, part, pens });

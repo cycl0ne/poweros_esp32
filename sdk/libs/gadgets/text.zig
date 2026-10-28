@@ -20,9 +20,16 @@
 //! - `<br>`: a new line; `<<`: a `<`
 //!
 //! With `TEXT_Wrap` the runs are broken at spaces into lines as wide as
-//! the gadget, each as tall as its tallest run, their baselines lined up;
-//! the gadget is as tall as its lines when it is made. Without, they make
-//! one line.
+//! the gadget, each as tall as its tallest run, their baselines lined up,
+//! from the top of the box; the gadget is as tall as its lines when it is
+//! made. Without, a line ends only at a `\n` - the lines are one block in
+//! the middle of the box. With `TEXT_Clipped` a line too wide for the box
+//! stops at its edge with three dots, as plain text does.
+//!
+//! A run's colour is a colour of its own, or the gadget's front pen (0),
+//! or one of the screen's pens by name (`screenPen`): the dim text of a
+//! line that says less is `screenPen(screens.DIMTEXTPEN)`, drawn in the
+//! colour the screen and the gadget's style give that pen at the time.
 //!
 //!   const help = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
 //!       .{ .tag = tx.TEXT_Text, .data = @intFromPtr("Press <b>OK</b> to go on, <c=#C03030>Cancel</c> to stop.") },
@@ -62,8 +69,9 @@ pub const TEXT_Format = TEXT_Dummy + 0x04;
 pub const TEXT_Border = TEXT_Dummy + 0x05;
 /// `TEXT_JUSTIFY_*`: where the text sits in the box.
 pub const TEXT_Justification = TEXT_Dummy + 0x06;
-/// Bool: text too wide for the box is cut at its edge. Otherwise it is
-/// drawn whole, past the edge.
+/// Bool: text too wide for the box is cut at its edge, three dots where
+/// it stops - a line of runs as well. Otherwise it is drawn whole, past
+/// the edge.
 pub const TEXT_Clipped = TEXT_Dummy + 0x07;
 /// The text's colour and the ground's (`graphics.Pen`, whole colours).
 /// The screen's text pen and background pen unless given.
@@ -92,9 +100,17 @@ pub const TextRun = extern struct {
     font: ?*graphics.TextFont = null,
     /// Soft styles, `graphics.FSF_BOLD` and the rest.
     style: u32 = 0,
-    /// The colour, 0xAARRGGBB, or 0 for the front pen.
+    /// The colour, 0xAARRGGBB; 0 for the front pen; a screen pen by its
+    /// index with `screenPen`.
     colour: graphics.Pen = 0,
 };
+
+/// A run's colour that is a screen pen (`screens.DIMTEXTPEN` and the
+/// rest) rather than a colour: the pen as the gadget's style has it when
+/// the run is drawn. A colour whose alpha is 0 is never drawn as one.
+pub fn screenPen(pen: u32) graphics.Pen {
+    return pen + 1;
+}
 
 pub const TEXT_JUSTIFY_LEFT: u32 = 0;
 pub const TEXT_JUSTIFY_RIGHT: u32 = 1;

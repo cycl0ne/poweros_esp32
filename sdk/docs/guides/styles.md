@@ -203,7 +203,8 @@ PART=SELECTION BACKGROUND=FILL TEXT=FILLTEXT
   `DISABLED`, or several joined by `+`.
 - A colour is a screen pen's name (`TEXT`, `SHINE`, `SHADOW`, `FILL`,
   `FILLTEXT`, `BACKGROUND`, `HIGHLIGHTTEXT`, `DETAIL`, `BLOCK`,
-  `BARDETAIL`, `BARBLOCK`, `BARTRIM`), `#RRGGBB` or `#AARRGGBB`; a
+  `BARDETAIL`, `BARBLOCK`, `BARTRIM`, `DIMTEXT`), `#RRGGBB` or
+  `#AARRGGBB`; a
   `BACKGROUND` of `#top..#bottom` is shaded from top to bottom.
 - `BORDER`, `JOINS`, and the numbers `BORDERWIDTH`, `BORDERX`,
   `BORDERY`, `RADIUS`, `PADDING`, `PADDINGX`, `PADDINGY`, `OPACITY`,
@@ -237,8 +238,12 @@ window keeps the border sizes it opened with.
 
 A style that names a pen - `TEXT`, `FILL`, `SHINE` - draws in whatever
 colour the screen gives that pen, so the pens change every look at once.
-The system's twelve pens are what every screen opened without pens of
-its own (`SA_Pens`, `SA_DetailPen`, `SA_BlockPen`) draws in.
+The system's thirteen pens are what every screen opened without pens of
+its own (`SA_Pens`, `SA_DetailPen`, `SA_BlockPen`) draws in. The dim
+text's (`DIMTEXTPEN`) may be given as 0: the screen then mixes it from
+the text and the background, six parts to four, and it follows them
+when they change. A part of a style whose text or background is not the
+screen's has its dim text mixed from its own (`StylePens`).
 `SetPrefs` with `IPREFS_Pens` (or `SetScreenPens(null, pens)`) replaces
 them - on the screens open too,
 whose ground, bar and windows are drawn again - and
@@ -249,9 +254,11 @@ back to the built-in ones, or for a screen to the system's.
 colour each - `BACKGROUND=#AAAAAA TEXT=#000000 ...` - with the built-in
 pens written out in a comment. `C:SetPrefs` hands the file to intuition
 at boot with the other three; a pen the line leaves out keeps
-the colour it has. `SYS:Programs/Prefs` edits them on its Colours page,
-each typed as `#RRGGBB` or picked on the colour wheel, and writes the
-file only when a colour was changed. Its form is `sdk.prefs.palette`.
+the colour it has, except `DIMTEXT`, which is mixed then.
+`SYS:Programs/Prefs` edits them on its Colours page, each typed as
+`#RRGGBB` or picked on the colour wheel - the dim text's field left
+empty to have it mixed - and writes the file only when a colour was
+changed. Its form is `sdk.prefs.palette`.
 
 ## Drawing a part in a class
 

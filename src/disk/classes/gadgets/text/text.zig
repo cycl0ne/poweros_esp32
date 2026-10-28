@@ -5,9 +5,10 @@
 //! nothing - and draws in `GM_RENDER`: its ground in the back pen, then
 //! the text, or the number written through its format with RawDoFmt, in
 //! the front pen, against the left, the right or in the middle of the box,
-//! and a sunk frameiclass frame round it with `TEXT_Border`. Clipped, the
-//! text stops at the box's edge; otherwise it runs past, and what it ran
-//! over is cleared the next time it is drawn. Set in a window, it is drawn
+//! and a sunk frameiclass frame round it with `TEXT_Border`. Clipped, a
+//! text too wide stops at the box's edge with three dots where it stops
+//! (graphics' `TextFitted`); otherwise it runs past, and what it ran over
+//! is cleared the next time it is drawn. Set in a window, it is drawn
 //! again at once.
 //!
 //! Given `TEXT_CopyText`, it keeps a copy of each text it is given, in
@@ -18,8 +19,12 @@
 //! markup (`TEXT_Markup`) are laid out a line at a time and drawn on each
 //! line's baseline, each line placed by the justification; with
 //! `TEXT_Wrap` lines from the top of the box until it is full, otherwise
-//! the one line in its middle. Its size is measured the same way on a
-//! RastPort of its own over a bitmap of a pixel.
+//! the lines its `\n`s make, as one block in the box's middle. Clipped,
+//! each line is cut at the box's edge as plain text is. A run's colour may
+//! name a pen (`tx.screenPen`), which is the gadget's pen of that name
+//! when it is drawn - so it follows the screen's pens and the style. Its
+//! size is measured the same way on a RastPort of its own over a bitmap
+//! of a pixel.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -44,8 +49,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tx.TEXT_CLASS,
     .version = 1,
-    .revision = 2,
-    .date = "18.10.2026",
+    .revision = 3,
+    .date = "28.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -284,22 +289,19 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     if (own.border != 0) if (own.frame) |frame| support.drawGadgetFrame(ib, o, frame, rp, b, ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_MAIN);
 
     if (own.runs) |runs| {
-        drawRuns(base, own, rp, runs, area, front);
-        if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(gb, rp, b, info.block_pen);
-        return;
+        const right = drawRuns(base, own, rp, runs, area, front, &styled);
+        own.overrun = @max(right - (b.left + b.width), 0);
+        return ghostIfDisabled(base, o, rp, b, info);
     }
     const text = shown(base, own) orelse return;
-    var count: u32 = @intCast(textLen(text));
-    var width = gb.TextLength(rp, text, count);
-    if (own.clipped != 0 and width > area.width) {
-        var extent: graphics.TextExtent = .{};
-        count = gb.TextFit(rp, text, count, &extent, null, 1, @max(area.width, 0), 0);
-        width = gb.TextLength(rp, text, count);
-    }
+    const count: u32 = @intCast(textLen(text));
+    const width = gb.TextLength(rp, text, count);
+    // Too wide and clipped: as much as fits from the left, and the dots.
+    const cut = own.clipped != 0 and width > area.width;
     var line: u32 = 0;
     const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&line) }, .{} };
     gb.GetRPAttrs(rp, &ask);
-    const left = switch (own.justification) {
+    const left = if (cut) area.left else switch (own.justification) {
         tx.TEXT_JUSTIFY_RIGHT => area.left + area.width - width,
         tx.TEXT_JUSTIFY_CENTER => area.left + @divTrunc(area.width - width, 2),
         else => area.left,
@@ -312,9 +314,13 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const mode = [_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} };
     gb.SetRPAttrs(rp, &mode);
     gb.Move(rp, left, top + @as(i32, @intCast(baseline)));
-    gb.Text(rp, text, count);
-    own.overrun = @max(left + width - (b.left + b.width), 0);
-    if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(gb, rp, b, info.block_pen);
+    if (cut) {
+        _ = gb.TextFitted(rp, text, count, @max(area.width, 0));
+    } else {
+        gb.Text(rp, text, count);
+        own.overrun = @max(left + width - (b.left + b.width), 0);
+    }
+    ghostIfDisabled(base, o, rp, b, info);
 }
 
 /// The font a RastPort has now.
@@ -333,24 +339,44 @@ fn lineLeft(own: *const Data, area: gc.Box, width: i32) i32 {
     };
 }
 
+/// The ghost over a disabled gadget's box.
+fn ghostIfDisabled(base: *gadgets.Base, o: *Object, rp: *graphics.RastPort, b: gc.Box, info: *classusr.GadgetInfo) void {
+    if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(base.graphics_base, rp, b, info.block_pen);
+}
+
 /// Rich text in `area`: wrapped lines from its top while they fit, or the
-/// one line in its middle.
-fn drawRuns(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, runs: [*]const tx.TextRun, area: gc.Box, front: graphics.Pen) void {
+/// lines its line breaks make as one block in its middle - each cut at
+/// the area's edge when it is clipped. How far right the lines reached.
+fn drawRuns(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, runs: [*]const tx.TextRun, area: gc.Box, front: graphics.Pen, pens: *const [sc.NUMDRIPENS]graphics.Pen) i32 {
     const gb = base.graphics_base;
-    const ink = rich.Ink{ .gb = gb, .rp = rp, .font = fontOf(gb, rp) orelse return, .front = front };
+    const ink = rich.Ink{ .gb = gb, .rp = rp, .font = fontOf(gb, rp) orelse return area.left, .front = front, .pens = pens };
     const wrap = own.wrap != 0;
-    var pos = rich.Pos{};
+    const limit: ?i32 = if (own.clipped != 0) area.left + area.width else null;
     var top = area.top;
-    var first = true;
+    if (!wrap) top += @max(@divTrunc(area.height - blockHeight(ink, runs, area.width), 2), 0);
+    var right = area.left;
+    var pos = rich.Pos{};
     while (rich.lineAt(ink, runs, pos, area.width, wrap)) |line| {
-        if (first and !wrap) top = area.top + @divTrunc(area.height - line.height, 2);
-        first = false;
         if (top + line.height > area.top + area.height and !(top == area.top)) break;
-        rich.drawLine(ink, runs, line, lineLeft(own, area, line.width), top);
+        const width = if (limit != null) @min(line.width, area.width) else line.width;
+        right = @max(right, rich.drawLine(ink, runs, line, lineLeft(own, area, width), top, limit));
         top += line.height;
         if (line.end.run == pos.run and line.end.at == pos.at) break;
         pos = line.end;
     }
+    return right;
+}
+
+/// How tall the lines of `runs` are together, laid out in `width`.
+fn blockHeight(ink: rich.Ink, runs: [*]const tx.TextRun, width: i32) i32 {
+    var height: i32 = 0;
+    var pos = rich.Pos{};
+    while (rich.lineAt(ink, runs, pos, width, false)) |line| {
+        height += line.height;
+        if (line.end.run == pos.run and line.end.at == pos.at) break;
+        pos = line.end;
+    }
+    return height;
 }
 
 /// Rich text's size: its lines in `width` (or one line), measured on a
@@ -394,7 +420,7 @@ fn domain(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, gi: ?*const clas
         const measured = measureRuns(base, own, runs, own.font orelse measure.font, if (own.wrap != 0) g.given_width - room.width else 0x7FFF);
         const lines = gc.Box{ .width = measured.width + room.width, .height = @max(measured.height, 1) + room.height };
         return switch (which) {
-            gc.GDOMAIN_MINIMUM => .{ .width = if (own.wrap != 0) 0 else lines.width, .height = lines.height },
+            gc.GDOMAIN_MINIMUM => .{ .width = if (own.wrap != 0 or own.clipped != 0) 0 else lines.width, .height = lines.height },
             gc.GDOMAIN_NOMINAL => .{ .width = @max(lines.width, g.given_width), .height = lines.height },
             else => .{ .width = gc.GDOMAIN_UNLIMITED, .height = lines.height },
         };

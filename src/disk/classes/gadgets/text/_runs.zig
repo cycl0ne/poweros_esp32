@@ -14,7 +14,9 @@
 //! RastPort: a word that would pass the width ends the line before it,
 //! unless it is the line's first. Spaces at the start of a line are not
 //! drawn. A line's height and baseline are its tallest run's; its pieces
-//! are drawn on the one baseline.
+//! are drawn on the one baseline. A line cut at an edge is drawn up to
+//! the piece that would pass it, as much of that piece as leaves room for
+//! three dots in its run's font, and the dots.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -204,6 +206,18 @@ pub const Ink = struct {
     rp: *graphics.RastPort,
     font: *graphics.TextFont,
     front: graphics.Pen,
+    /// The gadget's pens, for a run whose colour names one
+    /// (`tx.screenPen`); null where nothing is drawn.
+    pens: ?*const [sdk.intuition.screens.NUMDRIPENS]graphics.Pen = null,
+
+    /// A run's colour: its own, the front pen, or the pen it names.
+    fn colourOf(ink: Ink, given: graphics.Pen) graphics.Pen {
+        if (given == 0) return ink.front;
+        if (given >> 24 != 0) return given;
+        const pens = ink.pens orelse return ink.front;
+        const index = (given & 0xFF) - 1;
+        return if (index < pens.len) pens[index] else ink.front;
+    }
 
     /// The run's font and style on the RastPort, and its line's metrics.
     fn wear(ink: Ink, run: *const TextRun) [2]i32 {
@@ -217,6 +231,15 @@ pub const Ink = struct {
             .{},
         });
         return .{ @intCast(height), @intCast(baseline) };
+    }
+
+    /// The run's colour on the RastPort, drawn over what is there.
+    fn colour(ink: Ink, run: *const TextRun) void {
+        ink.gb.SetRPAttrs(ink.rp, &[_]TagItem{
+            .{ .tag = graphics.RPTAG_APen, .data = ink.colourOf(run.colour) },
+            .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
+            .{},
+        });
     }
 
     fn width(ink: Ink, runs: [*]const TextRun, piece: Piece) i32 {
@@ -270,24 +293,53 @@ pub fn lineAt(ink: Ink, runs: [*]const TextRun, start: Pos, room: i32, wrap: boo
     return if (any or line.width > 0) line else null;
 }
 
-/// A line drawn with its left edge at `left` and its top at `top`.
-pub fn drawLine(ink: Ink, runs: [*]const TextRun, line: Line, left: i32, top: i32) void {
+/// A line drawn with its left edge at `left` and its top at `top`; one
+/// that would pass `limit` is cut there, three dots where it stops.
+/// Where it ends on the right.
+pub fn drawLine(ink: Ink, runs: [*]const TextRun, line: Line, left: i32, top: i32, limit: ?i32) i32 {
+    const edge = limit orelse no_edge;
+    const cut = left + line.width > edge;
     var pos = line.start;
     var x = left;
+    // Where the last word drawn ends: the dots go there when nothing of
+    // the word cut is left, rather than after the space before it.
+    var word_end = left;
     while (pos.run < line.end.run or (pos.run == line.end.run and pos.at < line.end.at)) {
         const piece = next(runs, &pos) orelse break;
         if (piece.kind == .newline) continue;
         const run = &runs[piece.run];
         const w = ink.width(runs, piece);
+        const dots = if (cut) ink.gb.TextLength(ink.rp, "...", 3) else 0;
+        if (cut and x + w + dots > edge) {
+            // As much of this word as leaves room for the dots; with none
+            // of it, or at a space, the dots follow the word before.
+            ink.colour(run);
+            const text = run.text.? + piece.from;
+            var fits: u32 = 0;
+            if (piece.kind == .word) {
+                var extent: graphics.TextExtent = .{};
+                fits = ink.gb.TextFit(ink.rp, text, @intCast(piece.to - piece.from), &extent, null, 1, @max(edge - x - dots, 0), 0);
+            }
+            if (fits == 0) x = word_end;
+            ink.gb.Move(ink.rp, x, top + line.baseline);
+            if (fits != 0) {
+                ink.gb.Text(ink.rp, text, fits);
+                x += ink.gb.TextLength(ink.rp, text, fits);
+            }
+            if (x + dots > edge) return x;
+            ink.gb.Text(ink.rp, "...", 3);
+            return x + dots;
+        }
         if (piece.kind == .word) {
-            ink.gb.SetRPAttrs(ink.rp, &[_]TagItem{
-                .{ .tag = graphics.RPTAG_APen, .data = if (run.colour != 0) run.colour else ink.front },
-                .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
-                .{},
-            });
+            ink.colour(run);
             ink.gb.Move(ink.rp, x, top + line.baseline);
             ink.gb.Text(ink.rp, run.text.? + piece.from, @intCast(piece.to - piece.from));
         }
         x += w;
+        if (piece.kind == .word) word_end = x;
     }
+    return x;
 }
+
+/// No edge.
+const no_edge = 0x7FFF_FFFF;

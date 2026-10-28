@@ -31,7 +31,7 @@ const d = @import("../classes/draw.zig");
 /// Nothing; the pens are in `pens`, as 0xAARRGGBB.
 ///
 /// BEHAVIOR:
-/// Every pen is the screen's, except six:
+/// Every pen is the screen's, except seven:
 ///
 /// | pen | from the part |
 /// |---|---|
@@ -41,9 +41,10 @@ const d = @import("../classes/draw.zig");
 /// | `FILLTEXTPEN` | its text, pressed |
 /// | `SHINEPEN` | its bevel's light side |
 /// | `SHADOWPEN` | its bevel's dark side |
+/// | `DIMTEXTPEN` | the screen's, or where the part's text or background is not the screen's, mixed from those two (`dimText`) |
 ///
 /// Each is found as `DrawPart` finds a property. With the system's default
-/// style and `style.PART_MAIN`, all six are the screen's own pens again,
+/// style and `style.PART_MAIN`, all seven are the screen's own pens again,
 /// so a class that draws with these instead of the screen's draws exactly
 /// as it did - and follows whatever style its screen or the gadget has.
 ///
@@ -85,4 +86,7 @@ pub fn StylePens(ib: *IntuitionBase, draw_info: ?*const sc.DrawInfo, own: ?*cons
     pens[sc.FILLTEXTPEN] = pressed.colour(.text, base, num_pens);
     pens[sc.SHINEPEN] = rest.colour(.shine, base, num_pens);
     pens[sc.SHADOWPEN] = rest.colour(.shadow, base, num_pens);
+    if (pens[sc.TEXTPEN] != base[sc.TEXTPEN] or pens[sc.BACKGROUNDPEN] != base[sc.BACKGROUNDPEN]) {
+        pens[sc.DIMTEXTPEN] = sc.dimText(pens[sc.TEXTPEN], pens[sc.BACKGROUNDPEN]);
+    }
 }

@@ -111,7 +111,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Intuition";
-const VERSION_STRING = "\x00$VER: Intuition 1.13 (27.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Intuition 1.14 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "WINDOWS/S,GADGETS/S,SLIDERS/S,TEXT/S,REQUEST/S,MENUS/S,REQUESTER/S,CLOSE/S,BEEP/S,ALERT/S,EXECALERT/S,PANIC/S,CRASH/S,INFRONT/S,STAY/S";
@@ -155,6 +155,7 @@ const pen_names = [_][*:0]const u8{
     "DETAILPEN",        "BLOCKPEN",     "TEXTPEN",     "SHINEPEN",
     "SHADOWPEN",        "FILLPEN",      "FILLTEXTPEN", "BACKGROUNDPEN",
     "HIGHLIGHTTEXTPEN", "BARDETAILPEN", "BARBLOCKPEN", "BARTRIMPEN",
+    "DIMTEXTPEN",
 };
 
 /// A pointer, sixteen by sixteen, one bit to a pixel.

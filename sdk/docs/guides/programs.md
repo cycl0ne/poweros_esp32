@@ -390,6 +390,13 @@ const help = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
 });
 ```
 
+Without `TEXT_Wrap` a line ends only at a `\n`, and the lines stand as
+one block in the middle of the gadget; with `TEXT_Clipped` a line too
+wide for it stops at its edge in three dots. A run's colour may name one
+of the screen's pens rather than a colour: `tx.screenPen(screens.DIMTEXTPEN)`
+is the dim text of a line that says less, drawn as the screen's style
+has that pen.
+
 ### A keyboard on the screen
 
 On a board whose only input is a touch panel, intuition brings a

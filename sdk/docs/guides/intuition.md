@@ -91,6 +91,7 @@ const paper = dri.pens[sc.BACKGROUNDPEN];
 | `SHINEPEN`, `SHADOWPEN` | the light and the dark edge of something raised |
 | `FILLPEN`, `FILLTEXTPEN` | an active window's border or a selected gadget, and text over it |
 | `HIGHLIGHTTEXTPEN` | text that stands out |
+| `DIMTEXTPEN` | text that says less - an album under its title, a hint under a field; unless a colour is given, mixed from `TEXTPEN` and `BACKGROUNDPEN` (`sc.dimText`), so it follows them |
 | `BARDETAILPEN`, `BARBLOCKPEN`, `BARTRIMPEN` | the title bar and the menus: text, fill, the line under the bar |
 | `DETAILPEN`, `BLOCKPEN` | what a window's own two pens default to |
 
@@ -618,6 +619,19 @@ narrower needs more height, and the window grows to it - a second
 `IDCMP_NEWSIZE` after the first. In a window from
 tags, a layout fills it when it is given `GA_Left` and `GA_Top` at the
 border and `GA_RelWidth` and `GA_RelHeight` less the borders.
+
+A layout measures its children when the window opens and when it
+changes size. A program that sets a child to something of another
+size - a text of more lines, a longer label, a child added - sends the
+window object `WM_RETHINK`: the layout is measured and placed again and
+drawn at once, the window's smallest size becomes what it fits in now,
+and a window too small for it grows:
+
+```zig
+_ = ib.SetGadgetAttrsTagList(info, window, &.{ .{ .tag = tx.TEXT_Runs, .data = @intFromPtr(&runs) }, .{} });
+var rethink = wc.WmRethink{};
+_ = ib.SendMessage(object, @ptrCast(&rethink));
+```
 
 ### A window of settings
 

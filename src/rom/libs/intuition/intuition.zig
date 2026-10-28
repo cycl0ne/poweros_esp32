@@ -2756,6 +2756,62 @@ test "SetScreenPens: the system's pens reach a screen and its window's ground; a
     try tearDown(ib);
 }
 
+test "screens: the dim text is mixed from the text and the ground until a colour is given" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const sc = intuition.screens;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 80, 80, .rgb565);
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{},
+    }).?;
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    const kept: *_kscreen.Screen = @ptrCast(@alignCast(screen));
+    // Black on grey: six parts of the text to four of the ground.
+    try testing.expectEqual(graphics.penRGB(0x44, 0x44, 0x44), kept.pens[sc.DIMTEXTPEN]);
+    try testing.expectEqual(graphics.penRGB(0x44, 0x44, 0x44), it.GetScreenDrawInfo(screen).pens[sc.DIMTEXTPEN]);
+
+    // A new ground, the dim text left at 0: mixed again, and the system's
+    // pens keep it as given.
+    var pens = _kscreen.default_pens;
+    pens[sc.BACKGROUNDPEN] = graphics.penRGB(0xFF, 0xFF, 0xFF);
+    it.SetScreenPens(null, &pens);
+    try testing.expectEqual(graphics.penRGB(0x66, 0x66, 0x66), kept.pens[sc.DIMTEXTPEN]);
+    var got: [sc.NUMDRIPENS]graphics.Pen = undefined;
+    _ = it.GetPrefs(&[_]TagItem{ .{ .tag = intuition.IPREFS_Pens, .data = @intFromPtr(&got) }, .{} });
+    try testing.expectEqual(@as(graphics.Pen, 0), got[sc.DIMTEXTPEN]);
+
+    // Given, it is that colour, whatever the ground.
+    pens[sc.DIMTEXTPEN] = graphics.penRGB(0x12, 0x34, 0x56);
+    it.SetScreenPens(null, &pens);
+    try testing.expectEqual(graphics.penRGB(0x12, 0x34, 0x56), kept.pens[sc.DIMTEXTPEN]);
+
+    // A part whose text is not the screen's mixes its own.
+    it.SetScreenPens(null, null);
+    const red_text = [_]TagItem{
+        .{ .tag = intuition.style.STYLE_Part, .data = intuition.style.PART_MAIN },
+        .{ .tag = intuition.style.STYLE_TextRGB, .data = graphics.penRGB(0xFF, 0, 0) },
+        .{},
+    };
+    const _style = @import("style/_style.zig");
+    const own = _style.keep(ib, &red_text).?;
+    var styled: [sc.NUMDRIPENS]graphics.Pen = undefined;
+    it.StylePens(it.GetScreenDrawInfo(screen), own, intuition.style.PART_MAIN, &styled);
+    try testing.expectEqual(sc.dimText(graphics.penRGB(0xFF, 0, 0), kept.pens[sc.BACKGROUNDPEN]), styled[sc.DIMTEXTPEN]);
+    it.StylePens(it.GetScreenDrawInfo(screen), null, intuition.style.PART_MAIN, &styled);
+    try testing.expectEqual(kept.pens[sc.DIMTEXTPEN], styled[sc.DIMTEXTPEN]);
+    _style.drop(ib, own);
+
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "screens: composed, the ground has no buffer, and is its pens wherever a window leaves it" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -6139,6 +6195,60 @@ test "windowclass: opened at its layout's size in the middle, answered a word at
     try testing.expectEqual(wc.WMHI_GADGETUP | 2, it.SendMessage(object, @ptrCast(&handle)));
 
     // Disposed while open: the window closes, the layout and its gadgets go.
+    it.DisposeObject(object);
+    it.UnlockPubScreen(null, screen);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "windowclass: WM_RETHINK - the layout measured again once something in it grew, the window grown to it" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const lg = intuition.layoutgclass;
+    const wc = intuition.windowclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 96, 85, .rgb565);
+
+    const one = framedButton(ib, "One", 1);
+    const column = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Margin, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(one) },
+        .{},
+    }).?;
+    const object = it.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("W") },
+        .{ .tag = wn.WA_SizeGadget, .data = 1 },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(column) },
+        .{},
+    }).?;
+    // Not open: nothing to lay out.
+    var rethink = wc.WmRethink{};
+    try testing.expectEqual(@as(usize, 0), it.SendMessage(object, @ptrCast(&rethink)));
+
+    var open = wc.WmOpen{};
+    const w: *intuition.Window = @ptrFromInt(it.SendMessage(object, @ptrCast(&open)));
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    const was = win.height;
+
+    // A second button in the column: the window does not know until told.
+    const two = framedButton(ib, "Two", 2);
+    var add = classusr.OpMember{ .method_id = classusr.OM_ADDMEMBER, .object = two };
+    _ = it.SendMessage(column, @ptrCast(&add));
+    try testing.expectEqual(was, win.height);
+
+    // Told: both placed, one under the other, the window as tall as they
+    // need and no smaller from now on.
+    try testing.expectEqual(@as(usize, 1), it.SendMessage(object, @ptrCast(&rethink)));
+    try testing.expect(win.height > was);
+    try testing.expectEqual(win.height, win.min_height);
+    try testing.expect(boxOf(ib, two).top >= boxOf(ib, one).top + boxOf(ib, one).height);
+    const bottom: i32 = @intCast(windowAttr(ib, w, wn.WA_BorderBottom));
+    try testing.expect(boxOf(ib, two).top + boxOf(ib, two).height <= win.height - bottom);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    _ = it.LockPubScreen(null);
     it.DisposeObject(object);
     it.UnlockPubScreen(null, screen);
     try testing.expect(it.CloseScreen(screen));

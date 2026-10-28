@@ -50,8 +50,10 @@ pub const IPREFS_DefaultFont = IPREFS_Dummy + 5;
 pub const IPREFS_FixedFont = IPREFS_Dummy + 6;
 /// The system's pens: `NUMDRIPENS` colours, a `[*]const graphics.Pen`
 /// read once; null for the built-in ones. Every screen opened without
-/// pens of its own takes them, those open too. Got: a
-/// `*[NUMDRIPENS]graphics.Pen`.
+/// pens of its own takes them, those open too. A `DIMTEXTPEN` of 0 is
+/// mixed from the text and the background. Got: a
+/// `*[NUMDRIPENS]graphics.Pen`, as given - the dim text 0 while it is
+/// mixed.
 pub const IPREFS_Pens = IPREFS_Dummy + 7;
 /// The system's style: a style tag list (`STYLE_`), read once; null for
 /// none, which leaves the default. Set only: a style once read is

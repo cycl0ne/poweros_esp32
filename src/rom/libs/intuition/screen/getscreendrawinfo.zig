@@ -21,8 +21,9 @@ const Screen = _screen.Screen;
 /// - `screen` - the screen.
 ///
 /// RESULT:
-/// The screen's DrawInfo: `pens` indexed by `DETAILPEN`...`BARTRIMPEN`,
-/// each an ARGB pen; `font`; `depth` in bits per pixel.
+/// The screen's DrawInfo: `pens` indexed by `DETAILPEN`...`DIMTEXTPEN`,
+/// each an ARGB pen - the dim text's colour too, mixed or given; `font`;
+/// `depth` in bits per pixel.
 ///
 /// BEHAVIOR:
 /// The screen's own, not a copy: every caller sees the same pens.

@@ -133,7 +133,9 @@ pub const Screen = extern struct {
 };
 
 /// The default pens: a grey ground, black text and edges, white shine and
-/// a blue fill - the look the default screen has always had.
+/// a blue fill - the look the default screen has always had - and the dim
+/// text mixed from the text and the ground. As given: a screen draws in
+/// `drawnPens` of them.
 pub const default_pens = blk: {
     var pens: [sc.NUMDRIPENS]Pen = undefined;
     const grey = graphics.penRGB(0xAA, 0xAA, 0xAA);
@@ -152,8 +154,17 @@ pub const default_pens = blk: {
     pens[sc.BARDETAILPEN] = black;
     pens[sc.BARBLOCKPEN] = white;
     pens[sc.BARTRIMPEN] = black;
+    pens[sc.DIMTEXTPEN] = 0;
     break :blk pens;
 };
+
+/// A set of pens as given made the set a screen draws in: a `DIMTEXTPEN`
+/// of 0 mixed from its text and its background.
+pub fn drawnPens(given: [sc.NUMDRIPENS]Pen) [sc.NUMDRIPENS]Pen {
+    var pens = given;
+    if (pens[sc.DIMTEXTPEN] == 0) pens[sc.DIMTEXTPEN] = sc.dimText(pens[sc.TEXTPEN], pens[sc.BACKGROUNDPEN]);
+    return pens;
+}
 
 /// Left of the title text, and above and below it inside the bar.
 pub const bar_left = 5;

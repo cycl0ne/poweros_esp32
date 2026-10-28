@@ -107,6 +107,7 @@ pub const pens = [_]Name{
     .{ .name = "BARDETAIL", .value = sc.BARDETAILPEN },
     .{ .name = "BARBLOCK", .value = sc.BARBLOCKPEN },
     .{ .name = "BARTRIM", .value = sc.BARTRIMPEN },
+    .{ .name = "DIMTEXT", .value = sc.DIMTEXTPEN },
 };
 
 pub const borders = [_]Name{
@@ -410,8 +411,8 @@ pub const header =
     \\#          joined by +. Left out, NORMAL.
     \\# BACKGROUND, BORDERCOLOUR, SHINE, SHADOW, TEXT
     \\#          a screen pen - DETAIL BLOCK TEXT SHINE SHADOW FILL FILLTEXT
-    \\#          BACKGROUND HIGHLIGHTTEXT BARDETAIL BARBLOCK BARTRIM - or a
-    \\#          colour, #RRGGBB or #AARRGGBB. BACKGROUND may be shaded from the
+    \\#          BACKGROUND HIGHLIGHTTEXT BARDETAIL BARBLOCK BARTRIM DIMTEXT -
+    \\#          or a colour, #RRGGBB or #AARRGGBB. BACKGROUND may be shaded from the
     \\#          top down: #FAFBFC..#D8DCE2.
     \\# BORDER   NONE FLAT RAISED RECESSED RIDGE GROOVE
     \\# JOINS    NONE ANGLED - how a bevel's edges meet at its corners.
