@@ -129,6 +129,12 @@ pub const timed_out: u32 = 1 << 12;
 /// Data is held back while `link`'s queue is full; `output.linkRoom`
 /// sends it.
 pub const link_wait: u32 = 1 << 13;
+/// The last repair may be undone: the peer has not yet reported as
+/// copies `undo_left` of the segments it sent again (sack.zig).
+pub const undoable: u32 = 1 << 14;
+/// Bytes came a second time: the next acknowledgement names them first
+/// (`copy`, RFC 2883).
+pub const copy_named: u32 = 1 << 15;
 
 /// Where urgent data coming in stands (`oob_state`): none announced; one
 /// announced, its byte not here yet; the byte here, set aside from the
@@ -291,6 +297,14 @@ pub const Tcb = extern struct {
     sacked_count: u32 = 0,
     recover: u32 = 0,
     resend_next: u32 = 0,
+    /// The last repair's undoing, should it turn out to have been for
+    /// nothing (sack.zig): the window and its threshold before it began,
+    /// SND.UNA then, and how many of the segments it sent again the peer
+    /// has not reported as copies.
+    undo_cwnd: u32 = 0,
+    undo_ssthresh: u32 = 0,
+    undo_from: u32 = 0,
+    undo_left: u32 = 0,
     /// In-order segments not acknowledged yet.
     unacked_segments: u32 = 0,
     /// Segments that came before their turn (reorder.zig), their bytes and
@@ -302,6 +316,8 @@ pub const Tcb = extern struct {
     /// Where the segment held last starts: the block that holds it goes
     /// first in the SACK option.
     held_last: u32 = 0,
+    /// Bytes that came a second time, while `copy_named` is set.
+    copy: Range = .{},
     /// When a segment last came, for keepalive.
     last_heard: u64 align(4) = 0,
     /// Urgent data going out: one past its last byte (SND.UP), while

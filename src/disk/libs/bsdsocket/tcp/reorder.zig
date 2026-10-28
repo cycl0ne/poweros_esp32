@@ -17,6 +17,7 @@ const _frame = @import("../frame/_frame.zig");
 const Frame = _frame.Frame;
 const _tcp = @import("_tcp.zig");
 const Tcb = _tcp.Tcb;
+const sack = @import("sack.zig");
 
 /// The most segments one connection holds: a quarter of the stack's
 /// frames, about 180 KiB of full segments.
@@ -39,8 +40,12 @@ pub fn hold(stack: *StackBase, tcb: *Tcb, sequence: u32, data: []const u8) void 
     while (it.next()) |node| {
         const frame: *Frame = @fieldParentPtr("node", node);
         const start = sequenceOf(frame);
-        // One already held that covers it: nothing new.
-        if (_tcp.atOrBefore(start, sequence) and _tcp.atOrAfter(start +% frame.length, sequence +% length)) return;
+        // One already held that covers it: nothing new, but a copy the
+        // peer is told of.
+        if (_tcp.atOrBefore(start, sequence) and _tcp.atOrAfter(start +% frame.length, sequence +% length)) {
+            sack.copied(tcb, sequence, sequence +% length);
+            return;
+        }
         if (_tcp.after(start, sequence)) {
             before = frame;
             break;

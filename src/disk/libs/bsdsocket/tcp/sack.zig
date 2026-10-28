@@ -7,7 +7,10 @@
 //! that holds the segment that came last, as the RFC asks, then the
 //! highest of the others. A segment carries as many as fit beside its
 //! data in the peer's MSS; output.zig leaves room for all four in the
-//! data it sends while anything is held.
+//! data it sends while anything is held. Bytes that came a second time
+//! go in front of them once, in the next acknowledgement: below what it
+//! acknowledges, or inside the block that follows (RFC 2883's D-SACK) -
+//! so that a sender which sent them again for nothing can tell.
 //!
 //! **Sending**: the blocks the peer names are kept, merged, between
 //! SND.UNA and SND.MAX - eight ranges at the most; the highest is let go
@@ -37,9 +40,16 @@
 //! everything up to where it began (`recover`) is acknowledged, and the
 //! window stays at the threshold.
 //!
+//! **A repair for nothing is undone**: when the peer has reported every
+//! segment the last repair sent again as a copy (RFC 3708's test), that
+//! segment had come late, not been lost - the window and the threshold
+//! go back to what they were, and the repair ends if it still goes on.
+//! A path that puts a segment behind the next now and then cost a halved
+//! window each time otherwise.
+//!
 //! A timeout forgets the blocks - the peer may have let go of what it
 //! held - and everything from SND.UNA goes again; no repair begins until
-//! all of that is acknowledged.
+//! all of that is acknowledged, and none before it can be undone.
 
 const _base = @import("../bsdsocket_base.zig");
 const StackBase = _base.StackBase;
@@ -69,10 +79,18 @@ pub fn fitting(tcb: *const Tcb, length: u32) usize {
 // --- receiving -------------------------------------------------------------------------
 
 /// The blocks an acknowledgement going out names, as many as `into`
-/// holds: how many. The held segments are in sequence order; touching
-/// ones make one block.
+/// holds: how many. Bytes that came a second time go first, once; the
+/// held segments are in sequence order, and touching ones make one
+/// block.
 pub fn blocks(tcb: *Tcb, into: []Range) usize {
-    if (into.len == 0 or tcb.held_count == 0) return 0;
+    if (into.len == 0) return 0;
+    var count: usize = 0;
+    if (tcb.flags & _tcp.copy_named != 0) {
+        tcb.flags &= ~_tcp.copy_named;
+        into[0] = tcb.copy;
+        count = 1;
+    }
+    if (tcb.held_count == 0) return count;
     var newest: ?Range = null;
     // The highest blocks but the newest's, the last ones in a circle.
     var others: [_tcp.sack_blocks_max]Range = undefined;
@@ -100,10 +118,11 @@ pub fn blocks(tcb: *Tcb, into: []Range) usize {
         }
         current = next orelse break;
     }
-    var count: usize = 0;
     if (newest) |range| {
-        into[0] = range;
-        count = 1;
+        if (count < into.len) {
+            into[count] = range;
+            count += 1;
+        }
     }
     var index = other_count;
     while (count < into.len and index > 0 and other_count - index < others.len) {
@@ -114,6 +133,14 @@ pub fn blocks(tcb: *Tcb, into: []Range) usize {
     return count;
 }
 
+/// Bytes from `start` to `end` that came a second time: named first in
+/// the next acknowledgement.
+pub fn copied(tcb: *Tcb, start: u32, end: u32) void {
+    if (tcb.flags & _tcp.sack_ok == 0 or !_tcp.before(start, end)) return;
+    tcb.copy = .{ .start = start, .end = end };
+    tcb.flags |= _tcp.copy_named;
+}
+
 // --- sending ---------------------------------------------------------------------------
 
 /// The blocks a segment from the peer named, kept: what of each lies
@@ -121,6 +148,7 @@ pub fn blocks(tcb: *Tcb, into: []Range) usize {
 /// when one of them names bytes no block named before, which is what
 /// makes an acknowledgement a duplicate one (RFC 6675).
 pub fn record(tcb: *Tcb, named: []const Range, ack: u32) bool {
+    if (tcb.flags & _tcp.undoable != 0) reported(tcb, named, ack);
     const floor = if (_tcp.after(ack, tcb.snd_una)) ack else tcb.snd_una;
     var more = false;
     for (named) |block| {
@@ -139,6 +167,30 @@ fn held(tcb: *const Tcb, range: Range) bool {
         if (_tcp.atOrBefore(have.start, range.start) and _tcp.atOrBefore(range.end, have.end)) return true;
     }
     return false;
+}
+
+/// The first block, if it reports a copy (RFC 2883: below what `ack`
+/// acknowledges, or inside the second block) of what the last repair
+/// sent again: its segments counted off, and the repair undone when none
+/// is left.
+fn reported(tcb: *Tcb, named: []const Range, ack: u32) void {
+    const first = named[0];
+    const copy = _tcp.atOrBefore(first.end, ack) or
+        (named.len > 1 and _tcp.atOrBefore(named[1].start, first.start) and _tcp.atOrBefore(first.end, named[1].end));
+    if (!copy or !_tcp.before(first.start, first.end) or _tcp.before(first.start, tcb.undo_from) or _tcp.after(first.end, tcb.recover)) return;
+    if (tcb.undo_left == 0) return;
+    tcb.undo_left -|= (first.end -% first.start +% tcb.mss -% 1) / tcb.mss;
+    if (tcb.undo_left == 0) undo(tcb);
+}
+
+/// The last repair, every segment of which the peer had already: the
+/// window and its threshold as they were before it, and the repair
+/// ended if it still goes on.
+fn undo(tcb: *Tcb) void {
+    tcb.flags &= ~(_tcp.undoable | _tcp.recovering);
+    tcb.cwnd = @max(tcb.cwnd, tcb.undo_cwnd);
+    tcb.ssthresh = @max(tcb.ssthresh, tcb.undo_ssthresh);
+    tcb.dupacks = 0;
 }
 
 /// A range merged into what is kept, which stays in order.
@@ -242,6 +294,7 @@ fn resend(stack: *StackBase, tcb: *Tcb, start: u32, end: u32) u32 {
     const length = @min(@min(end -% start, tcb.mss), tcb.send.count - offset);
     if (length == 0 or output.segment(stack, tcb, start, _tcp.ACK, offset, length) != 0) return 0;
     tcb.resend_next = start +% length;
+    if (tcb.flags & _tcp.undoable != 0) tcb.undo_left += 1;
     return length;
 }
 
@@ -250,6 +303,11 @@ fn resend(stack: *StackBase, tcb: *Tcb, start: u32, end: u32) u32 {
 pub fn duplicate(stack: *StackBase, tcb: *Tcb) void {
     if (tcb.flags & (_tcp.recovering | _tcp.timed_out) != 0) return;
     if (tcb.dupacks < 3 and lostBelow(tcb) == tcb.snd_una) return;
+    tcb.undo_cwnd = tcb.cwnd;
+    tcb.undo_ssthresh = tcb.ssthresh;
+    tcb.undo_from = tcb.snd_una;
+    tcb.undo_left = 0;
+    tcb.flags |= _tcp.undoable;
     tcb.ssthresh = timers.halved(tcb);
     tcb.cwnd = tcb.ssthresh;
     tcb.recover = tcb.snd_max;
@@ -299,6 +357,7 @@ pub fn acknowledged(tcb: *Tcb, ack: u32) void {
 /// forgotten, and a repair is over until what was sent is acknowledged.
 pub fn timedOut(tcb: *Tcb) void {
     tcb.sacked_count = 0;
+    tcb.flags &= ~_tcp.undoable;
     if (tcb.flags & _tcp.sack_ok == 0) return;
     tcb.flags = (tcb.flags & ~_tcp.recovering) | _tcp.timed_out;
     tcb.recover = tcb.snd_max;

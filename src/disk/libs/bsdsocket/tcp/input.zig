@@ -322,6 +322,11 @@ fn synchronized(stack: *StackBase, tcb: *Tcb, original: *const Segment, header: 
     const window = output.window(tcb);
 
     // First: is any of it inside the window?
+    // Data before RCV.NXT came a second time: the peer is told (sack.zig).
+    const data_end = seg.seq +% @as(u32, @intCast(seg.data.len));
+    if (seg.flags & (_tcp.SYN | _tcp.RST) == 0 and _tcp.before(seg.seq, tcb.rcv_nxt)) {
+        sack.copied(tcb, seg.seq, if (_tcp.before(data_end, tcb.rcv_nxt)) data_end else tcb.rcv_nxt);
+    }
     if (!acceptable(tcb, &seg, window)) {
         if (seg.flags & _tcp.RST == 0) {
             tcb.flags |= _tcp.ack_now;

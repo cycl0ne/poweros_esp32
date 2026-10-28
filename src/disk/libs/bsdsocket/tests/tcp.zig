@@ -1244,6 +1244,42 @@ test "acknowledgements name what is held beyond a hole, the block of the newest 
     try rig.deinit();
 }
 
+test "bytes that come a second time are named first in the next acknowledgement, once" {
+    var rig = try Rig.init();
+    const pair = try connected(&rig, 110);
+    const server = _tcp.of(socketOf(&rig.b, pair.server));
+    const client_port = socketOf(&rig.a, pair.client).local_port;
+    const n = server.rcv_nxt;
+    const steps = [_]struct { at: u32, bytes: []const u8, ack: u32, blocks: []const [2]u32 }{
+        .{ .at = 2, .bytes = "c", .ack = 0, .blocks = &.{.{ n +% 2, n +% 3 }} },
+        // A copy of a held one: named inside the block that holds it.
+        .{ .at = 2, .bytes = "c", .ack = 0, .blocks = &.{ .{ n +% 2, n +% 3 }, .{ n +% 2, n +% 3 } } },
+        .{ .at = 0, .bytes = "ab", .ack = 3, .blocks = &.{} },
+        // A copy of what was taken: named below the acknowledgement.
+        .{ .at = 1, .bytes = "b", .ack = 3, .blocks = &.{.{ n +% 1, n +% 2 }} },
+        // Named once.
+        .{ .at = 5, .bytes = "f", .ack = 3, .blocks = &.{.{ n +% 5, n +% 6 }} },
+        // Part a copy: that part.
+        .{ .at = 1, .bytes = "bcd", .ack = 4, .blocks = &.{ .{ n +% 1, n +% 3 }, .{ n +% 5, n +% 6 } } },
+        .{ .at = 4, .bytes = "e", .ack = 6, .blocks = &.{} },
+    };
+    for (steps) |step| {
+        forge(&rig, client_port, 110, .{ .seq = n +% step.at, .ack = server.snd_una, .flags = _tcp.ACK, .data = step.bytes });
+        try expectAck(n +% step.ack, step.blocks);
+    }
+    var buffer: [16]u8 = undefined;
+    try testing.expectEqual(@as(i32, 6), rig.b.sb.Recv(pair.server, &buffer, buffer.len, 0));
+    try testing.expectEqualStrings("abcdef", buffer[0..6]);
+    const cut: bsd.linger = .{ .l_onoff = 1, .l_linger = 0 };
+    _ = rig.b.sb.SetSockOpt(pair.server, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.b.sb.CloseSocket(pair.server);
+    _ = rig.b.sb.CloseSocket(pair.listener);
+    _ = rig.a.sb.SetSockOpt(pair.client, bsd.SOL_SOCKET, bsd.SO_LINGER, &cut, @sizeOf(bsd.linger));
+    _ = rig.a.sb.CloseSocket(pair.client);
+    wire_count = 0;
+    try rig.deinit();
+}
+
 /// The data segments A sent, each by where it starts and how often it went.
 const Sent = struct {
     starts: [256]u32 = undefined,
@@ -1404,7 +1440,7 @@ fn reorderedTransfer(rig: *Rig, pair: anytype, sent: *Sent, late: []const usize,
     try testing.expectEqualSlices(u8, data, got);
 }
 
-test "a segment that comes late goes again once at most, and the repair sends nothing else again" {
+test "a segment that comes late goes again once at most, the repair sends nothing else again, and is undone" {
     var rig = try Rig.init();
     const pair = try connected(&rig, 108);
     const client = _tcp.of(socketOf(&rig.a, pair.client));
@@ -1413,17 +1449,19 @@ test "a segment that comes late goes again once at most, and the repair sends no
     const late = [_]usize{25};
     var sent: Sent = .{};
     try reorderedTransfer(&rig, pair, &sent, &late, &.{});
-    // The late one may have gone twice, before it came; every other
-    // segment once. The acknowledgements of the copy began no repair.
+    // The late one went twice, before it came; every other segment
+    // once. The acknowledgements of the copy began no repair, and the
+    // one repair was undone when B reported the copy: the threshold is
+    // what it was, nothing having been lost.
     try testing.expect(sent.count > late[0] + 12);
     for (sent.times[0..sent.count], 0..) |times, index| {
-        try testing.expectEqual(@as(u32, if (index == late[0]) times else 1), times);
+        try testing.expectEqual(@as(u32, if (index == late[0]) 2 else 1), times);
     }
-    try testing.expect(sent.times[late[0]] <= 2);
     const counts = rig.a.stack.counts;
     try testing.expectEqual(@as(u32, 0), counts.tcp_retransmits);
-    try testing.expect(counts.tcp_fast_retransmits <= 1);
-    try testing.expectEqual(@as(u32, 0), client.flags & _tcp.recovering);
+    try testing.expectEqual(@as(u32, 1), counts.tcp_fast_retransmits);
+    try testing.expectEqual(@as(u32, 0), client.flags & (_tcp.recovering | _tcp.undoable));
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), client.ssthresh);
     closeAll(&rig, pair);
     try rig.deinit();
 }
