@@ -15,7 +15,9 @@
 //! to it, and answers what it was in one word: the class in the upper
 //! half (`WMHI_*`), the gadget's `GA_ID`, the menu number or the key in
 //! the lower - `WMHI_LASTMSG` when there is nothing more. A message of a
-//! class it has no word for is replied and passed over.
+//! class it has no word for is replied and passed over. `IDCMP_NEWSIZE`
+//! is replied at the next `WM_HANDLEINPUT`, so a sizing's next step waits
+//! for whatever the program does with `WMHI_NEWSIZE` before it asks again.
 //!
 //! A layout measures its gadgets when the window opens and when it changes
 //! size. A program that sets a gadget to something of another size - a
@@ -183,6 +185,9 @@ pub const WMHI_GADGETDOWN: usize = 3 << 16;
 pub const WMHI_MENUPICK: usize = 4 << 16;
 pub const WMHI_VANILLAKEY: usize = 5 << 16;
 pub const WMHI_RAWKEY: usize = 6 << 16;
+/// The window was sized. The message is replied at the next
+/// `WM_HANDLEINPUT`, and a sizing goes on once it is: a program that draws
+/// here keeps the window from getting ahead of its drawing.
 pub const WMHI_NEWSIZE: usize = 7 << 16;
 pub const WMHI_ACTIVE: usize = 8 << 16;
 pub const WMHI_INACTIVE: usize = 9 << 16;

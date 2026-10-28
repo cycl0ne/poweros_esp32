@@ -175,7 +175,9 @@ pub const LIBRARY_VERSION = 0;
 /// fill as its ground, so a gadget in it that erases, or is drawn aside,
 /// stands on the fill and not on junk; and a gadget on a layer that paints
 /// no ground is drawn in place.
-pub const LIBRARY_REVISION = 67;
+/// 68: windowclass replies IDCMP_NEWSIZE at the next WM_HANDLEINPUT, so a
+/// sizing's next step waits until the program is done with the last one.
+pub const LIBRARY_REVISION = 68;
 const BUILD_DATE = "28.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -20,11 +20,16 @@
 //! aside, in one copy, as a size does.
 //!
 //! `WM_HANDLEINPUT` turns one message into one word and replies to it
-//! there and then - the program never holds a message, so there is
-//! nothing it can forget to reply. What the word has no room for - the
-//! keys held with the message, the gadget it came from - is kept to be
-//! read (`WINDOWA_Qualifier`, `WINDOWA_GadgetID`); an update's `GA_ID` is
-//! read from its tag list before the reply, since the list goes with the
+//! itself - the program never holds a message, so there is nothing it can
+//! forget to reply. It replies most there and then, and `IDCMP_NEWSIZE`
+//! at the next `WM_HANDLEINPUT`: by then the program has done what the
+//! size asked of it, such as drawing its picture again. A sizing takes its
+//! next step once the last step's message is back (input/_input.zig
+//! `pace`), so it waits for that drawing too. Closing the window replies
+//! one still held. What the word has no room for - the keys held with the
+//! message, the gadget it came from - is kept to be read
+//! (`WINDOWA_Qualifier`, `WINDOWA_GadgetID`); an update's `GA_ID` is read
+//! from its tag list before the reply, since the list goes with the
 //! message.
 //!
 //! The scroll bars in the borders are scroller.gadgets, which the object
@@ -66,6 +71,9 @@ pub const Data = extern struct {
     /// `WM_HANDLEINPUT` answered last.
     qualifier: u32 = 0,
     gadget_id: usize = wc.WINDOW_NOGADGET,
+    /// The `IDCMP_NEWSIZE` `WM_HANDLEINPUT` answered last, replied at its
+    /// next call or when the window closes.
+    held: ?*intuition.IntuiMessage = null,
     /// The border bars asked for (`BAR_`), the program's tags for each,
     /// copied, and the bars once made.
     bars: u32 = 0,
@@ -288,6 +296,7 @@ fn rethink(ib: *IntuitionBase, p: *Data) bool {
 
 /// The window closed; the layout stays the object's.
 fn close(ib: *IntuitionBase, p: *Data) bool {
+    replyHeld(ib, p);
     const window = p.window orelse return false;
     ib.iface().CloseWindow(window);
     p.window = null;
@@ -319,10 +328,18 @@ fn keyGadget(ib: *IntuitionBase, p: *Data, said: u32, qualifier: u32, code: ?*u3
     return wc.WMHI_GADGETUP | (id & wc.WMHI_GADGETMASK);
 }
 
+/// The size answered last replied, as the program is done with it.
+fn replyHeld(ib: *IntuitionBase, p: *Data) void {
+    const message = p.held orelse return;
+    p.held = null;
+    ib.iface().ReplyIMsg(message);
+}
+
 /// The next message of a class it has a word for, replied, as that word;
-/// `WMHI_LASTMSG` when there is none.
+/// `WMHI_LASTMSG` when there is none. A size is held until the next call.
 fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
     const it = ib.iface();
+    replyHeld(ib, p);
     const window = p.window orelse return wc.WMHI_LASTMSG;
     while (it.GetIMsg(window)) |im| {
         const class = im.class;
@@ -334,7 +351,7 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
             ib.utility_base.GetTagData(gc.GA_ID, wc.WINDOW_NOGADGET, @ptrCast(@alignCast(address)))
         else
             wc.WINDOW_NOGADGET;
-        it.ReplyIMsg(im);
+        if (class == wn.IDCMP_NEWSIZE) p.held = im else it.ReplyIMsg(im);
         p.qualifier = qualifier;
         p.gadget_id = wc.WINDOW_NOGADGET;
         // A key that works a gadget of the layout is that gadget's, not
