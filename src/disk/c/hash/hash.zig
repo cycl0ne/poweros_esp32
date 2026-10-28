@@ -13,7 +13,9 @@
 //! ALGO is CRC32, MD5, SHA1, SHA224, SHA256 (what it is without ALGO),
 //! SHA384 or SHA512, in either case and with or without a `-` after SHA.
 //! CRC-32 is worked out here; the others come from crypto.library, which
-//! is opened only when one of them is asked for.
+//! is opened only when one of them is asked for. A file longer than one
+//! read is read ahead (BUF_ASYNC, dos.library 1.15): its next piece comes
+//! while this one is hashed.
 //!
 //! **A list** is sha256sum's, so one made here checks on any other
 //! system and one made there checks here: a line per file, the digest in
@@ -51,7 +53,7 @@ const digests = @import("digests.zig");
 const Algorithm = digests.Algorithm;
 
 pub const COMMAND_NAME = "Hash";
-const VERSION_STRING = "\x00$VER: Hash 1.0 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Hash 1.1 (28.10.2026)\r\n";
 
 const template = "FILE/M,ALGO/K,CHECK/S,TO/K,ALL/S,QUIET/S";
 const arg_file = 0;
@@ -425,8 +427,12 @@ fn checkEntry(run: *Run, entry: *const digests.Entry, algorithm: Algorithm) void
 /// The digest of what is left of `file`: its length, or null with IoErr
 /// set when it could not be read, or with `stop` set when Ctrl-C or a
 /// missing algorithm ended it.
+///
+/// A file of Hash's own that fills the first read is read ahead from
+/// then on; the input is the shell's, and keeps its buffering.
 fn digestOf(run: *Run, file: ?*dos.FileHandle, algorithm: Algorithm, digest: *[digests.digest_max]u8) ?usize {
     const dl = run.dl;
+    var read_ahead = file != dl.Input();
     var crc = digests.crc_start;
     var context: crypto.HashContext = .{};
     var engine: ?*CryptoBase = null;
@@ -446,6 +452,11 @@ fn digestOf(run: *Run, file: ?*dos.FileHandle, algorithm: Algorithm, digest: *[d
         const got = dl.Read(file, &run.buffer, run.buffer.len);
         if (got < 0) return null;
         if (got == 0) break;
+        if (read_ahead and got == run.buffer.len) {
+            // Without it the file is read as before: an older dos, no memory.
+            _ = dl.SetVBuf(file, null, dos.BUF_ASYNC, 2 * read_size);
+            read_ahead = false;
+        }
         const bytes = run.buffer[0..@intCast(got)];
         if (engine) |cb| cb.UpdateHash(&context, bytes.ptr, @intCast(bytes.len)) else crc = digests.crcAdd(crc, bytes);
     }

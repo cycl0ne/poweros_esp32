@@ -40,6 +40,9 @@ const FileHandle = dos.FileHandle;
 /// The count can be less than `length` without the end being reached - a
 /// console answers with what has been typed.
 ///
+/// A handle with `BUF_ASYNC` reads through its halves as `FRead` does:
+/// past them the handler is ahead of the caller.
+///
 /// CONTEXT:
 /// - Waits: yes: it sends the handler a packet and waits for the answer.
 /// - Interrupts: no. It waits.

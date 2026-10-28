@@ -18,6 +18,8 @@
 //! order, which every reader turns; its link is Ethernet, or for lo0 a
 //! four-byte address family before each packet. The stamps are the
 //! system clock's, which keeps local time: a reader shows it as UTC.
+//! The file is written behind in halves of 32 KiB (BUF_ASYNC, dos.library
+//! 1.15), not a packet to its handler for each frame.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -32,7 +34,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "PacketCapture";
-const VERSION_STRING = "\x00$VER: PacketCapture 1.2 (08.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: PacketCapture 1.3 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "INTERFACE/A,TO/K/A,COUNT/K/N,TIME/K/N,SNAPLEN/K/N,QUIET/S,FILTERED/S";
@@ -52,6 +54,8 @@ const MSG_DONE = "%lu frames, %lu bytes; %lu had no room\n";
 
 /// The largest frame, its capture header, and some.
 const buffer_bytes = 2048;
+/// TO's buffer, both halves.
+const file_buffer_bytes = 64 * 1024;
 const snaplen_most: u32 = 65535;
 /// 1 January 1970 to 1 January 1978, where the system clock counts from.
 const unix_to_system: u32 = 252_460_800;
@@ -139,7 +143,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = dl.PrintFault(dl.IoErr(), to);
         return dos.RETURN_ERROR;
     };
-    defer _ = dl.Close(file);
+    // Without it every frame is written as it comes, as before.
+    _ = dl.SetVBuf(file, null, dos.BUF_ASYNC, file_buffer_bytes);
+    var open = true;
+    defer if (open) {
+        _ = dl.Close(file);
+    };
     const header: FileHeader = .{ .snaplen = snaplen, .link = link };
     if (!write(dl, file, bytesOf(&header))) return writeFailed(dl);
     if (!quiet) _ = Printf(dl, MSG_CAPTURING, .{ @as([*:0]const u8, &name), to });
@@ -189,6 +198,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         bytes += seen.length;
         dropped += seen.dropped;
     }
+    // The last frames go, and a write behind that failed is told.
+    open = false;
+    if (!dl.Close(file)) return writeFailed(dl);
     if (!quiet) _ = Printf(dl, MSG_DONE, .{ frames, bytes, dropped });
     return dos.RETURN_OK;
 }

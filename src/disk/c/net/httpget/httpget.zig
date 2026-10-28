@@ -13,7 +13,9 @@
 //! five at the most, to a whole URL or a path. An answer other than 2xx
 //! prints its status line and fails: a warning for 4xx, an error else.
 //! Ctrl-C stops it, and a half-written TO is deleted, as it is when the
-//! connection ends before the body does.
+//! connection ends before the body does. TO is written behind
+//! (BUF_ASYNC, dos.library 1.15): the next piece comes over the network
+//! while this one goes to the disk.
 //!
 //! The request goes through LIBS:http.library, as HTTP/1.1: the body ends
 //! where its length says, where its last chunk does, or where the server
@@ -43,7 +45,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "HTTPGet";
-const VERSION_STRING = "\x00$VER: HTTPGet 1.7 (26.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: HTTPGet 1.8 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "URL/A,TO/K,QUIET/S,NOVERIFY/S";
@@ -168,9 +170,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = dl.PrintFault(dl.IoErr(), name);
         return dos.RETURN_ERROR;
     } else dl.Output();
+    // Without it TO is written as before: an older dos, no memory.
+    if (to != null) _ = dl.SetVBuf(file, null, dos.BUF_ASYNC, 2 * buffer_bytes);
+    var open = to != null;
     var kept = false;
     defer if (to) |name| {
-        _ = dl.Close(file);
+        if (open) _ = dl.Close(file);
         if (!kept) _ = dl.DeleteFile(name);
     };
 
@@ -193,6 +198,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             return dos.RETURN_ERROR;
         }
         total += @intCast(got);
+    }
+    if (to != null) {
+        // The last piece goes, and a write behind that failed is told.
+        open = false;
+        if (!dl.Close(file)) {
+            _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
+            return dos.RETURN_ERROR;
+        }
     }
     kept = true;
     if (to != null and !quiet) {

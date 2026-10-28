@@ -37,6 +37,10 @@ const FileHandle = dos.FileHandle;
 /// ahead, since it has no position to give back. Then one `ACTION_WRITE`
 /// carries the bytes.
 ///
+/// A handle with `BUF_ASYNC` writes through its halves as `FWrite` does,
+/// so the bytes are written behind and the answer is `length`: a failure
+/// is told by the next write, `Flush` or `Close`.
+///
 /// CONTEXT:
 /// - Waits: yes: it sends the handler a packet and waits for the answer.
 /// - Interrupts: no. It waits.
@@ -59,6 +63,7 @@ const FileHandle = dos.FileHandle;
 /// ```
 pub fn Write(db: *DosBase, file: ?*FileHandle, buffer: [*]const u8, length: isize) isize {
     const fh = file orelse return failWith(db, dos.ERROR_INVALID_LOCK, -1);
+    if (fh.ahead != null) return db.iface().FWrite(fh, buffer, length);
     if (!_file.beforeWrite(db, fh)) return -1;
     return rawWrite(db, fh, buffer, length);
 }

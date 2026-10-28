@@ -211,12 +211,39 @@ while (dl.FGets(fh, &line, line.len)) |text| {
 ```
 
 Every handle starts in `BUF_LINE`: written out at each newline on a console,
-when the buffer is full on anything else. `SetVBuf` picks `BUF_FULL` or
-`BUF_NONE` instead, and can give the handle a buffer of the caller's.
+when the buffer is full on anything else. `SetVBuf` picks `BUF_FULL`,
+`BUF_NONE` or `BUF_ASYNC` instead, and can give the handle a buffer of the
+caller's.
 `Flush` writes out what waits and gives back what was read ahead. `Close`,
 `Seek`, `Read` and `Write` take what the buffer holds into account
 themselves, so buffered and unbuffered calls mix on one handle. A prompt
 without a newline needs `Flush(Output())` to be seen.
+
+`BUF_ASYNC` (dos.library 1.15) splits the buffer in two halves and gives
+the handle a request of its own, one signal of the task that set it.
+Reading, the next half is read ahead while the program takes from this
+one; writing, a full half is written behind while the program fills the
+other. `Read` and `Write` go through the halves too, so a program that
+reads or writes a file in a loop has the handler working beside it with
+one `SetVBuf`, at the cost of the copy every buffered call has - a
+program that keeps its own buffers uses requests instead. A write behind
+that failed is told by the call that next needs its half - a write,
+`Flush` or `Close` - and its bytes are lost. `Seek`, a turn from reading
+to writing and `Flush` wait for what is out and give back what both
+halves read ahead. On a console `BUF_ASYNC` is `BUF_LINE`.
+
+```zig
+// Hash a file with the next 128 KiB read while this one is hashed.
+const in = dl.Open(name, dos.MODE_OLDFILE) orelse return dos.RETURN_ERROR;
+defer _ = dl.Close(in);
+if (dl.SetVBuf(in, null, dos.BUF_ASYNC, 256 << 10) < 0) return dos.RETURN_ERROR;
+var piece: [128 << 10]u8 = undefined;
+while (true) {
+    const got = dl.FRead(in, &piece, piece.len);
+    if (got <= 0) break;
+    hash.update(piece[0..@intCast(got)]);
+}
+```
 
 `Input()` and `Output()` are the process's streams: for a command, its
 shell's console, or what `<` and `>` named on its line. They belong to

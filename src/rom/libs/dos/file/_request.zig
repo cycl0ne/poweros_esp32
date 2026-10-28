@@ -27,6 +27,10 @@
 //! console has no position to go back to: there a StartRead takes what
 //! was typed ahead and is back at once, without a packet, as Read gives
 //! it first; a StartWrite leaves it to be read.
+//!
+//! BUF_ASYNC's read ahead and write behind are requests too, the handle's
+//! own (`FileHandle.ahead`): `post` sends one past the buffer, since it is
+//! the buffer (_file.zig).
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -57,7 +61,7 @@ pub fn start(db: *DosBase, file: ?*FileHandle, request: ?*DosRequest, action: do
     const req = request orelse return fail(db, dos.ERROR_REQUIRED_ARG_MISSING);
     if (req.state == .out) return fail(db, dos.ERROR_OBJECT_IN_USE);
     const fh = file orelse return fail(db, dos.ERROR_INVALID_LOCK);
-    const port = fh.task orelse return fail(db, dos.ERROR_INVALID_LOCK);
+    if (fh.task == null) return fail(db, dos.ERROR_INVALID_LOCK);
     const reply = req.port orelse return fail(db, dos.ERROR_NO_FREE_STORE);
     if (action == .read and fh.state == .read and fh.interactive and length > 0) {
         // Typed ahead: the console's next bytes, and the request's
@@ -74,6 +78,25 @@ pub fn start(db: *DosBase, file: ?*FileHandle, request: ?*DosRequest, action: do
     }
     const ready = if (action == .read) _file.flush(db, fh) else _file.beforeWrite(db, fh);
     if (!ready) return false;
+    return post(db, fh, req, action, buffer, length);
+}
+
+/// Sends `req` as `start` does, but past the handle's buffer: BUF_ASYNC's
+/// read ahead and write behind, which are the buffer's own.
+///
+/// INPUTS:
+/// - `db` - the library's base.
+/// - `fh` - the handle.
+/// - `req` - a request not out.
+/// - `action` - `.read` or `.write`.
+/// - `buffer`, `length` - the bytes.
+///
+/// RESULT:
+/// False when the handle has no handler or the request no port: nothing
+/// sent.
+pub fn post(db: *DosBase, fh: *FileHandle, req: *DosRequest, action: dos.ActionCode, buffer: [*]u8, length: isize) bool {
+    const port = fh.task orelse return false;
+    const reply = req.port orelse return false;
     send(fh, req, action, buffer, length);
     req.packet.port = reply;
     req.packet.msg.reply_port = reply;

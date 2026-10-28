@@ -52,6 +52,19 @@
 //! comes after theirs, and Close, CopyFH, ExamineFH, Flush and ChangeMode
 //! wait for them before anything else.
 //!
+//! BUF_ASYNC splits the buffer in two halves - `buf`, the caller's, and
+//! `other` - and gives the handle a request of its own (`ahead`). Reading,
+//! the other half is read ahead while the caller takes from this one; a
+//! refill takes the half that came and sends the next read ahead, until
+//! the end. Writing, a full half is written behind while the caller fills
+//! the other (`pass`); a write behind that failed is told by the next call
+//! that writes, Flush or Close, and its bytes are lost. Read and Write go
+//! through the halves too, since past them the handler is ahead of the
+//! caller. Turning around, seeking and giving the buffer up wait for what
+//! is out, and seek back over what both halves read ahead. The request is
+//! the task's that set the mode: its port signals that task, and another
+//! task reads and writes the halves without it.
+//!
 //! Line buffering (BUF_LINE, where every handle starts) writes out at '\n'
 //! or '\r' - on consoles only, where someone is waiting to see the line; to
 //! a file it is BUF_FULL. The end isn't sticky: FGetC asks the handler
@@ -303,6 +316,128 @@ pub fn bufferOf(db: *DosBase, fh: *FileHandle) ?[*]u8 {
     return fh.buf;
 }
 
+/// The whole buffer and its size: with BUF_ASYNC from the lower half's
+/// first byte, both halves.
+pub const Whole = struct { ptr: ?[*]u8, size: u32 };
+
+/// The handle's whole buffer: what dos frees, and what SetVBuf splits or
+/// joins.
+///
+/// INPUTS:
+/// - `fh` - the handle.
+pub fn wholeBuffer(fh: *const FileHandle) Whole {
+    if (fh.other == null) return .{ .ptr = fh.buf, .size = fh.buf_size };
+    return .{ .ptr = lower(fh.buf, fh.other), .size = 2 * fh.buf_size };
+}
+
+/// The lower of a buffer's halves, or the buffer when it has none.
+fn lower(buf: ?[*]u8, other: ?[*]u8) ?[*]u8 {
+    const o = other orelse return buf;
+    const b = buf orelse return o;
+    return if (@intFromPtr(o) < @intFromPtr(b)) o else b;
+}
+
+/// BUF_ASYNC: the caller's half and the other change places.
+fn swap(fh: *FileHandle) void {
+    const b = fh.buf;
+    fh.buf = fh.other;
+    fh.other = b;
+}
+
+/// BUF_ASYNC: sends the handle's request past the buffer - a read into
+/// `other`, or a write of the caller's half.
+///
+/// INPUTS:
+/// - `db` - the library's base.
+/// - `fh` - the handle.
+/// - `action` - `.read` or `.write`.
+/// - `buffer`, `length` - the half and how much of it.
+///
+/// RESULT:
+/// Whether it went. Not from a task other than the request's, whose port
+/// would signal the wrong one; then the caller reads or writes the half
+/// itself.
+fn postAhead(db: *DosBase, fh: *FileHandle, action: ActionCode, buffer: [*]u8, length: u32) bool {
+    const req = fh.ahead orelse return false;
+    const port = req.port orelse return false;
+    const me: ?*anyopaque = db.sys_base.FindTask(null);
+    if (port.sig_task != me) return false;
+    return _request.post(db, fh, req, action, buffer, @intCast(length));
+}
+
+/// BUF_ASYNC: the read ahead's answer, waited for.
+///
+/// INPUTS:
+/// - `db` - the library's base.
+/// - `fh` - the handle.
+///
+/// RESULT:
+/// What it brought into `other` (0 at the end), or -1 with `IoErr()` set.
+/// Null when no read is out or back.
+fn landRead(db: *DosBase, fh: *FileHandle) ?isize {
+    const req = fh.ahead orelse return null;
+    if (req.state == .idle or req.packet.getAction() != .read) return null;
+    _ = _request.take(db, req, true);
+    req.state = .idle;
+    if (req.result < 0) _ = db.iface().SetIoErr(req.code);
+    return req.result;
+}
+
+/// BUF_ASYNC: the write behind's answer, waited for. A short write is
+/// finished from its half, which nothing touches until it is back.
+///
+/// INPUTS:
+/// - `db` - the library's base.
+/// - `fh` - the handle.
+///
+/// RESULT:
+/// True when no write is out, or it went. False with `IoErr()` set when
+/// it failed: its bytes are lost, and the failure is told this once.
+fn landWrite(db: *DosBase, fh: *FileHandle) bool {
+    const dos_lib = db.iface();
+    const req = fh.ahead orelse return true;
+    if (req.state == .idle or req.packet.getAction() != .write) return true;
+    _ = _request.take(db, req, true);
+    req.state = .idle;
+    if (req.result < 0) {
+        _ = dos_lib.SetIoErr(req.code);
+        return false;
+    }
+    const io = req.packet.args.io;
+    var done: usize = @intCast(req.result);
+    const total: usize = @intCast(io.length);
+    while (done < total) {
+        const n = rawWrite(db, fh, io.buffer.? + done, @intCast(total - done));
+        if (n <= 0) {
+            if (n == 0) _ = dos_lib.SetIoErr(dos.ERROR_DISK_FULL);
+            return false;
+        }
+        done += @intCast(n);
+    }
+    return true;
+}
+
+/// Makes room in a full buffer. With BUF_ASYNC the half is written
+/// behind, once the write before it is back, and the caller fills the
+/// other; in every other mode, or when the request cannot go, the buffer
+/// is written out (`drain`).
+///
+/// INPUTS:
+/// - `db` - the library's base.
+/// - `fh` - a writing handle.
+///
+/// RESULT:
+/// False with `IoErr()` set when a write failed: the one behind, whose
+/// bytes are lost, or this one, whose bytes stay as `drain` keeps them.
+pub fn pass(db: *DosBase, fh: *FileHandle) bool {
+    if (fh.ahead == null) return drain(db, fh);
+    if (!landWrite(db, fh)) return false;
+    if (!postAhead(db, fh, .write, fh.buf.?, fh.pos)) return drain(db, fh);
+    swap(fh);
+    fh.pos = 0;
+    return true;
+}
+
 /// Whether '\n' and '\r' write the buffer out: line buffering, on a
 /// console.
 ///
@@ -312,7 +447,8 @@ pub fn lineBuffered(fh: *const FileHandle) bool {
     return fh.buf_mode == stdio.BUF_LINE and fh.interactive;
 }
 
-/// Writes the waiting bytes out, and leaves the handle empty.
+/// Writes the waiting bytes out, and leaves the handle empty. With
+/// BUF_ASYNC the write behind is waited for first.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
@@ -321,9 +457,11 @@ pub fn lineBuffered(fh: *const FileHandle) bool {
 /// RESULT:
 /// True when all went out. False with `IoErr()` set (`ERROR_DISK_FULL`
 /// when the handler wrote nothing); what didn't go stays at the front of
-/// the buffer for the next try.
+/// the buffer for the next try. A write behind that failed is the answer
+/// by itself, the caller's half kept.
 pub fn drain(db: *DosBase, fh: *FileHandle) bool {
     const dos_lib = db.iface();
+    if (!landWrite(db, fh)) return false;
     var done: u32 = 0;
     while (done < fh.pos) {
         const b = fh.buf.?;
@@ -343,7 +481,8 @@ pub fn drain(db: *DosBase, fh: *FileHandle) bool {
 
 /// Empties the buffer, so the handler's position is the caller's: waiting
 /// bytes are written, bytes read ahead and pushed back are seeked back
-/// over. On a console they are dropped, having no position to go back to.
+/// over - with BUF_ASYNC both halves', once the read ahead is back. On a
+/// console they are dropped, having no position to go back to.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
@@ -359,7 +498,8 @@ pub fn flush(db: *DosBase, fh: *FileHandle) bool {
         .empty => return true,
         .write => return drain(db, fh),
         .read => {
-            const back: isize = @as(isize, @intCast(fh.end - fh.pos)) + @popCount(fh.unget_backed);
+            var back: isize = @as(isize, @intCast(fh.end - fh.pos)) + @popCount(fh.unget_backed);
+            if (landRead(db, fh)) |ahead| back += @max(ahead, 0);
             fh.pos = 0;
             fh.end = 0;
             fh.unget_count = 0;
@@ -401,11 +541,14 @@ pub const Lent = struct {
     unget: [4]i16,
     last: i16,
     lent: bool,
+    other: ?[*]u8,
+    ahead: ?*dos.DosRequest,
 };
 
 /// Lends a handle an argument line: `line` becomes what the handle has
 /// read ahead, so FGetC and ReadArgs read it first. Bytes waiting to be
-/// written are written out first.
+/// written are written out first. BUF_ASYNC's halves are put aside with
+/// the buffer: the command reads the handle without them.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
@@ -428,7 +571,11 @@ pub fn lend(db: *DosBase, fh: *FileHandle, line: []u8) Lent {
         .unget = fh.unget,
         .last = fh.last,
         .lent = fh.lent,
+        .other = fh.other,
+        .ahead = fh.ahead,
     };
+    fh.other = null;
+    fh.ahead = null;
     fh.buf = line.ptr;
     fh.buf_size = @intCast(line.len);
     fh.pos = 0;
@@ -443,7 +590,7 @@ pub fn lend(db: *DosBase, fh: *FileHandle, line: []u8) Lent {
 }
 
 /// Gives a handle its own buffer back after the command, freeing one the
-/// command's calls allocated meanwhile.
+/// command's calls allocated meanwhile, and a BUF_ASYNC request it made.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
@@ -451,9 +598,11 @@ pub fn lend(db: *DosBase, fh: *FileHandle, line: []u8) Lent {
 /// - `saved` - what `lend` answered.
 pub fn giveBack(db: *DosBase, fh: *FileHandle, saved: Lent) void {
     if (fh.state == .write) _ = drain(db, fh);
+    if (fh.ahead) |req| db.iface().FreeDosObject(dos.DOS_REQUEST, req);
     if (fh.buf_owned) {
-        if (fh.buf) |b| {
-            if (saved.buf == null or b != saved.buf.?) db.sys_base.FreeVec(b);
+        if (wholeBuffer(fh).ptr) |b| {
+            const kept = lower(saved.buf, saved.other);
+            if (kept == null or b != kept.?) db.sys_base.FreeVec(b);
         }
     }
     fh.buf = saved.buf;
@@ -467,10 +616,12 @@ pub fn giveBack(db: *DosBase, fh: *FileHandle, saved: Lent) void {
     fh.unget = saved.unget;
     fh.last = saved.last;
     fh.lent = saved.lent;
+    fh.other = saved.other;
+    fh.ahead = saved.ahead;
 }
 
-/// Close's part: writes the waiting bytes and frees dos's buffer. A
-/// buffer the caller gave SetVBuf is left alone.
+/// Close's part: writes the waiting bytes and frees dos's buffer, and
+/// BUF_ASYNC's request. A buffer the caller gave SetVBuf is left alone.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
@@ -480,18 +631,23 @@ pub fn giveBack(db: *DosBase, fh: *FileHandle, saved: Lent) void {
 /// Whether the waiting bytes went out; `IoErr()` says why not.
 pub fn release(db: *DosBase, fh: *FileHandle) bool {
     const written = fh.state != .write or drain(db, fh);
+    if (fh.ahead) |req| db.iface().FreeDosObject(dos.DOS_REQUEST, req);
     if (fh.buf_owned) {
-        if (fh.buf) |b| db.sys_base.FreeVec(b);
+        if (wholeBuffer(fh).ptr) |b| db.sys_base.FreeVec(b);
     }
     fh.buf = null;
+    fh.other = null;
+    fh.ahead = null;
     fh.buf_owned = false;
     fh.state = .empty;
     return written;
 }
 
 /// Fills the buffer from the handler with one ACTION_READ (one byte with
-/// BUF_NONE). A lent argument line, once read, is dropped for a buffer of
-/// the handle's own.
+/// BUF_NONE). With BUF_ASYNC the half read ahead becomes the caller's, or
+/// this one is read when none is out, and the next read ahead goes into
+/// the other until the end. A lent argument line, once read, is dropped
+/// for a buffer of the handle's own.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
@@ -509,7 +665,7 @@ pub fn refill(db: *DosBase, fh: *FileHandle) isize {
     }
     const b = bufferOf(db, fh) orelse return -1;
     const want: isize = if (fh.buf_mode == stdio.BUF_NONE) 1 else @intCast(fh.buf_size);
-    const n = rawRead(db, fh, b, want);
+    const n = if (fh.ahead != null) nextHalf(db, fh) else rawRead(db, fh, b, want);
     fh.pos = 0;
     fh.end = if (n > 0) @intCast(n) else 0;
     fh.state = .read;
@@ -519,6 +675,17 @@ pub fn refill(db: *DosBase, fh: *FileHandle) isize {
     } else if (n < 0) {
         fh.last = FileHandle.NO_CHAR;
     }
+    return n;
+}
+
+/// BUF_ASYNC's refill: the half read ahead taken as the caller's - or,
+/// with none out, this one read now - and the next read ahead sent.
+fn nextHalf(db: *DosBase, fh: *FileHandle) isize {
+    const n = if (landRead(db, fh)) |ahead| blk: {
+        swap(fh);
+        break :blk ahead;
+    } else rawRead(db, fh, fh.buf.?, @intCast(fh.buf_size));
+    if (n > 0) _ = postAhead(db, fh, .read, fh.other.?, fh.buf_size);
     return n;
 }
 
@@ -554,7 +721,8 @@ pub fn take(fh: *FileHandle, dest: [*]u8, want: usize) Taken {
 
 /// Read's part: what the buffer holds first, then one ACTION_READ for the
 /// rest - on a console only when the buffer had nothing, so a line typed
-/// is not waited past.
+/// is not waited past. With BUF_ASYNC all of it through the halves, as
+/// FRead reads.
 ///
 /// INPUTS:
 /// - `db` - the library's base.
@@ -565,6 +733,11 @@ pub fn take(fh: *FileHandle, dest: [*]u8, want: usize) Taken {
 /// RESULT:
 /// As Read: the count, 0 at the end, -1 on an error before any byte.
 pub fn readThrough(db: *DosBase, fh: *FileHandle, dest: [*]u8, length: isize) isize {
+    if (fh.ahead != null) {
+        const n = db.iface().FRead(fh, dest, length);
+        fh.last = FileHandle.NO_CHAR;
+        return n;
+    }
     if (fh.state == .write and !drain(db, fh)) return -1;
     fh.last = FileHandle.NO_CHAR;
     if (fh.state != .read or length <= 0) return rawRead(db, fh, dest, length);

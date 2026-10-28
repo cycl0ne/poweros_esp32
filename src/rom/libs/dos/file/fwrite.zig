@@ -7,6 +7,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 const _file = @import("_file.zig");
 const lineBuffered = _file.lineBuffered;
 const drain = _file.drain;
+const pass = _file.pass;
 const bufferSize = _file.bufferSize;
 const stdio = dos.stdio;
 const flush = _file.flush;
@@ -39,6 +40,11 @@ const FileHandle = dos.FileHandle;
 /// size or more, the buffer is written out and the bytes go straight to the
 /// handler. A reading handle turns around first as for `FPutC`; on a
 /// console the bytes go straight out.
+///
+/// With `BUF_ASYNC` all of them go through the halves: a full half is
+/// written behind while the next is filled. A failure of the write behind
+/// is the answer of the call that next needs its half - this one, `Flush`
+/// or `Close` - and its bytes are lost.
 ///
 /// CONTEXT:
 /// - Waits: only when the buffer has to go to or come from the handler;
@@ -75,16 +81,17 @@ pub fn FWrite(db: *DosBase, file: ?*FileHandle, buffer: [*]const u8, length: isi
         if (fh.interactive) return _file.rawWrite(db, fh, buffer, length);
         if (!flush(db, fh)) return -1;
     }
-    if (fh.buf_mode == stdio.BUF_NONE or len >= bufferSize(fh)) {
+    if (fh.ahead == null and (fh.buf_mode == stdio.BUF_NONE or len >= bufferSize(fh))) {
         if (fh.state == .write and !drain(db, fh)) return -1;
         return _file.rawWrite(db, fh, buffer, length);
     }
-    const b = _file.bufferOf(db, fh) orelse return -1;
+    _ = _file.bufferOf(db, fh) orelse return -1;
     var done: usize = 0;
     while (done < len) {
-        if (fh.pos == fh.buf_size and !drain(db, fh)) return -1;
+        // BUF_ASYNC hands the caller the other half here.
+        if (fh.pos == fh.buf_size and !pass(db, fh)) return -1;
         const n: usize = @min(len - done, fh.buf_size - fh.pos);
-        @memcpy(b[fh.pos..][0..n], buffer[done..][0..n]);
+        @memcpy(fh.buf.?[fh.pos..][0..n], buffer[done..][0..n]);
         fh.pos += @intCast(n);
         done += n;
         fh.state = .write;
@@ -92,6 +99,6 @@ pub fn FWrite(db: *DosBase, file: ?*FileHandle, buffer: [*]const u8, length: isi
     const newline = lineBuffered(fh) and for (buffer[0..len]) |c| {
         if (c == '\n' or c == '\r') break true;
     } else false;
-    if ((fh.pos == fh.buf_size or newline) and !drain(db, fh)) return -1;
+    if ((fh.pos == fh.buf_size or newline) and !pass(db, fh)) return -1;
     return length;
 }

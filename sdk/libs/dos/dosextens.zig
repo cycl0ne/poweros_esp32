@@ -359,9 +359,11 @@ pub const FileHandle = extern struct {
     /// The handler's own reference for the open file (fh_Arg1), set on FINDINPUT, FINDOUTPUT or FINDUPDATE.
     key: ?*anyopaque = null,
 
-    /// fh_Buf: the buffer, null until the first buffered call.
+    /// fh_Buf: the buffer, null until the first buffered call. With
+    /// BUF_ASYNC, the half the caller takes from or fills.
     buf: ?[*]u8 = null,
-    /// fh_BufSize: its size (stdio.BUFFER_SIZE, or SetVBuf's).
+    /// fh_BufSize: its size (stdio.BUFFER_SIZE, or SetVBuf's); with
+    /// BUF_ASYNC, a half's.
     buf_size: u32 = 0,
     /// fh_Pos: the next byte to give (reading), or how many bytes wait
     /// (writing).
@@ -369,7 +371,7 @@ pub const FileHandle = extern struct {
     /// fh_End: how many bytes the last read brought (reading).
     end: u32 = 0,
     state: BufferState = .empty,
-    /// stdio.BUF_LINE, BUF_FULL or BUF_NONE (SetVBuf).
+    /// stdio.BUF_LINE, BUF_FULL, BUF_NONE or BUF_ASYNC (SetVBuf).
     buf_mode: u8 = 0,
     /// Whether dos allocated the buffer (Close frees it), or SetVBuf's
     /// caller gave it.
@@ -391,6 +393,12 @@ pub const FileHandle = extern struct {
     /// first: every other call that reads, writes, moves, asks about or
     /// closes it waits for them.
     requests: ?*DosRequest = null,
+    /// BUF_ASYNC: the other half - being read ahead or written behind, or
+    /// holding what was read ahead. Null in every other mode.
+    other: ?[*]u8 = null,
+    /// BUF_ASYNC: the request that reads into or writes from `other`,
+    /// the task's that set the mode. Null in every other mode.
+    ahead: ?*DosRequest = null,
 
     pub const NO_CHAR: i16 = -2;
 };

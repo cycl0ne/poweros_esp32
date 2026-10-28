@@ -14,8 +14,9 @@
 //! Four reads go round: each is written to the file as it comes back and
 //! sent again, so the recording runs without a gap however long it is,
 //! and a write to the file may take a second without anything being
-//! lost. The file's header goes first with its lengths open, and is
-//! filled in at the end.
+//! lost. The file is written behind (BUF_ASYNC, dos.library 1.15), so
+//! a write returns once its bytes are in the file's buffer. The file's
+//! header goes first with its lengths open, and is filled in at the end.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -27,7 +28,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Record";
-const VERSION_STRING = "\x00$VER: Record 1.2 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Record 1.3 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,SECONDS/K/N,RATE/K/N,CHANNELS/K/N,BITS/K/N,VOLUME/K/N,QUIET/S";
@@ -152,6 +153,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = dl.PrintFault(dl.IoErr(), name);
         return dos.RETURN_FAIL;
     };
+    // Without it each read is written as it comes back, as before.
+    _ = dl.SetVBuf(file, null, dos.BUF_ASYNC, 2 * read_bytes);
     var head: [header_bytes]u8 = undefined;
     waveHeader(&head, first.channels, rate, bits, 0);
     if (dl.Write(file, &head, header_bytes) != header_bytes) {
@@ -229,8 +232,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = dl.Seek(file, 0, dos.OFFSET_BEGINNING);
         if (dl.Write(file, &head, header_bytes) != header_bytes) failed = true;
     }
+    // The rest goes, and a write behind that failed is told.
+    if (!dl.Close(file)) failed = true;
     if (failed) _ = dl.PrintFault(dl.IoErr(), name);
-    _ = dl.Close(file);
 
     if (argv[arg_quiet] == 0) {
         var after: audio.AudioInfo = .{};

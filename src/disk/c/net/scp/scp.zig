@@ -22,8 +22,9 @@
 //! it wrote.
 //!
 //! **How.** Requests go out several at a time - four reads or writes of
-//! 32 KiB each in flight - so the round trips overlap. Ctrl-C stops
-//! between them. The return code is 0 when all was copied, 10 when
+//! 32 KiB each in flight - so the round trips overlap, and the file here
+//! is read ahead or written behind (BUF_ASYNC, dos.library 1.15) while
+//! they travel. Ctrl-C stops between them. The return code is 0 when all was copied, 10 when
 //! something could not be, 20 when there was no connection.
 
 const sdk = @import("sdk");
@@ -41,7 +42,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SCP";
-const VERSION_STRING = "\x00$VER: SCP 1.1 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SCP 1.2 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/A,TO/A,ALL/S,PORT/K/N,USER/K,QUIET/S";
@@ -604,6 +605,8 @@ fn putFile(st: *State) void {
     const dl = st.dl;
     const file = dl.Open(&st.local, dos.MODE_OLDFILE) orelse return st.hereFailed();
     defer _ = dl.Close(file);
+    // Read ahead; without it read as before (an older dos, no memory).
+    _ = dl.SetVBuf(file, null, dos.BUF_ASYNC, 2 * chunk);
     var handle: Handle = .{};
     if (!st.open(sftp.FXP_OPEN, sftp.FXF_WRITE | sftp.FXF_CREAT | sftp.FXF_TRUNC, &handle)) return st.thereFailed();
     var offset: u64 = 0;
@@ -669,7 +672,13 @@ fn getFile(st: *State) void {
     if (!st.open(sftp.FXP_OPEN, sftp.FXF_READ, &handle)) return st.thereFailed();
     defer st.close(&handle);
     const file = dl.Open(&st.local, dos.MODE_NEWFILE) orelse return st.hereFailed();
-    defer _ = dl.Close(file);
+    // Written behind; without it written as before. Its Close tells a
+    // write behind that failed.
+    _ = dl.SetVBuf(file, null, dos.BUF_ASYNC, 2 * chunk);
+    var open = true;
+    defer if (open) {
+        _ = dl.Close(file);
+    };
     var asked: [window]u64 = undefined;
     var first: usize = 0;
     var in_flight: usize = 0;
@@ -733,6 +742,11 @@ fn getFile(st: *State) void {
         }
     }
     while (in_flight > 0 and !st.broken) : (in_flight -= 1) _ = st.receive() orelse break;
+    open = false;
+    if (!dl.Close(file) and good) {
+        st.hereFailed();
+        good = false;
+    }
     if (good and !st.broken) st.copied(st.remoteName(), written);
 }
 

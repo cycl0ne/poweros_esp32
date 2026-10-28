@@ -2600,6 +2600,8 @@ once with `BUF_NONE`, and at '\n' or '\r' when the handle is line
 buffered and a console. A handle that was reading turns around first:
 read-ahead is given back by seeking over it - except on a console, where
 the byte goes straight out and what was read ahead stays to be read.
+With `BUF_ASYNC` a full half is written behind while the next is
+filled.
 
 **CONTEXT**
 
@@ -2719,6 +2721,10 @@ a smaller one through a refill. It stops at the end of the file, and on
 a console as soon as it has anything, so a line typed is not waited
 past. At the end `IoErr()` is 0.
 
+With `BUF_ASYNC` every part comes through the halves, each refill
+taking the half read ahead and sending the next read: the handler reads
+while the caller copies.
+
 **CONTEXT**
 
 - Waits: only when the buffer has to go to or come from the handler;
@@ -2783,6 +2789,11 @@ is a line-buffered console. With `BUF_NONE`, or `length` the buffer's
 size or more, the buffer is written out and the bytes go straight to the
 handler. A reading handle turns around first as for `FPutC`; on a
 console the bytes go straight out.
+
+With `BUF_ASYNC` all of them go through the halves: a full half is
+written behind while the next is filled. A failure of the write behind
+is the answer of the call that next needs its half - this one, `Flush`
+or `Close` - and its bytes are lost.
 
 **CONTEXT**
 
@@ -6190,6 +6201,9 @@ to be written are written out before anything is read.
 The count can be less than `length` without the end being reached - a
 console answers with what has been typed.
 
+A handle with `BUF_ASYNC` reads through its halves as `FRead` does:
+past them the handler is ahead of the caller.
+
 **CONTEXT**
 
 - Waits: yes: it sends the handler a packet and waits for the answer.
@@ -8130,7 +8144,7 @@ fn SetVBuf(db: *DosBase, file: ?*FileHandle, buffer: ?[*]u8, mode: i32, size: is
 
 **SINCE**
 
-1.0. LVO -436.
+1.0; `BUF_ASYNC` 1.15. LVO -436.
 
 **INPUTS**
 
@@ -8138,16 +8152,18 @@ fn SetVBuf(db: *DosBase, file: ?*FileHandle, buffer: ?[*]u8, mode: i32, size: is
 - `buffer` - the caller's memory for the buffer, or null to have one
   allocated. Not looked at when `size` is -1.
 - `mode` - `BUF_LINE` (written out at a line's end on a console),
-  `BUF_FULL` (written out when full) or `BUF_NONE` (every byte written
-  at once).
-- `size` - the buffer's size in bytes, or -1 to keep the buffer and
-  change the mode only.
+  `BUF_FULL` (written out when full), `BUF_NONE` (every byte written
+  at once) or `BUF_ASYNC` (two halves: one read ahead or written behind
+  while the caller uses the other).
+- `size` - the buffer's size in bytes - with `BUF_ASYNC` both halves',
+  2 or more - or -1 to keep the buffer and change the mode only.
 
 **RESULT**
 
 0, or -1 with `IoErr()` set: `ERROR_INVALID_LOCK` for a null handle,
-`ERROR_BAD_NUMBER` for another mode or a size of 0, below -1 or over 32
-bits, `ERROR_NO_FREE_STORE`, or what `Flush` failed with.
+`ERROR_BAD_NUMBER` for another mode, a size of 0, below -1 or over 32
+bits, or one too small to halve; `ERROR_NO_FREE_STORE` (no memory, or
+no signal for `BUF_ASYNC`'s request), or what `Flush` failed with.
 
 **BEHAVIOR**
 
@@ -8158,6 +8174,16 @@ nothing to seek, they are dropped. Then the mode is set and, unless
 `size` is -1, the new buffer put in; a buffer dos had allocated for the
 handle is freed. There is no smallest size.
 
+`BUF_ASYNC` splits the buffer in two halves - the new one, or with -1
+the one the handle has, allocated now when it has none - and gives the
+handle a request (`DOS_REQUEST`) on a port of its own, one of the
+calling task's signals. `FRead`, `FGetC`, `Read` and the rest then find
+the next half read already, and `FWrite`, `FPutC` and `Write` fill one
+while the other is written; the halves are the copy every buffered
+call has. Leaving `BUF_ASYNC` frees the request, and with -1 joins the
+halves again. On a console `BUF_ASYNC` is `BUF_LINE`: reading ahead
+there would wait for a line nobody typed.
+
 **CONTEXT**
 
 - Waits: only when the buffer has to go to or come from the handler;
@@ -8165,13 +8191,15 @@ handle is freed. There is no smallest size.
 - Interrupts: no. It may wait.
 - Locks: none taken; no spinlock may be held around it: it may wait.
 - Process: a Task will do. One handle is one caller's: two tasks sharing
-  a handle take turns themselves.
+  a handle take turns themselves. `BUF_ASYNC`'s request signals the
+  task that set it: only that task reads ahead and writes behind, and it
+  closes the handle, or sets another mode before handing it on.
 
 **OWNERSHIP**
 
 A buffer the caller gives stays the caller's and must outlive the handle
 - until `Close`, or a later `SetVBuf`. One allocated here is freed by
-`Close`.
+`Close`, and so is `BUF_ASYNC`'s request.
 
 **BUGS**
 
@@ -8179,13 +8207,16 @@ None known.
 
 **SEE ALSO**
 
-`Flush`, `FWrite`, `FGetC`
+`Flush`, `FWrite`, `FGetC`, `StartRead`
 
 **EXAMPLES**
 
 ```zig
 var big: [8192]u8 = undefined;
 if (dos_lib.SetVBuf(fh, &big, dos.stdio.BUF_FULL, big.len) < 0) return dos_lib.IoErr();
+
+// Read ahead in two halves of 128 KiB, dos's memory.
+if (dos_lib.SetVBuf(in, null, dos.stdio.BUF_ASYNC, 256 << 10) < 0) return dos_lib.IoErr();
 ```
 
 ## SetVar
@@ -9488,6 +9519,10 @@ out, and bytes read ahead are given back by seeking over them, so the
 write lands where the caller's position is. A console keeps what it read
 ahead, since it has no position to give back. Then one `ACTION_WRITE`
 carries the bytes.
+
+A handle with `BUF_ASYNC` writes through its halves as `FWrite` does,
+so the bytes are written behind and the answer is `length`: a failure
+is told by the next write, `Flush` or `Close`.
 
 **CONTEXT**
 

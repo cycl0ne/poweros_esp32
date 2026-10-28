@@ -18,6 +18,10 @@ pub const BUF_LINE: i32 = 0;
 pub const BUF_FULL: i32 = 1;
 /// No buffering: each FPutC goes out, FGetC reads one byte at a time.
 pub const BUF_NONE: i32 = 2;
+/// The buffer in two halves (dos.library 1.15): one is read ahead or
+/// written behind while the caller takes from or fills the other, and
+/// Read and Write go through them too. On a console it is BUF_LINE.
+pub const BUF_ASYNC: i32 = 3;
 
 /// FGetC's answer at the end of the file (or on an error).
 pub const ENDSTREAMCH: i32 = -1;

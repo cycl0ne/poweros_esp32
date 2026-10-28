@@ -14,7 +14,10 @@
 //! runs it on the session's unit of ssh.device until the client ends.
 //! Open files and directories are handles - up to `handles_max` - their
 //! slot and a count of uses, so a stale one is told apart. A file is read
-//! and written where the request says; writing past its end grows it.
+//! and written where the request says; writing past its end grows it. A
+//! file read or written in order is read ahead or written behind
+//! (BUF_ASYNC, dos.library 1.15) while the replies travel; a write behind
+//! that failed is told by a later WRITE or by CLOSE.
 //!
 //! **Attributes.** A file's size, its time - the system clock's local
 //! time turned into UTC by the zone in `ENVARC:Sys/timezone` - and its
@@ -185,6 +188,8 @@ pub const Server = struct {
         // A file that is there and not made new is emptied when asked.
         if (writing and flags & sftp.FXF_TRUNC != 0 and mode != dos.MODE_NEWFILE)
             _ = dl.SetFileSize(handle.file, 0, dos.OFFSET_BEGINNING);
+        // Without it the file is read and written as before.
+        _ = dl.SetVBuf(handle.file, null, dos.BUF_ASYNC, 2 * sftp.read_max);
         handle.kind = .file;
         handle.append = flags & sftp.FXF_APPEND != 0;
         copyName(&handle.name, sliceOf(&server.path));

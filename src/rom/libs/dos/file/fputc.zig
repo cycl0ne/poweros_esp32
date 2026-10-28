@@ -7,7 +7,7 @@ const DosBase = @import("../dos_base.zig").DosBase;
 const _file = @import("_file.zig");
 const lineBuffered = _file.lineBuffered;
 const stdio = dos.stdio;
-const drain = _file.drain;
+const pass = _file.pass;
 const bufferOf = _file.bufferOf;
 const flush = _file.flush;
 const failWith = _file.failWith;
@@ -37,6 +37,8 @@ const FileHandle = dos.FileHandle;
 /// buffered and a console. A handle that was reading turns around first:
 /// read-ahead is given back by seeking over it - except on a console, where
 /// the byte goes straight out and what was read ahead stays to be read.
+/// With `BUF_ASYNC` a full half is written behind while the next is
+/// filled.
 ///
 /// CONTEXT:
 /// - Waits: only when the buffer has to go to or come from the handler;
@@ -67,13 +69,13 @@ pub fn FPutC(db: *DosBase, file: ?*FileHandle, character: i32) i32 {
         if (fh.interactive) return if (_file.rawWrite(db, fh, @ptrCast(&c), 1) < 0) -1 else c;
         if (!flush(db, fh)) return -1;
     }
-    const b = bufferOf(db, fh) orelse return -1;
-    if (fh.pos == fh.buf_size and !drain(db, fh)) return -1;
-    b[fh.pos] = c;
+    _ = bufferOf(db, fh) orelse return -1;
+    if (fh.pos == fh.buf_size and !pass(db, fh)) return -1;
+    fh.buf.?[fh.pos] = c;
     fh.pos += 1;
     fh.state = .write;
     const out = fh.pos == fh.buf_size or fh.buf_mode == stdio.BUF_NONE or
         (lineBuffered(fh) and (c == '\n' or c == '\r'));
-    if (out and !drain(db, fh)) return -1;
+    if (out and !pass(db, fh)) return -1;
     return c;
 }

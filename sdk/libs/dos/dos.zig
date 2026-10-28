@@ -488,6 +488,7 @@ pub const BufferState = dosextens.BufferState;
 pub const BUF_LINE = stdio.BUF_LINE;
 pub const BUF_FULL = stdio.BUF_FULL;
 pub const BUF_NONE = stdio.BUF_NONE;
+pub const BUF_ASYNC = stdio.BUF_ASYNC;
 pub const ENDSTREAMCH = stdio.ENDSTREAMCH;
 
 // ReadArgs (rdargs.zig).

@@ -40,6 +40,10 @@ const FileHandle = dos.FileHandle;
 /// a console as soon as it has anything, so a line typed is not waited
 /// past. At the end `IoErr()` is 0.
 ///
+/// With `BUF_ASYNC` every part comes through the halves, each refill
+/// taking the half read ahead and sending the next read: the handler reads
+/// while the caller copies.
+///
 /// CONTEXT:
 /// - Waits: only when the buffer has to go to or come from the handler;
 ///   then it sends a packet and waits for the answer.
@@ -75,10 +79,10 @@ pub fn FRead(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, length: isize) isi
     var at_end = taken.end;
     while (got < want and !at_end and !(got > 0 and fh.interactive)) {
         const rest = want - got;
-        const n = if (rest >= bufferSize(fh))
-            _file.rawRead(db, fh, buffer + got, @intCast(rest))
-        else
-            refill(db, fh);
+        // Past the buffer when it would only be copied through - not past
+        // BUF_ASYNC's halves, behind which the handler is ahead.
+        const straight = fh.ahead == null and rest >= bufferSize(fh);
+        const n = if (straight) _file.rawRead(db, fh, buffer + got, @intCast(rest)) else refill(db, fh);
         if (n < 0) {
             if (got == 0) return -1;
             break;
@@ -86,7 +90,7 @@ pub fn FRead(db: *DosBase, file: ?*FileHandle, buffer: [*]u8, length: isize) isi
         if (n == 0) {
             _ = dos_lib.SetIoErr(0);
             at_end = true;
-        } else if (rest >= bufferSize(fh)) {
+        } else if (straight) {
             got += @intCast(n);
         } else {
             got += take(fh, buffer + got, rest).count;

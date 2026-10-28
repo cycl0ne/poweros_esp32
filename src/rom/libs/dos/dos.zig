@@ -858,6 +858,8 @@ const FakeFs = struct {
     var same: ?bool = null;
     /// READ, WRITE, SEEK, SET_FILE_SIZE, END and COPY_FH fail.
     var io_fail: bool = false;
+    /// The next this many WRITEs fail ERROR_DISK_FULL.
+    var fail_writes: u32 = 0;
     /// INHIBIT and FORMAT are refused ERROR_OBJECT_IN_USE.
     var in_use: bool = false;
     /// The path READ_LINK answers for a name through "lnk".
@@ -967,7 +969,8 @@ const FakeFs = struct {
                 pkt.args.find.fh.?.key = &dir;
                 res1 = dos.DOSTRUE;
             },
-            .read, .write => if (io_fail) {
+            .read, .write => if (io_fail or (action == .write and fail_writes > 0)) {
+                if (!io_fail) fail_writes -= 1;
                 res1 = -1;
                 res2 = dos.ERROR_DISK_FULL;
             } else {
@@ -1025,6 +1028,7 @@ const FakeFs = struct {
         calls = 0;
         same = null;
         io_fail = false;
+        fail_writes = 0;
         in_use = false;
         link_to = "FS:dir";
         read_links = 0;
@@ -3011,7 +3015,7 @@ test "SetVBuf: modes, the caller's buffer, line buffering on consoles" {
     try RamFs.mount(db, &tp);
 
     const fh = dl.Open("RAMT:v", dos.MODE_NEWFILE).?;
-    try testing.expectEqual(@as(i32, -1), dl.SetVBuf(fh, null, 3, -1));
+    try testing.expectEqual(@as(i32, -1), dl.SetVBuf(fh, null, dos.BUF_ASYNC + 1, -1));
     try testing.expectEqual(dos.ERROR_BAD_NUMBER, dl.IoErr());
     var mine: [16]u8 = undefined;
     try testing.expectEqual(@as(i32, 0), dl.SetVBuf(fh, &mine, dos.BUF_FULL, mine.len));
@@ -3040,6 +3044,178 @@ test "SetVBuf: modes, the caller's buffer, line buffering on consoles" {
     try expectContents(dl, "RAMT:v", "abc" ++ "p" ** 16 ++ "x\ny\nn");
 
     RamFs.disk.deinit();
+    try tearDown(db);
+}
+
+/// BUF_ASYNC's request answered at the test process's port, where the test
+/// handler serves what is waited for: at a port of its own it would wait
+/// for a handler the host cannot switch to.
+fn aheadAtProcess(fh: *FileHandle, tp: *TestProcess) void {
+    const req = fh.ahead.?;
+    kexec.DeleteMsgPort(kexec.SysBase, req.port.?);
+    req.port = &tp.proc.msg_port;
+    req.own_port = false;
+}
+
+/// How many packets wait at a handler's port.
+fn queued(port: *MsgPort) usize {
+    var count: usize = 0;
+    var it = port.msg_list.iterator();
+    while (it.next()) |_| count += 1;
+    return count;
+}
+
+test "SetVBuf BUF_ASYNC on a RAM: disk: the next half read ahead, a full one written behind, turning around, halves joined" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try RamFs.mount(db, &tp);
+    var data: [1500]u8 = undefined;
+    for (&data, 0..) |*b, i| b.* = @truncate(i * 7 + 3);
+    try fileWith(dl, "RAMT:a", &data);
+
+    // Two halves of 100 bytes, and a request of the handle's own.
+    const in = dl.Open("RAMT:a", dos.MODE_OLDFILE).?;
+    try testing.expectEqual(@as(i32, 0), dl.SetVBuf(in, null, dos.BUF_ASYNC, 200));
+    try testing.expectEqual(@as(u32, 100), in.buf_size);
+    try testing.expectEqual(in.buf.? + 100, in.other.?);
+    try testing.expect(in.ahead.?.own_port);
+    aheadAtProcess(in, &tp);
+
+    // The first byte reads the first half and sends the second's read
+    // ahead, which waits at the handler.
+    try testing.expectEqual(@as(i32, data[0]), dl.FGetC(in));
+    try testing.expectEqual(@as(usize, 1), queued(&RamFs.port));
+    try testing.expectEqual(dos.RequestState.out, in.ahead.?.state);
+    try testing.expectEqual(@as(isize, 100), in.ahead.?.packet.args.io.length);
+
+    // FRead across the halves: each refill takes the half that came and
+    // sends the next.
+    var back: [1600]u8 = undefined;
+    try testing.expectEqual(@as(isize, 350), dl.FRead(in, &back, 350));
+    try testing.expectEqualSlices(u8, data[1..351], back[0..350]);
+    try testing.expectEqual(@as(usize, 1), queued(&RamFs.port));
+
+    // Seek gives back what both halves hold: the caller's position.
+    try testing.expectEqual(@as(i64, 351), dl.Seek(in, 0, dos.OFFSET_CURRENT));
+    try testing.expectEqual(@as(usize, 0), queued(&RamFs.port));
+    try testing.expectEqual(@as(i32, data[351]), dl.FGetC(in));
+
+    // Read goes through the halves too. The end stops the reading ahead,
+    // and is not sticky.
+    try testing.expectEqual(@as(isize, 1000), dl.Read(in, &back, 1000));
+    try testing.expectEqualSlices(u8, data[352..1352], back[0..1000]);
+    try testing.expectEqual(@as(isize, 148), dl.FRead(in, &back, 500));
+    try testing.expectEqualSlices(u8, data[1352..], back[0..148]);
+    try testing.expectEqual(@as(usize, 0), queued(&RamFs.port));
+    try testing.expectEqual(@as(i32, -1), dl.FGetC(in));
+    try testing.expectEqual(@as(i32, -1), dl.FGetC(in));
+    try testing.expect(dl.Close(in));
+
+    // Writing: a full half goes behind while the next is filled, Write
+    // through the halves as well; Close waits for it and writes the rest.
+    const out = dl.Open("RAMT:b", dos.MODE_NEWFILE).?;
+    try testing.expectEqual(@as(i32, 0), dl.SetVBuf(out, null, dos.BUF_ASYNC, 200));
+    aheadAtProcess(out, &tp);
+    try testing.expectEqual(@as(isize, 60), dl.FWrite(out, &data, 60));
+    try testing.expectEqual(@as(usize, 0), queued(&RamFs.port));
+    try testing.expectEqual(@as(isize, 60), dl.FWrite(out, data[60..].ptr, 60));
+    try testing.expectEqual(@as(usize, 1), queued(&RamFs.port));
+    try testing.expectEqual(@as(u32, 20), out.pos);
+    for (data[120..1000]) |c| try testing.expectEqual(@as(i32, c), dl.FPutC(out, c));
+    try testing.expectEqual(@as(isize, 500), dl.Write(out, data[1000..].ptr, 500));
+    try testing.expect(dl.Close(out));
+    try expectContents(dl, "RAMT:b", &data);
+
+    // Turning around: a write after reading ahead lands at the caller's
+    // position; a read after it waits for it.
+    const rw = dl.Open("RAMT:b", dos.MODE_READWRITE).?;
+    try testing.expectEqual(@as(i32, 0), dl.SetVBuf(rw, null, dos.BUF_ASYNC, 200));
+    aheadAtProcess(rw, &tp);
+    try testing.expectEqual(@as(isize, 10), dl.FRead(rw, &back, 10));
+    try testing.expectEqual(@as(isize, 3), dl.FWrite(rw, "XYZ", 3));
+    try testing.expectEqual(@as(usize, 0), queued(&RamFs.port));
+    try testing.expectEqual(@as(i32, data[13]), dl.FGetC(rw));
+    try testing.expect(dl.Close(rw));
+    var changed = data;
+    @memcpy(changed[10..13], "XYZ");
+    try expectContents(dl, "RAMT:b", &changed);
+
+    // With -1 the buffer the handle has is split, dos's own made now; and
+    // joined again on the way out of BUF_ASYNC, the request freed.
+    const j = dl.Open("RAMT:a", dos.MODE_OLDFILE).?;
+    try testing.expectEqual(@as(i32, 0), dl.SetVBuf(j, null, dos.BUF_ASYNC, -1));
+    try testing.expectEqual(dos.stdio.BUFFER_SIZE / 2, j.buf_size);
+    const block = j.buf.?;
+    try testing.expectEqual(@as(i32, 0), dl.SetVBuf(j, null, dos.BUF_FULL, -1));
+    try testing.expectEqual(dos.stdio.BUFFER_SIZE, j.buf_size);
+    try testing.expectEqual(block, j.buf.?);
+    try testing.expect(j.ahead == null and j.other == null);
+    try testing.expect(dl.Close(j));
+
+    RamFs.disk.deinit();
+    try tearDown(db);
+}
+
+test "SetVBuf BUF_ASYNC: a write behind that failed told by Flush, the next write and Close; a console stays BUF_LINE" {
+    const db = try setUp();
+    defer kexec.deinit();
+    const dl = base(db);
+    var tp: TestProcess = .{};
+    tp.enter();
+    defer tp.leave();
+    try FakeFs.mount(db, &tp);
+    const fh = dl.Open("FS:file", dos.MODE_NEWFILE).?;
+    try testing.expectEqual(@as(i32, -1), dl.SetVBuf(fh, null, dos.BUF_ASYNC, 1)); // no halves
+    try testing.expectEqual(dos.ERROR_BAD_NUMBER, dl.IoErr());
+    try testing.expectEqual(@as(i32, 0), dl.SetVBuf(fh, null, dos.BUF_ASYNC, 16));
+    aheadAtProcess(fh, &tp);
+
+    // A half written behind fails: Flush says so, and the half filled
+    // meanwhile is kept for the next try.
+    try testing.expectEqual(@as(isize, 8), dl.FWrite(fh, "abcdefgh", 8));
+    try testing.expectEqual(dos.RequestState.out, fh.ahead.?.state);
+    FakeFs.fail_writes = 1;
+    try testing.expectEqual(@as(isize, 4), dl.FWrite(fh, "ijkl", 4)); // nothing waited for
+    try testing.expect(!dl.Flush(fh));
+    try testing.expectEqual(dos.ERROR_DISK_FULL, dl.IoErr());
+    var calls = FakeFs.calls;
+    try testing.expect(dl.Flush(fh)); // told once; "ijkl" goes
+    try testing.expectEqual(calls + 1, FakeFs.calls);
+    try testing.expectEqual(dos.ActionCode.write, FakeFs.action);
+    try testing.expectEqual(@as(isize, 4), FakeFs.args[2]);
+
+    // FWrite says so when it needs the half back.
+    try testing.expectEqual(@as(isize, 8), dl.FWrite(fh, "abcdefgh", 8));
+    FakeFs.fail_writes = 1;
+    try testing.expectEqual(@as(isize, -1), dl.FWrite(fh, "12345678x", 9));
+    try testing.expectEqual(dos.ERROR_DISK_FULL, dl.IoErr());
+    calls = FakeFs.calls;
+    try testing.expect(dl.Close(fh)); // the full half kept goes now
+    try testing.expectEqual(calls + 2, FakeFs.calls); // WRITE, END
+
+    // Close says so, and closes all the same.
+    const last = dl.Open("FS:last", dos.MODE_NEWFILE).?;
+    try testing.expectEqual(@as(i32, 0), dl.SetVBuf(last, null, dos.BUF_ASYNC, 16));
+    aheadAtProcess(last, &tp);
+    try testing.expectEqual(@as(isize, 10), dl.FWrite(last, "abcdefghij", 10));
+    FakeFs.fail_writes = 1;
+    _ = dl.SetIoErr(0);
+    try testing.expect(!dl.Close(last));
+    try testing.expectEqual(dos.ERROR_DISK_FULL, dl.IoErr());
+    try testing.expectEqual(dos.ActionCode.end, FakeFs.action);
+
+    // A console reads no line ahead: BUF_ASYNC is BUF_LINE there.
+    const con = dl.Open("FS:con", dos.MODE_OLDFILE).?;
+    con.interactive = true; // as if a console
+    try testing.expectEqual(@as(i32, 0), dl.SetVBuf(con, null, dos.BUF_ASYNC, 64));
+    try testing.expectEqual(@as(u8, dos.BUF_LINE), con.buf_mode);
+    try testing.expect(con.ahead == null and con.other == null);
+    try testing.expectEqual(@as(u32, 64), con.buf_size);
+    try testing.expect(dl.Close(con));
     try tearDown(db);
 }
 
