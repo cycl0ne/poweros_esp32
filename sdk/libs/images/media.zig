@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 //! media.image: the pictures of a player's controls - play, pause, stop,
 //! wind on and back, the song before and after, shuffle, repeat, the
-//! speaker and its sound off - drawn and not painted, so each is sharp at
-//! every size, from a menu's 16 pixels to a large button's 48.
+//! speaker and its sound off - and the note that stands for music where a
+//! song has no cover, drawn and not painted, so each is sharp at every
+//! size, from a menu's 16 pixels to a large button's 48 and past it.
 //!
 //! Which picture an image is, is `MEDIA_Glyph`. The buttons of a tape
-//! deck are signs and stand on the ground as letters do: in the screen's
-//! text pen, so they read on a light screen and on a dark one. Shuffle
+//! deck and the note are signs and stand on the ground as letters do: in
+//! the screen's text pen, so they read on a light screen and on a dark
+//! one. Shuffle
 //! and repeat are blue arrows, the speaker is metal with blue waves, and
 //! its sound off a red badge with a white cross - each with a darker rim,
 //! shaded from light at the top, with a gloss and a soft shadow, in the
@@ -74,5 +76,8 @@ pub const MEDIA_REPEAT_ONE: u32 = 10;
 pub const MEDIA_SPEAKER: u32 = 11;
 /// The speaker with a red badge and a white cross: its sound off.
 pub const MEDIA_MUTE: u32 = 12;
+/// Two notes joined by a beam: music, where a song has no picture of its
+/// own. Since 1.1.
+pub const MEDIA_NOTE: u32 = 13;
 /// The last picture there is.
-pub const MEDIA_LAST: u32 = MEDIA_MUTE;
+pub const MEDIA_LAST: u32 = MEDIA_NOTE;
