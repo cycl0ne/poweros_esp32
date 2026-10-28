@@ -63,6 +63,8 @@ const chooser = @import("../chooser/chooser.zig");
 const pageclass = @import("../page/page.zig");
 const scrollgroup = @import("../scrollgroup/scrollgroup.zig");
 const listbrowser = @import("../listbrowser/listbrowser.zig");
+const toolbutton = @import("../toolbutton/toolbutton.zig");
+const tbg = sdk.gadgets.toolbutton;
 const lbr = sdk.gadgets.listbrowser;
 const sgc = sdk.gadgets.scrollgroup;
 const pgc = sdk.gadgets.page;
@@ -2833,5 +2835,230 @@ test "clicktab.gadget: a press takes the tab under it at once, and the key steps
     try testing.expectEqual(@as(usize, 0), ib.SendMessage(tabs, @ptrCast(&hit)));
 
     ib.DisposeObject(tabs);
+    try rig.down();
+}
+
+/// An image that keeps where and how big it was last asked to draw itself
+/// as a frame.
+const Asked = extern struct { left: i32 = 0, top: i32 = 0, width: i32 = 0, height: i32 = 0, times: u32 = 0 };
+
+fn askedDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const cl: *classes.Class = @ptrCast(hook);
+    const ib: *IntuitionBase = @ptrFromInt(cl.user_data);
+    const msg: *classusr.Msg = @ptrCast(@alignCast(message.?));
+    if (msg.method_id == intuition.imageclass.IM_DRAWFRAME) {
+        const draw: *intuition.imageclass.ImpDraw = @ptrCast(@alignCast(msg));
+        const asked = classes.instData(Asked, cl, @ptrCast(object.?));
+        asked.* = .{ .left = draw.offset.x, .top = draw.offset.y, .width = draw.dimensions.width, .height = draw.dimensions.height, .times = asked.times + 1 };
+        return 1;
+    }
+    return ib.SendSuperMessage(cl, @ptrCast(object), msg);
+}
+
+fn domainOf(ib: *IntuitionBase, o: *Object, which: u32) gc.Box {
+    var ask = gc.GpDomain{ .which = which };
+    _ = ib.SendMessage(o, @ptrCast(&ask));
+    return ask.domain;
+}
+
+test "toolbutton.gadget: a push button's code is 0; a toggle turns over, tells its target, and its state is the code" {
+    var heard = Heard{ .tag = tbg.TOOLBUTTON_Checked, .ib = undefined };
+    var rig = try Rig.up(&toolbutton.Library.resident_tag, &heard);
+    const ib = rig.ib;
+
+    const cut = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 4 },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("Cut") },
+        .{},
+    }).?;
+    // Something to say under gadget help, and without a hint, the label.
+    try testing.expectEqual(@as(usize, 1), attr(ib, cut, gc.GA_GadgetHelp));
+    try testing.expectEqualStrings("Cut", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, cut, tbg.TOOLBUTTON_Hint)))));
+    try testing.expectEqual(@as(usize, tbg.TBKIND_PUSH), attr(ib, cut, tbg.TOOLBUTTON_Kind));
+    try testing.expect(gc.gadget(cut).flags & gc.GFLG_HOVERLOOK != 0);
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, 2, 2, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(cut, @ptrCast(&down)));
+    // Held: selected, which is drawn pressed; let go over it: 0, and no
+    // longer selected.
+    try testing.expect(gc.gadget(cut).flags & gc.GFLG_SELECTED != 0);
+    var up = input(gc.GM_HANDLEINPUT, &release, 2, 2, &termination);
+    try testing.expect(ib.SendMessage(cut, @ptrCast(&up)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, 0), termination);
+    try testing.expect(gc.gadget(cut).flags & gc.GFLG_SELECTED == 0);
+    ib.DisposeObject(cut);
+
+    const bold = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 7 },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("_Bold") },
+        .{ .tag = tbg.TOOLBUTTON_Kind, .data = tbg.TBKIND_TOGGLE },
+        .{ .tag = tbg.TOOLBUTTON_Hint, .data = @intFromPtr("Make the text bold") },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqualStrings("Make the text bold", std.mem.span(@as([*:0]const u8, @ptrFromInt(attr(ib, bold, tbg.TOOLBUTTON_Hint)))));
+    try testing.expectEqual(@as(usize, 0), attr(ib, bold, tbg.TOOLBUTTON_Checked));
+    // Pressed: on at once, and the target told.
+    termination = -1;
+    _ = ib.SendMessage(bold, @ptrCast(&down));
+    try testing.expectEqual(@as(usize, 1), attr(ib, bold, tbg.TOOLBUTTON_Checked));
+    try testing.expectEqual(@as(?usize, 1), heard.value);
+    try testing.expectEqual(@as(?usize, 7), heard.id);
+    try testing.expect(ib.SendMessage(bold, @ptrCast(&up)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, 1), termination);
+    // Its key, from the label's `_`, turns it off again.
+    var typed = gc.GpKey{ .key = 'B', .termination = &termination };
+    try testing.expect(ib.SendMessage(bold, @ptrCast(&typed)) & gc.GMKR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, 0), termination);
+    try testing.expectEqual(@as(?usize, 0), heard.value);
+    try testing.expectEqual(@as(usize, 0), attr(ib, bold, gc.GA_Selected));
+    // Set and read.
+    _ = ib.SetAttrsTagList(bold, &[_]TagItem{ .{ .tag = tbg.TOOLBUTTON_Checked, .data = 1 }, .{} });
+    try testing.expectEqual(@as(usize, 1), attr(ib, bold, gc.GA_Selected));
+    ib.DisposeObject(bold);
+    try rig.down();
+}
+
+test "toolbutton.gadget: three sizes to the font, a large label in two lines, the picture drawn to the size" {
+    var heard = Heard{ .tag = tbg.TOOLBUTTON_Checked, .ib = undefined };
+    var rig = try Rig.up(&toolbutton.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const asked_class = ib.MakeClass(null, classusr.IMAGECLASS, null, @sizeOf(Asked)).?;
+    asked_class.dispatcher.entry = &askedDispatch;
+    asked_class.user_data = @intFromPtr(ib);
+    const picture = ib.NewObjectTagList(asked_class, null, null).?;
+
+    const button = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("Format Painter") },
+        .{ .tag = tbg.TOOLBUTTON_Image, .data = @intFromPtr(picture) },
+        .{ .tag = tbg.TOOLBUTTON_Size, .data = tbg.TBSIZE_SMALL },
+        .{},
+    }).?;
+    const measure = sdk.gadgets.support.Measure.of(ib, gc.gadget(button), null);
+    defer measure.done(ib);
+    const whole = measure.width(ib, "Format Painter");
+    const longer = measure.width(ib, "Painter");
+    // For the 8-row font the small picture is 16, the large 32; the tool's
+    // frame is four pixels of room at each side, two at the top and the
+    // bottom.
+    // Small: the picture alone, made that size without a size of its own.
+    try testing.expectEqual(gc.Box{ .width = 24, .height = 20 }, domainOf(ib, button, gc.GDOMAIN_NOMINAL));
+    try testing.expectEqual(@as(usize, 24), attr(ib, button, gc.GA_Width));
+    try testing.expectEqual(gc.Box{ .width = 24, .height = 20 }, domainOf(ib, button, gc.GDOMAIN_MAXIMUM));
+    // Medium: the label beside the picture, in one line; as wide as there
+    // is room at the most.
+    _ = ib.SetAttrsTagList(button, &[_]TagItem{ .{ .tag = tbg.TOOLBUTTON_Size, .data = tbg.TBSIZE_MEDIUM }, .{} });
+    try testing.expectEqual(gc.Box{ .width = 16 + 4 + whole + 8, .height = 20 }, domainOf(ib, button, gc.GDOMAIN_NOMINAL));
+    try testing.expectEqual(gc.GDOMAIN_UNLIMITED, domainOf(ib, button, gc.GDOMAIN_MAXIMUM).width);
+    // Large: the label under the picture, broken at its space; two lines
+    // high however long it is.
+    _ = ib.SetAttrsTagList(button, &[_]TagItem{ .{ .tag = tbg.TOOLBUTTON_Size, .data = tbg.TBSIZE_LARGE }, .{} });
+    try testing.expectEqual(gc.Box{ .width = @max(32, longer) + 8, .height = 32 + 2 + 16 + 4 }, domainOf(ib, button, gc.GDOMAIN_NOMINAL));
+    try testing.expectEqual(@as(usize, @intCast(32 + 2 + 16 + 4)), attr(ib, button, gc.GA_Height));
+    ib.DisposeObject(button);
+
+    // Without a picture, the label is all there is, small or not; the `_`
+    // of its key takes no room.
+    const plain = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("_Find") },
+        .{ .tag = tbg.TOOLBUTTON_Size, .data = tbg.TBSIZE_SMALL },
+        .{},
+    }).?;
+    try testing.expectEqual(gc.Box{ .width = measure.width(ib, "Find") + 8, .height = 8 + 4 }, domainOf(ib, plain, gc.GDOMAIN_NOMINAL));
+    ib.DisposeObject(plain);
+
+    // Drawn in a window: the picture asked for at the small size, in the
+    // middle of a small button and at the left of a medium one.
+    const display = try Display.up(rig.kib);
+    const wn = intuition.windows;
+    const small = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 2 },
+        .{ .tag = gc.GA_Width, .data = 30 },
+        .{ .tag = gc.GA_Height, .data = 24 },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("Cut") },
+        .{ .tag = tbg.TOOLBUTTON_Image, .data = @intFromPtr(picture) },
+        .{ .tag = tbg.TOOLBUTTON_Size, .data = tbg.TBSIZE_SMALL },
+        .{},
+    }).?;
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(small) },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    ib.RefreshGList(small, w, 1);
+    var asked = classes.instData(Asked, asked_class, picture);
+    try testing.expectEqual(Asked{ .left = 2 + 7, .top = 2 + 4, .width = 16, .height = 16, .times = asked.times }, asked.*);
+    _ = ib.SetAttrsTagList(small, &[_]TagItem{ .{ .tag = tbg.TOOLBUTTON_Size, .data = tbg.TBSIZE_MEDIUM }, .{} });
+    ib.RefreshGList(small, w, 1);
+    asked = classes.instData(Asked, asked_class, picture);
+    try testing.expectEqual(Asked{ .left = 2 + 4, .top = 2 + 4, .width = 16, .height = 16, .times = asked.times }, asked.*);
+    // Made with a size of its own, it keeps it.
+    try testing.expectEqual(@as(usize, 30), attr(ib, small, gc.GA_Width));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
+    ib.CloseWindow(w);
+    try testing.expect(ib.CloseScreen(screen));
+    display.down(rig.kib);
+    ib.DisposeObject(small);
+    ib.DisposeObject(picture);
+    try testing.expect(ib.FreeClass(asked_class));
+    try rig.down();
+}
+
+test "toolbutton.gadget: flat at rest, its border under the pointer, sunk while on" {
+    var heard = Heard{ .tag = tbg.TOOLBUTTON_Checked, .ib = undefined };
+    var rig = try Rig.up(&toolbutton.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const display = try Display.up(rig.kib);
+    const wn = intuition.windows;
+    const button = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 4 },
+        .{ .tag = gc.GA_Width, .data = 30 },
+        .{ .tag = gc.GA_Height, .data = 16 },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr("Wrap") },
+        .{ .tag = tbg.TOOLBUTTON_Kind, .data = tbg.TBKIND_TOGGLE },
+        .{},
+    }).?;
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(button) },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    const background = display.pixel(60, 36);
+    // At rest: its left edge and a corner are the window's ground.
+    ib.RefreshGList(button, w, 1);
+    try testing.expectEqual(background, display.pixel(4, 12));
+    try testing.expectEqual(background, display.pixel(33, 19));
+    // Under the pointer: raised, the shine on the left, the shadow at the
+    // bottom.
+    gc.gadget(button).flags |= gc.GFLG_HOVERED;
+    ib.RefreshGList(button, w, 1);
+    const shine = display.pixel(4, 12);
+    const shadow = display.pixel(20, 19);
+    try testing.expect(shine != background);
+    try testing.expect(shadow != background and shadow != shine);
+    // On: sunk, the shadow on the left now, and the fill inside.
+    gc.gadget(button).flags &= ~gc.GFLG_HOVERED;
+    _ = ib.SetAttrsTagList(button, &[_]TagItem{ .{ .tag = tbg.TOOLBUTTON_Checked, .data = 1 }, .{} });
+    ib.RefreshGList(button, w, 1);
+    try testing.expectEqual(shadow, display.pixel(4, 12));
+    try testing.expectEqual(shine, display.pixel(20, 19));
+    try testing.expect(display.pixel(7, 6) != background);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
+    ib.CloseWindow(w);
+    try testing.expect(ib.CloseScreen(screen));
+    display.down(rig.kib);
+    ib.DisposeObject(button);
     try rig.down();
 }

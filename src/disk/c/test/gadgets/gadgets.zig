@@ -5,9 +5,13 @@
 //!   Gadgets TOUCH/S
 //!
 //! It opens the gadget classes of `SYS:classes/gadgets/` - checkbox,
-//! cycle, radiobutton, string, text, slider and palette - and a window object on
-//! the default public screen holding one layout, each gadget labelled by
-//! it: a line to type a name in, a number field, a check box "Backups", a
+//! cycle, radiobutton, string, text, slider, palette and toolbutton - and
+//! a window object on the default public screen holding one layout, each
+//! gadget labelled by it: a row of tool buttons with the system's default
+//! icons as their pictures - "New" and "Folder" large, "Picture", "Sound"
+//! and a disabled "Trash" medium in a column, and "Wrap" a small toggle
+//! whose label is its hint - then a line to type a name in, a number
+//! field, a check box "Backups", a
 //! second one "Locked" that is ticked and disabled, a cycle "Level" of Low,
 //! Medium and High, a radio column "Port" of Serial, USB and None, a
 //! slider "Volume" from 0 to 64 showing its level, a palette "Colour" of
@@ -23,8 +27,9 @@
 //! Every label has an `_` before the letter that works its gadget, and
 //! that letter is underlined: `b` turns the check box over, `e` steps the
 //! cycle gadget on and Shift-`e` back, `v` moves the slider, `o` presses
-//! OK, `n` gives the name field the keyboard. `Locked` is disabled, so
-//! its `l` does nothing and the key reaches the program instead.
+//! OK, `n` gives the name field the keyboard, `a` turns Wrap over. `Locked`
+//! is disabled, so its `l` does nothing and the key reaches the program
+//! instead. A tool button's code is 0, a toggle's its new state.
 //!
 //! With `TOUCH` the check boxes and the radio group fill the room the
 //! layout gives them instead of being a line of text high, which is what
@@ -46,6 +51,7 @@ const st = sdk.gadgets.string;
 const tx = sdk.gadgets.text;
 const sl = sdk.gadgets.slider;
 const pa = sdk.gadgets.palette;
+const tb = sdk.gadgets.toolbutton;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
@@ -54,7 +60,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Gadgets";
-const VERSION_STRING = "\x00$VER: Gadgets 1.4 (28.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gadgets 1.5 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TOUCH/S";
@@ -78,6 +84,12 @@ const ID_NUMBER = 7;
 const ID_VOLUME = 8;
 const ID_LAST = 9;
 const ID_COLOUR = 10;
+const ID_NEW = 11;
+const ID_FOLDER = 12;
+const ID_PICTURE = 13;
+const ID_SOUND = 14;
+const ID_TRASH = 15;
+const ID_WRAP = 16;
 
 /// The palette's colours.
 const colours = [_]sdk.graphics.Pen{
@@ -99,6 +111,12 @@ fn nameOf(id: usize) [*:0]const u8 {
         ID_NUMBER => "Number",
         ID_VOLUME => "Volume",
         ID_COLOUR => "Colour",
+        ID_NEW => "New",
+        ID_FOLDER => "Folder",
+        ID_PICTURE => "Picture",
+        ID_SOUND => "Sound",
+        ID_TRASH => "Trash",
+        ID_WRAP => "Wrap",
         else => "?",
     };
 }
@@ -111,9 +129,75 @@ const Shown = struct {
     last: *Object,
 };
 
+/// A tool button with an icon of the system's defaults as its picture.
+fn tool(ib: *IntuitionBase, id: u32, label: [*:0]const u8, icon: [*:0]const u8, size: u32, more: []const TagItem) ?*Object {
+    var tags = [_]TagItem{
+        .{ .tag = gc.GA_ID, .data = id },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr(label) },
+        .{ .tag = tb.TOOLBUTTON_IconName, .data = @intFromPtr(icon) },
+        .{ .tag = tb.TOOLBUTTON_Size, .data = size },
+        .{ .tag = sdk.utility.TAG_MORE, .data = @intFromPtr(more.ptr) },
+    };
+    if (more.len == 0) tags[4] = .{};
+    return ib.NewObjectTagList(null, tb.TOOLBUTTON_CLASS, &tags);
+}
+
+/// The row of tool buttons: two large ones, a column of three medium ones
+/// and a small toggle. Null, with whatever was made freed, when one of
+/// them could not be made.
+fn toolRow(ib: *IntuitionBase) ?*Object {
+    const new = tool(ib, ID_NEW, "Ne_w", "ENV:Sys/def_document", tb.TBSIZE_LARGE, &.{});
+    const folder = tool(ib, ID_FOLDER, "_Folder", "ENV:Sys/def_drawer", tb.TBSIZE_LARGE, &.{});
+    const picture = tool(ib, ID_PICTURE, "P_icture", "ENV:Sys/def_picture", tb.TBSIZE_MEDIUM, &.{});
+    const sound = tool(ib, ID_SOUND, "_Sound", "ENV:Sys/def_sound", tb.TBSIZE_MEDIUM, &.{});
+    const trash = tool(ib, ID_TRASH, "_Trash", "ENV:Sys/def_trashcan", tb.TBSIZE_MEDIUM, &.{
+        .{ .tag = gc.GA_Disabled, .data = 1 },
+        .{},
+    });
+    const wrap = tool(ib, ID_WRAP, "Wr_ap", "ENV:Sys/def_text", tb.TBSIZE_SMALL, &.{
+        .{ .tag = tb.TOOLBUTTON_Kind, .data = tb.TBKIND_TOGGLE },
+        .{ .tag = tb.TOOLBUTTON_Hint, .data = @intFromPtr("Wrap the lines at the window's edge") },
+        .{},
+    });
+    const parts = [_]?*Object{ new, folder, picture, sound, trash, wrap };
+    var whole = true;
+    for (parts) |part| whole = whole and part != null;
+    const column = if (whole) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(picture) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(sound) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(trash) },
+        .{},
+    }) else null;
+    const row = if (column) |c| ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 2 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(new) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(folder) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(c) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(wrap) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_TOP },
+        .{},
+    }) else null;
+    return row orelse {
+        if (column) |c| {
+            ib.DisposeObject(c);
+            ib.DisposeObject(new);
+            ib.DisposeObject(folder);
+            ib.DisposeObject(wrap);
+        } else for (parts) |part| ib.DisposeObject(part);
+        return null;
+    };
+}
+
 /// The layout and everything in it; null, with whatever was made freed,
 /// when one of them could not be made.
 fn build(ib: *IntuitionBase, touch: bool) ?Shown {
+    const tools = toolRow(ib);
     const name = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_NAME },
         .{ .tag = gc.STRINGA_MaxChars, .data = 40 },
@@ -185,12 +269,14 @@ fn build(ib: *IntuitionBase, touch: bool) ?Shown {
         .{ .tag = gc.GA_RelVerify, .data = 1 },
         .{},
     });
-    const parts = [_]?*Object{ name, number, backups, locked, level, port, volume, colour, last, ok };
+    const parts = [_]?*Object{ tools, name, number, backups, locked, level, port, volume, colour, last, ok };
     var whole = true;
     for (parts) |part| whole = whole and part != null;
     const layout = if (whole) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
         .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(tools) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(name) },
         .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_Name") },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(number) },
@@ -250,9 +336,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // The class libraries, open for as long as their objects are there:
     // the window object is disposed of before they are closed.
     const wanted = [_][*:0]const u8{
-        cb.CHECKBOX_LIBRARY, cy.CYCLE_LIBRARY, rb.RADIO_LIBRARY,
-        st.STRING_LIBRARY,   tx.TEXT_LIBRARY,  sl.SLIDER_LIBRARY,
-        pa.PALETTE_LIBRARY,
+        cb.CHECKBOX_LIBRARY, cy.CYCLE_LIBRARY,      rb.RADIO_LIBRARY,
+        st.STRING_LIBRARY,   tx.TEXT_LIBRARY,       sl.SLIDER_LIBRARY,
+        pa.PALETTE_LIBRARY,  tb.TOOLBUTTON_LIBRARY,
     };
     var libraries: [wanted.len]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);

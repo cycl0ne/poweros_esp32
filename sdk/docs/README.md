@@ -296,6 +296,7 @@ of its own besides. How a class is written is in
 | textedit.gadget | text of many lines to edit: selection, clipboard, undo, find and replace, word wrap, line numbers | [`textedit.zig`](../libs/gadgets/textedit.zig) |
 | scrollgroup.gadget | a layout larger than its room, seen through it and moved by scrollers and the wheel; what lies outside is cut off | [`scrollgroup.zig`](../libs/gadgets/scrollgroup.zig) |
 | listbrowser.gadget | a list in columns under headings that sort it, its rows a tree whose branches open and close | [`listbrowser.zig`](../libs/gadgets/listbrowser.zig) |
+| toolbutton.gadget | a button with a picture and a label in three sizes, as a tool bar or a ribbon has them; a command or a toggle, flat until the pointer is over it | [`toolbutton.zig`](../libs/gadgets/toolbutton.zig) |
 
 ## Docklets
 

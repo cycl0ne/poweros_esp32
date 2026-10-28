@@ -436,6 +436,7 @@ flowchart TB
     m_fuelgauge_gadget["fuelgauge.gadget"]
     m_gif_datatype["gif.datatype"]
     m_gifanim_datatype["gifanim.datatype"]
+    m_icon_library["icon.library"]
     m_iffparse_library["iffparse.library"]
     m_ilbm_datatype["ilbm.datatype"]
     m_input_device["input.device"]
@@ -465,6 +466,7 @@ flowchart TB
     m_text_gadget["text.gadget"]
     m_textedit_gadget["textedit.gadget"]
     m_timer_device["timer.device"]
+    m_toolbutton_gadget["toolbutton.gadget"]
 
     m_8svx_datatype --> m_dos_library
     m_8svx_datatype --> m_iffparse_library
@@ -549,11 +551,12 @@ flowchart TB
     m_text_gadget --> m_diskfont_library
     m_textedit_gadget --> m_keymap_library
     m_textedit_gadget --> m_scroller_gadget
+    m_toolbutton_gadget --> m_icon_library
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_anvil_library,m_asl_library,m_audiocodec_library,m_compression_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_iffparse_library lib
+    class m_anvil_library,m_asl_library,m_audiocodec_library,m_compression_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_icon_library,m_iffparse_library lib
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827
-    class m_8svx_datatype,m_animation_datatype,m_ascii_datatype,m_audiocodec_datatype,m_bmp_datatype,m_calendar_gadget,m_checkbox_gadget,m_chooser_gadget,m_cycle_gadget,m_font_datatype,m_fuelgauge_gadget,m_gif_datatype,m_gifanim_datatype,m_ilbm_datatype,m_integer_gadget,m_jpeg_datatype,m_keyboard_gadget,m_listbrowser_gadget,m_listview_gadget,m_lottie_datatype,m_markdown_datatype,m_model_datatype,m_obj_datatype,m_palette_gadget,m_picture_datatype,m_png_datatype,m_scroller_gadget,m_scrollgroup_gadget,m_sound_datatype,m_spinner_gadget,m_string_gadget,m_text_datatype,m_text_gadget,m_textedit_gadget cls
+    class m_8svx_datatype,m_animation_datatype,m_ascii_datatype,m_audiocodec_datatype,m_bmp_datatype,m_calendar_gadget,m_checkbox_gadget,m_chooser_gadget,m_cycle_gadget,m_font_datatype,m_fuelgauge_gadget,m_gif_datatype,m_gifanim_datatype,m_ilbm_datatype,m_integer_gadget,m_jpeg_datatype,m_keyboard_gadget,m_listbrowser_gadget,m_listview_gadget,m_lottie_datatype,m_markdown_datatype,m_model_datatype,m_obj_datatype,m_palette_gadget,m_picture_datatype,m_png_datatype,m_scroller_gadget,m_scrollgroup_gadget,m_sound_datatype,m_spinner_gadget,m_string_gadget,m_text_datatype,m_text_gadget,m_textedit_gadget,m_toolbutton_gadget cls
     classDef rom fill:#f3f4f6,stroke:#9ca3af,color:#374151
     class m_audio_device,m_dos_library,m_input_device,m_intuition_library,m_jpeg_resource,m_keymap_library,m_layers_library,m_motion_library,m_timer_device rom
 ```
