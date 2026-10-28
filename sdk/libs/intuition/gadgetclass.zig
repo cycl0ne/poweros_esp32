@@ -291,6 +291,13 @@ pub const GFLG_REFRESH: u32 = 1 << 14;
 /// typed into only in a part of it, as it goes active there; strgclass
 /// and the classes made from it need not.
 pub const GFLG_TYPING: u32 = 1 << 15;
+/// Its look follows the pointer whatever style is in force: intuition
+/// draws it again as the pointer comes onto it and leaves it, as it does
+/// every gadget only once a style names the hovered state. Set by a class
+/// whose look changes under the pointer under the system's default too -
+/// one drawn as `imageclass.PART_TOOL`, flat until pointed at - as it
+/// makes the gadget.
+pub const GFLG_HOVERLOOK: u32 = 1 << 16;
 
 /// Whether a class should move a gadget rather than change it at once:
 /// neither the gadget (`GA_Animate`) nor its screen (`SA_Animate`) said

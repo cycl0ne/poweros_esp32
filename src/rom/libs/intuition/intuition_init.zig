@@ -142,7 +142,10 @@ pub const LIBRARY_VERSION = 0;
 /// 58: SA_Dragging - whether a picture is dragged across a screen.
 /// 59: a gadget in the border redrawn over the border in a picture of
 /// its own size, in a window of any size.
-pub const LIBRARY_REVISION = 59;
+/// 60: PART_TOOL, a tool's button flat until the pointer is over it, and
+/// GFLG_HOVERLOOK - a gadget drawn again under the pointer whatever the
+/// style.
+pub const LIBRARY_REVISION = 60;
 const BUILD_DATE = "28.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

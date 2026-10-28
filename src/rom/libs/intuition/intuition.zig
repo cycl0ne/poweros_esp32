@@ -4114,6 +4114,65 @@ test "gadgets: the pointer over a gadget hovers it, the one with the input is fo
     try tearDown(ib);
 }
 
+test "gadgets: under the default a hovered gadget is drawn again only when its look follows the pointer" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const told_class = toldClass(ib);
+
+    // Two gadgets side by side; the right one's class says its look
+    // follows the pointer, as a tool's button does.
+    const plain = it.NewObjectTagList(told_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{},
+    }).?;
+    const tool = it.NewObjectTagList(told_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 30 },
+        .{ .tag = gc.GA_Top, .data = 14 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.GA_Previous, .data = @intFromPtr(plain) },
+        .{},
+    }).?;
+    gadgetclass.gadgetOf(ib, tool).flags |= gc.GFLG_HOVERLOOK;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 60 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(plain) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const plain_drawn = intuition.instData(Told, told_class, plain).rendered;
+    const tool_drawn = intuition.instData(Told, told_class, tool).rendered;
+
+    @import("input/pointer.zig").mouseSeen(ib);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 18);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 40, 18);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 25, 18);
+    // Both were hovered and left; only the one whose look follows the
+    // pointer was drawn for it, as it came and as it went.
+    try testing.expectEqual(plain_drawn, intuition.instData(Told, told_class, plain).rendered);
+    try testing.expectEqual(tool_drawn + 2, intuition.instData(Told, told_class, tool).rendered);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(plain);
+    it.DisposeObject(tool);
+    try testing.expect(it.FreeClass(told_class));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "IDCMP: moves and repeats are held to a few at a time, news always goes" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -7245,6 +7304,38 @@ test "styles: DrawPart measures without drawing, and a gadget and a screen keep 
     it.FreeScreenDrawInfo(s, dri);
     try testing.expect(it.CloseScreen(s));
     display.down(ib);
+    try tearDown(ib);
+}
+
+test "styles: a tool's button is flat at rest and framed under the pointer, what it holds kept in place" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const it = ib.iface();
+    const tool = ic.PART_TOOL;
+
+    try testing.expectEqual(@as(usize, style.BORDER_NONE), it.GetStyleAttr(null, null, tool, style.STATE_NORMAL, style.STYLE_Border));
+    try testing.expectEqual(@as(usize, style.BORDER_RAISED), it.GetStyleAttr(null, null, tool, style.STATE_HOVERED, style.STYLE_Border));
+    try testing.expectEqual(@as(usize, style.BORDER_RECESSED), it.GetStyleAttr(null, null, tool, style.STATE_PRESSED, style.STYLE_Border));
+    try testing.expectEqual(@as(usize, style.BORDER_RECESSED), it.GetStyleAttr(null, null, tool, style.STATE_CHECKED | style.STATE_HOVERED, style.STYLE_Border));
+    try testing.expectEqual(@as(usize, style.BORDER_NONE), it.GetStyleAttr(null, null, tool, style.STATE_DISABLED, style.STYLE_Border));
+    // Pressed and on, it is a pressed button's colours.
+    try testing.expectEqual(
+        it.GetStyleAttr(null, null, style.PART_MAIN, style.STATE_PRESSED, style.STYLE_Background),
+        it.GetStyleAttr(null, null, tool, style.STATE_PRESSED, style.STYLE_Background),
+    );
+
+    // The room inside is the same in every state: the border, where there
+    // is one, takes what is padding without it.
+    const box = graphics.Rect{ .max_x = 100, .max_y = 50 };
+    var at_rest: graphics.Rect = undefined;
+    it.DrawPart(null, null, null, tool, style.STATE_NORMAL, 0, &box, &at_rest);
+    try testing.expectEqual(graphics.Rect{ .min_x = 4, .min_y = 2, .max_x = 96, .max_y = 48 }, at_rest);
+    for ([_]u32{ style.STATE_HOVERED, style.STATE_PRESSED, style.STATE_CHECKED, style.STATE_DISABLED }) |state| {
+        var inside: graphics.Rect = undefined;
+        it.DrawPart(null, null, null, tool, state, 0, &box, &inside);
+        try testing.expectEqual(at_rest, inside);
+    }
     try tearDown(ib);
 }
 

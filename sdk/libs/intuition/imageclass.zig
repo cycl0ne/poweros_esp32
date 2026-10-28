@@ -134,6 +134,12 @@ pub const PART_MENU: u32 = style.classPart(style.PART_MAIN, 5);
 /// A requester's ground and writing; an easy requester's ground is a
 /// pattern of its shine on its background.
 pub const PART_REQUESTER: u32 = style.classPart(style.PART_GROUP, 2);
+/// A button in a tool bar or a ribbon: a body of its own that is flat
+/// at rest - no border, only room where one goes - and gets its border
+/// under the pointer, pressed and on. A gadget drawn as this part sets
+/// `GFLG_HOVERLOOK`, since its look follows the pointer even under the
+/// system's default.
+pub const PART_TOOL: u32 = style.classPart(style.PART_MAIN, 6);
 
 // --- sysiclass: the system's own images ---------------------------------------
 

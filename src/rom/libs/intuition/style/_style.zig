@@ -382,13 +382,16 @@ fn lookIn(layers: [4]?*const style.Style, part: u32, states: u32) Look {
 /// Whether any of the styles names `state` for any part: whether a gadget
 /// can look different in it at all. Under the system's default alone no
 /// gadget is drawn again for being hovered, since nothing would change.
+/// The default itself is not asked: it names hovering for the tool part
+/// alone (`ic.PART_TOOL`), whose gadgets say so themselves
+/// (`GFLG_HOVERLOOK`).
 pub fn mentions(ib: *const IntuitionBase, own: ?*const style.Style, draw_info: ?*const sc.DrawInfo, state: u32) bool {
     const lock = @constCast(&ib.look_lock);
     ib.sys_base.AcquireLock(lock);
     defer ib.sys_base.ReleaseLock(lock);
     const screen: ?*const style.Style = if (draw_info) |dri| dri.style else null;
     const layers = chain(ib, own, screen);
-    for (layers) |maybe| {
+    for (layers[0 .. layers.len - 1]) |maybe| {
         const kept: *const Kept = @ptrCast(@alignCast(maybe orelse continue));
         for (kept.all()) |e| if (e.states & state != 0) return true;
     }
@@ -643,6 +646,29 @@ pub const default_tags = complete(style.PART_MAIN, style.BORDER_RAISED, sc.BACKG
     pair(style.STYLE_BorderX, 1),
     pair(style.STYLE_BorderY, 1),
     pair(style.STYLE_Joins, style.JOINS_NONE),
+    // A tool's button: flat at rest, a button's border under the pointer,
+    // sunk pressed and on. Without a border the room it takes is padding,
+    // so what is inside stays where it is as the border comes and goes.
+    pair(style.STYLE_Part, ic.PART_TOOL),
+    pair(style.STYLE_Border, style.BORDER_NONE),
+    pair(style.STYLE_PaddingX, 4),
+    pair(style.STYLE_PaddingY, 2),
+    pair(style.STYLE_State, style.STATE_HOVERED),
+    pair(style.STYLE_Border, style.BORDER_RAISED),
+    pair(style.STYLE_PaddingX, 2),
+    pair(style.STYLE_PaddingY, 1),
+    pair(style.STYLE_State, style.STATE_PRESSED),
+    pair(style.STYLE_Border, style.BORDER_RECESSED),
+    pair(style.STYLE_PaddingX, 2),
+    pair(style.STYLE_PaddingY, 1),
+    pair(style.STYLE_State, style.STATE_CHECKED),
+    pair(style.STYLE_Border, style.BORDER_RECESSED),
+    pair(style.STYLE_PaddingX, 2),
+    pair(style.STYLE_PaddingY, 1),
+    pair(style.STYLE_State, style.STATE_DISABLED),
+    pair(style.STYLE_Border, style.BORDER_NONE),
+    pair(style.STYLE_PaddingX, 4),
+    pair(style.STYLE_PaddingY, 2),
 } ++ complete(style.PART_INDICATOR, style.BORDER_NONE, sc.FILLPEN, sc.FILLTEXTPEN, 0, 0, 0, 0, style.JOINS_ANGLED) ++
     complete(style.PART_KNOB, style.BORDER_RAISED, sc.FILLPEN, sc.TEXTPEN, 1, 1, 0, 0, style.JOINS_NONE) ++
     complete(style.PART_TRACK, style.BORDER_RECESSED, sc.BACKGROUNDPEN, sc.TEXTPEN, 1, 1, 0, 0, style.JOINS_NONE) ++

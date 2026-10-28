@@ -79,6 +79,7 @@ part's look. Intuition's own (`sdk/libs/intuition/imageclass.zig`):
 | `PART_CHECK`, `PART_RADIO` | MAIN | a check box's box, a radio button's ring |
 | `PART_FIELD` | MAIN | the line a string gadget edits |
 | `PART_MENU` | MAIN | a menu's panel |
+| `PART_TOOL` | MAIN | a button in a tool bar or a ribbon: flat at rest, its border under the pointer |
 | `PART_FRAME_DROPBOX` | GROUP | an icon's drop box |
 | `PART_REQUESTER` | GROUP | a requester's ground |
 | `PART_CHECKMARK`, `PART_RADIOMARK` | INDICATOR | the tick, the dot |
@@ -197,7 +198,7 @@ PART=SELECTION BACKGROUND=FILL TEXT=FILLTEXT
 - `PART` is a part's name - `MAIN`, `GROUP`, `INDICATOR`, `KNOB`,
   `TRACK`, `SELECTION`, `TITLE`, `FRAME`, `DROPBOX`, `CHECK`, `RADIO`,
   `CHECKMARK`, `RADIOMARK`, `TITLEINACTIVE`, `FIELD`, `WINDOWBORDER`,
-  `SCREENBAR`, `MENU`, `REQUESTER` - or a number.
+  `SCREENBAR`, `MENU`, `REQUESTER`, `TOOL` - or a number.
 - `STATE` is `NORMAL`, `HOVERED`, `PRESSED`, `CHECKED`, `FOCUSED`,
   `DISABLED`, or several joined by `+`.
 - A colour is a screen pen's name (`TEXT`, `SHINE`, `SHADOW`, `FILL`,
@@ -388,7 +389,10 @@ draw.style_state = ib.GadgetStyleState(o, dri, style.PART_MAIN, states);
 
 A hovered gadget is drawn again as the pointer comes and goes only when
 a style it is drawn from names the hovered state at all; under the
-default nothing is drawn for it. It is drawn with `GREDRAW_STATE`: a
+default nothing is drawn for it. The exception is a gadget whose class
+set `GFLG_HOVERLOOK` as it made it: one drawn as `PART_TOOL`, which the
+default itself gives a border only under the pointer, is drawn again
+whatever the style. It is drawn with `GREDRAW_STATE`: a
 class whose look does not follow the mark - a list view, whose lines
 would all be drawn again - draws nothing for it. A focused one is drawn
 by its class as it goes active and inactive, which it does anyway.
