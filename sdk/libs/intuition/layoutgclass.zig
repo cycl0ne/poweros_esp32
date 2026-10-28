@@ -14,6 +14,8 @@
 //! a child with a weight fills the layout's height or width up to its
 //! maximum; one with weight 0 keeps its nominal size, centred in a row and
 //! against the left of a column unless `CHILDA_Align` puts it elsewhere.
+//! A space (`LAYOUTA_AddSpace`) is a child that shows nothing and takes
+//! spare room by its weight: what comes after it goes to the far end.
 //! A child that keeps its shape (`CHILDA_Aspect`) is as long along as its
 //! size across makes it: a cover stays square as the window grows.
 //!
@@ -125,6 +127,15 @@ pub const LAYOUTA_Wrap = LAYOUTA_Dummy + 0x000A;
 /// list. It holds for the frame the layout has and any it is given later;
 /// on its own it gives none.
 pub const LAYOUTA_FrameRecessed = LAYOUTA_Dummy + 0x000B;
+/// A space at the end of the row or column: a child of no size and no
+/// limit, which shows nothing and takes the spare length by a weight of
+/// its own - 100, unless a `CHILDA_WeightWidth` or `CHILDA_WeightHeight`
+/// follows - so what comes after it is pushed to the far end, or with a
+/// space before and after, to the middle. A press on it is a press beside
+/// the gadgets. It has the spacing either side of it, as any child: with
+/// no room to spare it still parts what is before from what is after. In
+/// a grid it is an empty cell. The tag's data is not read.
+pub const LAYOUTA_AddSpace = LAYOUTA_Dummy + 0x000C;
 
 pub const LORIENT_HORIZ: u32 = 1;
 pub const LORIENT_VERT: u32 = 2;

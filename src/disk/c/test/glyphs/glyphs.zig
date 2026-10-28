@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
-//! Glyphs: every picture command.image draws, at one size, enabled and
-//! disabled. Built against the SDK only.
+//! Glyphs: every picture command.image draws, or media.image, at one
+//! size: as a button shows it, selected and disabled. Built against the
+//! SDK only.
 //!
-//!   Glyphs SIZE/N,DARK/S,NOWINDOW/S
+//!   Glyphs SIZE/N,DARK/S,MEDIA/S,NOWINDOW/S
 //!
-//! It opens a window on the default public screen with two panels, each
-//! every picture from `CMD_NEW` to `CMD_LAST` in a grid: the first as a
-//! button shows it, the second disabled. SIZE is how big each is, 16 to
+//! It opens a window on the default public screen with three panels, each
+//! every picture from `CMD_NEW` to `CMD_LAST` in a grid - with MEDIA,
+//! media.image's from `MEDIA_PLAY` to `MEDIA_LAST`: the first as a button
+//! shows it, the second selected, each on the fill pen as a pressed tape
+//! deck button has it, the third disabled. SIZE is how big each is, 16 to
 //! 96 and 32 without; at 16 they have no shading, gloss or shadow. Run it
 //! at 16, 24, 32 and 48 to see them as a menu, a small and a large button
 //! and the dock would.
@@ -26,6 +29,7 @@ const intuition = sdk.intuition;
 const ic = intuition.imageclass;
 const sc = intuition.screens;
 const command = sdk.images.command;
+const media = sdk.images.media;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
@@ -37,23 +41,37 @@ const RastPort = graphics.RastPort;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Glyphs";
-const VERSION_STRING = "\x00$VER: Glyphs 1.0 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Glyphs 1.1 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "SIZE/N,DARK/S,NOWINDOW/S";
+const template = "SIZE/N,DARK/S,MEDIA/S,NOWINDOW/S";
 const arg_size = 0;
 const arg_dark = 1;
-const arg_nowindow = 2;
+const arg_media = 2;
+const arg_nowindow = 3;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display, or it shows another screen\n";
 const MSG_NOWINDOW = "No window - the screen would not open one that size\n";
-const MSG_NOIMAGE = "No command.image object\n";
+const MSG_NOIMAGE = "No %s object\n";
 const MSG_GLYPHS = "%lu pictures, at %lu pixels\n";
 const MSG_WAITING = "The close gadget or Ctrl-C closes the window\n";
 
-/// The pictures there are.
-const count = command.CMD_LAST - command.CMD_NEW + 1;
+/// The class whose pictures are shown: its library, its name, the tag
+/// that picks a picture, and the first and the last.
+const Kind = struct {
+    library: [*:0]const u8,
+    class: [*:0]const u8,
+    tag: sdk.utility.Tag,
+    first: u32,
+    last: u32,
+
+    fn count(kind: Kind) u32 {
+        return kind.last - kind.first + 1;
+    }
+};
+const commands = Kind{ .library = command.COMMAND_LIBRARY, .class = command.COMMAND_CLASS, .tag = command.COMMAND_Glyph, .first = command.CMD_NEW, .last = command.CMD_LAST };
+const controls = Kind{ .library = media.MEDIA_LIBRARY, .class = media.MEDIA_CLASS, .tag = media.MEDIA_Glyph, .first = media.MEDIA_PLAY, .last = media.MEDIA_LAST };
 /// Room between two pictures, and round the panels.
 const gap = 8;
 const margin = 10;
@@ -71,16 +89,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [3]usize = @splat(0);
+    var argv: [4]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
     };
     defer dl.FreeArgs(rda);
     const size: i32 = if (argv[arg_size] != 0) @intCast(@min(@max(@as(*const i32, @ptrFromInt(argv[arg_size])).*, 16), 96)) else 32;
+    const kind = if (argv[arg_media] != 0) controls else commands;
 
     if (argv[arg_nowindow] != 0) {
-        _ = Printf(dl, MSG_GLYPHS, .{ @as(u64, count), @as(u64, @intCast(size)) });
+        _ = Printf(dl, MSG_GLYPHS, .{ @as(u64, kind.count()), @as(u64, @intCast(size)) });
         return dos.RETURN_OK;
     }
 
@@ -98,13 +117,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(int_lib);
     const ib: *IntuitionBase = @ptrCast(int_lib);
 
-    const command_lib = sys.OpenLibrary(command.COMMAND_LIBRARY, 0) orelse {
-        _ = Printf(dl, MSG_NOLIBRARY, .{command.COMMAND_LIBRARY});
+    const image_lib = sys.OpenLibrary(kind.library, 0) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{kind.library});
         return dos.RETURN_FAIL;
     };
-    defer sys.CloseLibrary(command_lib);
-    const image = ib.NewObjectTagList(null, command.COMMAND_CLASS, null) orelse {
-        _ = Printf(dl, MSG_NOIMAGE, .{});
+    defer sys.CloseLibrary(image_lib);
+    const image = ib.NewObjectTagList(null, kind.class, null) orelse {
+        _ = Printf(dl, MSG_NOIMAGE, .{kind.class});
         return dos.RETURN_FAIL;
     };
     defer ib.DisposeObject(image);
@@ -123,10 +142,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const cell = size + gap;
     const room: i32 = @divTrunc(@as(i32, @intCast(ask_width)) - 2 * margin - 40, cell);
     const columns: i32 = @min(@max(room, 4), 9);
-    const rows: i32 = @divTrunc(@as(i32, count) + columns - 1, columns);
+    const rows: i32 = @divTrunc(@as(i32, @intCast(kind.count())) + columns - 1, columns);
     const panel_h = heading_h + rows * cell;
     const inner_w = @max(2 * margin + columns * cell - gap, 200);
-    const inner_h = 2 * margin + 2 * panel_h + gap;
+    const inner_h = 2 * margin + 3 * panel_h + 2 * gap;
 
     const window_tags = [_]TagItem{
         .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(screen) },
@@ -168,9 +187,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     gb.RectFill(rp, &.{ .min_x = left, .min_y = top, .max_x = left + inner_w, .max_y = top + inner_h });
 
     var y = top + margin;
-    panel(ib, gb, rp, dri, image, left + margin, y, size, columns, "As a button shows them", ic.IDS_NORMAL);
+    panel(ib, gb, rp, dri, image, kind, left + margin, y, size, columns, "As a button shows them", ic.IDS_NORMAL);
     y += panel_h + gap;
-    panel(ib, gb, rp, dri, image, left + margin, y, size, columns, "Disabled", ic.IDS_DISABLED);
+    panel(ib, gb, rp, dri, image, kind, left + margin, y, size, columns, "Selected, on the fill pen", ic.IDS_SELECTED);
+    y += panel_h + gap;
+    panel(ib, gb, rp, dri, image, kind, left + margin, y, size, columns, "Disabled", ic.IDS_DISABLED);
 
     _ = Printf(dl, MSG_WAITING, .{});
 
@@ -187,20 +208,27 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     return dos.RETURN_OK;
 }
 
-/// A heading, and under it every picture in `state`, `columns` to a row.
-fn panel(ib: *IntuitionBase, gb: *GraphicsBase, rp: *RastPort, dri: *sc.DrawInfo, image: *intuition.Object, x0: i32, y0: i32, size: i32, columns: i32, heading: []const u8, state: u32) void {
+/// A heading, and under it every picture in `state`, `columns` to a row;
+/// selected, each on a square of the fill pen.
+fn panel(ib: *IntuitionBase, gb: *GraphicsBase, rp: *RastPort, dri: *sc.DrawInfo, image: *intuition.Object, kind: Kind, x0: i32, y0: i32, size: i32, columns: i32, heading: []const u8, state: u32) void {
     pen(gb, rp, dri.pens[sc.TEXTPEN]);
     gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} });
     gb.Move(rp, x0, y0 + 10);
     gb.Text(rp, heading.ptr, @intCast(heading.len));
-    var glyph: u32 = command.CMD_NEW;
-    while (glyph <= command.CMD_LAST) : (glyph += 1) {
-        const at: i32 = @intCast(glyph - command.CMD_NEW);
-        _ = ib.SetAttrsTagList(image, &[_]TagItem{ .{ .tag = command.COMMAND_Glyph, .data = glyph }, .{} });
+    var glyph: u32 = kind.first;
+    while (glyph <= kind.last) : (glyph += 1) {
+        const at: i32 = @intCast(glyph - kind.first);
+        _ = ib.SetAttrsTagList(image, &[_]TagItem{ .{ .tag = kind.tag, .data = glyph }, .{} });
+        const x = x0 + @mod(at, columns) * (size + gap);
+        const y = y0 + heading_h + @divTrunc(at, columns) * (size + gap);
+        if (state == ic.IDS_SELECTED) {
+            pen(gb, rp, dri.pens[sc.FILLPEN]);
+            gb.RectFill(rp, &.{ .min_x = x - 2, .min_y = y - 2, .max_x = x + size + 2, .max_y = y + size + 2 });
+        }
         var draw = ic.ImpDraw{
             .method_id = ic.IM_DRAWFRAME,
             .rast_port = rp,
-            .offset = .{ .x = x0 + @mod(at, columns) * (size + gap), .y = y0 + heading_h + @divTrunc(at, columns) * (size + gap) },
+            .offset = .{ .x = x, .y = y },
             .state = state,
             .draw_info = dri,
             .dimensions = .{ .width = size, .height = size },

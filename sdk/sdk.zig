@@ -32,7 +32,7 @@ pub const gadgets = @import("libs/gadgets/gadgets.zig");
 /// that makes one.
 pub const docklets = @import("libs/docklets/docklets.zig");
 /// The image classes on the disk: pictures drawn to any size, the
-/// command images a tool bar has.
+/// command images a tool bar has and a player's controls.
 pub const images = @import("libs/images/images.zig");
 pub const bsdsocket = @import("libs/bsdsocket/bsdsocket.zig");
 pub const crypto = @import("libs/crypto/crypto.zig");

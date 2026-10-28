@@ -36,6 +36,11 @@
 //! others. Its width cut short so, or by its own largest or smallest
 //! width, its height gives way the other way and the shape holds.
 //!
+//! **A space** (`LAYOUTA_AddSpace`) is a child like the others: a
+//! gadgetclass gadget made here, of no size, so that it asks for nothing
+//! and has no limit, and disabled, so that the group's hit test finds
+//! nothing there and a press falls through. gadgetclass draws nothing.
+//!
 //! **A child is sized in place.** Its box is written, not set through
 //! `OM_SET`: set, its `GA_Width` would become the size it asks for next
 //! time, and a layout would hear its own last answer back. Its corner is
@@ -225,6 +230,21 @@ fn addChild(ib: *IntuitionBase, cl: *Class, o: *Object, child: *Object) bool {
     return true;
 }
 
+/// A space at the end of the row or column: a gadgetclass gadget of no
+/// size, disabled, taken on as any child. False without the memory.
+fn addSpace(ib: *IntuitionBase, cl: *Class, o: *Object) bool {
+    const it = ib.iface();
+    const space = it.NewObjectTagList(ib.gadget_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 0 },
+        .{ .tag = gc.GA_Height, .data = 0 },
+        .{ .tag = gc.GA_Disabled, .data = 1 },
+        .{},
+    }) orelse return false;
+    if (addChild(ib, cl, o, space)) return true;
+    it.DisposeObject(space);
+    return false;
+}
+
 fn recordOf(p: *Data, child: *Object) ?*Child {
     var walk = Walk.over(p);
     while (walk.next()) |record| {
@@ -271,6 +291,9 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
             },
             lg.LAYOUTA_AddChild => if (v != 0) {
                 if (addChild(ib, cl, o, @ptrFromInt(v))) changed = 1;
+            },
+            lg.LAYOUTA_AddSpace => if (addSpace(ib, cl, o)) {
+                changed = 1;
             },
             lg.LAYOUTA_Frame, lg.LAYOUTA_FrameType => {
                 ib.iface().DisposeObject(p.frame);

@@ -8,6 +8,7 @@ const testing = std.testing;
 const sdk = @import("sdk");
 const prefs = sdk.prefs;
 const style = sdk.intuition.style;
+const sc = sdk.intuition.screens;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const kexec = @import("host_rom").exec;
 const utility_library = @import("host_rom").utility;
@@ -58,6 +59,19 @@ test "style.prefs: a line read, its shorthands as both sides, its tags, written 
     try testing.expectEqual(@as(u32, 0xFFD8_DCE2), fill.stops[1].pen);
 
     // What is wrong is said.
+    // A blend of pens: their names and weights, a pen's tag with the
+    // value style.blend makes; written back as it was given.
+    try testing.expect(prefs.style.parse(ub, "PART=TOOL STATE=CHECKED BACKGROUND=Background:6+SHINE:6+FILL:4 BORDERCOLOUR=FILL+TEXT", &line) == null);
+    const blended = tags[0..prefs.style.toTags(&line, &tags, &fill)];
+    try testing.expectEqual(style.STYLE_Background, blended[2].tag);
+    try testing.expectEqual(@as(usize, style.blend(&.{ .{ .pen = sc.BACKGROUNDPEN, .weight = 6 }, .{ .pen = sc.SHINEPEN, .weight = 6 }, .{ .pen = sc.FILLPEN, .weight = 4 } })), blended[2].data);
+    try testing.expectEqual(style.STYLE_BorderPen, blended[3].tag);
+    try testing.expectEqual(@as(usize, style.blend(&.{ .{ .pen = sc.FILLPEN }, .{ .pen = sc.TEXTPEN } })), blended[3].data);
+    try testing.expectEqualStrings("PART=TOOL STATE=CHECKED BACKGROUND=BACKGROUND:6+SHINE:6+FILL:4 BORDERCOLOUR=FILL+TEXT", out[0..prefs.style.write(&line, &out)]);
+    for ([_][]const u8{ "FILL:0", "FILL:32", "FILL+", "NOPE:2", "FILL:1+TEXT:1+SHINE:1+SHADOW:1", "FILL:x" }) |wrong| {
+        try testing.expect(prefs.style.blendOf(wrong) == null);
+    }
+
     try testing.expect(prefs.style.parse(ub, "PART=NOPE", &line) != null);
     try testing.expect(prefs.style.parse(ub, "STATE=PRESSED", &line) != null);
     try testing.expect(prefs.style.parse(ub, "PART=MAIN BORDER=WAVY", &line) != null);
@@ -411,7 +425,6 @@ test "the styles the editor offers: every line read" {
 test "palette.prefs: the pens read and written back" {
     const ub = try utilityUp();
     defer kexec.deinit();
-    const sc = sdk.intuition.screens;
     var palette: prefs.palette.Palette = .{};
     try testing.expect(prefs.palette.parse(ub, "BACKGROUND=#336699 text=#FFFFFF", &palette) == null);
     try testing.expectEqual(@as(u32, 0xFF33_6699), palette.pens[sc.BACKGROUNDPEN]);

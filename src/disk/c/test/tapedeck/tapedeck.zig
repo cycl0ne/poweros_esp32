@@ -5,9 +5,10 @@
 //!
 //! It opens tapedeck.gadget and text.gadget from `SYS:classes/gadgets/`
 //! and a window object on the default public screen holding one layout: a
-//! tape deck, an animation control of 100 frames, a text line with what
-//! was pressed last, and an OK button. Each press let go is printed with
-//! its code taken apart - the mode, paused or not, or the frame - and
+//! tape deck, a tape deck with the song before and after round it, an
+//! animation control of 100 frames, a text line with what was pressed
+//! last, and an OK button. Each press let go is printed with its code
+//! taken apart - the mode or the song, paused or not, or the frame - and
 //! shown in the line. OK, the close gadget or Ctrl-C end it.
 
 const sdk = @import("sdk");
@@ -29,7 +30,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "TapeDeck";
-const VERSION_STRING = "\x00$VER: TapeDeck 1.0 (25.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: TapeDeck 1.1 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -47,11 +48,16 @@ const ID_TAPE = 1;
 const ID_ANIM = 2;
 const ID_LAST = 3;
 const ID_OK = 4;
+const ID_TRACKS = 5;
 
 const mode_names = [_][*:0]const u8{ "rewind", "play", "fast forward", "stop" };
 
 fn modeName(mode: u32) [*:0]const u8 {
-    return if (mode < mode_names.len) mode_names[mode] else "?";
+    return switch (mode) {
+        td.BUT_PREVIOUS => "song before",
+        td.BUT_NEXT => "song after",
+        else => if (mode < mode_names.len) mode_names[mode] else "?",
+    };
 }
 
 const Shown = struct { layout: *Object, last: *Object };
@@ -60,6 +66,12 @@ fn build(ib: *IntuitionBase) ?Shown {
     const tape = ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_TAPE },
         .{ .tag = td.TDECK_Tape, .data = 1 },
+        .{},
+    });
+    const tracks = ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_TRACKS },
+        .{ .tag = td.TDECK_Tape, .data = 1 },
+        .{ .tag = td.TDECK_Tracks, .data = 1 },
         .{},
     });
     const anim = ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
@@ -80,7 +92,7 @@ fn build(ib: *IntuitionBase) ?Shown {
         .{ .tag = gc.GA_RelVerify, .data = 1 },
         .{},
     });
-    const parts = [_]?*Object{ tape, anim, last, ok };
+    const parts = [_]?*Object{ tape, tracks, anim, last, ok };
     var whole = true;
     for (parts) |part| whole = whole and part != null;
     const layout = if (whole) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
@@ -88,6 +100,9 @@ fn build(ib: *IntuitionBase) ?Shown {
         .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(tape) },
         .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Tape") },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(tracks) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Songs") },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(anim) },
         .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Anim") },
@@ -192,7 +207,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             var shown_text: [*:0]const u8 = "";
             switch (word & wc.WMHI_GADGETMASK) {
                 ID_OK => return dos.RETURN_OK,
-                ID_TAPE => {
+                ID_TAPE, ID_TRACKS => {
                     const paused: [*:0]const u8 = if (code & td.TDECK_PAUSED_CODE != 0) ", paused" else "";
                     _ = Printf(dl, MSG_TAPE, .{ modeName(code & 0xFF), paused });
                     shown_text = modeName(code & 0xFF);

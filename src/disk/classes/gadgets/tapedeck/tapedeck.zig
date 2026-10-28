@@ -2,15 +2,23 @@
 //! tapedeck.gadget: a tape deck's buttons, or an animation player's.
 //!
 //! A gadgetclass gadget of a row of buttons, each a button bevel with a
-//! one-bit glyph in its middle: raised on the background pen with the
-//! glyph in the text pen, or pressed on the fill pen with it in the
-//! fill-text pen.
+//! media.image picture in its middle, as large as the bevel leaves room
+//! for: raised on the background pen with the picture in the text pen, or
+//! pressed on the fill pen with it in the fill-text pen. The deck makes
+//! its picture when it is made, through `images/media.image`; without
+//! that library its buttons are drawn bare. It is a line of its font high
+//! and its bevel, as a chooser or a string gadget is, so they stand in a
+//! row at one height.
 //!
-//! As a tape deck: rewind and fast forward 27 pixels wide, play, stop and
-//! pause 48, pause three pixels apart. A press on a button ends the press
-//! at once: the first four make their mode the deck's, shown pressed, and
-//! pause turns over. The code is the mode, with `TDECK_PAUSED_CODE` added
-//! while paused.
+//! As a tape deck: rewind, play and fast forward, then stop and pause,
+//! the two groups a quarter of the height apart; play, stop and pause
+//! twice the height wide, the others one and a half. With tracks the song
+//! before stands at the left and the song after at the right, each a gap
+//! apart. A press on a button ends the press at once: the first four make
+//! their mode the deck's, shown pressed, pause turns over, and the song
+//! before and after leave the mode as it is. The code is the mode, or
+//! `BUT_PREVIOUS` or `BUT_NEXT`, with `TDECK_PAUSED_CODE` added while
+//! paused.
 //!
 //! As an animation control: rewind, play and fast forward, sized from the
 //! gadget's width (rewind and fast forward gone below 80 pixels), and in
@@ -40,6 +48,8 @@ const ie = sdk.devices.inputevent;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const td = gadgets.tapedeck;
+const media = sdk.images.media;
+const exec = sdk.exec;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -48,7 +58,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = td.TDECK_CLASS,
     .version = 1,
-    .date = "25.09.2026",
+    .revision = 1,
+    .date = "28.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -57,57 +68,33 @@ comptime {
     _ = Library;
 }
 
-// --- the glyphs -----------------------------------------------------------------
+// --- the pictures --------------------------------------------------------------
 
-/// A one-bit picture, as rows of 16-bit words with the leftmost pixel in
-/// the top bit: the bytes `BltTemplate` takes are each word's high byte
-/// and then its low one.
-const Glyph = struct {
-    width: i32,
-    height: i32,
-    bits: []const u8,
-    pitch: u32,
-
-    fn of(comptime width: i32, comptime words: []const u16) Glyph {
-        const per_row = (width + 15) >> 4;
-        const bytes = comptime blk: {
-            var out: [words.len * 2]u8 = undefined;
-            for (words, 0..) |word, i| {
-                out[2 * i] = @truncate(word >> 8);
-                out[2 * i + 1] = @truncate(word);
-            }
-            break :blk out;
-        };
-        return .{ .width = width, .height = @intCast(words.len / per_row), .bits = &bytes, .pitch = per_row * 2 };
-    }
-};
-
-const rewind_glyph = Glyph.of(17, &.{ 0x0301, 0x8000, 0x0F07, 0x8000, 0x3F1F, 0x8000, 0xFF7F, 0x8000, 0x3F1F, 0x8000, 0x0F07, 0x8000, 0x0301, 0x8000 });
-const play_glyph = Glyph.of(8, &.{ 0xC000, 0xF000, 0xFC00, 0xFF00, 0xFC00, 0xF000, 0xC000 });
-const forward_glyph = Glyph.of(17, &.{ 0xC060, 0x0000, 0xF078, 0x0000, 0xFC7E, 0x0000, 0xFF7F, 0x8000, 0xFC7E, 0x0000, 0xF078, 0x0000, 0xC060, 0x0000 });
-const stop_glyph = Glyph.of(9, &.{ 0xFF80, 0xFF80, 0xFF80, 0xFF80, 0xFF80, 0xFF80, 0xFF80 });
-const pause_glyph = Glyph.of(9, &.{ 0xE380, 0xE380, 0xE380, 0xE380, 0xE380, 0xE380, 0xE380 });
-
-fn glyphOf(id: u32) ?*const Glyph {
+/// The picture a button shows, or none.
+fn pictureOf(id: u32) u32 {
     return switch (id) {
-        td.BUT_REWIND => &rewind_glyph,
-        td.BUT_PLAY => &play_glyph,
-        td.BUT_FORWARD => &forward_glyph,
-        td.BUT_STOP => &stop_glyph,
-        td.BUT_PAUSE => &pause_glyph,
-        else => null,
+        td.BUT_REWIND => media.MEDIA_REWIND,
+        td.BUT_PLAY => media.MEDIA_PLAY,
+        td.BUT_FORWARD => media.MEDIA_FORWARD,
+        td.BUT_STOP => media.MEDIA_STOP,
+        td.BUT_PAUSE => media.MEDIA_PAUSE,
+        td.BUT_PREVIOUS => media.MEDIA_PREVIOUS,
+        td.BUT_NEXT => media.MEDIA_NEXT,
+        else => media.MEDIA_NONE,
     };
 }
 
 // --- the gadget -------------------------------------------------------------------
 
-/// A tape deck's width, and either's height.
-const tape_width = 202;
-const deck_height = 16;
+/// The least either is high, and an animation control's width when it is
+/// given none.
+const least_height = 16;
+const anim_width = 202;
 /// The frame slider inside its bevel.
 const slider_inset_x = 4;
 const slider_inset_y = 2;
-const slider_height = 11;
+/// Room between a button's bevel and its picture, each side.
+const picture_inset = 3;
 
 /// tapedeck.gadget's part of an object.
 pub const Data = extern struct {
@@ -119,6 +106,8 @@ pub const Data = extern struct {
     frames: u32 = 10,
     current_frame: u32 = 0,
     tape: u8 = 0,
+    /// The song before and after, round a tape deck.
+    tracks: u8 = 0,
     paused: u8 = 0,
     /// The frame slider has the input.
     in_slider: u8 = 0,
@@ -126,32 +115,54 @@ pub const Data = extern struct {
     /// The frame slider, and the buttons' bevel.
     slider: ?*Object = null,
     frame: ?*Object = null,
+    /// The buttons' picture, and the library it is from.
+    picture: ?*Object = null,
+    pictures: ?*exec.Library = null,
 };
 
-/// The buttons: at most five, each a box from the gadget's corner and what
-/// it is.
+/// The buttons: at most seven, each a box from the gadget's corner and
+/// what it is.
 pub const Buttons = struct {
-    boxes: [5]gc.Box = @splat(.{}),
-    ids: [5]u32 = @splat(td.BUT_STOP),
+    boxes: [7]gc.Box = @splat(.{}),
+    ids: [7]u32 = @splat(td.BUT_STOP),
     count: usize = 0,
+    /// Where the last ends.
+    right: i32 = 0,
 
     fn add(buttons: *Buttons, box: gc.Box, id: u32) void {
         buttons.boxes[buttons.count] = box;
         buttons.ids[buttons.count] = id;
         buttons.count += 1;
+        buttons.right = box.left + box.width;
     }
 
-    pub fn of(tape: bool, width: i32, height: i32) Buttons {
+    /// The next button after the last, `width` wide, or a gap after it
+    /// first.
+    fn next(buttons: *Buttons, width: i32, height: i32, gap: i32, id: u32) void {
+        buttons.add(.{ .left = buttons.right + gap, .width = width, .height = height }, id);
+    }
+
+    /// A tape deck's buttons at a height: the wide ones twice it, the
+    /// narrow one and a half, the groups a quarter of it apart.
+    pub fn ofTape(tracks: bool, height: i32) Buttons {
         var buttons = Buttons{};
-        const h = height - 1;
-        if (tape) {
-            buttons.add(.{ .left = 0, .width = 27, .height = h }, td.BUT_REWIND);
-            buttons.add(.{ .left = 27, .width = 48, .height = h }, td.BUT_PLAY);
-            buttons.add(.{ .left = 75, .width = 27, .height = h }, td.BUT_FORWARD);
-            buttons.add(.{ .left = 102, .width = 48, .height = h }, td.BUT_STOP);
-            buttons.add(.{ .left = 153, .width = 48, .height = h }, td.BUT_PAUSE);
-            return buttons;
-        }
+        const wide = 2 * height;
+        const narrow = @divTrunc(3 * height, 2);
+        const gap = @max(@divTrunc(height, 4), 3);
+        if (tracks) buttons.next(narrow, height, 0, td.BUT_PREVIOUS);
+        buttons.next(narrow, height, if (tracks) gap else 0, td.BUT_REWIND);
+        buttons.next(wide, height, 0, td.BUT_PLAY);
+        buttons.next(narrow, height, 0, td.BUT_FORWARD);
+        buttons.next(wide, height, gap, td.BUT_STOP);
+        buttons.next(wide, height, 0, td.BUT_PAUSE);
+        if (tracks) buttons.next(narrow, height, gap, td.BUT_NEXT);
+        return buttons;
+    }
+
+    pub fn of(tape: bool, tracks: bool, width: i32, height: i32) Buttons {
+        if (tape) return ofTape(tracks, height);
+        var buttons = Buttons{};
+        const h = height;
         // The buttons grow with the gadget; rewind and fast forward go when
         // it is too narrow for them.
         var side = @max(@divTrunc(width * 100, 748), 23);
@@ -176,13 +187,25 @@ pub const Buttons = struct {
     /// The frame slider's place, inside the frame button's bevel.
     fn sliderBox(buttons: Buttons) gc.Box {
         const box = buttons.boxes[3];
-        return .{ .left = box.left + slider_inset_x, .top = box.top + slider_inset_y, .width = @max(box.width - 2 * slider_inset_x, 1), .height = slider_height };
+        return .{ .left = box.left + slider_inset_x, .top = box.top + slider_inset_y, .width = @max(box.width - 2 * slider_inset_x, 1), .height = @max(box.height - 2 * slider_inset_y, 1) };
     }
 };
 
 fn buttonsOf(own: *const Data, o: *Object, gi: ?*const classusr.GadgetInfo) Buttons {
     const b = gc.boxFor(gc.gadget(o), gi);
-    return Buttons.of(own.tape != 0, b.width, b.height);
+    return Buttons.of(own.tape != 0, own.tracks != 0, b.width, b.height);
+}
+
+/// How high it is: a line of its font and its bevel, and never less than
+/// `least_height`.
+fn heightOf(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo) i32 {
+    const ib = base.intuition_base;
+    const measure = support.Measure.of(ib, g, gi);
+    defer measure.done(ib);
+    const line = measure.lineHeight(base.graphics_base);
+    const dri = if (gi) |info| info.draw_info else g.draw_info;
+    const inset = if (own.frame) |frame| support.frameInset(ib, frame, dri, g.style) else gc.Box{ .width = 4, .height = 4 };
+    return @max(line + inset.height, least_height);
 }
 
 /// The slider put where it belongs; its place in the gadget's box.
@@ -215,18 +238,14 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const rp = r.rast_port;
     const saved = support.Saved.of(gb, rp);
     defer saved.restore(gb, rp);
-    const buttons = Buttons.of(own.tape != 0, b.width, b.height);
+    const buttons = buttonsOf(own, o, info);
     for (buttons.boxes[0..buttons.count], buttons.ids[0..buttons.count]) |part, id| {
         if (part.width <= 0) continue;
         const box = gc.Box{ .left = b.left + part.left, .top = b.top + part.top, .width = part.width, .height = part.height };
         const down = pressed(own, g, id);
         support.drawFrame(ib, own.frame.?, rp, box, if (down) ic.IDS_SELECTED else ic.IDS_NORMAL, info.draw_info, gc.gadget(o).style);
         support.fill(gb, rp, .{ .left = box.left + 2, .top = box.top + 1, .width = box.width - 4, .height = box.height - 2 }, if (down) pens[sc.FILLPEN] else pens[sc.BACKGROUNDPEN]);
-        const glyph = glyphOf(id) orelse continue;
-        support.setPen(gb, rp, if (down) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN]);
-        const x = box.left + @divTrunc(box.width - glyph.width, 2);
-        const y = box.top + @divTrunc(box.height - glyph.height, 2);
-        gb.BltTemplate(rp, glyph.bits.ptr, glyph.pitch, 0, 0, &.{ .min_x = x, .min_y = y, .max_x = x + glyph.width, .max_y = y + glyph.height });
+        drawPicture(base, own, rp, info, box, id, down);
     }
     if (own.slider) |slider| {
         _ = placeSlider(base, own, o, info);
@@ -235,6 +254,28 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
         _ = ib.SendMessage(slider, @ptrCast(&slider_render));
     }
     if (g.flags & gc.GFLG_DISABLED != 0) support.ghost(gb, rp, b, info.block_pen);
+}
+
+/// A button's picture in the middle of its box, as large as the bevel
+/// leaves room for, in the colours the screen and the gadget's style give
+/// that button - pressed, on the fill.
+fn drawPicture(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: *classusr.GadgetInfo, box: gc.Box, id: u32, down: bool) void {
+    const picture = own.picture orelse return;
+    const which = pictureOf(id);
+    if (which == media.MEDIA_NONE) return;
+    const ib = base.intuition_base;
+    const size = @min(box.width, box.height) - 2 * picture_inset;
+    if (size < 4) return;
+    _ = ib.SetAttrsTagList(picture, &[_]TagItem{ .{ .tag = media.MEDIA_Glyph, .data = which }, .{} });
+    var draw = ic.ImpDraw{
+        .method_id = ic.IM_DRAWFRAME,
+        .rast_port = rp,
+        .offset = .{ .x = box.left + @divTrunc(box.width - size, 2), .y = box.top + @divTrunc(box.height - size, 2) },
+        .state = if (down) ic.IDS_SELECTED else ic.IDS_NORMAL,
+        .draw_info = info.draw_info,
+        .dimensions = .{ .width = size, .height = size },
+    };
+    _ = ib.SendMessage(picture, @ptrCast(&draw));
 }
 
 fn redraw(base: *gadgets.Base, o: *Object, gi: ?*classusr.GadgetInfo) void {
@@ -280,6 +321,9 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
             td.TDECK_Tape => if (new) {
                 own.tape = @intFromBool(item.data != 0);
             },
+            td.TDECK_Tracks => if (new) {
+                own.tracks = @intFromBool(item.data != 0);
+            },
             td.TDECK_Mode => if (value <= td.BUT_STOP) {
                 if (value != own.mode) changed = true;
                 own.mode = value;
@@ -309,15 +353,22 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
 
 // --- input ----------------------------------------------------------------------------
 
-/// A tape deck's press: the button's mode, or pause turned over, and done.
+/// A tape deck's press: the button's mode, or pause turned over, or the
+/// song before or after asked for, and done.
 fn pressTape(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput) usize {
     const buttons = buttonsOf(own, o, in.gadget_info);
+    var code = own.mode;
     if (buttons.at(in.mouse.x, in.mouse.y)) |id| {
-        if (id == td.BUT_PAUSE) own.paused ^= 1 else own.mode = id;
-        redraw(base, o, in.gadget_info);
-        tell(base, own, o, in.gadget_info, 0);
+        if (id == td.BUT_PREVIOUS or id == td.BUT_NEXT) {
+            code = id;
+        } else {
+            if (id == td.BUT_PAUSE) own.paused ^= 1 else own.mode = id;
+            code = own.mode;
+            redraw(base, o, in.gadget_info);
+            tell(base, own, o, in.gadget_info, 0);
+        }
     }
-    in.termination.* = @intCast(own.mode | (if (own.paused != 0) td.TDECK_PAUSED_CODE else 0));
+    in.termination.* = @intCast(code | (if (own.paused != 0) td.TDECK_PAUSED_CODE else 0));
     return gc.GMR_NOREUSE | gc.GMR_VERIFY;
 }
 
@@ -407,6 +458,18 @@ fn handleAnim(base: *gadgets.Base, own: *Data, o: *Object, in: *gc.GpInput) usiz
     return result;
 }
 
+/// Its size: a tape deck its buttons at its height; an animation control
+/// as wide as there is room.
+fn domain(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo, which: u32) gc.Box {
+    const height = heightOf(base, own, g, gi);
+    const width: i32 = if (own.tape != 0) Buttons.ofTape(own.tracks != 0, height).right else switch (which) {
+        gc.GDOMAIN_MINIMUM => 40,
+        gc.GDOMAIN_NOMINAL => if (own.sized != 0) g.given_width else anim_width,
+        else => gc.GDOMAIN_UNLIMITED,
+    };
+    return .{ .width = width, .height = height };
+}
+
 fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const cl: *Class = @ptrCast(hook);
     const base = gadgets.baseOf(cl);
@@ -438,19 +501,24 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 if (ok) putSlider(base, own, null);
             }
             if (!ok) {
+                ib.DisposeObject(own.slider);
                 ib.DisposeObject(own.frame);
                 var gone = classusr.Msg{ .method_id = classusr.OM_DISPOSE };
                 _ = ib.SendSuperMessage(cl, obj, &gone);
                 return 0;
             }
-            // Reported when a press ends; made without a size, a tape
-            // deck's.
+            // The buttons' picture; without its library they are bare.
+            own.pictures = base.sys_base.OpenLibrary(media.MEDIA_LIBRARY, 0);
+            if (own.pictures != null) own.picture = ib.NewObjectTagList(null, media.MEDIA_CLASS, null);
+            // Reported when a press ends; made without a size, as large
+            // as it is meant to be.
             const ub = base.utility_base;
             own.sized = @intFromBool(ub.FindTagItem(gc.GA_Width, new.attr_list) != null or ub.FindTagItem(gc.GA_Height, new.attr_list) != null);
+            const size = domain(base, own, gc.gadget(obj), null, gc.GDOMAIN_NOMINAL);
             const tags = [_]TagItem{
                 .{ .tag = gc.GA_RelVerify, .data = 1 },
-                .{ .tag = if (own.sized != 0) utility.TAG_DONE else gc.GA_Width, .data = tape_width },
-                .{ .tag = gc.GA_Height, .data = deck_height },
+                .{ .tag = if (own.sized != 0) utility.TAG_DONE else gc.GA_Width, .data = @intCast(size.width) },
+                .{ .tag = gc.GA_Height, .data = @intCast(size.height) },
                 .{},
             };
             var set = classusr.OpSet{ .method_id = classusr.OM_SET, .attr_list = &tags };
@@ -461,6 +529,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o orelse return 0);
             ib.DisposeObject(own.slider);
             ib.DisposeObject(own.frame);
+            ib.DisposeObject(own.picture);
+            if (own.pictures) |lib| base.sys_base.CloseLibrary(lib);
             return ib.SendSuperMessage(cl, o, msg);
         },
         classusr.OM_SET, classusr.OM_UPDATE => {
@@ -495,18 +565,10 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             }
             return 1;
         },
-        // A tape deck is its size; an animation control as wide as there
-        // is room.
         gc.GM_DOMAIN => {
             const ask: *gc.GpDomain = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
-            const g = gc.gadget(o.?);
-            const width: i32 = if (own.tape != 0) tape_width else switch (ask.which) {
-                gc.GDOMAIN_MINIMUM => 40,
-                gc.GDOMAIN_NOMINAL => if (own.sized != 0) g.given_width else tape_width,
-                else => gc.GDOMAIN_UNLIMITED,
-            };
-            ask.domain = .{ .width = width, .height = deck_height };
+            ask.domain = domain(base, own, gc.gadget(o.?), ask.gadget_info, ask.which);
             return 1;
         },
         gc.GM_HITTEST => return gc.GMR_GADGETHIT,

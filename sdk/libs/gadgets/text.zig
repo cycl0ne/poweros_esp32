@@ -7,7 +7,10 @@
 //! whichever was given last, in `TEXT_FrontPen` on `TEXT_BackPen`, against
 //! the left, the right or in the middle (`TEXT_Justification`), in a sunk
 //! frame with `TEXT_Border`. It is a line of the font high, and as wide as
-//! its text unless it is given a width.
+//! its text unless it is given a width - or room for a wider one: a line
+//! that changes, a time or a count, keeps the width of `TEXT_RoomFor`'s
+//! text in its own font, so it never grows and the gadgets beside it never
+//! move.
 //!
 //! **Rich text.** Given `TEXT_Runs`, it shows runs of text each in its own
 //! font, soft style and colour, one after another; with `TEXT_Markup`,
@@ -91,6 +94,10 @@ pub const TEXT_Markup = TEXT_Dummy + 0x0C;
 /// Bool: runs are broken into lines as wide as the gadget (false). Made
 /// and set.
 pub const TEXT_Wrap = TEXT_Dummy + 0x0D;
+/// A C string: the gadget is never narrower than this text in its font -
+/// `"-00:00"` for a time - whatever it shows, so a text that changes keeps
+/// the room the widest of them needs. Not copied. Made and set.
+pub const TEXT_RoomFor = TEXT_Dummy + 0x0E;
 
 /// A run of text in one look.
 pub const TextRun = extern struct {

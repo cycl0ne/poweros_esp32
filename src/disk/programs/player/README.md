@@ -13,7 +13,7 @@ file, or type in a shell:
 Player FILES/M,VOLUME/K/N,LOOK/K
 ```
 
-- `FILES` are played one after another.
+- `FILES` are played one after another - or shuffled, with **Shuffle**.
 - `VOLUME` is in percent of as recorded (100), up to 200: up to 100 as
   loud as it sounds - half way is -18 dB - and past it a boost, 200
   twice as loud as recorded.
@@ -44,18 +44,31 @@ The window's title is the song's: `Fire - Player`.
   tall, when diskfont.library can render it so; the dim lines are in
   the screen's dim text colour, which **Prefs > Colours** sets as
   *Dim text*.
-- A slider across that is where the song is, with the time and the
-  song's length beside it. Drag it to go to another place; the time shows
-  where while it is held.
+- A slider across that is where the song is, the time heard before it
+  and the song's length after it. Drag it to go to another place; the
+  time shows where while it is held. A press on the length shows what is
+  left of the song instead (`-3:16`), and another the length again. A
+  song of an hour or more shows its hours (`1:02:33`).
 - The buttons of a tape deck. Play starts, pause holds the sound and goes
   on, stop goes back to the start; rewind and fast forward jump ten
-  seconds back or on.
-- The volume, and beside it the output the machine plays through - its
-  speaker, headphones, a USB speaker. Picking another plays every sound
-  through it from then on; one plugged in or out shows in the list. In
-  a window too narrow for the tape deck, the volume and the output side
-  by side, they stand one under the other, and the window grows to keep
-  everything in it.
+  seconds back or on. At its ends, the song before and the song after:
+  the song before goes back a song within the first three seconds of
+  one, and later to the start of this one. A song reached so plays when
+  the deck was playing, waits at its start when it was paused, and is
+  only shown when it was stopped.
+- **Shuffle** plays the list in an order of its own, from the song
+  playing on; the list keeps its own order, and turned off it goes on in
+  that from the song playing.
+- **Repeat** goes round three ways with each press: off, the whole list
+  - which starts again after its last song, shuffled anew when shuffle
+  is on - and the one song, again and again (its picture with a 1). Off,
+  the sound stops after the last song.
+- At the right, the sound: off and on again (a press on the volume
+  turns it on again too), the volume, and the output the machine plays
+  through - its speaker, headphones, a USB speaker. Picking another
+  plays every sound through it from then on; one plugged in or out shows
+  in the list. In a window too narrow for the whole row, it stands in
+  two lines or more, and the window grows to keep everything in it.
 
 Under them, as big as the window lets it be and sunk in a frame, the
 picture:
@@ -85,6 +98,8 @@ sixteen of the sound's streams are in use.
 ## Keys
 
 - Space pauses and goes on; when nothing plays, it starts.
+- S turns shuffle on and off, R goes round repeat's three ways, M turns
+  the sound off and on, O opens the output's list.
 - Right-Amiga O opens a song.
 - Right-Amiga Q ends it.
 

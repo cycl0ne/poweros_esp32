@@ -5510,6 +5510,98 @@ test "layoutgclass: a child smaller than its room sits where CHILDA_Align says" 
     try tearDown(ib);
 }
 
+test "layoutgclass: a space takes the spare room, and a press on it is on nothing" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // A row of 300: a button, a space, a button - the second at the right
+    // end. A second row: a space either side of a button, which sits in
+    // the middle; the space before it with twice the weight, a third of
+    // the way along instead.
+    var ends: [2]*Object = undefined;
+    for (&ends, 0..) |*button, i| button.* = framedButton(ib, "OK", i);
+    const row = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 300 },
+        .{ .tag = gc.GA_Height, .data = 40 },
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(ends[0]) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddSpace },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(ends[1]) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{},
+    }).?;
+    const middle = framedButton(ib, "Go", 10);
+    const centred = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 300 },
+        .{ .tag = gc.GA_Height, .data = 40 },
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddSpace },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(middle) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddSpace },
+        .{},
+    }).?;
+    const third = framedButton(ib, "Go", 11);
+    const weighed = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 300 },
+        .{ .tag = gc.GA_Height, .data = 40 },
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddSpace },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 50 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(third) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddSpace },
+        .{},
+    }).?;
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var gi = _gadget.info(win);
+    gi.domain_width = 400;
+    gi.domain_height = 200;
+    var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+    for ([_]*Object{ row, centred, weighed }) |layout| _ = it.SendMessage(layout, @ptrCast(&lay));
+
+    const first = boxOf(ib, ends[0]);
+    const last = boxOf(ib, ends[1]);
+    try testing.expectEqual(@as(i32, 0), first.left);
+    try testing.expectEqual(300 - last.width, last.left);
+    // The pixel a share leaves over goes to the first space.
+    const mid = boxOf(ib, middle);
+    try testing.expect(@abs(mid.left - @divTrunc(300 - mid.width, 2)) <= 1);
+    const along = boxOf(ib, third);
+    try testing.expect(@abs(along.left - @divTrunc(300 - along.width, 3)) <= 1);
+
+    // On a button, a hit; on the space between, none.
+    const down = first.top + @divTrunc(first.height, 2);
+    var on_button = gc.GpHitTest{ .gadget_info = &gi, .mouse = .{ .x = 2, .y = down } };
+    try testing.expectEqual(gc.GMR_GADGETHIT, it.SendMessage(row, @ptrCast(&on_button)));
+    var on_space = gc.GpHitTest{ .gadget_info = &gi, .mouse = .{ .x = 150, .y = down } };
+    try testing.expectEqual(@as(usize, 0), it.SendMessage(row, @ptrCast(&on_space)));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(row);
+    it.DisposeObject(centred);
+    it.DisposeObject(weighed);
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "layoutgclass: a child's maximum holds its nominal size, and the layout's with it" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -7471,19 +7563,41 @@ test "styles: a tool's button is flat at rest and framed under the pointer, what
     const ib = try setUp();
     defer kexec.deinit();
     const style = intuition.style;
+    const sc = intuition.screens;
     const it = ib.iface();
     const tool = ic.PART_TOOL;
 
     try testing.expectEqual(@as(usize, style.BORDER_NONE), it.GetStyleAttr(null, null, tool, style.STATE_NORMAL, style.STYLE_Border));
-    try testing.expectEqual(@as(usize, style.BORDER_RAISED), it.GetStyleAttr(null, null, tool, style.STATE_HOVERED, style.STYLE_Border));
-    try testing.expectEqual(@as(usize, style.BORDER_RECESSED), it.GetStyleAttr(null, null, tool, style.STATE_PRESSED, style.STYLE_Border));
-    try testing.expectEqual(@as(usize, style.BORDER_RECESSED), it.GetStyleAttr(null, null, tool, style.STATE_CHECKED | style.STATE_HOVERED, style.STYLE_Border));
+    try testing.expectEqual(@as(usize, style.BORDER_FLAT), it.GetStyleAttr(null, null, tool, style.STATE_HOVERED, style.STYLE_Border));
+    try testing.expectEqual(@as(usize, style.BORDER_FLAT), it.GetStyleAttr(null, null, tool, style.STATE_PRESSED, style.STYLE_Border));
+    try testing.expectEqual(@as(usize, style.BORDER_FLAT), it.GetStyleAttr(null, null, tool, style.STATE_CHECKED | style.STATE_HOVERED, style.STYLE_Border));
     try testing.expectEqual(@as(usize, style.BORDER_NONE), it.GetStyleAttr(null, null, tool, style.STATE_DISABLED, style.STYLE_Border));
-    // Pressed and on, it is a pressed button's colours.
+    // Its grounds and edges are blended from the pens: on the built-in
+    // grey, a light grey under the pointer, light blue-greys pressed and
+    // on, the text in the text pen.
+    const grounds = [_]struct { state: u32, background: u32, edge: u32 }{
+        .{ .state = style.STATE_HOVERED, .background = 0xFFCBCDD0, .edge = 0xFF6A6A6A },
+        .{ .state = style.STATE_PRESSED, .background = 0xFFA4ACB9, .edge = 0xFF33445E },
+        .{ .state = style.STATE_CHECKED | style.STATE_HOVERED, .background = 0xFFB9C1CE, .edge = 0xFF33445E },
+    };
+    for (grounds) |want| {
+        try testing.expectEqual(@as(usize, want.background), it.GetStyleAttr(null, null, tool, want.state, style.STYLE_Background));
+        try testing.expectEqual(@as(usize, want.edge), it.GetStyleAttr(null, null, tool, want.state, style.STYLE_BorderPen));
+    }
     try testing.expectEqual(
-        it.GetStyleAttr(null, null, style.PART_MAIN, style.STATE_PRESSED, style.STYLE_Background),
-        it.GetStyleAttr(null, null, tool, style.STATE_PRESSED, style.STYLE_Background),
+        it.GetStyleAttr(null, null, tool, style.STATE_NORMAL, style.STYLE_TextPen),
+        it.GetStyleAttr(null, null, tool, style.STATE_CHECKED, style.STYLE_TextPen),
     );
+    // On a dark screen the same blends are dark: the ground under the
+    // pointer between the background and the shine.
+    var dark: [sc.NUMDRIPENS]graphics.Pen = @splat(0xFF000000);
+    dark[sc.BACKGROUNDPEN] = 0xFF2A2E35;
+    dark[sc.SHINEPEN] = 0xFF4B525D;
+    dark[sc.FILLPEN] = 0xFF5B9BF0;
+    dark[sc.TEXTPEN] = 0xFFE6E8EB;
+    const dark_info = sc.DrawInfo{ .pens = &dark };
+    try testing.expectEqual(@as(usize, 0xFF3C4552), it.GetStyleAttr(&dark_info, null, tool, style.STATE_HOVERED, style.STYLE_Background));
+    try testing.expectEqual(@as(usize, 0xFF435773), it.GetStyleAttr(&dark_info, null, tool, style.STATE_CHECKED, style.STYLE_Background));
 
     // The room inside is the same in every state: the border, where there
     // is one, takes what is padding without it.
@@ -7496,6 +7610,53 @@ test "styles: a tool's button is flat at rest and framed under the pointer, what
         it.DrawPart(null, null, null, tool, state, 0, &box, &inside);
         try testing.expectEqual(at_rest, inside);
     }
+    try tearDown(ib);
+}
+
+test "styles: a blend of pens is their mean by weight, and follows the screen's pens" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const style = intuition.style;
+    const sc = intuition.screens;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+
+    var pens: [sc.NUMDRIPENS]graphics.Pen = @splat(0xFF000000);
+    pens[sc.SHINEPEN] = 0xFFFFFFFF;
+    pens[sc.FILLPEN] = 0x80204060;
+    // Half and half, a channel at a time, alpha too.
+    const half = style.blend(&.{ .{ .pen = sc.SHINEPEN }, .{ .pen = sc.FILLPEN } });
+    try testing.expect(style.isBlend(half) and !style.isBlend(sc.SHINEPEN));
+    try testing.expectEqual(@as(graphics.Pen, 0xC090A0B0), style.blendColour(half, &pens, sc.NUMDRIPENS));
+    // Three parts of one to one of the other, rounded.
+    const quarter = style.blend(&.{ .{ .pen = sc.SHINEPEN, .weight = 3 }, .{ .pen = sc.TEXTPEN } });
+    try testing.expectEqual(@as(graphics.Pen, 0xFFBFBFBF), style.blendColour(quarter, &pens, sc.NUMDRIPENS));
+    // A pen of weight 0 counts for nothing, a pen the screen does not
+    // have is its first, and a blend of no weight is the first pen.
+    pens[0] = 0xFF102030;
+    try testing.expectEqual(pens[sc.SHINEPEN], style.blendColour(style.blend(&.{ .{ .pen = sc.FILLPEN, .weight = 0 }, .{ .pen = sc.SHINEPEN } }), &pens, sc.NUMDRIPENS));
+    try testing.expectEqual(pens[0], style.blendColour(style.blend(&.{.{ .pen = 30 }}), &pens, sc.NUMDRIPENS));
+    try testing.expectEqual(pens[0], style.blendColour(style.blend(&.{}), &pens, sc.NUMDRIPENS));
+    // What is kept is cut to three pens, each index and weight to 31.
+    var kept: [style.blend_pens]style.BlendPen = undefined;
+    const many = style.blend(&.{ .{ .pen = 1, .weight = 40 }, .{ .pen = 2 }, .{ .pen = 99, .weight = 2 }, .{ .pen = 4 } });
+    try testing.expectEqual(@as(usize, 3), style.blendPens(many, &kept));
+    try testing.expectEqual(style.BlendPen{ .pen = 1, .weight = 31 }, kept[0]);
+    try testing.expectEqual(style.BlendPen{ .pen = 31, .weight = 2 }, kept[2]);
+
+    // In a gadget's own style, as a border's colour: read back as the
+    // colour of the pens it is drawn with.
+    const g = it.NewObjectTagList(ib.gadget_class, null, &[_]TagItem{
+        .{ .tag = gc.GA_Style, .data = @intFromPtr(&[_]TagItem{ .{ .tag = style.STYLE_BorderPen, .data = half }, .{} }) },
+        .{},
+    }).?;
+    var own: usize = 0;
+    _ = it.GetAttr(gc.GA_Style, g, &own);
+    const info = sc.DrawInfo{ .pens = &pens };
+    try testing.expectEqual(@as(usize, 0xC090A0B0), it.GetStyleAttr(&info, @ptrFromInt(own), style.PART_MAIN, style.STATE_NORMAL, style.STYLE_BorderPen));
+    pens[sc.FILLPEN] = 0xFF000000;
+    try testing.expectEqual(@as(usize, 0xFF808080), it.GetStyleAttr(&info, @ptrFromInt(own), style.PART_MAIN, style.STATE_NORMAL, style.STYLE_BorderPen));
+    it.DisposeObject(g);
     try tearDown(ib);
 }
 

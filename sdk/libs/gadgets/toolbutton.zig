@@ -10,7 +10,9 @@
 //! small picture with the label beside it; small, the picture alone, its
 //! label said only by its hint. The small picture is as tall as a line of
 //! the font and never under 16 pixels, so the sizes follow the screen's
-//! font. A button with no picture is its label in every size.
+//! font. A button with no picture is its label in every size; one whose
+//! label changes - a time, a count - keeps room for `TOOLBUTTON_RoomFor`'s
+//! text, so it never grows.
 //!
 //! The picture is any imageclass image (`TOOLBUTTON_Image`), drawn to the
 //! size with `IM_DRAWFRAME` - a drawn one, as a docklet or a command image
@@ -18,9 +20,11 @@
 //! made smaller to the size by icon.library.
 //!
 //! It is drawn as a part of its own, `imageclass.PART_TOOL`: under the
-//! system's default flat at rest, with a button's border under the
-//! pointer and sunk while pressed or on. A style may give it a border at
-//! rest - which a touch screen, with no pointer to hover, may want.
+//! system's default flat at rest; under the pointer, pressed and on, a
+//! one-pixel edge with round corners round a light ground blended from
+//! the screen's pens, so a coloured picture keeps its colours. A style
+//! may give it a border at rest - which a touch screen, with no pointer
+//! to hover, may want.
 //!
 //!   const lib = sys.OpenLibrary(tb.TOOLBUTTON_LIBRARY, 0) orelse return;
 //!   defer sys.CloseLibrary(lib);
@@ -64,6 +68,11 @@ pub const TOOLBUTTON_Hint = TOOLBUTTON_Dummy + 0x05;
 /// read; told to the target, with the gadget's `GA_ID`, when a press or
 /// its key turns it.
 pub const TOOLBUTTON_Checked = TOOLBUTTON_Dummy + 0x06;
+/// A C string: the label is given at least the room this text takes in
+/// the button's font - `"-00:00"` for a time - so a label that changes
+/// keeps the room the widest of them needs. Only where the label is shown.
+/// Not copied. Made and set.
+pub const TOOLBUTTON_RoomFor = TOOLBUTTON_Dummy + 0x07;
 
 /// `TOOLBUTTON_Size`.
 pub const TBSIZE_LARGE: u32 = 0;

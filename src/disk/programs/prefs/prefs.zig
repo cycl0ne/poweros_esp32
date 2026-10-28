@@ -132,7 +132,7 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.19";
+const VERSION = "1.20";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
@@ -707,9 +707,15 @@ const Editor = struct {
     }
 
     /// The colour a field's text is, as near as one colour says it: a
-    /// pen's own, the first of two, or the background's when it is none.
+    /// pen's own, a blend of the pens as the page has them, the first of
+    /// two, or the background's when it is none.
     fn colourOf(e: *const Editor, text: []const u8) Pen {
         if (style_file.lookUp(&style_file.pens, text)) |pen| return e.penColour(pen);
+        if (style_file.blendOf(text)) |blended| {
+            var shown: [sc.NUMDRIPENS]Pen = undefined;
+            for (&shown, 0..) |*colour, pen| colour.* = e.penColour(pen);
+            return looks.blendColour(blended, &shown, sc.NUMDRIPENS);
+        }
         const first = if (text.len >= 7) text[0..7] else text;
         return style_file.rgb(text) orelse style_file.rgb(first) orelse e.pens[sc.BACKGROUNDPEN];
     }

@@ -92,7 +92,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.10 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.11 (28.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";

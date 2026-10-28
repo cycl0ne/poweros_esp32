@@ -601,6 +601,7 @@ with weight 0 keeps its own size.
 | `LAYOUTA_Orientation` | `LORIENT_VERT` (a column, the default), `LORIENT_HORIZ` (a row), `LORIENT_GRID` |
 | `LAYOUTA_Spacing`, `LAYOUTA_Margin` | pixels between children (4) and round them (0) |
 | `LAYOUTA_AddChild` | a gadget, the layout's from then on; the `CHILDA_` tags after it are about it |
+| `LAYOUTA_AddSpace` | a space that shows nothing and takes the spare room by its weight: what follows goes to the far end |
 | `CHILDA_Label` | text on its left; the labels of a column line up |
 | `CHILDA_WeightWidth`, `CHILDA_WeightHeight` | its share of the spare room in a row, in a column (100) |
 | `CHILDA_MinWidth` ... `CHILDA_MaxHeight` | its smallest and largest size - a button big enough for a finger; the largest is also the most it asks for, so an editor that wants a page can be kept to a few lines |

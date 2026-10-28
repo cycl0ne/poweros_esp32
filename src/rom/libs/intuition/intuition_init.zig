@@ -157,7 +157,12 @@ pub const LIBRARY_VERSION = 0;
 /// 64: groupgclass's hit test names the member under the point or none,
 /// keeping nothing from an earlier one - the pointer passing over a
 /// member no longer leaves it the one a later press goes to.
-pub const LIBRARY_REVISION = 64;
+/// 65: layoutgclass's LAYOUTA_AddSpace - a space that takes the spare
+/// room of a row or column, so what follows it goes to the far end.
+/// 66: a style's colour may be a blend of up to three screen pens
+/// (`style.blend`); PART_TOOL's grounds and edges are blends, its frame
+/// one pixel flat with round corners.
+pub const LIBRARY_REVISION = 66;
 const BUILD_DATE = "28.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

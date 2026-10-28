@@ -79,7 +79,7 @@ part's look. Intuition's own (`sdk/libs/intuition/imageclass.zig`):
 | `PART_CHECK`, `PART_RADIO` | MAIN | a check box's box, a radio button's ring |
 | `PART_FIELD` | MAIN | the line a string gadget edits |
 | `PART_MENU` | MAIN | a menu's panel |
-| `PART_TOOL` | MAIN | a button in a tool bar or a ribbon: flat at rest, its border under the pointer |
+| `PART_TOOL` | MAIN | a button in a tool bar or a ribbon: flat at rest; under the pointer, pressed and on, a one-pixel edge with round corners on a light ground blended from the pens, so a coloured picture keeps its colours |
 | `PART_FRAME_DROPBOX` | GROUP | an icon's drop box |
 | `PART_REQUESTER` | GROUP | a requester's ground |
 | `PART_CHECKMARK`, `PART_RADIOMARK` | INDICATOR | the tick, the dot |
@@ -105,7 +105,7 @@ that a style may name exactly.
 
 | Tag | Takes |
 |-----|-------|
-| `STYLE_Background` / `RGB` / `Fill` | a screen pen, a colour `0xAARRGGBB`, or a `*const graphics.FillStyle` (a gradient or a tile) |
+| `STYLE_Background` / `RGB` / `Fill` | a screen pen or a blend of pens, a colour `0xAARRGGBB`, or a `*const graphics.FillStyle` (a gradient or a tile) |
 | `STYLE_Border` | `BORDER_NONE`, `FLAT`, `RAISED`, `RECESSED`, `RIDGE`, `GROOVE` |
 | `STYLE_BorderPen` / `RGB` | a flat border's colour |
 | `STYLE_ShinePen` / `RGB`, `STYLE_ShadowPen` / `RGB` | a bevel's light and dark sides |
@@ -121,6 +121,23 @@ that a style may name exactly.
 A colour given as a pen is the screen's pen, looked up when the part is
 drawn, so a style in pens follows the screen's colours. A colour given as
 `0xAARRGGBB` is that colour on every screen.
+
+A tag ending in `Pen` also takes a blend of up to three pens, made by
+`style.blend`: each channel is the mean of the pens' channels, each pen
+counted by its weight (1 to 31). A blend is mixed from the screen's pens
+when the part is drawn, so a tone between two of the screen's colours
+follows them as a single pen does - a dark screen gets a dark one:
+
+```zig
+// The background halfway to the shine, with a sixteenth of the fill.
+.{ .tag = style.STYLE_Background, .data = style.blend(&.{
+    .{ .pen = sc.BACKGROUNDPEN, .weight = 8 },
+    .{ .pen = sc.SHINEPEN, .weight = 7 },
+    .{ .pen = sc.FILLPEN },
+}) },
+```
+
+The default draws a tool's grounds and edges this way.
 
 ## Where a style comes from
 
@@ -203,9 +220,11 @@ PART=SELECTION BACKGROUND=FILL TEXT=FILLTEXT
   `DISABLED`, or several joined by `+`.
 - A colour is a screen pen's name (`TEXT`, `SHINE`, `SHADOW`, `FILL`,
   `FILLTEXT`, `BACKGROUND`, `HIGHLIGHTTEXT`, `DETAIL`, `BLOCK`,
-  `BARDETAIL`, `BARBLOCK`, `BARTRIM`, `DIMTEXT`), `#RRGGBB` or
-  `#AARRGGBB`; a
-  `BACKGROUND` of `#top..#bottom` is shaded from top to bottom.
+  `BARDETAIL`, `BARBLOCK`, `BARTRIM`, `DIMTEXT`), a blend of up to
+  three of them joined by `+`, each with its weight after a colon
+  (`BACKGROUND:8+SHINE:7+FILL`, 1 when left out), `#RRGGBB` or
+  `#AARRGGBB`; a `BACKGROUND` of `#top..#bottom` is shaded from top to
+  bottom.
 - `BORDER`, `JOINS`, and the numbers `BORDERWIDTH`, `BORDERX`,
   `BORDERY`, `RADIUS`, `PADDING`, `PADDINGX`, `PADDINGY`, `OPACITY`,
   `GAP`, `TRANSITION`.

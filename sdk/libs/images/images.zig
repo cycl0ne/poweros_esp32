@@ -32,3 +32,4 @@ pub const IMAGES_Step = 0x1_0000;
 
 /// The classes' tags and names, a file each.
 pub const command = @import("command.zig");
+pub const media = @import("media.zig");
