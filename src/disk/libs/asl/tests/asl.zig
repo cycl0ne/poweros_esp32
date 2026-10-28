@@ -16,6 +16,7 @@ const host = @import("host_rom");
 const kexec = host.exec;
 const AslBase = @import("../asl_base.zig").AslBase;
 const _request = @import("../request/_request.zig");
+const AbortAslRequest = @import("../request/abortaslrequest.zig").AbortAslRequest;
 const Requester = _request.Requester;
 const entries = @import("../file/entries.zig");
 const Entry = entries.Entry;
@@ -146,6 +147,30 @@ test "the kinds share the tags that mean the same thing, and no others" {
     // The pattern is the file requester's alone.
     try testing.expectEqualStrings("#?.txt", std.mem.span(@as([*:0]const u8, @ptrCast(&file.pattern))));
     try testing.expectEqual(@as(u8, 0), font.pattern[0]);
+}
+
+test "a reply port for every kind; taking down signals only a requester that is up" {
+    var rig: Rig = undefined;
+    try rig.up();
+    defer rig.down() catch {};
+    const sys = rig.base.sys_base;
+
+    var port: exec.MsgPort = .{};
+    var font = rig.requester(asl.ASL_FontRequest);
+    sys.InitSemaphore(&font.asker_lock);
+    _request.takeTags(&font, &[_]TagItem{ .{ .tag = asl.ASLFO_ReplyPort, .data = @intFromPtr(&port) }, .{} });
+    try testing.expectEqual(@as(?*exec.MsgPort, &port), font.reply_port);
+
+    // Not up: nothing reaches anyone.
+    _ = sys.SetSignal(0, exec.SIGBREAKF_CTRL_C);
+    AbortAslRequest(&rig.base, @ptrCast(&font));
+    try testing.expectEqual(@as(u32, 0), sys.SetSignal(0, 0) & exec.SIGBREAKF_CTRL_C);
+
+    // Up on a process - this one stands in for it: it is given Ctrl-C,
+    // which a requester takes as being given up.
+    font.asker = sys.FindTask(null);
+    AbortAslRequest(&rig.base, @ptrCast(&font));
+    try testing.expect(sys.SetSignal(0, exec.SIGBREAKF_CTRL_C) & exec.SIGBREAKF_CTRL_C != 0);
 }
 
 fn namesOf(list: *exec.List, into: [][]const u8) usize {

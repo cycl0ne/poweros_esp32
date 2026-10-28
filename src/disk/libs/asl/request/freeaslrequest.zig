@@ -27,6 +27,10 @@ const _request = @import("_request.zig");
 /// answer and the locks with them - is gone once this returns, so a
 /// program that wants to keep an answer copies it first.
 ///
+/// A requester still up on a process of its own (`ASLFR_ReplyPort`) is
+/// left as it is, since its process is using it: the program takes it
+/// down with `AbortAslRequest`, waits for its message and frees it then.
+///
 /// CONTEXT:
 /// - Waits: for memory to be given back.
 /// - Interrupts: no.
@@ -38,8 +42,13 @@ const _request = @import("_request.zig");
 /// What the tags handed the requester stays the caller's and is not
 /// touched.
 ///
+/// BUGS:
+/// A requester whose message has been sent but not yet taken off the
+/// port cannot be told from one that is the program's again: freed then,
+/// the message on the port is gone with it.
+///
 /// SEE ALSO:
-/// `AllocAslRequest`, `AslRequest`
+/// `AllocAslRequest`, `AslRequest`, `AbortAslRequest`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -49,6 +58,10 @@ pub fn FreeAslRequest(ab: *AslBase, requester: ?*anyopaque) void {
     const handle = requester orelse return;
     const r = _request.requesterOf(handle);
     const sys = ab.sys_base;
+    sys.ObtainSemaphore(&r.asker_lock);
+    const busy = r.asker != null;
+    sys.ReleaseSemaphore(&r.asker_lock);
+    if (busy) return;
     _request.dropArgs(r);
     sys.AcquireLock(&ab.requester_lock);
     sys.Remove(@ptrCast(&r.node));

@@ -1012,9 +1012,34 @@ keeps the window from taking input while it is up, and
 ready for `OpenDiskFont` ([Choosing and opening a font](fonts.md#choosing-and-opening-a-font)).
 In a window of gadgets, getfile.gadget and getfont.gadget are a field
 with a button beside it that opens these requesters
-([More than buttons](programs.md#more-than-buttons)). While the desktop
-runs, a file dragged from it and let go on the file requester goes to
-its drawer with its name in the File field
+([More than buttons](programs.md#more-than-buttons)).
+
+`AslRequest` holds its caller until the requester is answered. A
+program that must go on meanwhile - drawing, playing a sound - gives it
+a port (`ASLFR_ReplyPort`): the requester runs on a process of its own,
+the call returns at once, and an `asl.AslMessage` arrives on the port
+when it is answered or given up, its `answered` saying which. Until
+then the requester is the library's. `AbortAslRequest` takes it down
+early - a program ending with one up calls it and waits for the message
+before `FreeAslRequest`:
+
+```zig
+_ = ab.AslRequest(request, &[_]TagItem{
+    .{ .tag = asl.ASLFR_Window, .data = @intFromPtr(window) },
+    .{ .tag = asl.ASLFR_ReplyPort, .data = @intFromPtr(port) },
+    .{},
+});
+// The port's signal among what the program waits for:
+while (sys.GetMsg(port)) |message| {
+    const reply: *asl.AslMessage = @ptrCast(@alignCast(message));
+    if (reply.answered != 0) {
+        // the answer is in the request structure, as after a waiting call
+    }
+}
+```
+
+While the desktop runs, a file dragged from it and let go on the file
+requester goes to its drawer with its name in the File field
 ([Programs on the desktop](anvil.md#programs-on-the-desktop)).
 
 ## Trying it
@@ -1027,7 +1052,7 @@ its drawer with its name in the File field
 | `C:test/Gadgets` | the gadget classes in one layout, each worked by its key |
 | `C:test/Settings` | tabs along a page gadget's top, its pages framed below them (`PAGE_Tabs`), framed groups |
 | `C:test/Widgets` | meters, a canvas drawn into and queued, codes, a chart |
-| `C:test/Asl` | the file and font requesters |
+| `C:test/Asl` | the file and font requesters; `ASYNC` asked without waiting, `ABORT` taken down |
 | `SYS:Programs/Notepad` | a window object with menus, border scroll bars, a second window, requesters |
 | `SYS:Programs/Sheet` | a canvas drawn into and pressed on, a line of text with an edit hook of its own, border scroll bars telling the window |
 | `SYS:Programs/MultiView` | border scroll bars joined to a picture through a model |

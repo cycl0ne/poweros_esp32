@@ -698,6 +698,12 @@ fn loop(s: *Session) void {
         // while the requester stays answerable, and nothing waits until
         // there is nothing left to read.
         if (s.walk.reading()) {
+            // Taken down while it reads - AbortAslRequest, Ctrl-C - it
+            // stops here rather than once the whole drawer is in.
+            if (s.sys.SetSignal(0, exec.SIGBREAKF_CTRL_C) & exec.SIGBREAKF_CTRL_C != 0) {
+                s.given_up = true;
+                return;
+            }
             readChunk(s);
             continue;
         }

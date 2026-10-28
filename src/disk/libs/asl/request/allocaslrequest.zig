@@ -80,6 +80,7 @@ pub fn AllocAslRequest(ab: *AslBase, kind: u32, tags: ?[*]const TagItem) ?*anyop
     const block = sys.AllocVec(@sizeOf(Requester), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     const r: *Requester = @ptrCast(@alignCast(block));
     r.* = .{ .public = .{ .file = .{} }, .base = ab, .kind = kind };
+    sys.InitSemaphore(&r.asker_lock);
     _request.takeTags(r, tags);
     sys.AcquireLock(&ab.requester_lock);
     sys.AddTail(@ptrCast(&ab.requesters), @ptrCast(&r.node));

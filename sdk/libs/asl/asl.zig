@@ -28,8 +28,30 @@
 //! A requester remembers where it was, how big it was and what was typed
 //! in it, so the next `AslRequest` on the same requester opens where the
 //! one before it was left.
+//!
+//! **Asking without waiting.** `AslRequest` holds its caller until the
+//! requester is answered. Given a port (`ASLFR_ReplyPort`), it puts the
+//! requester up on a process of its own and returns at once; the program
+//! goes on - drawing, playing, answering its window - and the requester's
+//! message (`AslMessage`) arrives on the port when it is answered or
+//! given up. Until then the requester is the library's: the program reads
+//! nothing from it, asks nothing of it and does not free it.
+//! `AbortAslRequest` takes it down early, and its message still comes, as
+//! an IORequest's does after AbortIO.
+//!
+//!   _ = ab.AslRequest(req, &.{
+//!       .{ .tag = asl.ASLFR_Window, .data = @intFromPtr(window) },
+//!       .{ .tag = asl.ASLFR_ReplyPort, .data = @intFromPtr(port) },
+//!       .{},
+//!   });
+//!   // ... later, the port's signal among those waited for:
+//!   while (sys.GetMsg(port)) |message| {
+//!       const ended: *asl.AslMessage = @ptrCast(message);
+//!       if (ended.answered != 0) open(req.drawer, req.file);
+//!   }
 
 const utility = @import("../utility/utility.zig");
+const ports = @import("../exec/ports.zig");
 const dos = @import("../dos/dos.zig");
 const graphics = @import("../graphics/graphics.zig");
 
@@ -44,6 +66,30 @@ pub const ASL_DeviceRequest: u32 = 3;
 
 /// Where asl's tags begin.
 pub const ASL_TB = utility.TAG_USER + 0x0008_0000;
+
+/// A `*MsgPort` for every kind of requester (`ASLFR_ReplyPort`,
+/// `ASLFO_ReplyPort`, `ASLSM_ReplyPort`, `ASLDR_ReplyPort`): `AslRequest`
+/// puts the requester up on a process of its own and returns at once, and
+/// its `AslMessage` arrives on this port when it is answered or given up.
+/// 0, as when it is not given, waits for the answer. Like every tag it
+/// holds for the requests after, until it is set again.
+pub const ASLFR_ReplyPort = ASL_TB + 200;
+pub const ASLFO_ReplyPort = ASLFR_ReplyPort;
+pub const ASLSM_ReplyPort = ASLFR_ReplyPort;
+pub const ASLDR_ReplyPort = ASLFR_ReplyPort;
+
+/// What arrives on `ASLFR_ReplyPort` when a requester put up there ends:
+/// the requester's own message, taken off the port with GetMsg and never
+/// replied. Once it has arrived the requester is the program's again, its
+/// answer in the request structure as after a waiting `AslRequest`.
+pub const AslMessage = extern struct {
+    message: ports.Message = .{},
+    /// The requester that ended, as `AllocAslRequest` handed it out.
+    requester: ?*anyopaque = null,
+    /// 1 when it was answered, 0 when it was given up, taken down with
+    /// `AbortAslRequest` or could not be shown.
+    answered: u32 = 0,
+};
 
 /// One of the things a requester was answered with: the drawer it is in
 /// and its name in that drawer. A name with no lock is a name on its own;
