@@ -2063,6 +2063,64 @@ test "text.gadget: markup into runs, runs wrapped into lines" {
     try rig.down();
 }
 
+test "text.gadget: a line of runs cut at an edge with dots, a run in a pen named" {
+    var heard = Heard{ .tag = tx.TEXT_Text, .ib = undefined };
+    var rig = try Rig.up(&text.Library.resident_tag, &heard);
+    const gb = rig.kib.graphics_base;
+    const graphics = sdk.graphics;
+    const sc = sdk.intuition.screens;
+    const bitmap = gb.AllocBitMapTagList(&[_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = 160 },
+        .{ .tag = graphics.BMTAG_Height, .data = 16 },
+        .{},
+    }).?;
+    const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(bitmap) }, .{} }).?;
+    const font = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }).?;
+    graphics.SetFont(gb, rp, font);
+    const black = graphics.penRGB(0, 0, 0);
+    const red = graphics.penRGB(0xFF, 0, 0);
+    const green = graphics.penRGB(0, 0xFF, 0);
+    var pens: [sc.NUMDRIPENS]graphics.Pen = @splat(black);
+    pens[sc.DIMTEXTPEN] = green;
+    const runs = [_]tx.TextRun{
+        .{ .text = "one two three four five six", .colour = tx.screenPen(sc.DIMTEXTPEN) },
+        .{},
+    };
+    const ink = text.rich.Ink{ .gb = gb, .rp = rp, .font = font, .front = red, .pens = &pens };
+    const line = text.rich.lineAt(ink, &runs, .{}, 0x7FFF, false).?;
+    try testing.expect(line.width > 100);
+
+    // Cut at 60: nothing drawn past it, and what is drawn is the pen the
+    // run names, not the front pen.
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = black }, .{} });
+    gb.RectFill(rp, &.{ .min_x = 0, .min_y = 0, .max_x = 160, .max_y = 16 });
+    const right = text.rich.drawLine(ink, &runs, line, 0, 0, 60);
+    try testing.expect(right <= 60 and right > 40);
+    var seen_green = false;
+    for (0..16) |y| for (0..160) |x| {
+        var pixel: graphics.Pen = 0;
+        try testing.expect(gb.ReadPixel(rp, @intCast(x), @intCast(y), &pixel));
+        if (x >= 60) try testing.expectEqual(black, pixel | 0xFF00_0000);
+        try testing.expect(pixel | 0xFF00_0000 != red);
+        if (pixel | 0xFF00_0000 == green) seen_green = true;
+    };
+    try testing.expect(seen_green);
+
+    // Room for no letter of "two": the dots follow "one", not the space
+    // after it.
+    const one = gb.TextLength(rp, "one", 3);
+    const dots = gb.TextLength(rp, "...", 3);
+    const tight = gb.TextLength(rp, "one ", 4) + dots + 1;
+    try testing.expectEqual(one + dots, text.rich.drawLine(ink, &runs, line, 0, 0, tight));
+
+    // Not cut: the whole line, as wide as it was measured.
+    try testing.expectEqual(line.width, text.rich.drawLine(ink, &runs, line, 0, 0, null));
+    gb.CloseFont(font);
+    gb.FreeRastPort(rp);
+    gb.FreeBitMap(bitmap);
+    try rig.down();
+}
+
 test "fuelgauge.gadget: the level held in its range, the part filled, never pressed" {
     var heard = Heard{ .tag = fg.GAUGE_Level, .ib = undefined };
     var rig = try Rig.up(&fuelgauge.Library.resident_tag, &heard);
