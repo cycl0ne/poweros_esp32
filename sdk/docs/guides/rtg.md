@@ -303,7 +303,8 @@ shape in two colours) and `BlitPattern` (a one-bit tile anchored to the
 buffer); `BlendPixels` lays pixels of the caller's own over a buffer by
 their coverage, times a constant alpha, `BlendRect` a colour by its
 alpha, and `ScalePixels` a part of a picture scaled to a rectangle's
-size, mixed between its pixels. `CopyRects` copies several rectangles
+size, mixed between its pixels where it is made larger and averaged over
+all it covers where it is made smaller. `CopyRects` copies several rectangles
 from one buffer to another as one job - the pieces of a window seen
 between others, copied on to the display by an engine that shares its
 work between cores with the cores woken once; a board without it is given
@@ -353,10 +354,13 @@ which reads the buffer and the picture together and writes the mix:
 pictures in `bgra32`, `bgr24`, `rgb24` and `rgb565`; `rgba32` is
 refused, since the unit can read four bytes only as they are, with each
 pair exchanged, or reversed. The scale runs on the PPA's scaler, which
-mixes between pixels as `RPTAG_Smooth` does and steps its factors in
-sixteenths, so it takes a job only when both sizes come out exactly - a
-half, a double, three quarters; it scales into a block of its own, which
-is then blended over the rectangle. Every operation is finished when the
+mixes between pixels as `RPTAG_Smooth` does for a picture made larger and
+steps its factors in sixteenths, so it takes a job only when both sizes
+come out exactly - a double, one and a half - and the picture is made no
+smaller either way: made smaller, a smooth scale averages every pixel
+each covers, which the scaler would skip, and the caller does it itself.
+The scaler scales into a block of its own, which is then blended over the
+rectangle. Every operation is finished when the
 call returns; the caller's task waits for the engine's interrupt
 meanwhile, so the CPU is free for others. The engine shares the
 PSRAM with the panel's stream, which cannot wait: the stream is put first

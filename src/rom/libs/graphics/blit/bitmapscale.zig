@@ -40,9 +40,11 @@ const pixelBytes = _blit.pixelBytes;
 /// blurring them across the pixels either side. Scaling down drops pixels
 /// rather than averaging them. A RastPort that wants it smooth
 /// (`RPTAG_Smooth`) gets each pixel mixed from the four round its place
-/// instead; a smooth scale whose destination is one whole piece of a
-/// board's buffer goes to the board's engine (`rtg.ScalePixels`) where it
-/// takes the job.
+/// instead where the picture is made larger, and the mean of all the
+/// source it covers where it is made smaller, every pixel by how much of
+/// it is covered - each way by itself. A smooth scale whose destination
+/// is one whole piece of a board's buffer goes to the board's engine
+/// (`rtg.ScalePixels`) where it takes the job.
 ///
 /// Which source pixel a destination pixel comes from is worked out from the
 /// destination rectangle's own corner and not from the clipped one, so a
@@ -106,6 +108,7 @@ pub fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const 
     var bound = Rect{};
     var any = false;
     const bytes = pixelBytes(src);
+    const shrinks = src_w > dest_w or src_h > dest_h;
     while (it.next()) |r| {
         const count: usize = @intCast(r.rect.width());
         const run = count * bytes;
@@ -120,13 +123,18 @@ pub fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const 
             const to = r.surface.pixels.? + @as(usize, @intCast(y + r.dy)) * r.surface.pitch +
                 @as(usize, @intCast(r.rect.min_x + r.dx)) * bytes;
             if (dest.smooth) {
-                // Between the pixels, for a RastPort that wants it smooth:
-                // every pixel worked out, none copied from the row above.
+                // Between the pixels, for a RastPort that wants it smooth,
+                // or the mean of what each covers where it is made
+                // smaller: every pixel worked out, none copied from the
+                // row above.
                 const fy = _blit.sourceOf(y, dest_area.min_y, dest_h, from.min_y, src_h);
+                const down = _blit.spanOf(y, dest_area.min_y, dest_h, from.min_y, src_h);
                 var x: i32 = r.rect.min_x;
                 while (x < r.rect.max_x) : (x += 1) {
-                    const fx = _blit.sourceOf(x, dest_area.min_x, dest_w, from.min_x, src_w);
-                    const pen = _blit.sampleBetween(src.pixels.?, src.pitch, src.format, from, fx, fy);
+                    const pen = if (shrinks)
+                        _blit.sampleOver(src.pixels.?, src.pitch, src.format, from, _blit.spanOf(x, dest_area.min_x, dest_w, from.min_x, src_w), down)
+                    else
+                        _blit.sampleBetween(src.pixels.?, src.pitch, src.format, from, _blit.sourceOf(x, dest_area.min_x, dest_w, from.min_x, src_w), fy);
                     rows.store(to + @as(usize, @intCast(x - r.rect.min_x)) * bytes, bytes, rastport.packPen(src.format, pen) orelse 0);
                 }
                 drawing.grow(&bound, y, &any);

@@ -43,7 +43,13 @@ const rastport = @import("../rastport/_rastport.zig");
 /// made smaller drops rows and columns whole. That is what a picture
 /// wants - a screenshot or a drawing scaled this way stays sharp and
 /// stays itself - and it is what makes the work one pass with no memory
-/// of its own.
+/// of its own. A RastPort that wants it smooth (`RPTAG_Smooth`) gets a
+/// photograph's look instead: made larger, each pixel mixed from the four
+/// of the source round its place; made smaller, each the mean of all the
+/// source it covers, every pixel of it by how much of it is covered - so
+/// nothing is left out, and a cover shrunk to a thumbnail keeps its fine
+/// lines as their share of the colour. Each way is taken by itself: a
+/// picture made narrower and taller is averaged across and mixed down.
 ///
 /// Coverage is honoured where the format carries it, exactly as
 /// `BlendPixelArray` does, so a picture with soft edges scales without
@@ -108,6 +114,7 @@ pub fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
     }
 
     const src_bytes = rtg.bitmaps.formatBits(from) / 8;
+    const shrinks = src_w > dest_w or src_h > dest_h;
     var it = drawing.visible(rp, dest_area.*);
     var bound = Rect{};
     var any = false;
@@ -127,11 +134,15 @@ pub fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
                 @as(usize, @intCast(r.rect.min_x + r.dx)) * to_bytes;
             var x: i32 = r.rect.min_x;
             if (rp.smooth) {
-                // Between the pixels, for a RastPort that wants it smooth.
+                // Between the pixels, for a RastPort that wants it smooth;
+                // the mean of what each covers where it is made smaller.
                 const fy = _blit.sourceOf(y, dest_area.min_y, dest_h, src_area.min_y, src_h);
+                const down = _blit.spanOf(y, dest_area.min_y, dest_h, src_area.min_y, src_h);
                 while (x < r.rect.max_x) : (x += 1) {
-                    const fx = _blit.sourceOf(x, dest_area.min_x, dest_w, src_area.min_x, src_w);
-                    const pen = _blit.sampleBetween(pixels, pitch, from, src_area.*, fx, fy);
+                    const pen = if (shrinks)
+                        _blit.sampleOver(pixels, pitch, from, src_area.*, _blit.spanOf(x, dest_area.min_x, dest_w, src_area.min_x, src_w), down)
+                    else
+                        _blit.sampleBetween(pixels, pitch, from, src_area.*, _blit.sourceOf(x, dest_area.min_x, dest_w, src_area.min_x, src_w), fy);
                     _blit.blendPixel(to + @as(usize, @intCast(x - r.rect.min_x)) * to_bytes, to_bytes, to_format, pen);
                 }
                 drawing.grow(&bound, y, &any);

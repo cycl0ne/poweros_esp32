@@ -35,9 +35,11 @@ const err = rtg.errors;
 /// a job the engine does not take, or what the driver answered.
 ///
 /// BEHAVIOR:
-/// Every pixel of the rectangle is the picture's colour at that place,
-/// mixed from the pixels round it, and is laid over the buffer by its
-/// coverage as `BlendPixels` lays it. The rectangle is not cut to the
+/// Every pixel of the rectangle is the picture's colour at that place, as
+/// graphics.library's smooth scale takes it - where the picture is made
+/// larger, mixed from the pixels round it; where it is made smaller, the
+/// mean of all the pixels it covers, each by how much of it it covers -
+/// and is laid over the buffer by its coverage as `BlendPixels` lays it. The rectangle is not cut to the
 /// buffer: a cut would move the picture under it. Which formats and
 /// which ratios the engine takes is the driver's to say - an engine that
 /// scales in fixed steps takes only the sizes those steps reach exactly -

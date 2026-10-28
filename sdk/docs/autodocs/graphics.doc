@@ -779,9 +779,11 @@ graphics.library/XorRegionRegion
 	blurring them across the pixels either side. Scaling down drops pixels
 	rather than averaging them. A RastPort that wants it smooth
 	(`RPTAG_Smooth`) gets each pixel mixed from the four round its place
-	instead; a smooth scale whose destination is one whole piece of a
-	board's buffer goes to the board's engine (`rtg.ScalePixels`) where it
-	takes the job.
+	instead where the picture is made larger, and the mean of all the
+	source it covers where it is made smaller, every pixel by how much of
+	it is covered - each way by itself. A smooth scale whose destination
+	is one whole piece of a board's buffer goes to the board's engine
+	(`rtg.ScalePixels`) where it takes the job.
 
 	Which source pixel a destination pixel comes from is worked out from the
 	destination rectangle's own corner and not from the clipped one, so a
@@ -3448,7 +3450,13 @@ graphics.library/XorRegionRegion
 	made smaller drops rows and columns whole. That is what a picture
 	wants - a screenshot or a drawing scaled this way stays sharp and
 	stays itself - and it is what makes the work one pass with no memory
-	of its own.
+	of its own. A RastPort that wants it smooth (`RPTAG_Smooth`) gets a
+	photograph's look instead: made larger, each pixel mixed from the four
+	of the source round its place; made smaller, each the mean of all the
+	source it covers, every pixel of it by how much of it is covered - so
+	nothing is left out, and a cover shrunk to a thumbnail keeps its fine
+	lines as their share of the colour. Each way is taken by itself: a
+	picture made narrower and taller is averaged across and mixed down.
 
 	Coverage is honoured where the format carries it, exactly as
 	`BlendPixelArray` does, so a picture with soft edges scales without
