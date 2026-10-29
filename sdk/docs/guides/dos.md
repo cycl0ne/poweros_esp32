@@ -513,6 +513,11 @@ header)` writes it with a newline (`RAM:x: object not found`) to the
 error stream, or to `Output()` when there is none, and leaves `IoErr()`
 at the code.
 
+The texts are in the default locale's language once one is set
+(`RAM:x: Objekt nicht gefunden`), and `DateToStr` and `StrToDate` write
+and read its words; `dos.FORMAT_DEF` is the country's short date and
+time ([locale guide](locale.md#dos-in-the-default-locale)).
+
 A command returns `RETURN_OK` (0) when it is done, `RETURN_WARN` (5)
 when it is done with something to say - nothing matched, Ctrl-C stopped
 it - `RETURN_ERROR` (10) when it failed, and `RETURN_FAIL` (20) when it

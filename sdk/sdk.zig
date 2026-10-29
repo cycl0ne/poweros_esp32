@@ -73,6 +73,9 @@ pub const usb = @import("libs/usb/usb.zig");
 pub const pci = @import("libs/pci/pci.zig");
 /// Three-dimensional drawing on the machine's cores, through facet.library.
 pub const facet = @import("libs/facet/facet.zig");
+/// Countries, languages and a program's strings in them, through
+/// locale.library.
+pub const locale = @import("libs/locale/locale.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

@@ -3700,6 +3700,45 @@ test "Fault, PrintFault: texts, headers, cutting, the shell's texts" {
     try tearDown(db);
 }
 
+test "Fault's texts are text/dos.cd's: each message the text of its code, and every code there" {
+    // The descriptor a translation of dos's messages is checked against.
+    const descriptor = @embedFile("text/dos.cd");
+    var lines = std.mem.splitScalar(u8, descriptor, '\n');
+    var messages: usize = 0;
+    while (lines.next()) |line| {
+        if (line.len == 0 or line[0] == ';' or line[0] == '#') continue;
+        const open = std.mem.indexOfScalar(u8, line, '(').?;
+        const close = std.mem.indexOfScalarPos(u8, line, open, '/').?;
+        const code = try std.fmt.parseInt(i32, line[open + 1 .. close], 10);
+        var text: [80]u8 = undefined;
+        var length: usize = 0;
+        const escaped = lines.next().?;
+        var at: usize = 0;
+        while (at < escaped.len) : (at += 1) {
+            if (escaped[at] == '\\') {
+                at += 1;
+                switch (escaped[at]) {
+                    'n' => text[length] = '\n',
+                    'x' => {
+                        text[length] = try std.fmt.parseInt(u8, escaped[at + 1 ..][0..2], 16);
+                        at += 2;
+                    },
+                    else => return error.UnknownEscape,
+                }
+            } else text[length] = escaped[at];
+            length += 1;
+        }
+        try testing.expectEqualStrings(text[0..length], std.mem.span(readargs.text(code).?));
+        messages += 1;
+    }
+    var codes: usize = 0;
+    var code: i32 = -200;
+    while (code < 1000) : (code += 1) {
+        if (readargs.text(code) != null) codes += 1;
+    }
+    try testing.expectEqual(codes, messages);
+}
+
 test "SetVar, GetVar, FindVar, DeleteVar: local variables and aliases" {
     const db = try setUp();
     defer kexec.deinit();

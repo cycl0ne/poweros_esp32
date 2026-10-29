@@ -1,0 +1,23 @@
+# LOCALE:Languages/deutsch.language - German: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=Sonntag DAY_2=Montag DAY_3=Dienstag DAY_4=Mittwoch
+DAY_5=Donnerstag DAY_6=Freitag DAY_7=Samstag
+ABDAY_1=So ABDAY_2=Mo ABDAY_3=Di ABDAY_4=Mi ABDAY_5=Do ABDAY_6=Fr
+ABDAY_7=Sa
+# The months, then their short names.
+MON_1=Januar MON_2=Februar MON_3=März MON_4=April MON_5=Mai
+MON_6=Juni MON_7=Juli MON_8=August MON_9=September MON_10=Oktober
+MON_11=November MON_12=Dezember
+ABMON_1=Jan ABMON_2=Feb ABMON_3=Mär ABMON_4=Apr ABMON_5=Mai
+ABMON_6=Jun ABMON_7=Jul ABMON_8=Aug ABMON_9=Sep ABMON_10=Okt
+ABMON_11=Nov ABMON_12=Dez
+# Yes and no, before and after noon.
+YESSTR=Ja NOSTR=Nein AM_STR=vorm. PM_STR=nachm.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=-
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Gestern TODAYSTR=Heute TOMORROWSTR=Morgen
+FUTURESTR=Zukunft

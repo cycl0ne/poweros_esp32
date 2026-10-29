@@ -475,6 +475,10 @@ FLASH=YES SOUND=BEEP VOLUME=80 TONE=880 DURATION=80
 FLASH=NO SOUND=SAMPLE SAMPLE=SYS:Sounds/ding.wav
 ```
 
+It also hands audio.prefs to audio.device, and makes the locale
+locale.prefs describes the system's default
+([locale guide](locale.md#setting-the-default-envsyslocaleprefs)).
+
 The keyboard is a window opened with `WA_NoActivate`: a press on it
 reaches its gadgets and leaves the active window - and the field being
 typed into - as they were. A program may open one of those too, for a

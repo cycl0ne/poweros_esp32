@@ -87,7 +87,7 @@ pub fn programTargetQuery(chip: Chip) std.Target.Query {
 }
 
 /// The libraries with an `.fd` file, each made into `interface/<name>.zig`.
-const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "jpeg", "dos", "rtg", "rta", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "asl", "iffparse", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil", "usb", "usbclass", "battery", "usbport", "battclock", "battmem", "thermal", "audiocodec", "wpa", "pci", "facet", "compression", "http" };
+const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "jpeg", "dos", "rtg", "rta", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "asl", "iffparse", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil", "usb", "usbclass", "battery", "usbport", "battclock", "battmem", "thermal", "audiocodec", "wpa", "pci", "facet", "compression", "http", "locale" };
 
 pub fn build(b: *std.Build) void {
     const sdk = b.addModule("sdk", .{ .root_source_file = b.path("sdk.zig") });
@@ -141,10 +141,24 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(fd2zig);
 
+    // A program's strings into the module it is built with, and a
+    // translation of them into a catalog file.
+    const catcomp = b.addExecutable(.{
+        .name = "catcomp",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/catcomp/catcomp.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    b.installArtifact(catcomp);
+    const catcomp_tests = b.addTest(.{ .root_module = catcomp.root_module });
+
     const fd_step = b.step("fd", "Generate the interfaces (interface/) from fd/");
     const test_step = b.step("test", "Check that every interface is up to date with its .fd file, and test the tools");
     test_step.dependOn(&b.addRunArtifact(addends_tests).step);
     test_step.dependOn(&b.addRunArtifact(romld_tests).step);
+    test_step.dependOn(&b.addRunArtifact(catcomp_tests).step);
 
     // elf2seg refuses what a loaded RISC-V or AArch64 program could not
     // survive: absolute addresses in its code, and a direct call to a fixed
@@ -190,6 +204,32 @@ pub fn build(b: *std.Build) void {
         check.addFileArg(b.path(interface));
         test_step.dependOn(&check.step);
     }
+}
+
+/// A program's strings, from its catalog descriptor (`.cd`), as the module
+/// it imports (tools/catcomp): their numbers, the strings built in, and the
+/// catalog's name and version for sdk.locale's `Strings`. `catalog_name` is
+/// the name locale.library looks the catalog up by - the program's place
+/// on the disk and `.catalog` (`c/test/locale.catalog`).
+pub fn addStrings(b: *std.Build, dep: *std.Build.Dependency, descriptor: std.Build.LazyPath, catalog_name: []const u8) *std.Build.Module {
+    const run = b.addRunArtifact(dep.artifact("catcomp"));
+    run.addArg("strings");
+    run.addFileArg(descriptor);
+    run.addArg(catalog_name);
+    const module = run.addOutputFileArg("strings.zig");
+    return b.createModule(.{ .root_source_file = module });
+}
+
+/// A translation (`.ct`) of a program's strings as the catalog file that
+/// goes on the disk at `LOCALE:Catalogs/<language>/<catalog_name>`
+/// (tools/catcomp), checked against the descriptor.
+pub fn addCatalog(b: *std.Build, dep: *std.Build.Dependency, descriptor: std.Build.LazyPath, translation: std.Build.LazyPath, catalog_name: []const u8) std.Build.LazyPath {
+    const run = b.addRunArtifact(dep.artifact("catcomp"));
+    run.addArg("catalog");
+    run.addFileArg(descriptor);
+    run.addFileArg(translation);
+    run.addArg(catalog_name);
+    return run.addOutputFileArg(std.fs.path.basename(catalog_name));
 }
 
 /// What `addProgram` builds.

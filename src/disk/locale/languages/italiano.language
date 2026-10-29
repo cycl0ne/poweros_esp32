@@ -1,0 +1,23 @@
+# LOCALE:Languages/italiano.language - Italian: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=Domenica DAY_2=Lunedì DAY_3=Martedì DAY_4=Mercoledì
+DAY_5=Giovedì DAY_6=Venerdì DAY_7=Sabato
+ABDAY_1=Dom ABDAY_2=Lun ABDAY_3=Mar ABDAY_4=Mer ABDAY_5=Gio
+ABDAY_6=Ven ABDAY_7=Sab
+# The months, then their short names.
+MON_1=Gennaio MON_2=Febbraio MON_3=Marzo MON_4=Aprile MON_5=Maggio
+MON_6=Giugno MON_7=Luglio MON_8=Agosto MON_9=Settembre
+MON_10=Ottobre MON_11=Novembre MON_12=Dicembre
+ABMON_1=Gen ABMON_2=Feb ABMON_3=Mar ABMON_4=Apr ABMON_5=Mag
+ABMON_6=Giu ABMON_7=Lug ABMON_8=Ago ABMON_9=Set ABMON_10=Ott
+ABMON_11=Nov ABMON_12=Dic
+# Yes and no, before and after noon.
+YESSTR=Sì NOSTR=No AM_STR=AM PM_STR=PM
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=-
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Ieri TODAYSTR=Oggi TOMORROWSTR=Domani
+FUTURESTR=Futuro

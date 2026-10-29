@@ -50,11 +50,16 @@ const sameWord = _date.sameWord;
 /// OWNERSHIP:
 /// Nothing is allocated. The strings stay the caller's.
 ///
+/// NOTES:
+/// Once a default locale is set, locale.library stands in front of this
+/// call: it reads the locale's words and formats, FORMAT_DEF its short
+/// date and time, and hands what it does not read to this.
+///
 /// BUGS:
 /// The calendar is right only up to the end of February 2100.
 ///
 /// SEE ALSO:
-/// `DateToStr`, `DateStamp`
+/// `DateToStr`, `DateStamp`, locale.library `SetDefaultLocale`
 ///
 /// EXAMPLES:
 /// ```zig

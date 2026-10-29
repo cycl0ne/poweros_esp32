@@ -1,0 +1,44 @@
+; C:test/Locale's strings, in English: the program is built with these,
+; and a translation in LOCALE:Catalogs/<language>/c/test/locale.catalog
+; stands in for them.
+#version 1
+MSG_NOLIBRARY (1//)
+No %s\n
+MSG_COUNTRY (//)
+Country:     %s (%s)\n
+MSG_LANGUAGE (//)
+Language:    %s\n
+MSG_PREFERRED (//)
+Preferred:\x20\x20
+MSG_ZONE (//)
+Time zone:   %s\n
+MSG_NOZONE (//)
+Time zone:   none\n
+MSG_CATALOG (//)
+Catalog:     %s, version %lu.%lu\n
+MSG_NOCATALOG (//)
+Catalog:     none, the strings built in\n
+MSG_DATETIME (//)
+Date and time
+MSG_DATE (//)
+Date
+MSG_TIME (//)
+Time
+MSG_SHORTDATETIME (//)
+Short
+MSG_SHORTDATE (//)
+Short date
+MSG_SHORTTIME (//)
+Short time
+MSG_FORMAT (//)
+  %-14s %s\n
+MSG_NUMBER (//)
+A number:    %D, %d without groups\n
+MSG_MONEY (//)
+Money:       %s and %s, %s\n
+MSG_PARSED (//)
+%s is %s\n
+MSG_NODATE (//)
+%s is no date by %s\n
+MSG_SORTED (//)
+In order:\x20\x20\x20

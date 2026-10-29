@@ -44,11 +44,17 @@ const Fill = _text.Fill;
 /// OWNERSHIP:
 /// The buffer is the caller's.
 ///
+/// NOTES:
+/// Once a default locale is set, locale.library stands in front of this
+/// call: a code's text is the one its catalog `sys/dos.catalog` has in
+/// the locale's language, and this one's where it has none. It takes the
+/// library's lock then, so Fault is no longer for an interrupt.
+///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `PrintFault`, `IoErr`
+/// `PrintFault`, `IoErr`, locale.library `SetDefaultLocale`
 ///
 /// EXAMPLES:
 /// ```zig

@@ -94,6 +94,11 @@ tags and constants, each with its doc comment.
   partitions, rdb.library: reading a disk's table, changing it, a fresh
   one, file systems kept in the table, errors, when a change is seen,
   and `C:RDB`.
+- [Locale](guides/locale.md) - the default locale and
+  `ENV:Sys/locale.prefs`, the country and language files, dates,
+  numbers and the order of letters in a program, a program's texts in
+  catalogs (descriptors, translations, `catcomp`, `sdk.locale.Strings`),
+  dos in the default locale, the code set.
 - [Modbus](guides/modbus.md) - a device's tables, the RS-485 bus
   (rs485.device), modbus.library as a client over RTU and TCP, what a
   call answers, a server from a program's tables, the commands, and
@@ -145,6 +150,7 @@ first time something opens it.
 | facet.library | `LIBS:` | three-dimensional drawing as Vulkan's model has it, on the machine's cores: memory, buffers and images, command buffers and a queue, render passes, pipelines with the program's own shaders, fences and semaphores, swapchains on a screen or in a window | [md](autodocs/facet.md) · [doc](autodocs/facet.doc) |
 | filter.library | `LIBS:` | a packet filter: rules on what comes in, on bsdsocket.library's packet hooks | [md](autodocs/filter.md) · [doc](autodocs/filter.doc) |
 | http.library | `LIBS:` | HTTP/1.1 requests over plain connections or TLS: a client keeping its connections for the next request, bodies sent and read in pieces, redirects followed, packed answers unpacked | [md](autodocs/http.md) · [doc](autodocs/http.doc), [`http.zig`](../libs/http/http.zig), [guide](guides/network.md#http-httplibrary) |
+| locale.library | `LIBS:` | locales - a country's dates, numbers and money, a language's words and order of letters - the default one, and programs' texts from catalogs | [md](autodocs/locale.md) · [doc](autodocs/locale.doc), [`locale.zig`](../libs/locale/locale.zig), [guide](guides/locale.md) |
 | icon.library | `LIBS:` | icons: the picture a file is shown with and its fields; the default that fits a file without one | [md](autodocs/icon.md) · [doc](autodocs/icon.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |
