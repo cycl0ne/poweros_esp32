@@ -1,8 +1,8 @@
 # Player
 
-Player plays sound files - WAV, MP3, FLAC and Ogg Vorbis - in a window,
-with a picture of the sound under its controls: a plasma, the wave, or
-the spectrum's bars.
+Player plays sound files - WAV, MP3, FLAC and Ogg Vorbis - and internet
+stations in a window, with a picture of the sound under its controls: a
+plasma, the wave, or the spectrum's bars.
 
 ## Starting it
 
@@ -10,19 +10,40 @@ Double-click its icon, double-click a `.mp3`, `.wav`, `.flac` or `.ogg`
 file, or type in a shell:
 
 ```
-Player FILES/M,VOLUME/K/N,LOOK/K
+Player FILES/M,ADD/S,VOLUME/K/N,LOOK/K
 ```
 
-- `FILES` are played one after another - or shuffled, with **Shuffle**.
+- `FILES` make the playlist, played one after another - or shuffled,
+  with **Shuffle**. A drawer adds its sound files by name, then those of
+  the drawers in it; an address - `http://...` or `https://...` - adds
+  a station (see *Stations*).
+- `ADD` adds the files to the list there is - the one the Player kept -
+  instead, and plays none of them.
 - `VOLUME` is in percent of as recorded (100), up to 200: up to 100 as
   loud as it sounds - half way is -18 dB - and past it a boost, 200
   twice as loud as recorded.
 - `LOOK` is the picture to start with: `PLASMA`, `WAVE` or `BARS`.
 
-A file dropped on the window from the desktop, or picked with
-**Project > Open...**, is played at once, in place of the files it was
-playing. The file requester starts in the drawer of the song playing;
-the sound and the picture go on while it is up.
+Each left out is as the Player was left; started without files, it opens
+with the list it had and the song it showed, paused where it stopped
+(see *Remembered*).
+
+There is one Player. Started while it runs, it hands what it was given
+to the one running and ends at once: the files are added to that list
+and the first played - with `ADD` only added - and `VOLUME` and `LOOK`
+are set. Without `ADD` the window comes to the front and is made
+active, which is all `Player` alone does. A song double-clicked on the
+desktop plays in the Player that is open. A name is handed over as the
+file's full name, so a name typed in a shell's drawer is found.
+
+Files dropped on the window from the desktop are added to the
+playlist - a drawer its sound files - and the first is played when
+nothing plays. **Project > Open...** picks songs, several at once, that
+are added and the first played; **Project > Open drawer...** picks a
+drawer, whose sound files are added and played the same way. The file
+requester starts in the drawer of the song shown; the sound and the
+picture go on while it is up. **Project > Open URL...** asks for a
+station's address.
 
 ## What the window shows
 
@@ -35,8 +56,9 @@ The window's title is the song's: `Fire - Player`.
   corners in a sunk edge; a song without one shows a note. A click on the
   cover shows it at its own size in a window of its own - as much of it
   as the screen holds, kept in its shape when the window is sized - which
-  its close gadget or Esc closes. That window stays with the cover it
-  shows; a click on the next song's cover shows that one in its place.
+  its close gadget or Esc closes. That window follows the songs: the
+  next song's cover takes the last one's place in it, and a song without
+  one closes it.
 - Beside it, one block of lines in the middle of the room, what the tags
   say: the title, large and bold - or the file's name - and the artist;
   under them, dimmer, the album and its year, the genre, the track and
@@ -53,7 +75,8 @@ The window's title is the song's: `Fire - Player`.
   and the song's length after it. Drag it to go to another place; the
   time shows where while it is held. A press on the length shows what is
   left of the song instead (`-3:16`), and another the length again. A
-  song of an hour or more shows its hours (`1:02:33`).
+  song of an hour or more shows its hours (`1:02:33`). With no song, or
+  one that cannot be read, the slider is empty and still.
 - The buttons of a tape deck. Play starts, pause holds the sound and goes
   on, stop goes back to the start; rewind and fast forward jump ten
   seconds back or on. At its ends, the song before and the song after:
@@ -75,8 +98,12 @@ The window's title is the song's: `Fire - Player`.
   in the list. In a window too narrow for the whole row, it stands in
   two lines or more, and the window grows to keep everything in it.
 
-Under them, as big as the window lets it be and sunk in a frame, the
-picture:
+Under them, as big as the window lets it be, two tabs: **Now playing**
+with the picture, and **Playlist** with the list.
+
+## The picture
+
+Sunk in a frame, one of three:
 
 - **Plasma**: waves of colour that move faster with the bass, turn their
   colours with the treble and light up with the loudness.
@@ -84,7 +111,14 @@ picture:
   still where it crosses the middle going up; what was drawn before fades
   away behind it.
 - **Bars**: the spectrum from 40 Hz at the left to 16 kHz at the right,
-  each bar a share of an octave, with a mark where its peak was.
+  each bar a share of an octave and a pixel from the next, with a mark
+  where its peak was.
+
+With a cover, the plasma and the bars are drawn in its colours: the two
+it has most of, grey, black and white left out. The plasma runs from one
+to the other and back, and the bars go from the first at the foot to the
+second at the top. Without a cover, or with one of hardly any colour,
+they keep their own.
 
 A press on the picture goes to the next one; the **Picture** menu picks
 one and ticks the one shown. The picture keeps in step with what is
@@ -92,21 +126,128 @@ heard, not with what has been decoded: the sound card's own delay is
 taken off. When the sound stops, the picture settles for two
 seconds and then rests until something plays.
 
-A song is shown before it is heard: its names and its cover first, then
-its sound. Reading a large cover takes a moment, and the sound starts
-after it rather than stumbling while it is read.
+## The playlist
+
+Each song's place, title, artist and length, the one shown in bold with
+a mark at its start. A song added shows its file's name at first; its
+tags are read a few songs at a time while the window has nothing else
+to do, and its row fills in. "song 3 of 12" beside the kind of file is
+the song's place in the list.
+
+- A double-click on a song, or Return, plays it.
+- **Remove**, or Del, takes the song selected out of the list. The song
+  shown taken out makes way for the one after it, which starts as the
+  deck was; after the last there is no song.
+- **Clear** takes every song out.
+- **Add...** picks songs to add, several at once; a drawer named adds
+  its sound files.
+- A song dragged up or down moves in the list. A press on a heading
+  sorts the list by it - the time by how long - and a second press turns
+  the order round; the list stays sorted as songs come and their tags
+  are read.
+
+With shuffle on, a song added goes to a random place among the songs
+still to come, and a song picked to play starts a new shuffle from it.
+
+## How it plays
+
+A song is shown as it starts: its names and its cover first, then its
+sound. The sound plays on a process of its own, so nothing the window
+does - reading a cover, opening the large one, a requester, the window
+being sized - makes it stumble.
+
+One song runs into the next without a gap: the song that follows is
+opened a few seconds before this one ends, and its sound joins this
+one's, from the first frame of its music - an MP3 as its encoder marked
+where the music begins and ends. A song at another rate than the one
+before follows once the sound has played out, after a short pause.
+Repeat one plays a song into itself the same way. A change to the list,
+the order or repeat in the last moment still counts: the song that
+would have followed is taken back unheard.
 
 On a machine with no sound the window opens all the same and says so,
 and a song picked still shows its cover and tags - as it does when all
 sixteen of the sound's streams are in use.
 
+## Stations
+
+An address in the playlist is a station: an internet radio that sends
+MP3 or Ogg Vorbis over `http://` or `https://`. **Project > Open URL...**
+asks for one in a small window: Return or **Open** adds it to the list
+and plays it, Esc or **Cancel** closes the window. An address typed
+without `http://` gets it put in front.
+
+A station is called when it is played. The window says *Calling the
+station*, then *Buffering* and how far, and the sound starts once two
+seconds of it have come. Then it shows the station: its name where an
+album's goes - and as its row's title in the list - its genre, the title
+it sends, taken apart into artist and title when it sends
+`Artist - Title`, and its address under them. The times say `live`, and
+the slider stays still: a station has no place to go to. When the sound
+comes more slowly than it plays, the window says *buffering* and the
+sound waits until two seconds have come again.
+
+A connection lost is called again, up to three times in a row - after a
+second, a second and five seconds - and the sound goes on. A station
+that cannot be reached, answers with an error or sends AAC says why at
+once; one that stops sending says so after the third call. A station on
+`https://` needs the clock set to check its certificate, and says so
+when it is not (`C:net/TimeSync` sets it).
+
+Stop ends the call, and play calls the station again. A station kept in
+the list is shown when the Player starts again, not called: play calls
+it.
+
+## Menus
+
+- **Project**: Open..., Open drawer... and Open URL..., as above; About, which says
+  which Player this is while the sound and the picture go on; Quit.
+- **Playlist**: Add..., Remove and Clear, as the buttons on its page;
+  Shuffle, ticked while it is on, and Repeat, with Off, All and One.
+  Each follows the button beside the deck, and the button follows it.
+- **Picture**: Plasma, Wave or Bars, the one shown ticked.
+- **Settings**: Remember where it was, ticked while it is on.
+
 ## Keys
 
 - Space pauses and goes on; when nothing plays, it starts.
+- N plays the song after, P the song before - as the deck's buttons at
+  its ends do.
+- Cursor left and right jump ten seconds back and on; cursor up and down
+  turn the volume up and down by five.
+- Return plays the song selected in the playlist, Del takes it out.
 - S turns shuffle on and off, R goes round repeat's three ways, M turns
-  the sound off and on, O opens the output's list.
-- Right-Amiga O opens a song.
+  the sound off and on, O opens the output's list. On the Playlist page,
+  A adds, E removes and L clears.
+- Right-Amiga O opens songs, Right-Amiga D a drawer of them, Right-Amiga
+  U a station's address, Right-Amiga A adds songs.
 - Right-Amiga Q ends it.
+
+## Remembered
+
+As it ends, the Player keeps how it was, in `ENV:` and in `ENVARC:`, so
+that it lasts past a restart:
+
+- `Player.prefs`, one line: the window's place and size, the page shown,
+  the picture, the volume, shuffle and repeat, whether it remembers, and
+  the drawer the file requester was last answered in.
+- `Player.list`, a line for each song in the list, in its order; the song
+  shown carries the second it was at.
+
+Started again, it opens where the window was - squeezed onto the screen
+when that is smaller now - on the page it showed, with its list and the
+song shown waiting where it stopped, paused: Space plays on. A song that
+had played to its end waits at its start. The file requester starts in
+the drawer last answered in.
+
+Files named as it starts make the list instead, and `VOLUME` and `LOOK`
+named win over what was kept. With **Settings > Remember where it was**
+off, no list is kept: the next start has an empty one, and the rest is
+kept all the same. A song in `Player.list` whose file is gone stays in
+the list and says so when it is played, as a file named that is not
+there does; a song whose name has a `"` in it is not kept. A
+`Player.prefs` that cannot be read leaves the Player as it starts the
+first time.
 
 ## Ending it
 

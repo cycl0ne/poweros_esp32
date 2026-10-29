@@ -6,7 +6,9 @@
 //!   diagonal, one that is the sine of a sum of sines across and down,
 //!   which bends it, and rings round a centre that wanders - added and
 //!   looked up in a palette that turns. The bass drives it faster, the
-//!   treble turns the colours, the loudness lights it. It is worked out at
+//!   treble turns the colours, the loudness lights it. The palette is the
+//!   colour wheel, or with a cover the way from its first colour to its
+//!   second and back, in bands of light and shade. It is worked out at
 //!   half the size and each point drawn as a square of four, which is a
 //!   quarter of the work and looks the same.
 //! - **Wave**: a fiftieth of a second as a line, started where the sound
@@ -14,9 +16,12 @@
 //!   still and noise does not set it off - each point between two samples
 //!   read between them; what was drawn before fades to a quarter each
 //!   look, which leaves a trail.
-//! - **Bars**: the spectrum (spectrum.zig) as columns of lit segments,
-//!   green at the foot to red at the top, a mark above each where its
-//!   peak was.
+//! - **Bars**: the spectrum (spectrum.zig) as columns of lit segments a
+//!   pixel apart, green at the foot to red at the top - or the cover's
+//!   first colour to its second - a mark above each where its peak was.
+//!
+//! The cover's colours (colours.zig) are `tint`, set by the window when a
+//! song's cover is read and taken away when it has none.
 //!
 //! The sine table and the plasma's rows and columns are kept here, so a
 //! look costs table lookups and additions - no sine per point. A ring's
@@ -29,6 +34,7 @@
 //! Nothing here touches the system: the host tests hold it.
 
 const spectrum = @import("spectrum.zig");
+const colours = @import("colours.zig");
 
 pub const Mode = enum(u8) { plasma, wave, bars };
 pub const mode_count = 3;
@@ -78,6 +84,9 @@ pub const Visual = struct {
     /// down.
     phase: [7]f32 = @splat(0),
     hue: f32 = 0,
+    /// The cover's two colours, which the plasma and the bars are drawn
+    /// in; null for their own.
+    tint: ?colours.Pair = null,
     /// The area as last drawn: a new size starts the trail again.
     width: u32 = 0,
     height: u32 = 0,
@@ -230,10 +239,20 @@ pub const Visual = struct {
 
     /// The palette for this look: the colour wheel - three sines a third
     /// apart - turned by `hue`, never below a sixth in any colour so it
-    /// stays soft, at `light` of full brightness.
+    /// stays soft, at `light` of full brightness. With a tint, the way
+    /// from its first colour to its second and back, turned the same, in
+    /// two bands of light and shade round the palette.
     fn turnPalette(v: *Visual, light: f32) void {
         const turn: u32 = @intFromFloat(v.hue);
         const scale: u32 = @intFromFloat(light * 256.0);
+        if (v.tint) |pair| {
+            for (&v.palette, 0..) |*entry, i| {
+                const n: u32 = @intCast(i);
+                const colour = colours.mix(pair.first, pair.second, v.sine[(n + turn) & 255]);
+                entry.* = colours.dim(colour, soft(v.sine[(n * 2 + 64) & 255]) * scale >> 8);
+            }
+            return;
+        }
         for (&v.palette, 0..) |*entry, i| {
             const n: u32 = @intCast(i);
             const r = soft(v.sine[(n + turn) & 255]) * scale >> 8;
@@ -296,7 +315,7 @@ pub const Visual = struct {
 
     fn bars(v: *Visual, pixels: [*]u32, w: u32, h: u32, stride: u32, bands: usize) void {
         const segment = 4;
-        const gap = @max(w / @as(u32, @intCast(bands)) / 6, 1);
+        const gap = 1;
         for (0..h) |y| @memset(pixels[y * stride ..][0..w], rgb(8, 8, 16));
         const room = h - 2;
         for (0..bands) |b| {
@@ -310,7 +329,8 @@ pub const Visual = struct {
             while (up < lit) : (up += 1) {
                 if (up % segment == segment - 1) continue;
                 const row = pixels + (h - 1 - up) * stride;
-                const colour = heat(up * 255 / room);
+                const height = up * 255 / room;
+                const colour = if (v.tint) |pair| colours.mix(pair.first, pair.second, height) else heat(height);
                 @memset(row[left..right], colour);
             }
             if (peak > 1 and peak < room) {
@@ -374,6 +394,39 @@ test "every mode draws inside its area and leaves the rest" {
         try testing.expect(differs);
         v.cycle();
     }
+}
+
+test "with a cover's colours the bars go from its first at the foot to its second at the top, a pixel apart" {
+    const v = try testing.allocator.create(Visual);
+    defer testing.allocator.destroy(v);
+    v.* = .{ .mode = .bars, .tint = .{ .first = rgb(255, 0, 0), .second = rgb(0, 0, 255) } };
+    v.init();
+    const w = 160;
+    const h = 64;
+    var pixels: [w * h]u32 = undefined;
+    // Every band at the top.
+    v.spectrum.levels = @splat(1.0);
+    v.bars(&pixels, w, h, w, 8);
+    const ground = rgb(8, 8, 16);
+    // The foot of the first band in the first colour, the top of its lit
+    // part in the second, the column after each band the ground.
+    try testing.expectEqual(rgb(255, 0, 0), pixels[(h - 1) * w]);
+    const top = pixels[(h - 1 - (h - 3)) * w];
+    try testing.expect(top >> 16 & 255 < 8 and top & 255 > 240);
+    for (1..8) |b| try testing.expectEqual(ground, pixels[(h - 1) * w + b * w / 8 - 1]);
+    // Without them, green at the foot again.
+    v.tint = null;
+    v.bars(&pixels, w, h, w, 8);
+    try testing.expectEqual(heat(0), pixels[(h - 1) * w]);
+}
+
+test "with a cover's colours the plasma's palette holds only blends of them" {
+    const v = try testing.allocator.create(Visual);
+    defer testing.allocator.destroy(v);
+    v.* = .{ .tint = .{ .first = rgb(255, 0, 0), .second = rgb(0, 0, 255) } };
+    v.init();
+    v.turnPalette(1.0);
+    for (v.palette) |entry| try testing.expect(entry >> 8 & 255 == 0);
 }
 
 test "the wave stands still where the sound crosses zero going up" {

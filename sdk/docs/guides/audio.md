@@ -529,8 +529,11 @@ leaves all of this to datatypes.library: a sound file is a
 in); Ctrl-C stops it. `SYS:Programs/Player` does it in a window, and is
 what the desktop opens a `.mp3`, `.wav`, `.flac` or `.ogg` file with
 (the `MP3`, `WAV`, `FLAC` and `Ogg` descriptors in `DEVS:DataTypes`),
-with the song's cover and tags and the chapter of a mix that is
-playing.
+with the song's cover and tags, the chapter of a mix that is playing,
+a playlist, and internet stations - MP3 or Ogg Vorbis over `http://` or
+`https://`, read on a process of their own and decoded through
+`ACA_ReadFunc`. There is one Player: a file opened while it runs plays
+in the one that is open, and it starts again where it was left.
 
 ## Keeping a picture in step
 

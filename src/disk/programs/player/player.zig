@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: MIT
 //! Player: sound files played in a window - WAV, MP3, FLAC and Ogg Vorbis
-//! - with a picture of the sound under the controls. Built against the
-//! SDK only.
+//! - and stations heard over the network, with a picture of the sound
+//! under the controls. Built against the SDK only.
 //!
-//!   Player FILES/M,VOLUME/K/N,LOOK/K
+//!   Player FILES/M,ADD/S,VOLUME/K/N,LOOK/K
 //!
-//! FILES are played one after another; VOLUME is in percent of as
-//! recorded (100), LOOK the picture to start with: PLASMA, WAVE or BARS.
-//! A file picked with Project > Open... or dropped on the window from the
-//! desktop is played at once instead.
+//! FILES make the playlist - a drawer its sound files, an address that
+//! starts `http://` or `https://` a station - and the first is played; with ADD they are added to the list kept and nothing more.
+//! VOLUME is in percent of as recorded, LOOK the picture to start with:
+//! PLASMA, WAVE or BARS. Each left out is as the Player was left.
+//!
+//! **One Player** (one.zig). The Player keeps the public port `Player`;
+//! a start while it runs hands its files over by their full names, with
+//! ADD, VOLUME and LOOK, and ends. The Player running adds them and plays
+//! the first, or only adds them with ADD; without ADD its window comes to
+//! the front, which is all a start with nothing given asks.
 //!
 //! The window's title is the song's. At its top, the song's cover beside
 //! what its tags say, one block of lines in the middle of the room: the
@@ -25,7 +31,8 @@
 //! window, read once for each song and scaled again when a sizing gives it
 //! another size, with round corners in a sunk edge - and where a song has none,
 //! a note on the ground (media.image's `MEDIA_NOTE`). A press on it shows
-//! the cover at its own size in a window of its own (big.zig). Then a slider
+//! the cover at its own size in a window of its own (big.zig), which
+//! follows the songs from then on. Then a slider
 //! across that is where the song is, which a drag moves, the time heard
 //! before it and the song's length after it - a press on the length shows
 //! what is left instead (`-3:16`); both keep the room their widest text
@@ -39,29 +46,70 @@
 //! Shuffle, repeat and the sound off are toolbuttons with media.image's
 //! pictures: repeat goes round off, the whole list, the one song, its
 //! picture with a 1 for the last. Under them, as big as the window lets it
-//! be and sunk in a frame, the picture:
+//! be, two pages under tabs (page.gadget with a clicktab.gadget): Now
+//! playing, the picture sunk in a frame, and Playlist, the list.
+//!
+//! The picture:
 //!
 //! - **Plasma** - waves of colour, driven faster by the bass, turned by
 //!   the treble, lit by the loudness.
 //! - **Wave** - the sound itself, a hundredth of a second of it.
 //! - **Bars** - the spectrum, from 40 Hz at the left to 16 kHz.
 //!
+//! The plasma and the bars are drawn in the cover's two leading colours
+//! when it has some (colours.zig), and in their own otherwise.
+//!
 //! A press on the picture goes to the next; the Picture menu picks one.
-//! The space bar pauses and goes on; the Project menu's Quit ends.
+//!
+//! **Menus and keys.** Project: Open..., Open drawer... (a drawer's songs,
+//! asked with `ASLFR_DrawersOnly`), Open URL... (a station's address, in
+//! a small window of the Player's own: Return or Open adds it and plays
+//! it - an address without `://` taken as `http://` - Esc or Cancel
+//! closes it), About and Quit. About is a requester
+//! put up without waiting (`BuildEasyRequestArgs`, `SysReqHandler`), so
+//! the sound and the picture go on behind it. Playlist: Add..., Remove,
+//! Clear, Shuffle and Repeat (Off, All, One), whose ticks follow the
+//! toolbuttons as the toolbuttons follow them. The space bar pauses and
+//! goes on, N and P are the song after and the song before, the cursor
+//! keys left and right jump ten seconds and up and down turn the volume
+//! five points; Return and Del work the list.
+//!
+//! **The playlist** (playlist.zig) is a listbrowser.gadget: each song's
+//! place, title, artist and length, the song shown bold and marked
+//! (`ROW_MARKED`). A double-click or Return plays a song; Del or Remove
+//! takes the one selected out, and Clear every one. A row dragged moves
+//! (`LISTBROWSER_Reorder`); a press on a heading sorts the list by it,
+//! and it stays sorted as songs come and their tags are read. A song
+//! added shows its file's name until its tags are read, a few songs at
+//! each look of the picture. Add... picks songs to add, several at once -
+//! a drawer named adds its sound files; Open... adds them too and plays
+//! the first. Files dropped on the window from the desktop are added - a
+//! drawer its sound files - and the first played when nothing plays.
 //!
 //! **The order.** The list is played in an order of its own - its own
 //! order, or shuffled from the song playing on, with the chip's random
-//! number generator (`sdk.hardware.rng`); the list as given stays. At the
-//! end of it the sound stops; with repeat it starts again, shuffled anew,
-//! and repeat one plays the song again. The song after, the song before
-//! and a file picked follow the deck: they play when it played, wait
-//! paused at their start when it was paused, and are only shown when it
-//! was stopped.
+//! number generator (`sdk.hardware.rng`); the list as shown stays. A song
+//! added to a shuffled list goes to a random place among those still to
+//! come, and a song picked to play starts a new shuffle. At the end of
+//! the order the sound stops; with repeat it starts again, shuffled anew,
+//! and repeat one plays the song again. The song after and the song
+//! before follow the deck: they play when it played, wait paused at their
+//! start when it was paused, and are only shown when it was stopped. The
+//! song shown taken out of the list makes way for the one after it in the
+//! order, started as the deck was.
 //!
-//! **Open...** puts up asl.library's file requester without waiting for
-//! it (`ASLFR_ReplyPort`): it runs on a process of its own, the window and
-//! the sound go on meanwhile, and its answer arrives as a message on a
-//! port the window's loop waits on with everything else.
+//! **One song into the next.** A few seconds before a song ends the sound
+//! asks for the song that follows in the order; the window opens it - its
+//! tags and cover read here - and hands it over, and the sound goes on into
+//! it without a gap (engine.zig). A change to what follows - the list, the
+//! order, repeat - hands over the new one instead while the old is not yet
+//! heard. Once it is heard the window shows it as the song, as `ended`
+//! would have gone on to it, without loading it again.
+//!
+//! **Open..., Open drawer... and Add...** put up asl.library's file requester without
+//! waiting for it (`ASLFR_ReplyPort`): it runs on a process of its own,
+//! the window and the sound go on meanwhile, and its answer arrives as a
+//! message on a port the window's loop waits on with everything else.
 //!
 //! **The output** is audio.device's, for every sound of the machine: one
 //! picked moves them all over as they play. The list follows the device -
@@ -79,16 +127,44 @@
 //! with QueueGadgetRefresh. While nothing plays it settles for two seconds
 //! and then rests.
 //!
-//! **The sound is the window's to keep going**: its buffers are refilled
-//! by the window's loop, so nothing the loop does may take long. A sizing
-//! says `IDCMP_NEWSIZE` at every step, and a step can come while the last
-//! one is still being drawn; the canvases follow the last size once the
-//! messages there are have been read, and the loop is back at the sound
-//! between one step and the next.
+//! **The sound has a process of its own** (engine.zig), above every
+//! program: the window gives it orders and is told when a song has ended,
+//! and whatever the window does meanwhile - reading a cover, the large
+//! one too, putting up a requester, following a sizing - the sound goes
+//! on. A sizing says `IDCMP_NEWSIZE` at every step; the canvases follow
+//! the last size once the messages there are have been read, so the
+//! window draws a sizing's last step and not every one in turn.
 //!
-//! **A song is shown before it is heard**: its names and its cover first,
-//! then its sound - reading a large cover takes the S3 a moment, which
-//! would otherwise starve the sound.
+//! **A song is shown as it starts**: its names and its cover first, then
+//! its sound, so the window says what is playing from its first moment.
+//!
+//! **A station** (radio.zig, icy.zig) is an address in the list, called
+//! when it is played. A process of its own reads what the station sends
+//! into a ring - the sound, with the titles it puts in every so many bytes
+//! taken out (`Icy-MetaData`) - and the sound's process decodes from that
+//! ring as from a file (`ACA_ReadFunc`). The window shows the station's
+//! name where an album's goes and as its row's title, its genre, the
+//! title it sends as the song's - `Artist - Title` taken apart - its
+//! address in the chapter's line, and `live` for the times; the slider
+//! stays still. The sound starts once the ring holds two seconds of it,
+//! and waits again - "buffering" - when it runs short. A connection lost
+//! is called again, three times in a row, after a second, a second and
+//! five seconds; a station that never sent sound, or sends no more, says
+//! why, and one that sends AAC is refused. Stop ends the call and play
+//! calls it again; a station kept in Player.list is shown at a start, not
+//! called.
+//!
+//! **Remembered** (remembered.zig). As it ends the Player writes how it
+//! was left to `ENV:` and `ENVARC:`: the window's box, the page, the look,
+//! the volume, shuffle and repeat, and the drawer last opened
+//! (Player.prefs), and the list with the song shown and the second it was
+//! at (Player.list). Started without files it opens that list again and
+//! shows the song where it was, paused - the sound moved there without
+//! being started (`place`). Started with files, they are the list, and
+//! VOLUME and LOOK given win over what was kept. Settings > Remember where
+//! it was, turned off, keeps no list. The files are written once, as the
+//! Player ends, so the disk is not written while songs play; a box kept
+//! on a larger screen is squeezed onto a smaller one (`WA_AutoAdjust`).
 //!
 //! The close gadget or Ctrl-C end it.
 
@@ -107,6 +183,8 @@ const MotionBase = sdk.interface.motion.MotionBase;
 const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const AslBase = sdk.interface.asl.AslBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
+const prefs = sdk.prefs;
 const Object = intuition.Object;
 const Window = intuition.Window;
 const TagItem = sdk.utility.TagItem;
@@ -130,10 +208,14 @@ const asl = sdk.asl;
 const mn = intuition.menus;
 const cv = sdk.gadgets.canvas;
 const ch = sdk.gadgets.chooser;
+const lb = sdk.gadgets.listbrowser;
+const ct = sdk.gadgets.clicktab;
+const pg = sdk.gadgets.page;
 const sc = intuition.screens;
 const diskfont = sdk.diskfont;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const audiocontrol = sdk.devices.audiocontrol;
+const keyboard = sdk.devices.keyboard;
 
 const engine_file = @import("engine.zig");
 const Engine = engine_file.Engine;
@@ -141,18 +223,29 @@ const visual = @import("visual.zig");
 const Visual = visual.Visual;
 const cover = @import("cover.zig");
 const big_window = @import("big.zig");
+const playlist = @import("playlist.zig");
+const Entry = playlist.Entry;
+const remembered = @import("remembered.zig");
+const one = @import("one.zig");
+const radio = @import("radio.zig");
+const icy = @import("icy.zig");
+const st = sdk.gadgets.string;
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.9";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (28.10.2026)\r\n";
+const VERSION = "1.16";
+const DATE = "29.10.2026";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
+/// How the Player names itself to a station.
+const USER_AGENT = COMMAND_NAME ++ "/" ++ VERSION;
 
-const template = "FILES/M,VOLUME/K/N,LOOK/K";
+const template = "FILES/M,ADD/S,VOLUME/K/N,LOOK/K";
 const arg_files = 0;
-const arg_volume = 1;
-const arg_look = 2;
+const arg_add = 1;
+const arg_volume = 2;
+const arg_look = 3;
 
 const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_NOMEMORY = "%s: no memory for the window\n";
@@ -169,6 +262,20 @@ const ID_REPEAT = 9;
 const ID_MUTE = 10;
 const ID_LENGTH = 11;
 const ID_COVER = 12;
+const ID_TABS = 13;
+const ID_LIST = 14;
+const ID_ADD = 15;
+const ID_REMOVE = 16;
+const ID_CLEAR = 17;
+/// Open URL...'s window: the address, Open and Cancel.
+const ID_URL_TEXT = 20;
+const ID_URL_OPEN = 21;
+const ID_URL_CANCEL = 22;
+
+/// The pages under the tabs.
+const page_picture = 0;
+const page_list = 1;
+const page_names = [_:null]?[*:0]const u8{ "Now playing", "Playlist" };
 
 /// A look every 40 ms; the time beside the slider every sixth.
 const look_period = 40;
@@ -178,11 +285,17 @@ const looks_per_time = 6;
 const settle_looks = 50;
 /// How far rewind and fast forward jump, in seconds.
 const jump_seconds = 10;
+/// The volume slider's top, in percent of as recorded, and how far a
+/// press of up or down moves it.
+const volume_most = 200;
+const volume_step = 5;
 /// Within this many seconds of a song's start, the song before is the one
 /// before; later, it is the start of this one.
 const back_seconds = 3;
 /// The volume slider's width, with its level beside it.
 const volume_width = 120;
+/// The least width of Open URL...'s field.
+const url_width = 360;
 /// The room the times beside the slider keep: minutes, or hours for a
 /// song of an hour or more.
 const room_short = "-00:00";
@@ -197,6 +310,8 @@ const Repeat = enum { off, all, one };
 const Start = enum { play, pause, stop };
 /// Looks between two readings of the outputs: a second.
 const looks_per_outputs = 25;
+/// Songs whose tags are read at each look, while some are not.
+const reads_per_look = 2;
 
 /// The lines beside the cover, in the order they are shown; the cover's
 /// size at first, and the least it is shown at - the most is what
@@ -239,31 +354,72 @@ fn soundTrouble(engine: *const Engine) [*:0]const u8 {
     };
 }
 
-/// The menus: the Project's Open... and Quit, and the Picture's looks in
-/// `visual.Mode`'s order, one ticked at a time.
+/// The menus: Project's songs and stations, About and Quit; the Playlist's, with
+/// shuffle ticked and repeat's three ways, one ticked; the Picture's looks
+/// in `visual.Mode`'s order, one ticked; Settings, whether the list and
+/// where it was are kept for the next start. The ticks follow the buttons
+/// and keys (`showMenuTicks`).
 const MENU_PROJECT = 0;
 const ITEM_OPEN = 0;
-const ITEM_QUIT = 2;
-const MENU_PICTURE = 1;
+const ITEM_OPEN_DRAWER = 1;
+const ITEM_OPEN_URL = 2;
+const ITEM_ABOUT = 4;
+const ITEM_QUIT = 5;
+const MENU_PLAYLIST = 1;
+const ITEM_ADD = 0;
+const ITEM_REMOVE = 1;
+const ITEM_CLEAR = 2;
+const ITEM_SHUFFLE = 4;
+const ITEM_REPEAT = 5;
+const MENU_PICTURE = 2;
+const MENU_SETTINGS = 3;
+const ITEM_REMEMBER = 0;
 
-fn lookItem(label: [*:0]const u8, which: visual.Mode) mn.NewMenu {
-    const self_bit = @as(u32, 1) << @intFromEnum(which);
-    return .{ .type = mn.NM_ITEM, .label = label, .flags = mn.CHECKIT, .mutual_exclude = ((@as(u32, 1) << visual.mode_count) - 1) & ~self_bit };
+fn menuItem(label: [*:0]const u8, key: ?[*:0]const u8) mn.NewMenu {
+    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key };
+}
+
+const bar = mn.NewMenu{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL };
+
+/// One of `count` items that exclude each other, the `at`th.
+fn oneOf(kind: u8, label: [*:0]const u8, at: u5, count: u5) mn.NewMenu {
+    const all = (@as(u32, 1) << count) - 1;
+    return .{ .type = kind, .label = label, .flags = mn.CHECKIT, .mutual_exclude = all & ~(@as(u32, 1) << at) };
 }
 
 const menus = [_]mn.NewMenu{
     .{ .type = mn.NM_TITLE, .label = "Project" },
-    .{ .type = mn.NM_ITEM, .label = "Open...", .comm_key = "O" },
-    .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL },
-    .{ .type = mn.NM_ITEM, .label = "Quit", .comm_key = "Q" },
+    menuItem("Open...", "O"),
+    menuItem("Open drawer...", "D"),
+    menuItem("Open URL...", "U"),
+    bar,
+    menuItem("About", null),
+    menuItem("Quit", "Q"),
+    .{ .type = mn.NM_TITLE, .label = "Playlist" },
+    menuItem("Add...", "A"),
+    menuItem("Remove", null),
+    menuItem("Clear", null),
+    bar,
+    .{ .type = mn.NM_ITEM, .label = "Shuffle", .flags = mn.CHECKIT | mn.MENUTOGGLE },
+    menuItem("Repeat", null),
+    oneOf(mn.NM_SUB, "Off", @intFromEnum(Repeat.off), 3),
+    oneOf(mn.NM_SUB, "All", @intFromEnum(Repeat.all), 3),
+    oneOf(mn.NM_SUB, "One", @intFromEnum(Repeat.one), 3),
     .{ .type = mn.NM_TITLE, .label = "Picture" },
-    lookItem("Plasma", .plasma),
-    lookItem("Wave", .wave),
-    lookItem("Bars", .bars),
+    oneOf(mn.NM_ITEM, "Plasma", @intFromEnum(visual.Mode.plasma), visual.mode_count),
+    oneOf(mn.NM_ITEM, "Wave", @intFromEnum(visual.Mode.wave), visual.mode_count),
+    oneOf(mn.NM_ITEM, "Bars", @intFromEnum(visual.Mode.bars), visual.mode_count),
+    .{ .type = mn.NM_TITLE, .label = "Settings" },
+    .{ .type = mn.NM_ITEM, .label = "Remember where it was", .flags = mn.CHECKIT | mn.MENUTOGGLE },
     .{},
 };
-/// Where the looks start in `menus`.
-const first_look = 5;
+
+/// The song shown when the Player last ended, and the second it was at.
+const Resume = struct { entry: *Entry, second: u32 };
+
+/// What the file requester is up for: songs to play, songs to add, or a
+/// drawer's songs to play.
+const Ask = enum { play, add, drawer };
 
 fn pair(t: sdk.utility.Tag, data: usize) TagItem {
     return .{ .tag = t, .data = data };
@@ -291,6 +447,15 @@ fn Line(comptime size: usize) type {
             line.text[line.len] = 0;
         }
 
+        fn addBytes(line: *Self, piece: []const u8) void {
+            for (piece) |byte| {
+                if (line.len == size) break;
+                line.text[line.len] = byte;
+                line.len += 1;
+            }
+            line.text[line.len] = 0;
+        }
+
         /// A separator before what follows, when something came before.
         fn between(line: *Self, separator: [*:0]const u8) void {
             if (line.len != 0) line.add(separator);
@@ -299,8 +464,23 @@ fn Line(comptime size: usize) type {
         fn empty(line: *const Self) bool {
             return line.len == 0;
         }
+
+        fn same(line: *const Self, other: *const Self) bool {
+            if (line.len != other.len) return false;
+            for (line.text[0..line.len], other.text[0..other.len]) |mine, theirs| {
+                if (mine != theirs) return false;
+            }
+            return true;
+        }
     };
 }
+
+/// Open URL...'s window, while it is open.
+const UrlWindow = struct {
+    object: *Object,
+    window: *Window,
+    field: *Object,
+};
 
 const App = struct {
     sys: *ExecBase,
@@ -343,6 +523,11 @@ const App = struct {
     mute_picture: *Object = undefined,
     volume: *Object = undefined,
     picture: *Object = undefined,
+    /// The pages and their tabs, the page shown, and the list.
+    book: *Object = undefined,
+    pages: [page_names.len:null]?*Object = @splat(null),
+    page: u32 = page_picture,
+    browser: *Object = undefined,
     /// audio.device's outputs, the chooser that shows them, and the
     /// device opened to ask - none without sound.
     output: *Object = undefined,
@@ -362,16 +547,23 @@ const App = struct {
     settle: u32 = 0,
     looks: u32 = 0,
 
-    /// The files to play, and which is playing.
-    list: [*]const ?[*:0]const u8 = undefined,
-    count: usize = 0,
-    current: usize = 0,
-    /// The order they are played in, a file's index each - the list's
-    /// own, or shuffled; `step` is where in it the song is. Without the
-    /// memory for it, the list's own.
-    order: ?[*]u32 = null,
+    /// The songs, and the one shown - playing, paused or stopped.
+    songs: playlist.Playlist = .{},
+    playing: ?*Entry = null,
+    /// The order they are played in - the list's own, or shuffled - every
+    /// song once, `ordered` of them; `step` is where in it the song shown
+    /// is, or with none the song to start at. Without the memory for it,
+    /// the list's own.
+    order: ?[*]*Entry = null,
+    ordered: usize = 0,
     order_room: usize = 0,
     step: usize = 0,
+    /// The song handed to the sound to follow the one shown without a
+    /// gap, and the one last tried - opened or not - so it is not tried
+    /// again; as of the sound's `follow_round`.
+    following: ?*Entry = null,
+    follow_tried: ?*Entry = null,
+    follow_round: u32 = 0,
     shuffled: bool = false,
     repeat: Repeat = .off,
     /// The sound off, and the volume it comes back at.
@@ -381,20 +573,48 @@ const App = struct {
     show_left: bool = false,
     /// The song is an hour or more: its times with hours.
     long: bool = false,
-    /// A file picked or dropped: the list is then this one.
-    picked: [dos.path_max + 1]u8 = @splat(0),
-    picked_list: [1]?[*:0]const u8 = .{null},
-    /// Open...'s file requester, made the first time, and the port its
-    /// answer comes to; `asking` while it is up. None without asl.library.
+    /// The file requester of Open..., Open drawer... and Add..., made the
+    /// first time, and the port its answer comes to; `asking` while it is
+    /// up, for what `asked`. None without asl.library.
     al: ?*AslBase = null,
     request: ?*anyopaque = null,
     asl_port: ?*exec.MsgPort = null,
     asking: bool = false,
+    asked: Ask = .play,
+    /// About's requester while it is up.
+    about_window: ?*intuition.Window = null,
+    /// The public port a second start hands its files to (one.zig).
+    public: ?*exec.MsgPort = null,
+    /// The station listened to, while it is (radio.zig): connecting,
+    /// filling its ring, or played - `station_loaded` once the sound reads
+    /// it, how it is to start until then - and what it said last.
+    station: ?*radio.Radio = null,
+    station_loaded: bool = false,
+    station_how: Start = .play,
+    station_facts: radio.Facts = .{},
+    /// How far the ring was to a start when it was last shown, and why the
+    /// station shown could not be listened to.
+    station_percent: u32 = 0,
+    station_why: [128:0]u8 = @splat(0),
+    /// Open URL...'s window while it is up, the address last opened in
+    /// it, and string.gadget for its field - opened the first time.
+    url_window: ?UrlWindow = null,
+    url_text: [dos.path_max + 1:0]u8 = @splat(0),
+    string_lib: ?*exec.Library = null,
+    /// Whether the list and where it was are kept for the next start
+    /// (Settings > Remember where it was), and the drawer the file
+    /// requester was last answered in - both from the run before, too.
+    remember: bool = true,
+    drawer: [dos.path_max + 1:0]u8 = @splat(0),
 
     /// The position slider held: the time shows where it would go.
     dragging: bool = false,
     shown_second: u32 = ~@as(u32, 0),
     line_text: [line_count]Line(160) = [_]Line(160){.{}} ** line_count,
+    /// The kind of file the song is, which the kind line starts with, and
+    /// whether the machine cannot play it.
+    kind_text: Line(64) = .{},
+    silent: bool = false,
     /// The lines that say something as runs: each line's, and a line
     /// break between two; and the null run that ends them.
     runs: [2 * line_count]tx.TextRun = @splat(.{}),
@@ -418,31 +638,48 @@ const App = struct {
         _ = app.ib.SetGadgetAttrsTagList(gadget, app.window, tags.ptr);
     }
 
+    /// A gadget on page `page` set: drawn when the page is shown, and
+    /// only changed when it is not, where drawing it would cover the page
+    /// that is.
+    fn setOn(app: *App, page: u32, gadget: *Object, tags: []const TagItem) void {
+        _ = app.ib.SetGadgetAttrsTagList(gadget, if (app.page == page) app.window else null, tags.ptr);
+    }
+
     // --- the song --------------------------------------------------------------
 
-    /// File `index` of the list shown, then started as `how` says.
-    fn playAt(app: *App, index: usize, how: Start) void {
-        app.current = index;
-        const name = app.list[index] orelse return;
+    /// `entry` shown, its row marked, then started as `how` says - a
+    /// station listened to (`playStation`).
+    fn playAt(app: *App, entry: *Entry, how: Start) void {
+        const name = entry.path();
+        if (playlist.isUrl(name)) return app.playStation(entry, how);
+        app.stopStation();
         const err = app.engine.load(name);
+        app.kind_text.clear();
+        app.silent = err == engine_file.no_sound;
+        // What the sound read of it is its row's too.
+        if (err == 0 or err == engine_file.no_sound) app.songs.filled(app.sys, entry, &app.engine.info);
+        app.markPlaying(entry);
         app.visual.quiet();
         app.shown_second = ~@as(u32, 0);
         if (err != 0 and err != engine_file.no_sound) {
+            const shown = playlist.fileName(name);
             for (&app.line_text) |*line| line.clear();
             const title = &app.line_text[line_title];
-            title.add(app.dl.FilePart(name));
+            title.add(shown);
             title.add(": ");
             title.add(app.acb.AudioErrorText(err));
-            app.showTitle(app.dl.FilePart(name));
+            app.showTitle(shown);
             app.chapters = null;
             app.chapter_count = 0;
             app.showLines();
-            app.showCover(null, name);
+            app.showCover(null, name, shown);
+            app.showRange(0);
+            app.showTime();
             app.showDeck(td.BUT_STOP, false);
             app.wake();
             return;
         }
-        app.showSong(name, err == engine_file.no_sound);
+        app.showSong(name);
         if (err == engine_file.no_sound or how == .stop) {
             app.showDeck(td.BUT_STOP, false);
         } else if (how == .pause) {
@@ -455,18 +692,341 @@ const App = struct {
         app.wake();
     }
 
+    // --- a station -----------------------------------------------------------
+
+    /// The song shown is a station.
+    fn showsStation(app: *const App) bool {
+        const entry = app.playing orelse return false;
+        return playlist.isUrl(entry.path());
+    }
+
+    /// A station is being called, or its ring filled, and the sound does
+    /// not read it yet.
+    fn connecting(app: *const App) bool {
+        return app.station != null and !app.station_loaded;
+    }
+
+    /// `entry`, a station, shown and - unless `how` is to stop - called;
+    /// played as `how` says once enough of it has come (`stationNews`).
+    fn playStation(app: *App, entry: *Entry, how: Start) void {
+        app.stopStation();
+        app.engine.unload();
+        app.markPlaying(entry);
+        app.visual.quiet();
+        app.shown_second = ~@as(u32, 0);
+        app.kind_text.clear();
+        app.silent = false;
+        app.chapters = null;
+        app.chapter_count = 0;
+        app.station_facts = .{};
+        app.station_why = @splat(0);
+        app.station_how = how;
+        app.station_percent = 0;
+        if (how != .stop) {
+            app.station = radio.Radio.start(app.sys, app.dl, entry.path(), USER_AGENT);
+            if (app.station == null) app.tellWhy("No memory for the station");
+        }
+        app.showStation();
+        app.showCover(null, "", &app.line_text[line_title].text);
+        app.showRange(0);
+        app.keepRoom(false);
+        app.showTime();
+        app.showDeck(if (app.station != null) td.BUT_PLAY else td.BUT_STOP, how == .pause);
+        app.wake();
+    }
+
+    /// The station listened to let go of: its reader told to end - which
+    /// ends the sound's reading of its ring too - the sound given back,
+    /// and the reader waited for.
+    fn stopStation(app: *App) void {
+        const station = app.station orelse return;
+        station.halt();
+        app.engine.unload();
+        station.free();
+        app.station = null;
+        app.station_loaded = false;
+    }
+
+    /// The station says something: how it goes, what it is, what plays,
+    /// or - before the sound reads it - that its ring has filled. Once it
+    /// holds what a start wants, the sound opens on it.
+    fn stationNews(app: *App) void {
+        const station = app.station orelse return;
+        const phase = app.station_facts.phase;
+        const titles = app.station_facts.titles;
+        station.facts(&app.station_facts);
+        const facts = &app.station_facts;
+        const changed = facts.phase != phase or facts.titles != titles;
+        if (app.station_loaded) {
+            if (changed) app.showStation();
+            return;
+        }
+        switch (facts.phase) {
+            .failed => return app.stationFailed(&facts.why),
+            .streaming => if (station.holds(station.startBytes())) return app.listenNow(),
+            .connecting, .halted => {},
+        }
+        // How far the ring is, in tens.
+        const percent = station.percent();
+        if (!changed and percent / 10 == app.station_percent / 10) return;
+        app.station_percent = percent;
+        app.showStation();
+    }
+
+    /// Enough of the station has come: the sound opened on its ring and
+    /// started as the deck says - or why not said.
+    fn listenNow(app: *App) void {
+        const station = app.station orelse return;
+        const err = app.engine.listen(station);
+        app.station_loaded = true;
+        station.begun();
+        if (err == engine_file.no_sound) return app.stationFailed(soundTrouble(app.engine));
+        if (err != 0) return app.stationFailed(app.acb.AudioErrorText(err));
+        app.describeSound();
+        app.showStation();
+        app.engine.start();
+        if (app.station_how == .pause) app.engine.pause(true);
+        app.showDeck(td.BUT_PLAY, app.station_how == .pause);
+        app.showTime();
+        app.wake();
+    }
+
+    /// The station could not be listened to, or stopped sending: why is
+    /// said where its sound's kind goes, and it is let go of. Play calls
+    /// it again.
+    fn stationFailed(app: *App, why: [*:0]const u8) void {
+        var told: [128:0]u8 = @splat(0);
+        const length = @min(lengthOf(why), told.len);
+        @memcpy(told[0..length], why[0..length]);
+        app.stopStation();
+        app.tellWhy(&told);
+        app.visual.quiet();
+        app.showStation();
+        app.showDeck(td.BUT_STOP, false);
+        app.showTime();
+    }
+
+    /// The station's sound played out: it stopped sending, and its ring
+    /// is empty.
+    fn stationEnded(app: *App) void {
+        if (app.station) |station| station.facts(&app.station_facts);
+        const why = &app.station_facts.why;
+        app.stationFailed(if (why[0] != 0) why else "The station stopped sending");
+    }
+
+    fn tellWhy(app: *App, why: [*:0]const u8) void {
+        app.station_why = @splat(0);
+        const length = @min(lengthOf(why), app.station_why.len);
+        @memcpy(app.station_why[0..length], why[0..length]);
+    }
+
+    /// The station's lines: what plays - the title its metadata names, its
+    /// artist apart - or else its name; its name and its genre under that;
+    /// its address; and how it goes. The window's title is the first line,
+    /// and the station's row takes its name once it says it.
+    fn showStation(app: *App) void {
+        const entry = app.playing orelse return;
+        const facts = &app.station_facts;
+        for (&app.line_text) |*line| line.clear();
+        const named = icy.split(facts.title[0..lengthOf(&facts.title)]);
+        const title = &app.line_text[line_title];
+        if (named.title.len > 0) {
+            title.addBytes(named.title);
+            app.line_text[line_artist].addBytes(named.artist);
+            app.line_text[line_album].add(&facts.name);
+        } else if (facts.name[0] != 0) {
+            title.add(&facts.name);
+        } else {
+            title.add(@ptrCast(&entry.title));
+        }
+        app.line_text[line_more].add(&facts.genre);
+        app.line_text[line_chapter].add(entry.path());
+        app.composeKind();
+        app.showTitle(&title.text);
+        app.showLines();
+        if (facts.name[0] != 0 and !sameText(@ptrCast(&entry.title), &facts.name)) {
+            entry.retitle(&facts.name);
+            app.rowsChanged();
+        }
+    }
+
+    /// A station's kind line: why it could not be listened to; that it is
+    /// being called, or how far its ring is to a start; the kind of its
+    /// sound, live - and holding while its ring fills again; or, let go
+    /// of, that play listens to it.
+    fn composeStation(app: *App, line: *Line(160)) void {
+        if (app.station_why[0] != 0) return line.add(&app.station_why);
+        const station = app.station orelse return line.add("A station: play listens to it");
+        if (!app.station_loaded) {
+            if (app.station_facts.phase != .streaming) return line.add("Calling the station");
+            var progress: [32:0]u8 = @splat(0);
+            app.formatNumber(&progress, "Buffering %u%%", station.percent());
+            return line.add(&progress);
+        }
+        line.add(&app.kind_text.text);
+        line.add(" - live");
+        if (app.engine.starved) line.add(", buffering");
+    }
+
+    // --- Open URL... ------------------------------------------------------------
+
+    /// Open URL...: a small window for a station's address - the one last
+    /// opened in it - with Open and Cancel, which does not hold the Player
+    /// up; brought to the front when it is open already.
+    fn askUrl(app: *App) void {
+        const ib = app.ib;
+        if (app.url_window) |shown| {
+            ib.WindowToFront(shown.window);
+            ib.ActivateWindow(shown.window);
+            _ = ib.ActivateGadget(shown.field, shown.window, null);
+            return;
+        }
+        if (app.string_lib == null) app.string_lib = app.sys.OpenLibrary(st.STRING_LIBRARY, 0);
+        if (app.string_lib == null) return ib.DisplayBeep(app.screen);
+        var loose: Loose = .{};
+        defer loose.dispose(ib);
+        const field = loose.add(ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+            pair(gc.GA_ID, ID_URL_TEXT),
+            pair(gc.GA_RelVerify, 1),
+            pair(gc.STRINGA_MaxChars, dos.path_max),
+            pair(gc.STRINGA_TextVal, @intFromPtr(&app.url_text)),
+            .{},
+        })) orelse return ib.DisplayBeep(app.screen);
+        const open_button = loose.add(button(ib, "_Open", ID_URL_OPEN)) orelse return ib.DisplayBeep(app.screen);
+        const cancel_button = loose.add(button(ib, "_Cancel", ID_URL_CANCEL)) orelse return ib.DisplayBeep(app.screen);
+        const buttons = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
+            .{ .object = open_button, .weight_width = 0 },
+            .{},
+            .{ .object = cancel_button, .weight_width = 0 },
+        }) orelse return ib.DisplayBeep(app.screen);
+        const layout = group(ib, &loose, &.{ pair(lg.LAYOUTA_Margin, 8), pair(lg.LAYOUTA_Spacing, 6) }, &.{
+            .{ .object = field, .min_width = url_width, .label = "A_ddress" },
+            .{ .object = buttons, .weight_height = 0 },
+        }) orelse return ib.DisplayBeep(app.screen);
+        const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+            pair(wn.WA_Title, @intFromPtr("Open URL")),
+            pair(wn.WA_ScreenTitle, @intFromPtr(SCREEN_TITLE)),
+            pair(wn.WA_PubScreen, @intFromPtr(app.screen)),
+            pair(wn.WA_AutoAdjust, 1),
+            pair(wn.WA_CloseGadget, 1),
+            pair(wn.WA_DragBar, 1),
+            pair(wn.WA_DepthGadget, 1),
+            pair(wn.WA_SizeGadget, 1),
+            pair(wn.WA_Activate, 1),
+            pair(wc.WINDOWA_Layout, @intFromPtr(layout)),
+            .{},
+        }) orelse return ib.DisplayBeep(app.screen);
+        loose.take(layout);
+        var open = wc.WmOpen{};
+        const opened = ib.SendMessage(object, @ptrCast(&open));
+        if (opened == 0) {
+            ib.DisposeObject(object);
+            return ib.DisplayBeep(app.screen);
+        }
+        const window: *Window = @ptrFromInt(opened);
+        app.url_window = .{ .object = object, .window = window, .field = field };
+        _ = ib.ActivateGadget(field, window, null);
+    }
+
+    /// The signal of Open URL...'s window, while it is open.
+    fn urlSignal(app: *App) u32 {
+        const shown = app.url_window orelse return 0;
+        var mask: usize = 0;
+        _ = app.ib.GetAttr(wc.WINDOWA_SigMask, shown.object, &mask);
+        return @truncate(mask);
+    }
+
+    /// What Open URL...'s window says: Open, or Return in its field,
+    /// listens to the address and closes it; Cancel, Escape and its close
+    /// gadget only close it.
+    fn urlMessages(app: *App) void {
+        const shown = app.url_window orelse return;
+        var code: u32 = 0;
+        var handle = wc.WmHandleInput{ .code = &code };
+        while (true) {
+            const word = app.ib.SendMessage(shown.object, @ptrCast(&handle));
+            if (word == wc.WMHI_LASTMSG) return;
+            switch (word & wc.WMHI_CLASSMASK) {
+                wc.WMHI_CLOSEWINDOW => return app.closeUrl(),
+                wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
+                    ID_URL_TEXT => {
+                        if (code == keyboard.RAWKEY_ESC) return app.closeUrl();
+                        if (app.openUrl()) return app.closeUrl();
+                    },
+                    ID_URL_OPEN => if (app.openUrl()) return app.closeUrl(),
+                    ID_URL_CANCEL => return app.closeUrl(),
+                    else => {},
+                },
+                else => {},
+            }
+        }
+    }
+
+    /// The address in Open URL...'s field added to the list and listened
+    /// to - `http://` put before one that names no way to be reached:
+    /// false, with a beep, when there is none, or one the Player cannot
+    /// listen to.
+    fn openUrl(app: *App) bool {
+        const shown = app.url_window orelse return false;
+        var value: usize = 0;
+        _ = app.ib.GetAttr(gc.STRINGA_TextVal, shown.field, &value);
+        const typed: [*:0]const u8 = if (value != 0) @ptrFromInt(value) else "";
+        var start: usize = 0;
+        while (typed[start] == ' ') start += 1;
+        var end = start + lengthOf(typed + start);
+        while (end > start and typed[end - 1] == ' ') end -= 1;
+        const text = typed[start..end];
+        if (text.len == 0) {
+            app.ib.DisplayBeep(app.screen);
+            return false;
+        }
+        var address: [dos.path_max + 1:0]u8 = @splat(0);
+        const plain = "http://";
+        const bare = indexOf(text, "://") == null;
+        const lead: []const u8 = if (bare) plain else "";
+        const length = @min(lead.len + text.len, dos.path_max);
+        @memcpy(address[0..lead.len], lead);
+        @memcpy(address[lead.len..length], text[0 .. length - lead.len]);
+        if (!playlist.isUrl(&address)) {
+            app.ib.DisplayBeep(app.screen);
+            return false;
+        }
+        app.url_text = address;
+        const before = app.beginAdding();
+        _ = app.songs.addPath(app.sys, app.dl, &address);
+        if (app.endAdding(before)) |first| app.playNow(first);
+        return true;
+    }
+
+    /// Open URL...'s window closed, what its field said kept for the next
+    /// time.
+    fn closeUrl(app: *App) void {
+        const shown = app.url_window orelse return;
+        app.ib.DisposeObject(shown.object);
+        app.url_window = null;
+    }
+
     // --- the order -----------------------------------------------------------
 
-    /// The file at `step` of the order.
-    fn indexAt(app: *const App, step: usize) usize {
-        const order = app.order orelse return step;
+    /// The song at `step` of the order; null past its end.
+    fn entryAt(app: *App, step: usize) ?*Entry {
+        if (step >= app.songs.count) return null;
+        const order = app.order orelse return app.songs.at(step);
         return order[step];
     }
 
     /// The song at `step` of the order shown, and started as `how` says.
     fn goTo(app: *App, step: usize, how: Start) void {
         app.step = step;
-        app.playAt(app.indexAt(step), how);
+        app.playAt(app.entryAt(step) orelse return, how);
+    }
+
+    /// Play with no song loaded: the song shown, or the one the order
+    /// stands at, or its first.
+    fn playShown(app: *App) void {
+        if (app.playing) |entry| return app.playAt(entry, .play);
+        if (app.songs.count == 0) return;
+        app.goTo(if (app.step < app.songs.count) app.step else 0, .play);
     }
 
     /// How the song after or before is started: as the one playing is.
@@ -478,26 +1038,37 @@ const App = struct {
         };
     }
 
-    /// The order made for a new list: room for it, and the list's own
-    /// order or a shuffled one with the first song first.
-    fn newOrder(app: *App) void {
-        if (app.count > app.order_room) {
-            if (app.order) |old| app.sys.FreeVec(old);
-            app.order = null;
-            app.order_room = 0;
-            const memory = app.sys.AllocVec(app.count * @sizeOf(u32), exec.MEMF_ANY) orelse return;
-            app.order = @ptrCast(@alignCast(memory));
-            app.order_room = app.count;
+    /// Room in the order for every song, what it holds kept; false
+    /// without the memory, and the order is then the list's own.
+    fn orderRoom(app: *App) bool {
+        const wanted = app.songs.count;
+        if (app.order != null and wanted <= app.order_room) return true;
+        const room = @max(wanted, app.order_room * 2, 16);
+        const memory = app.sys.AllocVec(room * @sizeOf(*Entry), exec.MEMF_ANY);
+        const old = app.order;
+        app.order = if (memory) |made| @ptrCast(@alignCast(made)) else null;
+        app.order_room = if (memory != null) room else 0;
+        if (old) |kept| {
+            if (app.order) |order| {
+                for (0..app.ordered) |i| order[i] = kept[i];
+            }
+            app.sys.FreeVec(@ptrCast(kept));
         }
-        app.step = 0;
-        if (app.shuffled) app.shuffleOrder(0) else app.listOrder();
+        if (app.order == null) app.ordered = 0;
+        return app.order != null;
     }
 
-    /// The list's own order, the song at the step it has there.
+    /// The list's own order, the step on the song shown.
     fn listOrder(app: *App) void {
-        const order = app.order orelse return;
-        for (0..app.count) |i| order[i] = @intCast(i);
-        app.step = app.current;
+        const order = if (app.orderRoom()) app.order else null;
+        var entry = app.songs.first();
+        var at: usize = 0;
+        while (entry) |song| : (entry = song.next()) {
+            if (song == app.playing) app.step = at;
+            if (order) |into| into[at] = song;
+            at += 1;
+        }
+        if (order != null) app.ordered = at;
     }
 
     /// A number from 0 to `below` less one, from the chip's generator.
@@ -506,17 +1077,21 @@ const App = struct {
     }
 
     /// The order shuffled: with `first` at its start and the rest after
-    /// it, or - with none - all of it, the song just played not first.
-    fn shuffleOrder(app: *App, first: ?usize) void {
-        const order = app.order orelse return;
-        const n = app.count;
-        for (0..n) |i| order[i] = @intCast(i);
+    /// it, or - with none - all of it, the song shown not first.
+    fn shuffleOrder(app: *App, first: ?*Entry) void {
+        app.listOrder();
         app.step = 0;
+        const order = app.order orelse return;
+        const n = app.ordered;
         if (n < 2) return;
         var from: usize = 0;
         if (first) |song| {
-            order[0] = @intCast(song);
-            order[song] = 0;
+            for (order[0..n]) |*slot| {
+                if (slot.* != song) continue;
+                slot.* = order[0];
+                break;
+            }
+            order[0] = song;
             from = 1;
         }
         var at = n - 1;
@@ -526,19 +1101,150 @@ const App = struct {
             order[at] = order[other];
             order[other] = held;
         }
-        if (first == null and order[0] == app.current) {
+        if (first == null and order[0] == app.playing) {
             const other = 1 + random(n - 1);
             order[0] = order[other];
-            order[other] = @intCast(app.current);
+            order[other] = app.playing.?;
         }
     }
 
+    /// Songs added at the end of the list, from place `before` on, put in
+    /// a shuffled order each at a random place among the songs still to
+    /// come. The list's own order follows the list (`listMoved`).
+    fn orderAdded(app: *App, before: usize) void {
+        if (!app.shuffled or !app.orderRoom()) return;
+        const order = app.order.?;
+        var entry = app.songs.at(before);
+        while (entry) |song| : (entry = song.next()) {
+            const lowest = @min(if (app.playing != null) app.step + 1 else app.step, app.ordered);
+            const at = lowest + random(app.ordered - lowest + 1);
+            var shift = app.ordered;
+            while (shift > at) : (shift -= 1) order[shift] = order[shift - 1];
+            order[at] = song;
+            app.ordered += 1;
+        }
+    }
+
+    /// `entry` taken out of the order, the step kept on the song it is on
+    /// - or, when that is this one, on the one after it - and no longer
+    /// the song that follows. Where it stood.
+    fn forget(app: *App, entry: *Entry) usize {
+        if (app.following == entry) app.following = null;
+        if (app.follow_tried == entry) app.follow_tried = null;
+        var at: usize = 0;
+        if (app.order) |order| {
+            while (at < app.ordered and order[at] != entry) at += 1;
+            if (at == app.ordered) return at;
+            for (at..app.ordered - 1) |i| order[i] = order[i + 1];
+            app.ordered -= 1;
+        } else {
+            at = app.songs.placeOf(entry);
+        }
+        if (at < app.step) app.step -= 1;
+        return at;
+    }
+
+    /// Where `entry` stands in the order.
+    fn stepOf(app: *App, entry: *Entry) usize {
+        const order = app.order orelse return app.songs.placeOf(entry);
+        for (order[0..app.ordered], 0..) |song, at| {
+            if (song == entry) return at;
+        }
+        return 0;
+    }
+
+    /// The song that plays when the one shown ends, as `ended` goes on: the
+    /// same again with repeat one, the next of the order, or round to the
+    /// first with repeat - shuffled anew, so one at random then, and the
+    /// one picked before while it still may be. Null at the end.
+    fn followingEntry(app: *App) ?*Entry {
+        const shown = app.playing orelse return null;
+        const count = app.songs.count;
+        if (app.repeat == .one) return shown;
+        if (app.step + 1 < count) return app.entryAt(app.step + 1);
+        if (app.repeat == .off) return null;
+        if (!app.shuffled) return app.entryAt(0);
+        if (app.follow_tried) |kept| {
+            if (kept != shown) return kept;
+        }
+        if (count < 2) return shown;
+        const picked = app.songs.at(random(count - 1)) orelse return null;
+        return if (picked == shown) app.songs.at(count - 1) else picked;
+    }
+
+    /// What the sound let go of - the song handed to follow, at a load, a
+    /// stop or a seek - forgotten here too.
+    fn followUp(app: *App) void {
+        if (app.follow_round == app.engine.follow_round) return;
+        app.follow_round = app.engine.follow_round;
+        app.following = null;
+        app.follow_tried = null;
+    }
+
+    /// While the sound asks for it, the song that follows the one shown
+    /// handed to it: opened here - its tags and cover read on the window's
+    /// task - so the sound goes on into it without a gap. Handed again
+    /// when the order, repeat or the list changed what follows.
+    fn keepFollowing(app: *App) void {
+        const engine = app.engine;
+        app.followUp();
+        if (!engine.wantsFollowing()) return;
+        const wanted = app.followingEntry();
+        if (wanted == app.follow_tried) return;
+        var stream: ?*ac.AudioStream = null;
+        // A station is listened to when the order comes to it, not gone on
+        // into.
+        if (wanted) |entry| {
+            if (!playlist.isUrl(entry.path())) stream = app.acb.OpenAudioStream(&[_]TagItem{
+                pair(ac.ACA_Name, @intFromPtr(entry.path())),
+                pair(ac.ACA_KeepPicture, 1),
+                .{},
+            }, null);
+        }
+        const taken = engine.follow(stream);
+        app.follow_round = engine.follow_round;
+        app.follow_tried = wanted;
+        if (taken) {
+            app.following = if (stream != null) wanted else null;
+        } else if (stream) |late| {
+            app.acb.CloseAudioStream(late);
+        }
+    }
+
+    /// The song handed to follow is being heard: the song shown from now
+    /// on, the order gone on to it - without loading it, the picture going
+    /// on. Taken out of the list as it began, the order goes on after it.
+    fn advance(app: *App) void {
+        app.followUp();
+        const song = app.following orelse return app.goOn();
+        if (!app.engine.advance()) return;
+        app.followUp();
+        if (song != app.playing) {
+            if (app.entryAt(app.step + 1) == song) {
+                app.step += 1;
+            } else if (app.shuffled) {
+                app.shuffleOrder(song);
+            } else {
+                app.step = app.stepOf(song);
+            }
+        }
+        app.songs.filled(app.sys, song, &app.engine.info);
+        app.kind_text.clear();
+        app.silent = false;
+        app.markPlaying(song);
+        app.shown_second = ~@as(u32, 0);
+        app.showSong(song.path());
+        app.wake();
+    }
+
     /// The song after: the next of the order, round to the first with
-    /// repeat.
+    /// repeat - with no song shown, the one the order stands at.
     fn next(app: *App) void {
-        if (app.count == 0) return;
+        const count = app.songs.count;
+        if (count == 0) return;
         const how = app.startNow();
-        if (app.step + 1 < app.count) return app.goTo(app.step + 1, how);
+        const after = if (app.playing != null) app.step + 1 else app.step;
+        if (after < count) return app.goTo(after, how);
         if (app.repeat == .off) return;
         if (app.shuffled) app.shuffleOrder(null);
         app.goTo(0, how);
@@ -546,15 +1252,17 @@ const App = struct {
 
     /// The song before - or, a few seconds into this one, its start.
     fn previous(app: *App) void {
-        if (app.count == 0) return;
+        const count = app.songs.count;
+        if (count == 0) return;
         const engine = app.engine;
         const going = engine.state == .playing or engine.state == .paused;
         const rate = @max(engine.info.rate, 1);
-        const late = going and engine.songFrame() >= back_seconds * rate;
+        const late = going and engine.live == null and engine.songFrame() >= back_seconds * rate;
         if (!late) {
             const how = app.startNow();
+            if (app.playing == null) return app.goTo(@min(app.step, count - 1), how);
             if (app.step > 0) return app.goTo(app.step - 1, how);
-            if (app.repeat != .off) return app.goTo(app.count - 1, how);
+            if (app.repeat != .off) return app.goTo(count - 1, how);
         }
         if (!going) return;
         engine.seek(0);
@@ -562,24 +1270,33 @@ const App = struct {
         app.showTime();
     }
 
-    /// Shuffle turned on or off: an order from the song playing on, or
-    /// the list's own.
+    /// Shuffle turned on or off - by its button, the menu or its key: an
+    /// order from the song playing on, or the list's own; the button and
+    /// the menu's tick with it.
     fn shuffleTurned(app: *App, on: bool) void {
         app.shuffled = on;
-        if (on) app.shuffleOrder(app.current) else app.listOrder();
+        if (on) app.shuffleOrder(app.playing) else app.listOrder();
+        app.set(app.shuffle_button, &.{ pair(tb.TOOLBUTTON_Checked, @intFromBool(on)), .{} });
+        app.showMenuTicks();
     }
 
-    /// Repeat pressed: off, the whole list, the one song, and round; the
-    /// button on for the two, its picture with a 1 for the one song.
+    /// Repeat pressed: off, the whole list, the one song, and round.
     fn repeatTurned(app: *App) void {
-        app.repeat = switch (app.repeat) {
+        app.repeatTo(switch (app.repeat) {
             .off => .all,
             .all => .one,
             .one => .off,
-        };
-        const picture = if (app.repeat == .one) media.MEDIA_REPEAT_ONE else media.MEDIA_REPEAT;
+        });
+    }
+
+    /// Repeat as `how`: the button on for the whole list and the one song,
+    /// its picture with a 1 for the one song; the menu's tick with it.
+    fn repeatTo(app: *App, how: Repeat) void {
+        app.repeat = how;
+        const picture = if (how == .one) media.MEDIA_REPEAT_ONE else media.MEDIA_REPEAT;
         _ = app.ib.SetAttrsTagList(app.repeat_picture, &[_]TagItem{ pair(media.MEDIA_Glyph, picture), .{} });
-        app.set(app.repeat_button, &.{ pair(tb.TOOLBUTTON_Checked, @intFromBool(app.repeat != .off)), .{} });
+        app.set(app.repeat_button, &.{ pair(tb.TOOLBUTTON_Checked, @intFromBool(how != .off)), .{} });
+        app.showMenuTicks();
     }
 
     /// The sound off or on again, at the volume the slider says; the
@@ -590,6 +1307,19 @@ const App = struct {
         _ = app.ib.SetAttrsTagList(app.mute_picture, &[_]TagItem{ pair(media.MEDIA_Glyph, picture), .{} });
         app.set(app.mute_button, &.{ pair(tb.TOOLBUTTON_Checked, @intFromBool(off)), .{} });
         app.engine.setVolume(if (off) 0 else app.level);
+    }
+
+    /// The volume `by` percent up or down.
+    fn volumeBy(app: *App, by: i32) void {
+        app.volumeAt(@as(i32, @intCast(app.level)) + by);
+    }
+
+    /// The volume at `wanted` percent, within the slider's range, and the
+    /// slider with it.
+    fn volumeAt(app: *App, wanted: i32) void {
+        const level: u32 = @intCast(@min(@max(wanted, 0), volume_most));
+        app.set(app.volume, &.{ pair(sl.SLIDER_Level, level), .{} });
+        app.volumeTo(level);
     }
 
     /// The volume slider moved: the sound at that level, and on again
@@ -629,9 +1359,8 @@ const App = struct {
         return tags;
     }
 
-    /// The song's names, cover and kind, and the slider as long as it is;
-    /// `silent` when the machine cannot play it.
-    fn showSong(app: *App, name: [*:0]const u8, silent: bool) void {
+    /// The song's names, cover and kind, and the slider as long as it is.
+    fn showSong(app: *App, name: [*:0]const u8) void {
         const info = &app.engine.info;
         const tags = app.tagsOf(name);
         for (&app.line_text) |*line| line.clear();
@@ -670,6 +1399,19 @@ const App = struct {
         app.chapter_shown = no_chapter;
         if (app.chapter_count == 0) app.line_text[line_chapter].add(tags.comment);
 
+        app.describeSound();
+        app.composeKind();
+        app.showLines();
+        app.showCover(tags.picture, name, if (tags.album[0] != 0) tags.album else tags.title);
+        app.showRange(app.seconds(info.frames));
+        app.keepRoom(app.seconds(info.frames) >= hour);
+        app.showTime();
+    }
+
+    /// What the sound is - its kind, rate, sides and bit rate - as the
+    /// kind line starts.
+    fn describeSound(app: *App) void {
+        const info = &app.engine.info;
         const kind: [*:0]const u8 = switch (info.codec) {
             ac.ACODEC_WAV => "WAV",
             ac.ACODEC_MP3 => "MP3",
@@ -682,21 +1424,71 @@ const App = struct {
         const stream = exec.fmtStream(.{ kind, info.rate, sides, info.bitrate / 1000 });
         comptime exec.checkFormat("%s, %u Hz, %s, %u kbit/s", @TypeOf(.{ kind, @as(u32, 0), sides, @as(u32, 0) }));
         _ = app.sys.RawDoFmt("%s, %u Hz, %s, %u kbit/s", &stream, null, &about);
-        const kind_line = &app.line_text[line_format];
-        kind_line.add(&about);
-        if (app.count > 1) {
-            var place: [32:0]u8 = @splat(0);
-            const counted = exec.fmtStream(.{ @as(u32, @intCast(app.current + 1)), @as(u32, @intCast(app.count)) });
-            comptime exec.checkFormat(" - song %u of %u", @TypeOf(.{ @as(u32, 0), @as(u32, 0) }));
-            _ = app.sys.RawDoFmt(" - song %u of %u", &counted, null, &place);
-            kind_line.add(&place);
+        app.kind_text.clear();
+        app.kind_text.add(&about);
+    }
+
+    /// The kind line made: the kind of file, the song's place in the list
+    /// when it holds more, and why it is silent when it is; for a station
+    /// how it goes.
+    fn composeKind(app: *App) void {
+        const line = &app.line_text[line_format];
+        line.clear();
+        if (app.showsStation()) return app.composeStation(line);
+        line.add(&app.kind_text.text);
+        if (app.songs.count > 1) {
+            if (app.playing) |entry| {
+                var place: [32:0]u8 = @splat(0);
+                const counted = exec.fmtStream(.{ entry.place, @as(u32, @intCast(app.songs.count)) });
+                comptime exec.checkFormat(" - song %u of %u", @TypeOf(.{ @as(u32, 0), @as(u32, 0) }));
+                _ = app.sys.RawDoFmt(" - song %u of %u", &counted, null, &place);
+                line.add(&place);
+            }
         }
-        if (silent) kind_line.add(if (app.engine.open_error == exec.IOERR_OPENFAIL) " - no sound" else " - no stream free");
+        if (app.silent) line.add(if (app.engine.open_error == exec.IOERR_OPENFAIL) " - no sound" else " - no stream free");
+    }
+
+    /// The kind line made again after the list changed, and shown when it
+    /// says something else now.
+    fn showKind(app: *App) void {
+        if (app.kind_text.empty() and !app.showsStation()) return;
+        const before = app.line_text[line_format];
+        app.composeKind();
+        if (!app.line_text[line_format].same(&before)) app.showLines();
+    }
+
+    /// No song shown: the sound given back, and the window as it opens.
+    fn showNoSong(app: *App) void {
+        app.stopStation();
+        app.engine.unload();
+        app.visual.quiet();
+        app.shown_second = ~@as(u32, 0);
+        for (&app.line_text) |*line| line.clear();
+        app.kind_text.clear();
+        app.silent = false;
+        app.line_text[line_title].add("No song");
+        if (!app.engine.opened) app.line_text[line_format].add(soundTrouble(app.engine));
+        app.chapters = null;
+        app.chapter_count = 0;
+        _ = app.ib.SetAttrsTagList(app.object, &[_]TagItem{ pair(wn.WA_Title, @intFromPtr(COMMAND_NAME)), .{} });
         app.showLines();
-        app.showCover(tags.picture, name);
-        app.set(app.position, &.{ pair(sl.SLIDER_Max, @max(app.seconds(info.frames), 1)), pair(sl.SLIDER_Level, 0), .{} });
-        app.keepRoom(app.seconds(info.frames) >= hour);
+        app.showCover(null, "", COMMAND_NAME);
+        app.showRange(0);
+        app.keepRoom(false);
         app.showTime();
+        app.showDeck(td.BUT_STOP, false);
+    }
+
+    /// The position slider across a song `length` seconds long, at its
+    /// start; with no length to go through, still and empty - over an
+    /// hour's range, so its knob is as small as a song's.
+    fn showRange(app: *App, length: u32) void {
+        app.set(app.position, &.{
+            pair(sl.SLIDER_Max, if (length > 0) length else hour),
+            pair(sl.SLIDER_Level, 0),
+            pair(gc.GA_Disabled, @intFromBool(length == 0)),
+            .{},
+        });
     }
 
     /// The times keep the room for hours when `long`, or for minutes; the
@@ -778,14 +1570,29 @@ const App = struct {
     }
 
     /// The cover read and drawn: the picture the tags hold, one beside
-    /// the song, or the note.
-    fn showCover(app: *App, picture: ?*const ac.AudioPicture, name: [*:0]const u8) void {
+    /// the song, or the note; the pictures take its colours. The large
+    /// cover's window, when it is open, shows it too, `title` its title,
+    /// or closes when there is none.
+    fn showCover(app: *App, picture: ?*const ac.AudioPicture, name: [*:0]const u8, title: [*:0]const u8) void {
         app.covers +%= 1;
         var value: usize = 0;
         _ = app.ib.GetAttr(cv.CANVAS_RastPort, app.cover, &value);
         if (value == 0) return;
         _ = app.kept.read(.{ .sys = app.sys, .dl = app.dl, .gb = app.gb, .dt = app.dt }, @ptrFromInt(value), picture, name);
+        app.visual.tint = app.kept.lead;
         app.drawCover();
+        const dt = app.dt orelse return;
+        _ = app.big.follow(.{ .ib = app.ib, .dt = dt, .screen = app.screen }, app.covers, app.coverSource(picture), title);
+    }
+
+    /// Where the kept cover came from, for the large window to read it
+    /// again at its own size; null for the note.
+    fn coverSource(app: *const App, picture: ?*const ac.AudioPicture) ?cover.Source {
+        return switch (app.kept.from) {
+            .none => null,
+            .tags => .{ .held = picture orelse return null },
+            .beside => .{ .file = app.kept.file() orelse return null },
+        };
     }
 
     /// The canvas made as big as the cover's box, and the cover drawn into
@@ -839,14 +1646,10 @@ const App = struct {
         const at_x: isize = @bitCast(x);
         const at_y: isize = @bitCast(y);
         if (at_x < 0 or at_y < 0 or at_x >= side or at_y >= side) return;
-        if (app.count == 0) return;
-        const name = app.list[app.current] orelse return;
+        const name = (app.playing orelse return).path();
+        if (playlist.isUrl(name)) return;
         const tags = app.tagsOf(name);
-        const source: cover.Source = switch (app.kept.from) {
-            .none => return,
-            .tags => .{ .held = tags.picture orelse return },
-            .beside => .{ .file = app.kept.file() orelse return },
-        };
+        const source = app.coverSource(tags.picture) orelse return;
         const title = if (tags.album[0] != 0) tags.album else tags.title;
         if (!app.big.show(.{ .ib = app.ib, .dt = dt, .screen = app.screen }, app.covers, source, title)) app.ib.DisplayBeep(app.screen);
     }
@@ -909,6 +1712,12 @@ const App = struct {
     fn clockTexts(app: *App, at: u32) void {
         const total = app.seconds(app.engine.info.frames);
         app.formatTime(&app.time_text, at, false);
+        if (app.showsStation()) {
+            // Listened to for `at`, with no end.
+            app.length_text = @splat(0);
+            @memcpy(app.length_text[0.."live".len], "live");
+            return;
+        }
         if (app.show_left) app.formatTime(&app.length_text, total -| at, true) else app.formatTime(&app.length_text, total, false);
     }
 
@@ -927,33 +1736,40 @@ const App = struct {
         const at = app.seconds(app.engine.songFrame());
         if (at == app.shown_second) return;
         app.shown_second = at;
-        app.set(app.position, &.{ pair(sl.SLIDER_Level, at), .{} });
+        if (!app.showsStation()) app.set(app.position, &.{ pair(sl.SLIDER_Level, at), .{} });
         app.writeClock(at);
     }
 
-    /// The end of a song: the same again with repeat one; the next of the
-    /// order, round to the first with repeat; or back to the start and
-    /// still.
+    /// The end of a song: the same again with repeat one, or the order
+    /// gone on.
     fn ended(app: *App) void {
+        if (app.station != null and app.engine.live != null) return app.stationEnded();
         if (app.repeat == .one) {
             app.engine.start();
             app.visual.quiet();
             app.showTime();
             return;
         }
-        if (app.step + 1 < app.count) return app.goTo(app.step + 1, .play);
-        if (app.repeat == .all and app.count > 0) {
+        app.goOn();
+    }
+
+    /// Past the song shown: the next of the order, round to the first with
+    /// repeat; or back to the start and still.
+    fn goOn(app: *App) void {
+        if (app.step + 1 < app.songs.count) return app.goTo(app.step + 1, .play);
+        if (app.repeat == .all and app.songs.count > 0) {
             if (app.shuffled) app.shuffleOrder(null);
             return app.goTo(0, .play);
         }
         app.engine.stop();
+        app.visual.quiet();
         app.showDeck(td.BUT_STOP, false);
         app.showTime();
     }
 
     fn jump(app: *App, by: i32) void {
         const engine = app.engine;
-        if (engine.stream == null or (engine.state != .playing and engine.state != .paused)) return;
+        if (engine.stream == null or engine.live != null or (engine.state != .playing and engine.state != .paused)) return;
         const rate: i64 = @max(engine.info.rate, 1);
         const target = @max(@as(i64, engine.songFrame()) + by * rate, 0);
         engine.seek(@intCast(target));
@@ -970,25 +1786,32 @@ const App = struct {
         const paused = code & td.TDECK_PAUSED_CODE != 0;
         switch (mode) {
             td.BUT_PLAY => {
-                if (engine.stream == null) {
-                    if (app.count > 0) app.playAt(app.current, .play);
-                } else {
-                    engine.start();
+                // A station still to come starts as the deck says once it
+                // is there.
+                if (app.connecting()) {
+                    app.station_how = if (paused) .pause else .play;
+                    return;
                 }
+                if (engine.stream == null) app.playShown() else engine.start();
                 engine.pause(paused);
+                if (app.connecting() and paused) app.station_how = .pause;
                 // Nothing to play: the deck stays stopped.
-                if (engine.stream == null) app.showDeck(td.BUT_STOP, false);
+                if (engine.stream == null and app.station == null) app.showDeck(td.BUT_STOP, false);
                 app.wake();
             },
             td.BUT_STOP => {
-                engine.stop();
+                // A station stopped is let go of; play calls it again.
+                if (app.showsStation()) {
+                    app.stopStation();
+                    app.showStation();
+                } else engine.stop();
                 app.visual.quiet();
                 app.showTime();
             },
             td.BUT_REWIND, td.BUT_FORWARD => {
                 app.jump(if (mode == td.BUT_REWIND) -jump_seconds else jump_seconds);
                 // A jump, not a mode: the deck goes back to what it was.
-                const playing = engine.state == .playing or engine.state == .paused;
+                const playing = engine.state == .playing or engine.state == .paused or app.connecting();
                 app.showDeck(if (playing) td.BUT_PLAY else td.BUT_STOP, engine.state == .paused);
             },
             // The deck's mode stays as it was; the song follows it.
@@ -1005,10 +1828,11 @@ const App = struct {
             .playing => engine.pause(true),
             .paused => engine.pause(false),
             .idle, .ended => {
-                if (engine.stream == null) {
-                    if (app.count > 0) app.playAt(app.current, .play);
-                    return;
+                if (app.connecting()) {
+                    app.station_how = if (app.station_how == .pause) .play else .pause;
+                    return app.showDeck(td.BUT_PLAY, app.station_how == .pause);
                 }
+                if (engine.stream == null) return app.playShown();
                 engine.start();
             },
         }
@@ -1050,69 +1874,156 @@ const App = struct {
 
     fn cycleLook(app: *App) void {
         app.visual.cycle();
-        app.showLookMenu();
+        app.showMenuTicks();
         app.wake();
     }
 
-    /// The Picture menu's tick on the look shown.
-    fn showLookMenu(app: *App) void {
+    /// The picture `mode`, ticked in the menu.
+    fn lookTo(app: *App, mode: visual.Mode) void {
+        app.visual.mode = mode;
+        app.visual.width = 0;
+        app.showMenuTicks();
+        app.wake();
+    }
+
+    /// The menus' ticks on what is so: shuffle, the way repeat goes, the
+    /// look shown, and whether where it was is remembered.
+    fn showMenuTicks(app: *App) void {
         const strip = app.strip orelse return;
         app.ib.ClearMenuStrip(app.window);
-        for (0..visual.mode_count) |at| {
-            const entry = app.ib.ItemAddress(strip, mn.FULLMENUNUM(MENU_PICTURE, @intCast(at), mn.NOSUB)) orelse continue;
-            if (at == @intFromEnum(app.visual.mode)) entry.flags |= mn.CHECKED else entry.flags &= ~mn.CHECKED;
+        app.tickItem(strip, mn.FULLMENUNUM(MENU_PLAYLIST, ITEM_SHUFFLE, mn.NOSUB), app.shuffled);
+        for (0..3) |at| {
+            app.tickItem(strip, mn.FULLMENUNUM(MENU_PLAYLIST, ITEM_REPEAT, @intCast(at)), at == @intFromEnum(app.repeat));
         }
+        for (0..visual.mode_count) |at| {
+            app.tickItem(strip, mn.FULLMENUNUM(MENU_PICTURE, @intCast(at), mn.NOSUB), at == @intFromEnum(app.visual.mode));
+        }
+        app.tickItem(strip, mn.FULLMENUNUM(MENU_SETTINGS, ITEM_REMEMBER, mn.NOSUB), app.remember);
         _ = app.ib.ResetMenuStrip(app.window, strip);
+    }
+
+    fn tickItem(app: *App, strip: *intuition.Menu, number: u32, on: bool) void {
+        const entry = app.ib.ItemAddress(strip, number) orelse return;
+        if (on) entry.flags |= mn.CHECKED else entry.flags &= ~mn.CHECKED;
     }
 
     /// A menu item picked: false when it is Quit.
     fn menuPicked(app: *App, number: u32) bool {
         switch (mn.MENUNUM(number)) {
             MENU_PROJECT => switch (mn.ITEMNUM(number)) {
-                ITEM_OPEN => app.askFile(),
+                ITEM_OPEN => app.askFiles(.play),
+                ITEM_OPEN_DRAWER => app.askFiles(.drawer),
+                ITEM_OPEN_URL => app.askUrl(),
+                ITEM_ABOUT => app.showAbout(),
                 ITEM_QUIT => return false,
+                else => {},
+            },
+            MENU_PLAYLIST => switch (mn.ITEMNUM(number)) {
+                ITEM_ADD => app.askFiles(.add),
+                ITEM_REMOVE => app.removeSelected(),
+                ITEM_CLEAR => app.clearList(),
+                ITEM_SHUFFLE => app.shuffleTurned(!app.shuffled),
+                ITEM_REPEAT => {
+                    const how = mn.SUBNUM(number);
+                    if (how < 3) app.repeatTo(@enumFromInt(how));
+                },
                 else => {},
             },
             MENU_PICTURE => {
                 const which = mn.ITEMNUM(number);
-                if (which < visual.mode_count) {
-                    app.visual.mode = @enumFromInt(which);
-                    app.visual.width = 0;
-                    app.wake();
-                }
+                if (which < visual.mode_count) app.lookTo(@enumFromInt(which));
+            },
+            MENU_SETTINGS => if (mn.ITEMNUM(number) == ITEM_REMEMBER) {
+                app.remember = !app.remember;
+                app.showMenuTicks();
             },
             else => {},
         }
         return true;
     }
 
-    /// The file requester put up, without waiting for it: it starts in
-    /// the drawer of the song playing the first time, and where it was
-    /// left after that. Nothing while it is up already.
-    fn askFile(app: *App) void {
+    /// The file requester put up, without waiting for it: for songs to
+    /// play or only to add, several at once, or for a drawer whose songs
+    /// are played. The first time it starts in the drawer last answered
+    /// in - kept from the run before - or else the drawer of the song
+    /// shown, and where it was left after that. Nothing while it is up
+    /// already.
+    fn askFiles(app: *App, what: Ask) void {
         const al = app.al orelse return;
         const port = app.asl_port orelse return;
         if (app.asking) return;
         const request = app.request orelse made: {
             var drawer: [dos.path_max + 1:0]u8 = @splat(0);
-            app.songDrawer(&drawer);
+            if (app.drawer[0] != 0) drawer = app.drawer else app.songDrawer(&drawer);
             app.request = al.AllocAslRequest(asl.ASL_FileRequest, &[_]TagItem{
-                pair(asl.ASLFR_TitleText, @intFromPtr("Which song?")),
                 pair(asl.ASLFR_InitialDrawer, @intFromPtr(&drawer)),
-                pair(asl.ASLFR_InitialPattern, @intFromPtr("#?.(mp3|wav|flac|ogg|oga)")),
+                pair(asl.ASLFR_InitialPattern, @intFromPtr(playlist.pattern)),
                 pair(asl.ASLFR_DoPatterns, 1),
+                pair(asl.ASLFR_DoMultiSelect, 1),
                 pair(asl.ASLFR_ReplyPort, @intFromPtr(port)),
                 .{},
             });
             break :made app.request orelse return;
         };
-        app.asking = al.AslRequest(request, &[_]TagItem{ pair(asl.ASLFR_Window, @intFromPtr(app.window)), .{} });
+        const title: [*:0]const u8 = switch (what) {
+            .play => "Which songs?",
+            .add => "Add which songs?",
+            .drawer => "Which drawer?",
+        };
+        app.asked = what;
+        app.asking = al.AslRequest(request, &[_]TagItem{
+            pair(asl.ASLFR_Window, @intFromPtr(app.window)),
+            pair(asl.ASLFR_TitleText, @intFromPtr(title)),
+            pair(asl.ASLFR_DrawersOnly, @intFromBool(what == .drawer)),
+            pair(asl.ASLFR_DoMultiSelect, @intFromBool(what != .drawer)),
+            .{},
+        });
     }
 
-    /// The drawer the song playing is in, or `SYS:` with none.
+    /// About: what the Player is, in a requester that does not hold the
+    /// window up - the picture goes on, and the next song follows. Brought
+    /// to the front when it is up already.
+    fn showAbout(app: *App) void {
+        if (app.about_window) |shown| {
+            app.ib.WindowToFront(shown);
+            app.ib.ActivateWindow(shown);
+            return;
+        }
+        const easy = intuition.requesters.EasyStruct{
+            .title = "About " ++ COMMAND_NAME,
+            .text_format = COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\n\n" ++
+                "Songs from WAV, MP3, FLAC and Ogg Vorbis files,\n" ++
+                "one into the next, with their covers,\n" ++
+                "stations from the network\n" ++
+                "and a picture of the sound.",
+            .gadget_format = "OK",
+        };
+        app.about_window = app.ib.BuildEasyRequestArgs(app.window, &easy, 0, null);
+    }
+
+    /// The signal of About's requester, while it is up.
+    fn aboutSignal(app: *App) u32 {
+        const shown = app.about_window orelse return 0;
+        var port: usize = 0;
+        app.ib.GetWindowAttrs(shown, &[_]TagItem{ pair(wn.WA_UserPort, @intFromPtr(&port)), .{} });
+        const user_port: *exec.MsgPort = @ptrFromInt(port);
+        return user_port.sigMask();
+    }
+
+    /// About's requester answered - or asked to go, as the window ends:
+    /// taken down.
+    fn aboutAnswered(app: *App, going: bool) void {
+        const shown = app.about_window orelse return;
+        if (!going and app.ib.SysReqHandler(shown, null, false) == intuition.requesters.SYSREQ_PENDING) return;
+        app.ib.FreeSysRequest(shown);
+        app.about_window = null;
+    }
+
+    /// The drawer the song shown is in, or `SYS:` with none.
     fn songDrawer(app: *App, into: *[dos.path_max + 1:0]u8) void {
         const fallback = "SYS:";
-        const song: [*:0]const u8 = if (app.count > 0) app.list[app.current] orelse fallback else fallback;
+        const shown: [*:0]const u8 = if (app.playing) |entry| entry.path() else fallback;
+        const song: [*:0]const u8 = if (playlist.isUrl(shown)) fallback else shown;
         var length: usize = 0;
         while (song[length] != 0 and length < dos.path_max) : (length += 1) into[length] = song[length];
         into[length] = 0;
@@ -1122,8 +2033,8 @@ const App = struct {
         }
     }
 
-    /// The file requester's answer: the song picked played, as a file
-    /// dropped is.
+    /// The file requester's answer: the songs picked - a drawer named
+    /// its sound files - added, and for Open... the first played.
     fn answered(app: *App) void {
         const port = app.asl_port orelse return;
         while (app.sys.GetMsg(port)) |message| {
@@ -1131,11 +2042,168 @@ const App = struct {
             app.asking = false;
             if (reply.answered == 0) continue;
             const answer: *asl.FileRequester = @ptrCast(@alignCast(reply.requester orelse continue));
-            var path: [dos.path_max + 1:0]u8 = @splat(0);
-            _ = app.dl.AddPart(&path, answer.drawer orelse continue, path.len);
-            if (!app.dl.AddPart(&path, answer.file orelse continue, path.len)) continue;
-            app.pickedFile(&path);
+            const drawer = answer.drawer orelse continue;
+            app.keepDrawer(drawer);
+            const before = app.beginAdding();
+            const picks = if (answer.arg_list) |list| list[0..@intCast(@max(answer.num_args, 0))] else &[_]asl.WBArg{};
+            if (picks.len > 0) {
+                for (picks) |pick| app.addIn(drawer, pick.name orelse continue);
+            } else {
+                app.addIn(drawer, answer.file orelse "");
+            }
+            const first = app.endAdding(before) orelse continue;
+            if (app.asked != .add) app.playNow(first);
         }
+    }
+
+    /// The drawer the requester was answered in, kept for the next
+    /// start.
+    fn keepDrawer(app: *App, drawer: [*:0]const u8) void {
+        const length = @min(lengthOf(drawer), dos.path_max);
+        @memcpy(app.drawer[0..length], drawer[0..length]);
+        app.drawer[length] = 0;
+    }
+
+    // --- one Player -------------------------------------------------------------
+
+    /// What a second start handed over (one.zig): its volume and its
+    /// picture, its files added and the first played - only added with
+    /// ADD - and, without ADD, the window brought to the front. Each
+    /// answered once it is dealt with, as the names are the sender's.
+    fn handedOver(app: *App) void {
+        const port = app.public orelse return;
+        while (app.sys.GetMsg(port)) |message| {
+            defer app.sys.ReplyMsg(message);
+            const handed: *const one.Handed = @ptrCast(@alignCast(message));
+            if (handed.volume >= 0) app.volumeAt(handed.volume);
+            if (handed.lookAsked()) |mode| app.lookTo(mode);
+            const names = handed.nameList();
+            if (names.len > 0) {
+                const before = app.beginAdding();
+                for (names) |name| _ = app.songs.addPath(app.sys, app.dl, name);
+                if (app.endAdding(before)) |first| {
+                    if (handed.add == 0) app.playNow(first);
+                }
+            }
+            if (handed.add == 0) app.toFront();
+        }
+    }
+
+    /// The window in front, its screen in front of the others, and active.
+    fn toFront(app: *App) void {
+        app.ib.ScreenToFront(app.screen);
+        app.ib.WindowToFront(app.window);
+        app.ib.ActivateWindow(app.window);
+    }
+
+    // --- remembered -----------------------------------------------------------
+
+    /// The list the last run left (Player.list), and the song it showed
+    /// with the second it was at; null when it showed none.
+    fn readList(app: *App, ub: *UtilityBase) ?Resume {
+        const text = prefs.loadWhole(app.sys, app.dl, remembered.LIST_ENV_FILE) orelse return null;
+        defer app.sys.FreeVec(text.ptr);
+        var found: ?Resume = null;
+        var songs = remembered.Songs.init(ub, text);
+        var name: [dos.path_max + 1:0]u8 = @splat(0);
+        while (songs.next()) |song| {
+            @memcpy(name[0..song.path.len], song.path);
+            name[song.path.len] = 0;
+            const entry = app.songs.add(app.sys, &name) orelse continue;
+            if (song.at) |second| found = .{ .entry = entry, .second = second };
+        }
+        return found;
+    }
+
+    /// The song shown when the Player last ended shown again where it
+    /// was, paused: play or the space bar goes on from there.
+    fn resumeAt(app: *App, where: Resume) void {
+        if (app.shuffled) app.shuffleOrder(where.entry);
+        app.step = app.stepOf(where.entry);
+        // A station waits to be played: nothing is called as the Player
+        // starts.
+        if (playlist.isUrl(where.entry.path())) return app.playAt(where.entry, .stop);
+        app.playAt(where.entry, .pause);
+        if (app.engine.stream == null) return;
+        app.engine.place(where.second *| @max(app.engine.info.rate, 1));
+        app.showTime();
+    }
+
+    /// One of the window's numbers, which is opaque to a program.
+    fn windowAttr(app: *App, tag: sdk.utility.Tag) i32 {
+        var value: usize = 0;
+        app.ib.GetWindowAttrs(app.window, &[_]TagItem{ pair(tag, @intFromPtr(&value)), .{} });
+        return @bitCast(@as(u32, @truncate(value)));
+    }
+
+    /// How the Player was left, written to ENV: and ENVARC: for the next
+    /// start: once, as it ends, so the disk is not written while songs
+    /// play.
+    fn keep(app: *App) void {
+        var settings = remembered.Settings{
+            .box = .{
+                .left = app.windowAttr(wn.WA_Left),
+                .top = app.windowAttr(wn.WA_Top),
+                .width = app.windowAttr(wn.WA_Width),
+                .height = app.windowAttr(wn.WA_Height),
+            },
+            .page = @intCast(app.page),
+            .look = app.visual.mode,
+            .volume = app.level,
+            .shuffle = app.shuffled,
+            .repeat = @intFromEnum(app.repeat),
+            .remember = app.remember,
+        };
+        _ = settings.setDrawer(app.drawer[0..lengthOf(&app.drawer)]);
+        const room = remembered.header.len + remembered.line_max + 1;
+        const memory = app.sys.AllocVec(room, exec.MEMF_ANY) orelse return;
+        defer app.sys.FreeVec(memory);
+        const text: [*]u8 = @ptrCast(memory);
+        @memcpy(text[0..remembered.header.len], remembered.header);
+        var n: usize = remembered.header.len;
+        n += remembered.write(&settings, text[n..room]);
+        text[n] = '\n';
+        n += 1;
+        _ = prefs.save(app.dl, remembered.ENV_FILE, text[0..n]);
+        _ = prefs.save(app.dl, remembered.ENVARC_FILE, text[0..n]);
+        app.keepList();
+    }
+
+    /// The list and the song shown, with the second it is at, written for
+    /// the next start; with Remember where it was off, the list kept
+    /// before is taken away instead.
+    fn keepList(app: *App) void {
+        if (!app.remember) {
+            _ = app.dl.DeleteFile(remembered.LIST_ENV_FILE);
+            _ = app.dl.DeleteFile(remembered.LIST_ENVARC_FILE);
+            return;
+        }
+        // A song played to its end starts again from its start.
+        const engine = app.engine;
+        const second: u32 = if (engine.stream != null and engine.live == null and engine.state != .ended) app.seconds(engine.songFrame()) else 0;
+        var length: usize = remembered.list_header.len;
+        var entry = app.songs.first();
+        while (entry) |song| : (entry = song.next()) length += remembered.songLength(.{ .path = pathOf(song) });
+        const memory = app.sys.AllocVec(length, exec.MEMF_ANY) orelse return;
+        defer app.sys.FreeVec(memory);
+        const text: [*]u8 = @ptrCast(memory);
+        @memcpy(text[0..remembered.list_header.len], remembered.list_header);
+        var n: usize = remembered.list_header.len;
+        entry = app.songs.first();
+        while (entry) |song| : (entry = song.next()) {
+            const line: remembered.Song = .{ .path = pathOf(song), .at = if (song == app.playing) second else null };
+            n += remembered.songLine(line, text[n..length]) orelse 0;
+        }
+        _ = prefs.save(app.dl, remembered.LIST_ENV_FILE, text[0..n]);
+        _ = prefs.save(app.dl, remembered.LIST_ENVARC_FILE, text[0..n]);
+    }
+
+    /// `name` in `drawer` added to the list: a song, or a drawer's songs.
+    fn addIn(app: *App, drawer: [*:0]const u8, name: [*:0]const u8) void {
+        var path: [dos.path_max + 1:0]u8 = @splat(0);
+        _ = app.dl.AddPart(&path, drawer, path.len);
+        if (!app.dl.AddPart(&path, name, path.len)) return;
+        _ = app.songs.addPath(app.sys, app.dl, &path);
     }
 
     /// A requester still up taken down, its message waited for, and it
@@ -1159,18 +2227,139 @@ const App = struct {
         app.asl_port = null;
     }
 
-    /// A file picked or dropped: the list is that one now.
-    fn pickedFile(app: *App, name: [*:0]const u8) void {
-        var i: usize = 0;
-        while (name[i] != 0 and i < dos.path_max) : (i += 1) app.picked[i] = name[i];
-        app.picked[i] = 0;
-        if (i == 0) return;
-        app.picked_list[0] = @ptrCast(&app.picked);
-        app.list = &app.picked_list;
-        app.count = 1;
-        app.current = 0;
-        app.newOrder();
-        app.goTo(0, .play);
+    // --- the playlist -----------------------------------------------------------
+
+    /// The list's gadget set and drawn again at the next chance, on
+    /// whichever page it is.
+    fn setList(app: *App, tags: []const TagItem) void {
+        _ = app.ib.SetGadgetAttrsTagList(app.browser, null, tags.ptr);
+        app.ib.QueueGadgetRefresh(app.browser);
+    }
+
+    /// The list taken from its gadget while songs are added or taken out.
+    fn detachList(app: *App) void {
+        _ = app.ib.SetGadgetAttrsTagList(app.browser, null, &[_]TagItem{ pair(lb.LISTBROWSER_Rows, lb.LISTBROWSER_DETACH), .{} });
+    }
+
+    /// The list given back to its gadget, which sorts it again when it is
+    /// sorted by a column, and what follows from the list followed.
+    fn giveBack(app: *App) void {
+        app.setList(&.{ pair(lb.LISTBROWSER_Rows, @intFromPtr(&app.songs.rows)), .{} });
+        app.listMoved();
+    }
+
+    /// The list stands in another order or holds other songs: the places
+    /// in its first column, the order they play in when it is the list's
+    /// own, and the song's place in the kind line.
+    fn listMoved(app: *App) void {
+        if (app.songs.renumber(app.sys)) app.ib.QueueGadgetRefresh(app.browser);
+        if (!app.shuffled) app.listOrder();
+        app.showKind();
+    }
+
+    /// Rows' texts changed: the list drawn again - sorted again first,
+    /// when it is sorted by a column.
+    fn rowsChanged(app: *App) void {
+        var column: usize = lb.LISTBROWSER_NONE;
+        _ = app.ib.GetAttr(lb.LISTBROWSER_SortColumn, app.browser, &column);
+        if (column != lb.LISTBROWSER_NONE) app.giveBack() else app.ib.QueueGadgetRefresh(app.browser);
+    }
+
+    /// `entry` the song shown: its row marked, the last one's not.
+    fn markPlaying(app: *App, entry: *Entry) void {
+        if (app.playing) |last| last.row.flags &= ~lb.ROW_MARKED;
+        app.playing = entry;
+        entry.row.flags |= lb.ROW_MARKED;
+        app.giveBack();
+    }
+
+    /// The song whose row is selected, if one is.
+    fn selectedEntry(app: *App) ?*Entry {
+        var value: usize = 0;
+        _ = app.ib.GetAttr(lb.LISTBROWSER_SelectedRow, app.browser, &value);
+        const row: ?*lb.Row = @ptrFromInt(value);
+        return Entry.of(row orelse return null);
+    }
+
+    /// Songs about to be added: the list taken from its gadget, and where
+    /// the first of them will stand.
+    fn beginAdding(app: *App) usize {
+        app.detachList();
+        return app.songs.count;
+    }
+
+    /// Songs added from place `before` on: put in the order, the list
+    /// given back, and their tags read as the picture goes. The first of
+    /// them; null when none was.
+    fn endAdding(app: *App, before: usize) ?*Entry {
+        const first = app.songs.at(before);
+        if (first != null) app.orderAdded(before);
+        app.giveBack();
+        if (first != null) app.wake();
+        return first;
+    }
+
+    /// `entry` played now, as a song picked is: with shuffle, from a new
+    /// order that starts with it.
+    fn playNow(app: *App, entry: *Entry) void {
+        if (app.shuffled) app.shuffleOrder(entry);
+        app.playAt(entry, .play);
+    }
+
+    fn playSelected(app: *App) void {
+        app.playNow(app.selectedEntry() orelse return);
+    }
+
+    /// The song selected taken out of the list, and the one after it
+    /// selected. When it is the song shown, the one after it in the order
+    /// is shown instead, started as the deck was; after the last, none.
+    fn removeSelected(app: *App) void {
+        const entry = app.selectedEntry() orelse return;
+        const place = app.songs.placeOf(entry);
+        const shown = app.playing == entry;
+        const how = app.startNow();
+        app.detachList();
+        if (shown) app.playing = null;
+        _ = app.forget(entry);
+        app.songs.remove(app.sys, entry);
+        app.giveBack();
+        if (app.songs.count > 0) app.setList(&.{ pair(lb.LISTBROWSER_Selected, @min(place, app.songs.count - 1)), .{} });
+        if (!shown) return;
+        if (app.step < app.songs.count) app.goTo(app.step, how) else app.showNoSong();
+    }
+
+    /// Every song taken out of the list, and none shown.
+    fn clearList(app: *App) void {
+        if (app.songs.count == 0) return;
+        app.detachList();
+        app.playing = null;
+        app.following = null;
+        app.follow_tried = null;
+        app.songs.clear(app.sys);
+        app.ordered = 0;
+        app.step = 0;
+        app.giveBack();
+        app.showNoSong();
+    }
+
+    /// A few songs' tags read, while some are not, into their rows.
+    fn readTags(app: *App) void {
+        var read: usize = 0;
+        while (read < reads_per_look and app.songs.readNext(app.sys, app.acb) != null) read += 1;
+        if (read > 0) app.rowsChanged();
+    }
+
+    /// A press let go on the list: a row moved, or one double-clicked.
+    fn listPressed(app: *App, code: u32) void {
+        if (code & lb.LISTBROWSER_MOVED != 0) return app.listMoved();
+        if (code & lb.LISTBROWSER_DOUBLE != 0) app.playSelected();
+    }
+
+    /// A tab pressed: its page shown, and the picture going again on its
+    /// own.
+    fn turned(app: *App, page: u32) void {
+        app.page = page;
+        if (page == page_picture) app.wake();
     }
 
     fn gadgetUp(app: *App, id: usize, code: u32) void {
@@ -1201,6 +2390,11 @@ const App = struct {
                 app.showTime();
             },
             ID_COVER => app.coverPressed(),
+            ID_TABS => app.turned(code),
+            ID_LIST => app.listPressed(code),
+            ID_ADD => app.askFiles(.add),
+            ID_REMOVE => app.removeSelected(),
+            ID_CLEAR => app.clearList(),
             else => {},
         }
     }
@@ -1223,6 +2417,8 @@ const App = struct {
                 _ = app.ib.GetAttr(sl.SLIDER_Level, app.volume, &value);
                 app.volumeTo(value);
             },
+            // A press on a heading sorted the list.
+            ID_LIST => app.listMoved(),
             else => {},
         }
     }
@@ -1245,9 +2441,15 @@ const App = struct {
                     if (number != mn.MENUNULL and !app.menuPicked(number)) return false;
                 },
                 wc.WMHI_IDCMPUPDATE => app.updated(),
-                wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == ' ') app.togglePause(),
+                wc.WMHI_VANILLAKEY => app.key(word & wc.WMHI_KEYMASK),
+                wc.WMHI_RAWKEY => app.rawKey(word & wc.WMHI_KEYMASK),
                 wc.WMHI_NEWSIZE => sized = true,
                 wc.WMHI_ACTIVE => app.readOutputs(),
+                // The pens changed: the cover's ground and its note are
+                // drawn in them. The fonts stay: an open window keeps the
+                // ones it was made with, and the title keeps its own with
+                // them.
+                wc.WMHI_NEWPREFS => app.drawCover(),
                 else => {},
             }
         }
@@ -1259,20 +2461,50 @@ const App = struct {
         return true;
     }
 
+    /// A key no gadget took: the space bar pauses and goes on; N and P
+    /// the song after and before; Return plays the song selected where the
+    /// list is shown.
+    fn key(app: *App, code: usize) void {
+        switch (code) {
+            ' ' => app.togglePause(),
+            'n', 'N' => app.next(),
+            'p', 'P' => app.previous(),
+            13 => if (app.page == page_list) app.playSelected(),
+            else => {},
+        }
+    }
+
+    /// A key that is no character: left and right ten seconds back and on,
+    /// up and down the volume; Del takes the song selected out where the
+    /// list is shown.
+    fn rawKey(app: *App, code: usize) void {
+        switch (code) {
+            keyboard.RAWKEY_LEFT => app.jump(-jump_seconds),
+            keyboard.RAWKEY_RIGHT => app.jump(jump_seconds),
+            keyboard.RAWKEY_UP => app.volumeBy(volume_step),
+            keyboard.RAWKEY_DOWN => app.volumeBy(-volume_step),
+            keyboard.RAWKEY_DEL => if (app.page == page_list) app.removeSelected(),
+            else => {},
+        }
+    }
+
+    /// Files dropped on the window, every one of each drop: added - a
+    /// drawer its songs - and the first played when nothing plays.
     fn dropped(app: *App) void {
         var name: [dos.path_max + 1]u8 = undefined;
-        while (app.drop.next(app.dl, &name)) |file| {
-            if (file.is_drawer) continue;
-            app.ib.ActivateWindow(app.window);
-            app.pickedFile(file.name);
-        }
+        const before = app.beginAdding();
+        while (app.drop.next(app.dl, &name)) |file| _ = app.songs.addPath(app.sys, app.dl, file.name);
+        const first = app.endAdding(before) orelse return;
+        app.ib.ActivateWindow(app.window);
+        const state = app.engine.state;
+        if (state != .playing and state != .paused) app.playNow(first);
     }
 
     // --- the picture ----------------------------------------------------------
 
     /// The canvas made as big as its box, and the pixels with it.
     fn fitPicture(app: *App) void {
-        app.set(app.picture, &.{ pair(cv.CANVAS_Width, 0), pair(cv.CANVAS_Height, 0), .{} });
+        app.setOn(page_picture, app.picture, &.{ pair(cv.CANVAS_Width, 0), pair(cv.CANVAS_Height, 0), .{} });
         app.takePicture();
     }
 
@@ -1307,41 +2539,50 @@ const App = struct {
         app.ticking = true;
     }
 
-    /// One look: the picture drawn from what is being heard, the time
-    /// now and then; the clock let rest once the sound has stopped and the
-    /// picture settled.
+    /// One look: the picture drawn from what is being heard while its
+    /// page is shown, the time now and then, a few songs' tags; the clock
+    /// let rest once the sound has stopped, the picture settled and every
+    /// song read.
     fn tick(app: *App) void {
         const engine = app.engine;
-        app.serviceSound();
-        if (app.pixels) |pixels| {
-            if (app.rast_port) |rp| {
-                engine.heard(&app.samples);
-                app.visual.draw(pixels, app.width, app.height, app.width, &app.samples, @max(engine.info.rate, 8000));
-                app.gb.WritePixelArray(rp, @ptrCast(pixels), app.width * 4, @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
-                    .max_x = @intCast(app.width),
-                    .max_y = @intCast(app.height),
-                });
-                app.ib.QueueGadgetRefresh(app.picture);
-            }
-        }
+        if (app.page == page_picture) app.drawPicture();
         app.looks +%= 1;
         if (app.looks % looks_per_time == 0) app.showTime();
         if (app.looks % looks_per_outputs == 0) app.readOutputs();
+        app.readTags();
         if (engine.state == .playing) {
             app.settle = settle_looks;
         } else if (app.settle > 0) {
             app.settle -= 1;
-        } else {
+        } else if (app.songs.unread == 0) {
             app.mb.StopTimer(app.timer);
             app.ticking = false;
         }
     }
 
-    /// The buffers that came back filled and sent again; the next song
-    /// when this one has ended.
-    fn serviceSound(app: *App) void {
-        app.engine.service();
-        if (app.engine.state == .ended) app.ended();
+    /// The picture drawn from what is being heard, and shown.
+    fn drawPicture(app: *App) void {
+        const pixels = app.pixels orelse return;
+        const rp = app.rast_port orelse return;
+        const engine = app.engine;
+        engine.heard(&app.samples);
+        app.visual.draw(pixels, app.width, app.height, app.width, &app.samples, @max(engine.info.rate, 8000));
+        app.gb.WritePixelArray(rp, @ptrCast(pixels), app.width * 4, @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
+            .max_x = @intCast(app.width),
+            .max_y = @intCast(app.height),
+        });
+        app.ib.QueueGadgetRefresh(app.picture);
+    }
+
+    /// The sound's process says something: the song that follows is heard
+    /// - the song shown now - or a song has ended - the next one, as the
+    /// order and repeat say; a song started again meanwhile has not. That
+    /// it asks for the song that follows is read at the round's end.
+    fn soundNews(app: *App) void {
+        if (app.engine.switched) app.advance();
+        if (app.engine.state == .ended) return app.ended();
+        // A station's sound holding for its ring, or going on.
+        if (app.station_loaded) app.showKind();
     }
 
     fn run(app: *App) void {
@@ -1352,17 +2593,66 @@ const App = struct {
             const drop_mask = app.drop.signal();
             const asl_mask: u32 = if (app.asl_port) |port| port.sigMask() else 0;
             const big_mask = app.big.signal(app.ib);
-            const got = app.sys.Wait(@as(u32, @truncate(window_mask)) | sound_mask | app.tick_mask | drop_mask | asl_mask | big_mask | exec.SIGBREAKF_CTRL_C);
+            const about_mask = app.aboutSignal();
+            const public_mask: u32 = if (app.public) |port| port.sigMask() else 0;
+            const station_mask: u32 = if (app.station) |station| station.signal() else 0;
+            const url_mask = app.urlSignal();
+            const got = app.sys.Wait(@as(u32, @truncate(window_mask)) | sound_mask | app.tick_mask | drop_mask | asl_mask | big_mask | about_mask | public_mask | station_mask | url_mask | exec.SIGBREAKF_CTRL_C);
             if (got & exec.SIGBREAKF_CTRL_C != 0) return;
-            if (got & sound_mask != 0) app.serviceSound();
+            if (got & sound_mask != 0) app.soundNews();
             if (got & drop_mask != 0) app.dropped();
             if (got & asl_mask != 0) app.answered();
             if (got & big_mask != 0) app.bigMessages();
+            if (got & about_mask != 0) app.aboutAnswered(false);
+            if (got & public_mask != 0) app.handedOver();
+            if (got & station_mask != 0) app.stationNews();
+            if (got & url_mask != 0) app.urlMessages();
             if (!app.windowMessages()) return;
             if (got & app.tick_mask != 0) app.tick();
+            app.keepFollowing();
         }
     }
 };
+
+fn lengthOf(text: [*:0]const u8) usize {
+    var length: usize = 0;
+    while (text[length] != 0) length += 1;
+    return length;
+}
+
+fn sameText(a: [*:0]const u8, b: [*:0]const u8) bool {
+    var at: usize = 0;
+    while (a[at] == b[at]) : (at += 1) {
+        if (a[at] == 0) return true;
+    }
+    return false;
+}
+
+fn indexOf(text: []const u8, wanted: []const u8) ?usize {
+    if (wanted.len > text.len) return null;
+    for (0..text.len - wanted.len + 1) |at| {
+        for (text[at..][0..wanted.len], wanted) |got, want| {
+            if (got != want) break;
+        } else return at;
+    }
+    return null;
+}
+
+/// A song's file name, as the files write it.
+fn pathOf(entry: *const Entry) []const u8 {
+    const path = entry.path();
+    return path[0..lengthOf(path)];
+}
+
+/// ENV:Player.prefs read into `kept`: a file that is not there, or a
+/// line that does not make sense, leaves the Player's own.
+fn readKept(sys: *ExecBase, dl: *DosBase, ub: *UtilityBase, kept: *remembered.Settings) void {
+    const text = prefs.loadWhole(sys, dl, remembered.ENV_FILE) orelse return;
+    defer sys.FreeVec(text.ptr);
+    const line = prefs.firstLine(text) orelse return;
+    var read = kept.*;
+    if (remembered.parse(ub, line, &read) == null) kept.* = read;
+}
 
 fn lookNamed(name: ?[*:0]const u8) visual.Mode {
     const given = name orelse return .plasma;
@@ -1376,7 +2666,7 @@ fn lookNamed(name: ?[*:0]const u8) visual.Mode {
 /// Gadgets made and not yet taken by a layout: given back together when
 /// the window cannot be made.
 const Loose = struct {
-    items: [28]?*Object = @splat(null),
+    items: [32]?*Object = @splat(null),
     count: usize = 0,
 
     /// What was made, kept loose; null when it was not.
@@ -1464,16 +2754,16 @@ fn group(ib: *IntuitionBase, loose: *Loose, tags: []const TagItem, children: []c
     return loose.add(made);
 }
 
-/// The window's font at half again its height, rendered by
-/// diskfont.library; null without it, and then the title is in the
-/// window's font.
+/// The window's font at half again its height and bold - its family's
+/// bold face where it has one - from diskfont.library; null without it,
+/// and then the title is in the window's font.
 fn titleFont(ib: *IntuitionBase, gb: *GraphicsBase, dfb: ?*DiskfontBase) ?*graphics.TextFont {
     const fonts = dfb orelse return null;
     const font = ib.OpenSystemFont(sc.SYSFONT_DEFAULT) orelse return null;
     defer gb.CloseFont(font);
     const name = font.node.name orelse return null;
     const rows: u32 = font.image.height;
-    return fonts.OpenDiskFont(&.{ .name = name, .y_size = @intCast(rows * 3 / 2) });
+    return fonts.OpenDiskFont(&.{ .name = name, .y_size = @intCast(rows * 3 / 2), .style = graphics.FSF_BOLD });
 }
 
 fn noWindow(dl: *DosBase) i32 {
@@ -1495,6 +2785,16 @@ fn toggle(ib: *IntuitionBase, id: u32, label: [*:0]const u8, hint: [*:0]const u8
     });
 }
 
+/// A button of the playlist's: its text, with its key, and its ID.
+fn button(ib: *IntuitionBase, label: [*:0]const u8, id: u32) ?*Object {
+    return ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        pair(gc.GA_ID, id),
+        pair(gc.GA_Text, @intFromPtr(label)),
+        pair(gc.GA_RelVerify, 1),
+        .{},
+    });
+}
+
 /// One of media.image's pictures; the program's, disposed of after the
 /// button it is on.
 fn mediaPicture(ib: *IntuitionBase, glyph: u32) ?*Object {
@@ -1508,20 +2808,63 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [3]usize = @splat(0);
+    var argv: [4]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
     };
     defer dl.FreeArgs(rda);
-    const percent: u32 = @intCast(@min(@max(rdargs.number(argv[arg_volume]) orelse 100, 0), 200));
+    const only_add = argv[arg_add] != 0;
+    const look_given = rdargs.string(argv[arg_look]);
+    // The files by their full names: the shell's drawer is not the
+    // Player's, nor the next start's that reads them back.
+    var given = one.names(sys, dl, @ptrFromInt(argv[arg_files])) orelse {
+        _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, COMMAND_NAME);
+        return dos.RETURN_FAIL;
+    };
+    defer given.free(sys);
 
-    var libraries: [11]?*exec.Library = @splat(null);
+    // A Player running already is handed what this start was given, and
+    // this start ends; else this one's port is the public one, made before
+    // anything slow so that a second start soon after finds it.
+    switch (one.handOver(sys, &given, only_add, rdargs.number(argv[arg_volume]), if (look_given != null) lookNamed(look_given) else null)) {
+        .handed => return dos.RETURN_OK,
+        .no_memory => {
+            _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, COMMAND_NAME);
+            return dos.RETURN_FAIL;
+        },
+        .alone => {},
+    }
+    const public = sys.CreateMsgPort() orelse {
+        _ = dl.PrintFault(dos.ERROR_NO_FREE_STORE, COMMAND_NAME);
+        return dos.RETURN_FAIL;
+    };
+    public.node.name = one.PORT_NAME;
+    sys.AddPort(public);
+    // Taken off first, so that nothing more comes; what came meanwhile is
+    // answered.
+    defer {
+        sys.RemPort(public);
+        while (sys.GetMsg(public)) |message| sys.ReplyMsg(message);
+        sys.DeleteMsgPort(public);
+    }
+
+    // How the last run left it: the settings, and the list read below.
+    const utility_lib = sys.OpenLibrary(sdk.utility.UTILITYNAME, 0);
+    defer if (utility_lib) |lib| sys.CloseLibrary(lib);
+    const ub: ?*UtilityBase = @ptrCast(utility_lib);
+    var kept = remembered.Settings{};
+    if (ub) |utility_base| readKept(sys, dl, utility_base, &kept);
+    const kept_volume: i32 = @intCast(kept.volume);
+    const percent: u32 = @intCast(@min(@max(rdargs.number(argv[arg_volume]) orelse kept_volume, 0), 200));
+
+    var libraries: [14]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
     const wanted = [_][*:0]const u8{
-        intuition.INTUITIONNAME, graphics.GRAPHICSNAME, motion.MOTIONNAME,   ac.AUDIOCODECNAME,
-        tx.TEXT_LIBRARY,         sl.SLIDER_LIBRARY,     td.TDECK_LIBRARY,    cv.CANVAS_LIBRARY,
-        ch.CHOOSER_LIBRARY,      tb.TOOLBUTTON_LIBRARY, media.MEDIA_LIBRARY,
+        intuition.INTUITIONNAME, graphics.GRAPHICSNAME,  motion.MOTIONNAME,   ac.AUDIOCODECNAME,
+        tx.TEXT_LIBRARY,         sl.SLIDER_LIBRARY,      td.TDECK_LIBRARY,    cv.CANVAS_LIBRARY,
+        ch.CHOOSER_LIBRARY,      tb.TOOLBUTTON_LIBRARY,  media.MEDIA_LIBRARY, ct.CLICKTAB_LIBRARY,
+        pg.PAGE_LIBRARY,         lb.LISTBROWSER_LIBRARY,
     };
     for (wanted, 0..) |name, i| {
         libraries[i] = sys.OpenLibrary(name, 0) orelse {
@@ -1534,12 +2877,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // Wanted for the covers only: without it there are none.
     const dt_lib = sys.OpenLibrary(sdk.datatypes.DATATYPESNAME, 0);
     defer if (dt_lib) |lib| sys.CloseLibrary(lib);
-    // Wanted for Open... only, and opened now rather than then: loading
-    // it from the disk while the sound plays would starve the sound.
+    // Wanted for Open... only, and opened now rather than then, so the
+    // requester comes up at once rather than after the library is read.
     const asl_lib = sys.OpenLibrary(asl.ASLNAME, 1);
     defer if (asl_lib) |lib| sys.CloseLibrary(lib);
 
-    const engine = Engine.create(sys, acb) orelse {
+    const engine = Engine.create(sys, dl, acb) orelse {
         _ = Printf(dl, MSG_NOBUFFERS, .{COMMAND_NAME});
         return dos.RETURN_FAIL;
     };
@@ -1552,7 +2895,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const visual_memory = sys.AllocVec(@sizeOf(Visual), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return dos.RETURN_FAIL;
     defer sys.FreeVec(visual_memory);
     const look: *Visual = @ptrCast(@alignCast(visual_memory));
-    look.* = .{ .mode = lookNamed(rdargs.string(argv[arg_look])) };
+    look.* = .{ .mode = if (look_given != null) lookNamed(look_given) else kept.look };
     look.init();
     const app: *App = @ptrCast(@alignCast(app_memory));
     app.* = .{
@@ -1568,15 +2911,30 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .engine = engine,
         .visual = look,
         .level = percent,
+        .page = kept.page,
+        .remember = kept.remember,
+        .public = public,
     };
+    if (kept.drawerName()) |name| app.keepDrawer(name.ptr);
+    // Open URL...'s field's class, given back after the window that has it.
+    defer if (app.string_lib) |lib| sys.CloseLibrary(lib);
+    // A station let go of before the sound's process ends.
+    defer app.stopStation();
     defer if (app.pixels) |pixels| sys.FreeVec(pixels);
-    defer if (app.order) |order| sys.FreeVec(order);
+    defer if (app.order) |order| sys.FreeVec(@ptrCast(order));
     defer app.kept.free(app.gb);
-    if (argv[arg_files] != 0) {
-        app.list = @ptrFromInt(argv[arg_files]);
-        while (app.list[app.count] != null) app.count += 1;
+    // The songs, given back after the gadget that shows them.
+    app.songs.init();
+    defer app.songs.clear(sys);
+    // Files named make the list - or, with ADD, go after the one kept.
+    var resume_at: ?Resume = null;
+    if (given.count == 0 or only_add) {
+        if (kept.remember) {
+            if (ub) |utility_base| resume_at = app.readList(utility_base);
+        }
     }
-    app.newOrder();
+    for (given.slice()) |name| _ = app.songs.addPath(sys, dl, name);
+    app.listOrder();
     app.clockTexts(0);
     app.line_text[line_title].add("No song");
     if (!engine.opened) app.line_text[line_format].add(soundTrouble(engine));
@@ -1619,8 +2977,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     })) orelse return noWindow(dl);
     app.position = loose.add(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_POSITION),
-        pair(sl.SLIDER_Max, 1),
+        pair(sl.SLIDER_Max, hour),
         pair(sl.SLIDER_Level, 0),
+        pair(gc.GA_Disabled, 1),
         pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
         .{},
     })) orelse return noWindow(dl);
@@ -1650,7 +3009,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     app.mute_button = loose.add(toggle(ib, ID_MUTE, "_Mute", "The sound off, and on again", app.mute_picture)) orelse return noWindow(dl);
     app.volume = loose.add(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_VOLUME),
-        pair(sl.SLIDER_Max, 200),
+        pair(sl.SLIDER_Max, volume_most),
         pair(sl.SLIDER_Level, percent),
         pair(sl.SLIDER_LevelFormat, @intFromPtr("%ld%%")),
         pair(sl.SLIDER_MaxLevelLen, 4),
@@ -1676,6 +3035,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(cv.CANVAS_Height, 180),
         .{},
     })) orelse return noWindow(dl);
+    app.browser = loose.add(ib.NewObjectTagList(null, lb.LISTBROWSER_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_LIST),
+        pair(lb.LISTBROWSER_Columns, @intFromPtr(&playlist.columns)),
+        pair(lb.LISTBROWSER_Rows, @intFromPtr(&app.songs.rows)),
+        pair(lb.LISTBROWSER_Reorder, 1),
+        pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
+        .{},
+    })) orelse return noWindow(dl);
+    const add_button = loose.add(button(ib, "_Add...", ID_ADD)) orelse return noWindow(dl);
+    const remove_button = loose.add(button(ib, "R_emove", ID_REMOVE)) orelse return noWindow(dl);
+    const clear_button = loose.add(button(ib, "C_lear", ID_CLEAR)) orelse return noWindow(dl);
 
     // The cover beside its lines, square and as tall as the row; the
     // slider between the time and the length; the deck, shuffle and
@@ -1703,13 +3073,39 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const framed = group(ib, &loose, &.{ pair(lg.LAYOUTA_FrameType, ic.FRAME_BUTTON), pair(lg.LAYOUTA_FrameRecessed, 1) }, &.{
         .{ .object = app.picture },
     }) orelse return noWindow(dl);
-    // The tags' row grows half as fast as the picture, until the cover
-    // is as large as it is kept.
+    // The list over its buttons, which keep their size at its left.
+    const list_buttons = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
+        .{ .object = add_button, .weight_width = 0 },
+        .{ .object = remove_button, .weight_width = 0 },
+        .{ .object = clear_button, .weight_width = 0 },
+        .{},
+    }) orelse return noWindow(dl);
+    const list_page = group(ib, &loose, &.{pair(lg.LAYOUTA_Spacing, 6)}, &.{
+        .{ .object = app.browser },
+        .{ .object = list_buttons, .weight_height = 0 },
+    }) orelse return noWindow(dl);
+    // The picture and the list on pages under tabs, which go with the
+    // page gadget: no longer loose once it is made.
+    const tabs = loose.add(ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_TABS),
+        pair(ct.CLICKTAB_Labels, @intFromPtr(&page_names)),
+        .{},
+    })) orelse return noWindow(dl);
+    app.pages = .{ framed, list_page };
+    app.book = loose.add(ib.NewObjectTagList(null, pg.PAGE_CLASS, &[_]TagItem{
+        pair(pg.PAGE_Pages, @intFromPtr(&app.pages)),
+        pair(pg.PAGE_Tabs, @intFromPtr(tabs)),
+        pair(pg.PAGE_Current, app.page),
+        .{},
+    })) orelse return noWindow(dl);
+    for ([_]*Object{ framed, list_page, tabs }) |taken| loose.take(taken);
+    // The tags' row grows half as fast as the pages, until the cover is
+    // as large as it is kept.
     const layout = group(ib, &loose, &.{ pair(lg.LAYOUTA_Margin, 6), pair(lg.LAYOUTA_Spacing, 6) }, &.{
         .{ .object = info_row, .weight_height = 50, .max_height = cover.kept_size },
         .{ .object = seek_row, .weight_height = 0 },
         .{ .object = control_row, .weight_height = 0 },
-        .{ .object = framed },
+        .{ .object = app.book },
     }) orelse return noWindow(dl);
     // The screen the window opens on, which the menus are laid out for.
     const screen = ib.LockPubScreen(null) orelse return noWindow(dl);
@@ -1717,8 +3113,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     app.screen = screen;
     app.dri = ib.GetScreenDrawInfo(screen);
     defer ib.FreeScreenDrawInfo(screen, app.dri);
+    // Where it was left, and that big: a box kept on a larger screen
+    // squeezed onto this one.
+    const box = kept.box orelse remembered.Box{ .left = 0, .top = 0, .width = 0, .height = 0 };
+    const placed = kept.box != null;
+    const ignore = sdk.utility.TAG_IGNORE;
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
         pair(wn.WA_PubScreen, @intFromPtr(screen)),
+        pair(if (placed) wn.WA_Left else ignore, @intCast(box.left)),
+        pair(if (placed) wn.WA_Top else ignore, @intCast(box.top)),
+        pair(if (placed) wn.WA_Width else ignore, @intCast(box.width)),
+        pair(if (placed) wn.WA_Height else ignore, @intCast(box.height)),
+        pair(if (placed) wn.WA_AutoAdjust else ignore, 1),
         pair(wn.WA_Title, @intFromPtr(COMMAND_NAME)),
         pair(wn.WA_ScreenTitle, @intFromPtr(SCREEN_TITLE)),
         pair(wn.WA_CloseGadget, 1),
@@ -1726,7 +3132,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(wn.WA_DepthGadget, 1),
         pair(wn.WA_SizeGadget, 1),
         pair(wn.WA_Activate, 1),
-        pair(wn.WA_IDCMP, wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_ACTIVEWINDOW),
+        pair(wn.WA_IDCMP, wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_ACTIVEWINDOW | wn.IDCMP_NEWPREFS | wn.IDCMP_RAWKEY),
         pair(wc.WINDOWA_Layout, @intFromPtr(layout)),
         .{},
     }) orelse return noWindow(dl);
@@ -1741,18 +3147,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
     app.window = @ptrFromInt(opened);
-    // The large cover's window, closed before this one.
+    // The large cover's window and Open URL...'s, closed before this one.
     defer app.big.close(ib);
+    defer app.closeUrl();
     app.fitPicture();
     app.set(app.cover, &.{ pair(cv.CANVAS_Width, 0), pair(cv.CANVAS_Height, 0), .{} });
-    app.showCover(null, "");
+    app.showCover(null, "", COMMAND_NAME);
 
-    // The menus, the look started with ticked; the window plays without
-    // them when they will not go on.
-    var table = menus;
-    table[first_look + @intFromEnum(look.mode)].flags |= mn.CHECKED;
+    // The menus, ticked as things are; the window plays without them when
+    // they will not go on.
     app.strip = blk: {
-        const made = ib.CreateMenusA(&table, null) orelse break :blk null;
+        const made = ib.CreateMenusA(&menus, null) orelse break :blk null;
         if (!ib.LayoutMenusA(made, screen, null) or !ib.SetMenuStrip(app.window, made)) {
             ib.FreeMenus(made);
             break :blk null;
@@ -1763,6 +3168,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         ib.ClearMenuStrip(app.window);
         ib.FreeMenus(made);
     };
+    app.showMenuTicks();
+    defer app.aboutAnswered(true);
+    // Shuffle and repeat as they were left.
+    app.repeatTo(@enumFromInt(kept.repeat));
+    if (kept.shuffle) app.shuffleTurned(true);
 
     // The clock the pictures are drawn by.
     const bit = sys.AllocSignal(-1);
@@ -1777,6 +3187,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer app.mb.DeleteTimer(app.timer);
     app.tick_mask = @as(u32, 1) << @intCast(bit);
 
+    // Every file of a drop is the list's.
+    app.drop.all = true;
     app.drop.add(sys, app.window);
     defer app.drop.remove();
 
@@ -1786,7 +3198,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer app.dropRequest();
 
     _ = sys.SetSignal(0, exec.SIGBREAKF_CTRL_C);
-    if (app.count > 0) app.goTo(0, .play) else app.wake();
+    if (resume_at) |where| {
+        app.resumeAt(where);
+    } else if (app.songs.count > 0 and !only_add) app.goTo(0, .play) else app.wake();
     app.run();
+    app.keep();
     return dos.RETURN_OK;
 }
