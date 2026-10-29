@@ -54,8 +54,8 @@ const layout_file = @import("layout.zig");
 
 pub const DEVICE_NAME = "hid.device";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "12.10.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "29.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -65,7 +65,8 @@ const vec = exec.libraries.vec;
 
 /// The most keyboards and mice at once.
 const max_functions = 8;
-const stack_size = 4096;
+/// The standard stack: 32 KiB on a 64-bit machine, 16 KiB on a 32-bit one.
+const stack_size = 4096 * @sizeOf(usize);
 /// The longest report descriptor read.
 const max_descriptor = 1024;
 /// Above dos's processes, as input.device's sources are: a key is taken
@@ -481,7 +482,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     hb.functions = @splat(null);
     sys_base.InitSemaphore(&hb.lock);
     hb.usb_base = @ptrCast(sys_base.OpenLibrary(usb.USBNAME, 1) orelse return null);
-    const stack = sys_base.AllocMem(stack_size, exec.MEMF_CLEAR) orelse return null;
+    const stack = sys_base.AllocMem(stack_size, exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return null;
     hb.stack = stack;
     hb.task = .{
         .node = .{ .type = .task, .pri = task_pri, .name = DEVICE_NAME },

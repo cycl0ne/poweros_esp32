@@ -46,9 +46,9 @@ pub const DEVICE_NAME = kb.KEYBOARDNAME;
 const DEVICE_VERSION = 1;
 /// 1: sources (KBDF_SOURCE, KBD_ADDEVENT, KBD_READSOURCES), and on every
 /// board. 2: the emulator's stack is the system's, not the first
-/// opener's.
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "22.10.2026";
+/// opener's. 3: the standard stack.
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "29.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -58,7 +58,8 @@ const vec = exec.libraries.vec;
 
 /// Above ordinary tasks, so a key is taken while a program computes.
 const task_pri = 10;
-const stack_size = 4096;
+/// The standard stack: 32 KiB on a 64-bit machine, 16 KiB on a 32-bit one.
+const stack_size = 4096 * @sizeOf(usize);
 /// How often the emulator's queue is looked at.
 const poll_us = 10_000;
 

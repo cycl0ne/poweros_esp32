@@ -51,7 +51,7 @@ const regs = @import("regs.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 9;
+const DEVICE_REVISION = 10;
 const BUILD_DATE = "29.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -60,7 +60,8 @@ const DEVICE_VERSION_STRING =
 
 const vec = exec.libraries.vec;
 
-const stack_size = 8192;
+/// The standard stack: 32 KiB on a 64-bit machine, 16 KiB on a 32-bit one.
+const stack_size = 4096 * @sizeOf(usize);
 /// Above dos's processes, as a disk's device is: a keyboard's keys and a
 /// stick's blocks wait on it.
 const task_pri = 6;
