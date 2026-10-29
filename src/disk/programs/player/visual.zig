@@ -23,8 +23,11 @@
 //! The cover's colours (colours.zig) are `tint`, set by the window when a
 //! song's cover is read and taken away when it has none.
 //!
-//! The sine table and the plasma's rows and columns are kept here, so a
-//! look costs table lookups and additions - no sine per point. A ring's
+//! The sine table and the plasma's rows and columns are kept, so a look
+//! costs table lookups and additions - no sine per point. The rows and
+//! columns are as many as the area has, whatever its size - a window as
+//! large as its screen too - in memory the window keeps beside the pixels
+//! (`linesSize`, `lay`). A ring's
 //! distance is a square root, which comes from a table too: the squared
 //! distances across and down are worked out per column and per row, and
 //! the root of their sum looked up. Near the centre, where the root
@@ -39,14 +42,11 @@ const colours = @import("colours.zig");
 pub const Mode = enum(u8) { plasma, wave, bars };
 pub const mode_count = 3;
 
-/// The largest area drawn: the plasma's half size is held in these.
-pub const max_width = 1280;
-pub const max_height = 800;
-const half_width = max_width / 2;
-const half_height = max_height / 2;
-/// The squared distances a ring is looked up by, and how many steps of
-/// the sine table the farthest corner is from the centre: four rings.
-const root_size = 4096;
+/// The squared distances a ring is looked up by - fine enough that a
+/// ring is within two steps of where it should be on a 3840x2160 screen,
+/// the largest a board shows - and how many steps of the sine table the
+/// farthest corner is from the centre: four rings.
+const root_size = 16384;
 const ring_steps = 1024;
 /// The squared distances, in the plasma's points, whose root is held
 /// exactly (`Visual.near`).
@@ -62,19 +62,20 @@ pub const Visual = struct {
     /// 128 + 127 sin, over 256 steps.
     sine: [256]u8 = @splat(0),
     palette: [256]u32 = @splat(0),
-    /// The plasma's terms worked out per column, per row and per diagonal.
-    across: [half_width]u16 = @splat(0),
-    bend_x: [half_width]u8 = @splat(0),
-    bend_y: [half_height]u8 = @splat(0),
-    diagonal: [half_width + half_height]u16 = @splat(0),
+    /// The plasma's terms worked out per column, per row and per diagonal,
+    /// for the area laid (`lay`).
+    across: []u16 = &.{},
+    bend_x: []u8 = &.{},
+    bend_y: []u8 = &.{},
+    diagonal: []u16 = &.{},
     /// The rings: the squared distance from the centre per column and per
-    /// row, in the plasma's points; the root of every share of the
-    /// farthest (`root_size` of them), and of every squared distance below
-    /// `near_size` for the farthest the area has (`reach`), which is worked
-    /// out again when that changes. A squared distance is `share` 65536ths
-    /// of a share.
-    square_x: [half_width]u32 = @splat(0),
-    square_y: [half_height]u32 = @splat(0),
+    /// row, in the plasma's points, for the area laid; the root of every
+    /// share of the farthest (`root_size` of them), and of every squared
+    /// distance below `near_size` for the farthest the area has (`reach`),
+    /// which is worked out again when that changes. A squared distance is
+    /// `share` 65536ths of a share.
+    square_x: []u32 = &.{},
+    square_y: []u32 = &.{},
     root: [root_size]u16 = @splat(0),
     near: [near_size]u16 = @splat(0),
     reach: u64 = 0,
@@ -109,12 +110,28 @@ pub const Visual = struct {
         v.width = 0;
     }
 
+    /// The plasma's rows and columns for an area `width` by `height`, in
+    /// `memory` (`linesSize` bytes), which the caller keeps until it lays
+    /// them again: the plasma reaches as far as they do.
+    pub fn lay(v: *Visual, memory: []align(4) u8, width: u32, height: u32) void {
+        const cols: usize = (width + 1) / 2;
+        const rows: usize = (height + 1) / 2;
+        var at: usize = 0;
+        // The widest first, so each starts aligned.
+        v.square_x = carve(u32, memory, &at, cols);
+        v.square_y = carve(u32, memory, &at, rows);
+        v.across = carve(u16, memory, &at, cols);
+        v.diagonal = carve(u16, memory, &at, cols + rows);
+        v.bend_x = carve(u8, memory, &at, cols);
+        v.bend_y = carve(u8, memory, &at, rows);
+    }
+
     /// The pixels made `width` by `height` with the last look carried
     /// into them (`carry`): the next look goes on from it, a trail with it,
     /// rather than starting afresh.
     pub fn follow(v: *Visual, width: u32, height: u32) void {
-        v.width = @min(width, max_width);
-        v.height = @min(height, max_height);
+        v.width = width;
+        v.height = height;
     }
 
     /// The silence after a stop or a seek: the bars drop, the trail goes.
@@ -127,8 +144,8 @@ pub const Visual = struct {
     /// `rate`.
     pub fn draw(v: *Visual, pixels: [*]u32, width: u32, height: u32, stride: u32, samples: []const f32, rate: u32) void {
         if (width < 4 or height < 4) return;
-        const w = @min(width, max_width);
-        const h = @min(height, max_height);
+        const w = width;
+        const h = height;
         const fresh = w != v.width or h != v.height;
         v.width = w;
         v.height = h;
@@ -163,8 +180,10 @@ pub const Visual = struct {
         v.hue = wrap(v.hue + 0.4 + 5.0 * treble);
         v.turnPalette(0.5 + 0.5 * loud);
 
-        const cols = (w + 1) / 2;
-        const rows = (h + 1) / 2;
+        // Every point of the area, as far as the rows and columns laid
+        // reach: the whole area, laid for its size.
+        const cols: u32 = @intCast(@min((w + 1) / 2, v.bend_x.len));
+        const rows: u32 = @intCast(@min((h + 1) / 2, v.bend_y.len));
         // As many waves across the area whatever its size: one across,
         // three quarters down, one along the diagonal.
         const kx = 256 * 256 / (cols + 1);
@@ -349,6 +368,21 @@ pub const Visual = struct {
     }
 };
 
+/// The bytes the plasma's rows and columns take for an area `width` by
+/// `height` (`Visual.lay`): a few for each of its columns and rows.
+pub fn linesSize(width: u32, height: u32) usize {
+    const cols: usize = (width + 1) / 2;
+    const rows: usize = (height + 1) / 2;
+    return (cols + rows) * @sizeOf(u32) + (cols + cols + rows) * @sizeOf(u16) + (cols + rows) * @sizeOf(u8);
+}
+
+/// `count` of `T` taken from `memory` at `at`, which moves past them.
+fn carve(comptime T: type, memory: []align(4) u8, at: *usize, count: usize) []T {
+    const piece: [*]T = @ptrCast(@alignCast(memory[at.*..].ptr));
+    at.* += count * @sizeOf(T);
+    return piece[0..count];
+}
+
 /// A palette colour no darker than a sixth: `level` 0 to 255.
 fn soft(level: u8) u32 {
     return 40 + @as(u32, level) * 215 / 255;
@@ -402,6 +436,8 @@ test "every mode draws inside its area and leaves the rest" {
     const w = 121;
     const h = 61;
     var pixels: [stride * (h + 1)]u32 = undefined;
+    var lines: [linesSize(w, h)]u8 align(4) = undefined;
+    v.lay(&lines, w, h);
     var samples: [take]f32 = undefined;
     for (&samples, 0..) |*s, i| s.* = 0.8 * @sin(@as(f32, @floatFromInt(i)) * 0.3);
     for (0..mode_count) |_| {
@@ -417,6 +453,30 @@ test "every mode draws inside its area and leaves the rest" {
             for (pixels[y * stride ..][0..w]) |p| differs = differs or p != pixels[0];
         }
         try testing.expect(differs);
+        v.cycle();
+    }
+}
+
+test "every mode draws to the far edge of an area of any size, a screen's too" {
+    const v = try testing.allocator.create(Visual);
+    defer testing.allocator.destroy(v);
+    v.* = .{};
+    v.init();
+    // Wider than a full-HD screen, an odd number of rows.
+    const w = 2000;
+    const h = 9;
+    const pixels = try testing.allocator.alloc(u32, w * h);
+    defer testing.allocator.free(pixels);
+    var lines: [linesSize(w, h)]u8 align(4) = undefined;
+    v.lay(&lines, w, h);
+    var samples: [take]f32 = undefined;
+    for (&samples, 0..) |*s, i| s.* = 0.8 * @sin(@as(f32, @floatFromInt(i)) * 0.3);
+    for (0..mode_count) |_| {
+        @memset(pixels, 0x12345678);
+        v.draw(pixels.ptr, w, h, w, &samples, 44100);
+        // The last column of every row, and the last row, drawn.
+        for (0..h) |y| try testing.expect(pixels[y * w + w - 1] != 0x12345678);
+        for (pixels[(h - 1) * w ..]) |p| try testing.expect(p != 0x12345678);
         v.cycle();
     }
 }
@@ -480,7 +540,8 @@ test "a ring's distance is the distance from its centre, close to it too" {
     defer testing.allocator.destroy(v);
     v.* = .{};
     v.init();
-    for ([_][2]u32{ .{ 300, 88 }, .{ 60, 30 }, .{ half_width, half_height } }) |size| {
+    // The last two the half sizes of a full-HD screen and of 3840x2160.
+    for ([_][2]u32{ .{ 300, 88 }, .{ 60, 30 }, .{ 960, 540 }, .{ 1920, 1080 } }) |size| {
         const cols, const rows = size;
         const reach = @as(u64, cols) * cols + @as(u64, rows) * rows + 1;
         v.reachTo(reach);

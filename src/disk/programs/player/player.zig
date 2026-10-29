@@ -122,9 +122,10 @@
 //! from the samples being heard at that moment - audio.device says how far
 //! its stream has played and how far behind that the sound comes out, and
 //! engine.zig keeps the last of what it decoded. The picture is drawn into
-//! a buffer of 32-bit pixels (visual.zig), put into a canvas.gadget with
-//! WritePixelArray, which converts it to the display's form, and shown
-//! with QueueGadgetRefresh. While nothing plays it settles for two seconds
+//! a buffer of 32-bit pixels as large as the canvas, whatever its size - a
+//! window as large as its screen too (visual.zig) - put into a
+//! canvas.gadget with WritePixelArray, which converts it to the display's
+//! form, and shown with QueueGadgetRefresh. While nothing plays it settles for two seconds
 //! and then rests.
 //!
 //! **The sound has a process of its own** (engine.zig), above every
@@ -235,7 +236,7 @@ const icy = @import("icy.zig");
 const st = sdk.gadgets.string;
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.16";
+const VERSION = "1.17";
 const DATE = "29.10.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
@@ -2524,19 +2525,25 @@ const App = struct {
         var height: usize = 0;
         _ = app.ib.GetAttr(cv.CANVAS_Width, app.picture, &width);
         _ = app.ib.GetAttr(cv.CANVAS_Height, app.picture, &height);
-        const w: u32 = @intCast(@min(width, visual.max_width));
-        const h: u32 = @intCast(@min(height, visual.max_height));
+        const w: u32 = @intCast(width);
+        const h: u32 = @intCast(height);
         if (w == app.width and h == app.height and app.pixels != null) return;
         const old = app.pixels;
         defer if (old) |pixels| app.sys.FreeVec(pixels);
         app.pixels = null;
-        const memory = app.sys.AllocVec(@as(usize, w) * h * 4, exec.MEMF_ANY) orelse {
+        // The pixels, and after them the plasma's rows and columns for
+        // their size.
+        const count = @as(usize, w) * h;
+        const lines = visual.linesSize(w, h);
+        const memory = app.sys.AllocVec(count * 4 + lines, exec.MEMF_ANY) orelse {
+            app.visual.lay(&.{}, 0, 0);
             app.width = 0;
             app.height = 0;
             return;
         };
         const pixels: [*]u32 = @ptrCast(@alignCast(memory));
         visual.carry(pixels, w, h, old, app.width, app.height);
+        app.visual.lay(@as([*]align(4) u8, @ptrCast(pixels + count))[0..lines], w, h);
         app.pixels = pixels;
         app.width = w;
         app.height = h;
