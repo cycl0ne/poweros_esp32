@@ -21,9 +21,9 @@ const _stream = @import("_stream.zig");
 /// - `tags`: what is asked, each tag's data the address its answer goes
 ///   to: `ACA_Title`, `ACA_Artist`, `ACA_Album`, `ACA_AlbumArtist`,
 ///   `ACA_Composer`, `ACA_Genre` and `ACA_Comment` a `*[*:0]const u8`;
-///   `ACA_Year`, `ACA_Track`, `ACA_Tracks` and `ACA_Chapters` a `*u32`;
-///   `ACA_Picture` a `*?*const ac.AudioPicture`; `ACA_ChapterList` a
-///   `*?[*]const ac.AudioChapter`.
+///   `ACA_Year`, `ACA_Track`, `ACA_Tracks`, `ACA_Chapters` and `ACA_Link`
+///   a `*u32`; `ACA_Picture` a `*?*const ac.AudioPicture`;
+///   `ACA_ChapterList` a `*?[*]const ac.AudioChapter`.
 ///
 /// RESULT:
 /// How many of the tags it answered; one it does not know is left as it
@@ -42,7 +42,10 @@ const _stream = @import("_stream.zig");
 /// METADATA_BLOCK_PICTURE comment. The chapters are an ID3v2 tag's CHAP
 /// frames, each with the title of its own TIT2, or the CHAPTERnnn and
 /// CHAPTERnnnNAME comments, each ending where the next begins - up to 256
-/// of them.
+/// of them. In a chained Ogg stream (SINCE 1.5) they are the link's being
+/// decoded - its own comments, nothing of the link before - and
+/// `ACA_Link` is which link that is, 0 for the first: a program that asks
+/// for it after each `DecodeAudio` call knows when they changed.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -52,7 +55,10 @@ const _stream = @import("_stream.zig");
 ///
 /// OWNERSHIP:
 /// Every text, the picture and the chapters are the stream's: read them,
-/// and keep a copy of what is needed after `CloseAudioStream`.
+/// and keep a copy of what is needed after `CloseAudioStream`. In a chain
+/// the texts and the chapters are written again where they are as a link
+/// begins, and a link's picture stays until the link after next begins:
+/// read them again when `ACA_Link` rises.
 ///
 /// NOTES:
 /// Texts are Latin-1; a character past it is a `?`.
@@ -76,7 +82,8 @@ const _stream = @import("_stream.zig");
 /// });
 /// ```
 pub fn GetAudioStreamAttrs(base: *AudioCodecBase, stream: *ac.AudioStream, tags: ?[*]const utility.TagItem) u32 {
-    const kept = &_stream.streamOf(stream).tags;
+    const own = _stream.streamOf(stream);
+    const kept = &own.tags;
     var list = tags;
     var answered: u32 = 0;
     while (base.utility_base.NextTagItem(&list)) |item| {
@@ -94,6 +101,7 @@ pub fn GetAudioStreamAttrs(base: *AudioCodecBase, stream: *ac.AudioStream, tags:
             ac.ACA_Track => numberInto(storage, kept.track),
             ac.ACA_Tracks => numberInto(storage, kept.tracks),
             ac.ACA_Chapters => numberInto(storage, kept.chapter_count),
+            ac.ACA_Link => numberInto(storage, own.links),
             ac.ACA_ChapterList => {
                 const answer: *?[*]const ac.AudioChapter = @ptrFromInt(storage);
                 answer.* = if (kept.chapter_count != 0) kept.chapters else null;

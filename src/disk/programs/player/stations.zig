@@ -29,7 +29,7 @@ const lb = sdk.gadgets.listbrowser;
 const ExecBase = sdk.interface.exec.ExecBase;
 const m3u = @import("m3u.zig");
 const csv = @import("csv.zig");
-const icy = @import("icy.zig");
+const icy = sdk.http.icy;
 
 pub const KEPT_ENV_FILE = "ENV:Player/Stations.m3u";
 pub const KEPT_ENVARC_FILE = "ENVARC:Player/Stations.m3u";

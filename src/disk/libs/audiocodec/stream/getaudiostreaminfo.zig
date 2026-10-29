@@ -32,7 +32,9 @@ const _stream = @import("_stream.zig");
 /// frame. A FLAC's is its STREAMINFO's. An Ogg Vorbis file's is its last
 /// page's position, exact; read through a function it is 0. The bit rate
 /// of a FLAC is the average its size and length give, of a Vorbis the
-/// one its header names.
+/// one its header names. In a chained Ogg stream (SINCE 1.5) all of it
+/// is the link's being decoded: it changes once DecodeAudio has handed
+/// out a frame of the next, and a file's length is the link's own.
 ///
 /// CONTEXT:
 /// - Waits: no.

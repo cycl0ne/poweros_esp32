@@ -26,9 +26,9 @@
 //! **Where the sound is** is the stream's position: the frames the device
 //! has played since it was opened (AUDIOCMD_QUERY). Every frame written is
 //! counted the same way, so a frame's number says both where it is in the
-//! copy kept for the pictures - a ring of the last 16384 frames, both
-//! sides together - and, from the number the song started at, where it is
-//! in the song. The window asks for the position with a request of its
+//! copy kept for the pictures - a ring of the last 16384 frames, left and
+//! right, a mono song's one side on both - and, from the number the song
+//! started at, where it is in the song. The window asks for the position with a request of its
 //! own (`query`), a copy of the opened one, so the two never share one. A
 //! seek takes back what is queued (CMD_FLUSH), moves the file and starts
 //! counting the song from there; a pause holds the stream (CMD_STOP).
@@ -48,6 +48,20 @@
 //! window makes it the song (`advance`). A load, a stop or a seek lets go
 //! of the song that follows; `follow_round` counts each time, so the
 //! window knows what it handed is gone.
+//!
+//! **A chained song** - an Ogg file or station whose songs are links one
+//! after another, each with headers of its own - goes on from link to
+//! link in its stream: audiocodec.library ends a decoding with a link's
+//! last frame and counts the links (`ACA_Link`), which the process looks
+//! at after each. A link begun is put aside (`link_info`) until it is
+//! heard (`link_heard`); the window then makes it the song (`takeLink`):
+//! its info, its frames counted from its first - a seek moves within it.
+//! A link at the same rate goes on in the same buffers, another channel
+//! count changing the form of the writes from there on; one of another
+//! rate waits in its buffer (`held`) until the device has played what it
+//! holds. A song played past its first link is opened again to start
+//! from its beginning (`rewind`), the stream before kept until the window
+//! has shown the first link again.
 //!
 //! **A station** (radio.zig) is opened on its ring, through the ring's
 //! read function (`listen`), and plays as a song does, with no end in
@@ -96,13 +110,13 @@ pub const State = enum { idle, playing, paused, ended };
 pub const no_sound: i32 = -1000;
 
 /// What the window tells the process to do.
-const What = enum(u32) { load, start, pause, seek, place, stop, unload, volume, follow, advance, quit };
+const What = enum(u32) { load, start, pause, seek, place, stop, unload, volume, follow, advance, link, quit };
 
 /// One order, on the window's stack until it is answered.
 const Order = struct {
     message: exec.Message = .{},
     what: What,
-    /// `load`'s file.
+    /// `load`'s file, and `follow`'s song's.
     path: ?[*:0]const u8 = null,
     /// `follow`'s song.
     stream: ?*ac.AudioStream = null,
@@ -119,6 +133,8 @@ const Order = struct {
 pub const Engine = struct {
     sys: *ExecBase,
     acb: *AudioCodecBase,
+    /// The library counts a chain's links: it answers GetAudioStreamAttrs.
+    has_links: bool,
 
     // --- the window's ---------------------------------------------------------
 
@@ -164,6 +180,7 @@ pub const Engine = struct {
     opened: bool = false,
     open_error: i32 = 0,
     samples: [*]i16,
+    /// The frames kept for the pictures, left and right in turn.
     ring: [*]f32,
     stream: ?*ac.AudioStream = null,
     info: ac.AudioStreamInfo = .{},
@@ -206,6 +223,32 @@ pub const Engine = struct {
     /// handed on as the song, or closed.
     follow_round: u32 = 0,
 
+    // --- a chained song's links, set by the process, read by the window --------
+
+    /// The link of the stream being decoded, as the library counts them.
+    link: u32 = 0,
+    /// A link begun in the decoding and not the song's yet: what it is, and
+    /// the stream's frame its sound starts at.
+    link_info: ac.AudioStreamInfo = .{},
+    link_waiting: bool = false,
+    link_at: u32 = 0,
+    /// It is being heard - or a stop or a seek made it the song's at once:
+    /// the window takes it (`takeLink`) and shows it.
+    link_heard: bool = false,
+    /// The buffer that holds a link of another rate while the device plays
+    /// what it holds at the rate before, and how many frames it holds.
+    held: ?usize = null,
+    held_frames: usize = 0,
+    /// The form the device stream was set to last.
+    set_rate: u32 = 0,
+    set_channels: u32 = 0,
+    /// The song's file and the following song's, to open again at the
+    /// start; the stream before one opened so, closed once the window has
+    /// taken the first link (`takeLink`).
+    path: [dos.path_max + 1]u8 = @splat(0),
+    following_path: [dos.path_max + 1]u8 = @splat(0),
+    spent: ?*ac.AudioStream = null,
+
     // --- the window's calls ------------------------------------------------------
 
     /// The buffers made and the sound's process started, which opens the
@@ -215,7 +258,7 @@ pub const Engine = struct {
     pub fn create(sys: *ExecBase, dl: *DosBase, acb: *AudioCodecBase) ?*Engine {
         const memory = sys.AllocVec(@sizeOf(Engine), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
         const buffers = sys.AllocVec(buffer_count * buffer_frames * 2 * @sizeOf(i16), exec.MEMF_ANY);
-        const ring = sys.AllocVec(ring_frames * @sizeOf(f32), exec.MEMF_ANY | exec.MEMF_CLEAR);
+        const ring = sys.AllocVec(ring_frames * 2 * @sizeOf(f32), exec.MEMF_ANY | exec.MEMF_CLEAR);
         const reply_port = sys.CreateMsgPort();
         const query_port = sys.CreateMsgPort();
         const query: ?*audio.IOAudio = @ptrCast(@alignCast(sys.CreateIORequest(query_port, @sizeOf(audio.IOAudio))));
@@ -234,6 +277,7 @@ pub const Engine = struct {
         engine.* = .{
             .sys = sys,
             .acb = acb,
+            .has_links = acb.lib().revision >= 1,
             .window = sys.FindTask(null).?,
             .news_bit = news_bit,
             .reply_port = reply_port.?,
@@ -361,12 +405,21 @@ pub const Engine = struct {
         return engine.asking;
     }
 
-    /// `stream` - opened by the window, a song to follow this one without
-    /// a gap - handed over, or null for none; the one handed before is
-    /// closed. False when it comes too late: the device already plays the
-    /// one handed before, and `stream` is still the window's.
-    pub fn follow(engine: *Engine, stream: ?*ac.AudioStream) bool {
-        return engine.give(.{ .what = .follow, .stream = stream }) == 0;
+    /// `stream` - opened by the window on the file `path`, a song to follow
+    /// this one without a gap - handed over, or null for none; the one
+    /// handed before is closed. False when it comes too late: the device
+    /// already plays the one handed before, and `stream` is still the
+    /// window's.
+    pub fn follow(engine: *Engine, stream: ?*ac.AudioStream, path: ?[*:0]const u8) bool {
+        return engine.give(.{ .what = .follow, .stream = stream, .path = path }) == 0;
+    }
+
+    /// The link of a chained song being heard (`link_heard`) made the
+    /// song: its info the engine's, counted from its start - or, when a
+    /// stop, a seek or a start from the beginning made it so already,
+    /// only the news taken. False when there is no link to take.
+    pub fn takeLink(engine: *Engine) bool {
+        return engine.order(.link, null, 0) == 0;
     }
 
     /// The song that followed, now heard (`switched`), made the song: its
@@ -401,15 +454,21 @@ pub const Engine = struct {
         return engine.base_song +% (at -% engine.base_position);
     }
 
-    /// The frames being heard, both sides together, -1 to 1, into `into`;
-    /// silence when nothing plays.
-    pub fn heard(engine: *Engine, into: []f32) void {
+    /// The frames being heard, -1 to 1, the left side into `left` and the
+    /// right into `right`, as many as they hold; silence when nothing
+    /// plays.
+    pub fn heard(engine: *Engine, left: []f32, right: []f32) void {
         if (engine.state != .playing and engine.state != .paused) {
-            @memset(into, 0);
+            @memset(left, 0);
+            @memset(right, 0);
             return;
         }
         const at = engine.heardVia(engine.query);
-        for (into, 0..) |*sample, i| sample.* = engine.ring[(at +% @as(u32, @intCast(i))) & ring_mask];
+        for (left, right, 0..) |*one, *other, i| {
+            const frame = (at +% @as(u32, @intCast(i))) & ring_mask;
+            one.* = engine.ring[frame * 2];
+            other.* = engine.ring[frame * 2 + 1];
+        }
     }
 
     /// The device's position, asked through `io`, less what is still on
@@ -561,10 +620,11 @@ pub const Engine = struct {
             },
             .volume => {
                 engine.volume = @min(given.number, 400);
-                if (engine.stream != null) engine.setParams(engine.decodedInfo());
+                if (engine.stream != null) engine.setForm(engine.set_rate, engine.set_channels);
             },
-            .follow => given.answer = engine.takeFollowing(given.stream),
+            .follow => given.answer = engine.takeFollowing(given.stream, given.path),
             .advance => given.answer = engine.advanceSong(),
+            .link => given.answer = engine.adoptLink(),
             .quit => {},
         }
     }
@@ -586,6 +646,7 @@ pub const Engine = struct {
     fn loadSong(engine: *Engine, path: [*:0]const u8) i32 {
         engine.stopSound();
         engine.closeSong();
+        copyPath(&engine.path, path);
         var err: i32 = 0;
         const stream = engine.acb.OpenAudioStream(&[_]TagItem{
             .{ .tag = ac.ACA_Name, .data = @intFromPtr(path) },
@@ -634,11 +695,17 @@ pub const Engine = struct {
     fn closeSong(engine: *Engine) void {
         engine.dropFollowing();
         if (engine.stream) |stream| engine.acb.CloseAudioStream(stream);
+        if (engine.spent) |stream| engine.acb.CloseAudioStream(stream);
         engine.stream = null;
+        engine.spent = null;
         engine.info = .{};
         engine.state = .idle;
         engine.live = null;
         engine.starved = false;
+        engine.link = 0;
+        engine.link_waiting = false;
+        engine.link_heard = false;
+        engine.held = null;
     }
 
     /// Whether the decoding may go on: a file's always, a station's while
@@ -669,14 +736,21 @@ pub const Engine = struct {
 
     /// The stream's form, rate and volume for the song `info` says.
     fn setParams(engine: *Engine, info: *const ac.AudioStreamInfo) void {
+        engine.setForm(@max(info.rate, 1), @max(info.channels, 1));
+    }
+
+    /// The stream's form and rate as `rate` and `channels`, and its volume.
+    fn setForm(engine: *Engine, rate: u32, channels: u32) void {
         const io = engine.control;
         io.std.req.command = audio.AUDIOCMD_SETPARAMS;
         io.format = audio.AUDIO_S16;
-        io.channels = @intCast(@max(info.channels, 1));
-        io.rate = @max(info.rate, 1);
+        io.channels = @intCast(channels);
+        io.rate = rate;
         io.volume = audiocontrol.volumeOf(engine.volume);
         io.pan = 0;
         _ = engine.sys.DoIO(&io.std.req);
+        engine.set_rate = rate;
+        engine.set_channels = channels;
     }
 
     /// The song being decoded - this one, or the one that follows once the
@@ -686,7 +760,8 @@ pub const Engine = struct {
     }
 
     fn decodedInfo(engine: *Engine) *const ac.AudioStreamInfo {
-        return if (engine.switching) &engine.following_info else &engine.info;
+        if (engine.switching) return &engine.following_info;
+        return if (engine.link_waiting) &engine.link_info else &engine.info;
     }
 
     /// The song that follows closed, and the window no longer asked.
@@ -705,7 +780,7 @@ pub const Engine = struct {
     /// `stream` the song that follows, the one handed before closed: 1 when
     /// the device already plays that one, and `stream` is not taken. One
     /// handed while this song's last buffers play is gone on into at once.
-    fn takeFollowing(engine: *Engine, stream: ?*ac.AudioStream) i32 {
+    fn takeFollowing(engine: *Engine, stream: ?*ac.AudioStream, path: ?[*:0]const u8) i32 {
         if (engine.switching) {
             if (after(engine.positionVia(engine.control), engine.following_at)) return 1;
             engine.takeBack();
@@ -714,6 +789,7 @@ pub const Engine = struct {
         engine.dropFollowing();
         engine.asking = asked;
         engine.following = stream;
+        copyPath(&engine.following_path, path orelse "");
         if (stream) |taken| engine.acb.GetAudioStreamInfo(taken, &engine.following_info);
         if (engine.ending and engine.outstanding > 0) {
             engine.ending = false;
@@ -763,6 +839,8 @@ pub const Engine = struct {
         if (engine.stream) |old| engine.acb.CloseAudioStream(old);
         engine.stream = engine.following;
         engine.info = engine.following_info;
+        engine.path = engine.following_path;
+        engine.link = 0;
         engine.base_song = 0;
         engine.base_position = engine.following_at;
         engine.following = null;
@@ -849,6 +927,102 @@ pub const Engine = struct {
         // A paused stream started again, for the next song.
         engine.command(exec.CMD_START);
         engine.dropFollowing();
+        // A link begun is the song's from here: a seek or a stop goes
+        // within it, at its rate.
+        if (engine.link_waiting) {
+            if (engine.held != null) engine.setParams(&engine.link_info);
+            engine.held = null;
+            engine.info = engine.link_info;
+            engine.link_waiting = false;
+            engine.link_heard = true;
+            engine.sys.Signal(engine.window, engine.signal());
+        }
+    }
+
+    /// The song at its start: a chained file played past its first link
+    /// opened again - a seek moves within the link being decoded - and the
+    /// window told to show it; any other moved to its first frame.
+    fn rewind(engine: *Engine) void {
+        const stream = engine.stream orelse return;
+        if (engine.link == 0 or engine.live != null) {
+            _ = engine.acb.SeekAudio(stream, 0);
+            return;
+        }
+        const again = engine.acb.OpenAudioStream(&[_]TagItem{
+            .{ .tag = ac.ACA_Name, .data = @intFromPtr(&engine.path) },
+            .{ .tag = ac.ACA_KeepPicture, .data = 1 },
+            .{},
+        }, null) orelse {
+            _ = engine.acb.SeekAudio(stream, 0);
+            return;
+        };
+        // The window may be reading the tags it showed: closed once it has
+        // taken the first link.
+        if (engine.spent) |old| engine.acb.CloseAudioStream(old);
+        engine.spent = stream;
+        engine.stream = again;
+        engine.acb.GetAudioStreamInfo(again, &engine.info);
+        engine.link = 0;
+        engine.setParams(&engine.info);
+        engine.link_heard = true;
+        engine.sys.Signal(engine.window, engine.signal());
+    }
+
+    /// The link of the stream being decoded, when it is another than
+    /// before - a chained song gone on into its next: its info put aside,
+    /// true. Not while the decoding has gone on into the song that follows.
+    fn linkBegun(engine: *Engine) bool {
+        if (!engine.has_links or engine.switching) return false;
+        const stream = engine.stream orelse return false;
+        var link = engine.link;
+        _ = engine.acb.GetAudioStreamAttrs(stream, &[_]TagItem{
+            .{ .tag = ac.ACA_Link, .data = @intFromPtr(&link) },
+            .{},
+        });
+        if (link == engine.link) return false;
+        engine.link = link;
+        engine.acb.GetAudioStreamInfo(stream, &engine.link_info);
+        engine.link_waiting = true;
+        return true;
+    }
+
+    /// The link begun is being heard: the window told.
+    fn checkLink(engine: *Engine) void {
+        if (!after(engine.heardVia(engine.control), engine.link_at)) return;
+        engine.link_heard = true;
+        engine.sys.Signal(engine.window, engine.signal());
+    }
+
+    /// A link of another rate, once the device has played what it held:
+    /// its rate taken, its first frames sent, the buffers after them
+    /// filled.
+    fn sendHeld(engine: *Engine) void {
+        const n = engine.held orelse return;
+        engine.held = null;
+        engine.setParams(&engine.link_info);
+        const now = engine.positionVia(engine.control);
+        engine.written = now;
+        engine.link_at = now;
+        engine.next = n;
+        engine.send(n, engine.held_frames);
+        engine.sendFree();
+    }
+
+    /// The link being heard the song's - unless a stop or a seek made it so
+    /// already - and the stream before a start from the beginning closed:
+    /// 1 when there is no link to take.
+    fn adoptLink(engine: *Engine) i32 {
+        if (!engine.link_heard) return 1;
+        engine.link_heard = false;
+        if (engine.link_waiting) {
+            engine.info = engine.link_info;
+            engine.base_song = 0;
+            engine.base_position = engine.link_at;
+            engine.link_waiting = false;
+        }
+        if (engine.spent) |old| engine.acb.CloseAudioStream(old);
+        engine.spent = null;
+        return 0;
     }
 
     fn command(engine: *Engine, which: u16) void {
@@ -895,7 +1069,11 @@ pub const Engine = struct {
     /// that follows, if it was not.
     fn end(engine: *Engine) void {
         engine.ending = true;
-        for (0..ring_frames / 4) |i| engine.ring[(engine.written +% @as(u32, @intCast(i))) & ring_mask] = 0;
+        for (0..ring_frames / 4) |i| {
+            const frame = (engine.written +% @as(u32, @intCast(i))) & ring_mask;
+            engine.ring[frame * 2] = 0;
+            engine.ring[frame * 2 + 1] = 0;
+        }
         engine.askNearEnd();
     }
 
@@ -907,21 +1085,44 @@ pub const Engine = struct {
 
     /// Buffer `n` decoded and written: false at the end of the song - and
     /// of the song that follows, when the decoding goes on into it. True,
-    /// and nothing sent, while a station's decoding holds (`fed`).
+    /// and nothing sent, while a station's decoding holds (`fed`) or a link
+    /// of another rate waits for the device (`held`).
     fn fillAndSend(engine: *Engine, n: usize) bool {
         if (!engine.fed()) return true;
+        if (engine.held != null) return true;
         const buffer = engine.samples + n * buffer_frames * 2;
         var got = engine.decode(buffer);
         if (got <= 0 and engine.goOnInto()) got = engine.decode(buffer);
         if (got <= 0) return false;
-        const channels: usize = @max(engine.decodedInfo().channels, 1);
         const frames: usize = @intCast(got);
-        // Both sides together into the ring, at the frames' numbers.
+        if (engine.linkBegun()) {
+            const info = &engine.link_info;
+            const rate = @max(info.rate, 1);
+            if (rate != engine.set_rate and engine.outstanding != 0) {
+                engine.held = n;
+                engine.held_frames = frames;
+                return true;
+            }
+            if (rate != engine.set_rate or @max(info.channels, 1) != engine.set_channels) engine.setParams(info);
+            engine.link_at = engine.written;
+        }
+        engine.send(n, frames);
+        return true;
+    }
+
+    /// Buffer `n`'s `frames` decoded frames into the ring, at their
+    /// numbers, and written.
+    fn send(engine: *Engine, n: usize, frames: usize) void {
+        const buffer = engine.samples + n * buffer_frames * 2;
+        const channels: usize = @max(engine.decodedInfo().channels, 1);
+        // Left and right into the ring, at the frames' numbers; one side
+        // on both.
         for (0..frames) |i| {
-            var sum: i32 = 0;
-            for (0..channels) |c| sum += buffer[i * channels + c];
-            const mono = @as(f32, @floatFromInt(sum)) / (32768.0 * @as(f32, @floatFromInt(channels)));
-            engine.ring[(engine.written +% @as(u32, @intCast(i))) & ring_mask] = mono;
+            const frame = (engine.written +% @as(u32, @intCast(i))) & ring_mask;
+            const left = @as(f32, @floatFromInt(buffer[i * channels])) / 32768.0;
+            const right = if (channels > 1) @as(f32, @floatFromInt(buffer[i * channels + 1])) / 32768.0 else left;
+            engine.ring[frame * 2] = left;
+            engine.ring[frame * 2 + 1] = right;
         }
         engine.write_from[n] = engine.written;
         engine.written +%= @intCast(frames);
@@ -936,7 +1137,6 @@ pub const Engine = struct {
         engine.sent[n] = true;
         engine.outstanding += 1;
         if (!engine.switching) engine.askNearEnd();
-        return true;
     }
 
     /// The next frames of the song being decoded into `buffer`: how many,
@@ -964,6 +1164,8 @@ pub const Engine = struct {
             engine.next = (engine.next + 1) % buffer_count;
         }
         if (engine.switching and !engine.switched) engine.checkHeard();
+        if (engine.link_waiting and !engine.link_heard and engine.held == null) engine.checkLink();
+        if (engine.outstanding == 0 and engine.held != null) engine.sendHeld();
         // A station that holds is not at its end.
         if (engine.outstanding != 0 or engine.state != .playing or engine.starved) return;
         if (engine.switching) {
@@ -980,7 +1182,8 @@ pub const Engine = struct {
             .idle => engine.startAt(engine.base_song, false),
             .ended => {
                 engine.stopSound();
-                engine.startAt(0, true);
+                engine.rewind();
+                engine.startAt(0, false);
             },
             .playing, .paused => {},
         }
@@ -1009,17 +1212,24 @@ pub const Engine = struct {
     }
 
     fn stopSong(engine: *Engine) void {
-        const stream = engine.stream orelse return;
+        if (engine.stream == null) return;
         engine.stopSound();
         engine.starved = false;
         // A station has no start to go back to: it goes on from here.
-        if (engine.live == null) _ = engine.acb.SeekAudio(stream, 0);
+        if (engine.live == null) engine.rewind();
         engine.base_song = 0;
         engine.base_position = engine.positionVia(engine.control);
         engine.written = engine.base_position;
         engine.state = .idle;
     }
 };
+
+/// `path` into `into`, NUL-terminated, cut where it no longer fits.
+fn copyPath(into: *[dos.path_max + 1]u8, path: [*:0]const u8) void {
+    var length: usize = 0;
+    while (path[length] != 0 and length < into.len - 1) : (length += 1) into[length] = path[length];
+    into[length] = 0;
+}
 
 /// Whether stream frame `frame` is at or past `mark`, counted round.
 fn after(frame: u32, mark: u32) bool {

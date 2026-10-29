@@ -9,7 +9,7 @@
 //!
 //! - WINDOW: the window's left, top, width and height.
 //! - PAGE: the page shown, PLAYING, PLAYLIST or RADIO.
-//! - LOOK: the picture, PLASMA, WAVE or BARS.
+//! - LOOK: the picture, PLASMA, WAVE, BARS, SCOPE or METERS.
 //! - VOLUME: in percent of as recorded, 0 to 200.
 //! - SHUFFLE: YES or NO. REPEAT: OFF, ALL or ONE.
 //! - REMEMBER: YES to keep the list and where it was in Player.list, NO
@@ -45,7 +45,7 @@ pub const LIST_ENVARC_FILE = "ENVARC:Player.list";
 /// PAGE's words, by the page's number.
 pub const page_names = [3][]const u8{ "PLAYING", "PLAYLIST", "RADIO" };
 /// LOOK's words, by `visual.Mode`.
-pub const look_names = [visual.mode_count][]const u8{ "PLASMA", "WAVE", "BARS" };
+pub const look_names = [visual.mode_count][]const u8{ "PLASMA", "WAVE", "BARS", "SCOPE", "METERS" };
 /// REPEAT's words: off, the whole list, the one song.
 pub const repeat_names = [3][]const u8{ "OFF", "ALL", "ONE" };
 /// The loudest VOLUME, twice as loud as recorded.
@@ -116,7 +116,7 @@ pub fn parse(ub: *UtilityBase, text: []const u8, settings: *Settings) ?[*:0]cons
             const k = indexOf(&page_names, value) orelse return "PAGE is PLAYING, PLAYLIST or RADIO";
             settings.page = @intCast(k);
         } else if (style.same(word, "LOOK")) {
-            const k = indexOf(&look_names, value) orelse return "LOOK is PLASMA, WAVE or BARS";
+            const k = indexOf(&look_names, value) orelse return "LOOK is PLASMA, WAVE, BARS, SCOPE or METERS";
             settings.look = @enumFromInt(k);
         } else if (style.same(word, "VOLUME")) {
             const percent = style.decimal(value) orelse return "VOLUME is a percentage, 0 to 200";
@@ -199,7 +199,7 @@ pub const header =
     \\#
     \\# WINDOW    its window's left, top, width and height.
     \\# PAGE      the page shown: PLAYING, PLAYLIST or RADIO.
-    \\# LOOK      the picture: PLASMA, WAVE or BARS.
+    \\# LOOK      the picture: PLASMA, WAVE, BARS, SCOPE or METERS.
     \\# VOLUME    in percent of as recorded, 0 to 200.
     \\# SHUFFLE   YES or NO.
     \\# REPEAT    OFF, the whole list (ALL) or the one song (ONE).

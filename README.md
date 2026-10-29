@@ -167,13 +167,17 @@ streams, each in its own form, rate, volume and pan, into one sink; the
 output preferred takes over when it is plugged in, each keeps its own
 volume (`C:Audio`, Prefs, `SYS:Programs/Volume`) - a USB speaker's at
 its own control - and its own ten-band equalizer, with presets by name
-(`C:Audio`, Prefs, `SYS:Programs/Volume`), a click plays at once
-as a trigger, and unit 1 records (`C:Record`). `LIBS:audiocodec.library`
-decodes WAV, MP3, FLAC and Ogg Vorbis as they play, from a file or
+(`C:Audio`, Prefs, `SYS:Programs/Volume`, the Player), a click plays at
+once as a trigger, and unit 1 records (`C:Record`). `LIBS:audiocodec.library`
+decodes WAV, MP3, FLAC and Ogg Vorbis as they play - a chained Ogg
+stream song by song, each with its own rate and tags - from a file or
 from a program's own reader - `SYS:Programs/Player`'s internet stations,
 kept on its Radio page or found in radio-browser.info's list, with the
 station's picture and the song's when the station names one; the Player
-reads and writes M3U playlists and reads PLS
+reads and writes M3U playlists and reads PLS, and draws the sound as a
+plasma, its wave, the spectrum's bars, left against right or a meter
+for each side, in its window or over the whole screen; `C:Play` plays a
+file or a station's address in the shell, each title said as it changes
 ([sound guide](sdk/docs/guides/audio.md)).
 
 | Driver | Output |

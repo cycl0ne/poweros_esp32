@@ -13,7 +13,7 @@
 //! Content-Type or, sent as plain text, by the address's ending - stands
 //! for the first station the list names, which is called instead, three
 //! lists deep at most; HLS, a list of a stream's pieces, is refused. The
-//! metadata blocks are taken out of each piece read (icy.zig); a title
+//! metadata blocks are taken out of each piece read (`sdk.http.icy`); a title
 //! one names goes to the window - with the picture's address it names
 //! beside it, a cover - the sound into the ring. A full ring
 //! holds the reader until the sound has taken some.
@@ -52,7 +52,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const HttpBase = sdk.interface.http.HttpBase;
 const TagItem = utility.TagItem;
-const icy = @import("icy.zig");
+const icy = http.icy;
 const m3u = @import("m3u.zig");
 const strings = @import("strings");
 const Text = sdk.locale.Strings(strings);

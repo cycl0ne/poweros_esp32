@@ -27,7 +27,9 @@ const vorbis = @import("../vorbis/_vorbis.zig");
 ///
 /// RESULT:
 /// How many frames went into `buffer`: `frames` until the end comes, then
-/// fewer, then 0. Below 0 an ACERR_* - the source would not be read.
+/// fewer, then 0 - or fewer at the end of a link of a chain (SINCE 1.5),
+/// and the next link's after it. Below 0 an ACERR_* - the source would
+/// not be read, or the next link cannot be decoded.
 ///
 /// BEHAVIOR:
 /// The samples are signed 16-bit, at the rate and channels
@@ -37,7 +39,12 @@ const vorbis = @import("../vorbis/_vorbis.zig");
 /// MP3 is cut where its encoder said the music begins and ends, an Ogg
 /// Vorbis stream where its pages' positions say, so a song played after
 /// another follows it without a gap. A FLAC frame that is damaged - its
-/// CRC wrong - is handed out as silence. A read function is asked for the
+/// CRC wrong - is handed out as silence. A chained Ogg stream (SINCE 1.5)
+/// goes on from link to link: a call ends with a link's last frame, and
+/// the next reads the following link's headers and hands out its sound -
+/// at its own rate and channels, which the info then gives, its tags with
+/// it, `ACA_Link` one more. A link of another kind ends the stream, and
+/// one that cannot be decoded ends it with why. A read function is asked for the
 /// bytes of the frames handed out and `AUDIO_READ_AHEAD` more at most
 /// (SINCE 1.4 said).
 ///

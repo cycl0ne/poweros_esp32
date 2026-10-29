@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Docklets: small pictures of the machine's state - the time, the
-//! battery, the volume, how busy the cores are, the network - that the
-//! dock shows among its entries, and keeps up to date.
+//! battery, the volume, how busy the cores are, the network, what the
+//! Player plays - that the dock shows among its entries, and keeps up to
+//! date.
 //!
 //! Each is a class library of its own in `SYS:classes/docklets/`, reached
 //! through `LIBS:` as `docklets/<name>.docklet`, its class called by the
@@ -62,6 +63,8 @@ pub const CPU_LIBRARY = "docklets/cpu.docklet";
 pub const CPU_CLASS = "cpu.docklet";
 pub const NETWORK_LIBRARY = "docklets/network.docklet";
 pub const NETWORK_CLASS = "network.docklet";
+pub const PLAYER_LIBRARY = "docklets/player.docklet";
+pub const PLAYER_CLASS = "player.docklet";
 
 /// Where the docklets' tags begin: clear of intuition's classes and of
 /// the gadget classes' (`gadgets.GADGETS_Dummy`).

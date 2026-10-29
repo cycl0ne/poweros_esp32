@@ -10,13 +10,17 @@
 //! what it lists - and the first is played; with ADD they are added to
 //! the list kept and nothing more.
 //! VOLUME is in percent of as recorded, LOOK the picture to start with:
-//! PLASMA, WAVE or BARS. Each left out is as the Player was left.
+//! PLASMA, WAVE, BARS, SCOPE or METERS. Each left out is as the Player
+//! was left.
 //!
 //! **One Player** (one.zig). The Player keeps the public port `Player`;
 //! a start while it runs hands its files over by their full names, with
 //! ADD, VOLUME and LOOK, and ends. The Player running adds them and plays
 //! the first, or only adds them with ADD; without ADD its window comes to
-//! the front, which is all a start with nothing given asks.
+//! the front, which is all a start with nothing given asks. A program's
+//! question what plays (`sdk.player.State`, the dock's player.docklet
+//! asks it) is answered at the same port: playing, paused or stopped, how
+//! far, how long, the title and the artist.
 //!
 //! The window's title is the song's. At its top, the song's cover beside
 //! what its tags say, one block of lines in the middle of the room: the
@@ -44,7 +48,8 @@
 //! three seconds of a song's start; later, the start of this one), rewind
 //! and fast forward ten seconds, play, stop back to the start, pause, the
 //! song after - then shuffle and repeat; a space (`LAYOUTA_AddSpace`);
-//! then the sound off, the volume and the output the sound comes out of.
+//! then the sound off, the volume, the output the sound comes out of and
+//! its equalizer's preset.
 //! Shuffle, repeat and the sound off are toolbuttons with media.image's
 //! pictures: repeat goes round off, the whole list, the one song, its
 //! picture with a 1 for the last. Under them, as big as the window lets it
@@ -58,11 +63,18 @@
 //!   the treble, lit by the loudness.
 //! - **Wave** - the sound itself, a hundredth of a second of it.
 //! - **Bars** - the spectrum, from 40 Hz at the left to 16 kHz.
+//! - **Scope** - left against right, what both sides share upright.
+//! - **Meters** - how loud each side is, with its peak held.
 //!
-//! The plasma and the bars are drawn in the cover's two leading colours
-//! when it has some (colours.zig), and in their own otherwise.
+//! The plasma, the bars and the meters are drawn in the cover's two
+//! leading colours when it has some (colours.zig), and in their own
+//! otherwise.
 //!
 //! A press on the picture goes to the next; the Picture menu picks one.
+//! A double-click on it - the look it was before the first press -
+//! Picture > Whole screen or the F key show it over the whole screen, on
+//! a borderless window of its own (whole.zig), the song's title faded in
+//! over it at each new song; a key or a press ends it.
 //!
 //! **Menus and keys.** Project: Open..., Open drawer... (a drawer's songs,
 //! asked with `ASLFR_DrawersOnly`), Open URL... (a station's address, in
@@ -134,7 +146,14 @@
 //! read again every second while the picture moves and whenever the
 //! window is made active - so headphones plugged in show up, and when
 //! they are the preferred output and take the sound over, the chooser
-//! says so.
+//! says so. Beside it EQ is that output's equalizer by its preset - Flat,
+//! Classical, Rock, Speech, ... (`audiocontrol.presets`) - as `C:Audio EQ`
+//! and Prefs' Sound page set it, Custom - listed only then - when its
+//! bands are none of them; Settings > Equalizer picks one too, the one in
+//! force ticked. A device without an equalizer ghosts both. The device keeps a preset picked for
+//! that output; when one was, the Player keeps what the device has in
+//! `ENV:Sys/audio.prefs` and `ENVARC:` as it ends, as Volume does, so
+//! C:SetPrefs gives it back at the next boot.
 //!
 //! **In step with the sound.** The picture is drawn 25 times a second
 //! from the samples being heard at that moment - audio.device says how far
@@ -159,8 +178,12 @@
 //!
 //! **A song is shown as it starts**: its names and its cover first, then
 //! its sound, so the window says what is playing from its first moment.
+//! A chained Ogg file's or station's next song - a link of the stream,
+//! with tags of its own - is shown as it is heard (`linkHeard`): a file's
+//! as the song, its length and time its own, a station's as what it
+//! plays, from the stream's own tags where the station sends no titles.
 //!
-//! **A station** (radio.zig, icy.zig) is an address in the list, called
+//! **A station** (radio.zig, `sdk.http.icy`) is an address in the list, called
 //! when it is played. A process of its own reads what the station sends
 //! into a ring - the sound, with the titles it puts in every so many bytes
 //! taken out (`Icy-MetaData`) - and the sound's process decodes from that
@@ -233,6 +256,7 @@ const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const AslBase = sdk.interface.asl.AslBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const prefs = sdk.prefs;
+const audio_file = prefs.audio;
 const Object = intuition.Object;
 const Window = intuition.Window;
 const TagItem = sdk.utility.TagItem;
@@ -270,12 +294,13 @@ const visual = @import("visual.zig");
 const Visual = visual.Visual;
 const cover = @import("cover.zig");
 const big_window = @import("big.zig");
+const whole_screen = @import("whole.zig");
 const playlist = @import("playlist.zig");
 const Entry = playlist.Entry;
 const remembered = @import("remembered.zig");
 const one = @import("one.zig");
 const radio = @import("radio.zig");
-const icy = @import("icy.zig");
+const icy = sdk.http.icy;
 const st = sdk.gadgets.string;
 const m3u = @import("m3u.zig");
 const stations = @import("stations.zig");
@@ -286,7 +311,7 @@ const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.22";
+const VERSION = "1.26";
 const DATE = "29.10.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
@@ -322,6 +347,8 @@ const ID_CLEAR = 17;
 const ID_URL_TEXT = 20;
 const ID_URL_OPEN = 21;
 const ID_URL_CANCEL = 22;
+/// The equalizer's presets; the Radio page's are 23 on.
+const ID_PRESET = 31;
 
 /// The pages under the tabs.
 const page_picture = 0;
@@ -406,11 +433,33 @@ fn soundTrouble(text: *const Text, engine: *const Engine) [*:0]const u8 {
     });
 }
 
+/// The presets' names, and Custom after them only while the bands are
+/// none of them: the chooser's key, which takes the next label, goes
+/// round the presets and never stops on a Custom that changes nothing.
+fn presetLabels(shown: usize) *const [audiocontrol.presets.len + 1:null]?[*:0]const u8 {
+    return if (shown == audiocontrol.preset_custom) &audiocontrol.preset_labels else &preset_names;
+}
+
+const preset_names: [audiocontrol.presets.len + 1:null]?[*:0]const u8 = names: {
+    var names = audiocontrol.preset_labels;
+    names[audiocontrol.preset_custom] = null;
+    break :names names;
+};
+
+/// The preset the equalizer of the output played through is, and whether
+/// there is none to show: no output, or a device without an equalizer.
+fn presetIn(control: ?*audiocontrol.Control, outputs: *const audiocontrol.Outputs) struct { usize, bool } {
+    const opened = control orelse return .{ 0, true };
+    const at = outputs.currentIndex() orelse return .{ 0, true };
+    return .{ audiocontrol.presetOf(&outputs.infos[at].equalizer), !opened.hasEqualizer() };
+}
+
 /// The menus: Project's songs and stations, About and Quit; the Playlist's, with
 /// shuffle ticked and repeat's three ways, one ticked; the Picture's looks
 /// in `visual.Mode`'s order, one ticked; Settings, whether the list and
-/// where it was are kept for the next start. The ticks follow the buttons
-/// and keys (`showMenuTicks`).
+/// where it was are kept for the next start, and the equalizer's presets,
+/// the one in force ticked. The ticks follow the buttons, keys and
+/// choosers (`showMenuTicks`).
 const MENU_PROJECT = 0;
 const ITEM_OPEN = 0;
 const ITEM_OPEN_DRAWER = 1;
@@ -425,8 +474,10 @@ const ITEM_CLEAR = 2;
 const ITEM_SHUFFLE = 4;
 const ITEM_REPEAT = 5;
 const MENU_PICTURE = 2;
+const ITEM_WHOLE = visual.mode_count + 1;
 const MENU_SETTINGS = 3;
 const ITEM_REMEMBER = 0;
+const ITEM_EQUALIZER = 1;
 
 /// A menu's entry, and the string its label is.
 const MenuEntry = struct { menu: mn.NewMenu, text: ?Id = null };
@@ -477,10 +528,26 @@ const menus = [_]MenuEntry{
     oneOf(mn.NM_ITEM, .MSG_MENU_PLASMA, @intFromEnum(visual.Mode.plasma), visual.mode_count),
     oneOf(mn.NM_ITEM, .MSG_MENU_WAVE, @intFromEnum(visual.Mode.wave), visual.mode_count),
     oneOf(mn.NM_ITEM, .MSG_MENU_BARS, @intFromEnum(visual.Mode.bars), visual.mode_count),
+    oneOf(mn.NM_ITEM, .MSG_MENU_SCOPE, @intFromEnum(visual.Mode.scope), visual.mode_count),
+    oneOf(mn.NM_ITEM, .MSG_MENU_METERS, @intFromEnum(visual.Mode.meters), visual.mode_count),
+    bar,
+    menuItem(.MSG_MENU_WHOLE_SCREEN, null),
     menuTitle(.MSG_MENU_SETTINGS),
     toggleItem(.MSG_MENU_REMEMBER),
-    .{ .menu = .{} },
-};
+    menuItem(.MSG_MENU_EQUALIZER, null),
+} ++ presetEntries() ++ [_]MenuEntry{.{ .menu = .{} }};
+
+/// Settings > Equalizer's entries: a preset each, by its own name, one
+/// ticked.
+fn presetEntries() [audiocontrol.presets.len]MenuEntry {
+    const count = audiocontrol.presets.len;
+    var made: [count]MenuEntry = undefined;
+    for (audiocontrol.presets, &made, 0..) |preset, *entry, at| {
+        const all = (@as(u32, 1) << count) - 1;
+        entry.* = .{ .menu = .{ .type = mn.NM_SUB, .label = preset.name, .flags = mn.CHECKIT, .mutual_exclude = all & ~(@as(u32, 1) << at) } };
+    }
+    return made;
+}
 
 /// The lists' headings by their strings, in their columns' order; null
 /// keeps the table's own.
@@ -625,13 +692,37 @@ const App = struct {
     output: *Object = undefined,
     control: ?audiocontrol.Control = null,
     outputs: audiocontrol.Outputs = .{},
+    /// The presets' chooser, the one it shows and whether it is ghosted;
+    /// a preset was picked, so the device's settings are kept as the
+    /// Player ends - read and written through utility.library.
+    preset: *Object = undefined,
+    preset_shown: usize = 0,
+    preset_off: bool = true,
+    preset_picked: bool = false,
+    ub: ?*UtilityBase = null,
 
     /// The picture as drawn, and the canvas it is put into.
     rast_port: ?*graphics.RastPort = null,
     pixels: ?[*]u32 = null,
     width: u32 = 0,
     height: u32 = 0,
-    samples: [visual.take]f32 = @splat(0),
+    /// The frames heard, a side each, for a look.
+    left: [visual.take]f32 = @splat(0),
+    right: [visual.take]f32 = @splat(0),
+    /// The canvas's size, which the pixels are while the picture is not
+    /// over the whole screen.
+    canvas_width: u32 = 0,
+    canvas_height: u32 = 0,
+    /// The picture over the whole screen, while it is; diskfont.library
+    /// for its fonts.
+    whole: ?whole_screen.Whole = null,
+    dfb: ?*DiskfontBase = null,
+    /// The last press on the picture, and the look before it: a press
+    /// soon after makes a double-click.
+    pressed: bool = false,
+    pressed_seconds: u32 = 0,
+    pressed_micros: u32 = 0,
+    look_before: visual.Mode = .plasma,
 
     timer: *motion.Timer = undefined,
     tick_mask: u32 = 0,
@@ -970,7 +1061,7 @@ const App = struct {
         const entry = app.playing orelse return;
         const facts = &app.station_facts;
         for (&app.line_text) |*line| line.clear();
-        const named = icy.split(facts.title[0..lengthOf(&facts.title)]);
+        const named = if (facts.title[0] != 0) icy.split(facts.title[0..lengthOf(&facts.title)]) else app.streamNames();
         const title = &app.line_text[line_title];
         if (named.title.len > 0) {
             title.addBytes(named.title);
@@ -991,6 +1082,23 @@ const App = struct {
             entry.retitle(&facts.name);
             app.rowsChanged();
         }
+    }
+
+    /// What a station's sound names in its own tags - a chained Ogg
+    /// stream's, each link a song: its title and artist, empty when it
+    /// names none or nothing reads it yet.
+    fn streamNames(app: *App) icy.Named {
+        const none: icy.Named = .{ .artist = "", .title = "" };
+        if (!app.station_loaded or !app.has_attrs) return none;
+        const stream = app.engine.stream orelse return none;
+        var title: [*:0]const u8 = "";
+        var artist: [*:0]const u8 = "";
+        _ = app.acb.GetAudioStreamAttrs(stream, &[_]TagItem{
+            pair(ac.ACA_Title, @intFromPtr(&title)),
+            pair(ac.ACA_Artist, @intFromPtr(&artist)),
+            .{},
+        });
+        return .{ .artist = artist[0..lengthOf(artist)], .title = title[0..lengthOf(title)] };
     }
 
     /// A station's kind line: why it could not be listened to; that it is
@@ -1417,7 +1525,7 @@ const App = struct {
                 .{},
             }, null);
         }
-        const taken = engine.follow(stream);
+        const taken = engine.follow(stream, if (wanted) |entry| entry.path() else null);
         app.follow_round = engine.follow_round;
         app.follow_tried = wanted;
         if (taken) {
@@ -1450,6 +1558,19 @@ const App = struct {
         app.markPlaying(song);
         app.shown_second = ~@as(u32, 0);
         app.showSong(song.path());
+        app.wake();
+    }
+
+    /// The next link of a chained song is being heard - or the song is back
+    /// at its first: a file's link shown as the song, its names, cover and
+    /// length; a station's names as what it plays.
+    fn linkHeard(app: *App) void {
+        if (!app.engine.takeLink()) return;
+        const entry = app.playing orelse return;
+        app.describeSound();
+        if (app.showsStation()) return app.showStation();
+        app.shown_second = ~@as(u32, 0);
+        app.showSong(entry.path());
         app.wake();
     }
 
@@ -1745,6 +1866,7 @@ const App = struct {
     /// measured again, and the cover and the picture fitted to where it
     /// put them, when there are more of them or fewer than before.
     fn showLines(app: *App) void {
+        if (app.whole) |*shown| shown.named(&app.line_text[line_title].text, &app.line_text[line_artist].text);
         const count = app.makeRuns();
         app.set(app.block, &.{ pair(tx.TEXT_Runs, @intFromPtr(&app.runs)), .{} });
         if (count == app.shown_lines) return;
@@ -2076,6 +2198,7 @@ const App = struct {
         const control = if (app.control) |*opened| opened else return;
         var now: audiocontrol.Outputs = .{};
         now.read(control);
+        app.showPreset(&now);
         if (now.same(&app.outputs)) return;
         app.outputs = now;
         for (app.outputs.labels[0..app.outputs.count], 0..) |*label, at| label.* = @ptrCast(&app.outputs.infos[at].name);
@@ -2100,6 +2223,55 @@ const App = struct {
         app.readOutputs();
     }
 
+    /// The preset the equalizer of the output played through is, on its
+    /// chooser and ticked in the menu, when it changed - ghosted with no
+    /// output, or a device without an equalizer.
+    fn showPreset(app: *App, outputs: *const audiocontrol.Outputs) void {
+        const shown, const off = presetIn(if (app.control) |*opened| opened else null, outputs);
+        if (shown == app.preset_shown and off == app.preset_off) return;
+        app.preset_shown = shown;
+        app.preset_off = off;
+        app.set(app.preset, &.{
+            pair(ch.CHOOSER_Labels, @intFromPtr(presetLabels(shown))),
+            pair(ch.CHOOSER_Active, shown),
+            pair(gc.GA_Disabled, @intFromBool(off)),
+            .{},
+        });
+        app.showMenuTicks();
+    }
+
+    /// A preset picked, on the chooser or in the menu: its bands the
+    /// equalizer of the output played through at once. Custom changes
+    /// nothing, and the chooser goes back to what the bands are.
+    fn pickPreset(app: *App, choice: usize) void {
+        const control = if (app.control) |*opened| opened else return;
+        if (choice < audiocontrol.presets.len and control.hasEqualizer()) {
+            if (control.setEqualizer(0, &audiocontrol.presets[choice].bands) == 0) app.preset_picked = true;
+        }
+        app.preset_shown = ~@as(usize, 0);
+        var now: audiocontrol.Outputs = .{};
+        now.read(control);
+        app.showPreset(&now);
+    }
+
+    /// What the device has now - each output's volume and equalizer, and
+    /// the one preferred - over what ENV:Sys/audio.prefs says of outputs
+    /// not plugged in, written to ENV: and ENVARC:: when a preset was
+    /// picked.
+    fn keepSound(app: *App) void {
+        if (!app.preset_picked) return;
+        const control = if (app.control) |*opened| opened else return;
+        const ub = app.ub orelse return;
+        const memory = app.sys.AllocVec(audio_file.max_file, exec.MEMF_ANY) orelse return;
+        defer app.sys.FreeVec(memory);
+        const text = @as([*]u8, @ptrCast(memory))[0..audio_file.max_file];
+        var settings: audio_file.Settings = .{};
+        if (prefs.load(app.dl, audio_file.ENV_FILE, text)) |read| _ = settings.load(ub, read);
+        audio_file.gather(control, &settings);
+        const length = audio_file.write(&settings, text);
+        for ([_][*:0]const u8{ audio_file.ENV_FILE, audio_file.ENVARC_FILE }) |path| _ = prefs.save(app.dl, path, text[0..length]);
+    }
+
     fn cycleLook(app: *App) void {
         app.visual.cycle();
         app.showMenuTicks();
@@ -2115,7 +2287,8 @@ const App = struct {
     }
 
     /// The menus' ticks on what is so: shuffle, the way repeat goes, the
-    /// look shown, and whether where it was is remembered.
+    /// look shown, whether where it was is remembered and the equalizer's
+    /// preset - its entry ghosted when the chooser is.
     fn showMenuTicks(app: *App) void {
         const strip = app.strip orelse return;
         app.ib.ClearMenuStrip(app.window);
@@ -2127,6 +2300,12 @@ const App = struct {
             app.tickItem(strip, mn.FULLMENUNUM(MENU_PICTURE, @intCast(at), mn.NOSUB), at == @intFromEnum(app.visual.mode));
         }
         app.tickItem(strip, mn.FULLMENUNUM(MENU_SETTINGS, ITEM_REMEMBER, mn.NOSUB), app.remember);
+        for (0..audiocontrol.presets.len) |at| {
+            app.tickItem(strip, mn.FULLMENUNUM(MENU_SETTINGS, ITEM_EQUALIZER, @intCast(at)), at == app.preset_shown);
+        }
+        if (app.ib.ItemAddress(strip, mn.FULLMENUNUM(MENU_SETTINGS, ITEM_EQUALIZER, mn.NOSUB))) |entry| {
+            if (app.preset_off) entry.flags &= ~mn.ITEMENABLED else entry.flags |= mn.ITEMENABLED;
+        }
         _ = app.ib.ResetMenuStrip(app.window, strip);
     }
 
@@ -2161,10 +2340,18 @@ const App = struct {
             MENU_PICTURE => {
                 const which = mn.ITEMNUM(number);
                 if (which < visual.mode_count) app.lookTo(@enumFromInt(which));
+                if (which == ITEM_WHOLE) app.openWhole();
             },
-            MENU_SETTINGS => if (mn.ITEMNUM(number) == ITEM_REMEMBER) {
-                app.remember = !app.remember;
-                app.showMenuTicks();
+            MENU_SETTINGS => switch (mn.ITEMNUM(number)) {
+                ITEM_REMEMBER => {
+                    app.remember = !app.remember;
+                    app.showMenuTicks();
+                },
+                ITEM_EQUALIZER => {
+                    const which = mn.SUBNUM(number);
+                    if (which < audiocontrol.presets.len) app.pickPreset(which);
+                },
+                else => {},
             },
             else => {},
         }
@@ -2328,11 +2515,19 @@ const App = struct {
     /// What a second start handed over (one.zig): its volume and its
     /// picture, its files added and the first played - only added with
     /// ADD - and, without ADD, the window brought to the front. Each
-    /// answered once it is dealt with, as the names are the sender's.
+    /// answered once it is dealt with, as the names are the sender's. A
+    /// program's question what plays (`sdk.player.State`) is answered
+    /// too.
     fn handedOver(app: *App) void {
+        if (@sizeOf(one.Handed) == @sizeOf(sdk.player.State)) @compileError("a Handed and a State are told apart by their length");
         const port = app.public orelse return;
         while (app.sys.GetMsg(port)) |message| {
             defer app.sys.ReplyMsg(message);
+            if (message.length == @sizeOf(sdk.player.State)) {
+                app.tellState(@ptrCast(@alignCast(message)));
+                continue;
+            }
+            if (message.length != @sizeOf(one.Handed)) continue;
             const handed: *const one.Handed = @ptrCast(@alignCast(message));
             if (handed.volume >= 0) app.volumeAt(handed.volume);
             if (handed.lookAsked()) |mode| app.lookTo(mode);
@@ -2346,6 +2541,20 @@ const App = struct {
             }
             if (handed.add == 0) app.toFront();
         }
+    }
+
+    /// `state` filled in: what is played, how far, and how long it is.
+    fn tellState(app: *App, state: *sdk.player.State) void {
+        const engine = app.engine;
+        state.doing = switch (engine.state) {
+            .playing => sdk.player.PLAYER_PLAYING,
+            .paused => sdk.player.PLAYER_PAUSED,
+            .idle, .ended => sdk.player.PLAYER_STOPPED,
+        };
+        state.seconds = app.seconds(engine.songFrame());
+        state.length = if (app.showsStation()) 0 else app.seconds(engine.info.frames);
+        copyCut(&state.title, &app.line_text[line_title].text);
+        copyCut(&state.artist, &app.line_text[line_artist].text);
     }
 
     /// The window in front, its screen in front of the others, and active.
@@ -2431,6 +2640,7 @@ const App = struct {
         _ = prefs.save(app.dl, remembered.ENVARC_FILE, text[0..n]);
         app.keepList();
         app.radio.keepFiles();
+        app.keepSound();
     }
 
     /// The list and the song shown, with the second it is at, written for
@@ -2644,8 +2854,9 @@ const App = struct {
                 app.showTime();
             },
             ID_VOLUME => app.volumeTo(code),
-            ID_PICTURE => app.cycleLook(),
+            ID_PICTURE => app.picturePressed(),
             ID_OUTPUT => app.pickOutput(code),
+            ID_PRESET => app.pickPreset(code),
             ID_SHUFFLE => app.shuffleTurned(code != 0),
             ID_REPEAT => app.repeatTurned(),
             ID_MUTE => app.mute(code != 0),
@@ -2738,13 +2949,16 @@ const App = struct {
     }
 
     /// A key no gadget took: the space bar pauses and goes on; N and P
-    /// the song after and before; Return plays the song selected where the
-    /// list is shown, and the station selected on the Radio page.
+    /// the song after and before; F the picture over the whole screen
+    /// (the Radio page's field takes it there);
+    /// Return plays the song selected where the list is shown, and the
+    /// station selected on the Radio page.
     fn key(app: *App, code: usize) void {
         switch (code) {
             ' ' => app.togglePause(),
             'n', 'N' => app.next(),
             'p', 'P' => app.previous(),
+            'f', 'F' => app.openWhole(),
             13 => switch (app.page) {
                 page_list => app.playSelected(),
                 page_radio => if (app.radio.toPlay()) |station| app.playFromRadio(station),
@@ -2803,8 +3017,14 @@ const App = struct {
         var height: usize = 0;
         _ = app.ib.GetAttr(cv.CANVAS_Width, app.picture, &width);
         _ = app.ib.GetAttr(cv.CANVAS_Height, app.picture, &height);
-        const w: u32 = @intCast(width);
-        const h: u32 = @intCast(height);
+        app.canvas_width = @intCast(width);
+        app.canvas_height = @intCast(height);
+        if (app.whole == null) app.fitPixels(app.canvas_width, app.canvas_height);
+    }
+
+    /// Pixels `w` by `h`, with what fits of the last picture carried into
+    /// them, and the plasma's rows and columns for that size.
+    fn fitPixels(app: *App, w: u32, h: u32) void {
         if (w == app.width and h == app.height and app.pixels != null) return;
         const old = app.pixels;
         defer if (old) |pixels| app.sys.FreeVec(pixels);
@@ -2842,12 +3062,13 @@ const App = struct {
     /// song read.
     fn tick(app: *App) void {
         const engine = app.engine;
-        if (app.page == page_picture) app.drawPicture();
+        if (app.page == page_picture or app.whole != null) app.drawPicture();
         app.looks +%= 1;
         if (app.looks % looks_per_time == 0) app.showTime();
         if (app.looks % looks_per_outputs == 0) app.readOutputs();
         app.readTags();
-        if (engine.state == .playing) {
+        const fading = if (app.whole) |*shown| shown.fading() else false;
+        if (engine.state == .playing or fading) {
             app.settle = settle_looks;
         } else if (app.settle > 0) {
             app.settle -= 1;
@@ -2857,18 +3078,62 @@ const App = struct {
         }
     }
 
-    /// The picture drawn from what is being heard, and shown.
+    /// The picture drawn from what is being heard, and shown: on the
+    /// canvas, or over the whole screen with the title over it.
     fn drawPicture(app: *App) void {
+        const rp = if (app.whole) |*shown| into: {
+            app.fitPixels(shown.width, shown.height);
+            break :into shown.rast_port;
+        } else app.rast_port orelse return;
         const pixels = app.pixels orelse return;
-        const rp = app.rast_port orelse return;
         const engine = app.engine;
-        engine.heard(&app.samples);
-        app.visual.draw(pixels, app.width, app.height, app.width, &app.samples, @max(engine.info.rate, 8000));
+        engine.heard(&app.left, &app.right);
+        app.visual.draw(pixels, app.width, app.height, app.width, &app.left, &app.right, @max(engine.info.rate, 8000));
         app.gb.WritePixelArray(rp, @ptrCast(pixels), app.width * 4, @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
             .max_x = @intCast(app.width),
             .max_y = @intCast(app.height),
         });
-        app.ib.QueueGadgetRefresh(app.picture);
+        if (app.whole) |*shown| shown.overlay(app.gb) else app.ib.QueueGadgetRefresh(app.picture);
+    }
+
+    /// The picture over the whole screen, the song's title faded in over
+    /// it; a beep when the window will not open.
+    fn openWhole(app: *App) void {
+        if (app.whole != null) return;
+        app.whole = whole_screen.Whole.open(app.ib, app.gb, app.dfb, app.screen) orelse return app.ib.DisplayBeep(app.screen);
+        if (app.whole) |*shown| shown.named(&app.line_text[line_title].text, &app.line_text[line_artist].text);
+        app.drawPicture();
+        app.wake();
+    }
+
+    /// The whole screen given up: the picture back on its canvas, the
+    /// window active again.
+    fn closeWhole(app: *App) void {
+        var shown = app.whole orelse return;
+        app.whole = null;
+        shown.close(app.ib, app.gb);
+        app.fitPixels(app.canvas_width, app.canvas_height);
+        if (app.page == page_picture) app.drawPicture();
+        app.ib.ActivateWindow(app.window);
+        app.wake();
+    }
+
+    /// A press on the picture: the next look - or, a second press soon
+    /// after the first, the look before it over the whole screen.
+    fn picturePressed(app: *App) void {
+        var now_seconds: u32 = 0;
+        var now_micros: u32 = 0;
+        app.ib.CurrentTime(&now_seconds, &now_micros);
+        if (app.pressed and app.ib.DoubleClick(app.pressed_seconds, app.pressed_micros, now_seconds, now_micros)) {
+            app.pressed = false;
+            app.lookTo(app.look_before);
+            return app.openWhole();
+        }
+        app.pressed = true;
+        app.pressed_seconds = now_seconds;
+        app.pressed_micros = now_micros;
+        app.look_before = app.visual.mode;
+        app.cycleLook();
     }
 
     /// The sound's process says something: the song that follows is heard
@@ -2877,6 +3142,7 @@ const App = struct {
     /// it asks for the song that follows is read at the round's end.
     fn soundNews(app: *App) void {
         if (app.engine.switched) app.advance();
+        if (app.engine.link_heard) app.linkHeard();
         if (app.engine.state == .ended) return app.ended();
         // A station's sound holding for its ring, or going on.
         if (app.station_loaded) app.showKind();
@@ -2895,7 +3161,8 @@ const App = struct {
             const station_mask: u32 = if (app.station) |station| station.signal() else 0;
             const url_mask = app.urlSignal();
             const radio_mask = app.radio.signal();
-            const got = app.sys.Wait(@as(u32, @truncate(window_mask)) | sound_mask | app.tick_mask | drop_mask | asl_mask | big_mask | about_mask | public_mask | station_mask | url_mask | radio_mask | exec.SIGBREAKF_CTRL_C);
+            const whole_mask: u32 = if (app.whole) |*shown| shown.signal() else 0;
+            const got = app.sys.Wait(@as(u32, @truncate(window_mask)) | sound_mask | app.tick_mask | drop_mask | asl_mask | big_mask | about_mask | public_mask | station_mask | url_mask | radio_mask | whole_mask | exec.SIGBREAKF_CTRL_C);
             if (got & exec.SIGBREAKF_CTRL_C != 0) return;
             if (got & sound_mask != 0) app.soundNews();
             if (got & drop_mask != 0) app.dropped();
@@ -2906,12 +3173,24 @@ const App = struct {
             if (got & station_mask != 0) app.stationNews();
             if (got & url_mask != 0) app.urlMessages();
             if (got & radio_mask != 0) app.radioNews();
+            if (got & whole_mask != 0) {
+                if (app.whole) |*shown| {
+                    if (!shown.messages(app.ib)) app.closeWhole();
+                }
+            }
             if (!app.windowMessages()) return;
             if (got & app.tick_mask != 0) app.tick();
             app.keepFollowing();
         }
     }
 };
+
+/// `text` into `into`, cut to fit and NUL-terminated.
+fn copyCut(into: []u8, text: [*:0]const u8) void {
+    const length = @min(lengthOf(text), into.len - 1);
+    @memcpy(into[0..length], text[0..length]);
+    into[length] = 0;
+}
 
 fn lengthOf(text: [*:0]const u8) usize {
     var length: usize = 0;
@@ -2958,6 +3237,8 @@ fn lookNamed(name: ?[*:0]const u8) visual.Mode {
     return switch (given[0] | 0x20) {
         'w' => .wave,
         'b' => .bars,
+        's' => .scope,
+        'm' => .meters,
         else => .plasma,
     };
 }
@@ -3223,6 +3504,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .dt = @ptrCast(dt_lib),
         .al = @ptrCast(asl_lib),
         .has_attrs = acb.lib().revision >= 1,
+        .ub = ub,
         .engine = engine,
         .visual = look,
         .level = percent,
@@ -3265,6 +3547,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const diskfont_lib = sys.OpenLibrary(diskfont.DISKFONTNAME, 0);
     defer if (diskfont_lib) |lib| sys.CloseLibrary(lib);
     app.title_font = titleFont(ib, app.gb, @ptrCast(diskfont_lib));
+    app.dfb = @ptrCast(diskfont_lib);
     defer if (app.title_font) |font| app.gb.CloseFont(font);
     app.shown_lines = app.makeRuns();
 
@@ -3359,6 +3642,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(gc.GA_Disabled, @intFromBool(app.outputs.count == 0)),
         .{},
     })) orelse return noWindow(&text, dl);
+    app.preset_shown, app.preset_off = presetIn(if (app.control) |*opened| opened else null, &app.outputs);
+    app.preset = loose.add(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_PRESET),
+        pair(gc.GA_RelVerify, 1),
+        pair(ch.CHOOSER_Labels, @intFromPtr(presetLabels(app.preset_shown))),
+        pair(ch.CHOOSER_Active, app.preset_shown),
+        pair(gc.GA_Disabled, @intFromBool(app.preset_off)),
+        .{},
+    })) orelse return noWindow(&text, dl);
     app.picture = loose.add(ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_PICTURE),
         pair(gc.GA_RelVerify, 1),
@@ -3400,6 +3692,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .object = app.mute_button, .weight_width = 0 },
         .{ .object = app.volume, .weight_width = 0 },
         .{ .object = app.output, .weight_width = 0, .label = text.get(.MSG_OUTPUT_LABEL) },
+        .{ .object = app.preset, .weight_width = 0, .label = text.get(.MSG_PRESET_LABEL) },
     }) orelse return noWindow(&text, dl);
     const framed = group(ib, &loose, &.{ pair(lg.LAYOUTA_FrameType, ic.FRAME_BUTTON), pair(lg.LAYOUTA_FrameRecessed, 1) }, &.{
         .{ .object = app.picture },
@@ -3595,6 +3888,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         app.resumeAt(where);
     } else if (app.songs.count > 0 and !only_add) app.goTo(0, .play) else app.wake();
     app.run();
+    if (app.whole) |*shown| shown.close(ib, app.gb);
+    app.whole = null;
     app.keep();
     return dos.RETURN_OK;
 }

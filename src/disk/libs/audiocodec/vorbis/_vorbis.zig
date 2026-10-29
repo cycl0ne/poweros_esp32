@@ -18,10 +18,20 @@
 //! the next one whole, and the page's position says where the sound
 //! goes on from. What lies between it and the sample is passed over.
 //!
+//! **A chain** - links one after another, each with headers of its own -
+//! is played link by link. The call that hands out a link's last frames
+//! stops there (ogg.zig finds where it ends), and the next reads the
+//! following link's headers: its setup in memory of its own, the one
+//! before given back; its comments the tags; the info its own, another
+//! rate or channel count with it. The link count rises (`ACA_Link`). On a
+//! file a link is what is measured and sought in: one whose last page is
+//! not the file's ends where a halving search finds the next link's first,
+//! and a seek moves within it. A link that cannot be decoded ends the
+//! stream with why.
+//!
 //! The samples are handed out at 16 bits, rounded and held at their ends.
 //! A stream of one or two channels is decoded; more are refused, as is
-//! a floor of type 0. A chained file - streams one after another - ends
-//! with the first.
+//! a floor of type 0.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -76,6 +86,15 @@ pub const Vorbis = struct {
     /// Where the first audio packet is: its page, and its first segment.
     audio_page: u64,
     audio_segment: u32,
+    /// What the link's first header says: its rate, and the bit rate it
+    /// was coded for - 0 or less when it does not say.
+    rate: u32,
+    nominal: i32,
+    /// Where in a file the link ends: the next link's first page, or the
+    /// file's end.
+    link_end: u64,
+    /// The ACERR_* a link broke the stream with, 0 while it has not.
+    broken: i32,
 };
 
 /// The headers read: the info filled in, the stream at the first audio
@@ -110,9 +129,22 @@ pub fn open(stream: *Stream) i32 {
         .start_offset = 0,
         .audio_page = 0,
         .audio_segment = 0,
+        .rate = 0,
+        .nominal = 0,
+        .link_end = 0,
+        .broken = 0,
     };
     ogg.begin(&v.ogg, null);
+    const result = headers(stream, v);
+    if (result != ac.ACERR_OK) return result;
+    return settle(stream, v);
+}
 
+/// A link's three headers read, the reader at its first page: what the
+/// sound is, its comments into the tags, and its setup - in memory of its
+/// own, the link before's given back - with the tables and buffers it
+/// needs; then where its sound begins.
+fn headers(stream: *Stream, v: *Vorbis) i32 {
     // What the sound is.
     if (!ogg.startPacket(stream, &v.ogg)) return failure(stream);
     var head: [30]u8 = undefined;
@@ -121,7 +153,6 @@ pub fn open(stream: *Stream) i32 {
     if (got < head.len or head[0] != 1 or !_stream.same(head[1..], "vorbis")) return ac.ACERR_CORRUPT;
     const channels: u32 = head[11];
     const rate = _stream.le32(head[12..16]);
-    const nominal: i32 = @bitCast(_stream.le32(head[20..24]));
     const short_bits = head[28] & 0x0F;
     const long_bits = head[28] >> 4;
     if (_stream.le32(head[7..11]) != 0 or channels == 0 or rate == 0 or head[29] & 1 == 0) return ac.ACERR_CORRUPT;
@@ -129,6 +160,8 @@ pub fn open(stream: *Stream) i32 {
     if (channels > 2) return ac.ACERR_UNSUPPORTED;
     v.channels = channels;
     v.blocksizes = .{ @as(u32, 1) << @intCast(short_bits), @as(u32, 1) << @intCast(long_bits) };
+    v.rate = rate;
+    v.nominal = @bitCast(_stream.le32(head[20..24]));
 
     // Its comments.
     if (!ogg.startPacket(stream, &v.ogg)) return failure(stream);
@@ -142,6 +175,8 @@ pub fn open(stream: *Stream) i32 {
     if (!ogg.startPacket(stream, &v.ogg)) return failure(stream);
     if (ogg.readBytes(stream, &v.ogg, &kind) != kind.len or kind[0] != 5 or !_stream.same(kind[1..], "vorbis")) return ac.ACERR_CORRUPT;
     const sys = stream.base.sys_base;
+    if (v.pool) |before| sys.DeletePool(before);
+    v.pool = null;
     const pool = sys.CreatePool(exec.MEMF_ANY | exec.MEMF_CLEAR, 32 * 1024, 8 * 1024) orelse return ac.ACERR_NOMEMORY;
     v.pool = pool;
     var bits: ogg.Bits = .{ .stream = stream, .ogg = &v.ogg };
@@ -169,7 +204,8 @@ pub fn open(stream: *Stream) i32 {
     v.class_stride = stride;
     v.classifications = setup.allocate(sys, pool, u8, stride * channels) orelse return ac.ACERR_NOMEMORY;
 
-    // Where the sound begins, where its positions start, how long it is.
+    // Where the sound begins, and where its positions start.
+    v.start_offset = 0;
     if (v.ogg.segment < v.ogg.segments) {
         v.audio_page = v.ogg.page_offset;
         v.audio_segment = v.ogg.segment;
@@ -178,25 +214,82 @@ pub fn open(stream: *Stream) i32 {
         v.audio_segment = 0;
         v.start_offset = startOffset(stream, v);
     }
+    v.ogg.chained = true;
+    return ac.ACERR_OK;
+}
+
+/// The link's length and the info: a file's link measured - where it
+/// ends, its last page's position - and the reader set at its first sound
+/// again; for a stream read once, the decoder made fresh.
+fn settle(stream: *Stream, v: *Vorbis) i32 {
     var frames: u64 = 0;
+    v.link_end = stream.end;
     if (stream.file != null and stream.has_end) {
-        const last = lastGranule(stream, v);
+        const last = measure(stream, v);
         if (last > 0 and @as(u64, @intCast(last)) > v.start_offset) frames = @as(u64, @intCast(last)) - v.start_offset;
         if (!positionAt(stream, v, v.audio_page, v.audio_segment)) return ac.ACERR_READ;
+    } else {
+        restart(v);
     }
 
+    const rate = v.rate;
     stream.info.codec = ac.ACODEC_VORBIS;
     stream.info.rate = rate;
-    stream.info.channels = channels;
+    stream.info.channels = v.channels;
     stream.info.bits = 16;
     stream.info.frames = @intCast(@min(frames, 0xFFFF_FFFF));
-    if (nominal > 0) {
-        stream.info.bitrate = @intCast(nominal);
-    } else if (frames != 0 and stream.end > v.audio_page) {
-        stream.info.bitrate = @intCast(@min((stream.end - v.audio_page) * 8 * rate / frames, 0xFFFF_FFFF));
+    stream.info.bitrate = 0;
+    if (v.nominal > 0) {
+        stream.info.bitrate = @intCast(v.nominal);
+    } else if (frames != 0 and v.link_end > v.audio_page) {
+        stream.info.bitrate = @intCast(@min((v.link_end - v.audio_page) * 8 * rate / frames, 0xFFFF_FFFF));
     }
     comments.finishChapters(stream, @intCast(@min(frames * 1000 / rate, 0xFFFF_FFFF)));
     return ac.ACERR_OK;
+}
+
+/// What a link's end came to: the next begun, none following, or one that
+/// cannot be decoded - why.
+const Link = union(enum) { begun, none, failed: i32 };
+
+/// The next link of a chain begun, when one follows: its headers read,
+/// its comments the tags, the info its own, and the count of links one
+/// more.
+fn nextLink(stream: *Stream, v: *Vorbis) Link {
+    if (!linkStart(stream, v)) return .none;
+    _stream.clearTags(stream);
+    var result = headers(stream, v);
+    if (result == ac.ACERR_OK) result = settle(stream, v);
+    if (result != ac.ACERR_OK) {
+        v.broken = result;
+        return .{ .failed = result };
+    }
+    _stream.nameInfo(stream);
+    stream.links += 1;
+    return .begun;
+}
+
+/// The reader set at the next link's first page: one that begins a stream
+/// with Vorbis's first header. A page of another kind, or of no beginning,
+/// is passed over - 64 of them at most. False when none comes: the reader
+/// is left on the link that ended, which a seek goes back into.
+fn linkStart(stream: *Stream, v: *Vorbis) bool {
+    var probe: ogg.Ogg = undefined;
+    var pages: u32 = 0;
+    while (pages < 64) : (pages += 1) {
+        ogg.begin(&probe, null);
+        if (!ogg.nextPage(stream, &probe)) return false;
+        // The page is small, and whole in the read-ahead: its first packet
+        // is looked at where it lies.
+        const body = _stream.available(stream);
+        const begins = probe.flags & ogg.first != 0 and probe.segments != 0;
+        if (begins and body.len >= 7 and body[0] == 1 and _stream.same(body[1..], "vorbis")) {
+            v.ogg = probe;
+            return true;
+        }
+        _stream.skip(stream, bodyOf(&probe));
+    }
+    return false;
 }
 
 fn failure(stream: *Stream) i32 {
@@ -259,6 +352,79 @@ fn blockOf(v: *const Vorbis, byte: u8) u32 {
     return v.blocksizes[@intFromBool(v.setup.modes[mode].long)];
 }
 
+/// How far a file's link goes - to the first page that is none of its
+/// own, or the file's end - into `link_end`, and its last granule
+/// position: -1 when it has none. A file of one link, as most are, ends
+/// with the link's own pages, and its last is looked for there; a link of
+/// a chain ends where a search halving the file, then page by page, finds
+/// the next link's first.
+fn measure(stream: *Stream, v: *Vorbis) i64 {
+    v.link_end = stream.end;
+    const tail = finalPage(stream, v);
+    if (tail.serial == null or inLink(v, tail.serial.?)) {
+        return if (tail.granule >= 0) tail.granule else lastGranule(stream, v);
+    }
+    var probe: ogg.Ogg = undefined;
+    var low = v.audio_page;
+    var high = stream.end;
+    var rounds: u32 = 0;
+    while (high > low and high - low > 64 * 1024 and rounds < 40) : (rounds += 1) {
+        const middle = low + (high - low) / 2;
+        if (!_stream.seekSource(stream, middle)) return -1;
+        ogg.begin(&probe, null);
+        if (!ogg.nextPage(stream, &probe) or probe.page_offset >= high) {
+            high = middle;
+        } else if (inLink(v, probe.serial)) {
+            low = probe.page_offset + 27 + probe.segments + bodyOf(&probe);
+        } else {
+            high = probe.page_offset;
+        }
+    }
+    if (!_stream.seekSource(stream, low)) return -1;
+    var last: i64 = -1;
+    while (true) {
+        ogg.begin(&probe, null);
+        if (!ogg.nextPage(stream, &probe)) break;
+        if (!inLink(v, probe.serial)) {
+            v.link_end = probe.page_offset;
+            break;
+        }
+        if (probe.serial == v.ogg.serial and probe.granule >= 0) last = probe.granule;
+        _stream.skip(stream, bodyOf(&probe));
+    }
+    return last;
+}
+
+/// What the last 64 KiB of a file end with: the serial of its last page -
+/// null when there is none there - and the last granule position of the
+/// stream read among them, -1 when there is none.
+fn finalPage(stream: *Stream, v: *const Vorbis) struct { serial: ?u32, granule: i64 } {
+    const span: u64 = 64 * 1024;
+    const from = if (stream.end - v.audio_page > span) stream.end - span else v.audio_page;
+    var serial: ?u32 = null;
+    var granule: i64 = -1;
+    if (!_stream.seekSource(stream, from)) return .{ .serial = null, .granule = -1 };
+    var probe: ogg.Ogg = undefined;
+    while (true) {
+        ogg.begin(&probe, null);
+        if (!ogg.nextPage(stream, &probe)) break;
+        serial = probe.serial;
+        if (probe.serial == v.ogg.serial and probe.granule >= 0) granule = probe.granule;
+        _stream.skip(stream, bodyOf(&probe));
+    }
+    return .{ .serial = serial, .granule = granule };
+}
+
+/// Whether the pages of the stream `serial` are the link's: its own, or a
+/// stream's that began beside it.
+fn inLink(v: *const Vorbis, serial: u32) bool {
+    if (serial == v.ogg.serial) return true;
+    for (v.ogg.companions[0..v.ogg.companion_count]) |other| {
+        if (other == serial) return true;
+    }
+    return false;
+}
+
 /// The last granule position of the stream in the file, looked for in
 /// more and more of its end: -1 when there is none.
 fn lastGranule(stream: *Stream, v: *const Vorbis) i64 {
@@ -289,13 +455,20 @@ fn bodyOf(probe: *const ogg.Ogg) u64 {
 /// decoder made fresh: no block before, no position known.
 fn positionAt(stream: *Stream, v: *Vorbis, offset: u64, segment: u32) bool {
     if (!_stream.seekSource(stream, offset)) return false;
-    ogg.begin(&v.ogg, v.ogg.serial);
+    ogg.again(&v.ogg);
     if (!ogg.nextPage(stream, &v.ogg) or segment > v.ogg.segments) return false;
     var before: u64 = 0;
     for (v.ogg.lacing[0..segment]) |value| before += value;
     _stream.skip(stream, before);
     v.ogg.segment = segment;
     v.ogg.pass_continued = false;
+    restart(v);
+    return true;
+}
+
+/// The decoder made fresh: no block before, no position known, nothing
+/// to hand out.
+fn restart(v: *Vorbis) void {
     v.previous_n = 0;
     v.ready = 0;
     v.ready_start = 0;
@@ -303,24 +476,32 @@ fn positionAt(stream: *Stream, v: *Vorbis, offset: u64, segment: u32) bool {
     v.produced = 0;
     v.seeking = false;
     v.skip_frames = 0;
-    return true;
 }
 
 // --- handing out ------------------------------------------------------------------
 
-/// Up to `frames` frames into `out`: how many, 0 at the end.
+/// Up to `frames` frames into `out`: how many, 0 at the end. A call ends
+/// with a link's last frame; the next goes on with the link after it.
 pub fn decode(stream: *Stream, v: *Vorbis, out: [*]i16, frames: u32) i32 {
-    const channels: usize = v.channels;
+    if (v.broken != 0) return 0;
     var done: u32 = 0;
     while (done < frames) {
         if (v.ready_start >= v.ready) {
             switch (packet.decode(stream, v)) {
-                .end => break,
+                .end => {
+                    if (done != 0) break;
+                    switch (nextLink(stream, v)) {
+                        .begun => continue,
+                        .none => break,
+                        .failed => |code| return code,
+                    }
+                },
                 .passed => {},
                 .decoded => account(v),
             }
             continue;
         }
+        const channels: usize = v.channels;
         const count = @min(v.ready - v.ready_start, frames - done);
         const into = out + @as(usize, done) * channels;
         for (0..channels) |channel| {
@@ -394,9 +575,10 @@ fn account(v: *Vorbis) void {
 
 // --- seeking ----------------------------------------------------------------------
 
-/// The stream moved to `frame` exactly.
+/// The stream moved to `frame` of the link being played, exactly.
 pub fn seek(stream: *Stream, v: *Vorbis, frame: u32) i32 {
     if (stream.file == null) return ac.ACERR_NOSEEK;
+    if (v.broken != 0) return v.broken;
     const target = @as(u64, frame) + v.start_offset;
     if (frame != 0 and stream.has_end) {
         if (findPage(stream, v, target)) |place| {
@@ -420,7 +602,7 @@ const Place = struct { offset: u64, segment: u32 };
 fn findPage(stream: *Stream, v: *const Vorbis, target: u64) ?Place {
     var probe: ogg.Ogg = undefined;
     var low = v.audio_page;
-    var high = stream.end;
+    var high = v.link_end;
     var rounds: u32 = 0;
     while (high > low and high - low > 64 * 1024 and rounds < 40) : (rounds += 1) {
         const middle = low + (high - low) / 2;
@@ -448,7 +630,7 @@ fn findPage(stream: *Stream, v: *const Vorbis, target: u64) ?Place {
     ogg.begin(&probe, v.ogg.serial);
     var best: ?Place = null;
     while (ogg.nextPage(stream, &probe)) {
-        if (probe.granule > @as(i64, @intCast(target))) break;
+        if (probe.page_offset >= v.link_end or probe.granule > @as(i64, @intCast(target))) break;
         if (probe.granule >= 0) {
             if (lastPacketStart(&probe)) |segment| best = .{ .offset = probe.page_offset, .segment = segment };
         }

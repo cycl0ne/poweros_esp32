@@ -282,8 +282,8 @@ left out. An output that plays one side has the bands worked once, on
 the sides joined.
 
 **Presets** are curves by name, in `sdk.devices.audiocontrol`'s
-`presets`; the Volume window and Prefs offer them in a chooser, and
-`Audio EQ` takes them by name:
+`presets`; the Volume window, Prefs and Player offer them in a chooser,
+and `Audio EQ` takes them by name:
 
 | Preset | 31 | 62 | 125 | 250 | 500 | 1k | 2k | 4k | 8k | 16k |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -387,7 +387,9 @@ Three places set it:
   equalizer, kept when the window closes.
 
 Player has an Output chooser of its own, beside its volume, which plays
-every sound through the output picked.
+every sound through the output picked, and an EQ chooser of the presets
+for that output's equalizer (also Settings > Equalizer): a preset
+picked is kept the way Volume keeps it, when the Player ends.
 
 ## Sounds for a moment: triggers
 
@@ -466,6 +468,33 @@ search halving the file) and an Ogg Vorbis file (by such a search over
 its pages) exactly, an MP3 by its encoder's table or its bit rate - and
 to its start exactly, where its encoder said the music begins.
 
+A chained Ogg stream - songs one after another, each a link with headers
+of its own, as an Ogg station sends them and as files put end to end
+are - goes on from link to link. A `DecodeAudio` call ends with a link's
+last frame, and the next reads the following link's headers and hands
+out its sound: its own rate and channels, which the info gives from then
+on, its own tags, and `ACA_Link` one more. A program asks for `ACA_Link`
+after each call; when it has risen it reads the info and the tags again
+and, for another rate or channel count, sets its output anew before it
+writes what that call gave. On a file each link is measured on its own:
+the info's length is the link's, and `SeekAudio` moves within the link
+being decoded - a file is started over from its first link by opening it
+again.
+
+```zig
+var link: u32 = 0;
+const got = acb.DecodeAudio(stream, &buffer, 4096);
+var now: u32 = link;
+_ = acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
+    .{ .tag = ac.ACA_Link, .data = @intFromPtr(&now) },
+    .{},
+});
+if (now != link) {
+    link = now;
+    acb.GetAudioStreamInfo(stream, &info); // the new song's rate, channels, names
+}
+```
+
 A stream is used by one task at a time, but not only by the one that
 opened it. A player opens the next song on its window's task - reading
 its tags and cover, which can take a while from a card - and hands the
@@ -518,7 +547,10 @@ _ = acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
 });
 ```
 
-Everything handed out is the stream's, good until it is closed.
+Everything handed out is the stream's, good until it is closed. In a
+chain the texts and chapters say the link being decoded, written again
+where they are as each begins; a link's picture stays until the link
+after next.
 
 A program that only wants a file heard - an alarm, a notification -
 leaves all of this to datatypes.library: a sound file is a
@@ -526,7 +558,14 @@ leaves all of this to datatypes.library: a sound file is a
 (the [datatypes guide](datatypes.md#sounds)).
 
 `C:Play FILE` plays a file this way, with `VOLUME` and `START` (seconds
-in); Ctrl-C stops it. `SYS:Programs/Player` does it in a window, and is
+in), a chained file song after song; Ctrl-C stops it. A FILE that is an
+`http://` or `https://` address is a station - MP3 or Ogg Vorbis, read
+on a process of its own into a ring and decoded from it through
+`ACA_ReadFunc`, a few seconds behind - and Play prints its name and each
+title its metadata names as it changes (`sdk.http.icy`), or an Ogg
+station's songs by their own tags; it ends when the station ends the
+stream, or says why the connection was lost. `SYS:Programs/Player` does
+it in a window, and is
 what the desktop opens a `.mp3`, `.wav`, `.flac` or `.ogg` file with,
 and a list - `.m3u`, `.m3u8`, `.pls` (the `MP3`, `WAV`, `FLAC`, `Ogg`,
 `M3U` and `PLS` descriptors in `DEVS:DataTypes`) - with the song's cover
@@ -536,9 +575,19 @@ M3U, and internet stations - MP3 or Ogg Vorbis over `http://` or
 `ACA_ReadFunc`. Its Radio page keeps stations and finds more in
 radio-browser.info's list; a station's picture is its cover, and the
 song's while it plays when the station names one beside its title
-(`StreamUrl`). There is one Player: a file opened while it
-runs plays in the one that is open, and it starts again where it was
-left.
+(`StreamUrl`). An Ogg station's songs, and the songs of a chained Ogg
+file, are shown one after another as each is heard, by the tags each
+brings. `audiocodec.datatype` plays a chained file's first song. There
+is one Player: a file opened while it runs plays in the one that is
+open, and it starts again where it was left.
+
+A program asks the Player that runs what it plays at its public port,
+`Player`: it sends a `sdk.player.State` with `SafePutToPort`, and the
+answer says whether the Player plays, pauses or is stopped, how far
+into the song it is and how long the song is (0 for a station), and
+the song's title and artist. A `State` that comes back unanswered came
+from a Player that was ending. The dock's `player.docklet` asks twice a
+second, taking each answer at its next look, so the dock never waits.
 
 ## Keeping a picture in step
 

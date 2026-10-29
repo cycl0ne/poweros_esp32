@@ -35,7 +35,7 @@
 //!   window.
 //! - Add Docklet in the menu lists the docklets in SYS:classes/docklets
 //!   (`sdk.docklets`) - the time, the battery, the volume, the cores, the
-//!   network - and puts the one picked in. A docklet is drawn by its
+//!   network, what the Player plays - and puts the one picked in. A docklet is drawn by its
 //!   class at the entry's size, looks at the machine as often as it asks,
 //!   and a click on it runs its program.
 //!
