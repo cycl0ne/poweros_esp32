@@ -179,7 +179,11 @@ pub const LIBRARY_VERSION = 0;
 /// sizing's next step waits until the program is done with the last one.
 /// 69: PART_TOOL disabled has a text pen of its own, faded into the ground
 /// as a disabled command picture is, so a tool button needs no ghost.
-pub const LIBRARY_REVISION = 69;
+/// 70: layoutgclass hides a child and shows it again (CHILDA_Hidden), and
+/// its CHILDA_ tags reach a child it has already (LAYOUTA_ModifyChild): a
+/// part of a window that comes and goes - a ribbon, a find line - keeps
+/// its place among the others.
+pub const LIBRARY_REVISION = 70;
 const BUILD_DATE = "29.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

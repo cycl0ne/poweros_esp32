@@ -617,6 +617,8 @@ with weight 0 keeps its own size.
 | `LAYOUTA_FrameRecessed` | the frame sunk: a groove, or with `LAYOUTA_FrameType` `FRAME_BUTTON` a hollow round a picture or a list |
 | `LAYOUTA_Columns`, `CHILDA_Column`, `CHILDA_Row`, `CHILDA_ColumnSpan` | a grid's columns and cells |
 | `LAYOUTA_Wrap` | a row too narrow for its children goes on in rows beneath |
+| `CHILDA_Hidden` | hidden: not drawn, pressed or reached by Tab, and taking no room; shown again where it was (intuition 0.70) |
+| `LAYOUTA_ModifyChild` | a child the layout has already, for the `CHILDA_` tags after it - to hide it or show it again |
 
 What a child reports reaches the window in its own name: a button in a
 layout in a layout is `WMHI_GADGETUP` with that button's `GA_ID`. A
@@ -637,6 +639,20 @@ and a window too small for it grows:
 ```zig
 _ = ib.SetGadgetAttrsTagList(info, window, &.{ .{ .tag = tx.TEXT_Runs, .data = @intFromPtr(&runs) }, .{} });
 var rethink = wc.WmRethink{};
+_ = ib.SendMessage(object, @ptrCast(&rethink));
+```
+
+A part of a window that comes and goes - a ribbon, a find line - is a
+child hidden and shown again. It keeps its place among the others, so it
+comes back where it was, and the layout disposes of it whether it is
+shown or not:
+
+```zig
+_ = ib.SetGadgetAttrsTagList(layout, window, &.{
+    .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(find_line) },
+    .{ .tag = lg.CHILDA_Hidden, .data = 0 },
+    .{},
+});
 _ = ib.SendMessage(object, @ptrCast(&rethink));
 ```
 
@@ -1041,7 +1057,8 @@ a group folds into one button with its picture, which drops the group
 down. Tabs the row has no room for stand behind a », which drops their
 names down. On a small screen `RIBBON_MinimizeBelow` keeps it minimized,
 a tab then dropping its page down over the window. `C:test/Ribbon` shows
-all of it.
+all of it; `SYS:Programs/Sheet` has a ribbon whose commands are its
+menus', and View → Ribbon hides it as a hidden layout child.
 
 ## Requesters
 

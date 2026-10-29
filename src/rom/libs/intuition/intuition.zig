@@ -5617,6 +5617,123 @@ test "layoutgclass: a space takes the spare room, and a press on it is on nothin
     try tearDown(ib);
 }
 
+/// A group's members in order, into `seen`; how many there are.
+fn membersOf(ib: *IntuitionBase, group: *Object, seen: []*Object) usize {
+    const it = ib.iface();
+    const data = intuition.instData(@import("classes/groupgclass.zig").Data, ib.group_class.?, group);
+    var state: ?*sdk.exec.MinNode = data.members.head;
+    var n: usize = 0;
+    while (it.NextObject(&state)) |member| : (n += 1) {
+        if (n < seen.len) seen[n] = member;
+    }
+    return n;
+}
+
+test "layoutgclass: a hidden child takes no room and is no member, and shown again is back where it was" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // A column of three, the middle one hidden from the start.
+    var parts: [3]*Object = undefined;
+    for (&parts, 0..) |*button, i| button.* = framedButton(ib, "OK", i);
+    const column = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 200 },
+        .{ .tag = gc.GA_Height, .data = 200 },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(parts[0]) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(parts[1]) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Hidden, .data = 1 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(parts[2]) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{},
+    }).?;
+
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_GimmeZeroZero, .data = 1 },
+        .{},
+    }).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    var gi = _gadget.info(win);
+    gi.domain_width = 400;
+    gi.domain_height = 300;
+    var lay = gc.GpLayout{ .gadget_info = &gi, .initial = 0 };
+    _ = it.SendMessage(column, @ptrCast(&lay));
+    var nominal = gc.GpDomain{ .gadget_info = &gi, .which = gc.GDOMAIN_NOMINAL };
+
+    // Hidden: the third right under the first, one spacing between, and
+    // the column as tall as the two.
+    var seen: [3]*Object = undefined;
+    try testing.expectEqual(@as(usize, 2), membersOf(ib, column, &seen));
+    try testing.expectEqual(parts[0], seen[0]);
+    try testing.expectEqual(parts[2], seen[1]);
+    const first = boxOf(ib, parts[0]);
+    try testing.expectEqual(first.top + first.height + 4, boxOf(ib, parts[2]).top);
+    _ = it.SendMessage(column, @ptrCast(&nominal));
+    try testing.expectEqual(first.height * 2 + 4, nominal.domain.height);
+
+    // Shown: between the two again, in the members as in the column.
+    const show = [_]TagItem{
+        .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(parts[1]) },
+        .{ .tag = lg.CHILDA_Hidden, .data = 0 },
+        .{},
+    };
+    _ = it.SetAttrsTagList(column, &show);
+    _ = it.SendMessage(column, @ptrCast(&lay));
+    try testing.expectEqual(@as(usize, 3), membersOf(ib, column, &seen));
+    for (parts, seen) |part, member| try testing.expectEqual(part, member);
+    const middle = boxOf(ib, parts[1]);
+    try testing.expectEqual(first.top + first.height + 4, middle.top);
+    try testing.expectEqual(middle.top + middle.height + 4, boxOf(ib, parts[2]).top);
+    _ = it.SendMessage(column, @ptrCast(&nominal));
+    try testing.expectEqual(first.height * 3 + 8, nominal.domain.height);
+
+    // The first hidden and shown: back at the head. A child the layout
+    // does not have is told nothing.
+    for ([_]usize{ 1, 0 }) |hidden| {
+        const toggle = [_]TagItem{
+            .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(parts[0]) },
+            .{ .tag = lg.CHILDA_Hidden, .data = hidden },
+            .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(column) },
+            .{ .tag = lg.CHILDA_Hidden, .data = 1 },
+            .{},
+        };
+        _ = it.SetAttrsTagList(column, &toggle);
+    }
+    try testing.expectEqual(@as(usize, 3), membersOf(ib, column, &seen));
+    for (parts, seen) |part, member| try testing.expectEqual(part, member);
+
+    // The last hidden and taken out: it is the program's again. The middle
+    // one hidden goes with the layout all the same.
+    const leave = [_]TagItem{
+        .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(parts[2]) },
+        .{ .tag = lg.CHILDA_Hidden, .data = 1 },
+        .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(parts[1]) },
+        .{ .tag = lg.CHILDA_Hidden, .data = 1 },
+        .{},
+    };
+    _ = it.SetAttrsTagList(column, &leave);
+    var off = classusr.OpMember{ .method_id = classusr.OM_REMMEMBER, .object = parts[2] };
+    try testing.expectEqual(@as(usize, 1), it.SendMessage(column, @ptrCast(&off)));
+    try testing.expectEqual(@as(usize, 1), membersOf(ib, column, &seen));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(column);
+    it.DisposeObject(parts[2]);
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "layoutgclass: a child's maximum holds its nominal size, and the layout's with it" {
     const ib = try setUp();
     defer kexec.deinit();

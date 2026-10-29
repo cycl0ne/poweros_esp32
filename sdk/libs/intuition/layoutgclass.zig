@@ -19,6 +19,25 @@
 //! A child that keeps its shape (`CHILDA_Aspect`) is as long along as its
 //! size across makes it: a cover stays square as the window grows.
 //!
+//! A child can be hidden (`CHILDA_Hidden`) and shown again: hidden, it is
+//! not drawn, pressed, keyed or reached by Tab, and takes no room - nor
+//! the spacing either side of it; shown, it is back where it was among
+//! the others. `LAYOUTA_ModifyChild` names a child the layout has already
+//! for the `CHILDA_` tags after it. A window object's program then sends
+//! `WM_RETHINK`. A ribbon or a find line that comes and goes:
+//!
+//!   _ = ib.SetGadgetAttrsTagList(layout, window, &.{
+//!       .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(find_line) },
+//!       .{ .tag = lg.CHILDA_Hidden, .data = 0 },
+//!       .{},
+//!   });
+//!   var rethink = wc.WmRethink{};
+//!   _ = ib.SendMessage(window_object, @ptrCast(&rethink));
+//!
+//! Since intuition 0.70. A hidden child is still the layout's, disposed
+//! of with it. A line of text that has the keyboard is to have let go of
+//! it before it is hidden.
+//!
 //! A layout can be drawn in a frame with a title in its top edge
 //! (`LAYOUTA_Frame`, `LAYOUTA_FrameTitle`), sunk rather than raised
 //! (`LAYOUTA_FrameRecessed`): the frame and the title take their room off
@@ -103,6 +122,11 @@ pub const LAYOUTA_Margin = LAYOUTA_Dummy + 0x0004;
 /// then on. The `CHILDA_` tags that follow it, up to the next one, are
 /// about it.
 pub const LAYOUTA_AddChild = LAYOUTA_Dummy + 0x0005;
+/// A child the layout has already: the `CHILDA_` tags that follow it, up
+/// to the next `LAYOUTA_AddChild` or `LAYOUTA_ModifyChild`, are about it.
+/// One that is not the layout's has them ignored. Set only; since
+/// intuition 0.70.
+pub const LAYOUTA_ModifyChild = LAYOUTA_Dummy + 0x000D;
 /// Bool: a frame round the layout, with the children inside it. A ridge
 /// unless `LAYOUTA_FrameType` says otherwise. This is what groups the
 /// settings of a window into boxes.
@@ -196,6 +220,10 @@ pub const CHILDA_RowSpan = CHILDA_Dummy + 0x0C;
 /// `CHILDA_Align` says. 0, the default, keeps no shape. A grid and a row or
 /// column that wraps leave it alone.
 pub const CHILDA_Aspect = CHILDA_Dummy + 0x0D;
+/// Bool: the child hidden - out of the drawing, the presses, the keys and
+/// Tab's round, and taking no room, the spacing either side of it neither
+/// - or shown again where it was. Made and set; since intuition 0.70.
+pub const CHILDA_Hidden = CHILDA_Dummy + 0x0E;
 
 /// A shape for `CHILDA_Aspect`: `width` to `height`, 1 to 1 for a square.
 pub fn aspect(width: u16, height: u16) u32 {

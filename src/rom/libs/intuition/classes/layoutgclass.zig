@@ -61,9 +61,20 @@
 //! the width it is about to give it before it asks its size, and the
 //! other way round.
 //!
+//! **A hidden child** (`CHILDA_Hidden`) is taken out of the group's
+//! members - it is not drawn, pressed, keyed or reached by Tab - and out
+//! of the measuring and the placing, the spacing either side of it too;
+//! its record stays where it is, so shown again it is put back among the
+//! members after the shown child before it, where it was. The layout
+//! disposes of it with the others. `LAYOUTA_ModifyChild` makes a child
+//! the layout has already the one the `CHILDA_` tags after it are about,
+//! which is how one is hidden and shown again.
+//!
 //! Each child has a record of its own here, on a list beside the group's
 //! members and in the same order: its label, its weights, the sizes that
 //! stand in for its own, and scratch room for the sizes being worked out.
+//! A hidden child's record is passed over by everything but finding,
+//! dropping and disposing of it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -114,6 +125,8 @@ pub const Child = extern struct {
     /// `CHILDA_Aspect`: its width in the top half, its height in the
     /// bottom; 0 keeps no shape.
     aspect: u32 = 0,
+    /// `CHILDA_Hidden`: out of the group's members, and of the layout.
+    hidden: u32 = 0,
     /// In a grid: the cell it asked for (-1 for the next free one), how
     /// many it covers, and the cell it was given.
     column: i32 = -1,
@@ -186,19 +199,27 @@ fn isLayout(ib: *IntuitionBase, o: *Object) bool {
     return false;
 }
 
-/// Each child's record in turn.
+/// Each shown child's record in turn; with `every`, the hidden ones' too.
 pub const Walk = struct {
     at: ?*exec.MinNode,
+    hidden: bool = false,
 
     pub fn over(p: *Data) Walk {
         return .{ .at = p.children.head };
     }
 
+    pub fn every(p: *Data) Walk {
+        return .{ .at = p.children.head, .hidden = true };
+    }
+
     pub fn next(w: *Walk) ?*Child {
-        const node = w.at orelse return null;
-        // The tail sentinel is the node with no successor.
-        w.at = node.succ orelse return null;
-        return @ptrCast(node);
+        while (true) {
+            const node = w.at orelse return null;
+            // The tail sentinel is the node with no successor.
+            w.at = node.succ orelse return null;
+            const record: *Child = @ptrCast(node);
+            if (record.hidden == 0 or w.hidden) return record;
+        }
     }
 };
 
@@ -246,7 +267,7 @@ fn addSpace(ib: *IntuitionBase, cl: *Class, o: *Object) bool {
 }
 
 fn recordOf(p: *Data, child: *Object) ?*Child {
-    var walk = Walk.over(p);
+    var walk = Walk.every(p);
     while (walk.next()) |record| {
         if (record.object == child) return record;
     }
@@ -257,6 +278,40 @@ fn dropRecord(ib: *IntuitionBase, p: *Data, record: *Child) void {
     if (p.last == record) p.last = null;
     ib.sys_base.Remove(@ptrCast(&record.node));
     ib.sys_base.FreeVec(record);
+}
+
+/// A child hidden - taken out of the group's members, as `OM_REMMEMBER`
+/// takes one - or shown again: given back to the group, which claims it
+/// for the window as it would a new member, and put among the members
+/// after the shown child before it.
+fn hide(ib: *IntuitionBase, cl: *Class, o: *Object, record: *Child, hidden: bool) void {
+    if ((record.hidden != 0) == hidden) return;
+    const it = ib.iface();
+    if (hidden) {
+        var off = classusr.OpMember{ .method_id = classusr.OM_REMMEMBER, .object = record.object };
+        _ = it.SendSuperMessage(cl, o, @ptrCast(&off));
+        record.hidden = 1;
+        return;
+    }
+    var on = classusr.OpMember{ .method_id = classusr.OM_ADDMEMBER, .object = record.object };
+    if (it.SendSuperMessage(cl, o, @ptrCast(&on)) == 0) return;
+    record.hidden = 0;
+    // The group put it at the end; it goes after the member before it.
+    var before: ?*exec.Node = null;
+    var node = record.node.pred;
+    while (node) |at| : (node = at.pred) {
+        if (at.pred == null) break;
+        const earlier: *Child = @ptrCast(at);
+        if (earlier.hidden == 0) {
+            before = @ptrCast(&classes.objectHeader(earlier.object).node);
+            break;
+        }
+    }
+    const group = classes.instData(groupgclass.Data, ib.group_class.?, o);
+    const sys = ib.sys_base;
+    const own_node: *exec.Node = @ptrCast(&classes.objectHeader(record.object).node);
+    sys.Remove(own_node);
+    sys.Insert(@ptrCast(&group.members), own_node, before);
 }
 
 /// The layout's own attributes, and children with what is said about them.
@@ -295,6 +350,7 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
             lg.LAYOUTA_AddSpace => if (addSpace(ib, cl, o)) {
                 changed = 1;
             },
+            lg.LAYOUTA_ModifyChild => p.last = if (v != 0) recordOf(p, @ptrFromInt(v)) else null,
             lg.LAYOUTA_Frame, lg.LAYOUTA_FrameType => {
                 ib.iface().DisposeObject(p.frame);
                 p.frame = null;
@@ -316,9 +372,10 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
                 }
                 changed = 1;
             },
-            lg.CHILDA_Label, lg.CHILDA_WeightWidth, lg.CHILDA_WeightHeight, lg.CHILDA_MinWidth, lg.CHILDA_MinHeight, lg.CHILDA_MaxWidth, lg.CHILDA_MaxHeight, lg.CHILDA_Align, lg.CHILDA_Column, lg.CHILDA_Row, lg.CHILDA_ColumnSpan, lg.CHILDA_RowSpan, lg.CHILDA_Aspect => {
+            lg.CHILDA_Label, lg.CHILDA_WeightWidth, lg.CHILDA_WeightHeight, lg.CHILDA_MinWidth, lg.CHILDA_MinHeight, lg.CHILDA_MaxWidth, lg.CHILDA_MaxHeight, lg.CHILDA_Align, lg.CHILDA_Column, lg.CHILDA_Row, lg.CHILDA_ColumnSpan, lg.CHILDA_RowSpan, lg.CHILDA_Aspect, lg.CHILDA_Hidden => {
                 const record = p.last orelse continue;
                 switch (item.tag) {
+                    lg.CHILDA_Hidden => hide(ib, cl, o, record, v != 0),
                     lg.CHILDA_Label => {
                         record.label = @ptrFromInt(v);
                         // A `_` in the label names the key the child is
@@ -999,8 +1056,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         classusr.OM_DISPOSE => {
             const p = own(cl, o orelse return 0);
             while (true) {
-                var walk = Walk.over(p);
-                dropRecord(ib, p, walk.next() orelse break);
+                var walk = Walk.every(p);
+                const record = walk.next() orelse break;
+                // A hidden child is no member, to go with the group.
+                if (record.hidden != 0) it.DisposeObject(record.object);
+                dropRecord(ib, p, record);
             }
             it.DisposeObject(p.frame);
             p.frame = null;
@@ -1033,7 +1093,10 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const m: *classusr.OpMember = @ptrCast(@alignCast(msg));
             const p = own(cl, o.?);
             const record = recordOf(p, m.object) orelse return 0;
+            const hidden = record.hidden != 0;
             dropRecord(ib, p, record);
+            // A hidden child left the members when it was hidden.
+            if (hidden) return 1;
             return it.SendSuperMessage(cl, o, msg);
         },
         gc.GM_DOMAIN => {
