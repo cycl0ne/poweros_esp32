@@ -96,9 +96,10 @@ pub const Library = gadgets.ClassLibrary(.{
     .version = 1,
     // 1: the wheel, a third press, indent, line numbers. 2: a press
     // follows the one before by place and time (DoubleTap). 3:
-    // highlighting (TEXTEDIT_HighlightHook).
-    .revision = 3,
-    .date = "26.10.2026",
+    // highlighting (TEXTEDIT_HighlightHook). 4: TEXTEDIT_CanUndo and
+    // TEXTEDIT_CanRedo.
+    .revision = 4,
+    .date = "29.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -1239,6 +1240,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 te.TEXTEDIT_VisibleHoriz => nowTold(base, own, o.?, null).width,
                 te.TEXTEDIT_Scrollers => @intFromBool(own.scrollers),
                 te.TEXTEDIT_HighlightHook => @intFromPtr(own.highlight_hook),
+                te.TEXTEDIT_CanUndo => @intFromBool(own.history.canUndo()),
+                te.TEXTEDIT_CanRedo => @intFromBool(own.history.canRedo()),
                 else => return ib.SendSuperMessage(cl, o, msg),
             };
             return 1;

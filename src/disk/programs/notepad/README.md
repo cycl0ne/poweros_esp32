@@ -15,10 +15,10 @@ the text is saved to.
 
 ## Using it
 
-Type where the cursor is. The scroll bars on the right and at the bottom
-move the text; the sizing gadget is in the corner between them. The
-window's title shows the file's name, with a `*` before it while the text
-has changed.
+Type where the cursor is. Along the top is the ribbon, under it the
+text. The scroll bars on the right and at the bottom move the text; the
+sizing gadget is in the corner between them. The window's title shows
+the file's name, with a `*` before it while the text has changed.
 
 The menus, with their right-Amiga keys:
 
@@ -28,7 +28,7 @@ The menus, with their right-Amiga keys:
 - **Search:** Find... (F), Find Next (G), Find Previous (P),
   Replace... (R)
 - **View:** Word Wrap (W) and Line Numbers (L), both on to start with;
-  Zig Highlighting (H), off to start with
+  Zig Highlighting (H), off to start with; Ribbon
 
 **Zig Highlighting** shows Zig source in colours: keywords, types,
 built-in functions (`@import`), strings, numbers and comments each in
@@ -48,6 +48,24 @@ and Find Previous go on with the last text looked for.
 
 A text that has changed is not let go - by New, Open, Quit or the close
 gadget - before a requester asks whether to save it.
+
+## The ribbon
+
+The ribbon has the menus' commands as buttons with pictures, on two tabs:
+
+- **Home:** Clipboard (Paste, Cut, Copy), Undo (Undo, Redo - grey while
+  there is nothing to undo or redo), Editing (Find, Replace, Select All).
+  Find's arrow drops down Find Next and Find Previous.
+- **View:** Word Wrap and Line Numbers, and Zig for Zig Highlighting -
+  each a toggle that is down while it is on, and the menu's check mark
+  says the same.
+
+**View → Ribbon** hides the ribbon and shows it again; Notepad remembers
+that in `ENV:Notepad.prefs` (`RIBBON=NO` hides it) and in `ENVARC:`. In a
+low window, on a small board's screen, the ribbon is only its row of tabs:
+a tab drops its page down when it is clicked. Without ribbon.gadget,
+toolbutton.gadget or command.image Notepad has no ribbon and works as
+before.
 
 ## Ending it
 

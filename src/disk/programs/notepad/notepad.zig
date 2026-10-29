@@ -4,9 +4,10 @@
 //!
 //!   Notepad [FILE]
 //!
-//! A window on the default public screen that is all textedit.gadget: the
-//! file's text, typed into where the cursor is (the gadget's own keys are
-//! in sdk/libs/gadgets/textedit.zig). FILE is opened at the start; a name
+//! A window on the default public screen: a ribbon of commands along the
+//! top, and under it textedit.gadget with the file's text, typed into
+//! where the cursor is (the gadget's own keys are in
+//! sdk/libs/gadgets/textedit.zig). FILE is opened at the start; a name
 //! that is not there yet is the file the text is saved to.
 //!
 //! The scroll bars are in the window's border, one down the right and one
@@ -28,7 +29,23 @@
 //!   Search   Find... (F), Find Next (G), Find Previous (P),
 //!            Replace... (R)
 //!   View     Word Wrap (W), Line Numbers (L), both on to begin with;
-//!            Zig Highlighting (H), off
+//!            Zig Highlighting (H), off; Ribbon
+//!
+//! **The ribbon** (ribbon.gadget, made from a table with `rb.build`) has
+//! two tabs. Home has the commands of the text: Clipboard (Paste, Cut,
+//! Copy), Undo (Undo and Redo, disabled while there is nothing to undo or
+//! redo - textedit.gadget 1.4's `TEXTEDIT_CanUndo`, `TEXTEDIT_CanRedo`)
+//! and Editing (Find, which drops down Find Next and Find Previous;
+//! Replace; Select All). View has its toggles: Word Wrap and Line Numbers,
+//! and Zig. A menu item and a ribbon button are one command: the item's
+//! user data is the button's ID, and a toggle and its check mark say the
+//! same whichever was used. No label marks a key, since a key typed is
+//! the text's. View's Ribbon hides it and shows it again, and
+//! `ENV:Notepad.prefs` keeps that (`RIBBON=NO`), ENVARC: too. In a window
+//! lower than 400 pixels inside, a small board's, the ribbon is its row
+//! of tabs alone, a tab dropping its page down. Without toolbutton.gadget,
+//! command.image or ribbon.gadget Notepad has no ribbon and works as
+//! before.
 //!
 //! Zig Highlighting gives the text a highlight hook (highlight.zig) that
 //! labels each line as Zig - keywords, types, built-in functions, strings,
@@ -68,19 +85,24 @@ const sr = sdk.gadgets.scroller;
 const highlight = @import("highlight.zig");
 const st = sdk.gadgets.string;
 const cb = sdk.gadgets.checkbox;
+const tb = sdk.gadgets.toolbutton;
+const rb = sdk.gadgets.ribbon;
+const command = sdk.images.command;
+const prefs = sdk.prefs;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const AslBase = sdk.interface.asl.AslBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const IFFParseBase = sdk.interface.iffparse.IFFParseBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const Object = intuition.Object;
 const Window = intuition.Window;
 const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Notepad";
-const VERSION = "1.4";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (26.10.2026)\r\n";
+const VERSION = "1.5";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -99,6 +121,10 @@ const search_size = 128;
 const ID_EDITOR = 1;
 const ID_VERT = 10;
 const ID_HORIZ = 11;
+const ID_RIBBON = 12;
+// The ribbon's Find, whose list says to find the next or the one before.
+const ID_FINDS = 20;
+// The find window's.
 const ID_FIND_TEXT = 2;
 const ID_WITH_TEXT = 3;
 const ID_ANY_CASE = 4;
@@ -106,69 +132,126 @@ const ID_FIND = 5;
 const ID_REPLACE = 6;
 const ID_REPLACE_ALL = 7;
 
-// The menus and their items, in the order of `menus` below; a bar counts
-// as an item.
-const MENU_PROJECT = 0;
-const MENU_EDIT = 1;
-const MENU_SEARCH = 2;
-const MENU_VIEW = 3;
+/// What Notepad does when asked: a menu item's user data and a ribbon
+/// button's `GA_ID` both, so the two are one command.
+const Command = enum(u32) {
+    new = 100,
+    open,
+    save,
+    save_as,
+    quit,
+    undo,
+    redo,
+    cut,
+    copy,
+    paste,
+    select_all,
+    find,
+    find_next,
+    find_previous,
+    replace,
+    wrap,
+    numbers,
+    zig,
+    ribbon,
 
-const ITEM_NEW = 0;
-const ITEM_OPEN = 1;
-const ITEM_SAVE = 2;
-const ITEM_SAVE_AS = 3;
-const ITEM_QUIT = 5;
+    fn id(which: Command) u32 {
+        return @intFromEnum(which);
+    }
 
-const ITEM_UNDO = 0;
-const ITEM_REDO = 1;
-const ITEM_CUT = 3;
-const ITEM_COPY = 4;
-const ITEM_PASTE = 5;
-const ITEM_SELECT_ALL = 7;
+    /// The command of a menu item's user data or a gadget's ID; null for
+    /// none.
+    fn of(value: usize) ?Command {
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.ribbon)) return null;
+        return @enumFromInt(value);
+    }
+};
 
-const ITEM_FIND = 0;
-const ITEM_FIND_NEXT = 1;
-const ITEM_FIND_PREVIOUS = 2;
-const ITEM_REPLACE = 3;
+fn item(label: [*:0]const u8, key: ?[*:0]const u8, which: Command) mn.NewMenu {
+    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key, .user_data = @ptrFromInt(which.id()) };
+}
 
-const ITEM_WRAP = 0;
-const ITEM_NUMBERS = 1;
-const ITEM_ZIG = 2;
-
-fn item(label: [*:0]const u8, key: ?[*:0]const u8) mn.NewMenu {
-    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key };
+/// A View item with a check mark, toggled as it is picked.
+fn toggleItem(label: [*:0]const u8, key: ?[*:0]const u8, which: Command, on: bool) mn.NewMenu {
+    const checked: u32 = if (on) mn.CHECKED else 0;
+    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key, .flags = mn.CHECKIT | mn.MENUTOGGLE | checked, .user_data = @ptrFromInt(which.id()) };
 }
 
 const bar = mn.NewMenu{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL };
 
 const menus = [_]mn.NewMenu{
     .{ .type = mn.NM_TITLE, .label = "Project" },
-    item("New", "N"),
-    item("Open...", "O"),
-    item("Save", "S"),
-    item("Save As...", null),
+    item("New", "N", .new),
+    item("Open...", "O", .open),
+    item("Save", "S", .save),
+    item("Save As...", null, .save_as),
     bar,
-    item("Quit", "Q"),
+    item("Quit", "Q", .quit),
     .{ .type = mn.NM_TITLE, .label = "Edit" },
-    item("Undo", "Z"),
-    item("Redo", "Y"),
+    item("Undo", "Z", .undo),
+    item("Redo", "Y", .redo),
     bar,
-    item("Cut", "X"),
-    item("Copy", "C"),
-    item("Paste", "V"),
+    item("Cut", "X", .cut),
+    item("Copy", "C", .copy),
+    item("Paste", "V", .paste),
     bar,
-    item("Select All", "A"),
+    item("Select All", "A", .select_all),
     .{ .type = mn.NM_TITLE, .label = "Search" },
-    item("Find...", "F"),
-    item("Find Next", "G"),
-    item("Find Previous", "P"),
-    item("Replace...", "R"),
+    item("Find...", "F", .find),
+    item("Find Next", "G", .find_next),
+    item("Find Previous", "P", .find_previous),
+    item("Replace...", "R", .replace),
     .{ .type = mn.NM_TITLE, .label = "View" },
-    .{ .type = mn.NM_ITEM, .label = "Word Wrap", .comm_key = "W", .flags = mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED },
-    .{ .type = mn.NM_ITEM, .label = "Line Numbers", .comm_key = "L", .flags = mn.CHECKIT | mn.MENUTOGGLE | mn.CHECKED },
-    .{ .type = mn.NM_ITEM, .label = "Zig Highlighting", .comm_key = "H", .flags = mn.CHECKIT | mn.MENUTOGGLE },
+    toggleItem("Word Wrap", "W", .wrap, true),
+    toggleItem("Line Numbers", "L", .numbers, true),
+    toggleItem("Zig Highlighting", "H", .zig, false),
+    bar,
+    toggleItem("Ribbon", null, .ribbon, false),
     .{},
 };
+
+/// Where the View menu's Ribbon item is in `menus`, to be checked or not
+/// before the strip is made.
+const ribbon_item = blk: {
+    for (menus, 0..) |entry, at| {
+        if (entry.user_data == @as(?*anyopaque, @ptrFromInt(Command.ribbon.id()))) break :blk at;
+    }
+    unreachable;
+};
+
+const finds = [_:null]?[*:0]const u8{ "Find Next", "Find Previous" };
+
+/// The ribbon: the menus' commands for the text on Home, the toggles on
+/// View. No label has a key marked: a key typed is the text's.
+const ribbon_table = [_]rb.NewRibbon{
+    .{ .type = rb.RB_TAB, .label = "Home" },
+    .{ .type = rb.RB_GROUP, .label = "Clipboard", .glyph = command.CMD_PASTE, .reduce = 1 },
+    .{ .type = rb.RB_LARGE, .id = Command.paste.id(), .label = "Paste", .glyph = command.CMD_PASTE, .hint = "Put in what was cut or copied" },
+    .{ .type = rb.RB_MEDIUM, .id = Command.cut.id(), .label = "Cut", .glyph = command.CMD_CUT },
+    .{ .type = rb.RB_MEDIUM, .id = Command.copy.id(), .label = "Copy", .glyph = command.CMD_COPY },
+    .{ .type = rb.RB_GROUP, .label = "Undo", .glyph = command.CMD_UNDO, .reduce = 2 },
+    .{ .type = rb.RB_MEDIUM, .id = Command.undo.id(), .label = "Undo", .glyph = command.CMD_UNDO, .flags = rb.RBF_DISABLED },
+    .{ .type = rb.RB_MEDIUM, .id = Command.redo.id(), .label = "Redo", .glyph = command.CMD_REDO, .flags = rb.RBF_DISABLED },
+    .{ .type = rb.RB_GROUP, .label = "Editing", .glyph = command.CMD_FIND },
+    .{ .type = rb.RB_LARGE, .id = ID_FINDS, .label = "Find", .glyph = command.CMD_FIND, .kind = tb.TBKIND_SPLIT, .labels = &finds, .hint = "Find a text; the list finds the next again, or the one before" },
+    .{ .type = rb.RB_MEDIUM, .id = Command.replace.id(), .label = "Replace", .glyph = command.CMD_REPLACE, .hint = "Put another text in the place of one found" },
+    .{ .type = rb.RB_MEDIUM, .id = Command.select_all.id(), .label = "Select All", .glyph = command.CMD_SELECT_ALL, .hint = "Select the whole text" },
+    .{ .type = rb.RB_TAB, .label = "View" },
+    .{ .type = rb.RB_GROUP, .label = "Lines", .glyph = command.CMD_WRAP },
+    .{ .type = rb.RB_LARGE, .id = Command.wrap.id(), .label = "Word Wrap", .glyph = command.CMD_WRAP, .kind = tb.TBKIND_TOGGLE, .flags = rb.RBF_CHECKED, .hint = "Go on in the next row rather than past the window's edge" },
+    .{ .type = rb.RB_LARGE, .id = Command.numbers.id(), .label = "Line Numbers", .glyph = command.CMD_LINE_NUMBERS, .kind = tb.TBKIND_TOGGLE, .flags = rb.RBF_CHECKED, .hint = "Number each line at the left" },
+    .{ .type = rb.RB_GROUP, .label = "Highlighting", .glyph = command.CMD_HIGHLIGHT },
+    .{ .type = rb.RB_LARGE, .id = Command.zig.id(), .label = "Zig", .glyph = command.CMD_HIGHLIGHT, .kind = tb.TBKIND_TOGGLE, .hint = "Show Zig's keywords, strings and comments each in a colour" },
+    .{ .type = rb.RB_END },
+};
+
+/// The window's room under which the ribbon is its row of tabs alone: a
+/// small board's screen.
+const ribbon_minimize_below = 400;
+
+/// Where Notepad keeps whether it shows the ribbon: `RIBBON=YES` or `NO`.
+const ENV_FILE = "ENV:Notepad.prefs";
+const ENVARC_FILE = "ENVARC:Notepad.prefs";
 
 /// The find window, while it is open.
 const Finder = struct {
@@ -209,6 +292,15 @@ const Notepad = struct {
     any_case: bool = false,
     /// The window as one files can be dropped on, while the desktop runs.
     drop: sdk.anvil.DropTarget = .{},
+    /// The window's layout and, when its classes could be had, the ribbon
+    /// in it, which comes and goes.
+    layout: *Object,
+    built: ?*rb.Built = null,
+    ribbon_shown: bool = false,
+    strip: ?*intuition.Menu = null,
+    /// What the ribbon's Undo and Redo were last set to; null to set them
+    /// again whatever they are.
+    undo_shown: ?[2]bool = null,
 
     fn deinit(np: *Notepad) void {
         np.closeFinder();
@@ -439,7 +531,7 @@ const Notepad = struct {
         _ = te.paste(np.sys, np.ib, ip, np.editor, np.window);
     }
 
-    fn command(np: *Notepad, method: classusr.MethodID) void {
+    fn send(np: *Notepad, method: classusr.MethodID) void {
         var msg = te.TepCommand{ .method_id = method };
         _ = np.ib.DoGadgetMethodA(np.editor, np.window, null, @ptrCast(&msg));
     }
@@ -650,69 +742,163 @@ const Notepad = struct {
         np.followChanges();
     }
 
-    // --- the menus ----------------------------------------------------------
+    // --- the view and the ribbon --------------------------------------------
 
-    /// A menu item picked. False to end.
+    /// Word Wrap, Line Numbers or Zig Highlighting turned on or off: the
+    /// text told, and the menu's check mark and the ribbon's toggle made
+    /// to say the same, whichever of them was used.
+    fn showView(np: *Notepad, which: Command, on: bool) void {
+        const tag: TagItem = switch (which) {
+            .wrap => blk: {
+                np.wrap = on;
+                break :blk .{ .tag = te.TEXTEDIT_WordWrap, .data = @intFromBool(on) };
+            },
+            .numbers => blk: {
+                np.numbers = on;
+                break :blk .{ .tag = te.TEXTEDIT_LineNumbers, .data = @intFromBool(on) };
+            },
+            .zig => blk: {
+                np.zig = on;
+                break :blk .{ .tag = te.TEXTEDIT_HighlightHook, .data = if (on) @intFromPtr(&np.zig_hook) else 0 };
+            },
+            else => return,
+        };
+        _ = np.ib.SetGadgetAttrsTagList(np.editor, np.window, &[_]TagItem{ tag, .{} });
+        np.followEditor();
+        np.check(which, on);
+        if (np.built) |built| if (built.entry(which.id())) |toggle| {
+            _ = np.ib.SetGadgetAttrsTagList(toggle, np.window, &[_]TagItem{ .{ .tag = tb.TOOLBUTTON_Checked, .data = @intFromBool(on) }, .{} });
+        };
+    }
+
+    /// The menu item of `which` checked or not, the strip taken off the
+    /// window while it changes.
+    fn check(np: *Notepad, which: Command, on: bool) void {
+        const strip = np.strip orelse return;
+        var menu: ?*intuition.Menu = strip;
+        while (menu) |title| : (menu = title.next_menu) {
+            var entry = title.first_item;
+            while (entry) |menu_item| : (entry = menu_item.next_item) {
+                if (@intFromPtr(mn.GTMENUITEM_USERDATA(menu_item)) != which.id()) continue;
+                if ((menu_item.flags & mn.CHECKED != 0) == on) return;
+                np.ib.ClearMenuStrip(np.window);
+                menu_item.flags ^= mn.CHECKED;
+                _ = np.ib.ResetMenuStrip(np.window, strip);
+                return;
+            }
+        }
+    }
+
+    /// The ribbon's Undo and Redo disabled while there is nothing to undo
+    /// or redo; set only when that has changed.
+    fn followRibbon(np: *Notepad) void {
+        const built = np.built orelse return;
+        const can = [2]bool{ np.ask(te.TEXTEDIT_CanUndo) != 0, np.ask(te.TEXTEDIT_CanRedo) != 0 };
+        if (np.undo_shown) |shown| if (shown[0] == can[0] and shown[1] == can[1]) return;
+        np.undo_shown = can;
+        for ([_]Command{ .undo, .redo }, can) |which, possible| {
+            const undo_button = built.entry(which.id()) orelse continue;
+            _ = np.ib.SetGadgetAttrsTagList(undo_button, np.window, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = @intFromBool(!possible) }, .{} });
+        }
+    }
+
+    /// The ribbon shown or hidden - the layout's child hidden, the window
+    /// laid out again - and that kept for the next time.
+    fn showRibbon(np: *Notepad, shown: bool) void {
+        const built = np.built orelse return;
+        if (shown == np.ribbon_shown) return;
+        np.ribbon_shown = shown;
+        _ = np.ib.SetGadgetAttrsTagList(np.layout, np.window, &[_]TagItem{
+            .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(built.ribbon) },
+            .{ .tag = lg.CHILDA_Hidden, .data = @intFromBool(!shown) },
+            .{},
+        });
+        np.rethink();
+        np.keepSettings();
+    }
+
+    /// The window laid out again, the bars following the text's new size.
+    fn rethink(np: *Notepad) void {
+        var again = wc.WmRethink{};
+        _ = np.ib.SendMessage(np.object, @ptrCast(&again));
+        np.followEditor();
+    }
+
+    /// Whether the ribbon is shown, written to ENV: and ENVARC:.
+    fn keepSettings(np: *Notepad) void {
+        const header = "; Notepad's settings: RIBBON=NO hides the ribbon\n";
+        const text: []const u8 = if (np.ribbon_shown) header ++ "RIBBON=YES\n" else header ++ "RIBBON=NO\n";
+        for ([_][*:0]const u8{ ENV_FILE, ENVARC_FILE }) |path| _ = prefs.save(np.dl, path, text);
+    }
+
+    // --- the commands -------------------------------------------------------
+
+    /// A menu item picked: its command. False to end.
     fn picked(np: *Notepad, number: u32) bool {
-        switch (mn.MENUNUM(number)) {
-            MENU_PROJECT => switch (mn.ITEMNUM(number)) {
-                ITEM_NEW => if (np.mayLeave()) {
-                    np.setText("", 0);
-                    np.path[0] = 0;
-                    np.showTitle();
-                },
-                ITEM_OPEN => if (np.mayLeave()) {
-                    var name: [path_size:0]u8 = undefined;
-                    if (np.askFile("Open a text", false, &name)) _ = np.load(&name, false);
-                },
-                ITEM_SAVE => _ = np.saveKept(),
-                ITEM_SAVE_AS => _ = np.saveAs(),
-                ITEM_QUIT => return !np.mayLeave(),
-                else => {},
+        const strip = np.strip orelse return true;
+        const picked_item = np.ib.ItemAddress(strip, number) orelse return true;
+        const which = Command.of(@intFromPtr(mn.GTMENUITEM_USERDATA(picked_item))) orelse return true;
+        // An item with a check mark has checked or unchecked itself.
+        const checked = picked_item.flags & mn.CHECKED != 0;
+        switch (which) {
+            .wrap, .numbers, .zig => np.showView(which, checked),
+            .ribbon => np.showRibbon(checked),
+            else => return np.perform(which),
+        }
+        np.focus();
+        return true;
+    }
+
+    /// A ribbon button pressed - `code` what a toggle turned to, or which
+    /// of Find's list was taken. False to end.
+    fn pressed(np: *Notepad, id: u32, code: u32) bool {
+        if (id == ID_FINDS) {
+            const taken: i32 = @bitCast(code);
+            return np.perform(if (taken == tb.TBCODE_MAIN) .find else if (taken == 0) .find_next else .find_previous);
+        }
+        const which = Command.of(id) orelse return true;
+        switch (which) {
+            .wrap, .numbers, .zig => np.showView(which, code != 0),
+            else => return np.perform(which),
+        }
+        np.focus();
+        return true;
+    }
+
+    /// A command, from a menu, the ribbon or a key. False to end.
+    fn perform(np: *Notepad, which: Command) bool {
+        switch (which) {
+            .new => if (np.mayLeave()) {
+                np.setText("", 0);
+                np.path[0] = 0;
+                np.showTitle();
             },
-            MENU_EDIT => switch (mn.ITEMNUM(number)) {
-                ITEM_UNDO => np.command(te.TEM_UNDO),
-                ITEM_REDO => np.command(te.TEM_REDO),
-                ITEM_CUT => np.cut(),
-                ITEM_COPY => np.copy(),
-                ITEM_PASTE => np.paste(),
-                ITEM_SELECT_ALL => np.command(te.TEM_SELECTALL),
-                else => {},
+            .open => if (np.mayLeave()) {
+                var name: [path_size:0]u8 = undefined;
+                if (np.askFile("Open a text", false, &name)) _ = np.load(&name, false);
             },
-            MENU_SEARCH => switch (mn.ITEMNUM(number)) {
-                ITEM_FIND, ITEM_REPLACE => {
-                    np.openFinder();
-                    return true;
-                },
-                ITEM_FIND_NEXT => if (!np.findAgain(false)) {
-                    np.openFinder();
-                    return true;
-                },
-                ITEM_FIND_PREVIOUS => if (!np.findAgain(true)) {
-                    np.openFinder();
-                    return true;
-                },
-                else => {},
+            .save => _ = np.saveKept(),
+            .save_as => _ = np.saveAs(),
+            .quit => return !np.mayLeave(),
+            .undo => np.send(te.TEM_UNDO),
+            .redo => np.send(te.TEM_REDO),
+            .cut => np.cut(),
+            .copy => np.copy(),
+            .paste => np.paste(),
+            .select_all => np.send(te.TEM_SELECTALL),
+            // The find window keeps the keyboard.
+            .find, .replace => {
+                np.openFinder();
+                return true;
             },
-            MENU_VIEW => switch (mn.ITEMNUM(number)) {
-                ITEM_WRAP => {
-                    np.wrap = !np.wrap;
-                    _ = np.ib.SetGadgetAttrsTagList(np.editor, np.window, &[_]TagItem{ .{ .tag = te.TEXTEDIT_WordWrap, .data = @intFromBool(np.wrap) }, .{} });
-                    np.followEditor();
-                },
-                ITEM_NUMBERS => {
-                    np.numbers = !np.numbers;
-                    _ = np.ib.SetGadgetAttrsTagList(np.editor, np.window, &[_]TagItem{ .{ .tag = te.TEXTEDIT_LineNumbers, .data = @intFromBool(np.numbers) }, .{} });
-                    np.followEditor();
-                },
-                ITEM_ZIG => {
-                    np.zig = !np.zig;
-                    const hook: usize = if (np.zig) @intFromPtr(&np.zig_hook) else 0;
-                    _ = np.ib.SetGadgetAttrsTagList(np.editor, np.window, &[_]TagItem{ .{ .tag = te.TEXTEDIT_HighlightHook, .data = hook }, .{} });
-                },
-                else => {},
+            .find_next, .find_previous => if (!np.findAgain(which == .find_previous)) {
+                np.openFinder();
+                return true;
             },
-            else => {},
+            .wrap => np.showView(.wrap, !np.wrap),
+            .numbers => np.showView(.numbers, !np.numbers),
+            .zig => np.showView(.zig, !np.zig),
+            .ribbon => np.showRibbon(!np.ribbon_shown),
         }
         np.focus();
         return true;
@@ -749,6 +935,11 @@ const Notepad = struct {
                 wc.WMHI_MENUPICK => {
                     const number: u32 = @truncate(word & wc.WMHI_MENUMASK);
                     if (number != mn.MENUNULL and !np.picked(number)) return false;
+                },
+                wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
+                    // Minimized or brought back: its height has changed.
+                    ID_RIBBON => if (@as(i32, @bitCast(code)) == rb.RBCODE_MINIMIZED) np.rethink(),
+                    else => |id| if (!np.pressed(@truncate(id), code)) return false,
                 },
                 wc.WMHI_VANILLAKEY => np.keyed(@truncate(word & wc.WMHI_KEYMASK)),
                 // The text's view moved, or its size: the bars follow.
@@ -806,6 +997,7 @@ const Notepad = struct {
             if (got & drop_signal != 0) np.dropped();
             if (!np.mainWindow()) return;
             np.followChanges();
+            np.followRibbon();
         }
     }
 };
@@ -845,6 +1037,20 @@ fn button(ib: *IntuitionBase, label: [*:0]const u8, id: u32) ?*Object {
     });
 }
 
+/// Whether the ribbon is to be shown, from `ENV:Notepad.prefs`: yes unless
+/// it says `RIBBON=NO`, and yes without utility.library to read it.
+fn ribbonWanted(sys: *ExecBase, dl: *DosBase, ub: ?*UtilityBase) bool {
+    const utility_base = ub orelse return true;
+    const text = prefs.loadWhole(sys, dl, ENV_FILE) orelse return true;
+    defer sys.FreeVec(text.ptr);
+    const line = prefs.firstLine(text) orelse return true;
+    var pairs = prefs.Pairs.init(utility_base, line);
+    while (pairs.next() catch null) |pair| {
+        if (prefs.style.same(pair.key, "RIBBON")) return prefs.yesOrNo(pair.value) orelse true;
+    }
+    return true;
+}
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
@@ -871,6 +1077,25 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(editor_lib);
 
+    // What Notepad does without: utility.library, which reads its
+    // settings, and the ribbon's classes. Open until the window object is
+    // gone too.
+    const optional_names = [_][*:0]const u8{ sdk.utility.UTILITYNAME, tb.TOOLBUTTON_LIBRARY, command.COMMAND_LIBRARY, rb.RIBBON_LIBRARY };
+    var optional: [optional_names.len]?*exec.Library = @splat(null);
+    defer for (optional) |lib| {
+        if (lib) |opened| sys.CloseLibrary(opened);
+    };
+    for (optional_names, 0..) |name, i| optional[i] = sys.OpenLibrary(name, 0);
+    const ub: ?*UtilityBase = @ptrCast(optional[0]);
+    const built: ?*rb.Built = if (optional[1] != null and optional[2] != null and optional[3] != null) rb.build(sys, ib, &ribbon_table, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_RIBBON },
+        .{ .tag = rb.RIBBON_MinimizeBelow, .data = ribbon_minimize_below },
+        .{},
+    }) else null;
+    // After the window object, which disposes of the ribbon.
+    defer if (built) |made| made.free(sys, ib);
+    const ribbon_shown = built != null and ribbonWanted(sys, dl, ub);
+
     const screen = ib.LockPubScreen(null) orelse {
         _ = Printf(dl, MSG_NOSCREEN, .{});
         return dos.RETURN_FAIL;
@@ -887,16 +1112,29 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
         .{},
     }) orelse {
+        if (built) |made| ib.DisposeObject(made.ribbon);
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
+    // The ribbon on top, when there is one, and the text under it.
+    const ribbon_tags = [_]TagItem{
+        .{ .tag = lg.LAYOUTA_AddChild, .data = if (built) |made| @intFromPtr(made.ribbon) else 0 },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Hidden, .data = @intFromBool(!ribbon_shown) },
+        .{ .tag = sdk.utility.TAG_MORE, .data = @intFromPtr(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(editor) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 1 },
+            .{},
+        }) },
+    };
     const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         .{ .tag = lg.LAYOUTA_Margin, .data = 2 },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(editor) },
-        .{ .tag = lg.CHILDA_WeightHeight, .data = 1 },
-        .{},
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 2 },
+        .{ .tag = sdk.utility.TAG_MORE, .data = @intFromPtr(if (built != null) &ribbon_tags else ribbon_tags[3..].ptr) },
     }) orelse {
+        // What the layout did not take is still Notepad's.
         ib.DisposeObject(editor);
+        if (built) |made| ib.DisposeObject(made.ribbon);
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
@@ -905,7 +1143,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
         .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(screen) },
         .{ .tag = wn.WA_InnerWidth, .data = 600 },
-        .{ .tag = wn.WA_InnerHeight, .data = 380 },
+        .{ .tag = wn.WA_InnerHeight, .data = 460 },
         .{ .tag = wn.WA_AutoAdjust, .data = 1 },
         .{ .tag = wn.WA_CloseGadget, .data = 1 },
         .{ .tag = wn.WA_DragBar, .data = 1 },
@@ -950,9 +1188,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const bars = Bars{ .vert = @ptrFromInt(vert), .horiz = @ptrFromInt(horiz) };
 
     // The menus; a program without them still edits, so a strip that will
-    // not go on is left off rather than given up over.
+    // not go on is left off rather than given up over. View's Ribbon is
+    // checked while it is shown, and there only when there is one.
+    var table = menus;
+    if (built == null) {
+        table[ribbon_item].flags |= mn.NM_ITEMDISABLED;
+    } else if (ribbon_shown) table[ribbon_item].flags |= mn.CHECKED;
     const strip = blk: {
-        const made = ib.CreateMenusA(&menus, null) orelse break :blk null;
+        const made = ib.CreateMenusA(&table, null) orelse break :blk null;
         if (!ib.LayoutMenusA(made, screen, null) or !ib.SetMenuStrip(window, made)) {
             ib.FreeMenus(made);
             break :blk null;
@@ -964,7 +1207,20 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         ib.FreeMenus(made);
     };
 
-    var np = Notepad{ .sys = sys, .dl = dl, .ib = ib, .screen = screen, .object = object, .window = window, .editor = editor, .bars = bars };
+    var np = Notepad{
+        .sys = sys,
+        .dl = dl,
+        .ib = ib,
+        .screen = screen,
+        .object = object,
+        .window = window,
+        .editor = editor,
+        .bars = bars,
+        .layout = layout,
+        .built = built,
+        .ribbon_shown = ribbon_shown,
+        .strip = strip,
+    };
     defer np.deinit();
     // Taken off the desktop's list before the window closes.
     np.drop.add(sys, window);

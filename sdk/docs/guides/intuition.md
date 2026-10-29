@@ -1057,8 +1057,10 @@ a group folds into one button with its picture, which drops the group
 down. Tabs the row has no room for stand behind a », which drops their
 names down. On a small screen `RIBBON_MinimizeBelow` keeps it minimized,
 a tab then dropping its page down over the window. `C:test/Ribbon` shows
-all of it; `SYS:Programs/Sheet` has a ribbon whose commands are its
-menus', and View → Ribbon hides it as a hidden layout child.
+all of it; `SYS:Programs/Sheet` and `SYS:Programs/Notepad` have a ribbon
+whose commands are their menus', and View → Ribbon hides it as a hidden
+layout child. Notepad's toggles and the View menu's check marks say the
+same, whichever was used.
 
 ## Requesters
 
@@ -1169,6 +1171,6 @@ requester goes to its drawer with its name in the File field
 | `C:test/Settings` | tabs along a page gadget's top, its pages framed below them (`PAGE_Tabs`), framed groups |
 | `C:test/Widgets` | meters, a canvas drawn into and queued, codes, a chart |
 | `C:test/Asl` | the file and font requesters; `ASYNC` asked without waiting, `ABORT` taken down |
-| `SYS:Programs/Notepad` | a window object with menus, border scroll bars, a second window, requesters |
+| `SYS:Programs/Notepad` | a window object with menus, border scroll bars, a second window, requesters, a ribbon whose toggles follow the menu's check marks |
 | `SYS:Programs/Sheet` | a canvas drawn into and pressed on, a line of text with an edit hook of its own, border scroll bars telling the window |
 | `SYS:Programs/MultiView` | border scroll bars joined to a picture through a model |

@@ -36,7 +36,9 @@
 //!
 //! Control-A selects everything, Control-Z takes the last change back and
 //! Control-Y puts it back again: undo goes back as far as memory allows,
-//! a run of typing as one step. The keys a program answers - the right
+//! a run of typing as one step. `TEXTEDIT_CanUndo` and `TEXTEDIT_CanRedo`
+//! say whether there is a step to take, for a program's own Undo and Redo
+//! to be enabled by. The keys a program answers - the right
 //! Amiga key with anything, which is how a menu's shortcut is typed,
 //! Control-C, -X and -V for the clipboard, and the menu button - end the
 //! typing and go to the window as they would without it (`IDCMP_RAWKEY`,
@@ -148,6 +150,11 @@ pub const TEXTEDIT_LineNumbers = TEXTEDIT_Dummy + 0x11;
 /// neither draw nor wait: it is called while the gadget draws. Null draws
 /// everything as plain text. Made, set and read.
 pub const TEXTEDIT_HighlightHook = TEXTEDIT_Dummy + 0x12;
+/// Bool: there is a change undo can take back, or one redo can put back
+/// again. Read only; nothing is told when they change, so a program reads
+/// them after each message the gadget sent. Since 1.4.
+pub const TEXTEDIT_CanUndo = TEXTEDIT_Dummy + 0x13;
+pub const TEXTEDIT_CanRedo = TEXTEDIT_Dummy + 0x14;
 
 /// The kinds a highlight hook gives a byte, each drawn in a colour of its
 /// own: plain text, a keyword, a type, a built-in function, a string or

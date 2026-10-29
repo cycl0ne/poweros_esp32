@@ -156,6 +156,51 @@ pub fn draw(p: *Painter, glyph: u32) void {
             p.solid(&.{p.poly(&.{ .{ 33, 39 }, .{ 58, 14 }, .{ 84, 40 }, .{ 59, 65 } })}, .red, .{});
             p.solid(&.{p.poly(&.{ .{ 8, 64 }, .{ 33, 39 }, .{ 59, 65 }, .{ 34, 90 } })}, .paper, .{});
         },
+        command.CMD_LINE_NUMBERS => {
+            // The margin, a mark in it for each line's number, the lines.
+            p.solid(&.{p.rr(6, 6, 32, 94, 4)}, .blue, .{ .no_gloss = true });
+            const white = shapes.Paint{ .colour = shapes.white };
+            for ([_]f32{ 14, 34, 54, 74 }) |y| p.fill(p.rr(13, y, 25, y + 10, 2), white);
+            p.ink(&.{ p.rr(40, 14, 94, 24, 3), p.rr(40, 34, 80, 44, 3), p.rr(40, 54, 90, 64, 3), p.rr(40, 74, 66, 84, 3) });
+        },
+        command.CMD_HIGHLIGHT => {
+            // A word or two of each line in a colour of its kind, the rest
+            // in the ink.
+            const plain = shapes.Solid{ .no_shadow = true, .no_gloss = true };
+            p.ink(&.{ p.rr(44, 10, 92, 22, 3), p.rr(20, 54, 40, 66, 3) });
+            p.solid(&.{p.rr(8, 10, 38, 22, 3)}, .violet, plain);
+            p.solid(&.{p.rr(20, 32, 52, 44, 3)}, .blue, plain);
+            p.solid(&.{p.rr(58, 32, 84, 44, 3)}, .orange, plain);
+            p.solid(&.{p.rr(46, 54, 92, 66, 3)}, .green, plain);
+            p.solid(&.{p.rr(8, 76, 72, 88, 3)}, .teal, plain);
+        },
+        command.CMD_REPLACE => {
+            // What was there, the arrow from it turning down, and what
+            // takes its place; on each a line of white text.
+            p.solid(&.{p.rr(6, 8, 46, 38, 4)}, .red, .{});
+            p.solid(&.{ p.rr(44, 18, 62, 28, 0), p.ring(62, 39, 21, 11, 0, 90), p.poly(&.{ .{ 66, 39 }, .{ 90, 39 }, .{ 78, 58 } }) }, .orange, .{});
+            p.solid(&.{p.rr(52, 60, 94, 92, 4)}, .green, .{});
+            if (p.detail) {
+                p.stroke(14, 38, 21, 4, shapes.white);
+                p.stroke(60, 86, 74, 4, shapes.white);
+            }
+        },
+        command.CMD_SELECT_ALL => {
+            // What is selected, and round it the frame: four corners and a
+            // dash between each two.
+            p.fill(p.rr(20, 20, 80, 80, 2), .{ .colour = shapes.tones(.blue).light });
+            p.ink(&.{ p.rr(26, 28, 74, 36, 2), p.rr(26, 46, 66, 54, 2), p.rr(26, 64, 56, 72, 2) });
+            p.solid(&.{
+                p.poly(&.{ .{ 6, 6 }, .{ 24, 6 }, .{ 24, 13 }, .{ 13, 13 }, .{ 13, 24 }, .{ 6, 24 } }),
+                p.poly(&.{ .{ 76, 6 }, .{ 94, 6 }, .{ 94, 24 }, .{ 87, 24 }, .{ 87, 13 }, .{ 76, 13 } }),
+                p.poly(&.{ .{ 6, 76 }, .{ 13, 76 }, .{ 13, 87 }, .{ 24, 87 }, .{ 24, 94 }, .{ 6, 94 } }),
+                p.poly(&.{ .{ 87, 76 }, .{ 94, 76 }, .{ 94, 94 }, .{ 76, 94 }, .{ 76, 87 }, .{ 87, 87 } }),
+                p.rr(41, 6, 59, 13, 0),
+                p.rr(41, 87, 59, 94, 0),
+                p.rr(6, 41, 13, 59, 0),
+                p.rr(87, 41, 94, 59, 0),
+            }, .blue, .{ .flat = true, .no_shadow = true });
+        },
         // The box's top and left edge, and the arrow out of its corner,
         // its head filling the opposite one.
         command.CMD_LAUNCHER => p.ink(&.{

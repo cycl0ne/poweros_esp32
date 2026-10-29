@@ -15,7 +15,8 @@
 //! `IDS_SELECTEDDISABLED`), every colour is its grey, faded into the
 //! screen's background. Since 1.3 there are the pictures a spreadsheet's
 //! ribbon has besides: a number's format, a percent, money, a decimal
-//! more and fewer, fill and clear.
+//! more and fewer, fill and clear. Since 1.4 a text editor's: line
+//! numbers, highlighting, replace and select all.
 //!
 //! `IM_DRAWFRAME` draws the picture in the largest square that fits the
 //! box, in its middle; `IM_DRAW` in the image's own box, 24 by 24 unless
@@ -117,5 +118,17 @@ pub const CMD_DECIMALS_LESS: u32 = 32;
 pub const CMD_FILL: u32 = 33;
 /// An eraser, red with a white sleeve, on a line in the ink. Since 1.3.
 pub const CMD_CLEAR: u32 = 34;
+/// Lines of text in the ink beside a blue margin with a white mark for
+/// each line's number. Since 1.4.
+pub const CMD_LINE_NUMBERS: u32 = 35;
+/// Lines of text whose words are of many colours: text highlighted as a
+/// language's. Since 1.4.
+pub const CMD_HIGHLIGHT: u32 = 36;
+/// A red block, an orange arrow turning down from it, and a green block
+/// where it points: one thing put in another's place. Since 1.4.
+pub const CMD_REPLACE: u32 = 37;
+/// Lines of text, picked out in light blue, inside a frame of blue
+/// dashes: all of it selected. Since 1.4.
+pub const CMD_SELECT_ALL: u32 = 38;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_CLEAR;
+pub const CMD_LAST: u32 = CMD_SELECT_ALL;
