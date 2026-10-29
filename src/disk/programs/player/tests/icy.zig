@@ -100,6 +100,20 @@ test "the title found, taken apart, and a block without one" {
     try testing.expectEqualStrings("Station ID", plain.title);
 }
 
+test "the address a block names beside its title, and whether it is a picture's" {
+    const block = "StreamTitle='Bill Laswell - Obscure';StreamUrl='http://img.example/covers/l/28145.jpg';\x00\x00";
+    try testing.expectEqualStrings("Bill Laswell - Obscure", icy.streamTitle(block).?);
+    try testing.expectEqualStrings("http://img.example/covers/l/28145.jpg", icy.streamUrl(block).?);
+    try testing.expectEqualStrings("https://a.example/logo.png", icy.streamUrl("StreamTitle='';StreamUrl='https://a.example/logo.png'\x00").?);
+    try testing.expect(icy.streamUrl("StreamTitle='Only a title';") == null);
+    try testing.expect(icy.isPictureAddress("http://img.example/covers/l/28145.jpg"));
+    try testing.expect(icy.isPictureAddress("HTTPS://img.example/c.PNG?size=500"));
+    try testing.expect(!icy.isPictureAddress("20062305"));
+    try testing.expect(!icy.isPictureAddress("http://station.example/"));
+    try testing.expect(!icy.isPictureAddress("http://station.example/page?img=a.jpg"));
+    try testing.expect(!icy.isPictureAddress("ftp://img.example/a.jpg"));
+}
+
 test "what a stream is by its Content-Type" {
     try testing.expectEqual(icy.Kind.mp3, icy.kindOf("audio/mpeg"));
     try testing.expectEqual(icy.Kind.mp3, icy.kindOf("Audio/MPEG; charset=x"));

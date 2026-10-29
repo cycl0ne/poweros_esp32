@@ -260,9 +260,15 @@ Esc in the field leaves it without searching. A station from Found that
 is played is counted by the service, as it asks of a player.
 
 A station with a picture - one the service knows, or a kept one's
-`tvg-logo` - shows it as its cover once it has come, and a click on the
-cover shows it large under the station's name. A picture on `https://`
-needs the clock set (`C:net/TimeSync`).
+`tvg-logo`; the six a fresh disk keeps have theirs - shows it as its
+cover once it has come, and a click on the cover shows it large under
+the station's name. A station that names a picture beside each song it
+sends (its `StreamUrl`), as Radio Paradise does, shows that one while
+the song plays, large under the song's title, and its own picture again
+for a song that names none. Pictures are JPEG, PNG, GIF, BMP or ICO; a
+picture of another kind is not shown, and the note or the station's own
+picture stays. A picture on `https://` needs the clock set
+(`C:net/TimeSync`).
 
 The kept stations are `ENVARC:Player/Stations.m3u`, an M3U list that
 can be edited, or used as a playlist; they are written as the Player

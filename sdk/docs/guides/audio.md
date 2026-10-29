@@ -534,7 +534,9 @@ and tags, the chapter of a mix that is playing, a playlist it saves as
 M3U, and internet stations - MP3 or Ogg Vorbis over `http://` or
 `https://`, read on a process of their own and decoded through
 `ACA_ReadFunc`. Its Radio page keeps stations and finds more in
-radio-browser.info's list. There is one Player: a file opened while it
+radio-browser.info's list; a station's picture is its cover, and the
+song's while it plays when the station names one beside its title
+(`StreamUrl`). There is one Player: a file opened while it
 runs plays in the one that is open, and it starts again where it was
 left.
 

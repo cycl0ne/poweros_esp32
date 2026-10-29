@@ -6,7 +6,8 @@
 //! as. Each point is sorted by its hue into one of `hue_bins` and counted
 //! by how much colour it has - its chroma, the difference between its
 //! strongest part and its weakest - so a grey, black or white point counts
-//! for nothing, and a black ground never leads. The first colour is the
+//! for nothing, and a black ground never leads; nor does a point more
+//! clear than not, whose colour is never seen. The first colour is the
 //! hue counted most, together with the hues either side of it, so a colour
 //! on the border between two bins is not split in half. The second is the
 //! hue counted most at least a sixth of the wheel away, or the first made
@@ -44,6 +45,7 @@ pub fn leading(pixels: [*]const u8, pitch: usize, left: u32, top: u32, width: u3
         for (0..grid) |column| {
             const x = left + @as(u32, @intCast((2 * column + 1) * width / (2 * grid)));
             const point = line + @as(usize, x) * 4;
+            if (point[3] < 128) continue;
             const b: u32 = point[0];
             const g: u32 = point[1];
             const r: u32 = point[2];
@@ -61,11 +63,11 @@ pub fn leading(pixels: [*]const u8, pitch: usize, left: u32, top: u32, width: u3
     // Too little colour: what there is averages under a 32nd of the most.
     if (total < grid * grid * 255 / 32) return null;
 
-    const first = strongest(&bins, null);
+    const first = strongest(&bins, null) orelse return null;
     const first_colour = brightest(averageAround(&bins, first));
     const second = strongest(&bins, first);
-    const second_colour = if (scoreAround(&bins, second) * 6 >= scoreAround(&bins, first))
-        brightest(averageAround(&bins, second))
+    const second_colour = if (second != null and scoreAround(&bins, second.?) * 6 >= scoreAround(&bins, first))
+        brightest(averageAround(&bins, second.?))
     else
         mix(first_colour, rgb(255, 255, 255), 128);
     return .{ .first = first_colour, .second = second_colour };
@@ -87,9 +89,10 @@ fn hueBin(r: u32, g: u32, b: u32, high: u32, chroma: u32) usize {
 }
 
 /// The bin whose count, with its neighbours', is the highest - at least
-/// `apart` bins round the wheel from `away` when that is given.
-fn strongest(bins: *const [hue_bins]Bin, away: ?usize) usize {
-    var best: usize = 0;
+/// `apart` bins round the wheel from `away` when that is given. Null when
+/// no bin there counts anything.
+fn strongest(bins: *const [hue_bins]Bin, away: ?usize) ?usize {
+    var best: ?usize = null;
     var best_score: u32 = 0;
     for (0..hue_bins) |at| {
         if (away) |other| {
@@ -227,6 +230,23 @@ test "grey, black and white lead with nothing; only the area asked for counts" {
     try testing.expectEqual(@as(?Pair, null), leading(&bytes, 64 * 4, 0, 0, 32, 64));
     const right = leading(&bytes, 64 * 4, 32, 0, 32, 64).?;
     try testing.expect(near(rgb(255, 204, 0), right.first));
+}
+
+test "a clear point counts for nothing, whatever its colour" {
+    // Red, under a blue that is all but clear.
+    var bytes = picture(32, struct {
+        fn paint(x: usize, y: usize) [3]u8 {
+            _ = y;
+            return if (x < 12) .{ 220, 30, 30 } else .{ 30, 30, 220 };
+        }
+    }.paint);
+    var at: usize = 3;
+    while (at < bytes.len) : (at += 4) {
+        if (bytes[at - 1] < 100) bytes[at] = 20;
+    }
+    const pair = leading(&bytes, 32 * 4, 0, 0, 32, 32).?;
+    try testing.expect(near(rgb(255, 35, 35), pair.first));
+    try testing.expect(near(mix(pair.first, rgb(255, 255, 255), 128), pair.second));
 }
 
 test "a hue on the border between two bins is not split" {

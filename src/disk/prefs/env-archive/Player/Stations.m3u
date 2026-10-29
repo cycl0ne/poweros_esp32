@@ -2,15 +2,15 @@
 # ENVARC:Player/Stations.m3u - the stations the Player keeps, shown on its
 # Radio page: an #EXTINF line with the station's name (and its picture,
 # tvg-logo="..."), then its address. Keep and Remove there write it.
-#EXTINF:-1,SomaFM Groove Salad
+#EXTINF:-1 tvg-logo="http://somafm.com/img3/groovesalad-400.jpg",SomaFM Groove Salad
 http://ice1.somafm.com/groovesalad-128-mp3
-#EXTINF:-1,SomaFM Drone Zone
+#EXTINF:-1 tvg-logo="http://somafm.com/img3/dronezone-400.jpg",SomaFM Drone Zone
 http://ice1.somafm.com/dronezone-128-mp3
-#EXTINF:-1,Deutschlandfunk
+#EXTINF:-1 tvg-logo="https://www.deutschlandfunk.de/static/img/deutschlandfunk/icons/apple-touch-icon-128x128.png",Deutschlandfunk
 http://st01.dlf.de/dlf/01/128/mp3/stream.mp3
-#EXTINF:-1,Deutschlandfunk Kultur
+#EXTINF:-1 tvg-logo="https://www.deutschlandfunkkultur.de/static/img/deutschlandfunk_kultur/icons/apple-touch-icon-128x128.png",Deutschlandfunk Kultur
 http://st02.dlf.de/dlf/02/128/mp3/stream.mp3
-#EXTINF:-1,FluxFM
+#EXTINF:-1 tvg-logo="https://www.fluxfm.de/assets/favicons/apple-icon-120x120.png",FluxFM
 http://streams.fluxfm.de/live/mp3-128/audio/
-#EXTINF:-1,Radio Paradise
+#EXTINF:-1 tvg-logo="http://radioparadise.com/apple-touch-icon.png",Radio Paradise
 http://stream.radioparadise.com/mp3-128

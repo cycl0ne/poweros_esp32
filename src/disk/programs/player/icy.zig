@@ -8,8 +8,11 @@
 //! `Strip` takes the blocks out of the pieces as they come, the sound
 //! moved together in place, and keeps the last whole block; `streamTitle`
 //! finds the title in one, `split` the artist and the title in that, and
-//! `latin1` brings UTF-8 to the screen's Latin-1. `kindOf` reads a
-//! Content-Type. Nothing here touches the network: the host tests hold
+//! `latin1` brings UTF-8 to the screen's Latin-1. `streamUrl` finds the
+//! address a block names beside its title - some stations name the cover
+//! of the song there, some their own picture, some a page or a number -
+//! and `isPictureAddress` tells a picture's from the rest. `kindOf` reads
+//! a Content-Type. Nothing here touches the network: the host tests hold
 //! all of it.
 
 /// The longest a block can be: 255 sixteens.
@@ -83,11 +86,40 @@ pub const Strip = struct {
 /// The title a block names - `StreamTitle='...';` - without its quotes;
 /// null when it names none.
 pub fn streamTitle(block: []const u8) ?[]const u8 {
-    const word = "StreamTitle='";
+    return quoted(block, "StreamTitle='");
+}
+
+/// The address a block names beside its title - `StreamUrl='...';` -
+/// without its quotes; null when it names none.
+pub fn streamUrl(block: []const u8) ?[]const u8 {
+    return quoted(block, "StreamUrl='");
+}
+
+/// Whether `url` is a picture's address: `http://` or `https://`, its
+/// path - the query and the fragment left off - ending as a JPEG, PNG,
+/// GIF, BMP or ICO file's name does.
+pub fn isPictureAddress(url: []const u8) bool {
+    if (!startsWith(url, "http://") and !startsWith(url, "https://")) return false;
+    var end: usize = 0;
+    while (end < url.len and url[end] != '?' and url[end] != '#') end += 1;
+    const path = url[0..end];
+    for ([_][]const u8{ ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".ico" }) |ending| {
+        if (path.len > ending.len and startsWith(path[path.len - ending.len ..], ending)) return true;
+    }
+    return false;
+}
+
+/// What follows `word` in a block up to the `';` that ends it - or the
+/// last quote, for the block's last word without its `;`.
+fn quoted(block: []const u8, word: []const u8) ?[]const u8 {
     const start = indexOf(block, word) orelse return null;
     const from = start + word.len;
-    const length = indexOf(block[from..], "';") orelse return null;
-    return block[from..][0..length];
+    const rest = block[from..];
+    if (indexOf(rest, "';")) |length| return rest[0..length];
+    var end = rest.len;
+    while (end > 0 and rest[end - 1] == 0) end -= 1;
+    if (end == 0 or rest[end - 1] != '\'') return null;
+    return rest[0 .. end - 1];
 }
 
 /// A title of the form `Artist - Title` taken apart at its first ` - `;
