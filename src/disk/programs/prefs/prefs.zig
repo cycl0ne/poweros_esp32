@@ -143,7 +143,7 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.21";
+const VERSION = "1.22";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
@@ -2589,7 +2589,7 @@ noinline fn buildRegion(e: *Editor) ?*Object {
         .{},
     }) orelse return null;
     var lists: [3]?*Object = undefined;
-    const titles = [3][*:0]const u8{ "Country", "Languages", "Preferred, first first" };
+    const titles = [3][*:0]const u8{ "Country", "Languages", "Preferred, in order" };
     const views = [3]*Object{ e.country_list, e.language_list, e.picked_list };
     for (views, titles, 0..) |view, title, i| {
         lists[i] = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
