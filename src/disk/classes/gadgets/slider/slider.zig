@@ -16,7 +16,9 @@
 //! - the knob let go, or a press beside it that moved it a level - the
 //! knob is put exactly on its level, the level is the code of the window's
 //! `IDCMP_GADGETUP`, and the target hears it. While the knob moves, every
-//! level it reaches is shown and told.
+//! level it reaches is shown and told. A press beside the knob moves the
+//! prop gadget's pot a knob's length, which may be many levels; only the
+//! one level it ends on is shown and told, never the length's.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -42,8 +44,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = sl.SLIDER_CLASS,
     .version = 1,
-    .revision = 2,
-    .date = "25.10.2026",
+    .revision = 3,
+    .date = "29.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -60,7 +62,10 @@ pub const Data = extern struct {
     /// Up and down rather than across.
     vertical: u8 = 0,
     place_right: u8 = 0,
-    pad: [2]u8 = @splat(0),
+    /// A press is being handed to the prop gadget: where it puts the
+    /// knob is kept, and shown and told once the press is settled.
+    pressing: u8 = 0,
+    pad: u8 = 0,
     max_level_len: u32 = 2,
     /// `SLIDER_MaxLevelPixels`: room for the level in pixels as well, 0
     /// for none.
@@ -418,6 +423,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 const level = levelAt(own, @truncate(item.data));
                 const moved = level != own.level;
                 own.level = level;
+                if (own.pressing != 0) return 0;
                 if (moved) redrawDisplay(base, own, o.?, update.gadget_info);
                 if (moved or update.flags & classusr.OPUF_INTERIM == 0) tell(base, own, o.?, update.gadget_info, update.flags);
                 return 0;
@@ -504,15 +510,21 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o.?);
             const was = own.level;
             const at = placeInner(base, own, o.?, in.gadget_info);
+            const pressed = msg.method_id == gc.GM_GOACTIVE;
+            own.pressing = @intFromBool(pressed);
             const result = support.handOnInput(ib, own.inner.?, in, at);
-            if (result & gc.GMR_VERIFY != 0) {
+            own.pressing = 0;
+            if (pressed) {
                 // A press beside the knob, done as it is pressed: one level
-                // that way, however far the knob's own length took it.
-                const beside = msg.method_id == gc.GM_GOACTIVE and own.level != was and (own.level - was > 1 or was - own.level > 1);
-                if (beside) {
-                    own.level = if (own.level > was) was + 1 else was - 1;
+                // that way, however far the knob's own length took it -
+                // and that level is the one shown and told.
+                if (own.level - was > 1 or was - own.level > 1) own.level = if (own.level > was) was + 1 else was - 1;
+                if (own.level != was) {
+                    redrawDisplay(base, own, o.?, in.gadget_info);
                     tell(base, own, o.?, in.gadget_info, 0);
                 }
+            }
+            if (result & gc.GMR_VERIFY != 0) {
                 // Done: the knob on its level, which is the code.
                 putKnob(base, own, in.gadget_info);
                 in.termination.* = own.level;

@@ -92,6 +92,8 @@ const Heard = struct {
     tag: utility.Tag,
     value: ?usize = null,
     id: ?usize = null,
+    /// How many times the tag was heard.
+    times: u32 = 0,
     ib: *IntuitionBase,
 };
 
@@ -104,7 +106,10 @@ fn listen(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callco
         var i: usize = 0;
         while (update.attr_list.?[i].tag != utility.TAG_DONE) : (i += 1) {
             const item = update.attr_list.?[i];
-            if (item.tag == heard.tag) heard.value = item.data;
+            if (item.tag == heard.tag) {
+                heard.value = item.data;
+                heard.times += 1;
+            }
             if (item.tag == gc.GA_ID) heard.id = item.data;
         }
         return 0;
@@ -526,6 +531,32 @@ test "slider.gadget: levels spread over the pot, the knob on its level, and the 
     try testing.expect(ib.SendMessage(knob, @ptrCast(&let_go)) & gc.GMR_VERIFY != 0);
     try testing.expectEqual(@as(i32, 15), termination);
     ib.DisposeObject(knob);
+
+    // Many levels, and a knob as long as the slider is high - far longer
+    // than a level: a press
+    // beside it pages the pot by its length, tens of levels, and only the
+    // one level the press moves it is told, never where the length took
+    // it.
+    const long = ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = 5 },
+        .{ .tag = sl.SLIDER_Max, .data = 200 },
+        .{ .tag = sl.SLIDER_Level, .data = 30 },
+        .{ .tag = gc.GA_Width, .data = 120 },
+        .{ .tag = gc.GA_Height, .data = 16 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    const long_width: i32 = @intCast(attr(ib, long, gc.GA_Width));
+    for ([_]struct { x: i32, level: usize }{ .{ .x = 4, .level = 29 }, .{ .x = long_width - 6, .level = 30 } }) |press_at| {
+        heard.times = 0;
+        var paged = input(gc.GM_GOACTIVE, &press, press_at.x, 5, &termination);
+        try testing.expect(ib.SendMessage(long, @ptrCast(&paged)) & gc.GMR_VERIFY != 0);
+        try testing.expectEqual(@as(i32, @intCast(press_at.level)), termination);
+        try testing.expectEqual(press_at.level, attr(ib, long, sl.SLIDER_Level));
+        try testing.expectEqual(@as(?usize, press_at.level), heard.value);
+        try testing.expectEqual(@as(u32, 1), heard.times);
+    }
+    ib.DisposeObject(long);
 
     // The level shown through its format, and through a hook first.
     var hook = utility.Hook{ .entry = &doubled };
