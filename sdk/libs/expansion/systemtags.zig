@@ -574,6 +574,12 @@ pub const CHIP_RPI_RTC: u32 = 43;
 /// pixel valve 0, and the HDMI0 controller with its PHY and DDC. Its
 /// clocks are the VideoCore firmware's, asked through its mailbox.
 pub const CHIP_BCM2712_HVS: u32 = 44;
+/// The BCM2712's first HDMI port as the machine's sound (PARTKIND_CODEC
+/// on BUS_MEMORY, PART_Address the 40-bit DMA channel that feeds it,
+/// PART_Irq that channel's interrupt): IEC 958 subframes into the HDMI0
+/// controller's MAI FIFO, sent as HDMI's audio packets. Only while the
+/// picture (CHIP_BCM2712_HVS) goes out as HDMI.
+pub const CHIP_BCM2712_HDMI_AUDIO: u32 = 45;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

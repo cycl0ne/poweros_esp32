@@ -7,8 +7,9 @@
 //! pci.library, brings up the SSD and hands its partitions to
 //! expansion.library as boot nodes. The ROM's posfs-handler runs the
 //! SSD's posfs partitions unless their table brings a newer one. And
-//! battclock.resource for the module's RTC, which its firmware keeps. The
-//! RP1's Ethernet and GPIO come later.
+//! battclock.resource for the module's RTC, which its firmware keeps. And
+//! sound: rta.library, the HDMI port's sink (rta-hdmi) and audio.device,
+//! which plays through it. The RP1's Ethernet and GPIO come later.
 
 pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
@@ -16,4 +17,7 @@ pub const modules = .{
     @import("../../disk/libs/pci/pci.zig"),
     @import("../../disk/devs/nvme/nvme.zig"),
     @import("../../disk/devs/handlers/posfs/posfs.zig"),
+    @import("../../rom/libs/rta/rta.zig"),
+    @import("../../rom/libs/rta_driver/hdmi/bcm2712.zig"),
+    @import("../../rom/devs/audio/audio.zig"),
 };

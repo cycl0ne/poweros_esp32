@@ -180,6 +180,21 @@ const display = [_]Tag{
     .done,
 };
 
+/// The first HDMI port's sound: channel 10 of the DMA controller's
+/// 40-bit channels (the device tree's dma40, whose channels 6 to 10 are
+/// the ARM's), at 0x10_0001_0A00, its interrupt SPI 90, feeding the
+/// HDMI0 controller's MAI.
+const hdmi_sound = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_CODEC),
+    .value(st.PART_Chip, st.CHIP_BCM2712_HDMI_AUDIO),
+    .pointer(st.PART_ChipName, "bcm2712 hdmi0 audio"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x10_0001_0A00),
+    .value(st.PART_Irq, 122),
+    .pointer(st.PART_Label, "HDMI 0 sound"),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -206,6 +221,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &wifi),
     .pointer(st.SYSTAG_Part, &rtc),
     .pointer(st.SYSTAG_Part, &display),
+    .pointer(st.SYSTAG_Part, &hdmi_sound),
     .done,
 };
 
