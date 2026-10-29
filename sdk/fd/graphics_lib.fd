@@ -325,4 +325,13 @@ u32 TextFitted(*graphics.RastPort rp, [*]const u8 string, u32 count, i32 width)
 /// DrawRoundRect otherwise: RPTAG_LineWidth thick, growing inward, with
 /// smooth edges under RPTAG_Smooth; the RastPort's pen is left as it was.
 void DrawRoundBevel(*graphics.RastPort rp, *const graphics.Rect area, u32 radius, graphics.Pen light, graphics.Pen dark)
+// Pictures in YUV, as a video decoder hands them out
+/// A YUV picture put down as colours, converted to the surface's format
+/// through the picture's own colours (BT.601 or BT.709, video's range or
+/// the whole byte): WritePixelArray for a decoded video frame.
+void WriteYUVPixelArray(*graphics.RastPort rp, *const rtg.RtgYuv picture, i32 src_x, i32 src_y, *const graphics.Rect area)
+/// A YUV picture put down at another size: ScalePixelArray for a decoded
+/// video frame - the nearest pixel, or between them and averaged under
+/// RPTAG_Smooth.
+void ScaleYUVPixelArray(*graphics.RastPort rp, *const rtg.RtgYuv picture, *const graphics.Rect src_area, *const graphics.Rect dest_area)
 ##end

@@ -89,6 +89,8 @@ const BltCoverBitMapRastPort = @import("blit/bltcoverbitmaprastport.zig").BltCov
 const BlurCoverage = @import("bitmap/blurcoverage.zig").BlurCoverage;
 const TextFitted = @import("text/textfitted.zig").TextFitted;
 const DrawRoundBevel = @import("draw/drawroundbevel.zig").DrawRoundBevel;
+const WriteYUVPixelArray = @import("blit/writeyuvpixelarray.zig").WriteYUVPixelArray;
+const ScaleYUVPixelArray = @import("blit/scaleyuvpixelarray.zig").ScaleYUVPixelArray;
 const WriteLUTPixelArray = @import("blit/writelutpixelarray.zig").WriteLUTPixelArray;
 const BeginDraw = @import("draw/begindraw.zig").BeginDraw;
 const EndDraw = @import("draw/enddraw.zig").EndDraw;
@@ -160,6 +162,8 @@ const contract_files = [_][]const u8{
     @embedFile("blit/blttemplate.zig"),
     @embedFile("blit/writepixelarray.zig"),
     @embedFile("blit/writelutpixelarray.zig"),
+    @embedFile("blit/writeyuvpixelarray.zig"),
+    @embedFile("blit/scaleyuvpixelarray.zig"),
     @embedFile("blit/bltpattern.zig"),
     @embedFile("blit/bltmaskrastport.zig"),
     @embedFile("blit/bltbitmap.zig"),
@@ -421,6 +425,12 @@ fn lvoTextFitted(gb: *GraphicsBase, rp: *graphics.RastPort, string: [*]const u8,
 fn lvoDrawRoundBevel(gb: *GraphicsBase, rp: *graphics.RastPort, area: *const graphics.Rect, radius: u32, light: graphics.Pen, dark: graphics.Pen) callconv(.c) void {
     DrawRoundBevel(gb, @ptrCast(@alignCast(rp)), area, radius, light, dark);
 }
+fn lvoWriteYUVPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, picture: *const rtg.RtgYuv, src_x: i32, src_y: i32, area: *const graphics.Rect) callconv(.c) void {
+    WriteYUVPixelArray(gb, @ptrCast(@alignCast(rp)), picture, src_x, src_y, area);
+}
+fn lvoScaleYUVPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, picture: *const rtg.RtgYuv, src_area: *const graphics.Rect, dest_area: *const graphics.Rect) callconv(.c) void {
+    ScaleYUVPixelArray(gb, @ptrCast(@alignCast(rp)), picture, src_area, dest_area);
+}
 fn lvoWriteLUTPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, table: [*]const graphics.Pen, src_x: i32, src_y: i32, area: *const graphics.Rect) callconv(.c) void {
     WriteLUTPixelArray(gb, @ptrCast(@alignCast(rp)), pixels, pitch, table, src_x, src_y, area);
 }
@@ -548,6 +558,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoTextFitted),
     // Shapes a widget is made of, continued
     vec(lvoDrawRoundBevel),
+    // Pictures in YUV, as a video decoder hands them out
+    vec(lvoWriteYUVPixelArray),
+    vec(lvoScaleYUVPixelArray),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

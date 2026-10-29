@@ -65,9 +65,11 @@ pub const LIBRARY_VERSION = 0;
 /// display's corner where the layers share its buffer. 35: a smooth
 /// rounded box tells what of it is surely in or out by its corners'
 /// circles, not by samples, and runs through what is surely in without
-/// asking each pixel; a fill's colour is made ready once a shape. The
-/// version stays 0 until there is something to demand of it.
-pub const LIBRARY_REVISION = 35;
+/// asking each pixel; a fill's colour is made ready once a shape. 36:
+/// `WriteYUVPixelArray` and `ScaleYUVPixelArray`, a video decoder's YUV
+/// frames put down as colours. The version stays 0 until there is
+/// something to demand of it.
+pub const LIBRARY_REVISION = 36;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

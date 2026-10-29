@@ -76,6 +76,7 @@ Generated from the source by `./zig build autodoc`.
 - [RegionRectangles](#regionrectangles) - Reads out the rectangles a region is made of.
 - [RemFont](#remfont) - Takes a font off the list.
 - [ScalePixelArray](#scalepixelarray) - Puts a rectangle of one's own pixels down at another size.
+- [ScaleYUVPixelArray](#scaleyuvpixelarray) - Puts a YUV picture down as colours at another size.
 - [ScrollRaster](#scrollraster) - Moves a rectangle of a RastPort within the RastPort itself.
 - [SetRPAttrs](#setrpattrs) - Changes a RastPort.
 - [SetSoftStyle](#setsoftstyle) - Sets the styles, keeping only what will make a difference.
@@ -90,6 +91,7 @@ Generated from the source by `./zig build autodoc`.
 - [WriteLUTPixelArray](#writelutpixelarray) - Puts a rectangle of 8-bit colour numbers down through a table of 256 pens.
 - [WritePixel](#writepixel) - One pixel in the foreground pen.
 - [WritePixelArray](#writepixelarray) - Puts a rectangle of one's own pixels down, converted to the surface's format.
+- [WriteYUVPixelArray](#writeyuvpixelarray) - Puts a YUV picture down as colours, converted to the surface's format.
 - [XorRectRegion](#xorrectregion) - What is in the region or the rectangle, but not in both.
 - [XorRegionRegion](#xorregionregion) - Leaves in `dest` what is in one of the two regions but not in both.
 
@@ -4476,6 +4478,90 @@ gb.ScalePixelArray(rp, picture.ptr, 640 * 3, @intFromEnum(PixelFormat.rgb24),
     &.{ .min_x = 0, .min_y = 0, .max_x = 640, .max_y = 400 }, &box);
 ```
 
+## ScaleYUVPixelArray
+
+Puts a YUV picture down as colours at another size.
+
+**SYNOPSIS**
+
+```zig
+fn ScaleYUVPixelArray(gb: *GraphicsBase, rp: *RastPort, picture: *const RtgYuv, src_area: *const Rect, dest_area: *const Rect) void
+```
+
+**SINCE**
+
+0.36. LVO -348.
+
+**INPUTS**
+
+- `rp` - the RastPort. Its clip decides where the pixels land.
+- `picture` - the picture, as for `WriteYUVPixelArray`.
+- `src_area` - the part of the picture to take, half-open, measured
+  in its luma pixels.
+- `dest_area` - where it lands and how big, half-open.
+
+**RESULT**
+
+Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` as for
+`WriteYUVPixelArray`, and nothing was written; an empty `src_area` or
+`dest_area` writes nothing and is not an error.
+
+**BEHAVIOR**
+
+As `ScalePixelArray` scales a picture, with the colours worked out as
+`WriteYUVPixelArray` works them out. Every pixel of the destination is
+the nearest pixel of the source, taken from the edges: pixel `k` of
+`dest_area` is pixel `k * source / destination` of `src_area`, each
+way. A RastPort that wants it smooth (`RPTAG_Smooth`) has each plane
+sampled first - made larger, mixed from the nearest pixels by how near
+each is; made smaller, the mean of all it covers - and the colour
+worked out from what that gives. Each way is taken by itself.
+
+The clip cuts the destination, and each piece of it still takes the
+pixels that belong at that place, so a picture drawn in pieces is the
+same picture as one drawn in a single call.
+
+A piece of many pixels is cut into bands of rows, one for each core
+(`ShareWork`). The nearest pixel costs about what
+`WriteYUVPixelArray` costs a pixel; smooth costs several times that,
+most where the picture is made much smaller.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one, and for the cores that share the
+  work.
+- Interrupts: no. The work is unbounded, and it hands the rows it wrote
+  on to the display at the end.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The picture stays the caller's, and is only read
+until the call returns.
+
+**NOTES**
+
+What a video player calls for a frame in a window of any size. No
+board's engine scales YUV, so this is done here every time.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`WriteYUVPixelArray`, `ScalePixelArray`
+
+**EXAMPLES**
+
+```zig
+// A decoded frame into whatever room the window has.
+gb.ScaleYUVPixelArray(rp, &picture, &.{ .min_x = 0, .min_y = 0,
+    .max_x = @intCast(frame.width), .max_y = @intCast(frame.height) }, &box);
+```
+
 ## ScrollRaster
 
 Moves a rectangle of a RastPort within the RastPort itself.
@@ -5455,6 +5541,92 @@ None known.
 
 ```zig
 gb.WritePixelArray(rp, frame.ptr, 320 * 4, @intFromEnum(PixelFormat.rgba32), 0, 0, &.{ .min_x = 10, .min_y = 10, .max_x = 330, .max_y = 250 });
+```
+
+## WriteYUVPixelArray
+
+Puts a YUV picture down as colours, converted to the surface's format.
+
+**SYNOPSIS**
+
+```zig
+fn WriteYUVPixelArray(gb: *GraphicsBase, rp: *RastPort, picture: *const RtgYuv, src_x: i32, src_y: i32, area: *const Rect) void
+```
+
+**SINCE**
+
+0.36. LVO -344.
+
+**INPUTS**
+
+- `rp` - the RastPort. Its clip decides where the pixels land.
+- `picture` - the picture: its luma and chroma planes, their layout
+  (`RTGYUV_NV12` or `RTGYUV_I420`) and how its numbers stand for
+  colours (`RTGYUV_BT601` or `RTGYUV_BT709`, with `RTGYUV_FULL` for
+  the whole byte).
+- `src_x` - where in the picture to start, across, in luma pixels.
+- `src_y` - where in it to start, down.
+- `area` - where it lands, half-open. Its size is how much is taken.
+
+**RESULT**
+
+Nothing. `RPTAG_LastError` says `GERR_BAD_FORMAT` for a layout or
+colours this library does not know, an I420 picture with no Cr plane,
+or a surface with no colours in it (`indexed8`, `mono1`); then nothing
+was written.
+
+**BEHAVIOR**
+
+Each pixel's colour comes from its own Y and the Cb and Cr of the two
+by two pixels it is in, through the picture's matrix and range, and
+goes down opaque: the pens, the draw mode and what was there are not
+used. Below black and above white are held to them. This is how a
+frame from a video decoder is put on the display as it comes - no copy
+of it in RGB first.
+
+When the clip cuts the front off, the picture starts that much further
+in, so a clipped picture is cut rather than slid; an odd `src_x` or
+`src_y` takes the chroma of the pair it falls in.
+
+A piece of many pixels - a frame of any size - is cut into bands of
+rows, one for each core (`ShareWork`).
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the RastPort's lock
+  (`RPTAG_Lock`), if it has one, and for the cores that share the
+  work.
+- Interrupts: no. The work is unbounded, and it hands the rows it wrote
+  on to the display at the end.
+- Locks: the RastPort's own, taken here; no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The picture stays the caller's, and is only read
+until the call returns.
+
+**NOTES**
+
+A video decoder's frame is in memory its engine wrote: the caller
+makes sure the cores see it (`CachePostDMA`, which videodec.resource's
+`DecodeVideoFrame` has done) before handing it here.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ScaleYUVPixelArray`, `WritePixelArray`
+
+**EXAMPLES**
+
+```zig
+const picture = rtg.RtgYuv{ .y = frame.y, .cb = frame.cbcr, .y_pitch = frame.pitch,
+    .c_pitch = frame.pitch, .layout = rtg.RTGYUV_NV12, .colors = rtg.RTGYUV_BT709 };
+gb.WriteYUVPixelArray(rp, &picture, 0, 0, &.{ .min_x = 10, .min_y = 10,
+    .max_x = 10 + @as(i32, @intCast(frame.width)), .max_y = 10 + @as(i32, @intCast(frame.height)) });
 ```
 
 ## XorRectRegion
