@@ -18,6 +18,10 @@
 //! is what opens it again at its own size (big.zig). Without
 //! datatypes.library, or with no picture, the square is the ground with a
 //! note on it, faded into the ground as a picture that is not there.
+//!
+//! While a picture is read, the colours it leads with are counted over the
+//! square it is shown as (colours.zig), for the pictures under the
+//! controls to be drawn in.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -42,6 +46,7 @@ const Surface = sdk.rtg.Surface;
 const PixelFormat = sdk.rtg.bitmaps.PixelFormat;
 const dtc = datatypes.datatypesclass;
 const pic = datatypes.pictureclass;
+const colours = @import("colours.zig");
 
 /// What reading a cover needs.
 pub const Libraries = struct {
@@ -123,6 +128,8 @@ pub const Kept = struct {
     shown: ?*Surface = null,
     shown_port: ?*RastPort = null,
     from: From = .none,
+    /// The colours the cover leads with, when it has any.
+    lead: ?colours.Pair = null,
     /// The file beside the song the cover was read from, when it was.
     path: [dos.path_max + 1:0]u8 = @splat(0),
 
@@ -132,6 +139,7 @@ pub const Kept = struct {
     /// nothing is kept and the note is shown. Whether a picture was found.
     pub fn read(kept: *Kept, libs: Libraries, friend: *RastPort, picture: ?*const ac.AudioPicture, song: [*:0]const u8) bool {
         kept.from = .none;
+        kept.lead = null;
         if (kept.bitmap == null) {
             kept.bitmap = square(libs.gb, friend);
             kept.rast_port = portOnto(libs.gb, kept.bitmap);
@@ -142,12 +150,12 @@ pub const Kept = struct {
         if (kept.shown_port == null) return false;
         const dt = libs.dt orelse return false;
         if (picture) |held| {
-            if (load(dt, libs.gb, rp, .{ .held = held })) {
+            if (load(dt, libs.gb, rp, .{ .held = held }, &kept.lead)) {
                 kept.from = .tags;
                 return true;
             }
         }
-        if (fromFolder(libs, dt, rp, song, &kept.path)) {
+        if (fromFolder(libs, dt, rp, song, &kept.path, &kept.lead)) {
             kept.from = .beside;
             return true;
         }
@@ -223,8 +231,9 @@ fn portOnto(gb: *GraphicsBase, bitmap: ?*Surface) ?*RastPort {
     });
 }
 
-/// A picture lying in the song's own drawer, its name left in `path`.
-fn fromFolder(libs: Libraries, dt: *DataTypesBase, rp: *RastPort, song: [*:0]const u8, path: *[dos.path_max + 1:0]u8) bool {
+/// A picture lying in the song's own drawer, its name left in `path` and
+/// its colours in `lead`.
+fn fromFolder(libs: Libraries, dt: *DataTypesBase, rp: *RastPort, song: [*:0]const u8, path: *[dos.path_max + 1:0]u8, lead: *?colours.Pair) bool {
     if (song[0] == 0) return false;
     const dl = libs.dl;
     @memset(path, 0);
@@ -236,13 +245,14 @@ fn fromFolder(libs: Libraries, dt: *DataTypesBase, rp: *RastPort, song: [*:0]con
         if (!dl.AddPart(path, candidate, path.len)) continue;
         const lock = dl.Lock(path, dos.SHARED_LOCK) orelse continue;
         dl.UnLock(lock);
-        if (load(dt, libs.gb, rp, .{ .file = path })) return true;
+        if (load(dt, libs.gb, rp, .{ .file = path }, lead)) return true;
     }
     return false;
 }
 
-/// The picture read and scaled into the kept square.
-fn load(dt: *DataTypesBase, gb: *GraphicsBase, rp: *RastPort, source: Source) bool {
+/// The picture read and scaled into the kept square, the colours it leads
+/// with left in `lead`.
+fn load(dt: *DataTypesBase, gb: *GraphicsBase, rp: *RastPort, source: Source, lead: *?colours.Pair) bool {
     const object = objectOf(dt, source, null) orelse return false;
     defer dt.DisposeDTObject(object);
     var header: usize = 0;
@@ -269,5 +279,6 @@ fn load(dt: *DataTypesBase, gb: *GraphicsBase, rp: *RastPort, source: Source) bo
     };
     // The picture's pens are 0xAARRGGBB words: in memory blue first.
     gb.ScalePixelArray(rp, @ptrFromInt(pixels), @intCast(pitch), @intFromEnum(PixelFormat.bgra32), &source_area, &.{ .max_x = kept_size, .max_y = kept_size });
+    lead.* = colours.leading(@ptrFromInt(pixels), pitch, @intCast(source_area.min_x), @intCast(source_area.min_y), @intCast(side), @intCast(side));
     return true;
 }

@@ -436,7 +436,7 @@ fn readHead(request: *Request) i32 {
             if (request.filled == request.buffer.len) return http.HTTPERR_PROTOCOL;
             const got = connection.receive(request.buffer[request.filled..]);
             if (got < 0) return got;
-            if (got == 0) return if (request.filled == 0) http.HTTPERR_IO else http.HTTPERR_TRUNCATED;
+            if (got == 0) return if (request.filled == 0) http.HTTPERR_CLOSED else http.HTTPERR_TRUNCATED;
             request.filled += @intCast(got);
             request.answered = true;
         }

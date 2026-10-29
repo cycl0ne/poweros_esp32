@@ -715,7 +715,12 @@ answers to reaches the program, as `WMHI_VANILLAKEY`.
 
 Tab and Shift-Tab move the keyboard between the fields that have
 `GA_TabCycle`, in the layout's order - row by row in a grid - and a field
-reports `WMHI_GADGETUP` when it is left with Return or Tab.
+reports `WMHI_GADGETUP` when it is left with Return or Tab. A press
+beside it or the menu button lets it go without a report, and the menu
+button then opens the menus. In a field, the cursor keys, Home and End
+move, and with Shift a cursor key goes to the start or the end;
+Shift-Backspace takes out everything before the cursor, Shift-Delete
+everything after it, and Escape puts back what was there.
 `ActivateGadget` gives a gadget the keyboard without a press, and only in
 the active window; a window is not always active the moment it opens, so
 a program waits for `WMHI_ACTIVE` as above. A gadget that hands the
@@ -1135,6 +1140,9 @@ if (ab.AslRequest(request, null)) {
 `ASLFR_Window` opens it on the window's screen, `ASLFR_SleepWindow`
 keeps the window from taking input while it is up, and
 `ASLFR_DoSaveMode` makes it ask for a name to save under.
+`ASLFR_DrawersOnly` asks for a drawer: it shows no files and has no File
+field, so the answer's `file` is empty, and its New Drawer makes the
+drawer typed in the Drawer field.
 `ASL_FontRequest` asks for a font, and its `FontRequester`'s `attr` is
 ready for `OpenDiskFont` ([Choosing and opening a font](fonts.md#choosing-and-opening-a-font)).
 In a window of gadgets, getfile.gadget and getfont.gadget are a field
@@ -1179,7 +1187,7 @@ requester goes to its drawer with its name in the File field
 | `C:test/Gadgets` | the gadget classes in one layout, each worked by its key |
 | `C:test/Settings` | tabs along a page gadget's top, its pages framed below them (`PAGE_Tabs`), framed groups |
 | `C:test/Widgets` | meters, a canvas drawn into and queued, codes, a chart |
-| `C:test/Asl` | the file and font requesters; `ASYNC` asked without waiting, `ABORT` taken down |
+| `C:test/Asl` | the file and font requesters; `DRAWERS` a drawer, `ASYNC` asked without waiting, `ABORT` taken down |
 | `SYS:Programs/Notepad` | a window object with menus, border scroll bars, a second window, requesters, a ribbon whose toggles follow the menu's check marks |
 | `SYS:Programs/Sheet` | a canvas drawn into and pressed on, a line of text with an edit hook of its own, border scroll bars telling the window |
 | `SYS:Programs/MultiView` | border scroll bars joined to a picture through a model |

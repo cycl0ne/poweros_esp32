@@ -8,10 +8,11 @@
 //! screen has room for, and is sized like any other; its close gadget or
 //! Esc close it.
 //!
-//! It shows the cover it was opened with: the next song leaves it as it
-//! is, and a press on that song's cover shows the new one instead, where
-//! the window was and as large as it was. A press on the cover it shows
-//! brings it to the front.
+//! It follows the songs: the next song's cover takes the picture's place
+//! in the layout (`CHILDA_Replace`), in the same window, where it is and
+//! as large as it is, and goes over the last one with no ground drawn
+//! between; a song with no cover closes it. A press on the cover brings
+//! it to the front.
 //!
 //! The picture lays itself out on a process of its own and says when it
 //! has (`IDCMPUPDATE`); it is drawn again then.
@@ -43,9 +44,11 @@ pub const Libraries = struct {
 };
 
 pub const Big = struct {
-    /// The window object, and the window and the picture while it is open.
+    /// The window object, and the window, its layout and the picture in
+    /// that while it is open.
     object: ?*Object = null,
     window: ?*intuition.Window = null,
+    layout: ?*Object = null,
     picture: ?*Object = null,
     /// Which song's cover it shows, as the caller counts them.
     song: usize = 0,
@@ -61,37 +64,26 @@ pub const Big = struct {
         return @truncate(mask);
     }
 
-    /// The cover of `song` - `source`, `title` its window's title - shown:
-    /// the window brought to the front when it shows it already, opened
-    /// in place of the one there otherwise. False when it cannot be shown.
+    /// The cover of `song` - `source`, `title` its window's title - shown
+    /// and the window brought to the front: in the window if it is open,
+    /// in one opened for it otherwise. False when it cannot be shown.
     pub fn show(big: *Big, libs: Libraries, song: usize, source: cover.Source, title: [*:0]const u8) bool {
         const ib = libs.ib;
         const dt = libs.dt;
         if (big.window) |window| {
-            if (big.song == song) {
-                ib.WindowToFront(window);
-                ib.ActivateWindow(window);
-                return true;
-            }
+            if (!big.follow(libs, song, source, title)) return false;
+            ib.WindowToFront(window);
+            ib.ActivateWindow(window);
+            return true;
         }
-        big.close(ib);
 
-        const picture = cover.objectOf(dt, source, &[_]TagItem{
-            .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
-            .{ .tag = pic.PDTA_Scale, .data = 1 },
-            .{},
-        }) orelse return false;
-        var header: usize = 0;
-        _ = dt.GetDTAttrsA(picture, &[_]TagItem{ .{ .tag = pic.PDTA_BitMapHeader, .data = @intFromPtr(&header) }, .{} });
-        const shape: ?*const pic.BitMapHeader = @ptrFromInt(header);
-        const wide: u16 = if (shape) |known| @max(known.width, 1) else 1;
-        const high: u16 = if (shape) |known| @max(known.height, 1) else 1;
+        const picture = pictureOf(dt, source) orelse return false;
         // From here on the picture is the layout's, which disposes of
         // what is in it.
         const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(picture) },
-            .{ .tag = lg.CHILDA_Aspect, .data = lg.aspect(wide, high) },
+            .{ .tag = lg.CHILDA_Aspect, .data = shapeOf(dt, picture) },
             .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_HCENTRE | lg.CALIGN_VCENTRE },
             .{},
         }) orelse {
@@ -99,9 +91,7 @@ pub const Big = struct {
             return false;
         };
 
-        var length: usize = 0;
-        while (title[length] != 0 and length < big.title.len) : (length += 1) big.title[length] = title[length];
-        big.title[length] = 0;
+        big.setTitle(title);
         const at = big.place;
         const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
             .{ .tag = wn.WA_Title, .data = @intFromPtr(&big.title) },
@@ -133,9 +123,49 @@ pub const Big = struct {
         }
         big.object = object;
         big.window = @ptrFromInt(opened);
+        big.layout = layout;
         big.picture = picture;
         big.song = song;
         return true;
+    }
+
+    /// The window made to follow the songs: the cover of `song` -
+    /// `source`, `title` its window's title - shown in it in place of the
+    /// one there, the window staying where it is and as large as it is.
+    /// Nothing when it is closed or shows that song already. With no
+    /// cover (`source` null), or one that cannot be read, the window
+    /// closes. False when it is closed.
+    pub fn follow(big: *Big, libs: Libraries, song: usize, source: ?cover.Source, title: [*:0]const u8) bool {
+        const ib = libs.ib;
+        const window = big.window orelse return false;
+        if (big.song == song) return true;
+        const old = big.picture orelse return false;
+        const layout = big.layout orelse return false;
+        const new = pictureOf(libs.dt, source orelse {
+            big.close(ib);
+            return false;
+        }) orelse {
+            big.close(ib);
+            return false;
+        };
+        // The layout takes the new one and disposes of the old.
+        _ = ib.SetGadgetAttrsTagList(layout, window, &[_]TagItem{
+            .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(old) },
+            .{ .tag = lg.CHILDA_Replace, .data = @intFromPtr(new) },
+            .{ .tag = lg.CHILDA_Aspect, .data = shapeOf(libs.dt, new) },
+            .{},
+        });
+        big.picture = new;
+        big.song = song;
+        big.setTitle(title);
+        if (big.object) |object| _ = ib.SetAttrsTagList(object, &[_]TagItem{ .{ .tag = wn.WA_Title, .data = @intFromPtr(&big.title) }, .{} });
+        return true;
+    }
+
+    fn setTitle(big: *Big, title: [*:0]const u8) void {
+        var length: usize = 0;
+        while (title[length] != 0 and length < big.title.len) : (length += 1) big.title[length] = title[length];
+        big.title[length] = 0;
     }
 
     /// Everything the window says: false when it is to close.
@@ -178,9 +208,30 @@ pub const Big = struct {
         ib.DisposeObject(object); // the window, the layout and the picture
         big.object = null;
         big.window = null;
+        big.layout = null;
         big.picture = null;
     }
 };
+
+/// The picture made from `source`, scaled to the room it is given and
+/// telling the window when it has laid itself out.
+fn pictureOf(dt: *DataTypesBase, source: cover.Source) ?*Object {
+    return cover.objectOf(dt, source, &[_]TagItem{
+        .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+        .{ .tag = pic.PDTA_Scale, .data = 1 },
+        .{},
+    });
+}
+
+/// The picture's shape, as `CHILDA_Aspect` takes it.
+fn shapeOf(dt: *DataTypesBase, picture: *Object) usize {
+    var header: usize = 0;
+    _ = dt.GetDTAttrsA(picture, &[_]TagItem{ .{ .tag = pic.PDTA_BitMapHeader, .data = @intFromPtr(&header) }, .{} });
+    const shape: ?*const pic.BitMapHeader = @ptrFromInt(header);
+    const wide: u16 = if (shape) |known| @max(known.width, 1) else 1;
+    const high: u16 = if (shape) |known| @max(known.height, 1) else 1;
+    return lg.aspect(wide, high);
+}
 
 /// One of the window's numbers.
 fn windowAttr(ib: *IntuitionBase, window: *intuition.Window, attr: utility.Tag) i32 {

@@ -195,7 +195,13 @@ pub const LIBRARY_VERSION = 0;
 /// window is drawn; a group draws only the members a band of the room
 /// reaches, and a size draws the border and room once, not again for its
 /// repair. The input task has the standard stack.
-pub const LIBRARY_REVISION = 73;
+/// 74: layoutgclass CHILDA_Replace, a child put in another's place, a
+/// hidden one hidden. A
+/// line of text with the keys gives way to the menu button: it ends
+/// without an answer, and the press opens the menus. Its edit goes to the
+/// start or end with Shift and a cursor key, and Shift-Backspace and
+/// Shift-Delete take out everything before or after the cursor.
+pub const LIBRARY_REVISION = 74;
 const BUILD_DATE = "29.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -316,6 +316,7 @@ test "an outline family: any height rendered, listed as scalable, found by NewFo
     const entries = fontfile.entriesOf(block);
     try testing.expectEqual(@as(usize, 1), entries.len);
     try testing.expectEqual(@as(u8, 1), entries[0].outline);
+    try testing.expectEqual(graphics.FS_NORMAL, entries[0].style);
     try testing.expectEqualStrings("tt/tt.ttf", fontfile.pathOf(&entries[0]));
     try rig.write("FONTS:tt.font", block[0..fontfile.contentsSize(contents.count)]);
     rig.dfb.DisposeFontContents(contents);
@@ -339,6 +340,68 @@ test "an outline family: any height rendered, listed as scalable, found by NewFo
     // At the end diskfont's expunge frees the rendered size nobody holds
     // and closes truetype.library, whose RemLibrary above then completes;
     // the leak check says whether all of it went.
+}
+
+/// An outline family `name` whose TrueType file says it is drawn in
+/// `style_bits` (1 bold, 2 italic), its contents file made by
+/// NewFontContents.
+fn writeOutlineFamily(rig: *Rig, comptime name: []const u8, style_bits: u8) !void {
+    const tt = @import("../../truetype/tests/truetype.zig");
+    var out: tt.Out = .{};
+    tt.buildFace(&out, style_bits);
+    const made = rig.dosLib().CreateDir("FONTS:" ++ name) orelse return error.NoDir;
+    rig.dosLib().UnLock(made);
+    try rig.write("FONTS:" ++ name ++ "/" ++ name ++ ".ttf", out.bytes[0..out.len]);
+    const fonts = rig.dosLib().Lock("FONTS:", dos.SHARED_LOCK).?;
+    defer rig.dosLib().UnLock(fonts);
+    const contents = rig.dfb.NewFontContents(fonts, name ++ ".font") orelse return error.NoContents;
+    defer rig.dfb.DisposeFontContents(contents);
+    const block: [*]align(4) u8 = @ptrCast(contents);
+    try rig.write("FONTS:" ++ name ++ ".font", block[0..fontfile.contentsSize(contents.count)]);
+}
+
+test "faces: bold asked of a family is its bold face, drawn bold; a face it lacks is left to the soft styles" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const truetype_init = @import("../../truetype/truetype_init.zig");
+    const lib = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoTrueType;
+    const truetype_lib: *exec.Library = @ptrCast(@alignCast(lib));
+    defer _ = rig.sysLib().RemLibrary(truetype_lib);
+    try writeOutlineFamily(&rig, "tt", 0);
+    try writeOutlineFamily(&rig, "tt-bold", 1);
+
+    // The bold face's entry says what its file says.
+    const fonts = rig.dosLib().Lock("FONTS:", dos.SHARED_LOCK).?;
+    const listed = rig.dfb.NewFontContents(fonts, "tt-bold.font") orelse return error.NoContents;
+    rig.dosLib().UnLock(fonts);
+    try testing.expectEqual(graphics.FSF_BOLD, fontfile.entriesOf(@ptrCast(listed))[0].style);
+    rig.dfb.DisposeFontContents(listed);
+
+    const gb = rig.graphicsLib();
+    // Bold: the bold face, drawn bold, so graphics adds no bold of its own.
+    const bold = rig.dfb.OpenDiskFont(&.{ .name = "tt.font", .y_size = 20, .style = graphics.FSF_BOLD }) orelse return error.NoFont;
+    defer gb.CloseFont(bold);
+    try testing.expectEqualStrings("tt-bold.font", std.mem.span(bold.node.name.?));
+    try testing.expectEqual(graphics.FSF_BOLD, bold.image.style);
+    // Bold italic: no face for both, so the bold one, for the soft
+    // styles to lean.
+    const both = rig.dfb.OpenDiskFont(&.{ .name = "tt.font", .y_size = 20, .style = graphics.FSF_BOLD | graphics.FSF_ITALIC }) orelse return error.NoFont;
+    defer gb.CloseFont(both);
+    try testing.expectEqual(bold, both);
+    // Italic: no italic face, the family itself, plain.
+    const italic = rig.dfb.OpenDiskFont(&.{ .name = "tt.font", .y_size = 20, .style = graphics.FSF_ITALIC }) orelse return error.NoFont;
+    defer gb.CloseFont(italic);
+    try testing.expectEqualStrings("tt.font", std.mem.span(italic.node.name.?));
+    try testing.expectEqual(graphics.FS_NORMAL, italic.image.style);
+
+    // The face asked by its own name, plain, is the size in memory: the
+    // outline is not rendered twice.
+    const loaded = fontsLoaded(&rig);
+    const again = rig.dfb.OpenDiskFont(&.{ .name = "tt-bold.font", .y_size = 20 }) orelse return error.NoFont;
+    defer gb.CloseFont(again);
+    try testing.expectEqual(bold, again);
+    try testing.expectEqual(loaded, fontsLoaded(&rig));
 }
 
 test "NewScaledDiskFont: the caller's, freed with FreeVec" {

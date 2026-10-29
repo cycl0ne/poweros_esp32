@@ -115,7 +115,21 @@ test "the head of an answer, read in place" {
     var kept_bytes = "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\n\r\n".*;
     try testing.expect(!_protocol.parseHead(&kept_bytes).?.close);
 
-    for ([_][]const u8{ "SSH-2.0 x\r\n\r\n", "HTTP/1.1 2x0 OK\r\n\r\n", "HTTP/1.1 200OK\r\n\r\n", "HTTP/1.1 200 OK\r\nContent-Length: -1\r\n\r\n" }) |bad| {
+    // A Shoutcast server's answer: HTTP/1.0's, its body to the connection's
+    // end, its icy- headers as any other.
+    var icy_bytes = "ICY 200 OK\r\nicy-name: Radio\r\nicy-metaint:8192\r\nContent-Type: audio/mpeg\r\n\r\n\xff\xfb".*;
+    const icy = _protocol.parseHead(&icy_bytes).?;
+    try testing.expectEqual(@as(u16, 200), icy.status);
+    try testing.expectEqualStrings("ICY 200 OK", std.mem.span(icy.status_line));
+    try testing.expect(icy.close);
+    try testing.expectEqual(@as(?u64, null), icy.content_length);
+    try testing.expect(!icy.chunked);
+    try testing.expectEqualStrings("\xff\xfb", icy_bytes[icy.body_at..]);
+    try testing.expectEqualStrings("8192", std.mem.span(_protocol.findHeader(icy_bytes[0..icy.body_at], "Icy-MetaInt").?));
+    var icy_short = "ICY 404\r\n\r\n".*;
+    try testing.expectEqual(@as(u16, 404), _protocol.parseHead(&icy_short).?.status);
+
+    for ([_][]const u8{ "SSH-2.0 x\r\n\r\n", "HTTP/1.1 2x0 OK\r\n\r\n", "HTTP/1.1 200OK\r\n\r\n", "HTTP/1.1 200 OK\r\nContent-Length: -1\r\n\r\n", "HTTP/1.1 20\r\n\r\n", "ICY 20\r\n\r\n", "ICY 2000 OK\r\n\r\n", "ICY200 OK\r\n\r\n", "ICE 200 OK\r\n\r\n" }) |bad| {
         var copy: [64]u8 = undefined;
         @memcpy(copy[0..bad.len], bad);
         try testing.expectEqual(@as(?Head, null), _protocol.parseHead(copy[0..bad.len]));
@@ -744,6 +758,7 @@ test "what is refused, and why" {
         .{ .answers = &.{"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nabcdeX"} },
         .{ .answers = &.{"HTTP/1.1 200 OK\r\nContent-"} },
         .{ .answers = &.{&long_head} },
+        .{},
     }, null);
     try testing.expectEqual(http.HTTPERR_URL, rig.refused("GET", "ftp://h/", null));
     try testing.expectEqual(http.HTTPERR_URL, rig.refused("GET", "http://h/a b", null));
@@ -768,6 +783,8 @@ test "what is refused, and why" {
     rig.hb.CloseRequest(nonsense);
     try testing.expectEqual(http.HTTPERR_TRUNCATED, rig.refused("GET", "http://h/", null));
     try testing.expectEqual(http.HTTPERR_PROTOCOL, rig.refused("GET", "http://h/", null));
+    // A server that takes the request and closes.
+    try testing.expectEqual(http.HTTPERR_CLOSED, rig.refused("GET", "http://h/", null));
     // No more connections to be had.
     try testing.expectEqual(http.HTTPERR_IO, rig.refused("GET", "http://h/", null));
 

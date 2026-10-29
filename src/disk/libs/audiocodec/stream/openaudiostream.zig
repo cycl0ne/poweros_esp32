@@ -42,10 +42,11 @@ const vorbis = @import("../vorbis/_vorbis.zig");
 /// its data, an MP3's tags in front of the sound and its first frame -
 /// with what its encoder wrote about the rest, when it did - a FLAC's
 /// metadata blocks, an Ogg Vorbis stream's three header packets; and the
-/// stream's info is filled in. An Ogg Vorbis file's last page is looked
-/// for at its end, for its length. A file's end is looked at first: tags there
-/// (ID3v1, APE) are not read as sound, and an ID3v1 tag's names count
-/// where the front says nothing. An ID3v2 tag is read whole, frame by
+/// stream's info is filled in. A read function is asked for the header's
+/// bytes and `AUDIO_READ_AHEAD` more at most. An Ogg Vorbis file's last
+/// page is looked for at its end, for its length. A file's end is looked
+/// at first: tags there (ID3v1, APE) are not read as sound, and an ID3v1
+/// tag's names count where the front says nothing. An ID3v2 tag is read whole, frame by
 /// frame, however large; its picture is read into memory of its own only
 /// with `ACA_KeepPicture` - the front cover, where there are several - and
 /// passed over otherwise. A file can seek; a read function cannot.
@@ -58,8 +59,11 @@ const vorbis = @import("../vorbis/_vorbis.zig");
 ///   do with ACA_ReadFunc.
 ///
 /// OWNERSHIP:
-/// The stream is the caller's, given back with `CloseAudioStream`. A file
-/// opened with ACA_Name is closed with it; a handle given with
+/// The stream is the caller's, given back with `CloseAudioStream`. It may
+/// be handed to another task, which then decodes, moves and closes it
+/// (SINCE 1.3): a program opens the next song - its tags and its cover
+/// read - while the task that decodes plays this one. Two tasks never use
+/// one stream at once. A file opened with ACA_Name is closed with it; a handle given with
 /// ACA_FileHandle stays the program's, and must stay open until then.
 ///
 /// NOTES:

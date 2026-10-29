@@ -326,7 +326,8 @@ finding, line numbers and highlighting through a hook that labels each
 line - what `SYS:Programs/Notepad` is made of), and
 `scrollgroup` (a layout larger than the window, scrolled; `C:test/Scroll`),
 `listbrowser` (a list in columns, sorted by a heading, its rows a
-tree; `C:test/ListBrowser`), `toolbutton` (a button with a picture and a
+tree, or a list whose rows are dragged into another order, with a row
+marked as the one in use; `C:test/ListBrowser`), `toolbutton` (a button with a picture and a
 label, as a tool bar has; `C:test/Gadgets`) and `ribbon` (a program's
 commands in tabs and named groups, made from a table;
 [A ribbon](intuition.md#a-ribbon), `C:test/Ribbon`). Each
@@ -382,6 +383,21 @@ const tx = sdk.gadgets.text;
 const time = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
     .{ .tag = tx.TEXT_Text, .data = @intFromPtr("0:42") },
     .{ .tag = tx.TEXT_RoomFor, .data = @intFromPtr("-00:00") },
+    .{},
+});
+```
+
+A child is replaced in a window that is open: `LAYOUTA_ModifyChild`
+names it and `CHILDA_Replace` gives the new one, which takes its place,
+its label and its sizes; the layout disposes of the old one. Only the
+child's place is drawn, the new one over what the old one left, so a
+picture changes to the next with no flicker - the Player's large cover
+follows the songs this way:
+
+```zig
+_ = ib.SetGadgetAttrsTagList(layout, window, &.{
+    .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(old) },
+    .{ .tag = lg.CHILDA_Replace, .data = @intFromPtr(new) },
     .{},
 });
 ```

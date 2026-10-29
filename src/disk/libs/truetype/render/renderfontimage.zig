@@ -42,7 +42,9 @@ const _render = @import("_render.zig");
 /// pixels. A code the font has no glyph for is its missing glyph. The
 /// font is `FPF_DESIGNED` - drawn at its size from the outline, not
 /// scaled from another size - and `FPF_PROPORTIONAL` when its advances
-/// differ.
+/// differ. Its styles are the ones the file says it is drawn in
+/// (`truetype.styleOf`): a bold face renders as `FSF_BOLD`, so graphics
+/// draws no bold over it.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -136,6 +138,7 @@ pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32,
         .baseline = @intFromFloat(@floor(scale.ascender * scale.factor + 0.5)),
         .x_size = @intCast(@max(zero, 1)),
         .max_width = @intCast(max_width),
+        .style = font.style,
         .flags = graphics.FPF_DESIGNED | if (proportional) graphics.FPF_PROPORTIONAL else 0,
         .kind = .alpha4,
         .default_char = last + 1,

@@ -387,6 +387,55 @@ test "a WAV: its samples as they are, its name, every sample form brought to 16 
     acb.CloseAudioStream(sf);
 }
 
+/// A WAV's header and then silence, `total` bytes in all, handed over in
+/// pieces of 1000 at most; how far it has been read.
+const Silence = struct {
+    header: []const u8,
+    total: usize,
+    at: usize = 0,
+
+    fn read(data: ?*anyopaque, buffer: [*]u8, length: u32) callconv(.c) i32 {
+        const source: *Silence = @ptrCast(@alignCast(data.?));
+        const count = @min(@as(usize, length), 1000, source.total - source.at);
+        for (buffer[0..count], source.at..) |*byte, at| byte.* = if (at < source.header.len) source.header[at] else 0;
+        source.at += count;
+        return @intCast(count);
+    }
+};
+
+test "a read function is asked for no more than AUDIO_READ_AHEAD past what was used" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+
+    // A WAV that says it holds 50000 frames, 16-bit stereo, whose data
+    // is not in the builder: the read function hands it out.
+    const frames = 50_000;
+    var b: Builder = .{};
+    wavFile(&b, 1, 2, 16, "", &.{});
+    std.mem.writeInt(u32, b.bytes[4..8], @intCast(b.len - 8 + frames * 4), .little);
+    std.mem.writeInt(u32, b.bytes[b.len - 4 ..][0..4], frames * 4, .little);
+    var source: Silence = .{ .header = b.slice(), .total = b.len + frames * 4 };
+    var err: i32 = 0;
+    const stream = acb.OpenAudioStream(&[_]utility.TagItem{
+        .{ .tag = ac.ACA_ReadFunc, .data = @intFromPtr(&Silence.read) },
+        .{ .tag = ac.ACA_ReadData, .data = @intFromPtr(&source) },
+        .{},
+    }, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    try testing.expect(source.at <= b.len + ac.AUDIO_READ_AHEAD);
+
+    var buffer: [4096 * 2]i16 = undefined;
+    var decoded: usize = 0;
+    while (decoded < 30_000) {
+        const got = acb.DecodeAudio(stream, &buffer, 4096);
+        try testing.expect(got > 0);
+        decoded += @intCast(got);
+        try testing.expect(source.at <= b.len + decoded * 4 + ac.AUDIO_READ_AHEAD);
+    }
+}
+
 test "a WAV it does not decode, and bytes that are no sound, are refused with why" {
     var rig: Rig = undefined;
     try rig.init();
@@ -459,7 +508,45 @@ test "files: they seek; a tag at the end is no sound and names it; a WAV seeks e
     try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(tone, tone_frames / 2));
     const rest = try decodeAll(acb, tone, 2, 1000, &.{});
     try testing.expect(rest > tone_frames / 4 and rest <= tone_frames / 2 + 1152);
+
+    // Back to its start: the encoder's delay left out again, every frame
+    // there, the first as another decoder makes them.
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(tone, 0));
+    var head: [1024 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, tone_frames), try decodeAll(acb, tone, 2, 1000, &head));
+    const reference: []align(1) const i16 = std.mem.bytesAsSlice(i16, tone_head);
+    for (head, reference) |ours, theirs| {
+        try testing.expect(@abs(@as(i32, ours) - theirs) <= 1);
+    }
     acb.CloseAudioStream(tone);
+}
+
+test "a stream opened by one process is decoded, moved and closed by another" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    try rig.write("WORK:tone.mp3", &.{tone_mp3});
+    const tone = openFile(acb, "WORK:tone.mp3", &err) orelse return error.NoStream;
+
+    // The other process, with WORK: behind it as well.
+    var other: dos.Process = .{};
+    other.task.node.name = "other process";
+    host.dos_process.initMsgPort(&other);
+    other.pkt_wait = &Disk.wait;
+    kexec.SysBase.cpu().this_task = &other.task;
+    defer kexec.SysBase.cpu().this_task = &rig.proc.task;
+
+    var head: [1024 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, tone_frames), try decodeAll(acb, tone, 2, 1000, &head));
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(tone, 0));
+    try testing.expectEqual(@as(u32, tone_frames), try decodeAll(acb, tone, 2, 1000, &.{}));
+    acb.CloseAudioStream(tone);
+    const reference: []align(1) const i16 = std.mem.bytesAsSlice(i16, tone_head);
+    for (head, reference) |ours, theirs| {
+        try testing.expect(@abs(@as(i32, ours) - theirs) <= 1);
+    }
 }
 
 // --- ID3v2 tags made here ---------------------------------------------------------

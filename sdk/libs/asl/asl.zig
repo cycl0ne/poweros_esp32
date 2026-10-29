@@ -180,8 +180,9 @@ pub const ASLFR_DoMultiSelect = ASL_TB + 45;
 pub const ASLFR_DoPatterns = ASL_TB + 46;
 
 // What it shows.
-/// Bool: drawers only, no files - what a program that asks for a place
-/// to put something wants.
+/// Bool: drawers only, no files and no File field - what a program that
+/// asks for a place to put something wants. The answer is the drawer,
+/// its file empty; New Drawer makes the drawer the Drawer field names.
 pub const ASLFR_DrawersOnly = ASL_TB + 47;
 /// A `*utility.Hook` asked about every entry: true shows it.
 pub const ASLFR_FilterFunc = ASL_TB + 49;

@@ -27,6 +27,18 @@
 //! text for the triangle of a row that heads a branch. Text that does not
 //! fit is cut at the last whole character.
 //!
+//! **Moving a row** (`LISTBROWSER_Reorder`, a list that is no tree): as
+//! the pointer reaches another row, the row pressed is taken off the list
+//! and put back after that row when it is further down, before it when it
+//! is further up - so it stands where the pointer is, and every row
+//! between closes up. The place it was pressed at is kept, so the press's
+//! end tells the target where from.
+//!
+//! **A marked row** is drawn in the soft bold of the gadget's font, and a
+//! step at the start of its first column - after a tree's levels and
+//! triangle - holds a small triangle pointing right; the text starts after
+//! it.
+//!
 //! **Sorting** puts the program's list in order: the rows are taken into
 //! an array, each level's rows sorted with their branches kept under them
 //! - the branches first, each in its place, then the rows of the level by
@@ -62,7 +74,8 @@ const Row = lb.Row;
 pub const Library = gadgets.ClassLibrary(.{
     .name = lb.LISTBROWSER_CLASS,
     .version = 1,
-    .date = "07.10.2026",
+    .revision = 2,
+    .date = "29.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -120,6 +133,15 @@ pub const Data = extern struct {
     told_top: u32 = lb.LISTBROWSER_NONE,
     told_total: u32 = lb.LISTBROWSER_NONE,
     told_visible: u32 = lb.LISTBROWSER_NONE,
+    /// A row dragged moves in the list.
+    reorder: u8 = 0,
+    /// Where the row a press holds was when it was pressed; where the row
+    /// the last press moved was before it, or none.
+    pressed_place: u32 = lb.LISTBROWSER_NONE,
+    moved: u32 = lb.LISTBROWSER_NONE,
+    /// The list taken away (`LISTBROWSER_DETACH`), which given back is the
+    /// same list.
+    away: ?*exec.List = null,
 };
 
 // --- the rows ---------------------------------------------------------------
@@ -217,6 +239,29 @@ fn rowAtPlace(own: *const Data, place: u32) ?*Row {
     return null;
 }
 
+/// `row` moved to where `target` is: after it when `target` is further
+/// down, before it when further up.
+fn moveRow(base: *gadgets.Base, own: *const Data, row: *Row, target: *Row) void {
+    const list = own.rows orelse return;
+    const sys = base.sys_base;
+    const down = placeOf(own, target) > placeOf(own, row);
+    sys.Remove(&row.node);
+    // Before `target`: behind the node in front of it, or at the head when
+    // that is the list's own.
+    const in_front = target.node.pred.?;
+    const pred: ?*exec.Node = if (down) &target.node else if (in_front.pred == null) null else in_front;
+    sys.Insert(list, &row.node, pred);
+}
+
+/// Whether `node` is on `list`.
+fn onList(list: *exec.List, node: *exec.Node) bool {
+    var at = list.first();
+    while (at) |each| : (at = each.next()) {
+        if (each == node) return true;
+    }
+    return false;
+}
+
 /// Whether some row lies deeper than the first.
 fn isTree(own: *const Data) bool {
     var at = firstRow(own);
@@ -245,14 +290,25 @@ fn compareText(a: [*:0]const u8, b: [*:0]const u8) i32 {
     }
 }
 
-/// The number a text starts with, a `-` before it taken; 0 for none.
+/// The number a text starts with, a `-` before it taken; numbers joined
+/// by `:` read as one, each part sixty of the one after it - a length,
+/// `1:02:33` 3753 seconds. 0 for none.
 fn numberOf(text: [*:0]const u8) i64 {
     var i: usize = 0;
     while (text[i] == ' ') i += 1;
     const negative = text[i] == '-';
     if (negative) i += 1;
     var n: i64 = 0;
-    while (text[i] >= '0' and text[i] <= '9') : (i += 1) n = n *| 10 +| (text[i] - '0');
+    var part: i64 = 0;
+    while (true) {
+        while (text[i] >= '0' and text[i] <= '9') : (i += 1) part = part *| 10 +| (text[i] - '0');
+        // Another part only where a digit follows the colon.
+        if (text[i] != ':' or text[i + 1] < '0' or text[i + 1] > '9') break;
+        n = (n +| part) *| 60;
+        part = 0;
+        i += 1;
+    }
+    n +|= part;
     return if (negative) -n else n;
 }
 
@@ -557,10 +613,13 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: 
         return;
     };
     const selected = own.selected == r;
+    const marked = r.flags & lb.ROW_MARKED != 0;
     // The whole row, to the pixel: a gap would show the field's ground
     // between rows, which is the fill pen while the gadget is pressed.
     support.fill(gb, rp, at, if (selected) pens[sc.FILLPEN] else pens[sc.BACKGROUNDPEN]);
     setPen(gb, rp, if (selected) pens[sc.FILLTEXTPEN] else pens[sc.TEXTPEN]);
+    _ = gb.SetSoftStyle(rp, if (marked) graphics.FSF_BOLD else graphics.FS_NORMAL, 0xFF);
+    defer _ = gb.SetSoftStyle(rp, graphics.FS_NORMAL, 0xFF);
     const metric = metricOf(gb, rp);
     const baseline = at.top + @divTrunc(parts.line_height - metric.height, 2) + metric.baseline;
     var spans: [max_columns]Span = undefined;
@@ -577,6 +636,14 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: 
                 triangle(gb, rp, x, y, size, if (r.flags & lb.ROW_OPEN != 0) .down else .right);
             }
             const indent = expander.left + expander.width - span.left;
+            span.left += indent;
+            span.width -= indent;
+        }
+        if (i == 0 and marked) {
+            const step = parts.line_height;
+            const size: i32 = @max(@divTrunc(step, 2), 4);
+            triangle(gb, rp, span.left + cell_margin, at.top + @divTrunc(parts.line_height - size, 2), size, .right);
+            const indent = @min(cell_margin + size, span.width);
             span.left += indent;
             span.width -= indent;
         }
@@ -693,6 +760,7 @@ fn topShowing(own: *const Data, row: *Row, visible: u32) u32 {
 fn tell(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo) void {
     const tags = [_]TagItem{
         .{ .tag = lb.LISTBROWSER_Selected, .data = placeOf(own, own.selected) },
+        .{ .tag = lb.LISTBROWSER_Moved, .data = own.moved },
         .{ .tag = gc.GA_ID, .data = gc.gadget(o).id },
         .{},
     };
@@ -713,7 +781,8 @@ fn turnBranch(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.Gadget
     tellView(base, own, o, gi);
 }
 
-/// Sorted by `column`; the same column again turns the order round.
+/// Sorted by `column`; the same column again turns the order round. The
+/// target is told, since its list now stands in another order.
 fn sortBy(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo, column: u32) void {
     if (own.sort_column == column) own.reverse ^= 1 else {
         own.sort_column = column;
@@ -724,6 +793,13 @@ fn sortBy(base: *gadgets.Base, own: *Data, o: *Object, gi: ?*classusr.GadgetInfo
     putScroller(base, own, o, gi);
     support.redraw(base.intuition_base, o, gi);
     tellView(base, own, o, gi);
+    const tags = [_]TagItem{
+        .{ .tag = lb.LISTBROWSER_SortColumn, .data = own.sort_column },
+        .{ .tag = lb.LISTBROWSER_SortReverse, .data = own.reverse },
+        .{ .tag = gc.GA_ID, .data = gc.gadget(o).id },
+        .{},
+    };
+    support.notify(base.intuition_base, o, gi, &tags, 0);
 }
 
 // --- attributes -------------------------------------------------------------
@@ -751,12 +827,25 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
             },
             lb.LISTBROWSER_Rows => {
                 const list: ?*exec.List = if (item.data == lb.LISTBROWSER_DETACH) null else @ptrFromInt(item.data);
-                // The same list given back keeps its view and selection;
-                // another starts afresh.
-                if (list != null and list != own.rows) {
-                    own.top = 0;
-                    own.selected = null;
-                    own.last_row = null;
+                // The same list given back - after it was taken away, too -
+                // keeps its view and its selection, unless the program took
+                // the selected row out; another starts afresh.
+                if (list) |given| {
+                    if (given != own.rows and given != own.away) {
+                        own.top = 0;
+                        own.selected = null;
+                        own.last_row = null;
+                    } else {
+                        if (own.selected) |chosen| if (!onList(given, &chosen.node)) {
+                            own.selected = null;
+                        };
+                        if (own.last_row) |row| if (!onList(given, &row.node)) {
+                            own.last_row = null;
+                        };
+                    }
+                    own.away = null;
+                } else if (own.rows != null) {
+                    own.away = own.rows;
                 }
                 own.rows = list;
                 own.tree = @intFromBool(isTree(own));
@@ -778,6 +867,7 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
                 change.sort = true;
                 change.whole = true;
             },
+            lb.LISTBROWSER_Reorder => own.reorder = @intFromBool(item.data != 0),
             else => if (new) switch (item.tag) {
                 lb.LISTBROWSER_Headings => own.headings = @intFromBool(item.data != 0),
                 else => {},
@@ -876,12 +966,15 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const change = setAttrs(base, own, set.attr_list, false);
             if (change.sort) sortRows(base, own);
             const parts = partsOf(base, own, o.?, set.gadget_info);
+            // While the list is away the view is kept as it is, for the
+            // list given back.
+            const held = own.rows == null;
             if (change.top) |top| {
-                own.top = @min(top, lastTop(own, parts.visible));
+                own.top = if (held) top else @min(top, lastTop(own, parts.visible));
                 changed = 1;
             }
             if (change.whole) {
-                own.top = @min(own.top, lastTop(own, parts.visible));
+                if (!held) own.top = @min(own.top, lastTop(own, parts.visible));
                 changed = 1;
             }
             if (changed != 0) putScroller(base, own, o.?, null);
@@ -908,6 +1001,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 lb.LISTBROWSER_Top => get.storage.* = own.top,
                 lb.LISTBROWSER_SortColumn => get.storage.* = own.sort_column,
                 lb.LISTBROWSER_SortReverse => get.storage.* = own.reverse,
+                lb.LISTBROWSER_Reorder => get.storage.* = own.reorder,
+                lb.LISTBROWSER_Moved => get.storage.* = own.moved,
                 else => return ib.SendSuperMessage(cl, o, msg),
             }
             return 1;
@@ -950,6 +1045,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 (if (back) (if (now == 0) 0 else now - 1) else @min(now + 1, count - 1))
             else if (back) count - 1 else 0;
             own.selected = shownAt(own, index);
+            own.moved = lb.LISTBROWSER_NONE;
             const parts = partsOf(base, own, o.?, k.gadget_info);
             own.top = @min(topShowing(own, own.selected.?, parts.visible), lastTop(own, parts.visible));
             putScroller(base, own, o.?, k.gadget_info);
@@ -999,6 +1095,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             own.last_micros = e.time.micro;
             own.selected = row;
             own.pressed = .row;
+            own.pressed_place = placeOf(own, row);
             support.redraw(ib, o.?, in.gadget_info);
             return gc.GMR_MEACTIVE;
         },
@@ -1027,7 +1124,15 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (released) {
                 own.pressed = .none;
                 const chosen = own.selected orelse return gc.GMR_NOREUSE;
-                const code = placeOf(own, chosen) | (if (own.double != 0) lb.LISTBROWSER_DOUBLE else 0);
+                const place = placeOf(own, chosen);
+                // Only a row that moves comes from elsewhere: a drag that
+                // moves the selection leaves every row where it was.
+                const reordering = own.reorder != 0 and own.tree == 0;
+                own.moved = if (reordering and place != own.pressed_place) own.pressed_place else lb.LISTBROWSER_NONE;
+                // A row moved is no double-click, whatever the time.
+                if (own.moved != lb.LISTBROWSER_NONE) own.double = 0;
+                const code = place | (if (own.double != 0) lb.LISTBROWSER_DOUBLE else 0) |
+                    (if (own.moved != lb.LISTBROWSER_NONE) lb.LISTBROWSER_MOVED else 0);
                 // The click just reported cannot also be the first of the
                 // next double-click.
                 if (own.double != 0) own.last_row = null;
@@ -1045,7 +1150,14 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             }
             if (rowAt(own, parts, in.mouse.y)) |row| {
                 if (row != own.selected) {
-                    own.selected = row;
+                    // The row pressed goes where the pointer is, and the
+                    // rows stand in no column's order.
+                    if (own.reorder != 0 and own.tree == 0) {
+                        if (own.selected) |held| moveRow(base, own, held, row);
+                        own.sort_column = lb.LISTBROWSER_NONE;
+                    } else {
+                        own.selected = row;
+                    }
                     support.redraw(ib, o.?, in.gadget_info);
                 }
             }

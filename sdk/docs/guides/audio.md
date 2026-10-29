@@ -87,6 +87,15 @@ while (true) {
 }
 ```
 
+One song after another goes on in the same buffers: the next song's
+first frames follow this one's last write. A song of the other channel
+count only needs `AUDIOCMD_SETPARAMS` before its first write - each write
+keeps its form - but a song at another rate waits until every write has
+come back, as the rate changes at once. `CMD_FLUSH` would take back
+everything queued; to take back only the next song's writes - the list
+changed before it was heard - `AbortIO` each of them and keep the
+others.
+
 The rest, on the stream the request was opened on:
 
 - `CMD_STOP` holds the stream where it is; `CMD_START` goes on.
@@ -454,7 +463,14 @@ the music begins and ends, an Ogg Vorbis stream where its pages' granule
 positions say, so one song follows another without a gap. `SeekAudio`
 moves a file's stream to a frame: a WAV, a FLAC (by its seek table, or a
 search halving the file) and an Ogg Vorbis file (by such a search over
-its pages) exactly, an MP3 by its encoder's table or its bit rate.
+its pages) exactly, an MP3 by its encoder's table or its bit rate - and
+to its start exactly, where its encoder said the music begins.
+
+A stream is used by one task at a time, but not only by the one that
+opened it. A player opens the next song on its window's task - reading
+its tags and cover, which can take a while from a card - and hands the
+stream to the task that decodes, which goes on into it when this song
+ends; the reading never holds up the sound.
 Decoding an MP3 takes about a tenth of a core at 44.1 kHz in stereo. A
 FLAC stream holds a block of samples for each channel, 32 KiB for the
 usual 4096 in stereo; an Ogg Vorbis one its codebooks and tables, about
@@ -513,8 +529,11 @@ leaves all of this to datatypes.library: a sound file is a
 in); Ctrl-C stops it. `SYS:Programs/Player` does it in a window, and is
 what the desktop opens a `.mp3`, `.wav`, `.flac` or `.ogg` file with
 (the `MP3`, `WAV`, `FLAC` and `Ogg` descriptors in `DEVS:DataTypes`),
-with the song's cover and tags and the chapter of a mix that is
-playing.
+with the song's cover and tags, the chapter of a mix that is playing,
+a playlist, and internet stations - MP3 or Ogg Vorbis over `http://` or
+`https://`, read on a process of their own and decoded through
+`ACA_ReadFunc`. There is one Player: a file opened while it runs plays
+in the one that is open, and it starts again where it was left.
 
 ## Keeping a picture in step
 

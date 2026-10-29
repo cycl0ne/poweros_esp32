@@ -51,8 +51,9 @@ const _request = @import("_request.zig");
 /// writes, its own head sent - and `err` HTTPERR_OK. Null, with `err`:
 /// HTTPERR_URL for a URL that is none, HTTPERR_HOST for a host without
 /// an address, HTTPERR_IO when no connection could be made or it failed,
-/// HTTPERR_TLS when the TLS session could not be had, HTTPERR_PROTOCOL
-/// for an answer that is not HTTP, HTTPERR_TRUNCATED for one cut short,
+/// HTTPERR_TLS when the TLS session could not be had, HTTPERR_CLOSED
+/// when the server closed without answering, HTTPERR_PROTOCOL for an
+/// answer that is not HTTP, HTTPERR_TRUNCATED for one cut short,
 /// HTTPERR_REDIRECT for too many redirects or one to nowhere,
 /// HTTPERR_STATE for a method or header that is none, credentials too
 /// long, or a request head longer than 8 KiB, HTTPERR_LIBRARY without tls.library for
@@ -75,6 +76,10 @@ const _request = @import("_request.zig");
 /// given up and the request sent again on a new one: a server may close
 /// a connection it has been idle on at any time. A body the program
 /// writes always goes over a new connection.
+///
+/// The answer's status line is `HTTP/1.x`'s, or a Shoutcast server's
+/// `ICY 200 OK`, which is read as HTTP/1.0's: the connection is not kept,
+/// and the body - the stream - runs to its end.
 ///
 /// Interim answers (100 Continue) are read past. A redirect - 301, 302,
 /// 303, 307 or 308 with a Location - is followed when the request's body

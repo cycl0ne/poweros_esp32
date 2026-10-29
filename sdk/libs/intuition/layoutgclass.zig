@@ -81,6 +81,14 @@
 //! `IDCMP_GADGETUP` from a button in a layout carries that button, and its
 //! `GA_ID`, not the layout's.
 //!
+//! **A child replaced.** `CHILDA_Replace` after `LAYOUTA_ModifyChild`
+//! puts another gadget in the child's place, with its label, weights,
+//! sizes and shape, and disposes of the old one; a hidden child is
+//! replaced hidden. In a window the layout is laid out again and drawn
+//! where it changed, so a window can show another picture, list or field
+//! where one stood without being closed and opened again. Since intuition
+//! 0.74.
+//!
 //! Disposing of a layout disposes of its children.
 //!
 //! ```zig
@@ -123,9 +131,10 @@ pub const LAYOUTA_Margin = LAYOUTA_Dummy + 0x0004;
 /// about it.
 pub const LAYOUTA_AddChild = LAYOUTA_Dummy + 0x0005;
 /// A child the layout has already: the `CHILDA_` tags that follow it, up
-/// to the next `LAYOUTA_AddChild` or `LAYOUTA_ModifyChild`, are about it.
-/// One that is not the layout's has them ignored. Set only; since
-/// intuition 0.70.
+/// to the next `LAYOUTA_AddChild` or `LAYOUTA_ModifyChild`, are about it -
+/// its label, weights, sizes and shape set anew, the child hidden or
+/// shown, or replaced (`CHILDA_Replace`). One that is not the layout's
+/// has them ignored. Set only; since intuition 0.70.
 pub const LAYOUTA_ModifyChild = LAYOUTA_Dummy + 0x000D;
 /// Bool: a frame round the layout, with the children inside it. A ridge
 /// unless `LAYOUTA_FrameType` says otherwise. This is what groups the
@@ -224,6 +233,21 @@ pub const CHILDA_Aspect = CHILDA_Dummy + 0x0D;
 /// Tab's round, and taking no room, the spacing either side of it neither
 /// - or shown again where it was. Made and set; since intuition 0.70.
 pub const CHILDA_Hidden = CHILDA_Dummy + 0x0E;
+/// A gadget to stand where the child named by `LAYOUTA_ModifyChild` is,
+/// with the label, the weights, the sizes and the shape that one had -
+/// the `CHILDA_` tags after it change them for the new one - and the
+/// layout's from then on. The old child is disposed of; its window lets
+/// go of it first, so neither the pointer resting on it nor a key meant
+/// for it reaches it again. In a window the layout is laid out again in
+/// the box it has, and what changed is drawn: the window's ground where
+/// the old child was and the new one is not, and the new one over what
+/// the old one left - a picture, which paints the whole of its box, takes
+/// the old one's place in one step. A window that should take the new
+/// child's size asks to be measured again (`WM_RETHINK`). A hidden child
+/// is replaced hidden, the new one shown where it was when
+/// `CHILDA_Hidden` shows it. Set only; a gadget that is a child already
+/// is not taken. Since intuition 0.74.
+pub const CHILDA_Replace = CHILDA_Dummy + 0x0F;
 
 /// A shape for `CHILDA_Aspect`: `width` to `height`, 1 to 1 for a square.
 pub fn aspect(width: u16, height: u16) u32 {

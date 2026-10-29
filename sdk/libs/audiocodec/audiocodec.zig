@@ -17,6 +17,10 @@
 //! the stream was opened with `ACA_KeepPicture`. `SeekAudio` moves to a
 //! frame where the stream can be read from anywhere.
 //!
+//! A stream is used by one task at a time, which need not be the one that
+//! opened it: a program can open the next song while another task decodes
+//! this one, and hand it over.
+//!
 //! The samples go to audio.device as they are: a stream of `AUDIO_S16`
 //! at the rate and channels the info gives.
 
@@ -44,6 +48,15 @@ pub const ACODEC_VORBIS: u32 = 4;
 /// How many bytes `IdentifyAudio` wants to be sure: enough for a WAV's
 /// header and for several MP3 frames after a short tag.
 pub const AUDIO_IDENTIFY_BYTES: u32 = 4096;
+
+/// The most a stream reads of its source past the bytes it has used
+/// (SINCE 1.4): OpenAudioStream reads the kind's header and this much
+/// more, DecodeAudio the bytes of the frames it hands out and this much
+/// more. A read function that has this many ready, and the bytes of the
+/// frames asked for, is never asked for more than it has - so a program
+/// that fills its own buffer from a network knows how much to hold
+/// before it lets the stream read.
+pub const AUDIO_READ_AHEAD: u32 = 16 * 1024;
 
 // --- OpenAudioStream's tags -------------------------------------------------------
 
@@ -127,7 +140,9 @@ pub const ACPIC_FRONTCOVER: u32 = 3;
 pub const ACPIC_BACKCOVER: u32 = 4;
 
 /// Up to `length` bytes into `buffer`: how many it put there, 0 at the
-/// end, below 0 when it cannot read.
+/// end, below 0 when it cannot read. Fewer than asked are fine: the
+/// stream asks again until it has `AUDIO_READ_AHEAD` read ahead, or 0
+/// says there are no more.
 pub const ReadFn = *const fn (data: ?*anyopaque, buffer: [*]u8, length: u32) callconv(.c) i32;
 
 // --- errors -----------------------------------------------------------------------

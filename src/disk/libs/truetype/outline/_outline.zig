@@ -34,6 +34,8 @@ pub const Font = struct {
     /// The character map's subtable used, and its format (4 or 12).
     cmap: Table,
     cmap_format: u32,
+    /// The styles the file says it is drawn in (`FSF_BOLD`, `FSF_ITALIC`).
+    style: sdk.graphics.FontStyle,
 };
 
 /// Where a table is in the file.
@@ -110,6 +112,7 @@ pub fn open(font: *Font, data: [*]const u8, size: u32) bool {
     font.ascender = i16At(font, hhea.at + 4);
     font.descender = i16At(font, hhea.at + 6);
     font.hmetric_count = u16At(font, hhea.at + 34);
+    font.style = sdk.truetype.styleOf(data[0..size]);
     if (font.units_per_em == 0 or font.hmetric_count == 0 or font.ascender <= font.descender) return false;
     return pickCmap(font, cmap);
 }

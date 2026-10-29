@@ -21,8 +21,9 @@ const _request = @import("_request.zig");
 /// - `attr`:
 ///   - HTTP_Status: the answer's status, 200 for OK; 0 while the body is
 ///     being written.
-///   - HTTP_StatusLine (`[*:0]const u8`): `HTTP/1.1 404 Not Found`; empty
-///     while the body is being written.
+///   - HTTP_StatusLine (`[*:0]const u8`): `HTTP/1.1 404 Not Found`, or a
+///     Shoutcast server's `ICY 200 OK`; empty while the body is being
+///     written.
 ///   - HTTP_ContentLength: the body's length as the answer gives it, or
 ///     HTTP_LENGTH_UNKNOWN for one in chunks, one that ends with the
 ///     connection, or one being unpacked.

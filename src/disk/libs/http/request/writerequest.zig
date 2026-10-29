@@ -27,8 +27,9 @@ const _request = @import("_request.zig");
 /// status, once its head is read. Below 0 an HTTPERR_*: HTTPERR_STATE
 /// for a request whose body is not the program's, for bytes past the
 /// length it gave, for an end before all of them came, or for a
-/// `length` past 2 GiB; HTTPERR_IO, HTTPERR_TLS, HTTPERR_PROTOCOL,
-/// HTTPERR_TRUNCATED and HTTPERR_DATA as OpenRequest answers them.
+/// `length` past 2 GiB; HTTPERR_IO, HTTPERR_TLS, HTTPERR_CLOSED,
+/// HTTPERR_PROTOCOL, HTTPERR_TRUNCATED and HTTPERR_DATA as OpenRequest
+/// answers them.
 ///
 /// BEHAVIOR:
 /// A body with HTTP_BodyLength goes as it is, and is ended once all of

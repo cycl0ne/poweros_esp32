@@ -3387,6 +3387,15 @@ fn rawKey(ib: *IntuitionBase, code: u32) void {
     _input.handle(ib, &up);
 }
 
+/// A key pressed and let go with Shift held.
+fn shiftedKey(ib: *IntuitionBase, code: u32) void {
+    const ie = sdk.devices.inputevent;
+    const down: ie.InputEvent = .{ .class = ie.IECLASS_RAWKEY, .code = code, .qualifier = ie.IEQUALIFIER_LSHIFT };
+    _input.handle(ib, &down);
+    const up: ie.InputEvent = .{ .class = ie.IECLASS_RAWKEY, .code = code | ie.IECODE_UP_PREFIX, .qualifier = ie.IEQUALIFIER_LSHIFT };
+    _input.handle(ib, &up);
+}
+
 fn getAttr(ib: *IntuitionBase, o: *Object, attr: utility.Tag) usize {
     var value: usize = 0;
     _ = ib.iface().GetAttr(attr, o, &value);
@@ -3631,7 +3640,7 @@ test "a string gadget: Escape puts back what was there, whoever owns the buffer"
     try tearDown(ib);
 }
 
-test "a string gadget: typed into, moved about, finished and cancelled" {
+test "a string gadget: typed into, moved about - Shift to the ends - finished and cancelled" {
     const ib = try setUp();
     defer kexec.deinit();
     const wn = intuition.windows;
@@ -3681,6 +3690,27 @@ test "a string gadget: typed into, moved about, finished and cancelled" {
 
     // Backspace takes out what is before the cursor.
     rawKey(ib, 0x41);
+    try testing.expectEqualStrings("abc", std.mem.span(buffer));
+
+    // With Shift, the cursor keys go to the end and the start.
+    shiftedKey(ib, 0x4E); // cursor right
+    rawKey(ib, 0x22); // d
+    try testing.expectEqualStrings("abcd", std.mem.span(buffer));
+    shiftedKey(ib, 0x4F); // cursor left
+    rawKey(ib, 0x32); // x
+    try testing.expectEqualStrings("xabcd", std.mem.span(buffer));
+
+    // Shift-Backspace takes out everything before the cursor,
+    // Shift-Delete everything after it.
+    rawKey(ib, 0x4E);
+    shiftedKey(ib, 0x41);
+    try testing.expectEqualStrings("bcd", std.mem.span(buffer));
+    shiftedKey(ib, 0x4E);
+    rawKey(ib, 0x4F);
+    shiftedKey(ib, 0x46);
+    try testing.expectEqualStrings("bc", std.mem.span(buffer));
+    shiftedKey(ib, 0x4F);
+    rawKey(ib, 0x20); // a
     try testing.expectEqualStrings("abc", std.mem.span(buffer));
 
     // Return finishes it, and the window hears that it was let go.
@@ -6771,6 +6801,133 @@ test "gadgets in a layout: Tab reaches them and goes round, ActivateGadget takes
     try testing.expect(it.CloseScreen(screen));
     it.DisposeObject(layout);
     it.DisposeObject(own);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "layoutgclass: a child replaced takes its place, its record and its window; the old one let go of and disposed" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const lg = intuition.layoutgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // Two lines of text with a button between them, the second labelled.
+    const first = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_TabCycle, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    const second = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_TabCycle, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    const layout = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 0 },
+        .{ .tag = gc.GA_Top, .data = 0 },
+        .{ .tag = gc.GA_Width, .data = 60 },
+        .{ .tag = gc.GA_Height, .data = 28 },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 1 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(first) },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(framedButton(ib, "B", 3)) },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(second) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_x") },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(layout) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    const was = boxOf(ib, second);
+    try testing.expect(it.ActivateGadget(second, w, null));
+    try testing.expectEqual(ib.input.active.?, second);
+
+    // The second replaced while it has the keys: it lets go of them and
+    // is disposed of (the leak check at the end says so); the new one
+    // stands where it stood, in the window, with its label's key.
+    const third = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_TabCycle, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    _ = it.SetGadgetAttrsTagList(layout, w, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(second) },
+        .{ .tag = lg.CHILDA_Replace, .data = @intFromPtr(third) },
+        .{},
+    });
+    try testing.expect(ib.input.active == null);
+    try testing.expect(@intFromPtr(gadgetclass.gadgetOf(ib, third).window) == @intFromPtr(w));
+    try testing.expectEqual(@as(usize, 'x'), getAttr(ib, third, gc.GA_Key));
+    const now = boxOf(ib, third);
+    try testing.expectEqual(was.left, now.left);
+    try testing.expectEqual(was.top, now.top);
+    try testing.expectEqual(was.width, now.width);
+    try testing.expectEqual(was.height, now.height);
+
+    // In the old one's place among the members: Tab from the first goes
+    // past the button to it.
+    const f = boxOf(ib, first);
+    click(ib, f.left + 2, f.top + 2);
+    rawKey(ib, 0x42); // Tab
+    try testing.expectEqual(ib.input.active.?, third);
+
+    // A child already there is not taken again, and a gadget that is no
+    // child names none.
+    _ = it.SetGadgetAttrsTagList(layout, w, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(third) },
+        .{ .tag = lg.CHILDA_Replace, .data = @intFromPtr(first) },
+        .{},
+    });
+    try testing.expect(@intFromPtr(gadgetclass.gadgetOf(ib, third).window) == @intFromPtr(w));
+    try testing.expectEqual(f.top, boxOf(ib, first).top);
+
+    // A hidden child replaced stays hidden, out of the members; shown
+    // again, the new one is a member where the old one was, in the window.
+    const fourth = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_TabCycle, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    var seen: [4]*Object = undefined;
+    click(ib, 62, 38); // beside the layout: the field lets go of the keys
+    try testing.expect(ib.input.active == null);
+    _ = it.SetGadgetAttrsTagList(layout, w, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(third) },
+        .{ .tag = lg.CHILDA_Hidden, .data = 1 },
+        .{},
+    });
+    try testing.expectEqual(@as(usize, 2), membersOf(ib, layout, &seen));
+    _ = it.SetGadgetAttrsTagList(layout, w, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(third) },
+        .{ .tag = lg.CHILDA_Replace, .data = @intFromPtr(fourth) },
+        .{},
+    });
+    try testing.expectEqual(@as(usize, 2), membersOf(ib, layout, &seen));
+    try testing.expectEqual(@as(usize, 'x'), getAttr(ib, fourth, gc.GA_Key));
+    _ = it.SetGadgetAttrsTagList(layout, w, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(fourth) },
+        .{ .tag = lg.CHILDA_Hidden, .data = 0 },
+        .{},
+    });
+    try testing.expectEqual(@as(usize, 3), membersOf(ib, layout, &seen));
+    try testing.expectEqual(first, seen[0]);
+    try testing.expectEqual(fourth, seen[2]);
+    try testing.expect(@intFromPtr(gadgetclass.gadgetOf(ib, fourth).window) == @intFromPtr(w));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(layout);
     display.down(ib);
     try tearDown(ib);
 }
@@ -9961,6 +10118,67 @@ test "ActivateGadget gives a line of text the keys; DoGadgetMethodA fills in the
     try testing.expect(set.gadget_info == null);
     _ = it.GetAttr(gc.STRINGA_TextVal, field, &text);
     try testing.expectEqualStrings("xy", std.mem.span(@as([*:0]const u8, @ptrFromInt(text))));
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    it.DisposeObject(field);
+    display.down(ib);
+    try tearDown(ib);
+}
+
+test "a line of text with the keys gives way to the menu button: no answer, the press goes on" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const ie = sdk.devices.inputevent;
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const field = it.NewObjectTagList(null, classusr.STRGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 2 },
+        .{ .tag = gc.GA_Top, .data = 2 },
+        .{ .tag = gc.GA_Width, .data = 50 },
+        .{ .tag = gc.GA_Height, .data = 12 },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 16 },
+        .{},
+    }).?;
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETUP | wn.IDCMP_MOUSEBUTTONS },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(field) },
+        .{},
+    }).?;
+    var got: [4]intuition.IntuiMessage = undefined;
+    // The menu button the window's own, so that where the press went
+    // shows as a message.
+    const wnd: *_window.Window = @ptrCast(@alignCast(w));
+    wnd.flags |= _window.WF_RMBTRAP;
+
+    try testing.expect(it.ActivateGadget(field, w, null));
+    keyEvent(ib, 0x20, 0);
+    keyEvent(ib, 0x20 | ie.IECODE_UP_PREFIX, 0);
+
+    // The press ends the field without a GADGETUP, and reaches the window.
+    pointerEvent(ib, ie.IECODE_RBUTTON, 10, 10);
+    pointerEvent(ib, ie.IECODE_RBUTTON | ie.IECODE_UP_PREFIX, 10, 10);
+    try testing.expect(ib.input.active == null);
+    try testing.expectEqual(@as(usize, 2), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_MOUSEBUTTONS, got[0].class);
+    try testing.expectEqual(wn.MENUDOWN, got[0].code);
+    try testing.expectEqual(wn.MENUUP, got[1].code);
+
+    // What was typed stays, and a key now types nothing.
+    keyEvent(ib, 0x21, 0);
+    keyEvent(ib, 0x21 | ie.IECODE_UP_PREFIX, 0);
+    var text: usize = 0;
+    _ = it.GetAttr(gc.STRINGA_TextVal, field, &text);
+    try testing.expectEqualStrings("a", std.mem.span(@as([*:0]const u8, @ptrFromInt(text))));
 
     const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
     it.CloseWindow(w);

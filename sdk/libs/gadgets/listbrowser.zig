@@ -20,9 +20,12 @@
 //! triangle in the heading says which way. The program's list is put in
 //! that order: every row keeps its branch under it, and the rows of a
 //! branch are sorted among themselves. Text is compared in any case, a
-//! `COLUMN_NUMBER` column by the number its text starts with.
+//! `COLUMN_NUMBER` column by the number its text starts with - numbers
+//! joined by `:` read as one, so a column of lengths (`3:45`, `1:02:33`)
+//! sorts by how long each is.
 //! `LISTBROWSER_SortColumn` and `LISTBROWSER_SortReverse` sort from the
-//! program.
+//! program; a press on a heading tells the target both, since the
+//! program's list then stands in another order.
 //!
 //! **Choosing.** A press on a row selects it, a drag moves the selection,
 //! scrolling past the top or the bottom; let go, the gadget reports the
@@ -30,6 +33,20 @@
 //! when it was the second press of a double-click - and tells its target
 //! `LISTBROWSER_Selected`. The wheel moves the view three rows a notch,
 //! and the key of `GA_Key` moves the selection down a row (up with Shift).
+//!
+//! **Moving rows.** Made with `LISTBROWSER_Reorder`, a row pressed and
+//! dragged up or down moves in the program's list rather than the
+//! selection moving: it goes past each row the pointer reaches, and past
+//! the top or the bottom the view scrolls on with it. Let go somewhere
+//! else, the code is its new place with `LISTBROWSER_MOVED` added, and the
+//! target is told `LISTBROWSER_Moved`, the place it came from, with
+//! `LISTBROWSER_Selected`, the place it went to; the rows stand as moved,
+//! sorted by no column. A tree keeps choosing: its rows move with their
+//! branches, which a drag does not.
+//!
+//! **A marked row** (`ROW_MARKED`) is the one the program has in use - the
+//! song being heard: its texts are bold, and its first column starts with
+//! a small triangle pointing right.
 //!
 //! **A scroller in the window's border** instead of its own: made with
 //! `LISTBROWSER_Scrollers` false, the gadget is the field alone, and tells
@@ -42,7 +59,9 @@
 //!
 //! While the program changes the list - adds rows, removes them, opens a
 //! branch by hand - it takes it away from the gadget (`LISTBROWSER_Rows`
-//! set to `LISTBROWSER_DETACH`) and gives it back afterwards.
+//! set to `LISTBROWSER_DETACH`) and gives it back afterwards. Given back,
+//! the list keeps its view and its selection - unless the selected row
+//! was taken out - where another list starts at its top with none.
 //!
 //!   const columns = [_]lb.Column{
 //!       .{ .title = "Name", .weight = 3 },
@@ -86,7 +105,9 @@ pub const LISTBROWSER_SelectedRow = LISTBROWSER_Dummy + 0x04;
 /// read.
 pub const LISTBROWSER_Top = LISTBROWSER_Dummy + 0x05;
 /// The column the rows are sorted by, from 0, or `LISTBROWSER_NONE` while
-/// they stand as given. Made, set and read; set, it sorts them.
+/// they stand as given. Made, set and read; set, it sorts them. Told to
+/// the target, with `LISTBROWSER_SortReverse`, when a press on a heading
+/// has sorted them.
 pub const LISTBROWSER_SortColumn = LISTBROWSER_Dummy + 0x06;
 /// Bool: sorted from the end - Z to A, the largest first. Made, set and
 /// read; with `LISTBROWSER_SortColumn`.
@@ -101,6 +122,13 @@ pub const LISTBROWSER_Scrollers = LISTBROWSER_Dummy + 0x09;
 /// them changes.
 pub const LISTBROWSER_Total = LISTBROWSER_Dummy + 0x0A;
 pub const LISTBROWSER_Visible = LISTBROWSER_Dummy + 0x0B;
+/// Bool: a row dragged moves in the list (false: the selection moves).
+/// Made and set; a list that is a tree is not moved.
+pub const LISTBROWSER_Reorder = LISTBROWSER_Dummy + 0x0C;
+/// Where the row the last press moved was before it, counting every row;
+/// `LISTBROWSER_NONE` when that press moved none. Read only; told to the
+/// target with `LISTBROWSER_Selected` when a press ends.
+pub const LISTBROWSER_Moved = LISTBROWSER_Dummy + 0x0D;
 
 /// No row, no column.
 pub const LISTBROWSER_NONE: u32 = 0xFFFF_FFFF;
@@ -108,6 +136,8 @@ pub const LISTBROWSER_NONE: u32 = 0xFFFF_FFFF;
 pub const LISTBROWSER_DETACH: usize = ~@as(usize, 0);
 /// Added to a press's code when it was the second of a double-click.
 pub const LISTBROWSER_DOUBLE: u32 = 0x8000_0000;
+/// Added to a press's code when it moved its row to another place.
+pub const LISTBROWSER_MOVED: u32 = 0x4000_0000;
 
 /// One column: its heading, its share of the width, and its flags. An
 /// array of them ends with one whose `title` is null.
@@ -121,7 +151,9 @@ pub const Column = extern struct {
 
 /// `Column.flags`: its text set to the right of the column - numbers.
 pub const COLUMN_RIGHT: u16 = 1 << 0;
-/// Compared by the number its text starts with, not as text.
+/// Compared by the number its text starts with, not as text; numbers
+/// joined by `:` are one, each part sixty of the next - a length,
+/// `1:02:33`, is its seconds.
 pub const COLUMN_NUMBER: u16 = 1 << 1;
 /// A press on its heading does not sort.
 pub const COLUMN_NOSORT: u16 = 1 << 2;
@@ -137,7 +169,7 @@ pub const Row = extern struct {
     cells: [*]const ?[*:0]const u8,
     /// 0 at the top of the tree, one more for each branch it is in.
     depth: u16 = 0,
-    /// `ROW_OPEN`.
+    /// `ROW_OPEN`, `ROW_MARKED`.
     flags: u16 = 0,
     /// The program's own.
     user_data: usize = 0,
@@ -145,6 +177,10 @@ pub const Row = extern struct {
 
 /// `Row.flags`: its branch is open - the rows under it are shown.
 pub const ROW_OPEN: u16 = 1 << 0;
+/// `Row.flags`: the row the program has in use, drawn bold and marked at
+/// its start. Set by the program, which then gives the list back
+/// (`LISTBROWSER_Rows`, the same list) to have it drawn so.
+pub const ROW_MARKED: u16 = 1 << 1;
 
 /// A row holding copies of `texts`, one for each column, `depth` deep:
 /// the row, the column pointers and the texts in one allocation, given

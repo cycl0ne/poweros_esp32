@@ -37,6 +37,7 @@ const MSG_NOHOST = "the host of %s has no address\n";
 const MSG_FAILED = "the connection failed: %s (errno %d)\n";
 const MSG_STOPPED = "stopped\n";
 const MSG_NOTHTTP = "the server's answer is not HTTP\n";
+const MSG_CLOSED = "the server closed the connection without answering\n";
 const MSG_EARLY = "the connection ended before the answer did\n";
 const MSG_REDIRECTS = "more than %u redirects, or one to nowhere\n";
 const MSG_HTTP_FAILED = "the request failed (%d)\n";
@@ -313,6 +314,7 @@ pub const HttpLink = struct {
             },
             http.HTTPERR_PROTOCOL => git.say(MSG_NOTHTTP, .{}),
             http.HTTPERR_TRUNCATED => git.say(MSG_EARLY, .{}),
+            http.HTTPERR_CLOSED => git.say(MSG_CLOSED, .{}),
             http.HTTPERR_REDIRECT => git.say(MSG_REDIRECTS, .{@as(u32, redirects_most)}),
             http.HTTPERR_LIBRARY => git.say("can't open %s\n", .{@as([*:0]const u8, tls.TLSNAME)}),
             http.HTTPERR_NOMEM => git.say("no memory\n", .{}),

@@ -37,13 +37,16 @@ const vorbis = @import("../vorbis/_vorbis.zig");
 /// MP3 is cut where its encoder said the music begins and ends, an Ogg
 /// Vorbis stream where its pages' positions say, so a song played after
 /// another follows it without a gap. A FLAC frame that is damaged - its
-/// CRC wrong - is handed out as silence.
+/// CRC wrong - is handed out as silence. A read function is asked for the
+/// bytes of the frames handed out and `AUDIO_READ_AHEAD` more at most
+/// (SINCE 1.4 said).
 ///
 /// CONTEXT:
 /// - Waits: yes, on the source when the read-ahead runs low.
 /// - Interrupts: no.
 /// - Locks: no spinlock may be held.
-/// - Process: the task that opened the stream.
+/// - Process: a task will do: the one that has the stream - the one that
+///   opened it, or one it was handed to (SINCE 1.3) - never two at once.
 ///
 /// OWNERSHIP:
 /// `buffer` is the caller's.
@@ -52,7 +55,8 @@ const vorbis = @import("../vorbis/_vorbis.zig");
 /// An MP3 frame is 1152 frames of samples at 32 kHz and up, 576 below; a
 /// buffer of a few thousand frames costs the fewest calls. Decoding an
 /// MP3 takes about a tenth of a core at 44.1 kHz in stereo. A FLAC block
-/// is mostly 4096 frames, a Vorbis packet up to 1024.
+/// is mostly 4096 frames, a Vorbis packet up to 1024. A stream read
+/// through a function (ACA_ReadFunc) calls it on the task that decodes.
 ///
 /// BUGS:
 /// None known.

@@ -163,7 +163,9 @@ the outline covers, in fifteenths. The advances are rounded to whole
 pixels. A code the font has no glyph for is its missing glyph. The
 font is `FPF_DESIGNED` - drawn at its size from the outline, not
 scaled from another size - and `FPF_PROPORTIONAL` when its advances
-differ.
+differ. Its styles are the ones the file says it is drawn in
+(`truetype.styleOf`): a bold face renders as `FSF_BOLD`, so graphics
+draws no bold over it.
 
 **CONTEXT**
 

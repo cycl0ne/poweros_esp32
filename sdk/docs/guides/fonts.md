@@ -118,7 +118,9 @@ gb.Text(rp, "Hello", 5);
   draws a line under the run, `FSF_EXTENDED` sets the letters a pixel
   further apart. Bold widens every advance by one as well, for the glyph
   drawn again, so a run in either is longer than the plain one. A style the
-  font was drawn with (its `style`) is not added again.
+  font was drawn with (its `style`) is not added again - a family's own
+  bold face, which diskfont.library answers for `FSF_BOLD` where one is
+  installed, is drawn as it is.
 - `GetRPAttrs` with `RPTAG_FontHeight`, `RPTAG_FontBaseline`,
   `RPTAG_FontWidth` (the nominal width) and `RPTAG_FontProportional`
   answers what a layout needs without touching the font.
@@ -254,6 +256,8 @@ FONTS:spleen/8           a size file, 8 rows
 FONTS:spleen/16          a size file, 16 rows
 FONTS:go.font            a contents file listing an outline
 FONTS:go/Go-Regular.ttf  the outline, rendered at any height
+FONTS:go-bold.font       the same family's bold face, a family of its own
+FONTS:go-bold/Go-Bold.ttf
 ```
 
 **A size file is a FontImage, byte for byte.** It is read with one `Read`
@@ -264,7 +268,8 @@ it lies; nothing in it is fixed up.
 `ContentsHeader` - magic `PFCT`, version, count, checksum - and one
 80-byte `FontContents` per size: the file's path from `FONTS:`, its
 height, drawn styles, flags, kind of pixels, nominal width, and `outline`
-set for an entry that is a TrueType file (whose height is then 0). Its
+set for an entry that is a TrueType file (whose height is then 0, and its
+styles the ones the file says it is drawn in). Its
 longwords add up to zero too. `fontfile.sound` checks one, `seal` sets
 its checksum, `entryFor` and `outlineEntry` make entries.
 
@@ -282,13 +287,24 @@ const font = dfb.OpenDiskFont(&.{ .name = "spleen.font", .y_size = 20 }) orelse 
 defer gb.CloseFont(font);
 ```
 
-**`OpenDiskFont`** answers a perfect match in memory at once. Otherwise it
-reads the family's contents file - `FONTS:<name>`, or the name as given
-when it holds a `:` - and:
+**`OpenDiskFont`** answers a perfect match in memory at once.
+
+**Bold and italic are a family's own faces where it has them**: asked for
+`FSF_BOLD` or `FSF_ITALIC`, it tries the faces installed beside the family
+first - `go-bolditalic.font`, `go-bold.font`, `go-italic.font` beside
+`go.font`, each only for styles asked, the one drawing the most of them
+first. A face is drawn in its styles, so the soft styles draw only what it
+lacks: bold italic asked of a family with only a bold face is that face,
+leaned. A family is installed as its own faces by naming them so.
+
+Otherwise it reads the family's contents file - `FONTS:<name>`, or the
+name as given when it holds a `:` - and:
 
 - for a family with an outline, loads a size drawn at exactly that height
-  and style if there is one, and otherwise renders the outline at that
-  height;
+  and style if there is one, then takes a size of the outline already in
+  memory at that height, and otherwise renders the outline at that
+  height - in the styles the TrueType file says it is drawn in, so a bold
+  face renders as bold;
 - without `FPF_DESIGNED`, looks for a source at the height asked, then at
   twice it, then at half it, in memory first and then on the disk,
   letting go of underline, then bold, then italic if none is found, and
@@ -347,7 +363,9 @@ the caller's until then. The line is the font's ascender to its
 descender, scaled to `rows`; each glyph's curves are flattened and the
 area of each pixel inside the outline measured, kept in four bits. There
 is no hinting. The image has the codes asked for and the font's missing
-glyph as its default character.
+glyph as its default character, and the styles the file says it is drawn
+in - `truetype.styleOf` reads them, bold and italic, from its `head`
+table.
 
 diskfont.library does all of this for a family whose contents file lists
 an outline: a program only asks `OpenDiskFont` for a height. Rendering a
