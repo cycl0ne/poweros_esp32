@@ -11,6 +11,7 @@ test {
     _ = @import("resources/gpio/gpio.zig");
     _ = @import("resources/usbport/usbport.zig");
     _ = @import("resources/jpeg/jpeg.zig");
+    _ = @import("resources/videodec/videodec.zig");
     _ = @import("resources/battery/battery.zig");
     _ = @import("resources/battclock/battclock.zig");
     _ = @import("resources/battmem/battmem.zig");

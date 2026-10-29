@@ -71,6 +71,18 @@ const jpu = [_]Tag{
     .done,
 };
 
+/// The video decoder, the WAVE511, in the same power domain:
+/// videodec.resource's, on PLIC source 13.
+const vdec = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_VIDEODEC),
+    .value(st.PART_Chip, st.CHIP_JH7110_VDEC),
+    .pointer(st.PART_ChipName, "jh7110 vdec"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x130A_0000),
+    .value(st.PART_Irq, 13),
+    .done,
+};
+
 /// The JH7110's own temperature sensor, beside its cores.
 const temperature = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_THERMAL),
@@ -315,6 +327,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &crypto_engine),
     .pointer(st.SYSTAG_Part, &crypto_dma),
     .pointer(st.SYSTAG_Part, &jpu),
+    .pointer(st.SYSTAG_Part, &vdec),
     .pointer(st.SYSTAG_Part, &temperature),
     .pointer(st.SYSTAG_Part, &rtc),
     .pointer(st.SYSTAG_Part, &dmac),

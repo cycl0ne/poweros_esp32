@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT
+//! videodec.resource's functions: the chip's video decoder, a stream fed
+//! a picture at a time and its frames handed out in the order they are
+//! shown (sdk/resources/videodec.zig). A resource: no Open or Close, its
+//! first function in the first slot. The base comes from
+//! OpenResource("videodec.resource").
+##include resources/videodec as videodec
+##include libs/utility/utility as utility
+##basetype VideoDecBase
+##name videodec.resource
+##bias 0
+##public
+/// The codecs the chip decodes, a VDCODEC_* bit each; 0 for none.
+u32 VideoDecCodecs()
+/// A decoder for `codec` (a VDCODEC_*), with VDA_* tags; the first wakes
+/// the chip and loads its firmware. Null, and why in `err` (VDERR_*),
+/// when it failed. A Process: it reads the firmware's file.
+?*videodec.VideoDecoder OpenVideoDecoder(u32 codec, ?[*]const utility.TagItem tags, ?*u32 err)
+/// The decoder closed, its frames with it - those handed out too.
+void CloseVideoDecoder(?*videodec.VideoDecoder decoder)
+/// One picture's data fed, with the time it is shown at; VDFEED_END with
+/// the last. VDERR_OK, VDERR_FULL when there is no room for it yet.
+u32 FeedVideoDecoder(*videodec.VideoDecoder decoder, ?[*]const u8 data, u32 length, u64 time, u32 flags)
+/// The next frame in the order frames are shown, into `frame`: VDERR_OK,
+/// VDERR_NEED_DATA, VDERR_END after the last, or why not. Waits for the
+/// chip.
+u32 DecodeVideoFrame(*videodec.VideoDecoder decoder, *videodec.VideoDecFrame frame)
+/// A frame DecodeVideoFrame handed out given back to the decoder.
+void ReleaseVideoFrame(*videodec.VideoDecoder decoder, *videodec.VideoDecFrame frame)
+/// What the stream is, into `info`: VDERR_OK, or VDERR_NEED_DATA before
+/// the decoder has read its parameter sets.
+u32 GetVideoDecoderInfo(*videodec.VideoDecoder decoder, *videodec.VideoDecInfo info)
+/// What was fed and not yet shown dropped, for a seek; the frames handed
+/// out stay the caller's.
+void FlushVideoDecoder(*videodec.VideoDecoder decoder)
+##end

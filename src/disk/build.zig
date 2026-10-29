@@ -75,7 +75,7 @@ const tests = [_][]const u8{
     "engine",      "jpeg",       "keysource",   "usbdevice", "scsi",
     "sound",       "memowner",   "records",     "exall",     "disktest",
     "filetest",    "speed2d",    "windraw",     "semtest",   "membench",
-    "glyphs",      "ribbon",     "taskbench",
+    "glyphs",      "ribbon",     "taskbench",   "videodec",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "mountshare", "git" };
 
@@ -242,8 +242,8 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// What a RISC-V 64 machine under SBI and an AArch64 machine under PSCI
 /// have and the ESP32s do not: PCI, the command that lists it, and the
 /// USB controllers and SSDs on it. And the dock in SYS:WBStartup, started
-/// with the desktop.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "WBStartup/Dock" };
+/// with the desktop, and the test of a chip's video decoder.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "WBStartup/Dock", "videodec" };
 
 /// Whether `program` is built for `chip`. The lists name a program by its
 /// name, or by its place on the disk where one program has two. The

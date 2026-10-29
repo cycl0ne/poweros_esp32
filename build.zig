@@ -632,6 +632,15 @@ pub fn build(b: *std.Build) void {
             make_p4_disk.addPrefixedFileArg(b.fmt("devs/usb/firmware/aic8800/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
         }
     }
+    // DEVS:firmware/wave511_dec_fw.bin - what the JH7110's video decoder
+    // runs, which videodec.resource loads, as scripts/fetch-vpu.sh fetched
+    // it - and Chips&Media's licence for it beside it. On the RISC-V 64
+    // disk alone.
+    if (vpuDir(b)) |dir| {
+        make_rv64_disk.addArg("devs/firmware");
+        make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511_dec_fw.bin=", .{ .cwd_relative = b.pathJoin(&.{ dir, "wave511_dec_fw.bin" }) });
+        make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE.txt" }) });
+    }
     // DEVS:pci.ids - the PCI ID Repository's list, which C:PCIInfo names
     // vendors and devices from, as scripts/fetch-pciids.sh fetched it. On
     // the disks with PCI, the RISC-V 64 and the AArch64 one.
@@ -1350,6 +1359,18 @@ fn aic8800Dir(b: *std.Build) ?[]const u8 {
     const path = b.pathFromRoot("toolchain/aic8800");
     std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "fmacfw.bin" }), .{}) catch {
         std.log.info("no AIC8800 firmware (scripts/fetch-aic8800.sh): the disk has no DEVS:usb/firmware/aic8800/", .{});
+        return null;
+    };
+    return path;
+}
+
+/// Where scripts/fetch-vpu.sh put the WAVE511's firmware, or null
+/// without it.
+fn vpuDir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/wave511");
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "wave511_dec_fw.bin" }), .{}) catch {
+        std.log.info("no WAVE511 firmware (scripts/fetch-vpu.sh): the RISC-V 64 disk has no DEVS:firmware/", .{});
         return null;
     };
     return path;

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The ROM tags the VisionFive 2 carries beyond the ones every image has:
 //! the display driver for its HDMI port, dma.resource for the chip's DMA
-//! controller, jpeg.resource for its JPEG codec, thermal.resource for its
-//! temperature sensor, battclock.resource for its RTC, which keeps the
-//! date over a reset, and the card slot as a disk the machine can start
+//! controller, jpeg.resource for its JPEG codec, videodec.resource for its
+//! video decoder, thermal.resource for its temperature sensor,
+//! battclock.resource for its RTC, which keeps the date over a reset, and
+//! the card slot as a disk the machine can start
 //! from - sdcard.device, which hands the card's partitions to
 //! expansion.library at cold start, and FAT's handler for them. Both are
 //! the disk's own drivers, built into the ROM as they are. And sound: rta.library, the
@@ -24,6 +25,7 @@ pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
     @import("../../rom/resources/dma/dma.zig"),
     @import("../../rom/resources/jpeg/jpeg.zig"),
+    @import("../../rom/resources/videodec/videodec.zig"),
     @import("../../rom/resources/thermal/thermal.zig"),
     @import("../../rom/resources/battclock/battclock.zig"),
     @import("../../disk/devs/sdcard/sdcard.zig"),

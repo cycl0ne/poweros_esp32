@@ -399,6 +399,10 @@ pub const PARTKIND_CRYPTO: u32 = 24;
 /// which, PART_Address its registers (BUS_MEMORY), PART_Irq its
 /// interrupt.
 pub const PARTKIND_JPEG: u32 = 25;
+/// A video decoder in the chip, which videodec.resource decodes with:
+/// PART_Chip which, PART_Address its registers (BUS_MEMORY), PART_Irq its
+/// interrupt.
+pub const PARTKIND_VIDEODEC: u32 = 26;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -521,6 +525,10 @@ pub const CHIP_JH7110_CRYPTO: u32 = 37;
 /// BUS_MEMORY): baseline files of 8-bit samples into YCbCr planes, in the
 /// video decoder's power domain.
 pub const CHIP_JH7110_JPU: u32 = 38;
+/// The JH7110's video decoder, Chips&Media's WAVE511 (PARTKIND_VIDEODEC
+/// on BUS_MEMORY): H.264 and H.265 into 4:2:0 frames, run by a firmware
+/// the host loads, in the video decoder's power domain beside the JPU.
+pub const CHIP_JH7110_VDEC: u32 = 39;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
