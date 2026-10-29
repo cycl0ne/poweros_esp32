@@ -49,6 +49,9 @@ const BUS_WIDTH_MASK: u8 = 3;
 const BUS_WIDTH_4: u8 = 2;
 const SPEED_SUPPORTS_HIGH: u8 = 1 << 0;
 const SPEED_HIGH: u8 = 1 << 1;
+/// The card's interrupts' master enable; a function's is the bit of its
+/// number.
+const INT_ENABLE_MASTER: u8 = 1 << 0;
 
 /// R5's flags, the response's second byte: a general error, a function
 /// that is not there, an address out of range - the ones Linux takes as
@@ -162,6 +165,13 @@ pub fn setBlockSize(card: *const Card, function: u32, size: u16) Error!void {
     const at = function * 0x100 + FBR_BLOCK_SIZE;
     try write8(card, 0, at, @truncate(size));
     try write8(card, 0, at + 1, @truncate(size >> 8));
+}
+
+/// The card's interrupts on: its master enable and functions 1's and
+/// 2's, as Linux claims both. The card then holds DAT1 low between
+/// commands while the chip has something for the host.
+pub fn enableInterrupts(card: *const Card) Error!void {
+    try write8(card, 0, CCCR_INT_ENABLE, INT_ENABLE_MASTER | 1 << 1 | 1 << 2);
 }
 
 /// The transfer function `function` was in the middle of abandoned, on

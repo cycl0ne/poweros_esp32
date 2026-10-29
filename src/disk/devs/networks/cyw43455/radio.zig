@@ -2,13 +2,18 @@
 //! The radio at work, on the device's worker: the firmware's frames in,
 //! the unit's frames out, its requests, and scans.
 //!
-//! **Polled.** Nothing tells the host yet that the chip has something for
-//! it: the worker looks at the SDIO core's interrupt status on a timer,
-//! every few milliseconds, and whenever a request comes; and reads every
-//! frame the firmware has. A frame that comes while the worker waits for
-//! the answer to a command is handed here too (bcdc.zig), so nothing is
-//! lost meanwhile - which is why what a frame's handler needs a command
-//! for is only noted, and done once the worker is back in its loop.
+//! **Woken by the chip.** The card's interrupt (cyw43455.zig's server)
+//! wakes the worker when the chip has something for it, and so does a
+//! request; it then looks at the SDIO core's interrupt status, reads
+//! every frame the firmware has, and turns the card's interrupt on again
+//! before it waits. A timer wakes it too, every tenth of a second, for
+//! what is due by the clock - a scan or a join that takes too long, a
+//! join after its pause - and in case an interrupt went astray; every
+//! few milliseconds, as the only way to the chip, where the board gives
+//! no interrupt. A frame that comes while the worker waits for the
+//! answer to a command is handed here too (bcdc.zig), so nothing is lost
+//! meanwhile - which is why what a frame's handler needs a command for
+//! is only noted, and done once the worker is back in its loop.
 //!
 //! **Frames.** An event goes to what waits for it; a data frame - an
 //! Ethernet frame behind a BCDC header - to the unit, and the unit's
@@ -53,6 +58,7 @@ const exec = sdk.exec;
 const net = sdk.devices.network;
 const wireless = sdk.devices.wireless;
 const timer = sdk.devices.timer;
+const systimer = sdk.hardware.systimer;
 const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _cyw = @import("_cyw43455.zig");
@@ -69,8 +75,10 @@ const CywBase = _cyw.CywBase;
 const Error = host_file.Error;
 const DEVICE_NAME = _cyw.DEVICE_NAME;
 
-/// How often the chip is looked at, and how many of its frames are read
-/// at a time: Linux's bound.
+/// How often the worker wakes by itself: with the chip's interrupt, and
+/// without it, when it is the only way to the chip. How many of its
+/// frames are read at a time: Linux's bound.
+const tick_us = 100_000;
 const poll_us = 5_000;
 const rx_bound = 50;
 /// How long a scan may take before it is ended with what it heard.
@@ -140,9 +148,11 @@ pub const Work = struct {
     scanning: bool = false,
     scan_id: u16 = 0,
     scan_started: u32 = 0,
-    /// The poll timer, and whether it is out.
+    /// The timer, and whether it is out; whether the firmware had frames
+    /// past the bound.
     poll_io: timer.TimeRequest = .{},
     poll_out: bool = false,
+    frames_left: bool = false,
     /// The network asked for; whether a join of it is to be made - after
     /// a scan for it, from when.
     wanted: bool = false,
@@ -254,21 +264,26 @@ pub fn makeWork(base: *CywBase) ?*Work {
     return work;
 }
 
-/// The worker's loop, for good: the unit's requests, the poll timer, and
-/// the chip looked at after each.
+/// The worker's loop, for good: the unit's requests, the timer, and the
+/// chip looked at after each and whenever it interrupts - its interrupt
+/// on again before the worker waits. Frames left past the bound are read
+/// at once.
 pub fn run(work: *Work) noreturn {
     const base = work.base;
     const sys = base.sys_base;
+    const every_us: u64 = if (base.int_hooked != 0) tick_us else poll_us;
     while (true) {
         while (sys.GetMsg(&base.poll_port)) |_| work.poll_out = false;
         while (sys.GetMsg(&base.unit.msg_port)) |message| request(work, _cyw.sanaReq(_cyw.requestOf(message)));
         service(work);
+        if (work.frames_left) continue;
         if (!work.poll_out) {
             work.poll_io.node.command = timer.TR_ADDREQUEST;
-            work.poll_io.time = timer.TimeVal.fromMicros(poll_us);
+            work.poll_io.time = timer.TimeVal.fromMicros(every_us);
             sys.SendIO(&work.poll_io.node);
             work.poll_out = true;
         }
+        if (base.int_hooked != 0 and base.running != 0) host_file.cardInterrupt(&base.host, true);
         _ = sys.Wait(base.work_mask);
     }
 }
@@ -278,18 +293,22 @@ pub fn run(work: *Work) noreturn {
 /// up, and the unit's writes sent.
 fn service(work: *Work) void {
     const base = work.base;
+    work.frames_left = false;
     if (base.running == 0) return;
-    readFrames(base) catch |err| sayError(base.sys_base, "the firmware's frames cannot be read", err);
+    work.frames_left = readFrames(base) catch |err| left: {
+        sayError(base.sys_base, "the firmware's frames cannot be read", err);
+        break :left false;
+    };
     if (work.leave_due) leave(work);
     if (work.join_due) joinStep(work);
     if (work.scan_due) startScan(work);
-    if (work.scanning and elapsed(base) -% work.scan_started > scan_ms) {
+    if (work.scanning and elapsed() -% work.scan_started > scan_ms) {
         say(base.sys_base, "the scan did not finish");
         endScan(work);
     }
     sendWrites(work);
     handshakeDue(work);
-    if (work.state == .joining and reached(base, work.deadline)) {
+    if (work.state == .joining and reached(work.deadline)) {
         const progress: u32 = if (work.handshake) |handshake| work.wpa_base.?.HandshakeStatus(handshake) else 0;
         exec.kprintf(base.sys_base, "%s: the network was not joined in time: %s, handshake %s\n", .{
             @as([*:0]const u8, DEVICE_NAME),
@@ -305,12 +324,15 @@ fn service(work: *Work) void {
     }
 }
 
-fn readFrames(base: *CywBase) Error!void {
+/// The firmware's frames read and handed on, up to the bound: whether it
+/// has more.
+fn readFrames(base: *CywBase) Error!bool {
     try sdpcm.poll(base);
     for (0..rx_bound) |_| {
-        const frame = (try sdpcm.receive(base)) orelse return;
+        const frame = (try sdpcm.receive(base)) orelse return false;
         frameIn(base, frame);
     }
+    return true;
 }
 
 /// A frame from the firmware that answers no command: an event to what
@@ -409,19 +431,20 @@ fn cameOff(work: *Work) void {
     if (!work.wanted) return;
     work.join_due = true;
     work.join_scanned = false;
-    work.join_at = elapsed(work.base) +% work.pause_s * 1000;
+    work.join_at = elapsed() +% work.pause_s * 1000;
     work.pause_s = @min(work.pause_s * 2, pause_most_s);
 }
 
-/// Milliseconds since the system started, from the timer.
-fn elapsed(base: *CywBase) u32 {
-    const time = base.now();
-    return @truncate(time.secs * 1000 + time.micro / 1000);
+/// Milliseconds since the system started, as the system timer counts
+/// them: not the system time, which is a date once battclock.resource
+/// or C:net/TimeSync has set it, and moves when it is set.
+fn elapsed() u32 {
+    return @truncate(systimer.uptimeUs() / 1000);
 }
 
 /// Whether the time `at` has come.
-fn reached(base: *CywBase, at: u32) bool {
-    return @as(i32, @bitCast(elapsed(base) -% at)) >= 0;
+fn reached(at: u32) bool {
+    return @as(i32, @bitCast(elapsed() -% at)) >= 0;
 }
 
 // --- the unit's requests --------------------------------------------------
@@ -507,7 +530,7 @@ fn setOptions(work: *Work, req: *net.IOSana2Req) i8 {
     work.wanted = true;
     work.join_due = true;
     work.join_scanned = false;
-    work.join_at = elapsed(work.base);
+    work.join_at = elapsed();
     work.pause_s = pause_first_s;
     if (work.state != .idle) work.leave_due = true;
     return 0;
@@ -516,7 +539,7 @@ fn setOptions(work: *Work, req: *net.IOSana2Req) i8 {
 /// A join due: once its time has come and no scan runs, a scan for the
 /// network; after it, the join.
 fn joinStep(work: *Work) void {
-    if (work.scanning or work.scan_due or !reached(work.base, work.join_at)) return;
+    if (work.scanning or work.scan_due or !reached(work.join_at)) return;
     if (!work.join_scanned) {
         work.join_scanned = true;
         work.scan_due = true;
@@ -568,7 +591,7 @@ fn join(work: *Work) void {
         work.state = .idle;
         return cameOff(work);
     }
-    work.deadline = elapsed(base) +% join_ms;
+    work.deadline = elapsed() +% join_ms;
 }
 
 /// The firmware told the security and to join: false, said, if it
@@ -877,7 +900,7 @@ fn startScan(work: *Work) void {
         return answerScans(work, net.S2ERR_SOFTWARE);
     }
     work.scanning = true;
-    work.scan_started = elapsed(base);
+    work.scan_started = elapsed();
 }
 
 fn endScan(work: *Work) void {

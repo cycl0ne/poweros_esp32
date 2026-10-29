@@ -73,9 +73,15 @@ pub const CywBase = extern struct {
     pad3: [3]u8 = .{ 0, 0, 0 },
     work: ?*anyopaque = null,
     /// The poll timer's answers and the unit's requests: the worker's, on
-    /// one signal.
+    /// one signal - which the chip's interrupt sends it too.
     poll_port: exec.MsgPort = .{},
     work_mask: u32 = 0,
+    /// The SD host's interrupt, as the board gives it, its server, and
+    /// whether that is on the interrupt's chain.
+    irq: u32 = 0,
+    int_hooked: u8 = 0,
+    pad4: [3]u8 = .{ 0, 0, 0 },
+    int: exec.Interrupt = .{},
     /// The exec unit the openers' requests name; its port is the worker's
     /// queue of them.
     unit: exec.Unit = .{},

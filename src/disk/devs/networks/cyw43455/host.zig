@@ -20,7 +20,8 @@
 //! is the SD one. Its clock is 200 MHz, the card's that divided by an
 //! even number. Commands are polled and data moves through the
 //! controller's buffer port, a word at a time: the interrupt line is for
-//! the chip's own interrupt, later.
+//! the chip's own interrupt, the card's (`cardInterrupt`), which it
+//! signals by holding DAT1 low between commands.
 //!
 //! **Which BCM2712.** The pin controller's layout is the D0 stepping's -
 //! seven registers, which a CM5 has; another stepping's would be read
@@ -254,6 +255,9 @@ const INT_CMD_DONE: u32 = 1 << 0;
 const INT_XFER_DONE: u32 = 1 << 1;
 const INT_WRITE_READY: u32 = 1 << 4;
 const INT_READ_READY: u32 = 1 << 5;
+/// The card's interrupt: read-only, set for as long as the card holds
+/// it.
+const INT_CARD: u32 = 1 << 8;
 const INT_ERROR: u32 = 1 << 15;
 const ERR_CMD_TIMEOUT: u32 = 1 << 16;
 const ERR_CMD_CRC: u32 = 1 << 17;
@@ -306,6 +310,29 @@ pub fn reset(host: *Host) bool {
     reg32(host.regs + SIGNAL_ENABLE).* = 0;
     reg8(host.regs + TIMEOUT).* = 0x0E;
     return true;
+}
+
+/// The card's interrupt reported and signalled on the host's interrupt
+/// line, or neither: off while it is served, as the SDHCI specification
+/// asks, so that it does not come again until the chip has been
+/// answered. Whole words, the rest of what is reported being fixed, so
+/// that the interrupt's server and the worker never write over each
+/// other's bits.
+pub fn cardInterrupt(host: *const Host, on: bool) void {
+    if (on) {
+        reg32(host.regs + INT_ENABLE).* = ERR_ALL | INT_POLLED | INT_CARD;
+        reg32(host.regs + SIGNAL_ENABLE).* = INT_CARD;
+    } else {
+        reg32(host.regs + SIGNAL_ENABLE).* = 0;
+        reg32(host.regs + INT_ENABLE).* = ERR_ALL | INT_POLLED;
+    }
+}
+
+/// Whether the host's interrupt is the card's: signalled, and the card
+/// holding it.
+pub fn cardInterrupting(host: *const Host) bool {
+    if (reg32(host.regs + SIGNAL_ENABLE).* & INT_CARD == 0) return false;
+    return reg32(host.regs + INT_STATUS).* & INT_CARD != 0;
 }
 
 /// The controller's version, as its register numbers it (2 for 3.00).

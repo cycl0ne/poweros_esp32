@@ -20,7 +20,7 @@
 //! then the rest; a header of zeros says there is no frame left. A frame
 //! the host cannot take is ended on the chip's side. Whether the firmware
 //! has frames, or wrote to the host's mailbox, the SDIO core's interrupt
-//! status says - polled, for now.
+//! status says, which the card's interrupt stands for (`poll`).
 //!
 //! **Coalesced frames** - several in one, on their own channel - the
 //! firmware sends only when told it may; nothing here tells it.

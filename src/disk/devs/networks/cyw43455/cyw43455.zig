@@ -5,22 +5,24 @@
 //! one and how it is wired (a PARTKIND_NET part with CHIP_CYW43455); a
 //! board without one gets no device.
 //!
-//! **What it does so far** is the chip's bring-up, and no more: the
-//! host's lines and the radio's power (host.zig), the card found on the
-//! bus and set up as Linux's brcmfmac sets it up - four data lines at 25
-//! MHz, function 1's blocks of 64 bytes and function 2's of 512, function
-//! 1 enabled (sdio.zig) - the backplane's clock brought up, the chip read
-//! and its cores listed (backplane.zig), the firmware loaded and started
-//! (boot.zig), the firmware set up as Linux sets it up, through its
-//! commands (bcdc.zig) in its frames (sdpcm.zig) - the board's station
-//! address, the CLM blob, the events it sends - and the radio brought up
-//! as a station (radio.zig): unit 0, which scans. It joins no network
-//! yet.
+//! **The bring-up**: the host's lines and the radio's power (host.zig),
+//! the card found on the bus and set up as Linux's brcmfmac sets it up -
+//! four data lines at 25 MHz, function 1's blocks of 64 bytes and
+//! function 2's of 512, function 1 enabled (sdio.zig) - the backplane's
+//! clock brought up, the chip read and its cores listed (backplane.zig),
+//! the firmware loaded and started (boot.zig), the firmware set up as
+//! Linux sets it up, through its commands (bcdc.zig) in its frames
+//! (sdpcm.zig) - the board's station address, the CLM blob, the events it
+//! sends - and the radio brought up as a station (radio.zig): unit 0,
+//! which scans, joins and leaves networks, and carries their frames.
 //!
 //! **Every access to the chip runs on the device's worker**, a DOS
 //! process: the firmware is read from files. The unit's requests come to
 //! the worker too, except S2_DEVICEQUERY and S2_GETSTATIONADDRESS,
-//! answered where they are asked.
+//! answered where they are asked. The chip's interrupt - the card's, on
+//! the SD host's line - wakes it: the server turns the card's interrupt
+//! off and signals the worker, which answers the chip and turns it on
+//! again before it waits.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -45,7 +47,7 @@ const CywBase = _cyw.CywBase;
 
 pub const DEVICE_NAME = _cyw.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "29.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -125,9 +127,38 @@ fn start(base: *CywBase) ?*radio.Work {
     sys.Enable();
     base.net.init(sys, base, &base.station);
     base.net.setCarrier(false);
+    if (!hookInterrupt(base)) say(sys, "no interrupt; the chip is polled");
     base.ready = 1;
     say(sys, "the radio is up");
     return work;
+}
+
+/// The SD host's interrupt hooked, and the card's interrupts on at the
+/// card: the worker turns them on at the host, where they reach the line,
+/// once it waits. False where the board gives no interrupt, or the card
+/// refuses.
+fn hookInterrupt(base: *CywBase) bool {
+    if (base.irq == 0) return false;
+    sdio.enableInterrupts(&base.backplane.card) catch return false;
+    base.int = .{
+        .node = .{ .type = .interrupt, .pri = 0, .name = DEVICE_NAME },
+        .data = base,
+        .code = &intServer,
+    };
+    base.sys_base.AddIntServer(base.irq, &base.int);
+    base.int_hooked = 1;
+    return true;
+}
+
+/// The SD host's interrupt: the card's interrupt turned off and the
+/// worker woken, if it is the card's.
+fn intServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
+    _ = int_number;
+    const base: *CywBase = @ptrCast(@alignCast(is_data.?));
+    if (!host_file.cardInterrupting(&base.host)) return 0;
+    host_file.cardInterrupt(&base.host, false);
+    base.sys_base.Signal(base.worker.?, base.work_mask);
+    return 1;
 }
 
 fn openTimer(base: *CywBase) bool {
@@ -388,8 +419,8 @@ fn expunge(_: *exec.Device) callconv(.c) ?*anyopaque {
     return null;
 }
 
-/// The board's Wi-Fi part: the host it is on, its lines and its power
-/// pin, into the base. False if the board has none, or wires it where
+/// The board's Wi-Fi part: the host it is on, its interrupt, its lines
+/// and its power pin, into the base. False if the board has none, or wires it where
 /// this cannot drive it.
 fn findPart(sys: *ExecBase, utility: *UtilityBase, base: *CywBase) bool {
     const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return false;
@@ -403,6 +434,7 @@ fn findPart(sys: *ExecBase, utility: *UtilityBase, base: *CywBase) bool {
     };
     const station = utility.GetTagData(st.PART_StationAddress, 0, part.tags);
     if (station != 0) base.station = @as(*const [6]u8, @ptrFromInt(station)).*;
+    base.irq = @truncate(utility.GetTagData(st.PART_Irq, 0, part.tags));
     return true;
 }
 
