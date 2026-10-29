@@ -332,7 +332,10 @@ header by its name. The body is `ReadRequest`'s, a piece at a time,
 decoded from its chunks; with `HTTP_Unzip` the server may pack it with
 gzip or deflate, and it is unpacked on the way by compression.library.
 The body ends where its length says, at its last chunk, or where the
-server closes; the answer to `HEAD`, a 204 and a 304 have none.
+server closes; the answer to `HEAD`, a 204 and a 304 have none. A
+Shoutcast server answers a stream's request with `ICY 200 OK`, which is
+read as an HTTP/1.0 answer: its `icy-` headers are `GetHeader`'s, and
+its body is the stream, to the connection's end.
 
 **A body to send** that is in memory goes with the head: `HTTP_Body` and
 `HTTP_BodyLength`. One not at hand in one piece - a file - is the
@@ -381,7 +384,8 @@ checked unless the client was made with `HTTP_Verify` false; a request
 that fails with `HTTPERR_TLS` says why through `HTTP_GetTLSError`,
 `HTTP_GetVerdict` and `HTTP_GetAlert`. A wait ends after `HTTP_Timeout`
 seconds of quiet, or with Ctrl-C: `HTTPERR_IO`, and bsdsocket's `Errno`
-says which (`EWOULDBLOCK`, `EINTR`).
+says which (`EWOULDBLOCK`, `EINTR`). A server that takes the request and
+closes before it answers gives `HTTPERR_CLOSED`.
 
 A client and its requests belong to the task whose socket base they use.
 A request takes some 14 KiB, and 8 KiB more while it unpacks; the head

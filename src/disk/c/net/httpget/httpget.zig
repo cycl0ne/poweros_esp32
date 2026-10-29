@@ -45,7 +45,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "HTTPGet";
-const VERSION_STRING = "\x00$VER: HTTPGet 1.8 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: HTTPGet 1.9 (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "URL/A,TO/K,QUIET/S,NOVERIFY/S";
@@ -66,6 +66,7 @@ const MSG_NOHOST = "%s: the host of %s has no address\n";
 const MSG_FAILED = "%s: the connection failed: %s (errno %d)\n";
 const MSG_STOPPED = "%s: stopped\n";
 const MSG_NOTHTTP = "%s: the answer is not HTTP\n";
+const MSG_CLOSED = "%s: the server closed the connection without answering\n";
 const MSG_EARLY = "%s: the connection ended before the body did\n";
 const MSG_BADCHUNK = "%s: the body's chunks make no sense\n";
 const MSG_STATUS = "%s: %s\n";
@@ -152,6 +153,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             http.HTTPERR_HOST => say(dl, MSG_NOHOST, .{url}),
             http.HTTPERR_TLS => tlsFailed(dl, tls_error, verdict, alert),
             http.HTTPERR_PROTOCOL => say(dl, MSG_NOTHTTP, .{}),
+            http.HTTPERR_CLOSED => say(dl, MSG_CLOSED, .{}),
             http.HTTPERR_REDIRECT => say(dl, MSG_REDIRECTS, .{@as(u32, redirects_most)}),
             http.HTTPERR_LIBRARY => say(dl, MSG_NOLIBRARY, .{@as([*:0]const u8, tls.TLSNAME)}),
             else => failed(dl, sb, err),

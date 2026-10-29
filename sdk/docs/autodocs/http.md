@@ -288,8 +288,9 @@ fn GetRequestAttr(base: *HttpBase, request: *http.Request, attr: utility.Tag) us
 - `attr`:
   - HTTP_Status: the answer's status, 200 for OK; 0 while the body is
     being written.
-  - HTTP_StatusLine (`[*:0]const u8`): `HTTP/1.1 404 Not Found`; empty
-    while the body is being written.
+  - HTTP_StatusLine (`[*:0]const u8`): `HTTP/1.1 404 Not Found`, or a
+    Shoutcast server's `ICY 200 OK`; empty while the body is being
+    written.
   - HTTP_ContentLength: the body's length as the answer gives it, or
     HTTP_LENGTH_UNKNOWN for one in chunks, one that ends with the
     connection, or one being unpacked.
@@ -390,8 +391,9 @@ The request, its answer's head read - or, with a body the program
 writes, its own head sent - and `err` HTTPERR_OK. Null, with `err`:
 HTTPERR_URL for a URL that is none, HTTPERR_HOST for a host without
 an address, HTTPERR_IO when no connection could be made or it failed,
-HTTPERR_TLS when the TLS session could not be had, HTTPERR_PROTOCOL
-for an answer that is not HTTP, HTTPERR_TRUNCATED for one cut short,
+HTTPERR_TLS when the TLS session could not be had, HTTPERR_CLOSED
+when the server closed without answering, HTTPERR_PROTOCOL for an
+answer that is not HTTP, HTTPERR_TRUNCATED for one cut short,
 HTTPERR_REDIRECT for too many redirects or one to nowhere,
 HTTPERR_STATE for a method or header that is none, credentials too
 long, or a request head longer than 8 KiB, HTTPERR_LIBRARY without tls.library for
@@ -415,6 +417,10 @@ A kept connection that fails before any of the answer has come is
 given up and the request sent again on a new one: a server may close
 a connection it has been idle on at any time. A body the program
 writes always goes over a new connection.
+
+The answer's status line is `HTTP/1.x`'s, or a Shoutcast server's
+`ICY 200 OK`, which is read as HTTP/1.0's: the connection is not kept,
+and the body - the stream - runs to its end.
 
 Interim answers (100 Continue) are read past. A redirect - 301, 302,
 303, 307 or 308 with a Location - is followed when the request's body
@@ -572,8 +578,9 @@ For bytes: `length` once they are all sent. For the end: the answer's
 status, once its head is read. Below 0 an HTTPERR_*: HTTPERR_STATE
 for a request whose body is not the program's, for bytes past the
 length it gave, for an end before all of them came, or for a
-`length` past 2 GiB; HTTPERR_IO, HTTPERR_TLS, HTTPERR_PROTOCOL,
-HTTPERR_TRUNCATED and HTTPERR_DATA as OpenRequest answers them.
+`length` past 2 GiB; HTTPERR_IO, HTTPERR_TLS, HTTPERR_CLOSED,
+HTTPERR_PROTOCOL, HTTPERR_TRUNCATED and HTTPERR_DATA as OpenRequest
+answers them.
 
 **BEHAVIOR**
 

@@ -4,6 +4,11 @@
 //! answer read, a chunked body decoded in place as it comes in pieces,
 //! and the base64 Basic authorization is sent in.
 //!
+//! **An answer's status line** is `HTTP/1.x`'s, or `ICY 200 OK` - what a
+//! Shoutcast server answers a stream's request with - which is read as an
+//! HTTP/1.0 answer: the connection ends with it, and a body with no
+//! length runs to that end.
+//!
 //! **An answer's head is read in place**: each of its lines is ended with
 //! a NUL where its line end was, and a value's trailing blanks are cut
 //! off the same way, so the status line and every header's value are
@@ -301,7 +306,7 @@ pub const Head = struct {
     content_length: ?u64 = null,
     chunked: bool = false,
     /// The connection ends with this answer: `Connection: close`, or an
-    /// HTTP/1.0 answer that does not ask to keep it.
+    /// HTTP/1.0 or ICY answer that does not ask to keep it.
     close: bool = false,
     encoding: Encoding = .identity,
     location: ?[*:0]const u8 = null,
@@ -322,22 +327,27 @@ pub fn headEnd(bytes: []const u8) ?usize {
 }
 
 /// The head in `bytes`, which holds it whole (headEnd), its lines ended
-/// with NULs in place; null when it is not an HTTP answer.
+/// with NULs in place; null when it is not an HTTP answer - nor an ICY
+/// one, which is HTTP/1.0's.
 pub fn parseHead(bytes: []u8) ?Head {
     const end = headEnd(bytes) orelse return null;
     var head: Head = .{ .body_at = end };
     var lines = Lines{ .text = bytes[0..end] };
     const status_line = lines.next() orelse return null;
-    if (!startsWith(status_line, "HTTP/1.") or status_line.len < 12 or status_line[8] != ' ') return null;
+    const icy = startsWith(status_line, "ICY ");
+    if (!icy and (!startsWith(status_line, "HTTP/1.") or status_line.len < 9 or status_line[8] != ' ')) return null;
+    // The status's three digits, after the protocol and a space.
+    const code_at: usize = if (icy) 4 else 9;
+    if (status_line.len < code_at + 3) return null;
     var status: u16 = 0;
-    for (status_line[9..12]) |digit| {
+    for (status_line[code_at .. code_at + 3]) |digit| {
         if (digit < '0' or digit > '9') return null;
         status = status * 10 + (digit - '0');
     }
-    if (status_line.len > 12 and status_line[12] != ' ') return null;
+    if (status_line.len > code_at + 3 and status_line[code_at + 3] != ' ') return null;
     head.status = status;
     head.status_line = @ptrCast(status_line.ptr);
-    const old = status_line[7] == '0';
+    const old = icy or status_line[7] == '0';
     var keep_alive = false;
     while (lines.next()) |line| {
         const field = split(line) orelse continue;

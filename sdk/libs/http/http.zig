@@ -18,6 +18,8 @@
 //! HTTP_Unzip, unpacked; CloseRequest gives the connection back to the
 //! client. A request whose body is not at hand in one piece - a file
 //! being sent - is written with WriteRequest before the answer is read.
+//! A Shoutcast server's answer, `ICY 200 OK`, is read as HTTP/1.0's: its
+//! body runs to the connection's end.
 //!
 //! A client and its requests are one task's at a time, as the socket
 //! base they use is.
@@ -89,7 +91,8 @@ pub const HTTP_GetAlert = HTTP_Dummy + 0x1A;
 
 /// The answer's status, 200 for OK; 0 while the body is being written.
 pub const HTTP_Status = HTTP_Dummy + 0x20;
-/// `[*:0]const u8`: the answer's status line, `HTTP/1.1 404 Not Found`.
+/// `[*:0]const u8`: the answer's status line, `HTTP/1.1 404 Not Found`,
+/// or a Shoutcast server's `ICY 200 OK`.
 pub const HTTP_StatusLine = HTTP_Dummy + 0x21;
 /// The body's length as the answer gives it, or HTTP_LENGTH_UNKNOWN: an
 /// answer in chunks, one that ends where the connection does, or one
@@ -128,8 +131,8 @@ pub const HTTPERR_HOST: i32 = -4;
 /// The TLS session failed: HTTP_GetTLSError's TLSERR_* says how,
 /// HTTP_GetVerdict and HTTP_GetAlert why.
 pub const HTTPERR_TLS: i32 = -5;
-/// The answer is not HTTP: no status line, a head too long, chunks that
-/// make no sense.
+/// The answer is not HTTP: no status line - `HTTP/1.x` or `ICY` - a head
+/// too long, chunks that make no sense.
 pub const HTTPERR_PROTOCOL: i32 = -6;
 /// More redirects than HTTP_Redirects allows, or one to nowhere.
 pub const HTTPERR_REDIRECT: i32 = -7;
@@ -145,3 +148,6 @@ pub const HTTPERR_STATE: i32 = -9;
 pub const HTTPERR_LIBRARY: i32 = -10;
 /// A body the server packed that does not unpack.
 pub const HTTPERR_DATA: i32 = -11;
+/// The server ended the connection without answering (SINCE 1.3): it
+/// took the request and closed before the first byte of an answer.
+pub const HTTPERR_CLOSED: i32 = -12;
