@@ -25,7 +25,9 @@
 //! first on the list from then on, every stream going on where it was.
 //! With none left, a write is answered AUDIOERR_NOOUTPUT, until an output
 //! comes: the next write plays through it. A machine whose only outputs
-//! come and go - a USB speaker - starts the same way, with none.
+//! come and go - a USB speaker - starts the same way, with none; and so
+//! does one whose output will not start yet - an HDMI port with no
+//! monitor on it - which the next write tries again.
 //!
 //! rta.library says nothing when a sink comes, so the task looks for the
 //! preferred output itself: every `look_every` buffers it plays, while the
@@ -111,8 +113,8 @@ const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 12;
-const BUILD_DATE = "26.10.2026";
+const DEVICE_REVISION = 13;
+const BUILD_DATE = "29.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -1133,15 +1135,18 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
     const quit = sys.AllocSignal(-1);
     const carry = sys.AllocSignal(-1);
     const heard = sys.AllocSignal(-1);
-    var ok = signal >= 0 and quit >= 0 and carry >= 0 and heard >= 0;
+    const ok = signal >= 0 and quit >= 0 and carry >= 0 and heard >= 0;
     if (ok) {
         ab.feed_task = &ab.task;
         ab.feed_mask = @as(u32, 1) << @intCast(signal);
         ab.quit_mask = @as(u32, 1) << @intCast(quit);
         ab.command_mask = @as(u32, 1) << @intCast(carry);
         ab.record_mask = @as(u32, 1) << @intCast(heard);
-        // With no output yet, the first write looks for one.
-        if (firstChoice(ab)) |sink| ok = attachSink(ab, sink);
+        // With no output yet, or one that will not start yet, the first
+        // write looks for one. The task runs either way: one that ended
+        // here would be started again by the next open on the stack it
+        // is still ending on.
+        if (firstChoice(ab)) |sink| _ = attachSink(ab, sink);
     }
     if (ok) ab.ready = 1;
     if (ab.starter) |starter| {
