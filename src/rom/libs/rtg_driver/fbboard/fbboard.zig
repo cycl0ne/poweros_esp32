@@ -135,7 +135,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 16;
+const REVISION = 17;
 const BUILD_DATE = "29.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -198,6 +198,14 @@ const Screen = struct {
     mode_count: u32 = 0,
     current: u32 = 0,
     frame_us: u32 = 16_667,
+    /// Behind an HDMI port: what the monitor says of itself - HDMI or DVI,
+    /// sound, range, its fastest clock - from its EDID; whether it was on
+    /// the port when last looked at, how many looks in a row have seen
+    /// otherwise, and when the port was last looked at (`watch`).
+    sink: edid.Sink = .{},
+    plugged: bool = false,
+    settling: u32 = 0,
+    watched_us: u64 = 0,
     /// A picture of the largest mode: what the composed frame takes.
     frame_bytes: usize = 0,
     /// Where the display reads from; 0 before it has been told.
@@ -1008,17 +1016,86 @@ fn flipperCode(sys: *ExecBase) callconv(.c) void {
     while (@atomicLoad(?*anyopaque, &me.user_data, .acquire) == null) _ = sys.Wait(exec.SIGF_SINGLE);
     const screen: *Screen = @ptrCast(@alignCast(me.user_data.?));
     while (true) {
-        _ = sys.WaitForAny(&[_]*exec.Waitable{&screen.work}, 1, exec.WAIT_FOREVER);
+        _ = sys.WaitForAny(&[_]*exec.Waitable{&screen.work}, 1, untilWatch(screen));
         // Reset before what was noted is taken: whatever is noted after
         // it wakes the task again.
         sys.ResetWaitable(&screen.work);
         if (@atomicLoad(bool, &screen.stopping, .acquire)) break;
         sys.ObtainSemaphore(&screen.flip_lock);
         _ = flipFrames(screen);
+        if (watches(screen)) watch(screen);
         sys.ReleaseSemaphore(&screen.flip_lock);
     }
     // The last it does with the screen: it is freed once this is seen.
     sys.SignalWaitable(&screen.stopped);
+}
+
+// --- the HDMI port watched: a monitor plugged in or taken off ----------------
+
+/// How often the port is looked at, and how many looks in a row must see
+/// a monitor come or go before it is taken to have: a second, which is
+/// what a plug that bounces as it goes in, or a monitor that raises its
+/// hot-plug line before its EDID reads, takes.
+const watch_us: u64 = 500_000;
+const settle_looks = 2;
+
+/// Whether the task looks at the port now and then: the BCM2712's, whose
+/// hot-plug line has no interrupt of its own here, once the display
+/// runs. The JH7110's is not looked at.
+fn watches(screen: *const Screen) bool {
+    return screen.scanout == .bcm2712 and screen.scanning != 0;
+}
+
+/// How long the task waits for work before it looks at the port again;
+/// for good where it does not look.
+fn untilWatch(screen: *const Screen) u64 {
+    if (!watches(screen)) return exec.WAIT_FOREVER;
+    const now = sdk.hardware.systimer.uptimeUs();
+    const due = screen.watched_us + watch_us;
+    return if (due > now + 1000) due - now else 1000;
+}
+
+/// The port looked at, when it is time: a monitor that has come is
+/// read - its EDID, what it says of itself - and the display started
+/// again for it in the mode it is in, in the monitor's own timing of
+/// that mode where it names it; one that has gone is said on the raw
+/// port, the display left running. With a monitor on it, its scrambling
+/// is looked after (`bcm2712.tend`). The modes the board lists stay as
+/// they were made: a monitor that does not take the mode shows nothing
+/// until another is set. Made holding `flip_lock`.
+fn watch(screen: *Screen) void {
+    const now = sdk.hardware.systimer.uptimeUs();
+    if (now -% screen.watched_us < watch_us - watch_us / 8) return;
+    screen.watched_us = now;
+    const waiter = Waiter{ .screen = screen };
+    const plugged = bcm2712.monitor();
+    if (plugged == screen.plugged) {
+        screen.settling = 0;
+        if (plugged) bcm2712.tend(waiter);
+        return;
+    }
+    screen.settling += 1;
+    if (screen.settling < settle_looks) return;
+    screen.settling = 0;
+    screen.plugged = plugged;
+    if (!plugged) {
+        exec.kprintf(screen.sys, "%s: the monitor was taken off the HDMI port\n", .{MODULE_NAME});
+        return;
+    }
+    const current = &screen.timings.modes[screen.current];
+    const found = portModes(bcm2712, screen, current.*);
+    for (found.modes[0..found.count]) |*timing| {
+        if (timing.sameAs(current)) {
+            current.* = timing.*;
+            break;
+        }
+    } else exec.kprintf(screen.sys, "%s: the monitor does not name %dx%d at %d Hz\n", .{ MODULE_NAME, current.width, current.height, current.hz() });
+    const failure = bcm2712.start(screen.sys, current, screen.sink, screen.scanning, screen.pitch, waiter);
+    if (failure != .none) {
+        exec.kprintf(screen.sys, "%s: %s\n", .{ MODULE_NAME, bcm2712.why(failure) });
+        return;
+    }
+    cursorPlane(screen);
 }
 
 /// `box` of the display noted for the next picture. Made holding
@@ -1383,6 +1460,7 @@ fn hdmiModes(screen: *Screen, own: edid.Timing) monitor.List {
 /// `hdmiModes` on the port `port` drives (`jh7110.zig`, `bcm2712.zig`).
 fn portModes(comptime port: type, screen: *Screen, own: edid.Timing) monitor.List {
     const waiter = Waiter{ .screen = screen };
+    screen.sink = .{};
     if (port.wake(screen.sys, waiter) != .none or !port.monitor()) return monitor.modesOf(null, null, own, port.sends);
     var first: edid.Block = undefined;
     var extension: edid.Block = undefined;
@@ -1395,6 +1473,7 @@ fn portModes(comptime port: type, screen: *Screen, own: edid.Timing) monitor.Lis
         if (first[126] != 0 and port.readEdid(1, &extension, waiter) and edid.valid(&extension)) cea = &extension;
     }
     const found = monitor.modesOf(base, cea, own, port.sends);
+    if (base != null) screen.sink = edid.sinkOf(cea);
     const shown = &found.modes[found.default];
     if (base == null) {
         exec.kprintf(screen.sys, "%s: HDMI to a monitor whose EDID did not read, %dx%d at %d Hz\n", .{ MODULE_NAME, shown.width, shown.height, shown.hz() });
@@ -1455,16 +1534,24 @@ fn begin(screen: *Screen, address: usize) bool {
     return screen.scanning == address;
 }
 
-/// `begin` on the HDMI port `port` drives: the mode set, and the frame
-/// interrupt hooked once it runs.
+/// `begin` on the HDMI port `port` drives: the mode set - on the
+/// BCM2712's, sent as the monitor takes it (`Screen.sink`) - and the
+/// frame interrupt hooked once it runs.
 fn startPort(comptime port: type, screen: *Screen, address: usize) void {
-    const failure = port.start(screen.sys, &screen.timings.modes[screen.current], address, screen.pitch, Waiter{ .screen = screen });
+    const mode = &screen.timings.modes[screen.current];
+    const waiter = Waiter{ .screen = screen };
+    const failure = if (port == bcm2712)
+        port.start(screen.sys, mode, screen.sink, address, screen.pitch, waiter)
+    else
+        port.start(screen.sys, mode, address, screen.pitch, waiter);
     if (failure != .none) {
         exec.kprintf(screen.sys, "%s: %s\n", .{ MODULE_NAME, port.why(failure) });
         return;
     }
     screen.scanning = address;
-    if (!port.monitor()) exec.kprintf(screen.sys, "%s: no monitor on the HDMI port\n", .{MODULE_NAME});
+    screen.plugged = port.monitor();
+    screen.settling = 0;
+    if (!screen.plugged) exec.kprintf(screen.sys, "%s: no monitor on the HDMI port\n", .{MODULE_NAME});
     hookFrames(screen);
 }
 

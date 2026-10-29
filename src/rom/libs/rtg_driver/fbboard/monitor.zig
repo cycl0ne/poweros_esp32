@@ -57,23 +57,26 @@ fn before(a: *const edid.Timing, b: *const edid.Timing) bool {
 }
 
 /// The modes the monitor whose EDID is `first` (and `extension`, when it
-/// has one) takes that a port sending the pixel clocks `sends` can send;
-/// `own` alone when there is no EDID, or nothing in it can be sent.
+/// has one) takes that a port sending the pixel clocks `sends` can send,
+/// and the monitor takes - up to the fastest clock its extension says
+/// (`edid.Sink.mostKhz`); `own` alone when there is no EDID, or nothing
+/// in it can be sent.
 pub fn modesOf(first: ?*const edid.Block, extension: ?*const edid.Block, own: edid.Timing, sends: *const fn (u32) bool) List {
     var found: List = .{};
     var preferred: ?edid.Timing = null;
     if (first) |base| {
+        const most_khz = edid.sinkOf(extension).mostKhz();
         var timings: [10]edid.Timing = undefined;
         const count = edid.detailedTimings(base, extension, &timings);
         for (timings[0..count], 0..) |timing, i| {
-            if (!sends(timing.pixel_khz)) continue;
+            if (!sends(timing.pixel_khz) or timing.pixel_khz > most_khz) continue;
             var named = timing;
             named.vic = edid.vicOf(&timing);
             if (i == 0 and edid.detailed(base, 54) != null) preferred = named;
             found.add(named);
         }
         for (&edid.known) |*mode| {
-            if (!sends(mode.pixel_khz)) continue;
+            if (!sends(mode.pixel_khz) or mode.pixel_khz > most_khz) continue;
             if (edid.takes(base, extension, .{ .width = mode.width, .height = mode.height, .refresh_hz = mode.hz(), .vic = mode.vic })) found.add(mode.*);
         }
     }
