@@ -1583,6 +1583,61 @@ test "a container's partition mounted at its blocks on the disk, and a GPT parti
     try testing.expectEqual(sdk.dos.posfs.ID_POSFS_DISK, env.dos_type);
 }
 
+test "a new GPT partition mounted for FAT with the format asked for, one with a volume as it holds, and nothing another system put there" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    var large = try Large.attach(rig);
+    defer large.detach(rig);
+    const rb = rig.rb;
+    try large.lay(&.{
+        gptEntry(gpt.TYPE_BASIC_DATA, 2048, 3071, "Boot"),
+        gptEntry(gpt.TYPE_EFI_SYSTEM, 3072, 4095, "EFI"),
+        gptEntry(gpt.TYPE_BASIC_DATA, 4096, 5119, "posfs"),
+        gptEntry(gpt.TYPE_BASIC_DATA, 5120, 6143, "NTFS"),
+        gptEntry(gpt.TYPE_LINUX, 6144, 7167, "Linux"),
+    });
+    large.posfsVolume(4096);
+    // Another system's boot sector, which is no volume of FAT32 or exFAT.
+    const ntfs = large.block(5120);
+    @memcpy(ntfs[3..11], "NTFS    ");
+    sdk.dos.fat.putU16(ntfs, sdk.dos.fat.signature_at, sdk.dos.fat.signature);
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    const boot = rb.NextGPTPartition(handle, null).?;
+    const efi = rb.NextGPTPartition(handle, boot).?;
+    const posfs_part = rb.NextGPTPartition(handle, efi).?;
+    const ntfs_part = rb.NextGPTPartition(handle, posfs_part).?;
+    const linux = rb.NextGPTPartition(handle, ntfs_part).?;
+
+    const fat32 = rdb.RDBMF_FAT | rdb.mountFormat(sdk.dos.fat.FORMAT_FAT32);
+    try testing.expectEqual(rdb.RDBERR_FILESYSTEM, rb.MountGPTPartition(handle, boot, "Boot", null, 0));
+    var name: rdb.MountName = undefined;
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountGPTPartition(handle, boot, "Boot", &name, fat32));
+    try testing.expectEqualStrings("Boot", nameText(&name));
+    const node = dos_rig.device("Boot") orelse return error.NotMounted;
+    try testing.expectEqualStrings(sdk.dos.filesystems.fat_handler, std.mem.span(node.misc.handler.handler.?));
+    var env = sdk.dos.filehandler.startupOf(node.misc.handler.startup).?.environ.?;
+    try testing.expectEqual(sdk.dos.fat.typeWithFormat(sdk.dos.ID_MSDOS_DISK, sdk.dos.fat.FORMAT_FAT32), env.dos_type);
+    try testing.expectEqual(@as(u32, 2048), env.low_cyl);
+    try testing.expectEqual(@as(u32, 3071), env.high_cyl);
+    try testing.expectEqual(rdb.RDBERR_MOUNTED, rb.MountGPTPartition(handle, boot, "Boot2", null, fat32));
+
+    // The format left to the volume's size.
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountGPTPartition(handle, efi, "EFI", null, rdb.RDBMF_FAT));
+    env = sdk.dos.filehandler.startupOf(dos_rig.device("EFI").?.misc.handler.startup).?.environ.?;
+    try testing.expectEqual(sdk.dos.ID_MSDOS_DISK, env.dos_type);
+
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountGPTPartition(handle, posfs_part, "Work", null, fat32));
+    env = sdk.dos.filehandler.startupOf(dos_rig.device("Work").?.misc.handler.startup).?.environ.?;
+    try testing.expectEqual(sdk.dos.posfs.ID_POSFS_DISK, env.dos_type);
+
+    try testing.expectEqual(rdb.RDBERR_FILESYSTEM, rb.MountGPTPartition(handle, ntfs_part, "NTFS", null, fat32));
+    try testing.expectEqual(rdb.RDBERR_FILESYSTEM, rb.MountGPTPartition(handle, linux, "Linux", null, fat32));
+    try testing.expect(dos_rig.device("NTFS") == null);
+    try testing.expect(dos_rig.device("Linux") == null);
+}
+
 test "a unit's first medium with a GPT: the container's partitions, then its FAT and posfs partitions under the unit's name, none it may not mount, none of its own" {
     var dos_rig = try DosRig.init();
     defer dos_rig.deinit() catch unreachable;
@@ -1619,4 +1674,37 @@ test "a unit's first medium with a GPT: the container's partitions, then its FAT
     try testing.expect(dos_rig.device("SD0P5") == null);
     const work = dos_rig.device("SD0P4") orelse return error.NotMounted;
     try testing.expectEqualStrings(sdk.dos.posfs.HANDLER_NAME, std.mem.span(work.misc.handler.handler.?));
+}
+
+test "a unit whose table's partitions dos has as boot nodes: the GPT's FAT partition still gets its drive, the table nothing more" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    var large = try Large.attach(rig);
+    defer large.detach(rig);
+    try large.lay(&.{
+        gptEntry(gpt.TYPE_BASIC_DATA, 2048, 3071, "BOOT"),
+        gptEntry(gpt.TYPE_CONTAINER, 3072, last_usable, "PowerOS"),
+    });
+    large.fatVolume(2048);
+    {
+        const handle = try rig.open();
+        defer rig.rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.InitRDB(handle));
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.AddPartition(handle, "DH0", 16, 1000, sdk.dos.posfs.ID_POSFS_DISK));
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.AddPartition(handle, "DH1", 1001, 2000, sdk.dos.posfs.ID_POSFS_DISK));
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.WriteRDB(handle));
+        // What the ROM's copy of the device did at cold start: DH0.
+        try testing.expectEqual(rdb.RDBERR_OK, rig.rb.MountPartition(handle, rig.rb.FindPartition(handle, "DH0").?, null, 0));
+    }
+
+    var medium: automount.MediumNode = .{};
+    var drives: automount.Drives = .{};
+    automount.mountMedium(rig.sys, dos_rig.dl, removable(&medium), &drives);
+    try testing.expectEqual(@as(u32, 2), drives.count);
+    try testing.expectEqualStrings("DH0", nameText(&drives.names[0]));
+    try testing.expectEqualStrings("SD0", nameText(&drives.names[1]));
+    const boot = dos_rig.device("SD0") orelse return error.NotMounted;
+    try testing.expectEqualStrings(sdk.dos.filesystems.fat_handler, std.mem.span(boot.misc.handler.handler.?));
+    try testing.expect(dos_rig.device("DH1") == null);
 }

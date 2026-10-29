@@ -46,13 +46,15 @@ const max_cyl_blocks: u64 = 1 << 31;
 ///   `SD0P3`).
 /// - `mounted`: where the name the node got goes, or null.
 /// - `flags`: RDBMF_START to start the handler before the call returns;
-///   0 leaves it to the drive's first use.
+///   0 leaves it to the drive's first use. RDBMF_FAT (1.7), with a
+///   format by `rdb.mountFormat`, mounts a new partition for FAT.
 ///
 /// RESULT:
 /// RDBERR_OK when the node is on the list, and `mounted` holds its name.
 /// RDBERR_NOGPT for a handle without a GPT; RDBERR_FILESYSTEM for the
 /// container, or a partition whose first block holds no file system this
-/// machine reads or one that cannot go on this medium; RDBERR_NAME for a
+/// machine reads - with RDBMF_FAT, and is not a new one's - or one that
+/// cannot go on this medium; RDBERR_NAME for a
 /// name that is empty, too long, holds a colon or a slash, or is taken
 /// with every dot that fits; RDBERR_RANGE for a partition a cylinder
 /// cannot be found for (one that starts on an odd block of a disk of 2^32
@@ -69,6 +71,15 @@ const max_cyl_blocks: u64 = 1 << 31;
 /// blocks and no more, with the medium's block size and memory, and it is
 /// called `name`, with a dot added while dos's list has a device or an
 /// assign of the name, as MountPartition does.
+///
+/// With RDBMF_FAT a partition whose first block holds no volume is
+/// mounted for FAT (`MSD`, with the format the flags name as its last
+/// byte) when the block is all zeroes and the partition's type is one a
+/// FAT volume is in - basic data, or EFI System for the partition a
+/// firmware starts from: a new partition, whose first block the program
+/// that made it cleared, so that C:Format can give it a volume. What
+/// another system put there - an NTFS volume, FAT12 or FAT16 - is not
+/// mistaken for one.
 ///
 /// A node of the same unit whose area shares a block with the partition's
 /// stops it, as it stops MountPartition: a drive over the whole medium,
@@ -119,7 +130,10 @@ pub fn MountGPTPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb
     if (!_partition.validName(drive)) return rdb.RDBERR_NAME;
     if (_handle.changed(private)) return rdb.RDBERR_CHANGED;
     const first = _handle.readAt(private, entry.starting_lba) orelse return rdb.RDBERR_IO;
-    const dos_type = holds(first) orelse return rdb.RDBERR_FILESYSTEM;
+    const dos_type = holds(first) orelse if (flags & rdb.RDBMF_FAT != 0 and fresh(entry, first))
+        dos.fat.typeWithFormat(dos.ID_MSDOS_DISK, rdb.formatOfFlags(flags))
+    else
+        return rdb.RDBERR_FILESYSTEM;
     if (!dos.filesystems.suits(dos_type, handle.geometry.erase_size, false)) return rdb.RDBERR_FILESYSTEM;
     const handler = dos.filesystems.handlerFor(dos_type) orelse return rdb.RDBERR_FILESYSTEM;
     const env = environmentOf(handle, entry, dos_type) orelse return rdb.RDBERR_RANGE;
@@ -147,6 +161,17 @@ fn holds(block: []const u8) ?u32 {
     if (dos.posfs.table.isLabel(block)) return dos.posfs.ID_POSFS_DISK;
     if (dos.fat.formatOf(block) != .unknown) return dos.ID_MSDOS_DISK;
     return null;
+}
+
+/// Whether a partition is a new one for FAT: of a type a FAT volume is
+/// in, its first block all zeroes.
+fn fresh(entry: *const gpt.Entry, block: []const u8) bool {
+    if (!gpt.sameGuid(&entry.partition_type_guid, &gpt.TYPE_BASIC_DATA) and
+        !gpt.sameGuid(&entry.partition_type_guid, &gpt.TYPE_EFI_SYSTEM)) return false;
+    for (block) |byte| {
+        if (byte != 0) return false;
+    }
+    return true;
 }
 
 /// The environment of a partition's blocks, or null where no cylinder of

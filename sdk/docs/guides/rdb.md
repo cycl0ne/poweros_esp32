@@ -483,6 +483,17 @@ sector is FAT, and anything else is `RDBERR_FILESYSTEM`, as is the
 container. An EFI System partition is a FAT volume and is mounted as
 one.
 
+A partition just made holds no volume yet, so nothing says it is FAT's.
+With `RDBMF_FAT` (1.7) a basic data or EFI System partition whose first
+block is all zeroes is mounted for FAT all the same, its DosType `MSD`
+with the format `rdb.mountFormat` puts in the flags as its last byte -
+`rb.MountGPTPartition(handle, part, "BOOT", &name, rdb.RDBMF_START |
+rdb.RDBMF_FAT | rdb.mountFormat(fat.FORMAT_FAT32))` - so `C:Format`
+can give it a volume. Whoever made the partition clears its first
+block for that; what another system put there - an NTFS volume, FAT16
+- is not all zeroes, and stays unmounted. A partition that holds a
+volume is mounted as it holds, the flag aside.
+
 ### Making a GPT
 
 ```zig
@@ -613,7 +624,9 @@ unit's own name, `SD0:` or `DU0:`, every later one under the unit's name
 with `P` and its entry number, `SD0P3:`. An EFI System partition is one
 of them. A unit
 that a device node opens already - a MountList entry mounted by hand
-first - is left to it. The drives stay with the handlers they got: the
+first, or the boot nodes a device in the ROM made for its table - is
+left to it, but for the GPT partitions outside the container, which
+get their drives as above where that node opens none of their blocks. The drives stay with the handlers they got: the
 next card or stick in the unit is read through them, and a table
 written to a card is mounted as it says at the next start, or at once
 by `MountPartition`.
@@ -749,11 +762,17 @@ RDB CHANGE DH1 DOSTYPE POS           ; a partition given to another file system
 RDB REMOVE DH1
 RDB ADDFS HANDLERS:posfs-handler DOSTYPE POS   ; posfs's code kept in the table
 RDB REMFS POS                        ; ... and taken out
+RDB nvme.device ADD DH1 DOSTYPE POS MOUNT  ; ... and mounted at once
+RDB ADD DH2 SIZE 4G DOSTYPE FAT32    ; 4 GiB for FAT32, at the first free cylinders they fit in
+RDB nvme.device INIT GPT ADDGPT BOOT DOSTYPE FAT32 SIZE 256M
+                                     ; a GPT with a FAT partition first, mounted as BOOT:
+RDB sdcard.device ADDGPT Photos DOSTYPE EXFAT   ; FAT over the GPT's largest free run
+RDB sdcard.device REMGPT Photos      ; ... and taken out of the GPT
 ```
 
-A change is made in the order `INIT`, `REMOVE`, `CHANGE`, `ADD`,
-`REMFS`, `ADDFS`, and the table is written once, as a whole, and
-printed, with the file systems it keeps and which code each one's
+A change is made in the order `INIT`, `REMOVE`, `REMGPT`, `CHANGE`,
+`ADD`, `ADDGPT`, `REMFS`, `ADDFS`, and the table is written once, as a
+whole, and printed, with the file systems it keeps and which code each one's
 partitions run. A disk with a GPT has it listed first - each partition's
 entry number, first and last block, size, type and name, and which one
 holds the table - and its table is the container's, in the container's
@@ -761,9 +780,13 @@ cylinders. `INIT` on such a disk makes the table in its container,
 `INIT GPT` a new GPT for the whole disk with a container over its free
 blocks, and `INIT FORCE` on a GPT with no container a table over the
 whole disk in place of the GPT. A changed GPT is written before the
-table. `DOSTYPE` takes four
-characters with `\<n>` for a byte by its value (`FLS\0`, or `FLS` with
-the zero left off) or a number (`0x464C5300`). `CHANGE` sets the
+table. `DOSTYPE` takes a file system's name - `FAT` (`MSD\0`, which
+`C:Format` makes FAT32 up to 32 GiB and exFAT past that), `FAT32`
+(`MSD\1`), `EXFAT` (`MSD\2`), `POSFS` (`POS\0`) - four characters with
+`\<n>` for a byte by its value (`FLS\0`, or `FLS` with the zero left
+off) or a number (`0x464C5300`). `SIZE` goes in place of `LOW` and
+`HIGH`, in bytes or with `K`, `M`, `G` or `T` after it: `ADD` rounds it
+up to whole cylinders and puts them at the first free ones they fit in. `CHANGE` sets the
 partition's DosType, its `BOOTABLE` flag, or both, and leaves its
 cylinders and what is on them alone: the partition is mounted with its
 new handler at the next boot, and `C:Format` gives it that file system's
@@ -772,6 +795,68 @@ empty volume.
 `BOOTPRI` gives the partition `ADD` makes, or the one `CHANGE` names,
 its boot priority (0 for a new one without it): of the bootable
 partitions of every disk, dos starts from the one with the highest.
+
+`MOUNT` mounts at once, as HDToolBox's Save does, once any change is
+written: every partition of the table not marked `PBFF_NOMOUNT` that no
+drive has yet gets one and its file system started (`MountPartition`
+with `RDBMF_START`), under its name or with a dot added while that is
+taken - a second disk's `DH0` is `DH0.:`. A drive over the whole medium
+opens all of its blocks, so `NV0:` on an SSD that had no table is
+dismounted first (`Assign NV0: DISMOUNT`). It is how a machine without
+a display, where HDToolBox does not run, partitions and formats a disk
+in one go, as the Compute Module 5's SSD was:
+
+```
+Assign NV0: DISMOUNT
+RDB nvme.device INIT GPT
+RDB nvme.device ADD DH0 LOW 2048 HIGH 67110911 DOSTYPE POS
+RDB nvme.device ADD DH1 DOSTYPE POS MOUNT
+Format DRIVE DH0.: NAME System POSFS
+Format DRIVE DH1: NAME Work POSFS
+Copy SYS: TO DH0.: ALL CLONE QUIET
+RDB nvme.device CHANGE DH0 BOOTABLE BOOTPRI 5
+```
+
+`DH0` is 32 GiB from 1 MiB into the container - a cylinder is a block
+there, and the container starts on a whole MiB - and `DH1` the rest.
+The last line makes the SSD's `DH0:` the one the next start comes
+from, above the flash disk's (priority 0), whose `DH0` dos then
+refuses: one name, one drive. The flash disk is still loaded, and
+`RDB MOUNT` gives it a drive again (`DH0.:`), so a newer system's files
+in it go onto the SSD with `Copy DH0.: TO SYS: ALL CLONE QUIET` and a
+restart.
+
+**FAT for other systems.** A FAT partition in the table is one only
+PowerOS sees; one of the GPT's own, beside the container, every system
+sees - a camera's card, a stick for a PC, the partition a firmware
+loads its kernel from. `ADDGPT` puts a basic data partition of that
+name in the GPT, over `LOW` to `HIGH` (the disk's blocks, the first on
+a whole MiB), of `SIZE` at the first free MiB it fits from, or over the
+largest free run; writes it, clears its first block, and mounts it at
+once for FAT under its name (`RDBMF_FAT`), with the format `DOSTYPE`
+names - `FAT`, `FAT32` or `EXFAT`, `FAT` when it is left out:
+
+```
+Assign NV1: DISMOUNT
+RDB nvme.device UNIT 1 INIT GPT ADDGPT BOOT DOSTYPE FAT32 SIZE 256M
+Format DRIVE BOOT: NAME Boot
+RDB nvme.device UNIT 1 ADD DH5 SIZE 128M DOSTYPE POSFS MOUNT
+RDB nvme.device UNIT 1 ADD DH6 SIZE 64M DOSTYPE EXFAT MOUNT
+```
+
+The container `INIT GPT` makes takes every block the GPT's other
+partitions leave, so a FAT partition goes in with it: `INIT GPT` puts
+`ADDGPT`'s partition in first, at the disk's first MiB, and the
+container over the largest free run after it. `ADDGPT` on a disk whose
+container has the rest says so. Once the partition holds a volume the
+next start mounts it as the device mounts a GPT's partitions - here
+`NV1:` - and `MOUNT` mounts the GPT's partitions too: those that hold
+a volume, under their entry's name, and a new one, its first block
+still clear, for FAT. A drive over the whole medium in the way is
+named, with the `Assign` that takes it away. `REMGPT` takes a GPT
+partition out, by its name or its entry number; not the container,
+which `INIT GPT FORCE` replaces with all it holds. A drive it had
+stays until the next start.
 
 `s3> rdb init [partition]` writes a first table on a blank chip, its
 one partition for the flash file system.
