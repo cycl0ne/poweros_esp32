@@ -186,7 +186,11 @@ pub const LIBRARY_VERSION = 0;
 /// 71: on a composed screen a step of a sizing reaches the display once it
 /// is drawn: what intuition and the program draw in the window for it is
 /// gathered until the program has replied its IDCMP_NEWSIZE.
-pub const LIBRARY_REVISION = 71;
+/// 72: a group sized by its window (GA_RelWidth, GA_RelHeight) keeps that
+/// size when a member joins: a layout's child shown again no longer turns
+/// the window's layout into one as big as the whole window, over its
+/// border.
+pub const LIBRARY_REVISION = 72;
 const BUILD_DATE = "29.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

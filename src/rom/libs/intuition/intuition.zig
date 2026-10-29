@@ -5114,6 +5114,56 @@ test "a group holds what it is given, and gives a member back where it found it"
     try tearDown(ib);
 }
 
+test "a group sized by its window keeps that size when a member joins" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+    const told_class = toldClass(ib);
+
+    // As a window object puts its layout in once it is made: inside the
+    // border, its width and height what it is less than the window's room.
+    const group = it.NewObjectTagList(null, classusr.GROUPGCLASS, null).?;
+    _ = it.SetAttrsTagList(group, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 19 },
+        .{ .tag = gc.GA_RelWidth, .data = @bitCast(@as(isize, -26)) },
+        .{ .tag = gc.GA_RelHeight, .data = @bitCast(@as(isize, -38)) },
+        .{},
+    });
+    // Placed once, and so of a size: a member shown again. One never placed
+    // is of none.
+    const members = [_]*Object{
+        it.NewObjectTagList(told_class, null, &[_]TagItem{
+            .{ .tag = gc.GA_Left, .data = 2 },
+            .{ .tag = gc.GA_Top, .data = 2 },
+            .{ .tag = gc.GA_Width, .data = 596 },
+            .{ .tag = gc.GA_Height, .data = 120 },
+            .{},
+        }).?,
+        it.NewObjectTagList(told_class, null, &[_]TagItem{
+            .{ .tag = gc.GA_Width, .data = 0 },
+            .{ .tag = gc.GA_Height, .data = 0 },
+            .{},
+        }).?,
+    };
+    for (members) |member| {
+        var add = classusr.OpMember{ .method_id = classusr.OM_ADDMEMBER, .object = member };
+        try testing.expect(it.SendMessage(group, @ptrCast(&add)) != 0);
+        try testing.expectEqual(@as(isize, -26), @as(isize, @bitCast(getAttr(ib, group, gc.GA_RelWidth))));
+        try testing.expectEqual(@as(isize, -38), @as(isize, @bitCast(getAttr(ib, group, gc.GA_RelHeight))));
+    }
+    const g = gadgetclass.gadgetOf(ib, group);
+    try testing.expect(g.flags & gadgetclass.GFLG_RELWIDTH != 0 and g.flags & gadgetclass.GFLG_RELHEIGHT != 0);
+    // The member is still put inside the group's corner.
+    try testing.expectEqual(@as(usize, 6), getAttr(ib, members[0], gc.GA_Left));
+    try testing.expectEqual(@as(usize, 21), getAttr(ib, members[0], gc.GA_Top));
+
+    it.DisposeObject(group);
+    try testing.expect(ib.iface().FreeClass(told_class));
+    try tearDown(ib);
+}
+
 test "a group tells the member that had the input that it is done, and that the room changed" {
     const ib = try setUp();
     defer kexec.deinit();

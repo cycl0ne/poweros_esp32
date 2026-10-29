@@ -10,8 +10,9 @@
 //! `GA_Left` and `GA_Top` when it joins are where it sits in the group;
 //! the group adds its own corner to them there and then, so from that
 //! moment the member is a gadget of the window like any other and draws
-//! itself where it is. The group grows to hold it. Moving the group moves
-//! every member by the same amount.
+//! itself where it is. The group grows to hold it, unless its size is the
+//! window's (`GA_RelWidth`, `GA_RelHeight`), which it keeps. Moving the
+//! group moves every member by the same amount.
 //!
 //! What a member does reaches the window in the member's own name: a
 //! member with `GA_RelVerify` let go over itself is the gadget of that
@@ -256,8 +257,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             // thereafter.
             const b = cornerOf(ib, member, null);
             const group = gadgetclass.gadgetOf(ib, o.?);
-            group.width = @max(group.width, b.left + b.width);
-            group.height = @max(group.height, b.top + b.height);
+            // A group sized by its window (`GA_RelWidth`, `GA_RelHeight`)
+            // keeps that size: its width and height are then what it is
+            // less than the window's room, not a size to grow - a layout
+            // filling a window, a child of it shown again.
+            if (group.flags & gadgetclass.GFLG_RELWIDTH == 0) group.width = @max(group.width, b.left + b.width);
+            if (group.flags & gadgetclass.GFLG_RELHEIGHT == 0) group.height = @max(group.height, b.top + b.height);
             moveTo(ib, member, null, group.left + b.left, group.top + b.top);
             clipOne(ib, member, &group.clip);
             // A group already in a window or a requester takes the member
