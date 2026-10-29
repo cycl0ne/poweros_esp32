@@ -15,7 +15,7 @@
 //! and after it. It is no music itself, and is passed over. With it the
 //! length is exact, the samples before and after the music are left out
 //! (one song runs into the next without a gap), and a seek lands where the
-//! table says. Without it the length is worked out from the bit rate and
+//! table says - a seek to the start on the music's first sample. Without it the length is worked out from the bit rate and
 //! the file's size, and a seek from the bit rate - exact for a constant
 //! rate, near for a variable one.
 //!
@@ -49,7 +49,9 @@ pub const Mp3 = struct {
     exact: bool,
     total: u32,
     given: u32,
-    /// Frames to leave out at the start, still to go.
+    /// The frames the encoder put before the music, and those of them
+    /// still to leave out.
+    delay: u32,
     to_skip: u32,
 };
 
@@ -72,6 +74,7 @@ pub fn open(stream: *Stream) i32 {
     m.exact = false;
     m.total = 0;
     m.given = 0;
+    m.delay = 0;
     m.to_skip = 0;
 
     // The first frame: found, but not decoded.
@@ -109,6 +112,7 @@ pub fn open(stream: *Stream) i32 {
             const cut = @as(u64, tag.delay) + tag.padding;
             m.exact = true;
             m.total = @intCast(@min(all -| cut, 0xFFFF_FFFF));
+            m.delay = tag.delay;
             m.to_skip = tag.delay;
             m.tagged_frames = tag.frames;
             if (tag.bytes != 0 and tag.frames != 0) {
@@ -224,11 +228,14 @@ fn toChannels(stream: *Stream, samples: u32, from: u32) void {
 
 /// The stream moved to near `frame`: by the encoder's table where there
 /// is one, else by the bit rate. The frames just after it may be left
-/// out, until the reservoir they reach back into is filled again.
+/// out, until the reservoir they reach back into is filled again. Frame
+/// 0 is the first frame of music, the encoder's delay left out again.
 pub fn seek(stream: *Stream, m: *Mp3, frame: u32) i32 {
     if (stream.file == null) return ac.ACERR_NOSEEK;
     var offset: u64 = 0;
-    if (m.has_toc and m.exact and m.total != 0 and m.music_bytes != 0) {
+    if (frame == 0) {
+        offset = 0;
+    } else if (m.has_toc and m.exact and m.total != 0 and m.music_bytes != 0) {
         const at = @as(f32, @floatFromInt(@min(frame, m.total))) * 100.0 / @as(f32, @floatFromInt(m.total));
         const index: usize = @intFromFloat(@min(at, 99.0));
         const low: f32 = @floatFromInt(m.toc[index]);
@@ -241,7 +248,7 @@ pub fn seek(stream: *Stream, m: *Mp3, frame: u32) i32 {
     if (m.music_bytes != 0) offset = @min(offset, m.music_bytes);
     if (!_stream.seekSource(stream, m.first_frame + offset)) return ac.ACERR_NOSEEK;
     m.dec.reset();
-    m.to_skip = 0;
+    m.to_skip = if (frame == 0) m.delay else 0;
     m.given = @min(frame, if (m.exact) m.total else frame);
     stream.pcm_start = 0;
     stream.pcm_stop = 0;

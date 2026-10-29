@@ -41,8 +41,10 @@ const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
 
 /// How many bytes are read ahead: enough to find an MP3's first frame -
-/// it has to agree with the frames after it - and a WAV's header.
-pub const input_bytes = 16 * 1024;
+/// it has to agree with the frames after it - and a WAV's header. The
+/// SDK says it to programs, which keep that much ready for a read
+/// function.
+pub const input_bytes = ac.AUDIO_READ_AHEAD;
 
 /// The longest a name is kept, and a comment; a frame's text read whole,
 /// at most.

@@ -105,7 +105,8 @@ A file the stream opened (ACA_Name) is closed; the stream is freed.
 - Waits: yes, on the file it closes.
 - Interrupts: no.
 - Locks: no spinlock may be held.
-- Process: the task that opened the stream.
+- Process: a task will do: the one that has the stream - the one that
+  opened it, or one it was handed to (SINCE 1.3) - never two at once.
 
 **OWNERSHIP**
 
@@ -165,14 +166,17 @@ stream's packets decoded one at a time and handed out across calls. An
 MP3 is cut where its encoder said the music begins and ends, an Ogg
 Vorbis stream where its pages' positions say, so a song played after
 another follows it without a gap. A FLAC frame that is damaged - its
-CRC wrong - is handed out as silence.
+CRC wrong - is handed out as silence. A read function is asked for the
+bytes of the frames handed out and `AUDIO_READ_AHEAD` more at most
+(SINCE 1.4 said).
 
 **CONTEXT**
 
 - Waits: yes, on the source when the read-ahead runs low.
 - Interrupts: no.
 - Locks: no spinlock may be held.
-- Process: the task that opened the stream.
+- Process: a task will do: the one that has the stream - the one that
+  opened it, or one it was handed to (SINCE 1.3) - never two at once.
 
 **OWNERSHIP**
 
@@ -183,7 +187,8 @@ CRC wrong - is handed out as silence.
 An MP3 frame is 1152 frames of samples at 32 kHz and up, 576 below; a
 buffer of a few thousand frames costs the fewest calls. Decoding an
 MP3 takes about a tenth of a core at 44.1 kHz in stereo. A FLAC block
-is mostly 4096 frames, a Vorbis packet up to 1024.
+is mostly 4096 frames, a Vorbis packet up to 1024. A stream read
+through a function (ACA_ReadFunc) calls it on the task that decodes.
 
 **BUGS**
 
@@ -450,10 +455,11 @@ finds the kind by the first bytes (as `IdentifyAudio`) unless
 its data, an MP3's tags in front of the sound and its first frame -
 with what its encoder wrote about the rest, when it did - a FLAC's
 metadata blocks, an Ogg Vorbis stream's three header packets; and the
-stream's info is filled in. An Ogg Vorbis file's last page is looked
-for at its end, for its length. A file's end is looked at first: tags there
-(ID3v1, APE) are not read as sound, and an ID3v1 tag's names count
-where the front says nothing. An ID3v2 tag is read whole, frame by
+stream's info is filled in. A read function is asked for the header's
+bytes and `AUDIO_READ_AHEAD` more at most. An Ogg Vorbis file's last
+page is looked for at its end, for its length. A file's end is looked
+at first: tags there (ID3v1, APE) are not read as sound, and an ID3v1
+tag's names count where the front says nothing. An ID3v2 tag is read whole, frame by
 frame, however large; its picture is read into memory of its own only
 with `ACA_KeepPicture` - the front cover, where there are several - and
 passed over otherwise. A file can seek; a read function cannot.
@@ -468,8 +474,11 @@ passed over otherwise. A file can seek; a read function cannot.
 
 **OWNERSHIP**
 
-The stream is the caller's, given back with `CloseAudioStream`. A file
-opened with ACA_Name is closed with it; a handle given with
+The stream is the caller's, given back with `CloseAudioStream`. It may
+be handed to another task, which then decodes, moves and closes it
+(SINCE 1.3): a program opens the next song - its tags and its cover
+read - while the task that decodes plays this one. Two tasks never use
+one stream at once. A file opened with ACA_Name is closed with it; a handle given with
 ACA_FileHandle stays the program's, and must stay open until then.
 
 **NOTES**
@@ -537,14 +546,16 @@ on to the frame. An MP3 goes to the frame its encoder's
 table of contents points to, or the bit rate when it has none - exact
 for a constant rate, near for a variable one - and the frame or two
 after it may be left out, until the reservoir of bits they reach back
-into is filled again.
+into is filled again. Frame 0 is exact for every kind: an MP3 starts
+again where its encoder said the music begins (SINCE 1.3).
 
 **CONTEXT**
 
 - Waits: yes, on the file.
 - Interrupts: no.
 - Locks: no spinlock may be held.
-- Process: the task that opened the stream.
+- Process: a task will do: the one that has the stream - the one that
+  opened it, or one it was handed to (SINCE 1.3) - never two at once.
 
 **OWNERSHIP**
 

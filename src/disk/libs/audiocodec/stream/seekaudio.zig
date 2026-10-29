@@ -34,13 +34,15 @@ const vorbis = @import("../vorbis/_vorbis.zig");
 /// table of contents points to, or the bit rate when it has none - exact
 /// for a constant rate, near for a variable one - and the frame or two
 /// after it may be left out, until the reservoir of bits they reach back
-/// into is filled again.
+/// into is filled again. Frame 0 is exact for every kind: an MP3 starts
+/// again where its encoder said the music begins (SINCE 1.3).
 ///
 /// CONTEXT:
 /// - Waits: yes, on the file.
 /// - Interrupts: no.
 /// - Locks: no spinlock may be held.
-/// - Process: the task that opened the stream.
+/// - Process: a task will do: the one that has the stream - the one that
+///   opened it, or one it was handed to (SINCE 1.3) - never two at once.
 ///
 /// OWNERSHIP:
 /// None.

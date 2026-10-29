@@ -15,6 +15,8 @@
 //!
 //! A stream is its opener's: everything about it is in the stream, and the
 //! base, shared by every opener, holds only the libraries it works through.
+//! So a stream can be handed to another task, which goes on with it - its
+//! file is read through dos, which answers any task.
 //!
 //! The jump table is audiocodec_lvo.zig, the ROM tag, init and expunge
 //! audiocodec_init.zig, the base audiocodec_base.zig. Each call is a file

@@ -28,7 +28,8 @@ const _stream = @import("_stream.zig");
 /// - Waits: yes, on the file it closes.
 /// - Interrupts: no.
 /// - Locks: no spinlock may be held.
-/// - Process: the task that opened the stream.
+/// - Process: a task will do: the one that has the stream - the one that
+///   opened it, or one it was handed to (SINCE 1.3) - never two at once.
 ///
 /// OWNERSHIP:
 /// The stream is gone after the call. A handle the program gave
