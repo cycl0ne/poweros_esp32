@@ -94,8 +94,9 @@ pub fn ready(base: *TLSBase) i32 {
     return tls.TLSERR_OK;
 }
 
-/// A whole file into memory; null for none, or one past `limit`.
-fn readFile(base: *TLSBase, name: [*:0]const u8, limit: u32, length: *u32) ?[*]u8 {
+/// A whole file into memory allocated with `requirements`; null for
+/// none, or one past `limit`.
+fn readFile(base: *TLSBase, name: [*:0]const u8, limit: u32, requirements: u32, length: *u32) ?[*]u8 {
     const sys = base.sys_base;
     const dl = base.dos_base.?;
     const file = dl.Open(name, dos.MODE_OLDFILE) orelse return null;
@@ -103,7 +104,7 @@ fn readFile(base: *TLSBase, name: [*:0]const u8, limit: u32, length: *u32) ?[*]u
     _ = dl.Seek(file, 0, dos.OFFSET_END);
     const size = dl.Seek(file, 0, dos.OFFSET_BEGINNING);
     if (size <= 0 or size > limit) return null;
-    const memory = sys.AllocVec(@intCast(size), exec.MEMF_ANY) orelse return null;
+    const memory = sys.AllocVec(@intCast(size), requirements) orelse return null;
     const bytes: [*]u8 = @ptrCast(memory);
     if (dl.Read(file, bytes, @intCast(size)) != size) {
         sys.FreeVec(memory);
@@ -113,15 +114,17 @@ fn readFile(base: *TLSBase, name: [*:0]const u8, limit: u32, length: *u32) ?[*]u
     return bytes;
 }
 
+/// The roots, kept in the base: the system's memory, not the task's whose
+/// session read them first.
 fn loadRoots(base: *TLSBase) void {
     var length: u32 = 0;
-    const bytes = readFile(base, roots_file, 1 << 20, &length) orelse return;
+    const bytes = readFile(base, roots_file, 1 << 20, exec.MEMF_ANY | exec.MEMF_SYSTEM, &length) orelse return;
     base.roots = bytes;
     base.roots_length = length;
 }
 
 /// Every certificate of every PEM file in the program's own directory,
-/// as anchors in a store of their own.
+/// as anchors in a store of their own, kept in the base as the roots are.
 fn loadOwnRoots(base: *TLSBase) void {
     const sys = base.sys_base;
     const dl = base.dos_base.?;
@@ -129,7 +132,7 @@ fn loadOwnRoots(base: *TLSBase) void {
     defer dl.UnLock(lock);
     var fib: dos.FileInfoBlock = .{};
     if (!dl.Examine(lock, &fib) or fib.dir_entry_type <= 0) return;
-    const memory = sys.AllocVec(own_max, exec.MEMF_ANY) orelse return;
+    const memory = sys.AllocVec(own_max, exec.MEMF_ANY | exec.MEMF_SYSTEM) orelse return;
     const store: [*]u8 = @ptrCast(memory);
     @memcpy(store[0..anchors.magic.len], anchors.magic);
     var at: usize = anchors.magic.len;
@@ -150,7 +153,7 @@ fn loadOwnRoots(base: *TLSBase) void {
         @memcpy(path[prefix.len..][0..name.len], name);
         path[prefix.len + name.len] = 0;
         var length: u32 = 0;
-        const text = readFile(base, @ptrCast(&path), pem_max, &length) orelse continue;
+        const text = readFile(base, @ptrCast(&path), pem_max, exec.MEMF_ANY, &length) orelse continue;
         defer sys.FreeVec(text);
         var blocks = pem.Blocks.of(text[0..length]);
         while (blocks.next(der)) |encoded| {
@@ -178,7 +181,7 @@ fn nameOf(field: []const u8) []const u8 {
 /// The time zone rule's first line that is not a comment.
 fn loadZone(base: *TLSBase) void {
     var length: u32 = 0;
-    const text = readFile(base, timezone.zone_file, 4096, &length) orelse return;
+    const text = readFile(base, timezone.zone_file, 4096, exec.MEMF_ANY, &length) orelse return;
     defer base.sys_base.FreeVec(text);
     var start: usize = 0;
     while (start < length) {

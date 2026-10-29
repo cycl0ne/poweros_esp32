@@ -298,7 +298,8 @@ fn setUp(cb: *CryptoBase) bool {
     state.rx = state.units[1] - dmares.PL080_CHANNEL0;
     state.int_number = dmares.dmaIntNumber(state.units[0], dmares.DMA_IN);
 
-    const block = sys.AllocVec(allocation, exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return giveChannels(state);
+    // Kept until the library goes: the system's, not the first caller's.
+    const block = sys.AllocVec(allocation, exec.MEMF_DMA | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return giveChannels(state);
     state.block = block;
     const first = (@intFromPtr(block) + line - 1) & ~@as(usize, line - 1);
     state.in = first;
