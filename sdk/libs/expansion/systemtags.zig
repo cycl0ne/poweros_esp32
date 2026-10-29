@@ -466,8 +466,9 @@ pub const CHIP_PCI_ECAM: u32 = 26;
 /// bridge's registers; its INTA to INTD are gathered on PART_Irq.
 pub const CHIP_JH7110_PCIE: u32 = 27;
 /// An xHCI USB host controller, found on PCI (PARTKIND_USB on BUS_PCI):
-/// PART_BusUnit says which, counting the machine's xHCI functions in the
-/// order pci.library has them (xhci.device's unit).
+/// PART_BusUnit says which - xhci.device's unit, the PCI functions
+/// counted in the order pci.library has them, after the board's own
+/// controllers (CHIP_DWC3).
 pub const CHIP_XHCI: u32 = 28;
 /// Motorcomm's YT8531, a 10/100/1000 Mbit/s Ethernet PHY (PARTKIND_NET on
 /// BUS_RGMII): PART_BusUnit the MAC it is wired to, PART_Address its
@@ -513,6 +514,13 @@ pub const CHIP_JH7110_SDMA: u32 = 36;
 /// CCM and GCM, SHA-2 and SM3 with HMAC, and a big-number unit, its data
 /// moved by the block's DMA controller (CHIP_JH7110_SDMA).
 pub const CHIP_JH7110_CRYPTO: u32 = 37;
+/// Synopsys's DesignWare USB 3 controller in host mode, an xHCI that is
+/// no PCI function (PARTKIND_USB on BUS_MEMORY): PART_Address its
+/// registers - the xHCI's, the controller's own at 0xC100 above - and
+/// PART_Irq its first interrupter's interrupt; PART_BusUnit its
+/// xhci.device unit, the board's controllers before the PCI functions.
+/// The CM5's RP1 has two.
+pub const CHIP_DWC3: u32 = 38;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

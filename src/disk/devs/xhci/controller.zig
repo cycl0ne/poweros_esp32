@@ -2,8 +2,9 @@
 //! The controller itself: brought up and stopped, its interrupt, its
 //! event ring, and commands.
 //!
-//! **Bringing it up**, as the specification's chapter 4.2 has it: the
-//! function's memory decoding and bus mastering on; the controller taken
+//! **Bringing it up**, as the specification's chapter 4.2 has it: a PCI
+//! function's memory decoding and bus mastering on, a board's DWC3 made a
+//! host (dwc3.zig); the controller taken
 //! from the firmware if the firmware says it has it (USB Legacy
 //! Support); halted and reset; told how many slots to use, where the
 //! device context base address array is - its entry 0 the scratchpad's
@@ -41,6 +42,7 @@ const reg = _xhci.reg;
 const roothub = @import("roothub.zig");
 const transfer = @import("transfer.zig");
 const slots = @import("slots.zig");
+const dwc3 = @import("dwc3.zig");
 
 /// The interrupter's moderation: 250 µs, in its 250 ns units.
 const moderation = 1000;
@@ -58,23 +60,11 @@ fn pollFor(host: *Host, offset: usize, mask: u32, want: u32, ms: u32) bool {
     return true;
 }
 
-/// The controller found behind its function and reset: its registers'
-/// blocks, what it is, its root hub's ports. False if it does not answer.
+/// The controller found and reset: its registers' blocks, what it is,
+/// its root hub's ports. False if it does not answer.
 pub fn bringUp(host: *Host) bool {
     const sys = host.sys;
-    const pb = host.dev_base.pci_base.?;
-    const function = host.function;
-    const bar = function.bars[0];
-    if (bar.address == 0 or bar.flags & pci.PCIBAR_IO != 0) {
-        sdk.exec.kprintf(sys, "%s: unit %d: its registers were not placed\n", .{ _xhci.DEVICE_NAME, host.number });
-        return false;
-    }
-    var command_word = pb.ReadPCIConfig(function, pci.PCI_COMMAND, 2);
-    command_word |= pci.PCI_COMMAND_MEMORY | pci.PCI_COMMAND_MASTER;
-    command_word &= ~@as(u32, pci.PCI_COMMAND_INTX_DISABLE);
-    pb.WritePCIConfig(function, pci.PCI_COMMAND, 2, command_word);
-
-    host.regs = @intCast(bar.address);
+    host.regs = registersOf(host) orelse return false;
     const first = reg(host.regs + regs.CAPLENGTH).*;
     if (first == 0xFFFF_FFFF) {
         sdk.exec.kprintf(sys, "%s: unit %d: its registers do not answer\n", .{ _xhci.DEVICE_NAME, host.number });
@@ -129,6 +119,27 @@ pub fn bringUp(host: *Host) bool {
     host.frame_seen = 0;
     host.frame_ms = _xhci.now(host);
     return true;
+}
+
+/// Where the controller's registers are: a board controller's where its
+/// part says, the DWC3 made a host first; a PCI function's in BAR0, its
+/// memory decoding and bus mastering on. Null if they were not placed.
+fn registersOf(host: *Host) ?usize {
+    const function = host.function orelse {
+        dwc3.asHost(host.board.regs);
+        return host.board.regs;
+    };
+    const pb = host.dev_base.pci_base.?;
+    const bar = function.bars[0];
+    if (bar.address == 0 or bar.flags & pci.PCIBAR_IO != 0) {
+        sdk.exec.kprintf(host.sys, "%s: unit %d: its registers were not placed\n", .{ _xhci.DEVICE_NAME, host.number });
+        return null;
+    }
+    var command_word = pb.ReadPCIConfig(function, pci.PCI_COMMAND, 2);
+    command_word |= pci.PCI_COMMAND_MEMORY | pci.PCI_COMMAND_MASTER;
+    command_word &= ~@as(u32, pci.PCI_COMMAND_INTX_DISABLE);
+    pb.WritePCIConfig(function, pci.PCI_COMMAND, 2, command_word);
+    return @intCast(bar.address);
 }
 
 /// The root ports each Supported Protocol capability names: the USB 2

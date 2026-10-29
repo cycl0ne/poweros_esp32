@@ -1006,7 +1006,7 @@ The bus is the library's until StopUSB.
 
 The buses are the board's `PARTKIND_USB` parts that may be hosts,
 each on the device that drives its chip (`CHIP_DWC2`:
-usbotg.device; `CHIP_XHCI`: xhci.device).
+usbotg.device; `CHIP_XHCI`, `CHIP_DWC3`: xhci.device).
 
 **BUGS**
 

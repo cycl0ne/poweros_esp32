@@ -13,16 +13,26 @@
 //! the RP1 not reset before the kernel starts): the link up, the RP1's
 //! BARs placed - BAR1, its peripherals, at 0x1C_0000_0000 through the
 //! port's one outbound window, BAR0 with the MSI-X table above it - and
-//! its memory decoding and bus mastering on. Not left: the root port's
-//! bus numbers, an inbound window to the MIP, MSI-X.
+//! its memory decoding and bus mastering on; of RAM, only the 8 MiB at
+//! 0x3B00_0000 open to it. Not left: the root port's bus numbers, the
+//! rest of RAM, an inbound window to the MIP, MSI-X.
 //!
 //! **Set up once** (`init`), as Linux's drivers do it (pcie-brcmstb.c,
 //! irq-bcm2712-mip.c, rp1.c):
 //! 1. the root port's secondary and subordinate bus 1, which the RP1's
 //!    configuration space is reached on - through the port's index and
 //!    data registers, not ECAM;
-//! 2. an inbound window, the port's BAR3: the 4 KiB at 0xFF_FFFF_F000 on
-//!    the bus onto the MIP, so that what the RP1 writes there reaches it;
+//! 2. two inbound windows: the port's BAR2, RAM where it is - the 16 GiB
+//!    from 0 on the bus onto RAM from 0, the most a CM5 has - which the
+//!    RP1's devices, its USB controllers and its Ethernet, read and
+//!    write. The RP1 hands on what they address as it is, so a driver
+//!    gives them the processor's addresses, as on any other board here.
+//!    (Linux puts RAM at 0x10_0000_0000 on the bus and gives them that
+//!    much more.) The RP1's own BARs at 0x8000_0000 are inside the
+//!    window: they are decoded on the way down, it on the way up, and
+//!    the RP1's USB controllers work through it, measured on a CM5.
+//!    And BAR3, the 4 KiB at 0xFF_FFFF_F000 on the bus onto the MIP, so
+//!    that what the RP1 writes there reaches it;
 //! 3. the MIP: every vector the processors', none the VPU's, each taken
 //!    on its edge;
 //! 4. each entry of the RP1's MSI-X table: that address, its own number
@@ -46,14 +56,16 @@ const boards = @import("../boards.zig");
 /// Port 2, the RP1's root port: its own configuration space at the start
 /// of its registers, the RP1's through the index and data registers.
 const PCIE: usize = 0x10_0012_0000;
+const PCIE_MISC_RC_BAR2_CONFIG_LO = 0x4034;
 const PCIE_MISC_RC_BAR3_CONFIG_LO = 0x403C;
-const PCIE_MISC_RC_BAR3_CONFIG_HI = 0x4040;
+const PCIE_MISC_UBUS_BAR2_CONFIG_REMAP_LO = 0x40B4;
 const PCIE_MISC_UBUS_BAR3_CONFIG_REMAP_LO = 0x40BC;
-const PCIE_MISC_UBUS_BAR3_CONFIG_REMAP_HI = 0x40C0;
 const PCIE_EXT_CFG_DATA = 0x8000;
 const PCIE_EXT_CFG_INDEX = 0x9000;
-/// RC_BARn_CONFIG_LO's size for 4 KiB, and a remap's switch.
+/// RC_BARn_CONFIG_LO's size for 4 KiB and for 16 GiB, and a remap's
+/// switch.
 const IBAR_SIZE_4K: u32 = 0x1C;
+const IBAR_SIZE_16G: u32 = 34 - 15;
 const UBUS_REMAP_ACCESS_EN: u32 = 1 << 0;
 
 /// MIP0, whose 64 vectors are the GIC's shared interrupts 128 to 191, and
@@ -92,6 +104,9 @@ pub const INT_ETH = 6;
 pub const INT_UART0 = 25;
 pub const INT_USBHOST0_0 = 31;
 pub const INT_USBHOST1_0 = 36;
+/// Its two USB controllers' registers.
+pub const usb0: usize = peripherals + 0x20_0000;
+pub const usb1: usize = peripherals + 0x30_0000;
 const edge_sources: u64 = (0xF << 31) | (0xF << 36);
 
 /// The exec interrupt - the GIC's interrupt ID - source `source` comes
@@ -122,10 +137,8 @@ fn init() void {
     const cap = msixCapability() orelse return;
     const table = msixTable(cap) orelse return;
 
-    reg(PCIE + PCIE_MISC_UBUS_BAR3_CONFIG_REMAP_HI).* = @truncate(MIP >> 32);
-    reg(PCIE + PCIE_MISC_UBUS_BAR3_CONFIG_REMAP_LO).* = @as(u32, @truncate(MIP)) | UBUS_REMAP_ACCESS_EN;
-    reg(PCIE + PCIE_MISC_RC_BAR3_CONFIG_HI).* = @truncate(mip_on_bus >> 32);
-    reg(PCIE + PCIE_MISC_RC_BAR3_CONFIG_LO).* = @as(u32, @truncate(mip_on_bus)) | IBAR_SIZE_4K;
+    inbound(PCIE_MISC_RC_BAR2_CONFIG_LO, PCIE_MISC_UBUS_BAR2_CONFIG_REMAP_LO, 0, 0, IBAR_SIZE_16G);
+    inbound(PCIE_MISC_RC_BAR3_CONFIG_LO, PCIE_MISC_UBUS_BAR3_CONFIG_REMAP_LO, mip_on_bus, MIP, IBAR_SIZE_4K);
 
     reg(MIP + MIP_INT_MASKL_VPU).* = 0xFFFF_FFFF;
     reg(MIP + MIP_INT_MASKH_VPU).* = 0xFFFF_FFFF;
@@ -148,6 +161,16 @@ fn init() void {
     // The status register beside it written with nothing to clear.
     const command = config(pci.PCI_COMMAND);
     command.* = (command.* & 0xFFFF) | pci.PCI_COMMAND_MASTER | pci.PCI_COMMAND_INTX_DISABLE;
+}
+
+/// An inbound window: `size` (RC_BARn_CONFIG_LO's code for it) from
+/// `on_bus` on the bus onto `cpu`, the port's BAR whose registers are at
+/// `bar` and its remap's at `remap` - each a low word and a high one.
+fn inbound(bar: usize, remap: usize, on_bus: u64, cpu: u64, size: u32) void {
+    reg(PCIE + remap + 4).* = @truncate(cpu >> 32);
+    reg(PCIE + remap).* = @as(u32, @truncate(cpu)) | UBUS_REMAP_ACCESS_EN;
+    reg(PCIE + bar + 4).* = @truncate(on_bus >> 32);
+    reg(PCIE + bar).* = @as(u32, @truncate(on_bus)) | size;
 }
 
 /// Source `irq - first_irq` on, as its kind is; acknowledged once too, so

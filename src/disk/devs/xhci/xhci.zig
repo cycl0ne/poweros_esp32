@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-//! xhci.device: USB host controllers on PCI that speak xHCI, as
-//! `DEVIF_USBHC` (sdk/devices/usbhc.zig) has a host controller - what
-//! usb.library runs a bus on. Unit n is the nth xHCI function
-//! pci.library found: the VisionFive 2's VL805, QEMU's qemu-xhci.
+//! xhci.device: USB host controllers that speak xHCI, as `DEVIF_USBHC`
+//! (sdk/devices/usbhc.zig) has a host controller - what usb.library runs
+//! a bus on. The units are the board's own controllers first (CHIP_DWC3
+//! parts: the CM5's RP1's two), then the xHCI functions pci.library
+//! found: the VisionFive 2's VL805, QEMU's qemu-xhci.
 //!
 //!   UHCMD_CONTROLXFER  a control transfer: setup, data, status
 //!   UHCMD_BULKXFER     a bulk transfer, in rounds of 16 KiB
@@ -24,12 +25,12 @@
 //! _xhci.zig's design, the controller in controller.zig's.
 //!
 //! **A unit's life.** The first OpenDevice of a unit makes its block and
-//! task, claims its PCI function and starts the controller: reset, its
-//! rings set up, its interrupt hooked, run. The last CloseDevice stops
-//! it - every transfer answered, the controller halted - and the task
-//! waits for the next opener. The block, the task and the function stay
-//! the device's: the task cannot give back the stack it runs on, and the
-//! device stays once loaded.
+//! task, claims its PCI function where it is one, and starts the
+//! controller: reset, its rings set up, its interrupt hooked, run. The
+//! last CloseDevice stops it - every transfer answered, the controller
+//! halted - and the task waits for the next opener. The block, the task
+//! and the function stay the device's: the task cannot give back the
+//! stack it runs on, and the device stays once loaded.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -39,11 +40,14 @@ const timer = sdk.devices.timer;
 const pci = sdk.pci;
 const ExecBase = sdk.interface.exec.ExecBase;
 const PCIBase = sdk.interface.pci.PCIBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const expansion = sdk.expansion;
 const st = expansion.systemtags;
 const _xhci = @import("_xhci.zig");
 const XhciBase = _xhci.XhciBase;
 const Host = _xhci.Host;
+const BoardController = _xhci.BoardController;
 const controller = @import("controller.zig");
 const transfer = @import("transfer.zig");
 const roothub = @import("roothub.zig");
@@ -51,8 +55,8 @@ const regs = @import("regs.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 8;
-const BUILD_DATE = "20.10.2026";
+const DEVICE_REVISION = 9;
+const BUILD_DATE = "29.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -154,7 +158,6 @@ fn openTimers(host: *Host) bool {
 /// The controller up: reset, its interrupt hooked, run. False if any of
 /// it failed; then nothing is left running.
 fn start(host: *Host) bool {
-    const pb = host.dev_base.pci_base.?;
     host.stopped = 0;
     host.root = .{};
     if (!controller.bringUp(host)) return false;
@@ -163,11 +166,17 @@ fn start(host: *Host) bool {
         .data = host,
         .code = &controller.intServer,
     };
-    // A message of its own where the function and its host bridge have
-    // them: no line shared with anything else.
-    host.int_vector = pb.AllocPCIVectors(host.function, 1) == 1 and pb.AddPCIVectorServer(host.function, 0, &host.int);
-    if (!host.int_vector) pb.FreePCIVectors(host.function);
-    host.int_hooked = host.int_vector or pb.AddPCIIntServer(host.function, &host.int);
+    if (host.function) |function| {
+        // A message of its own where the function and its host bridge
+        // have them: no line shared with anything else.
+        const pb = host.dev_base.pci_base.?;
+        host.int_vector = pb.AllocPCIVectors(function, 1) == 1 and pb.AddPCIVectorServer(function, 0, &host.int);
+        if (!host.int_vector) pb.FreePCIVectors(function);
+        host.int_hooked = host.int_vector or pb.AddPCIIntServer(function, &host.int);
+    } else if (host.board.irq != 0) {
+        host.sys.AddIntServer(host.board.irq, &host.int);
+        host.int_hooked = true;
+    }
     if (!host.int_hooked) {
         sdk.exec.kprintf(host.sys, "%s: unit %d: no interrupt; the controller is polled\n", .{ DEVICE_NAME, host.number });
     }
@@ -182,12 +191,16 @@ fn start(host: *Host) bool {
 
 fn unhook(host: *Host) void {
     if (!host.int_hooked) return;
-    const pb = host.dev_base.pci_base.?;
-    if (host.int_vector) {
-        pb.RemPCIVectorServer(host.function, 0, &host.int);
-        pb.FreePCIVectors(host.function);
+    if (host.function) |function| {
+        const pb = host.dev_base.pci_base.?;
+        if (host.int_vector) {
+            pb.RemPCIVectorServer(function, 0, &host.int);
+            pb.FreePCIVectors(function);
+        } else {
+            pb.RemPCIIntServer(function, &host.int);
+        }
     } else {
-        pb.RemPCIIntServer(host.function, &host.int);
+        host.sys.RemIntServer(host.board.irq, &host.int);
     }
     host.int_hooked = false;
     host.int_vector = false;
@@ -361,27 +374,39 @@ fn coherent(pb: *PCIBase, function: *pci.PCIDevice) bool {
 
 /// Unit `number`'s block and task, made and waited for until the task
 /// has its signals; it starts the controller on the opener's command.
-/// Its PCI function is claimed for the device.
+/// A PCI function is claimed for the device. A board controller is taken
+/// as not seeing the caches: what it reads is written back, what it
+/// wrote dropped from them, which is right either way.
 fn makeHost(base: *XhciBase, number: u32) ?*Host {
     const sys = base.sys_base;
-    const pb = base.pci_base.?;
-    const function = functionOf(pb, number) orelse return null;
-    if (pb.ClaimPCIDevice(function, DEVICE_NAME)) |holder| {
-        sdk.exec.kprintf(sys, "%s: unit %d: its PCI function is %s's\n", .{ DEVICE_NAME, number, holder });
-        return null;
+    var function: ?*pci.PCIDevice = null;
+    var board: BoardController = .{};
+    var sees_caches = false;
+    if (number < base.board_units) {
+        board = base.board[number];
+        if (board.regs == 0) return null;
+    } else {
+        const pb = base.pci_base orelse return null;
+        const found = functionOf(pb, number - base.board_units) orelse return null;
+        if (pb.ClaimPCIDevice(found, DEVICE_NAME)) |holder| {
+            sdk.exec.kprintf(sys, "%s: unit %d: its PCI function is %s's\n", .{ DEVICE_NAME, number, holder });
+            return null;
+        }
+        function = found;
+        sees_caches = coherent(pb, found);
     }
     const memory = sys.AllocMem(@sizeOf(Host), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse {
-        pb.ReleasePCIDevice(function);
+        release(base, function);
         return null;
     };
     const host: *Host = @ptrCast(@alignCast(memory));
-    host.* = .{ .dev_base = base, .sys = sys, .number = number, .function = function, .coherent = coherent(pb, function) };
+    host.* = .{ .dev_base = base, .sys = sys, .number = number, .function = function, .board = board, .coherent = sees_caches };
     host.unit = .{ .msg_port = .{ .flags = exec.PA_IGNORE } };
     host.unit.msg_port.msg_list.init(.message);
     sys.NewList(&host.posted);
     const stack = sys.AllocMem(stack_size, exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse {
         sys.FreeMem(memory, @sizeOf(Host));
-        pb.ReleasePCIDevice(function);
+        release(base, function);
         return null;
     };
     host.stack = stack;
@@ -397,7 +422,7 @@ fn makeHost(base: *XhciBase, number: u32) ?*Host {
     if (signal < 0) {
         sys.FreeMem(stack, stack_size);
         sys.FreeMem(memory, @sizeOf(Host));
-        pb.ReleasePCIDevice(function);
+        release(base, function);
         return null;
     }
     host.start_signal = signal;
@@ -412,29 +437,63 @@ fn makeHost(base: *XhciBase, number: u32) ?*Host {
     return host;
 }
 
+/// A unit's PCI function given back, if it has one.
+fn release(base: *XhciBase, function: ?*pci.PCIDevice) void {
+    if (function) |claimed| base.pci_base.?.ReleasePCIDevice(claimed);
+}
+
+/// The board's own controllers - its CHIP_DWC3 parts that may be hosts -
+/// each at the unit its part names: where its registers are, and its
+/// interrupt.
+fn findBoardControllers(base: *XhciBase) void {
+    const sys = base.sys_base;
+    const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return;
+    defer sys.CloseLibrary(utility_lib);
+    const ub: *UtilityBase = @ptrCast(utility_lib);
+    const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return;
+    defer sys.CloseLibrary(expansion_lib);
+    const eb: *ExpansionBase = @ptrCast(expansion_lib);
+    var part = eb.FindBoardPart(null, st.PARTKIND_USB, st.CHIP_DWC3);
+    while (part) |it| : (part = eb.FindBoardPart(it, st.PARTKIND_USB, st.CHIP_DWC3)) {
+        if (ub.GetTagData(st.PART_UsbRoles, st.USBROLE_HOST, it.tags) & st.USBROLE_HOST == 0) continue;
+        const unit = ub.GetTagData(st.PART_BusUnit, 0, it.tags);
+        const registers = ub.GetTagData(st.PART_Address, 0, it.tags);
+        if (unit >= _xhci.max_units or registers == 0) continue;
+        base.board[unit] = .{ .regs = registers, .irq = @truncate(ub.GetTagData(st.PART_Irq, 0, it.tags)) };
+        base.board_units = @max(base.board_units, @as(u32, @intCast(unit)) + 1);
+    }
+}
+
 /// exec has copied the tag's name, version and ID string into the base.
-/// A machine without PCI, or without an xHCI function on it, gets no
-/// device: null, before anything is kept.
+/// A machine with no controller of the board's own and no xHCI function
+/// on PCI gets no device: null, before anything is kept.
 fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Device {
     dev.revision = DEVICE_REVISION;
     const base = _xhci.baseOf(dev);
     base.sys_base = sys_base;
     base.seg_list = seg_list;
     base.hosts = @splat(null);
+    base.board = @splat(.{});
+    base.board_units = 0;
     base.units = 0;
-    const pci_lib = sys_base.OpenLibrary(pci.PCINAME, 2) orelse {
-        sdk.exec.kprintf(sys_base, "%s: no %s\n", .{ DEVICE_NAME, pci.PCINAME });
-        return null;
-    };
-    const pb: *PCIBase = @ptrCast(pci_lib);
-    while (base.units < _xhci.max_units and functionOf(pb, base.units) != null) base.units += 1;
+    findBoardControllers(base);
+    base.units = base.board_units;
+    if (sys_base.OpenLibrary(pci.PCINAME, 2)) |pci_lib| {
+        const pb: *PCIBase = @ptrCast(pci_lib);
+        var functions: u32 = 0;
+        while (base.units + functions < _xhci.max_units and functionOf(pb, functions) != null) functions += 1;
+        if (functions != 0) {
+            // Kept open: the device stays.
+            base.pci_base = pb;
+            base.units += functions;
+        } else {
+            sys_base.CloseLibrary(pci_lib);
+        }
+    }
     if (base.units == 0) {
-        sdk.exec.kprintf(sys_base, "%s: no xHCI controller on PCI\n", .{DEVICE_NAME});
-        sys_base.CloseLibrary(pci_lib);
+        sdk.exec.kprintf(sys_base, "%s: no xHCI controller on this board or on PCI\n", .{DEVICE_NAME});
         return null;
     }
-    // Kept open: the device stays.
-    base.pci_base = pb;
     sys_base.InitSemaphore(&base.open_lock);
     return dev;
 }

@@ -34,6 +34,30 @@ const rp1 = @import("rp1.zig");
 /// The module, as Raspberry Pi names it.
 const name = "Raspberry Pi Compute Module 5";
 
+/// The IO board's two USB 3 sockets, one on each of the RP1's DWC3
+/// controllers, xhci.device's units 0 and 1: each a USB 3 port and a USB
+/// 2 one. Their 5 V is switched by the RP1's GPIO42 (USB_VBUS_EN), which
+/// the bootloader leaves on.
+const usb0 = usbPart(0, rp1.usb0, rp1.INT_USBHOST0_0, "USB 3 socket (RP1 USB 0)");
+const usb1 = usbPart(1, rp1.usb1, rp1.INT_USBHOST1_0, "USB 3 socket (RP1 USB 1)");
+
+fn usbPart(comptime unit: u32, comptime registers: usize, comptime source: u32, comptime label: [*:0]const u8) [12]Tag {
+    return .{
+        .value(st.PART_Kind, st.PARTKIND_USB),
+        .value(st.PART_Chip, st.CHIP_DWC3),
+        .pointer(st.PART_ChipName, "rp1 dwc3"),
+        .value(st.PART_Bus, st.BUS_MEMORY),
+        .value(st.PART_BusUnit, unit),
+        .value(st.PART_Address, registers),
+        .value(st.PART_Irq, rp1.irq(source)),
+        .value(st.PART_UsbRoles, st.USBROLE_HOST),
+        .value(st.PART_UsbSpeed, st.USBSPEED_HIGH),
+        .value(st.PART_UsbVbus, st.USBVBUS_ALWAYS),
+        .pointer(st.PART_Label, label),
+        .done,
+    };
+}
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -50,6 +74,8 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_GicDist, 0x10_7FFF_9000),
     .value(st.SYSTAG_GicCpu, 0x10_7FFF_A000),
     .value(st.SYSTAG_Cores, 4),
+    .pointer(st.SYSTAG_Part, &usb0),
+    .pointer(st.SYSTAG_Part, &usb1),
     .done,
 };
 
