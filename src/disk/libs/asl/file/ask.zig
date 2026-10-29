@@ -7,6 +7,12 @@
 //! bottom. The layout places and sizes everything, so the requester has
 //! no geometry of its own and follows the window as it is resized.
 //!
+//! A requester for drawers only (`ASLFR_DrawersOnly`) has no File field:
+//! what it answers is a drawer, so the Drawer field takes the keys each
+//! time the window is made active, its New Drawer makes the drawer that
+//! field names, and its Delete, which works on the File field's name, is
+//! off.
+//!
 //! The drawer is read with `ExAll`, a bufferful at a time, between
 //! rounds of input rather than all at once: a drawer of some thousands of
 //! files on a card takes long enough that a requester which waited for it
@@ -98,7 +104,8 @@ const Session = struct {
     window: *intuition.Window,
     list_gadget: *Object,
     drawer_gadget: *Object,
-    file_gadget: *Object,
+    /// Null in a requester for drawers only.
+    file_gadget: ?*Object,
     pattern_gadget: ?*Object,
     /// The lines, and the walk that fills them.
     list: exec.List = .{},
@@ -473,8 +480,9 @@ fn build(s: *Session, screen: *intuition.Screen) bool {
         .{ .tag = if (r.flags1 & asl.FRF_DOMULTISELECT != 0) lv.LISTVIEW_MultiSelect else utility.TAG_IGNORE, .data = 1 },
         .{},
     });
+    const drawers_only = r.flags2 & asl.FRF2_DRAWERSONLY != 0;
     const drawer = makeField(s, ID_DRAWER, @ptrCast(&r.drawer));
-    const file = makeField(s, ID_FILE, @ptrCast(&r.file));
+    const file = if (drawers_only) null else makeField(s, ID_FILE, @ptrCast(&r.file));
     const pattern = if (r.flags1 & asl.FRF_DOPATTERNS != 0) makeField(s, ID_PATTERN, @ptrCast(&r.pattern)) else null;
     const ok = makeButton(s, r.words.positive orelse "_Ok", ID_OK);
     const volumes = makeButton(s, "_Volumes", ID_VOLUMES);
@@ -494,7 +502,7 @@ fn build(s: *Session, screen: *intuition.Screen) bool {
     else
         null;
 
-    const whole = list != null and drawer != null and file != null and buttons != null and
+    const whole = list != null and drawer != null and (file != null or drawers_only) and buttons != null and
         (pattern != null or r.flags1 & asl.FRF_DOPATTERNS == 0);
     const layout = if (whole) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         .{ .tag = lg.LAYOUTA_Margin, .data = 6 },
@@ -503,9 +511,9 @@ fn build(s: *Session, screen: *intuition.Screen) bool {
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(drawer) },
         .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_Drawer") },
         .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(file) },
-        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("_File") },
-        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = if (file != null) lg.LAYOUTA_AddChild else utility.TAG_IGNORE, .data = @intFromPtr(file) },
+        .{ .tag = if (file != null) lg.CHILDA_Label else utility.TAG_IGNORE, .data = @intFromPtr("_File") },
+        .{ .tag = if (file != null) lg.CHILDA_WeightHeight else utility.TAG_IGNORE, .data = 0 },
         .{ .tag = if (pattern != null) lg.LAYOUTA_AddChild else utility.TAG_IGNORE, .data = @intFromPtr(pattern) },
         .{ .tag = if (pattern != null) lg.CHILDA_Label else utility.TAG_IGNORE, .data = @intFromPtr("Pa_ttern") },
         .{ .tag = if (pattern != null) lg.CHILDA_WeightHeight else utility.TAG_IGNORE, .data = 0 },
@@ -539,9 +547,10 @@ fn build(s: *Session, screen: *intuition.Screen) bool {
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
         .{ .tag = wn.WA_SizeGadget, .data = 1 },
         .{ .tag = wn.WA_Activate, .data = 1 },
-        // The cursor keys, Return and Esc are the requester's own, and a
-        // card going in or out is a reason to look again.
-        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_RAWKEY | wn.IDCMP_DISKINSERTED | wn.IDCMP_DISKREMOVED },
+        // The cursor keys, Return and Esc are the requester's own, a card
+        // going in or out is a reason to look again, and being made the
+        // active window is when a field can be given the keys.
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_RAWKEY | wn.IDCMP_DISKINSERTED | wn.IDCMP_DISKREMOVED | wn.IDCMP_ACTIVEWINDOW },
         .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(made) },
         .{},
     }) orelse {
@@ -551,7 +560,7 @@ fn build(s: *Session, screen: *intuition.Screen) bool {
     s.object = object;
     s.list_gadget = list.?;
     s.drawer_gadget = drawer.?;
-    s.file_gadget = file.?;
+    s.file_gadget = file;
     s.pattern_gadget = pattern;
     return true;
 }
@@ -649,6 +658,12 @@ fn act(s: *Session, word: usize, code: u32) bool {
         wc.WMHI_DISKINSERTED, wc.WMHI_DISKREMOVED => {
             if (s.showing_volumes) showVolumes(s) else refill(s);
         },
+        // A drawer is the whole answer of a requester for drawers only:
+        // the keys go to the field that names it whenever the window is
+        // made the active one.
+        wc.WMHI_ACTIVE => if (s.file_gadget == null) {
+            _ = s.ib.ActivateGadget(s.drawer_gadget, s.window, null);
+        },
         wc.WMHI_VANILLAKEY => switch (word & wc.WMHI_KEYMASK) {
             CHAR_RETURN => {
                 if (answer(s)) {
@@ -676,8 +691,10 @@ fn takeDrops(s: *Session) void {
             goTo(s, file.name);
             continue;
         }
-        _request.copyInto(&s.r.file, s.dl.FilePart(file.name));
-        setString(s, s.file_gadget, @ptrCast(&s.r.file));
+        if (s.file_gadget) |field| {
+            _request.copyInto(&s.r.file, s.dl.FilePart(file.name));
+            setString(s, field, @ptrCast(&s.r.file));
+        }
         const end = @intFromPtr(s.dl.PathPart(file.name)) - @intFromPtr(&s.path);
         s.path[end] = 0;
         goTo(s, @ptrCast(&s.path));
@@ -737,7 +754,7 @@ pub fn ask(ab: *AslBase, r: *Requester) bool {
         .window = undefined,
         .list_gadget = undefined,
         .drawer_gadget = undefined,
-        .file_gadget = undefined,
+        .file_gadget = null,
         .pattern_gadget = null,
     };
     s.list.init(.unknown);
@@ -848,6 +865,8 @@ fn addMenu(s: *Session, screen: *intuition.Screen) void {
         return;
     }
     s.menu = menu;
+    // Delete works on the File field's name, and there is none to work on.
+    if (s.file_gadget == null) s.ib.OffMenu(s.window, intuition.menus.FULLMENUNUM(0, ITEM_DELETE, intuition.menus.NOSUB));
 }
 
 fn dropMenu(s: *Session) void {
@@ -868,9 +887,11 @@ fn restore(s: *Session) void {
 
 /// A drawer made with the name in the File field, and gone into. Nothing
 /// happens without a name; what could not be made says so by the drawer
-/// not changing.
+/// not changing. Without a File field, the drawer made is the one the
+/// Drawer field names, when it is not there yet.
 fn newDrawer(s: *Session) void {
     takeFields(s);
+    if (s.file_gadget == null) return makeNamedDrawer(s);
     if (s.r.file[0] == 0 or s.showing_volumes) return;
     _request.copyInto(&s.path, @ptrCast(&s.r.drawer));
     if (!s.dl.AddPart(@ptrCast(&s.path), @ptrCast(&s.r.file), s.path.len)) return;
@@ -878,6 +899,16 @@ fn newDrawer(s: *Session) void {
     s.dl.UnLock(made);
     _request.copyInto(&s.r.file, "");
     setString(s, s.file_gadget, @ptrCast(&s.r.file));
+    goTo(s, @ptrCast(&s.path));
+}
+
+/// The drawer the Drawer field names made, and gone into. One that is
+/// there already cannot be made, and the drawer shown stays as it was.
+fn makeNamedDrawer(s: *Session) void {
+    if (s.r.drawer[0] == 0) return;
+    const made = s.dl.CreateDir(@ptrCast(&s.r.drawer)) orelse return;
+    s.dl.UnLock(made);
+    _request.copyInto(&s.path, @ptrCast(&s.r.drawer));
     goTo(s, @ptrCast(&s.path));
 }
 

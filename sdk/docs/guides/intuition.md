@@ -1034,6 +1034,9 @@ if (ab.AslRequest(request, null)) {
 `ASLFR_Window` opens it on the window's screen, `ASLFR_SleepWindow`
 keeps the window from taking input while it is up, and
 `ASLFR_DoSaveMode` makes it ask for a name to save under.
+`ASLFR_DrawersOnly` asks for a drawer: it shows no files and has no File
+field, so the answer's `file` is empty, and its New Drawer makes the
+drawer typed in the Drawer field.
 `ASL_FontRequest` asks for a font, and its `FontRequester`'s `attr` is
 ready for `OpenDiskFont` ([Choosing and opening a font](fonts.md#choosing-and-opening-a-font)).
 In a window of gadgets, getfile.gadget and getfont.gadget are a field
@@ -1078,7 +1081,7 @@ requester goes to its drawer with its name in the File field
 | `C:test/Gadgets` | the gadget classes in one layout, each worked by its key |
 | `C:test/Settings` | tabs along a page gadget's top, its pages framed below them (`PAGE_Tabs`), framed groups |
 | `C:test/Widgets` | meters, a canvas drawn into and queued, codes, a chart |
-| `C:test/Asl` | the file and font requesters; `ASYNC` asked without waiting, `ABORT` taken down |
+| `C:test/Asl` | the file and font requesters; `DRAWERS` a drawer, `ASYNC` asked without waiting, `ABORT` taken down |
 | `SYS:Programs/Notepad` | a window object with menus, border scroll bars, a second window, requesters |
 | `SYS:Programs/Sheet` | a canvas drawn into and pressed on, a line of text with an edit hook of its own, border scroll bars telling the window |
 | `SYS:Programs/MultiView` | border scroll bars joined to a picture through a model |
