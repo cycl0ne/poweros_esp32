@@ -535,6 +535,9 @@ pub fn build(b: *std.Build) void {
     for (poweros_userland.mac_files) |file| {
         make_rv64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), rv64_disk_dep.namedLazyPath(file.source));
     }
+    for (poweros_userland.a64_files) |file| {
+        make_a64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), a64_disk_dep.namedLazyPath(file.source));
+    }
     if (wifi != null) {
         const wifi_device = poweros_userland.wifi_device;
         make_disk.addPrefixedFileArg(b.fmt("{s}=", .{wifi_device.disk}), disk_dep.namedLazyPath(wifi_device.disk));
@@ -603,6 +606,15 @@ pub fn build(b: *std.Build) void {
         make_p4_disk.addArgs(&.{ "devs/usb/firmware", "devs/usb/firmware/aic8800" });
         for (aic8800_files) |name| {
             make_p4_disk.addPrefixedFileArg(b.fmt("devs/usb/firmware/aic8800/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
+        }
+    }
+    // DEVS:networks/firmware/cyw43455/ - what the Raspberry Pi CM5's radio
+    // runs, as scripts/fetch-cyw43455.sh fetched it. On the AArch64 disk
+    // alone, whose networks/cyw43455.device loads it.
+    if (cyw43455Dir(b)) |dir| {
+        make_a64_disk.addArgs(&.{ "devs/networks/firmware", "devs/networks/firmware/cyw43455" });
+        for (cyw43455_files) |name| {
+            make_a64_disk.addPrefixedFileArg(b.fmt("devs/networks/firmware/cyw43455/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
         }
     }
     // DEVS:pci.ids - the PCI ID Repository's list, which C:PCIInfo names
@@ -1315,6 +1327,20 @@ const aic8800_files = [_][]const u8{
     "fmacfw.bin",         "fw_adid.bin",            "fw_adid_u03.bin", "fw_patch.bin", "fw_patch_u03.bin",
     "fw_patch_table.bin", "fw_patch_table_u03.bin",
 };
+
+const cyw43455_files = [_][]const u8{ "cyfmac43455-sdio.bin", "cyfmac43455-sdio.clm_blob", "brcmfmac43455-sdio.txt" };
+
+/// Where scripts/fetch-cyw43455.sh put the CYW43455's firmware, or null
+/// without it.
+fn cyw43455Dir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/cyw43455");
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "cyfmac43455-sdio.bin" }), .{}) catch {
+        std.log.info("no CYW43455 firmware (scripts/fetch-cyw43455.sh): the disk has no DEVS:networks/firmware/cyw43455/", .{});
+        return null;
+    };
+    return path;
+}
 
 /// Where scripts/fetch-aic8800.sh put the AIC8800's firmware, or null
 /// without it.

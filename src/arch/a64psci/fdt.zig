@@ -9,8 +9,10 @@
 //! itself); how PSCI is called (`/psci`'s `method`, `smc` or `hvc`); and
 //! the cores that can run the kernel - every `/cpus/cpu@` node of
 //! `device_type` "cpu" that is not disabled, by its MPIDR affinity
-//! (`reg`). And each Ethernet port's station address: the
-//! `local-mac-address` of every `ethernet@<address>` node. Read once in
+//! (`reg`). And each network port's station address: the
+//! `local-mac-address` of every `ethernet@<address>` node, and of every
+//! radio on an SD host - a `wifi@` node in an `mmc@<address>` one, which
+//! the Pi's firmware writes - by its host's address. Read once in
 //! kmain, before exec's memory exists: the tree sits in RAM exec is
 //! given, and is gone after.
 //!
@@ -42,11 +44,12 @@ pub const max_cores = 8;
 /// The most ranges of RAM kept; more are left out.
 pub const max_memory = 8;
 
-/// The most Ethernet ports whose station address is kept.
+/// The most network ports whose station address is kept.
 pub const max_stations = 4;
 
-/// An Ethernet port's station address, and where the port's registers
-/// are: the address in its node's name.
+/// A network port's station address, and where the port's registers
+/// are: the address in its node's name - an SD host's, for a radio on
+/// one.
 pub const Station = struct { address: usize, bytes: [6]u8 };
 
 /// How the PSCI firmware is reached, as `/psci` says.
@@ -191,9 +194,12 @@ pub fn read(address: usize) Facts {
     var cpu_id: ?u64 = null;
     var cpu_okay = true;
     var cpu_kind = false;
-    // The Ethernet node being read, by the address in its name.
-    var ethernet: ?usize = null;
-    var ethernet_depth: u32 = 0;
+    // The network port being read, by the address in its name - or its
+    // SD host's, for a radio; and the SD host being read.
+    var station: ?usize = null;
+    var station_depth: u32 = 0;
+    var sd_host: ?usize = null;
+    var sd_host_depth: u32 = 0;
     while (at + 4 <= tree.len) {
         const token = be32(tree[at..]);
         at += 4;
@@ -219,8 +225,16 @@ pub fn read(address: usize) Facts {
                         .other;
                 }
                 if (std.mem.startsWith(u8, name, "ethernet@")) {
-                    ethernet = std.fmt.parseInt(usize, name["ethernet@".len..], 16) catch null;
-                    ethernet_depth = depth;
+                    station = std.fmt.parseInt(usize, name["ethernet@".len..], 16) catch null;
+                    station_depth = depth;
+                }
+                if (std.mem.startsWith(u8, name, "mmc@")) {
+                    sd_host = std.fmt.parseInt(usize, name["mmc@".len..], 16) catch null;
+                    sd_host_depth = depth;
+                }
+                if (std.mem.startsWith(u8, name, "wifi@") and sd_host != null and depth == sd_host_depth + 1) {
+                    station = sd_host;
+                    station_depth = depth;
                 }
                 if (depth == 3 and node == .cpus and std.mem.startsWith(u8, name, "cpu@")) {
                     in_cpu = true;
@@ -237,7 +251,8 @@ pub fn read(address: usize) Facts {
                         facts.core_count += 1;
                     }
                 }
-                if (ethernet != null and depth == ethernet_depth) ethernet = null;
+                if (station != null and depth == station_depth) station = null;
+                if (sd_host != null and depth == sd_host_depth) sd_host = null;
                 depth -|= 1;
                 if (depth < 2) node = .other;
             },
@@ -246,10 +261,10 @@ pub fn read(address: usize) Facts {
                 const name = std.mem.sliceTo(strings[be32(tree[at + 4 ..])..], 0);
                 const value = tree[at + 8 ..][0..len];
                 at = std.mem.alignForward(usize, at + 8 + len, 4);
-                if (ethernet != null and depth == ethernet_depth and len == 6 and
+                if (station != null and depth == station_depth and len == 6 and
                     std.mem.eql(u8, name, "local-mac-address") and facts.station_count < max_stations)
                 {
-                    facts.stations[facts.station_count] = .{ .address = ethernet.?, .bytes = value[0..6].* };
+                    facts.stations[facts.station_count] = .{ .address = station.?, .bytes = value[0..6].* };
                     facts.station_count += 1;
                 }
                 if (depth == 1) {

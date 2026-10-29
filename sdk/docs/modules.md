@@ -189,6 +189,7 @@ flowchart TB
     m_clock_docklet["clock.docklet"]
     m_compression_library["compression.library"]
     m_crypto_library["crypto.library"]
+    m_cyw43455_device["cyw43455.device"]
     m_datatype_classes["datatype classes"]
     m_datatypes_library["datatypes.library"]
     m_disk_device["disk.device"]
@@ -280,6 +281,9 @@ flowchart TB
     m_clock_docklet --> m_dos_library
     m_crypto_library --> m_dma_resource
     m_crypto_library --> m_timer_device
+    m_cyw43455_device --> m_dos_library
+    m_cyw43455_device --> m_timer_device
+    m_cyw43455_device --> m_wpa_library
     m_datatypes_library -.-> m_datatype_classes
     m_datatypes_library --> m_dos_library
     m_datatypes_library --> m_graphics_library
@@ -386,7 +390,7 @@ flowchart TB
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
     class m_anvil_library,m_asl_library,m_audiocodec_library,m_battery_docklet,m_bsdsocket_library,m_clock_docklet,m_compression_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_filter_library,m_http_library,m_icon_library,m_iffparse_library,m_modbus_library,m_network_docklet,m_pci_library,m_rdb_library,m_tls_library,m_truetype_library,m_usb_library,m_wpa_library lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
-    class m_acm_device,m_aic8800_device,m_clipboard_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_uac_device,m_usbotg_device,m_xhci_device dev
+    class m_acm_device,m_aic8800_device,m_clipboard_device,m_cyw43455_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_uac_device,m_usbotg_device,m_xhci_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
     class m_fat_handler,m_posfs_handler,m_smb_handler hand
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827

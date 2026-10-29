@@ -21,6 +21,7 @@ test {
     _ = @import("prefs/tests/prefs.zig");
     _ = @import("devs/sdcard/sdspi.zig");
     _ = @import("devs/networks/tests/api.zig");
+    _ = @import("devs/networks/tests/cyw43455.zig");
     _ = @import("devs/networks/tests/openeth.zig");
     _ = @import("devs/networks/tests/slip.zig");
     _ = @import("devs/ssh/tests/ssh.zig");

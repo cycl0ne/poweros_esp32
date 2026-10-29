@@ -29,6 +29,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const Tag = sdk.utility.FixedTagItem;
 const st = sdk.expansion.systemtags;
+const pins = sdk.expansion.boardpin;
 const rp1 = @import("rp1.zig");
 
 /// The module, as Raspberry Pi names it.
@@ -86,6 +87,44 @@ const pcie1 = [_]Tag{
     .done,
 };
 
+/// The radio's station address. The kernel copies it in from the device
+/// tree the firmware passes - the `local-mac-address` the firmware writes
+/// into wifi@1, on the SD host mmc@1100000 - before anything runs; all
+/// zero when the tree has none.
+pub var wifi_station: [6]u8 = @splat(0);
+
+/// The station addresses the kernel takes from the device tree: for the
+/// port whose registers are at the first - the radio's SD host, by the
+/// address in the tree's name for it - into the second.
+pub const stations = .{.{ 0x0110_0000, &wifi_station }};
+
+/// The module's Wi-Fi, a CYW43455 on the BCM2712's second SD host
+/// ("sdio2", an SDHCI at 0x10_0110_0000 with a 200 MHz clock, GIC
+/// interrupt 306), four data lines. The bootloader leaves the radio off
+/// and the host's pins GPIOs: WL_REG_ON is GPIO28 of the SoC's own GPIO
+/// block, and the lines GPIO30 to 35 in their "sd2" function. The
+/// antenna switch is on the always-on GPIO block, which the radio's
+/// driver drives itself: pin 5 (ANT1) picks the module's own antenna, pin
+/// 6 (ANT2) the U.FL connector's - the first, as Raspberry Pi's device
+/// tree has it unless told otherwise.
+const wifi = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_NET),
+    .value(st.PART_Chip, st.CHIP_CYW43455),
+    .pointer(st.PART_ChipName, "cyw43455"),
+    .value(st.PART_Bus, st.BUS_SDIO),
+    .value(st.PART_Address, 0x10_0110_0000),
+    .value(st.PART_Irq, 306),
+    .value(st.PART_PinPower, pins.gpio(28)),
+    .value(st.PART_PinClock, pins.gpio(30)),
+    .value(st.PART_PinCommand, pins.gpio(31)),
+    .value(st.PART_PinData0, pins.gpio(32)),
+    .value(st.PART_PinAntenna, pins.driver(5)),
+    .value(st.PART_PinAntennaExternal, pins.driver(6)),
+    .pointer(st.PART_StationAddress, &wifi_station),
+    .pointer(st.PART_Label, "Wi-Fi"),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -105,6 +144,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &usb0),
     .pointer(st.SYSTAG_Part, &usb1),
     .pointer(st.SYSTAG_Part, &pcie1),
+    .pointer(st.SYSTAG_Part, &wifi),
     .done,
 };
 

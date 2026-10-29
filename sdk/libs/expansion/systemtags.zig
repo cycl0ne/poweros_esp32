@@ -197,7 +197,9 @@ pub const PART_PciPrefSize = PART_Dummy + 18;
 /// Where the station address the board gives a network port is: six
 /// bytes, all zero while there is none. The VisionFive 2's are in its
 /// EEPROM, which U-Boot writes into the device tree it passes, and the
-/// kernel copies them from there into the bytes before anything runs.
+/// Raspberry Pi's firmware writes the CM5's radio's into the tree it
+/// passes; the kernel copies them from there into the bytes before
+/// anything runs.
 pub const PART_StationAddress = PART_Dummy + 19;
 /// The delays a PHY adds on RGMII, in picoseconds: to the receive clock
 /// against its data, and to the send clock. A board whose traces delay
@@ -286,6 +288,11 @@ pub const PART_SenseScale = PART_Dummy + 0x42;
 /// pulses, which the board filters into its jack.
 pub const PART_PinLeft = PART_Dummy + 0x43;
 pub const PART_PinRight = PART_Dummy + 0x44;
+/// A radio's antenna switch: the line that, asserted, gives it the
+/// board's own antenna, and the line that gives it the one on the
+/// connector. The board leaves one asserted and the other not.
+pub const PART_PinAntenna = PART_Dummy + 0x45;
+pub const PART_PinAntennaExternal = PART_Dummy + 0x46;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -327,6 +334,8 @@ pub fn lineName(tag: u32) ?[*:0]const u8 {
         PART_PinCharging => "CHRG",
         PART_PinLeft => "LEFT",
         PART_PinRight => "RIGHT",
+        PART_PinAntenna => "ANT",
+        PART_PinAntennaExternal => "ANT_EXT",
         else => null,
     };
 }
@@ -528,6 +537,14 @@ pub const CHIP_DWC3: u32 = 38;
 /// its configuration space is reached through. Its INTA is PART_Irq,
 /// INTB to INTD the three interrupts after it.
 pub const CHIP_BCM2712_PCIE: u32 = 39;
+/// Infineon's (Cypress's, Broadcom's) CYW43455, an 802.11ac radio of one
+/// stream at 2.4 and 5 GHz that runs a firmware of its own, on an SDIO
+/// bus (PARTKIND_NET on BUS_SDIO): PART_Address the BCM2712's SD host it
+/// is on (an SDHCI, its configuration registers 0x400 above), PART_Irq
+/// that host's interrupt, PART_PinPower its WL_REG_ON on the BCM2712's
+/// own GPIO block, PART_PinClock, PART_PinCommand and PART_PinData0 the
+/// host's lines - the data's four in a row from it.
+pub const CHIP_CYW43455: u32 = 40;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
