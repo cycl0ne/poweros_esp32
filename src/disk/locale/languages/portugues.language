@@ -1,0 +1,24 @@
+# LOCALE:Languages/portugues.language - Portuguese: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=Domingo DAY_2=Segunda-feira DAY_3=Terça-feira
+DAY_4=Quarta-feira DAY_5=Quinta-feira DAY_6=Sexta-feira
+DAY_7=Sábado
+ABDAY_1=Dom ABDAY_2=Seg ABDAY_3=Ter ABDAY_4=Qua ABDAY_5=Qui
+ABDAY_6=Sex ABDAY_7=Sab
+# The months, then their short names.
+MON_1=Janeiro MON_2=Fevereiro MON_3=Março MON_4=Abril MON_5=Maio
+MON_6=Junho MON_7=Julho MON_8=Agosto MON_9=Setembro MON_10=Outubro
+MON_11=Novembro MON_12=Dezembro
+ABMON_1=Jan ABMON_2=Fev ABMON_3=Mar ABMON_4=Abr ABMON_5=Mai
+ABMON_6=Jun ABMON_7=Jul ABMON_8=Ago ABMON_9=Set ABMON_10=Out
+ABMON_11=Nov ABMON_12=Dez
+# Yes and no, before and after noon.
+YESSTR=Sim NOSTR=Não AM_STR=AM PM_STR=PM
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=-
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Ontem TODAYSTR=Hoje TOMORROWSTR=Amanhã
+FUTURESTR=Futuro

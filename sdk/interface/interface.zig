@@ -49,3 +49,4 @@ pub const pci = @import("pci.zig");
 pub const facet = @import("facet.zig");
 pub const compression = @import("compression.zig");
 pub const http = @import("http.zig");
+pub const locale = @import("locale.zig");

@@ -64,6 +64,12 @@ fn chipOf(board: Board) Chip {
     };
 }
 
+/// The ROM modules' strings in other languages: what dos.library's faults
+/// say once locale.library stands in front of Fault.
+const rom_catalogs = [_]poweros_userland.Catalog{
+    .{ .disk = "locale/Catalogs/deutsch/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/deutsch.ct", .name = "sys/dos.catalog" },
+};
+
 /// The directories every disk image has, parents before what is in them.
 const image_dirs = [_][]const u8{
     "c",
@@ -133,6 +139,17 @@ const image_dirs = [_][]const u8{
     "prefs/env-archive/Player",
     "prefs/presets",
     "prefs/presets/styles",
+    // LOCALE: - the countries' formats, the languages' words and order,
+    // and the programs' strings in each language, a catalog per program
+    // at the program's own place (sys/ for the system's own modules).
+    "locale",
+    "locale/Countries",
+    "locale/Languages",
+    "locale/Catalogs",
+    "locale/Catalogs/deutsch",
+    "locale/Catalogs/deutsch/sys",
+    "locale/Catalogs/deutsch/c",
+    "locale/Catalogs/deutsch/c/test",
 };
 
 /// An icon the build writes onto the image: where it goes, the picture
@@ -527,6 +544,14 @@ pub fn build(b: *std.Build) void {
     }
     for (poweros_userland.files) |file| {
         disks.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), disk_dep.namedLazyPath(file.disk));
+    }
+    // The programs' catalogs, and the ROM modules' own.
+    for (poweros_userland.catalogs) |catalog| {
+        disks.addPrefixedFileArg(b.fmt("{s}=", .{catalog.disk}), disk_dep.namedLazyPath(catalog.disk));
+    }
+    for (rom_catalogs) |catalog| {
+        const catalog_file = poweros_sdk.addCatalog(b, sdk_dep, b.path(catalog.descriptor), b.path(catalog.translation), catalog.name);
+        disks.addPrefixedFileArg(b.fmt("{s}=", .{catalog.disk}), catalog_file);
     }
     // The chips' own versions after the shared ones, which they replace
     // on their images.

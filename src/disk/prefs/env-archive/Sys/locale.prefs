@@ -1,0 +1,13 @@
+# ENVARC:Sys/locale.prefs - the country and the languages the system
+# writes dates, numbers and its messages in, which C:SetPrefs makes the
+# default locale at boot. COUNTRY names a file in LOCALE:Countries;
+# LANGUAGES the languages wanted, the preferred first, each a file in
+# LOCALE:Languages and the catalogs in LOCALE:Catalogs/<language>, in
+# quotes when there are several. Without LANGUAGES the country's own
+# language is used; without either, or without a line, English and the
+# United States' formats. The first line that is not a comment is read;
+# take the # off one below to use it.
+#
+# COUNTRY=deutschland
+# COUNTRY=schweiz LANGUAGES="deutsch, francais, english"
+# COUNTRY=united_kingdom

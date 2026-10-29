@@ -1,0 +1,47 @@
+# LOCALE:Countries/united_states.country - The United States: how dates, times,
+# numbers and money are written there, which locale.library takes for a
+# locale whose settings name this country. A value with a blank is in
+# quotes; a key left out is the United States' own.
+#
+# The country's ISO code, its telephone code, its measures, the first day
+# of its week, and the language spoken there unless the settings say
+# otherwise.
+CODE=US
+TELEPHONE=1
+MEASURE=AMERICAN
+FIRSTDAY=SUNDAY
+LANGUAGE=english
+# Dates and times, long and short, as FormatDate writes them.
+DATETIME="%A %B %e %Y %Q:%M %p"
+DATE="%A %B %e %Y"
+TIME="%Q:%M:%S %p"
+SHORTDATETIME="%m/%d/%Y %Q:%M %p"
+SHORTDATE=%m/%d/%Y
+SHORTTIME="%Q:%M %p"
+# Numbers: the decimal point, the separator between groups of digits and
+# their sizes from the right (3, or 3,2 for three then twos; NONE).
+DECIMAL=.
+GROUP=,
+FRACGROUP=,
+GROUPING=3
+FRACGROUPING=3
+# Money: the same for amounts, the digits after the point, the currency
+# and where it and the sign go.
+MONDECIMAL=.
+MONGROUP=,
+MONFRACGROUP=,
+MONGROUPING=3
+MONFRACGROUPING=3
+MONFRACDIGITS=2
+MONINTFRACDIGITS=2
+CURRENCY=$
+SMALLCURRENCY=¢
+INTCURRENCY=USD
+POSITIVESIGN=""
+POSITIVESPACE=NO
+POSITIVESIGNAT=BEFORE
+POSITIVECURRENCYAT=BEFORE
+NEGATIVESIGN=-
+NEGATIVESPACE=NO
+NEGATIVESIGNAT=BEFORE
+NEGATIVECURRENCYAT=BEFORE

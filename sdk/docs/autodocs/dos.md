@@ -1492,7 +1492,8 @@ the minute).
 **BEHAVIOR**
 
 dat_StrDay gets the weekday's name. dat_StrTime gets "hh:mm:ss".
-dat_StrDate gets the date in dat_Format (an unknown one is FORMAT_DOS):
+dat_StrDate gets the date in dat_Format (an unknown one, FORMAT_DEF
+among them, is FORMAT_DOS):
 "dd-Mmm-yyyy", "yyyy-mm-dd", "mm-dd-yyyy" or "dd-mm-yyyy". With
 FORMAT_DOS and DTF_SUBST a date near today is a word instead: "Today",
 "Yesterday", "Tomorrow", "Future" for anything later, and the weekday's
@@ -1514,13 +1515,17 @@ Nothing is allocated. The buffers are the caller's.
 Without timer.device today is day 0, so DTF_SUBST calls every date
 from 1978 on "Future".
 
+Once a default locale is set, locale.library stands in front of this
+call: the same strings in the locale's words, and FORMAT_DEF in its
+short date and time.
+
 **BUGS**
 
 A year past 9999 is written with only its last four digits.
 
 **SEE ALSO**
 
-`StrToDate`, `DateStamp`
+`StrToDate`, `DateStamp`, locale.library `SetDefaultLocale`
 
 **EXAMPLES**
 
@@ -2875,13 +2880,20 @@ IoErr is not touched.
 
 The buffer is the caller's.
 
+**NOTES**
+
+Once a default locale is set, locale.library stands in front of this
+call: a code's text is the one its catalog `sys/dos.catalog` has in
+the locale's language, and this one's where it has none. It takes the
+library's lock then, so Fault is no longer for an interrupt.
+
 **BUGS**
 
 None known.
 
 **SEE ALSO**
 
-`PrintFault`, `IoErr`
+`PrintFault`, `IoErr`, locale.library `SetDefaultLocale`
 
 **EXAMPLES**
 
@@ -8637,13 +8649,19 @@ ds_Days, the time ds_Minute and ds_Tick.
 
 Nothing is allocated. The strings stay the caller's.
 
+**NOTES**
+
+Once a default locale is set, locale.library stands in front of this
+call: it reads the locale's words and formats, FORMAT_DEF its short
+date and time, and hands what it does not read to this.
+
 **BUGS**
 
 The calendar is right only up to the end of February 2100.
 
 **SEE ALSO**
 
-`DateToStr`, `DateStamp`
+`DateToStr`, `DateStamp`, locale.library `SetDefaultLocale`
 
 **EXAMPLES**
 

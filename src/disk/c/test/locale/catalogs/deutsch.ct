@@ -1,0 +1,44 @@
+## version $VER: c/test/locale.catalog 1.0 (29.10.2026)
+## language deutsch
+## codeset 106
+; C:test/Locale's strings in German.
+MSG_NOLIBRARY
+Kein %s\n
+MSG_COUNTRY
+Land:        %s (%s)\n
+MSG_LANGUAGE
+Sprache:     %s\n
+MSG_PREFERRED
+Bevorzugt:\x20\x20
+MSG_ZONE
+Zeitzone:    %s\n
+MSG_NOZONE
+Zeitzone:    keine\n
+MSG_CATALOG
+Katalog:     %s, Version %lu.%lu\n
+MSG_NOCATALOG
+Katalog:     keiner, die eingebauten Texte\n
+MSG_DATETIME
+Datum und Zeit
+MSG_DATE
+Datum
+MSG_TIME
+Zeit
+MSG_SHORTDATETIME
+Kurz
+MSG_SHORTDATE
+Datum kurz
+MSG_SHORTTIME
+Zeit kurz
+MSG_FORMAT
+  %-14s %s\n
+MSG_NUMBER
+Eine Zahl:   %D, %d ohne Gruppen\n
+MSG_MONEY
+Geld:        %s und %s, %s\n
+MSG_PARSED
+%s ist %s\n
+MSG_NODATE
+%2$s liest %1$s nicht als Datum\n
+MSG_SORTED
+Sortiert:\x20\x20\x20

@@ -1,0 +1,47 @@
+# LOCALE:Countries/united_kingdom.country - The United Kingdom: how dates, times,
+# numbers and money are written there, which locale.library takes for a
+# locale whose settings name this country. A value with a blank is in
+# quotes; a key left out is the United States' own.
+#
+# The country's ISO code, its telephone code, its measures, the first day
+# of its week, and the language spoken there unless the settings say
+# otherwise.
+CODE=GB
+TELEPHONE=44
+MEASURE=BRITISH
+FIRSTDAY=MONDAY
+LANGUAGE=english
+# Dates and times, long and short, as FormatDate writes them.
+DATETIME="%A %e %B %Y %H:%M"
+DATE="%A %e %B %Y"
+TIME=%H:%M:%S
+SHORTDATETIME="%d/%m/%Y %H:%M"
+SHORTDATE=%d/%m/%Y
+SHORTTIME=%H:%M
+# Numbers: the decimal point, the separator between groups of digits and
+# their sizes from the right (3, or 3,2 for three then twos; NONE).
+DECIMAL=.
+GROUP=,
+FRACGROUP=""
+GROUPING=3
+FRACGROUPING=NONE
+# Money: the same for amounts, the digits after the point, the currency
+# and where it and the sign go.
+MONDECIMAL=.
+MONGROUP=,
+MONFRACGROUP=""
+MONGROUPING=3
+MONFRACGROUPING=NONE
+MONFRACDIGITS=2
+MONINTFRACDIGITS=2
+CURRENCY=£
+SMALLCURRENCY=p
+INTCURRENCY=GBP
+POSITIVESIGN=""
+POSITIVESPACE=NO
+POSITIVESIGNAT=BEFORE
+POSITIVECURRENCYAT=BEFORE
+NEGATIVESIGN=""
+NEGATIVESPACE=NO
+NEGATIVESIGNAT=PARENS
+NEGATIVECURRENCYAT=BEFORE

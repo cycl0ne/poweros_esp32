@@ -413,6 +413,7 @@ pub const FORMAT_INT = datetime.FORMAT_INT;
 pub const FORMAT_USA = datetime.FORMAT_USA;
 pub const FORMAT_CDN = datetime.FORMAT_CDN;
 pub const FORMAT_MAX = datetime.FORMAT_MAX;
+pub const FORMAT_DEF = datetime.FORMAT_DEF;
 /// struct FileSysStartupMsg: the device a handler works on
 /// (a device node's dol_Startup).
 pub const FileSysStartupMsg = filehandler.FileSysStartupMsg;

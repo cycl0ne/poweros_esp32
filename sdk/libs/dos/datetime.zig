@@ -34,6 +34,10 @@ pub const FORMAT_USA: u8 = 2;
 /// dd-mm-yyyy.
 pub const FORMAT_CDN: u8 = 3;
 pub const FORMAT_MAX: u8 = FORMAT_CDN;
+/// The default locale's short date and time (locale.library's
+/// short_date_format and short_time_format); FORMAT_DOS while no default
+/// locale has been set.
+pub const FORMAT_DEF: u8 = 4;
 
 /// struct DateTime: a DateStamp and the three strings it is written to or
 /// read from. A null string is one the caller doesn't want (DateToStr) or

@@ -4,10 +4,10 @@
 //!
 //!   SetPrefs FROM/K,RESET/S,SHOW/S
 //!
-//! Reads the six settings files from FROM, a directory - ENV:Sys unless
+//! Reads the seven settings files from FROM, a directory - ENV:Sys unless
 //! named; ENVARC:Sys for the ones kept over a restart - and hands five of
-//! them to intuition.library in one `SetPrefs`, and the sixth to
-//! audio.device:
+//! them to intuition.library in one `SetPrefs`, one to audio.device and
+//! one to locale.library:
 //!
 //! - intuition.prefs: the double-click time, the height of a screen's
 //!   font when it is given none, when the keyboard on the screen comes up,
@@ -29,6 +29,11 @@
 //!   in too, and the output preferred - played through whenever it is
 //!   there. A line that cannot be read is reported with its number and
 //!   passed over; a machine without audio.device takes none of it.
+//! - locale.prefs: the country and the languages, made the default locale
+//!   - the one dates, numbers and dos's messages are written in from then
+//!   on - and the language preferred left in the global variable
+//!   Language. A country or a language that cannot be read is reported,
+//!   and the locale stays as it was.
 //!
 //! A file that is not there changes nothing of its own. Every screen and
 //! window takes the pens, the style and the title bars' gadgets at once,
@@ -39,7 +44,8 @@
 //!
 //! RESET puts every setting back to what the system starts with, and the
 //! style to the default - no output preferred, every output listed at
-//! full volume and flat; the files are not read. SHOW prints the settings in force
+//! full volume and flat; the files are not read. The locale stays as it
+//! is: the next start makes it again from locale.prefs. SHOW prints the settings in force
 //! - after setting them when FROM or RESET is given, and on its own
 //! changes nothing:
 //!
@@ -56,10 +62,12 @@
 //!   OUTPUT       es8311 80%, EQ 4,3,0,0,0,0,0,2,3,0
 //!   OUTPUT       QEMU USB Audio 40%
 //!   PREFERRED    QEMU USB Audio
+//!   LOCALE       deutschland, deutsch
 //!
 //! An OUTPUT line for each output there is, with its volume and its
 //! equalizer when it is not flat; PREFERRED names the one preferred, by
-//! its number when it is not there.
+//! its number when it is not there; LOCALE the default locale's country
+//! and language ("default" is the system's own, English).
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -76,6 +84,7 @@ const palette_file = prefs.palette;
 const sound_file = prefs.sound;
 const audio_file = prefs.audio;
 const audiocontrol = sdk.devices.audiocontrol;
+const locale = sdk.locale;
 const datatypes = sdk.datatypes;
 const dtc = datatypes.datatypesclass;
 const sdt = datatypes.soundclass;
@@ -87,12 +96,13 @@ const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const LocaleBase = sdk.interface.locale.LocaleBase;
 const TagItem = utility.TagItem;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.11 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.12 (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";
@@ -118,6 +128,7 @@ const MSG_OUTPUT = "%-12s %s %u%%\n";
 const MSG_OUTPUT_EQ = "%-12s %s %u%%, EQ %s\n";
 const MSG_PREFERRED = "%-12s %s\n";
 const MSG_PREFERRED_GONE = "%-12s %s, not there\n";
+const MSG_LOCALE = "%-12s %s, %s\n";
 
 /// The most of a beep's sound file read, in seconds.
 const max_sample_seconds = 4;
@@ -366,6 +377,38 @@ fn readAudio(l: Libs, dir: [*:0]const u8, _: *Gathered) i32 {
     return result;
 }
 
+/// locale.prefs: the locale it describes made the default, and its
+/// language left in the global variable Language. Without the file, or
+/// without locale.library, the locale stays as it is.
+fn readLocale(l: Libs, dir: [*:0]const u8, _: *Gathered) i32 {
+    var path: [128:0]u8 = undefined;
+    const from = pathOf(&path, dir, "locale.prefs");
+    const there = l.dl.Lock(from, dos.ACCESS_READ) orelse return dos.RETURN_OK;
+    l.dl.UnLock(there);
+    const library = l.sys.OpenLibrary(locale.LOCALENAME, 1) orelse return dos.RETURN_OK;
+    defer l.sys.CloseLibrary(library);
+    const lb: *LocaleBase = @ptrCast(library);
+    const loc = lb.OpenLocale(from) orelse {
+        _ = l.dl.PrintFault(l.dl.IoErr(), from);
+        return dos.RETURN_WARN;
+    };
+    defer lb.CloseLocale(loc);
+    lb.CloseLocale(lb.SetDefaultLocale(loc));
+    _ = l.dl.SetVar("Language", loc.language_name, -1, dos.GVF_GLOBAL_ONLY);
+    return dos.RETURN_OK;
+}
+
+/// The default locale's country and language, when there is
+/// locale.library.
+fn showLocale(l: Libs) void {
+    const library = l.sys.OpenLibrary(locale.LOCALENAME, 1) orelse return;
+    defer l.sys.CloseLibrary(library);
+    const lb: *LocaleBase = @ptrCast(library);
+    const loc = lb.OpenLocale(null) orelse return;
+    defer lb.CloseLocale(loc);
+    _ = Printf(l.dl, MSG_LOCALE, .{ @as([*:0]const u8, "LOCALE"), loc.locale_name, loc.language_name });
+}
+
 /// What the system starts with, for audio.device: no output preferred,
 /// and every output listed at full volume, flat.
 fn resetAudio(l: Libs) void {
@@ -560,6 +603,7 @@ fn show(l: Libs) void {
     @memcpy(flashes[0..flash_word.len], flash_word);
     _ = Printf(l.dl, MSG_WORD, .{ @as([*:0]const u8, "BEEPFLASH"), @as([*:0]const u8, &flashes) });
     showAudio(l);
+    showLocale(l);
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -608,7 +652,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         resetAudio(l);
     } else {
         const dir = from orelse default_dir;
-        const steps = [_]*const fn (Libs, [*:0]const u8, *Gathered) i32{ readAudio, readSettings, readFonts, readPens, readStyle, readSound };
+        const steps = [_]*const fn (Libs, [*:0]const u8, *Gathered) i32{ readLocale, readAudio, readSettings, readFonts, readPens, readStyle, readSound };
         for (steps) |step| result = @max(result, step(l, dir, &g));
         if (result == dos.RETURN_FAIL) return result;
     }

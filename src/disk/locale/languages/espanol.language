@@ -1,0 +1,24 @@
+# LOCALE:Languages/espanol.language - Spanish: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=domingo DAY_2=lunes DAY_3=martes DAY_4=miércoles
+DAY_5=jueves DAY_6=viernes DAY_7=sábado
+ABDAY_1=dom ABDAY_2=lun ABDAY_3=mar ABDAY_4=mie ABDAY_5=jue
+ABDAY_6=vie ABDAY_7=sab
+# The months, then their short names.
+MON_1=enero MON_2=febrero MON_3=marzo MON_4=abril MON_5=mayo
+MON_6=junio MON_7=julio MON_8=agosto MON_9=septiembre
+MON_10=octubre MON_11=noviembre MON_12=diciembre
+ABMON_1=ene ABMON_2=feb ABMON_3=mar ABMON_4=abr ABMON_5=may
+ABMON_6=jun ABMON_7=jul ABMON_8=ago ABMON_9=sep ABMON_10=oct
+ABMON_11=nov ABMON_12=dic
+# Yes and no, before and after noon.
+YESSTR=Sí NOSTR=No AM_STR=AM PM_STR=PM
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=-
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Ayer TODAYSTR=Hoy TOMORROWSTR=Mañana FUTURESTR=Futuro
+# The order of the letters: Ñ after N.
+AFTER_N=Ñ

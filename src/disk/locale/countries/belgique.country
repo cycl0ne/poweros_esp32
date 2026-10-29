@@ -1,0 +1,47 @@
+# LOCALE:Countries/belgique.country - Belgium, in French: how dates, times,
+# numbers and money are written there, which locale.library takes for a
+# locale whose settings name this country. A value with a blank is in
+# quotes; a key left out is the United States' own.
+#
+# The country's ISO code, its telephone code, its measures, the first day
+# of its week, and the language spoken there unless the settings say
+# otherwise.
+CODE=BE
+TELEPHONE=32
+MEASURE=METRIC
+FIRSTDAY=MONDAY
+LANGUAGE=francais
+# Dates and times, long and short, as FormatDate writes them.
+DATETIME="%e-%b-%Y %Hh%M"
+DATE=%e-%b-%Y
+TIME=%Hh%M
+SHORTDATETIME="%d/%m/%Y %Hh%M"
+SHORTDATE=%d/%m/%Y
+SHORTTIME=%Hh%M
+# Numbers: the decimal point, the separator between groups of digits and
+# their sizes from the right (3, or 3,2 for three then twos; NONE).
+DECIMAL=,
+GROUP=.
+FRACGROUP=""
+GROUPING=3
+FRACGROUPING=NONE
+# Money: the same for amounts, the digits after the point, the currency
+# and where it and the sign go.
+MONDECIMAL=,
+MONGROUP=.
+MONFRACGROUP=""
+MONGROUPING=3
+MONFRACGROUPING=NONE
+MONFRACDIGITS=2
+MONINTFRACDIGITS=2
+CURRENCY=€
+SMALLCURRENCY=ct
+INTCURRENCY=EUR
+POSITIVESIGN=""
+POSITIVESPACE=NO
+POSITIVESIGNAT=BEFORE
+POSITIVECURRENCYAT=AFTER
+NEGATIVESIGN=-
+NEGATIVESPACE=NO
+NEGATIVESIGNAT=BEFORE
+NEGATIVECURRENCYAT=AFTER

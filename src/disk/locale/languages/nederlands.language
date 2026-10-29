@@ -1,0 +1,23 @@
+# LOCALE:Languages/nederlands.language - Dutch: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=zondag DAY_2=maandag DAY_3=dinsdag DAY_4=woensdag
+DAY_5=donderdag DAY_6=vrijdag DAY_7=zaterdag
+ABDAY_1=zo ABDAY_2=ma ABDAY_3=di ABDAY_4=wo ABDAY_5=do ABDAY_6=vr
+ABDAY_7=za
+# The months, then their short names.
+MON_1=januari MON_2=februari MON_3=maart MON_4=april MON_5=mei
+MON_6=juni MON_7=juli MON_8=augustus MON_9=september
+MON_10=oktober MON_11=november MON_12=december
+ABMON_1=jan ABMON_2=feb ABMON_3=mrt ABMON_4=apr ABMON_5=mei
+ABMON_6=jun ABMON_7=jul ABMON_8=aug ABMON_9=sep ABMON_10=okt
+ABMON_11=nov ABMON_12=dec
+# Yes and no, before and after noon.
+YESSTR=Ja NOSTR=Nee AM_STR=VM PM_STR=NM
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=-
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=gisteren TODAYSTR=vandaag TOMORROWSTR=morgen
+FUTURESTR=toekomst

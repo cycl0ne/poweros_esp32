@@ -1,0 +1,80 @@
+//! locale.library's functions: a country's formats for dates, times and
+//! numbers, a language's words and order of letters, and a program's
+//! strings in the languages the user prefers. Open it with
+//! OpenLibrary("locale.library", 1).
+//!
+//! The table is this library's own: it starts at the first slot after
+//! the standard four and holds only what is here.
+##include libs/utility/utility as utility
+##include libs/dos/dos as dos
+##include libs/locale/locale as locale
+##basetype LocaleBase
+##name locale.library
+##bias 4
+##public
+/// A locale from the settings file `name`, or the default one when it is
+/// null. Null when the file, its country or every language it names
+/// cannot be read; IoErr says why.
+?*locale.Locale OpenLocale(?[*:0]const u8 name)
+/// A locale given back. Null does nothing.
+void CloseLocale(?*locale.Locale loc)
+/// `loc` made the default, which `OpenLocale(null)` answers and which
+/// dos's dates and faults are written in; the one before is answered, and
+/// the library's hold on it is the caller's to give back with CloseLocale.
+?*locale.Locale SetDefaultLocale(*locale.Locale loc)
+/// One of the language's words (DAY_1, MON_1, YESSTR, ...); null for a
+/// number past them.
+?[*:0]const u8 GetLocaleStr(*const locale.Locale loc, u32 string_num)
+/// Whether `character` is a letter or a digit.
+bool IsAlNum(*const locale.Locale loc, u32 character)
+/// Whether `character` is a letter.
+bool IsAlpha(*const locale.Locale loc, u32 character)
+/// Whether `character` is a control character.
+bool IsCntrl(*const locale.Locale loc, u32 character)
+/// Whether `character` is a decimal digit.
+bool IsDigit(*const locale.Locale loc, u32 character)
+/// Whether `character` is printed and not blank.
+bool IsGraph(*const locale.Locale loc, u32 character)
+/// Whether `character` is a small letter.
+bool IsLower(*const locale.Locale loc, u32 character)
+/// Whether `character` is printed, blanks included.
+bool IsPrint(*const locale.Locale loc, u32 character)
+/// Whether `character` is printed and neither a letter, a digit nor blank.
+bool IsPunct(*const locale.Locale loc, u32 character)
+/// Whether `character` is blank: a space, a tab, a line's end.
+bool IsSpace(*const locale.Locale loc, u32 character)
+/// Whether `character` is a capital letter.
+bool IsUpper(*const locale.Locale loc, u32 character)
+/// Whether `character` is a hexadecimal digit.
+bool IsXDigit(*const locale.Locale loc, u32 character)
+/// `character` as a small letter; as it is when it has none.
+u32 ConvToLower(*const locale.Locale loc, u32 character)
+/// `character` as a capital letter; as it is when it has none.
+u32 ConvToUpper(*const locale.Locale loc, u32 character)
+/// Two strings compared, at most `length` bytes of each (-1 for all), by
+/// `compare_type` (SC_*): below 0, 0 or above 0.
+i32 StrnCmp(*const locale.Locale loc, [*:0]const u8 string1, [*:0]const u8 string2, i32 length, u32 compare_type)
+/// `string` as bytes whose plain order is its order by `compare_type`
+/// (SC_*), into `buffer`; the bytes written, the NUL left out.
+u32 StrConvert(*const locale.Locale loc, [*:0]const u8 string, [*]u8 buffer, u32 buffer_size, u32 compare_type)
+/// A date written out by a template (`%A %e %B %Y`), each byte handed to
+/// `put_char_func`, a NUL last.
+void FormatDate(*const locale.Locale loc, [*:0]const u8 template, *const dos.DateStamp date, *utility.Hook put_char_func)
+/// A date read by a template, each byte asked of `get_char_func`; false
+/// when the text is not one.
+bool ParseDate(*const locale.Locale loc, *dos.DateStamp date, [*:0]const u8 template, *utility.Hook get_char_func)
+/// Values written out by a template, as RawDoFmt writes them, with an
+/// argument picked by its place (`%2$s`) and digits grouped (`%D`, `%U`);
+/// each byte handed to `put_char_func`, a NUL last. The data stream past
+/// the values used.
+?*const anyopaque FormatString(*const locale.Locale loc, [*:0]const u8 template, ?*const anyopaque data_stream, *utility.Hook put_char_func)
+/// The catalog `name` in the first of the locale's languages that has
+/// one (null: the default locale); null when none has, and the strings
+/// built in are the ones to use.
+?*locale.Catalog OpenCatalogA(?*const locale.Locale loc, [*:0]const u8 name, ?[*]const utility.TagItem tag_list)
+/// A catalog given back. Null does nothing.
+void CloseCatalog(?*locale.Catalog catalog)
+/// The catalog's string `string_num`, or `default_string` when it has
+/// none or `catalog` is null.
+[*:0]const u8 GetCatalogStr(?*const locale.Catalog catalog, i32 string_num, [*:0]const u8 default_string)
+##end

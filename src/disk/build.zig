@@ -15,9 +15,20 @@ const std = @import("std");
 const poweros_sdk = @import("poweros_sdk");
 
 /// Something built for the disk: its place there, its root source file,
-/// the name its load file is known by, and the inner modules it is built
-/// with (`inner_modules`).
-pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, imports: []const []const u8 = &.{} };
+/// the name its load file is known by, the inner modules it is built
+/// with (`inner_modules`), and the catalog descriptor its strings are made
+/// from - imported as `strings`, its catalog named after its place.
+pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, imports: []const []const u8 = &.{}, strings: ?[]const u8 = null };
+
+/// A translation of a program's strings: its place on the disk, in
+/// LOCALE:Catalogs/<language>/, the descriptor and the translation it is
+/// made from, and the catalog's name.
+pub const Catalog = struct { disk: []const u8, descriptor: []const u8, translation: []const u8, name: []const u8 };
+
+/// The programs' translations.
+pub const catalogs = [_]Catalog{
+    .{ .disk = "locale/Catalogs/deutsch/c/test/locale.catalog", .descriptor = "c/test/locale/locale.cd", .translation = "c/test/locale/catalogs/deutsch.ct", .name = "c/test/locale.catalog" },
+};
 
 /// Code compiled into each program that imports it, by name, rather than
 /// loaded: a library's inner part that its test programs build in as well.
@@ -94,6 +105,7 @@ const inner_tests = [_]Program{
     .{ .disk = "c/test/cube", .source = "c/test/raster/cube.zig", .name = "cube", .imports = &.{"raster"} },
     .{ .disk = "c/test/facetcube", .source = "c/test/raster/facetcube.zig", .name = "facetcube", .imports = &.{"raster"} },
     .{ .disk = "c/test/facetwindow", .source = "c/test/raster/facetwindow.zig", .name = "facetwindow", .imports = &.{"raster"} },
+    .{ .disk = "c/test/locale", .source = "c/test/locale/locale.zig", .name = "locale", .strings = "c/test/locale/locale.cd" },
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
@@ -123,6 +135,7 @@ const modules = [_]Program{
     .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },
     .{ .disk = "libs/asl.library", .source = "libs/asl/asl.zig", .name = "asl.library" },
     .{ .disk = "libs/iffparse.library", .source = "libs/iffparse/iffparse.zig", .name = "iffparse.library" },
+    .{ .disk = "libs/locale.library", .source = "libs/locale/locale.zig", .name = "locale.library" },
     .{ .disk = "libs/datatypes.library", .source = "libs/datatypes/datatypes.zig", .name = "datatypes.library" },
     .{ .disk = "classes/gadgets/hello.gadget", .source = "classes/gadgets/hello/hello.zig", .name = "hello.gadget" },
     .{ .disk = "classes/gadgets/checkbox.gadget", .source = "classes/gadgets/checkbox/checkbox.zig", .name = "checkbox.gadget" },
@@ -336,6 +349,7 @@ pub const files = [_]File{
     // ENVARC: as a fresh disk has it: what each settings file says, and
     // its value to start with.
     .{ .disk = "prefs/env-archive/Sys/timezone", .source = "prefs/env-archive/Sys/timezone" },
+    .{ .disk = "prefs/env-archive/Sys/locale.prefs", .source = "prefs/env-archive/Sys/locale.prefs" },
     .{ .disk = "prefs/env-archive/Sys/font.prefs", .source = "prefs/env-archive/Sys/font.prefs" },
     .{ .disk = "prefs/env-archive/Sys/style.prefs", .source = "prefs/env-archive/Sys/style.prefs" },
     .{ .disk = "prefs/env-archive/Sys/intuition.prefs", .source = "prefs/env-archive/Sys/intuition.prefs" },
@@ -346,6 +360,38 @@ pub const files = [_]File{
     .{ .disk = "prefs/env-archive/Sys/dock.prefs", .source = "prefs/env-archive/Sys/dock.prefs" },
     .{ .disk = "prefs/env-archive/Sys/dock.items", .source = "prefs/env-archive/Sys/dock.items" },
     .{ .disk = "prefs/env-archive/Player/Stations.m3u", .source = "prefs/env-archive/Player/Stations.m3u" },
+    // LOCALE: - each country's formats and each language's words, which
+    // locale.library makes a locale of.
+    .{ .disk = "locale/Countries/australia.country", .source = "locale/countries/australia.country" },
+    .{ .disk = "locale/Countries/belgie.country", .source = "locale/countries/belgie.country" },
+    .{ .disk = "locale/Countries/belgique.country", .source = "locale/countries/belgique.country" },
+    .{ .disk = "locale/Countries/canada.country", .source = "locale/countries/canada.country" },
+    .{ .disk = "locale/Countries/canada_francais.country", .source = "locale/countries/canada_francais.country" },
+    .{ .disk = "locale/Countries/danmark.country", .source = "locale/countries/danmark.country" },
+    .{ .disk = "locale/Countries/deutschland.country", .source = "locale/countries/deutschland.country" },
+    .{ .disk = "locale/Countries/espana.country", .source = "locale/countries/espana.country" },
+    .{ .disk = "locale/Countries/france.country", .source = "locale/countries/france.country" },
+    .{ .disk = "locale/Countries/great_britain.country", .source = "locale/countries/great_britain.country" },
+    .{ .disk = "locale/Countries/italia.country", .source = "locale/countries/italia.country" },
+    .{ .disk = "locale/Countries/nederland.country", .source = "locale/countries/nederland.country" },
+    .{ .disk = "locale/Countries/norge.country", .source = "locale/countries/norge.country" },
+    .{ .disk = "locale/Countries/osterreich.country", .source = "locale/countries/osterreich.country" },
+    .{ .disk = "locale/Countries/portugal.country", .source = "locale/countries/portugal.country" },
+    .{ .disk = "locale/Countries/schweiz.country", .source = "locale/countries/schweiz.country" },
+    .{ .disk = "locale/Countries/suisse.country", .source = "locale/countries/suisse.country" },
+    .{ .disk = "locale/Countries/sverige.country", .source = "locale/countries/sverige.country" },
+    .{ .disk = "locale/Countries/svizzera.country", .source = "locale/countries/svizzera.country" },
+    .{ .disk = "locale/Countries/united_kingdom.country", .source = "locale/countries/united_kingdom.country" },
+    .{ .disk = "locale/Countries/united_states.country", .source = "locale/countries/united_states.country" },
+    .{ .disk = "locale/Languages/dansk.language", .source = "locale/languages/dansk.language" },
+    .{ .disk = "locale/Languages/deutsch.language", .source = "locale/languages/deutsch.language" },
+    .{ .disk = "locale/Languages/espanol.language", .source = "locale/languages/espanol.language" },
+    .{ .disk = "locale/Languages/francais.language", .source = "locale/languages/francais.language" },
+    .{ .disk = "locale/Languages/italiano.language", .source = "locale/languages/italiano.language" },
+    .{ .disk = "locale/Languages/nederlands.language", .source = "locale/languages/nederlands.language" },
+    .{ .disk = "locale/Languages/norsk.language", .source = "locale/languages/norsk.language" },
+    .{ .disk = "locale/Languages/portugues.language", .source = "locale/languages/portugues.language" },
+    .{ .disk = "locale/Languages/svenska.language", .source = "locale/languages/svenska.language" },
     // The looks the preferences editor offers, a style file each.
     .{ .disk = "prefs/presets/styles/Classic.prefs", .source = "prefs/presets/styles/Classic.prefs" },
     .{ .disk = "prefs/presets/styles/Rounded.prefs", .source = "prefs/presets/styles/Rounded.prefs" },
@@ -434,7 +480,7 @@ pub fn build(b: *std.Build) void {
     }
     for (programs) |program| {
         if (!builtFor(program, chip)) continue;
-        var imports: [inner_modules.len]std.Build.Module.Import = undefined;
+        var imports: [inner_modules.len + 1]std.Build.Module.Import = undefined;
         var count: usize = 0;
         for (program.imports) |name| {
             for (inner) |import| {
@@ -442,6 +488,11 @@ pub fn build(b: *std.Build) void {
                 imports[count] = import;
                 count += 1;
             }
+        }
+        if (program.strings) |descriptor| {
+            const catalog_name = b.fmt("{s}.catalog", .{program.disk});
+            imports[count] = .{ .name = "strings", .module = poweros_sdk.addStrings(b, sdk, b.path(descriptor), catalog_name) };
+            count += 1;
         }
         const seg = poweros_sdk.addProgram(b, sdk, .{
             .name = program.name,
@@ -454,5 +505,8 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(seg, b.fmt("{s}.seg", .{program.name})).step);
     }
     for (files) |file| b.addNamedLazyPath(file.disk, b.path(file.source));
+    for (catalogs) |catalog| {
+        b.addNamedLazyPath(catalog.disk, poweros_sdk.addCatalog(b, sdk, b.path(catalog.descriptor), b.path(catalog.translation), catalog.name));
+    }
     for (mac_files ++ p4_files) |file| b.addNamedLazyPath(file.source, b.path(file.source));
 }
