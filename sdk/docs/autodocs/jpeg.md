@@ -30,8 +30,9 @@ fn DecodeJPEG(jb: *JpegBase, file: [*]const u8, length: u32,
 
 **INPUTS**
 
-- `file` - the file's bytes, from its start, in memory the 2D-DMA
-  reads: the PSRAM or the internal memory (what AllocVec gives).
+- `file` - the file's bytes, from its start. On the ESP32-P4 in memory
+  the 2D-DMA reads: the PSRAM or the internal memory (what AllocVec
+  gives); on the JH7110 anywhere.
 - `length` - how many there are.
 - `picture` - filled in.
 
@@ -43,19 +44,25 @@ them from `pixels` on, `pitch` bytes from one row to the next, in
 why not, and `picture` is all zero: what ExamineJPEG answers for the
 file, JPEGERR_UNSUPPORTED as well for a file the 2D-DMA cannot read,
 JPEGERR_NO_MEMORY, JPEGERR_FAILED when the codec stopped on the file
-or did not finish in time, JPEGERR_NO_ENGINE when there is no codec.
+or did not finish in time, JPEGERR_NO_ENGINE when there is no codec
+or it would not wake.
 
 **BEHAVIOR**
 
-The headers are read and their tables written into the codec; the
-2D-DMA feeds it the file from its scan on and writes the picture,
-turned into red, green and blue with JFIF's matrix, into memory the
-resource allocates on whole cache lines - whole blocks of the file's
-sampling, so `pitch` and the rows may run past the picture. The
-caller's task waits on the 2D-DMA's end interrupt, or the codec's
-error interrupt, for at most a quarter of a second and a microsecond
-for each eight pixels; the CPU is free meanwhile. One decode at a time:
-a second caller waits for the first.
+The headers are read and their tables written into the codec, and the
+picture made in memory the resource allocates on whole cache lines -
+whole blocks of the file's sampling, so `pitch` and the rows may run
+past the picture. On the ESP32-P4 the 2D-DMA feeds the codec the file
+from its scan on and writes the picture, turned into red, green and
+blue with JFIF's matrix; the caller's task waits on the 2D-DMA's end
+interrupt, or the codec's error interrupt. On the JH7110 the file is
+copied below 4 GiB, where the codec reads it, and the codec writes the
+picture's planes - a grey one straight into the picture - which are
+then turned into blue, green and red with the same matrix; the first
+decode wakes the codec and its power domain. Either waits for at most
+a quarter of a second and a microsecond for each eight pixels; the CPU
+is free meanwhile. One decode at a time: a second caller waits for the
+first.
 
 The codec writes behind the data cache's back: the file's bytes are
 written back out of the cache before, the picture dropped from it
@@ -75,8 +82,9 @@ The picture is the caller's until it gives it to FreeJPEGPicture.
 
 **NOTES**
 
-The 2D-DMA brings the colour's halved samples to full size its own
-way: the picture is close to a software decoder's, not equal.
+The codec brings the colour's halved samples to full size its own way
+- the 2D-DMA, the JH7110's format converter: the picture is close to
+a software decoder's, not equal.
 
 **BUGS**
 

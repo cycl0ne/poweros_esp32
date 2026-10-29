@@ -395,6 +395,10 @@ pub const PARTKIND_THERMAL: u32 = 23;
 /// PART_Chip which, PART_Address its registers (BUS_MEMORY), PART_Irq its
 /// interrupt.
 pub const PARTKIND_CRYPTO: u32 = 24;
+/// A JPEG codec in the chip, which jpeg.resource decodes with: PART_Chip
+/// which, PART_Address its registers (BUS_MEMORY), PART_Irq its
+/// interrupt.
+pub const PARTKIND_JPEG: u32 = 25;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -513,6 +517,10 @@ pub const CHIP_JH7110_SDMA: u32 = 36;
 /// CCM and GCM, SHA-2 and SM3 with HMAC, and a big-number unit, its data
 /// moved by the block's DMA controller (CHIP_JH7110_SDMA).
 pub const CHIP_JH7110_CRYPTO: u32 = 37;
+/// The JH7110's JPEG codec, Chips&Media's CODAJ12 (PARTKIND_JPEG on
+/// BUS_MEMORY): baseline files of 8-bit samples into YCbCr planes, in the
+/// video decoder's power domain.
+pub const CHIP_JH7110_JPU: u32 = 38;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

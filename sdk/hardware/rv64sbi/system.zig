@@ -87,7 +87,13 @@ pub const SYSCLK_NOC_BUS_DISP_AXI = 60;
 pub const SYSCLK_VOUT_TOP_AHB = 61;
 pub const SYSCLK_VOUT_TOP_AXI = 62;
 pub const SYSCLK_VOUT_TOP_HDMITX0_MCLK = 63;
+pub const SYSCLK_CODAJ12_AXI = 66;
+pub const SYSCLK_CODAJ12_CORE = 67;
+pub const SYSCLK_CODAJ12_APB = 68;
 pub const SYSCLK_WAVE511_VCE = 72;
+pub const SYSCLK_VDEC_JPG = 74;
+pub const SYSCLK_VDEC_MAIN = 75;
+pub const SYSCLK_NOC_BUS_VDEC_AXI = 76;
 pub const SYSCLK_QSPI_REF_SRC = 89;
 pub const SYSCLK_SDIO1_AHB = 92;
 pub const SYSCLK_SDIO1_SDCARD = 94;
@@ -139,7 +145,13 @@ pub const VOUTCLK_HDMI_TX_SYS = 17;
 
 /// The system generator's resets.
 pub const SYSRST_NOC_BUS_DISP_AXI = 26;
+pub const SYSRST_NOC_BUS_VDEC_AXI = 31;
 pub const SYSRST_VOUT_TOP_SRC = 43;
+pub const SYSRST_CODAJ12_AXI = 44;
+pub const SYSRST_CODAJ12_CORE = 45;
+pub const SYSRST_CODAJ12_APB = 46;
+pub const SYSRST_VDEC_JPG = 51;
+pub const SYSRST_VDEC_MAIN = 52;
 pub const SYSRST_SDIO1_AHB = 65;
 pub const SYSRST_I2C5_APB = 81;
 pub const SYSRST_PWMDAC_APB = 96;
@@ -260,6 +272,43 @@ pub fn waitOutOfReset(comptime generator: Generator, n: u32) bool {
     var tries: u32 = 0;
     while (tries < patience) : (tries += 1) {
         if (outOfReset(generator, n)) return true;
+    }
+    return false;
+}
+
+// --- the JH7110's power domains ------------------------------------------------
+
+/// The power management unit, in the always-on domain: a domain is
+/// switched on by writing its bit to SW_TURN_ON and then the three words
+/// that make the unit act on it, and is on once its bit reads set in
+/// CURR_POWER_MODE. Numbered as in Linux's binding
+/// (dt-bindings/power/starfive,jh7110-pmu.h).
+const PMU: usize = 0x1703_0000;
+const PMU_SW_TURN_ON = PMU + 0x0C;
+const PMU_SW_ENCOURAGE = PMU + 0x44;
+const PMU_CURR_POWER_MODE = PMU + 0x80;
+const PMU_ENCOURAGE = [_]u32{ 0xFF, 0x05, 0x50 };
+
+/// The video decoder's domain - the WAVE511 and the JPEG codec - and the
+/// display's.
+pub const PD_VDEC: u32 = 1 << 3;
+pub const PD_VOUT: u32 = 1 << 4;
+
+/// Whether the domains `mask` are on.
+pub fn powered(mask: u32) bool {
+    return mmio.reg(PMU_CURR_POWER_MODE).* & mask == mask;
+}
+
+/// The domains `mask` switched on, if they are off; whether they came on
+/// in time. The other domains are left as they are. Outside Disable, as
+/// `waitOutOfReset`.
+pub fn powerOn(mask: u32) bool {
+    if (powered(mask)) return true;
+    mmio.reg(PMU_SW_TURN_ON).* = mask;
+    for (PMU_ENCOURAGE) |value| mmio.reg(PMU_SW_ENCOURAGE).* = value;
+    var tries: u32 = 0;
+    while (tries < patience) : (tries += 1) {
+        if (powered(mask)) return true;
     }
     return false;
 }

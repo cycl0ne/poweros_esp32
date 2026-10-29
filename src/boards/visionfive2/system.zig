@@ -59,6 +59,18 @@ const crypto_dma = [_]Tag{
     .done,
 };
 
+/// The JPEG codec, in the video decoder's power domain: jpeg.resource's,
+/// on PLIC source 14.
+const jpu = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_JPEG),
+    .value(st.PART_Chip, st.CHIP_JH7110_JPU),
+    .pointer(st.PART_ChipName, "jh7110 jpu"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x1309_0000),
+    .value(st.PART_Irq, 14),
+    .done,
+};
+
 /// The JH7110's own temperature sensor, beside its cores.
 const temperature = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_THERMAL),
@@ -302,6 +314,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &trng),
     .pointer(st.SYSTAG_Part, &crypto_engine),
     .pointer(st.SYSTAG_Part, &crypto_dma),
+    .pointer(st.SYSTAG_Part, &jpu),
     .pointer(st.SYSTAG_Part, &temperature),
     .pointer(st.SYSTAG_Part, &rtc),
     .pointer(st.SYSTAG_Part, &dmac),

@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
-//! jpeg.resource's ROM tag, and the init routine it names: the codec
-//! clocked and out of reset, the 2D-DMA channel it is fed through claimed
-//! from dma.resource, and the servers on its two interrupts - the
-//! codec's, for a file it cannot decode, and the receive side's, for the
-//! end of the picture.
+//! jpeg.resource's ROM tag, and the init routine it names. On the
+//! ESP32-P4: the codec clocked and out of reset, the 2D-DMA channel it is
+//! fed through claimed from dma.resource, and the servers on its two
+//! interrupts - the codec's, for a file it cannot decode, and the receive
+//! side's, for the end of the picture. On the JH7110: the codec found
+//! among the board's parts and the server on its interrupt; it is woken by
+//! the first decode, so its power domain stays off until a file is
+//! decoded.
 //!
-//! On a chip without the codec (the host the tests run on) the resource
-//! is made all the same, without the codec: ExamineJPEG works, DecodeJPEG
-//! answers JPEGERR_NO_ENGINE.
+//! On a chip or board without the codec (the host the tests run on) the
+//! resource is made all the same, without the codec: ExamineJPEG works,
+//! DecodeJPEG answers JPEGERR_NO_ENGINE.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -22,22 +25,28 @@ const JpegBase = @import("jpeg_base.zig").JpegBase;
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.JPEGNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 0;
-const BUILD_DATE = "10.10.2026";
+pub const RESOURCE_REVISION = 1;
+const BUILD_DATE = "29.10.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// Whether the chip has the codec.
-pub const on_chip = hardware.chip == .esp32p4;
+/// The codec the chip may have: the ESP32-P4's, the JH7110's CODAJ12 -
+/// where the board lists it - or none.
+pub const Engine = enum { none, esp32p4, codaj12 };
+pub const engine: Engine = switch (hardware.chip) {
+    .esp32p4 => .esp32p4,
+    .rv64sbi => .codaj12,
+    else => .none,
+};
 
 fn jpegBase(lib: *exec.Library) *JpegBase {
     return @alignCast(@fieldParentPtr("lib", lib));
 }
 
 /// ResInit: the lock, and on the chip the codec, its channel and its
-/// interrupts.
+/// interrupts; on the JH7110 its part and its interrupt.
 ///
 /// CONTEXT:
 /// - Waits: no. - Interrupts: no; it runs on the exec task at cold start.
@@ -55,8 +64,46 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     jb.errors = 0;
     jb.ended = 0;
     jb.hooked = false;
-    if (comptime on_chip) startCodec(jb, sys_base);
+    jb.jpu = 0;
+    jb.jpu_irq = 0;
+    jb.jpu_awake = false;
+    jb.jpu_dead = false;
+    switch (comptime engine) {
+        .esp32p4 => startCodec(jb, sys_base),
+        .codaj12 => findJpu(jb, sys_base),
+        .none => {},
+    }
     return lib;
+}
+
+/// The JH7110's codec found on the board and its interrupt hooked; it
+/// stays asleep until the first decode.
+fn findJpu(jb: *JpegBase, sys: *ExecBase) void {
+    const codaj12 = @import("codec/_codaj12.zig");
+    const part = codaj12.find(sys) orelse return;
+    jb.jpu = part.regs;
+    jb.jpu_irq = part.irq;
+    jb.codec_int = .{
+        .node = .{ .type = .interrupt, .pri = 0, .name = RESOURCE_NAME },
+        .data = jb,
+        .code = &jpuServer,
+    };
+    sys.AddIntServer(part.irq, &jb.codec_int);
+    jb.hooked = true;
+}
+
+/// The JH7110's codec ended a picture, or stopped on one: what it raised
+/// noted and cleared, and the decode's task told.
+fn jpuServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
+    _ = int_number;
+    const codaj12 = @import("codec/_codaj12.zig");
+    const jb: *JpegBase = @ptrCast(@alignCast(is_data.?));
+    if (!jb.jpu_awake) return 0;
+    const raised = codaj12.takeStatus(jb.jpu);
+    if (raised == 0) return 0;
+    jb.ended |= raised;
+    if (jb.waiter) |task| jb.sys_base.Signal(task, jb.waiter_mask);
+    return 1;
 }
 
 /// The codec's channel claimed, the codec clocked, its interrupts
@@ -114,7 +161,8 @@ const init_table = exec.InitTable{
 };
 
 /// Cold start at 60: after dma.resource (70), whose 2D-DMA channel 0 it
-/// claims.
+/// claims on the ESP32-P4, and after expansion.library (102), which has
+/// the JH7110's part.
 pub export const jpeg_resource_tag: exec.Resident linksection(".resident") = .{
     .match_tag = &jpeg_resource_tag,
     .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,

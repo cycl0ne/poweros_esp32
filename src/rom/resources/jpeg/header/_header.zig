@@ -50,7 +50,7 @@ const M_TEM: u8 = 0x01;
 /// The order the sixty-four entries of a table are written in: out from
 /// the corner, diagonal by diagonal. Entry `i` of the file is entry
 /// `zigzag[i]` of the table in natural order.
-const zigzag = [64]u8{
+pub const zigzag = [64]u8{
     0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 18, 11, 4,  5,
     12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6,  7,  14, 21, 28,
     35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
@@ -68,12 +68,15 @@ pub const CodeTable = struct {
 };
 
 /// One component of the frame: its number, its sampling across and down,
-/// its quantization table.
+/// its quantization table, and the code tables the scan gives it, DC and
+/// AC.
 pub const Component = struct {
     id: u8 = 0,
     across: u8 = 0,
     down: u8 = 0,
     table: u8 = 0,
+    dc: u8 = 0,
+    ac: u8 = 0,
 };
 
 pub const Header = struct {
@@ -276,12 +279,14 @@ fn quantizationTables(body: *Reader, h: *Header) Error!void {
 /// file gave and the codec holds, the whole of each block in one pass.
 fn scan(body: *Reader, h: *Header) Error!void {
     if (try body.byte() != h.count) return Error.Unsupported;
-    for (h.component[0..h.count]) |c| {
+    for (h.component[0..h.count]) |*c| {
         if (try body.byte() != c.id) return Error.Unsupported;
         const tables = try body.byte();
         const dc = tables >> 4;
         const ac = tables & 0xF;
         if (dc > 1 or ac > 1) return Error.Unsupported;
+        c.dc = dc;
+        c.ac = ac;
         const dc_bit = @as(u4, 1) << @intCast(dc);
         const ac_bit = @as(u4, 1) << @intCast(2 + ac);
         if (h.code_given & dc_bit == 0 or h.code_given & ac_bit == 0) return Error.Unsupported;

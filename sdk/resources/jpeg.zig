@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! jpeg.resource: the chip's JPEG codec, decoding a file into pixels -
-//! the ESP32-P4's; a machine without one has no jpeg.resource, and a
-//! program decodes in software there (jpeg.datatype does).
+//! the ESP32-P4's, or the JH7110's CODAJ12 (the VisionFive 2's); a machine
+//! without one has no jpeg.resource, and a program decodes in software
+//! there (jpeg.datatype does).
 //!
 //! ExamineJPEG says what a file is and whether the codec takes it, and
 //! what the picture will need; DecodeJPEG decodes it into a picture the
@@ -12,8 +13,9 @@
 //! three components with their colour at full size or halved across, or
 //! across and down (4:4:4, 4:2:2, 4:2:0), up to 16383 pixels either way;
 //! two code tables of each kind and the quantization tables 0 to 3. The
-//! colour is turned into red, green and blue on the way to memory, with
-//! JFIF's full-range matrix.
+//! colour is turned into red, green and blue with JFIF's full-range
+//! matrix - by the P4's 2D-DMA on the way to memory, by the CPU from the
+//! JH7110's codec's planes.
 //!
 //! Get its base with OpenResource(JPEGNAME); its functions are in
 //! sdk/interface/jpeg.zig.
@@ -35,7 +37,8 @@ pub const JPEGERR_UNSUPPORTED: u32 = 3;
 pub const JPEGERR_NO_MEMORY: u32 = 4;
 /// The codec stopped on the file, or did not finish in time.
 pub const JPEGERR_FAILED: u32 = 5;
-/// The codec cannot be used: its 2D-DMA channel is someone else's.
+/// The codec cannot be used: the P4's 2D-DMA channel is someone else's,
+/// or the JH7110's codec would not wake.
 pub const JPEGERR_NO_ENGINE: u32 = 6;
 
 /// How a file keeps its colour: grey only, or brightness and two colour
