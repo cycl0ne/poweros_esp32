@@ -1,0 +1,142 @@
+; Notepad's strings, in English: the program is built with these, and a
+; translation in LOCALE:Catalogs/<language>/programs/Notepad.catalog
+; stands in for them. A requester's text is written by RawDoFmt, which
+; takes its values in order: a translation keeps them so.
+#version 1
+;
+; The menus.
+MSG_MENU_PROJECT (1//)
+Project
+MSG_MENU_NEW (//)
+New
+MSG_MENU_OPEN (//)
+Open...
+MSG_MENU_SAVE (//)
+Save
+MSG_MENU_SAVE_AS (//)
+Save As...
+MSG_MENU_QUIT (//)
+Quit
+MSG_MENU_EDIT (//)
+Edit
+MSG_MENU_UNDO (//)
+Undo
+MSG_MENU_REDO (//)
+Redo
+MSG_MENU_CUT (//)
+Cut
+MSG_MENU_COPY (//)
+Copy
+MSG_MENU_PASTE (//)
+Paste
+MSG_MENU_SELECT_ALL (//)
+Select All
+MSG_MENU_SEARCH (//)
+Search
+MSG_MENU_FIND (//)
+Find...
+MSG_MENU_FIND_NEXT (//)
+Find Next
+MSG_MENU_FIND_PREVIOUS (//)
+Find Previous
+MSG_MENU_REPLACE (//)
+Replace...
+MSG_MENU_VIEW (//)
+View
+MSG_MENU_WRAP (//)
+Word Wrap
+MSG_MENU_NUMBERS (//)
+Line Numbers
+MSG_MENU_ZIG (//)
+Zig Highlighting
+MSG_MENU_RIBBON (//)
+Ribbon
+;
+; The ribbon: its tabs, groups and buttons, with the hints shown under
+; the pointer. The buttons that are menu items too take the items' words.
+MSG_RIBBON_HOME (//)
+Home
+MSG_RIBBON_CLIPBOARD (//)
+Clipboard
+MSG_RIBBON_PASTE_HINT (//)
+Put in what was cut or copied
+MSG_RIBBON_EDITING (//)
+Editing
+MSG_RIBBON_FIND (//)
+Find
+MSG_RIBBON_FIND_HINT (//)
+Find a text; the list finds the next again, or the one before
+MSG_RIBBON_REPLACE (//)
+Replace
+MSG_RIBBON_REPLACE_HINT (//)
+Put another text in the place of one found
+MSG_RIBBON_SELECT_ALL_HINT (//)
+Select the whole text
+MSG_RIBBON_LINES (//)
+Lines
+MSG_RIBBON_WRAP_HINT (//)
+Go on in the next row rather than past the window's edge
+MSG_RIBBON_NUMBERS_HINT (//)
+Number each line at the left
+MSG_RIBBON_HIGHLIGHTING (//)
+Highlighting
+MSG_RIBBON_ZIG (//)
+Zig
+MSG_RIBBON_ZIG_HINT (//)
+Show Zig's keywords, strings and comments each in a colour
+;
+; The window's title, before " - Notepad", for a text with no file yet.
+MSG_UNTITLED (//)
+Untitled
+;
+; What a requester tells: %s is the file's name.
+MSG_OK (//)
+OK
+MSG_CANNOT_OPEN (//)
+Cannot open %s
+MSG_CANNOT_READ (//)
+Cannot read %s
+MSG_TOO_BIG (//)
+%s is too big
+MSG_NO_MEMORY_FOR (//)
+No memory for %s
+MSG_NO_MEMORY_TO_SAVE (//)
+No memory to save %s
+MSG_CANNOT_WRITE (//)
+Cannot write %s
+MSG_NO_REQUESTER (//)
+No %s
+MSG_CHANGED (//)
+The text has changed.\nSave it first?
+MSG_CHANGED_BUTTONS (//)
+Save|Don't save|Cancel
+;
+; The file requester's titles.
+MSG_OPEN_TITLE (//)
+Open a text
+MSG_SAVE_AS_TITLE (//)
+Save the text as
+;
+; The find window.
+MSG_FIND_TITLE (//)
+Find and Replace
+MSG_FIND_LABEL (//)
+Find
+MSG_REPLACE_WITH (//)
+Replace with
+MSG_ANY_CASE (//)
+Any case
+MSG_FIND_NEXT_BUTTON (//)
+Find next
+MSG_REPLACE_BUTTON (//)
+Replace
+MSG_REPLACE_ALL_BUTTON (//)
+Replace all
+;
+; What the shell is told when Notepad cannot start.
+MSG_NOLIBRARY (//)
+No %s\n
+MSG_NOSCREEN (//)
+No default screen - no display\n
+MSG_NOMEMORY (//)
+No memory for the window\n

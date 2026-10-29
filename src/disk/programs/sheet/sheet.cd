@@ -1,0 +1,245 @@
+; Sheet's strings, in English: the program is built with these, and a
+; translation in LOCALE:Catalogs/<language>/programs/Sheet.catalog
+; stands in for them. A requester's and the status line's texts are
+; written by RawDoFmt, which takes their values in order: a translation
+; keeps them so. A formula's function names, TRUE and FALSE are the
+; formulas' own and stay as they are.
+#version 1
+;
+; The menus.
+MSG_MENU_PROJECT (1//)
+Project
+MSG_MENU_NEW (//)
+New
+MSG_MENU_OPEN (//)
+Open...
+MSG_MENU_SAVE (//)
+Save
+MSG_MENU_SAVE_AS (//)
+Save As...
+MSG_MENU_QUIT (//)
+Quit
+MSG_MENU_EDIT (//)
+Edit
+MSG_MENU_UNDO (//)
+Undo
+MSG_MENU_REDO (//)
+Redo
+MSG_MENU_CUT (//)
+Cut
+MSG_MENU_COPY (//)
+Copy
+MSG_MENU_PASTE (//)
+Paste
+MSG_MENU_CLEAR (//)
+Clear
+MSG_MENU_FILL_DOWN (//)
+Fill Down
+MSG_MENU_FILL_RIGHT (//)
+Fill Right
+MSG_MENU_SELECT_ALL (//)
+Select All
+MSG_MENU_FIND (//)
+Find...
+MSG_MENU_FIND_NEXT (//)
+Find Next
+MSG_MENU_SHEET (//)
+Sheet
+MSG_MENU_INSERT_ROWS (//)
+Insert Rows
+MSG_MENU_DELETE_ROWS (//)
+Delete Rows
+MSG_MENU_INSERT_COLUMNS (//)
+Insert Columns
+MSG_MENU_DELETE_COLUMNS (//)
+Delete Columns
+MSG_MENU_WIDER (//)
+Wider Column
+MSG_MENU_NARROWER (//)
+Narrower Column
+MSG_MENU_SUM (//)
+AutoSum
+MSG_MENU_SORT_ASCENDING (//)
+Sort Ascending
+MSG_MENU_SORT_DESCENDING (//)
+Sort Descending
+MSG_MENU_FORMAT (//)
+Format
+MSG_MENU_GENERAL (//)
+General
+MSG_MENU_NUMBER (//)
+Number
+MSG_MENU_PERCENT (//)
+Percent
+MSG_MENU_CURRENCY (//)
+Currency
+MSG_MENU_DECIMALS_MORE (//)
+More Decimals
+MSG_MENU_DECIMALS_LESS (//)
+Fewer Decimals
+MSG_MENU_VIEW (//)
+View
+MSG_MENU_RIBBON (//)
+Ribbon
+;
+; The ribbon: what the menus do not name already.
+MSG_RIBBON_HOME (//)
+Home
+MSG_RIBBON_CLIPBOARD (//)
+Clipboard
+MSG_RIBBON_PASTE_HINT (//)
+Put in what was cut or copied
+MSG_RIBBON_NUMBER_HINT (//)
+Show the numbers with decimals, in thousands
+MSG_RIBBON_PERCENT_HINT (//)
+Show the numbers as a percent
+MSG_RIBBON_CURRENCY_HINT (//)
+Show the numbers as money
+MSG_RIBBON_DECIMALS_MORE_HINT (//)
+Show a decimal more
+MSG_RIBBON_DECIMALS_LESS_HINT (//)
+Show a decimal fewer
+MSG_RIBBON_CELLS (//)
+Cells
+MSG_RIBBON_INSERT (//)
+Insert
+MSG_RIBBON_INSERT_HINT (//)
+Put in rows or columns where the cells are picked
+MSG_RIBBON_DELETE (//)
+Delete
+MSG_RIBBON_DELETE_HINT (//)
+Take out the rows or columns of the cells picked
+MSG_RIBBON_EDITING (//)
+Editing
+MSG_RIBBON_SUM_HINT (//)
+Add up the numbers above or to the left
+MSG_RIBBON_SORT (//)
+Sort
+MSG_RIBBON_SORT_HINT (//)
+Put the rows in order by the current cell's column
+MSG_RIBBON_FIND (//)
+Find
+MSG_RIBBON_FIND_HINT (//)
+Find a cell by what it holds
+MSG_RIBBON_FILL (//)
+Fill
+MSG_RIBBON_FILL_HINT (//)
+Copy the first row or column over the rest
+MSG_RIBBON_CLEAR_HINT (//)
+Empty the cells picked
+;
+; The lists of the ribbon's buttons; the sums' names are the status
+; line's too.
+MSG_ROWS (//)
+Rows
+MSG_COLUMNS (//)
+Columns
+MSG_SUM (//)
+Sum
+MSG_AVERAGE (//)
+Average
+MSG_COUNT (//)
+Count
+MSG_MIN (//)
+Min
+MSG_MAX (//)
+Max
+MSG_ASCENDING (//)
+Ascending
+MSG_DESCENDING (//)
+Descending
+MSG_DOWN (//)
+Down
+MSG_RIGHT (//)
+Right
+;
+; What the status line says. A formula's problem goes into MSG_PROBLEM_AT
+; with where it was found.
+MSG_PROBLEM_NAME (//)
+No such function or name
+MSG_PROBLEM_ARGUMENTS (//)
+Wrong number of arguments
+MSG_PROBLEM_PARENTHESES (//)
+A parenthesis has no partner
+MSG_PROBLEM_TOO_LONG (//)
+The formula is too long
+MSG_PROBLEM_UNREADABLE (//)
+The formula cannot be read
+MSG_PROBLEM_AT (//)
+%s, at character %u
+MSG_NO_MEMORY_KEEP (//)
+Not enough memory to keep all of that
+MSG_NO_MEMORY_FILE (//)
+Not enough memory for all of the file
+MSG_LEFT_OUT (//)
+Cells past row 9999 or column IV were left out
+MSG_NO_MEMORY_COPY (//)
+No memory to copy that much
+MSG_NO_MEMORY_CLEAR (//)
+Not enough memory to clear all of it
+MSG_NO_MEMORY_PASTE (//)
+Not enough memory to paste all of it
+MSG_NO_ROOM_COLUMNS (//)
+No room: the last columns have something in them
+MSG_NO_ROOM_ROWS (//)
+No room: the last rows have something in them
+MSG_NO_MEMORY_THAT (//)
+Not enough memory for that
+MSG_NO_MEMORY_FORMAT (//)
+Not enough memory to format all of it
+MSG_NOTHING_TO_ADD (//)
+No numbers above or to the left to add up
+MSG_NO_MEMORY_ALL (//)
+Not enough memory for all of that
+MSG_NO_MEMORY_SORT (//)
+Not enough memory to sort all of that
+MSG_NO_MEMORY_FILL (//)
+Not enough memory to fill all of it
+MSG_NOT_FOUND (//)
+No cell holds that
+;
+; The requesters and the title.
+MSG_UNTITLED (//)
+Untitled
+MSG_OK (//)
+OK
+MSG_CANNOT_OPEN (//)
+Cannot open %s
+MSG_CANNOT_READ (//)
+Cannot read %s
+MSG_TOO_BIG (//)
+%s is too big
+MSG_NO_MEMORY_FOR (//)
+No memory for %s
+MSG_NO_MEMORY_TO_SAVE (//)
+No memory to save %s
+MSG_CANNOT_WRITE (//)
+Cannot write %s
+MSG_NO_REQUESTER (//)
+No %s
+MSG_CHANGED (//)
+The sheet has changed.\nSave it first?
+MSG_CHANGED_BUTTONS (//)
+Save|Don't save|Cancel
+MSG_OPEN_TITLE (//)
+Open a sheet
+MSG_SAVE_AS_TITLE (//)
+Save the sheet as
+;
+; The find line.
+MSG_FIND_LABEL (//)
+Find
+MSG_FIND_NEXT_BUTTON (//)
+Next
+MSG_FIND_PREVIOUS_BUTTON (//)
+Previous
+MSG_FIND_CLOSE_BUTTON (//)
+Close
+;
+; What the shell is told when Sheet cannot start.
+MSG_NOLIBRARY (//)
+No %s\n
+MSG_NOSCREEN (//)
+No default screen - no display\n
+MSG_NOMEMORY (//)
+No memory for the window\n

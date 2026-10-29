@@ -32,7 +32,7 @@
 //! does not change it.
 //!
 //! **Local time.** The system clock keeps local time. The zone is a POSIX
-//! TZ rule in `ENVARC:Sys/timezone` (`CET-1CEST,M3.5.0,M10.5.0/3`,
+//! TZ rule in `ENV:Sys/timezone` (`CET-1CEST,M3.5.0,M10.5.0/3`,
 //! sdk.dos.timezone), its first line that is not a `#` comment; with no rule, the
 //! clock keeps UTC.
 
@@ -50,7 +50,7 @@ const Printf = dos.stdio.Printf;
 const zone = sdk.dos.timezone;
 
 pub const COMMAND_NAME = "TimeSync";
-const VERSION_STRING = "\x00$VER: TimeSync 1.3 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: TimeSync 1.4 (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SERVER,PORT/K/N,QUIET/S,TEST/S,REDATE/S";

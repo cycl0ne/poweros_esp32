@@ -5,8 +5,8 @@
 # LOCALE:Languages and the catalogs in LOCALE:Catalogs/<language>, in
 # quotes when there are several. Without LANGUAGES the country's own
 # language is used; without either, or without a line, English and the
-# United States' formats. The first line that is not a comment is read;
-# take the # off one below to use it.
+# United States' formats. Prefs' Region page writes the line; to write
+# it by hand, take the # off one below.
 #
 # COUNTRY=deutschland
 # COUNTRY=schweiz LANGUAGES="deutsch, francais, english"

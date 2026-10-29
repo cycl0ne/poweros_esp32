@@ -13,7 +13,7 @@
 //! when the first session needs it: crypto, dos and utility opened, the
 //! trusted roots (`SYS:Certificates/Roots`), the program's own
 //! (`ENVARC:Sys/net/certificates/`, PEM files, turned into a store of
-//! the same form) and the clock's time zone (`ENVARC:Sys/timezone`). A
+//! the same form) and the clock's time zone (`ENV:Sys/timezone`). A
 //! file that is not there is no failure: no roots trust nothing, no zone
 //! is UTC.
 

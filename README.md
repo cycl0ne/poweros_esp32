@@ -230,10 +230,12 @@ Beside them:
   completion, files hashed and checked against a list of digests
   ([dos guide](sdk/docs/guides/dos.md)).
 - **Languages:** 21 countries and 9 languages besides English in
-  `LOCALE:`, the one chosen in `ENV:Sys/locale.prefs`; dates, dos's
+  `LOCALE:`, the one chosen on Prefs' Region page with the time zone,
+  or in `ENV:Sys/locale.prefs`; dates, dos's
   error texts and the shell's messages in it - German shipped - and a
   program's own texts from its catalog, built from a descriptor and
-  checked by `sdk/tools/catcomp`
+  checked by `sdk/tools/catcomp`: Notepad's, Sheet's and the Player's
+  in German
   ([locale guide](sdk/docs/guides/locale.md)).
 - **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
   Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,

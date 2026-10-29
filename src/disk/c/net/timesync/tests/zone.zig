@@ -97,3 +97,10 @@ test "a zone that is not in whole quarter hours is not kept; bits that hold no z
     try testing.expectEqual(@as(?Zone, null), timezone.unpack(1 << 8 | (13 | 1 << 4) << 19 | (3 | 1 << 4) << 42));
     try testing.expectEqual(@as(?Zone, null), timezone.unpack(4 << 9));
 }
+
+test "every place offered by name: its rule read, and kept in 64 bits" {
+    for (timezone.places) |place| {
+        const zone = parse(place.rule) orelse return error.NotARule;
+        try testing.expect(timezone.pack(&zone) != null);
+    }
+}

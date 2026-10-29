@@ -28,7 +28,7 @@ pub const TLSBase = extern struct {
     /// The program's own roots, turned into a store.
     own: ?[*]u8 = null,
     own_length: u32 = 0,
-    /// The clock's time zone rule, as `ENVARC:Sys/timezone` gives it.
+    /// The clock's time zone rule, as `ENV:Sys/timezone` gives it.
     zone: [96]u8 = @splat(0),
     zone_length: u32 = 0,
 };

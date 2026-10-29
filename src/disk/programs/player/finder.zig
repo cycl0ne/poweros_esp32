@@ -40,11 +40,14 @@ const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const HttpBase = sdk.interface.http.HttpBase;
 const TagItem = utility.TagItem;
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
+const Id = strings.Id;
 
 /// What the words are looked for in.
 pub const By = enum(u32) { name, tag, country };
-/// The chooser's labels for them, in `By`'s order.
-pub const by_labels = [_:null]?[*:0]const u8{ "Name", "Genre", "Country" };
+/// The chooser's labels for them, by their strings, in `By`'s order.
+pub const by_labels = [_]Id{ .MSG_NAME, .MSG_GENRE, .MSG_COUNTRY };
 
 /// The kinds asked for, one request each, and the stations of each.
 const kinds = [_][]const u8{ "MP3", "OGG" };
@@ -138,13 +141,16 @@ pub const Finder = struct {
     /// The server asked now, among `servers`.
     current: usize = 0,
     agent: [*:0]const u8,
+    /// The window's strings: why a search failed is said in them.
+    text: *const Text,
     address: [dos.path_max:0]u8 = @splat(0),
 
     // --- the window's calls ------------------------------------------------------
 
-    /// The finder started, `agent` the name its requests give, the window's
-    /// until `free`; null without the memory, a signal or the process.
-    pub fn start(sys: *ExecBase, dl: *DosBase, agent: [*:0]const u8) ?*Finder {
+    /// The finder started, `agent` the name its requests give and `text`
+    /// the strings it says why in, both the window's until `free`; null
+    /// without the memory, a signal or the process.
+    pub fn start(sys: *ExecBase, dl: *DosBase, agent: [*:0]const u8, text: *const Text) ?*Finder {
         const memory = sys.AllocVec(@sizeOf(Finder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
         const answer = sys.AllocVec(kind_count * answer_bytes, exec.MEMF_ANY);
         const logo = sys.AllocVec(logo_bytes, exec.MEMF_ANY);
@@ -167,6 +173,7 @@ pub const Finder = struct {
             .answer = @ptrCast(answer.?),
             .logo = @ptrCast(logo.?),
             .agent = agent,
+            .text = text,
         };
         finder.ended = .{ .reply_port = finder.end_port, .length = @sizeOf(exec.Message) };
         sys.InitSemaphore(&finder.lock);
@@ -347,10 +354,10 @@ pub const Finder = struct {
         finder.shown.round = round;
         sys.ReleaseSemaphore(&finder.lock);
         finder.tell();
-        const sb = net.sb orelse return finder.searchFailed(round, "No network: bsdsocket.library is not there");
-        const hb = net.hb orelse return finder.searchFailed(round, "http.library is not there");
-        const client = net.client orelse return finder.searchFailed(round, "No memory for the connection");
-        if (finder.server_count == 0 and !finder.pickServers(sb)) return finder.searchFailed(round, "radio-browser.info has no address");
+        const sb = net.sb orelse return finder.searchFailed(round, .MSG_NO_NETWORK);
+        const hb = net.hb orelse return finder.searchFailed(round, .MSG_NO_HTTP);
+        const client = net.client orelse return finder.searchFailed(round, .MSG_NO_MEMORY_CONNECTION);
+        if (finder.server_count == 0 and !finder.pickServers(sb)) return finder.searchFailed(round, .MSG_SERVICE_NO_ADDRESS);
         var lengths: [kind_count]u32 = @splat(0);
         for (kinds, 0..) |kind, at| {
             // A newer search asked meanwhile: this one is not wanted.
@@ -385,13 +392,13 @@ pub const Finder = struct {
         return finder.search_asked;
     }
 
-    fn searchFailed(finder: *Finder, round: u32, why: [*:0]const u8) void {
+    fn searchFailed(finder: *Finder, round: u32, why: Id) void {
         const sys = finder.sys;
         sys.ObtainSemaphore(&finder.lock);
         if (finder.search_asked == round) {
             finder.shown.phase = .failed;
             finder.shown.round = round;
-            copyText(&finder.shown.why, why);
+            copyText(&finder.shown.why, finder.text.get(why));
         }
         sys.ReleaseSemaphore(&finder.lock);
         finder.tell();
@@ -500,7 +507,7 @@ pub const Finder = struct {
 const Got = struct {
     length: usize = 0,
     cut: bool = false,
-    failed: ?[*:0]const u8 = null,
+    failed: ?Id = null,
     unreached: bool = false,
 };
 
@@ -513,7 +520,7 @@ fn get(hb: *HttpBase, client: *http.Client, url: [*:0]const u8, room: []u8) Got 
     }, &err) orelse return .{ .failed = failure(err), .unreached = err == http.HTTPERR_IO or err == http.HTTPERR_HOST or err == http.HTTPERR_CLOSED };
     defer hb.CloseRequest(request);
     const status = hb.GetRequestAttr(request, http.HTTP_Status);
-    if (status < 200 or status > 299) return .{ .failed = "radio-browser.info did not answer the search", .unreached = status >= 500 };
+    if (status < 200 or status > 299) return .{ .failed = .MSG_SERVICE_NO_ANSWER, .unreached = status >= 500 };
     var length: usize = 0;
     while (length < room.len) {
         const got = hb.ReadRequest(request, room.ptr + length, @intCast(room.len - length));
@@ -525,13 +532,13 @@ fn get(hb: *HttpBase, client: *http.Client, url: [*:0]const u8, room: []u8) Got 
 }
 
 /// What http.library's error says, for the window.
-fn failure(err: i32) [*:0]const u8 {
+fn failure(err: i32) Id {
     return switch (err) {
-        http.HTTPERR_HOST => "radio-browser.info has no address",
-        http.HTTPERR_NOMEM => "No memory for the connection",
-        http.HTTPERR_IO, http.HTTPERR_CLOSED => "radio-browser.info could not be reached",
-        http.HTTPERR_PROTOCOL => "radio-browser.info's answer makes no sense",
-        else => "The search failed",
+        http.HTTPERR_HOST => .MSG_SERVICE_NO_ADDRESS,
+        http.HTTPERR_NOMEM => .MSG_NO_MEMORY_CONNECTION,
+        http.HTTPERR_IO, http.HTTPERR_CLOSED => .MSG_SERVICE_UNREACHED,
+        http.HTTPERR_PROTOCOL => .MSG_SERVICE_NONSENSE,
+        else => .MSG_SEARCH_FAILED,
     };
 }
 

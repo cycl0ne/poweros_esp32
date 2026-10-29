@@ -16,6 +16,13 @@ a program's catalogs, and what dos does with the default.
 
 ## Setting the default: `ENV:Sys/locale.prefs`
 
+Prefs' Region page sets it: the country from those in
+`LOCALE:Countries`, the languages from those in `LOCALE:Languages` and
+English, each one picked going on the preferred list after the ones on
+it, and the time zone; a date, a time, a number and an amount of money
+show how the settings look before they are saved. Save and Use write the
+file and hand it over as described below. By hand:
+
 One line names the country and, when they are not the country's own,
 the languages wanted, the preferred first:
 
@@ -30,7 +37,7 @@ leaves the preferred language in the global variable `Language`. Without
 the file, or with no line in it, the system stays in its own locale:
 English, with the United States' numbers and money and dos's own forms
 of the date (`29-Oct-2026`, `14:05:09`). To change it while running,
-write the file and run `SetPrefs`; `SetPrefs SHOW` prints it as
+write the file and run `SetPrefs`, as the Region page does; `SetPrefs SHOW` prints it as
 `LOCALE deutschland, deutsch`. A program opened the default before the
 change keeps the one it has until it closes it.
 
@@ -38,7 +45,8 @@ LANGUAGES holds ten languages at most, each in quotes with the rest when
 there are several; a blank parts one setting from the next. The first of
 them that has a file in `LOCALE:Languages` gives the locale its words;
 English needs none. The whole list stays the order a catalog is looked
-for in (below).
+for in (below). `sdk.prefs.locale` reads the file and writes it, as the
+Region page does.
 
 The countries there are: australia, belgie, belgique, canada,
 canada_francais, danmark, deutschland, espana, france, great_britain,
@@ -141,7 +149,7 @@ day of the month (`01`, ` 1`), `%m %y %Y`, `%H %q` the hour of 24
 (`09`, `9`), `%I %Q` of 12 with `%p` the language's AM_STR or PM_STR,
 `%M %S`, `%j` the day of the year, `%w` the weekday's number, `%U %W` the
 week of the year from Sunday and from Monday, `%Z` the time zone's name
-then (`CET`, `CEST`, from the rule in `ENVARC:Sys/timezone`), the
+then (`CET`, `CEST`, from the rule in `ENV:Sys/timezone`), the
 composites `%D %x %T %X %R %r %c %C`, and `%n %t`. Any other character
 after a `%` is written as it is.
 
@@ -228,8 +236,22 @@ _ = dl.PutStr(text.get(.MSG_NONE));
 
 `printf` checks the values against the string built in when the program
 is compiled, and writes by FormatString, so a translation's `%2$s` and
-`%D` work. Without locale.library, or without a catalog in any of the
-languages the default locale prefers, every string is the one built in.
+`%D` work; `format` does the same into a buffer, cut to it. Without
+locale.library, or without a catalog in any of the languages the default
+locale prefers, every string is the one built in.
+
+A table made when the program is compiled - menus, a ribbon, a chooser's
+labels - holds each label's string name rather than its text, and the
+program makes the table it hands over from it when it runs, each label
+`text.get`'s; the table it made stays as long as what shows it. A
+requester's text goes through RawDoFmt, which takes its values in
+order, so a translation of one keeps them so. Another process of the
+program's may be handed the strings and read them while the program
+keeps them open.
+
+Notepad, Sheet and the Player have their texts in catalogs, German on
+the disk (`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`); their
+descriptors and translations are beside their sources.
 
 `OpenCatalogA(loc, name, tags)` looks for `name` in `OC_Language`'s
 language, if given, then in each of the locale's languages in turn, and

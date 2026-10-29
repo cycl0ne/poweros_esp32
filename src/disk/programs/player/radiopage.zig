@@ -41,6 +41,9 @@ const stations = @import("stations.zig");
 const Station = stations.Station;
 const finder_file = @import("finder.zig");
 const Finder = finder_file.Finder;
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
+const Id = strings.Id;
 
 pub const ID_VIEW = 23;
 pub const ID_KEPT = 24;
@@ -54,7 +57,7 @@ pub const ID_REMOVE = 30;
 /// The two lists, as the chooser names them.
 pub const view_kept = 0;
 pub const view_found = 1;
-pub const view_labels = [_:null]?[*:0]const u8{ "Your stations", "Found" };
+pub const view_labels = [_]Id{ .MSG_VIEW_KEPT, .MSG_VIEW_FOUND };
 
 /// The station shown in the window, for Keep.
 pub const Playing = struct {
@@ -78,6 +81,8 @@ pub const Page = struct {
     ib: *IntuitionBase,
     /// The name the finder's requests give.
     agent: [*:0]const u8,
+    /// The window's strings, the status line's and the finder's.
+    text: *const Text,
     window: ?*Window = null,
     shown: bool = false,
 
@@ -154,7 +159,7 @@ pub const Page = struct {
     }
 
     fn startFinder(page: *Page) ?*Finder {
-        if (page.finder == null) page.finder = Finder.start(page.sys, page.dl, page.agent);
+        if (page.finder == null) page.finder = Finder.start(page.sys, page.dl, page.agent, page.text);
         return page.finder;
     }
 
@@ -241,14 +246,14 @@ pub const Page = struct {
         const length = @min(made.url.len, dos.path_max);
         @memcpy(url[0..length], made.url[0..length]);
         if (page.kept.find(&url)) |station| {
-            page.say("Kept already: ", @ptrCast(&station.name));
+            page.sayName(.MSG_KEPT_ALREADY, @ptrCast(&station.name));
             return page.giveBack(view_kept, @intCast(page.kept.placeOf(station)));
         }
         page.detach(view_kept);
         const station = page.kept.add(page.sys, made, false);
         if (station != null) page.kept.changed = true;
         page.giveBack(view_kept, if (station) |added| @intCast(page.kept.placeOf(added)) else lb.LISTBROWSER_NONE);
-        if (station) |added| page.say("Kept: ", @ptrCast(&added.name)) else page.say("No memory to keep the station", null);
+        if (station) |added| page.sayName(.MSG_KEPT, @ptrCast(&added.name)) else page.say(.MSG_NO_MEMORY_KEEP);
     }
 
     /// Remove: the station kept that is selected taken out, and the one
@@ -274,10 +279,10 @@ pub const Page = struct {
         const typed: [*:0]const u8 = if (value != 0) @ptrFromInt(value) else "";
         const words = trimmed(typed);
         if (words.len == 0) return page.ib.DisplayBeep(null);
-        const finder = page.startFinder() orelse return page.say("No memory for the search", null);
+        const finder = page.startFinder() orelse return page.say(.MSG_NO_MEMORY_SEARCH);
         page.search_round = finder.search(words, page.by);
         page.turnTo(view_found);
-        page.say("Searching", null);
+        page.say(.MSG_SEARCHING);
     }
 
     /// What the finder says: how the search goes, the stations it found -
@@ -291,10 +296,10 @@ pub const Page = struct {
         if (page.search_round != 0 and news.round == page.search_round and page.search_read != page.search_round) {
             switch (news.phase) {
                 .idle => {},
-                .searching => if (news.server[0] != 0) page.say("Asking ", @ptrCast(&news.server)) else page.say("Searching", null),
+                .searching => if (news.server[0] != 0) page.sayName(.MSG_ASKING, @ptrCast(&news.server)) else page.say(.MSG_SEARCHING),
                 .failed => {
                     page.search_read = page.search_round;
-                    page.say(@ptrCast(&news.why), null);
+                    page.sayText(@ptrCast(&news.why));
                 },
                 .done => {
                     page.search_read = page.search_round;
@@ -351,29 +356,29 @@ pub const Page = struct {
     }
 
     /// The line under the lists: `first`, and `then` after it.
-    fn say(page: *Page, first: [*:0]const u8, then: ?[*:0]const u8) void {
+    fn say(page: *Page, id: Id) void {
+        page.sayText(page.text.get(id));
+    }
+
+    /// The string `id` said with a station's or a server's name in it.
+    fn sayName(page: *Page, comptime id: Id, name: [*:0]const u8) void {
+        var line: [page.status_text.len + 1]u8 = undefined;
+        page.sayText(page.text.format(&line, id, .{name}));
+    }
+
+    fn sayText(page: *Page, said: [*:0]const u8) void {
         page.status_text = @splat(0);
         var length: usize = 0;
-        for ([_]?[*:0]const u8{ first, then }) |maybe| {
-            const piece = maybe orelse continue;
-            var at: usize = 0;
-            while (piece[at] != 0 and length < page.status_text.len) : (at += 1) {
-                page.status_text[length] = piece[at];
-                length += 1;
-            }
-        }
+        while (said[length] != 0 and length < page.status_text.len) : (length += 1) page.status_text[length] = said[length];
         page.set(page.status, &.{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&page.status_text) }, .{} });
     }
 
     /// How many stations the search found, said.
     fn sayCount(page: *Page, count: usize) void {
-        if (count == 0) return page.say("No station found", null);
-        if (count == 1) return page.say("One station found", null);
-        var line: [48:0]u8 = @splat(0);
-        const stream = exec.fmtStream(.{@as(u32, @intCast(count))});
-        comptime exec.checkFormat("%u stations found", @TypeOf(.{@as(u32, 0)}));
-        _ = page.sys.RawDoFmt("%u stations found", &stream, null, &line);
-        page.say(&line, null);
+        if (count == 0) return page.say(.MSG_NONE_FOUND);
+        if (count == 1) return page.say(.MSG_ONE_FOUND);
+        var line: [page.status_text.len + 1]u8 = undefined;
+        page.sayText(page.text.format(&line, .MSG_COUNT_FOUND, .{@as(u32, @intCast(count))}));
     }
 };
 

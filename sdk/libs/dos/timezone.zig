@@ -21,9 +21,69 @@
 
 const std = @import("std");
 
-/// Where the system's rule is kept: its first line that is not a `#`
-/// comment. The system clock keeps the local time this rule gives.
-pub const zone_file = "ENVARC:Sys/timezone";
+/// Where the system's rule is in force: its first line that is not a `#`
+/// comment. The system clock keeps the local time this rule gives. The
+/// boot copies it there from `kept_zone_file`, as every setting in ENV:,
+/// so a rule written to ENV: alone holds until the machine starts again.
+pub const zone_file = "ENV:Sys/timezone";
+/// Where the rule is kept across a boot.
+pub const kept_zone_file = "ENVARC:Sys/timezone";
+
+/// The zone file's explanation, every line a comment, which a program
+/// that writes the file puts before the rule.
+pub const header =
+    \\# ENVARC:Sys/timezone - the local time, as a POSIX TZ rule, which the boot
+    \\# copies to ENV:Sys/timezone, where the system reads it: C:net/TimeSync
+    \\# sets the clock by it, dates are written in it. The zone's name and its
+    \\# offset west of UTC, then the summer zone and when it starts and ends.
+    \\# The first line that is not a comment is the rule; without one the clock
+    \\# keeps UTC. Prefs' Region page writes the line.
+    \\#
+    \\#   CET-1CEST,M3.5.0,M10.5.0/3     Central Europe (Berlin, Paris, Rome)
+    \\#   GMT0BST,M3.5.0/1,M10.5.0       United Kingdom
+    \\#   EST5EDT,M3.2.0,M11.1.0         US Eastern
+    \\#   PST8PDT,M3.2.0,M11.1.0         US Pacific
+    \\#   JST-9                          Japan
+    \\#   UTC0                           UTC
+    \\
+;
+
+/// A zone by the places that keep it, for a program to offer them by
+/// name: what it is called, and its rule.
+pub const Place = struct { name: [*:0]const u8, rule: [:0]const u8 };
+
+/// The zones offered by name, west of UTC last. Each rule's offsets and
+/// changes are whole quarter hours, so `pack` keeps every one.
+pub const places = [_]Place{
+    .{ .name = "UTC", .rule = "UTC0" },
+    .{ .name = "United Kingdom, Ireland (London, Dublin)", .rule = "GMT0BST,M3.5.0/1,M10.5.0" },
+    .{ .name = "Western Europe (Lisbon)", .rule = "WET0WEST,M3.5.0/1,M10.5.0" },
+    .{ .name = "Central Europe (Berlin, Paris, Rome, Madrid)", .rule = "CET-1CEST,M3.5.0,M10.5.0/3" },
+    .{ .name = "Eastern Europe (Athens, Helsinki, Kyiv)", .rule = "EET-2EEST,M3.5.0/3,M10.5.0/4" },
+    .{ .name = "Turkey (Istanbul)", .rule = "<+03>-3" },
+    .{ .name = "Moscow", .rule = "MSK-3" },
+    .{ .name = "Gulf (Dubai)", .rule = "<+04>-4" },
+    .{ .name = "India (Delhi, Mumbai)", .rule = "IST-5:30" },
+    .{ .name = "China (Beijing, Shanghai)", .rule = "CST-8" },
+    .{ .name = "Australia West (Perth)", .rule = "AWST-8" },
+    .{ .name = "Japan (Tokyo)", .rule = "JST-9" },
+    .{ .name = "Korea (Seoul)", .rule = "KST-9" },
+    .{ .name = "Australia South (Adelaide)", .rule = "ACST-9:30ACDT,M10.1.0,M4.1.0/3" },
+    .{ .name = "Australia North (Darwin)", .rule = "ACST-9:30" },
+    .{ .name = "Australia East (Sydney, Melbourne)", .rule = "AEST-10AEDT,M10.1.0,M4.1.0/3" },
+    .{ .name = "Australia Queensland (Brisbane)", .rule = "AEST-10" },
+    .{ .name = "New Zealand (Auckland)", .rule = "NZST-12NZDT,M9.5.0,M4.1.0/3" },
+    .{ .name = "Brazil (Sao Paulo)", .rule = "<-03>3" },
+    .{ .name = "Canada Newfoundland (St. John's)", .rule = "NST3:30NDT,M3.2.0,M11.1.0" },
+    .{ .name = "Canada Atlantic (Halifax)", .rule = "AST4ADT,M3.2.0,M11.1.0" },
+    .{ .name = "US, Canada Eastern (New York, Toronto)", .rule = "EST5EDT,M3.2.0,M11.1.0" },
+    .{ .name = "US, Canada Central (Chicago, Winnipeg)", .rule = "CST6CDT,M3.2.0,M11.1.0" },
+    .{ .name = "US, Canada Mountain (Denver, Calgary)", .rule = "MST7MDT,M3.2.0,M11.1.0" },
+    .{ .name = "US Arizona (Phoenix)", .rule = "MST7" },
+    .{ .name = "US, Canada Pacific (Los Angeles, Vancouver)", .rule = "PST8PDT,M3.2.0,M11.1.0" },
+    .{ .name = "Alaska (Anchorage)", .rule = "AKST9AKDT,M3.2.0,M11.1.0" },
+    .{ .name = "Hawaii (Honolulu)", .rule = "HST10" },
+};
 
 /// Seconds from 1 January 1970, where these times count from, to
 /// 1 January 1978, where a DateStamp counts from.
