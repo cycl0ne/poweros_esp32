@@ -37,7 +37,9 @@
 //! the ribbon's `GA_ID` and the code `RBCODE_MINIMIZED`, and the target
 //! `RIBBON_Minimized`. Its height has changed: a window object's program
 //! sends `WM_RETHINK` then. `RIBBON_MinimizeBelow` minimizes it by itself
-//! in a window lower than that.
+//! in a window lower than that; there the mark drops the front tab's page
+//! down, as a press on the tab does, and `RIBBON_Minimized` stays as it
+//! was - minimized or brought back, the ribbon would still be its row.
 //!
 //! A contextual tab (`RibbonTab.contextual`) is not in the row until the
 //! program shows it - while a table is picked, say - with `RIBBON_ShowTab`,

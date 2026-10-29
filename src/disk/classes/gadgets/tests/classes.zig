@@ -4395,6 +4395,23 @@ test "ribbon.gadget: too narrow, a group folds into a button that drops it down;
     _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = rbn.RIBBON_MinimizeBelow, .data = 300 }, .{} });
     try testing.expectEqual(row, ribbonDomain(ib, bar, &info, gc.GDOMAIN_NOMINAL).height);
     try testing.expectEqual(@as(usize, 0), attr(ib, bar, rbn.RIBBON_Minimized));
+    // The mark there - laid out in that window, as a window object lays
+    // its gadgets out at each size - drops Home's page down, as a press on
+    // Home does, and leaves the ribbon as it was set: not minimized, and
+    // nothing told.
+    ribbonLayout(ib, bar, &info, width);
+    ib.RefreshGList(bar, w, 1);
+    heard.value = null;
+    termination = 99;
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(bar, @ptrCast(&on_mark)));
+    try testing.expectEqual(@as(i32, 99), termination);
+    try testing.expect(own.popup.flags & rq.REQACTIVE != 0);
+    try testing.expectEqual(@as(u32, 0), own.popup_tab);
+    try testing.expect(gc.gadget(paste).requester == &own.popup);
+    ib.EndRequest(&own.popup, w);
+    try testing.expect(own.popup_ribbon == null);
+    try testing.expectEqual(@as(usize, 0), attr(ib, bar, rbn.RIBBON_Minimized));
+    try testing.expectEqual(@as(?usize, null), heard.value);
     _ = ib.SetAttrsTagList(bar, &[_]TagItem{ .{ .tag = rbn.RIBBON_MinimizeBelow, .data = 0 }, .{} });
     try testing.expectEqual(whole.height, ribbonDomain(ib, bar, &info, gc.GDOMAIN_NOMINAL).height);
 

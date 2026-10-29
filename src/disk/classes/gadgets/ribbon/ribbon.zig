@@ -14,7 +14,10 @@
 //! under a tab, and then says whether a tab is there: a press on one is
 //! the ribbon's, reported in its own name with the tab's number as the
 //! code (`_gadget.reporter` finds no member under it). So is the mark at
-//! the row's right end, which minimizes the ribbon and brings it back.
+//! the row's right end, which minimizes the ribbon and brings it back - in
+//! a window too low for the ribbon whole (`RIBBON_MinimizeBelow`), where
+//! either would show nothing, it drops the front tab's page down instead,
+//! as a press on that tab does.
 //!
 //! **Tabs the row has no room for** are in a list the » before that mark
 //! drops down (`RowPlan`, a `listpanel` under the »): their names, and the
@@ -89,8 +92,8 @@ const LayersBase = sdk.interface.layers.LayersBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = rb.RIBBON_CLASS,
     .version = 1,
-    .revision = 2,
-    .date = "28.10.2026",
+    .revision = 3,
+    .date = "29.10.2026",
     .super = classusr.GROUPGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -645,11 +648,16 @@ fn tell(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.Gadget
     support.notify(base.intuition_base, o, gi, &tags, 0);
 }
 
-/// Whether the ribbon is its row alone: minimized, or in a window whose
-/// room is lower than `RIBBON_MinimizeBelow`.
+/// Whether the ribbon is its row alone: minimized, or in a window too low
+/// for it whole (`low`).
 fn folded(own: *const Data, gi: ?*const classusr.GadgetInfo) bool {
     if (own.row == 0) return false;
-    if (own.minimized != 0) return true;
+    return own.minimized != 0 or low(own, gi);
+}
+
+/// Whether the window's room is lower than `RIBBON_MinimizeBelow`: the
+/// ribbon is its row alone there, minimized or not.
+fn low(own: *const Data, gi: ?*const classusr.GadgetInfo) bool {
     const info = gi orelse return false;
     return own.minimize_below != 0 and info.domain_height < @as(i32, @intCast(own.minimize_below));
 }
@@ -1763,7 +1771,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         // A press on a tab turns to it at once and is done with; its
         // number is the code. Minimized, its page drops down as well. A
         // second press on it soon after, and the one on the mark at the
-        // row's end, minimize the ribbon or bring it back. One on the »
+        // row's end, minimize the ribbon or bring it back - but in a window
+        // too low for it whole, the mark drops the front tab's page down,
+        // and the window hears nothing: there is nothing new. One on the »
         // drops down the tabs out of the row, and the ribbon has the
         // events until one is taken or none. A press anywhere else is a
         // member's.
@@ -1773,6 +1783,11 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const e = in.event orelse return ib.SendSuperMessage(cl, o, msg);
             if (!inRow(base, own, o.?, in.gadget_info, in.mouse.y)) return ib.SendSuperMessage(cl, o, msg);
             if (onFoldMark(own, o.?, in.gadget_info, in.mouse.x)) {
+                if (low(own, in.gadget_info)) {
+                    own.pressed_tab = NONE;
+                    openPage(base, own, o.?, in.gadget_info);
+                    return gc.GMR_NOREUSE;
+                }
                 minimize(base, cl, o.?, own, in.gadget_info);
                 in.termination.* = rb.RBCODE_MINIMIZED;
                 return gc.GMR_NOREUSE | gc.GMR_VERIFY;
