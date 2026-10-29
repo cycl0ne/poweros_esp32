@@ -188,7 +188,11 @@
 //! that is selected, or else the one playing; Remove or Del lets a kept one
 //! go. A station with a picture - a kept one's `tvg-logo`, a found one's
 //! favicon - shows it as its cover, fetched by the finder; a press on it
-//! shows it large under the station's name.
+//! shows it large under the station's name. A song's own picture, the
+//! `StreamUrl` a station sends beside its title, takes the cover's place
+//! while that song plays and is shown large under the song's title; the
+//! station's picture is held beside it (`logo`), for the next song that
+//! names none, so it is fetched once while the station plays.
 //!
 //! **Remembered** (remembered.zig). As it ends the Player writes how it
 //! was left to `ENV:` and `ENVARC:`: the window's box, the page, the look,
@@ -273,7 +277,7 @@ const finder = @import("finder.zig");
 const radio_page = @import("radiopage.zig");
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.20";
+const VERSION = "1.21";
 const DATE = "29.10.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
@@ -679,11 +683,19 @@ const App = struct {
     drop: sdk.anvil.DropTarget = .{},
     /// The Radio page (radiopage.zig).
     radio: radio_page.Page = undefined,
-    /// A station's picture, a copy of the finder's, and the cover made of
-    /// it - the station it is of - for as long as it is shown.
+    /// A station's own picture, a copy of the finder's, and the cover made
+    /// of it - the station it is of - kept while that station plays, to
+    /// be shown again whenever a song brings no cover of its own.
     logo: ?[*]u8 = null,
     logo_picture: ac.AudioPicture = undefined,
     logo_entry: ?*Entry = null,
+    /// The cover of the song a station plays, as its metadata named it,
+    /// held the same way - the station it is shown for - and the cover's
+    /// address the metadata named last.
+    song_cover: ?[*]u8 = null,
+    song_picture: ac.AudioPicture = undefined,
+    song_entry: ?*Entry = null,
+    station_picture: [radio.picture_room:0]u8 = @splat(0),
 
     fn set(app: *App, gadget: *Object, tags: []const TagItem) void {
         _ = app.ib.SetGadgetAttrsTagList(gadget, app.window, tags.ptr);
@@ -770,6 +782,8 @@ const App = struct {
         app.chapters = null;
         app.chapter_count = 0;
         app.station_facts = .{};
+        app.station_picture = @splat(0);
+        app.song_entry = null;
         app.station_why = @splat(0);
         app.station_how = how;
         app.station_percent = 0;
@@ -778,9 +792,11 @@ const App = struct {
             if (app.station == null) app.tellWhy("No memory for the station");
         }
         app.showStation();
-        app.showCover(null, "", @ptrCast(&entry.title));
-        // Its picture, when the Radio page knows one, comes later.
-        _ = app.radio.askLogo(entry.path());
+        // Its picture, when it is held from before; when the Radio page
+        // knows one, it comes later.
+        const held = app.logo_entry == entry;
+        app.showCover(if (held) &app.logo_picture else null, "", @ptrCast(&entry.title));
+        if (!held) _ = app.radio.askLogo(entry.path());
         app.showRange(0);
         app.keepRoom(false);
         app.showTime();
@@ -810,6 +826,7 @@ const App = struct {
         station.facts(&app.station_facts);
         const facts = &app.station_facts;
         const changed = facts.phase != phase or facts.titles != titles;
+        if (changed) app.followCover();
         if (app.station_loaded) {
             if (changed) app.showStation();
             return;
@@ -824,6 +841,33 @@ const App = struct {
         if (!changed and percent / 10 == app.station_percent / 10) return;
         app.station_percent = percent;
         app.showStation();
+    }
+
+    /// The cover a station's metadata names for the song it plays asked
+    /// for when it is another than before - the one shown stays until it
+    /// comes; a song that names none goes back to the station's own.
+    fn followCover(app: *App) void {
+        const entry = app.playing orelse return;
+        const wanted = &app.station_facts.picture;
+        if (sameText(wanted, &app.station_picture)) return;
+        app.station_picture = wanted.*;
+        if (wanted[0] != 0) {
+            _ = app.radio.askCover(entry.path(), wanted);
+            return;
+        }
+        app.radio.forgetCover();
+        app.coverGone(entry);
+    }
+
+    /// The song's cover given up: the station's own picture shown again,
+    /// or the note while it is not held - and asked for then, unless it
+    /// is on its way.
+    fn coverGone(app: *App, entry: *Entry) void {
+        if (app.song_entry == entry) {
+            app.song_entry = null;
+            app.showCover(if (app.logo_entry == entry) &app.logo_picture else null, "", @ptrCast(&entry.title));
+        }
+        if (app.logo_entry != entry and !app.radio.askingLogo()) _ = app.radio.askLogo(entry.path());
     }
 
     /// Enough of the station has come: the sound opened on its ring and
@@ -1097,20 +1141,38 @@ const App = struct {
         return .{ .url = entry.path(), .name = if (named) &app.station_facts.name else @ptrCast(&entry.title) };
     }
 
-    /// What the finder says, for the Radio page; a station's picture, once
-    /// it has come, shown as its cover while the station is shown.
+    /// What the finder says, for the Radio page; a picture, once it has
+    /// come, kept while its station plays: a song's cover shown at once -
+    /// and the station's own asked for behind it when it is not held, to
+    /// be there for a song without one - the station's own unless a song's
+    /// is shown. A song's cover that could not be fetched gives way to the
+    /// station's own.
     fn radioNews(app: *App) void {
         const logo = app.radio.heard() orelse return;
         const entry = app.playing orelse return;
         if (!sameText(entry.path(), logo.url)) return;
-        const memory = app.sys.AllocVec(@intCast(logo.bytes.len), exec.MEMF_ANY) orelse return;
-        if (app.logo) |old| app.sys.FreeVec(old);
-        const bytes: [*]u8 = @ptrCast(memory);
-        @memcpy(bytes[0..logo.bytes.len], logo.bytes);
-        app.logo = bytes;
-        app.logo_picture = .{ .data = bytes, .size = @intCast(logo.bytes.len), .kind = ac.ACPIC_FRONTCOVER, .mime = @splat(0) };
+        if (logo.song) {
+            if (logo.bytes.len == 0 or !app.hold(&app.song_cover, &app.song_picture, logo.bytes)) return app.coverGone(entry);
+            app.song_entry = entry;
+            app.showCover(&app.song_picture, "", &app.line_text[line_title].text);
+            if (app.logo_entry != entry and !app.radio.askingLogo()) _ = app.radio.askLogo(entry.path());
+            return;
+        }
+        if (logo.bytes.len == 0 or !app.hold(&app.logo, &app.logo_picture, logo.bytes)) return;
         app.logo_entry = entry;
-        app.showCover(&app.logo_picture, "", @ptrCast(&entry.title));
+        if (app.song_entry != entry) app.showCover(&app.logo_picture, "", @ptrCast(&entry.title));
+    }
+
+    /// `bytes` copied into memory of the window's own in place of what
+    /// `held` held, and `picture` made of them: false without the memory.
+    fn hold(app: *App, held: *?[*]u8, picture: *ac.AudioPicture, bytes: []const u8) bool {
+        const memory = app.sys.AllocVec(@intCast(bytes.len), exec.MEMF_ANY) orelse return false;
+        if (held.*) |old| app.sys.FreeVec(old);
+        const copy: [*]u8 = @ptrCast(memory);
+        @memcpy(copy[0..bytes.len], bytes);
+        held.* = copy;
+        picture.* = .{ .data = copy, .size = @intCast(bytes.len), .kind = ac.ACPIC_FRONTCOVER, .mime = @splat(0) };
+        return true;
     }
 
     // --- the order -----------------------------------------------------------
@@ -1685,7 +1747,7 @@ const App = struct {
         var value: usize = 0;
         _ = app.ib.GetAttr(cv.CANVAS_RastPort, app.cover, &value);
         if (value == 0) return;
-        _ = app.kept.read(.{ .sys = app.sys, .dl = app.dl, .gb = app.gb, .dt = app.dt }, @ptrFromInt(value), picture, name);
+        _ = app.kept.read(.{ .sys = app.sys, .dl = app.dl, .gb = app.gb, .dt = app.dt }, @ptrFromInt(value), app.coverLook(), picture, name);
         app.visual.tint = app.kept.lead;
         app.drawCover();
         const dt = app.dt orelse return;
@@ -1722,6 +1784,11 @@ const App = struct {
         return .{ .width = width, .height = height };
     }
 
+    /// The screen's pens the cover is read and shown with.
+    fn coverLook(app: *const App) cover.Look {
+        return .{ .ib = app.ib, .dri = app.dri, .note = app.note };
+    }
+
     /// The kept cover scaled into the canvas, as large as its box.
     fn drawCover(app: *App) void {
         var value: usize = 0;
@@ -1733,7 +1800,7 @@ const App = struct {
         if (value == 0) return;
         const side: i32 = @intCast(@min(width, height, cover.kept_size));
         if (side == 0) return;
-        app.kept.show(app.gb, @ptrFromInt(value), side, .{ .ib = app.ib, .dri = app.dri, .note = app.note });
+        app.kept.show(app.gb, @ptrFromInt(value), side, app.coverLook());
         app.ib.QueueGadgetRefresh(app.cover);
     }
 
@@ -1756,10 +1823,14 @@ const App = struct {
         const entry = app.playing orelse return;
         const name = entry.path();
         if (playlist.isUrl(name)) {
-            // A station's cover is its picture, when it has one, under the
-            // station's name.
-            if (app.logo_entry != app.playing or app.kept.from == .none) return;
-            if (!app.big.show(.{ .ib = app.ib, .dt = dt, .screen = app.screen }, app.covers, .{ .held = &app.logo_picture }, @ptrCast(&entry.title))) app.ib.DisplayBeep(app.screen);
+            // A station's cover is the song's cover it names, under the
+            // song's title, or its own picture, under its name.
+            if (app.kept.from == .none) return;
+            const song = app.song_entry == entry;
+            if (!song and app.logo_entry != entry) return;
+            const picture = if (song) &app.song_picture else &app.logo_picture;
+            const title: [*:0]const u8 = if (song) &app.line_text[line_title].text else @ptrCast(&entry.title);
+            if (!app.big.show(.{ .ib = app.ib, .dt = dt, .screen = app.screen }, app.covers, .{ .held = picture }, title)) app.ib.DisplayBeep(app.screen);
             return;
         }
         const tags = app.tagsOf(name);
@@ -3124,6 +3195,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     app.radio.init();
     defer app.radio.free();
     defer if (app.logo) |bytes| sys.FreeVec(bytes);
+    defer if (app.song_cover) |bytes| sys.FreeVec(bytes);
     defer if (app.pixels) |pixels| sys.FreeVec(pixels);
     defer if (app.order) |order| sys.FreeVec(@ptrCast(order));
     defer app.kept.free(app.gb);

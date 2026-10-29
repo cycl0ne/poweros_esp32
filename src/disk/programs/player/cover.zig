@@ -15,7 +15,9 @@
 //!
 //! A picture the tags hold is read from memory (`DTST_MEMORY`), one beside
 //! the song from its file, whose name is kept: where the cover came from
-//! is what opens it again at its own size (big.zig). Without
+//! is what opens it again at its own size (big.zig). A picture with clear
+//! pixels is kept on the window's ground, which is what shows through
+//! them. Without
 //! datatypes.library, or with no picture, the square is the ground with a
 //! note on it, faded into the ground as a picture that is not there.
 //!
@@ -134,10 +136,11 @@ pub const Kept = struct {
     path: [dos.path_max + 1:0]u8 = @splat(0),
 
     /// The song's picture read and kept: the one its tags hold, one beside
-    /// it, or none. `friend` is a RastPort it is to be shown in. The
-    /// bitmaps are made the first time; without the memory for them
-    /// nothing is kept and the note is shown. Whether a picture was found.
-    pub fn read(kept: *Kept, libs: Libraries, friend: *RastPort, picture: ?*const ac.AudioPicture, song: [*:0]const u8) bool {
+    /// it, or none. `friend` is a RastPort it is to be shown in, `look`
+    /// the screen's pens it is shown with. The bitmaps are made the first
+    /// time; without the memory for them nothing is kept and the note is
+    /// shown. Whether a picture was found.
+    pub fn read(kept: *Kept, libs: Libraries, friend: *RastPort, look: Look, picture: ?*const ac.AudioPicture, song: [*:0]const u8) bool {
         kept.from = .none;
         kept.lead = null;
         if (kept.bitmap == null) {
@@ -149,13 +152,14 @@ pub const Kept = struct {
         const rp = kept.rast_port orelse return false;
         if (kept.shown_port == null) return false;
         const dt = libs.dt orelse return false;
+        const ground = look.pen(sc.BACKGROUNDPEN, 0xFFAA_AAAA);
         if (picture) |held| {
-            if (load(dt, libs.gb, rp, .{ .held = held }, &kept.lead)) {
+            if (load(dt, libs.gb, rp, ground, .{ .held = held }, &kept.lead)) {
                 kept.from = .tags;
                 return true;
             }
         }
-        if (fromFolder(libs, dt, rp, song, &kept.path, &kept.lead)) {
+        if (fromFolder(libs, dt, rp, ground, song, &kept.path, &kept.lead)) {
             kept.from = .beside;
             return true;
         }
@@ -233,7 +237,7 @@ fn portOnto(gb: *GraphicsBase, bitmap: ?*Surface) ?*RastPort {
 
 /// A picture lying in the song's own drawer, its name left in `path` and
 /// its colours in `lead`.
-fn fromFolder(libs: Libraries, dt: *DataTypesBase, rp: *RastPort, song: [*:0]const u8, path: *[dos.path_max + 1:0]u8, lead: *?colours.Pair) bool {
+fn fromFolder(libs: Libraries, dt: *DataTypesBase, rp: *RastPort, ground: graphics.Pen, song: [*:0]const u8, path: *[dos.path_max + 1:0]u8, lead: *?colours.Pair) bool {
     if (song[0] == 0) return false;
     const dl = libs.dl;
     @memset(path, 0);
@@ -245,14 +249,14 @@ fn fromFolder(libs: Libraries, dt: *DataTypesBase, rp: *RastPort, song: [*:0]con
         if (!dl.AddPart(path, candidate, path.len)) continue;
         const lock = dl.Lock(path, dos.SHARED_LOCK) orelse continue;
         dl.UnLock(lock);
-        if (load(dt, libs.gb, rp, .{ .file = path }, lead)) return true;
+        if (load(dt, libs.gb, rp, ground, .{ .file = path }, lead)) return true;
     }
     return false;
 }
 
-/// The picture read and scaled into the kept square, the colours it leads
-/// with left in `lead`.
-fn load(dt: *DataTypesBase, gb: *GraphicsBase, rp: *RastPort, source: Source, lead: *?colours.Pair) bool {
+/// The picture read and scaled into the kept square on `ground`, the
+/// colours it leads with left in `lead`.
+fn load(dt: *DataTypesBase, gb: *GraphicsBase, rp: *RastPort, ground: graphics.Pen, source: Source, lead: *?colours.Pair) bool {
     const object = objectOf(dt, source, null) orelse return false;
     defer dt.DisposeDTObject(object);
     var header: usize = 0;
@@ -277,6 +281,10 @@ fn load(dt: *DataTypesBase, gb: *GraphicsBase, rp: *RastPort, source: Source, le
         .max_x = @divTrunc(width - side, 2) + side,
         .max_y = @divTrunc(height - side, 2) + side,
     };
+    // The picture is drawn over what it covers, so what its clear pixels
+    // show is the ground, not the cover before it.
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = ground }, .{} });
+    gb.RectFill(rp, &.{ .max_x = kept_size, .max_y = kept_size });
     // The picture's pens are 0xAARRGGBB words: in memory blue first.
     gb.ScalePixelArray(rp, @ptrFromInt(pixels), @intCast(pitch), @intFromEnum(PixelFormat.bgra32), &source_area, &.{ .max_x = kept_size, .max_y = kept_size });
     lead.* = colours.leading(@ptrFromInt(pixels), pitch, @intCast(source_area.min_x), @intCast(source_area.min_y), @intCast(side), @intCast(side));

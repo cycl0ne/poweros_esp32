@@ -14,7 +14,8 @@
 //! for the first station the list names, which is called instead, three
 //! lists deep at most; HLS, a list of a stream's pieces, is refused. The
 //! metadata blocks are taken out of each piece read (icy.zig); a title
-//! one names goes to the window, the sound into the ring. A full ring
+//! one names goes to the window - with the picture's address it names
+//! beside it, a cover - the sound into the ring. A full ring
 //! holds the reader until the sound has taken some.
 //!
 //! **A station that stops sending** is called again, three times in a row:
@@ -69,6 +70,8 @@ const assumed_kbps = 128;
 /// How often a station that stops sending is called again in a row, and
 /// the seconds waited before each call.
 const call_waits = [_]u32{ 1, 1, 5 };
+/// The longest picture's address the metadata names that is kept.
+pub const picture_room = 256;
 /// How many lists in a row an address may lead through to its station.
 const lists_most = 3;
 /// How long a connection may stay quiet before it counts as lost.
@@ -98,9 +101,11 @@ pub const Facts = struct {
     phase: Phase = .connecting,
     name: [64:0]u8 = @splat(0),
     genre: [64:0]u8 = @splat(0),
-    /// What it plays now, as the metadata last named it; `titles` counts
-    /// each new one.
+    /// What it plays now, as the metadata last named it, and the picture's
+    /// address it named beside it (`StreamUrl`) - empty when it named none
+    /// or something else; `titles` counts each new one of either.
     title: [160:0]u8 = @splat(0),
+    picture: [picture_room:0]u8 = @splat(0),
     titles: u32 = 0,
     /// Its bit rate as it says it, or 0.
     kbps: u32 = 0,
@@ -517,17 +522,22 @@ pub const Radio = struct {
         station.tell();
     }
 
-    /// A metadata block's title, when it names another than the one
-    /// before, for the window.
+    /// A metadata block's title and its picture's address, when it names
+    /// another than the one before, for the window.
     fn titled(station: *Radio, block: []const u8) void {
         const named = icy.streamTitle(block) orelse return;
         var title: [160:0]u8 = @splat(0);
         icy.latin1(named, &title);
+        var picture: [picture_room:0]u8 = @splat(0);
+        if (icy.streamUrl(block)) |address| {
+            if (icy.isPictureAddress(address) and address.len <= picture_room) @memcpy(picture[0..address.len], address);
+        }
         const sys = station.sys;
         sys.ObtainSemaphore(&station.lock);
-        const same = sameText(&title, &station.shown.title);
+        const same = sameText(&title, &station.shown.title) and sameText(&picture, &station.shown.picture);
         if (!same) {
             station.shown.title = title;
+            station.shown.picture = picture;
             station.shown.titles +%= 1;
         }
         sys.ReleaseSemaphore(&station.lock);

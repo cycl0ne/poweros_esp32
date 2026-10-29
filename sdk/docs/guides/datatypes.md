@@ -56,8 +56,8 @@ The bytes are recognised as a file's are, by what they start with; a
 name handed to `NewDTObjectA` is matched against the descriptors'
 patterns too, and without one the patterns are not asked. The object
 reads the bytes while it is made: when the call returns they are the
-program's again. JPEG, PNG, GIF, BMP, text, models, Markdown and Lottie
-read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
+program's again. JPEG, PNG, GIF, BMP, ICO, text, models, Markdown and
+Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
 and a font's sizes are files beside its contents file, so these refuse
 bytes in memory with `DTERROR_COULDNT_OPEN`.
 
@@ -184,6 +184,15 @@ Datatype, codec: 1024 x 600 in 198387 us, read by the codec
 Compared: worst 35, mean 107/100, 559 of 614400 pixels more than 24 apart
 ```
 
+**A Windows icon** - a `.ico`, the favicon a web site names among them -
+is read by `ico.datatype` as the largest picture its directory holds,
+the deepest of the largest. A bitmap in it is one, four or eight bits
+into a palette, twenty-four bits of colour, or thirty-two with
+coverage, its mask making the pixels it marks clear; a PNG in it is
+read by `png.datatype` from memory. The four bytes such a file starts
+with say little, so the class is asked (`RECOGNISE`) whether its
+directory makes sense.
+
 **A font is shown as a picture of it.** font.datatype takes a family's
 contents file (`FONTS:spleen.font`, `sdk.diskfont.fontfile`) and draws a
 sheet: the file's name and what the font is, a table of its characters,
@@ -194,7 +203,9 @@ as it shows any picture.
 
 `PDTM_READPIXELARRAY` hands a rectangle of it back in whichever
 shape the program wants - `PBPAFMT_RGB`, `PBPAFMT_RGBA`, `PBPAFMT_ARGB`
-or `PBPAFMT_GREY8`. `PDTA_Scale` draws the picture at the size of the
+or `PBPAFMT_GREY8`. It goes with intuition's `SendMessage`, not
+`DoDTMethodA`: its message has no `GadgetInfo`, and the second field
+`DoDTMethodA` would fill is where the rows go. `PDTA_Scale` draws the picture at the size of the
 room it is given rather than its own, and `PDTM_SCALE` makes it another
 size for good. `DTM_WRITE` writes it as an IFF `ILBM`.
 

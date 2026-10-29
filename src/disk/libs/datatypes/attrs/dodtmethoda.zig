@@ -31,10 +31,11 @@ const DataTypesBase = _base.DataTypesBase;
 /// What the object answered.
 ///
 /// BEHAVIOR:
-/// The window and requester are put into the message's `GadgetInfo`
-/// where it has one, so that a method that draws or scrolls knows where
-/// the object is. That is the difference between this and sending the
-/// message by hand.
+/// The window and requester are put into the message's `GadgetInfo` -
+/// the third field of `OM_NEW`, `OM_SET`, `OM_NOTIFY` and `OM_UPDATE`,
+/// the second of every other method - so that a method that draws or
+/// scrolls knows where the object is. That is the difference between
+/// this and sending the message by hand.
 ///
 /// CONTEXT:
 /// - Waits: whatever the method waits for.
@@ -45,8 +46,14 @@ const DataTypesBase = _base.DataTypesBase;
 /// OWNERSHIP:
 /// The message stays the caller's.
 ///
+/// NOTES:
+/// The second field is written whatever it holds. A message that has
+/// something else there - `PDTM_READPIXELARRAY` and
+/// `PDTM_WRITEPIXELARRAY`, whose second field is the rows - goes with
+/// intuition's `SendMessage` instead.
+///
 /// SEE ALSO:
-/// `GetDTMethods`, `GetDTTriggerMethods`
+/// `GetDTMethods`, `GetDTTriggerMethods`, intuition `SendMessage`
 ///
 /// EXAMPLES:
 /// ```zig

@@ -14,7 +14,8 @@
 //!
 //! **The finder** - the process that asks radio-browser.info - is started
 //! the first time it is wanted, and asked for the picture of each station
-//! played that has one, kept or found: the window shows it as the cover.
+//! played that has one, kept or found, and for the cover a station names
+//! for the song it plays: the window shows it as the cover.
 //!
 //! The window builds the page's gadgets and hands them over; what they
 //! do is here. A gadget is drawn when it is set only while the page is
@@ -62,10 +63,13 @@ pub const Playing = struct {
 };
 
 /// A station's picture, fetched: the address of the station it is of,
-/// and its bytes, the finder's until the next is asked for.
+/// its bytes, the finder's until the next is asked for - none when it
+/// could not be fetched - and whether it is the cover of the song playing
+/// rather than the station's own.
 pub const Logo = struct {
     url: [*:0]const u8,
     bytes: []const u8,
+    song: bool = false,
 };
 
 pub const Page = struct {
@@ -97,11 +101,12 @@ pub const Page = struct {
     /// The search asked last, and the last whose answers were read.
     search_round: u32 = 0,
     search_read: u32 = 0,
-    /// The picture asked for last, the station it is of, and whether it
-    /// has been taken.
+    /// The picture asked for last, the station it is of, whether it is a
+    /// song's cover, and whether it has been taken.
     logo_round: u32 = 0,
     logo_taken: bool = true,
     logo_for: [dos.path_max + 1:0]u8 = @splat(0),
+    logo_song: bool = false,
 
     /// Made where it is to stay - the lists point at themselves - and the
     /// stations kept read.
@@ -276,8 +281,9 @@ pub const Page = struct {
     }
 
     /// What the finder says: how the search goes, the stations it found -
-    /// put into the list found in place of those before - and a station's
-    /// picture once it has come, handed back.
+    /// put into the list found in place of those before - and the picture
+    /// asked for last once it has come, or could not be fetched, handed
+    /// back.
     pub fn heard(page: *Page) ?Logo {
         const finder = page.finder orelse return null;
         finder.news(&page.news);
@@ -302,8 +308,18 @@ pub const Page = struct {
         }
         if (page.logo_taken or news.logo_round != page.logo_round) return null;
         page.logo_taken = true;
-        if (news.logo_length == 0) return null;
-        return .{ .url = &page.logo_for, .bytes = finder.logoBytes(news.logo_length) };
+        const bytes: []const u8 = if (news.logo_length == 0) &.{} else finder.logoBytes(news.logo_length);
+        return .{ .url = &page.logo_for, .bytes = bytes, .song = page.logo_song };
+    }
+
+    /// A song's cover still on its way no longer wanted.
+    pub fn forgetCover(page: *Page) void {
+        if (page.logo_song) page.logo_taken = true;
+    }
+
+    /// Whether a station's own picture is on its way.
+    pub fn askingLogo(page: *Page) bool {
+        return !page.logo_taken and !page.logo_song;
     }
 
     /// The picture of the station at `url`, when one kept or found has
@@ -311,12 +327,26 @@ pub const Page = struct {
     pub fn askLogo(page: *Page, url: [*:0]const u8) bool {
         const station = page.kept.find(url) orelse page.found.find(url) orelse return false;
         const logo = station.logo() orelse return false;
+        return page.fetch(url, logo, false);
+    }
+
+    /// The cover at `picture` - what the station at `url` names, in its
+    /// metadata, for the song it plays - asked of the finder: false when
+    /// the finder cannot be started.
+    pub fn askCover(page: *Page, url: [*:0]const u8, picture: [*:0]const u8) bool {
+        return page.fetch(url, picture, true);
+    }
+
+    /// The picture at `picture` asked for the station at `url`, the one
+    /// asked before given up.
+    fn fetch(page: *Page, url: [*:0]const u8, picture: [*:0]const u8, song: bool) bool {
         const finder = page.startFinder() orelse return false;
         page.logo_for = @splat(0);
         const length = @min(lengthOf(url), dos.path_max);
         @memcpy(page.logo_for[0..length], url[0..length]);
-        page.logo_round = finder.fetchLogo(logo);
+        page.logo_round = finder.fetchLogo(picture);
         page.logo_taken = false;
+        page.logo_song = song;
         return true;
     }
 
