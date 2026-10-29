@@ -1,0 +1,1 @@
+NAME=PLS BASE=ascii GROUP=text ID=PLS PATTERN=#?.pls TYPE=ASCII PRI=5 BROWSE=SYS:Programs/Player EDIT=SYS:Programs/Notepad

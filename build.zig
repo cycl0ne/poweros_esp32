@@ -122,13 +122,15 @@ const image_dirs = [_][]const u8{
     // empty without scripts/fetch-fonts.sh.
     "fonts",
     // ENVARC: lives here: the global variables that survive a reboot.
-    // Sys/ holds the system's settings, Sys/net/ the network's, and
-    // Sys/net/networks/ a Wi-Fi network's passphrase per file.
+    // Sys/ holds the system's settings, Sys/net/ the network's,
+    // Sys/net/networks/ a Wi-Fi network's passphrase per file, and
+    // Player/ the stations the Player keeps.
     "prefs",
     "prefs/env-archive",
     "prefs/env-archive/Sys",
     "prefs/env-archive/Sys/net",
     "prefs/env-archive/Sys/net/networks",
+    "prefs/env-archive/Player",
     "prefs/presets",
     "prefs/presets/styles",
 };

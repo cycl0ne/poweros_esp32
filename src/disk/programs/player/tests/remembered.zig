@@ -57,6 +57,8 @@ test "Player.prefs: the line read, what it leaves out kept, written back as it w
     try testing.expectEqual(@as(u32, 150), settings.volume);
     try testing.expectEqual(@as(u8, 1), @intFromEnum(settings.look));
     try testing.expectEqual(@as(u8, 1), settings.page);
+    try testing.expect(remembered.parse(ub, "page=radio", &settings) == null);
+    try testing.expectEqual(@as(u8, 2), settings.page);
 
     // Without a box or a drawer, neither is written.
     var plain = remembered.Settings{};
@@ -77,7 +79,7 @@ test "Player.prefs: words that do not make sense say so" {
     try testing.expect(remembered.parse(ub, "WINDOW=40,30,560", &bad) != null);
     try testing.expect(remembered.parse(ub, "WINDOW=40,30,0,420", &bad) != null);
     try testing.expect(remembered.parse(ub, "WINDOW=-4,30,560,420", &bad) != null);
-    try testing.expect(remembered.parse(ub, "PAGE=RADIO", &bad) != null);
+    try testing.expect(remembered.parse(ub, "PAGE=STATIONS", &bad) != null);
     try testing.expect(remembered.parse(ub, "LOOK=SCOPE", &bad) != null);
     try testing.expect(remembered.parse(ub, "VOLUME=201", &bad) != null);
     try testing.expect(remembered.parse(ub, "VOLUME=loud", &bad) != null);

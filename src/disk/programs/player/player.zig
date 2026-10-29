@@ -6,7 +6,9 @@
 //!   Player FILES/M,ADD/S,VOLUME/K/N,LOOK/K
 //!
 //! FILES make the playlist - a drawer its sound files, an address that
-//! starts `http://` or `https://` a station - and the first is played; with ADD they are added to the list kept and nothing more.
+//! starts `http://` or `https://` a station, a list (M3U, M3U8 or PLS)
+//! what it lists - and the first is played; with ADD they are added to
+//! the list kept and nothing more.
 //! VOLUME is in percent of as recorded, LOOK the picture to start with:
 //! PLASMA, WAVE or BARS. Each left out is as the Player was left.
 //!
@@ -46,8 +48,9 @@
 //! Shuffle, repeat and the sound off are toolbuttons with media.image's
 //! pictures: repeat goes round off, the whole list, the one song, its
 //! picture with a 1 for the last. Under them, as big as the window lets it
-//! be, two pages under tabs (page.gadget with a clicktab.gadget): Now
-//! playing, the picture sunk in a frame, and Playlist, the list.
+//! be, three pages under tabs (page.gadget with a clicktab.gadget): Now
+//! playing, the picture sunk in a frame, Playlist, the list, and Radio,
+//! the stations.
 //!
 //! The picture:
 //!
@@ -65,14 +68,16 @@
 //! asked with `ASLFR_DrawersOnly`), Open URL... (a station's address, in
 //! a small window of the Player's own: Return or Open adds it and plays
 //! it - an address without `://` taken as `http://` - Esc or Cancel
-//! closes it), About and Quit. About is a requester
+//! closes it), Save playlist... (the list as an M3U file), About and
+//! Quit. About is a requester
 //! put up without waiting (`BuildEasyRequestArgs`, `SysReqHandler`), so
 //! the sound and the picture go on behind it. Playlist: Add..., Remove,
 //! Clear, Shuffle and Repeat (Off, All, One), whose ticks follow the
 //! toolbuttons as the toolbuttons follow them. The space bar pauses and
 //! goes on, N and P are the song after and the song before, the cursor
 //! keys left and right jump ten seconds and up and down turn the volume
-//! five points; Return and Del work the list.
+//! five points; Return and Del work the list, and on the Radio page its
+//! stations.
 //!
 //! **The playlist** (playlist.zig) is a listbrowser.gadget: each song's
 //! place, title, artist and length, the song shown bold and marked
@@ -85,6 +90,19 @@
 //! a drawer named adds its sound files; Open... adds them too and plays
 //! the first. Files dropped on the window from the desktop are added - a
 //! drawer its sound files - and the first played when nothing plays.
+//!
+//! **A list** (m3u.zig) - M3U, its UTF-8 form M3U8, or PLS - adds the
+//! songs and stations it names wherever a file can be given: on the
+//! command line, by Add... or Open..., dropped, or opened from the
+//! desktop (DEVS:DataTypes' M3U and PLS name the Player to browse them).
+//! A name in it is found from the list's own drawer - `../` goes up, a
+//! leading `/` is the root of the list's volume - and a list it names is
+//! read too, four deep at most; the titles and lengths it gives stand in
+//! a row until the song's own tags are read. Save playlist... asks for a
+//! name with the save requester and writes the list as an extended M3U
+//! (`#EXTINF`), UTF-8, each song named from the drawer it is saved in when
+//! it lies there or below, by its full name otherwise; a name without
+//! `.m3u` or `.m3u8` gets `.m3u`.
 //!
 //! **The order.** The list is played in an order of its own - its own
 //! order, or shuffled from the song playing on, with the chip's random
@@ -154,15 +172,30 @@
 //! and waits again - "buffering" - when it runs short. A connection lost
 //! is called again, three times in a row, after a second, a second and
 //! five seconds; a station that never sent sound, or sends no more, says
-//! why, and one that sends AAC is refused. Stop ends the call and play
+//! why, and one that sends AAC is refused. An address that answers with a
+//! list - PLS or M3U - stands for the first station it names; HLS is
+//! refused. Stop ends the call and play
 //! calls it again; a station kept in Player.list is shown at a start, not
 //! called.
+//!
+//! **The Radio page** (radiopage.zig) holds two lists, one at a time, a
+//! chooser turning between them: Your stations, kept in
+//! `ENVARC:Player/Stations.m3u` (stations.zig) - a fresh disk has six -
+//! and Found, what a search of radio-browser.info gave (finder.zig): the
+//! words, what they are looked for in - Name, Genre or Country - and
+//! Search, or Return in the field. A double-click or Return plays a
+//! station, in the playlist under its name; Keep keeps the station found
+//! that is selected, or else the one playing; Remove or Del lets a kept one
+//! go. A station with a picture - a kept one's `tvg-logo`, a found one's
+//! favicon - shows it as its cover, fetched by the finder; a press on it
+//! shows it large under the station's name.
 //!
 //! **Remembered** (remembered.zig). As it ends the Player writes how it
 //! was left to `ENV:` and `ENVARC:`: the window's box, the page, the look,
 //! the volume, shuffle and repeat, and the drawer last opened
 //! (Player.prefs), and the list with the song shown and the second it was
-//! at (Player.list). Started without files it opens that list again and
+//! at (Player.list), and the stations kept when they changed
+//! (Player/Stations.m3u). Started without files it opens that list again and
 //! shows the song where it was, paused - the sound moved there without
 //! being started (`place`). Started with files, they are the list, and
 //! VOLUME and LOOK given win over what was kept. Settings > Remember where
@@ -234,9 +267,13 @@ const one = @import("one.zig");
 const radio = @import("radio.zig");
 const icy = @import("icy.zig");
 const st = sdk.gadgets.string;
+const m3u = @import("m3u.zig");
+const stations = @import("stations.zig");
+const finder = @import("finder.zig");
+const radio_page = @import("radiopage.zig");
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.17";
+const VERSION = "1.20";
 const DATE = "29.10.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
@@ -279,7 +316,8 @@ const ID_URL_CANCEL = 22;
 /// The pages under the tabs.
 const page_picture = 0;
 const page_list = 1;
-const page_names = [_:null]?[*:0]const u8{ "Now playing", "Playlist" };
+const page_radio = 2;
+const page_names = [_:null]?[*:0]const u8{ "Now playing", "Playlist", "Radio" };
 
 /// A look every 40 ms; the time beside the slider every sixth.
 const look_period = 40;
@@ -367,8 +405,9 @@ const MENU_PROJECT = 0;
 const ITEM_OPEN = 0;
 const ITEM_OPEN_DRAWER = 1;
 const ITEM_OPEN_URL = 2;
-const ITEM_ABOUT = 4;
-const ITEM_QUIT = 5;
+const ITEM_SAVE = 3;
+const ITEM_ABOUT = 5;
+const ITEM_QUIT = 6;
 const MENU_PLAYLIST = 1;
 const ITEM_ADD = 0;
 const ITEM_REMOVE = 1;
@@ -396,6 +435,7 @@ const menus = [_]mn.NewMenu{
     menuItem("Open...", "O"),
     menuItem("Open drawer...", "D"),
     menuItem("Open URL...", "U"),
+    menuItem("Save playlist...", "S"),
     bar,
     menuItem("About", null),
     menuItem("Quit", "Q"),
@@ -421,9 +461,9 @@ const menus = [_]mn.NewMenu{
 /// The song shown when the Player last ended, and the second it was at.
 const Resume = struct { entry: *Entry, second: u32 };
 
-/// What the file requester is up for: songs to play, songs to add, or a
-/// drawer's songs to play.
-const Ask = enum { play, add, drawer };
+/// What the file requester is up for: songs to play, songs to add, a
+/// drawer's songs to play, or where the playlist is saved.
+const Ask = enum { play, add, drawer, save };
 
 fn pair(t: sdk.utility.Tag, data: usize) TagItem {
     return .{ .tag = t, .data = data };
@@ -637,6 +677,13 @@ const App = struct {
     /// The menus while they are on the window.
     strip: ?*intuition.Menu = null,
     drop: sdk.anvil.DropTarget = .{},
+    /// The Radio page (radiopage.zig).
+    radio: radio_page.Page = undefined,
+    /// A station's picture, a copy of the finder's, and the cover made of
+    /// it - the station it is of - for as long as it is shown.
+    logo: ?[*]u8 = null,
+    logo_picture: ac.AudioPicture = undefined,
+    logo_entry: ?*Entry = null,
 
     fn set(app: *App, gadget: *Object, tags: []const TagItem) void {
         _ = app.ib.SetGadgetAttrsTagList(gadget, app.window, tags.ptr);
@@ -731,7 +778,9 @@ const App = struct {
             if (app.station == null) app.tellWhy("No memory for the station");
         }
         app.showStation();
-        app.showCover(null, "", &app.line_text[line_title].text);
+        app.showCover(null, "", @ptrCast(&entry.title));
+        // Its picture, when the Radio page knows one, comes later.
+        _ = app.radio.askLogo(entry.path());
         app.showRange(0);
         app.keepRoom(false);
         app.showTime();
@@ -827,7 +876,8 @@ const App = struct {
     /// The station's lines: what plays - the title its metadata names, its
     /// artist apart - or else its name; its name and its genre under that;
     /// its address; and how it goes. The window's title is the first line,
-    /// and the station's row takes its name once it says it.
+    /// and the station's row takes its name once it says it - unless the
+    /// Radio page has a name for it.
     fn showStation(app: *App) void {
         const entry = app.playing orelse return;
         const facts = &app.station_facts;
@@ -848,7 +898,8 @@ const App = struct {
         app.composeKind();
         app.showTitle(&title.text);
         app.showLines();
-        if (facts.name[0] != 0 and !sameText(@ptrCast(&entry.title), &facts.name)) {
+        // A station the Radio page knows keeps the name it has there.
+        if (facts.name[0] != 0 and app.radio.nameOf(entry.path()) == null and !sameText(@ptrCast(&entry.title), &facts.name)) {
             entry.retitle(&facts.name);
             app.rowsChanged();
         }
@@ -1008,6 +1059,58 @@ const App = struct {
         const shown = app.url_window orelse return;
         app.ib.DisposeObject(shown.object);
         app.url_window = null;
+    }
+
+    // --- the Radio page ---------------------------------------------------------
+
+    /// A station from the Radio page played: the row of the playlist with
+    /// its address, or one added at the list's end, under the station's
+    /// name; a station found told to the service.
+    fn playFromRadio(app: *App, station: *const stations.Station) void {
+        const url = station.url();
+        const entry = app.entryOf(url) orelse added: {
+            const before = app.beginAdding();
+            _ = app.songs.addPath(app.sys, app.dl, url);
+            break :added app.endAdding(before) orelse return;
+        };
+        entry.retitle(@ptrCast(&station.name));
+        app.rowsChanged();
+        app.radio.listened(station);
+        app.playNow(entry);
+    }
+
+    /// The row of the playlist whose song is `path`, if there is one.
+    fn entryOf(app: *App, path: [*:0]const u8) ?*Entry {
+        var entry = app.songs.first();
+        while (entry) |song| : (entry = song.next()) {
+            if (sameText(song.path(), path)) return song;
+        }
+        return null;
+    }
+
+    /// The station shown, for Keep: its address and its name - what it
+    /// says it is called, or its row's.
+    fn playingStation(app: *App) ?radio_page.Playing {
+        if (!app.showsStation()) return null;
+        const entry = app.playing.?;
+        const named = app.station_facts.name[0] != 0;
+        return .{ .url = entry.path(), .name = if (named) &app.station_facts.name else @ptrCast(&entry.title) };
+    }
+
+    /// What the finder says, for the Radio page; a station's picture, once
+    /// it has come, shown as its cover while the station is shown.
+    fn radioNews(app: *App) void {
+        const logo = app.radio.heard() orelse return;
+        const entry = app.playing orelse return;
+        if (!sameText(entry.path(), logo.url)) return;
+        const memory = app.sys.AllocVec(@intCast(logo.bytes.len), exec.MEMF_ANY) orelse return;
+        if (app.logo) |old| app.sys.FreeVec(old);
+        const bytes: [*]u8 = @ptrCast(memory);
+        @memcpy(bytes[0..logo.bytes.len], logo.bytes);
+        app.logo = bytes;
+        app.logo_picture = .{ .data = bytes, .size = @intCast(logo.bytes.len), .kind = ac.ACPIC_FRONTCOVER, .mime = @splat(0) };
+        app.logo_entry = entry;
+        app.showCover(&app.logo_picture, "", @ptrCast(&entry.title));
     }
 
     // --- the order -----------------------------------------------------------
@@ -1650,8 +1753,15 @@ const App = struct {
         const at_x: isize = @bitCast(x);
         const at_y: isize = @bitCast(y);
         if (at_x < 0 or at_y < 0 or at_x >= side or at_y >= side) return;
-        const name = (app.playing orelse return).path();
-        if (playlist.isUrl(name)) return;
+        const entry = app.playing orelse return;
+        const name = entry.path();
+        if (playlist.isUrl(name)) {
+            // A station's cover is its picture, when it has one, under the
+            // station's name.
+            if (app.logo_entry != app.playing or app.kept.from == .none) return;
+            if (!app.big.show(.{ .ib = app.ib, .dt = dt, .screen = app.screen }, app.covers, .{ .held = &app.logo_picture }, @ptrCast(&entry.title))) app.ib.DisplayBeep(app.screen);
+            return;
+        }
         const tags = app.tagsOf(name);
         const source = app.coverSource(tags.picture) orelse return;
         const title = if (tags.album[0] != 0) tags.album else tags.title;
@@ -1918,6 +2028,7 @@ const App = struct {
                 ITEM_OPEN => app.askFiles(.play),
                 ITEM_OPEN_DRAWER => app.askFiles(.drawer),
                 ITEM_OPEN_URL => app.askUrl(),
+                ITEM_SAVE => app.askFiles(.save),
                 ITEM_ABOUT => app.showAbout(),
                 ITEM_QUIT => return false,
                 else => {},
@@ -1946,12 +2057,12 @@ const App = struct {
         return true;
     }
 
-    /// The file requester put up, without waiting for it: for songs to
-    /// play or only to add, several at once, or for a drawer whose songs
-    /// are played. The first time it starts in the drawer last answered
-    /// in - kept from the run before - or else the drawer of the song
-    /// shown, and where it was left after that. Nothing while it is up
-    /// already.
+    /// The file requester put up, without waiting for it: for songs and
+    /// lists to play or only to add, several at once, for a drawer whose
+    /// songs are played, or for the file the playlist is saved as. The
+    /// first time it starts in the drawer last answered in - kept from the
+    /// run before - or else the drawer of the song shown, and where it was
+    /// left after that. Nothing while it is up already.
     fn askFiles(app: *App, what: Ask) void {
         const al = app.al orelse return;
         const port = app.asl_port orelse return;
@@ -1961,7 +2072,7 @@ const App = struct {
             if (app.drawer[0] != 0) drawer = app.drawer else app.songDrawer(&drawer);
             app.request = al.AllocAslRequest(asl.ASL_FileRequest, &[_]TagItem{
                 pair(asl.ASLFR_InitialDrawer, @intFromPtr(&drawer)),
-                pair(asl.ASLFR_InitialPattern, @intFromPtr(playlist.pattern)),
+                pair(asl.ASLFR_InitialPattern, @intFromPtr(playlist.open_pattern)),
                 pair(asl.ASLFR_DoPatterns, 1),
                 pair(asl.ASLFR_DoMultiSelect, 1),
                 pair(asl.ASLFR_ReplyPort, @intFromPtr(port)),
@@ -1973,13 +2084,20 @@ const App = struct {
             .play => "Which songs?",
             .add => "Add which songs?",
             .drawer => "Which drawer?",
+            .save => "Save the playlist as",
         };
         app.asked = what;
+        const saving = what == .save;
+        const shown_pattern: [*:0]const u8 = if (saving) m3u.save_pattern else playlist.open_pattern;
+        const file: [*:0]const u8 = if (saving) "Playlist.m3u" else "";
         app.asking = al.AslRequest(request, &[_]TagItem{
             pair(asl.ASLFR_Window, @intFromPtr(app.window)),
             pair(asl.ASLFR_TitleText, @intFromPtr(title)),
             pair(asl.ASLFR_DrawersOnly, @intFromBool(what == .drawer)),
-            pair(asl.ASLFR_DoMultiSelect, @intFromBool(what != .drawer)),
+            pair(asl.ASLFR_DoMultiSelect, @intFromBool(what == .play or what == .add)),
+            pair(asl.ASLFR_DoSaveMode, @intFromBool(saving)),
+            pair(asl.ASLFR_InitialPattern, @intFromPtr(shown_pattern)),
+            pair(asl.ASLFR_InitialFile, @intFromPtr(file)),
             .{},
         });
     }
@@ -2038,7 +2156,8 @@ const App = struct {
     }
 
     /// The file requester's answer: the songs picked - a drawer named
-    /// its sound files - added, and for Open... the first played.
+    /// its sound files, a list its songs - added, and for Open... the
+    /// first played; or the file the playlist is saved as.
     fn answered(app: *App) void {
         const port = app.asl_port orelse return;
         while (app.sys.GetMsg(port)) |message| {
@@ -2048,6 +2167,10 @@ const App = struct {
             const answer: *asl.FileRequester = @ptrCast(@alignCast(reply.requester orelse continue));
             const drawer = answer.drawer orelse continue;
             app.keepDrawer(drawer);
+            if (app.asked == .save) {
+                app.savePlaylist(drawer, answer.file orelse "");
+                continue;
+            }
             const before = app.beginAdding();
             const picks = if (answer.arg_list) |list| list[0..@intCast(@max(answer.num_args, 0))] else &[_]asl.WBArg{};
             if (picks.len > 0) {
@@ -2058,6 +2181,26 @@ const App = struct {
             const first = app.endAdding(before) orelse continue;
             if (app.asked != .add) app.playNow(first);
         }
+    }
+
+    /// Save playlist...'s answer: the list written there as M3U - `.m3u`
+    /// put after a name that ends in neither `.m3u` nor `.m3u8` - its songs
+    /// by their names from that drawer where they lie within it. A beep
+    /// when it cannot be written.
+    fn savePlaylist(app: *App, drawer: [*:0]const u8, file: [*:0]const u8) void {
+        var path: [dos.path_max + 1:0]u8 = @splat(0);
+        _ = app.dl.AddPart(&path, drawer, path.len);
+        if (file[0] == 0 or !app.dl.AddPart(&path, file, path.len)) return app.ib.DisplayBeep(app.screen);
+        var length = lengthOf(&path);
+        if (m3u.kindOf(path[0..length]) != .m3u) {
+            const ending = ".m3u";
+            if (length + ending.len > dos.path_max) return app.ib.DisplayBeep(app.screen);
+            @memcpy(path[length..][0..ending.len], ending);
+            length += ending.len;
+        }
+        const text = app.songs.listText(app.sys, drawer[0..lengthOf(drawer)]) orelse return app.ib.DisplayBeep(app.screen);
+        defer app.sys.FreeVec(text.ptr);
+        if (!prefs.save(app.dl, &path, text)) app.ib.DisplayBeep(app.screen);
     }
 
     /// The drawer the requester was answered in, kept for the next
@@ -2114,6 +2257,10 @@ const App = struct {
             @memcpy(name[0..song.path.len], song.path);
             name[song.path.len] = 0;
             const entry = app.songs.add(app.sys, &name) orelse continue;
+            // A station kept or found goes by its name.
+            if (playlist.isUrl(&name)) {
+                if (app.radio.nameOf(&name)) |station_name| entry.retitle(station_name);
+            }
             if (song.at) |second| found = .{ .entry = entry, .second = second };
         }
         return found;
@@ -2171,6 +2318,7 @@ const App = struct {
         _ = prefs.save(app.dl, remembered.ENV_FILE, text[0..n]);
         _ = prefs.save(app.dl, remembered.ENVARC_FILE, text[0..n]);
         app.keepList();
+        app.radio.keepFiles();
     }
 
     /// The list and the song shown, with the second it is at, written for
@@ -2363,6 +2511,7 @@ const App = struct {
     /// own.
     fn turned(app: *App, page: u32) void {
         app.page = page;
+        app.radio.shown = page == page_radio;
         if (page == page_picture) app.wake();
     }
 
@@ -2399,6 +2548,14 @@ const App = struct {
             ID_ADD => app.askFiles(.add),
             ID_REMOVE => app.removeSelected(),
             ID_CLEAR => app.clearList(),
+            radio_page.ID_VIEW => app.radio.turnTo(code),
+            radio_page.ID_KEPT, radio_page.ID_FOUND => if (app.radio.pressed(code)) |station| app.playFromRadio(station),
+            // Return in the field, or Tab out of it; Esc leaves it alone.
+            radio_page.ID_FIND => if (code != keyboard.RAWKEY_ESC) app.radio.search(),
+            radio_page.ID_BY => app.radio.by = @enumFromInt(@min(code, finder.by_labels.len - 1)),
+            radio_page.ID_SEARCH => app.radio.search(),
+            radio_page.ID_KEEP => app.radio.keep(app.playingStation()),
+            radio_page.ID_REMOVE => app.radio.remove(),
             else => {},
         }
     }
@@ -2470,27 +2627,36 @@ const App = struct {
 
     /// A key no gadget took: the space bar pauses and goes on; N and P
     /// the song after and before; Return plays the song selected where the
-    /// list is shown.
+    /// list is shown, and the station selected on the Radio page.
     fn key(app: *App, code: usize) void {
         switch (code) {
             ' ' => app.togglePause(),
             'n', 'N' => app.next(),
             'p', 'P' => app.previous(),
-            13 => if (app.page == page_list) app.playSelected(),
+            13 => switch (app.page) {
+                page_list => app.playSelected(),
+                page_radio => if (app.radio.toPlay()) |station| app.playFromRadio(station),
+                else => {},
+            },
             else => {},
         }
     }
 
     /// A key that is no character: left and right ten seconds back and on,
     /// up and down the volume; Del takes the song selected out where the
-    /// list is shown.
+    /// list is shown, and the station kept that is selected on the Radio
+    /// page.
     fn rawKey(app: *App, code: usize) void {
         switch (code) {
             keyboard.RAWKEY_LEFT => app.jump(-jump_seconds),
             keyboard.RAWKEY_RIGHT => app.jump(jump_seconds),
             keyboard.RAWKEY_UP => app.volumeBy(volume_step),
             keyboard.RAWKEY_DOWN => app.volumeBy(-volume_step),
-            keyboard.RAWKEY_DEL => if (app.page == page_list) app.removeSelected(),
+            keyboard.RAWKEY_DEL => switch (app.page) {
+                page_list => app.removeSelected(),
+                page_radio => app.radio.remove(),
+                else => {},
+            },
             else => {},
         }
     }
@@ -2616,7 +2782,8 @@ const App = struct {
             const public_mask: u32 = if (app.public) |port| port.sigMask() else 0;
             const station_mask: u32 = if (app.station) |station| station.signal() else 0;
             const url_mask = app.urlSignal();
-            const got = app.sys.Wait(@as(u32, @truncate(window_mask)) | sound_mask | app.tick_mask | drop_mask | asl_mask | big_mask | about_mask | public_mask | station_mask | url_mask | exec.SIGBREAKF_CTRL_C);
+            const radio_mask = app.radio.signal();
+            const got = app.sys.Wait(@as(u32, @truncate(window_mask)) | sound_mask | app.tick_mask | drop_mask | asl_mask | big_mask | about_mask | public_mask | station_mask | url_mask | radio_mask | exec.SIGBREAKF_CTRL_C);
             if (got & exec.SIGBREAKF_CTRL_C != 0) return;
             if (got & sound_mask != 0) app.soundNews();
             if (got & drop_mask != 0) app.dropped();
@@ -2626,6 +2793,7 @@ const App = struct {
             if (got & public_mask != 0) app.handedOver();
             if (got & station_mask != 0) app.stationNews();
             if (got & url_mask != 0) app.urlMessages();
+            if (got & radio_mask != 0) app.radioNews();
             if (!app.windowMessages()) return;
             if (got & app.tick_mask != 0) app.tick();
             app.keepFollowing();
@@ -2685,7 +2853,7 @@ fn lookNamed(name: ?[*:0]const u8) visual.Mode {
 /// Gadgets made and not yet taken by a layout: given back together when
 /// the window cannot be made.
 const Loose = struct {
-    items: [32]?*Object = @splat(null),
+    items: [48]?*Object = @splat(null),
     count: usize = 0,
 
     /// What was made, kept loose; null when it was not.
@@ -2814,6 +2982,17 @@ fn button(ib: *IntuitionBase, label: [*:0]const u8, id: u32) ?*Object {
     });
 }
 
+/// A list of the Radio page's: its ID, its columns and its rows.
+fn stationList(ib: *IntuitionBase, id: u32, columns: [*]const lb.Column, rows: *exec.List) ?*Object {
+    return ib.NewObjectTagList(null, lb.LISTBROWSER_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, id),
+        pair(gc.GA_RelVerify, 1),
+        pair(lb.LISTBROWSER_Columns, @intFromPtr(columns)),
+        pair(lb.LISTBROWSER_Rows, @intFromPtr(rows)),
+        .{},
+    });
+}
+
 /// One of media.image's pictures; the program's, disposed of after the
 /// button it is on.
 fn mediaPicture(ib: *IntuitionBase, glyph: u32) ?*Object {
@@ -2877,13 +3056,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const kept_volume: i32 = @intCast(kept.volume);
     const percent: u32 = @intCast(@min(@max(rdargs.number(argv[arg_volume]) orelse kept_volume, 0), 200));
 
-    var libraries: [14]?*exec.Library = @splat(null);
+    var libraries: [15]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
     const wanted = [_][*:0]const u8{
         intuition.INTUITIONNAME, graphics.GRAPHICSNAME,  motion.MOTIONNAME,   ac.AUDIOCODECNAME,
         tx.TEXT_LIBRARY,         sl.SLIDER_LIBRARY,      td.TDECK_LIBRARY,    cv.CANVAS_LIBRARY,
         ch.CHOOSER_LIBRARY,      tb.TOOLBUTTON_LIBRARY,  media.MEDIA_LIBRARY, ct.CLICKTAB_LIBRARY,
-        pg.PAGE_LIBRARY,         lb.LISTBROWSER_LIBRARY,
+        pg.PAGE_LIBRARY,         lb.LISTBROWSER_LIBRARY, st.STRING_LIBRARY,
     };
     for (wanted, 0..) |name, i| {
         libraries[i] = sys.OpenLibrary(name, 0) orelse {
@@ -2939,6 +3118,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer if (app.string_lib) |lib| sys.CloseLibrary(lib);
     // A station let go of before the sound's process ends.
     defer app.stopStation();
+    // The stations kept, read before the list, whose stations go by their
+    // names; given back, and the finder let go of, after the window.
+    app.radio = .{ .sys = sys, .dl = dl, .ib = ib, .agent = USER_AGENT };
+    app.radio.init();
+    defer app.radio.free();
+    defer if (app.logo) |bytes| sys.FreeVec(bytes);
     defer if (app.pixels) |pixels| sys.FreeVec(pixels);
     defer if (app.order) |order| sys.FreeVec(@ptrCast(order));
     defer app.kept.free(app.gb);
@@ -3103,6 +3288,61 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .object = app.browser },
         .{ .object = list_buttons, .weight_height = 0 },
     }) orelse return noWindow(dl);
+    // The Radio page: the search line over the stations kept or found,
+    // which a page without tabs holds, and under them Keep, Remove and the
+    // line that says how a search goes.
+    app.radio.view_chooser = loose.add(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, radio_page.ID_VIEW),
+        pair(gc.GA_RelVerify, 1),
+        pair(ch.CHOOSER_Labels, @intFromPtr(&radio_page.view_labels)),
+        pair(ch.CHOOSER_Active, radio_page.view_kept),
+        .{},
+    })) orelse return noWindow(dl);
+    app.radio.field = loose.add(ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, radio_page.ID_FIND),
+        pair(gc.GA_RelVerify, 1),
+        pair(gc.STRINGA_MaxChars, finder.query_max),
+        .{},
+    })) orelse return noWindow(dl);
+    const by_chooser = loose.add(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, radio_page.ID_BY),
+        pair(gc.GA_RelVerify, 1),
+        pair(ch.CHOOSER_Labels, @intFromPtr(&finder.by_labels)),
+        .{},
+    })) orelse return noWindow(dl);
+    const search_button = loose.add(button(ib, "Searc_h", radio_page.ID_SEARCH)) orelse return noWindow(dl);
+    app.radio.kept_list = loose.add(stationList(ib, radio_page.ID_KEPT, &stations.kept_columns, &app.radio.kept.rows)) orelse return noWindow(dl);
+    app.radio.found_list = loose.add(stationList(ib, radio_page.ID_FOUND, &stations.found_columns, &app.radio.found.rows)) orelse return noWindow(dl);
+    const keep_button = loose.add(button(ib, "_Keep", radio_page.ID_KEEP)) orelse return noWindow(dl);
+    const forget_button = loose.add(button(ib, "Remo_ve", radio_page.ID_REMOVE)) orelse return noWindow(dl);
+    app.radio.status = loose.add(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Text, @intFromPtr(&app.radio.status_text)),
+        pair(tx.TEXT_Clipped, 1),
+        .{},
+    })) orelse return noWindow(dl);
+    const search_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
+        .{ .object = app.radio.view_chooser, .weight_width = 0 },
+        .{ .object = app.radio.field, .label = "_Find" },
+        .{ .object = by_chooser, .weight_width = 0, .label = "_in" },
+        .{ .object = search_button, .weight_width = 0 },
+    }) orelse return noWindow(dl);
+    app.radio.pages = .{ app.radio.kept_list, app.radio.found_list };
+    app.radio.book = loose.add(ib.NewObjectTagList(null, pg.PAGE_CLASS, &[_]TagItem{
+        pair(pg.PAGE_Pages, @intFromPtr(&app.radio.pages)),
+        pair(pg.PAGE_Current, radio_page.view_kept),
+        .{},
+    })) orelse return noWindow(dl);
+    for ([_]*Object{ app.radio.kept_list, app.radio.found_list }) |taken| loose.take(taken);
+    const radio_buttons = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
+        .{ .object = keep_button, .weight_width = 0 },
+        .{ .object = forget_button, .weight_width = 0 },
+        .{ .object = app.radio.status },
+    }) orelse return noWindow(dl);
+    const radio_screen = group(ib, &loose, &.{pair(lg.LAYOUTA_Spacing, 6)}, &.{
+        .{ .object = search_row, .weight_height = 0 },
+        .{ .object = app.radio.book },
+        .{ .object = radio_buttons, .weight_height = 0 },
+    }) orelse return noWindow(dl);
     // The picture and the list on pages under tabs, which go with the
     // page gadget: no longer loose once it is made.
     const tabs = loose.add(ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
@@ -3110,14 +3350,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(ct.CLICKTAB_Labels, @intFromPtr(&page_names)),
         .{},
     })) orelse return noWindow(dl);
-    app.pages = .{ framed, list_page };
+    app.pages = .{ framed, list_page, radio_screen };
     app.book = loose.add(ib.NewObjectTagList(null, pg.PAGE_CLASS, &[_]TagItem{
         pair(pg.PAGE_Pages, @intFromPtr(&app.pages)),
         pair(pg.PAGE_Tabs, @intFromPtr(tabs)),
         pair(pg.PAGE_Current, app.page),
         .{},
     })) orelse return noWindow(dl);
-    for ([_]*Object{ framed, list_page, tabs }) |taken| loose.take(taken);
+    for ([_]*Object{ framed, list_page, radio_screen, tabs }) |taken| loose.take(taken);
     // The tags' row grows half as fast as the pages, until the cover is
     // as large as it is kept.
     const layout = group(ib, &loose, &.{ pair(lg.LAYOUTA_Margin, 6), pair(lg.LAYOUTA_Spacing, 6) }, &.{
@@ -3166,6 +3406,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
     app.window = @ptrFromInt(opened);
+    app.radio.window = app.window;
+    app.radio.shown = app.page == page_radio;
     // The large cover's window and Open URL...'s, closed before this one.
     defer app.big.close(ib);
     defer app.closeUrl();

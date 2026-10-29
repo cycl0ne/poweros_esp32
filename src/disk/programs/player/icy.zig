@@ -99,11 +99,20 @@ pub fn split(text: []const u8) Named {
     return .{ .artist = text[0..at], .title = text[at + 3 ..] };
 }
 
-/// What a stream is, by its Content-Type.
-pub const Kind = enum { unknown, mp3, vorbis, aac };
+/// What a stream is, by its Content-Type: a sound, or a list of
+/// addresses - PLS or M3U, as a station's site hands out - instead of one.
+pub const Kind = enum { unknown, mp3, vorbis, aac, list };
 
 pub fn kindOf(content_type: []const u8) Kind {
+    // The lists first: `audio/x-mpegurl` starts as `audio/x-mpeg` does.
     const kinds = [_]struct { prefix: []const u8, kind: Kind }{
+        .{ .prefix = "audio/x-scpls", .kind = .list },
+        .{ .prefix = "audio/scpls", .kind = .list },
+        .{ .prefix = "application/pls", .kind = .list },
+        .{ .prefix = "audio/x-mpegurl", .kind = .list },
+        .{ .prefix = "audio/mpegurl", .kind = .list },
+        .{ .prefix = "application/x-mpegurl", .kind = .list },
+        .{ .prefix = "application/vnd.apple.mpegurl", .kind = .list },
         .{ .prefix = "audio/mpeg", .kind = .mp3 },
         .{ .prefix = "audio/mp3", .kind = .mp3 },
         .{ .prefix = "audio/x-mpeg", .kind = .mp3 },
@@ -125,17 +134,24 @@ pub fn kindOf(content_type: []const u8) Kind {
 /// character past Latin-1 a `?` - and anything that is not UTF-8 taken
 /// as Latin-1 already, as older stations send it. Cut to fit.
 pub fn latin1(text: []const u8, into: []u8) void {
+    latin1As(text, isUtf8(text), into);
+}
+
+/// `text` into `into` as Latin-1, NUL after it, read as UTF-8 when `utf8`
+/// says - a whole file's word for each of its lines - and as Latin-1
+/// already otherwise. Cut to fit.
+pub fn latin1As(text: []const u8, utf8: bool, into: []u8) void {
     if (into.len == 0) return;
-    const utf8 = isUtf8(text);
     var out: usize = 0;
     var at: usize = 0;
     while (at < text.len and out + 1 < into.len) {
         const lead = text[at];
-        if (!utf8 or lead < 0x80) {
+        const length = sequenceLength(lead);
+        // A sequence cut short, or none, is a Latin-1 byte.
+        if (!utf8 or lead < 0x80 or length == 0 or at + length > text.len) {
             into[out] = lead;
             at += 1;
         } else {
-            const length = sequenceLength(lead);
             var code: u32 = lead & (@as(u8, 0x7F) >> @intCast(length));
             for (text[at + 1 .. at + length]) |byte| code = (code << 6) | (byte & 0x3F);
             into[out] = if (code <= 0xFF) @intCast(code) else '?';
@@ -157,7 +173,7 @@ fn sequenceLength(lead: u8) usize {
 }
 
 /// Whether `text` is UTF-8 with at least one character past ASCII.
-fn isUtf8(text: []const u8) bool {
+pub fn isUtf8(text: []const u8) bool {
     var wide = false;
     var at: usize = 0;
     while (at < text.len) {

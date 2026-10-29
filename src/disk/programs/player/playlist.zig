@@ -15,6 +15,14 @@
 //! requester's pattern shows (`pattern`); a file named on its own is
 //! added whatever it ends in, and says what it is when it is read.
 //!
+//! **A list** - a file ending in `.m3u`, `.m3u8` or `.pls` (m3u.zig) -
+//! adds what it names in its order: a name taken from the list's drawer,
+//! a station's address as it is, a list named in it read in turn, up to
+//! `deepest_lists` lists down. The name and the length a list gives a
+//! song stand in its row until its tags are read; a station keeps the
+//! name. `listText` is the list the other way, as M3U, a song's name
+//! written from the drawer the list is saved in when it lies within it.
+//!
 //! **The places** in the first column follow the list as it stands: once
 //! rows are moved or sorted, `renumber` writes them again - those that
 //! changed.
@@ -32,14 +40,21 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 const TagItem = sdk.utility.TagItem;
+const prefs = sdk.prefs;
+const m3u = @import("m3u.zig");
+const icy = @import("icy.zig");
 
 /// The endings of the files that are sound, and the file requester's
 /// pattern for the same.
 pub const endings = [_][]const u8{ "mp3", "wav", "flac", "ogg", "oga" };
 pub const pattern = "#?.(mp3|wav|flac|ogg|oga)";
+/// What the file requester shows for songs to open: sound and lists.
+pub const open_pattern = "#?.(mp3|wav|flac|ogg|oga|m3u|m3u8|pls)";
 
 /// How many drawers down a drawer added is looked into.
 const deepest = 8;
+/// How many lists down a list named in a list is read.
+const deepest_lists = 4;
 
 /// The columns: the place, which a press on its heading does not sort
 /// by, the title, the artist, and the length, which sorts by how long.
@@ -69,6 +84,9 @@ pub const Entry = extern struct {
     title: [name_room + 1]u8 = @splat(0),
     artist: [name_room + 1]u8 = @splat(0),
     time: [12]u8 = @splat(0),
+    /// Its length in seconds, as its tags or its list say; 0 when it is
+    /// not known.
+    seconds: u32 = 0,
 
     /// The song's file name.
     pub fn path(entry: *const Entry) [*:0]const u8 {
@@ -94,6 +112,33 @@ pub const Entry = extern struct {
     /// it.
     pub fn retitle(entry: *Entry, title: [*:0]const u8) void {
         copyText(&entry.title, title);
+    }
+
+    /// What a list file says of it, written from `drawer`: its name - the
+    /// artist before it, joined in `named` - unless its row shows only
+    /// its file's name, and its length when it is known.
+    fn item(entry: *const Entry, drawer: []const u8, named: *[2 * name_room + 4]u8) m3u.Item {
+        const whole = entry.path();
+        const name = whole[0..lengthOf(whole)];
+        const shown = entry.title[0..lengthOf(@ptrCast(&entry.title))];
+        const own = fileName(whole);
+        var title: []const u8 = "";
+        if (!sameBytes(shown, own[0..lengthOf(own)])) {
+            const artist = entry.artist[0..lengthOf(@ptrCast(&entry.artist))];
+            var at: usize = 0;
+            if (artist.len > 0) {
+                @memcpy(named[0..artist.len], artist);
+                @memcpy(named[artist.len..][0..3], " - ");
+                at = artist.len + 3;
+            }
+            @memcpy(named[at..][0..shown.len], shown);
+            title = named[0 .. at + shown.len];
+        }
+        return .{
+            .location = if (isUrl(whole)) name else m3u.relative(drawer, name) orelse name,
+            .title = title,
+            .seconds = if (entry.seconds != 0) entry.seconds else null,
+        };
     }
 
     /// Its place, written into its first column.
@@ -163,11 +208,19 @@ pub const Playlist = struct {
     }
 
     /// What `name` names added: a file - one that is not there too,
-    /// which says so when it is read - a station's address, or a drawer's
-    /// sound files by name and then its drawers' in turn. How many songs
-    /// that was.
+    /// which says so when it is read - a station's address, a list's
+    /// songs, or a drawer's sound files by name and then its drawers' in
+    /// turn. How many songs that was.
     pub fn addPath(list: *Playlist, sys: *ExecBase, dl: *DosBase, name: [*:0]const u8) usize {
+        return list.addAt(sys, dl, name, 0);
+    }
+
+    /// `addPath` for a name a list `depth` lists down gave.
+    fn addAt(list: *Playlist, sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, depth: u32) usize {
         if (isUrl(name)) return list.addFile(sys, name);
+        if (depth < deepest_lists and m3u.kindOf(name[0..lengthOf(name)]) != null) {
+            if (list.addList(sys, dl, name, depth)) |added| return added;
+        }
         const lock = dl.Lock(name, dos.ACCESS_READ) orelse return list.addFile(sys, name);
         defer dl.UnLock(lock);
         const fib: *dos.FileInfoBlock = @ptrCast(@alignCast(sys.AllocVec(@sizeOf(dos.FileInfoBlock), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return list.addFile(sys, name)));
@@ -177,6 +230,64 @@ pub const Playlist = struct {
         var length: usize = 0;
         while (name[length] != 0 and length < dos.path_max) : (length += 1) path[length] = name[length];
         return list.addDrawer(sys, dl, &path, lock, fib, 0);
+    }
+
+    /// The songs the list file `name` gives, in its order - its name and
+    /// length for each in its row - `depth` lists down: how many; null
+    /// when it cannot be read, and it is added as a file, which says what
+    /// it is when it is read.
+    fn addList(list: *Playlist, sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, depth: u32) ?usize {
+        const text = prefs.loadWhole(sys, dl, name) orelse return null;
+        defer sys.FreeVec(text.ptr);
+        var drawer: [dos.path_max + 1:0]u8 = @splat(0);
+        const length = @min(lengthOf(name), dos.path_max);
+        @memcpy(drawer[0..length], name[0..length]);
+        drawer[@intFromPtr(dl.PathPart(&drawer)) - @intFromPtr(&drawer)] = 0;
+        var reader = m3u.Reader.init(text);
+        var location: [dos.path_max + 1:0]u8 = undefined;
+        var path: [dos.path_max + 1:0]u8 = undefined;
+        var title: [name_room + 1]u8 = undefined;
+        var added: usize = 0;
+        while (reader.next()) |item| {
+            icy.latin1As(item.location, reader.utf8, &location);
+            const found = m3u.locate(drawer[0..lengthOf(&drawer)], location[0..lengthOf(&location)], path[0..dos.path_max]) orelse continue;
+            path[found.len] = 0;
+            const count = list.addAt(sys, dl, &path, depth + 1);
+            added += count;
+            // One song: the one at the end, which the list may name.
+            if (count != 1 or m3u.kindOf(found) != null) continue;
+            const entry = Entry.ofNode(list.rows.last() orelse continue);
+            icy.latin1As(item.title, reader.utf8, &title);
+            if (title[0] != 0) entry.retitle(@ptrCast(&title));
+            if (item.seconds) |seconds| {
+                entry.seconds = seconds;
+                writeTime(sys, &entry.time, seconds, 1);
+            }
+        }
+        return added;
+    }
+
+    /// The list as M3U, in memory of its own the caller gives back with
+    /// `FreeVec`: each song by its name from `drawer` when it lies within
+    /// it, by its whole name otherwise, with its name - `Artist - Title`
+    /// once its tags are read - and its length. Null without the memory.
+    pub fn listText(list: *Playlist, sys: *ExecBase, drawer: []const u8) ?[]u8 {
+        var length: usize = m3u.header.len;
+        var entry = list.first();
+        while (entry) |song| : (entry = song.next()) {
+            var named: [2 * name_room + 4]u8 = undefined;
+            length += m3u.itemLength(song.item(drawer, &named));
+        }
+        const memory = sys.AllocVec(length, exec.MEMF_ANY) orelse return null;
+        const text: [*]u8 = @ptrCast(memory);
+        @memcpy(text[0..m3u.header.len], m3u.header);
+        var written: usize = m3u.header.len;
+        entry = list.first();
+        while (entry) |song| : (entry = song.next()) {
+            var named: [2 * name_room + 4]u8 = undefined;
+            written += m3u.itemLines(song.item(drawer, &named), text[written..length]);
+        }
+        return text[0..written];
     }
 
     /// The drawer `path` names, locked as `lock` and examined into `fib`:
@@ -278,7 +389,11 @@ pub const Playlist = struct {
     pub fn filled(list: *Playlist, sys: *ExecBase, entry: *Entry, info: *const ac.AudioStreamInfo) void {
         if (info.title[0] != 0) copyText(&entry.title, &info.title);
         copyText(&entry.artist, &info.artist);
-        writeTime(sys, &entry.time, info.frames, info.rate);
+        // A list's length stands until the song says its own.
+        if (info.frames != 0 and info.rate != 0) {
+            entry.seconds = info.frames / info.rate;
+            writeTime(sys, &entry.time, info.frames, info.rate);
+        }
         if (entry.read != 0) return;
         entry.read = 1;
         list.unread -= 1;
@@ -417,4 +532,10 @@ fn lengthOf(text: [*:0]const u8) usize {
     var n: usize = 0;
     while (text[n] != 0) n += 1;
     return n;
+}
+
+fn sameBytes(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| if (x != y) return false;
+    return true;
 }

@@ -170,7 +170,9 @@ its own control - and its own ten-band equalizer, with presets by name
 (`C:Audio`, Prefs, `SYS:Programs/Volume`), a click plays at once
 as a trigger, and unit 1 records (`C:Record`). `LIBS:audiocodec.library`
 decodes WAV, MP3, FLAC and Ogg Vorbis as they play, from a file or
-from a program's own reader - `SYS:Programs/Player`'s internet stations
+from a program's own reader - `SYS:Programs/Player`'s internet stations,
+kept on its Radio page or found in radio-browser.info's list; the Player
+reads and writes M3U playlists and reads PLS
 ([sound guide](sdk/docs/guides/audio.md)).
 
 | Driver | Output |

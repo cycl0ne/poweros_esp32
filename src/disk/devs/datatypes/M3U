@@ -1,0 +1,1 @@
+NAME=M3U BASE=ascii GROUP=text ID=M3U PATTERN=#?.(m3u|m3u8) TYPE=ASCII PRI=5 BROWSE=SYS:Programs/Player EDIT=SYS:Programs/Notepad

@@ -8,7 +8,7 @@
 //!     WINDOW=40,30,560,420 PAGE=PLAYLIST LOOK=BARS VOLUME=100 SHUFFLE=NO REPEAT=ALL REMEMBER=YES DRAWER="SYS:Music"
 //!
 //! - WINDOW: the window's left, top, width and height.
-//! - PAGE: the page shown, PLAYING or PLAYLIST.
+//! - PAGE: the page shown, PLAYING, PLAYLIST or RADIO.
 //! - LOOK: the picture, PLASMA, WAVE or BARS.
 //! - VOLUME: in percent of as recorded, 0 to 200.
 //! - SHUFFLE: YES or NO. REPEAT: OFF, ALL or ONE.
@@ -43,7 +43,7 @@ pub const LIST_ENV_FILE = "ENV:Player.list";
 pub const LIST_ENVARC_FILE = "ENVARC:Player.list";
 
 /// PAGE's words, by the page's number.
-pub const page_names = [2][]const u8{ "PLAYING", "PLAYLIST" };
+pub const page_names = [3][]const u8{ "PLAYING", "PLAYLIST", "RADIO" };
 /// LOOK's words, by `visual.Mode`.
 pub const look_names = [visual.mode_count][]const u8{ "PLASMA", "WAVE", "BARS" };
 /// REPEAT's words: off, the whole list, the one song.
@@ -113,7 +113,7 @@ pub fn parse(ub: *UtilityBase, text: []const u8, settings: *Settings) ?[*:0]cons
             if (box[0] < 0 or box[1] < 0 or box[2] <= 0 or box[3] <= 0) return "WINDOW is left,top,width,height";
             settings.box = .{ .left = box[0], .top = box[1], .width = box[2], .height = box[3] };
         } else if (style.same(word, "PAGE")) {
-            const k = indexOf(&page_names, value) orelse return "PAGE is PLAYING or PLAYLIST";
+            const k = indexOf(&page_names, value) orelse return "PAGE is PLAYING, PLAYLIST or RADIO";
             settings.page = @intCast(k);
         } else if (style.same(word, "LOOK")) {
             const k = indexOf(&look_names, value) orelse return "LOOK is PLASMA, WAVE or BARS";
@@ -198,7 +198,7 @@ pub const header =
     \\# written as it ends. One line:
     \\#
     \\# WINDOW    its window's left, top, width and height.
-    \\# PAGE      the page shown: PLAYING or PLAYLIST.
+    \\# PAGE      the page shown: PLAYING, PLAYLIST or RADIO.
     \\# LOOK      the picture: PLASMA, WAVE or BARS.
     \\# VOLUME    in percent of as recorded, 0 to 200.
     \\# SHUFFLE   YES or NO.
