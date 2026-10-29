@@ -157,6 +157,19 @@ pub const Cid = extern struct {
     month: u8 = 0,
 };
 
+/// Whether two identifications are of one card: every field the card
+/// answers with the same. A card woken again after it stopped answering
+/// is the one that was in only if it says so here.
+pub fn sameCard(a: Cid, b: Cid) bool {
+    return a.manufacturer == b.manufacturer and
+        std.mem.eql(u8, &a.oem, &b.oem) and
+        std.mem.eql(u8, &a.name, &b.name) and
+        a.revision == b.revision and
+        a.serial == b.serial and
+        a.year == b.year and
+        a.month == b.month;
+}
+
 /// The identification a card answers CMD2 with.
 pub fn decodeCid(resp: *const [4]u32) Cid {
     var cid = Cid{};
@@ -406,6 +419,17 @@ test "the identification of a card" {
     try testing.expectEqual(@as(u32, 0x1A2B_3C4D), cid.serial);
     try testing.expectEqual(@as(u16, 2021), cid.year);
     try testing.expectEqual(@as(u8, 9), cid.month);
+}
+
+test "a card woken again is the same card only if every field of its identification is" {
+    const was = decodeCid(&longAnswer("0353445355363447801a2b3c4d015901"));
+    try testing.expect(sameCard(was, decodeCid(&longAnswer("0353445355363447801a2b3c4d015901"))));
+    // Another card of the same make and size: only its serial differs.
+    try testing.expect(!sameCard(was, decodeCid(&longAnswer("0353445355363447801a2b3c4e015901"))));
+    // The same serial from another maker.
+    try testing.expect(!sameCard(was, decodeCid(&longAnswer("2753445355363447801a2b3c4d015901"))));
+    // Nothing read back at all.
+    try testing.expect(!sameCard(was, .{}));
 }
 
 test "a 64 GB card's size, from the newer description" {

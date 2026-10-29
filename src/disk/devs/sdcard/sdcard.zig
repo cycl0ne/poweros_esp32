@@ -66,8 +66,15 @@
 //! the slot has no switch - so the task asks: a card that is in is asked
 //! for its status once a second while nothing else is going on, and an
 //! empty slot is looked at as often. A card that does not answer - then,
-//! or to any command - has gone: the unit says there is no card, counts
-//! the change, and tries to identify one afresh on the next command. A
+//! or to a run of blocks - is not taken for gone at once: it is given the
+//! time a card may take over a write, asked again, and if it still says
+//! nothing, woken afresh. If it is the card that was in - every field of
+//! its identification the same - nothing above the device notices: the
+//! change is not counted, the handlers' locks hold, and a run of blocks it
+//! stumbled over is tried again, three times in all. A card that cannot
+//! be woken, or another card in its place, has gone: the unit says there
+//! is no card, counts the change, and tries to identify one afresh on the
+//! next command. What went wrong is said, a line a try. A
 //! card come or gone causes the handlers' change interrupts
 //! (TD_ADDCHANGEINT), and the handler looks at the slot on its own task -
 //! and tells input, so a window showing the device list looks again.
@@ -111,6 +118,7 @@ const sdmmc = @import("sdmmc.zig");
 const sdspi = @import("sdspi.zig");
 const card = @import("card.zig");
 const pads = sdk.hardware.gpio;
+const systimer = sdk.hardware.systimer;
 const spi = sdk.hardware.gpspi.spi3;
 /// Whether a slot may be on SPI: the chip has the controller `sdspi.zig`
 /// talks over, as both ESP32s do. On a machine under SBI firmware it has
@@ -131,8 +139,8 @@ const DosBase = sdk.interface.dos.DosBase;
 
 pub const DEVICE_NAME = _sdcard.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 9;
-const BUILD_DATE = "25.10.2026";
+const DEVICE_REVISION = 10;
+const BUILD_DATE = "29.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -354,9 +362,17 @@ fn takeBack(sb: *SdCardBase, blocks: Blocks) void {
 /// the machine.
 fn waitIdle(sb: *SdCardBase) void {
     _ = sb;
-    var spins: u32 = 0;
-    while (sdmmc.busy() and spins < 2_000_000) spins += 1;
+    const until = systimer.uptimeUs() + busy_timeout_us;
+    while (sdmmc.busy() and systimer.uptimeUs() < until) {}
 }
+
+/// The longest a card may take over what it was given - programming the
+/// blocks of a write - by the specification: 250 ms on a high-capacity
+/// card, 500 ms on an extended-capacity one. Counted in time, not in looks
+/// at the controller, which take as long as the chip's bus makes them: a
+/// card given its next command while it is still programming does not
+/// answer it.
+const busy_timeout_us: u64 = 500_000;
 
 /// A command the card only listens to after APP_CMD.
 fn appCommand(
@@ -549,6 +565,7 @@ fn transfer(sb: *SdCardBase, way: sdmmc.Direction, block: u64, count: u32, bytes
     if (onSpi(sb)) return transferSpi(sb, way, block, count, bytes);
     const work = sb.work.?;
     var done: u32 = 0;
+    var tries: u32 = 0;
     while (done < count) {
         const piece = @min(count - done, _sdcard.chunk_blocks);
         const piece_bytes = piece * @as(u32, @intCast(card.block_bytes));
@@ -568,14 +585,65 @@ fn transfer(sb: *SdCardBase, way: sdmmc.Direction, block: u64, count: u32, bytes
             .stop = many,
         });
         if (!answer.ok()) {
-            lost(sb);
+            tries += 1;
+            const said = saidSoFar(sb);
+            stumbled(sb, way, block + done, piece, answer.fault, said.status, said.dma, tries);
+            // The same card, and tries left: the same piece again.
+            if (recover(sb) and tries < transfer_tries) continue;
             return answer.fault.code();
         }
         if (answer.resp[0] & card.r1_errors != 0) return td.TDERR_NotSpecified;
         if (way == .from_card) @memcpy(bytes[at..][0..piece_bytes], work.buffer[0..piece_bytes]);
         done += piece;
+        tries = 0;
     }
     return 0;
+}
+
+/// How often a piece of a run of blocks is tried, the card it stumbled
+/// over recovered between, before the caller is given the error.
+const transfer_tries: u32 = 3;
+
+/// A piece of a run of blocks that failed, said: which way, where, what
+/// the controller raised (its interrupt and DMA status), and the try.
+fn stumbled(sb: *SdCardBase, way: sdmmc.Direction, block: u64, count: u32, fault: card.Fault, status: u32, dma: u32, tries: u32) void {
+    const what: [*:0]const u8 = if (fault.no_answer)
+        "no answer"
+    else if (fault.bad_checksum)
+        "a bad checksum"
+    else
+        "the controller's error";
+    const verb: [*:0]const u8 = if (way == .from_card) "reading" else "writing";
+    sdk.exec.kprintf(sb.sys_base, "%s: %s %ld blocks at %ld: %s (0x%x, dma 0x%x), try %ld of %ld\n", .{
+        DEVICE_NAME,
+        verb,
+        @as(i64, count),
+        @as(i64, @intCast(block)),
+        what,
+        status,
+        dma,
+        @as(i64, tries),
+        @as(i64, transfer_tries),
+    });
+}
+
+/// After a command the card did not take: whether the card that was in is
+/// still the one in. It is given the time a write may take, asked for its
+/// status, and if it still does not answer, woken afresh and its
+/// identification compared with the one it had. Gone, or another card in
+/// its place, and it is lost - the change counted, the handlers told; the
+/// same card again changes nothing above the device.
+fn recover(sb: *SdCardBase) bool {
+    if (sb.present == 0) return false;
+    if (!onSpi(sb)) waitIdle(sb);
+    if (stillThere(sb)) return true;
+    const was = sb.card.cid;
+    if (wake(sb) and card.sameCard(was, sb.card.cid)) {
+        say(sb, "the card answers again");
+        return true;
+    }
+    lost(sb);
+    return false;
 }
 
 /// A card went in or out: every handler that asked (TD_ADDCHANGEINT)
@@ -624,24 +692,30 @@ fn lost(sb: *SdCardBase) void {
     changed(sb);
 }
 
-/// A card in the slot, identified if it has not been already. False if
-/// the slot is empty or the card cannot be used.
-fn ready(sb: *SdCardBase) bool {
-    if (sb.present != 0) return true;
+/// The card in the slot woken and identified, from the start: what it
+/// is is in `sb.card`. False if the slot is empty or the card cannot be
+/// used.
+fn wake(sb: *SdCardBase) bool {
     if (onSpi(sb)) {
         var bus = SpiBus{ .sb = sb };
         // A card the chip was reset on - part way through a run of
         // blocks, say - has been seen to miss the first wake-up and take
         // the second. An empty slot fails both at once.
-        if (!Spi.identify(&bus, &sb.card) and !Spi.identify(&bus, &sb.card)) return false;
-    } else {
-        if (!sdmmc.cardPresent()) return false;
-        // The reset puts the controller's interrupt gates back where they
-        // start, so what this device wants raised has to be said again.
-        sdmmc.reset();
-        sdmmc.interruptsOn(sdmmc.int_wanted, sdmmc.dma_int_wanted);
-        if (!identify(sb)) return false;
+        return Spi.identify(&bus, &sb.card) or Spi.identify(&bus, &sb.card);
     }
+    if (!sdmmc.cardPresent()) return false;
+    // The reset puts the controller's interrupt gates back where they
+    // start, so what this device wants raised has to be said again.
+    sdmmc.reset();
+    sdmmc.interruptsOn(sdmmc.int_wanted, sdmmc.dma_int_wanted);
+    return identify(sb);
+}
+
+/// A card in the slot, identified if it has not been already. False if
+/// the slot is empty or the card cannot be used.
+fn ready(sb: *SdCardBase) bool {
+    if (sb.present != 0) return true;
+    if (!wake(sb)) return false;
     sb.present = 1;
     sb.change_num +%= 1;
     report(sb);
@@ -869,16 +943,22 @@ fn receiveByDma(sb: *SdCardBase, into: []u8) void {
 }
 
 /// A run of blocks over SPI, straight between the caller's buffer and the
-/// controller's. A card that stopped answering, or whose data did not
-/// check out, is taken for gone, as on the SD/MMC host.
+/// controller's. A card that stopped answering is recovered and the run
+/// tried again, as on the SD/MMC host.
 fn transferSpi(sb: *SdCardBase, way: sdmmc.Direction, block: u64, count: u32, bytes: [*]u8) i8 {
     var bus = SpiBus{ .sb = sb };
-    const outcome = switch (way) {
-        .from_card => Spi.read(&bus, &sb.card, block, count, bytes),
-        .to_card => Spi.write(&bus, &sb.card, block, count, bytes),
-    };
-    if (outcome.lost()) lost(sb);
-    return outcome.code();
+    var tries: u32 = 0;
+    while (true) {
+        const outcome = switch (way) {
+            .from_card => Spi.read(&bus, &sb.card, block, count, bytes),
+            .to_card => Spi.write(&bus, &sb.card, block, count, bytes),
+        };
+        if (!outcome.lost()) return outcome.code();
+        tries += 1;
+        stumbled(sb, way, block, count, .{ .no_answer = true }, 0, 0, tries);
+        // The same card, and tries left: the whole run again.
+        if (!recover(sb) or tries >= transfer_tries) return outcome.code();
+    }
 }
 
 /// SPI3 on the slot's pads, and its chip select: claimed on the expander,
@@ -1046,8 +1126,8 @@ fn sdTask(sys: *ExecBase) callconv(.c) void {
         if (got & queue_port.sigMask() != 0) continue;
         if (sb.present == 0) {
             _ = ready(sb);
-        } else if (!stillThere(sb) and !stillThere(sb)) {
-            lost(sb);
+        } else if (!stillThere(sb)) {
+            _ = recover(sb);
         }
     }
 }
