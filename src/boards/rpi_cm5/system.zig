@@ -125,6 +125,21 @@ const wifi = [_]Tag{
     .done,
 };
 
+/// The module's RTC, in its power chip, read and set by the VideoCore's
+/// firmware through its mailbox at 0x10_7C01_3880 (the BCM2835's, on the
+/// SoC's bus at 0x7C01_3880). It counts while the module has power; the
+/// IO board's BAT connector takes a cell for it to count through a power
+/// cut.
+const rtc = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_RTC),
+    .value(st.PART_Chip, st.CHIP_RPI_RTC),
+    .pointer(st.PART_ChipName, "rpi rtc"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x10_7C01_3880),
+    .pointer(st.PART_Label, "RTC"),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -132,6 +147,10 @@ pub const root = [_]Tag{
     // The smallest CM5's; the device tree has the module's own, in pieces.
     .value(st.SYSTAG_RamBase, 0),
     .value(st.SYSTAG_RamSize, 2 * 1024 * 1024 * 1024),
+    // The VideoCore's firmware reads its messages from RAM's first GiB,
+    // where Linux keeps every buffer for DMA on this board (the device
+    // tree's CMA): MEMF_DMA is that GiB.
+    .value(st.SYSTAG_DmaLimit, 0x4000_0000),
     .value(st.SYSTAG_UnifiedMemory, 1),
     .value(st.SYSTAG_Timebase, 54_000_000),
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
@@ -145,6 +164,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &usb1),
     .pointer(st.SYSTAG_Part, &pcie1),
     .pointer(st.SYSTAG_Part, &wifi),
+    .pointer(st.SYSTAG_Part, &rtc),
     .done,
 };
 

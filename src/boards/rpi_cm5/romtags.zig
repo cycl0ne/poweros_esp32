@@ -5,10 +5,12 @@
 //! VisionFive 2 has them. nvme.device is a cold-start device in the ROM:
 //! it makes pci.library, brings up the SSD and hands its partitions to
 //! expansion.library as boot nodes. The ROM's posfs-handler runs the
-//! SSD's posfs partitions unless their table brings a newer one. The
+//! SSD's posfs partitions unless their table brings a newer one. And
+//! battclock.resource for the module's RTC, which its firmware keeps. The
 //! RP1's Ethernet and GPIO, and HDMI, come later.
 
 pub const modules = .{
+    @import("../../rom/resources/battclock/battclock.zig"),
     @import("../../disk/libs/pci/pci.zig"),
     @import("../../disk/devs/nvme/nvme.zig"),
     @import("../../disk/devs/handlers/posfs/posfs.zig"),

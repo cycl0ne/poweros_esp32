@@ -4,12 +4,14 @@
 //!
 //! The clock is the board's clock when its system list names one
 //! (PARTKIND_RTC): a PCF8563 on I2C (`source/pcf8563.zig`), which keeps
-//! the date on its own cell while the board is off, or the JH7110's own
+//! the date on its own cell while the board is off; the JH7110's own
 //! RTC (`source/jh7110rtc.zig`), which a reset stops but keeps the date
-//! in, and a power cut loses it. Otherwise it is the ESP32s' RTC timer
-//! (`source/rtctimer.zig`), which counts through a reset but not through
-//! a power cut. At its start the resource sets the system time from the
-//! clock; `C:SetClock` loads, saves and resets it.
+//! in, and a power cut loses it; or the Raspberry Pi's
+//! (`source/rpirtc.zig`), which its firmware keeps for the ARM, counting
+//! through a reset and - on a cell - a power cut. Otherwise it is the
+//! ESP32s' RTC timer (`source/rtctimer.zig`), which counts through a
+//! reset but not through a power cut. At its start the resource sets the
+//! system time from the clock; `C:SetClock` loads, saves and resets it.
 //!
 //! Each call is a file of its own under `clock/`. The jump table is
 //! battclock_lvo.zig, the ROM tag and init battclock_init.zig, the base
@@ -40,6 +42,7 @@ const testing = std.testing;
 const rtctimer = @import("source/rtctimer.zig");
 const pcf8563 = @import("source/pcf8563.zig");
 const jh7110rtc = @import("source/jh7110rtc.zig");
+const rpirtc = @import("source/rpirtc.zig");
 
 test {
     _ = @import("battclock_lvo.zig");
@@ -157,4 +160,30 @@ test "what a power-on leaves in the JH7110 RTC, and day 0, are no date" {
     // A month 13, and an hour 24.
     try testing.expect(jh7110rtc.dateOf(.{ .time = 0x0008_6A98, .date = 0x0001_34E5 }) == null);
     try testing.expect(jh7110rtc.dateOf(.{ .time = 0x0009_0000, .date = 0x0001_3425 }) == null);
+}
+
+test "the Raspberry Pi's RTC: its messages, and its count since 1970 as seconds since 1978" {
+    const asked = rpirtc.message(0x0003_8087, 0, 1_700_000_000);
+    try testing.expectEqualSlices(u32, &.{ 32, 0, 0x0003_8087, 8, 0, 0, 1_700_000_000, 0 }, &asked);
+    // Not answered: the codes as they were sent.
+    try testing.expectEqual(@as(?u32, null), rpirtc.answer(&asked));
+    var answered = asked;
+    answered[1] = 0x8000_0000;
+    answered[4] = 0x8000_0008;
+    try testing.expectEqual(@as(?u32, 1_700_000_000), rpirtc.answer(&answered));
+    answered[1] = 0x8000_0001;
+    try testing.expectEqual(@as(?u32, null), rpirtc.answer(&answered));
+    // 1 January 1978 is the first date; a count from a power-on without a
+    // cell is none.
+    try testing.expectEqual(@as(?u32, 0), rpirtc.secondsOf(252_460_800));
+    try testing.expectEqual(@as(?u32, null), rpirtc.secondsOf(12));
+    try testing.expectEqual(@as(?u32, 1_700_000_000 - 252_460_800), rpirtc.secondsOf(1_700_000_000));
+    try testing.expectEqual(@as(u32, 1_700_000_000), rpirtc.countOf(1_700_000_000 - 252_460_800));
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), rpirtc.countOf(0xFFFF_0000));
+}
+
+test "the Raspberry Pi's RTC: its buffer on a cache line of its own, below 4 GiB" {
+    try testing.expectEqual(@as(usize, 0x3000_0040), @intFromPtr(rpirtc.bufferIn(@ptrFromInt(0x3000_0010)).?));
+    try testing.expectEqual(@as(usize, 0x3000_0040), @intFromPtr(rpirtc.bufferIn(@ptrFromInt(0x3000_0040)).?));
+    try testing.expect(rpirtc.bufferIn(@ptrFromInt(0x1_0000_0000)) == null);
 }

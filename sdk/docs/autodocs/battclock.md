@@ -38,15 +38,17 @@ date, or there is no clock.
 
 **BEHAVIOR**
 
-Reads the board's clock chip, or works the date out from the chip's
-RTC timer. A clock that holds no date - a chip whose cell ran low or
-whose registers hold no date, an RTC timer after a power-on - is put
-in working order and set to 1 January 1978, as ResetBattClock does,
-and the answer is 0.
+Reads the board's clock chip, asks the Raspberry Pi's firmware for
+its RTC, or works the date out from the chip's RTC timer. A clock that
+holds no date - a chip whose cell ran low or whose registers hold no
+date, a Raspberry Pi's RTC before 1978 after a power-on without a
+cell, an RTC timer after a power-on - is put in working order and set
+to 1 January 1978, as ResetBattClock does, and the answer is 0.
 
 **CONTEXT**
 
-- Waits: yes, for the resource's semaphore and for i2c.device.
+- Waits: yes, for the resource's semaphore and for i2c.device; for
+  the Raspberry Pi's firmware it spins, a millisecond or so.
 - Interrupts: no.
 - Locks: the resource's semaphore, for the call.
 - Process: a Task will do.
@@ -106,13 +108,14 @@ None.
 **BEHAVIOR**
 
 A clock chip has its control registers cleared - running, no test
-mode, no alarm or timer interrupt - and its date set. The chip's RTC
-timer has its reckoning set, so that it holds a date again. Without a
-clock nothing happens.
+mode, no alarm or timer interrupt - and its date set; the Raspberry
+Pi's RTC has its date set. The chip's RTC timer has its reckoning
+set, so that it holds a date again. Without a clock nothing happens.
 
 **CONTEXT**
 
-- Waits: yes, for the resource's semaphore and for i2c.device.
+- Waits: yes, for the resource's semaphore and for i2c.device; for
+  the Raspberry Pi's firmware it spins, a millisecond or so.
 - Interrupts: no.
 - Locks: the resource's semaphore, for the call.
 - Process: a Task will do.
@@ -165,13 +168,14 @@ None.
 
 **BEHAVIOR**
 
-Writes the date to the board's clock chip, or makes the chip's RTC
-timer's reckoning give it from now on. Without a clock nothing
-happens.
+Writes the date to the board's clock chip, has the Raspberry Pi's
+firmware set its RTC to it, or makes the chip's RTC timer's reckoning
+give it from now on. Without a clock nothing happens.
 
 **CONTEXT**
 
-- Waits: yes, for the resource's semaphore and for i2c.device.
+- Waits: yes, for the resource's semaphore and for i2c.device; for
+  the Raspberry Pi's firmware it spins, a millisecond or so.
 - Interrupts: no.
 - Locks: the resource's semaphore, for the call.
 - Process: a Task will do.

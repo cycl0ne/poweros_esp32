@@ -20,12 +20,13 @@ const BattClockBase = @import("../battclock_base.zig").BattClockBase;
 /// None.
 ///
 /// BEHAVIOR:
-/// Writes the date to the board's clock chip, or makes the chip's RTC
-/// timer's reckoning give it from now on. Without a clock nothing
-/// happens.
+/// Writes the date to the board's clock chip, has the Raspberry Pi's
+/// firmware set its RTC to it, or makes the chip's RTC timer's reckoning
+/// give it from now on. Without a clock nothing happens.
 ///
 /// CONTEXT:
-/// - Waits: yes, for the resource's semaphore and for i2c.device.
+/// - Waits: yes, for the resource's semaphore and for i2c.device; for
+///   the Raspberry Pi's firmware it spins, a millisecond or so.
 /// - Interrupts: no.
 /// - Locks: the resource's semaphore, for the call.
 /// - Process: a Task will do.

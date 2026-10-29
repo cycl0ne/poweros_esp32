@@ -545,6 +545,13 @@ pub const CHIP_BCM2712_PCIE: u32 = 39;
 /// own GPIO block, PART_PinClock, PART_PinCommand and PART_PinData0 the
 /// host's lines - the data's four in a row from it.
 pub const CHIP_CYW43455: u32 = 40;
+/// The Raspberry Pi 5's and Compute Module 5's RTC (PARTKIND_RTC on
+/// BUS_MEMORY, PART_Address the VideoCore's mailbox): a count of seconds
+/// since 1970 in the board's power chip, which the VideoCore's firmware
+/// reads and sets for the ARM through its mailbox. It counts while the
+/// board has power, and through a power cut on a cell at the BAT
+/// connector.
+pub const CHIP_RPI_RTC: u32 = 41;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

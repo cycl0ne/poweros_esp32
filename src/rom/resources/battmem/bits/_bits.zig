@@ -12,14 +12,14 @@ const Store = _base.Store;
 const magic: u32 = 0x424D_454D; // "BMEM"
 
 comptime {
-    if (hardware.chip != .rv64sbi and @sizeOf(Store) > hardware.rtc_timer.batt_memory_size) @compileError("the bits do not fit their memory");
+    if (hardware.chip != .rv64sbi and hardware.chip != .a64psci and @sizeOf(Store) > hardware.rtc_timer.batt_memory_size) @compileError("the bits do not fit their memory");
 }
 
 /// Where a chip keeps the bits: the RTC memory past the clock's on the
 /// ESP32s, the base itself on a chip with none.
 pub fn storeOf(mb: *BattMemBase) *Store {
     return switch (hardware.chip) {
-        .rv64sbi => &mb.own,
+        .rv64sbi, .a64psci => &mb.own,
         else => @ptrFromInt(hardware.rtc_timer.batt_memory),
     };
 }
