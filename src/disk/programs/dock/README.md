@@ -68,6 +68,11 @@ own icon's tool types, changed with Information.
   - **Network**: an arrow down for what comes in and one up for what
     goes out, lit while something does; its words are the address and
     the rates. A click runs NetLoad.
+  - **Player**: a note in a ring that fills as the song plays - all of
+    it for a station - two bars in its place while the Player pauses,
+    and dim while no Player runs; its words are the song, its artist
+    and how far it is. A click brings the Player's window to the front,
+    or starts the Player.
 - **A dot** by an entry whose program, started from the dock, still
   runs.
 - **Where dragged files would go**, while they are dragged over the

@@ -301,8 +301,9 @@ pub const items_header =
     \\#                              name and a colon: "Work:".
     \\# SEPARATOR                    a line between entries.
     \\# DOCKLET="clock.docklet"      a docklet - the time, the battery, the
-    \\#                              volume, the cores, the network - by
-    \\#                              its name in SYS:classes/docklets.
+    \\#                              volume, the cores, the network, what
+    \\#                              the Player plays - by its name in
+    \\#                              SYS:classes/docklets.
     \\#
     \\# How an entry is started - its arguments, stack and priority - is
     \\# in its icon's tool types, not here.

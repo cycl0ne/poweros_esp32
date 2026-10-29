@@ -2,7 +2,8 @@
 
 Player plays sound files - WAV, MP3, FLAC and Ogg Vorbis - and internet
 stations in a window, with a picture of the sound under its controls: a
-plasma, the wave, or the spectrum's bars.
+plasma, the wave, the spectrum's bars, left against right, or a meter
+for each side - in the window or over the whole screen.
 
 Its menus, tabs, buttons, lists' headings, the lines beside the cover
 and why a station or a search failed are in the language chosen on
@@ -28,7 +29,8 @@ Player FILES/M,ADD/S,VOLUME/K/N,LOOK/K
 - `VOLUME` is in percent of as recorded (100), up to 200: up to 100 as
   loud as it sounds - half way is -18 dB - and past it a boost, 200
   twice as loud as recorded.
-- `LOOK` is the picture to start with: `PLASMA`, `WAVE` or `BARS`.
+- `LOOK` is the picture to start with: `PLASMA`, `WAVE`, `BARS`, `SCOPE`
+  or `METERS`.
 
 Each left out is as the Player was left; started without files, it opens
 with the list it had and the song it showed, paused where it stopped
@@ -38,8 +40,11 @@ There is one Player. Started while it runs, it hands what it was given
 to the one running and ends at once: the files are added to that list
 and the first played - with `ADD` only added - and `VOLUME` and `LOOK`
 are set. Without `ADD` the window comes to the front and is made
-active, which is all `Player` alone does. A song double-clicked on the
-desktop plays in the Player that is open. A name is handed over as the
+active, which is all `Player` alone does - and what a click on the
+dock's Player docklet runs. The docklet shows what plays as a note in a
+ring that fills with the song, two bars while it pauses; it asks the
+Player at its port twice a second (`sdk.player`). A song double-clicked
+on the desktop plays in the Player that is open. A name is handed over as the
 file's full name, so a name typed in a shell's drawer is found.
 
 Files dropped on the window from the desktop are added to the
@@ -102,8 +107,14 @@ The window's title is the song's: `Fire - Player`.
   turns it on again too), the volume, and the output the machine plays
   through - its speaker, headphones, a USB speaker. Picking another
   plays every sound through it from then on; one plugged in or out shows
-  in the list. In a window too narrow for the whole row, it stands in
-  two lines or more, and the window grows to keep everything in it.
+  in the list. Last, **EQ**: that output's equalizer by its preset -
+  Flat, Classical, Jazz, Rock, Speech, More bass, Small speaker and the
+  rest, as `Audio EQ` and Prefs' Sound page name them - or Custom when
+  its bands are none of them, which the list holds only then; a preset
+  picked is heard at once, and one set elsewhere shows within a second
+  while a song plays. It is ghosted when the device has no equalizer. In
+  a window too narrow for the whole row, it stands in two lines or more,
+  and the window grows to keep everything in it.
 
 Under them, as big as the window lets it be, three tabs: **Now playing**
 with the picture, **Playlist** with the list, and **Radio** with the
@@ -111,7 +122,7 @@ stations.
 
 ## The picture
 
-Sunk in a frame, one of three:
+Sunk in a frame, one of five:
 
 - **Plasma**: waves of colour that move faster with the bass, turn their
   colours with the treble and light up with the loudness.
@@ -121,15 +132,31 @@ Sunk in a frame, one of three:
 - **Bars**: the spectrum from 40 Hz at the left to 16 kHz at the right,
   each bar a share of an octave and a pixel from the next, with a mark
   where its peak was.
+- **Scope**: left against right, a point for each moment: what both
+  sides share stands upright, what is only on the left leans up to the
+  left and only on the right up to the right, and a sound wide apart
+  spreads across. What was drawn before fades away behind it.
+- **Meters**: a bar for each side, the left above the right, as long as
+  the side is loud - from 48 dB down to full - with a tick every 6 dB
+  between them and a mark where its peak was, held for a moment and
+  then let fall.
 
-With a cover, the plasma and the bars are drawn in its colours: the two
-it has most of, grey, black and white left out. The plasma runs from one
-to the other and back, and the bars go from the first at the foot to the
-second at the top. Without a cover, or with one of hardly any colour,
-they keep their own.
+With a cover, the plasma, the bars and the meters are drawn in its
+colours: the two it has most of, grey, black and white left out. The
+plasma runs from one to the other and back, the bars go from the first
+at the foot to the second at the top, and the meters from the first at
+their left end to the second at their right. Without a cover, or with one of hardly any colour, they
+keep their own.
 
 A press on the picture goes to the next one; the **Picture** menu picks
-one and ticks the one shown. The picture keeps in step with what is
+one and ticks the one shown.
+
+**Over the whole screen**: Picture > Whole screen, the F key, or a
+double-click on the picture - which shows the one it was before the
+first press - shows the picture over everything on the screen, the dock
+too, with no pointer. At each new song its title and artist fade in at
+the lower left, stay three seconds and fade out. A key or a press of any
+button ends it, and the picture is back in the window. The picture keeps in step with what is
 heard, not with what has been decoded: the sound card's own delay is
 taken off. When the sound stops, the picture settles for two
 seconds and then rests until something plays.
@@ -198,6 +225,13 @@ Repeat one plays a song into itself the same way. A change to the list,
 the order or repeat in the last moment still counts: the song that
 would have followed is taken back unheard.
 
+An Ogg file can hold several songs one after another, each with its own
+tags - a chain. Each is shown as the song once it is heard: its names,
+its cover, its kind and its length, the time counted from its start,
+and the slider moves within it. One at another rate follows after a
+short pause, as a song of another rate does. Played again from the
+start, the file starts with its first song.
+
 On a machine with no sound the window opens all the same and says so,
 and a song picked still shows its cover and tags - as it does when all
 sixteen of the sound's streams are in use.
@@ -220,7 +254,10 @@ station*, then *Buffering* and how far, and the sound starts once two
 seconds of it have come. Then it shows the station: its name where an
 album's goes - and as its row's title in the list - its genre, the title
 it sends, taken apart into artist and title when it sends
-`Artist - Title`, and its address under them. The times say `live`, and
+`Artist - Title`, and its address under them. An Ogg station sends each
+song with tags of its own: their title and artist are shown as each song
+is heard, with its rate and channels, and the time counts from its
+start. The times say `live`, and
 the slider stays still: a station has no place to go to. When the sound
 comes more slowly than it plays, the window says *buffering* and the
 sound waits until two seconds have come again.
@@ -288,21 +325,30 @@ ends when Keep or Remove changed them.
 - **Playlist**: Add..., Remove and Clear, as the buttons on its page;
   Shuffle, ticked while it is on, and Repeat, with Off, All and One.
   Each follows the button beside the deck, and the button follows it.
-- **Picture**: Plasma, Wave or Bars, the one shown ticked.
-- **Settings**: Remember where it was, ticked while it is on.
+- **Picture**: Plasma, Wave, Bars, Scope or Meters, the one shown
+  ticked; Whole screen.
+- **Settings**: Remember where it was, ticked while it is on;
+  Equalizer, the presets, the one in force ticked - as the EQ chooser,
+  which follows it. When a preset was picked, the Player keeps what the
+  device then has - each output's volume and equalizer - in
+  `ENV:Sys/audio.prefs` and `ENVARC:` as it ends, as Volume does, so it
+  is the same after the next boot.
 
 ## Keys
 
 - Space pauses and goes on; when nothing plays, it starts.
 - N plays the song after, P the song before - as the deck's buttons at
   its ends do.
+- F shows the picture over the whole screen - but on the Radio page,
+  where F goes to the field.
 - Cursor left and right jump ten seconds back and on; cursor up and down
   turn the volume up and down by five.
 - Return plays the song selected in the playlist, Del takes it out; on
   the Radio page Return plays the station selected, Del lets a kept one
   go.
 - S turns shuffle on and off, R goes round repeat's three ways, M turns
-  the sound off and on, O opens the output's list. On the Playlist page,
+  the sound off and on, O takes the next output and Q the equalizer's
+  next preset - with Shift, the one before. On the Playlist page,
   A adds, E removes and L clears; on the Radio page, F goes to the
   field, I opens what the words are looked for in, H searches, K keeps
   and V removes.

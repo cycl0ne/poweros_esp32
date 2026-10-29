@@ -26,6 +26,10 @@
 
 const utility = @import("../utility/utility.zig");
 
+/// A station's stream: the metadata taken out of its body, the title
+/// found in it.
+pub const icy = @import("icy.zig");
+
 /// The library's name, for OpenLibrary.
 pub const HTTPNAME = "http.library";
 

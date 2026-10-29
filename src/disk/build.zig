@@ -185,6 +185,7 @@ const modules = [_]Program{
     .{ .disk = "classes/docklets/volume.docklet", .source = "classes/docklets/volume/volume.zig", .name = "volume.docklet" },
     .{ .disk = "classes/docklets/cpu.docklet", .source = "classes/docklets/cpu/cpu.zig", .name = "cpu.docklet" },
     .{ .disk = "classes/docklets/network.docklet", .source = "classes/docklets/network/network.zig", .name = "network.docklet" },
+    .{ .disk = "classes/docklets/player.docklet", .source = "classes/docklets/player/player.zig", .name = "player.docklet" },
     .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype" },
     .{ .disk = "classes/datatypes/animation.datatype", .source = "classes/datatypes/animation/animation.zig", .name = "animation.datatype" },
     .{ .disk = "classes/datatypes/model.datatype", .source = "classes/datatypes/model/model.zig", .name = "model.datatype" },

@@ -12,6 +12,12 @@
 //! **Every kind the library knows is this one class.** The decoding is
 //! audiocodec.library's, so a kind it learns needs only a descriptor in
 //! `DEVS:DataTypes` that names `BASE=audiocodec`.
+//!
+//! **A chained Ogg file** - songs one after another, each with headers of
+//! its own - is its first link: the rate, channels, length and names the
+//! superclass is told are that link's. The decoding ends where the next
+//! link begins, and a seek once it has - the library seeks within the
+//! link being decoded - opens the stream again at the file's start.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -36,7 +42,8 @@ const Base = gadgets.Base;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "audiocodec.datatype",
     .version = 1,
-    .date = "13.10.2026",
+    .revision = 1,
+    .date = "29.10.2026",
     .super = sdt.SOUNDDTCLASS,
     .opens = &.{ sdt.SOUND_LIBRARY, ac.AUDIOCODECNAME, dos.DOSNAME },
     .Instance = Data,
@@ -121,6 +128,33 @@ fn openSound(base: *Base, cl: *Class, o: *Object, own: *Data) i32 {
     return 0;
 }
 
+/// The link of a chained file the stream decodes: 0 for the first, and
+/// for every file of one.
+fn linkOf(acb: *AudioCodecBase, stream: *ac.AudioStream) u32 {
+    var link: u32 = 0;
+    if (acb.lib().revision < 1) return link;
+    _ = acb.GetAudioStreamAttrs(stream, &[_]TagItem{
+        .{ .tag = ac.ACA_Link, .data = @intFromPtr(&link) },
+        .{},
+    });
+    return link;
+}
+
+/// The stream opened again at the file's start, on its first link: null
+/// when it cannot be.
+fn reopen(base: *Base, own: *Data) ?*ac.AudioStream {
+    const acb = codecOf(base);
+    const file = own.file orelse return null;
+    if (own.stream) |stream| acb.CloseAudioStream(stream);
+    own.stream = null;
+    if (dosOf(base).Seek(file, 0, dos.OFFSET_BEGINNING) < 0) return null;
+    own.stream = acb.OpenAudioStream(&[_]TagItem{
+        .{ .tag = ac.ACA_FileHandle, .data = @intFromPtr(file) },
+        .{},
+    }, null);
+    return own.stream;
+}
+
 /// The stream and the file given back.
 fn closeSound(base: *Base, kept: *const Data) void {
     if (kept.stream) |stream| codecOf(base).CloseAudioStream(stream);
@@ -161,13 +195,19 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         sdt.SDTM_DECODE => {
             const decode: *sdt.SdtDecode = @ptrCast(@alignCast(msg));
             const stream = classes.instData(Data, cl, o.?).stream orelse return 0;
-            const got = codecOf(base).DecodeAudio(stream, decode.samples, decode.frames);
-            return if (got > 0) @intCast(got) else 0;
+            const acb = codecOf(base);
+            const got = acb.DecodeAudio(stream, decode.samples, decode.frames);
+            // The next link's sound is not the object's.
+            if (got <= 0 or linkOf(acb, stream) != 0) return 0;
+            return @intCast(got);
         },
         sdt.SDTM_SEEK => {
             const seek: *sdt.SdtSeek = @ptrCast(@alignCast(msg));
-            const stream = classes.instData(Data, cl, o.?).stream orelse return 0;
-            return @intFromBool(codecOf(base).SeekAudio(stream, seek.frame) == ac.ACERR_OK);
+            const own = classes.instData(Data, cl, o.?);
+            const acb = codecOf(base);
+            var stream = own.stream orelse return 0;
+            if (linkOf(acb, stream) != 0) stream = reopen(base, own) orelse return 0;
+            return @intFromBool(acb.SeekAudio(stream, seek.frame) == ac.ACERR_OK);
         },
         else => return ib.SendSuperMessage(cl, o, msg),
     }

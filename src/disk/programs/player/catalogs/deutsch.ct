@@ -256,3 +256,13 @@ MSG_NOBUFFERS
 %s: kein Speicher für den Ton\n
 MSG_NOWINDOW
 %s: kein Fenster\n
+MSG_MENU_EQUALIZER
+Equalizer
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Stereobild
+MSG_MENU_METERS
+Pegel
+MSG_MENU_WHOLE_SCREEN
+Ganzer Bildschirm

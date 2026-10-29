@@ -17,6 +17,14 @@
 //! the stream was opened with `ACA_KeepPicture`. `SeekAudio` moves to a
 //! frame where the stream can be read from anywhere.
 //!
+//! A chained Ogg stream - songs one after another, each with its own
+//! headers, as a station sends them - goes on from link to link: a
+//! `DecodeAudio` call ends with a link's last frame, the next hands out
+//! the following link's, and from then on the info and the tags are that
+//! link's. `ACA_Link` counts the links, so a program that looks after
+//! each call knows when to read them again - and to set its output to
+//! another rate or channel count.
+//!
 //! A stream is used by one task at a time, which need not be the one that
 //! opened it: a program can open the next song while another task decodes
 //! this one, and hand it over.
@@ -82,7 +90,8 @@ pub const ACA_KeepPicture = ACA_Dummy + 0x06;
 
 // Each tag's data is where the answer goes. A text is the stream's own,
 // NUL-terminated, Latin-1 - a character past it is a `?` - and empty when
-// the tags do not say; it is good until the stream is closed.
+// the tags do not say; it is good until the stream is closed, and in a
+// chain says the link being decoded.
 
 /// `*[*:0]const u8`: the title, the artist, the album - at full length,
 /// where the info's are cut at 63 characters - the album's own artist,
@@ -111,6 +120,10 @@ pub const ACA_Picture = ACA_Dummy + 0x2A;
 /// the tags give them, or null when there are none.
 pub const ACA_Chapters = ACA_Dummy + 0x2B;
 pub const ACA_ChapterList = ACA_Dummy + 0x2C;
+/// `*u32`: the link of a chained Ogg stream being decoded, 0 for the
+/// first - and for every stream of one: a count that rises as each link
+/// begins (SINCE 1.5).
+pub const ACA_Link = ACA_Dummy + 0x2D;
 
 /// A chapter the tags mark: where it starts and ends in the sound, and
 /// its title.

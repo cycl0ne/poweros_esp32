@@ -18,7 +18,6 @@ test {
     _ = @import("programs/player/tests/playlist.zig");
     _ = @import("programs/player/tests/remembered.zig");
     _ = @import("programs/player/tests/one.zig");
-    _ = @import("programs/player/tests/icy.zig");
     _ = @import("programs/player/tests/m3u.zig");
     _ = @import("programs/player/tests/csv.zig");
     _ = @import("programs/player/tests/stations.zig");
@@ -53,6 +52,7 @@ test {
     _ = @import("libs/crypto/tests/crypto.zig");
     _ = @import("libs/compression/tests/compression.zig");
     _ = @import("libs/http/tests/http.zig");
+    _ = @import("libs/http/tests/icy.zig");
     _ = @import("libs/crypto/tests/keys.zig");
     _ = @import("libs/tls/tests/x509.zig");
     _ = @import("libs/tls/tests/tls13.zig");

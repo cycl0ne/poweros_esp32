@@ -42,7 +42,7 @@ const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 const TagItem = sdk.utility.TagItem;
 const prefs = sdk.prefs;
 const m3u = @import("m3u.zig");
-const icy = @import("icy.zig");
+const icy = sdk.http.icy;
 
 /// The endings of the files that are sound, and the file requester's
 /// pattern for the same.

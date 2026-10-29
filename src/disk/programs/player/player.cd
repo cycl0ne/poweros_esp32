@@ -279,3 +279,18 @@ MSG_NOBUFFERS (//)
 %s: no memory for the sound\n
 MSG_NOWINDOW (//)
 %s: no window\n
+;
+; The equalizer: Settings' entry for its presets, and the label of their
+; chooser beside the output's.
+MSG_MENU_EQUALIZER (//)
+Equalizer
+MSG_PRESET_LABEL (//)
+E_Q
+;
+; The Picture menu's two looks after the bars, and the whole screen.
+MSG_MENU_SCOPE (//)
+Scope
+MSG_MENU_METERS (//)
+Meters
+MSG_MENU_WHOLE_SCREEN (//)
+Whole screen

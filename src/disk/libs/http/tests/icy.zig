@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! Host tests of icy.zig: the metadata taken out of a station's stream
+//! Host tests of `sdk.http.icy`: the metadata taken out of a station's stream
 //! however its pieces fall, the title found and taken apart, the
 //! Content-Type read, and UTF-8 brought to Latin-1.
 
 const std = @import("std");
-const icy = @import("../icy.zig");
+const icy = @import("sdk").http.icy;
 
 const testing = std.testing;
 
