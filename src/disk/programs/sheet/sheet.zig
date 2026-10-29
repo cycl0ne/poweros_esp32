@@ -60,8 +60,9 @@
 //!
 //! **The ribbon** (ribbon.gadget, made from a table with `rb.build`) has
 //! one tab, Home, with the menus' commands in groups: Clipboard (Paste,
-//! Cut, Copy), Undo (Undo, Redo, disabled while there is nothing to undo
-//! or redo), Number (the formats, toggles that show the current cell's,
+//! Cut, Copy - Paste disabled while the clipboard holds no text and Sheet
+//! has copied no cells, told by iffparse's `clip.Watch`), Undo (Undo,
+//! Redo, disabled while there is nothing to undo or redo), Number (the formats, toggles that show the current cell's,
 //! and a decimal more or fewer), Cells (Insert and Delete, each dropping
 //! down Rows and Columns) and Editing (AutoSum, which drops down Sum,
 //! Average, Count, Min and Max; Sort; Find; Fill down or right; Clear).
@@ -176,7 +177,7 @@ const max_rows = formula.max_rows;
 const max_cols = formula.max_cols;
 
 pub const COMMAND_NAME = "Sheet";
-const VERSION = "1.2";
+const VERSION = "1.3";
 const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (29.10.2026)\r\n";
 /// What the screen's title bar says while the window is the active one.
 const SCREEN_TITLE = "Sheet " ++ VERSION;
@@ -333,7 +334,7 @@ const fills = [_:null]?[*:0]const u8{ "Down", "Right" };
 const ribbon_table = [_]rb.NewRibbon{
     .{ .type = rb.RB_TAB, .label = "Home" },
     .{ .type = rb.RB_GROUP, .label = "Clipboard", .glyph = command.CMD_PASTE, .reduce = 1 },
-    .{ .type = rb.RB_LARGE, .id = Command.paste.id(), .label = "Paste", .glyph = command.CMD_PASTE, .hint = "Put in what was cut or copied" },
+    .{ .type = rb.RB_LARGE, .id = Command.paste.id(), .label = "Paste", .glyph = command.CMD_PASTE, .hint = "Put in what was cut or copied", .flags = rb.RBF_DISABLED },
     .{ .type = rb.RB_MEDIUM, .id = Command.cut.id(), .label = "Cut", .glyph = command.CMD_CUT },
     .{ .type = rb.RB_MEDIUM, .id = Command.copy.id(), .label = "Copy", .glyph = command.CMD_COPY },
     .{ .type = rb.RB_GROUP, .label = "Undo", .glyph = command.CMD_UNDO, .reduce = 2 },
@@ -476,6 +477,9 @@ const App = struct {
     clip_len: u32 = 0,
     asl_lib: ?*exec.Library = null,
     iff_lib: ?*exec.Library = null,
+    /// Told when the clipboard changes, and whether it holds text.
+    clip_watch: iffparse.clip.Watch = .{},
+    pasteable: bool = true,
 
     /// The window as one files can be dropped on, while the desktop runs.
     drop: sdk.anvil.DropTarget = .{},
@@ -493,6 +497,7 @@ const App = struct {
     /// to set them again whatever they are.
     style_shown: ?number.Style = null,
     undo_shown: ?[2]bool = null,
+    paste_shown: ?bool = null,
 
     fn deinit(app: *App) void {
         app.block.deinit(app.sys);
@@ -779,8 +784,9 @@ const App = struct {
     }
 
     /// The ribbon's number toggles checked as the current cell's format
-    /// says, and Undo and Redo disabled while there is nothing to undo
-    /// or redo; set only when that has changed.
+    /// says, Undo and Redo disabled while there is nothing to undo or
+    /// redo, and Paste while there is nothing to paste - no text on the
+    /// clipboard, no cells Sheet copied; set only when that has changed.
     fn followRibbon(app: *App) void {
         const built = app.built orelse return;
         const style = if (app.sheet.find(app.row, app.col)) |cell| cell.format.style else number.Style.general;
@@ -802,6 +808,13 @@ const App = struct {
             for ([_]Command{ .undo, .redo }, can) |which, possible| {
                 const undo_button = built.entry(which.id()) orelse continue;
                 _ = app.ib.SetGadgetAttrsTagList(undo_button, app.window, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = @intFromBool(!possible) }, .{} });
+            }
+        }
+        const can_paste = app.pasteable or app.block.entries.len > 0;
+        if (app.paste_shown != can_paste) {
+            app.paste_shown = can_paste;
+            if (built.entry(Command.paste.id())) |paste_button| {
+                _ = app.ib.SetGadgetAttrsTagList(paste_button, app.window, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = @intFromBool(!can_paste) }, .{} });
             }
         }
     }
@@ -1977,9 +1990,14 @@ const App = struct {
         while (true) {
             const window_signal = app.signalOf();
             const drop_signal = app.drop.signal();
-            const got = app.sys.Wait(window_signal | drop_signal | exec.SIGBREAKF_CTRL_C);
+            const clip_signal = app.clip_watch.signal();
+            const got = app.sys.Wait(window_signal | drop_signal | clip_signal | exec.SIGBREAKF_CTRL_C);
             if (got & exec.SIGBREAKF_CTRL_C != 0 and app.mayLeave()) return;
             if (got & drop_signal != 0) app.dropped();
+            if (got & clip_signal != 0) {
+                app.pasteable = app.clip_watch.holdsText();
+                app.followRibbon();
+            }
             if (!app.windowMessages()) return;
             if (app.sheet.changed != app.shown_changed) app.showTitle();
         }
@@ -2348,6 +2366,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // Taken off the desktop's list before the window closes.
     app.drop.add(sys, app.window);
     defer app.drop.remove();
+    // Stopped before the libraries close.
+    if (app.iff()) |ip| app.clip_watch.start(sys, ip);
+    defer app.clip_watch.stop();
+    app.pasteable = app.clip_watch.holdsText();
     if (dos.rdargs.string(argv[0])) |name| {
         // A name that is not there yet is where the sheet will be saved.
         if (!app.load(name, true)) app.keepPath(name);

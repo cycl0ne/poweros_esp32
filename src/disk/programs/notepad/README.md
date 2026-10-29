@@ -53,8 +53,9 @@ gadget - before a requester asks whether to save it.
 
 The ribbon has the menus' commands as buttons with pictures, on two tabs:
 
-- **Home:** Clipboard (Paste, Cut, Copy), Undo (Undo, Redo - grey while
-  there is nothing to undo or redo), Editing (Find, Replace, Select All).
+- **Home:** Clipboard (Paste, Cut, Copy - Paste grey while the clipboard
+  holds no text), Undo (Undo, Redo - grey while there is nothing to undo
+  or redo), Editing (Find, Replace, Select All).
   Find's arrow drops down Find Next and Find Previous.
 - **View:** Word Wrap and Line Numbers, and Zig for Zig Highlighting -
   each a toggle that is down while it is on, and the menu's check mark

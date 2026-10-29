@@ -33,7 +33,8 @@
 //!
 //! **The ribbon** (ribbon.gadget, made from a table with `rb.build`) has
 //! two tabs. Home has the commands of the text: Clipboard (Paste, Cut,
-//! Copy), Undo (Undo and Redo, disabled while there is nothing to undo or
+//! Copy - Paste disabled while the clipboard holds no text, told by
+//! iffparse's `clip.Watch`), Undo (Undo and Redo, disabled while there is nothing to undo or
 //! redo - textedit.gadget 1.4's `TEXTEDIT_CanUndo`, `TEXTEDIT_CanRedo`)
 //! and Editing (Find, which drops down Find Next and Find Previous;
 //! Replace; Select All). View has its toggles: Word Wrap and Line Numbers,
@@ -101,7 +102,7 @@ const TagItem = sdk.utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Notepad";
-const VERSION = "1.5";
+const VERSION = "1.6";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
@@ -226,7 +227,7 @@ const finds = [_:null]?[*:0]const u8{ "Find Next", "Find Previous" };
 const ribbon_table = [_]rb.NewRibbon{
     .{ .type = rb.RB_TAB, .label = "Home" },
     .{ .type = rb.RB_GROUP, .label = "Clipboard", .glyph = command.CMD_PASTE, .reduce = 1 },
-    .{ .type = rb.RB_LARGE, .id = Command.paste.id(), .label = "Paste", .glyph = command.CMD_PASTE, .hint = "Put in what was cut or copied" },
+    .{ .type = rb.RB_LARGE, .id = Command.paste.id(), .label = "Paste", .glyph = command.CMD_PASTE, .hint = "Put in what was cut or copied", .flags = rb.RBF_DISABLED },
     .{ .type = rb.RB_MEDIUM, .id = Command.cut.id(), .label = "Cut", .glyph = command.CMD_CUT },
     .{ .type = rb.RB_MEDIUM, .id = Command.copy.id(), .label = "Copy", .glyph = command.CMD_COPY },
     .{ .type = rb.RB_GROUP, .label = "Undo", .glyph = command.CMD_UNDO, .reduce = 2 },
@@ -301,6 +302,12 @@ const Notepad = struct {
     /// What the ribbon's Undo and Redo were last set to; null to set them
     /// again whatever they are.
     undo_shown: ?[2]bool = null,
+    /// Told when the clipboard changes, and whether it holds text; the
+    /// ribbon's Paste is disabled while it does not, and `paste_shown` is
+    /// what it was last set to.
+    clip_watch: iffparse.clip.Watch = .{},
+    pasteable: bool = true,
+    paste_shown: ?bool = null,
 
     fn deinit(np: *Notepad) void {
         np.closeFinder();
@@ -790,15 +797,23 @@ const Notepad = struct {
     }
 
     /// The ribbon's Undo and Redo disabled while there is nothing to undo
-    /// or redo; set only when that has changed.
+    /// or redo, and Paste while the clipboard holds no text; set only when
+    /// that has changed.
     fn followRibbon(np: *Notepad) void {
         const built = np.built orelse return;
         const can = [2]bool{ np.ask(te.TEXTEDIT_CanUndo) != 0, np.ask(te.TEXTEDIT_CanRedo) != 0 };
-        if (np.undo_shown) |shown| if (shown[0] == can[0] and shown[1] == can[1]) return;
-        np.undo_shown = can;
-        for ([_]Command{ .undo, .redo }, can) |which, possible| {
-            const undo_button = built.entry(which.id()) orelse continue;
-            _ = np.ib.SetGadgetAttrsTagList(undo_button, np.window, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = @intFromBool(!possible) }, .{} });
+        if (np.undo_shown == null or np.undo_shown.?[0] != can[0] or np.undo_shown.?[1] != can[1]) {
+            np.undo_shown = can;
+            for ([_]Command{ .undo, .redo }, can) |which, possible| {
+                const undo_button = built.entry(which.id()) orelse continue;
+                _ = np.ib.SetGadgetAttrsTagList(undo_button, np.window, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = @intFromBool(!possible) }, .{} });
+            }
+        }
+        if (np.paste_shown != np.pasteable) {
+            np.paste_shown = np.pasteable;
+            if (built.entry(Command.paste.id())) |paste_button| {
+                _ = np.ib.SetGadgetAttrsTagList(paste_button, np.window, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = @intFromBool(!np.pasteable) }, .{} });
+            }
         }
     }
 
@@ -991,10 +1006,12 @@ const Notepad = struct {
             const main_signal = np.signalOf(np.object);
             const find_signal = if (np.finder) |finder| np.signalOf(finder.object) else 0;
             const drop_signal = np.drop.signal();
-            const got = np.sys.Wait(main_signal | find_signal | drop_signal | exec.SIGBREAKF_CTRL_C);
+            const clip_signal = np.clip_watch.signal();
+            const got = np.sys.Wait(main_signal | find_signal | drop_signal | clip_signal | exec.SIGBREAKF_CTRL_C);
             if (got & exec.SIGBREAKF_CTRL_C != 0 and np.mayLeave()) return;
             if (got & find_signal != 0) np.findWindow();
             if (got & drop_signal != 0) np.dropped();
+            if (got & clip_signal != 0) np.pasteable = np.clip_watch.holdsText();
             if (!np.mainWindow()) return;
             np.followChanges();
             np.followRibbon();
@@ -1225,12 +1242,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // Taken off the desktop's list before the window closes.
     np.drop.add(sys, window);
     defer np.drop.remove();
+    // Stopped before the libraries close.
+    if (np.iff()) |ip| np.clip_watch.start(sys, ip);
+    defer np.clip_watch.stop();
+    np.pasteable = np.clip_watch.holdsText();
     if (dos.rdargs.string(argv[0])) |name| {
         // A name that is not there yet is where the text will be saved.
         if (!np.load(name, true)) np.keepPath(name);
     }
     np.showTitle();
     np.followEditor();
+    np.followRibbon();
     np.run();
     return dos.RETURN_OK;
 }

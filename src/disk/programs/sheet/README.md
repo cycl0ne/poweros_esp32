@@ -31,7 +31,7 @@ and a file dragged from the desktop and let go on its window is opened.
 - **The scroll bars** are in the window's border.
 
 While the window is the active one, the screen's title bar says
-`Sheet 1.2`. The window's own title says the file's name, with a `*` in
+`Sheet 1.3`. The window's own title says the file's name, with a `*` in
 front while the sheet has changed since it was read or saved.
 
 ## Cells
@@ -215,7 +215,7 @@ The ribbon has one tab, Home, with the menus' commands in groups:
 
 | Group | Buttons |
 |---|---|
-| Clipboard | Paste, Cut, Copy |
+| Clipboard | Paste, Cut, Copy - Paste grey while there is nothing to paste: no text on the clipboard, no cells copied |
 | Undo | Undo, Redo - grey while there is nothing to undo or redo |
 | Number | Number, Percent, Currency - lit for the current cell's format; pressed again, back to General - and a decimal more or fewer |
 | Cells | Insert, Delete - each drops down Rows and Columns |
