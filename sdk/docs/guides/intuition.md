@@ -690,7 +690,12 @@ answers to reaches the program, as `WMHI_VANILLAKEY`.
 
 Tab and Shift-Tab move the keyboard between the fields that have
 `GA_TabCycle`, in the layout's order - row by row in a grid - and a field
-reports `WMHI_GADGETUP` when it is left with Return or Tab.
+reports `WMHI_GADGETUP` when it is left with Return or Tab. A press
+beside it or the menu button lets it go without a report, and the menu
+button then opens the menus. In a field, the cursor keys, Home and End
+move, and with Shift a cursor key goes to the start or the end;
+Shift-Backspace takes out everything before the cursor, Shift-Delete
+everything after it, and Escape puts back what was there.
 `ActivateGadget` gives a gadget the keyboard without a press, and only in
 the active window; a window is not always active the moment it opens, so
 a program waits for `WMHI_ACTIVE` as above. A gadget that hands the

@@ -383,6 +383,21 @@ const time = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
 });
 ```
 
+A child is replaced in a window that is open: `LAYOUTA_ModifyChild`
+names it and `CHILDA_Replace` gives the new one, which takes its place,
+its label and its sizes; the layout disposes of the old one. Only the
+child's place is drawn, the new one over what the old one left, so a
+picture changes to the next with no flicker - the Player's large cover
+follows the songs this way:
+
+```zig
+_ = ib.SetGadgetAttrsTagList(layout, window, &.{
+    .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(old) },
+    .{ .tag = lg.CHILDA_Replace, .data = @intFromPtr(new) },
+    .{},
+});
+```
+
 ### Text in more than one look
 
 `text.gadget` shows runs of text each in its own font, soft style and

@@ -62,6 +62,14 @@
 //! `IDCMP_GADGETUP` from a button in a layout carries that button, and its
 //! `GA_ID`, not the layout's.
 //!
+//! **A child replaced.** `LAYOUTA_ModifyChild` names a child the
+//! `CHILDA_` tags after it are about, so its label, weights, sizes and
+//! shape can be set anew; `CHILDA_Replace` among them puts another gadget
+//! in its place, with all of that, and disposes of the old one. In a
+//! window the layout is laid out again and drawn where it changed, so a
+//! window can show another picture, list or field where one stood without
+//! being closed and opened again.
+//!
 //! Disposing of a layout disposes of its children.
 //!
 //! ```zig
@@ -136,6 +144,12 @@ pub const LAYOUTA_FrameRecessed = LAYOUTA_Dummy + 0x000B;
 /// no room to spare it still parts what is before from what is after. In
 /// a grid it is an empty cell. The tag's data is not read.
 pub const LAYOUTA_AddSpace = LAYOUTA_Dummy + 0x000C;
+/// One of the layout's children, which the `CHILDA_` tags after it - up
+/// to the next child named or added - are about: its label, weights,
+/// sizes and shape set anew, or the child replaced (`CHILDA_Replace`).
+/// Set only. A gadget that is no child of the layout's leaves the tags
+/// after it unheard.
+pub const LAYOUTA_ModifyChild = LAYOUTA_Dummy + 0x000D;
 
 pub const LORIENT_HORIZ: u32 = 1;
 pub const LORIENT_VERT: u32 = 2;
@@ -196,6 +210,19 @@ pub const CHILDA_RowSpan = CHILDA_Dummy + 0x0C;
 /// `CHILDA_Align` says. 0, the default, keeps no shape. A grid and a row or
 /// column that wraps leave it alone.
 pub const CHILDA_Aspect = CHILDA_Dummy + 0x0D;
+/// A gadget to stand where the child named by `LAYOUTA_ModifyChild` is,
+/// with the label, the weights, the sizes and the shape that one had -
+/// the `CHILDA_` tags after it change them for the new one - and the
+/// layout's from then on. The old child is disposed of; its window lets
+/// go of it first, so neither the pointer resting on it nor a key meant
+/// for it reaches it again. In a window the layout is laid out again in
+/// the box it has, and what changed is drawn: the window's ground where
+/// the old child was and the new one is not, and the new one over what
+/// the old one left - a picture, which paints the whole of its box, takes
+/// the old one's place in one step. A window that should take the new
+/// child's size asks to be measured again (`WM_RETHINK`). Set only; a
+/// gadget that is a child already is not taken. Since intuition 0.74.
+pub const CHILDA_Replace = CHILDA_Dummy + 0x0F;
 
 /// A shape for `CHILDA_Aspect`: `width` to `height`, 1 to 1 for a square.
 pub fn aspect(width: u16, height: u16) u32 {

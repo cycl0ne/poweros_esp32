@@ -240,8 +240,10 @@ fn workTake(w: *sg.SGWork, at: u32) void {
 
 /// Intuition's own editing: the global edit hook until `SetEditHook` puts
 /// another. It edits the work for `SGH_KEY` and answers 0 for anything
-/// else. What the keys do: the cursor keys, Home and End move; Backspace
-/// and Delete take a character out; a character goes in, or over the one
+/// else. What the keys do: the cursor keys, Home and End move, and a
+/// cursor key with Shift goes to the start or the end; Backspace and
+/// Delete take a character out, and with Shift everything before the
+/// cursor or after it; a character goes in, or over the one
 /// at the cursor in replace mode; Return ends the gadget, Tab ends it and
 /// moves on (Shift-Tab back), Escape puts back what was there when it was
 /// activated and ends it; Help ends it in `SGM_EXITHELP`. A fixed field
@@ -253,12 +255,13 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
     if (command.* != sg.SGH_KEY) return 0;
     const e = w.event;
     const fixed = w.modes & sg.SGM_FIXEDFIELD != 0;
+    const shifted = e.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
     w.edit_op = sg.EO_NOOP;
     switch (e.code) {
         raw_left, raw_right, raw_home, raw_end => {
             w.buffer_pos = switch (e.code) {
-                raw_left => w.buffer_pos -| 1,
-                raw_right => @min(w.buffer_pos + 1, w.num_chars),
+                raw_left => if (shifted) 0 else w.buffer_pos -| 1,
+                raw_right => if (shifted) w.num_chars else @min(w.buffer_pos + 1, w.num_chars),
                 raw_home => 0,
                 else => w.num_chars,
             };
@@ -268,14 +271,16 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
         },
         raw_delete => {
             if (fixed or w.buffer_pos >= w.num_chars) return 1;
-            workTake(w, w.buffer_pos);
+            if (shifted) {
+                w.num_chars = w.buffer_pos;
+                w.work_buffer[w.num_chars] = 0;
+            } else workTake(w, w.buffer_pos);
             w.edit_op = sg.EO_DELFORWARD;
             return 1;
         },
         raw_tab => {
-            const back = e.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
             w.code = 0x09;
-            w.actions |= sg.SGA_END | (if (back) sg.SGA_PREVACTIVE else sg.SGA_NEXTACTIVE);
+            w.actions |= sg.SGA_END | (if (shifted) sg.SGA_PREVACTIVE else sg.SGA_NEXTACTIVE);
             return 1;
         },
         raw_help => {
@@ -309,18 +314,22 @@ pub fn defaultEdit(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaqu
             // Tab finishes the field and hands the keyboard on, rather than
             // going into the text: a tab in a line of text is not a
             // character anybody wants there.
-            const back = e.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
             w.code = e.code;
-            w.actions |= sg.SGA_END | (if (back) sg.SGA_PREVACTIVE else sg.SGA_NEXTACTIVE);
+            w.actions |= sg.SGA_END | (if (shifted) sg.SGA_PREVACTIVE else sg.SGA_NEXTACTIVE);
         },
         0x08 => {
             if (w.buffer_pos == 0) return 1;
-            w.buffer_pos -= 1;
+            const count: u32 = if (shifted) w.buffer_pos else 1;
             if (fixed) {
+                w.buffer_pos -= count;
                 w.edit_op = sg.EO_MOVECURSOR;
                 w.actions |= sg.SGA_REDISPLAY;
             } else {
-                workTake(w, w.buffer_pos);
+                var left = count;
+                while (left > 0) : (left -= 1) {
+                    w.buffer_pos -= 1;
+                    workTake(w, w.buffer_pos);
+                }
                 w.edit_op = sg.EO_DELBACKWARD;
             }
         },
@@ -883,6 +892,15 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 clickHook(ib, o.?, p, e, in.gadget_info);
                 redraw(ib, o.?, in.gadget_info);
                 return gc.GMR_MEACTIVE;
+            }
+            // The menu button ends it without an answer, and the press
+            // goes on to open the menus: a line of text with the keys
+            // does not keep them from the window.
+            if (e.class == ie.IECLASS_NEWPOINTERPOS and e.code == ie.IECODE_RBUTTON) {
+                p.active = 0;
+                redraw(ib, o.?, in.gadget_info);
+                tell(ib, cl, o.?, in.gadget_info, 0);
+                return gc.GMR_REUSE;
             }
             if (e.class != ie.IECLASS_RAWKEY) return gc.GMR_MEACTIVE;
             if (e.code & ie.IECODE_UP_PREFIX != 0) return gc.GMR_MEACTIVE;

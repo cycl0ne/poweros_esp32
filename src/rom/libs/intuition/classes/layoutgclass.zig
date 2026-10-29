@@ -61,6 +61,17 @@
 //! the width it is about to give it before it asks its size, and the
 //! other way round.
 //!
+//! **A child replaced** (`CHILDA_Replace`) keeps its record - its label,
+//! weights, sizes and shape - and its place among the group's members;
+//! the old one is let go of by the input first (`_input.forgetWithin`),
+//! as `RemoveGList` lets go of a gadget, taken out of its window and
+//! disposed of. Set with a GadgetInfo, the layout is placed again in its
+//! box. When every other child kept its box, only the replaced one's place
+//! is drawn: the window's ground where the old one was and the new one is
+//! not, then the new one over what the old one left, so a picture goes
+//! from one to the other without a frame of ground between. When others
+//! moved, the whole layout is drawn on the ground.
+//!
 //! Each child has a record of its own here, on a list beside the group's
 //! members and in the same order: its label, its weights, the sizes that
 //! stand in for its own, and scratch room for the sizes being worked out.
@@ -79,11 +90,13 @@ const sc = intuition.screens;
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
+const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const gadgetclass = @import("gadgetclass.zig");
 const groupgclass = @import("groupgclass.zig");
 const _gadget = @import("../gadget/_gadget.zig");
 const _window = @import("../window/_window.zig");
+const _input = @import("../input/_input.zig");
 const d = @import("draw.zig");
 const layoutgrid = @import("layoutgrid.zig");
 const layoutwrap = @import("layoutwrap.zig");
@@ -156,6 +169,13 @@ pub const Data = extern struct {
     /// `LAYOUTA_FrameRecessed`: the frame, this one and any made later,
     /// sunk.
     frame_recessed: u32 = 0,
+    /// The child last replaced (`CHILDA_Replace`) and the box the old one
+    /// had, until the layout has been drawn again for it.
+    replaced: ?*Child = null,
+    was_left: i32 = 0,
+    was_top: i32 = 0,
+    was_width: i32 = 0,
+    was_height: i32 = 0,
 };
 
 /// How far in from the frame's left edge a title starts, and the room
@@ -253,7 +273,105 @@ fn recordOf(p: *Data, child: *Object) ?*Child {
     return null;
 }
 
+/// `record`'s child replaced by `new`: in the old one's place among the
+/// group's members, in its window, with the old one's record. The old one
+/// is let go of by the input, taken out of its window and disposed of.
+/// False when `new` is a child here already.
+fn replaceChild(ib: *IntuitionBase, cl: *Class, o: *Object, record: *Child, new: *Object) bool {
+    const p = own(cl, o);
+    const old = record.object;
+    if (old == new or recordOf(p, new) != null) return false;
+    const sys = ib.sys_base;
+    const group = classes.instData(groupgclass.Data, ib.group_class.?, o);
+    const at = gadgetclass.gadgetOf(ib, old);
+    _window.lock(ib);
+    defer _window.unlock(ib);
+    sys.Insert(@ptrCast(&group.members), @ptrCast(&classes.objectHeader(new).node), @ptrCast(&classes.objectHeader(old).node));
+    sys.Remove(@ptrCast(&classes.objectHeader(old).node));
+    if (group.active == old) group.active = null;
+    record.object = new;
+    p.replaced = record;
+    p.was_left = at.left;
+    p.was_top = at.top;
+    p.was_width = at.width;
+    p.was_height = at.height;
+    _input.forgetWithin(ib, old);
+    _gadget.claim(ib, old, null, null);
+    const layout = gadgetclass.gadgetOf(ib, o);
+    _gadget.claim(ib, new, layout.window, layout.requester);
+    // The key its label names is the new one's.
+    const key = gc.labelKey(record.label);
+    if (key != 0) {
+        const named = [_]TagItem{ .{ .tag = gc.GA_Key, .data = key }, .{} };
+        _ = ib.iface().SetAttrsTagList(new, &named);
+    }
+    ib.iface().DisposeObject(old);
+    return true;
+}
+
+/// The boxes of every child but `except`, folded into one number: the
+/// same before and after a placing when none of them moved.
+fn othersKey(ib: *IntuitionBase, p: *Data, except: *const Child) u64 {
+    var key: u64 = 0xCBF2_9CE4_8422_2325;
+    var walk = Walk.over(p);
+    while (walk.next()) |record| {
+        if (record == except) continue;
+        const g = gadgetclass.gadgetOf(ib, record.object);
+        for ([_]i32{ g.left, g.top, g.width, g.height }) |n| {
+            key = (key ^ @as(u32, @bitCast(n))) *% 0x0000_0100_0000_01B3;
+        }
+    }
+    return key;
+}
+
+/// The window's ground over the part of `outer` that `inner` does not
+/// cover: four strips at most.
+fn eraseAround(gb: *GraphicsBase, rp: *graphics.RastPort, outer: _gadget.Box, inner: _gadget.Box) void {
+    const left = outer.left;
+    const top = outer.top;
+    const right = outer.left + outer.width;
+    const bottom = outer.top + outer.height;
+    const in_left = @max(@min(inner.left, right), left);
+    const in_top = @max(@min(inner.top, bottom), top);
+    const in_right = @max(@min(inner.left + inner.width, right), in_left);
+    const in_bottom = @max(@min(inner.top + inner.height, bottom), in_top);
+    const strips = [_]graphics.Rect{
+        .{ .min_x = left, .min_y = top, .max_x = right, .max_y = in_top },
+        .{ .min_x = left, .min_y = in_bottom, .max_x = right, .max_y = bottom },
+        .{ .min_x = left, .min_y = in_top, .max_x = in_left, .max_y = in_bottom },
+        .{ .min_x = in_right, .min_y = in_top, .max_x = right, .max_y = in_bottom },
+    };
+    for (&strips) |*strip| {
+        if (strip.max_x > strip.min_x and strip.max_y > strip.min_y) gb.EraseRect(rp, strip);
+    }
+}
+
+/// After a child was replaced: the layout placed again in its box, and
+/// what changed drawn - when no other child moved, the ground where the
+/// old one was and the new one is not, and the new one over what the old
+/// one left; otherwise the ground round the new one and the whole layout.
+fn showReplaced(ib: *IntuitionBase, cl: *Class, o: *Object, info: *classusr.GadgetInfo, record: *Child) void {
+    const p = own(cl, o);
+    const it = ib.iface();
+    const before = othersKey(ib, p, record);
+    place(ib, cl, o, info, false);
+    const others_stayed = othersKey(ib, p, record) == before;
+    const g = gadgetclass.gadgetOf(ib, record.object);
+    const now = _gadget.Box{ .left = g.left, .top = g.top, .width = g.width, .height = g.height };
+    const outer = if (others_stayed)
+        _gadget.Box{ .left = p.was_left, .top = p.was_top, .width = p.was_width, .height = p.was_height }
+    else
+        cornerOf(ib, o, info);
+    if (it.ObtainGIRPort(info)) |rp| {
+        eraseAround(ib.graphics_base, rp, outer, now);
+        it.ReleaseGIRPort(rp);
+    }
+    const w: *_window.Window = @ptrCast(@alignCast(info.window));
+    _gadget.render(ib, w, if (others_stayed) record.object else o, gc.GREDRAW_REDRAW);
+}
+
 fn dropRecord(ib: *IntuitionBase, p: *Data, record: *Child) void {
+    if (p.replaced == record) p.replaced = null;
     if (p.last == record) p.last = null;
     ib.sys_base.Remove(@ptrCast(&record.node));
     ib.sys_base.FreeVec(record);
@@ -294,6 +412,11 @@ fn setAttrs(ib: *IntuitionBase, cl: *Class, o: *Object, tags: ?[*]const TagItem)
             },
             lg.LAYOUTA_AddSpace => if (addSpace(ib, cl, o)) {
                 changed = 1;
+            },
+            lg.LAYOUTA_ModifyChild => p.last = if (v != 0) recordOf(p, @ptrFromInt(v)) else null,
+            lg.CHILDA_Replace => if (v != 0) {
+                const record = p.last orelse continue;
+                if (replaceChild(ib, cl, o, record, @ptrFromInt(v))) changed = 1;
             },
             lg.LAYOUTA_Frame, lg.LAYOUTA_FrameType => {
                 ib.iface().DisposeObject(p.frame);
@@ -1023,6 +1146,13 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                     record.label_y += now.top - was.top;
                 }
             }
+            // A child replaced: placed and drawn in a window now, and at
+            // the next layout otherwise.
+            const p = own(cl, o.?);
+            if (p.replaced) |record| {
+                p.replaced = null;
+                if (set.gadget_info) |info| showReplaced(ib, cl, o.?, info, record);
+            }
             return changed;
         },
         classusr.OM_ADDMEMBER => {
@@ -1057,6 +1187,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 if (g.flags & gadgetclass.GFLG_RELWIDTH == 0 and g.width <= 0) g.width = need.nominal.width;
                 if (g.flags & gadgetclass.GFLG_RELHEIGHT == 0 and g.height <= 0) g.height = need.nominal.height;
             }
+            // A child replaced before the layout was in a window is
+            // placed here like the rest.
+            own(cl, o.?).replaced = null;
             place(ib, cl, o.?, info, lay.initial != 0);
             // After placing: a wrapping row knows its width then, and how
             // deep its lines go is part of what the window must hold - so

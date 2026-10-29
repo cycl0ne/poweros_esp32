@@ -177,8 +177,13 @@ pub const LIBRARY_VERSION = 0;
 /// no ground is drawn in place.
 /// 68: windowclass replies IDCMP_NEWSIZE at the next WM_HANDLEINPUT, so a
 /// sizing's next step waits until the program is done with the last one.
-pub const LIBRARY_REVISION = 68;
-const BUILD_DATE = "28.10.2026";
+/// 74: layoutgclass CHILDA_Replace, a child put in another's place. A
+/// line of text with the keys gives way to the menu button: it ends
+/// without an answer, and the press opens the menus. Its edit goes to the
+/// start or end with Shift and a cursor key, and Shift-Backspace and
+/// Shift-Delete take out everything before or after the cursor.
+pub const LIBRARY_REVISION = 74;
+const BUILD_DATE = "29.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
