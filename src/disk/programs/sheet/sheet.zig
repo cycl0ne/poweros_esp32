@@ -131,8 +131,19 @@
 //!
 //! While the window is the active one, the screen's title bar says
 //! `Sheet` and the version, in place of the screen's own title.
+//!
+//! Its texts are in `sheet.cd`, read through `sdk.locale.Strings`: the
+//! menus' and the ribbon's labels, the status line's messages, the
+//! requesters, the find line and what the shell is told come from the
+//! catalog of the language the user prefers, when there is one. The
+//! tables hold each label's string, and the labels are put in from the
+//! catalog as the menus and the ribbon are made. A formula's function
+//! names, TRUE and FALSE are the formulas' own, whatever the language.
 
 const sdk = @import("sdk");
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
+const Id = strings.Id;
 const asl = sdk.asl;
 const dos = sdk.dos;
 const exec = sdk.exec;
@@ -167,8 +178,6 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const Object = intuition.Object;
 const Window = intuition.Window;
 const TagItem = sdk.utility.TagItem;
-const Printf = dos.stdio.Printf;
-
 const cells = @import("cells.zig");
 const formula = @import("formula.zig");
 const number = @import("number.zig");
@@ -179,17 +188,13 @@ const max_rows = formula.max_rows;
 const max_cols = formula.max_cols;
 
 pub const COMMAND_NAME = "Sheet";
-const VERSION = "1.5";
+const VERSION = "1.6";
 const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (29.10.2026)\r\n";
 /// What the screen's title bar says while the window is the active one.
 const SCREEN_TITLE = "Sheet " ++ VERSION;
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE";
-
-const MSG_NOLIBRARY = "No %s\n";
-const MSG_NOSCREEN = "No default screen - no display\n";
-const MSG_NOMEMORY = "No memory for the window\n";
 
 /// The longest path a file is kept by.
 const path_size = 256;
@@ -260,104 +265,140 @@ const Command = enum(u32) {
     }
 };
 
-fn item(label: [*:0]const u8, key: ?[*:0]const u8, which: Command) mn.NewMenu {
-    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key, .user_data = @ptrFromInt(which.id()) };
+/// A menu's entry, and the string its label is.
+const MenuEntry = struct { menu: mn.NewMenu, text: ?Id = null };
+
+fn menuTitle(text: Id) MenuEntry {
+    return .{ .menu = .{ .type = mn.NM_TITLE, .label = strings.builtin(text) }, .text = text };
 }
 
-const bar = mn.NewMenu{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL };
+fn item(text: Id, key: ?[*:0]const u8, which: Command) MenuEntry {
+    return .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(text), .comm_key = key, .user_data = @ptrFromInt(which.id()) }, .text = text };
+}
 
-const menus = [_]mn.NewMenu{
-    .{ .type = mn.NM_TITLE, .label = "Project" },
-    item("New", "N", .new),
-    item("Open...", "O", .open),
-    item("Save", "S", .save),
-    item("Save As...", null, .save_as),
+/// An item with a check mark, toggled as it is picked.
+fn toggleItem(text: Id, which: Command) MenuEntry {
+    var made = item(text, null, which);
+    made.menu.flags = mn.CHECKIT | mn.MENUTOGGLE;
+    return made;
+}
+
+const bar = MenuEntry{ .menu = .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL } };
+
+const menus = [_]MenuEntry{
+    menuTitle(.MSG_MENU_PROJECT),
+    item(.MSG_MENU_NEW, "N", .new),
+    item(.MSG_MENU_OPEN, "O", .open),
+    item(.MSG_MENU_SAVE, "S", .save),
+    item(.MSG_MENU_SAVE_AS, null, .save_as),
     bar,
-    item("Quit", "Q", .quit),
-    .{ .type = mn.NM_TITLE, .label = "Edit" },
-    item("Undo", "Z", .undo),
-    item("Redo", "Y", .redo),
+    item(.MSG_MENU_QUIT, "Q", .quit),
+    menuTitle(.MSG_MENU_EDIT),
+    item(.MSG_MENU_UNDO, "Z", .undo),
+    item(.MSG_MENU_REDO, "Y", .redo),
     bar,
-    item("Cut", "X", .cut),
-    item("Copy", "C", .copy),
-    item("Paste", "V", .paste),
-    item("Clear", null, .clear),
+    item(.MSG_MENU_CUT, "X", .cut),
+    item(.MSG_MENU_COPY, "C", .copy),
+    item(.MSG_MENU_PASTE, "V", .paste),
+    item(.MSG_MENU_CLEAR, null, .clear),
     bar,
-    item("Fill Down", "D", .fill_down),
-    item("Fill Right", "R", .fill_right),
+    item(.MSG_MENU_FILL_DOWN, "D", .fill_down),
+    item(.MSG_MENU_FILL_RIGHT, "R", .fill_right),
     bar,
-    item("Select All", "A", .select_all),
+    item(.MSG_MENU_SELECT_ALL, "A", .select_all),
     bar,
-    item("Find...", "F", .find),
-    item("Find Next", "G", .find_next),
-    .{ .type = mn.NM_TITLE, .label = "Sheet" },
-    item("Insert Rows", null, .insert_rows),
-    item("Delete Rows", null, .delete_rows),
-    item("Insert Columns", null, .insert_columns),
-    item("Delete Columns", null, .delete_columns),
+    item(.MSG_MENU_FIND, "F", .find),
+    item(.MSG_MENU_FIND_NEXT, "G", .find_next),
+    menuTitle(.MSG_MENU_SHEET),
+    item(.MSG_MENU_INSERT_ROWS, null, .insert_rows),
+    item(.MSG_MENU_DELETE_ROWS, null, .delete_rows),
+    item(.MSG_MENU_INSERT_COLUMNS, null, .insert_columns),
+    item(.MSG_MENU_DELETE_COLUMNS, null, .delete_columns),
     bar,
-    item("Wider Column", null, .wider),
-    item("Narrower Column", null, .narrower),
+    item(.MSG_MENU_WIDER, null, .wider),
+    item(.MSG_MENU_NARROWER, null, .narrower),
     bar,
-    item("AutoSum", null, .sum),
-    item("Sort Ascending", null, .sort_ascending),
-    item("Sort Descending", null, .sort_descending),
-    .{ .type = mn.NM_TITLE, .label = "Format" },
-    item("General", null, .general),
-    item("Number", null, .number),
-    item("Percent", null, .percent),
-    item("Currency", null, .currency),
+    item(.MSG_MENU_SUM, null, .sum),
+    item(.MSG_MENU_SORT_ASCENDING, null, .sort_ascending),
+    item(.MSG_MENU_SORT_DESCENDING, null, .sort_descending),
+    menuTitle(.MSG_MENU_FORMAT),
+    item(.MSG_MENU_GENERAL, null, .general),
+    item(.MSG_MENU_NUMBER, null, .number),
+    item(.MSG_MENU_PERCENT, null, .percent),
+    item(.MSG_MENU_CURRENCY, null, .currency),
     bar,
-    item("More Decimals", null, .decimals_more),
-    item("Fewer Decimals", null, .decimals_less),
-    .{ .type = mn.NM_TITLE, .label = "View" },
-    .{ .type = mn.NM_ITEM, .label = "Ribbon", .flags = mn.CHECKIT | mn.MENUTOGGLE, .user_data = @ptrFromInt(Command.ribbon.id()) },
-    .{},
+    item(.MSG_MENU_DECIMALS_MORE, null, .decimals_more),
+    item(.MSG_MENU_DECIMALS_LESS, null, .decimals_less),
+    menuTitle(.MSG_MENU_VIEW),
+    toggleItem(.MSG_MENU_RIBBON, .ribbon),
+    .{ .menu = .{} },
 };
 
 /// Where the View menu's Ribbon item is in `menus`, to be checked or not
 /// before the strip is made.
 const ribbon_item = blk: {
     for (menus, 0..) |entry, at| {
-        if (entry.user_data == @as(?*anyopaque, @ptrFromInt(Command.ribbon.id()))) break :blk at;
+        if (entry.menu.user_data == @as(?*anyopaque, @ptrFromInt(Command.ribbon.id()))) break :blk at;
     }
     unreachable;
 };
 
-// The lists of the ribbon's buttons that drop one down.
-const lines = [_:null]?[*:0]const u8{ "Rows", "Columns" };
-const sums = [_:null]?[*:0]const u8{ "Sum", "Average", "Count", "Min", "Max" };
+// The lists of the ribbon's buttons that drop one down, by their strings.
+const lines = [_]Id{ .MSG_ROWS, .MSG_COLUMNS };
+const sums = [_]Id{ .MSG_SUM, .MSG_AVERAGE, .MSG_COUNT, .MSG_MIN, .MSG_MAX };
 const sum_functions = [_][]const u8{ "SUM", "AVERAGE", "COUNT", "MIN", "MAX" };
-const sorts = [_:null]?[*:0]const u8{ "Ascending", "Descending" };
-const fills = [_:null]?[*:0]const u8{ "Down", "Right" };
+const sorts = [_]Id{ .MSG_ASCENDING, .MSG_DESCENDING };
+const fills = [_]Id{ .MSG_DOWN, .MSG_RIGHT };
+
+/// A ribbon's entry, the strings its label and its hint are, and those of
+/// the list it drops down.
+const RibbonEntry = struct { entry: rb.NewRibbon, label: ?Id = null, hint: ?Id = null, list: []const Id = &.{} };
+
+fn ribbon(entry: rb.NewRibbon, label: Id, hint: ?Id, list: []const Id) RibbonEntry {
+    var made = entry;
+    made.label = strings.builtin(label);
+    if (hint) |id| made.hint = strings.builtin(id);
+    return .{ .entry = made, .label = label, .hint = hint, .list = list };
+}
 
 /// The ribbon: one tab, its commands those of the menus. No label has a
-/// key marked: a key typed on the cells is the cell's.
-const ribbon_table = [_]rb.NewRibbon{
-    .{ .type = rb.RB_TAB, .label = "Home" },
-    .{ .type = rb.RB_GROUP, .label = "Clipboard", .glyph = command.CMD_PASTE, .reduce = 1 },
-    .{ .type = rb.RB_LARGE, .id = Command.paste.id(), .label = "Paste", .glyph = command.CMD_PASTE, .hint = "Put in what was cut or copied", .flags = rb.RBF_DISABLED },
-    .{ .type = rb.RB_MEDIUM, .id = Command.cut.id(), .label = "Cut", .glyph = command.CMD_CUT },
-    .{ .type = rb.RB_MEDIUM, .id = Command.copy.id(), .label = "Copy", .glyph = command.CMD_COPY },
-    .{ .type = rb.RB_GROUP, .label = "Undo", .glyph = command.CMD_UNDO, .reduce = 2 },
-    .{ .type = rb.RB_MEDIUM, .id = Command.undo.id(), .label = "Undo", .glyph = command.CMD_UNDO, .flags = rb.RBF_DISABLED },
-    .{ .type = rb.RB_MEDIUM, .id = Command.redo.id(), .label = "Redo", .glyph = command.CMD_REDO, .flags = rb.RBF_DISABLED },
-    .{ .type = rb.RB_GROUP, .label = "Number", .glyph = command.CMD_NUMBER },
-    .{ .type = rb.RB_MEDIUM, .id = Command.number.id(), .label = "Number", .glyph = command.CMD_NUMBER, .kind = tb.TBKIND_TOGGLE, .hint = "Show the numbers with decimals, in thousands" },
-    .{ .type = rb.RB_MEDIUM, .id = Command.percent.id(), .label = "Percent", .glyph = command.CMD_PERCENT, .kind = tb.TBKIND_TOGGLE, .hint = "Show the numbers as a percent" },
-    .{ .type = rb.RB_MEDIUM, .id = Command.currency.id(), .label = "Currency", .glyph = command.CMD_CURRENCY, .kind = tb.TBKIND_TOGGLE, .hint = "Show the numbers as money" },
-    .{ .type = rb.RB_SMALL, .id = Command.decimals_more.id(), .label = "More Decimals", .glyph = command.CMD_DECIMALS_MORE, .hint = "Show a decimal more" },
-    .{ .type = rb.RB_SMALL, .id = Command.decimals_less.id(), .label = "Fewer Decimals", .glyph = command.CMD_DECIMALS_LESS, .hint = "Show a decimal fewer" },
-    .{ .type = rb.RB_GROUP, .label = "Cells", .glyph = command.CMD_INSERT_ROW, .reduce = 1 },
-    .{ .type = rb.RB_LARGE, .id = ID_INSERT, .label = "Insert", .glyph = command.CMD_INSERT_ROW, .kind = tb.TBKIND_DROPDOWN, .labels = &lines, .hint = "Put in rows or columns where the cells are picked" },
-    .{ .type = rb.RB_LARGE, .id = ID_DELETE, .label = "Delete", .glyph = command.CMD_DELETE_ROW, .kind = tb.TBKIND_DROPDOWN, .labels = &lines, .hint = "Take out the rows or columns of the cells picked" },
-    .{ .type = rb.RB_GROUP, .label = "Editing", .glyph = command.CMD_SUM },
-    .{ .type = rb.RB_LARGE, .id = ID_SUM, .label = "AutoSum", .glyph = command.CMD_SUM, .kind = tb.TBKIND_SPLIT, .labels = &sums, .hint = "Add up the numbers above or to the left" },
-    .{ .type = rb.RB_LARGE, .id = ID_SORT, .label = "Sort", .glyph = command.CMD_SORT, .kind = tb.TBKIND_DROPDOWN, .labels = &sorts, .hint = "Put the rows in order by the current cell's column" },
-    .{ .type = rb.RB_LARGE, .id = Command.find.id(), .label = "Find", .glyph = command.CMD_FIND, .hint = "Find a cell by what it holds" },
-    .{ .type = rb.RB_MEDIUM, .id = ID_FILL, .label = "Fill", .glyph = command.CMD_FILL, .kind = tb.TBKIND_DROPDOWN, .labels = &fills, .hint = "Copy the first row or column over the rest" },
-    .{ .type = rb.RB_MEDIUM, .id = Command.clear.id(), .label = "Clear", .glyph = command.CMD_CLEAR, .hint = "Empty the cells picked" },
-    .{ .type = rb.RB_END },
+/// key marked: a key typed on the cells is the cell's. A list's labels
+/// are put in as the ribbon is made.
+const ribbon_table = [_]RibbonEntry{
+    ribbon(.{ .type = rb.RB_TAB }, .MSG_RIBBON_HOME, null, &.{}),
+    ribbon(.{ .type = rb.RB_GROUP, .glyph = command.CMD_PASTE, .reduce = 1 }, .MSG_RIBBON_CLIPBOARD, null, &.{}),
+    ribbon(.{ .type = rb.RB_LARGE, .id = Command.paste.id(), .glyph = command.CMD_PASTE, .flags = rb.RBF_DISABLED }, .MSG_MENU_PASTE, .MSG_RIBBON_PASTE_HINT, &.{}),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.cut.id(), .glyph = command.CMD_CUT }, .MSG_MENU_CUT, null, &.{}),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.copy.id(), .glyph = command.CMD_COPY }, .MSG_MENU_COPY, null, &.{}),
+    ribbon(.{ .type = rb.RB_GROUP, .glyph = command.CMD_UNDO, .reduce = 2 }, .MSG_MENU_UNDO, null, &.{}),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.undo.id(), .glyph = command.CMD_UNDO, .flags = rb.RBF_DISABLED }, .MSG_MENU_UNDO, null, &.{}),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.redo.id(), .glyph = command.CMD_REDO, .flags = rb.RBF_DISABLED }, .MSG_MENU_REDO, null, &.{}),
+    ribbon(.{ .type = rb.RB_GROUP, .glyph = command.CMD_NUMBER }, .MSG_MENU_NUMBER, null, &.{}),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.number.id(), .glyph = command.CMD_NUMBER, .kind = tb.TBKIND_TOGGLE }, .MSG_MENU_NUMBER, .MSG_RIBBON_NUMBER_HINT, &.{}),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.percent.id(), .glyph = command.CMD_PERCENT, .kind = tb.TBKIND_TOGGLE }, .MSG_MENU_PERCENT, .MSG_RIBBON_PERCENT_HINT, &.{}),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.currency.id(), .glyph = command.CMD_CURRENCY, .kind = tb.TBKIND_TOGGLE }, .MSG_MENU_CURRENCY, .MSG_RIBBON_CURRENCY_HINT, &.{}),
+    ribbon(.{ .type = rb.RB_SMALL, .id = Command.decimals_more.id(), .glyph = command.CMD_DECIMALS_MORE }, .MSG_MENU_DECIMALS_MORE, .MSG_RIBBON_DECIMALS_MORE_HINT, &.{}),
+    ribbon(.{ .type = rb.RB_SMALL, .id = Command.decimals_less.id(), .glyph = command.CMD_DECIMALS_LESS }, .MSG_MENU_DECIMALS_LESS, .MSG_RIBBON_DECIMALS_LESS_HINT, &.{}),
+    ribbon(.{ .type = rb.RB_GROUP, .glyph = command.CMD_INSERT_ROW, .reduce = 1 }, .MSG_RIBBON_CELLS, null, &.{}),
+    ribbon(.{ .type = rb.RB_LARGE, .id = ID_INSERT, .glyph = command.CMD_INSERT_ROW, .kind = tb.TBKIND_DROPDOWN }, .MSG_RIBBON_INSERT, .MSG_RIBBON_INSERT_HINT, &lines),
+    ribbon(.{ .type = rb.RB_LARGE, .id = ID_DELETE, .glyph = command.CMD_DELETE_ROW, .kind = tb.TBKIND_DROPDOWN }, .MSG_RIBBON_DELETE, .MSG_RIBBON_DELETE_HINT, &lines),
+    ribbon(.{ .type = rb.RB_GROUP, .glyph = command.CMD_SUM }, .MSG_RIBBON_EDITING, null, &.{}),
+    ribbon(.{ .type = rb.RB_LARGE, .id = ID_SUM, .glyph = command.CMD_SUM, .kind = tb.TBKIND_SPLIT }, .MSG_MENU_SUM, .MSG_RIBBON_SUM_HINT, &sums),
+    ribbon(.{ .type = rb.RB_LARGE, .id = ID_SORT, .glyph = command.CMD_SORT, .kind = tb.TBKIND_DROPDOWN }, .MSG_RIBBON_SORT, .MSG_RIBBON_SORT_HINT, &sorts),
+    ribbon(.{ .type = rb.RB_LARGE, .id = Command.find.id(), .glyph = command.CMD_FIND }, .MSG_RIBBON_FIND, .MSG_RIBBON_FIND_HINT, &.{}),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = ID_FILL, .glyph = command.CMD_FILL, .kind = tb.TBKIND_DROPDOWN }, .MSG_RIBBON_FILL, .MSG_RIBBON_FILL_HINT, &fills),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.clear.id(), .glyph = command.CMD_CLEAR }, .MSG_MENU_CLEAR, .MSG_RIBBON_CLEAR_HINT, &.{}),
+    .{ .entry = .{ .type = rb.RB_END } },
+};
+
+/// The room the ribbon's lists take put in: each list's labels and the
+/// null after them.
+const list_room = blk: {
+    var room: usize = 0;
+    for (ribbon_table) |entry| {
+        if (entry.list.len != 0) room += entry.list.len + 1;
+    }
+    break :blk room;
 };
 
 /// The window's room under which the ribbon is its row of tabs alone: a
@@ -414,6 +455,8 @@ const Bars = struct { vert: ?*Object, horiz: ?*Object };
 const App = struct {
     sys: *ExecBase,
     dl: *DosBase,
+    /// The texts, in the language the user prefers.
+    text: *const Text,
     ib: *IntuitionBase,
     gb: *GraphicsBase,
     screen: *intuition.Screen,
@@ -834,7 +877,12 @@ const App = struct {
     }
 
     /// A message in the status line, kept until the next move.
-    fn say(app: *App, text: []const u8) void {
+    fn say(app: *App, id: Id) void {
+        app.sayLine(spanned(app.text.get(id)));
+    }
+
+    /// A message made in the status line, kept until the next move.
+    fn sayLine(app: *App, text: []const u8) void {
         app.setStatus(text);
         app.telling = true;
     }
@@ -846,17 +894,27 @@ const App = struct {
         if (app.area.cells() <= 1) return app.setStatus("");
         var gather = Totals{};
         app.sheet.eachInRange(app.area.top, app.area.left, app.area.bottom, app.area.right, &gather);
-        var line: [160]u8 = undefined;
+        // Each part a separator, a label of 30 bytes at most, a space and
+        // a value of 32.
+        var line: [3 * (3 + 30 + 1 + 32)]u8 = undefined;
         var used: usize = 0;
-        const parts = [_]struct { label: []const u8, value: ?f64 }{
-            .{ .label = "Sum ", .value = gather.sum },
-            .{ .label = "   Average ", .value = if (gather.count > 0) gather.sum / @as(f64, @floatFromInt(gather.count)) else null },
-            .{ .label = "   Count ", .value = @floatFromInt(gather.count) },
+        const parts = [_]struct { label: Id, value: ?f64 }{
+            .{ .label = .MSG_SUM, .value = gather.sum },
+            .{ .label = .MSG_AVERAGE, .value = if (gather.count > 0) gather.sum / @as(f64, @floatFromInt(gather.count)) else null },
+            .{ .label = .MSG_COUNT, .value = @floatFromInt(gather.count) },
         };
         for (parts) |part| {
             const shown = part.value orelse continue;
-            @memcpy(line[used..][0..part.label.len], part.label);
-            used += part.label.len;
+            if (used != 0) {
+                @memcpy(line[used..][0..3], "   ");
+                used += 3;
+            }
+            const label = spanned(app.text.get(part.label));
+            const room: usize = @min(label.len, 30);
+            @memcpy(line[used..][0..room], label[0..room]);
+            used += room;
+            line[used] = ' ';
+            used += 1;
             var digits: [32]u8 = undefined;
             const text = number.format(shown, 10, &digits);
             @memcpy(line[used..][0..text.len], text);
@@ -937,30 +995,22 @@ const App = struct {
         @memcpy(kept[0..length], text[0..length]);
         app.sheet.begin();
         const ok = app.sheet.changeText(app.row, app.col, kept[0..length]);
-        if (!app.sheet.end() or !ok) app.say("Not enough memory to keep all of that");
+        if (!app.sheet.end() or !ok) app.say(.MSG_NO_MEMORY_KEEP);
         app.followChanges();
         return true;
     }
 
     fn tellProblem(app: *App, compiled: formula.Compiled) void {
-        const what: []const u8 = switch (compiled.problem) {
-            .unknown_name => "No such function or name",
-            .arguments => "Wrong number of arguments",
-            .parentheses => "A parenthesis has no partner",
-            .too_long => "The formula is too long",
-            else => "The formula cannot be read",
+        const what: Id = switch (compiled.problem) {
+            .unknown_name => .MSG_PROBLEM_NAME,
+            .arguments => .MSG_PROBLEM_ARGUMENTS,
+            .parentheses => .MSG_PROBLEM_PARENTHESES,
+            .too_long => .MSG_PROBLEM_TOO_LONG,
+            else => .MSG_PROBLEM_UNREADABLE,
         };
-        var line: [96]u8 = undefined;
-        var used: usize = 0;
-        for ([_][]const u8{ what, ", at character " }) |part| {
-            @memcpy(line[used..][0..part.len], part);
-            used += part.len;
-        }
-        var digits: [32]u8 = undefined;
-        const at = number.format(@floatFromInt(compiled.at + 1), 10, &digits);
-        @memcpy(line[used..][0..at.len], at);
-        used += at.len;
-        app.say(line[0..used]);
+        var line: [160]u8 = undefined;
+        const at: u32 = @intCast(compiled.at + 1);
+        app.sayLine(app.text.format(&line, .MSG_PROBLEM_AT, .{ app.text.get(what), at }));
     }
 
     /// Typing left in the line at the top kept before anything else is
@@ -1229,7 +1279,7 @@ const App = struct {
     fn showTitle(app: *App) void {
         const now = app.sheet.changed;
         app.shown_changed = now;
-        const name: [*:0]const u8 = if (app.path[0] != 0) app.dl.FilePart(&app.path) else "Untitled";
+        const name: [*:0]const u8 = if (app.path[0] != 0) app.dl.FilePart(&app.path) else app.text.get(.MSG_UNTITLED);
         var used: usize = 0;
         if (now) {
             app.title[0] = '*';
@@ -1257,8 +1307,9 @@ const App = struct {
         if (app.sheet.changed != app.shown_changed) app.showTitle();
     }
 
-    fn tell(app: *App, comptime format: [*:0]const u8, name: [*:0]const u8) void {
-        const easy = intuition.requesters.EasyStruct{ .title = "Sheet", .text_format = format, .gadget_format = "OK" };
+    fn tell(app: *App, comptime format: Id, name: [*:0]const u8) void {
+        comptime sdk.exec.checkFormat(strings.builtin(format), struct { [*:0]const u8 });
+        const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = app.text.get(format), .gadget_format = app.text.get(.MSG_OK) };
         const args = [_]usize{@intFromPtr(name)};
         _ = app.ib.EasyRequestArgs(app.window, &easy, null, &args);
     }
@@ -1281,27 +1332,27 @@ const App = struct {
         const dl = app.dl;
         const sys = app.sys;
         const file = dl.Open(name, dos.MODE_OLDFILE) orelse {
-            if (!quiet) app.tell("Cannot open %s", name);
+            if (!quiet) app.tell(.MSG_CANNOT_OPEN, name);
             return false;
         };
         defer _ = dl.Close(file);
         var fib: dos.FileInfoBlock = .{};
         if (!dl.ExamineFH(file, &fib)) {
-            app.tell("Cannot read %s", name);
+            app.tell(.MSG_CANNOT_READ, name);
             return false;
         }
         if (fib.size > 0x7FFF_FFFF) {
-            app.tell("%s is too big", name);
+            app.tell(.MSG_TOO_BIG, name);
             return false;
         }
         const size: u32 = @intCast(fib.size);
         const memory: [*]u8 = @ptrCast(sys.AllocVec(@max(size, 1), exec.MEMF_ANY) orelse {
-            app.tell("No memory for %s", name);
+            app.tell(.MSG_NO_MEMORY_FOR, name);
             return false;
         });
         defer sys.FreeVec(memory);
         if (dl.Read(file, memory, @intCast(size)) != size) {
-            app.tell("Cannot read %s", name);
+            app.tell(.MSG_CANNOT_READ, name);
             return false;
         }
         const result = csv.read(app.sheet, memory[0..size]);
@@ -1310,8 +1361,8 @@ const App = struct {
         app.resetView();
         app.showTitle();
         if (result.short) {
-            app.say("Not enough memory for all of the file");
-        } else if (result.cut) app.say("Cells past row 9999 or column IV were left out");
+            app.say(.MSG_NO_MEMORY_FILE);
+        } else if (result.cut) app.say(.MSG_LEFT_OUT);
         return true;
     }
 
@@ -1320,18 +1371,18 @@ const App = struct {
     fn save(app: *App, name: [*:0]const u8) bool {
         const dl = app.dl;
         const bytes = csv.write(app.sheet, app.form) orelse {
-            app.tell("No memory to save %s", name);
+            app.tell(.MSG_NO_MEMORY_TO_SAVE, name);
             return false;
         };
         defer if (bytes.len > 0) app.sys.FreeVec(@constCast(bytes.ptr));
         const file = dl.Open(name, dos.MODE_NEWFILE) orelse {
-            app.tell("Cannot write %s", name);
+            app.tell(.MSG_CANNOT_WRITE, name);
             return false;
         };
         const wrote = if (bytes.len == 0) 0 else dl.Write(file, bytes.ptr, @intCast(bytes.len));
         const closed = dl.Close(file);
         if (wrote != bytes.len or !closed) {
-            app.tell("Cannot write %s", name);
+            app.tell(.MSG_CANNOT_WRITE, name);
             return false;
         }
         app.sheet.changed = false;
@@ -1352,7 +1403,7 @@ const App = struct {
     fn askFile(app: *App, title: [*:0]const u8, saving: bool, into: *[path_size:0]u8) bool {
         if (app.asl_lib == null) app.asl_lib = app.sys.OpenLibrary(asl.ASLNAME, 0);
         const ab: *AslBase = @ptrCast(app.asl_lib orelse {
-            app.tell("No %s", asl.ASLNAME);
+            app.tell(.MSG_NO_REQUESTER, asl.ASLNAME);
             return false;
         });
         // The drawer and the name the file has now, to begin with.
@@ -1395,7 +1446,7 @@ const App = struct {
 
     fn saveAs(app: *App) bool {
         var name: [path_size:0]u8 = undefined;
-        if (!app.askFile("Save the sheet as", true, &name)) return false;
+        if (!app.askFile(app.text.get(.MSG_SAVE_AS_TITLE), true, &name)) return false;
         return app.save(&name);
     }
 
@@ -1405,9 +1456,9 @@ const App = struct {
         if (!app.settle()) return false;
         if (!app.sheet.changed) return true;
         const easy = intuition.requesters.EasyStruct{
-            .title = "Sheet",
-            .text_format = "The sheet has changed.\nSave it first?",
-            .gadget_format = "Save|Don't save|Cancel",
+            .title = COMMAND_NAME,
+            .text_format = app.text.get(.MSG_CHANGED),
+            .gadget_format = app.text.get(.MSG_CHANGED_BUTTONS),
         };
         return switch (app.ib.EasyRequestArgs(app.window, &easy, null, null)) {
             1 => app.saveKept(),
@@ -1457,7 +1508,7 @@ const App = struct {
     fn copy(app: *App) bool {
         if (!app.sheet.copyBlock(app.area, &app.block)) {
             app.block.deinit(app.sys);
-            app.say("No memory to copy that much");
+            app.say(.MSG_NO_MEMORY_COPY);
             return false;
         }
         if (app.clip) |old| app.sys.FreeVec(old);
@@ -1477,7 +1528,7 @@ const App = struct {
 
     fn cut(app: *App) void {
         if (!app.copy()) return;
-        if (!app.sheet.clear(app.area)) app.say("Not enough memory to clear all of it");
+        if (!app.sheet.clear(app.area)) app.say(.MSG_NO_MEMORY_CLEAR);
         app.followChanges();
     }
 
@@ -1502,7 +1553,7 @@ const App = struct {
             app.ib.DisplayBeep(app.screen);
             return;
         }
-        if (!ok) app.say("Not enough memory to paste all of it");
+        if (!ok) app.say(.MSG_NO_MEMORY_PASTE);
         app.followChanges();
     }
 
@@ -1519,10 +1570,10 @@ const App = struct {
         switch (app.sheet.shiftLines(columns, at, count, insert)) {
             .done => {},
             .no_room => {
-                app.say(if (columns) "No room: the last columns have something in them" else "No room: the last rows have something in them");
+                app.say(if (columns) .MSG_NO_ROOM_COLUMNS else .MSG_NO_ROOM_ROWS);
                 return;
             },
-            .no_memory => app.say("Not enough memory for that"),
+            .no_memory => app.say(.MSG_NO_MEMORY_THAT),
         }
         if (columns) {
             // The columns' widths move with them.
@@ -1554,7 +1605,7 @@ const App = struct {
     /// Every cell picked given a format: a style, or a decimal more or
     /// fewer.
     fn restyle(app: *App, change: cells.Restyle) void {
-        if (!app.sheet.restyle(app.area, change)) app.say("Not enough memory to format all of it");
+        if (!app.sheet.restyle(app.area, change)) app.say(.MSG_NO_MEMORY_FORMAT);
         // A toggle pressed has turned itself; it is set back to the cell.
         app.style_shown = null;
         app.followChanges();
@@ -1571,12 +1622,12 @@ const App = struct {
         if (app.area.cells() == 1) {
             const numbers = sheet.sumRun(app.row, app.col) orelse {
                 app.ib.DisplayBeep(app.screen);
-                app.say("No numbers above or to the left to add up");
+                app.say(.MSG_NOTHING_TO_ADD);
                 return;
             };
             sheet.begin();
             const ok = sheet.changeText(app.row, app.col, cells.rangeFormula(function, numbers, &out));
-            if (!sheet.end() or !ok) app.say("Not enough memory for that");
+            if (!sheet.end() or !ok) app.say(.MSG_NO_MEMORY_THAT);
             app.followChanges();
             return;
         }
@@ -1615,7 +1666,7 @@ const App = struct {
             const text = cells.rangeFormula(function, numbers, &out);
             ok = (if (down) sheet.changeText(target, line, text) else sheet.changeText(line, target, text)) and ok;
         }
-        if (!sheet.end() or !ok) app.say("Not enough memory for all of that");
+        if (!sheet.end() or !ok) app.say(.MSG_NO_MEMORY_ALL);
         if (!any) app.ib.DisplayBeep(app.screen);
         app.followChanges();
     }
@@ -1649,7 +1700,7 @@ const App = struct {
             app.ib.DisplayBeep(app.screen);
             return;
         }
-        if (!app.sheet.sortRows(area, app.col, descending)) app.say("Not enough memory to sort all of that");
+        if (!app.sheet.sortRows(area, app.col, descending)) app.say(.MSG_NO_MEMORY_SORT);
         app.followChanges();
     }
 
@@ -1719,7 +1770,7 @@ const App = struct {
         if (length == 0) return app.startFind();
         const found = app.sheet.findText(text[0..length], app.row, app.col, backwards) orelse {
             app.ib.DisplayBeep(app.screen);
-            app.say("No cell holds that");
+            app.say(.MSG_NOT_FOUND);
             return;
         };
         app.moveTo(found.row, found.col);
@@ -1775,7 +1826,7 @@ const App = struct {
             },
             .open => if (app.mayLeave()) {
                 var name: [path_size:0]u8 = undefined;
-                if (app.askFile("Open a sheet", false, &name)) _ = app.load(&name, false);
+                if (app.askFile(app.text.get(.MSG_OPEN_TITLE), false, &name)) _ = app.load(&name, false);
             },
             .save => _ = app.saveKept(),
             .save_as => _ = app.saveAs(),
@@ -1792,14 +1843,14 @@ const App = struct {
             .copy => _ = app.copy(),
             .paste => app.paste(),
             .clear => {
-                if (!sheet.clear(app.area)) app.say("Not enough memory to clear all of it");
+                if (!sheet.clear(app.area)) app.say(.MSG_NO_MEMORY_CLEAR);
                 app.followChanges();
             },
             .fill_down, .fill_right => {
                 const down = which == .fill_down;
                 if ((down and app.area.bottom == app.area.top) or (!down and app.area.right == app.area.left)) {
                     app.ib.DisplayBeep(app.screen);
-                } else if (!sheet.fill(app.area, down)) app.say("Not enough memory to fill all of it");
+                } else if (!sheet.fill(app.area, down)) app.say(.MSG_NO_MEMORY_FILL);
                 app.followChanges();
             },
             .select_all => app.pickAll(),
@@ -1853,7 +1904,7 @@ const App = struct {
             '\r' => app.moveBy(1, 0),
             '\t' => app.moveBy(0, 1),
             0x7F => {
-                if (!app.sheet.clear(app.area)) app.say("Not enough memory to clear all of it");
+                if (!app.sheet.clear(app.area)) app.say(.MSG_NO_MEMORY_CLEAR);
                 app.followChanges();
             },
             0x1B => app.moveTo(app.row, app.col),
@@ -2097,6 +2148,13 @@ fn between(row: u32, col: u32, other_row: u32, other_col: u32) cells.Area {
     };
 }
 
+/// A string's bytes, up to its 0.
+fn spanned(text: [*:0]const u8) []const u8 {
+    var length: usize = 0;
+    while (text[length] != 0) length += 1;
+    return text[0..length];
+}
+
 fn button(ib: *IntuitionBase, label: [*:0]const u8, id: u32) ?*Object {
     return ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
         .{ .tag = gc.GA_Text, .data = @intFromPtr(label) },
@@ -2133,6 +2191,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_ERROR;
     };
     defer dl.FreeArgs(rda);
+    // Closed last: the menus and the ribbon show its strings to the end.
+    var text = Text.open(sys);
+    defer text.close();
 
     // The libraries, open until the window object is gone.
     const names = [_][*:0]const u8{ intuition.INTUITIONNAME, graphics.GRAPHICSNAME, st.STRING_LIBRARY, tx.TEXT_LIBRARY, cv.CANVAS_LIBRARY, sr.SCROLLER_LIBRARY };
@@ -2146,7 +2207,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     for (names) |name| {
         libraries[opened] = sys.OpenLibrary(name, 0) orelse {
-            _ = Printf(dl, MSG_NOLIBRARY, .{name});
+            _ = text.printf(dl, .MSG_NOLIBRARY, .{name});
             return dos.RETURN_FAIL;
         };
         opened += 1;
@@ -2163,7 +2224,25 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     for (optional_names, 0..) |name, i| optional[i] = sys.OpenLibrary(name, 0);
     const ub: ?*UtilityBase = @ptrCast(optional[0]);
-    const built: ?*rb.Built = if (optional[1] != null and optional[2] != null and optional[3] != null) rb.build(sys, ib, &ribbon_table, &[_]TagItem{
+    // The ribbon's table with its labels, hints and lists in the user's
+    // language, each list's labels in `list_labels` with a null after.
+    var list_labels: [list_room]?[*:0]const u8 = undefined;
+    var ribbon_entries: [ribbon_table.len]rb.NewRibbon = undefined;
+    var list_at: usize = 0;
+    for (ribbon_table, &ribbon_entries) |entry, *made| {
+        made.* = entry.entry;
+        if (entry.label) |id| made.label = text.get(id);
+        if (entry.hint) |id| made.hint = text.get(id);
+        if (entry.list.len == 0) continue;
+        made.labels = @ptrCast(&list_labels[list_at]);
+        for (entry.list) |id| {
+            list_labels[list_at] = text.get(id);
+            list_at += 1;
+        }
+        list_labels[list_at] = null;
+        list_at += 1;
+    }
+    const built: ?*rb.Built = if (optional[1] != null and optional[2] != null and optional[3] != null) rb.build(sys, ib, &ribbon_entries, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_RIBBON },
         .{ .tag = rb.RIBBON_MinimizeBelow, .data = ribbon_minimize_below },
         .{},
@@ -2173,7 +2252,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const ribbon_shown = built != null and ribbonWanted(sys, dl, ub);
 
     const screen = ib.LockPubScreen(null) orelse {
-        _ = Printf(dl, MSG_NOSCREEN, .{});
+        _ = text.printf(dl, .MSG_NOSCREEN, .{});
         return dos.RETURN_FAIL;
     };
     defer ib.UnlockPubScreen(null, screen);
@@ -2181,7 +2260,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const sheet = cells.Sheet.create(sys) orelse {
         ib.FreeScreenDrawInfo(screen, draw_info);
-        _ = Printf(dl, MSG_NOMEMORY, .{});
+        _ = text.printf(dl, .MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
     defer sheet.destroy();
@@ -2229,9 +2308,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = gc.STRINGA_MaxChars, .data = 64 },
         .{},
     });
-    const find_next = button(ib, "Next", ID_FIND_NEXT);
-    const find_previous = button(ib, "Previous", ID_FIND_PREVIOUS);
-    const find_close = button(ib, "Close", ID_FIND_CLOSE);
+    const find_next = button(ib, text.get(.MSG_FIND_NEXT_BUTTON), ID_FIND_NEXT);
+    const find_previous = button(ib, text.get(.MSG_FIND_PREVIOUS_BUTTON), ID_FIND_PREVIOUS);
+    const find_close = button(ib, text.get(.MSG_FIND_CLOSE_BUTTON), ID_FIND_CLOSE);
     const parts = [_]?*Object{ grid, name_box, entry, status, find_text, find_next, find_previous, find_close };
     var whole = true;
     for (parts) |part| whole = whole and part != null;
@@ -2249,7 +2328,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
         .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(find_text) },
-        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Find") },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(text.get(.MSG_FIND_LABEL)) },
         .{ .tag = lg.CHILDA_WeightWidth, .data = 1 },
         .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(find_next) },
         .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
@@ -2298,7 +2377,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         } else for (parts) |part| ib.DisposeObject(part);
         if (built) |made| ib.DisposeObject(made.ribbon);
         ib.FreeScreenDrawInfo(screen, draw_info);
-        _ = Printf(dl, MSG_NOMEMORY, .{});
+        _ = text.printf(dl, .MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
@@ -2332,7 +2411,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }) orelse {
         ib.DisposeObject(made_layout);
         ib.FreeScreenDrawInfo(screen, draw_info);
-        _ = Printf(dl, MSG_NOMEMORY, .{});
+        _ = text.printf(dl, .MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
     defer ib.DisposeObject(object);
@@ -2344,13 +2423,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // memory of its own.
     const app: *App = @ptrCast(@alignCast(sys.AllocVec(@sizeOf(App), exec.MEMF_ANY) orelse {
         ib.FreeScreenDrawInfo(screen, draw_info);
-        _ = Printf(dl, MSG_NOMEMORY, .{});
+        _ = text.printf(dl, .MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     }));
     defer sys.FreeVec(app);
     app.* = .{
         .sys = sys,
         .dl = dl,
+        .text = &text,
         .ib = ib,
         .gb = gb,
         .screen = screen,
@@ -2379,7 +2459,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var open = wc.WmOpen{};
     const opened_window = ib.SendMessage(object, @ptrCast(&open));
     if (opened_window == 0) {
-        _ = Printf(dl, MSG_NOMEMORY, .{});
+        _ = text.printf(dl, .MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     }
     app.window = @ptrFromInt(opened_window);
@@ -2394,7 +2474,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // The menus; a sheet without them still works, so a strip that will
     // not go on is left off rather than given up over. View's Ribbon is
     // checked while it is shown, and there only when there is one.
-    var table = menus;
+    var table: [menus.len]mn.NewMenu = undefined;
+    for (menus, &table) |menu_entry, *made| {
+        made.* = menu_entry.menu;
+        if (menu_entry.text) |id| made.label = text.get(id);
+    }
     if (built == null) {
         table[ribbon_item].flags |= mn.NM_ITEMDISABLED;
     } else if (ribbon_shown) table[ribbon_item].flags |= mn.CHECKED;

@@ -20,7 +20,7 @@
 //! that failed is told by a later WRITE or by CLOSE.
 //!
 //! **Attributes.** A file's size, its time - the system clock's local
-//! time turned into UTC by the zone in `ENVARC:Sys/timezone` - and its
+//! time turned into UTC by the zone in `ENV:Sys/timezone` - and its
 //! permissions: read, write and execute for the owner from the
 //! protection bits (a set bit forbids), the same without write for the
 //! rest. SETSTAT sets them back - write sets delete with it - and the

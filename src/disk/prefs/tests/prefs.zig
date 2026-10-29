@@ -227,6 +227,8 @@ test "the settings files of a fresh disk: the explanation the SDK writes" {
     try testing.expectEqualStrings(prefs.sound.header, @embedFile("../env-archive/Sys/sound.prefs"));
     try testing.expectEqualStrings(prefs.audio.header, @embedFile("../env-archive/Sys/audio.prefs"));
     try testing.expectEqualStrings(prefs.dock.header, @embedFile("../env-archive/Sys/dock.prefs"));
+    try testing.expectEqualStrings(prefs.locale.header, @embedFile("../env-archive/Sys/locale.prefs"));
+    try testing.expect(std.mem.startsWith(u8, @embedFile("../env-archive/Sys/timezone"), sdk.dos.timezone.header));
     const fonts = @embedFile("../env-archive/Sys/font.prefs");
     try testing.expect(std.mem.startsWith(u8, fonts, prefs.font.header));
     // Every commented line of the style's default reads as a line.
@@ -506,6 +508,34 @@ test "dock.prefs: a line read and written back; what it does not take is told" {
     try testing.expect(prefs.dock.parse(ub, "MAGNIFY=200", &bad) != null);
     try testing.expect(prefs.dock.parse(ub, "WIDTH=3", &bad) != null);
     try testing.expectEqualStrings(prefs.Pairs.quote_not_closed, std.mem.span(prefs.dock.parse(ub, "EDGE=\"LEFT", &bad).?));
+    try utilityDown(ub);
+}
+
+test "locale.prefs: every line read, the languages in order, written back" {
+    const ub = try utilityUp();
+    defer kexec.deinit();
+    var settings: prefs.locale.Settings = .{};
+    try testing.expect(prefs.locale.parse(ub, "# a comment\ncountry=schweiz\nLANGUAGES=\"francais, deutsch,english\" PAPER=A4\n", &settings) == null);
+    try testing.expectEqualStrings("schweiz", settings.countryName());
+    try testing.expectEqual(@as(usize, 3), settings.language_count);
+    try testing.expectEqualStrings("francais", settings.language(0));
+    try testing.expectEqualStrings("english", settings.language(2));
+    var text: [360]u8 = undefined;
+    try testing.expectEqualStrings("COUNTRY=schweiz LANGUAGES=\"francais, deutsch, english\"", text[0..prefs.locale.write(&settings, &text)]);
+
+    // A language once, one in no quotes, none at all.
+    try testing.expect(!settings.addLanguage("Deutsch"));
+    settings.clearLanguages();
+    try testing.expect(settings.addLanguage("deutsch"));
+    try testing.expectEqualStrings("COUNTRY=schweiz LANGUAGES=deutsch", text[0..prefs.locale.write(&settings, &text)]);
+    settings.clearLanguages();
+    try testing.expect(settings.setCountry(""));
+    try testing.expectEqual(@as(usize, 0), prefs.locale.write(&settings, &text));
+
+    // The header's examples read as the library reads them; a quote not
+    // closed is told.
+    var again: prefs.locale.Settings = .{};
+    try testing.expect(prefs.locale.parse(ub, "COUNTRY=deutschland LANGUAGES=\"deutsch", &again) != null);
     try utilityDown(ub);
 }
 

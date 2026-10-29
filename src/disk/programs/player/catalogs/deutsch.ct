@@ -1,0 +1,258 @@
+## version $VER: programs/Player.catalog 1.0 (29.10.2026)
+## language deutsch
+## codeset 106
+; The Player's strings in German.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Öffnen...
+MSG_MENU_OPEN_DRAWER
+Schublade öffnen...
+MSG_MENU_OPEN_URL
+URL öffnen...
+MSG_MENU_SAVE_PLAYLIST
+Wiedergabeliste speichern...
+MSG_MENU_ABOUT
+Über
+MSG_MENU_QUIT
+Beenden
+MSG_MENU_PLAYLIST
+Wiedergabeliste
+MSG_MENU_ADD
+Hinzufügen...
+MSG_MENU_REMOVE
+Entfernen
+MSG_MENU_CLEAR
+Leeren
+MSG_MENU_SHUFFLE
+Zufällig
+MSG_MENU_REPEAT
+Wiederholen
+MSG_MENU_REPEAT_OFF
+Aus
+MSG_MENU_REPEAT_ALL
+Alle
+MSG_MENU_REPEAT_ONE
+Eines
+MSG_MENU_PICTURE
+Bild
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Welle
+MSG_MENU_BARS
+Balken
+MSG_MENU_SETTINGS
+Einstellungen
+MSG_MENU_REMEMBER
+Merken, wo es war
+MSG_PAGE_PLAYING
+Läuft gerade
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Gemerkte Sender
+MSG_VIEW_FOUND
+Gefunden
+MSG_NAME
+Name
+MSG_GENRE
+Genre
+MSG_COUNTRY
+Land
+MSG_COLUMN_TITLE
+Titel
+MSG_COLUMN_ARTIST
+Interpret
+MSG_COLUMN_TIME
+Zeit
+MSG_COLUMN_STATION
+Sender
+MSG_COLUMN_ADDRESS
+Adresse
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Genres
+MSG_SHUFFLE_BUTTON
+_Zufällig
+MSG_SHUFFLE_HINT
+Die Lieder in einer eigenen Reihenfolge spielen
+MSG_REPEAT_BUTTON
+_Wiederholen
+MSG_REPEAT_HINT
+Die Liste noch einmal spielen, oder das eine Lied
+MSG_MUTE_BUTTON
+_Stumm
+MSG_MUTE_HINT
+Den Ton aus- und wieder einschalten
+MSG_LENGTH_HINT
+Die Länge des Liedes, oder was davon bleibt
+MSG_ADD_BUTTON
+_Hinzufügen...
+MSG_REMOVE_BUTTON
+_Entfernen
+MSG_CLEAR_BUTTON
+_Leeren
+MSG_OUTPUT_LABEL
+_Ausgabe
+MSG_SEARCH_BUTTON
+Su_chen
+MSG_KEEP_BUTTON
+_Merken
+MSG_FORGET_BUTTON
+E_ntfernen
+MSG_FIND_LABEL
+S_uche
+MSG_BY_LABEL
+_in
+MSG_URL_TITLE
+URL öffnen
+MSG_URL_ADDRESS
+A_dresse
+MSG_URL_OPEN
+Ö_ffnen
+MSG_URL_CANCEL
+_Abbrechen
+MSG_ASK_PLAY
+Welche Lieder?
+MSG_ASK_ADD
+Welche Lieder hinzufügen?
+MSG_ASK_DRAWER
+Welche Schublade?
+MSG_ASK_SAVE
+Die Wiedergabeliste speichern als
+MSG_ABOUT_TITLE
+Über Player
+MSG_ABOUT
+%s\n\nLieder aus WAV-, MP3-, FLAC- und Ogg-Vorbis-Dateien,\neines ins nächste, mit ihren Covern,\nSender aus dem Netz\nund ein Bild des Klangs.
+MSG_OK
+OK
+MSG_NO_SONG
+Kein Lied
+MSG_TRACK_OF
+Titel %u von %u
+MSG_TRACK
+Titel %u
+MSG_COMPOSED_BY
+komponiert von %s
+MSG_CHAPTER
+Kapitel %u von %u
+MSG_SOUND
+Ton
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+Lied %u von %u
+MSG_NO_SOUND
+kein Ton
+MSG_NO_STREAM_FREE
+kein Datenstrom frei
+MSG_LIVE
+live
+MSG_BUFFERING
+puffert
+MSG_BUFFERING_PERCENT
+Puffern %u%%
+MSG_STATION_IDLE
+Ein Sender: Abspielen hört ihn an
+MSG_CALLING
+Der Sender wird angerufen
+MSG_NO_MEMORY_STATION
+Kein Speicher für den Sender
+MSG_ALL_STREAMS_USED
+Alle Tondatenströme sind belegt
+MSG_NO_SOUND_HERE
+Dieses Gerät hat keinen Ton
+MSG_NO_AUDIO_STREAM
+audio.device öffnete keinen Datenstrom
+MSG_KEPT_ALREADY
+Schon gemerkt: %s
+MSG_KEPT
+Gemerkt: %s
+MSG_NO_MEMORY_KEEP
+Kein Speicher, um den Sender zu merken
+MSG_NO_MEMORY_SEARCH
+Kein Speicher für die Suche
+MSG_SEARCHING
+Suche läuft
+MSG_ASKING
+Frage %s
+MSG_NONE_FOUND
+Kein Sender gefunden
+MSG_ONE_FOUND
+Ein Sender gefunden
+MSG_COUNT_FOUND
+%u Sender gefunden
+MSG_NO_NETWORK
+Kein Netz: bsdsocket.library fehlt
+MSG_NO_HTTP
+http.library fehlt
+MSG_NO_TLS
+tls.library fehlt
+MSG_NO_MEMORY_CONNECTION
+Kein Speicher für die Verbindung
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info hat keine Adresse
+MSG_SERVICE_NO_ANSWER
+radio-browser.info hat die Suche nicht beantwortet
+MSG_SERVICE_UNREACHED
+radio-browser.info war nicht erreichbar
+MSG_SERVICE_NONSENSE
+Die Antwort von radio-browser.info ergibt keinen Sinn
+MSG_SEARCH_FAILED
+Die Suche ist fehlgeschlagen
+MSG_NO_SIGNAL
+Kein Signal frei für den Sender
+MSG_NO_TIMER
+timer.device ließ sich nicht öffnen
+MSG_LISTS_ONLY
+Die Listen des Senders führen nur zu weiteren Listen
+MSG_STATION_STOPPED
+Der Sender sendet nicht mehr
+MSG_STATION_ANSWERED
+Der Sender antwortete
+MSG_SENDS_AAC
+Der Sender sendet AAC, das nicht abgespielt wird
+MSG_STATION_ENDED
+Der Sender hat die Verbindung beendet
+MSG_SENDS_HLS
+Der Sender sendet HLS, das nicht abgespielt wird
+MSG_LIST_EMPTY
+Die Liste des Senders nennt keinen Sender
+MSG_LIST_TOO_LONG
+Die Liste des Senders nennt eine zu lange Adresse
+MSG_NOT_AN_ADDRESS
+Das ist keine Adresse, die sich anhören lässt
+MSG_HOST_NO_ADDRESS
+Der Rechner des Senders hat keine Adresse
+MSG_CLOCK_NOT_SET
+Die Uhr ist nicht gestellt, darum kann das Zertifikat des Senders nicht geprüft werden (TimeSync)
+MSG_CERTIFICATE
+Das Zertifikat des Senders wurde nicht angenommen
+MSG_SECURE_FAILED
+Die sichere Verbindung ist fehlgeschlagen
+MSG_CLOSED
+Der Sender hat die Verbindung ohne Antwort geschlossen
+MSG_NOT_HTTP
+Der Sender antwortet nicht in HTTP
+MSG_NONSENSE
+Die Antwort des Senders ergibt keinen Sinn
+MSG_CIRCLES
+Der Sender schickt die Anfrage im Kreis
+MSG_UNREACHED
+Der Sender war nicht erreichbar
+MSG_CONNECTION_FAILED
+Die Verbindung ist fehlgeschlagen
+MSG_NOLIBRARY
+%s: %s lässt sich nicht öffnen\n
+MSG_NOMEMORY
+%s: kein Speicher für das Fenster\n
+MSG_NOBUFFERS
+%s: kein Speicher für den Ton\n
+MSG_NOWINDOW
+%s: kein Fenster\n

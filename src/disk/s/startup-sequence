@@ -30,13 +30,11 @@ Assign >NIL: FONTS: SYS:fonts
 ; running system reads live in RAM:, and start as a copy of them.
 Assign >NIL: ENVARC: SYS:Prefs/Env-Archive
 
-; The time zone where a file system reads it without a file: exFAT writes
-; each moment with its offset from UTC. And the clock never earlier than
-; the date SetClock SAVE last kept - a board whose clock lost the date
-; would start in 1978 - before the first file is written, so that every
-; file has a date of this start's clock, which C:net/TimeSync REDATE
-; puts right once the network has the time.
-C:SetClock >NIL: ZONE LOAD
+; The clock never earlier than the date SetClock SAVE last kept - a board
+; whose clock lost the date would start in 1978 - before the first file is
+; written, so that every file has a date of this start's clock, which
+; C:net/TimeSync REDATE puts right once the network has the time.
+C:SetClock >NIL: LOAD
 
 C:MakeDir >NIL: RAM:T RAM:Clipboards RAM:ENV RAM:ENV/Sys
 C:Copy >NIL: ENVARC: RAM:ENV ALL QUIET NOREQ
@@ -44,6 +42,10 @@ C:Copy >NIL: ENVARC: RAM:ENV ALL QUIET NOREQ
 Assign >NIL: ENV: RAM:ENV
 Assign >NIL: T: RAM:T
 Assign >NIL: CLIPS: RAM:Clipboards
+
+; The time zone, from ENV:Sys/timezone, where a file system reads it
+; without a file: exFAT writes each moment with its offset from UTC.
+C:SetClock >NIL: ZONE
 
 ; The level the system log keeps, when ENV:Sys/loglevel names one (error,
 ; warning, info or debug); information and up without it.

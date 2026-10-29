@@ -54,6 +54,9 @@ const HttpBase = sdk.interface.http.HttpBase;
 const TagItem = utility.TagItem;
 const icy = @import("icy.zig");
 const m3u = @import("m3u.zig");
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
+const Id = strings.Id;
 
 pub const ring_bytes = 256 * 1024;
 const ring_mask = ring_bytes - 1;
@@ -172,14 +175,17 @@ pub const Radio = struct {
     /// The last connection brought sound.
     heard: bool = false,
     agent: [*:0]const u8,
+    /// The window's strings: why a connection ended is said in them.
+    text: *const Text,
     url: [dos.path_max + 1:0]u8 = @splat(0),
 
     // --- the window's calls ------------------------------------------------------
 
     /// The station at `url` listened to, its reader started; `agent` the
-    /// name the requests give, the window's until `free`. Null without the
-    /// memory, a signal or the process.
-    pub fn start(sys: *ExecBase, dl: *DosBase, url: [*:0]const u8, agent: [*:0]const u8) ?*Radio {
+    /// name the requests give and `text` the strings it says why in, both
+    /// the window's until `free`. Null without the memory, a signal or the
+    /// process.
+    pub fn start(sys: *ExecBase, dl: *DosBase, url: [*:0]const u8, agent: [*:0]const u8, text: *const Text) ?*Radio {
         const memory = sys.AllocVec(@sizeOf(Radio), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
         const ring = sys.AllocVec(ring_bytes, exec.MEMF_ANY);
         const end_port = sys.CreateMsgPort();
@@ -199,6 +205,7 @@ pub const Radio = struct {
             .end_port = end_port.?,
             .ring = @ptrCast(ring.?),
             .agent = agent,
+            .text = text,
         };
         station.ended = .{ .reply_port = station.end_port, .length = @sizeOf(exec.Message) };
         sys.InitSemaphore(&station.lock);
@@ -360,21 +367,21 @@ pub const Radio = struct {
     fn listenAll(station: *Radio) void {
         const sys = station.sys;
         station.room_bit = sys.AllocSignal(-1);
-        if (station.room_bit < 0) return station.fail("No signal free for the station", null);
+        if (station.room_bit < 0) return station.fail(station.text.get(.MSG_NO_SIGNAL), null);
         defer sys.FreeSignal(station.room_bit);
-        const socket_lib = sys.OpenLibrary(bsd.SOCKETNAME, 1) orelse return station.fail("No network: bsdsocket.library is not there", null);
+        const socket_lib = sys.OpenLibrary(bsd.SOCKETNAME, 1) orelse return station.fail(station.text.get(.MSG_NO_NETWORK), null);
         defer sys.CloseLibrary(socket_lib);
         const sb: *SocketBase = @ptrCast(socket_lib);
-        const http_lib = sys.OpenLibrary(http.HTTPNAME, 1) orelse return station.fail("http.library is not there", null);
+        const http_lib = sys.OpenLibrary(http.HTTPNAME, 1) orelse return station.fail(station.text.get(.MSG_NO_HTTP), null);
         defer sys.CloseLibrary(http_lib);
         const hb: *HttpBase = @ptrCast(http_lib);
-        if (!station.openClock()) return station.fail("timer.device would not open", null);
+        if (!station.openClock()) return station.fail(station.text.get(.MSG_NO_TIMER), null);
         defer station.closeClock();
         const client = hb.CreateClient(sb, &[_]TagItem{
             .{ .tag = http.HTTP_UserAgent, .data = @intFromPtr(station.agent) },
             .{ .tag = http.HTTP_Timeout, .data = quiet_seconds },
             .{},
-        }) orelse return station.fail("No memory for the connection", null);
+        }) orelse return station.fail(station.text.get(.MSG_NO_MEMORY_CONNECTION), null);
         defer hb.DeleteClient(client);
 
         // The calls in a row that brought no sound, and whether one ever did.
@@ -390,14 +397,14 @@ pub const Radio = struct {
                     lists += 1;
                     continue;
                 }
-                station.because("The station's lists lead only to more lists", null);
+                station.because(.MSG_LISTS_ONLY, null);
             }
             if (station.heard) {
                 calls = 0;
                 ever = true;
             }
             if (!ever) return station.fail(&station.reason, null);
-            if (calls == call_waits.len) return station.fail("The station stopped sending", &station.cause);
+            if (calls == call_waits.len) return station.fail(station.text.get(.MSG_STATION_STOPPED), &station.cause);
             if (!station.pause(call_waits[calls])) return;
             calls += 1;
         }
@@ -418,13 +425,13 @@ pub const Radio = struct {
         defer hb.CloseRequest(request);
         const status = hb.GetRequestAttr(request, http.HTTP_Status);
         if (status < 200 or status > 299) {
-            station.because("The station answered", @ptrFromInt(hb.GetRequestAttr(request, http.HTTP_StatusLine)));
+            station.because(.MSG_STATION_ANSWERED, @ptrFromInt(hb.GetRequestAttr(request, http.HTTP_StatusLine)));
             return .lost;
         }
         const kind = icy.kindOf(textOf(hb.GetHeader(request, "Content-Type")));
         if (kind == .list or (kind == .unknown and m3u.namesList(textOf(&station.url)))) return station.followList(hb, sb, request);
         if (kind == .aac) {
-            station.because("The station sends AAC, which is not played", null);
+            station.because(.MSG_SENDS_AAC, null);
             return .lost;
         }
         station.strip = icy.Strip.init(number(hb.GetHeader(request, "icy-metaint")));
@@ -435,7 +442,7 @@ pub const Radio = struct {
             if (got <= 0) {
                 if (station.isHalted()) return .halted;
                 if (got == 0) {
-                    station.because("The station ended the connection", null);
+                    station.because(.MSG_STATION_ENDED, null);
                     return .lost;
                 }
                 return station.lostBy(sb, got, tls.TLSERR_OK, false);
@@ -460,15 +467,15 @@ pub const Radio = struct {
         }
         const text = station.piece[0..length];
         if (m3u.isHls(text)) {
-            station.because("The station sends HLS, which is not played", null);
+            station.because(.MSG_SENDS_HLS, null);
             return .lost;
         }
         const address = m3u.firstAddress(text) orelse {
-            station.because("The station's list names no station", null);
+            station.because(.MSG_LIST_EMPTY, null);
             return .lost;
         };
         if (address.len > dos.path_max) {
-            station.because("The station's list names an address too long", null);
+            station.because(.MSG_LIST_TOO_LONG, null);
             return .lost;
         }
         @memcpy(station.url[0..address.len], address);
@@ -482,20 +489,20 @@ pub const Radio = struct {
     fn lostBy(station: *Radio, sb: *SocketBase, err: i32, tls_error: i32, opening: bool) Outcome {
         if (station.isHalted()) return .halted;
         switch (err) {
-            http.HTTPERR_URL => station.because("This is not an address to listen to", null),
-            http.HTTPERR_HOST => station.because("The station's host has no address", null),
+            http.HTTPERR_URL => station.because(.MSG_NOT_AN_ADDRESS, null),
+            http.HTTPERR_HOST => station.because(.MSG_HOST_NO_ADDRESS, null),
             http.HTTPERR_TLS => station.because(switch (tls_error) {
-                tls.TLSERR_CLOCK => "The clock is not set, so the station's certificate cannot be checked (TimeSync)",
-                tls.TLSERR_CERTIFICATE => "The station's certificate was not accepted",
-                else => "The secure connection failed",
+                tls.TLSERR_CLOCK => .MSG_CLOCK_NOT_SET,
+                tls.TLSERR_CERTIFICATE => .MSG_CERTIFICATE,
+                else => .MSG_SECURE_FAILED,
             }, null),
-            http.HTTPERR_LIBRARY => station.because("tls.library is not there", null),
-            http.HTTPERR_CLOSED => station.because("The station closed the connection without answering", null),
-            http.HTTPERR_PROTOCOL => station.because(if (opening) "The station does not answer in HTTP" else "The station's answer makes no sense", null),
-            http.HTTPERR_REDIRECT => station.because("The station sends the request round in circles", null),
-            http.HTTPERR_NOMEM => station.because("No memory for the connection", null),
-            http.HTTPERR_IO => station.because(if (opening) "The station could not be reached" else "The connection failed", bsd.errnoText(sb, sb.Errno())),
-            else => station.because("The connection failed", null),
+            http.HTTPERR_LIBRARY => station.because(.MSG_NO_TLS, null),
+            http.HTTPERR_CLOSED => station.because(.MSG_CLOSED, null),
+            http.HTTPERR_PROTOCOL => station.because(if (opening) .MSG_NOT_HTTP else .MSG_NONSENSE, null),
+            http.HTTPERR_REDIRECT => station.because(.MSG_CIRCLES, null),
+            http.HTTPERR_NOMEM => station.because(.MSG_NO_MEMORY_CONNECTION, null),
+            http.HTTPERR_IO => station.because(if (opening) .MSG_UNREACHED else .MSG_CONNECTION_FAILED, bsd.errnoText(sb, sb.Errno())),
+            else => station.because(.MSG_CONNECTION_FAILED, null),
         }
         return .lost;
     }
@@ -575,9 +582,10 @@ pub const Radio = struct {
 
     /// Why the last connection ended: `first`, and after a colon `then`
     /// when there is one - the cause alone.
-    fn because(station: *Radio, first: [*:0]const u8, then: ?[*:0]const u8) void {
-        join(&station.reason, first, then);
-        join(&station.cause, then orelse first, null);
+    fn because(station: *Radio, first: Id, then: ?[*:0]const u8) void {
+        const said = station.text.get(first);
+        join(&station.reason, said, then);
+        join(&station.cause, then orelse said, null);
     }
 
     /// The station given up on: why, for the window.

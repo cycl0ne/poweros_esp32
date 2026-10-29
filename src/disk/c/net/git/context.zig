@@ -37,7 +37,7 @@ pub const Git = struct {
     /// A progress line ended by a carriage return is on the screen: the
     /// next message starts a new line first.
     progress_open: bool = false,
-    /// The zone in ENVARC:Sys/timezone, read the first time a date is
+    /// The zone in ENV:Sys/timezone, read the first time a date is
     /// turned into git's time.
     zone: ?timezone.Zone = null,
 

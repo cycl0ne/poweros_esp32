@@ -18,7 +18,7 @@
 //!   the letters it sorts after one of the alphabet's (`AFTER_Z=Å,ÄÆ,ÖØ`,
 //!   a comma between letters that sort apart). English is the library's
 //!   own and has no file.
-//! - the time zone's rule, from the first line of ENVARC:Sys/timezone.
+//! - the time zone's rule, from the first line of ENV:Sys/timezone.
 //!
 //! Every file is a line of `KEY=value` pairs per line, as utility's
 //! NextSetting reads them - a value with blanks in double quotes - with
@@ -357,7 +357,7 @@ fn readLanguage(lb: *LocaleBase, ext: *ExtLocale, file: File) bool {
     return true;
 }
 
-/// The time zone's rule kept, when ENVARC:Sys/timezone has one.
+/// The time zone's rule kept, when ENV:Sys/timezone has one.
 fn readTimeZone(lb: *LocaleBase, ext: *ExtLocale) void {
     ext.public.time_zone = null;
     const file = File.read(lb, dos.timezone.zone_file) orelse return;

@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (29.10.2026)
+## language deutsch
+## codeset 106
+; Sheet's strings in German.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Neu
+MSG_MENU_OPEN
+Öffnen...
+MSG_MENU_SAVE
+Speichern
+MSG_MENU_SAVE_AS
+Speichern als...
+MSG_MENU_QUIT
+Beenden
+MSG_MENU_EDIT
+Bearbeiten
+MSG_MENU_UNDO
+Rückgängig
+MSG_MENU_REDO
+Wiederholen
+MSG_MENU_CUT
+Ausschneiden
+MSG_MENU_COPY
+Kopieren
+MSG_MENU_PASTE
+Einfügen
+MSG_MENU_CLEAR
+Leeren
+MSG_MENU_FILL_DOWN
+Nach unten füllen
+MSG_MENU_FILL_RIGHT
+Nach rechts füllen
+MSG_MENU_SELECT_ALL
+Alles auswählen
+MSG_MENU_FIND
+Suchen...
+MSG_MENU_FIND_NEXT
+Weitersuchen
+MSG_MENU_SHEET
+Tabelle
+MSG_MENU_INSERT_ROWS
+Zeilen einfügen
+MSG_MENU_DELETE_ROWS
+Zeilen löschen
+MSG_MENU_INSERT_COLUMNS
+Spalten einfügen
+MSG_MENU_DELETE_COLUMNS
+Spalten löschen
+MSG_MENU_WIDER
+Spalte breiter
+MSG_MENU_NARROWER
+Spalte schmaler
+MSG_MENU_SUM
+AutoSumme
+MSG_MENU_SORT_ASCENDING
+Aufsteigend sortieren
+MSG_MENU_SORT_DESCENDING
+Absteigend sortieren
+MSG_MENU_FORMAT
+Format
+MSG_MENU_GENERAL
+Standard
+MSG_MENU_NUMBER
+Zahl
+MSG_MENU_PERCENT
+Prozent
+MSG_MENU_CURRENCY
+Währung
+MSG_MENU_DECIMALS_MORE
+Mehr Dezimalstellen
+MSG_MENU_DECIMALS_LESS
+Weniger Dezimalstellen
+MSG_MENU_VIEW
+Ansicht
+MSG_MENU_RIBBON
+Menüband
+MSG_RIBBON_HOME
+Start
+MSG_RIBBON_CLIPBOARD
+Zwischenablage
+MSG_RIBBON_PASTE_HINT
+Einfügen, was ausgeschnitten oder kopiert wurde
+MSG_RIBBON_NUMBER_HINT
+Die Zahlen mit Dezimalstellen zeigen, in Tausendern
+MSG_RIBBON_PERCENT_HINT
+Die Zahlen als Prozent zeigen
+MSG_RIBBON_CURRENCY_HINT
+Die Zahlen als Geldbetrag zeigen
+MSG_RIBBON_DECIMALS_MORE_HINT
+Eine Dezimalstelle mehr zeigen
+MSG_RIBBON_DECIMALS_LESS_HINT
+Eine Dezimalstelle weniger zeigen
+MSG_RIBBON_CELLS
+Zellen
+MSG_RIBBON_INSERT
+Einfügen
+MSG_RIBBON_INSERT_HINT
+Zeilen oder Spalten dort einfügen, wo Zellen ausgewählt sind
+MSG_RIBBON_DELETE
+Löschen
+MSG_RIBBON_DELETE_HINT
+Die Zeilen oder Spalten der ausgewählten Zellen herausnehmen
+MSG_RIBBON_EDITING
+Bearbeiten
+MSG_RIBBON_SUM_HINT
+Die Zahlen darüber oder links davon zusammenzählen
+MSG_RIBBON_SORT
+Sortieren
+MSG_RIBBON_SORT_HINT
+Die Zeilen nach der Spalte der aktuellen Zelle ordnen
+MSG_RIBBON_FIND
+Suchen
+MSG_RIBBON_FIND_HINT
+Eine Zelle nach ihrem Inhalt suchen
+MSG_RIBBON_FILL
+Füllen
+MSG_RIBBON_FILL_HINT
+Die erste Zeile oder Spalte über die übrigen kopieren
+MSG_RIBBON_CLEAR_HINT
+Die ausgewählten Zellen leeren
+MSG_ROWS
+Zeilen
+MSG_COLUMNS
+Spalten
+MSG_SUM
+Summe
+MSG_AVERAGE
+Mittelwert
+MSG_COUNT
+Anzahl
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Aufsteigend
+MSG_DESCENDING
+Absteigend
+MSG_DOWN
+Nach unten
+MSG_RIGHT
+Nach rechts
+MSG_PROBLEM_NAME
+Unbekannte Funktion oder unbekannter Name
+MSG_PROBLEM_ARGUMENTS
+Falsche Anzahl von Argumenten
+MSG_PROBLEM_PARENTHESES
+Eine Klammer hat kein Gegenstück
+MSG_PROBLEM_TOO_LONG
+Die Formel ist zu lang
+MSG_PROBLEM_UNREADABLE
+Die Formel kann nicht gelesen werden
+MSG_PROBLEM_AT
+%s, bei Zeichen %u
+MSG_NO_MEMORY_KEEP
+Nicht genug Speicher, um alles davon zu behalten
+MSG_NO_MEMORY_FILE
+Nicht genug Speicher für die ganze Datei
+MSG_LEFT_OUT
+Zellen hinter Zeile 9999 oder Spalte IV wurden weggelassen
+MSG_NO_MEMORY_COPY
+Kein Speicher, um so viel zu kopieren
+MSG_NO_MEMORY_CLEAR
+Nicht genug Speicher, um alles zu leeren
+MSG_NO_MEMORY_PASTE
+Nicht genug Speicher, um alles einzufügen
+MSG_NO_ROOM_COLUMNS
+Kein Platz: in den letzten Spalten steht etwas
+MSG_NO_ROOM_ROWS
+Kein Platz: in den letzten Zeilen steht etwas
+MSG_NO_MEMORY_THAT
+Nicht genug Speicher dafür
+MSG_NO_MEMORY_FORMAT
+Nicht genug Speicher, um alles zu formatieren
+MSG_NOTHING_TO_ADD
+Keine Zahlen darüber oder links davon zum Zusammenzählen
+MSG_NO_MEMORY_ALL
+Nicht genug Speicher für all das
+MSG_NO_MEMORY_SORT
+Nicht genug Speicher, um alles zu sortieren
+MSG_NO_MEMORY_FILL
+Nicht genug Speicher, um alles zu füllen
+MSG_NOT_FOUND
+Keine Zelle enthält das
+MSG_UNTITLED
+Unbenannt
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s kann nicht geöffnet werden
+MSG_CANNOT_READ
+%s kann nicht gelesen werden
+MSG_TOO_BIG
+%s ist zu groß
+MSG_NO_MEMORY_FOR
+Kein Speicher für %s
+MSG_NO_MEMORY_TO_SAVE
+Kein Speicher, um %s zu speichern
+MSG_CANNOT_WRITE
+%s kann nicht geschrieben werden
+MSG_NO_REQUESTER
+Kein %s
+MSG_CHANGED
+Die Tabelle wurde geändert.\nZuerst speichern?
+MSG_CHANGED_BUTTONS
+Speichern|Nicht speichern|Abbrechen
+MSG_OPEN_TITLE
+Eine Tabelle öffnen
+MSG_SAVE_AS_TITLE
+Die Tabelle speichern als
+MSG_FIND_LABEL
+Suchen
+MSG_FIND_NEXT_BUTTON
+Weiter
+MSG_FIND_PREVIOUS_BUTTON
+Zurück
+MSG_FIND_CLOSE_BUTTON
+Schließen
+MSG_NOLIBRARY
+Kein %s\n
+MSG_NOSCREEN
+Kein Standardbildschirm - keine Anzeige\n
+MSG_NOMEMORY
+Kein Speicher für das Fenster\n

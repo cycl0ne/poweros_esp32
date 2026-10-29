@@ -394,7 +394,7 @@ pub fn writeModule(gpa: mem.Allocator, descriptor: *const Descriptor, catalog_na
         \\};
         \\
         \\/// Each string as it is built in.
-        \\pub fn builtin(comptime id: Id) [:0]const u8 {
+        \\pub fn builtin(id: Id) [:0]const u8 {
         \\    return switch (id) {
         \\
     );

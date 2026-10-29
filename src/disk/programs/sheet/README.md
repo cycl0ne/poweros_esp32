@@ -5,6 +5,13 @@ columns, each holding a number, a text or a formula, worked out again
 whenever a cell changes. It reads and writes CSV files, so a sheet goes
 to and comes from any other spreadsheet program.
 
+Its menus, ribbon, status line, requesters and messages are in the
+language chosen on Prefs' Region page when there is a catalog for it -
+German is on the disk, in
+`LOCALE:Catalogs/deutsch/programs/Sheet.catalog` - and in English
+otherwise. A formula's function names, `TRUE` and `FALSE` are the same
+in every language.
+
 ```
 Sheet [FILE]
 ```

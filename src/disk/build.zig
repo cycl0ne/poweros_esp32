@@ -28,6 +28,9 @@ pub const Catalog = struct { disk: []const u8, descriptor: []const u8, translati
 /// The programs' translations.
 pub const catalogs = [_]Catalog{
     .{ .disk = "locale/Catalogs/deutsch/c/test/locale.catalog", .descriptor = "c/test/locale/locale.cd", .translation = "c/test/locale/catalogs/deutsch.ct", .name = "c/test/locale.catalog" },
+    .{ .disk = "locale/Catalogs/deutsch/programs/Notepad.catalog", .descriptor = "programs/notepad/notepad.cd", .translation = "programs/notepad/catalogs/deutsch.ct", .name = "programs/Notepad.catalog" },
+    .{ .disk = "locale/Catalogs/deutsch/programs/Sheet.catalog", .descriptor = "programs/sheet/sheet.cd", .translation = "programs/sheet/catalogs/deutsch.ct", .name = "programs/Sheet.catalog" },
+    .{ .disk = "locale/Catalogs/deutsch/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/deutsch.ct", .name = "programs/Player.catalog" },
 };
 
 /// Code compiled into each program that imports it, by name, rather than
@@ -84,10 +87,10 @@ const window_programs = [_]Program{
     .{ .disk = "programs/MultiView", .source = "programs/multiview/multiview.zig", .name = "multiview" },
     .{ .disk = "programs/Battery", .source = "programs/battery/battery.zig", .name = "battery" },
     .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs" },
-    .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad" },
-    .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet" },
+    .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad", .strings = "programs/notepad/notepad.cd" },
+    .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet", .strings = "programs/sheet/sheet.cd" },
     .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal" },
-    .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player" },
+    .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player", .strings = "programs/player/player.cd" },
     .{ .disk = "programs/Volume", .source = "programs/volume/volume.zig", .name = "volume" },
     // The dock, one program in either place (`builtFor`).
     .{ .disk = "programs/Dock", .source = "programs/dock/dock.zig", .name = "dock" },

@@ -1342,7 +1342,7 @@ and the dates dos writes - before it has.
 With a name, a locale is made from the file: its COUNTRY's file in
 LOCALE:Countries, the first of its LANGUAGES that has a file in
 LOCALE:Languages (English needs none), and the time zone's rule from
-ENVARC:Sys/timezone. A field no file sets keeps the library's own
+ENV:Sys/timezone. A field no file sets keeps the library's own
 value. A name may be given with its `.country` or `.language` or
 without. Every file is UTF-8 text, converted to the locale's code set.
 

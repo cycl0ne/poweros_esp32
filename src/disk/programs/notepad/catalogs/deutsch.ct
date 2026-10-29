@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (29.10.2026)
+## language deutsch
+## codeset 106
+; Notepad's strings in German.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Neu
+MSG_MENU_OPEN
+Öffnen...
+MSG_MENU_SAVE
+Speichern
+MSG_MENU_SAVE_AS
+Speichern als...
+MSG_MENU_QUIT
+Beenden
+MSG_MENU_EDIT
+Bearbeiten
+MSG_MENU_UNDO
+Rückgängig
+MSG_MENU_REDO
+Wiederholen
+MSG_MENU_CUT
+Ausschneiden
+MSG_MENU_COPY
+Kopieren
+MSG_MENU_PASTE
+Einfügen
+MSG_MENU_SELECT_ALL
+Alles auswählen
+MSG_MENU_SEARCH
+Suchen
+MSG_MENU_FIND
+Suchen...
+MSG_MENU_FIND_NEXT
+Weitersuchen
+MSG_MENU_FIND_PREVIOUS
+Rückwärts suchen
+MSG_MENU_REPLACE
+Ersetzen...
+MSG_MENU_VIEW
+Ansicht
+MSG_MENU_WRAP
+Zeilenumbruch
+MSG_MENU_NUMBERS
+Zeilennummern
+MSG_MENU_ZIG
+Zig hervorheben
+MSG_MENU_RIBBON
+Menüband
+MSG_RIBBON_HOME
+Start
+MSG_RIBBON_CLIPBOARD
+Zwischenablage
+MSG_RIBBON_PASTE_HINT
+Einfügen, was ausgeschnitten oder kopiert wurde
+MSG_RIBBON_EDITING
+Bearbeiten
+MSG_RIBBON_FIND
+Suchen
+MSG_RIBBON_FIND_HINT
+Einen Text suchen; die Liste sucht ihn weiter oder rückwärts
+MSG_RIBBON_REPLACE
+Ersetzen
+MSG_RIBBON_REPLACE_HINT
+Einen gefundenen Text durch einen anderen ersetzen
+MSG_RIBBON_SELECT_ALL_HINT
+Den ganzen Text auswählen
+MSG_RIBBON_LINES
+Zeilen
+MSG_RIBBON_WRAP_HINT
+In der nächsten Zeile weiter statt über den Fensterrand hinaus
+MSG_RIBBON_NUMBERS_HINT
+Jede Zeile links nummerieren
+MSG_RIBBON_HIGHLIGHTING
+Hervorhebung
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Zigs Schlüsselwörter, Zeichenketten und Kommentare je in einer Farbe zeigen
+MSG_UNTITLED
+Unbenannt
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s kann nicht geöffnet werden
+MSG_CANNOT_READ
+%s kann nicht gelesen werden
+MSG_TOO_BIG
+%s ist zu groß
+MSG_NO_MEMORY_FOR
+Kein Speicher für %s
+MSG_NO_MEMORY_TO_SAVE
+Kein Speicher, um %s zu speichern
+MSG_CANNOT_WRITE
+%s kann nicht geschrieben werden
+MSG_NO_REQUESTER
+Kein %s
+MSG_CHANGED
+Der Text wurde geändert.\nZuerst speichern?
+MSG_CHANGED_BUTTONS
+Speichern|Nicht speichern|Abbrechen
+MSG_OPEN_TITLE
+Einen Text öffnen
+MSG_SAVE_AS_TITLE
+Den Text speichern als
+MSG_FIND_TITLE
+Suchen und Ersetzen
+MSG_FIND_LABEL
+Suchen
+MSG_REPLACE_WITH
+Ersetzen durch
+MSG_ANY_CASE
+Groß/klein egal
+MSG_FIND_NEXT_BUTTON
+Weitersuchen
+MSG_REPLACE_BUTTON
+Ersetzen
+MSG_REPLACE_ALL_BUTTON
+Alle ersetzen
+MSG_NOLIBRARY
+Kein %s\n
+MSG_NOSCREEN
+Kein Standardbildschirm - keine Anzeige\n
+MSG_NOMEMORY
+Kein Speicher für das Fenster\n

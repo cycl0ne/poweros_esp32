@@ -208,6 +208,13 @@
 //! on a larger screen is squeezed onto a smaller one (`WA_AutoAdjust`).
 //!
 //! The close gadget or Ctrl-C end it.
+//!
+//! Its texts are in `player.cd`, read through `sdk.locale.Strings`: the
+//! menus, the tabs, the buttons and their hints, the lists' headings, the
+//! lines beside the cover, the Radio page's status line, why a station or
+//! a search failed - the radio's and the finder's processes say it in the
+//! window's strings - and what the shell is told come from the catalog of
+//! the language the user prefers, when there is one.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -231,7 +238,6 @@ const Window = intuition.Window;
 const TagItem = sdk.utility.TagItem;
 const PixelFormat = sdk.rtg.bitmaps.PixelFormat;
 const rdargs = dos.rdargs;
-const Printf = dos.stdio.Printf;
 const gc = intuition.gadgetclass;
 const lg = intuition.layoutgclass;
 const wn = intuition.windows;
@@ -275,14 +281,19 @@ const m3u = @import("m3u.zig");
 const stations = @import("stations.zig");
 const finder = @import("finder.zig");
 const radio_page = @import("radiopage.zig");
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
+const Id = strings.Id;
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.21";
+const VERSION = "1.22";
 const DATE = "29.10.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
+/// What About says first.
+const ABOUT_VERSION = COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")";
 /// How the Player names itself to a station.
 const USER_AGENT = COMMAND_NAME ++ "/" ++ VERSION;
 
@@ -291,11 +302,6 @@ const arg_files = 0;
 const arg_add = 1;
 const arg_volume = 2;
 const arg_look = 3;
-
-const MSG_NOLIBRARY = "%s: can't open %s\n";
-const MSG_NOMEMORY = "%s: no memory for the window\n";
-const MSG_NOBUFFERS = "%s: no memory for the sound\n";
-const MSG_NOWINDOW = "%s: no window\n";
 
 const ID_DECK = 1;
 const ID_POSITION = 2;
@@ -321,7 +327,7 @@ const ID_URL_CANCEL = 22;
 const page_picture = 0;
 const page_list = 1;
 const page_radio = 2;
-const page_names = [_:null]?[*:0]const u8{ "Now playing", "Playlist", "Radio" };
+const page_names = [_]Id{ .MSG_PAGE_PLAYING, .MSG_MENU_PLAYLIST, .MSG_PAGE_RADIO };
 
 /// A look every 40 ms; the time beside the slider every sixth.
 const look_period = 40;
@@ -392,12 +398,12 @@ const Tags = struct {
 };
 
 /// What the window says when audio.device cannot be opened, by why.
-fn soundTrouble(engine: *const Engine) [*:0]const u8 {
-    return switch (engine.open_error) {
-        sdk.devices.audio.AUDIOERR_NOSTREAM => "Every sound stream is in use",
-        exec.IOERR_OPENFAIL => "This machine has no sound",
-        else => "audio.device would not open a stream",
-    };
+fn soundTrouble(text: *const Text, engine: *const Engine) [*:0]const u8 {
+    return text.get(switch (engine.open_error) {
+        sdk.devices.audio.AUDIOERR_NOSTREAM => .MSG_ALL_STREAMS_USED,
+        exec.IOERR_OPENFAIL => .MSG_NO_SOUND_HERE,
+        else => .MSG_NO_AUDIO_STREAM,
+    });
 }
 
 /// The menus: Project's songs and stations, About and Quit; the Playlist's, with
@@ -422,45 +428,81 @@ const MENU_PICTURE = 2;
 const MENU_SETTINGS = 3;
 const ITEM_REMEMBER = 0;
 
-fn menuItem(label: [*:0]const u8, key: ?[*:0]const u8) mn.NewMenu {
-    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key };
+/// A menu's entry, and the string its label is.
+const MenuEntry = struct { menu: mn.NewMenu, text: ?Id = null };
+
+fn menuTitle(text: Id) MenuEntry {
+    return .{ .menu = .{ .type = mn.NM_TITLE, .label = strings.builtin(text) }, .text = text };
 }
 
-const bar = mn.NewMenu{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL };
+fn menuItem(text: Id, key: ?[*:0]const u8) MenuEntry {
+    return .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(text), .comm_key = key }, .text = text };
+}
+
+/// An item with a tick, toggled as it is picked.
+fn toggleItem(text: Id) MenuEntry {
+    var made = menuItem(text, null);
+    made.menu.flags = mn.CHECKIT | mn.MENUTOGGLE;
+    return made;
+}
+
+const bar = MenuEntry{ .menu = .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL } };
 
 /// One of `count` items that exclude each other, the `at`th.
-fn oneOf(kind: u8, label: [*:0]const u8, at: u5, count: u5) mn.NewMenu {
+fn oneOf(kind: u8, text: Id, at: u5, count: u5) MenuEntry {
     const all = (@as(u32, 1) << count) - 1;
-    return .{ .type = kind, .label = label, .flags = mn.CHECKIT, .mutual_exclude = all & ~(@as(u32, 1) << at) };
+    return .{ .menu = .{ .type = kind, .label = strings.builtin(text), .flags = mn.CHECKIT, .mutual_exclude = all & ~(@as(u32, 1) << at) }, .text = text };
 }
 
-const menus = [_]mn.NewMenu{
-    .{ .type = mn.NM_TITLE, .label = "Project" },
-    menuItem("Open...", "O"),
-    menuItem("Open drawer...", "D"),
-    menuItem("Open URL...", "U"),
-    menuItem("Save playlist...", "S"),
+const menus = [_]MenuEntry{
+    menuTitle(.MSG_MENU_PROJECT),
+    menuItem(.MSG_MENU_OPEN, "O"),
+    menuItem(.MSG_MENU_OPEN_DRAWER, "D"),
+    menuItem(.MSG_MENU_OPEN_URL, "U"),
+    menuItem(.MSG_MENU_SAVE_PLAYLIST, "S"),
     bar,
-    menuItem("About", null),
-    menuItem("Quit", "Q"),
-    .{ .type = mn.NM_TITLE, .label = "Playlist" },
-    menuItem("Add...", "A"),
-    menuItem("Remove", null),
-    menuItem("Clear", null),
+    menuItem(.MSG_MENU_ABOUT, null),
+    menuItem(.MSG_MENU_QUIT, "Q"),
+    menuTitle(.MSG_MENU_PLAYLIST),
+    menuItem(.MSG_MENU_ADD, "A"),
+    menuItem(.MSG_MENU_REMOVE, null),
+    menuItem(.MSG_MENU_CLEAR, null),
     bar,
-    .{ .type = mn.NM_ITEM, .label = "Shuffle", .flags = mn.CHECKIT | mn.MENUTOGGLE },
-    menuItem("Repeat", null),
-    oneOf(mn.NM_SUB, "Off", @intFromEnum(Repeat.off), 3),
-    oneOf(mn.NM_SUB, "All", @intFromEnum(Repeat.all), 3),
-    oneOf(mn.NM_SUB, "One", @intFromEnum(Repeat.one), 3),
-    .{ .type = mn.NM_TITLE, .label = "Picture" },
-    oneOf(mn.NM_ITEM, "Plasma", @intFromEnum(visual.Mode.plasma), visual.mode_count),
-    oneOf(mn.NM_ITEM, "Wave", @intFromEnum(visual.Mode.wave), visual.mode_count),
-    oneOf(mn.NM_ITEM, "Bars", @intFromEnum(visual.Mode.bars), visual.mode_count),
-    .{ .type = mn.NM_TITLE, .label = "Settings" },
-    .{ .type = mn.NM_ITEM, .label = "Remember where it was", .flags = mn.CHECKIT | mn.MENUTOGGLE },
-    .{},
+    toggleItem(.MSG_MENU_SHUFFLE),
+    menuItem(.MSG_MENU_REPEAT, null),
+    oneOf(mn.NM_SUB, .MSG_MENU_REPEAT_OFF, @intFromEnum(Repeat.off), 3),
+    oneOf(mn.NM_SUB, .MSG_MENU_REPEAT_ALL, @intFromEnum(Repeat.all), 3),
+    oneOf(mn.NM_SUB, .MSG_MENU_REPEAT_ONE, @intFromEnum(Repeat.one), 3),
+    menuTitle(.MSG_MENU_PICTURE),
+    oneOf(mn.NM_ITEM, .MSG_MENU_PLASMA, @intFromEnum(visual.Mode.plasma), visual.mode_count),
+    oneOf(mn.NM_ITEM, .MSG_MENU_WAVE, @intFromEnum(visual.Mode.wave), visual.mode_count),
+    oneOf(mn.NM_ITEM, .MSG_MENU_BARS, @intFromEnum(visual.Mode.bars), visual.mode_count),
+    menuTitle(.MSG_MENU_SETTINGS),
+    toggleItem(.MSG_MENU_REMEMBER),
+    .{ .menu = .{} },
 };
+
+/// The lists' headings by their strings, in their columns' order; null
+/// keeps the table's own.
+const playlist_headings = [_]?Id{ null, .MSG_COLUMN_TITLE, .MSG_COLUMN_ARTIST, .MSG_COLUMN_TIME };
+const kept_headings = [_]?Id{ .MSG_COLUMN_STATION, .MSG_COLUMN_ADDRESS };
+const found_headings = [_]?Id{ .MSG_COLUMN_STATION, .MSG_COUNTRY, .MSG_COLUMN_BITRATE, .MSG_COLUMN_GENRES };
+
+/// `table`'s columns with their headings in the user's language.
+fn headed(text: *const Text, comptime table: []const lb.Column, headings: []const ?Id) [table.len]lb.Column {
+    var made: [table.len]lb.Column = table[0..table.len].*;
+    for (headings, 0..) |heading, at| {
+        if (heading) |id| made[at].title = text.get(id);
+    }
+    return made;
+}
+
+/// A chooser's or the tabs' labels in the user's language, `ids` in order.
+fn labelsOf(text: *const Text, comptime ids: []const Id) [ids.len:null]?[*:0]const u8 {
+    var made: [ids.len:null]?[*:0]const u8 = @splat(null);
+    for (ids, 0..) |id, at| made[at] = text.get(id);
+    return made;
+}
 
 /// The song shown when the Player last ended, and the second it was at.
 const Resume = struct { entry: *Entry, second: u32 };
@@ -533,6 +575,8 @@ const UrlWindow = struct {
 const App = struct {
     sys: *ExecBase,
     dl: *DosBase,
+    /// The texts, in the language the user prefers.
+    text: *const Text,
     ib: *IntuitionBase,
     gb: *GraphicsBase,
     mb: *MotionBase,
@@ -788,8 +832,8 @@ const App = struct {
         app.station_how = how;
         app.station_percent = 0;
         if (how != .stop) {
-            app.station = radio.Radio.start(app.sys, app.dl, entry.path(), USER_AGENT);
-            if (app.station == null) app.tellWhy("No memory for the station");
+            app.station = radio.Radio.start(app.sys, app.dl, entry.path(), USER_AGENT, app.text);
+            if (app.station == null) app.tellWhy(app.text.get(.MSG_NO_MEMORY_STATION));
         }
         app.showStation();
         // Its picture, when it is held from before; when the Radio page
@@ -877,7 +921,7 @@ const App = struct {
         const err = app.engine.listen(station);
         app.station_loaded = true;
         station.begun();
-        if (err == engine_file.no_sound) return app.stationFailed(soundTrouble(app.engine));
+        if (err == engine_file.no_sound) return app.stationFailed(soundTrouble(app.text, app.engine));
         if (err != 0) return app.stationFailed(app.acb.AudioErrorText(err));
         app.describeSound();
         app.showStation();
@@ -908,7 +952,7 @@ const App = struct {
     fn stationEnded(app: *App) void {
         if (app.station) |station| station.facts(&app.station_facts);
         const why = &app.station_facts.why;
-        app.stationFailed(if (why[0] != 0) why else "The station stopped sending");
+        app.stationFailed(if (why[0] != 0) why else app.text.get(.MSG_STATION_STOPPED));
     }
 
     fn tellWhy(app: *App, why: [*:0]const u8) void {
@@ -955,16 +999,19 @@ const App = struct {
     /// of, that play listens to it.
     fn composeStation(app: *App, line: *Line(160)) void {
         if (app.station_why[0] != 0) return line.add(&app.station_why);
-        const station = app.station orelse return line.add("A station: play listens to it");
+        const station = app.station orelse return line.add(app.text.get(.MSG_STATION_IDLE));
         if (!app.station_loaded) {
-            if (app.station_facts.phase != .streaming) return line.add("Calling the station");
-            var progress: [32:0]u8 = @splat(0);
-            app.formatNumber(&progress, "Buffering %u%%", station.percent());
-            return line.add(&progress);
+            if (app.station_facts.phase != .streaming) return line.add(app.text.get(.MSG_CALLING));
+            var progress: [48]u8 = undefined;
+            return line.add(app.text.format(&progress, .MSG_BUFFERING_PERCENT, .{station.percent()}));
         }
         line.add(&app.kind_text.text);
-        line.add(" - live");
-        if (app.engine.starved) line.add(", buffering");
+        line.add(" - ");
+        line.add(app.text.get(.MSG_LIVE));
+        if (app.engine.starved) {
+            line.add(", ");
+            line.add(app.text.get(.MSG_BUFFERING));
+        }
     }
 
     // --- Open URL... ------------------------------------------------------------
@@ -991,19 +1038,19 @@ const App = struct {
             pair(gc.STRINGA_TextVal, @intFromPtr(&app.url_text)),
             .{},
         })) orelse return ib.DisplayBeep(app.screen);
-        const open_button = loose.add(button(ib, "_Open", ID_URL_OPEN)) orelse return ib.DisplayBeep(app.screen);
-        const cancel_button = loose.add(button(ib, "_Cancel", ID_URL_CANCEL)) orelse return ib.DisplayBeep(app.screen);
+        const open_button = loose.add(button(ib, app.text.get(.MSG_URL_OPEN), ID_URL_OPEN)) orelse return ib.DisplayBeep(app.screen);
+        const cancel_button = loose.add(button(ib, app.text.get(.MSG_URL_CANCEL), ID_URL_CANCEL)) orelse return ib.DisplayBeep(app.screen);
         const buttons = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
             .{ .object = open_button, .weight_width = 0 },
             .{},
             .{ .object = cancel_button, .weight_width = 0 },
         }) orelse return ib.DisplayBeep(app.screen);
         const layout = group(ib, &loose, &.{ pair(lg.LAYOUTA_Margin, 8), pair(lg.LAYOUTA_Spacing, 6) }, &.{
-            .{ .object = field, .min_width = url_width, .label = "A_ddress" },
+            .{ .object = field, .min_width = url_width, .label = app.text.get(.MSG_URL_ADDRESS) },
             .{ .object = buttons, .weight_height = 0 },
         }) orelse return ib.DisplayBeep(app.screen);
         const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
-            pair(wn.WA_Title, @intFromPtr("Open URL")),
+            pair(wn.WA_Title, @intFromPtr(app.text.get(.MSG_URL_TITLE))),
             pair(wn.WA_ScreenTitle, @intFromPtr(SCREEN_TITLE)),
             pair(wn.WA_PubScreen, @intFromPtr(app.screen)),
             pair(wn.WA_AutoAdjust, 1),
@@ -1548,20 +1595,13 @@ const App = struct {
         more.add(tags.genre);
         if (tags.track != 0) {
             more.between(", ");
-            var track: [32:0]u8 = @splat(0);
-            if (tags.tracks != 0) {
-                const stream = exec.fmtStream(.{ tags.track, tags.tracks });
-                comptime exec.checkFormat("track %u of %u", @TypeOf(.{ @as(u32, 0), @as(u32, 0) }));
-                _ = app.sys.RawDoFmt("track %u of %u", &stream, null, &track);
-            } else {
-                app.formatNumber(&track, "track %u", tags.track);
-            }
-            more.add(&track);
+            var track: [48]u8 = undefined;
+            more.add(if (tags.tracks != 0) app.text.format(&track, .MSG_TRACK_OF, .{ tags.track, tags.tracks }) else app.text.format(&track, .MSG_TRACK, .{tags.track}));
         }
         if (tags.composer[0] != 0) {
             more.between(", ");
-            more.add("composed by ");
-            more.add(tags.composer);
+            var composed: [160]u8 = undefined;
+            more.add(app.text.format(&composed, .MSG_COMPOSED_BY, .{tags.composer}));
         }
         app.chapters = tags.chapter_list;
         app.chapter_count = if (tags.chapter_list != null) tags.chapters else 0;
@@ -1586,15 +1626,14 @@ const App = struct {
             ac.ACODEC_MP3 => "MP3",
             ac.ACODEC_FLAC => "FLAC",
             ac.ACODEC_VORBIS => "Vorbis",
-            else => "Sound",
+            else => app.text.get(.MSG_SOUND),
         };
-        const sides: [*:0]const u8 = if (info.channels == 1) "mono" else "stereo";
-        var about: [64:0]u8 = @splat(0);
-        const stream = exec.fmtStream(.{ kind, info.rate, sides, info.bitrate / 1000 });
-        comptime exec.checkFormat("%s, %u Hz, %s, %u kbit/s", @TypeOf(.{ kind, @as(u32, 0), sides, @as(u32, 0) }));
-        _ = app.sys.RawDoFmt("%s, %u Hz, %s, %u kbit/s", &stream, null, &about);
+        const sides = app.text.get(if (info.channels == 1) .MSG_MONO else .MSG_STEREO);
+        var about: [96]u8 = undefined;
+        const rate: u32 = info.rate;
+        const kbps: u32 = info.bitrate / 1000;
         app.kind_text.clear();
-        app.kind_text.add(&about);
+        app.kind_text.add(app.text.format(&about, .MSG_SOUND_LINE, .{ kind, rate, sides, kbps }));
     }
 
     /// The kind line made: the kind of file, the song's place in the list
@@ -1607,14 +1646,16 @@ const App = struct {
         line.add(&app.kind_text.text);
         if (app.songs.count > 1) {
             if (app.playing) |entry| {
-                var place: [32:0]u8 = @splat(0);
-                const counted = exec.fmtStream(.{ entry.place, @as(u32, @intCast(app.songs.count)) });
-                comptime exec.checkFormat(" - song %u of %u", @TypeOf(.{ @as(u32, 0), @as(u32, 0) }));
-                _ = app.sys.RawDoFmt(" - song %u of %u", &counted, null, &place);
-                line.add(&place);
+                var place: [48]u8 = undefined;
+                const at: u32 = entry.place;
+                line.add(" - ");
+                line.add(app.text.format(&place, .MSG_SONG_OF, .{ at, @as(u32, @intCast(app.songs.count)) }));
             }
         }
-        if (app.silent) line.add(if (app.engine.open_error == exec.IOERR_OPENFAIL) " - no sound" else " - no stream free");
+        if (app.silent) {
+            line.add(" - ");
+            line.add(app.text.get(if (app.engine.open_error == exec.IOERR_OPENFAIL) .MSG_NO_SOUND else .MSG_NO_STREAM_FREE));
+        }
     }
 
     /// The kind line made again after the list changed, and shown when it
@@ -1635,8 +1676,8 @@ const App = struct {
         for (&app.line_text) |*line| line.clear();
         app.kind_text.clear();
         app.silent = false;
-        app.line_text[line_title].add("No song");
-        if (!app.engine.opened) app.line_text[line_format].add(soundTrouble(app.engine));
+        app.line_text[line_title].add(app.text.get(.MSG_NO_SONG));
+        if (!app.engine.opened) app.line_text[line_format].add(soundTrouble(app.text, app.engine));
         app.chapters = null;
         app.chapter_count = 0;
         _ = app.ib.SetAttrsTagList(app.object, &[_]TagItem{ pair(wn.WA_Title, @intFromPtr(COMMAND_NAME)), .{} });
@@ -1859,11 +1900,11 @@ const App = struct {
         app.chapter_shown = which;
         const line = &app.line_text[line_chapter];
         line.clear();
-        var place: [32:0]u8 = @splat(0);
-        const stream = exec.fmtStream(.{ which + 1, app.chapter_count });
-        comptime exec.checkFormat("Chapter %u of %u: ", @TypeOf(.{ @as(u32, 0), @as(u32, 0) }));
-        _ = app.sys.RawDoFmt("Chapter %u of %u: ", &stream, null, &place);
-        line.add(&place);
+        var place: [48]u8 = undefined;
+        const number: u32 = which + 1;
+        const count: u32 = app.chapter_count;
+        line.add(app.text.format(&place, .MSG_CHAPTER, .{ number, count }));
+        line.add(": ");
         line.add(@ptrCast(&list[which].title));
         app.showLines();
     }
@@ -1900,7 +1941,9 @@ const App = struct {
         if (app.showsStation()) {
             // Listened to for `at`, with no end.
             app.length_text = @splat(0);
-            @memcpy(app.length_text[0.."live".len], "live");
+            const live = app.text.get(.MSG_LIVE);
+            var length: usize = 0;
+            while (live[length] != 0 and length < app.length_text.len) : (length += 1) app.length_text[length] = live[length];
             return;
         }
         if (app.show_left) app.formatTime(&app.length_text, total -| at, true) else app.formatTime(&app.length_text, total, false);
@@ -2151,12 +2194,12 @@ const App = struct {
             });
             break :made app.request orelse return;
         };
-        const title: [*:0]const u8 = switch (what) {
-            .play => "Which songs?",
-            .add => "Add which songs?",
-            .drawer => "Which drawer?",
-            .save => "Save the playlist as",
-        };
+        const title = app.text.get(switch (what) {
+            .play => .MSG_ASK_PLAY,
+            .add => .MSG_ASK_ADD,
+            .drawer => .MSG_ASK_DRAWER,
+            .save => .MSG_ASK_SAVE,
+        });
         app.asked = what;
         const saving = what == .save;
         const shown_pattern: [*:0]const u8 = if (saving) m3u.save_pattern else playlist.open_pattern;
@@ -2183,15 +2226,13 @@ const App = struct {
             return;
         }
         const easy = intuition.requesters.EasyStruct{
-            .title = "About " ++ COMMAND_NAME,
-            .text_format = COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\n\n" ++
-                "Songs from WAV, MP3, FLAC and Ogg Vorbis files,\n" ++
-                "one into the next, with their covers,\n" ++
-                "stations from the network\n" ++
-                "and a picture of the sound.",
-            .gadget_format = "OK",
+            .title = app.text.get(.MSG_ABOUT_TITLE),
+            .text_format = app.text.get(.MSG_ABOUT),
+            .gadget_format = app.text.get(.MSG_OK),
         };
-        app.about_window = app.ib.BuildEasyRequestArgs(app.window, &easy, 0, null);
+        comptime exec.checkFormat(strings.builtin(.MSG_ABOUT), @TypeOf(.{@as([*:0]const u8, ABOUT_VERSION)}));
+        const stream = exec.fmtStream(.{@as([*:0]const u8, ABOUT_VERSION)});
+        app.about_window = app.ib.BuildEasyRequestArgs(app.window, &easy, 0, &stream);
     }
 
     /// The signal of About's requester, while it is up.
@@ -3024,8 +3065,8 @@ fn titleFont(ib: *IntuitionBase, gb: *GraphicsBase, dfb: ?*DiskfontBase) ?*graph
     return fonts.OpenDiskFont(&.{ .name = name, .y_size = @intCast(rows * 3 / 2), .style = graphics.FSF_BOLD });
 }
 
-fn noWindow(dl: *DosBase) i32 {
-    _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
+fn noWindow(text: *const Text, dl: *DosBase) i32 {
+    _ = text.printf(dl, .MSG_NOMEMORY, .{@as([*:0]const u8, COMMAND_NAME)});
     return dos.RETURN_FAIL;
 }
 
@@ -3117,6 +3158,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         while (sys.GetMsg(public)) |message| sys.ReplyMsg(message);
         sys.DeleteMsgPort(public);
     }
+    // Closed last: the window, the menus and the processes show its
+    // strings to the end.
+    var text = Text.open(sys);
+    defer text.close();
 
     // How the last run left it: the settings, and the list read below.
     const utility_lib = sys.OpenLibrary(sdk.utility.UTILITYNAME, 0);
@@ -3137,7 +3182,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     for (wanted, 0..) |name, i| {
         libraries[i] = sys.OpenLibrary(name, 0) orelse {
-            _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, name });
+            _ = text.printf(dl, .MSG_NOLIBRARY, .{ @as([*:0]const u8, COMMAND_NAME), name });
             return dos.RETURN_FAIL;
         };
     }
@@ -3152,7 +3197,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer if (asl_lib) |lib| sys.CloseLibrary(lib);
 
     const engine = Engine.create(sys, dl, acb) orelse {
-        _ = Printf(dl, MSG_NOBUFFERS, .{COMMAND_NAME});
+        _ = text.printf(dl, .MSG_NOBUFFERS, .{@as([*:0]const u8, COMMAND_NAME)});
         return dos.RETURN_FAIL;
     };
     defer engine.destroy();
@@ -3170,6 +3215,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     app.* = .{
         .sys = sys,
         .dl = dl,
+        .text = &text,
         .ib = ib,
         .gb = @ptrCast(libraries[1].?),
         .mb = @ptrCast(libraries[2].?),
@@ -3191,7 +3237,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer app.stopStation();
     // The stations kept, read before the list, whose stations go by their
     // names; given back, and the finder let go of, after the window.
-    app.radio = .{ .sys = sys, .dl = dl, .ib = ib, .agent = USER_AGENT };
+    app.radio = .{ .sys = sys, .dl = dl, .ib = ib, .agent = USER_AGENT, .text = &text };
     app.radio.init();
     defer app.radio.free();
     defer if (app.logo) |bytes| sys.FreeVec(bytes);
@@ -3212,8 +3258,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     for (given.slice()) |name| _ = app.songs.addPath(sys, dl, name);
     app.listOrder();
     app.clockTexts(0);
-    app.line_text[line_title].add("No song");
-    if (!engine.opened) app.line_text[line_format].add(soundTrouble(engine));
+    app.line_text[line_title].add(text.get(.MSG_NO_SONG));
+    if (!engine.opened) app.line_text[line_format].add(soundTrouble(&text, engine));
     // The title's font, kept open - and the library that made it - until
     // the gadgets that draw in it are gone.
     const diskfont_lib = sys.OpenLibrary(diskfont.DISKFONTNAME, 0);
@@ -3224,15 +3270,24 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     // The toggles' pictures, the program's: made before the gadgets, so
     // they are disposed of after them.
-    const shuffle_picture = mediaPicture(ib, media.MEDIA_SHUFFLE) orelse return noWindow(dl);
+    const shuffle_picture = mediaPicture(ib, media.MEDIA_SHUFFLE) orelse return noWindow(&text, dl);
     defer ib.DisposeObject(shuffle_picture);
-    app.repeat_picture = mediaPicture(ib, media.MEDIA_REPEAT) orelse return noWindow(dl);
+    app.repeat_picture = mediaPicture(ib, media.MEDIA_REPEAT) orelse return noWindow(&text, dl);
     defer ib.DisposeObject(app.repeat_picture);
-    app.mute_picture = mediaPicture(ib, media.MEDIA_SPEAKER) orelse return noWindow(dl);
+    app.mute_picture = mediaPicture(ib, media.MEDIA_SPEAKER) orelse return noWindow(&text, dl);
     defer ib.DisposeObject(app.mute_picture);
     // Drawn into the cover where there is none; the ground alone without.
     app.note = mediaPicture(ib, media.MEDIA_NOTE);
     defer if (app.note) |note| ib.DisposeObject(note);
+
+    // The tabs', the choosers' and the lists' words in the user's
+    // language, as long as the gadgets that show them.
+    const page_labels = labelsOf(&text, &page_names);
+    const view_labels = labelsOf(&text, &radio_page.view_labels);
+    const by_labels = labelsOf(&text, &finder.by_labels);
+    const playlist_columns = headed(&text, &playlist.columns, &playlist_headings);
+    const kept_columns = headed(&text, &stations.kept_columns, &kept_headings);
+    const found_columns = headed(&text, &stations.found_columns, &found_headings);
 
     // The gadgets: each loose until a layout takes it, and whatever is
     // still loose given back when the window cannot be made.
@@ -3243,14 +3298,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(tx.TEXT_Clipped, 1),
         pair(gc.GA_Width, 240),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     app.cover = loose.add(ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_COVER),
         pair(gc.GA_RelVerify, 1),
         pair(cv.CANVAS_Width, cover_size),
         pair(cv.CANVAS_Height, cover_size),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     app.position = loose.add(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_POSITION),
         pair(sl.SLIDER_Max, hour),
@@ -3258,31 +3313,31 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(gc.GA_Disabled, 1),
         pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     app.time = loose.add(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         pair(tx.TEXT_Text, @intFromPtr(&app.time_text)),
         pair(tx.TEXT_RoomFor, @intFromPtr(room_short)),
         pair(tx.TEXT_Justification, tx.TEXT_JUSTIFY_RIGHT),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     app.length = loose.add(ib.NewObjectTagList(null, tb.TOOLBUTTON_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_LENGTH),
         pair(gc.GA_Text, @intFromPtr(&app.length_text)),
         pair(tb.TOOLBUTTON_RoomFor, @intFromPtr(room_short)),
         pair(tb.TOOLBUTTON_Size, tb.TBSIZE_SMALL),
-        pair(tb.TOOLBUTTON_Hint, @intFromPtr("The song's length, or what is left of it")),
+        pair(tb.TOOLBUTTON_Hint, @intFromPtr(text.get(.MSG_LENGTH_HINT))),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     app.deck = loose.add(ib.NewObjectTagList(null, td.TDECK_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_DECK),
         pair(td.TDECK_Tape, 1),
         pair(td.TDECK_Tracks, 1),
         pair(td.TDECK_Mode, td.BUT_STOP),
         .{},
-    })) orelse return noWindow(dl);
-    app.shuffle_button = loose.add(toggle(ib, ID_SHUFFLE, "_Shuffle", "Play the songs in an order of their own", shuffle_picture)) orelse return noWindow(dl);
-    app.repeat_button = loose.add(toggle(ib, ID_REPEAT, "_Repeat", "Play the list again, or the one song", app.repeat_picture)) orelse return noWindow(dl);
-    app.mute_button = loose.add(toggle(ib, ID_MUTE, "_Mute", "The sound off, and on again", app.mute_picture)) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
+    app.shuffle_button = loose.add(toggle(ib, ID_SHUFFLE, text.get(.MSG_SHUFFLE_BUTTON), text.get(.MSG_SHUFFLE_HINT), shuffle_picture)) orelse return noWindow(&text, dl);
+    app.repeat_button = loose.add(toggle(ib, ID_REPEAT, text.get(.MSG_REPEAT_BUTTON), text.get(.MSG_REPEAT_HINT), app.repeat_picture)) orelse return noWindow(&text, dl);
+    app.mute_button = loose.add(toggle(ib, ID_MUTE, text.get(.MSG_MUTE_BUTTON), text.get(.MSG_MUTE_HINT), app.mute_picture)) orelse return noWindow(&text, dl);
     app.volume = loose.add(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_VOLUME),
         pair(sl.SLIDER_Max, volume_most),
@@ -3292,7 +3347,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
         pair(gc.GA_Width, volume_width),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     app.control = audiocontrol.Control.open(sys);
     defer if (app.control) |*control| control.close();
     if (app.control) |*control| app.outputs.read(control);
@@ -3303,25 +3358,25 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(ch.CHOOSER_Active, app.outputs.currentIndex() orelse 0),
         pair(gc.GA_Disabled, @intFromBool(app.outputs.count == 0)),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     app.picture = loose.add(ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_PICTURE),
         pair(gc.GA_RelVerify, 1),
         pair(cv.CANVAS_Width, 400),
         pair(cv.CANVAS_Height, 180),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     app.browser = loose.add(ib.NewObjectTagList(null, lb.LISTBROWSER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_LIST),
-        pair(lb.LISTBROWSER_Columns, @intFromPtr(&playlist.columns)),
+        pair(lb.LISTBROWSER_Columns, @intFromPtr(&playlist_columns)),
         pair(lb.LISTBROWSER_Rows, @intFromPtr(&app.songs.rows)),
         pair(lb.LISTBROWSER_Reorder, 1),
         pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
         .{},
-    })) orelse return noWindow(dl);
-    const add_button = loose.add(button(ib, "_Add...", ID_ADD)) orelse return noWindow(dl);
-    const remove_button = loose.add(button(ib, "R_emove", ID_REMOVE)) orelse return noWindow(dl);
-    const clear_button = loose.add(button(ib, "C_lear", ID_CLEAR)) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
+    const add_button = loose.add(button(ib, text.get(.MSG_ADD_BUTTON), ID_ADD)) orelse return noWindow(&text, dl);
+    const remove_button = loose.add(button(ib, text.get(.MSG_REMOVE_BUTTON), ID_REMOVE)) orelse return noWindow(&text, dl);
+    const clear_button = loose.add(button(ib, text.get(.MSG_CLEAR_BUTTON), ID_CLEAR)) orelse return noWindow(&text, dl);
 
     // The cover beside its lines, square and as tall as the row; the
     // slider between the time and the length; the deck, shuffle and
@@ -3331,12 +3386,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const info_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 8) }, &.{
         .{ .object = app.cover, .aspect = lg.aspect(1, 1), .min_height = cover_least, .max_height = cover.kept_size },
         .{ .object = app.block },
-    }) orelse return noWindow(dl);
+    }) orelse return noWindow(&text, dl);
     const seek_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
         .{ .object = app.time, .weight_width = 0 },
         .{ .object = app.position },
         .{ .object = app.length, .weight_width = 0 },
-    }) orelse return noWindow(dl);
+    }) orelse return noWindow(&text, dl);
     const control_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 8), pair(lg.LAYOUTA_Wrap, 1) }, &.{
         .{ .object = app.deck, .weight_width = 0 },
         .{ .object = app.shuffle_button, .weight_width = 0 },
@@ -3344,91 +3399,91 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{},
         .{ .object = app.mute_button, .weight_width = 0 },
         .{ .object = app.volume, .weight_width = 0 },
-        .{ .object = app.output, .weight_width = 0, .label = "_Output" },
-    }) orelse return noWindow(dl);
+        .{ .object = app.output, .weight_width = 0, .label = text.get(.MSG_OUTPUT_LABEL) },
+    }) orelse return noWindow(&text, dl);
     const framed = group(ib, &loose, &.{ pair(lg.LAYOUTA_FrameType, ic.FRAME_BUTTON), pair(lg.LAYOUTA_FrameRecessed, 1) }, &.{
         .{ .object = app.picture },
-    }) orelse return noWindow(dl);
+    }) orelse return noWindow(&text, dl);
     // The list over its buttons, which keep their size at its left.
     const list_buttons = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
         .{ .object = add_button, .weight_width = 0 },
         .{ .object = remove_button, .weight_width = 0 },
         .{ .object = clear_button, .weight_width = 0 },
         .{},
-    }) orelse return noWindow(dl);
+    }) orelse return noWindow(&text, dl);
     const list_page = group(ib, &loose, &.{pair(lg.LAYOUTA_Spacing, 6)}, &.{
         .{ .object = app.browser },
         .{ .object = list_buttons, .weight_height = 0 },
-    }) orelse return noWindow(dl);
+    }) orelse return noWindow(&text, dl);
     // The Radio page: the search line over the stations kept or found,
     // which a page without tabs holds, and under them Keep, Remove and the
     // line that says how a search goes.
     app.radio.view_chooser = loose.add(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, radio_page.ID_VIEW),
         pair(gc.GA_RelVerify, 1),
-        pair(ch.CHOOSER_Labels, @intFromPtr(&radio_page.view_labels)),
+        pair(ch.CHOOSER_Labels, @intFromPtr(&view_labels)),
         pair(ch.CHOOSER_Active, radio_page.view_kept),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     app.radio.field = loose.add(ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
         pair(gc.GA_ID, radio_page.ID_FIND),
         pair(gc.GA_RelVerify, 1),
         pair(gc.STRINGA_MaxChars, finder.query_max),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     const by_chooser = loose.add(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
         pair(gc.GA_ID, radio_page.ID_BY),
         pair(gc.GA_RelVerify, 1),
-        pair(ch.CHOOSER_Labels, @intFromPtr(&finder.by_labels)),
+        pair(ch.CHOOSER_Labels, @intFromPtr(&by_labels)),
         .{},
-    })) orelse return noWindow(dl);
-    const search_button = loose.add(button(ib, "Searc_h", radio_page.ID_SEARCH)) orelse return noWindow(dl);
-    app.radio.kept_list = loose.add(stationList(ib, radio_page.ID_KEPT, &stations.kept_columns, &app.radio.kept.rows)) orelse return noWindow(dl);
-    app.radio.found_list = loose.add(stationList(ib, radio_page.ID_FOUND, &stations.found_columns, &app.radio.found.rows)) orelse return noWindow(dl);
-    const keep_button = loose.add(button(ib, "_Keep", radio_page.ID_KEEP)) orelse return noWindow(dl);
-    const forget_button = loose.add(button(ib, "Remo_ve", radio_page.ID_REMOVE)) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
+    const search_button = loose.add(button(ib, text.get(.MSG_SEARCH_BUTTON), radio_page.ID_SEARCH)) orelse return noWindow(&text, dl);
+    app.radio.kept_list = loose.add(stationList(ib, radio_page.ID_KEPT, &kept_columns, &app.radio.kept.rows)) orelse return noWindow(&text, dl);
+    app.radio.found_list = loose.add(stationList(ib, radio_page.ID_FOUND, &found_columns, &app.radio.found.rows)) orelse return noWindow(&text, dl);
+    const keep_button = loose.add(button(ib, text.get(.MSG_KEEP_BUTTON), radio_page.ID_KEEP)) orelse return noWindow(&text, dl);
+    const forget_button = loose.add(button(ib, text.get(.MSG_FORGET_BUTTON), radio_page.ID_REMOVE)) orelse return noWindow(&text, dl);
     app.radio.status = loose.add(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         pair(tx.TEXT_Text, @intFromPtr(&app.radio.status_text)),
         pair(tx.TEXT_Clipped, 1),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     const search_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
         .{ .object = app.radio.view_chooser, .weight_width = 0 },
-        .{ .object = app.radio.field, .label = "_Find" },
-        .{ .object = by_chooser, .weight_width = 0, .label = "_in" },
+        .{ .object = app.radio.field, .label = text.get(.MSG_FIND_LABEL) },
+        .{ .object = by_chooser, .weight_width = 0, .label = text.get(.MSG_BY_LABEL) },
         .{ .object = search_button, .weight_width = 0 },
-    }) orelse return noWindow(dl);
+    }) orelse return noWindow(&text, dl);
     app.radio.pages = .{ app.radio.kept_list, app.radio.found_list };
     app.radio.book = loose.add(ib.NewObjectTagList(null, pg.PAGE_CLASS, &[_]TagItem{
         pair(pg.PAGE_Pages, @intFromPtr(&app.radio.pages)),
         pair(pg.PAGE_Current, radio_page.view_kept),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     for ([_]*Object{ app.radio.kept_list, app.radio.found_list }) |taken| loose.take(taken);
     const radio_buttons = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{
         .{ .object = keep_button, .weight_width = 0 },
         .{ .object = forget_button, .weight_width = 0 },
         .{ .object = app.radio.status },
-    }) orelse return noWindow(dl);
+    }) orelse return noWindow(&text, dl);
     const radio_screen = group(ib, &loose, &.{pair(lg.LAYOUTA_Spacing, 6)}, &.{
         .{ .object = search_row, .weight_height = 0 },
         .{ .object = app.radio.book },
         .{ .object = radio_buttons, .weight_height = 0 },
-    }) orelse return noWindow(dl);
+    }) orelse return noWindow(&text, dl);
     // The picture and the list on pages under tabs, which go with the
     // page gadget: no longer loose once it is made.
     const tabs = loose.add(ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_TABS),
-        pair(ct.CLICKTAB_Labels, @intFromPtr(&page_names)),
+        pair(ct.CLICKTAB_Labels, @intFromPtr(&page_labels)),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     app.pages = .{ framed, list_page, radio_screen };
     app.book = loose.add(ib.NewObjectTagList(null, pg.PAGE_CLASS, &[_]TagItem{
         pair(pg.PAGE_Pages, @intFromPtr(&app.pages)),
         pair(pg.PAGE_Tabs, @intFromPtr(tabs)),
         pair(pg.PAGE_Current, app.page),
         .{},
-    })) orelse return noWindow(dl);
+    })) orelse return noWindow(&text, dl);
     for ([_]*Object{ framed, list_page, radio_screen, tabs }) |taken| loose.take(taken);
     // The tags' row grows half as fast as the pages, until the cover is
     // as large as it is kept.
@@ -3437,9 +3492,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .object = seek_row, .weight_height = 0 },
         .{ .object = control_row, .weight_height = 0 },
         .{ .object = app.book },
-    }) orelse return noWindow(dl);
+    }) orelse return noWindow(&text, dl);
     // The screen the window opens on, which the menus are laid out for.
-    const screen = ib.LockPubScreen(null) orelse return noWindow(dl);
+    const screen = ib.LockPubScreen(null) orelse return noWindow(&text, dl);
     defer ib.UnlockPubScreen(null, screen);
     app.screen = screen;
     app.dri = ib.GetScreenDrawInfo(screen);
@@ -3466,7 +3521,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(wn.WA_IDCMP, wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_ACTIVEWINDOW | wn.IDCMP_NEWPREFS | wn.IDCMP_RAWKEY),
         pair(wc.WINDOWA_Layout, @intFromPtr(layout)),
         .{},
-    }) orelse return noWindow(dl);
+    }) orelse return noWindow(&text, dl);
     loose.take(layout);
     defer ib.DisposeObject(object);
     app.object = object;
@@ -3474,7 +3529,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var open = wc.WmOpen{};
     const opened = ib.SendMessage(object, @ptrCast(&open));
     if (opened == 0) {
-        _ = Printf(dl, MSG_NOWINDOW, .{COMMAND_NAME});
+        _ = text.printf(dl, .MSG_NOWINDOW, .{@as([*:0]const u8, COMMAND_NAME)});
         return dos.RETURN_FAIL;
     }
     app.window = @ptrFromInt(opened);
@@ -3490,7 +3545,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // The menus, ticked as things are; the window plays without them when
     // they will not go on.
     app.strip = blk: {
-        const made = ib.CreateMenusA(&menus, null) orelse break :blk null;
+        var table: [menus.len]mn.NewMenu = undefined;
+        for (menus, &table) |entry, *made| {
+            made.* = entry.menu;
+            if (entry.text) |id| made.label = text.get(id);
+        }
+        const made = ib.CreateMenusA(&table, null) orelse break :blk null;
         if (!ib.LayoutMenusA(made, screen, null) or !ib.SetMenuStrip(app.window, made)) {
             ib.FreeMenus(made);
             break :blk null;

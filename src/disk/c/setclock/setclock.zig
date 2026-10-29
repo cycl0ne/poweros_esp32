@@ -11,7 +11,7 @@
 //!   SetClock SAVE     the clock set to the system time, and the date
 //!                     kept in ENVARC:Sys/clock
 //!   SetClock RESET    the clock put in working order, its date 1-Jan-1978
-//!   SetClock ZONE     the rule in ENVARC:Sys/timezone kept in battmem
+//!   SetClock ZONE     the rule in ENV:Sys/timezone kept in battmem
 //!
 //! The resource sets the system time from the clock as the system starts,
 //! so LOAD is for a clock that was changed since; SAVE after `Date` or
@@ -31,7 +31,7 @@
 //!
 //! ZONE is done as well, first: the zone file's first line that is not a
 //! `#` comment (sdk.dos.timezone), or UTC with none. The startup sequence
-//! does it once ENVARC: is there, so a file system that writes moments
+//! does it once ENV: is there, so a file system that writes moments
 //! with their offset from UTC (exFAT) has the zone without reading the
 //! file - which it could not do on the volume that holds it. A rule whose
 //! offsets or times of change are not whole quarter hours cannot be kept,
@@ -50,7 +50,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetClock";
-const VERSION_STRING = "\x00$VER: SetClock 1.2 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetClock 1.3 (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "LOAD/S,SAVE/S,RESET/S,ZONE/S";

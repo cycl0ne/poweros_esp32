@@ -59,7 +59,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const sftp = @import("sftp.zig");
 
 pub const COMMAND_NAME = "ShellServer";
-const VERSION_STRING = "\x00$VER: ShellServer 1.9 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShellServer 1.10 (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "PORT/K/N,QUIET/S,SSH/S";

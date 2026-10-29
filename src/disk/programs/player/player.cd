@@ -1,0 +1,281 @@
+; The Player's strings, in English: the program is built with these,
+; and a translation in LOCALE:Catalogs/<language>/programs/Player.catalog
+; stands in for them. A text with values is written by RawDoFmt, which
+; takes them in order: a translation keeps them so.
+#version 1
+;
+; The menus.
+MSG_MENU_PROJECT (1//)
+Project
+MSG_MENU_OPEN (//)
+Open...
+MSG_MENU_OPEN_DRAWER (//)
+Open drawer...
+MSG_MENU_OPEN_URL (//)
+Open URL...
+MSG_MENU_SAVE_PLAYLIST (//)
+Save playlist...
+MSG_MENU_ABOUT (//)
+About
+MSG_MENU_QUIT (//)
+Quit
+MSG_MENU_PLAYLIST (//)
+Playlist
+MSG_MENU_ADD (//)
+Add...
+MSG_MENU_REMOVE (//)
+Remove
+MSG_MENU_CLEAR (//)
+Clear
+MSG_MENU_SHUFFLE (//)
+Shuffle
+MSG_MENU_REPEAT (//)
+Repeat
+MSG_MENU_REPEAT_OFF (//)
+Off
+MSG_MENU_REPEAT_ALL (//)
+All
+MSG_MENU_REPEAT_ONE (//)
+One
+MSG_MENU_PICTURE (//)
+Picture
+MSG_MENU_PLASMA (//)
+Plasma
+MSG_MENU_WAVE (//)
+Wave
+MSG_MENU_BARS (//)
+Bars
+MSG_MENU_SETTINGS (//)
+Settings
+MSG_MENU_REMEMBER (//)
+Remember where it was
+;
+; The tabs, the Radio page's lists and what it searches by; the lists'
+; headings. The playlist's tab is the Playlist menu's word.
+MSG_PAGE_PLAYING (//)
+Now playing
+MSG_PAGE_RADIO (//)
+Radio
+MSG_VIEW_KEPT (//)
+Your stations
+MSG_VIEW_FOUND (//)
+Found
+MSG_NAME (//)
+Name
+MSG_GENRE (//)
+Genre
+MSG_COUNTRY (//)
+Country
+MSG_COLUMN_TITLE (//)
+Title
+MSG_COLUMN_ARTIST (//)
+Artist
+MSG_COLUMN_TIME (//)
+Time
+MSG_COLUMN_STATION (//)
+Station
+MSG_COLUMN_ADDRESS (//)
+Address
+MSG_COLUMN_BITRATE (//)
+kbit/s
+MSG_COLUMN_GENRES (//)
+Genres
+;
+; The buttons and fields: the letter after _ is the key that presses
+; one, each its own in the window.
+MSG_SHUFFLE_BUTTON (//)
+_Shuffle
+MSG_SHUFFLE_HINT (//)
+Play the songs in an order of their own
+MSG_REPEAT_BUTTON (//)
+_Repeat
+MSG_REPEAT_HINT (//)
+Play the list again, or the one song
+MSG_MUTE_BUTTON (//)
+_Mute
+MSG_MUTE_HINT (//)
+The sound off, and on again
+MSG_LENGTH_HINT (//)
+The song's length, or what is left of it
+MSG_ADD_BUTTON (//)
+_Add...
+MSG_REMOVE_BUTTON (//)
+R_emove
+MSG_CLEAR_BUTTON (//)
+C_lear
+MSG_OUTPUT_LABEL (//)
+_Output
+MSG_SEARCH_BUTTON (//)
+Searc_h
+MSG_KEEP_BUTTON (//)
+_Keep
+MSG_FORGET_BUTTON (//)
+Remo_ve
+MSG_FIND_LABEL (//)
+_Find
+MSG_BY_LABEL (//)
+_in
+;
+; Open URL...'s window, its keys its own.
+MSG_URL_TITLE (//)
+Open URL
+MSG_URL_ADDRESS (//)
+A_ddress
+MSG_URL_OPEN (//)
+_Open
+MSG_URL_CANCEL (//)
+_Cancel
+;
+; The file requester's titles, and About.
+MSG_ASK_PLAY (//)
+Which songs?
+MSG_ASK_ADD (//)
+Add which songs?
+MSG_ASK_DRAWER (//)
+Which drawer?
+MSG_ASK_SAVE (//)
+Save the playlist as
+MSG_ABOUT_TITLE (//)
+About Player
+MSG_ABOUT (//)
+%s\n\nSongs from WAV, MP3, FLAC and Ogg Vorbis files,\none into the next, with their covers,\nstations from the network\nand a picture of the sound.
+MSG_OK (//)
+OK
+;
+; The lines beside the cover. What the kind line adds after the sound's
+; kind follows a dash, which the Player puts in.
+MSG_NO_SONG (//)
+No song
+MSG_TRACK_OF (//)
+track %u of %u
+MSG_TRACK (//)
+track %u
+MSG_COMPOSED_BY (//)
+composed by %s
+MSG_CHAPTER (//)
+Chapter %u of %u
+MSG_SOUND (//)
+Sound
+MSG_MONO (//)
+mono
+MSG_STEREO (//)
+stereo
+MSG_SOUND_LINE (//)
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF (//)
+song %u of %u
+MSG_NO_SOUND (//)
+no sound
+MSG_NO_STREAM_FREE (//)
+no stream free
+MSG_LIVE (//)
+live
+MSG_BUFFERING (//)
+buffering
+MSG_BUFFERING_PERCENT (//)
+Buffering %u%%
+MSG_STATION_IDLE (//)
+A station: play listens to it
+MSG_CALLING (//)
+Calling the station
+MSG_NO_MEMORY_STATION (//)
+No memory for the station
+MSG_ALL_STREAMS_USED (//)
+Every sound stream is in use
+MSG_NO_SOUND_HERE (//)
+This machine has no sound
+MSG_NO_AUDIO_STREAM (//)
+audio.device would not open a stream
+;
+; The Radio page's status line.
+MSG_KEPT_ALREADY (//)
+Kept already: %s
+MSG_KEPT (//)
+Kept: %s
+MSG_NO_MEMORY_KEEP (//)
+No memory to keep the station
+MSG_NO_MEMORY_SEARCH (//)
+No memory for the search
+MSG_SEARCHING (//)
+Searching
+MSG_ASKING (//)
+Asking %s
+MSG_NONE_FOUND (//)
+No station found
+MSG_ONE_FOUND (//)
+One station found
+MSG_COUNT_FOUND (//)
+%u stations found
+;
+; Why a search or a station failed. A station's reason may have its
+; cause after a colon: an answer's status line, a network error's words.
+MSG_NO_NETWORK (//)
+No network: bsdsocket.library is not there
+MSG_NO_HTTP (//)
+http.library is not there
+MSG_NO_TLS (//)
+tls.library is not there
+MSG_NO_MEMORY_CONNECTION (//)
+No memory for the connection
+MSG_SERVICE_NO_ADDRESS (//)
+radio-browser.info has no address
+MSG_SERVICE_NO_ANSWER (//)
+radio-browser.info did not answer the search
+MSG_SERVICE_UNREACHED (//)
+radio-browser.info could not be reached
+MSG_SERVICE_NONSENSE (//)
+radio-browser.info's answer makes no sense
+MSG_SEARCH_FAILED (//)
+The search failed
+MSG_NO_SIGNAL (//)
+No signal free for the station
+MSG_NO_TIMER (//)
+timer.device would not open
+MSG_LISTS_ONLY (//)
+The station's lists lead only to more lists
+MSG_STATION_STOPPED (//)
+The station stopped sending
+MSG_STATION_ANSWERED (//)
+The station answered
+MSG_SENDS_AAC (//)
+The station sends AAC, which is not played
+MSG_STATION_ENDED (//)
+The station ended the connection
+MSG_SENDS_HLS (//)
+The station sends HLS, which is not played
+MSG_LIST_EMPTY (//)
+The station's list names no station
+MSG_LIST_TOO_LONG (//)
+The station's list names an address too long
+MSG_NOT_AN_ADDRESS (//)
+This is not an address to listen to
+MSG_HOST_NO_ADDRESS (//)
+The station's host has no address
+MSG_CLOCK_NOT_SET (//)
+The clock is not set, so the station's certificate cannot be checked (TimeSync)
+MSG_CERTIFICATE (//)
+The station's certificate was not accepted
+MSG_SECURE_FAILED (//)
+The secure connection failed
+MSG_CLOSED (//)
+The station closed the connection without answering
+MSG_NOT_HTTP (//)
+The station does not answer in HTTP
+MSG_NONSENSE (//)
+The station's answer makes no sense
+MSG_CIRCLES (//)
+The station sends the request round in circles
+MSG_UNREACHED (//)
+The station could not be reached
+MSG_CONNECTION_FAILED (//)
+The connection failed
+;
+; What the shell is told when the Player cannot start: its name first.
+MSG_NOLIBRARY (//)
+%s: can't open %s\n
+MSG_NOMEMORY (//)
+%s: no memory for the window\n
+MSG_NOBUFFERS (//)
+%s: no memory for the sound\n
+MSG_NOWINDOW (//)
+%s: no window\n

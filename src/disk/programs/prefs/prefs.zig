@@ -9,7 +9,7 @@
 //! PAGE opens it on a page, named as its tab is - PAGE=DOCK, say - which
 //! is how the dock's menu opens it on the dock's page.
 //!
-//! Eight pages under tabs:
+//! Nine pages under tabs:
 //!
 //! - **Style**: the looks there are to pick from - a style file each in
 //!   SYS:Prefs/Presets/Styles, its first comment saying what it is - and a
@@ -42,6 +42,12 @@
 //!   it is given none, when the keyboard on the screen comes up, whether
 //!   a window may be moved partly past the screen's edges, and whether the
 //!   gadgets in the title bars are wide.
+//! - **Region**: the country - its dates, numbers and money - the
+//!   languages wanted, the preferred first, picked from those in
+//!   LOCALE:Languages and English, and the time zone, by the places that
+//!   keep it (`sdk.dos.timezone.places`) or as a POSIX TZ rule typed; and
+//!   a date, a time, a number and an amount of money as the page has them,
+//!   from a locale made of its settings.
 //! - **Sound**: the output preferred - played through whenever it is
 //!   there, headphones that are plugged in taking the sound over - and
 //!   how loud each output plays, those on the machine now and those the
@@ -65,7 +71,8 @@
 //! **Save** writes the files to ENV:Sys and ENVARC:Sys, **Use** to
 //! ENV:Sys alone - in force until the machine starts again - and both then
 //! hand them to the system as S:Startup-Sequence does at boot, running
-//! C:SetPrefs: every window open takes the
+//! C:SetPrefs and, for the time zone, C:SetClock ZONE: every window open
+//! takes the
 //! style, the colours and the title bars' gadgets at once; fonts are taken
 //! by what opens from then on. The colours' file is written only when a colour was changed. **Cancel**
 //! leaves everything as it was. The files' forms are `sdk.prefs`'s, and
@@ -91,6 +98,10 @@ const intuition_file = prefs.intuition;
 const palette_file = prefs.palette;
 const anvil_file = prefs.anvil;
 const dock_file = prefs.dock;
+const locale_file = prefs.locale;
+const timezone = dos.timezone;
+const locale = sdk.locale;
+const LocaleBase = sdk.interface.locale.LocaleBase;
 const sound_file = prefs.sound;
 const audio_file = prefs.audio;
 const audio = sdk.devices.audio;
@@ -132,8 +143,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.20";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (28.10.2026)\r\n";
+const VERSION = "1.21";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -143,7 +154,7 @@ const MSG_NOMEMORY = "No memory for the settings\n";
 const MSG_NOWINDOW = "No window\n";
 const MSG_NOTSAVED = "%s could not be written\n";
 const MSG_NOTMOVED = "The dock could not be moved to %s\n";
-const MSG_BADPAGE = "%s: PAGE is STYLE, ADVANCED, COLOURS, FONTS, DESKTOP, SYSTEM, SOUND or DOCK\n";
+const MSG_BADPAGE = "%s: PAGE is STYLE, ADVANCED, COLOURS, FONTS, DESKTOP, SYSTEM, REGION, SOUND or DOCK\n";
 
 const template = "PAGE/K";
 const arg_page = 0;
@@ -193,6 +204,12 @@ const ID_EQ_OUTPUT = 160;
 const ID_EQ_FLAT = 161;
 const ID_EQ_PRESET = 162;
 const ID_BAND = 164;
+/// The region page's.
+const ID_COUNTRY = 180;
+const ID_LANGUAGE = 181;
+const ID_CLEAR = 182;
+const ID_ZONE = 183;
+const ID_ZONE_RULE = 184;
 
 const band_count = audio.AUDIO_EQ_BANDS;
 
@@ -296,15 +313,16 @@ const joins_labels = [_:null]?[*:0]const u8{ "Default", "None", "Angled" };
 const keyboard_labels = [_:null]?[*:0]const u8{ "When the board has none", "Always", "Never" };
 const place_labels = [_:null]?[*:0]const u8{ "Tiled", "Centred", "Scaled to cover" };
 const view_labels = [_:null]?[*:0]const u8{ "Icons", "Names", "Dates", "Sizes" };
-const tab_names = [_:null]?[*:0]const u8{ "Style", "Advanced", "Colours", "Fonts", "Desktop", "System", "Sound", "Dock" };
+const tab_names = [_:null]?[*:0]const u8{ "Style", "Advanced", "Colours", "Fonts", "Desktop", "System", "Region", "Sound", "Dock" };
 const page_style = 0;
 const page_advanced = 1;
 const page_colours = 2;
 const page_fonts = 3;
 const page_desktop = 4;
 const page_system = 5;
-const page_sound = 6;
-const page_dock = 7;
+const page_region = 6;
+const page_sound = 7;
+const page_dock = 8;
 
 const edge_labels = [_:null]?[*:0]const u8{ "Bottom", "Left", "Right", "Top" };
 const dock_label_labels = [_:null]?[*:0]const u8{ "Never", "Under the pointer", "Always" };
@@ -351,6 +369,26 @@ const Preset = struct {
     node: exec.Node = .{},
     name: [32:0]u8 = @splat(0),
 };
+
+/// A country or a language, on the list a list view shows.
+const ListEntry = struct {
+    node: exec.Node = .{},
+    name: [locale_file.name_len:0]u8 = @splat(0),
+};
+/// The most countries and languages the region page lists.
+const max_countries = 48;
+const max_languages = 24;
+/// The zone's chooser: the places that keep one, and a rule of one's own.
+const zone_labels = labels: {
+    var made: [timezone.places.len + 1:null]?[*:0]const u8 = undefined;
+    for (timezone.places, 0..) |place, i| made[i] = place.name;
+    made[timezone.places.len] = "Another: the rule typed";
+    break :labels made;
+};
+const zone_own = timezone.places.len;
+/// What the region page makes a locale of to show how it looks: its
+/// settings, written as the file.
+const sample_file = "T:Prefs-region.prefs";
 /// The style's fields: a key each, its label, and its group.
 const Field = struct { key: style_file.Key, label: [*:0]const u8 };
 const colour_fields = [_]Field{
@@ -494,6 +532,32 @@ const Editor = struct {
     dock_start: ?*Object = null,
     dock_status: *Object = undefined,
     dock_status_text: [80:0]u8 = @splat(0),
+    /// The region page: the country and the languages as ENV: had them
+    /// and as the page has them, the countries and the languages to pick
+    /// from, those picked as their list shows them, the zone's rule, a
+    /// date, a time, a number and money as they look, and locale.library,
+    /// when there is one, to make them.
+    region: locale_file.Settings = .{},
+    countries: exec.List = .{},
+    country_nodes: [max_countries]ListEntry = @splat(.{}),
+    country_count: usize = 0,
+    languages: exec.List = .{},
+    language_nodes: [max_languages]ListEntry = @splat(.{}),
+    language_count: usize = 0,
+    picked: exec.List = .{},
+    picked_nodes: [locale_file.max_languages]ListEntry = @splat(.{}),
+    country_list: *Object = undefined,
+    language_list: *Object = undefined,
+    picked_list: *Object = undefined,
+    clear_languages: *Object = undefined,
+    zone_rule: [96:0]u8 = @splat(0),
+    zone_chooser: *Object = undefined,
+    zone_field: *Object = undefined,
+    samples: [4]*Object = undefined,
+    sample_texts: [4][80:0]u8 = @splat(@splat(0)),
+    region_status: *Object = undefined,
+    region_status_text: [80:0]u8 = @splat(0),
+    locale_base: ?*LocaleBase = null,
     /// The pages, to turn to the one a problem is on.
     book: *Object = undefined,
     /// What Test plays: a tone on a request of its own, sent, and its
@@ -1270,6 +1334,202 @@ const Editor = struct {
         return d;
     }
 
+    // --- the region page --------------------------------------------------
+
+    fn sayRegion(e: *Editor, text: []const u8) void {
+        const n = @min(text.len, e.region_status_text.len);
+        @memcpy(e.region_status_text[0..n], text[0..n]);
+        e.region_status_text[n] = 0;
+        e.set(page_region, e.region_status, &.{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&e.region_status_text) }, .{} });
+    }
+
+    /// The names of the files in `dir` that end in `suffix` (in capitals),
+    /// without it, and `builtin` when given - a name with no file - onto
+    /// `list` from `nodes`, in order of their names; how many.
+    fn readNames(e: *Editor, dir: [*:0]const u8, suffix: []const u8, builtin: ?[]const u8, nodes: []ListEntry, list: *exec.List) usize {
+        list.init(.unknown);
+        var count: usize = 0;
+        if (builtin) |name| {
+            @memcpy(nodes[0].name[0..name.len], name);
+            count = 1;
+        }
+        const dl = e.dl;
+        if (dl.Lock(dir, dos.SHARED_LOCK)) |lock| {
+            defer dl.UnLock(lock);
+            var fib: dos.FileInfoBlock = .{};
+            if (dl.Examine(lock, &fib)) {
+                while (dl.ExNext(lock, &fib)) {
+                    if (dos.isDirectory(fib.dir_entry_type) or count == nodes.len) continue;
+                    var len: usize = 0;
+                    while (fib.file_name[len] != 0) len += 1;
+                    if (len <= suffix.len or len - suffix.len > locale_file.name_len) continue;
+                    const stem = len - suffix.len;
+                    if (!style_file.same(fib.file_name[stem..len], suffix)) continue;
+                    if (builtin) |name| if (sameText(fib.file_name[0..stem], name)) continue;
+                    @memcpy(nodes[count].name[0..stem], fib.file_name[0..stem]);
+                    nodes[count].name[stem] = 0;
+                    count += 1;
+                }
+            }
+        }
+        const all = nodes[0..count];
+        var i: usize = 1;
+        while (i < all.len) : (i += 1) {
+            var j = i;
+            while (j > 0 and sortsBefore(&all[j].name, &all[j - 1].name)) : (j -= 1) {
+                const swap = all[j];
+                all[j] = all[j - 1];
+                all[j - 1] = swap;
+            }
+        }
+        for (all) |*entry| {
+            entry.node.name = @ptrCast(&entry.name);
+            e.sys.AddTail(list, &entry.node);
+        }
+        return count;
+    }
+
+    /// The country's place on its list; LISTVIEW_NONE for none there.
+    fn countryIndex(e: *const Editor) u32 {
+        const name = e.region.countryName();
+        for (e.country_nodes[0..e.country_count], 0..) |*entry, i| {
+            if (sameWord(&entry.name, &e.region.country) and name.len != 0) return @intCast(i);
+        }
+        return lv.LISTVIEW_NONE;
+    }
+
+    fn takeCountry(e: *Editor, index: usize) void {
+        if (index >= e.country_count) return;
+        _ = e.region.setCountry(std_span(&e.country_nodes[index].name));
+        e.showSample();
+    }
+
+    /// The language at `index` of those there are added after the ones
+    /// picked.
+    fn takeLanguage(e: *Editor, index: usize) void {
+        if (index >= e.language_count) return;
+        if (e.region.language_count == locale_file.max_languages) {
+            e.sayRegion("Ten languages at most: Clear, and pick them anew");
+            return;
+        }
+        if (!e.region.addLanguage(std_span(&e.language_nodes[index].name))) {
+            e.sayRegion("That language is picked already");
+            return;
+        }
+        e.showPicked();
+        e.showSample();
+    }
+
+    fn clearLanguages(e: *Editor) void {
+        e.region.clearLanguages();
+        e.showPicked();
+        e.showSample();
+    }
+
+    /// The languages picked onto their list, the list given to its view
+    /// anew, and Clear ghosted while there are none.
+    fn showPicked(e: *Editor) void {
+        e.set(page_region, e.picked_list, &.{ pair(lv.LISTVIEW_Labels, lv.LISTVIEW_DETACH), .{} });
+        e.fillPicked();
+        e.set(page_region, e.picked_list, &.{ pair(lv.LISTVIEW_Labels, @intFromPtr(&e.picked)), .{} });
+        e.set(page_region, e.clear_languages, &.{ pair(gc.GA_Disabled, @intFromBool(e.region.language_count == 0)), .{} });
+    }
+
+    fn fillPicked(e: *Editor) void {
+        e.picked.init(.unknown);
+        for (0..e.region.language_count) |i| {
+            const entry = &e.picked_nodes[i];
+            entry.name = e.region.languages[i];
+            entry.node.name = @ptrCast(&entry.name);
+            e.sys.AddTail(&e.picked, &entry.node);
+        }
+    }
+
+    /// The zone the page's rule is: the place that keeps it, UTC for no
+    /// rule, else a rule of its own.
+    fn zoneChoice(e: *const Editor) usize {
+        const rule = std_span(&e.zone_rule);
+        if (rule.len == 0) return 0;
+        for (timezone.places, 0..) |place, i| {
+            if (sameText(rule, place.rule)) return i;
+        }
+        return zone_own;
+    }
+
+    /// The zone of the place picked, its rule shown in the field; for a
+    /// rule of one's own, the field is where it is typed.
+    fn takeZone(e: *Editor, choice: usize) void {
+        if (choice >= timezone.places.len) return;
+        const rule = timezone.places[choice].rule;
+        e.zone_rule = @splat(0);
+        @memcpy(e.zone_rule[0..rule.len], rule);
+        e.set(page_region, e.zone_field, &.{ pair(gc.STRINGA_TextVal, @intFromPtr(&e.zone_rule)), .{} });
+        e.sayRegion("");
+    }
+
+    /// The rule typed taken, and the place that keeps it shown: false,
+    /// with the rule as it was put back and the line saying why, for one
+    /// that is no rule or that SetClock ZONE could not keep.
+    fn takeZoneRule(e: *Editor) bool {
+        var got: usize = 0;
+        _ = e.ib.GetAttr(gc.STRINGA_TextVal, e.zone_field, &got);
+        const typed = if (got != 0) trimmed(std_span(@ptrFromInt(got))) else "";
+        const refused: ?[]const u8 = if (typed.len == 0) null else if (timezone.parse(typed)) |zone|
+            (if (timezone.pack(&zone) == null) "That rule's offsets or changes are not whole quarter hours" else null)
+        else
+            "That is no time zone rule: the one before is put back";
+        if (refused) |why| {
+            e.sayRegion(why);
+            e.set(page_region, e.zone_field, &.{ pair(gc.STRINGA_TextVal, @intFromPtr(&e.zone_rule)), .{} });
+            return false;
+        }
+        if (typed.len < e.zone_rule.len) {
+            e.zone_rule = @splat(0);
+            @memcpy(e.zone_rule[0..typed.len], typed);
+        }
+        e.set(page_region, e.zone_chooser, &.{ pair(ch.CHOOSER_Active, e.zoneChoice()), .{} });
+        e.sayRegion("");
+        return true;
+    }
+
+    /// The page's country and languages as the file has them, after its
+    /// explanation; how many bytes (`locale_file.header` and 400 will do).
+    fn regionText(e: *const Editor, into: []u8) usize {
+        var n = locale_file.header.len;
+        @memcpy(into[0..n], locale_file.header);
+        n += locale_file.write(&e.region, into[n..]);
+        into[n] = '\n';
+        return n + 1;
+    }
+
+    /// A date, a time, a number and an amount of money, as the page's
+    /// settings write them: a locale made of them, from the file they
+    /// make in T:.
+    fn showSample(e: *Editor) void {
+        const lb = e.locale_base orelse {
+            e.sayRegion("No locale.library: how it looks is not shown");
+            return;
+        };
+        var text: [locale_file.header.len + 400]u8 = undefined;
+        const length = e.regionText(&text);
+        if (!prefs.save(e.dl, sample_file, text[0..length])) return;
+        defer _ = e.dl.DeleteFile(sample_file);
+        for (&e.sample_texts) |*sample| sample[0] = 0;
+        if (lb.OpenLocale(sample_file)) |loc| {
+            defer lb.CloseLocale(loc);
+            var now: dos.DateStamp = .{};
+            _ = e.dl.DateStamp(&now);
+            var date = locale.BufferHook.init(&e.sample_texts[0]);
+            lb.FormatDate(loc, loc.date_format, &now, &date.hook);
+            var time = locale.BufferHook.init(&e.sample_texts[1]);
+            lb.FormatDate(loc, loc.time_format, &now, &time.hook);
+            sampleNumber(loc, &e.sample_texts[2]);
+            sampleMoney(loc, &e.sample_texts[3]);
+            e.sayRegion("");
+        } else e.sayRegion("The country's or a language's file could not be read");
+        for (e.samples, 0..) |o, i| e.set(page_region, o, &.{ pair(tx.TEXT_Text, @intFromPtr(&e.sample_texts[i])), .{} });
+    }
+
     /// The page shown turned to `page`.
     fn turnTo(e: *Editor, page: usize) void {
         const w = e.window orelse return;
@@ -1357,8 +1617,21 @@ const Editor = struct {
             ok = e.saveBoth(palette_file.ENV_FILE, palette_file.ENVARC_FILE, text[0..n], keep) and ok;
         }
 
+        n = e.regionText(text[0..room]);
+        ok = e.saveBoth(locale_file.ENV_FILE, locale_file.ENVARC_FILE, text[0..n], keep) and ok;
+
+        n = timezone.header.len;
+        @memcpy(text[0..n], timezone.header);
+        const rule = std_span(&e.zone_rule);
+        @memcpy(text[n..][0..rule.len], rule);
+        n += rule.len;
+        text[n] = '\n';
+        n += 1;
+        ok = e.saveBoth(timezone.zone_file, timezone.kept_zone_file, text[0..n], keep) and ok;
+
         // Handed to the system as the boot does.
         _ = e.dl.SystemTagList("C:SetPrefs >NIL:", null);
+        _ = e.dl.SystemTagList("C:SetClock >NIL: ZONE", null);
         return ok;
     }
 
@@ -1556,6 +1829,104 @@ fn std_span(text: [*:0]const u8) []const u8 {
     var n: usize = 0;
     while (text[n] != 0) n += 1;
     return text[0..n];
+}
+
+/// `text` without the blanks, tabs and returns at its ends.
+fn trimmed(text: []const u8) []const u8 {
+    var from: usize = 0;
+    var to = text.len;
+    while (from < to and (text[from] == ' ' or text[from] == '\t')) from += 1;
+    while (to > from and (text[to - 1] == ' ' or text[to - 1] == '\t' or text[to - 1] == '\r')) to -= 1;
+    return text[from..to];
+}
+
+/// `text` copied to `into` where it fits; how many bytes.
+fn append(into: []u8, text: []const u8) usize {
+    const n = @min(text.len, into.len);
+    @memcpy(into[0..n], text[0..n]);
+    return n;
+}
+
+/// `value`'s digits into `into`, `separator` between their groups as
+/// `grouping` sizes them from the right - a 0 repeats the size before it
+/// for the rest, GROUPING_NONE ends the groups; how many bytes.
+fn grouped(into: []u8, value: u32, separator: [*:0]const u8, grouping: [*]const u8) usize {
+    var digits: [10]u8 = undefined;
+    var count: usize = 0;
+    var left = value;
+    while (true) {
+        digits[count] = '0' + @as(u8, @intCast(left % 10));
+        count += 1;
+        left /= 10;
+        if (left == 0) break;
+    }
+    // Written from the right, then turned round.
+    const between = std_span(separator);
+    var backwards: [64]u8 = undefined;
+    var n: usize = 0;
+    var group: usize = 0;
+    var size: usize = if (grouping[0] == 0) locale.GROUPING_NONE else grouping[0];
+    var in_group: usize = 0;
+    for (digits[0..count]) |digit| {
+        if (size != locale.GROUPING_NONE and in_group == size and n + between.len < backwards.len) {
+            var k = between.len;
+            while (k > 0) {
+                k -= 1;
+                backwards[n] = between[k];
+                n += 1;
+            }
+            in_group = 0;
+            if (grouping[group] != 0) {
+                group += 1;
+                if (grouping[group] != 0) size = grouping[group];
+            }
+        }
+        if (n == backwards.len) break;
+        backwards[n] = digit;
+        n += 1;
+        in_group += 1;
+    }
+    const written = @min(n, into.len);
+    for (0..written) |i| into[i] = backwards[n - 1 - i];
+    return written;
+}
+
+/// 1234567.89 as the locale writes a number.
+fn sampleNumber(loc: *const locale.Locale, into: *[80:0]u8) void {
+    var n = grouped(into, 1234567, loc.group_separator, loc.grouping);
+    n += append(into[n..], std_span(loc.decimal_point));
+    n += append(into[n..], "89");
+    into[n] = 0;
+}
+
+/// 1234.56 as the locale writes an amount of money: its symbol, and the
+/// sign of an amount above zero, where it puts them.
+fn sampleMoney(loc: *const locale.Locale, into: *[80:0]u8) void {
+    var amount: [40]u8 = undefined;
+    var a = grouped(&amount, 1234, loc.mon_group_separator, loc.mon_grouping);
+    if (loc.mon_frac_digits > 0) {
+        a += append(amount[a..], std_span(loc.mon_decimal_point));
+        a += append(amount[a..], "5600"[0..@min(loc.mon_frac_digits, 4)]);
+    }
+    const at = loc.mon_positive_sign_pos;
+    const sign = std_span(loc.mon_positive_sign);
+    var symbol: [24]u8 = undefined;
+    var s: usize = 0;
+    if (at == locale.SP_PREC_CURR) s += append(symbol[s..], sign);
+    s += append(symbol[s..], std_span(loc.mon_cs));
+    if (at == locale.SP_SUCC_CURR) s += append(symbol[s..], sign);
+    const space: []const u8 = if (loc.mon_positive_space_sep == locale.SS_SPACE) " " else "";
+    const pieces: [3][]const u8 = if (loc.mon_positive_cs_pos == locale.CSP_PRECEDES)
+        .{ symbol[0..s], space, amount[0..a] }
+    else
+        .{ amount[0..a], space, symbol[0..s] };
+    var n: usize = 0;
+    if (at == locale.SP_PARENS) n += append(into[n..], "(");
+    if (at == locale.SP_PREC_ALL) n += append(into[n..], sign);
+    for (pieces) |piece| n += append(into[n..], piece);
+    if (at == locale.SP_SUCC_ALL) n += append(into[n..], sign);
+    if (at == locale.SP_PARENS) n += append(into[n..], ")");
+    into[n] = 0;
 }
 
 fn sameText(a: []const u8, b: []const u8) bool {
@@ -2089,6 +2460,7 @@ noinline fn build(e: *Editor) ?*Object {
         .{},
     }) orelse return null;
     pages[page_sound] = column(ib, null, &.{ sound_groups, e.sound_status }, &.{}) orelse return null;
+    pages[page_region] = buildRegion(e) orelse return null;
     pages[page_dock] = buildDock(e) orelse return null;
 
     e.tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
@@ -2180,6 +2552,117 @@ noinline fn buildDock(e: *Editor) ?*Object {
         .{},
     }) orelse return null;
     return column(ib, null, &.{ group, note, e.dock_status }, &.{});
+}
+
+/// The region page, apart from `build` as the dock's is: the countries,
+/// the languages there are and those picked, a list each; the zone; how
+/// it looks; and the line that says what was refused.
+noinline fn buildRegion(e: *Editor) ?*Object {
+    const ib = e.ib;
+    const country_at = e.countryIndex();
+    e.country_list = ib.NewObjectTagList(null, lv.LISTVIEW_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_COUNTRY),
+        pair(gc.GA_RelVerify, 1),
+        pair(lv.LISTVIEW_Labels, @intFromPtr(&e.countries)),
+        pair(lv.LISTVIEW_ShowSelected, 1),
+        pair(lv.LISTVIEW_Selected, country_at),
+        pair(lv.LISTVIEW_MakeVisible, if (country_at == lv.LISTVIEW_NONE) 0 else country_at),
+        .{},
+    }) orelse return null;
+    e.language_list = ib.NewObjectTagList(null, lv.LISTVIEW_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_LANGUAGE),
+        pair(gc.GA_RelVerify, 1),
+        pair(lv.LISTVIEW_Labels, @intFromPtr(&e.languages)),
+        .{},
+    }) orelse return null;
+    e.fillPicked();
+    e.picked_list = ib.NewObjectTagList(null, lv.LISTVIEW_CLASS, &[_]TagItem{
+        pair(lv.LISTVIEW_Labels, @intFromPtr(&e.picked)),
+        pair(lv.LISTVIEW_ReadOnly, 1),
+        .{},
+    }) orelse return null;
+    e.clear_languages = ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        pair(gc.GA_Text, @intFromPtr("C_lear")),
+        pair(gc.GA_ID, ID_CLEAR),
+        pair(gc.GA_RelVerify, 1),
+        pair(gc.GA_Disabled, @intFromBool(e.region.language_count == 0)),
+        .{},
+    }) orelse return null;
+    var lists: [3]?*Object = undefined;
+    const titles = [3][*:0]const u8{ "Country", "Languages", "Preferred, first first" };
+    const views = [3]*Object{ e.country_list, e.language_list, e.picked_list };
+    for (views, titles, 0..) |view, title, i| {
+        lists[i] = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            pair(lg.LAYOUTA_Orientation, lg.LORIENT_VERT),
+            pair(lg.LAYOUTA_FrameTitle, @intFromPtr(title)),
+            pair(lg.LAYOUTA_Margin, 6),
+            pair(lg.LAYOUTA_Spacing, 3),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(view)),
+            pair(lg.CHILDA_MinWidth, 130),
+            pair(lg.CHILDA_MinHeight, 110),
+            if (i == 2) pair(lg.LAYOUTA_AddChild, @intFromPtr(e.clear_languages)) else .{},
+            if (i == 2) pair(lg.CHILDA_WeightHeight, 0) else .{},
+            .{},
+        }) orelse return null;
+    }
+    const all_lists = row(ib, &lists) orelse return null;
+    const note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Wrap, 1),
+        pair(tx.TEXT_Text, @intFromPtr("A language picked goes on the preferred list, after those on it: texts are in the first that has them. With none picked, the country's own.")),
+        .{},
+    }) orelse return null;
+
+    e.zone_chooser = ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_ZONE),
+        pair(gc.GA_RelVerify, 1),
+        pair(ch.CHOOSER_Labels, @intFromPtr(&zone_labels)),
+        pair(ch.CHOOSER_Active, e.zoneChoice()),
+        .{},
+    }) orelse return null;
+    e.zone_field = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, ID_ZONE_RULE),
+        pair(gc.GA_RelVerify, 1),
+        pair(gc.STRINGA_TextVal, @intFromPtr(&e.zone_rule)),
+        pair(gc.STRINGA_MaxChars, e.zone_rule.len - 1),
+        .{},
+    }) orelse return null;
+    const zone_group = column(ib, "Time zone", &.{ e.zone_chooser, e.zone_field }, &.{ "_Zone", "_Rule" }) orelse return null;
+    for (&e.samples, 0..) |*sample, i| {
+        sample.* = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+            pair(tx.TEXT_Text, @intFromPtr(&e.sample_texts[i])),
+            pair(tx.TEXT_Clipped, 1),
+            pair(gc.GA_Width, 220),
+            .{},
+        }) orelse return null;
+    }
+    const sample_group = column(ib, "Looks like", &.{ e.samples[0], e.samples[1], e.samples[2], e.samples[3] }, &.{ "Date", "Time", "Number", "Money" }) orelse return null;
+    const lower = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ),
+        pair(lg.LAYOUTA_Spacing, 6),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(zone_group)),
+        pair(lg.CHILDA_Align, lg.CALIGN_TOP),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(sample_group)),
+        pair(lg.CHILDA_Align, lg.CALIGN_TOP),
+        .{},
+    }) orelse return null;
+    e.region_status = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Text, @intFromPtr(&e.region_status_text)),
+        pair(tx.TEXT_Clipped, 1),
+        .{},
+    }) orelse return null;
+    e.showSample();
+    return ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        pair(lg.LAYOUTA_Orientation, lg.LORIENT_VERT),
+        pair(lg.LAYOUTA_Spacing, 3),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(all_lists)),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(note)),
+        pair(lg.CHILDA_WeightHeight, 0),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(lower)),
+        pair(lg.CHILDA_WeightHeight, 0),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(e.region_status)),
+        pair(lg.CHILDA_WeightHeight, 0),
+        .{},
+    });
 }
 
 fn stringField(ib: *IntuitionBase, key: style_file.Key) ?*Object {
@@ -2451,6 +2934,26 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer e.closeSound();
     e.readAudio();
 
+    // The region: the country and the languages, the zone, and what
+    // there is to pick from.
+    if (prefs.loadWhole(sys, dl, locale_file.ENV_FILE)) |text| {
+        defer sys.FreeVec(text.ptr);
+        var region: locale_file.Settings = .{};
+        if (locale_file.parse(e.ub, text, &region) == null) e.region = region;
+    }
+    if (prefs.loadWhole(sys, dl, timezone.zone_file)) |text| {
+        defer sys.FreeVec(text.ptr);
+        if (prefs.firstLine(text)) |line| {
+            const rule = trimmed(line);
+            if (rule.len < e.zone_rule.len) @memcpy(e.zone_rule[0..rule.len], rule);
+        }
+    }
+    e.country_count = e.readNames(locale.countries_dir, ".COUNTRY", null, &e.country_nodes, &e.countries);
+    e.language_count = e.readNames(locale.languages_dir, ".LANGUAGE", "english", &e.language_nodes, &e.languages);
+    const locale_lib = sys.OpenLibrary(locale.LOCALENAME, 1);
+    defer if (locale_lib) |lib| sys.CloseLibrary(lib);
+    e.locale_base = @ptrCast(locale_lib);
+
     e.readPresets();
     const layout = build(e) orelse {
         _ = Printf(dl, MSG_NOMEMORY, .{});
@@ -2514,6 +3017,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                         ID_BORDER => e.takeChoice(.border, &style_file.borders, code),
                         ID_JOINS => e.takeChoice(.joins, &style_file.joins, code),
                         ID_SAVE, ID_USE => {
+                            if (!e.takeZoneRule()) {
+                                e.turnTo(page_region);
+                                continue;
+                            }
                             const beep = e.beepPrefs();
                             if (beep.sound == sound_file.SOUND_SAMPLE and beep.sample[0] == 0) {
                                 e.saySound("A sound file for the beep: pick one, or another sound");
@@ -2541,6 +3048,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                         ID_BUILTIN => e.builtInPens(),
                         ID_GROUND => e.takeGround(),
                         ID_GROUND_PICK => e.pickGround(),
+                        ID_COUNTRY => e.takeCountry(code & ~lv.LISTVIEW_DOUBLE),
+                        ID_LANGUAGE => e.takeLanguage(code & ~lv.LISTVIEW_DOUBLE),
+                        ID_CLEAR => e.clearLanguages(),
+                        ID_ZONE => e.takeZone(code),
+                        ID_ZONE_RULE => _ = e.takeZoneRule(),
                         else => if (id >= ID_FIELD and id < ID_FIELD + style_file.key_count) {
                             e.takeField(@enumFromInt(id - ID_FIELD));
                         } else if (id >= ID_PEN_CHOICE and id < ID_PEN_CHOICE + style_file.key_count) {

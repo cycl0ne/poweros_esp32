@@ -11,7 +11,7 @@
 //! the entries leave it. The commit names its author and committer as
 //! `[user]` in `.git/config` or ENVARC:Sys/net/gitconfig names them,
 //! with the time now and the offset of the zone in
-//! ENVARC:Sys/timezone. The message is MESSAGE, its blank lines at
+//! ENV:Sys/timezone. The message is MESSAGE, its blank lines at
 //! either end taken off.
 
 const sdk = @import("sdk");

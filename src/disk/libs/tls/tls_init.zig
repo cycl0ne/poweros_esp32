@@ -14,7 +14,7 @@ const tls_lvo = @import("tls_lvo.zig");
 
 pub const LIBRARY_NAME = tls.TLSNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
+pub const LIBRARY_REVISION = 4;
 pub const BUILD_DATE = "29.10.2026";
 /// The build's date as seconds since 1970: a clock earlier than this
 /// has not been set.

@@ -438,7 +438,8 @@ pub fn Strings(comptime Module: type) type {
         }
 
         /// The string `id` in the catalog's language, or the one built in.
-        pub fn get(self: *const Self, comptime id: Id) [*:0]const u8 {
+        /// `id` may be known only when the program runs: a table's.
+        pub fn get(self: *const Self, id: Id) [*:0]const u8 {
             const builtin = Module.builtin(id);
             const library = self.library orelse return builtin;
             return library.GetCatalogStr(self.catalog, @intFromEnum(id), builtin);
@@ -459,7 +460,30 @@ pub fn Strings(comptime Module: type) type {
             _ = library.FormatString(loc, self.get(id), &stream, &out.hook);
             return if (out.failed) -1 else out.count;
         }
+
+        /// The string `id` as a format, `args` checked as `printf` checks
+        /// them, written into `into` - cut to it, its NUL always there -
+        /// by FormatString, or RawDoFmt without the library. What was
+        /// written, without the NUL.
+        pub fn format(self: *const Self, into: []u8, comptime id: Id, args: anytype) [:0]const u8 {
+            comptime exec.checkFormat(Module.builtin(id), @TypeOf(args));
+            const stream = exec.fmtStream(args);
+            into[0] = 0;
+            var out = BufferHook.init(into);
+            if (self.library) |library| if (self.locale) |loc| {
+                _ = library.FormatString(loc, self.get(id), &stream, &out.hook);
+                return into[0..out.length :0];
+            };
+            _ = self.sys.RawDoFmt(self.get(id), &stream, &putInto, &out);
+            return into[0..out.length :0];
+        }
     };
+}
+
+/// RawDoFmt's way to BufferHook: each byte while there is room.
+fn putInto(byte: u8, data: ?*anyopaque) callconv(.c) void {
+    const out: *BufferHook = @ptrCast(@alignCast(data.?));
+    _ = BufferHook.put(&out.hook, null, @ptrFromInt(byte));
 }
 
 /// A hook for FormatString and FormatDate that writes to a file through

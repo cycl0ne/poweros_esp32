@@ -271,7 +271,7 @@ last two over a reset - so the boot after starts with the date; and to
 `ENVARC:Sys/clock`, where the boot starts the clock (`SetClock LOAD`)
 when that clock lost it: behind, then, but never in 1978. The clock
 keeps local time; the session works the UTC out by
-`ENVARC:Sys/timezone`.
+`ENV:Sys/timezone`.
 
 **Waiting.** A record is decrypted whole, and what a read does not take
 waits in the session, where `WaitSelect` does not see it: ask
@@ -455,7 +455,7 @@ minutes.
 | `ENVARC:Sys/net/known_hosts` | the host keys `C:net/SSH` and `C:net/SCP` have seen, OpenSSH's lines |
 | `ENVARC:Sys/net/filter` | the packet filter's rules: `S:Network-Startup` loads them before any interface comes up |
 | `ENVARC:Sys/clock` | the date `SetClock SAVE` last kept, in seconds since 1 January 1978: `SetClock LOAD` in the startup sequence starts the clock there when the clock that keeps the date has none, or an earlier one |
-| `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule; `SetClock ZONE` in the startup sequence keeps it in battmem.resource for the file systems, so after changing it run that too |
+| `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule, copied to `ENV:Sys/timezone` at boot, which is the one every program reads; `SetClock ZONE` in the startup sequence keeps it in battmem.resource for the file systems. Prefs' Region page writes both and runs `SetClock ZONE`; after changing the file by hand, copy it to ENV: and run that too |
 | `S:Network-Startup` | run by the Startup-Sequence in a shell of its own, once the desktop is up: `AddNetInterface ALL QUIET`, then `TimeSync REDATE` - the files the start wrote on SYS: and RAM: before the clock was right move with it - and, when a server answered, `SetClock SAVE`, then `MountShare ALL` for the shares in `DEVS:Shares/`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
 
 An interface file is keywords, one to a line, and `/* */` comments:
@@ -841,7 +841,7 @@ scp -r -P 2222 claus@localhost:/SYS/S saved-s
   gets the protection any new file gets, whatever the client's copy
   had, so a program brought from a PC stays runnable.
 - **Times** are the clock's local time turned into UTC by the zone in
-  `ENVARC:Sys/timezone`, and back.
+  `ENV:Sys/timezone`, and back.
 - SFTP version 3, as OpenSSH speaks it; up to 16 files and directories
   open at once in a session. No links. A file past 4 GiB (exFAT) is read,
   written, jumped about in and cut anywhere.
@@ -1134,7 +1134,7 @@ current branch's remote, else `origin`.
 **The configuration** is `.git/config`, and `ENVARC:Sys/net/gitconfig`
 for what that does not say: `[user]` `name` and `email` sign a commit,
 `init.defaultBranch` names a new repository's branch (`main` without
-it). A commit's time zone is `ENVARC:Sys/timezone`'s.
+it). A commit's time zone is `ENV:Sys/timezone`'s.
 
 ```
 [user]

@@ -58,7 +58,7 @@ const client_module = @import("../protocol/client.zig");
 /// `SYS:Certificates/Roots` and the PEM files in
 /// `ENVARC:Sys/net/certificates/`, read once by the first session, for
 /// the host and at the time now in UTC - the clock keeps local time by
-/// `ENVARC:Sys/timezone`. A clock set before this library was built has
+/// `ENV:Sys/timezone`. A clock set before this library was built has
 /// not been set, and nothing is checked against it.
 ///
 /// On a failure the server is sent an alert, as far as the socket

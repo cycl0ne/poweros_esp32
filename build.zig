@@ -150,6 +150,7 @@ const image_dirs = [_][]const u8{
     "locale/Catalogs/deutsch/sys",
     "locale/Catalogs/deutsch/c",
     "locale/Catalogs/deutsch/c/test",
+    "locale/Catalogs/deutsch/programs",
 };
 
 /// An icon the build writes onto the image: where it goes, the picture

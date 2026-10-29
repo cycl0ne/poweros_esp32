@@ -4,6 +4,12 @@ Player plays sound files - WAV, MP3, FLAC and Ogg Vorbis - and internet
 stations in a window, with a picture of the sound under its controls: a
 plasma, the wave, or the spectrum's bars.
 
+Its menus, tabs, buttons, lists' headings, the lines beside the cover
+and why a station or a search failed are in the language chosen on
+Prefs' Region page when there is a catalog for it - German is on the
+disk, in `LOCALE:Catalogs/deutsch/programs/Player.catalog` - and in
+English otherwise.
+
 ## Starting it
 
 Double-click its icon, double-click a `.mp3`, `.wav`, `.flac` or `.ogg`

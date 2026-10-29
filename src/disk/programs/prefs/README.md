@@ -2,7 +2,8 @@
 
 Prefs holds the system's settings in one window: the style that gadgets,
 windows and menus are drawn in, the colours of the screens, the fonts,
-the desktop, the sound, the dock and a few of the system's own settings.
+the desktop, the country and the language, the sound, the dock and a few
+of the system's own settings.
 
 ## Starting it
 
@@ -12,7 +13,7 @@ which is what **Dock Settings...** in the dock's menu does.
 
 ## The pages
 
-The settings are on eight pages, under tabs:
+The settings are on nine pages, under tabs:
 
 - **Style:** the looks there are to choose from - one style file each in
   SYS:Prefs/Presets/Styles - and a few gadgets drawn in the one chosen.
@@ -47,6 +48,15 @@ The settings are on eight pages, under tabs:
   it is given none, when the keyboard on the screen comes up, whether a
   window may be moved partly past the screen's edges, and whether the
   close, depth and zoom gadgets in the title bars are wide.
+- **Region:** the country, whose dates, numbers and money the system
+  writes; the languages wanted, the preferred first - a click on one
+  in the list of those there are puts it on the preferred list after the
+  ones there, Clear empties it, and with none the country's own is used
+  - texts are shown in the first of them a program has them in; and the
+  time zone, picked by the places that keep it or typed as a POSIX TZ
+  rule (`CET-1CEST,M3.5.0,M10.5.0/3`), a rule that is none refused.
+  Under them a date, a time, a number and an amount of money as the
+  page's settings write them.
 - **Sound:** the outputs and their volumes on the left - which one is
   preferred, played through whenever it is there and taking the sound
   over when it is plugged in, and a slider for each output that is
@@ -75,7 +85,8 @@ field, and OK and Cancel. Until it is closed the editor takes no input.
 ## Keeping the settings
 
 - **Save** keeps the settings for good: they are written to ENV:Sys and
-  ENVARC:Sys.
+  ENVARC:Sys - the time zone to Sys/timezone, the country and the
+  languages to Sys/locale.prefs.
 - **Use** keeps them until the machine starts again: they are written to
   ENV:Sys alone.
 - **Cancel** leaves everything as it was; the volumes, the equalizers
@@ -84,4 +95,6 @@ field, and OK and Cancel. Until it is closed the editor takes no input.
 
 Save and Use hand the settings to the system at once. Every open window
 takes the style, the colours and the title bars' gadgets straight away;
-new fonts are used by what opens from then on.
+new fonts are used by what opens from then on, and so are the country and
+the languages: dos writes its dates and messages in them at once, a
+program that is running keeps the ones it started with.

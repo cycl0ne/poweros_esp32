@@ -67,8 +67,18 @@
 //! one, replace it and find the next, or replace every one. Find Next and
 //! Find Previous go on with the last text looked for. Ctrl-C ends Notepad
 //! as Quit does.
+//!
+//! Its texts are in `notepad.cd`, read through `sdk.locale.Strings`: the
+//! menus' and the ribbon's labels, the requesters, the find window and
+//! what the shell is told come from the catalog of the language the user
+//! prefers, when there is one. The tables hold each label's string, and
+//! the labels are put in from the catalog as the menus and the ribbon
+//! are made.
 
 const sdk = @import("sdk");
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
+const Id = strings.Id;
 const asl = sdk.asl;
 const dos = sdk.dos;
 const exec = sdk.exec;
@@ -99,20 +109,15 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const Object = intuition.Object;
 const Window = intuition.Window;
 const TagItem = sdk.utility.TagItem;
-const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Notepad";
-const VERSION = "1.6";
+const VERSION = "1.7";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
 const template = "FILE";
-
-const MSG_NOLIBRARY = "No %s\n";
-const MSG_NOSCREEN = "No default screen - no display\n";
-const MSG_NOMEMORY = "No memory for the window\n";
 
 /// The longest path a file is kept by.
 const path_size = 256;
@@ -168,82 +173,102 @@ const Command = enum(u32) {
     }
 };
 
-fn item(label: [*:0]const u8, key: ?[*:0]const u8, which: Command) mn.NewMenu {
-    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key, .user_data = @ptrFromInt(which.id()) };
+/// A menu's entry, and the string its label is.
+const MenuEntry = struct { menu: mn.NewMenu, text: ?Id = null };
+
+fn menuTitle(text: Id) MenuEntry {
+    return .{ .menu = .{ .type = mn.NM_TITLE, .label = strings.builtin(text) }, .text = text };
+}
+
+fn item(text: Id, key: ?[*:0]const u8, which: Command) MenuEntry {
+    return .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(text), .comm_key = key, .user_data = @ptrFromInt(which.id()) }, .text = text };
 }
 
 /// A View item with a check mark, toggled as it is picked.
-fn toggleItem(label: [*:0]const u8, key: ?[*:0]const u8, which: Command, on: bool) mn.NewMenu {
-    const checked: u32 = if (on) mn.CHECKED else 0;
-    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key, .flags = mn.CHECKIT | mn.MENUTOGGLE | checked, .user_data = @ptrFromInt(which.id()) };
+fn toggleItem(text: Id, key: ?[*:0]const u8, which: Command, on: bool) MenuEntry {
+    var made = item(text, key, which);
+    made.menu.flags = mn.CHECKIT | mn.MENUTOGGLE | @as(u32, if (on) mn.CHECKED else 0);
+    return made;
 }
 
-const bar = mn.NewMenu{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL };
+const bar = MenuEntry{ .menu = .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL } };
 
-const menus = [_]mn.NewMenu{
-    .{ .type = mn.NM_TITLE, .label = "Project" },
-    item("New", "N", .new),
-    item("Open...", "O", .open),
-    item("Save", "S", .save),
-    item("Save As...", null, .save_as),
+const menus = [_]MenuEntry{
+    menuTitle(.MSG_MENU_PROJECT),
+    item(.MSG_MENU_NEW, "N", .new),
+    item(.MSG_MENU_OPEN, "O", .open),
+    item(.MSG_MENU_SAVE, "S", .save),
+    item(.MSG_MENU_SAVE_AS, null, .save_as),
     bar,
-    item("Quit", "Q", .quit),
-    .{ .type = mn.NM_TITLE, .label = "Edit" },
-    item("Undo", "Z", .undo),
-    item("Redo", "Y", .redo),
+    item(.MSG_MENU_QUIT, "Q", .quit),
+    menuTitle(.MSG_MENU_EDIT),
+    item(.MSG_MENU_UNDO, "Z", .undo),
+    item(.MSG_MENU_REDO, "Y", .redo),
     bar,
-    item("Cut", "X", .cut),
-    item("Copy", "C", .copy),
-    item("Paste", "V", .paste),
+    item(.MSG_MENU_CUT, "X", .cut),
+    item(.MSG_MENU_COPY, "C", .copy),
+    item(.MSG_MENU_PASTE, "V", .paste),
     bar,
-    item("Select All", "A", .select_all),
-    .{ .type = mn.NM_TITLE, .label = "Search" },
-    item("Find...", "F", .find),
-    item("Find Next", "G", .find_next),
-    item("Find Previous", "P", .find_previous),
-    item("Replace...", "R", .replace),
-    .{ .type = mn.NM_TITLE, .label = "View" },
-    toggleItem("Word Wrap", "W", .wrap, true),
-    toggleItem("Line Numbers", "L", .numbers, true),
-    toggleItem("Zig Highlighting", "H", .zig, false),
+    item(.MSG_MENU_SELECT_ALL, "A", .select_all),
+    menuTitle(.MSG_MENU_SEARCH),
+    item(.MSG_MENU_FIND, "F", .find),
+    item(.MSG_MENU_FIND_NEXT, "G", .find_next),
+    item(.MSG_MENU_FIND_PREVIOUS, "P", .find_previous),
+    item(.MSG_MENU_REPLACE, "R", .replace),
+    menuTitle(.MSG_MENU_VIEW),
+    toggleItem(.MSG_MENU_WRAP, "W", .wrap, true),
+    toggleItem(.MSG_MENU_NUMBERS, "L", .numbers, true),
+    toggleItem(.MSG_MENU_ZIG, "H", .zig, false),
     bar,
-    toggleItem("Ribbon", null, .ribbon, false),
-    .{},
+    toggleItem(.MSG_MENU_RIBBON, null, .ribbon, false),
+    .{ .menu = .{} },
 };
 
 /// Where the View menu's Ribbon item is in `menus`, to be checked or not
 /// before the strip is made.
 const ribbon_item = blk: {
     for (menus, 0..) |entry, at| {
-        if (entry.user_data == @as(?*anyopaque, @ptrFromInt(Command.ribbon.id()))) break :blk at;
+        if (entry.menu.user_data == @as(?*anyopaque, @ptrFromInt(Command.ribbon.id()))) break :blk at;
     }
     unreachable;
 };
 
-const finds = [_:null]?[*:0]const u8{ "Find Next", "Find Previous" };
+/// The ribbon Find's list: the strings of its two lines.
+const finds = [2]Id{ .MSG_MENU_FIND_NEXT, .MSG_MENU_FIND_PREVIOUS };
+const finds_builtin = [_:null]?[*:0]const u8{ strings.builtin(finds[0]), strings.builtin(finds[1]) };
+
+/// A ribbon's entry, and the strings its label and its hint are.
+const RibbonEntry = struct { entry: rb.NewRibbon, label: ?Id = null, hint: ?Id = null };
+
+fn ribbon(entry: rb.NewRibbon, label: Id, hint: ?Id) RibbonEntry {
+    var made = entry;
+    made.label = strings.builtin(label);
+    if (hint) |id| made.hint = strings.builtin(id);
+    return .{ .entry = made, .label = label, .hint = hint };
+}
 
 /// The ribbon: the menus' commands for the text on Home, the toggles on
 /// View. No label has a key marked: a key typed is the text's.
-const ribbon_table = [_]rb.NewRibbon{
-    .{ .type = rb.RB_TAB, .label = "Home" },
-    .{ .type = rb.RB_GROUP, .label = "Clipboard", .glyph = command.CMD_PASTE, .reduce = 1 },
-    .{ .type = rb.RB_LARGE, .id = Command.paste.id(), .label = "Paste", .glyph = command.CMD_PASTE, .hint = "Put in what was cut or copied", .flags = rb.RBF_DISABLED },
-    .{ .type = rb.RB_MEDIUM, .id = Command.cut.id(), .label = "Cut", .glyph = command.CMD_CUT },
-    .{ .type = rb.RB_MEDIUM, .id = Command.copy.id(), .label = "Copy", .glyph = command.CMD_COPY },
-    .{ .type = rb.RB_GROUP, .label = "Undo", .glyph = command.CMD_UNDO, .reduce = 2 },
-    .{ .type = rb.RB_MEDIUM, .id = Command.undo.id(), .label = "Undo", .glyph = command.CMD_UNDO, .flags = rb.RBF_DISABLED },
-    .{ .type = rb.RB_MEDIUM, .id = Command.redo.id(), .label = "Redo", .glyph = command.CMD_REDO, .flags = rb.RBF_DISABLED },
-    .{ .type = rb.RB_GROUP, .label = "Editing", .glyph = command.CMD_FIND },
-    .{ .type = rb.RB_LARGE, .id = ID_FINDS, .label = "Find", .glyph = command.CMD_FIND, .kind = tb.TBKIND_SPLIT, .labels = &finds, .hint = "Find a text; the list finds the next again, or the one before" },
-    .{ .type = rb.RB_MEDIUM, .id = Command.replace.id(), .label = "Replace", .glyph = command.CMD_REPLACE, .hint = "Put another text in the place of one found" },
-    .{ .type = rb.RB_MEDIUM, .id = Command.select_all.id(), .label = "Select All", .glyph = command.CMD_SELECT_ALL, .hint = "Select the whole text" },
-    .{ .type = rb.RB_TAB, .label = "View" },
-    .{ .type = rb.RB_GROUP, .label = "Lines", .glyph = command.CMD_WRAP },
-    .{ .type = rb.RB_LARGE, .id = Command.wrap.id(), .label = "Word Wrap", .glyph = command.CMD_WRAP, .kind = tb.TBKIND_TOGGLE, .flags = rb.RBF_CHECKED, .hint = "Go on in the next row rather than past the window's edge" },
-    .{ .type = rb.RB_LARGE, .id = Command.numbers.id(), .label = "Line Numbers", .glyph = command.CMD_LINE_NUMBERS, .kind = tb.TBKIND_TOGGLE, .flags = rb.RBF_CHECKED, .hint = "Number each line at the left" },
-    .{ .type = rb.RB_GROUP, .label = "Highlighting", .glyph = command.CMD_HIGHLIGHT },
-    .{ .type = rb.RB_LARGE, .id = Command.zig.id(), .label = "Zig", .glyph = command.CMD_HIGHLIGHT, .kind = tb.TBKIND_TOGGLE, .hint = "Show Zig's keywords, strings and comments each in a colour" },
-    .{ .type = rb.RB_END },
+const ribbon_table = [_]RibbonEntry{
+    ribbon(.{ .type = rb.RB_TAB }, .MSG_RIBBON_HOME, null),
+    ribbon(.{ .type = rb.RB_GROUP, .glyph = command.CMD_PASTE, .reduce = 1 }, .MSG_RIBBON_CLIPBOARD, null),
+    ribbon(.{ .type = rb.RB_LARGE, .id = Command.paste.id(), .glyph = command.CMD_PASTE, .flags = rb.RBF_DISABLED }, .MSG_MENU_PASTE, .MSG_RIBBON_PASTE_HINT),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.cut.id(), .glyph = command.CMD_CUT }, .MSG_MENU_CUT, null),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.copy.id(), .glyph = command.CMD_COPY }, .MSG_MENU_COPY, null),
+    ribbon(.{ .type = rb.RB_GROUP, .glyph = command.CMD_UNDO, .reduce = 2 }, .MSG_MENU_UNDO, null),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.undo.id(), .glyph = command.CMD_UNDO, .flags = rb.RBF_DISABLED }, .MSG_MENU_UNDO, null),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.redo.id(), .glyph = command.CMD_REDO, .flags = rb.RBF_DISABLED }, .MSG_MENU_REDO, null),
+    ribbon(.{ .type = rb.RB_GROUP, .glyph = command.CMD_FIND }, .MSG_RIBBON_EDITING, null),
+    ribbon(.{ .type = rb.RB_LARGE, .id = ID_FINDS, .glyph = command.CMD_FIND, .kind = tb.TBKIND_SPLIT, .labels = &finds_builtin }, .MSG_RIBBON_FIND, .MSG_RIBBON_FIND_HINT),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.replace.id(), .glyph = command.CMD_REPLACE }, .MSG_RIBBON_REPLACE, .MSG_RIBBON_REPLACE_HINT),
+    ribbon(.{ .type = rb.RB_MEDIUM, .id = Command.select_all.id(), .glyph = command.CMD_SELECT_ALL }, .MSG_MENU_SELECT_ALL, .MSG_RIBBON_SELECT_ALL_HINT),
+    ribbon(.{ .type = rb.RB_TAB }, .MSG_MENU_VIEW, null),
+    ribbon(.{ .type = rb.RB_GROUP, .glyph = command.CMD_WRAP }, .MSG_RIBBON_LINES, null),
+    ribbon(.{ .type = rb.RB_LARGE, .id = Command.wrap.id(), .glyph = command.CMD_WRAP, .kind = tb.TBKIND_TOGGLE, .flags = rb.RBF_CHECKED }, .MSG_MENU_WRAP, .MSG_RIBBON_WRAP_HINT),
+    ribbon(.{ .type = rb.RB_LARGE, .id = Command.numbers.id(), .glyph = command.CMD_LINE_NUMBERS, .kind = tb.TBKIND_TOGGLE, .flags = rb.RBF_CHECKED }, .MSG_MENU_NUMBERS, .MSG_RIBBON_NUMBERS_HINT),
+    ribbon(.{ .type = rb.RB_GROUP, .glyph = command.CMD_HIGHLIGHT }, .MSG_RIBBON_HIGHLIGHTING, null),
+    ribbon(.{ .type = rb.RB_LARGE, .id = Command.zig.id(), .glyph = command.CMD_HIGHLIGHT, .kind = tb.TBKIND_TOGGLE }, .MSG_RIBBON_ZIG, .MSG_RIBBON_ZIG_HINT),
+    .{ .entry = .{ .type = rb.RB_END } },
 };
 
 /// The window's room under which the ribbon is its row of tabs alone: a
@@ -266,6 +291,8 @@ const Finder = struct {
 const Notepad = struct {
     sys: *ExecBase,
     dl: *DosBase,
+    /// The texts, in the language the user prefers.
+    text: *const Text,
     ib: *IntuitionBase,
     screen: *intuition.Screen,
     object: *Object,
@@ -329,7 +356,7 @@ const Notepad = struct {
     fn showTitle(np: *Notepad) void {
         const now = np.changed();
         np.shown_changed = now;
-        const name: [*:0]const u8 = if (np.path[0] != 0) np.dl.FilePart(&np.path) else "Untitled";
+        const name: [*:0]const u8 = if (np.path[0] != 0) np.dl.FilePart(&np.path) else np.text.get(.MSG_UNTITLED);
         var used: usize = 0;
         if (now) {
             np.title[0] = '*';
@@ -357,8 +384,9 @@ const Notepad = struct {
         _ = np.ib.ActivateGadget(np.editor, np.window, null);
     }
 
-    fn tell(np: *Notepad, comptime format: [*:0]const u8, name: [*:0]const u8) void {
-        const easy = intuition.requesters.EasyStruct{ .title = "Notepad", .text_format = format, .gadget_format = "OK" };
+    fn tell(np: *Notepad, comptime format: Id, name: [*:0]const u8) void {
+        comptime sdk.exec.checkFormat(strings.builtin(format), struct { [*:0]const u8 });
+        const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = np.text.get(format), .gadget_format = np.text.get(.MSG_OK) };
         const args = [_]usize{@intFromPtr(name)};
         _ = np.ib.EasyRequestArgs(np.window, &easy, null, &args);
     }
@@ -381,27 +409,27 @@ const Notepad = struct {
         const dl = np.dl;
         const sys = np.sys;
         const file = dl.Open(name, dos.MODE_OLDFILE) orelse {
-            if (!quiet) np.tell("Cannot open %s", name);
+            if (!quiet) np.tell(.MSG_CANNOT_OPEN, name);
             return false;
         };
         defer _ = dl.Close(file);
         var fib: dos.FileInfoBlock = .{};
         if (!dl.ExamineFH(file, &fib)) {
-            np.tell("Cannot read %s", name);
+            np.tell(.MSG_CANNOT_READ, name);
             return false;
         }
         if (fib.size > 0x7FFF_FFFF) {
-            np.tell("%s is too big", name);
+            np.tell(.MSG_TOO_BIG, name);
             return false;
         }
         const size: u32 = @intCast(fib.size);
         const memory: [*]u8 = @ptrCast(sys.AllocVec(@max(size, 1), exec.MEMF_ANY) orelse {
-            np.tell("No memory for %s", name);
+            np.tell(.MSG_NO_MEMORY_FOR, name);
             return false;
         });
         defer sys.FreeVec(memory);
         if (dl.Read(file, memory, @intCast(size)) != size) {
-            np.tell("Cannot read %s", name);
+            np.tell(.MSG_CANNOT_READ, name);
             return false;
         }
         np.setText(memory, size);
@@ -419,20 +447,20 @@ const Notepad = struct {
         _ = np.ib.GetAttr(te.TEXTEDIT_Length, np.editor, &length);
         const size: u32 = @intCast(length);
         const memory: [*]u8 = @ptrCast(sys.AllocVec(@max(size, 1), exec.MEMF_ANY) orelse {
-            np.tell("No memory to save %s", name);
+            np.tell(.MSG_NO_MEMORY_TO_SAVE, name);
             return false;
         });
         defer sys.FreeVec(memory);
         var take = te.TepText{ .method_id = te.TEM_GETTEXT, .buffer = memory, .size = size };
         _ = np.ib.DoGadgetMethodA(np.editor, np.window, null, @ptrCast(&take));
         const file = dl.Open(name, dos.MODE_NEWFILE) orelse {
-            np.tell("Cannot write %s", name);
+            np.tell(.MSG_CANNOT_WRITE, name);
             return false;
         };
         const wrote = dl.Write(file, memory, @intCast(size));
         const closed = dl.Close(file);
         if (wrote != size or !closed) {
-            np.tell("Cannot write %s", name);
+            np.tell(.MSG_CANNOT_WRITE, name);
             return false;
         }
         _ = np.ib.SetGadgetAttrsTagList(np.editor, np.window, &[_]TagItem{ .{ .tag = te.TEXTEDIT_Changed, .data = 0 }, .{} });
@@ -453,7 +481,7 @@ const Notepad = struct {
     fn askFile(np: *Notepad, title: [*:0]const u8, saving: bool, into: *[path_size:0]u8) bool {
         if (np.asl_lib == null) np.asl_lib = np.sys.OpenLibrary(asl.ASLNAME, 0);
         const ab: *AslBase = @ptrCast(np.asl_lib orelse {
-            np.tell("No %s", asl.ASLNAME);
+            np.tell(.MSG_NO_REQUESTER, asl.ASLNAME);
             return false;
         });
         // The drawer and the name the file has now, to begin with.
@@ -496,7 +524,7 @@ const Notepad = struct {
 
     fn saveAs(np: *Notepad) bool {
         var name: [path_size:0]u8 = undefined;
-        if (!np.askFile("Save the text as", true, &name)) return false;
+        if (!np.askFile(np.text.get(.MSG_SAVE_AS_TITLE), true, &name)) return false;
         return np.save(&name);
     }
 
@@ -505,9 +533,9 @@ const Notepad = struct {
     fn mayLeave(np: *Notepad) bool {
         if (!np.changed()) return true;
         const easy = intuition.requesters.EasyStruct{
-            .title = "Notepad",
-            .text_format = "The text has changed.\nSave it first?",
-            .gadget_format = "Save|Don't save|Cancel",
+            .title = COMMAND_NAME,
+            .text_format = np.text.get(.MSG_CHANGED),
+            .gadget_format = np.text.get(.MSG_CHANGED_BUTTONS),
         };
         return switch (np.ib.EasyRequestArgs(np.window, &easy, null, null)) {
             1 => np.saveKept(),
@@ -655,9 +683,9 @@ const Notepad = struct {
             .{},
         });
         const buttons = [_]?*Object{
-            button(ib, "Find next", ID_FIND),
-            button(ib, "Replace", ID_REPLACE),
-            button(ib, "Replace all", ID_REPLACE_ALL),
+            button(ib, np.text.get(.MSG_FIND_NEXT_BUTTON), ID_FIND),
+            button(ib, np.text.get(.MSG_REPLACE_BUTTON), ID_REPLACE),
+            button(ib, np.text.get(.MSG_REPLACE_ALL_BUTTON), ID_REPLACE_ALL),
         };
         var whole = find_field != null and with_field != null and any_case != null;
         for (buttons) |made| whole = whole and made != null;
@@ -673,11 +701,11 @@ const Notepad = struct {
             .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(find_field) },
-            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Find") },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(np.text.get(.MSG_FIND_LABEL)) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(with_field) },
-            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Replace with") },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(np.text.get(.MSG_REPLACE_WITH)) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(any_case) },
-            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Any case") },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(np.text.get(.MSG_ANY_CASE)) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(row) },
             .{},
         }) else null;
@@ -690,7 +718,7 @@ const Notepad = struct {
             return;
         };
         const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
-            .{ .tag = wn.WA_Title, .data = @intFromPtr("Find and Replace") },
+            .{ .tag = wn.WA_Title, .data = @intFromPtr(np.text.get(.MSG_FIND_TITLE)) },
             .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
             .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(np.screen) },
             .{ .tag = wn.WA_AutoAdjust, .data = 1 },
@@ -890,7 +918,7 @@ const Notepad = struct {
             },
             .open => if (np.mayLeave()) {
                 var name: [path_size:0]u8 = undefined;
-                if (np.askFile("Open a text", false, &name)) _ = np.load(&name, false);
+                if (np.askFile(np.text.get(.MSG_OPEN_TITLE), false, &name)) _ = np.load(&name, false);
             },
             .save => _ = np.saveKept(),
             .save_as => _ = np.saveAs(),
@@ -1081,15 +1109,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_ERROR;
     };
     defer dl.FreeArgs(rda);
+    // Closed last: the menus and the ribbon show its strings to the end.
+    var text = Text.open(sys);
+    defer text.close();
 
     const intuition_lib = sys.OpenLibrary("intuition.library", 0) orelse {
-        _ = Printf(dl, MSG_NOLIBRARY, .{@as([*:0]const u8, "intuition.library")});
+        _ = text.printf(dl, .MSG_NOLIBRARY, .{@as([*:0]const u8, "intuition.library")});
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(intuition_lib);
     const ib: *IntuitionBase = @ptrCast(intuition_lib);
     const editor_lib = sys.OpenLibrary(te.TEXTEDIT_LIBRARY, 0) orelse {
-        _ = Printf(dl, MSG_NOLIBRARY, .{@as([*:0]const u8, te.TEXTEDIT_LIBRARY)});
+        _ = text.printf(dl, .MSG_NOLIBRARY, .{@as([*:0]const u8, te.TEXTEDIT_LIBRARY)});
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(editor_lib);
@@ -1104,7 +1135,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     for (optional_names, 0..) |name, i| optional[i] = sys.OpenLibrary(name, 0);
     const ub: ?*UtilityBase = @ptrCast(optional[0]);
-    const built: ?*rb.Built = if (optional[1] != null and optional[2] != null and optional[3] != null) rb.build(sys, ib, &ribbon_table, &[_]TagItem{
+    // The ribbon's table with its labels and hints in the user's language.
+    var find_labels: [finds.len:null]?[*:0]const u8 = @splat(null);
+    for (finds, 0..) |id, i| find_labels[i] = text.get(id);
+    var ribbon_entries: [ribbon_table.len]rb.NewRibbon = undefined;
+    for (ribbon_table, &ribbon_entries) |entry, *made| {
+        made.* = entry.entry;
+        if (entry.label) |id| made.label = text.get(id);
+        if (entry.hint) |id| made.hint = text.get(id);
+        if (made.labels != null) made.labels = &find_labels;
+    }
+    const built: ?*rb.Built = if (optional[1] != null and optional[2] != null and optional[3] != null) rb.build(sys, ib, &ribbon_entries, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_RIBBON },
         .{ .tag = rb.RIBBON_MinimizeBelow, .data = ribbon_minimize_below },
         .{},
@@ -1114,7 +1155,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const ribbon_shown = built != null and ribbonWanted(sys, dl, ub);
 
     const screen = ib.LockPubScreen(null) orelse {
-        _ = Printf(dl, MSG_NOSCREEN, .{});
+        _ = text.printf(dl, .MSG_NOSCREEN, .{});
         return dos.RETURN_FAIL;
     };
     defer ib.UnlockPubScreen(null, screen);
@@ -1130,7 +1171,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{},
     }) orelse {
         if (built) |made| ib.DisposeObject(made.ribbon);
-        _ = Printf(dl, MSG_NOMEMORY, .{});
+        _ = text.printf(dl, .MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
     // The ribbon on top, when there is one, and the text under it.
@@ -1152,7 +1193,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         // What the layout did not take is still Notepad's.
         ib.DisposeObject(editor);
         if (built) |made| ib.DisposeObject(made.ribbon);
-        _ = Printf(dl, MSG_NOMEMORY, .{});
+        _ = text.printf(dl, .MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
     const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
@@ -1185,14 +1226,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{},
     }) orelse {
         ib.DisposeObject(layout);
-        _ = Printf(dl, MSG_NOMEMORY, .{});
+        _ = text.printf(dl, .MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     };
     defer ib.DisposeObject(object);
 
     var open = wc.WmOpen{};
     if (ib.SendMessage(object, @ptrCast(&open)) == 0) {
-        _ = Printf(dl, MSG_NOMEMORY, .{});
+        _ = text.printf(dl, .MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
     }
     var window_ptr: usize = 0;
@@ -1207,7 +1248,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // The menus; a program without them still edits, so a strip that will
     // not go on is left off rather than given up over. View's Ribbon is
     // checked while it is shown, and there only when there is one.
-    var table = menus;
+    var table: [menus.len]mn.NewMenu = undefined;
+    for (menus, &table) |entry, *made| {
+        made.* = entry.menu;
+        if (entry.text) |id| made.label = text.get(id);
+    }
     if (built == null) {
         table[ribbon_item].flags |= mn.NM_ITEMDISABLED;
     } else if (ribbon_shown) table[ribbon_item].flags |= mn.CHECKED;
@@ -1227,6 +1272,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var np = Notepad{
         .sys = sys,
         .dl = dl,
+        .text = &text,
         .ib = ib,
         .screen = screen,
         .object = object,

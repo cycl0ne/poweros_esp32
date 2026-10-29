@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of locale.library as a whole: the library made from its
 //! ROM tag on the ROM's exec, utility and dos, with a RAM disk mounted as
-//! both LOCALE: and ENVARC: for the test to write the settings, a
+//! both LOCALE: and ENV: for the test to write the settings, a
 //! country, languages and catalogs onto, and spoken to through its jump
 //! table.
 
@@ -28,7 +28,7 @@ test {
     _ = @import("../locale_lvo.zig");
 }
 
-/// The RAM disk behind LOCALE: and ENVARC:, answering the test process's
+/// The RAM disk behind LOCALE: and ENV:, answering the test process's
 /// packets.
 const Disk = struct {
     var port: exec.MsgPort = undefined;
@@ -64,13 +64,13 @@ const Rig = struct {
         Disk.port = .{ .flags = exec.PA_IGNORE };
         Disk.port.msg_list.init(.message);
         Disk.disk = try host.ram.RamDisk.init(rig.db.sys_base, dl, rig.db.utility_base, &Disk.port);
-        for ([_][*:0]const u8{ "LOCALE", "ENVARC" }) |name| {
+        for ([_][*:0]const u8{ "LOCALE", "ENV" }) |name| {
             const node = dl.MakeDosEntry(name, dos.DLT_DEVICE).?;
             node.task = &Disk.port;
             try testing.expect(dl.AddDosEntry(node));
         }
         rig.proc.pkt_wait = &Disk.wait;
-        for ([_][*:0]const u8{ "LOCALE:Countries", "LOCALE:Languages", "ENVARC:Sys" }) |dir| {
+        for ([_][*:0]const u8{ "LOCALE:Countries", "LOCALE:Languages", "ENV:Sys" }) |dir| {
             dl.UnLock(dl.CreateDir(dir) orelse return error.NoDir);
         }
 
@@ -266,7 +266,7 @@ test "OpenLocale from files: the country's formats, the language's words and ord
     const lb = rig.lb;
     try rig.write("LOCALE:Countries/sverige.country", sverige_country);
     try rig.write("LOCALE:Languages/svenska.language", svenska_language);
-    try rig.write("ENVARC:Sys/timezone", "# Stockholm\nCET-1CEST,M3.5.0,M10.5.0/3\n");
+    try rig.write("ENV:Sys/timezone", "# Stockholm\nCET-1CEST,M3.5.0,M10.5.0/3\n");
     // The country names its language; the settings name none.
     try rig.write("LOCALE:sverige.prefs", "# Sweden\nCOUNTRY=sverige.country\n");
 
@@ -426,7 +426,7 @@ test "FormatDate: every conversion, the language's words and the time zone's nam
 
     try rig.write("LOCALE:Countries/sverige.country", sverige_country);
     try rig.write("LOCALE:Languages/svenska.language", svenska_language);
-    try rig.write("ENVARC:Sys/timezone", "CET-1CEST,M3.5.0,M10.5.0/3\n");
+    try rig.write("ENV:Sys/timezone", "CET-1CEST,M3.5.0,M10.5.0/3\n");
     try rig.write("LOCALE:sverige.prefs", "COUNTRY=sverige\n");
     const swedish = lb.OpenLocale("LOCALE:sverige.prefs").?;
     defer lb.CloseLocale(swedish);

@@ -2,6 +2,11 @@
 
 Notepad is a text editor: a text file in a window, to read and to write.
 
+Its menus, ribbon, requesters and messages are in the language chosen on
+Prefs' Region page when there is a catalog for it - German is on the
+disk, in `LOCALE:Catalogs/deutsch/programs/Notepad.catalog` - and in
+English otherwise.
+
 ## Starting it
 
 Double-click its icon, or type in a shell:
