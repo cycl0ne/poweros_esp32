@@ -100,6 +100,14 @@ pub const Visual = struct {
         v.width = 0;
     }
 
+    /// The pixels made `width` by `height` with the last look carried
+    /// into them (`carry`): the next look goes on from it, a trail with it,
+    /// rather than starting afresh.
+    pub fn follow(v: *Visual, width: u32, height: u32) void {
+        v.width = @min(width, max_width);
+        v.height = @min(height, max_height);
+    }
+
     /// The silence after a stop or a seek: the bars drop, the trail goes.
     pub fn quiet(v: *Visual) void {
         v.spectrum.quiet();
@@ -336,6 +344,23 @@ pub fn rgb(r: u32, g: u32, b: u32) u32 {
     return 0xFF000000 | (r & 255) << 16 | (g & 255) << 8 | (b & 255);
 }
 
+/// What fits of a picture `from_width` by `from_height` (none when
+/// `from` is null) copied into one `width` by `height`, and the rest
+/// black. Both are a row of pixels apart from one row to the next.
+pub fn carry(to: [*]u32, width: u32, height: u32, from: ?[*]const u32, from_width: u32, from_height: u32) void {
+    const kept_w = if (from == null) 0 else @min(width, from_width);
+    const kept_h = if (from == null) 0 else @min(height, from_height);
+    for (0..height) |y| {
+        const row = to[y * width ..][0..width];
+        if (y < kept_h) {
+            @memcpy(row[0..kept_w], from.?[y * from_width ..][0..kept_w]);
+            @memset(row[kept_w..], rgb(0, 0, 0));
+        } else {
+            @memset(row, rgb(0, 0, 0));
+        }
+    }
+}
+
 fn wrap(phase: f32) f32 {
     var p = phase;
     while (p >= 256.0) p -= 256.0;
@@ -415,4 +440,48 @@ test "a ring's distance is the distance from its centre, close to it too" {
             }
         }
     }
+}
+
+test "a picture carried into another size keeps what fits, and the rest is black" {
+    var small: [4 * 3]u32 = undefined;
+    for (&small, 0..) |*p, i| p.* = rgb(0, 0, @intCast(i + 1));
+    var large: [6 * 5]u32 = undefined;
+    carry(&large, 6, 5, &small, 4, 3);
+    for (0..5) |y| {
+        for (0..6) |x| {
+            const want = if (x < 4 and y < 3) small[y * 4 + x] else rgb(0, 0, 0);
+            try testing.expectEqual(want, large[y * 6 + x]);
+        }
+    }
+    var smaller: [3 * 2]u32 = undefined;
+    carry(&smaller, 3, 2, &large, 6, 5);
+    for (0..2) |y| {
+        for (0..3) |x| try testing.expectEqual(small[y * 4 + x], smaller[y * 3 + x]);
+    }
+    carry(&smaller, 3, 2, null, 0, 0);
+    for (smaller) |p| try testing.expectEqual(rgb(0, 0, 0), p);
+}
+
+test "a look after a size followed goes on from what was carried" {
+    const v = try testing.allocator.create(Visual);
+    defer testing.allocator.destroy(v);
+    v.* = .{ .mode = .wave };
+    v.init();
+    var samples: [take]f32 = undefined;
+    for (&samples, 0..) |*s, i| s.* = @sin(@as(f32, @floatFromInt(i)) * 0.2);
+    var first: [64 * 33]u32 = undefined;
+    v.draw(&first, 64, 33, 64, &samples, 44100);
+    // Wider: the trail carried, the next look fades it rather than
+    // clearing it.
+    var wider: [80 * 33]u32 = undefined;
+    carry(&wider, 80, 33, &first, 64, 33);
+    v.follow(80, 33);
+    for (&samples) |*s| s.* = 0;
+    v.draw(&wider, 80, 33, 80, &samples, 44100);
+    var trail: usize = 0;
+    for (0..33) |y| {
+        if (y == 16) continue; // the axis, and the silent wave on it
+        for (0..64) |x| trail += @intFromBool(wider[y * 80 + x] & 0x00FFFFFF != 0);
+    }
+    try testing.expect(trail > 0);
 }

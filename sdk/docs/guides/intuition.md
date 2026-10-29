@@ -314,7 +314,9 @@ next step of the sizing only when the program has replied the last
 step's `IDCMP_NEWSIZE` - or has had three tenths of a second to - and at
 most one step a frame. A program that draws on `IDCMP_NEWSIZE` and
 replies after drawing has the window follow its drawing a step at a
-time, rather than drawing a size the window no longer has. What is
+time, rather than drawing a size the window no longer has. On a composed
+screen the display is shown each step only then, with intuition's border
+and gadgets and the program's drawing in it together. What is
 drawn again whole is best drawn into a bitmap of its own
 (`AllocBitMapTagList`, with the window's RastPort as `BMTAG_Friend`) and
 put on the window with one `BltBitMapRastPort`: drawn in place, the
@@ -425,11 +427,16 @@ answers what it was as one word: the kind in the upper half
 is nothing more. The message's whole `code` goes where `WmHandleInput`'s
 `code` points. `IDCMP_NEWSIZE` alone is replied at the next
 `WM_HANDLEINPUT`. A sizing takes its next step once the last step's
-message is back, so a program that draws on `WMHI_NEWSIZE` is never a step
-behind its window. A program that keeps something else going from the
-same loop, such as sound, notes `WMHI_NEWSIZE` and draws once, after
-`WMHI_LASTMSG`. A sizing sends one at every step, and drawing each one in
-turn keeps the loop from getting back to its other work.
+message is back, so no more than one step is ever waiting, and a program
+that draws on `WMHI_NEWSIZE` - before it asks for the next message - is
+never a step behind its window. On a composed screen the step is shown
+only then: what intuition and the program draw for it reaches the display
+together, gadgets refreshed with `QueueGadgetRefresh` before the reply
+included. A program that keeps something else going from the same loop,
+such as sound, gets back to it between one step and the next. One that
+notes `WMHI_NEWSIZE` and draws after `WMHI_LASTMSG` has replied the step
+before drawing it: the next step begins meanwhile, and the step is shown
+without the program's drawing in it.
 
 | Word | What | Lower half |
 |---|---|---|

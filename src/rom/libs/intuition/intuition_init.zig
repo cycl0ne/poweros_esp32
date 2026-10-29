@@ -183,7 +183,10 @@ pub const LIBRARY_VERSION = 0;
 /// its CHILDA_ tags reach a child it has already (LAYOUTA_ModifyChild): a
 /// part of a window that comes and goes - a ribbon, a find line - keeps
 /// its place among the others.
-pub const LIBRARY_REVISION = 70;
+/// 71: on a composed screen a step of a sizing reaches the display once it
+/// is drawn: what intuition and the program draw in the window for it is
+/// gathered until the program has replied its IDCMP_NEWSIZE.
+pub const LIBRARY_REVISION = 71;
 const BUILD_DATE = "29.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
