@@ -22,12 +22,14 @@
 //! leading `'` keeps a text that would read as a number a text.
 //!
 //! **Typing.** A key typed on the cells begins the cell's text again with
-//! it; F2, or a press let go on the current cell, edits the text it has.
-//! The text is typed into the line at the top - on a board without a
-//! keyboard the one on the screen comes up for it. Return keeps it and
-//! goes down a row, Tab and Shift-Tab keep it and go right or left, the
-//! cursor keys up and down keep it and go up or down, and Escape puts back
-//! what was there. A formula that cannot be read is not kept: the status
+//! it, and the keys after it go on its end, shown in the line at the top:
+//! Backspace takes the last away, Return, Tab and the cursor keys keep it
+//! and move, and Escape lets it go. F2 - while typing too - or a press let
+//! go on the current cell gives the line the keyboard, to edit the text
+//! with a cursor; on a board without a keyboard the one on the screen
+//! comes up for it. In the line Return keeps it and goes down a row, Tab
+//! and Shift-Tab keep it and go right or left, the cursor keys up and down
+//! keep it and go up or down, and Escape puts back what was there. A formula that cannot be read is not kept: the status
 //! line says what is wrong with it and the line stays to be put right.
 //! Pressing elsewhere keeps what was typed too.
 //!
@@ -177,7 +179,7 @@ const max_rows = formula.max_rows;
 const max_cols = formula.max_cols;
 
 pub const COMMAND_NAME = "Sheet";
-const VERSION = "1.4";
+const VERSION = "1.5";
 const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (29.10.2026)\r\n";
 /// What the screen's title bar says while the window is the active one.
 const SCREEN_TITLE = "Sheet " ++ VERSION;
@@ -462,6 +464,11 @@ const App = struct {
     status_text: [160:0]u8 = @splat(0),
     /// The status line says something that stays until the next move.
     telling: bool = false,
+    /// Characters are being typed on the cells: they go on the end of the
+    /// line at the top without its having the keyboard - each comes here,
+    /// in the order typed - until Return, a cursor key, a press or a
+    /// command keeps them (`settle`) or Escape lets them go.
+    typing: bool = false,
 
     // --- files ----------------------------------------------------------------
     path: [path_size:0]u8 = @splat(0),
@@ -870,22 +877,42 @@ const App = struct {
     }
 
     /// The keyboard given to the line at the top, the cursor at the end of
-    /// its text: the cell's text, or `begun` in its place - the character
-    /// typed on the cells, or nothing.
-    fn startEdit(app: *App, begun: ?[]const u8) void {
-        // As a C string: the character and a 0.
-        var typed = [2]u8{ 0, 0 };
-        var text: []const u8 = app.sheet.textAt(app.row, app.col);
-        if (begun) |start| {
-            if (start.len > 0) typed[0] = start[0];
-            text = typed[0..start.len];
-        }
+    /// what it holds: what was typed on the cells, or else the cell's text.
+    fn startEdit(app: *App) void {
+        if (app.typing) app.typing = false else app.putText(app.sheet.textAt(app.row, app.col));
+        _ = app.ib.ActivateGadget(app.entry, app.window, null);
+    }
+
+    /// `text` in the line at the top in place of what it holds, the cursor
+    /// at its end.
+    fn putText(app: *App, text: []const u8) void {
+        // As a C string: the characters and a 0.
+        var held: [cells.max_text + 1]u8 = undefined;
+        const length = @min(text.len, cells.max_text);
+        @memcpy(held[0..length], text[0..length]);
+        held[length] = 0;
         _ = app.ib.SetGadgetAttrsTagList(app.entry, app.window, &[_]TagItem{
-            .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(text.ptr) },
-            .{ .tag = gc.STRINGA_BufferPos, .data = text.len },
+            .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(&held) },
+            .{ .tag = gc.STRINGA_BufferPos, .data = length },
             .{},
         });
-        _ = app.ib.ActivateGadget(app.entry, app.window, null);
+    }
+
+    /// A character typed on the cells on the end of the line at the top,
+    /// or Backspace taking its last away; `fresh`, in place of what the
+    /// line holds.
+    fn typeOn(app: *App, code: u32, fresh: bool) void {
+        var text: [cells.max_text]u8 = undefined;
+        const now = if (fresh) "" else app.entryText();
+        var length = @min(now.len, text.len);
+        @memcpy(text[0..length], now[0..length]);
+        if (code == 0x08) {
+            length -|= 1;
+        } else if (length < text.len) {
+            text[length] = @intCast(code);
+            length += 1;
+        }
+        app.putText(text[0..length]);
     }
 
     /// What the line at the top holds, kept in the current cell. False when
@@ -939,6 +966,7 @@ const App = struct {
     /// Typing left in the line at the top kept before anything else is
     /// done. False when it cannot be.
     fn settle(app: *App) bool {
+        app.typing = false;
         if (cells.sameText(app.entryText(), app.sheet.textAt(app.row, app.col))) return true;
         return app.commit();
     }
@@ -1801,12 +1829,29 @@ const App = struct {
 
     /// A character typed while the cells have the keyboard.
     fn keyed(app: *App, code: u32) void {
+        // A character begins the cell's text again with it, Backspace from
+        // nothing, and the characters after it go on its end - each comes
+        // here, in the order typed, since the line at the top is not given
+        // the keyboard for them. Escape lets what was typed go.
+        const character = code >= 0x20 and code <= 0xFF and !(code >= 0x80 and code < 0xA0);
+        if (character or code == 0x08) {
+            const fresh = !app.typing;
+            if (fresh) {
+                if (!app.settle()) return;
+                app.typing = true;
+            }
+            app.typeOn(code, fresh);
+            return;
+        }
+        if (code == 0x1B and app.typing) {
+            app.typing = false;
+            app.moveTo(app.row, app.col);
+            return;
+        }
         if (!app.settle()) return;
         switch (code) {
             '\r' => app.moveBy(1, 0),
             '\t' => app.moveBy(0, 1),
-            // Backspace begins the cell's text again, from nothing.
-            0x08 => app.startEdit(""),
             0x7F => {
                 if (!app.sheet.clear(app.area)) app.say("Not enough memory to clear all of it");
                 app.followChanges();
@@ -1819,10 +1864,7 @@ const App = struct {
             0x19 => _ = app.perform(.redo),
             0x01 => app.pickAll(),
             0x06 => app.startFind(),
-            else => if (code >= 0x20 and code <= 0xFF and !(code >= 0x80 and code < 0xA0)) {
-                const typed = [1]u8{@intCast(code)};
-                app.startEdit(&typed);
-            },
+            else => {},
         }
     }
 
@@ -1835,6 +1877,8 @@ const App = struct {
             raw_up, raw_down, raw_left, raw_right, raw_page_up, raw_page_down, raw_home, raw_end, raw_f2 => {},
             else => return,
         }
+        // F2 while typing goes on editing what was typed, not yet kept.
+        if (code == raw_f2 and app.typing) return app.startEdit();
         if (!app.settle()) return;
         const page: i32 = @intCast(app.visibleRows());
         if (shifted) switch (code) {
@@ -1869,7 +1913,7 @@ const App = struct {
                 }
                 app.moveTo(app.row, last);
             },
-            raw_f2 => app.startEdit(null),
+            raw_f2 => app.startEdit(),
             else => {},
         }
     }
@@ -1881,6 +1925,8 @@ const App = struct {
     /// current - the one below for Return (`entryKey` turns Tab and the
     /// cursor keys into their directions).
     fn entryDone(app: *App, code: u32) void {
+        // A press on the line while typing gave it the keyboard.
+        app.typing = false;
         if (code == raw_escape) {
             app.showCurrent();
             return;
@@ -1921,7 +1967,7 @@ const App = struct {
                         // Pressed and let go on the current cell: edited.
                         if (app.press_again) {
                             app.press_again = false;
-                            app.startEdit(null);
+                            app.startEdit();
                         }
                     },
                     ID_ENTRY => app.entryDone(code),

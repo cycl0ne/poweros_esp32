@@ -18,8 +18,10 @@ and a file dragged from the desktop and let go on its window is opened.
 - **The ribbon** across the top has Sheet's commands in groups - see
   [The ribbon](#the-ribbon). View → Ribbon hides it and shows it again.
 - **The line at the top** shows the current cell's name (`B7`) and the
-  text typed into it. Typing goes there. On a board with a touch panel
-  and no keyboard, the keyboard on the screen comes up for it.
+  text typed into it. Typing on the cells shows there; F2 or a second
+  press on the cell edits it there with a cursor. On a board with a
+  touch panel and no keyboard, the keyboard on the screen comes up for
+  that.
 - **The cells** fill the rest of the window: the columns' letters across
   the top, the rows' numbers down the left. The current cell has a frame;
   the cells picked with it are tinted, and so are their letters and
@@ -32,7 +34,7 @@ and a file dragged from the desktop and let go on its window is opened.
 - **The scroll bars** are in the window's border.
 
 While the window is the active one, the screen's title bar says
-`Sheet 1.4`. The window's own title says the file's name, with a `*` in
+`Sheet 1.5`. The window's own title says the file's name, with a `*` in
 front while the sheet has changed since it was read or saved.
 
 ## Cells
@@ -133,16 +135,16 @@ On the cells:
 
 | Key | Does |
 |---|---|
-| a character | begins the current cell's text again with it |
-| F2 | edits the current cell's text, the cursor at its end |
-| Backspace | begins the current cell's text again, from nothing |
+| a character | begins the current cell's text again with it; the ones after it go on its end, shown in the line at the top |
+| F2 | edits the current cell's text - or what is being typed - in the line at the top, the cursor at its end |
+| Backspace | while typing, takes the last character away; else begins the current cell's text again, from nothing |
 | Del | empties the cells picked |
-| cursor keys | move the current cell |
+| cursor keys | move the current cell, keeping what was typed |
 | Page Up, Page Down | move a window's height of rows |
 | Shift with a cursor key, Page Up or Page Down | picks the cells from the current one to where the key goes, the current cell staying |
 | Home, End | the first cell of the row, the last one with anything in it |
-| Return, Tab | move down, move right |
-| Escape | picks only the current cell |
+| Return, Tab | move down, move right, keeping what was typed |
+| Escape | lets what was typed go; picks only the current cell |
 | Ctrl-X, -C, -V | cut, copy, paste |
 | Ctrl-Z, -Y | undo, redo |
 | Ctrl-A | picks every cell |
