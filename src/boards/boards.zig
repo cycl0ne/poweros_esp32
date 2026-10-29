@@ -29,6 +29,7 @@ pub const system = switch (build_options.board) {
     .qemu_virt => @import("qemu_virt/system.zig"),
     .visionfive2 => @import("visionfive2/system.zig"),
     .qemu_virt_a64 => @import("qemu_virt_a64/system.zig"),
+    .rpi_cm5 => @import("rpi_cm5/system.zig"),
 };
 
 pub const romtags = switch (build_options.board) {
@@ -41,6 +42,7 @@ pub const romtags = switch (build_options.board) {
     .qemu_virt => @import("qemu_virt/romtags.zig"),
     .visionfive2 => @import("visionfive2/romtags.zig"),
     .qemu_virt_a64 => @import("qemu_virt_a64/romtags.zig"),
+    .rpi_cm5 => @import("rpi_cm5/romtags.zig"),
 };
 
 /// What the board does before the firmware resets the machine - its own

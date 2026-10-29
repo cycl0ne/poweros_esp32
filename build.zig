@@ -48,8 +48,9 @@ const disk_tree = "disk";
 /// RISC-V 64 `virt` machine under OpenSBI, which the `virt` step runs;
 /// `visionfive2` is StarFive's JH7110 board, booted from U-Boot.
 /// `qemu_virt_a64` is upstream QEMU's AArch64 `virt` machine with
-/// Cortex-A76 cores and a GICv2, which the `virt64` steps run.
-const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4, qemu_virt, visionfive2, qemu_virt_a64 };
+/// Cortex-A76 cores and a GICv2, which the `virt64` steps run;
+/// `rpi_cm5` is the Raspberry Pi Compute Module 5, booted from its eMMC.
+const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4, qemu_virt, visionfive2, qemu_virt_a64, rpi_cm5 };
 
 /// The chip a board is built on, which picks the kernel's target, its
 /// root, start code and linker script, and how its image is made.
@@ -60,7 +61,7 @@ fn chipOf(board: Board) Chip {
         .waveshare_7b, .es3c35p, .qemu => .esp32s3,
         .esp32p4_emu, .olimex_p4pc, .crowpanel_p4 => .esp32p4,
         .qemu_virt, .visionfive2 => .rv64sbi,
-        .qemu_virt_a64 => .a64psci,
+        .qemu_virt_a64, .rpi_cm5 => .a64psci,
     };
 }
 
@@ -243,7 +244,7 @@ fn iconSize(board: Board) u32 {
         // 480x320
         .es3c35p => 40,
         // No screen yet.
-        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4, .qemu_virt, .visionfive2, .qemu_virt_a64 => 48,
+        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4, .qemu_virt, .visionfive2, .qemu_virt_a64, .rpi_cm5 => 48,
     };
 }
 

@@ -189,6 +189,41 @@ _start:
 _boot:
     msr     daifset, #0xf
     mov     x19, x0                 /* the device tree */
+    /* An image loaded where it is not linked - the Pi's firmware loads
+       nothing above RAM's first GiB - is copied where it is, from its
+       header to the end of its data, and goes on there. Only the boot
+       core comes here, before anything has been written. With the MMU
+       off the copy goes straight to memory; lines the caches hold of
+       where it went are dropped, as for .bss below, and so is what the
+       instruction cache holds. */
+    adr     x9, _start              /* where it is */
+    ldr     x10, =_start            /* where it is linked */
+    cmp     x9, x10
+    b.eq    .Lplaced
+    ldr     x11, =_image_end
+    mov     x12, x10
+1:  ldp     x13, x14, [x9], #16
+    stp     x13, x14, [x12], #16
+    cmp     x12, x11
+    b.lo    1b
+    dsb     sy
+    mrs     x13, ctr_el0
+    ubfx    x13, x13, #16, #4       /* DminLine: log2 of the line in words */
+    mov     x14, #4
+    lsl     x14, x14, x13           /* the line, in bytes */
+    sub     x13, x14, #1
+    bic     x12, x10, x13
+2:  dc      ivac, x12
+    add     x12, x12, x14
+    cmp     x12, x11
+    b.lo    2b
+    dsb     sy
+    ic      iallu
+    dsb     sy
+    isb
+    ldr     x9, =.Lplaced
+    br      x9
+.Lplaced:
     /* The first core here goes on; any other is handed back to the
        firmware, stopped. Plain loads and stores: before the MMU is on
        there are no atomics to rely on, and only one core ever comes. */

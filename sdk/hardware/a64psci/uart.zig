@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! The console UART, an Arm PL011 (Arm DDI 0183): QEMU's virt's, and the
-//! BCM2712's debug UART. UART0 is exec's raw console (`consoleInit`,
-//! `consolePut`, `consoleGet`), polled.
+//! The console UART, an Arm PL011 (Arm DDI 0183): QEMU's virt's, the
+//! BCM2712's debug UART, and the CM5's RP1's UART0. UART0 is exec's raw
+//! console (`consoleInit`, `consolePut`, `consoleGet`), polled.
 //!
 //! Where the console is, its clock and its interrupt are `console`, which
 //! the kernel sets from the board before exec's raw port starts.
@@ -15,8 +15,10 @@
 //! interrupt: the receive side's, and its timeout's, which says the FIFO
 //! holds bytes below its trigger level that have waited. The PL011's
 //! modem lines are its own: RTS and DTR in its control register, CTS and
-//! DSR in its flags.
+//! DSR in its flags. A UART whose board names no interrupt is polled
+//! instead (`Port.polled`).
 
+const intbits = @import("intbits.zig");
 const map = @import("map.zig");
 const reg = @import("mmio.zig").reg;
 
@@ -145,9 +147,19 @@ pub const default_baud = 115_200;
 pub const Port = enum(u3) {
     uart0,
 
-    /// Its interrupt ID.
+    /// Its interrupt ID - or, for a UART the kernel takes no interrupt
+    /// from (`polled`), VBLANK's alarm, which it is read on.
     pub fn source(port: Port) u32 {
-        return geometryOf(port).irq;
+        const irq = geometryOf(port).irq;
+        return if (irq != 0) irq else intbits.INTB_ALARM1;
+    }
+
+    /// Whether it has no interrupt of its own: the board names none, as
+    /// the CM5's does for the RP1's UART, whose interrupt comes as an
+    /// MSI-X message nothing routes yet. serial.device reads it on every
+    /// VBLANK instead.
+    pub fn polled(port: Port) bool {
+        return geometryOf(port).irq == 0;
     }
 };
 

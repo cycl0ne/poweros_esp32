@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MPL-2.0
+# The Compute Module 5's config.txt, read by the bootloader in its EEPROM
+# from the eMMC's FAT partition, beside kernel.bin, disk-a64.bin and the
+# module's device tree (bcm2712-rpi-cm5-cm5io.dtb, Raspberry Pi's).
+
+# The kernel at 2 MiB: the bootloader loads nothing above RAM's first
+# GiB, and the kernel copies itself to where it is linked, 0x40200000
+# (src/arch/a64psci/kernel.ld, start.S). The device tree and the disk
+# image apart above it: the image would be cleared with the kernel's
+# .bss if it followed the kernel. Nothing the firmware checks the kernel
+# for.
+arm_64bit=1
+kernel=kernel.bin
+kernel_address=0x00200000
+device_tree_address=0x03000000
+initramfs disk-a64.bin 0x04000000
+os_check=0
+
+# The console: the RP1's UART0 on GPIO14 and 15 (header pins 8 and 10),
+# set up by the bootloader - which writes its own log there too - with
+# the RP1 left running for the kernel.
+enable_rp1_uart=1
+pciex4_reset=0
+uart_2ndstage=1

@@ -246,7 +246,8 @@ Beside them:
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, playing into a file, the UART1 and UART3-IN connectors |
 | `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk that keeps what is saved to it beside it; with `-device virtio-gpu-device` or `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with more `nvme` devices more SSDs; sound into an output that goes nowhere, and with `-device usb-audio` through QEMU's USB speaker, sample for sample, plugged in and out as it plays; with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in) |
 | `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: sound through a USB speaker or headset, USB 3 devices at SuperSpeed, a disk over UAS; not driven yet: the second Ethernet port, the eMMC socket |
-| `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk beside it, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device virtio-gpu-device` or `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with more `nvme` devices more SSDs, with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in); sound into an output that goes nowhere. The CM5 itself is to be the next board of this chip |
+| `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk beside it, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device virtio-gpu-device` or `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with more `nvme` devices more SSDs, with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in); sound into an output that goes nowhere. The CM5 is `rpi_cm5` |
+| `rpi_cm5` | Raspberry Pi Compute Module 5 on its IO board: BCM2712 with four Cortex-A76 cores and a GIC-400, up to 16 GB, eMMC, the console on the RP1's UART0 (pins 8 and 10 of the 40-pin header); started by the bootloader in its EEPROM from the eMMC, or over USB with `rpiboot` | runs: the shell on the console, four cores, all of RAM, dos with the disk image the bootloader loads; the console polled, its interrupt an MSI-X message nothing routes yet; not driven yet: the RP1's devices (USB, Ethernet, GPIO), PCI Express, HDMI |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network
@@ -449,6 +450,20 @@ qemu-system-aarch64 -M virt,gic-version=2,highmem=off -cpu cortex-a76 -m 512M -s
 QEMU loads `kernel.bin`, not the ELF: only for an `Image` does it pass
 the device tree, and name an initrd in it (`-initrd`, the flash disk
 image).
+
+`-Dboard=rpi_cm5` builds the same for the Compute Module 5. Its eMMC
+wants a FAT partition with `src/boards/rpi_cm5/config.txt` as
+`config.txt`, `kernel.bin`, `disk-a64.bin` and Raspberry Pi's device
+tree for the module, `bcm2712-rpi-cm5-cm5io.dtb`. The bootloader loads
+nothing above RAM's first GiB: it puts `kernel.bin` at 2 MiB, and the
+kernel copies itself up to 0x40200000. With the IO board's BOOT jumper
+fitted, `rpiboot` from Raspberry Pi's
+[usbboot](https://github.com/raspberrypi/usbboot) starts the same files
+over USB from a directory holding usbboot's `bootfiles.bin`, a
+`config.txt` saying `boot_ramdisk=1`, and the partition's image as
+`boot.img`; its `mass-storage-gadget64` makes the eMMC a USB disk to
+write the partition to. The console is the RP1's UART0 at 115200 8N1,
+on which the bootloader logs too (`uart_2ndstage=1`).
 
 More build steps and options:
 
