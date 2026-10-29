@@ -27,7 +27,7 @@
 //! names, and `namesList` whether an address ends as a list does. Nothing
 //! here opens a file: the host tests hold all of it.
 
-const icy = @import("icy.zig");
+const icy = @import("sdk").http.icy;
 
 /// What every M3U the Player writes starts with.
 pub const header = "#EXTM3U\n";

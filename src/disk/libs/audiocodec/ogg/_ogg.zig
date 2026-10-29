@@ -12,6 +12,14 @@
 //! the next page, which says so in its flags. Only the stream whose
 //! serial was taken is read; another's pages are passed over.
 //!
+//! **A chain** is streams one after another, each with headers of its
+//! own: a station sends a song after a song so, and files put end to end
+//! are one. Once a stream's headers are read (`chained`), a page that
+//! begins a stream - another's, or this one's again - ends it: that is
+//! the next link, and the page is left where it is for it. The streams
+//! that begin beside it, before its headers are read, are noted
+//! (`companions`): their pages lie among its own and are the link's too.
+//!
 //! **A page whose CRC is wrong is no page**: the next "OggS" is looked
 //! for. A page is checked when it lies whole in the read-ahead, as pages
 //! of sound do; a larger one is believed.
@@ -61,6 +69,11 @@ pub const Ogg = struct {
     packet_ends_stream: bool,
     /// Where the page being read begins in the source.
     page_offset: u64,
+    /// The stream's headers are read: a page that begins a stream ends it.
+    chained: bool,
+    /// The streams that began beside it, and how many - four at most.
+    companions: [4]u32,
+    companion_count: u32,
 };
 
 /// A reader set to begin at a page, for the stream `serial` (or the
@@ -83,7 +96,23 @@ pub fn begin(ogg: *Ogg, serial: ?u32) void {
         .packet_granule = -1,
         .packet_ends_stream = false,
         .page_offset = 0,
+        .chained = false,
+        .companions = @splat(0),
+        .companion_count = 0,
     };
+}
+
+/// The reader set to begin at a page again - after a seek - for the
+/// stream it reads: its serial, the streams beside it and whether its
+/// headers are read kept.
+pub fn again(ogg: *Ogg) void {
+    const chained = ogg.chained;
+    const companions = ogg.companions;
+    const companion_count = ogg.companion_count;
+    begin(ogg, ogg.serial);
+    ogg.chained = chained;
+    ogg.companions = companions;
+    ogg.companion_count = companion_count;
 }
 
 // --- pages ------------------------------------------------------------------------
@@ -141,7 +170,8 @@ pub fn pageAt(bytes: []const u8) ?PageHead {
 }
 
 /// The next page of the stream read, its header taken: false at the
-/// source's end. Bytes that are no page are passed over until one is.
+/// source's end, or at a page that begins the next link of a chain, which
+/// is left there. Bytes that are no page are passed over until one is.
 pub fn nextPage(stream: *Stream, ogg: *Ogg) bool {
     while (true) {
         if (stream.stop - stream.start < 27 + 255) _stream.fill(stream);
@@ -164,11 +194,16 @@ pub fn nextPage(stream: *Stream, ogg: *Ogg) bool {
             _stream.consume(stream, 1);
             continue;
         };
+        if (ogg.chained and head.flags & first != 0) return false;
         if (!ogg.has_serial) {
             ogg.serial = head.serial;
             ogg.has_serial = true;
         }
         if (head.serial != ogg.serial) {
+            if (head.flags & first != 0 and ogg.companion_count < ogg.companions.len) {
+                ogg.companions[ogg.companion_count] = head.serial;
+                ogg.companion_count += 1;
+            }
             _stream.skip(stream, head.bytes);
             continue;
         }

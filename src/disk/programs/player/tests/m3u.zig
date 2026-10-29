@@ -6,7 +6,7 @@
 
 const std = @import("std");
 const m3u = @import("../m3u.zig");
-const icy = @import("../icy.zig");
+const icy = @import("sdk").http.icy;
 
 const testing = std.testing;
 

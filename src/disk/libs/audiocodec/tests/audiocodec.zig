@@ -17,7 +17,8 @@
 //! in blocks of 576. `lossy.ogg` is lossless.flac's sound in Ogg Vorbis
 //! (libvorbis, quality 3) titled "Lossy", `lossy_head.raw` its first 1024
 //! frames as libvorbisfile decodes them; `mono.ogg` the same at 22.05 kHz
-//! in mono, 2250 frames.
+//! in mono, 2250 frames, with no names. Their serials differ, so the two
+//! one after the other are a chain of two links.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -48,6 +49,7 @@ const wide24_flac = @embedFile("wide24.flac");
 const lossy_ogg = @embedFile("lossy.ogg");
 const lossy_head = @embedFile("lossy_head.raw");
 const mono_ogg = @embedFile("mono.ogg");
+const chain_ogg = lossy_ogg.* ++ mono_ogg.*;
 
 // --- the rig ----------------------------------------------------------------------
 
@@ -1104,4 +1106,157 @@ test "Ogg Vorbis on a file: its length from its last page, and exact seeks" {
         const count: usize = @intCast(want * 2);
         try testing.expectEqualSlices(i16, straight[frame * 2 ..][0..count], some[0..count]);
     }
+}
+
+/// The link of a chain being decoded.
+fn linkOf(acb: *AudioCodecBase, stream: *ac.AudioStream) u32 {
+    var link: u32 = 99;
+    _ = acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
+        .{ .tag = ac.ACA_Link, .data = @intFromPtr(&link) },
+        .{},
+    });
+    return link;
+}
+
+/// The frames of the link being decoded, in pieces of `piece`, up to the
+/// call that hands out fewer - its last: how many, the first of them into
+/// `into`.
+fn decodeLink(acb: *AudioCodecBase, stream: *ac.AudioStream, channels: u32, piece: u32, into: []i16) !u32 {
+    var buffer: [2000 * 2]i16 = undefined;
+    var total: u32 = 0;
+    while (true) {
+        const got = acb.DecodeAudio(stream, &buffer, piece);
+        try testing.expect(got > 0);
+        const samples: usize = @as(usize, @intCast(got)) * channels;
+        const at: usize = @as(usize, total) * channels;
+        if (at < into.len) {
+            const fits = @min(samples, into.len - at);
+            @memcpy(into[at..][0..fits], buffer[0..fits]);
+        }
+        total += @intCast(got);
+        if (got < piece) return total;
+    }
+}
+
+/// An Ogg page's CRC, its own four bytes as zeros.
+fn oggCrc(page: []const u8) u32 {
+    var crc: u32 = 0;
+    for (page, 0..) |byte, i| {
+        crc ^= @as(u32, if (i >= 22 and i < 26) 0 else byte) << 24;
+        for (0..8) |_| crc = if (crc & 0x8000_0000 != 0) (crc << 1) ^ 0x04C1_1DB7 else crc << 1;
+    }
+    return crc;
+}
+
+test "a chained Ogg stream: link after link, each with its own rate, channels and tags" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+
+    // The second link alone, to hold it against.
+    var alone: [2250]i16 = undefined;
+    var memory: Memory = .{ .bytes = mono_ogg, .piece = 4000 };
+    const mono = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    try testing.expectEqual(@as(u32, 2250), try decodeAll(acb, mono, 1, 2000, &alone));
+    acb.CloseAudioStream(mono);
+
+    memory = .{ .bytes = &chain_ogg, .piece = 501 };
+    const stream = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    var info: ac.AudioStreamInfo = .{};
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, 44100), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqualStrings("Lossy", textOf(&info.title));
+    try testing.expectEqual(@as(u32, 0), linkOf(acb, stream));
+
+    // The first link to its last frame, which a call of fewer hands out:
+    // still the first link then.
+    try testing.expectEqual(@as(u32, 4500), try decodeLink(acb, stream, 2, 999, &.{}));
+    try testing.expectEqual(@as(u32, 0), linkOf(acb, stream));
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, 44100), info.rate);
+
+    // The calls after it: the second link, as it decodes alone - its rate,
+    // one channel, and none of the first's names.
+    var later: [2250]i16 = undefined;
+    try testing.expectEqual(@as(u32, 2250), try decodeAll(acb, stream, 1, 999, &later));
+    try testing.expectEqualSlices(i16, &alone, &later);
+    try testing.expectEqual(@as(u32, 1), linkOf(acb, stream));
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, 22050), info.rate);
+    try testing.expectEqual(@as(u32, 1), info.channels);
+    try testing.expectEqualStrings("", textOf(&info.title));
+    var artist: [*:0]const u8 = "unread";
+    _ = acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
+        .{ .tag = ac.ACA_Artist, .data = @intFromPtr(&artist) },
+        .{},
+    });
+    try testing.expectEqualStrings("", std.mem.span(artist));
+    var buffer: [16]i16 = undefined;
+    try testing.expectEqual(@as(i32, 0), acb.DecodeAudio(stream, &buffer, 8));
+}
+
+test "a chained Ogg file: each link measured, a seek within the link being played" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+
+    try rig.write("WORK:chain.ogg", &.{ lossy_ogg, mono_ogg });
+    const stream = openFile(acb, "WORK:chain.ogg", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    var info: ac.AudioStreamInfo = .{};
+    acb.GetAudioStreamInfo(stream, &info);
+    // The first link's length, though the file's last page is the second's.
+    try testing.expectEqual(@as(u32, 4500), info.frames);
+
+    var first: [4500 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 4500), try decodeLink(acb, stream, 2, 1999, &first));
+    var some: [400 * 2]i16 = undefined;
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 3000));
+    try testing.expectEqual(@as(i32, 400), acb.DecodeAudio(stream, &some, 400));
+    try testing.expectEqualSlices(i16, first[3000 * 2 ..][0 .. 400 * 2], &some);
+    try testing.expectEqual(@as(u32, 1100), try decodeLink(acb, stream, 2, 1999, &.{}));
+
+    // The second link: measured as it begins, sought in from its own start.
+    var second: [2250]i16 = undefined;
+    try testing.expectEqual(@as(u32, 2250), try decodeLink(acb, stream, 1, 1999, &second));
+    try testing.expectEqual(@as(u32, 1), linkOf(acb, stream));
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, 2250), info.frames);
+    try testing.expectEqual(@as(u32, 22050), info.rate);
+    for ([_]u32{ 1000, 0 }) |frame| {
+        try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, frame));
+        try testing.expectEqual(@as(i32, 400), acb.DecodeAudio(stream, &some, 400));
+        try testing.expectEqualSlices(i16, second[frame..][0..400], some[0..400]);
+    }
+    try testing.expectEqual(@as(u32, 1), linkOf(acb, stream));
+}
+
+test "a link cut short - no page ends it - ends where the next link begins" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+
+    // The first link's last page without its flag that ends the stream.
+    var cut = chain_ogg;
+    const last_page = 4029;
+    cut[last_page + 5] &= ~@as(u8, 0x04);
+    const length = 27 + 13 + 1391;
+    std.mem.writeInt(u32, cut[last_page + 22 ..][0..4], oggCrc(cut[last_page..][0..length]), .little);
+
+    var memory: Memory = .{ .bytes = &cut, .piece = 700 };
+    const stream = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    // Not cut where the sound stops, as no page says the stream ends.
+    try testing.expect(try decodeLink(acb, stream, 2, 1999, &.{}) >= 4500);
+    try testing.expectEqual(@as(u32, 0), linkOf(acb, stream));
+    try testing.expectEqual(@as(u32, 2250), try decodeAll(acb, stream, 1, 1999, &.{}));
+    try testing.expectEqual(@as(u32, 1), linkOf(acb, stream));
 }

@@ -23,7 +23,10 @@
 //! what ID3v2, a WAV's INFO list or Vorbis comments say over them. The
 //! info's names are cut from them once the kind's header is read
 //! (`nameInfo`). A picture is kept only when the program asked for it, in
-//! a block of its own.
+//! a block of its own. The next link of a chained Ogg stream brings tags
+//! of its own (`clearTags`): the texts are written again where they are,
+//! the chapters into the same block, and the picture handed out before
+//! stays until the link after, for a program that still reads it.
 //!
 //! The stream is one allocation, cleared: every field's starting value is
 //! zero, so nothing large is ever built on a stack. A FLAC's blocks and an
@@ -72,6 +75,9 @@ pub const Tags = struct {
     keep_picture: bool,
     picture_block: ?[*]u8,
     picture: ac.AudioPicture,
+    /// The block of the link before's picture, given back at the next
+    /// link or with the stream.
+    spent_picture: ?[*]u8,
     /// The chapters the tags mark, in a block of their own made at the
     /// first, and how many.
     chapters: ?[*]ac.AudioChapter,
@@ -110,6 +116,8 @@ pub const Stream = struct {
     failed: bool,
     info: ac.AudioStreamInfo,
     tags: Tags,
+    /// The links of a chain begun after the first (`ACA_Link`).
+    links: u32,
     codec: Codec,
     /// Samples decoded and not handed out yet, the channels interleaved,
     /// `pcm_start` to `pcm_stop`.
@@ -130,8 +138,28 @@ pub fn destroy(stream: *Stream) void {
         if (stream.file) |file| _ = base.dos_base.Close(file);
     }
     if (stream.tags.picture_block) |block| base.sys_base.FreeVec(block);
+    if (stream.tags.spent_picture) |block| base.sys_base.FreeVec(block);
     if (stream.tags.chapters) |list| base.sys_base.FreeVec(list);
     base.sys_base.FreeVec(stream);
+}
+
+/// The tags emptied for the next link of a chain, which brings its own:
+/// the texts and numbers cleared, no chapters - their block kept for the
+/// link's - and no picture. The one handed out is kept until the next
+/// link, a program may still be reading it; the one before it is given
+/// back.
+pub fn clearTags(stream: *Stream) void {
+    const tags = &stream.tags;
+    if (tags.spent_picture) |block| stream.base.sys_base.FreeVec(block);
+    tags.spent_picture = tags.picture_block;
+    tags.picture_block = null;
+    const texts = [_][]u8{ &tags.title, &tags.artist, &tags.album, &tags.album_artist, &tags.composer, &tags.genre, &tags.comment };
+    for (texts) |text| @memset(text, 0);
+    tags.plain_comment = false;
+    tags.year = 0;
+    tags.track = 0;
+    tags.tracks = 0;
+    tags.chapter_count = 0;
 }
 
 pub fn streamOf(public: *ac.AudioStream) *Stream {

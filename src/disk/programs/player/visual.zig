@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! The pictures below the controls, drawn from the sound being heard into
-//! a buffer of 32-bit pixels: a plasma, the wave, or the bars.
+//! The pictures below the controls, drawn from the sound being heard -
+//! its left and right sides - into a buffer of 32-bit pixels: a plasma,
+//! the wave, the bars, the scope or the meters.
 //!
 //! - **Plasma**: sine waves over the area - one across, one along the
 //!   diagonal, one that is the sine of a sum of sines across and down,
@@ -19,6 +20,18 @@
 //! - **Bars**: the spectrum (spectrum.zig) as columns of lit segments a
 //!   pixel apart, green at the foot to red at the top - or the cover's
 //!   first colour to its second - a mark above each where its peak was.
+//! - **Scope**: left against right, a frame a point joined to the one
+//!   before - what both sides share up the middle, what sets them apart
+//!   across it, so a mono song stands upright, the left alone leans up to
+//!   the left, the right alone up to the right and a wide song spreads -
+//!   over dim guides: the middle, and each side's own line at a slant.
+//!   What was drawn before fades to half each look.
+//! - **Meters**: a bar a side, the left above the right, as long as the
+//!   side is loud over the look - its mean square's root, -48 dB at the
+//!   bar's start to 0 at its end - lit in segments coloured along it as
+//!   the bars are; it rises at once and falls back slowly. A mark stands
+//!   where the side's peak was, held a second and a half; ticks every
+//!   6 dB lie between the bars.
 //!
 //! The cover's colours (colours.zig) are `tint`, set by the window when a
 //! song's cover is read and taken away when it has none.
@@ -39,8 +52,8 @@
 const spectrum = @import("spectrum.zig");
 const colours = @import("colours.zig");
 
-pub const Mode = enum(u8) { plasma, wave, bars };
-pub const mode_count = 3;
+pub const Mode = enum(u8) { plasma, wave, bars, scope, meters };
+pub const mode_count = 5;
 
 /// The squared distances a ring is looked up by - fine enough that a
 /// ring is within two steps of where it should be on a 3840x2160 screen,
@@ -52,9 +65,18 @@ const ring_steps = 1024;
 /// exactly (`Visual.near`).
 const near_size = 4096;
 
-/// Samples a look takes from the sound: the spectrum's run, which the
-/// wave takes too - half of it to find where to start, half to draw.
+/// Frames a look takes from the sound: the spectrum's run, which the
+/// wave takes too - half of it to find where to start, half to draw - and
+/// the scope and the meters all of.
 pub const take = spectrum.fft_size;
+
+/// The meters: the quietest a bar shows, in dB; how much of its length a
+/// bar falls back each look, and a peak's mark once it has been held
+/// `hold_looks` - a second and a half.
+const meter_floor = 48;
+const meter_fall = 0.025;
+const peak_fall = 0.01;
+const hold_looks = 38;
 
 pub const Visual = struct {
     mode: Mode = .bars,
@@ -91,6 +113,13 @@ pub const Visual = struct {
     /// The area as last drawn: a new size starts the trail again.
     width: u32 = 0,
     height: u32 = 0,
+    /// Both sides together, for the spectrum and the wave.
+    mono: [take]f32 = @splat(0),
+    /// The meters' bars and peaks, a side each, 0 to 1 of their length,
+    /// and the looks each peak is held on.
+    meter: [2]f32 = @splat(0),
+    meter_peak: [2]f32 = @splat(0),
+    meter_hold: [2]u32 = @splat(0),
 
     pub fn init(v: *Visual) void {
         v.spectrum.init();
@@ -134,32 +163,39 @@ pub const Visual = struct {
         v.height = height;
     }
 
-    /// The silence after a stop or a seek: the bars drop, the trail goes.
+    /// The silence after a stop or a seek: the bars and the meters drop,
+    /// the trail goes.
     pub fn quiet(v: *Visual) void {
         v.spectrum.quiet();
+        v.meter = @splat(0);
+        v.meter_peak = @splat(0);
+        v.meter_hold = @splat(0);
     }
 
     /// One look of `width` by `height` pixels into `pixels`, `stride`
-    /// pixels a row, from `samples` (`take` of them, -1 to 1) heard at
-    /// `rate`.
-    pub fn draw(v: *Visual, pixels: [*]u32, width: u32, height: u32, stride: u32, samples: []const f32, rate: u32) void {
+    /// pixels a row, from the frames heard at `rate`: `left` and `right`,
+    /// `take` of each, -1 to 1.
+    pub fn draw(v: *Visual, pixels: [*]u32, width: u32, height: u32, stride: u32, left: []const f32, right: []const f32, rate: u32) void {
         if (width < 4 or height < 4) return;
         const w = width;
         const h = height;
         const fresh = w != v.width or h != v.height;
         v.width = w;
         v.height = h;
+        for (&v.mono, left[0..take], right[0..take]) |*both, one, other| both.* = (one + other) * 0.5;
         switch (v.mode) {
             .plasma => {
-                v.spectrum.analyse(samples, @max(rate, 1), 24);
+                v.spectrum.analyse(&v.mono, @max(rate, 1), 24);
                 v.plasma(pixels, w, h, stride);
             },
-            .wave => v.wave(pixels, w, h, stride, samples, fresh),
+            .wave => v.wave(pixels, w, h, stride, &v.mono, fresh),
             .bars => {
                 const bands: usize = @min(@max(w / 18, 8), spectrum.max_bands);
-                v.spectrum.analyse(samples, @max(rate, 1), bands);
+                v.spectrum.analyse(&v.mono, @max(rate, 1), bands);
                 v.bars(pixels, w, h, stride, bands);
             },
+            .scope => scope(pixels, w, h, stride, left[0..take], right[0..take], fresh),
+            .meters => v.meters(pixels, w, h, stride, left[0..take], right[0..take]),
         }
     }
 
@@ -292,14 +328,7 @@ pub const Visual = struct {
     fn wave(v: *Visual, pixels: [*]u32, w: u32, h: u32, stride: u32, samples: []const f32, fresh: bool) void {
         _ = v;
         // What was drawn before, at a quarter, or black.
-        for (0..h) |y| {
-            const row = pixels[y * stride ..][0..w];
-            if (fresh) {
-                @memset(row, rgb(0, 0, 0));
-            } else {
-                for (row) |*p| p.* = (p.* >> 2) & 0x003F3F3F | 0xFF000000;
-            }
-        }
+        fade(pixels, w, h, stride, fresh, 2);
         const middle = h / 2;
         const axis = pixels[middle * stride ..][0..w];
         for (axis) |*p| p.* |= rgb(0, 40, 30);
@@ -366,7 +395,139 @@ pub const Visual = struct {
             }
         }
     }
+
+    fn meters(v: *Visual, pixels: [*]u32, w: u32, h: u32, stride: u32, left: []const f32, right: []const f32) void {
+        for (0..h) |y| @memset(pixels[y * stride ..][0..w], rgb(8, 8, 16));
+        const margin: u32 = @max(h / 10, 2);
+        if (w <= 2 * margin or h <= 3 * margin + 2) return;
+        const bar_height = (h - 3 * margin) / 2;
+        const start = margin;
+        const length = w - 2 * margin;
+        const segment = 4;
+        for ([2][]const f32{ left, right }, 0..) |samples, side| {
+            // How loud the side was over the look, and its largest swing.
+            var sum: f32 = 0;
+            var largest: f32 = 0;
+            for (samples) |sample| {
+                sum += sample * sample;
+                largest = @max(largest, @abs(sample));
+            }
+            const level = shareOf(@sqrt(sum / @as(f32, @floatFromInt(samples.len))));
+            const peak = shareOf(largest);
+            v.meter[side] = if (level > v.meter[side]) level else @max(level, v.meter[side] - meter_fall);
+            if (peak >= v.meter_peak[side]) {
+                v.meter_peak[side] = peak;
+                v.meter_hold[side] = hold_looks;
+            } else if (v.meter_hold[side] > 0) {
+                v.meter_hold[side] -= 1;
+            } else v.meter_peak[side] = @max(peak, v.meter_peak[side] - peak_fall);
+
+            const top = margin + @as(u32, @intCast(side)) * (bar_height + margin);
+            const lit: u32 = @intFromFloat(v.meter[side] * @as(f32, @floatFromInt(length)));
+            for (0..bar_height) |y| {
+                const row = pixels + (top + y) * stride + start;
+                var along: u32 = 0;
+                while (along < lit) : (along += 1) {
+                    if (along % segment == segment - 1) continue;
+                    const height = along * 255 / length;
+                    row[along] = if (v.tint) |pair| colours.mix(pair.first, pair.second, height) else heat(height);
+                }
+            }
+            const mark: u32 = @intFromFloat(v.meter_peak[side] * @as(f32, @floatFromInt(length - 2)));
+            if (mark > 1) {
+                for (0..bar_height) |y| {
+                    const row = pixels + (top + y) * stride + start + mark;
+                    row[0] = rgb(240, 240, 255);
+                    row[1] = rgb(240, 240, 255);
+                }
+            }
+        }
+        // The ticks between the bars, 0 dB brighter than the rest.
+        const tick_top = margin + bar_height + margin / 4;
+        const tick_bottom = 2 * margin + bar_height - margin / 4;
+        var db: u32 = 0;
+        while (db <= meter_floor) : (db += 6) {
+            const x = start + (length - 1) - db * (length - 1) / meter_floor;
+            const colour = if (db == 0) rgb(220, 90, 90) else rgb(90, 90, 110);
+            for (tick_top..tick_bottom) |y| pixels[y * stride + x] = colour;
+        }
+    }
 };
+
+/// Left against right: what both sides share up from the middle, what
+/// sets them apart across it - a frame a point, joined to the one before -
+/// over the guides; what was drawn before at half.
+fn scope(pixels: [*]u32, w: u32, h: u32, stride: u32, left: []const f32, right: []const f32, fresh: bool) void {
+    fade(pixels, w, h, stride, fresh, 1);
+    const centre_x: i32 = @intCast(w / 2);
+    const centre_y: i32 = @intCast(h / 2);
+    const reach: i32 = @intCast(@min(w, h) / 2 - 1);
+    // The middle up and across, and each side's own line at a slant.
+    const guide = rgb(0, 40, 30);
+    line(pixels, stride, centre_x, centre_y - reach, centre_x, centre_y + reach, guide);
+    line(pixels, stride, centre_x - reach, centre_y, centre_x + reach, centre_y, guide);
+    const slant = @divTrunc(reach * 7, 10);
+    line(pixels, stride, centre_x - slant, centre_y - slant, centre_x + slant, centre_y + slant, rgb(0, 26, 20));
+    line(pixels, stride, centre_x - slant, centre_y + slant, centre_x + slant, centre_y - slant, rgb(0, 26, 20));
+    const scale: f32 = @floatFromInt(reach);
+    var last_x: i32 = 0;
+    var last_y: i32 = 0;
+    for (left, right, 0..) |one, other, at| {
+        const both = @min(@max((one + other) * 0.5, -1.0), 1.0);
+        const apart = @min(@max((other - one) * 0.5, -1.0), 1.0);
+        const x = centre_x + @as(i32, @intFromFloat(apart * scale));
+        const y = centre_y - @as(i32, @intFromFloat(both * scale));
+        if (at != 0) line(pixels, stride, last_x, last_y, x, y, rgb(110, 255, 200));
+        last_x = x;
+        last_y = y;
+    }
+}
+
+/// What was drawn before, each colour shifted down `shift` - a half, a
+/// quarter - or, `fresh`, black.
+fn fade(pixels: [*]u32, w: u32, h: u32, stride: u32, fresh: bool, comptime shift: u5) void {
+    const kept: u32 = (@as(u32, 0xFF) >> shift) * 0x010101;
+    for (0..h) |y| {
+        const row = pixels[y * stride ..][0..w];
+        if (fresh) {
+            @memset(row, rgb(0, 0, 0));
+        } else {
+            for (row) |*p| p.* = (p.* >> shift) & kept | 0xFF000000;
+        }
+    }
+}
+
+/// A line from one point to another, both inside the pixels, in
+/// `colour`.
+fn line(pixels: [*]u32, stride: u32, from_x: i32, from_y: i32, to_x: i32, to_y: i32, colour: u32) void {
+    const dx: i32 = @intCast(@abs(to_x - from_x));
+    const dy: i32 = -@as(i32, @intCast(@abs(to_y - from_y)));
+    const step_x: i32 = if (from_x < to_x) 1 else -1;
+    const step_y: i32 = if (from_y < to_y) 1 else -1;
+    var err = dx + dy;
+    var x = from_x;
+    var y = from_y;
+    while (true) {
+        pixels[@as(usize, @intCast(y)) * stride + @as(usize, @intCast(x))] = colour;
+        if (x == to_x and y == to_y) break;
+        const twice = 2 * err;
+        if (twice >= dy) {
+            err += dy;
+            x += step_x;
+        }
+        if (twice <= dx) {
+            err += dx;
+            y += step_y;
+        }
+    }
+}
+
+/// How much of a meter a level is: -48 dB and below none of it, 0 dB all.
+fn shareOf(level: f32) f32 {
+    if (level <= 0) return 0;
+    const db = 20.0 * @log10(level);
+    return @min(@max((db + meter_floor) / meter_floor, 0.0), 1.0);
+}
 
 /// The bytes the plasma's rows and columns take for an area `width` by
 /// `height` (`Visual.lay`): a few for each of its columns and rows.
@@ -442,7 +603,7 @@ test "every mode draws inside its area and leaves the rest" {
     for (&samples, 0..) |*s, i| s.* = 0.8 * @sin(@as(f32, @floatFromInt(i)) * 0.3);
     for (0..mode_count) |_| {
         @memset(&pixels, 0x12345678);
-        for (0..3) |_| v.draw(&pixels, w, h, stride, &samples, 44100);
+        for (0..3) |_| v.draw(&pixels, w, h, stride, &samples, &samples, 44100);
         for (0..h) |y| {
             for (w..stride) |x| try testing.expectEqual(@as(u32, 0x12345678), pixels[y * stride + x]);
         }
@@ -473,7 +634,7 @@ test "every mode draws to the far edge of an area of any size, a screen's too" {
     for (&samples, 0..) |*s, i| s.* = 0.8 * @sin(@as(f32, @floatFromInt(i)) * 0.3);
     for (0..mode_count) |_| {
         @memset(pixels, 0x12345678);
-        v.draw(pixels.ptr, w, h, w, &samples, 44100);
+        v.draw(pixels.ptr, w, h, w, &samples, &samples, 44100);
         // The last column of every row, and the last row, drawn.
         for (0..h) |y| try testing.expect(pixels[y * w + w - 1] != 0x12345678);
         for (pixels[(h - 1) * w ..]) |p| try testing.expect(p != 0x12345678);
@@ -526,10 +687,10 @@ test "the wave stands still where the sound crosses zero going up" {
     var samples: [take]f32 = undefined;
     // The same note, started at two points of its cycle.
     for (&samples, 0..) |*s, i| s.* = @sin(@as(f32, @floatFromInt(i)) * 0.2);
-    v.draw(&first, w, h, w, &samples, 44100);
+    v.draw(&first, w, h, w, &samples, &samples, 44100);
     for (&samples, 0..) |*s, i| s.* = @sin(@as(f32, @floatFromInt(i + 9)) * 0.2);
     v.width = 0;
-    v.draw(&second, w, h, w, &samples, 44100);
+    v.draw(&second, w, h, w, &samples, &samples, 44100);
     var same: usize = 0;
     for (first, second) |a, b| same += @intFromBool(a == b);
     try testing.expect(same > w * h * 9 / 10);
@@ -584,18 +745,95 @@ test "a look after a size followed goes on from what was carried" {
     var samples: [take]f32 = undefined;
     for (&samples, 0..) |*s, i| s.* = @sin(@as(f32, @floatFromInt(i)) * 0.2);
     var first: [64 * 33]u32 = undefined;
-    v.draw(&first, 64, 33, 64, &samples, 44100);
+    v.draw(&first, 64, 33, 64, &samples, &samples, 44100);
     // Wider: the trail carried, the next look fades it rather than
     // clearing it.
     var wider: [80 * 33]u32 = undefined;
     carry(&wider, 80, 33, &first, 64, 33);
     v.follow(80, 33);
     for (&samples) |*s| s.* = 0;
-    v.draw(&wider, 80, 33, 80, &samples, 44100);
+    v.draw(&wider, 80, 33, 80, &samples, &samples, 44100);
     var trail: usize = 0;
     for (0..33) |y| {
         if (y == 16) continue; // the axis, and the silent wave on it
         for (0..64) |x| trail += @intFromBool(wider[y * 80 + x] & 0x00FFFFFF != 0);
     }
     try testing.expect(trail > 0);
+}
+
+test "the scope stands a mono sound upright and a sound only on one side at a slant" {
+    const w = 65;
+    const h = 65;
+    var pixels: [w * h]u32 = undefined;
+    var left: [take]f32 = undefined;
+    var right: [take]f32 = undefined;
+    for (&left, &right, 0..) |*one, *other, i| {
+        one.* = 0.9 * @sin(@as(f32, @floatFromInt(i)) * 0.05);
+        other.* = one.*;
+    }
+    scope(&pixels, w, h, w, &left, &right, true);
+    const trace = rgb(110, 255, 200);
+    for (0..h) |y| {
+        for (0..w) |x| {
+            if (pixels[y * w + x] == trace) try testing.expectEqual(@as(usize, w / 2), x);
+        }
+    }
+    // The left side alone: up and to the left together, down and to the
+    // right - the slant from top left to bottom right.
+    for (&right) |*other| other.* = 0;
+    scope(&pixels, w, h, w, &left, &right, true);
+    var lit: usize = 0;
+    for (0..h) |y| {
+        for (0..w) |x| {
+            if (pixels[y * w + x] != trace) continue;
+            lit += 1;
+            const off = @as(i32, @intCast(x)) - @as(i32, @intCast(y));
+            try testing.expect(off >= -1 and off <= 1);
+        }
+    }
+    try testing.expect(lit > 20);
+}
+
+test "a meter is as long as its side is loud, and its peak is held" {
+    const v = try testing.allocator.create(Visual);
+    defer testing.allocator.destroy(v);
+    v.* = .{ .mode = .meters };
+    v.init();
+    const w = 200;
+    const h = 40;
+    var pixels: [w * h]u32 = undefined;
+    var left: [take]f32 = undefined;
+    var right: [take]f32 = undefined;
+    // The left at full swing, the right 24 dB below it.
+    for (&left, &right, 0..) |*one, *other, i| {
+        one.* = @sin(@as(f32, @floatFromInt(i)) * 0.1);
+        other.* = one.* / 16.0;
+    }
+    v.draw(&pixels, w, h, w, &left, &right, 44100);
+    // A sine's mean square's root is 3 dB below its peak: the left bar
+    // near its end, the right half way less 3 dB; the peaks at 0 and -24.
+    try testing.expect(v.meter[0] > 0.9 and v.meter[0] < 0.96);
+    try testing.expect(v.meter[1] > 0.4 and v.meter[1] < 0.46);
+    try testing.expect(v.meter_peak[0] > 0.99);
+    try testing.expect(v.meter_peak[1] > 0.49 and v.meter_peak[1] < 0.51);
+    // Silence: the bars fall back a step a look, the peaks are held.
+    @memset(&left, 0);
+    @memset(&right, 0);
+    v.draw(&pixels, w, h, w, &left, &right, 44100);
+    try testing.expect(v.meter[0] > 0.9 - meter_fall - 0.001 and v.meter[0] < 0.96 - meter_fall + 0.001);
+    try testing.expect(v.meter_peak[0] > 0.99);
+    for (0..hold_looks + 1) |_| v.draw(&pixels, w, h, w, &left, &right, 44100);
+    try testing.expect(v.meter_peak[0] < 0.99);
+    // The left bar's row lit further along than the right's.
+    const margin = h / 10;
+    const bar = (h - 3 * margin) / 2;
+    v.quiet();
+    for (&left, &right, 0..) |*one, *other, i| {
+        one.* = @sin(@as(f32, @floatFromInt(i)) * 0.1);
+        other.* = one.* / 16.0;
+    }
+    v.draw(&pixels, w, h, w, &left, &right, 44100);
+    const ground = rgb(8, 8, 16);
+    try testing.expect(pixels[(margin + 1) * w + w * 3 / 4] != ground);
+    try testing.expect(pixels[(2 * margin + bar + 1) * w + w * 3 / 4] == ground);
 }

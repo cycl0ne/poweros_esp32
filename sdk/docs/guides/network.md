@@ -335,7 +335,11 @@ The body ends where its length says, at its last chunk, or where the
 server closes; the answer to `HEAD`, a 204 and a 304 have none. A
 Shoutcast server answers a stream's request with `ICY 200 OK`, which is
 read as an HTTP/1.0 answer: its `icy-` headers are `GetHeader`'s, and
-its body is the stream, to the connection's end.
+its body is the stream, to the connection's end. Asked with the header
+`Icy-MetaData: 1`, the server puts a block of text in every
+`icy-metaint` bytes; `sdk.http.icy.Strip` takes the blocks out of the
+pieces as `ReadRequest` hands them over and keeps the last whole one, and
+`streamTitle` finds the song's title in it.
 
 **A body to send** that is in memory goes with the head: `HTTP_Body` and
 `HTTP_BodyLength`. One not at hand in one piece - a file - is the

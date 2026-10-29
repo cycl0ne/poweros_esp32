@@ -8,6 +8,10 @@
 //! and makes its list of the same full names, which is how Player.list
 //! keeps them.
 //!
+//! The port takes a program's question too - what is playing, and how
+//! far (`sdk.player.State`, the dock's player.docklet asks it) - told
+//! from a `Handed` by its length.
+//!
 //! The second start sends a `Handed` with `SafePutToPort` - the find and
 //! the send under one hold of exec's port lock, so a Player ending at
 //! that moment answers it as it takes its port down - and waits for the
@@ -22,8 +26,9 @@ const DosBase = sdk.interface.dos.DosBase;
 const visual = @import("visual.zig");
 const playlist = @import("playlist.zig");
 
-/// The public port of the Player running.
-pub const PORT_NAME = "Player";
+/// The public port of the Player running, which a program asks what it
+/// plays at too (`sdk.player`).
+pub const PORT_NAME = sdk.player.PORT_NAME;
 
 /// What a second start hands the Player running. The sender's until it
 /// is replied.

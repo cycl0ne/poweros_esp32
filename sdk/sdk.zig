@@ -57,6 +57,8 @@ pub const modbus = @import("libs/modbus/modbus.zig");
 /// Sound decoded from WAV and MP3 into 16-bit samples, through
 /// audiocodec.library.
 pub const audiocodec = @import("libs/audiocodec/audiocodec.zig");
+/// What the Player that runs plays, asked at its public port.
+pub const player = @import("libs/player/player.zig");
 /// A packet filter on the stack's packet hooks, through filter.library.
 pub const filter = @import("libs/filter/filter.zig");
 /// A Wi-Fi station's WPA2-Personal keys and handshakes, through

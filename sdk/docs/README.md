@@ -323,6 +323,7 @@ library that makes one from a few functions, are in
 | volume.docklet | how loud the machine plays, as a speaker and its waves | `SYS:Programs/Volume` |
 | cpu.docklet | how busy each core is, a bar each | `SYS:System/CPULoad` |
 | network.docklet | an arrow for what comes in, one for what goes out | `SYS:System/NetLoad` |
+| player.docklet | what the Player plays, as a note in a ring that fills with the song ([`sdk.player`](../libs/player/player.zig)) | `SYS:Programs/Player` |
 
 ## Image classes
 

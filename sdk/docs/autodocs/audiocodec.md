@@ -155,7 +155,9 @@ fn DecodeAudio(base: *AudioCodecBase, stream: *ac.AudioStream, buffer: [*]i16, f
 **RESULT**
 
 How many frames went into `buffer`: `frames` until the end comes, then
-fewer, then 0. Below 0 an ACERR_* - the source would not be read.
+fewer, then 0 - or fewer at the end of a link of a chain (SINCE 1.5),
+and the next link's after it. Below 0 an ACERR_* - the source would
+not be read, or the next link cannot be decoded.
 
 **BEHAVIOR**
 
@@ -166,7 +168,12 @@ stream's packets decoded one at a time and handed out across calls. An
 MP3 is cut where its encoder said the music begins and ends, an Ogg
 Vorbis stream where its pages' positions say, so a song played after
 another follows it without a gap. A FLAC frame that is damaged - its
-CRC wrong - is handed out as silence. A read function is asked for the
+CRC wrong - is handed out as silence. A chained Ogg stream (SINCE 1.5)
+goes on from link to link: a call ends with a link's last frame, and
+the next reads the following link's headers and hands out its sound -
+at its own rate and channels, which the info then gives, its tags with
+it, `ACA_Link` one more. A link of another kind ends the stream, and
+one that cannot be decoded ends it with why. A read function is asked for the
 bytes of the frames handed out and `AUDIO_READ_AHEAD` more at most
 (SINCE 1.4 said).
 
@@ -226,9 +233,9 @@ fn GetAudioStreamAttrs(base: *AudioCodecBase, stream: *ac.AudioStream, tags: ?[*
 - `tags`: what is asked, each tag's data the address its answer goes
   to: `ACA_Title`, `ACA_Artist`, `ACA_Album`, `ACA_AlbumArtist`,
   `ACA_Composer`, `ACA_Genre` and `ACA_Comment` a `*[*:0]const u8`;
-  `ACA_Year`, `ACA_Track`, `ACA_Tracks` and `ACA_Chapters` a `*u32`;
-  `ACA_Picture` a `*?*const ac.AudioPicture`; `ACA_ChapterList` a
-  `*?[*]const ac.AudioChapter`.
+  `ACA_Year`, `ACA_Track`, `ACA_Tracks`, `ACA_Chapters` and `ACA_Link`
+  a `*u32`; `ACA_Picture` a `*?*const ac.AudioPicture`;
+  `ACA_ChapterList` a `*?[*]const ac.AudioChapter`.
 
 **RESULT**
 
@@ -249,7 +256,10 @@ are several - an ID3v2 tag's, a FLAC's PICTURE block, an Ogg stream's
 METADATA_BLOCK_PICTURE comment. The chapters are an ID3v2 tag's CHAP
 frames, each with the title of its own TIT2, or the CHAPTERnnn and
 CHAPTERnnnNAME comments, each ending where the next begins - up to 256
-of them.
+of them. In a chained Ogg stream (SINCE 1.5) they are the link's being
+decoded - its own comments, nothing of the link before - and
+`ACA_Link` is which link that is, 0 for the first: a program that asks
+for it after each `DecodeAudio` call knows when they changed.
 
 **CONTEXT**
 
@@ -261,7 +271,10 @@ of them.
 **OWNERSHIP**
 
 Every text, the picture and the chapters are the stream's: read them,
-and keep a copy of what is needed after `CloseAudioStream`.
+and keep a copy of what is needed after `CloseAudioStream`. In a chain
+the texts and the chapters are written again where they are as a link
+begins, and a link's picture stays until the link after next begins:
+read them again when `ACA_Link` rises.
 
 **NOTES**
 
@@ -323,7 +336,9 @@ otherwise, and 0 for a stream read through a function without that
 frame. A FLAC's is its STREAMINFO's. An Ogg Vorbis file's is its last
 page's position, exact; read through a function it is 0. The bit rate
 of a FLAC is the average its size and length give, of a Vorbis the
-one its header names.
+one its header names. In a chained Ogg stream (SINCE 1.5) all of it
+is the link's being decoded: it changes once DecodeAudio has handed
+out a frame of the next, and a file's length is the link's own.
 
 **CONTEXT**
 
@@ -547,7 +562,10 @@ table of contents points to, or the bit rate when it has none - exact
 for a constant rate, near for a variable one - and the frame or two
 after it may be left out, until the reservoir of bits they reach back
 into is filled again. Frame 0 is exact for every kind: an MP3 starts
-again where its encoder said the music begins (SINCE 1.3).
+again where its encoder said the music begins (SINCE 1.3). In a
+chained Ogg file (SINCE 1.5) the frame is the link's being decoded,
+counted from its start: the seek moves within that link. To start the
+file over from its first link, open it again.
 
 **CONTEXT**
 
