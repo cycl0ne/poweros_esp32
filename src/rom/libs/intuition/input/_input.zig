@@ -191,6 +191,9 @@ pub const State = extern struct {
     size_ticks: u8 = 0,
     pad4: [2]u8 = .{ 0, 0 },
     size_message: ?*wn.IntuiMessage = null,
+    /// The window a step of the sizing is drawn in while its drawing is
+    /// gathered, until the step is answered (`gatherStep`); null with none.
+    gathered: ?*Window = null,
     /// When the last step began: the next waits until a frame has passed
     /// since.
     step_began: timer.TimeVal = .{},
@@ -512,6 +515,7 @@ pub fn windowEvent(ib: *IntuitionBase, w: *Window, class: u32, code: u32) void {
 /// screen semaphore.
 pub fn forget(ib: *IntuitionBase, w: *Window) void {
     const st = stateOf(ib);
+    letGo(ib, w);
     if (st.side_window == w) {
         st.side = null;
         st.side_window = null;
@@ -1275,12 +1279,13 @@ fn pacing(ib: *IntuitionBase) bool {
     return st.started == 1 and st.size_port.flags == exec.PA_SIGNAL;
 }
 
-/// A sizing begins, or the window being sized is gone: nothing owed and
-/// no answer awaited.
+/// A sizing begins, or the window being sized is gone: nothing owed, no
+/// answer awaited, and so nothing gathered.
 fn sizeBegins(ib: *IntuitionBase) void {
     const st = stateOf(ib);
     st.step_owed = 0;
     st.size_message = null;
+    endGather(ib);
 }
 
 /// One step of a drag: the window to where the pointer has carried it.
@@ -1317,11 +1322,60 @@ fn sizeStep(ib: *IntuitionBase) void {
 /// message is sent.
 pub fn sendNewSize(ib: *IntuitionBase, w: *Window) void {
     const st = stateOf(ib);
-    const stepping = pacing(ib) and st.mode == .size and st.window == w and ib.sys_base.FindTask(null) == &st.task;
-    if (!stepping) return _window.send(ib, w, wn.IDCMP_NEWSIZE, 0);
+    if (!isStep(ib, w)) return _window.send(ib, w, wn.IDCMP_NEWSIZE, 0);
     const message = _window.post(ib, w, wn.IDCMP_NEWSIZE, 0, null, st.qualifier, &st.size_port) orelse return;
     st.size_message = message;
     st.size_ticks = size_answer_ticks;
+}
+
+/// Whether `w` is sized by a step of the input task's sizing, and this is
+/// the task: the step's IDCMP_NEWSIZE is waited for.
+fn isStep(ib: *IntuitionBase, w: *Window) bool {
+    const st = stateOf(ib);
+    return pacing(ib) and st.mode == .size and st.window == w and ib.sys_base.FindTask(null) == &st.task;
+}
+
+/// A step of the user's sizing has sized the window's layers: what is
+/// drawn in it from here on - intuition's border and gadgets, then the
+/// program's drawing for IDCMP_NEWSIZE - is gathered (`BeginDraw` on its
+/// buffers) and reaches the display in one go once the program has
+/// replied, or has had `size_answer_ticks` to (`settleGather`). So the
+/// display never shows a step half drawn. Only where the window is
+/// composed: there it draws into a buffer of its own and the rest of the
+/// display goes on meanwhile. Under the screen semaphore.
+pub fn gatherStep(ib: *IntuitionBase, w: *Window) void {
+    const st = stateOf(ib);
+    if (st.gathered != null or !isStep(ib, w)) return;
+    if (!@import("../window/_fade.zig").composed(ib, w.layer)) return;
+    const gb = ib.graphics_base;
+    gb.BeginDraw(w.rp);
+    if (w.inner_rp) |inner| gb.BeginDraw(inner);
+    st.gathered = w;
+}
+
+/// What a step gathered handed on to the display, if one has. Under the
+/// screen semaphore.
+fn endGather(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    const w = st.gathered orelse return;
+    st.gathered = null;
+    const gb = ib.graphics_base;
+    if (w.inner_rp) |inner| gb.EndDraw(inner);
+    gb.EndDraw(w.rp);
+}
+
+/// The step gathered handed on once no answer to it is awaited: at once
+/// for a window that does not listen for IDCMP_NEWSIZE. Under the screen
+/// semaphore.
+pub fn settleGather(ib: *IntuitionBase) void {
+    if (stateOf(ib).size_message == null) endGather(ib);
+}
+
+/// What a step gathered in `w` handed on, before anything else is done to
+/// the window: a size gives its layer a new buffer, and a close takes it
+/// away. Under the screen semaphore.
+pub fn letGo(ib: *IntuitionBase, w: *Window) void {
+    if (stateOf(ib).gathered == w) endGather(ib);
 }
 
 /// A tick while an answer is awaited: silence past `size_answer_ticks` is
@@ -1331,6 +1385,7 @@ fn paceTick(ib: *IntuitionBase) void {
     if (st.size_message == null) return;
     if (st.size_ticks == 0) {
         st.size_message = null;
+        endGather(ib);
         return;
     }
     st.size_ticks -= 1;
@@ -1350,6 +1405,13 @@ fn pace(ib: *IntuitionBase) void {
             if (&awaited.msg == m) st.size_message = null;
         }
         _window.freeMessage(ib, m);
+    }
+    // The step answered: shown as drawn - after the gadgets its program
+    // queued to be drawn before it replied, which the loop drew first.
+    if (st.gathered != null and st.size_message == null) {
+        _window.lock(ib);
+        settleGather(ib);
+        _window.unlock(ib);
     }
     const stepping = st.mode == .drag or (st.mode == .size and st.size_message == null);
     if (!stepping or st.step_owed == 0) return;

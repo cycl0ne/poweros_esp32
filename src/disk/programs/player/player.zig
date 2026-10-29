@@ -81,10 +81,13 @@
 //!
 //! **The sound is the window's to keep going**: its buffers are refilled
 //! by the window's loop, so nothing the loop does may take long. A sizing
-//! says `IDCMP_NEWSIZE` at every step, and a step can come while the last
-//! one is still being drawn; the canvases follow the last size once the
-//! messages there are have been read, and the loop is back at the sound
-//! between one step and the next.
+//! goes a step at a time, each said with `IDCMP_NEWSIZE`, and intuition
+//! takes the next step - and shows this one - once the program has
+//! replied it, which windowclass does when the loop asks for its next
+//! message. So the canvases are fitted and drawn on `WMHI_NEWSIZE`, before
+//! that: the step is shown with them in it, never a step behind, and the
+//! loop is back at the sound between one step and the next. What fits of
+//! the picture is kept across a step, the wave's trail with it.
 //!
 //! **A song is shown before it is heard**: its names and its cover first,
 //! then its sound - reading a large cover takes the S3 a moment, which
@@ -143,8 +146,8 @@ const cover = @import("cover.zig");
 const big_window = @import("big.zig");
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.9";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (28.10.2026)\r\n";
+const VERSION = "1.10";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -1227,13 +1230,10 @@ const App = struct {
         }
     }
 
-    /// Every message the window has: false when it is to close. The
-    /// canvases follow a new size once, after the messages: a sizing
-    /// sends one at every step.
+    /// Every message the window has: false when it is to close.
     fn windowMessages(app: *App) bool {
         var code: u32 = 0;
         var handle = wc.WmHandleInput{ .code = &code };
-        var sized = false;
         while (true) {
             const word = app.ib.SendMessage(app.object, @ptrCast(&handle));
             if (word == wc.WMHI_LASTMSG) break;
@@ -1246,17 +1246,23 @@ const App = struct {
                 },
                 wc.WMHI_IDCMPUPDATE => app.updated(),
                 wc.WMHI_VANILLAKEY => if (word & wc.WMHI_KEYMASK == ' ') app.togglePause(),
-                wc.WMHI_NEWSIZE => sized = true,
+                wc.WMHI_NEWSIZE => app.sized(),
                 wc.WMHI_ACTIVE => app.readOutputs(),
                 else => {},
             }
         }
-        if (sized) {
-            app.fitCover();
-            app.fitPicture();
-            app.wake();
-        }
         return true;
+    }
+
+    /// A step of a sizing: the cover and the picture fitted to their new
+    /// boxes and drawn there now, before the next message is asked for -
+    /// which replies the step's IDCMP_NEWSIZE, and intuition shows the
+    /// step once it is replied.
+    fn sized(app: *App) void {
+        app.fitCover();
+        app.fitPicture();
+        app.look();
+        app.wake();
     }
 
     fn dropped(app: *App) void {
@@ -1276,7 +1282,8 @@ const App = struct {
         app.takePicture();
     }
 
-    /// The canvas's RastPort and size read, and pixels for that size.
+    /// The canvas's RastPort and size read, and pixels for that size with
+    /// what fits of the last picture carried into them.
     fn takePicture(app: *App) void {
         var value: usize = 0;
         _ = app.ib.GetAttr(cv.CANVAS_RastPort, app.picture, &value);
@@ -1288,15 +1295,20 @@ const App = struct {
         const w: u32 = @intCast(@min(width, visual.max_width));
         const h: u32 = @intCast(@min(height, visual.max_height));
         if (w == app.width and h == app.height and app.pixels != null) return;
-        if (app.pixels) |old| app.sys.FreeVec(old);
+        const old = app.pixels;
+        defer if (old) |pixels| app.sys.FreeVec(pixels);
         app.pixels = null;
-        app.width = 0;
-        app.height = 0;
-        const memory = app.sys.AllocVec(@as(usize, w) * h * 4, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return;
-        app.pixels = @ptrCast(@alignCast(memory));
+        const memory = app.sys.AllocVec(@as(usize, w) * h * 4, exec.MEMF_ANY) orelse {
+            app.width = 0;
+            app.height = 0;
+            return;
+        };
+        const pixels: [*]u32 = @ptrCast(@alignCast(memory));
+        visual.carry(pixels, w, h, old, app.width, app.height);
+        app.pixels = pixels;
         app.width = w;
         app.height = h;
-        app.visual.width = 0;
+        app.visual.follow(w, h);
     }
 
     /// The pictures going again, after a change or with the sound.
@@ -1313,17 +1325,7 @@ const App = struct {
     fn tick(app: *App) void {
         const engine = app.engine;
         app.serviceSound();
-        if (app.pixels) |pixels| {
-            if (app.rast_port) |rp| {
-                engine.heard(&app.samples);
-                app.visual.draw(pixels, app.width, app.height, app.width, &app.samples, @max(engine.info.rate, 8000));
-                app.gb.WritePixelArray(rp, @ptrCast(pixels), app.width * 4, @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
-                    .max_x = @intCast(app.width),
-                    .max_y = @intCast(app.height),
-                });
-                app.ib.QueueGadgetRefresh(app.picture);
-            }
-        }
+        app.look();
         app.looks +%= 1;
         if (app.looks % looks_per_time == 0) app.showTime();
         if (app.looks % looks_per_outputs == 0) app.readOutputs();
@@ -1335,6 +1337,20 @@ const App = struct {
             app.mb.StopTimer(app.timer);
             app.ticking = false;
         }
+    }
+
+    /// The picture drawn from what is being heard, put into its canvas
+    /// and the canvas shown.
+    fn look(app: *App) void {
+        const pixels = app.pixels orelse return;
+        const rp = app.rast_port orelse return;
+        app.engine.heard(&app.samples);
+        app.visual.draw(pixels, app.width, app.height, app.width, &app.samples, @max(app.engine.info.rate, 8000));
+        app.gb.WritePixelArray(rp, @ptrCast(pixels), app.width * 4, @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
+            .max_x = @intCast(app.width),
+            .max_y = @intCast(app.height),
+        });
+        app.ib.QueueGadgetRefresh(app.picture);
     }
 
     /// The buffers that came back filled and sent again; the next song

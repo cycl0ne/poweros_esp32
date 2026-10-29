@@ -76,7 +76,7 @@ pub fn radiusOf(ib: *IntuitionBase, w: *Window) u32 {
 }
 
 /// Whether a layer is composed, and so can look like anything.
-fn composed(ib: *IntuitionBase, layer: *layers.Layer) bool {
+pub fn composed(ib: *IntuitionBase, layer: *layers.Layer) bool {
     var yes: u32 = 0;
     ib.layers_base.GetLayerAttrs(layer, &[_]TagItem{ .{ .tag = layers.LATAG_GetComposed, .data = @intFromPtr(&yes) }, .{} });
     return yes != 0;

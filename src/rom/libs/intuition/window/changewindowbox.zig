@@ -75,6 +75,12 @@ const unlock = _window.unlock;
 ///   three ticks at most - and a frame has passed since the last step
 ///   began. A program that redraws on it and replies after drawing has
 ///   the window follow its drawing, a step at a time.
+/// - On a composed screen such a step is shown once it is drawn: what is
+///   drawn in the window after its layers are sized, by intuition and
+///   then by the program, is gathered and reaches the display together
+///   when the program has replied (or the three ticks are up). Gadgets the
+///   program had refreshed with `QueueGadgetRefresh` before replying are
+///   drawn into it first.
 ///
 /// BUGS:
 /// None known.
@@ -102,6 +108,9 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
     const dw = new_w - window.width;
     const dh = new_h - window.height;
     if (dx == 0 and dy == 0 and dw == 0 and dh == 0) return;
+    // A step's drawing gathered in it is handed on first: a size gives the
+    // layer a new buffer.
+    _input.letGo(ib, window);
 
     // Where the gadgets that move with an edge are now: what the size
     // will leave behind, while their boxes are still measured against the
@@ -124,6 +133,9 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
         });
         return;
     }
+    // A step of the user's sizing is shown once drawn, its program's part
+    // included.
+    if (sized) _input.gatherStep(ib, window);
     const old_w = window.width;
     const old_h = window.height;
     window.left = new_l;
@@ -163,4 +175,6 @@ pub fn ChangeWindowBox(ib: *IntuitionBase, window: *Window, left: i32, top: i32,
     // A row that wraps may need more height at the new width than the
     // window has: the window grows to it, a second step of its own.
     if (sized) _window.fitLayout(ib, window);
+    // Shown now, unless the program's answer is awaited.
+    _input.settleGather(ib);
 }

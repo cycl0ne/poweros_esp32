@@ -14,7 +14,10 @@
 //! `OM_SET` of `CANVAS_Width` or `CANVAS_Height` makes the picture anew at
 //! the new size (0: the gadget's box, from the GadgetInfo when there is
 //! one): a new bitmap, what fits of the old picture blitted into it and
-//! the rest cleared, and a new RastPort that draws as the old one did - its
+//! the rest the gadget's background - as the box round a smaller picture
+//! is drawn, so a picture grown by a sizing shows no black edge before its
+//! program draws there; cleared without a GadgetInfo to say what the
+//! background is - and a new RastPort that draws as the old one did - its
 //! font, pens, draw mode and style. The old ones go at once, which is safe
 //! from intuition's drawing because `SetGadgetAttrsTagList` and every
 //! `GM_RENDER` intuition sends hold intuition's lock; the program, which
@@ -38,13 +41,14 @@ const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
+const Pen = graphics.Pen;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
 pub const Library = gadgets.ClassLibrary(.{
     .name = cv.CANVAS_CLASS,
     .version = 2,
-    .revision = 1,
-    .date = "18.10.2026",
+    .revision = 2,
+    .date = "29.10.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -99,14 +103,28 @@ fn makePicture(gb: *GraphicsBase, width: u32, height: u32, format: u32) ?struct 
 }
 
 /// The picture made anew at `width` by `height`, what fits of the old one
-/// kept and its RastPort's font, pens, draw mode and style carried over.
-/// False with no memory: the picture stays as it was.
-fn resize(gb: *GraphicsBase, own: *Data, width: u32, height: u32) bool {
+/// kept, the rest in `ground` (left cleared when null), and its
+/// RastPort's font, pens, draw mode and style carried over. False with no
+/// memory: the picture stays as it was.
+fn resize(gb: *GraphicsBase, own: *Data, width: u32, height: u32, ground: ?Pen) bool {
     if (width == own.width and height == own.height) return true;
     const format: u32 = if (own.bitmap) |old| @intFromEnum(old.format) else displayFormat(gb);
     const picture = makePicture(gb, width, height, format) orelse return false;
+    var kept_w: u32 = 0;
+    var kept_h: u32 = 0;
     if (own.bitmap) |old| {
-        _ = gb.BltBitMap(old, 0, 0, picture.bitmap, 0, 0, @intCast(@min(width, own.width)), @intCast(@min(height, own.height)));
+        kept_w = @min(width, own.width);
+        kept_h = @min(height, own.height);
+        _ = gb.BltBitMap(old, 0, 0, picture.bitmap, 0, 0, @intCast(kept_w), @intCast(kept_h));
+    }
+    // Before the old RastPort's pens are carried over: the fill sets one.
+    if (ground) |pen| {
+        const w: i32 = @intCast(width);
+        const h: i32 = @intCast(height);
+        const kw: i32 = @intCast(kept_w);
+        const kh: i32 = @intCast(kept_h);
+        support.fill(gb, picture.rast_port, .{ .left = kw, .top = 0, .width = w - kw, .height = h }, pen);
+        support.fill(gb, picture.rast_port, .{ .left = 0, .top = kh, .width = kw, .height = h - kh }, pen);
     }
     if (own.rast_port) |old| {
         var font: usize = 0;
@@ -236,7 +254,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const box = if (set.gadget_info) |info| gc.boxFor(g, info) else gc.Box{ .width = g.width, .height = g.height };
             const width: u32 = if (width_item) |item| (if (item.data != 0) @truncate(item.data) else @intCast(@max(box.width, 1))) else own.width;
             const height: u32 = if (height_item) |item| (if (item.data != 0) @truncate(item.data) else @intCast(@max(box.height, 1))) else own.height;
-            if (!resize(gb, own, width, height)) return changed;
+            const ground: ?Pen = if (set.gadget_info) |info| support.background(ib, info.draw_info, g.style, style.PART_MAIN) else null;
+            if (!resize(gb, own, width, height, ground)) return changed;
             ib.QueueGadgetRefresh(o.?);
             return changed;
         },
