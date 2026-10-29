@@ -2,7 +2,7 @@
 //! ListBrowser: a drawer as a tree in a list browser. Built against the
 //! SDK only.
 //!
-//!   ListBrowser [DIR]
+//!   ListBrowser [DIR] [FLAT]
 //!
 //! It opens listbrowser.gadget and a window object on the default public
 //! screen holding one: the entries of DIR (SYS: when not given) in three
@@ -11,6 +11,11 @@
 //! that column, a second press turns the order round; a press on a
 //! drawer's triangle opens it. A row chosen is printed with its place and
 //! name, a double-click said as such. The close gadget or Ctrl-C end it.
+//!
+//! With FLAT the entries are one level, and their rows move: a row
+//! dragged up or down goes where it is let go (`LISTBROWSER_Reorder`),
+//! printed with where it came from, and a double-click marks its row
+//! (`ROW_MARKED`) as a player marks the song it plays.
 //!
 //! The scroll bar is in the window's right border, the list browser made
 //! without one of its own: the bar's `ICA_TARGET` is the list browser and
@@ -40,11 +45,12 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ListBrowser";
-const VERSION_STRING = "\x00$VER: ListBrowser 1.0 (07.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ListBrowser 1.1 (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "DIR";
+const template = "DIR,FLAT/S";
 const arg_dir = 0;
+const arg_flat = 1;
 
 const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOSCREEN = "No default screen - no display\n";
@@ -54,6 +60,8 @@ const MSG_NOWINDOW = "No window\n";
 const MSG_HELLO = "%lu entries. Press the headings and the triangles. The close gadget or Ctrl-C end it\n";
 const MSG_CHOSEN = "Row %lu: %s\n";
 const MSG_DOUBLE = "Row %lu: %s, a double-click\n";
+const MSG_FLAT = "Drag a row to move it; a double-click marks it\n";
+const MSG_MOVED = "Row %lu moved to %lu: %s\n";
 
 /// The most entries read from one drawer.
 const most = 200;
@@ -66,9 +74,9 @@ const columns = [_]lb.Column{
 };
 
 /// The entries of the drawer `lock` stands for, each a row `depth` deep at
-/// the end of `rows`, a drawer's own entries under it when `depth` is 0.
-/// How many rows were added.
-fn readDrawer(sys: *ExecBase, dl: *DosBase, lock: *dos.FileLock, rows: *exec.List, depth: u16) u32 {
+/// the end of `rows`, a drawer's own entries under it when `depth` is 0
+/// and the list is not `flat`. How many rows were added.
+fn readDrawer(sys: *ExecBase, dl: *DosBase, lock: *dos.FileLock, rows: *exec.List, depth: u16, flat: bool) u32 {
     const fib: *dos.FileInfoBlock = @ptrCast(@alignCast(sys.AllocVec(@sizeOf(dos.FileInfoBlock), exec.MEMF_CLEAR) orelse return 0));
     defer sys.FreeVec(@ptrCast(fib));
     if (!dl.Examine(lock, fib)) return 0;
@@ -82,14 +90,14 @@ fn readDrawer(sys: *ExecBase, dl: *DosBase, lock: *dos.FileLock, rows: *exec.Lis
         const row = lb.allocRow(sys, &.{ name, if (drawer) "" else @ptrCast(&size_text), if (drawer) "Drawer" else "File" }, depth) orelse break;
         sys.AddTail(rows, &row.node);
         added += 1;
-        if (drawer and depth == 0) {
+        if (drawer and depth == 0 and !flat) {
             // Its entries under it, from a lock of its own: the walk of
             // this drawer goes on from `fib` afterwards.
             const old = dl.CurrentDir(lock);
             defer _ = dl.CurrentDir(old);
             if (dl.Lock(name, dos.ACCESS_READ)) |inner| {
                 defer dl.UnLock(inner);
-                added += readDrawer(sys, dl, inner, rows, 1);
+                added += readDrawer(sys, dl, inner, rows, 1, false);
             }
         }
     }
@@ -169,6 +177,18 @@ fn followView(ib: *IntuitionBase, window: *intuition.Window, bar: *Object, brows
     });
 }
 
+/// `row` the one marked, and the list given back to the list browser,
+/// which draws it so.
+fn mark(ib: *IntuitionBase, window: *intuition.Window, browser: *Object, rows: *exec.List, row: *lb.Row) void {
+    var node = rows.first();
+    while (node) |each| : (node = each.next()) {
+        const one: *lb.Row = @fieldParentPtr("node", each);
+        one.flags &= ~lb.ROW_MARKED;
+    }
+    row.flags |= lb.ROW_MARKED;
+    _ = ib.SetGadgetAttrsTagList(browser, window, &[_]TagItem{ .{ .tag = lb.LISTBROWSER_Rows, .data = @intFromPtr(rows) }, .{} });
+}
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
@@ -176,13 +196,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
 
-    var argv: [1]usize = @splat(0);
+    var argv: [2]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
     };
     defer dl.FreeArgs(rda);
     const dir: [*:0]const u8 = if (argv[arg_dir] != 0) @ptrFromInt(argv[arg_dir]) else "SYS:";
+    const flat = argv[arg_flat] != 0;
 
     var rows: exec.List = .{};
     rows.init(.unknown);
@@ -191,7 +212,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = Printf(dl, MSG_NODIR, .{dir});
         return dos.RETURN_FAIL;
     };
-    const count = readDrawer(sys, dl, lock, &rows, 0);
+    const count = readDrawer(sys, dl, lock, &rows, 0, flat);
     dl.UnLock(lock);
 
     const int_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse {
@@ -223,6 +244,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = lb.LISTBROWSER_Rows, .data = @intFromPtr(&rows) },
         .{ .tag = lb.LISTBROWSER_SortColumn, .data = 0 },
         .{ .tag = lb.LISTBROWSER_Scrollers, .data = 0 },
+        .{ .tag = lb.LISTBROWSER_Reorder, .data = @intFromBool(flat) },
         .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
         .{},
     }) orelse {
@@ -276,6 +298,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     if (bar) |made| followView(ib, window, made, browser);
     _ = Printf(dl, MSG_HELLO, .{@as(u64, count)});
+    if (flat) _ = Printf(dl, MSG_FLAT, .{});
 
     var code: u32 = 0;
     var handle = wc.WmHandleInput{ .code = &code };
@@ -293,10 +316,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                     _ = ib.GetAttr(lb.LISTBROWSER_SelectedRow, browser, &row_ptr);
                     if (row_ptr == 0) continue;
                     const row: *lb.Row = @ptrFromInt(row_ptr);
-                    const place: u64 = code & ~lb.LISTBROWSER_DOUBLE;
+                    const place: u64 = code & ~(lb.LISTBROWSER_DOUBLE | lb.LISTBROWSER_MOVED);
                     const name = row.cells[0] orelse "";
-                    if (code & lb.LISTBROWSER_DOUBLE != 0) {
+                    if (code & lb.LISTBROWSER_MOVED != 0) {
+                        var from: usize = 0;
+                        _ = ib.GetAttr(lb.LISTBROWSER_Moved, browser, &from);
+                        _ = Printf(dl, MSG_MOVED, .{ @as(u64, from), place, name });
+                    } else if (code & lb.LISTBROWSER_DOUBLE != 0) {
                         _ = Printf(dl, MSG_DOUBLE, .{ place, name });
+                        if (flat) mark(ib, window, browser, &rows, row);
                     } else {
                         _ = Printf(dl, MSG_CHOSEN, .{ place, name });
                     }

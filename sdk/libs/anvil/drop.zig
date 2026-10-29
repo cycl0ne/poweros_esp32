@@ -19,9 +19,12 @@
 //!   var name: [dos.path_max + 1]u8 = undefined;
 //!   while (target.next(dl, &name)) |dropped| show(dropped.name);
 //!
-//! A drop of several files gives the first; the others are let go.
+//! A drop of several files gives the first, and the others are let go -
+//! right for a program that shows one file. One that takes a list sets
+//! `all`, and `next` then gives every file of a drop in turn.
 
 const exec = @import("../exec/exec.zig");
+const dos = @import("../dos/dos.zig");
 const intuition = @import("../intuition/intuition.zig");
 const anvil = @import("anvil.zig");
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
@@ -41,6 +44,13 @@ pub const DropTarget = struct {
     library: ?*exec.Library = null,
     port: ?*exec.MsgPort = null,
     app: ?*anvil.AppWindow = null,
+    /// Every file of a drop handed out, one at each `next`, rather than
+    /// the first alone: set by a program that takes a list.
+    all: bool = false,
+    /// The drop whose files are being handed out, and how many of them
+    /// have been; it is replied at the call after its last.
+    held: ?*anvil.AppMessage = null,
+    taken: u32 = 0,
 
     /// `window` made one files can be dropped on, when the desktop runs.
     pub fn add(target: *DropTarget, sys: *ExecBase, window: *intuition.Window) void {
@@ -55,7 +65,7 @@ pub const DropTarget = struct {
             sys.CloseLibrary(library);
             return;
         };
-        target.* = .{ .sys = sys, .library = library, .port = port, .app = app };
+        target.* = .{ .sys = sys, .library = library, .port = port, .app = app, .all = target.all };
     }
 
     /// The signal a drop comes with; 0 without one to wait for.
@@ -64,23 +74,41 @@ pub const DropTarget = struct {
         return port.sigMask();
     }
 
-    /// The next file dropped, its full name made in `into`, and the
-    /// desktop's message replied; null when none waits.
+    /// The next file dropped, its full name made in `into`; null when
+    /// none waits, and every drop handed out has then been replied.
     pub fn next(target: *DropTarget, dl: *DosBase, into: []u8) ?Dropped {
-        const sys = target.sys orelse return null;
-        const port = target.port orelse return null;
-        while (sys.GetMsg(port)) |message| {
-            const am: *anvil.AppMessage = @fieldParentPtr("message", message);
-            defer sys.ReplyMsg(message);
-            if (am.num_args == 0) continue;
-            const first = am.arg_list.?[0];
-            if (!dl.NameFromLock(first.lock, into.ptr, @intCast(into.len))) continue;
-            const name = first.name orelse "";
+        while (target.nextFile()) |file| {
+            if (!dl.NameFromLock(file.lock, into.ptr, @intCast(into.len))) continue;
+            const name = file.name orelse "";
             const is_drawer = name[0] == 0;
             if (!is_drawer and !dl.AddPart(@ptrCast(into.ptr), name, @intCast(into.len))) continue;
             return .{ .name = @ptrCast(into.ptr), .is_drawer = is_drawer };
         }
         return null;
+    }
+
+    /// The next file dropped as the desktop gave it - the lock on its
+    /// drawer and its name there, which hold until the call after - or
+    /// null when none waits. The first file of each drop, or with `all`
+    /// each in turn; a drop is replied at the call after its last file is
+    /// handed out, so a loop to null leaves none unreplied.
+    pub fn nextFile(target: *DropTarget) ?dos.WBArg {
+        const sys = target.sys orelse return null;
+        const port = target.port orelse return null;
+        while (true) {
+            if (target.held) |held| {
+                const count = if (held.arg_list != null) held.num_args else 0;
+                if (target.taken < count and (target.all or target.taken == 0)) {
+                    target.taken += 1;
+                    return held.arg_list.?[target.taken - 1];
+                }
+                target.held = null;
+                sys.ReplyMsg(&held.message);
+            }
+            const message = sys.GetMsg(port) orelse return null;
+            target.held = @fieldParentPtr("message", message);
+            target.taken = 0;
+        }
     }
 
     /// The window taken off the desktop's list - nothing is sent for it
@@ -92,11 +120,12 @@ pub const DropTarget = struct {
             const ab: *AnvilBase = @ptrCast(library);
             _ = ab.RemoveAppWindow(target.app);
         }
+        if (target.held) |held| sys.ReplyMsg(&held.message);
         if (target.port) |port| {
             while (sys.GetMsg(port)) |message| sys.ReplyMsg(message);
             sys.DeleteMsgPort(port);
         }
         if (target.library) |library| sys.CloseLibrary(library);
-        target.* = .{};
+        target.* = .{ .all = target.all };
     }
 };

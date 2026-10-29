@@ -326,7 +326,8 @@ finding, line numbers and highlighting through a hook that labels each
 line - what `SYS:Programs/Notepad` is made of), and
 `scrollgroup` (a layout larger than the window, scrolled; `C:test/Scroll`),
 and `listbrowser` (a list in columns, sorted by a heading, its rows a
-tree; `C:test/ListBrowser`). Each
+tree, or a list whose rows are dragged into another order, with a row
+marked as the one in use; `C:test/ListBrowser`). Each
 has its tags in `sdk/libs/gadgets/<name>.zig`, named after the class:
 
 ```zig

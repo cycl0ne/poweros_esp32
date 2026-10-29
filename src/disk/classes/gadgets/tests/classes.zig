@@ -2864,6 +2864,17 @@ test "listbrowser.gadget: rows in a tree, a closed branch hidden, sorted with ev
     // By size, as numbers: 5 before 30 before 100, and 2 before 9.
     _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_SortColumn, .data = 1 }, .{ .tag = lbr.LISTBROWSER_SortReverse, .data = 0 }, .{} });
     try testing.expectEqualStrings("zeta alpha b a mid", namesOf(&rows, &names));
+    // Lengths, their parts joined by colons: an hour after 59 minutes,
+    // 3:07 before 3:45, and a plain number of seconds before them all.
+    var lengths: exec.List = .{};
+    lengths.init(.unknown);
+    const timed = [_][2][*:0]const u8{ .{ "hour", "1:02:33" }, .{ "long", "59:00" }, .{ "late", "3:45" }, .{ "early", "3:07" }, .{ "short", "12" } };
+    for (timed) |one| sys.AddTail(&lengths, &lbr.allocRow(sys, &.{ one[0], one[1] }, 0).?.node);
+    _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_Rows, .data = @intFromPtr(&lengths) }, .{} });
+    try testing.expectEqualStrings("short early late long hour", namesOf(&lengths, &names));
+    _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_Rows, .data = @intFromPtr(&rows) }, .{} });
+    lbr.freeRows(sys, &lengths);
+    try testing.expectEqualStrings("zeta alpha b a mid", namesOf(&rows, &names));
 
     // The selection is the row, counted among all rows.
     _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_Selected, .data = 4 }, .{} });
@@ -2896,14 +2907,18 @@ test "listbrowser.gadget: rows in a tree, a closed branch hidden, sorted with ev
     try testing.expectEqual(@as(usize, 5), attr(ib, browser, lbr.LISTBROWSER_Total));
     try testing.expectEqual(@as(usize, parts.visible), attr(ib, browser, lbr.LISTBROWSER_Visible));
 
-    // A press on the "Name" heading, let go on it: sorted by name.
+    // A press on the "Name" heading, let go on it: sorted by name, and
+    // the target told so.
     const heading_y = parts.heads.top + 1;
+    heard.tag = lbr.LISTBROWSER_SortColumn;
+    heard.value = null;
     var on_heading = input(gc.GM_GOACTIVE, &press, x, heading_y, &termination);
     try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(browser, @ptrCast(&on_heading)));
     var off_heading = input(gc.GM_HANDLEINPUT, &release, x, heading_y, &termination);
     _ = ib.SendMessage(browser, @ptrCast(&off_heading));
     try testing.expectEqualStrings("alpha a b mid zeta", namesOf(&rows, &names));
     try testing.expectEqual(@as(usize, 0), attr(ib, browser, lbr.LISTBROWSER_SortColumn));
+    try testing.expectEqual(@as(?usize, 0), heard.value);
 
     ib.DisposeObject(browser);
     lbr.freeRows(sys, &rows);
@@ -2911,6 +2926,164 @@ test "listbrowser.gadget: rows in a tree, a closed branch hidden, sorted with ev
     try testing.expect(ib.FreeClass(listener_class));
     _ = sys.RemLibrary(lib);
     try testing.expect(ib.FindClass(lbr.LISTBROWSER_CLASS) == null);
+    _ = sys.RemLibrary(scroller_lib);
+    ByTail.remove();
+    try host_rom.intuition.tearDown(kib);
+}
+
+test "listbrowser.gadget: a row dragged moves in the list, and the press tells where from and to" {
+    var heard = Heard{ .tag = lbr.LISTBROWSER_Moved, .ib = undefined };
+    const kib = try host_rom.intuition.setUp();
+    ByTail.install();
+    const scroller_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &scroller.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    heard.ib = ib;
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &listbrowser.Library.resident_tag, null).?));
+    const listener_class = ib.MakeClass(null, classusr.ROOTCLASS, null, 0).?;
+    listener_class.dispatcher.entry = &listen;
+    listener_class.user_data = @intFromPtr(&heard);
+    const listener = ib.NewObjectTagList(listener_class, null, null).?;
+    const sys = kexec.SysBase.iface();
+
+    const columns = [_]lbr.Column{ .{ .title = "Song" }, .{} };
+    var rows: exec.List = .{};
+    rows.init(.unknown);
+    for ([_][*:0]const u8{ "a", "b", "c", "d", "e" }) |name| sys.AddTail(&rows, &lbr.allocRow(sys, &.{name}, 0).?.node);
+    const browser = ib.NewObjectTagList(null, lbr.LISTBROWSER_CLASS, &[_]TagItem{
+        .{ .tag = lbr.LISTBROWSER_Columns, .data = @intFromPtr(&columns) },
+        .{ .tag = lbr.LISTBROWSER_Rows, .data = @intFromPtr(&rows) },
+        .{ .tag = lbr.LISTBROWSER_Reorder, .data = 1 },
+        .{ .tag = lbr.LISTBROWSER_SortColumn, .data = 0 },
+        .{ .tag = gc.GA_ID, .data = 9 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(listener) },
+        .{},
+    }).?;
+    const cl = classes.objectClass(browser);
+    const own = classes.instData(listbrowser.Data, cl, browser);
+    const parts = listbrowser.partsOf(sdk.gadgets.baseOf(cl), own, browser, null);
+    try testing.expect(parts.visible >= 5);
+    const x = parts.lines.left + 30;
+    const rowY = struct {
+        fn of(at: listbrowser.Parts, n: i32) i32 {
+            return at.lines.top + n * at.line_height + 1;
+        }
+    }.of;
+    const moving = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_NOBUTTON };
+    var names: [64]u8 = undefined;
+    var termination: i32 = -1;
+
+    // "b" pressed and dragged down over "c" to "d": it goes after "d".
+    var down = input(gc.GM_GOACTIVE, &press, x, rowY(parts, 1), &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(browser, @ptrCast(&down)));
+    var over_c = input(gc.GM_HANDLEINPUT, &moving, x, rowY(parts, 2), &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&over_c));
+    try testing.expectEqualStrings("a c b d e", namesOf(&rows, &names));
+    var over_d = input(gc.GM_HANDLEINPUT, &moving, x, rowY(parts, 3), &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&over_d));
+    try testing.expectEqualStrings("a c d b e", namesOf(&rows, &names));
+    // No longer in the order of a column.
+    try testing.expectEqual(@as(usize, lbr.LISTBROWSER_NONE), attr(ib, browser, lbr.LISTBROWSER_SortColumn));
+    var up = input(gc.GM_HANDLEINPUT, &release, x, rowY(parts, 3), &termination);
+    try testing.expect(ib.SendMessage(browser, @ptrCast(&up)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(i32, @bitCast(3 | lbr.LISTBROWSER_MOVED)), termination);
+    try testing.expectEqual(@as(?usize, 1), heard.value);
+    try testing.expectEqual(@as(usize, 3), attr(ib, browser, lbr.LISTBROWSER_Selected));
+
+    // Dragged up to the top: before "a".
+    var again = input(gc.GM_GOACTIVE, &press, x, rowY(parts, 3), &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&again));
+    var to_top = input(gc.GM_HANDLEINPUT, &moving, x, rowY(parts, 0), &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&to_top));
+    var let_go = input(gc.GM_HANDLEINPUT, &release, x, rowY(parts, 0), &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&let_go));
+    try testing.expectEqualStrings("b a c d e", namesOf(&rows, &names));
+    try testing.expectEqual(@as(i32, @bitCast(0 | lbr.LISTBROWSER_MOVED)), termination);
+    try testing.expectEqual(@as(?usize, 3), heard.value);
+
+    // A press let go where it was moves nothing.
+    var still = input(gc.GM_GOACTIVE, &press, x, rowY(parts, 2), &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&still));
+    var still_up = input(gc.GM_HANDLEINPUT, &release, x, rowY(parts, 2), &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&still_up));
+    try testing.expectEqual(@as(i32, 2), termination);
+    try testing.expectEqual(@as(?usize, lbr.LISTBROWSER_NONE), heard.value);
+
+    // Without LISTBROWSER_Reorder a drag moves the selection, not the row.
+    _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_Reorder, .data = 0 }, .{} });
+    var plain = input(gc.GM_GOACTIVE, &press, x, rowY(parts, 0), &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&plain));
+    var plain_drag = input(gc.GM_HANDLEINPUT, &moving, x, rowY(parts, 4), &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&plain_drag));
+    var plain_up = input(gc.GM_HANDLEINPUT, &release, x, rowY(parts, 4), &termination);
+    _ = ib.SendMessage(browser, @ptrCast(&plain_up));
+    try testing.expectEqualStrings("b a c d e", namesOf(&rows, &names));
+    try testing.expectEqual(@as(i32, 4), termination);
+
+    ib.DisposeObject(browser);
+    lbr.freeRows(sys, &rows);
+    ib.DisposeObject(listener);
+    try testing.expect(ib.FreeClass(listener_class));
+    _ = sys.RemLibrary(lib);
+    try testing.expect(ib.FindClass(lbr.LISTBROWSER_CLASS) == null);
+    _ = sys.RemLibrary(scroller_lib);
+    ByTail.remove();
+    try host_rom.intuition.tearDown(kib);
+}
+
+test "listbrowser.gadget: a list given back keeps its view and its selection, unless the selected row was taken out" {
+    const kib = try host_rom.intuition.setUp();
+    ByTail.install();
+    const scroller_lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &scroller.Library.resident_tag, null).?));
+    const ib = kib.iface();
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &listbrowser.Library.resident_tag, null).?));
+    const sys = kexec.SysBase.iface();
+
+    const columns = [_]lbr.Column{ .{ .title = "Song" }, .{} };
+    var rows: exec.List = .{};
+    rows.init(.unknown);
+    // More rows than the view holds, so it can be scrolled.
+    for (0..40) |i| {
+        const name = [_:0]u8{ 'a' + @as(u8, @intCast(i / 10)), '0' + @as(u8, @intCast(i % 10)) };
+        sys.AddTail(&rows, &lbr.allocRow(sys, &.{&name}, 0).?.node);
+    }
+    const browser = ib.NewObjectTagList(null, lbr.LISTBROWSER_CLASS, &[_]TagItem{
+        .{ .tag = lbr.LISTBROWSER_Columns, .data = @intFromPtr(&columns) },
+        .{ .tag = lbr.LISTBROWSER_Rows, .data = @intFromPtr(&rows) },
+        .{},
+    }).?;
+    const detach = [_]TagItem{ .{ .tag = lbr.LISTBROWSER_Rows, .data = lbr.LISTBROWSER_DETACH }, .{} };
+    const give_back = [_]TagItem{ .{ .tag = lbr.LISTBROWSER_Rows, .data = @intFromPtr(&rows) }, .{} };
+    _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_Top, .data = 2 }, .{ .tag = lbr.LISTBROWSER_Selected, .data = 5 }, .{} });
+    try testing.expectEqual(@as(usize, 2), attr(ib, browser, lbr.LISTBROWSER_Top));
+
+    // Taken away and given back: as it was.
+    _ = ib.SetAttrsTagList(browser, &detach);
+    _ = ib.SetAttrsTagList(browser, &give_back);
+    try testing.expectEqual(@as(usize, 2), attr(ib, browser, lbr.LISTBROWSER_Top));
+    try testing.expectEqual(@as(usize, 5), attr(ib, browser, lbr.LISTBROWSER_Selected));
+
+    // The selected row taken out meanwhile: none selected, the view kept.
+    const chosen: *lbr.Row = @ptrFromInt(attr(ib, browser, lbr.LISTBROWSER_SelectedRow));
+    _ = ib.SetAttrsTagList(browser, &detach);
+    sys.Remove(&chosen.node);
+    lbr.freeRow(sys, chosen);
+    _ = ib.SetAttrsTagList(browser, &give_back);
+    try testing.expectEqual(lbr.LISTBROWSER_NONE, @as(u32, @intCast(attr(ib, browser, lbr.LISTBROWSER_Selected))));
+    try testing.expectEqual(@as(usize, 2), attr(ib, browser, lbr.LISTBROWSER_Top));
+
+    // Another list starts at its top, with nothing selected.
+    var other: exec.List = .{};
+    other.init(.unknown);
+    sys.AddTail(&other, &lbr.allocRow(sys, &.{"x"}, 0).?.node);
+    _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_Selected, .data = 3 }, .{} });
+    _ = ib.SetAttrsTagList(browser, &[_]TagItem{ .{ .tag = lbr.LISTBROWSER_Rows, .data = @intFromPtr(&other) }, .{} });
+    try testing.expectEqual(@as(usize, 0), attr(ib, browser, lbr.LISTBROWSER_Top));
+    try testing.expectEqual(lbr.LISTBROWSER_NONE, @as(u32, @intCast(attr(ib, browser, lbr.LISTBROWSER_Selected))));
+
+    ib.DisposeObject(browser);
+    lbr.freeRows(sys, &rows);
+    lbr.freeRows(sys, &other);
+    _ = sys.RemLibrary(lib);
     _ = sys.RemLibrary(scroller_lib);
     ByTail.remove();
     try host_rom.intuition.tearDown(kib);

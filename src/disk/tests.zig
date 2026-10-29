@@ -83,6 +83,7 @@ test {
     _ = @import("libs/audiocodec/tests/audiocodec.zig");
     _ = @import("libs/anvil/tests/anvil.zig");
     _ = @import("libs/anvil/tests/app.zig");
+    _ = @import("libs/anvil/tests/drop.zig");
     _ = @import("libs/anvil/tests/scene.zig");
     _ = @import("libs/diskfont/tests/diskfont.zig");
     _ = @import("libs/truetype/tests/truetype.zig");
