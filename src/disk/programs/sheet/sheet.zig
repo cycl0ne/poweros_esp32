@@ -6,7 +6,7 @@
 //! A window on the default public screen: a ribbon of commands along the
 //! top, a line under it with the current cell's name and what was typed
 //! into it, the cells below in rows and columns, and a status line at the
-//! bottom. FILE, a CSV file, is opened at the start; a name that is not
+//! bottom, a sunk field of its own. FILE, a CSV file, is opened at the start; a name that is not
 //! there yet is the file the sheet is saved to.
 //!
 //! **Cells.** A cell holds a number, a text or a formula - anything that
@@ -177,7 +177,7 @@ const max_rows = formula.max_rows;
 const max_cols = formula.max_cols;
 
 pub const COMMAND_NAME = "Sheet";
-const VERSION = "1.3";
+const VERSION = "1.4";
 const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (29.10.2026)\r\n";
 /// What the screen's title bar says while the window is the active one.
 const SCREEN_TITLE = "Sheet " ++ VERSION;
@@ -2171,6 +2171,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const status = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_STATUS },
         .{ .tag = tx.TEXT_Text, .data = @intFromPtr("") },
+        // A field of its own, sunk, even while it says nothing.
+        .{ .tag = tx.TEXT_Border, .data = 1 },
+        .{ .tag = tx.TEXT_Clipped, .data = 1 },
         .{},
     });
     // The find line, hidden until Find is asked for.

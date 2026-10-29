@@ -25,13 +25,14 @@ and a file dragged from the desktop and let go on its window is opened.
   the cells picked with it are tinted, and so are their letters and
   numbers.
 - **The find line** comes under it with Find: see [Finding](#finding).
-- **The status line** at the bottom gives the sum, the average and the
-  count of the numbers among the cells picked, while there are several.
-  It also says what is wrong with a formula that cannot be kept.
+- **The status line**, the sunk field at the bottom, gives the sum, the
+  average and the count of the numbers among the cells picked, while
+  there are several. It also says what is wrong with a formula that
+  cannot be kept.
 - **The scroll bars** are in the window's border.
 
 While the window is the active one, the screen's title bar says
-`Sheet 1.3`. The window's own title says the file's name, with a `*` in
+`Sheet 1.4`. The window's own title says the file's name, with a `*` in
 front while the sheet has changed since it was read or saved.
 
 ## Cells
