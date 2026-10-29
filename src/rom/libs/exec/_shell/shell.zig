@@ -65,6 +65,12 @@ pub const Args = struct {
         return parseNumber(word) orelse error.Usage;
     }
 
+    /// The next word as an address: a number as wide as the machine's.
+    pub fn address(args: *Args) !usize {
+        const word = args.next() orelse return error.Usage;
+        return @intCast(parseWide(word, ~@as(usize, 0)) orelse return error.Usage);
+    }
+
     /// The next word as a number if there is one, else `default`.
     pub fn numberOr(args: *Args, default: u32) !u32 {
         return if (args.peek() != null) args.number() else default;
@@ -87,6 +93,11 @@ pub const Args = struct {
 /// `text` as a number: decimal, or hexadecimal after `0x`. Null for
 /// anything else, or one that does not fit 32 bits.
 pub fn parseNumber(text: []const u8) ?u32 {
+    return @intCast(parseWide(text, 0xFFFF_FFFF) orelse return null);
+}
+
+/// `text` as a number up to `max`, as `parseNumber` reads it.
+fn parseWide(text: []const u8, max: u64) ?u64 {
     var digits = text;
     var radix: u64 = 10;
     if (digits.len > 2 and digits[0] == '0' and (digits[1] == 'x' or digits[1] == 'X')) {
@@ -103,10 +114,12 @@ pub fn parseNumber(text: []const u8) ?u32 {
             else => return null,
         };
         if (digit >= radix) return null;
-        value = value * radix + digit;
-        if (value > 0xFFFF_FFFF) return null;
+        const shifted = @mulWithOverflow(value, radix);
+        const added = @addWithOverflow(shifted[0], digit);
+        if (shifted[1] != 0 or added[1] != 0 or added[0] > max) return null;
+        value = added[0];
     }
-    return @intCast(value);
+    return value;
 }
 
 /// Whether two words are the same.
