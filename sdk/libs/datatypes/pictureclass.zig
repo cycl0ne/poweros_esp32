@@ -109,7 +109,8 @@ pub const PDTM_READPIXELARRAY: classusr.MethodID = 0x702;
 pub const PDTM_SCALE: classusr.MethodID = 0x703;
 
 /// `PDTM_WRITEPIXELARRAY` and `PDTM_READPIXELARRAY`: a rectangle of the
-/// picture, in the caller's own shape.
+/// picture, in the caller's own shape. It has no `GadgetInfo`, so it is
+/// sent with intuition's `SendMessage`, never `DoDTMethodA`.
 pub const PdtBlitPixelArray = extern struct {
     method_id: classusr.MethodID = PDTM_WRITEPIXELARRAY,
     /// The rows, `bytes_per_row` apart, each pixel in `format`.
