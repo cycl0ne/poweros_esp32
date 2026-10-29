@@ -612,24 +612,135 @@ test "a card that will not be written is read and not written" {
     try testing.expectEqual(dos.ID_WRITE_PROTECTED, data.disk_state);
 }
 
-test "a card changed under a lock leaves the lock no good, and mounts the new one" {
+test "another card under a lock leaves the lock no good, and mounts the new one" {
     var rig: Rig = undefined;
     try rig.init(.{});
     defer rig.deinit();
     try rig.writeFile("f", "x");
     const held = rig.lock("f", dos.SHARED_LOCK);
 
+    // A card laid out as the first, with a serial number of its own.
+    try rig.volume.relay(.{ .serial = 0x5678_0001 });
     rig.volume.media.changes += 1;
     try testing.expect(rig.fs.checkMedium());
     try testing.expect(rig.fs.mounted);
+    try testing.expect(!rig.fs.back);
     var fib: FileInfoBlock = undefined;
     try testing.expectEqual(dos.ERROR_INVALID_LOCK, rig.examine(held, &fib).res2);
     // It can still be given back.
     rig.unlock(held);
     try testing.expect(!rig.fs.checkMedium());
-    // And the volume is there to be used.
+    // And the new card is there to be used.
+    try testing.expectEqual(@as(?*FileLock, null), rig.lock("f", dos.SHARED_LOCK));
+    try rig.writeFile("g", "y");
     var buffer: [4]u8 = undefined;
-    try testing.expectEqualStrings("x", buffer[0..try rig.readFile("f", &buffer)]);
+    try testing.expectEqualStrings("y", buffer[0..try rig.readFile("g", &buffer)]);
+}
+
+test "the same card taken out and put back: its locks and open files go on where they were" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    try rig.mkdir("d");
+    try rig.writeFile("d/f", "hello, world");
+    const dir = rig.lock("d", dos.SHARED_LOCK);
+    const root = rig.lock("", dos.SHARED_LOCK);
+    var fh: FileHandle = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findinput, "d/f").res1);
+    var part: [5]u8 = undefined;
+    try testing.expectEqual(@as(isize, 5), rig.read(&fh, &part));
+
+    rig.volume.media.in = false;
+    rig.volume.media.changes += 1;
+    try testing.expect(rig.fs.checkMedium());
+    try testing.expect(!rig.fs.mounted);
+    var fib: FileInfoBlock = undefined;
+    try testing.expectEqual(dos.ERROR_INVALID_LOCK, rig.examine(dir, &fib).res2);
+
+    rig.volume.media.in = true;
+    rig.volume.media.changes += 1;
+    try testing.expect(rig.fs.checkMedium());
+    try testing.expect(rig.fs.back);
+    try testing.expectEqual(dos.DOSTRUE, rig.examine(dir, &fib).res1);
+    try testing.expectEqualStrings("d", fibName(&fib));
+    try testing.expectEqual(dos.DOSTRUE, rig.examine(root, &fib).res1);
+    try testing.expectEqual(dos.ST_ROOT, fib.dir_entry_type);
+    var rest: [16]u8 = undefined;
+    try testing.expectEqualStrings(", world", rest[0..@intCast(rig.read(&fh, &rest))]);
+    try rig.close(&fh);
+    rig.unlock(dir);
+    rig.unlock(root);
+    try testing.expectEqual(@as(?*anyopaque, null), @as(?*anyopaque, @ptrCast(rig.fs.locks)));
+    try testing.expectEqual(@as(?*anyopaque, null), @as(?*anyopaque, @ptrCast(rig.fs.keys)));
+}
+
+test "the same card back while a file was being written: it is written on, its size comes out right, the volume clean after" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    var fh: FileHandle = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findoutput, "w").res1);
+    // The first write takes a cluster, and the entry follows it; the
+    // second only moves the size, which waits in the key.
+    try testing.expectEqual(@as(isize, 3), rig.write(&fh, "abc"));
+    try testing.expectEqual(@as(isize, 3), rig.write(&fh, "def"));
+    try testing.expectEqual(@as(u64, 3), try rig.sizeOnMedium("w"));
+    try testing.expect(!try rig.cleanOnMedium());
+
+    rig.volume.media.changes += 1;
+    try testing.expect(rig.fs.checkMedium());
+    try testing.expect(rig.fs.back);
+    try testing.expectEqual(@as(isize, 3), rig.write(&fh, "ghi"));
+    try rig.close(&fh);
+    try testing.expectEqual(@as(u64, 9), try rig.sizeOnMedium("w"));
+    try testing.expect(try rig.cleanOnMedium());
+    var buffer: [16]u8 = undefined;
+    try testing.expectEqualStrings("abcdefghi", buffer[0..try rig.readFile("w", &buffer)]);
+}
+
+test "the same card back, changed elsewhere: a lock on what is gone stays no good, one on what is still there works" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    try rig.writeFile("kept", "1");
+    try rig.writeFile("gone", "2");
+    const kept = rig.lock("kept", dos.SHARED_LOCK);
+    const gone = rig.lock("gone", dos.SHARED_LOCK);
+
+    rig.volume.media.in = false;
+    rig.volume.media.changes += 1;
+    try testing.expect(rig.fs.checkMedium());
+    // Another machine has the card meanwhile, and deletes one of them.
+    rig.volume.media.in = true;
+    var other = TestFs.init(&rig.volume.media, rig.ub, null);
+    try other.mount();
+    var pkt = DosPacket.init(.delete_object, .{ .raw = .{ 0, @bitCast(@intFromPtr("gone")), 0, 0, 0, 0, 0 } });
+    try testing.expectEqual(dos.DOSTRUE, other.answer(&pkt).res1);
+    other.deinit();
+
+    rig.volume.media.changes += 1;
+    try testing.expect(rig.fs.checkMedium());
+    try testing.expect(rig.fs.back);
+    var fib: FileInfoBlock = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.examine(kept, &fib).res1);
+    try testing.expectEqualStrings("kept", fibName(&fib));
+    try testing.expectEqual(dos.ERROR_INVALID_LOCK, rig.examine(gone, &fib).res2);
+    rig.unlock(kept);
+    rig.unlock(gone);
+}
+
+test "a volume put away gives its locks up for good, though the same card is mounted again" {
+    var rig: Rig = undefined;
+    try rig.init(.{});
+    defer rig.deinit();
+    try rig.writeFile("f", "x");
+    const held = rig.lock("f", dos.SHARED_LOCK);
+    rig.fs.unmount();
+    try rig.fs.mount();
+    try testing.expect(!rig.fs.back);
+    var fib: FileInfoBlock = undefined;
+    try testing.expectEqual(dos.ERROR_INVALID_LOCK, rig.examine(held, &fib).res2);
+    rig.unlock(held);
 }
 
 test "clusters past the 4 GiB mark of a 64 GB card" {

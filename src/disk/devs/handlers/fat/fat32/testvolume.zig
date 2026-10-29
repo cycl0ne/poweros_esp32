@@ -28,6 +28,8 @@ pub const Options = struct {
     fsinfo_count: ?u32 = null,
     /// A label in the root directory, if any.
     label: ?[]const u8 = null,
+    /// The volume's serial number: another card has another.
+    serial: u32 = 0x1234_ABCD,
     cache_blocks: u32 = 16,
 };
 
@@ -49,18 +51,11 @@ pub const Volume = struct {
         const volume = try std.testing.allocator.create(Volume);
         errdefer std.testing.allocator.destroy(volume);
 
-        const spc: u32 = options.sectors_per_cluster;
-        const clusters = options.clusters orelse card_clusters;
-        const fat_sectors = if (options.clusters == null)
-            card_fat_sectors
-        else
-            ((clusters + fat.first_cluster) * 4 + 511) / 512;
-        const total = if (options.clusters == null) card_total else reserved + 2 * fat_sectors + clusters * spc;
-
-        volume.media = TestMedia.init(512, @as(u64, options.first) + total);
+        const size = Size.of(options);
+        volume.media = TestMedia.init(512, @as(u64, options.first) + size.total);
         volume.media.table = options.first != 0;
         errdefer volume.media.deinit();
-        try lay(&volume.media, options, clusters, fat_sectors, total);
+        try lay(&volume.media, options, size.clusters, size.fat_sectors, size.total);
 
         var boot: [512]u8 = undefined;
         if (!volume.media.read(options.first, 1, &boot)) return error.Unexpected;
@@ -69,11 +64,38 @@ pub const Volume = struct {
         return volume;
     }
 
+    /// Another card in the slot: the medium wiped and a fresh volume laid
+    /// on it as `options` says, no larger than the first.
+    pub fn relay(volume: *Volume, options: Options) !void {
+        volume.cache.invalidate();
+        volume.media.wipe();
+        const size = Size.of(options);
+        try lay(&volume.media, options, size.clusters, size.fat_sectors, size.total);
+    }
+
     pub fn deinit(volume: *Volume) void {
         volume.cache.deinit();
         std.testing.expectEqual(@as(usize, 0), volume.media.live) catch {};
         volume.media.deinit();
         std.testing.allocator.destroy(volume);
+    }
+};
+
+/// A volume's numbers, as its options make them.
+const Size = struct {
+    clusters: u32,
+    fat_sectors: u32,
+    total: u32,
+
+    fn of(options: Options) Size {
+        const spc: u32 = options.sectors_per_cluster;
+        const clusters = options.clusters orelse card_clusters;
+        const fat_sectors = if (options.clusters == null)
+            card_fat_sectors
+        else
+            ((clusters + fat.first_cluster) * 4 + 511) / 512;
+        const total = if (options.clusters == null) card_total else reserved + 2 * fat_sectors + clusters * spc;
+        return .{ .clusters = clusters, .fat_sectors = fat_sectors, .total = total };
     }
 };
 
@@ -110,7 +132,7 @@ fn lay(media: *TestMedia, options: Options, clusters: u32, fat_sectors: u32, tot
     fat.putU16(&block, fat.bpb_backup_boot, 6);
     block[64] = 0x80;
     block[66] = 0x29;
-    fat.putU32(&block, fat.bpb_volume_id, 0x1234_ABCD);
+    fat.putU32(&block, fat.bpb_volume_id, options.serial);
     @memcpy(block[fat.bpb_volume_label..][0..11], "NO NAME    ");
     @memcpy(block[fat.fat32_label_at..][0..8], "FAT32   ");
     fat.putU16(&block, fat.signature_at, fat.signature);

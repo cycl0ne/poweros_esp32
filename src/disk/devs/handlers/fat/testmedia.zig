@@ -62,9 +62,16 @@ pub const TestMedia = struct {
     }
 
     pub fn deinit(m: *TestMedia) void {
+        m.wipe();
+        m.written.deinit();
+    }
+
+    /// Every block forgotten, as on a card never written: what a test puts
+    /// another card in the slot with.
+    pub fn wipe(m: *TestMedia) void {
         var it = m.written.valueIterator();
         while (it.next()) |block| std.testing.allocator.free(block.*);
-        m.written.deinit();
+        m.written.clearRetainingCapacity();
     }
 
     // --- the medium a file system sees ------------------------------------

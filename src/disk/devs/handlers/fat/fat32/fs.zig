@@ -48,6 +48,12 @@
 //!   use. With nothing in memory for an object nobody holds, a watch
 //!   waiting for its name looks for it again by its path when an entry
 //!   is made or renamed under that name, and when a volume is mounted.
+//! - **A card that comes back** takes its keys up again. A key stale
+//!   because its card went remembers the volume's serial number; when a
+//!   volume with that serial is mounted, every such key whose entry is
+//!   still where it was and still its object is good again, with its
+//!   locks and open files where they were (`revive`). A volume put away
+//!   (unmounted, inhibited) gives its keys up for good.
 //! - **A file is at most 4 GiB less a byte**, the size field's width.
 
 const std = @import("std");
@@ -99,6 +105,11 @@ const Key = struct {
     changed: bool = false,
     /// The medium changed under it: nothing it says is true any more.
     stale: bool = false,
+    /// It went stale because its card went, not because its volume was
+    /// put away: the card coming back may take it up again.
+    may_return: bool = false,
+    /// The serial number of the volume it is on.
+    serial: u32 = 0,
 
     fn isDir(key: *const Key) bool {
         return key.is_root or key.attr & _fat.ATTR_DIRECTORY != 0;
@@ -221,6 +232,10 @@ pub fn FileSystem(comptime Media: type) type {
         link_apart: bool = false,
         /// The medium's change count when the volume was read.
         change_num: u32 = 0,
+        /// The volume a change of medium let go of last, and whether the
+        /// one mounted is that volume back: the same card again.
+        parted: ?_fat.Parted = null,
+        back: bool = false,
         /// The volume's name, as the device list shows it.
         name_buf: [fat.ent_name_bytes]u8 = @splat(0),
         name_len: usize = 0,
@@ -264,7 +279,9 @@ pub fn FileSystem(comptime Media: type) type {
         /// The volume where the drive's DosType says it is: the medium
         /// itself, or the first partition of its table worth mounting
         /// (`_fat.findVolume`), when that is a FAT32 one. Every key there
-        /// was is stale from here on.
+        /// was is stale from here on - but for the keys of this very
+        /// volume that its card going left, which it takes up again
+        /// (`revive`).
         pub fn mount(fs: *Fs) Error!void {
             fs.unmount();
             fs.change_num = fs.media.changeNum();
@@ -298,12 +315,77 @@ pub fn FileSystem(comptime Media: type) type {
             fs.found_dirty = !try fs.table.clean();
             fs.dirty = false;
 
-            const root = fs.alloc(Key) orelse return error.NoMemory;
-            root.* = .{ .is_root = true, .first = fs.geo.root_cluster, .attr = _fat.ATTR_DIRECTORY };
-            fs.root_key = root;
+            fs.root_key = fs.returningRoot() orelse fresh: {
+                const root = fs.alloc(Key) orelse return error.NoMemory;
+                root.* = .{ .is_root = true, .first = fs.geo.root_cluster, .attr = _fat.ATTR_DIRECTORY, .serial = fs.geo.volume_id };
+                break :fresh root;
+            };
             fs.mounted = true;
+            fs.comeBack();
             fs.nameVolume() catch {};
             fs.arrive("", true);
+        }
+
+        /// Whether the volume just mounted is the one the last change let
+        /// go of, and if it is, the dirty mark on it this handler's again
+        /// where it had made it and the card still has it. Its keys are
+        /// taken up again by their own serial numbers either way, which is
+        /// also a card that went before the last one.
+        fn comeBack(fs: *Fs) void {
+            const gone = fs.parted;
+            fs.parted = null;
+            fs.back = if (gone) |volume| volume.serial == fs.geo.volume_id else false;
+            if (fs.back and gone.?.dirty and fs.found_dirty) {
+                fs.dirty = true;
+                fs.found_dirty = false;
+            }
+            fs.revive();
+        }
+
+        /// The root key a lock kept when this volume's card went: taken off
+        /// the keys and good again. Null for a volume with none.
+        fn returningRoot(fs: *Fs) ?*Key {
+            var link: *?*Key = &fs.keys;
+            while (link.*) |key| : (link = &key.next) {
+                if (!key.is_root or !key.may_return or key.serial != fs.geo.volume_id) continue;
+                link.* = key.next;
+                key.next = null;
+                key.stale = false;
+                key.may_return = false;
+                return key;
+            }
+            return null;
+        }
+
+        /// The keys this volume had when its card went, taken up again:
+        /// each one whose entry is still where it was and still its object
+        /// (`stillThere`). One that is not stays stale - the card was
+        /// changed elsewhere - and its locks can only be given back.
+        fn revive(fs: *Fs) void {
+            var it = fs.keys;
+            while (it) |key| : (it = key.next) {
+                if (!key.may_return or key.serial != fs.geo.volume_id) continue;
+                if (!fs.stillThere(key)) continue;
+                key.stale = false;
+                key.may_return = false;
+            }
+        }
+
+        /// Whether a key's entry is still at its place and still its
+        /// object: a directory still a directory, the same first cluster,
+        /// and the same size - or, while the key holds a size its entry has
+        /// not got yet, a smaller one in as many clusters, which is all a
+        /// write that took none leaves behind. A card that went in the
+        /// middle of a write that took clusters fails this.
+        fn stillThere(fs: *Fs, key: *const Key) bool {
+            var found: Found = .{};
+            const there = fs.dirs.at(key.dir, key.index, &found) catch return false;
+            if (!there or found.spot.block != key.spot.block or found.spot.at != key.spot.at) return false;
+            if (found.isDir() != key.isDir() or found.cluster != key.first) return false;
+            if (key.isDir() or found.size == key.size) return true;
+            const bytes = fs.geo.cluster_bytes;
+            return key.changed and found.size < key.size and
+                _fat.clustersFor(found.size, bytes) == _fat.clustersFor(key.size, bytes);
         }
 
         /// The cache made `count` blocks: at once on a mounted volume, and
@@ -326,6 +408,7 @@ pub fn FileSystem(comptime Media: type) type {
         /// The same, and with `write_back` false nothing is written: for a
         /// medium that has changed, where whatever is held belongs to a
         /// card that is no longer there and would damage the one that is.
+        /// Its keys may then come back with it (`may_return`, `parted`).
         fn release(fs: *Fs, write_back: bool) void {
             fs.forsakeAll();
             if (fs.mounted) {
@@ -336,6 +419,7 @@ pub fn FileSystem(comptime Media: type) type {
                     fs.clearDirty();
                 } else {
                     fs.cache.invalidate();
+                    fs.parted = .{ .serial = fs.geo.volume_id, .dirty = fs.dirty };
                 }
                 fs.cache.deinit();
                 fs.mounted = false;
@@ -346,6 +430,7 @@ pub fn FileSystem(comptime Media: type) type {
             }
             if (fs.root_key) |root| {
                 root.stale = true;
+                root.may_return = !write_back;
                 // The root key goes with the volume unless a lock holds
                 // it, in which case the lock's freeing takes it.
                 if (root.locks == 0) fs.free(root) else {
@@ -355,13 +440,17 @@ pub fn FileSystem(comptime Media: type) type {
                 fs.root_key = null;
             }
             var key = fs.keys;
-            while (key) |other| : (key = other.next) other.stale = true;
+            while (key) |other| : (key = other.next) {
+                if (!other.stale) other.may_return = !write_back;
+                other.stale = true;
+            }
         }
 
         /// Whether the medium is still the one mounted. If not, what was
         /// held is dropped without being written - it belongs to a card
-        /// that is no longer there - and the new one is mounted. True if
-        /// anything changed, so the caller renews the volume node.
+        /// that is no longer there - and the new one is mounted: the same
+        /// card back takes its keys up again (`back`). True if anything
+        /// changed, so the caller renews the volume node.
         pub fn checkMedium(fs: *Fs) bool {
             // With nothing mounted, asking whether a card is in is what
             // makes the device look for one put in since.
@@ -458,6 +547,7 @@ pub fn FileSystem(comptime Media: type) type {
                 .first = object.found.cluster,
                 .size = if (object.found.isDir()) 0 else object.found.size,
                 .attr = object.found.attr,
+                .serial = fs.geo.volume_id,
             };
             fs.keys = key;
             return key;

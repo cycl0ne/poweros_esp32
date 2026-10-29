@@ -34,7 +34,11 @@
 //! old one is dropped unwritten, the locks on it stop being any good, and
 //! the new card is mounted - so the volume node is put where the new
 //! card's name says, as soon as the list can be had without waiting
-//! (`renewVolume`). A handler nobody asks anything hears of a change by
+//! (`renewVolume`). The same card back - the volume's serial number the
+//! same - makes its locks good again: each body takes up the keys it had
+//! on that volume whose entries are still where they were and still the
+//! same objects, so a lock or an open file goes on where it was, as on an
+//! Amiga when the disk it asked for is put back. A handler nobody asks anything hears of a change by
 //! its change interrupt (TD_ADDCHANGEINT), which the device causes when a
 //! card goes in or out: it looks at once, and then tells input
 //! (IECLASS_DISKINSERTED, IECLASS_DISKREMOVED), so a window showing the
@@ -48,8 +52,13 @@
 //! device list with no handler behind it, which is what dos calls not
 //! mounted: the locks still point at something dos can name, so it can
 //! ask for that card back by name, and the card coming back takes the
-//! node up again and makes those locks work. The node is taken off the
-//! list and freed once no lock points at it.
+//! node up again and its keys with it, which makes those locks work. The
+//! node is taken off the list and freed once no lock points at it.
+//!
+//! **A read or write that fails** on a volume that is in asks the user
+//! (ErrorReport, ABORT_DISK_ERROR) and serves the packet again while they
+//! say to try again. A card that changed meanwhile is mounted first; the
+//! packet is served on it only if it is the same volume back.
 //!
 //! **Notification** has one set of watchers for both bodies, so a watch
 //! outlives a card: a card going lets go of every watch's object, and the
@@ -133,8 +142,8 @@ const cache_area = @import("cache.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 11;
-const BUILD_DATE = "20.10.2026";
+const HANDLER_REVISION = 12;
+const BUILD_DATE = "29.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -399,6 +408,15 @@ const Bodies = struct {
         }
     }
 
+    /// Whether the volume mounted is the one the last change of medium
+    /// let go of: the same card back.
+    fn back(bodies: *Bodies) bool {
+        return switch (bodies.active() orelse return false) {
+            .fat32 => bodies.fat32.back,
+            .exfat => bodies.exfat.back,
+        };
+    }
+
     fn volumeName(bodies: *Bodies) []const u8 {
         return switch (bodies.active() orelse return "") {
             .fat32 => bodies.fat32.volumeName(),
@@ -640,7 +658,11 @@ fn handle(dl: *DosBase, st: *State, pkt: *DosPacket, port: *MsgPort) void {
         if (dl.ErrorReport(dos.ABORT_DISK_ERROR, dos.REPORT_VOLUME, @intFromPtr(volume), null)) break;
         if (st.bodies.checkMedium()) {
             st.renew = true;
-            break;
+            // Another card, or none: the packet is not for it. The same
+            // card back has its locks again, and the packet is tried on
+            // it.
+            if (!st.bodies.back()) break;
+            renewVolume(dl, st, port);
         }
         reply = serve(st, pkt);
     }

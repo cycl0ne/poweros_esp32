@@ -54,6 +54,19 @@ pub fn yes() Answer {
     return .{ .res1 = dos.DOSTRUE, .res2 = 0 };
 }
 
+/// The volume a change of medium let go of last, as a body remembers it:
+/// a card that comes back with its serial number is that volume, and the
+/// dirty mark on it is this handler's if `dirty` says so.
+pub const Parted = struct {
+    serial: u32,
+    dirty: bool,
+};
+
+/// How many clusters `size` bytes take, in clusters of `cluster_bytes`.
+pub fn clustersFor(size: u64, cluster_bytes: u64) u64 {
+    return (size + cluster_bytes - 1) / cluster_bytes;
+}
+
 pub fn no(code: i32) Answer {
     return .{ .res1 = dos.DOSFALSE, .res2 = code };
 }
