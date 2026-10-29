@@ -66,6 +66,9 @@ pub const Timing = struct {
 /// and a refresh, largest first: CEA-861's (with their numbers) and
 /// VESA's DMT, as the standards time them.
 pub const known = [_]Timing{
+    // CEA's 3840x2160p at 60 and 50 Hz: 594 MHz, past HDMI 1.4's 340.
+    .{ .width = 3840, .height = 2160, .pixel_khz = 594_000, .h_front = 176, .h_sync = 88, .h_back = 296, .v_front = 8, .v_sync = 10, .v_back = 72, .hsync_high = true, .vsync_high = true, .vic = 97 },
+    .{ .width = 3840, .height = 2160, .pixel_khz = 594_000, .h_front = 1056, .h_sync = 88, .h_back = 296, .v_front = 8, .v_sync = 10, .v_back = 72, .hsync_high = true, .vsync_high = true, .vic = 96 },
     // CEA's 3840x2160p at 30, 25 and 24 Hz: one line, 297 MHz.
     .{ .width = 3840, .height = 2160, .pixel_khz = 297_000, .h_front = 176, .h_sync = 88, .h_back = 296, .v_front = 8, .v_sync = 10, .v_back = 72, .hsync_high = true, .vsync_high = true, .vic = 95 },
     .{ .width = 3840, .height = 2160, .pixel_khz = 297_000, .h_front = 1056, .h_sync = 88, .h_back = 296, .v_front = 8, .v_sync = 10, .v_back = 72, .hsync_high = true, .vsync_high = true, .vic = 94 },
@@ -318,6 +321,104 @@ fn videoCodes(cea: *const Block, vic: u8) bool {
     return false;
 }
 
+/// What a monitor says of itself beyond its modes, in the extension's
+/// data blocks. Without an extension it is a DVI monitor: none of it.
+pub const Sink = struct {
+    /// It names HDMI's own block (the IEEE's 00-0C-03): it takes HDMI's
+    /// packets - the infoframes, the sound - between the lines.
+    hdmi: bool = false,
+    /// It plays sound: two channels of LPCM at 32, 44.1 and 48 kHz at the
+    /// least (basic audio, the extension's fourth byte).
+    audio: bool = false,
+    /// Its RGB range may be chosen, full or limited, by the AVI
+    /// infoframe (the video capability block's QS).
+    quant_selectable: bool = false,
+    /// The fastest TMDS clock it takes, in kHz: the HDMI Forum's block's
+    /// rate where it has one, else HDMI's block's; 0 where neither says.
+    max_tmds_khz: u32 = 0,
+    /// It has the status and control data channel (the Forum's block's
+    /// SCDC_Present), which a TMDS clock past 340 MHz is scrambled
+    /// through.
+    scdc: bool = false,
+    /// It names the HDMI Forum's block: an HDMI 2.0 monitor, which takes
+    /// CEA's numbers above 64 in the AVI infoframe - HDMI 1.4's 4K modes
+    /// among them, which an older one takes in HDMI's vendor infoframe.
+    forum: bool = false,
+
+    /// The fastest pixel clock it takes at eight bits a colour, in kHz:
+    /// past 340 MHz only scrambled, which wants SCDC; else no more than
+    /// HDMI 1.4's 340 MHz, or what its HDMI block says if that is less.
+    pub fn mostKhz(sink: Sink) u32 {
+        if (sink.scdc and sink.max_tmds_khz > hdmi14_khz) return sink.max_tmds_khz;
+        if (sink.max_tmds_khz != 0) return @min(sink.max_tmds_khz, hdmi14_khz);
+        return hdmi14_khz;
+    }
+};
+
+/// The fastest TMDS clock unscrambled, HDMI 1.4's.
+pub const hdmi14_khz: u32 = 340_000;
+
+/// The IEEE's numbers for HDMI's block and the HDMI Forum's, as the
+/// block holds them, low byte first.
+const oui_hdmi = [3]u8{ 0x03, 0x0C, 0x00 };
+const oui_hdmi_forum = [3]u8{ 0xD8, 0x5D, 0xC4 };
+/// The extended tags of the video capability block and of the Forum's
+/// sink capability block (HF-SCDB), which carries what its vendor block
+/// did, at the same places.
+const ext_video_capability: u8 = 0x00;
+const ext_hf_scdb: u8 = 0x79;
+
+/// What the extension `extension` says of the sink; a DVI monitor's
+/// nothing when there is none.
+pub fn sinkOf(extension: ?*const Block) Sink {
+    var sink: Sink = .{};
+    const cea = extension orelse return sink;
+    if (!isCea(cea) or cea[1] < 2) return sink;
+    sink.audio = cea[3] & 0x40 != 0;
+    const end = @min(@as(usize, cea[2]), 127);
+    var at: usize = 4;
+    while (at < end) {
+        const tag = cea[at] >> 5;
+        const length: usize = cea[at] & 0x1F;
+        if (at + 1 + length > 127) break;
+        const block = cea[at..][0 .. 1 + length];
+        switch (tag) {
+            // A vendor's block: HDMI's, its fastest TMDS clock in its
+            // eighth byte, 5 MHz a step; the Forum's, in its sixth, and
+            // its flags in the seventh.
+            3 => if (length >= 3) {
+                if (std.mem.eql(u8, block[1..4], &oui_hdmi)) {
+                    sink.hdmi = true;
+                    if (length >= 7 and block[7] != 0) sink.max_tmds_khz = @max(sink.max_tmds_khz, @as(u32, block[7]) * 5000);
+                } else if (std.mem.eql(u8, block[1..4], &oui_hdmi_forum)) {
+                    forumCaps(&sink, block);
+                }
+            },
+            7 => if (length >= 2) switch (block[1]) {
+                ext_video_capability => sink.quant_selectable = block[2] & 0x40 != 0,
+                ext_hf_scdb => forumCaps(&sink, block),
+                else => {},
+            },
+            else => {},
+        }
+        at += 1 + length;
+    }
+    return sink;
+}
+
+/// The HDMI Forum's capabilities from its vendor block or its sink
+/// capability block, which hold them at the same places: the fastest
+/// TMDS character rate in the sixth byte, 5 MHz a step, and SCDC_Present
+/// in the seventh's top bit.
+fn forumCaps(sink: *Sink, block: []const u8) void {
+    sink.forum = true;
+    if (block.len < 7) return;
+    if (block[5] != 0) sink.max_tmds_khz = @as(u32, block[5]) * 5000;
+    sink.scdc = block[6] & 0x80 != 0;
+}
+
+const std = @import("std");
+
 // --- tests (host: ./zig build test) -----------------------------------------
 
 const testing = @import("std").testing;
@@ -413,6 +514,45 @@ test "the standard modes are timed as the standards have them" {
     try testing.expectEqual(@as(u32, 4400), knownMode(3840, 2160, 30).?.htotal());
     try testing.expectEqual(@as(u32, 1344), knownMode(1024, 768, 60).?.htotal());
     try testing.expectEqual(@as(?Timing, null), knownMode(1920, 1200, 60));
+}
+
+test "the portable monitor is an HDMI sink with sound, to 300 MHz" {
+    const sink = sinkOf(&portable_1080p[1]);
+    try testing.expect(sink.hdmi);
+    try testing.expect(sink.audio);
+    try testing.expect(sink.quant_selectable);
+    try testing.expect(!sink.scdc);
+    try testing.expectEqual(@as(u32, 300_000), sink.max_tmds_khz);
+    try testing.expectEqual(@as(u32, 300_000), sink.mostKhz());
+    // Without an extension, a DVI monitor, to HDMI 1.4's clock.
+    const dvi = sinkOf(null);
+    try testing.expect(!dvi.hdmi and !dvi.audio);
+    try testing.expectEqual(hdmi14_khz, dvi.mostKhz());
+}
+
+test "an HDMI 2.0 monitor's Forum block: 600 MHz, scrambled" {
+    var cea: Block = @splat(0);
+    cea[0] = 0x02;
+    cea[1] = 0x03;
+    cea[3] = 0x40;
+    // HDMI's block, then the Forum's: version 1, 120 x 5 MHz, SCDC.
+    const blocks = [_]u8{ 0x65, 0x03, 0x0C, 0x00, 0x10, 0x00, 0x67, 0xD8, 0x5D, 0xC4, 0x01, 0x78, 0x80 };
+    @memcpy(cea[4..][0..blocks.len], &blocks);
+    cea[2] = 4 + blocks.len;
+    var sink = sinkOf(&cea);
+    try testing.expect(sink.hdmi and sink.audio and sink.scdc);
+    try testing.expectEqual(@as(u32, 600_000), sink.mostKhz());
+    // The same in the sink capability block, an extended tag.
+    const scdb = [_]u8{ 0xE6, 0x79, 0x00, 0x00, 0x01, 0x78, 0x80 };
+    @memset(cea[4..], 0);
+    @memcpy(cea[4..][0..scdb.len], &scdb);
+    cea[2] = 4 + scdb.len;
+    sink = sinkOf(&cea);
+    try testing.expect(!sink.hdmi and sink.scdc);
+    try testing.expectEqual(@as(u32, 600_000), sink.mostKhz());
+    // Without SCDC no more than 340 MHz.
+    cea[10] = 0;
+    try testing.expectEqual(hdmi14_khz, sinkOf(&cea).mostKhz());
 }
 
 test "a native video code counts as its number" {

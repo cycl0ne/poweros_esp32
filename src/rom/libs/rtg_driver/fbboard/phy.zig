@@ -182,10 +182,10 @@ test "each clock reads back as itself" {
     try testing.expectEqual(@as(u32, 0), clockOf(.{ 0, 0, 0, 0, 0, 0 }, .{ 0, 0, 0 }));
 }
 
-test "the standard modes the port can send" {
+test "the standard modes the port can send: all but 4K at 60 and 50 Hz" {
     const edid = @import("../edid.zig");
     for (&edid.known) |*mode| {
-        try testing.expect(sends(mode.pixel_khz));
+        try testing.expectEqual(mode.pixel_khz <= 297_000, sends(mode.pixel_khz));
     }
     try testing.expect(!sends(146_250)); // 1680x1050 at 60 on DMT's full blanking
     try testing.expect(!sends(594_000)); // 3840x2160 at 60

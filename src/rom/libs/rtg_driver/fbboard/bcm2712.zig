@@ -39,11 +39,29 @@
 //! buffers have it. The HVS's IOMMU is left off: it reads RAM at the
 //! ARM's addresses.
 //!
-//! The port is driven as DVI: no infoframes, full-range RGB, eight bits a
-//! colour, so the TMDS clock is the pixel clock, and no scrambling - up
-//! to 340 MHz, which is 4K at 30 Hz (`sends`). Pixel valve 0 raises its
-//! interrupt at the start of each frame's vertical front porch, which is
-//! the board's frame interrupt (`takeInterrupts`).
+//! **What the monitor is sent** is eight bits a colour, so the TMDS clock
+//! is the pixel clock, up to 600 MHz (`sends`): 4K at 60 Hz. A monitor
+//! whose EDID names HDMI's block gets HDMI (`Output`): the AVI infoframe
+//! with the mode's CEA number, and the sound's packets while it plays;
+//! any other DVI. The RGB is full range wherever the monitor takes it so:
+//! as DVI, in a mode CEA does not number, or where the AVI infoframe may
+//! say so (its QS); else it is squashed to 16-235 on the way out, as a
+//! CEA mode's RGB is taken. Past 340 MHz the TMDS characters are
+//! scrambled, the monitor told so through its SCDC - registers at
+//! address 0x54 on the DDC - and looked at again now and then (`tend`),
+//! since a monitor forgets it when it is switched off and on.
+//!
+//! **The sound** (`audioStart`) goes into the controller's MAI FIFO,
+//! which a DMA channel feeds IEC 958 subframes (rta-hdmi's
+//! `rta_driver/hdmi/bcm2712.zig`); the controller sends them as audio
+//! sample packets, with the audio infoframe and the numbers the monitor
+//! rebuilds the sample clock from (N and CTS), which depend on the
+//! mode's pixel clock. The display and its sound share what both write
+//! (`Shared`): a mode set while sound plays sets those again.
+//!
+//! Pixel valve 0 raises its interrupt at the start of each frame's
+//! vertical front porch, which is the board's frame interrupt
+//! (`takeInterrupts`).
 
 const sdk = @import("sdk");
 const reg = sdk.hardware.mmio.reg;
@@ -178,7 +196,14 @@ const DVP_MISC_CONFIG: usize = 0x10_7C70_0008;
 const DVP_HDMI0_GATE: u32 = 1 << 3;
 
 const FIFO_CTL = 0x07C;
+const MAI_CHANNEL_MAP = 0x0A4;
+const MAI_CONFIG = 0x0A8;
+const AUDIO_PACKET_CONFIG = 0x0C0;
 const RAM_PACKET_CONFIG = 0x0C4;
+const RAM_PACKET_STATUS = 0x0CC;
+const CRP_CFG = 0x0D0;
+const CTS_0 = 0x0D4;
+const CTS_1 = 0x0D8;
 const SCHEDULER_CONTROL = 0x0E8;
 const H_HORZA = 0x0EC;
 const H_HORZB = 0x0F0;
@@ -192,6 +217,8 @@ const GCP_CONFIG = 0x194;
 const GCP_WORD_1 = 0x198;
 const HOTPLUG = 0x1C8;
 const HOTPLUG_CONNECTED: u32 = 1 << 0;
+const SCRAMBLER_CTL = 0x1E4;
+const SCRAMBLER_ENABLE: u32 = 1 << 0;
 const FIFO_MASTER_SLAVE_N: u32 = 1 << 0;
 const FIFO_RECENTER: u32 = 1 << 6;
 const FIFO_RECENTER_DONE: u32 = 1 << 14;
@@ -222,10 +249,18 @@ const CSC_32_31 = 0x14;
 const CSC_34_33 = 0x18;
 const CSC_CHANNEL_CTL = 0x2C;
 const CSC_ENABLE_CUSTOM: u32 = 1 << 2 | 3;
-/// 1.0 in the CSC's 2.13 fixed point.
+/// 1.0 in the CSC's 2.13 fixed point; 0.8594 of it, which with an offset
+/// of 16 (in 9.6) squashes 0-255 to 16-235.
 const CSC_ONE: u32 = 0x2000;
+const CSC_LIMITED: u32 = 0x1B80;
+const CSC_LIMITED_OFFSET: u32 = 0x0400;
 
 const HD_DVP_CTL = 0x00;
+const HD_MAI_CTL = 0x10;
+const HD_MAI_THR = 0x14;
+const HD_MAI_FMT = 0x18;
+const HD_MAI_DATA = 0x1C;
+const HD_MAI_SMP = 0x20;
 const HD_VID_CTL = 0x44;
 const VID_ENABLE: u32 = 1 << 31;
 const VID_UNDERFLOW_ENABLE: u32 = 1 << 30;
@@ -235,6 +270,55 @@ const VID_HSYNC_LOW: u32 = 1 << 27;
 const VID_CLRRGB: u32 = 1 << 23;
 const VID_BLANKPIX: u32 = 1 << 18;
 const VID_BLANK_INSERT_EN: u32 = 1 << 16;
+
+/// The MAI, the sound's way in: its control, its FIFO's thresholds for
+/// the DMA's request and for panic, the stream's format, the FIFO's
+/// data word and its sample clock - 108 MHz times M over N.
+const MAI_RESET: u32 = 1 << 0;
+const MAI_ERRORF: u32 = 1 << 1;
+const MAI_ERRORE: u32 = 1 << 2;
+const MAI_ENABLE: u32 = 1 << 3;
+const MAI_CHNUM_SHIFT = 4;
+const MAI_FLUSH: u32 = 1 << 9;
+const MAI_WHOLSMP: u32 = 1 << 12;
+const MAI_CHALIGN: u32 = 1 << 13;
+const MAI_DLATE: u32 = 1 << 15;
+const MAI_THRESHOLDS: u32 = 0x10 << 23 | 0x10 << 15 | 0x1C << 7 | 0x1C;
+const MAI_FORMAT_PCM: u32 = 2;
+const MAI_CONFIG_REVERSED: u32 = 1 << 27 | 1 << 26;
+const AUDIO_ZERO_FLAT: u32 = 1 << 29;
+const AUDIO_ZERO_INACTIVE: u32 = 1 << 24;
+/// The B frame's preamble, as the subframes carry it (alsa-lib's 8).
+const AUDIO_B_FRAME: u32 = 8 << 10;
+const CRP_EXTERNAL_CTS: u32 = 1 << 24;
+/// The DVP's 108 MHz, which the MAI's sample clock is divided from.
+const AUDIO_CLOCK_HZ: u64 = 108_000_000;
+
+/// HDMI0's MAI FIFO as the DMA engine reaches it, and the request line
+/// it asks for data on: the 40-bit engine's DREQ 12 on the D0 stepping
+/// (bcm2712d0-rpi-5-b.dts). The CM5's device tree has the C stepping's
+/// 10, which the firmware's D0 overlay changes, and which no request
+/// ever comes on here.
+pub const mai_data: usize = HDMI_HD + HD_MAI_DATA;
+pub const audio_dreq: u32 = 12;
+
+/// The packet RAM: a packet's nine words for each infoframe type, its
+/// header in the first and its four subpackets of seven bytes in the
+/// eight after, each four bytes then three.
+const HDMI_PACKET: usize = 0x10_7C70_3800;
+const PACKET_STRIDE = 0x24;
+pub const INFOFRAME_VENDOR: u8 = 0x81;
+pub const INFOFRAME_AVI: u8 = 0x82;
+pub const INFOFRAME_AUDIO: u8 = 0x84;
+
+/// The monitor's SCDC, on the DDC: the TMDS configuration - the bit
+/// clock at a fortieth of the TMDS clock, the scrambling - and the
+/// scrambler's status.
+const SCDC_ADDRESS: u32 = 0x54;
+const SCDC_TMDS_CONFIG: u8 = 0x20;
+const SCDC_SCRAMBLER_STATUS: u8 = 0x21;
+const SCDC_SCRAMBLING: u8 = 1 << 0;
+const SCDC_RATIO_40: u8 = 1 << 1;
 
 /// The PHY (vc6_hdmi_phy_init): its PLL from the 54 MHz crystal, its
 /// VCO 8 to 12 GHz, ten bits a TMDS character.
@@ -318,6 +402,36 @@ fn hvsDisp(offset: usize) *volatile u32 {
 
 fn word(index: u32) *volatile u32 {
     return reg(HVS + DLIST + @as(usize, index) * 4);
+}
+
+// --- what the display and its sound share ------------------------------------
+
+/// What the display (rtg-fb) and its sound (rta-hdmi) share, found by
+/// its name: a public semaphore held while either writes what both do -
+/// the packet RAM's switches, the clock regeneration - with the mode's
+/// pixel clock, whether it goes out as HDMI, and the sound playing (no
+/// channels while none does). The first to ask makes it and it stays
+/// for good: the display, as it starts.
+pub const Shared = struct {
+    lock: exec.SignalSemaphore = .{},
+    pixel_khz: u32 = 0,
+    hdmi: bool = false,
+    audio_rate: u32 = 0,
+    audio_channels: u32 = 0,
+};
+
+pub const shared_name = "bcm2712.hdmi0";
+
+/// The shared state, made when nobody has yet; null without memory for
+/// it.
+pub fn sharedOf(sys: *ExecBase) ?*Shared {
+    if (sys.FindSemaphore(shared_name)) |found| return @fieldParentPtr("lock", found);
+    const memory = sys.AllocMem(@sizeOf(Shared), exec.MEMF_SYSTEM | exec.MEMF_CLEAR) orelse return null;
+    const made: *Shared = @ptrCast(@alignCast(memory));
+    made.* = .{};
+    made.lock.link.name = shared_name;
+    sys.AddSemaphore(&made.lock);
+    return made;
 }
 
 // --- the firmware ------------------------------------------------------------
@@ -485,12 +599,40 @@ pub fn readEdid(number: u8, block: *[128]u8, waiter: anytype) bool {
     return true;
 }
 
+/// SCDC register `offset` of the monitor's, read: the offset written,
+/// then a byte read. Null when the monitor did not answer.
+fn scdcRead(offset: u8, waiter: anytype) ?u8 {
+    at(DDC, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1;
+    if (!send(COND_RESTART | COND_NOSTOP, &.{offset}, waiter)) return null;
+    at(DDC, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1 | 1;
+    var value = [1]u8{0};
+    if (!receive(readCondition(true, true), &value, waiter)) return null;
+    return value[0];
+}
+
+/// SCDC register `offset` written with `value`.
+fn scdcWrite(offset: u8, value: u8, waiter: anytype) bool {
+    at(DDC, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1;
+    return send(0, &.{ offset, value }, waiter);
+}
+
+/// The monitor told to take scrambled TMDS at a bit clock of a fortieth,
+/// or the TMDS as it was (drm_scdc_set_high_tmds_clock_ratio, then
+/// drm_scdc_set_scrambling): its TMDS configuration's two bits.
+fn scdcScrambling(on: bool, waiter: anytype) bool {
+    const config = scdcRead(SCDC_TMDS_CONFIG, waiter) orelse return false;
+    const both = SCDC_RATIO_40 | SCDC_SCRAMBLING;
+    return scdcWrite(SCDC_TMDS_CONFIG, if (on) config | both else config & ~both, waiter);
+}
+
 // --- the PHY -----------------------------------------------------------------
 
-/// The port's fastest TMDS clock without scrambling, in kHz.
-const max_khz: u32 = 340_000;
+/// The port's fastest TMDS clock, in kHz, scrambled past 340 MHz
+/// (Linux's max_pixel_clock for the BCM2712's HDMI0).
+const max_khz: u32 = 600_000;
 
-/// Whether the port can send a mode of that pixel clock.
+/// Whether the port can send a mode of that pixel clock - to a monitor
+/// that takes it (`edid.Sink.mostKhz`).
 pub fn sends(pixel_khz: u32) bool {
     return pixel_khz != 0 and pixel_khz <= max_khz;
 }
@@ -626,17 +768,143 @@ pub fn cursorPlaneOf(address: usize, side: u32, left: i32, top: i32, width: u32,
     };
 }
 
+// --- what the monitor is sent ------------------------------------------------
+
+/// How a mode goes to a monitor: as HDMI or DVI; its RGB squashed to
+/// 16-235 or not; the range said in the AVI infoframe or left to the
+/// monitor's default; the TMDS scrambled.
+pub const Output = struct {
+    hdmi: bool,
+    limited: bool,
+    range_said: bool,
+    scrambled: bool,
+};
+
+/// How `mode` goes to the monitor `sink` says it is. A CEA mode but the
+/// first is taken as limited range unless the AVI infoframe says
+/// otherwise, which it may where the monitor lets it (QS).
+pub fn outputFor(sink: edid.Sink, mode: *const edid.Timing) Output {
+    const cea_limited = sink.hdmi and mode.vic > 1;
+    return .{
+        .hdmi = sink.hdmi,
+        .limited = cea_limited and !sink.quant_selectable,
+        .range_said = sink.hdmi and sink.quant_selectable,
+        .scrambled = mode.pixel_khz > edid.hdmi14_khz,
+    };
+}
+
+/// An infoframe as the packet RAM takes it: its type, version and length,
+/// its checksum - which brings the sum of all its bytes to 0 - and its
+/// bytes, up to 27, the rest 0.
+pub const Infoframe = [31]u8;
+
+fn infoframe(kind: u8, version: u8, body: []const u8) Infoframe {
+    var frame: Infoframe = @splat(0);
+    frame[0] = kind;
+    frame[1] = version;
+    frame[2] = @intCast(body.len);
+    @memcpy(frame[4..][0..body.len], body);
+    var sum: u8 = 0;
+    for (frame) |byte| sum +%= byte;
+    frame[3] = 0 -% sum;
+    return frame;
+}
+
+/// HDMI 1.4's numbers for the 4K modes it sends in its vendor infoframe
+/// rather than the AVI infoframe - to a monitor that is not HDMI 2.0 -
+/// by their CEA numbers; 0 for any other mode.
+pub fn hdmiVic(vic: u8) u8 {
+    return switch (vic) {
+        95 => 1,
+        94 => 2,
+        93 => 3,
+        98 => 4,
+        else => 0,
+    };
+}
+
+/// The CEA number the AVI infoframe carries for `mode`: none for a mode
+/// HDMI 1.4's vendor infoframe carries instead.
+fn aviVic(sink: edid.Sink, mode: *const edid.Timing) u8 {
+    if (!sink.forum and hdmiVic(mode.vic) != 0) return 0;
+    return mode.vic;
+}
+
+/// The AVI infoframe for `mode` (hdmi_avi_infoframe_pack, as
+/// drm_hdmi_avi_infoframe_from_display_mode fills it): RGB, the picture's
+/// aspect - 4:3 for CEA's 640x480, 720x480 and 720x576 at their first
+/// numbers, 16:9 for its others - the active part the whole picture, the
+/// range when it is said, the mode's number.
+pub fn aviFrame(sink: edid.Sink, mode: *const edid.Timing, output: Output) Infoframe {
+    const aspect: u8 = switch (mode.vic) {
+        0 => 0,
+        1, 2, 17 => 1,
+        else => 2,
+    };
+    const range: u8 = if (!output.range_said) 0 else if (output.limited) 1 else 2;
+    return infoframe(INFOFRAME_AVI, 2, &.{
+        // Active format information present, RGB.
+        0x10,
+        aspect << 4 | 8,
+        range << 2,
+        aviVic(sink, mode),
+        0, 0, 0, 0, 0, 0, 0, 0, 0,
+    });
+}
+
+/// HDMI's vendor infoframe naming HDMI 1.4's 4K mode `hdmi_vic`.
+pub fn vendorFrame(hdmi_vic: u8) Infoframe {
+    return infoframe(INFOFRAME_VENDOR, 1, &.{ 0x03, 0x0C, 0x00, 0x20, hdmi_vic });
+}
+
+/// The audio infoframe for `channels` of LPCM: the rest as the stream's
+/// own header says, the speakers front left and right.
+pub fn audioFrame(channels: u32) Infoframe {
+    return infoframe(INFOFRAME_AUDIO, 1, &.{ @intCast(channels - 1), 0, 0, 0, 0, 0, 0, 0, 0, 0 });
+}
+
+/// The packet `frame` into the packet RAM and sent with every frame from
+/// now on (vc4_hdmi_write_infoframe): its sending stopped and waited out,
+/// its nine words written, then sent again. The packet RAM must be on.
+fn writePacket(frame: *const Infoframe, waiter: anytype) void {
+    const id: u5 = @intCast(frame[0] - 0x80);
+    const bit = @as(u32, 1) << id;
+    stopPacket(frame[0], waiter);
+    const first = HDMI_PACKET + @as(usize, id) * PACKET_STRIDE;
+    var i: usize = 0;
+    while (i < 28) : (i += 7) {
+        const pair = first + i / 7 * 8;
+        reg(pair).* = @as(u32, frame[i]) | @as(u32, frame[i + 1]) << 8 | @as(u32, frame[i + 2]) << 16;
+        reg(pair + 4).* = @as(u32, frame[i + 3]) | @as(u32, frame[i + 4]) << 8 | @as(u32, frame[i + 5]) << 16 | @as(u32, frame[i + 6]) << 24;
+    }
+    reg(first + 32).* = 0;
+    at(HDMI, RAM_PACKET_CONFIG).* |= bit;
+    waitBits(at(HDMI, RAM_PACKET_STATUS), bit, true, 100, waiter);
+}
+
+/// The packet of type `kind` no longer sent, waited out.
+fn stopPacket(kind: u8, waiter: anytype) void {
+    const bit = @as(u32, 1) << @as(u5, @intCast(kind - 0x80));
+    at(HDMI, RAM_PACKET_CONFIG).* &= ~bit;
+    waitBits(at(HDMI, RAM_PACKET_STATUS), bit, false, 100, waiter);
+}
+
 // --- starting ----------------------------------------------------------------
 
 /// The display taken down, if it runs: pixel valve 0 stopped at the end
-/// of a frame, the controller's picture blanked, the valve's FIFO cleared
-/// and the HVS's channel reset (vc4_crtc_disable).
+/// of a frame, the controller's packets and picture blanked, the
+/// scrambling off at both ends, the valve's FIFO cleared and the HVS's
+/// channel reset (vc4_crtc_disable).
 fn stop(waiter: anytype) void {
     if (at(PV, PV_V_CONTROL).* & PV_VCONTROL_VIDEN != 0) {
         at(PV, PV_V_CONTROL).* &= ~PV_VCONTROL_VIDEN;
         waiter.wait(20_000);
     }
     at(HDMI, RAM_PACKET_CONFIG).* = 0;
+    if (at(HDMI, SCRAMBLER_CTL).* & SCRAMBLER_ENABLE != 0) {
+        at(HDMI, SCRAMBLER_CTL).* &= ~SCRAMBLER_ENABLE;
+        _ = scdcScrambling(false, waiter);
+    }
     at(HDMI_HD, HD_VID_CTL).* |= VID_CLRRGB | VID_BLANKPIX;
     at(PV, PV_INTEN).* = 0;
     at(PV, PV_CONTROL).* &= ~PV_CONTROL_EN;
@@ -704,16 +972,19 @@ fn pvTiming(mode: *const edid.Timing) void {
         PV_CONTROL_CLR_AT_START | PV_CONTROL_TRIGGER_UNDERFLOW | PV_CONTROL_WAIT_HSTART;
 }
 
-/// RGB through the controller's CSC unchanged (vc5_hdmi_csc_setup).
-fn hdmiColours() void {
+/// RGB through the controller's CSC, unchanged or squashed to 16-235
+/// (vc5_hdmi_csc_setup, vc5_hdmi_csc_full_rgb_to_rgb).
+fn hdmiColours(limited: bool) void {
+    const scale = if (limited) CSC_LIMITED else CSC_ONE;
+    const offset = if (limited) CSC_LIMITED_OFFSET else 0;
     at(HDMI_DVP, DVP_VEC_INTERFACE_CFG).* = 0;
     at(HDMI_DVP, DVP_VEC_INTERFACE_XBAR).* = XBAR_RGB;
-    at(HDMI_CSC, CSC_12_11).* = CSC_ONE;
-    at(HDMI_CSC, CSC_14_13).* = 0;
-    at(HDMI_CSC, CSC_22_21).* = CSC_ONE << 16;
-    at(HDMI_CSC, CSC_24_23).* = 0;
+    at(HDMI_CSC, CSC_12_11).* = scale;
+    at(HDMI_CSC, CSC_14_13).* = offset << 16;
+    at(HDMI_CSC, CSC_22_21).* = scale << 16;
+    at(HDMI_CSC, CSC_24_23).* = offset << 16;
     at(HDMI_CSC, CSC_32_31).* = 0;
-    at(HDMI_CSC, CSC_34_33).* = CSC_ONE;
+    at(HDMI_CSC, CSC_34_33).* = offset << 16 | scale;
     at(HDMI_CSC, CSC_CHANNEL_CTL).* = 0;
     at(HDMI_CSC, CSC_CTL).* = CSC_ENABLE_CUSTOM;
 }
@@ -726,15 +997,20 @@ fn waitBits(register: *volatile u32, bits: u32, set: bool, tries: u32, waiter: a
 }
 
 /// The display brought up in `mode` - its pixel clock one the port sends
-/// (`sends`) - showing the picture at `address`, 32 bits a pixel, rows
-/// `pitch` bytes apart, below 4 GiB and out of the caches; the cursor
-/// hidden. With the display up, it changes to `mode`. The order is
+/// (`sends`) and the monitor `sink` takes - showing the picture at
+/// `address`, 32 bits a pixel, rows `pitch` bytes apart, below 4 GiB and
+/// out of the caches; the cursor hidden. With the display up, it changes
+/// to `mode`; sound that plays goes on in it. The order is
 /// vc4_crtc_atomic_enable's. `waiter.wait(micros)` waits that long.
-pub fn start(sys: *ExecBase, mode: *const edid.Timing, address: usize, pitch: u32, waiter: anytype) Failure {
+pub fn start(sys: *ExecBase, mode: *const edid.Timing, sink: edid.Sink, address: usize, pitch: u32, waiter: anytype) Failure {
     if (!on_bcm2712) return .firmware;
     if (!sends(mode.pixel_khz)) return .clock;
     const woken = wake(sys, waiter);
     if (woken != .none) return woken;
+    const shared = sharedOf(sys);
+    if (shared) |held| sys.ObtainSemaphore(&held.lock);
+    defer if (shared) |held| sys.ReleaseSemaphore(&held.lock);
+    const output = outputFor(sink, mode);
     const tmds_hz = @as(u64, mode.pixel_khz) * 1000;
     stop(waiter);
     if (!clocksFor(sys, tmds_hz)) return .firmware;
@@ -754,13 +1030,13 @@ pub fn start(sys: *ExecBase, mode: *const edid.Timing, address: usize, pitch: u3
 
     // The controller's PHY and timing, the valve's, the colours, then the
     // video let through (pre_crtc_configure, config_pv, pre_crtc_enable,
-    // post_crtc_enable), as DVI.
+    // post_crtc_enable), as HDMI with its infoframes or as DVI.
     phyStart(tmds_hz);
     at(HDMI, SCHEDULER_CONTROL).* |= SCHEDULER_MANUAL_FORMAT | SCHEDULER_IGNORE_VSYNC_PREDICTS;
     hdmiTiming(mode);
     pvTiming(mode);
     at(PV, PV_CONTROL).* |= PV_CONTROL_EN;
-    hdmiColours();
+    hdmiColours(output.limited);
     at(HDMI, FIFO_CTL).* = FIFO_MASTER_SLAVE_N;
     at(PV, PV_V_CONTROL).* |= PV_VCONTROL_VIDEN;
     var video = at(HDMI_HD, HD_VID_CTL).* & ~(VID_VSYNC_LOW | VID_HSYNC_LOW);
@@ -769,15 +1045,168 @@ pub fn start(sys: *ExecBase, mode: *const edid.Timing, address: usize, pitch: u3
     if (!mode.hsync_high) video |= VID_HSYNC_LOW;
     at(HDMI_HD, HD_VID_CTL).* = video;
     at(HDMI_HD, HD_VID_CTL).* &= ~VID_BLANKPIX;
-    at(HDMI, RAM_PACKET_CONFIG).* &= ~RAM_PACKET_ENABLE;
-    at(HDMI, SCHEDULER_CONTROL).* &= ~SCHEDULER_MODE_HDMI;
-    waitBits(at(HDMI, SCHEDULER_CONTROL), SCHEDULER_HDMI_ACTIVE, false, 1000, waiter);
+    if (output.hdmi) {
+        at(HDMI, SCHEDULER_CONTROL).* |= SCHEDULER_MODE_HDMI;
+        waitBits(at(HDMI, SCHEDULER_CONTROL), SCHEDULER_HDMI_ACTIVE, true, 1000, waiter);
+        at(HDMI, RAM_PACKET_CONFIG).* = RAM_PACKET_ENABLE;
+        writePacket(&aviFrame(sink, mode, output), waiter);
+        if (!sink.forum and hdmiVic(mode.vic) != 0) writePacket(&vendorFrame(hdmiVic(mode.vic)), waiter);
+    } else {
+        at(HDMI, RAM_PACKET_CONFIG).* &= ~RAM_PACKET_ENABLE;
+        at(HDMI, SCHEDULER_CONTROL).* &= ~SCHEDULER_MODE_HDMI;
+        waitBits(at(HDMI, SCHEDULER_CONTROL), SCHEDULER_HDMI_ACTIVE, false, 1000, waiter);
+    }
     recenter(waiter);
+    // Past 340 MHz, the monitor told before the scrambler starts
+    // (vc4_hdmi_enable_scrambling).
+    if (output.scrambled) {
+        _ = scdcScrambling(true, waiter);
+        at(HDMI, SCRAMBLER_CTL).* |= SCRAMBLER_ENABLE;
+    }
+
+    // The sound that plays, sent in the new mode: its clock regeneration
+    // from the new pixel clock, its infoframe again.
+    if (shared) |held| {
+        held.pixel_khz = mode.pixel_khz;
+        held.hdmi = output.hdmi;
+        if (output.hdmi and held.audio_channels != 0) {
+            regenerate(held);
+            writePacket(&audioFrame(held.audio_channels), waiter);
+        }
+    }
 
     // The frame interrupt: the start of each vertical front porch.
     at(PV, PV_INTSTAT).* = PV_INT_VFP_START;
     at(PV, PV_INTEN).* = PV_INT_VFP_START;
     return .none;
+}
+
+/// What a running display needs now and then, about once a second: the
+/// monitor's scrambling turned on again when it has lost it, as it does
+/// when it is switched off and on (vc4_hdmi_scrambling_wq).
+pub fn tend(waiter: anytype) void {
+    if (!on_bcm2712 or !running()) return;
+    if (at(HDMI, SCRAMBLER_CTL).* & SCRAMBLER_ENABLE == 0) return;
+    const status = scdcRead(SCDC_SCRAMBLER_STATUS, waiter) orelse return;
+    if (status & SCDC_SCRAMBLING == 0) _ = scdcScrambling(true, waiter);
+}
+
+// --- the sound ---------------------------------------------------------------
+
+/// The MAI's code for a sample rate; 0, not said, for any other.
+pub fn rateCode(rate: u32) u32 {
+    return switch (rate) {
+        32_000 => 7,
+        44_100 => 8,
+        48_000 => 9,
+        88_200 => 11,
+        96_000 => 12,
+        176_400 => 14,
+        192_000 => 15,
+        else => 0,
+    };
+}
+
+/// The MAI's sample clock for `rate`: 108 MHz divided by N over M, the
+/// nearest fraction with M to 256 (vc4_hdmi_audio_set_mai_clock), as its
+/// register holds them - N above, M less one in the low byte.
+pub fn maiSample(rate: u32) u32 {
+    var best_n: u64 = 0;
+    var best_m: u64 = 1;
+    var best_error: u64 = ~@as(u64, 0);
+    var m: u64 = 1;
+    while (m <= 256) : (m += 1) {
+        const n = (AUDIO_CLOCK_HZ * m + rate / 2) / rate;
+        if (n == 0 or n > 0xFF_FFFF) continue;
+        const exact = AUDIO_CLOCK_HZ * m;
+        const off = if (n * rate > exact) n * rate - exact else exact - n * rate;
+        // |n/m - clock/rate|, compared without dividing.
+        if (best_error == ~@as(u64, 0) or off * best_m < best_error * m) {
+            best_n = n;
+            best_m = m;
+            best_error = off;
+        }
+        if (off == 0) break;
+    }
+    return @intCast(best_n << 8 | (best_m - 1));
+}
+
+/// N and CTS, which the monitor rebuilds the sample clock from - 128
+/// times the rate is the TMDS clock times N over CTS - for `rate` at a
+/// pixel clock of `pixel_khz` (vc4_hdmi_set_n_cts).
+pub fn clockRegen(rate: u32, pixel_khz: u32) struct { n: u32, cts: u32 } {
+    const n = 128 * rate / 1000;
+    const cts = @as(u64, pixel_khz) * 1000 * n / (128 * @as(u64, rate));
+    return .{ .n = n, .cts = @intCast(cts) };
+}
+
+fn regenerate(shared: *const Shared) void {
+    const regen = clockRegen(shared.audio_rate, shared.pixel_khz);
+    at(HDMI, CRP_CFG).* = CRP_EXTERNAL_CTS | regen.n;
+    at(HDMI, CTS_0).* = regen.cts;
+    at(HDMI, CTS_1).* = regen.cts;
+}
+
+/// Whether sound can go out: the display up as HDMI.
+pub fn audible(sys: *ExecBase) bool {
+    if (!on_bcm2712 or !running()) return false;
+    const shared = sharedOf(sys) orelse return false;
+    return shared.hdmi;
+}
+
+/// The sound started: `channels` channels of IEC 958 subframes at `rate`
+/// into the MAI FIFO, sent as audio sample packets with their infoframe
+/// (vc4_hdmi_audio_startup, then vc4_hdmi_audio_prepare). The DMA
+/// channel that feeds the FIFO starts after. False, and nothing started,
+/// when the display is not up as HDMI.
+pub fn audioStart(sys: *ExecBase, rate: u32, channels: u32, waiter: anytype) bool {
+    if (!on_bcm2712 or channels == 0 or channels > 8) return false;
+    const shared = sharedOf(sys) orelse return false;
+    sys.ObtainSemaphore(&shared.lock);
+    defer sys.ReleaseSemaphore(&shared.lock);
+    if (!running() or !shared.hdmi) return false;
+    at(HDMI_HD, HD_MAI_CTL).* = MAI_RESET | MAI_FLUSH | MAI_DLATE | MAI_ERRORE | MAI_ERRORF;
+    at(HDMI_HD, HD_MAI_SMP).* = maiSample(rate);
+    at(HDMI_HD, HD_MAI_CTL).* = channels << MAI_CHNUM_SHIFT | MAI_WHOLSMP | MAI_CHALIGN | MAI_ENABLE;
+    at(HDMI_HD, HD_MAI_FMT).* = rateCode(rate) << 8 | MAI_FORMAT_PCM << 16;
+    at(HDMI_HD, HD_MAI_THR).* = MAI_THRESHOLDS;
+    const mask = (@as(u32, 1) << @intCast(channels)) - 1;
+    at(HDMI, MAI_CONFIG).* = MAI_CONFIG_REVERSED | mask;
+    at(HDMI, MAI_CHANNEL_MAP).* = channelMap(mask);
+    at(HDMI, AUDIO_PACKET_CONFIG).* = AUDIO_ZERO_FLAT | AUDIO_ZERO_INACTIVE | AUDIO_B_FRAME | mask;
+    shared.audio_rate = rate;
+    shared.audio_channels = channels;
+    regenerate(shared);
+    writePacket(&audioFrame(channels), waiter);
+    return true;
+}
+
+/// The sound stopped, once its DMA channel has: the MAI and its FIFO
+/// reset, the audio infoframe no longer sent (vc4_hdmi_audio_shutdown,
+/// vc4_hdmi_audio_reset).
+pub fn audioStop(sys: *ExecBase, waiter: anytype) void {
+    if (!on_bcm2712) return;
+    const shared = sharedOf(sys) orelse return;
+    sys.ObtainSemaphore(&shared.lock);
+    defer sys.ReleaseSemaphore(&shared.lock);
+    shared.audio_rate = 0;
+    shared.audio_channels = 0;
+    if (!running()) return;
+    at(HDMI_HD, HD_MAI_CTL).* = MAI_DLATE | MAI_ERRORE | MAI_ERRORF;
+    if (shared.hdmi) stopPacket(INFOFRAME_AUDIO, waiter);
+    at(HDMI_HD, HD_MAI_CTL).* = MAI_RESET;
+    at(HDMI_HD, HD_MAI_CTL).* = MAI_ERRORF;
+    at(HDMI_HD, HD_MAI_CTL).* = MAI_FLUSH;
+}
+
+/// Each channel of `mask` taken from the MAI's channel of its own number
+/// (vc5_hdmi_channel_map): four bits a channel.
+pub fn channelMap(mask: u32) u32 {
+    var map: u32 = 0;
+    for (0..8) |i| {
+        if (mask & (@as(u32, 1) << @intCast(i)) != 0) map |= @as(u32, @intCast(i)) << @intCast(4 * i);
+    }
+    return map;
 }
 
 /// The controller's FIFO centred between the valve and the PHY, twice a
@@ -846,7 +1275,8 @@ test "the BCM2712's HDMI PHY: the VCO's divider, the rate manager and the lanes'
     try testing.expectEqual(@as(u32, 0x8082_8700), laneDrive(222_000_000, true));
     try testing.expectEqual(@as(u32, 0xC087_0800), laneDrive(297_000_000, true));
     try testing.expectEqual(@as(u32, 0x848F_8700), laneDrive(340_000_000, false));
-    try testing.expect(sends(148_500) and sends(297_000) and !sends(594_000) and !sends(0));
+    try testing.expectEqual(@as(u32, 0x848F_8700), laneDrive(594_000_000, false));
+    try testing.expect(sends(148_500) and sends(297_000) and sends(594_000) and !sends(600_001) and !sends(0));
     try testing.expectEqual(@as(u64, 120_000_000), hsmHz(74_250_000));
     try testing.expectEqual(@as(u64, 149_985_000), hsmHz(148_500_000));
     try testing.expectEqual(@as(u64, 75_000_000), bvbHz(148_500_000));
@@ -895,4 +1325,61 @@ test "the BCM2712's DDC: how the pieces of a read end and start" {
     try testing.expectEqual(COND_NOSTOP, readCondition(true, false));
     try testing.expectEqual(COND_NOSTART | COND_NOSTOP, readCondition(false, false));
     try testing.expectEqual(COND_NOSTART, readCondition(false, true));
+}
+
+test "what a monitor is sent: HDMI with its range said, limited without QS, DVI full" {
+    const portable: edid.Sink = .{ .hdmi = true, .audio = true, .quant_selectable = true, .max_tmds_khz = 300_000 };
+    const full_hd = edid.knownMode(1920, 1080, 60).?;
+    const output = outputFor(portable, &full_hd);
+    try testing.expect(output.hdmi and !output.limited and output.range_said and !output.scrambled);
+    // RGB, 16:9 with the active part the picture, full range, VIC 16.
+    try testing.expectEqualSlices(u8, &.{ 0x82, 0x02, 0x0D, 0x1F, 0x10, 0x28, 0x08, 16, 0 }, aviFrame(portable, &full_hd, output)[0..9]);
+
+    // A monitor without QS takes a CEA mode's RGB limited, and is not
+    // told; 640x480 (VIC 1) stays full.
+    const plain: edid.Sink = .{ .hdmi = true, .audio = false, .quant_selectable = false, .max_tmds_khz = 0 };
+    const squashed = outputFor(plain, &full_hd);
+    try testing.expect(squashed.limited and !squashed.range_said);
+    try testing.expectEqual(@as(u8, 0), aviFrame(plain, &full_hd, squashed)[6]);
+    const vga = edid.knownMode(640, 480, 60).?;
+    try testing.expect(!outputFor(plain, &vga).limited);
+    try testing.expectEqual(@as(u8, 1 << 4 | 8), aviFrame(plain, &vga, outputFor(plain, &vga))[5]);
+
+    // DVI: no infoframes, full range.
+    const dvi: edid.Sink = .{ .hdmi = false, .audio = false, .quant_selectable = false, .max_tmds_khz = 0 };
+    const as_dvi = outputFor(dvi, &full_hd);
+    try testing.expect(!as_dvi.hdmi and !as_dvi.limited and !as_dvi.range_said);
+
+    // 4K60 is scrambled.
+    const uhd60 = edid.knownMode(3840, 2160, 60).?;
+    try testing.expect(outputFor(portable, &uhd60).scrambled);
+}
+
+test "HDMI 1.4's 4K modes go in the vendor infoframe, HDMI 2.0's in the AVI's" {
+    const uhd30 = edid.knownMode(3840, 2160, 30).?;
+    try testing.expectEqual(@as(u8, 95), uhd30.vic);
+    try testing.expectEqual(@as(u8, 1), hdmiVic(uhd30.vic));
+    const older: edid.Sink = .{ .hdmi = true, .audio = true, .quant_selectable = false, .max_tmds_khz = 300_000 };
+    try testing.expectEqual(@as(u8, 0), aviFrame(older, &uhd30, outputFor(older, &uhd30))[7]);
+    var newer = older;
+    newer.forum = true;
+    try testing.expectEqual(@as(u8, 95), aviFrame(newer, &uhd30, outputFor(newer, &uhd30))[7]);
+    try testing.expectEqualSlices(u8, &.{ 0x81, 0x01, 0x05, 0x49, 0x03, 0x0C, 0x00, 0x20, 0x01, 0 }, vendorFrame(1)[0..10]);
+}
+
+test "the sound's numbers: the audio infoframe, the MAI's clock, N and CTS" {
+    try testing.expectEqualSlices(u8, &.{ 0x84, 0x01, 0x0A, 0x70, 0x01, 0 }, audioFrame(2)[0..6]);
+    // 108 MHz over 48 kHz is 2250 exactly; over 44.1 kHz 120000/49.
+    try testing.expectEqual(@as(u32, 2250 << 8), maiSample(48_000));
+    try testing.expectEqual(@as(u32, 120_000 << 8 | 48), maiSample(44_100));
+    try testing.expectEqual(@as(u32, 3375 << 8), maiSample(32_000));
+    try testing.expectEqual(@as(u32, 9), rateCode(48_000));
+    try testing.expectEqual(@as(u32, 0), rateCode(22_050));
+    // HDMI's table: 6144 and 148500 at 1080p60, 594000 at 4K60.
+    const full_hd = clockRegen(48_000, 148_500);
+    try testing.expectEqual(@as(u32, 6144), full_hd.n);
+    try testing.expectEqual(@as(u32, 148_500), full_hd.cts);
+    try testing.expectEqual(@as(u32, 594_000), clockRegen(48_000, 594_000).cts);
+    try testing.expectEqual(@as(u32, 0x10), channelMap(0x3));
+    try testing.expectEqual(@as(u32, 0x7654_3210), channelMap(0xFF));
 }

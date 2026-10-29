@@ -31,6 +31,8 @@ test {
     _ = @import("devs/audio/recorder.zig");
     _ = @import("libs/rta_driver/es8311/codec.zig");
     _ = @import("libs/rta_driver/i2s/divider.zig");
+    _ = @import("libs/rta_driver/hdmi/bcm2712.zig");
+    _ = @import("libs/rta_driver/hdmi/dma40.zig");
     _ = @import("devs/audio/golden.zig");
     _ = @import("devs/audio/audio.zig");
     _ = @import("libs/utility/date/datesplit.zig");
