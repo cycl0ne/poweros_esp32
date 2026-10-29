@@ -4,8 +4,10 @@
 //! its system tag list (a ROM tag of its own, which expansion.library
 //! reads), and `romtags.zig`, the drivers its parts want in the image. A
 //! board that resets the machine itself, or whose firmware needs something
-//! done before it does, has `reset.zig` too (`before_reset`), and one that
-//! sets its cores' supply itself `power.zig` (`cpu_supply`).
+//! done before it does, has `reset.zig` too (`before_reset`), one that
+//! sets its cores' supply itself `power.zig` (`cpu_supply`), and one whose
+//! devices' interrupts come through a controller of its own the code for
+//! that (`interrupt_bridge`).
 //!
 //! The kernel's own code reads the same list at compile time, through
 //! `fact` and `partFact`, so a fact is written once whoever reads it.
@@ -57,6 +59,26 @@ pub const before_reset: ?*const fn () void = switch (build_options.board) {
 /// the board has no say in it.
 pub const cpu_supply: ?*const fn (microvolts: u32) bool = switch (build_options.board) {
     .visionfive2 => @import("visionfive2/power.zig").setCpuSupply,
+    else => null,
+};
+
+/// A controller between some of the board's devices and the chip's own:
+/// its sources reach it as interrupts `first` to `first + count - 1`,
+/// each taken on its edge, and it has its say in each - set up once the
+/// chip's controller is (`init`), switched on and off with it, and told
+/// once a source's servers have run (`end`).
+pub const InterruptBridge = struct {
+    first: u32,
+    count: u32,
+    init: *const fn () void,
+    enable: *const fn (source: u32) void,
+    disable: *const fn (source: u32) void,
+    end: *const fn (source: u32) void,
+};
+
+/// The board's, or null: the CM5's RP1, whose interrupts are messages.
+pub const interrupt_bridge: ?*const InterruptBridge = switch (build_options.board) {
+    .rpi_cm5 => &@import("rpi_cm5/rp1.zig").bridge,
     else => null,
 };
 

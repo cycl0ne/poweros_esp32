@@ -14,12 +14,12 @@
 //! (GPIO14 and 15), 115200 8N1: a PL011 with a 50 MHz clock, behind the
 //! RP1's PCI Express link. The bootloader sets it up and leaves the RP1
 //! running for the kernel (`enable_rp1_uart=1`, `pciex4_reset=0`), its
-//! registers at 0x1C_0003_0000 - in the link's prefetchable window, where
-//! the bootloader put them and says so on the UART ("RP1_UART"); Linux
-//! moves them to 0x1F_0003_0000. Its interrupt comes as an MSI-X message, which
-//! nothing routes yet, so the board names none and serial.device polls it.
-//! The GIC-400's distributor is at 0x10_7FFF_9000 and its CPU interface
-//! at 0x10_7FFF_A000; the system counter runs at 54 MHz.
+//! registers at 0x1C_0003_0000: the RP1's peripherals are where the
+//! bootloader's outbound window puts them, as it says on the UART
+//! ("RP1_UART"); Linux moves them to 0x1F_0003_0000. Its interrupt, RP1
+//! source 25, comes as an MSI-X message, on the GIC as interrupt 185
+//! (`rp1.zig`). The GIC-400's distributor is at 0x10_7FFF_9000 and its
+//! CPU interface at 0x10_7FFF_A000; the system counter runs at 54 MHz.
 //!
 //! What is true of the board is written down here once, as the system tag
 //! list the ROM carries for expansion.library (a part per SYSTAG_Part). The
@@ -29,6 +29,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const Tag = sdk.utility.FixedTagItem;
 const st = sdk.expansion.systemtags;
+const rp1 = @import("rp1.zig");
 
 /// The module, as Raspberry Pi names it.
 const name = "Raspberry Pi Compute Module 5";
@@ -43,8 +44,9 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_UnifiedMemory, 1),
     .value(st.SYSTAG_Timebase, 54_000_000),
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
-    .value(st.SYSTAG_ConsoleBase, 0x1C_0003_0000),
+    .value(st.SYSTAG_ConsoleBase, rp1.peripherals + 0x3_0000),
     .value(st.SYSTAG_ConsoleClock, 50_000_000),
+    .value(st.SYSTAG_ConsoleIrq, rp1.irq(rp1.INT_UART0)),
     .value(st.SYSTAG_GicDist, 0x10_7FFF_9000),
     .value(st.SYSTAG_GicCpu, 0x10_7FFF_A000),
     .value(st.SYSTAG_Cores, 4),

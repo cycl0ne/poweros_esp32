@@ -94,13 +94,6 @@ pub const Port = enum(u32) {
         return if (port.uartPort()) |p| p.source() else usbjtag.source;
     }
 
-    /// Whether the port has no interrupt of its own and is read on every
-    /// VBLANK instead (its UART's `polled`, where the chip has it).
-    fn polled(port: Port) bool {
-        if (comptime !@hasDecl(uart.Port, "polled")) return false;
-        return if (port.uartPort()) |p| p.polled() else false;
-    }
-
     /// A UART's clock and boot-up line (the USB port needs nothing).
     fn setUp(port: Port) void {
         if (port.uartPort()) |p| uart.setUp(p);
@@ -257,9 +250,9 @@ pub fn initDevice(dev: *exec.Device, sys_base: *ExecBase, ports: []const Port) v
         port.disableRx();
         while (port.read()) |_| {}
         pu.int = .{
-            .node = .{ .type = .interrupt, .name = dev.node.name, .pri = if (port.polled()) poll_pri else 0 },
+            .node = .{ .type = .interrupt, .name = dev.node.name },
             .data = pu,
-            .code = if (port.polled()) vec(pollServer) else vec(rxServer),
+            .code = vec(rxServer),
         };
         sys_base.AddIntServer(port.source(), &pu.int);
         port.enableRx();
@@ -452,19 +445,6 @@ fn rxServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
         .xon = events.xon,
     });
     return 1;
-}
-
-/// A polled port's server's priority on VBLANK's chain: ahead of
-/// timer.device's, which answers every VBLANK and ends the chain.
-const poll_pri: i8 = 10;
-
-/// A polled port's server (`Port.polled`), on VBLANK's chain: what the
-/// port holds is taken as its interrupt would have had it, and VBLANK goes
-/// on down the chain to timer.device. At 50 Hz the 32-byte FIFO keeps up
-/// with 1600 bytes a second: typing, not a paste.
-fn pollServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
-    _ = rxServer(is_data, int_number);
-    return 0;
 }
 
 /// The jump table both devices use.
