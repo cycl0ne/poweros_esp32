@@ -19,7 +19,11 @@
 //! **The interrupt** clears what the controller raised - USBSTS's EINT,
 //! the interrupter's IP - and wakes the task, which takes the events
 //! (`takeEvents`): a transfer's to transfer.zig, a port's to the root
-//! hub, a command's to the command waiting for it.
+//! hub, a command's to the command waiting for it. Every pass tells the
+//! controller how far it took them and clears Event Handler Busy, events
+//! or none: the interrupt for events a pass woken by something else took
+//! already sets it all the same, and while it is set the controller
+//! raises no other - every transfer would wait for good.
 //!
 //! **A command** is put on the command ring, the controller's doorbell
 //! rung, and the task waits for its completion, taking every event that
@@ -303,10 +307,8 @@ pub fn intServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
 /// how far.
 pub fn takeEvents(host: *Host) void {
     _xhci.fromDevice(host, @intFromPtr(host.events.trbs), host.events.bytes());
-    var taken = false;
     while (host.events.peek()) |event| {
         host.events.advance();
-        taken = true;
         switch (regs.trbType(event.control)) {
             regs.TRB_COMMAND_COMPLETION => {
                 if (host.command_trb != 0 and event.param() == host.command_trb) {
@@ -323,7 +325,8 @@ pub fn takeEvents(host: *Host) void {
             else => {},
         }
     }
-    if (taken) _xhci.write64(host.rt + regs.ERDP, host.events.dequeueAddress() | regs.ERDP_EHB);
+    // Even with nothing taken: EHB may be set for events taken before.
+    _xhci.write64(host.rt + regs.ERDP, host.events.dequeueAddress() | regs.ERDP_EHB);
 }
 
 // --- commands ---------------------------------------------------------------------
