@@ -121,6 +121,41 @@ pub fn draw(p: *Painter, glyph: u32) void {
             p.solid(&cog, .metal, .{ .flat = true });
             p.solid(&.{p.ring(50, 50, 22, 15, 0, 360)}, .teal, .{ .no_shadow = true });
         },
+        // Two strokes leaning as an italic does and two across them.
+        command.CMD_NUMBER => p.solid(&.{
+            p.poly(&shapes.bar(44, 8, 32, 92, 12)),
+            p.poly(&shapes.bar(72, 8, 60, 92, 12)),
+            p.rr(14, 28, 90, 40, 0),
+            p.rr(10, 60, 86, 72, 0),
+        }, .blue, .{}),
+        command.CMD_PERCENT => p.solid(&.{
+            p.poly(&shapes.bar(80, 8, 20, 92, 12)),
+            p.ring(27, 27, 18, 8, 0, 360),
+            p.ring(73, 73, 18, 8, 0, 360),
+        }, .orange, .{}),
+        command.CMD_CURRENCY => {
+            // The note, its middle lighter, and a coin with its rim.
+            p.solid(&.{p.rr(4, 18, 80, 66, 5)}, .green, .{});
+            if (p.detail) {
+                p.fill(p.disc(42, 42, 13), .{ .colour = shapes.tones(.green).light });
+                p.fill(p.ring(42, 42, 13, 9, 0, 360), .{ .colour = shapes.tones(.green).dark });
+            }
+            p.solid(&.{p.disc(70, 70, 25)}, .yellow, .{});
+            if (p.detail) p.fill(p.ring(70, 70, 18, 14, 0, 360), .{ .colour = shapes.tones(.yellow).dark });
+        },
+        command.CMD_DECIMALS_MORE => decimals(p, .green, .plus),
+        command.CMD_DECIMALS_LESS => decimals(p, .red, .minus),
+        command.CMD_FILL => {
+            p.solid(&.{p.rr(8, 6, 52, 33, 3)}, .blue, .{ .no_gloss = true });
+            p.solid(&.{ p.rr(8, 37, 52, 64, 3), p.rr(8, 68, 52, 95, 3) }, .paper, .{ .no_gloss = true });
+            p.solid(&.{ p.poly(&shapes.bar(76, 8, 76, 62, 14)), p.poly(&.{ .{ 58, 58 }, .{ 94, 58 }, .{ 76, 94 } }) }, .orange, .{});
+        },
+        command.CMD_CLEAR => {
+            // Leaning a quarter turn's half, its sleeve at the lower end.
+            p.ink(&.{p.rr(44, 88, 96, 94, 2)});
+            p.solid(&.{p.poly(&.{ .{ 33, 39 }, .{ 58, 14 }, .{ 84, 40 }, .{ 59, 65 } })}, .red, .{});
+            p.solid(&.{p.poly(&.{ .{ 8, 64 }, .{ 33, 39 }, .{ 59, 65 }, .{ 34, 90 } })}, .paper, .{});
+        },
         // The box's top and left edge, and the arrow out of its corner,
         // its head filling the opposite one.
         command.CMD_LAUNCHER => p.ink(&.{
@@ -136,6 +171,19 @@ pub fn draw(p: *Painter, glyph: u32) void {
 /// The arrow turning back: most of a ring and its head.
 fn undo(p: *Painter) void {
     p.solid(&.{ p.ring(54, 58, 35, 17, -40, 180), p.poly(&.{ .{ 6, 55 }, .{ 50, 55 }, .{ 28, 88 } }) }, .blue, .{});
+}
+
+/// `.0` in the ink - a point and a nought of two half rings and the
+/// sides between - and a badge in `hue`.
+fn decimals(p: *Painter, hue: Hue, mark: Mark) void {
+    p.ink(&.{
+        p.rr(6, 50, 18, 62, 3),
+        p.ring(40, 20, 16, 8, 0, 180),
+        p.ring(40, 46, 16, 8, 180, 360),
+        p.rr(24, 20, 32, 46, 0),
+        p.rr(48, 20, 56, 46, 0),
+    });
+    badge(p, 74, 76, 21, hue, mark);
 }
 
 /// The cog's eight teeth, bars from the rim outward between the eighths.

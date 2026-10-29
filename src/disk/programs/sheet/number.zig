@@ -3,6 +3,9 @@
 //! into a cell, and a number written back as text in at most a given
 //! count of significant digits.
 //!
+//! A cell's format (`Format`) writes a number in a fixed count of
+//! decimals instead: grouped in thousands, as a percent, or as money.
+//!
 //! A number is a double throughout. Reading gathers up to nineteen digits
 //! into an integer and scales it by a power of ten once; writing finds the
 //! decimal exponent from the double's own, rounds the number to the digits
@@ -229,4 +232,125 @@ pub fn format(value: f64, digits: u32, out: *[32]u8) []const u8 {
     @memcpy(out[used..][0..power_text.len], power_text);
     used += power_text.len;
     return out[0..used];
+}
+
+// --- formats ------------------------------------------------------------------
+
+/// How a cell's number is shown: as many digits as fit (`general`), or in
+/// a fixed count of decimals - its digits grouped in thousands (`number`),
+/// a hundred times it with a `%` after it (`percent`), or as money with
+/// the `$` in front and grouped (`currency`).
+pub const Style = enum(u8) { general, number, percent, currency };
+
+pub const Format = struct {
+    style: Style = .general,
+    /// The decimals of every style but `general`.
+    decimals: u8 = 0,
+
+    pub fn eql(one: Format, other: Format) bool {
+        return one.style == other.style and (one.style == .general or one.decimals == other.decimals);
+    }
+};
+
+/// The most decimals a format has.
+pub const max_decimals: u8 = 10;
+
+/// The decimals a style starts with when a cell is given it.
+pub fn decimalsOf(style: Style) u8 {
+    return switch (style) {
+        .general, .percent => 0,
+        .number, .currency => 2,
+    };
+}
+
+/// The longest text `styled` writes.
+pub const styled_size = 48;
+
+/// `value` with `decimals` places, its digits before the point grouped in
+/// threes by commas when `grouped`, into the end of `out`; null when it
+/// has more digits than a double holds whole - then it is written as
+/// `format` writes it.
+fn fixed(value: f64, decimals: u32, grouped: bool, out: []u8) ?[]u8 {
+    if (value - value != 0) return null;
+    const places = @min(decimals, max_decimals);
+    const scaled = @round(@abs(value) * tenTo(@intCast(places)));
+    if (scaled >= 9_007_199_254_740_992.0) return null;
+    const whole: u64 = @intFromFloat(scaled);
+    var scratch: [24]u8 = undefined;
+    const digits = writeInteger(whole, &scratch);
+    // Written from the end: the decimals, the point, the rest grouped.
+    var at = out.len;
+    var used: usize = 0;
+    while (used < places) : (used += 1) {
+        at -= 1;
+        out[at] = if (used < digits.len) digits[digits.len - 1 - used] else '0';
+    }
+    if (places > 0) {
+        at -= 1;
+        out[at] = '.';
+    }
+    var in_front: usize = 0;
+    var index = digits.len;
+    while (index > places or in_front == 0) {
+        if (grouped and in_front > 0 and in_front % 3 == 0) {
+            at -= 1;
+            out[at] = ',';
+        }
+        at -= 1;
+        out[at] = if (index > places) digits[index - 1 - places] else '0';
+        in_front += 1;
+        if (index <= places) break;
+        index -= 1;
+    }
+    if (value < 0 and whole != 0) {
+        at -= 1;
+        out[at] = '-';
+    }
+    return out[at..];
+}
+
+/// The text of `value` in the format `how`, written into `out`; null
+/// for the general format, which is as many digits as there is room for
+/// and so the caller's to write.
+pub fn styled(value: f64, how: Format, out: *[styled_size]u8) ?[]const u8 {
+    switch (how.style) {
+        .general => return null,
+        .number => return fixed(value, how.decimals, true, out[0..]) orelse format(value, max_digits, out[0..32]),
+        .percent => {
+            const text = fixed(value * 100, how.decimals, false, out[0 .. out.len - 1]) orelse return format(value, max_digits, out[0..32]);
+            out[out.len - 1] = '%';
+            return out[out.len - 1 - text.len ..];
+        },
+        .currency => {
+            const text = fixed(value, how.decimals, true, out[0..]) orelse return format(value, max_digits, out[0..32]);
+            // The sign before the `$`: -$1,234.50.
+            const start = out.len - text.len;
+            if (text[0] == '-') {
+                out[start - 1] = '-';
+                out[start] = '$';
+                return out[start - 1 ..];
+            }
+            out[start - 1] = '$';
+            return out[start - 1 ..];
+        },
+    }
+}
+
+/// How many decimals `value` shows written as `format` writes it in
+/// `digits` digits: what a general cell given a decimal more starts from.
+pub fn decimalsShown(value: f64, digits: u32) u8 {
+    var out: [32]u8 = undefined;
+    const text = format(value, digits, &out);
+    for (text, 0..) |char, at| {
+        if (char == 'E') return 0;
+        if (char == '.') {
+            var count: usize = 0;
+            for (text[at + 1 ..]) |after| {
+                if (after == 'E') break;
+                count += 1;
+            }
+            return @intCast(@min(count, max_decimals));
+        }
+    }
+    return 0;
 }

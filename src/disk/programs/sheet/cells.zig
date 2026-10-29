@@ -20,10 +20,18 @@
 //! whatever a condition says.
 //!
 //! **Undoing.** A change the user makes is a step: the texts of the cells
-//! it changes, each with the text before and after, and the rows or
-//! columns it moved. Undo plays a step's records backwards, redo forwards
-//! again. Everything goes through `changeText` and `shiftLines`, so what
-//! a step holds is what was done, in order.
+//! it changes, each with the text before and after, the formats, and the
+//! rows or columns it moved. Undo plays a step's records backwards, redo
+//! forwards again. Everything goes through `changeText`, `changeFormat`
+//! and `shiftLines`, so what a step holds is what was done, in order. A
+//! cell emptied takes its format with it, so emptying one with a format
+//! keeps the format's change first, which undoing puts back after the
+//! text.
+//!
+//! **Formats** (`number.Format`) are a cell's, kept beside its text: a
+//! cell keeps its format while its text changes, and has none once it is
+//! empty. A copy, a fill and a sort take a cell's format along. CSV has
+//! no room for them, so a file keeps none.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -106,6 +114,8 @@ pub const Cell = struct {
     visiting: u32 = 0,
     /// Given a new key and not yet put where it probes to.
     unplaced: bool = false,
+    /// How its number is shown.
+    format: number.Format = .{},
 
     pub fn text(cell: *const Cell) []const u8 {
         return cell.input[0..cell.input_len];
@@ -118,6 +128,8 @@ const Record = union(enum) {
     text: struct { key: u32, old: ?[*]u8, old_len: u16, new: ?[*]u8, new_len: u16 },
     /// Rows or columns put in (`insert`) or taken out at `at`.
     shift: struct { columns: bool, at: u32, count: u32, insert: bool },
+    /// A cell's format changed from `old` to `new`.
+    format: struct { key: u32, old: number.Format, new: number.Format },
 };
 
 const Step = struct { records: exec.Array(Record) = .{} };
@@ -132,7 +144,7 @@ pub const Block = struct {
     col: u32 = 0,
     entries: exec.Array(Entry) = .{},
 
-    pub const Entry = struct { row: u32, col: u32, text: [*]u8, len: u16 };
+    pub const Entry = struct { row: u32, col: u32, text: [*]u8, len: u16, format: number.Format = .{} };
 
     pub fn deinit(block: *Block, sys: *ExecBase) void {
         for (block.entries.slice()) |entry| sys.FreeVec(entry.text);
@@ -335,9 +347,11 @@ pub const Sheet = struct {
             sheet.sys.FreeVec(copy);
             return false;
         };
+        // A cell that was there keeps its format; a new one has none.
+        const format: number.Format = if (cell.input_len != 0) cell.format else .{};
         if (cell.input_len != 0) sheet.release(cell);
         const length: u16 = @intCast(@min(text.len, max_text));
-        cell.* = .{ .key = key, .input = copy, .input_len = length };
+        cell.* = .{ .key = key, .input = copy, .input_len = length, .format = format };
         cell.content = contentOf(copy[0..length]);
         cell.value = switch (cell.content) {
             .number => Value.ofNumber(number.parse(copy[0..length]).?),
@@ -459,7 +473,7 @@ pub const Sheet = struct {
                 if (change.old) |old| sheet.sys.FreeVec(old);
                 if (change.new) |new| sheet.sys.FreeVec(new);
             },
-            .shift => {},
+            .shift, .format => {},
         }
     }
 
@@ -531,6 +545,10 @@ pub const Sheet = struct {
                 _ = sheet.setText(change.key, text);
             },
             .shift => |shift| sheet.moveLines(shift.columns, shift.at, shift.count, if (forwards) shift.insert else !shift.insert),
+            .format => |change| {
+                const index = sheet.slotOf(change.key) orelse return;
+                sheet.slots[index].format = if (forwards) change.new else change.old;
+            },
         }
     }
 
@@ -566,6 +584,12 @@ pub const Sheet = struct {
         const old = sheet.textAt(row, col);
         const new = text[0..@min(text.len, max_text)];
         if (sameText(old, new)) return true;
+        // Emptied, it loses its format: that first, to come back after it.
+        if (new.len == 0) {
+            if (sheet.find(row, col)) |cell| {
+                if (!cell.format.eql(.{}) and !sheet.changeFormat(row, col, .{})) return false;
+            }
+        }
         if (sheet.open) |*step| {
             var failed = false;
             const old_copy = copyText(sheet.sys, old, &failed);
@@ -583,6 +607,19 @@ pub const Sheet = struct {
             return true;
         }
         return sheet.setText(key, new);
+    }
+
+    /// The cell at `row`, `col` given `format`, as part of the open step;
+    /// an empty cell has none to give. False with no memory, the cell as
+    /// it was.
+    pub fn changeFormat(sheet: *Sheet, row: u32, col: u32, format: number.Format) bool {
+        const cell = sheet.find(row, col) orelse return true;
+        if (cell.format.eql(format)) return true;
+        if (sheet.open) |*step| {
+            if (!step.records.append(sheet.sys, .{ .format = .{ .key = cell.key, .old = cell.format, .new = format } })) return false;
+        }
+        cell.format = format;
+        return true;
     }
 
     /// Rows (or columns) moved, the cells' places only: `count` of them
@@ -700,7 +737,9 @@ pub const Sheet = struct {
                 // The source's text is its own memory, which the change to
                 // another cell leaves alone.
                 const text = sheet.copiedText(sheet.textAt(from_row, from_col), from_row, from_col, row, col) orelse continue;
+                const format = if (sheet.find(from_row, from_col)) |from| from.format else number.Format{};
                 ok = sheet.changeText(row, col, text) and ok;
+                ok = sheet.changeFormat(row, col, format) and ok;
             }
         }
         return sheet.end() and ok;
@@ -734,7 +773,7 @@ pub const Sheet = struct {
             if (!area.holds(row, col)) continue;
             var failed = false;
             const copy = copyText(sheet.sys, cell.text(), &failed) orelse return false;
-            const entry = Block.Entry{ .row = row - area.top, .col = col - area.left, .text = copy, .len = cell.input_len };
+            const entry = Block.Entry{ .row = row - area.top, .col = col - area.left, .text = copy, .len = cell.input_len, .format = cell.format };
             if (!block.entries.append(sheet.sys, entry)) {
                 sheet.sys.FreeVec(copy);
                 return false;
@@ -767,6 +806,7 @@ pub const Sheet = struct {
             if (to_row > bottom or to_col > right) continue;
             const text = sheet.copiedText(entry.text[0..entry.len], block.row + entry.row, block.col + entry.col, to_row, to_col) orelse continue;
             ok = sheet.changeText(to_row, to_col, text) and ok;
+            ok = sheet.changeFormat(to_row, to_col, entry.format) and ok;
         }
         return sheet.end() and ok;
     }
@@ -800,9 +840,321 @@ pub const Sheet = struct {
         }
         return sheet.end() and ok;
     }
+    // --- formats, sorting, finding ----------------------------------------------
+
+    /// Every cell of the area that holds something given another format,
+    /// as one step: the style `to` with its decimals, or `more` decimals
+    /// than it has (fewer for a negative count) - a general cell starting
+    /// from the decimals it shows, and becoming a number. False with no
+    /// memory.
+    pub fn restyle(sheet: *Sheet, area: Area, change: Restyle) bool {
+        sheet.begin();
+        var ok = true;
+        var keys: exec.Array(u32) = .{};
+        defer keys.deinit(sheet.sys);
+        for (sheet.slots[0..sheet.capacity]) |cell| {
+            if (cell.key == free_key or !area.holds(rowOf(cell.key), colOf(cell.key))) continue;
+            if (!keys.append(sheet.sys, cell.key)) ok = false;
+        }
+        for (keys.slice()) |key| {
+            const cell = sheet.find(rowOf(key), colOf(key)) orelse continue;
+            const now = cell.format;
+            const format: number.Format = switch (change) {
+                .to => |style| .{ .style = style, .decimals = number.decimalsOf(style) },
+                .more => |count| blk: {
+                    var from: i32 = now.decimals;
+                    var style = now.style;
+                    if (style == .general) {
+                        style = .number;
+                        from = if (cell.value.kind == .number) number.decimalsShown(cell.value.number, 10) else 0;
+                    }
+                    break :blk .{ .style = style, .decimals = @intCast(@max(0, @min(from + count, number.max_decimals))) };
+                },
+            };
+            ok = sheet.changeFormat(rowOf(key), colOf(key), format) and ok;
+        }
+        return sheet.end() and ok;
+    }
+
+    /// The rectangle round `row`, `col` that holds something: grown a row
+    /// or a column at a time, corners too, until every row and column
+    /// round it is empty. Only the cell itself round an empty one.
+    pub fn region(sheet: *const Sheet, row: u32, col: u32) Area {
+        var area = Area{ .top = row, .left = col, .bottom = row, .right = col };
+        var grown = true;
+        while (grown) {
+            grown = false;
+            const left = area.left -| 1;
+            const right = @min(area.right + 1, max_cols - 1);
+            const top = area.top -| 1;
+            const bottom = @min(area.bottom + 1, max_rows - 1);
+            if (area.top > 0 and sheet.anyIn(.{ .top = top, .left = left, .bottom = top, .right = right })) {
+                area.top = top;
+                grown = true;
+            }
+            if (area.bottom + 1 < max_rows and sheet.anyIn(.{ .top = bottom, .left = left, .bottom = bottom, .right = right })) {
+                area.bottom = bottom;
+                grown = true;
+            }
+            if (area.left > 0 and sheet.anyIn(.{ .top = top, .left = left, .bottom = bottom, .right = left })) {
+                area.left = left;
+                grown = true;
+            }
+            if (area.right + 1 < max_cols and sheet.anyIn(.{ .top = top, .left = right, .bottom = bottom, .right = right })) {
+                area.right = right;
+                grown = true;
+            }
+        }
+        return area;
+    }
+
+    /// Whether a cell of the area holds something.
+    pub fn anyIn(sheet: *const Sheet, area: Area) bool {
+        if (area.cells() > sheet.count) {
+            for (sheet.slots[0..sheet.capacity]) |cell| {
+                if (cell.key != free_key and area.holds(rowOf(cell.key), colOf(cell.key))) return true;
+            }
+            return false;
+        }
+        var row = area.top;
+        while (row <= area.bottom) : (row += 1) {
+            var col = area.left;
+            while (col <= area.right) : (col += 1) {
+                if (sheet.find(row, col) != null) return true;
+            }
+        }
+        return false;
+    }
+
+    /// The rows of the area put in order by their cells in column `by`,
+    /// as one step: numbers smallest first, then texts from A to Z, case
+    /// not counting, then FALSE and TRUE, then errors - or all of that the
+    /// other way round (`descending`); empty cells last either way. Rows
+    /// that sort the same keep their order. A row's cells take their
+    /// formats along, and a formula's references move as a copy's would.
+    /// Only rows that hold something move. False with no memory.
+    pub fn sortRows(sheet: *Sheet, area: Area, by: u32, descending: bool) bool {
+        const reach = sheet.extent();
+        if (reach.rows == 0 or area.top >= reach.rows) return true;
+        const bottom = @min(area.bottom, reach.rows - 1);
+        const rows = bottom - area.top + 1;
+        if (rows < 2) return true;
+        const sys = sheet.sys;
+        // The rows' order and the order's other half, which the sort uses
+        // and then holds where each row goes.
+        const memory: [*]u32 = @ptrCast(@alignCast(sys.AllocVec(rows * 2 * @sizeOf(u32), exec.MEMF_ANY) orelse return false));
+        defer sys.FreeVec(memory);
+        const order = memory[0..rows];
+        const spare = memory[rows .. rows * 2];
+        for (order, 0..) |*slot, i| slot.* = @intCast(i);
+        const by_key = SortKey{ .sheet = sheet, .top = area.top, .col = by, .descending = descending };
+        mergeSort(order, spare, by_key);
+        var moves = false;
+        for (order, 0..) |from, to| {
+            spare[from] = @intCast(to);
+            if (from != to) moves = true;
+        }
+        if (!moves) return true;
+        const where = spare;
+
+        var block = Block{};
+        defer block.deinit(sys);
+        const whole = Area{ .top = area.top, .left = area.left, .bottom = bottom, .right = area.right };
+        if (!sheet.copyBlock(whole, &block)) return false;
+        sheet.begin();
+        var ok = true;
+        // The rows that move emptied first, then each put where it goes.
+        var keys: exec.Array(u32) = .{};
+        defer keys.deinit(sys);
+        for (sheet.slots[0..sheet.capacity]) |cell| {
+            if (cell.key == free_key or !whole.holds(rowOf(cell.key), colOf(cell.key))) continue;
+            const row = rowOf(cell.key) - area.top;
+            if (where[row] != row and !keys.append(sys, cell.key)) ok = false;
+        }
+        for (keys.slice()) |key| ok = sheet.changeText(rowOf(key), colOf(key), "") and ok;
+        for (block.entries.slice()) |entry| {
+            const to = where[entry.row];
+            if (to == entry.row) continue;
+            const col = area.left + entry.col;
+            const text = sheet.copiedText(entry.text[0..entry.len], area.top + entry.row, col, area.top + to, col) orelse continue;
+            ok = sheet.changeText(area.top + to, col, text) and ok;
+            ok = sheet.changeFormat(area.top + to, col, entry.format) and ok;
+        }
+        return sheet.end() and ok;
+    }
+
+    /// The numbers AutoSum adds up for the cell at `row`, `col`: those right
+    /// above it, up to the first cell that holds no number; with none
+    /// there, those right left of it. Null for none either way.
+    pub fn sumRun(sheet: *Sheet, row: u32, col: u32) ?Area {
+        if (row > 0 and sheet.cellValue(row - 1, col).kind == .number) {
+            var top = row - 1;
+            while (top > 0 and sheet.cellValue(top - 1, col).kind == .number) top -= 1;
+            return .{ .top = top, .left = col, .bottom = row - 1, .right = col };
+        }
+        if (col > 0 and sheet.cellValue(row, col - 1).kind == .number) {
+            var left = col - 1;
+            while (left > 0 and sheet.cellValue(row, left - 1).kind == .number) left -= 1;
+            return .{ .top = row, .left = left, .bottom = row, .right = col - 1 };
+        }
+        return null;
+    }
+
+    /// The next cell after `row`, `col` along the rows - from the last one
+    /// round to the first - whose text or what it shows holds `wanted`,
+    /// case not counting; `backwards` the other way. The cell itself is
+    /// the last one looked at. Null for none, or nothing wanted.
+    pub fn findText(sheet: *const Sheet, wanted: []const u8, row: u32, col: u32, backwards: bool) ?struct { row: u32, col: u32 } {
+        if (wanted.len == 0) return null;
+        const start = keyOf(row, col);
+        var best: ?u32 = null;
+        var best_distance: u32 = 0;
+        for (sheet.slots[0..sheet.capacity]) |*cell| {
+            if (cell.key == free_key) continue;
+            var out: [number.styled_size]u8 = undefined;
+            if (!holdsText(cell.text(), wanted) and !holdsText(shownIn(cell.value, cell.format, number.max_digits, &out), wanted)) continue;
+            // How far on from the start, round the end: the start itself
+            // the furthest.
+            const distance = if (backwards) start -% cell.key -% 1 else cell.key -% start -% 1;
+            if (best == null or distance < best_distance) {
+                best = cell.key;
+                best_distance = distance;
+            }
+        }
+        const key = best orelse return null;
+        return .{ .row = rowOf(key), .col = colOf(key) };
+    }
 };
 
 pub const ShiftResult = enum { done, no_room, no_memory };
+
+/// What `restyle` does to a format: gives it a style, or decimals more
+/// (fewer when negative).
+pub const Restyle = union(enum) { to: number.Style, more: i32 };
+
+/// How `sortRows` tells the rows apart: by the value in one column.
+const SortKey = struct {
+    sheet: *Sheet,
+    top: u32,
+    col: u32,
+    descending: bool,
+
+    /// Whether row `a` goes after row `b`, the rows counted from `top`.
+    fn after(key: SortKey, a: u32, b: u32) bool {
+        const first = key.sheet.cellValue(key.top + a, key.col);
+        const second = key.sheet.cellValue(key.top + b, key.col);
+        const empty_first = first.kind == .empty;
+        const empty_second = second.kind == .empty;
+        if (empty_first or empty_second) return empty_first and !empty_second;
+        const order = compareValues(first, second);
+        return if (key.descending) order < 0 else order > 0;
+    }
+};
+
+/// `=FUNCTION(B2:B9)` for the area - a single cell without the colon -
+/// written into `out`: what AutoSum puts in a cell.
+pub fn rangeFormula(function: []const u8, area: Area, out: *[40]u8) []const u8 {
+    var used: usize = 0;
+    var names: [2][8]u8 = undefined;
+    const first = formula.cellName(area.top, area.left, &names[0]);
+    const parts = [_][]const u8{ "=", function, "(", first };
+    for (parts) |part| {
+        @memcpy(out[used..][0..part.len], part);
+        used += part.len;
+    }
+    if (area.bottom != area.top or area.right != area.left) {
+        const last = formula.cellName(area.bottom, area.right, &names[1]);
+        out[used] = ':';
+        used += 1;
+        @memcpy(out[used..][0..last.len], last);
+        used += last.len;
+    }
+    out[used] = ')';
+    return out[0 .. used + 1];
+}
+
+/// Where a value of each kind goes in a sort, before the values in it.
+fn rankOf(value: Value) u8 {
+    return switch (value.kind) {
+        .number => 0,
+        .text => 1,
+        .boolean => 2,
+        .err => 3,
+        .empty, .range => 4,
+    };
+}
+
+/// -1, 0 or 1 as `a` sorts before, with or after `b`.
+pub fn compareValues(a: Value, b: Value) i32 {
+    const rank_a = rankOf(a);
+    const rank_b = rankOf(b);
+    if (rank_a != rank_b) return if (rank_a < rank_b) -1 else 1;
+    switch (a.kind) {
+        .number, .boolean => return if (a.number < b.number) -1 else if (a.number > b.number) 1 else 0,
+        .text => {
+            for (a.text[0..@min(a.text.len, b.text.len)], b.text[0..@min(a.text.len, b.text.len)]) |x, y| {
+                const lx = lower(x);
+                const ly = lower(y);
+                if (lx != ly) return if (lx < ly) -1 else 1;
+            }
+            return if (a.text.len < b.text.len) -1 else if (a.text.len > b.text.len) 1 else 0;
+        },
+        .err => return if (@intFromEnum(a.err) < @intFromEnum(b.err)) -1 else if (@intFromEnum(a.err) > @intFromEnum(b.err)) 1 else 0,
+        .empty, .range => return 0,
+    }
+}
+
+/// A Latin-1 letter in small, anything else as it is.
+fn lower(char: u8) u8 {
+    return switch (char) {
+        'A'...'Z', 0xC0...0xD6, 0xD8...0xDE => char + 0x20,
+        else => char,
+    };
+}
+
+/// Whether `text` holds `wanted`, case not counting.
+pub fn holdsText(text: []const u8, wanted: []const u8) bool {
+    if (wanted.len > text.len) return false;
+    var at: usize = 0;
+    while (at + wanted.len <= text.len) : (at += 1) {
+        for (wanted, text[at..][0..wanted.len]) |w, t| {
+            if (lower(w) != lower(t)) break;
+        } else return true;
+    }
+    return false;
+}
+
+/// `order` put in order by `key`, keeping equal ones as they were: a
+/// merge from the bottom up, `spare` as long as it to merge into.
+fn mergeSort(order: []u32, spare: []u32, key: SortKey) void {
+    var from = order;
+    var into = spare;
+    var width: usize = 1;
+    while (width < order.len) : (width *= 2) {
+        var start: usize = 0;
+        while (start < order.len) : (start += 2 * width) {
+            const middle = @min(start + width, order.len);
+            const end = @min(start + 2 * width, order.len);
+            var left = start;
+            var right = middle;
+            var at = start;
+            while (at < end) : (at += 1) {
+                // From the right only when the left one goes after it.
+                if (left < middle and (right >= end or !key.after(from[left], from[right]))) {
+                    into[at] = from[left];
+                    left += 1;
+                } else {
+                    into[at] = from[right];
+                    right += 1;
+                }
+            }
+        }
+        const was = from;
+        from = into;
+        into = was;
+    }
+    if (from.ptr != order.ptr) @memcpy(order, from);
+}
 
 /// A key moved by rows or columns put in or taken out; null for a cell in
 /// what was taken out.
@@ -828,6 +1180,16 @@ pub fn sameText(text: []const u8, other: []const u8) bool {
         if (char != other_char) return false;
     }
     return true;
+}
+
+/// How a value is shown in a cell of `format`: a number in its format, or
+/// for the general format in at most `digits` significant digits; any
+/// other value as `shownText` has it.
+pub fn shownIn(value: Value, format: number.Format, digits: u32, out: *[number.styled_size]u8) []const u8 {
+    if (value.kind == .number) {
+        if (number.styled(value.number, format, out)) |text| return text;
+    }
+    return shownText(value, digits, out[0..32]);
 }
 
 /// How a value is shown: a number in at most `digits` significant

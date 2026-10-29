@@ -13,7 +13,9 @@
 //! the screen's text pen, so it reads on a light screen and on a dark one.
 //! Drawn in a disabled state (`IDS_DISABLED`, `IDS_INACTIVEDISABLED`,
 //! `IDS_SELECTEDDISABLED`), every colour is its grey, faded into the
-//! screen's background.
+//! screen's background. Since 1.3 there are the pictures a spreadsheet's
+//! ribbon has besides: a number's format, a percent, money, a decimal
+//! more and fewer, fill and clear.
 //!
 //! `IM_DRAWFRAME` draws the picture in the largest square that fits the
 //! box, in its middle; `IM_DRAW` in the image's own box, 24 by 24 unless
@@ -100,5 +102,20 @@ pub const CMD_DELETE_COLUMN: u32 = 26;
 /// more of the same in a dialog of its own - what a ribbon group's name
 /// line has at its end. In the ink, as a mark on the ground is.
 pub const CMD_LAUNCHER: u32 = 27;
+/// A blue `#`: a number's format. Since 1.3.
+pub const CMD_NUMBER: u32 = 28;
+/// An orange `%`. Since 1.3.
+pub const CMD_PERCENT: u32 = 29;
+/// A green banknote and a gold coin on it: money. Since 1.3.
+pub const CMD_CURRENCY: u32 = 30;
+/// `.0` in the ink and a green plus: a decimal more. Since 1.3.
+pub const CMD_DECIMALS_MORE: u32 = 31;
+/// `.0` and a red minus: a decimal fewer. Since 1.3.
+pub const CMD_DECIMALS_LESS: u32 = 32;
+/// A column of cells, the top one blue, and an orange arrow down: the
+/// first copied over the rest. Since 1.3.
+pub const CMD_FILL: u32 = 33;
+/// An eraser, red with a white sleeve, on a line in the ink. Since 1.3.
+pub const CMD_CLEAR: u32 = 34;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_LAUNCHER;
+pub const CMD_LAST: u32 = CMD_CLEAR;

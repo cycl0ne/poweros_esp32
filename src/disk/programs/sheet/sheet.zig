@@ -3,11 +3,11 @@
 //!
 //!   Sheet [FILE]
 //!
-//! A window on the default public screen: a line at the top with the
-//! current cell's name and what was typed into it, the cells below in rows
-//! and columns, and a status line at the bottom. FILE, a CSV file, is
-//! opened at the start; a name that is not there yet is the file the sheet
-//! is saved to.
+//! A window on the default public screen: a ribbon of commands along the
+//! top, a line under it with the current cell's name and what was typed
+//! into it, the cells below in rows and columns, and a status line at the
+//! bottom. FILE, a CSV file, is opened at the start; a name that is not
+//! there yet is the file the sheet is saved to.
 //!
 //! **Cells.** A cell holds a number, a text or a formula - anything that
 //! starts with `=`, worked out again whenever a cell changes (formula.zig
@@ -49,15 +49,66 @@
 //!
 //!   Project  New (N), Open... (O), Save (S), Save As..., Quit (Q)
 //!   Edit     Undo (Z), Redo (Y), Cut (X), Copy (C), Paste (V),
-//!            Clear (Del), Fill Down (D), Fill Right (R), Select All (A)
+//!            Clear (Del), Fill Down (D), Fill Right (R), Select All (A),
+//!            Find... (F), Find Next (G)
 //!   Sheet    Insert Rows, Delete Rows, Insert Columns, Delete Columns,
-//!            Wider Column, Narrower Column
+//!            Wider Column, Narrower Column, AutoSum, Sort Ascending,
+//!            Sort Descending
+//!   Format   General, Number, Percent, Currency, More Decimals,
+//!            Fewer Decimals
+//!   View     Ribbon
+//!
+//! **The ribbon** (ribbon.gadget, made from a table with `rb.build`) has
+//! one tab, Home, with the menus' commands in groups: Clipboard (Paste,
+//! Cut, Copy), Undo (Undo, Redo, disabled while there is nothing to undo
+//! or redo), Number (the formats, toggles that show the current cell's,
+//! and a decimal more or fewer), Cells (Insert and Delete, each dropping
+//! down Rows and Columns) and Editing (AutoSum, which drops down Sum,
+//! Average, Count, Min and Max; Sort; Find; Fill down or right; Clear).
+//! A menu item and a ribbon button are one command: the item's user data
+//! is the button's ID. No label marks a key, since a key typed is the
+//! cell's. View's Ribbon hides it and shows it again - the layout's child
+//! hidden, intuition 0.70 - and `ENV:Sheet.prefs` keeps that (`RIBBON=NO`),
+//! ENVARC: too. In a window lower than 400 pixels inside, a small board's,
+//! the ribbon is its row of tabs alone, a tab dropping its page down.
+//! Without toolbutton.gadget, command.image or ribbon.gadget Sheet has no
+//! ribbon and works as before.
+//!
+//! **Formats.** A cell's number is shown as many digits as fit (General),
+//! or with a fixed count of decimals: grouped in thousands (Number, two
+//! decimals to begin with), a hundred times it with a `%` (Percent, none),
+//! or as money with a `$` in front (Currency, two). More Decimals on a
+//! General cell starts from the decimals it shows. A cell keeps its format
+//! while its text changes, loses it when emptied; copies, fills and sorts
+//! take it along, and undo puts it back. CSV keeps no formats: a file read
+//! again shows its numbers in General.
+//!
+//! **AutoSum** puts `=SUM(...)` - or AVERAGE, COUNT, MIN or MAX - of the
+//! numbers right above the current cell into it, or of those right left
+//! of it when there are none above. With several cells picked, a sum goes
+//! under each column of them that has numbers: into the last row picked
+//! when that is empty, else into the row under it; for a single row, to
+//! its right the same way.
+//!
+//! **Sort** puts the rows picked in order by the current cell's column:
+//! numbers, then texts (case not counting), then truth values, then
+//! errors, or the other way round; empty cells last either way. With one
+//! cell picked it sorts the cells round it out to the empty rows and
+//! columns, a first row of texts over a row with a number staying on top
+//! as a heading. A formula moves with its row as a copy would.
+//!
+//! **Find** shows a line under the line at the top: what is typed there is
+//! looked for in each cell's text and in what it shows, case not counting,
+//! from the current cell on along the rows and round the end. Return or
+//! Next finds the next, Previous the one before, Escape or Close hides
+//! the line. Control-F shows it too.
 //!
 //! Control-X, -C, -V, -Z, -Y and -A do as their menu items do. Copy puts
 //! the cells on the clipboard as text - a line per row, their shown values
-//! split by tabs - for any program to paste, and keeps their texts for
-//! Sheet itself: pasted back into Sheet, a formula's references move with
-//! it as far as it moved, a part with a `$` in front staying. Text from
+//! in their formats split by tabs - for any program to paste, and keeps
+//! their texts and formats for Sheet itself: pasted back into Sheet, a
+//! formula's references move with it as far as it moved, a part with a
+//! `$` in front staying. Text from
 //! another program is pasted a line per row, split at its tabs. Fill Down
 //! and Fill Right copy the first row or column of the cells picked over
 //! the rest the same way. Inserting and deleting rows and columns moves
@@ -99,12 +150,17 @@ const sr = sdk.gadgets.scroller;
 const st = sdk.gadgets.string;
 const tx = sdk.gadgets.text;
 const cv = sdk.gadgets.canvas;
+const tb = sdk.gadgets.toolbutton;
+const rb = sdk.gadgets.ribbon;
+const command = sdk.images.command;
+const prefs = sdk.prefs;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const AslBase = sdk.interface.asl.AslBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IFFParseBase = sdk.interface.iffparse.IFFParseBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 const Object = intuition.Object;
 const Window = intuition.Window;
 const TagItem = sdk.utility.TagItem;
@@ -120,8 +176,8 @@ const max_rows = formula.max_rows;
 const max_cols = formula.max_cols;
 
 pub const COMMAND_NAME = "Sheet";
-const VERSION = "1.1";
-const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (11.10.2026)\r\n";
+const VERSION = "1.2";
+const VERSION_STRING = "\x00$VER: Sheet " ++ VERSION ++ " (29.10.2026)\r\n";
 /// What the screen's title bar says while the window is the active one.
 const SCREEN_TITLE = "Sheet " ++ VERSION;
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
@@ -139,75 +195,175 @@ const ID_NAME = 1;
 const ID_ENTRY = 2;
 const ID_GRID = 3;
 const ID_STATUS = 4;
+const ID_RIBBON = 5;
+const ID_FIND_TEXT = 6;
+const ID_FIND_NEXT = 7;
+const ID_FIND_PREVIOUS = 8;
+const ID_FIND_CLOSE = 9;
 const ID_VERT = 10;
 const ID_HORIZ = 11;
+// The ribbon's buttons with a list, whose code says which of it.
+const ID_INSERT = 20;
+const ID_DELETE = 21;
+const ID_SUM = 22;
+const ID_SORT = 23;
+const ID_FILL = 24;
 
-// The menus and their items, in the order of `menus` below; a bar counts
-// as an item.
-const MENU_PROJECT = 0;
-const MENU_EDIT = 1;
-const MENU_SHEET = 2;
+/// What Sheet does when asked: a menu item's user data and a ribbon
+/// button's `GA_ID` both, so the two are one command.
+const Command = enum(u32) {
+    new = 100,
+    open,
+    save,
+    save_as,
+    quit,
+    undo,
+    redo,
+    cut,
+    copy,
+    paste,
+    clear,
+    fill_down,
+    fill_right,
+    select_all,
+    find,
+    find_next,
+    insert_rows,
+    delete_rows,
+    insert_columns,
+    delete_columns,
+    wider,
+    narrower,
+    sum,
+    sort_ascending,
+    sort_descending,
+    general,
+    number,
+    percent,
+    currency,
+    decimals_more,
+    decimals_less,
+    ribbon,
 
-const ITEM_NEW = 0;
-const ITEM_OPEN = 1;
-const ITEM_SAVE = 2;
-const ITEM_SAVE_AS = 3;
-const ITEM_QUIT = 5;
+    fn id(which: Command) u32 {
+        return @intFromEnum(which);
+    }
 
-const ITEM_UNDO = 0;
-const ITEM_REDO = 1;
-const ITEM_CUT = 3;
-const ITEM_COPY = 4;
-const ITEM_PASTE = 5;
-const ITEM_CLEAR = 6;
-const ITEM_FILL_DOWN = 8;
-const ITEM_FILL_RIGHT = 9;
-const ITEM_SELECT_ALL = 11;
+    /// The command of a menu item's user data or a gadget's ID; null for
+    /// none.
+    fn of(value: usize) ?Command {
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.ribbon)) return null;
+        return @enumFromInt(value);
+    }
+};
 
-const ITEM_INSERT_ROWS = 0;
-const ITEM_DELETE_ROWS = 1;
-const ITEM_INSERT_COLUMNS = 2;
-const ITEM_DELETE_COLUMNS = 3;
-const ITEM_WIDER = 5;
-const ITEM_NARROWER = 6;
-
-fn item(label: [*:0]const u8, key: ?[*:0]const u8) mn.NewMenu {
-    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key };
+fn item(label: [*:0]const u8, key: ?[*:0]const u8, which: Command) mn.NewMenu {
+    return .{ .type = mn.NM_ITEM, .label = label, .comm_key = key, .user_data = @ptrFromInt(which.id()) };
 }
 
 const bar = mn.NewMenu{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL };
 
 const menus = [_]mn.NewMenu{
     .{ .type = mn.NM_TITLE, .label = "Project" },
-    item("New", "N"),
-    item("Open...", "O"),
-    item("Save", "S"),
-    item("Save As...", null),
+    item("New", "N", .new),
+    item("Open...", "O", .open),
+    item("Save", "S", .save),
+    item("Save As...", null, .save_as),
     bar,
-    item("Quit", "Q"),
+    item("Quit", "Q", .quit),
     .{ .type = mn.NM_TITLE, .label = "Edit" },
-    item("Undo", "Z"),
-    item("Redo", "Y"),
+    item("Undo", "Z", .undo),
+    item("Redo", "Y", .redo),
     bar,
-    item("Cut", "X"),
-    item("Copy", "C"),
-    item("Paste", "V"),
-    item("Clear", null),
+    item("Cut", "X", .cut),
+    item("Copy", "C", .copy),
+    item("Paste", "V", .paste),
+    item("Clear", null, .clear),
     bar,
-    item("Fill Down", "D"),
-    item("Fill Right", "R"),
+    item("Fill Down", "D", .fill_down),
+    item("Fill Right", "R", .fill_right),
     bar,
-    item("Select All", "A"),
+    item("Select All", "A", .select_all),
+    bar,
+    item("Find...", "F", .find),
+    item("Find Next", "G", .find_next),
     .{ .type = mn.NM_TITLE, .label = "Sheet" },
-    item("Insert Rows", null),
-    item("Delete Rows", null),
-    item("Insert Columns", null),
-    item("Delete Columns", null),
+    item("Insert Rows", null, .insert_rows),
+    item("Delete Rows", null, .delete_rows),
+    item("Insert Columns", null, .insert_columns),
+    item("Delete Columns", null, .delete_columns),
     bar,
-    item("Wider Column", null),
-    item("Narrower Column", null),
+    item("Wider Column", null, .wider),
+    item("Narrower Column", null, .narrower),
+    bar,
+    item("AutoSum", null, .sum),
+    item("Sort Ascending", null, .sort_ascending),
+    item("Sort Descending", null, .sort_descending),
+    .{ .type = mn.NM_TITLE, .label = "Format" },
+    item("General", null, .general),
+    item("Number", null, .number),
+    item("Percent", null, .percent),
+    item("Currency", null, .currency),
+    bar,
+    item("More Decimals", null, .decimals_more),
+    item("Fewer Decimals", null, .decimals_less),
+    .{ .type = mn.NM_TITLE, .label = "View" },
+    .{ .type = mn.NM_ITEM, .label = "Ribbon", .flags = mn.CHECKIT | mn.MENUTOGGLE, .user_data = @ptrFromInt(Command.ribbon.id()) },
     .{},
 };
+
+/// Where the View menu's Ribbon item is in `menus`, to be checked or not
+/// before the strip is made.
+const ribbon_item = blk: {
+    for (menus, 0..) |entry, at| {
+        if (entry.user_data == @as(?*anyopaque, @ptrFromInt(Command.ribbon.id()))) break :blk at;
+    }
+    unreachable;
+};
+
+// The lists of the ribbon's buttons that drop one down.
+const lines = [_:null]?[*:0]const u8{ "Rows", "Columns" };
+const sums = [_:null]?[*:0]const u8{ "Sum", "Average", "Count", "Min", "Max" };
+const sum_functions = [_][]const u8{ "SUM", "AVERAGE", "COUNT", "MIN", "MAX" };
+const sorts = [_:null]?[*:0]const u8{ "Ascending", "Descending" };
+const fills = [_:null]?[*:0]const u8{ "Down", "Right" };
+
+/// The ribbon: one tab, its commands those of the menus. No label has a
+/// key marked: a key typed on the cells is the cell's.
+const ribbon_table = [_]rb.NewRibbon{
+    .{ .type = rb.RB_TAB, .label = "Home" },
+    .{ .type = rb.RB_GROUP, .label = "Clipboard", .glyph = command.CMD_PASTE, .reduce = 1 },
+    .{ .type = rb.RB_LARGE, .id = Command.paste.id(), .label = "Paste", .glyph = command.CMD_PASTE, .hint = "Put in what was cut or copied" },
+    .{ .type = rb.RB_MEDIUM, .id = Command.cut.id(), .label = "Cut", .glyph = command.CMD_CUT },
+    .{ .type = rb.RB_MEDIUM, .id = Command.copy.id(), .label = "Copy", .glyph = command.CMD_COPY },
+    .{ .type = rb.RB_GROUP, .label = "Undo", .glyph = command.CMD_UNDO, .reduce = 2 },
+    .{ .type = rb.RB_MEDIUM, .id = Command.undo.id(), .label = "Undo", .glyph = command.CMD_UNDO, .flags = rb.RBF_DISABLED },
+    .{ .type = rb.RB_MEDIUM, .id = Command.redo.id(), .label = "Redo", .glyph = command.CMD_REDO, .flags = rb.RBF_DISABLED },
+    .{ .type = rb.RB_GROUP, .label = "Number", .glyph = command.CMD_NUMBER },
+    .{ .type = rb.RB_MEDIUM, .id = Command.number.id(), .label = "Number", .glyph = command.CMD_NUMBER, .kind = tb.TBKIND_TOGGLE, .hint = "Show the numbers with decimals, in thousands" },
+    .{ .type = rb.RB_MEDIUM, .id = Command.percent.id(), .label = "Percent", .glyph = command.CMD_PERCENT, .kind = tb.TBKIND_TOGGLE, .hint = "Show the numbers as a percent" },
+    .{ .type = rb.RB_MEDIUM, .id = Command.currency.id(), .label = "Currency", .glyph = command.CMD_CURRENCY, .kind = tb.TBKIND_TOGGLE, .hint = "Show the numbers as money" },
+    .{ .type = rb.RB_SMALL, .id = Command.decimals_more.id(), .label = "More Decimals", .glyph = command.CMD_DECIMALS_MORE, .hint = "Show a decimal more" },
+    .{ .type = rb.RB_SMALL, .id = Command.decimals_less.id(), .label = "Fewer Decimals", .glyph = command.CMD_DECIMALS_LESS, .hint = "Show a decimal fewer" },
+    .{ .type = rb.RB_GROUP, .label = "Cells", .glyph = command.CMD_INSERT_ROW, .reduce = 1 },
+    .{ .type = rb.RB_LARGE, .id = ID_INSERT, .label = "Insert", .glyph = command.CMD_INSERT_ROW, .kind = tb.TBKIND_DROPDOWN, .labels = &lines, .hint = "Put in rows or columns where the cells are picked" },
+    .{ .type = rb.RB_LARGE, .id = ID_DELETE, .label = "Delete", .glyph = command.CMD_DELETE_ROW, .kind = tb.TBKIND_DROPDOWN, .labels = &lines, .hint = "Take out the rows or columns of the cells picked" },
+    .{ .type = rb.RB_GROUP, .label = "Editing", .glyph = command.CMD_SUM },
+    .{ .type = rb.RB_LARGE, .id = ID_SUM, .label = "AutoSum", .glyph = command.CMD_SUM, .kind = tb.TBKIND_SPLIT, .labels = &sums, .hint = "Add up the numbers above or to the left" },
+    .{ .type = rb.RB_LARGE, .id = ID_SORT, .label = "Sort", .glyph = command.CMD_SORT, .kind = tb.TBKIND_DROPDOWN, .labels = &sorts, .hint = "Put the rows in order by the current cell's column" },
+    .{ .type = rb.RB_LARGE, .id = Command.find.id(), .label = "Find", .glyph = command.CMD_FIND, .hint = "Find a cell by what it holds" },
+    .{ .type = rb.RB_MEDIUM, .id = ID_FILL, .label = "Fill", .glyph = command.CMD_FILL, .kind = tb.TBKIND_DROPDOWN, .labels = &fills, .hint = "Copy the first row or column over the rest" },
+    .{ .type = rb.RB_MEDIUM, .id = Command.clear.id(), .label = "Clear", .glyph = command.CMD_CLEAR, .hint = "Empty the cells picked" },
+    .{ .type = rb.RB_END },
+};
+
+/// The window's room under which the ribbon is its row of tabs alone: a
+/// small board's screen.
+const ribbon_minimize_below = 400;
+
+/// Where Sheet keeps whether it shows the ribbon: `RIBBON=YES` or `NO`.
+const ENV_FILE = "ENV:Sheet.prefs";
+const ENVARC_FILE = "ENVARC:Sheet.prefs";
 
 // Raw key codes the cells move by.
 const raw_up = 0x4C;
@@ -323,6 +479,20 @@ const App = struct {
 
     /// The window as one files can be dropped on, while the desktop runs.
     drop: sdk.anvil.DropTarget = .{},
+
+    /// The window's layout, and the parts of it that come and go: the
+    /// ribbon - when its classes could be had - and the find line.
+    layout: *Object,
+    built: ?*rb.Built = null,
+    ribbon_shown: bool = false,
+    find_line: *Object,
+    find_text: *Object,
+    finding: bool = false,
+    strip: ?*intuition.Menu = null,
+    /// What the ribbon's toggles and Undo and Redo were last set to; null
+    /// to set them again whatever they are.
+    style_shown: ?number.Style = null,
+    undo_shown: ?[2]bool = null,
 
     fn deinit(app: *App) void {
         app.block.deinit(app.sys);
@@ -457,12 +627,17 @@ const App = struct {
         app.unclip();
     }
 
-    /// A number in as many digits as the width has room for, or `###`.
-    fn numberText(app: *App, value: f64, room: i32, out: *[32]u8) []const u8 {
-        var digits: u32 = 10;
-        while (digits >= 1) : (digits -= 1) {
-            const text = number.format(value, digits, out);
+    /// A number in its format, or for the general format in as many
+    /// digits as the width has room for; `###` when it does not fit.
+    fn numberText(app: *App, value: f64, format: number.Format, room: i32, out: *[number.styled_size]u8) []const u8 {
+        if (number.styled(value, format, out)) |text| {
             if (app.textWidth(text) <= room) return text;
+        } else {
+            var digits: u32 = 10;
+            while (digits >= 1) : (digits -= 1) {
+                const text = number.format(value, digits, out[0..32]);
+                if (app.textWidth(text) <= room) return text;
+            }
         }
         const hash_w = @max(app.textWidth("#"), 1);
         const count: usize = @intCast(@max(1, @min(31, @divTrunc(room, hash_w))));
@@ -495,10 +670,10 @@ const App = struct {
             defer x += cw;
             const cell = app.sheet.find(row, col) orelse continue;
             const value = cell.value;
-            var digits: [32]u8 = undefined;
+            var digits: [number.styled_size]u8 = undefined;
             switch (value.kind) {
                 .number => {
-                    const text = app.numberText(value.number, cw - 6, &digits);
+                    const text = app.numberText(value.number, cell.format, cw - 6, &digits);
                     app.write(text, x + cw - 3 - app.textWidth(text), top, x + 1, x + cw - 1, app.pens.ink);
                 },
                 .text => {
@@ -513,7 +688,7 @@ const App = struct {
                     app.write(value.text, x + 3, top, x + 1, right - 1, app.pens.ink);
                 },
                 .boolean, .err => {
-                    const text = cells.shownText(value, 10, &digits);
+                    const text = cells.shownText(value, 10, digits[0..32]);
                     app.write(text, x + @divTrunc(cw - app.textWidth(text), 2), top, x + 1, x + cw - 1, app.pens.ink);
                 },
                 .empty, .range => {},
@@ -600,6 +775,35 @@ const App = struct {
         // A cell's text has a 0 after it; "" is one too.
         _ = app.ib.SetGadgetAttrsTagList(app.entry, app.window, &[_]TagItem{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(input.ptr) }, .{} });
         app.showStatus();
+        app.followRibbon();
+    }
+
+    /// The ribbon's number toggles checked as the current cell's format
+    /// says, and Undo and Redo disabled while there is nothing to undo
+    /// or redo; set only when that has changed.
+    fn followRibbon(app: *App) void {
+        const built = app.built orelse return;
+        const style = if (app.sheet.find(app.row, app.col)) |cell| cell.format.style else number.Style.general;
+        if (app.style_shown != style) {
+            app.style_shown = style;
+            const toggles = [_]struct { which: Command, style: number.Style }{
+                .{ .which = .number, .style = .number },
+                .{ .which = .percent, .style = .percent },
+                .{ .which = .currency, .style = .currency },
+            };
+            for (toggles) |toggle| {
+                const toggle_button = built.entry(toggle.which.id()) orelse continue;
+                _ = app.ib.SetGadgetAttrsTagList(toggle_button, app.window, &[_]TagItem{ .{ .tag = tb.TOOLBUTTON_Checked, .data = @intFromBool(style == toggle.style) }, .{} });
+            }
+        }
+        const can = [2]bool{ app.sheet.canUndo(), app.sheet.canRedo() };
+        if (app.undo_shown == null or app.undo_shown.?[0] != can[0] or app.undo_shown.?[1] != can[1]) {
+            app.undo_shown = can;
+            for ([_]Command{ .undo, .redo }, can) |which, possible| {
+                const undo_button = built.entry(which.id()) orelse continue;
+                _ = app.ib.SetGadgetAttrsTagList(undo_button, app.window, &[_]TagItem{ .{ .tag = gc.GA_Disabled, .data = @intFromBool(!possible) }, .{} });
+            }
+        }
     }
 
     fn setStatus(app: *App, text: []const u8) void {
@@ -1195,8 +1399,8 @@ const App = struct {
             while (col <= right) : (col += 1) {
                 if (col > app.area.left) failed = !out.append(app.sys, '\t') or failed;
                 const cell = sheet.find(row, col) orelse continue;
-                var digits: [32]u8 = undefined;
-                const shown = cells.shownText(cell.value, number.max_digits, &digits);
+                var digits: [number.styled_size]u8 = undefined;
+                const shown = cells.shownIn(cell.value, cell.format, number.max_digits, &digits);
                 failed = !out.appendSlice(app.sys, shown) or failed;
             }
             failed = !out.append(app.sys, '\n') or failed;
@@ -1306,64 +1510,276 @@ const App = struct {
         app.followBars();
     }
 
-    /// A menu item picked. False to end.
+    /// Every cell picked given a format: a style, or a decimal more or
+    /// fewer.
+    fn restyle(app: *App, change: cells.Restyle) void {
+        if (!app.sheet.restyle(app.area, change)) app.say("Not enough memory to format all of it");
+        // A toggle pressed has turned itself; it is set back to the cell.
+        app.style_shown = null;
+        app.followChanges();
+    }
+
+    /// AutoSum: with one cell picked, the numbers above it - or left of
+    /// it - added up in it by `function`; with several, a sum under each
+    /// column that has numbers in it - in the last row picked when that
+    /// is empty, else in the row under it - or, for one row, right of it
+    /// the same way. One step.
+    fn autoSum(app: *App, function: []const u8) void {
+        const sheet = app.sheet;
+        var out: [40]u8 = undefined;
+        if (app.area.cells() == 1) {
+            const numbers = sheet.sumRun(app.row, app.col) orelse {
+                app.ib.DisplayBeep(app.screen);
+                app.say("No numbers above or to the left to add up");
+                return;
+            };
+            sheet.begin();
+            const ok = sheet.changeText(app.row, app.col, cells.rangeFormula(function, numbers, &out));
+            if (!sheet.end() or !ok) app.say("Not enough memory for that");
+            app.followChanges();
+            return;
+        }
+        const reach = sheet.extent();
+        var area = app.area;
+        if (reach.rows == 0 or area.top >= reach.rows or area.left >= reach.cols) {
+            app.ib.DisplayBeep(app.screen);
+            return;
+        }
+        area.bottom = @min(area.bottom, reach.rows - 1);
+        area.right = @min(area.right, reach.cols - 1);
+        const down = area.bottom > area.top;
+        const last_empty = if (down)
+            !sheet.anyIn(.{ .top = area.bottom, .left = area.left, .bottom = area.bottom, .right = area.right })
+        else
+            !sheet.anyIn(.{ .top = area.top, .left = area.right, .bottom = area.top, .right = area.right });
+        const target = if (down) area.bottom + @intFromBool(!last_empty) else area.right + @intFromBool(!last_empty);
+        if (target >= (if (down) max_rows else max_cols) or (!down and area.right == area.left)) {
+            app.ib.DisplayBeep(app.screen);
+            return;
+        }
+        sheet.begin();
+        var ok = true;
+        var any = false;
+        var line = if (down) area.left else area.top;
+        const lines_end = if (down) area.right else area.bottom;
+        while (line <= lines_end) : (line += 1) {
+            const numbers = if (down)
+                cells.Area{ .top = area.top, .left = line, .bottom = target - 1, .right = line }
+            else
+                cells.Area{ .top = line, .left = area.left, .bottom = line, .right = target - 1 };
+            var gather = Totals{};
+            sheet.eachInRange(numbers.top, numbers.left, numbers.bottom, numbers.right, &gather);
+            if (gather.count == 0) continue;
+            any = true;
+            const text = cells.rangeFormula(function, numbers, &out);
+            ok = (if (down) sheet.changeText(target, line, text) else sheet.changeText(line, target, text)) and ok;
+        }
+        if (!sheet.end() or !ok) app.say("Not enough memory for all of that");
+        if (!any) app.ib.DisplayBeep(app.screen);
+        app.followChanges();
+    }
+
+    /// Whether the first row of `area` is a heading: texts only, over a
+    /// row with a number in it.
+    fn headed(app: *App, area: cells.Area) bool {
+        var col = area.left;
+        var number_under = false;
+        while (col <= area.right) : (col += 1) {
+            if (app.sheet.find(area.top, col)) |cell| {
+                if (cell.value.kind != .text) return false;
+            }
+            if (app.sheet.find(area.top + 1, col)) |cell| {
+                if (cell.value.kind == .number) number_under = true;
+            }
+        }
+        return number_under;
+    }
+
+    /// The rows picked put in order by the current cell's column; with
+    /// one cell picked, the rows of the cells round it, out to the empty
+    /// rows and columns, a heading staying on top.
+    fn sort(app: *App, descending: bool) void {
+        var area = app.area;
+        if (area.cells() == 1) {
+            area = app.sheet.region(app.row, app.col);
+            if (area.bottom > area.top and app.headed(area)) area.top += 1;
+        }
+        if (area.bottom == area.top or app.col < area.left or app.col > area.right) {
+            app.ib.DisplayBeep(app.screen);
+            return;
+        }
+        if (!app.sheet.sortRows(area, app.col, descending)) app.say("Not enough memory to sort all of that");
+        app.followChanges();
+    }
+
+    // --- the parts that come and go ---------------------------------------------
+
+    /// A part of the layout hidden or shown, and the window laid out again
+    /// round it: the cells' picture made as big as their new box.
+    fn showPart(app: *App, part: *Object, shown: bool) void {
+        _ = app.ib.SetGadgetAttrsTagList(app.layout, app.window, &[_]TagItem{
+            .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(part) },
+            .{ .tag = lg.CHILDA_Hidden, .data = @intFromBool(!shown) },
+            .{},
+        });
+        app.rethink();
+    }
+
+    /// The window laid out again, the cells following.
+    fn rethink(app: *App) void {
+        var again = wc.WmRethink{};
+        _ = app.ib.SendMessage(app.object, @ptrCast(&again));
+        app.fitPicture();
+        app.reveal(app.row, app.col);
+        app.draw();
+        app.followBars();
+    }
+
+    /// The ribbon shown or hidden, and that kept for the next time.
+    fn showRibbon(app: *App, shown: bool) void {
+        const built = app.built orelse return;
+        if (shown == app.ribbon_shown) return;
+        app.ribbon_shown = shown;
+        app.showPart(built.ribbon, shown);
+        app.keepSettings();
+    }
+
+    /// Whether the ribbon is shown, written to ENV: and ENVARC:.
+    fn keepSettings(app: *App) void {
+        const header = "; Sheet's settings: RIBBON=NO hides the ribbon\n";
+        const text: []const u8 = if (app.ribbon_shown) header ++ "RIBBON=YES\n" else header ++ "RIBBON=NO\n";
+        for ([_][*:0]const u8{ ENV_FILE, ENVARC_FILE }) |path| _ = prefs.save(app.dl, path, text);
+    }
+
+    /// The find line shown, its text given the keyboard.
+    fn startFind(app: *App) void {
+        if (!app.finding) {
+            app.finding = true;
+            app.showPart(app.find_line, true);
+        }
+        _ = app.ib.ActivateGadget(app.find_text, app.window, null);
+    }
+
+    fn endFind(app: *App) void {
+        if (!app.finding) return;
+        app.finding = false;
+        app.showPart(app.find_line, false);
+    }
+
+    /// What the find line holds, from the cell after the current one on
+    /// (`backwards`, before it), made current; a beep when no cell holds
+    /// it. With nothing to find, the find line given the keyboard.
+    fn findNext(app: *App, backwards: bool) void {
+        var value: usize = 0;
+        _ = app.ib.GetAttr(gc.STRINGA_TextVal, app.find_text, &value);
+        const text: [*:0]const u8 = if (value != 0) @ptrFromInt(value) else "";
+        var length: usize = 0;
+        while (text[length] != 0) length += 1;
+        if (length == 0) return app.startFind();
+        const found = app.sheet.findText(text[0..length], app.row, app.col, backwards) orelse {
+            app.ib.DisplayBeep(app.screen);
+            app.say("No cell holds that");
+            return;
+        };
+        app.moveTo(found.row, found.col);
+    }
+
+    // --- the commands -------------------------------------------------------------
+
+    /// A menu item picked: its command. False to end.
     fn picked(app: *App, menu_number: u32) bool {
+        const strip = app.strip orelse return true;
+        const picked_item = app.ib.ItemAddress(strip, menu_number) orelse return true;
+        const which = Command.of(@intFromPtr(mn.GTMENUITEM_USERDATA(picked_item))) orelse return true;
+        // The Ribbon item has checked or unchecked itself.
+        if (which == .ribbon) {
+            app.showRibbon(picked_item.flags & mn.CHECKED != 0);
+            return true;
+        }
+        return app.perform(which);
+    }
+
+    /// A ribbon button pressed - `code` what a toggle turned to, or which
+    /// of a list was taken.
+    fn pressed(app: *App, id: u32, code: u32) void {
+        const taken: i32 = @bitCast(code);
+        const index: usize = if (taken >= 0) @intCast(taken) else 0;
+        switch (id) {
+            ID_INSERT => _ = app.perform(if (index == 0) .insert_rows else .insert_columns),
+            ID_DELETE => _ = app.perform(if (index == 0) .delete_rows else .delete_columns),
+            ID_SORT => _ = app.perform(if (index == 0) .sort_ascending else .sort_descending),
+            ID_FILL => _ = app.perform(if (index == 0) .fill_down else .fill_right),
+            ID_SUM => if (app.settle()) app.autoSum(if (taken == tb.TBCODE_MAIN) "SUM" else sum_functions[@min(index, sum_functions.len - 1)]),
+            else => {
+                const which = Command.of(id) orelse return;
+                // A number toggle turned off is the general format.
+                if ((which == .number or which == .percent or which == .currency) and code == 0) {
+                    _ = app.perform(.general);
+                } else _ = app.perform(which);
+            },
+        }
+    }
+
+    /// A command, from a menu, the ribbon or a key. False to end.
+    fn perform(app: *App, which: Command) bool {
         if (!app.settle()) return true;
         const sheet = app.sheet;
-        switch (mn.MENUNUM(menu_number)) {
-            MENU_PROJECT => switch (mn.ITEMNUM(menu_number)) {
-                ITEM_NEW => if (app.mayLeave()) {
-                    sheet.clearAll();
-                    app.path[0] = 0;
-                    app.form = .{};
-                    app.resetView();
-                    app.showTitle();
-                },
-                ITEM_OPEN => if (app.mayLeave()) {
-                    var name: [path_size:0]u8 = undefined;
-                    if (app.askFile("Open a sheet", false, &name)) _ = app.load(&name, false);
-                },
-                ITEM_SAVE => _ = app.saveKept(),
-                ITEM_SAVE_AS => _ = app.saveAs(),
-                ITEM_QUIT => return !app.mayLeave(),
-                else => {},
+        switch (which) {
+            .new => if (app.mayLeave()) {
+                sheet.clearAll();
+                app.path[0] = 0;
+                app.form = .{};
+                app.resetView();
+                app.showTitle();
             },
-            MENU_EDIT => switch (mn.ITEMNUM(menu_number)) {
-                ITEM_UNDO => {
-                    if (!sheet.undo()) app.ib.DisplayBeep(app.screen);
-                    app.followChanges();
-                },
-                ITEM_REDO => {
-                    if (!sheet.redo()) app.ib.DisplayBeep(app.screen);
-                    app.followChanges();
-                },
-                ITEM_CUT => app.cut(),
-                ITEM_COPY => _ = app.copy(),
-                ITEM_PASTE => app.paste(),
-                ITEM_CLEAR => {
-                    if (!sheet.clear(app.area)) app.say("Not enough memory to clear all of it");
-                    app.followChanges();
-                },
-                ITEM_FILL_DOWN, ITEM_FILL_RIGHT => {
-                    const down = mn.ITEMNUM(menu_number) == ITEM_FILL_DOWN;
-                    if ((down and app.area.bottom == app.area.top) or (!down and app.area.right == app.area.left)) {
-                        app.ib.DisplayBeep(app.screen);
-                    } else if (!sheet.fill(app.area, down)) app.say("Not enough memory to fill all of it");
-                    app.followChanges();
-                },
-                ITEM_SELECT_ALL => app.pickAll(),
-                else => {},
+            .open => if (app.mayLeave()) {
+                var name: [path_size:0]u8 = undefined;
+                if (app.askFile("Open a sheet", false, &name)) _ = app.load(&name, false);
             },
-            MENU_SHEET => switch (mn.ITEMNUM(menu_number)) {
-                ITEM_INSERT_ROWS => app.shift(false, true),
-                ITEM_DELETE_ROWS => app.shift(false, false),
-                ITEM_INSERT_COLUMNS => app.shift(true, true),
-                ITEM_DELETE_COLUMNS => app.shift(true, false),
-                ITEM_WIDER => app.widen(app.char_w * 2),
-                ITEM_NARROWER => app.widen(-app.char_w * 2),
-                else => {},
+            .save => _ = app.saveKept(),
+            .save_as => _ = app.saveAs(),
+            .quit => return !app.mayLeave(),
+            .undo => {
+                if (!sheet.undo()) app.ib.DisplayBeep(app.screen);
+                app.followChanges();
             },
-            else => {},
+            .redo => {
+                if (!sheet.redo()) app.ib.DisplayBeep(app.screen);
+                app.followChanges();
+            },
+            .cut => app.cut(),
+            .copy => _ = app.copy(),
+            .paste => app.paste(),
+            .clear => {
+                if (!sheet.clear(app.area)) app.say("Not enough memory to clear all of it");
+                app.followChanges();
+            },
+            .fill_down, .fill_right => {
+                const down = which == .fill_down;
+                if ((down and app.area.bottom == app.area.top) or (!down and app.area.right == app.area.left)) {
+                    app.ib.DisplayBeep(app.screen);
+                } else if (!sheet.fill(app.area, down)) app.say("Not enough memory to fill all of it");
+                app.followChanges();
+            },
+            .select_all => app.pickAll(),
+            .find => app.startFind(),
+            .find_next => app.findNext(false),
+            .insert_rows => app.shift(false, true),
+            .delete_rows => app.shift(false, false),
+            .insert_columns => app.shift(true, true),
+            .delete_columns => app.shift(true, false),
+            .wider => app.widen(app.char_w * 2),
+            .narrower => app.widen(-app.char_w * 2),
+            .sum => app.autoSum("SUM"),
+            .sort_ascending => app.sort(false),
+            .sort_descending => app.sort(true),
+            .general => app.restyle(.{ .to = .general }),
+            .number => app.restyle(.{ .to = .number }),
+            .percent => app.restyle(.{ .to = .percent }),
+            .currency => app.restyle(.{ .to = .currency }),
+            .decimals_more => app.restyle(.{ .more = 1 }),
+            .decimals_less => app.restyle(.{ .more = -1 }),
+            .ribbon => app.showRibbon(!app.ribbon_shown),
         }
         return true;
     }
@@ -1386,9 +1802,10 @@ const App = struct {
             0x03 => _ = app.copy(),
             0x18 => app.cut(),
             0x16 => app.paste(),
-            0x1A => _ = app.picked(mn.FULLMENUNUM(MENU_EDIT, ITEM_UNDO, mn.NOSUB)),
-            0x19 => _ = app.picked(mn.FULLMENUNUM(MENU_EDIT, ITEM_REDO, mn.NOSUB)),
+            0x1A => _ = app.perform(.undo),
+            0x19 => _ = app.perform(.redo),
             0x01 => app.pickAll(),
+            0x06 => app.startFind(),
             else => if (code >= 0x20 and code <= 0xFF and !(code >= 0x80 and code < 0xA0)) {
                 const typed = [1]u8{@intCast(code)};
                 app.startEdit(&typed);
@@ -1496,7 +1913,18 @@ const App = struct {
                     },
                     ID_ENTRY => app.entryDone(code),
                     ID_VERT, ID_HORIZ => app.followScrollers(),
-                    else => {},
+                    // Return finds the next, and the line keeps the
+                    // keyboard to find the one after; Escape closes it.
+                    ID_FIND_TEXT => if (code == raw_escape) app.endFind() else {
+                        app.findNext(false);
+                        if (app.finding) _ = app.ib.ActivateGadget(app.find_text, app.window, null);
+                    },
+                    ID_FIND_NEXT => app.findNext(false),
+                    ID_FIND_PREVIOUS => app.findNext(true),
+                    ID_FIND_CLOSE => app.endFind(),
+                    // Minimized or brought back: its height has changed.
+                    ID_RIBBON => if (@as(i32, @bitCast(code)) == rb.RBCODE_MINIMIZED) app.rethink(),
+                    else => |id| app.pressed(@truncate(id), code),
                 },
                 // A drag on the cells, or a bar moved.
                 wc.WMHI_IDCMPUPDATE => switch (gadget) {
@@ -1578,8 +2006,8 @@ const Totals = struct {
 /// the edit and nothing else.
 fn entryKey(_: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
     const work: *sg.SGWork = @ptrCast(@alignCast(object orelse return 0));
-    const command: *const u32 = @ptrCast(@alignCast(message orelse return 0));
-    if (command.* != sg.SGH_KEY) return 0;
+    const hook_command: *const u32 = @ptrCast(@alignCast(message orelse return 0));
+    if (hook_command.* != sg.SGH_KEY) return 0;
     const shifted = work.event.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
     if (work.actions & (sg.SGA_NEXTACTIVE | sg.SGA_PREVACTIVE) != 0) {
         work.actions &= ~(sg.SGA_NEXTACTIVE | sg.SGA_PREVACTIVE);
@@ -1603,6 +2031,29 @@ fn between(row: u32, col: u32, other_row: u32, other_col: u32) cells.Area {
         .bottom = @max(row, other_row),
         .right = @max(col, other_col),
     };
+}
+
+fn button(ib: *IntuitionBase, label: [*:0]const u8, id: u32) ?*Object {
+    return ib.NewObjectTagList(null, classusr.FRBUTTONCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Text, .data = @intFromPtr(label) },
+        .{ .tag = gc.GA_ID, .data = id },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{},
+    });
+}
+
+/// Whether the ribbon is to be shown, from `ENV:Sheet.prefs`: yes unless
+/// it says `RIBBON=NO`, and yes without utility.library to read it.
+fn ribbonWanted(sys: *ExecBase, dl: *DosBase, ub: ?*UtilityBase) bool {
+    const utility_base = ub orelse return true;
+    const text = prefs.loadWhole(sys, dl, ENV_FILE) orelse return true;
+    defer sys.FreeVec(text.ptr);
+    const line = prefs.firstLine(text) orelse return true;
+    var pairs = prefs.Pairs.init(utility_base, line);
+    while (pairs.next() catch null) |pair| {
+        if (prefs.style.same(pair.key, "RIBBON")) return prefs.yesOrNo(pair.value) orelse true;
+    }
+    return true;
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -1638,6 +2089,24 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     const ib: *IntuitionBase = @ptrCast(libraries[0]);
     const gb: *GraphicsBase = @ptrCast(libraries[1]);
+
+    // What Sheet does without: utility.library, which reads its settings,
+    // and the ribbon's classes. Open until the window object is gone too.
+    const optional_names = [_][*:0]const u8{ sdk.utility.UTILITYNAME, tb.TOOLBUTTON_LIBRARY, command.COMMAND_LIBRARY, rb.RIBBON_LIBRARY };
+    var optional: [optional_names.len]?*exec.Library = @splat(null);
+    defer for (optional) |lib| {
+        if (lib) |opened_lib| sys.CloseLibrary(opened_lib);
+    };
+    for (optional_names, 0..) |name, i| optional[i] = sys.OpenLibrary(name, 0);
+    const ub: ?*UtilityBase = @ptrCast(optional[0]);
+    const built: ?*rb.Built = if (optional[1] != null and optional[2] != null and optional[3] != null) rb.build(sys, ib, &ribbon_table, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_RIBBON },
+        .{ .tag = rb.RIBBON_MinimizeBelow, .data = ribbon_minimize_below },
+        .{},
+    }) else null;
+    // After the window object, which disposes of the ribbon.
+    defer if (built) |made| made.free(sys, ib);
+    const ribbon_shown = built != null and ribbonWanted(sys, dl, ub);
 
     const screen = ib.LockPubScreen(null) orelse {
         _ = Printf(dl, MSG_NOSCREEN, .{});
@@ -1686,7 +2155,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = tx.TEXT_Text, .data = @intFromPtr("") },
         .{},
     });
-    const parts = [_]?*Object{ grid, name_box, entry, status };
+    // The find line, hidden until Find is asked for.
+    const find_text = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = ID_FIND_TEXT },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{ .tag = gc.STRINGA_MaxChars, .data = 64 },
+        .{},
+    });
+    const find_next = button(ib, "Next", ID_FIND_NEXT);
+    const find_previous = button(ib, "Previous", ID_FIND_PREVIOUS);
+    const find_close = button(ib, "Close", ID_FIND_CLOSE);
+    const parts = [_]?*Object{ grid, name_box, entry, status, find_text, find_next, find_previous, find_close };
     var whole = true;
     for (parts) |part| whole = whole and part != null;
     const top_line = if (whole) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
@@ -1699,24 +2178,58 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = lg.CHILDA_WeightWidth, .data = 1 },
         .{},
     }) else null;
-    const layout = if (top_line != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+    const find_line = if (top_line != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+        .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(find_text) },
+        .{ .tag = lg.CHILDA_Label, .data = @intFromPtr("Find") },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 1 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(find_next) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(find_previous) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(find_close) },
+        .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+        .{},
+    }) else null;
+    // The ribbon on top, when there is one; the find line under the line
+    // at the top.
+    const ribbon_tags = [_]TagItem{
+        .{ .tag = lg.LAYOUTA_AddChild, .data = if (built) |made| @intFromPtr(made.ribbon) else 0 },
+        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+        .{ .tag = lg.CHILDA_Hidden, .data = @intFromBool(!ribbon_shown) },
+        .{ .tag = sdk.utility.TAG_MORE, .data = @intFromPtr(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(top_line) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(find_line) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.CHILDA_Hidden, .data = 1 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(grid) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 1 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(status) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{},
+        }) },
+    };
+    const layout = if (find_line != null) ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         .{ .tag = lg.LAYOUTA_Margin, .data = 2 },
         .{ .tag = lg.LAYOUTA_Spacing, .data = 2 },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(top_line) },
-        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(grid) },
-        .{ .tag = lg.CHILDA_WeightHeight, .data = 1 },
-        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(status) },
-        .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
-        .{},
+        .{ .tag = sdk.utility.TAG_MORE, .data = @intFromPtr(if (built != null) &ribbon_tags else ribbon_tags[3..].ptr) },
     }) else null;
     const made_layout = layout orelse {
         // What a layout took is its own; only what none took goes here.
-        if (top_line) |line| {
+        if (find_line) |line| {
             ib.DisposeObject(line);
+            ib.DisposeObject(top_line);
             ib.DisposeObject(grid);
             ib.DisposeObject(status);
+        } else if (top_line) |line| {
+            ib.DisposeObject(line);
+            for (parts) |part| {
+                if (part != name_box and part != entry) ib.DisposeObject(part);
+            }
         } else for (parts) |part| ib.DisposeObject(part);
+        if (built) |made| ib.DisposeObject(made.ribbon);
         ib.FreeScreenDrawInfo(screen, draw_info);
         _ = Printf(dl, MSG_NOMEMORY, .{});
         return dos.RETURN_FAIL;
@@ -1726,7 +2239,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
         .{ .tag = wn.WA_PubScreen, .data = @intFromPtr(screen) },
         .{ .tag = wn.WA_InnerWidth, .data = 600 },
-        .{ .tag = wn.WA_InnerHeight, .data = 380 },
+        .{ .tag = wn.WA_InnerHeight, .data = 460 },
         .{ .tag = wn.WA_AutoAdjust, .data = 1 },
         .{ .tag = wn.WA_CloseGadget, .data = 1 },
         .{ .tag = wn.WA_DragBar, .data = 1 },
@@ -1780,6 +2293,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .entry = entry.?,
         .grid = grid.?,
         .status = status.?,
+        .layout = made_layout,
+        .built = built,
+        .ribbon_shown = ribbon_shown,
+        .find_line = find_line.?,
+        .find_text = find_text.?,
         .rp = @ptrFromInt(picture),
         .picture_w = picture_w,
         .picture_h = picture_h,
@@ -1807,9 +2325,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     app.fitPicture();
 
     // The menus; a sheet without them still works, so a strip that will
-    // not go on is left off rather than given up over.
+    // not go on is left off rather than given up over. View's Ribbon is
+    // checked while it is shown, and there only when there is one.
+    var table = menus;
+    if (built == null) {
+        table[ribbon_item].flags |= mn.NM_ITEMDISABLED;
+    } else if (ribbon_shown) table[ribbon_item].flags |= mn.CHECKED;
     const strip = blk: {
-        const made = ib.CreateMenusA(&menus, null) orelse break :blk null;
+        const made = ib.CreateMenusA(&table, null) orelse break :blk null;
         if (!ib.LayoutMenusA(made, screen, null) or !ib.SetMenuStrip(app.window, made)) {
             ib.FreeMenus(made);
             break :blk null;
@@ -1820,6 +2343,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         ib.ClearMenuStrip(app.window);
         ib.FreeMenus(made);
     };
+    app.strip = strip;
 
     // Taken off the desktop's list before the window closes.
     app.drop.add(sys, app.window);

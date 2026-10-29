@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of Sheet's workings: numbers read and written, formulas read
 //! and worked out, references moved, the cells kept, undone and moved in
-//! rows and columns, and CSV read and written. The window is not here.
+//! rows and columns, CSV read and written, and formats, sorting, finding
+//! and AutoSum's ranges. The window is not here.
 
 const std = @import("std");
 const host = @import("host_rom");
@@ -50,6 +51,34 @@ test "Sheet: numbers written in so many digits" {
     try testing.expectEqualStrings("1.2346E+05", formatted(123456.7, 5));
     try testing.expectEqualStrings("1E+100", formatted(1e100, 10));
     try testing.expectEqualStrings("2.2250738585E-308", formatted(2.2250738585072014e-308, 11));
+}
+
+fn styledText(value: f64, style: number.Style, decimals: u8) []const u8 {
+    const State = struct {
+        var out: [number.styled_size]u8 = undefined;
+    };
+    return number.styled(value, .{ .style = style, .decimals = decimals }, &State.out).?;
+}
+
+test "Sheet: numbers in a format" {
+    var out: [number.styled_size]u8 = undefined;
+    try testing.expectEqual(@as(?[]const u8, null), number.styled(1.5, .{}, &out));
+    try testing.expectEqualStrings("1,234.50", styledText(1234.5, .number, 2));
+    try testing.expectEqualStrings("-1,234,567", styledText(-1234567.4, .number, 0));
+    try testing.expectEqualStrings("0.05", styledText(0.049, .number, 2));
+    try testing.expectEqualStrings("0.00", styledText(-0.001, .number, 2));
+    try testing.expectEqualStrings("123", styledText(123, .number, 0));
+    try testing.expectEqualStrings("15%", styledText(0.15, .percent, 0));
+    try testing.expectEqualStrings("12.5%", styledText(0.125, .percent, 1));
+    try testing.expectEqualStrings("1234%", styledText(12.34, .percent, 0));
+    try testing.expectEqualStrings("$1,000.00", styledText(1000, .currency, 2));
+    try testing.expectEqualStrings("-$3.25", styledText(-3.25, .currency, 2));
+    try testing.expectEqualStrings("$0", styledText(0.2, .currency, 0));
+    // Past a double's whole digits, as the general format writes it.
+    try testing.expectEqualStrings("1E+20", styledText(1e20, .number, 2));
+    try testing.expectEqual(@as(u8, 2), number.decimalsShown(1.25, 10));
+    try testing.expectEqual(@as(u8, 0), number.decimalsShown(1e20, 10));
+    try testing.expectEqual(@as(u8, 0), number.decimalsShown(7, 10));
 }
 
 test "Sheet: the names of cells, and references read" {
@@ -392,5 +421,148 @@ test "Sheet: CSV read and written" {
     const back = csv.write(fixture.sheet, second.form).?;
     try testing.expectEqualStrings("Preis;1,5\nM\xFCller;=B1*2\n", back);
     fixture.sheet.sys.FreeVec(@constCast(back.ptr));
+    try fixture.deinit();
+}
+
+test "Sheet: formats kept with their cells, through undo, copies and fills" {
+    var fixture = try Fixture.init();
+    const sheet = fixture.sheet;
+    try fixture.put("A1", "0.25");
+    try fixture.put("A2", "1.5");
+    try fixture.put("B1", "text");
+    const all = cells.Area{ .top = 0, .left = 0, .bottom = 9, .right = 9 };
+    try testing.expect(sheet.restyle(all, .{ .to = .percent }));
+    try testing.expectEqual(number.Style.percent, sheet.find(0, 0).?.format.style);
+    try testing.expectEqual(number.Style.percent, sheet.find(0, 1).?.format.style);
+    // An empty cell has none to take.
+    try testing.expect(sheet.find(5, 5) == null);
+
+    // A decimal more; a general cell starts from what it shows.
+    try testing.expect(sheet.restyle(.{ .top = 0, .left = 0, .bottom = 0, .right = 0 }, .{ .more = 1 }));
+    try testing.expectEqual(@as(u8, 1), sheet.find(0, 0).?.format.decimals);
+    try testing.expect(sheet.undo());
+    try testing.expectEqual(@as(u8, 0), sheet.find(0, 0).?.format.decimals);
+    try testing.expect(sheet.undo());
+    try testing.expectEqual(number.Style.general, sheet.find(0, 0).?.format.style);
+    try testing.expect(sheet.restyle(.{ .top = 1, .left = 0, .bottom = 1, .right = 0 }, .{ .more = 1 }));
+    try testing.expectEqual(number.Format{ .style = .number, .decimals = 2 }, sheet.find(1, 0).?.format);
+    try testing.expect(sheet.restyle(.{ .top = 1, .left = 0, .bottom = 1, .right = 0 }, .{ .more = -5 }));
+    try testing.expectEqual(@as(u8, 0), sheet.find(1, 0).?.format.decimals);
+
+    // Its text changed, the format stays; emptied and undone, it is back.
+    try fixture.put("A2", "2.5");
+    try testing.expectEqual(number.Style.number, sheet.find(1, 0).?.format.style);
+    try testing.expect(sheet.clear(.{ .top = 1, .left = 0, .bottom = 1, .right = 0 }));
+    try testing.expect(sheet.find(1, 0) == null);
+    try testing.expect(sheet.undo());
+    try testing.expectEqual(number.Style.number, sheet.find(1, 0).?.format.style);
+    try testing.expectEqualStrings("2.5", fixture.text("A2"));
+    try testing.expect(sheet.redo());
+    try testing.expect(sheet.find(1, 0) == null);
+    try testing.expect(sheet.undo());
+
+    // A copy and a fill take it along.
+    var block: cells.Block = .{};
+    try testing.expect(sheet.copyBlock(.{ .top = 1, .left = 0, .bottom = 1, .right = 0 }, &block));
+    try testing.expect(sheet.pasteBlock(&block, 4, 3));
+    try testing.expectEqual(number.Style.number, sheet.find(4, 3).?.format.style);
+    block.deinit(sheet.sys);
+    try testing.expect(sheet.fill(.{ .top = 4, .left = 3, .bottom = 6, .right = 3 }, true));
+    try testing.expectEqual(number.Style.number, sheet.find(6, 3).?.format.style);
+
+    // What a cell shows in it.
+    try testing.expect(sheet.restyle(.{ .top = 0, .left = 0, .bottom = 0, .right = 0 }, .{ .to = .percent }));
+    var out: [number.styled_size]u8 = undefined;
+    const a1 = sheet.find(0, 0).?;
+    try testing.expectEqualStrings("25%", cells.shownIn(a1.value, a1.format, 10, &out));
+    try testing.expectEqualStrings("text", cells.shownIn(sheet.find(0, 1).?.value, a1.format, 10, &out));
+    try fixture.deinit();
+}
+
+test "Sheet: rows sorted by a column, either way, empty cells last and formulas moved along" {
+    var fixture = try Fixture.init();
+    const sheet = fixture.sheet;
+    // Names and numbers, a row with none, a text and a formula.
+    try fixture.put("A1", "pear");
+    try fixture.put("B1", "3");
+    try fixture.put("A2", "Apple");
+    try fixture.put("B2", "10");
+    try fixture.put("A3", "fig");
+    try fixture.put("A4", "kiwi");
+    try fixture.put("B4", "x");
+    try fixture.put("A5", "plum");
+    try fixture.put("B5", "-2");
+    try fixture.put("C1", "=B1*2");
+    try fixture.put("C5", "=B5*2");
+    try testing.expect(sheet.restyle(.{ .top = 1, .left = 1, .bottom = 1, .right = 1 }, .{ .to = .currency }));
+    const area = cells.Area{ .top = 0, .left = 0, .bottom = 4, .right = 2 };
+
+    try testing.expect(sheet.sortRows(area, 1, false));
+    for ([_][]const u8{ "plum", "pear", "Apple", "kiwi", "fig" }, 0..) |name, row| {
+        try testing.expectEqualStrings(name, sheet.textAt(@intCast(row), 0));
+    }
+    // The formula went with its row, its reference moved along.
+    try testing.expectEqualStrings("=B1*2", fixture.text("C1"));
+    try fixture.expectNumber("C1", -4);
+    try fixture.expectNumber("C2", 6);
+    try testing.expectEqual(number.Style.currency, sheet.find(2, 1).?.format.style);
+
+    try testing.expect(sheet.sortRows(area, 1, true));
+    for ([_][]const u8{ "kiwi", "Apple", "pear", "plum", "fig" }, 0..) |name, row| {
+        try testing.expectEqualStrings(name, sheet.textAt(@intCast(row), 0));
+    }
+    // By the names: case does not count.
+    try testing.expect(sheet.sortRows(area, 0, false));
+    for ([_][]const u8{ "Apple", "fig", "kiwi", "pear", "plum" }, 0..) |name, row| {
+        try testing.expectEqualStrings(name, sheet.textAt(@intCast(row), 0));
+    }
+    // One step each.
+    try testing.expect(sheet.undo());
+    try testing.expect(sheet.undo());
+    try testing.expectEqualStrings("plum", fixture.text("A1"));
+    try testing.expect(sheet.undo());
+    try testing.expectEqualStrings("pear", fixture.text("A1"));
+    try fixture.expectNumber("C1", 6);
+    try fixture.deinit();
+}
+
+test "Sheet: the region round a cell, finding, and AutoSum's ranges" {
+    var fixture = try Fixture.init();
+    const sheet = fixture.sheet;
+    try fixture.put("B2", "Price");
+    try fixture.put("C2", "Count");
+    try fixture.put("B3", "1.5");
+    try fixture.put("C3", "4");
+    try fixture.put("B4", "2");
+    try fixture.put("D5", "x");
+    try fixture.put("F9", "far");
+    // A corner counts: D5 joins B2:C4.
+    try testing.expectEqual(cells.Area{ .top = 1, .left = 1, .bottom = 4, .right = 3 }, sheet.region(2, 2));
+    try testing.expectEqual(cells.Area{ .top = 7, .left = 7, .bottom = 7, .right = 7 }, sheet.region(7, 7));
+    try testing.expect(sheet.anyIn(.{ .top = 0, .left = 0, .bottom = 9998, .right = 255 }));
+    try testing.expect(!sheet.anyIn(.{ .top = 5, .left = 0, .bottom = 7, .right = 255 }));
+
+    // From B2 on, round the end; backwards; a shown value too.
+    const next = sheet.findText("COUNT", 0, 0, false).?;
+    try testing.expectEqual(@as(u32, 1), next.row);
+    try testing.expectEqual(@as(u32, 2), next.col);
+    // The only one there is, is the cell itself; past the end, round.
+    const again = sheet.findText("far", 8, 5, false).?;
+    try testing.expectEqual(@as(u32, 8), again.row);
+    try testing.expectEqual(@as(u32, 1), sheet.findText("r", 8, 5, false).?.row);
+    const back = sheet.findText("r", 8, 5, true).?;
+    try testing.expectEqual(@as(u32, 1), back.row);
+    try testing.expectEqual(@as(u32, 1), back.col);
+    try testing.expect(sheet.restyle(.{ .top = 2, .left = 1, .bottom = 2, .right = 1 }, .{ .to = .currency }));
+    try testing.expectEqual(@as(u32, 2), sheet.findText("$1.50", 0, 0, false).?.row);
+    try testing.expect(sheet.findText("nothing", 0, 0, false) == null);
+
+    // Above, then left; none.
+    try testing.expectEqual(cells.Area{ .top = 2, .left = 1, .bottom = 3, .right = 1 }, sheet.sumRun(4, 1).?);
+    try testing.expectEqual(cells.Area{ .top = 2, .left = 1, .bottom = 2, .right = 2 }, sheet.sumRun(2, 3).?);
+    try testing.expect(sheet.sumRun(0, 0) == null);
+    var out: [40]u8 = undefined;
+    try testing.expectEqualStrings("=SUM(B3:B4)", cells.rangeFormula("SUM", sheet.sumRun(4, 1).?, &out));
+    try testing.expectEqualStrings("=MAX(C3)", cells.rangeFormula("MAX", .{ .top = 2, .left = 2, .bottom = 2, .right = 2 }, &out));
     try fixture.deinit();
 }

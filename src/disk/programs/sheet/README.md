@@ -15,6 +15,8 @@ and a file dragged from the desktop and let go on its window is opened.
 
 ## The window
 
+- **The ribbon** across the top has Sheet's commands in groups - see
+  [The ribbon](#the-ribbon). View → Ribbon hides it and shows it again.
 - **The line at the top** shows the current cell's name (`B7`) and the
   text typed into it. Typing goes there. On a board with a touch panel
   and no keyboard, the keyboard on the screen comes up for it.
@@ -22,13 +24,14 @@ and a file dragged from the desktop and let go on its window is opened.
   the top, the rows' numbers down the left. The current cell has a frame;
   the cells picked with it are tinted, and so are their letters and
   numbers.
+- **The find line** comes under it with Find: see [Finding](#finding).
 - **The status line** at the bottom gives the sum, the average and the
   count of the numbers among the cells picked, while there are several.
   It also says what is wrong with a formula that cannot be kept.
 - **The scroll bars** are in the window's border.
 
 While the window is the active one, the screen's title bar says
-`Sheet 1.1`. The window's own title says the file's name, with a `*` in
+`Sheet 1.2`. The window's own title says the file's name, with a `*` in
 front while the sheet has changed since it was read or saved.
 
 ## Cells
@@ -43,7 +46,7 @@ What is typed into a cell decides what it is:
 | anything else | a text | against the left, running on over empty cells to its right |
 
 A truth value (`TRUE`, `FALSE`) and an error sit in the middle of their
-cell. A cell holds up to 1024 characters; the sheet has rows 1 to 9999
+cell. A number can be given a format - see [Formats](#formats). A cell holds up to 1024 characters; the sheet has rows 1 to 9999
 and columns A to IV.
 
 ## Formulas
@@ -142,6 +145,7 @@ On the cells:
 | Ctrl-X, -C, -V | cut, copy, paste |
 | Ctrl-Z, -Y | undo, redo |
 | Ctrl-A | picks every cell |
+| Ctrl-F | shows the find line |
 
 In the line at the top:
 
@@ -166,8 +170,10 @@ was typed into the line at the top.
 | Menu | Items |
 |---|---|
 | Project | New (N), Open... (O), Save (S), Save As..., Quit (Q) |
-| Edit | Undo (Z), Redo (Y), Cut (X), Copy (C), Paste (V), Clear, Fill Down (D), Fill Right (R), Select All (A) |
-| Sheet | Insert Rows, Delete Rows, Insert Columns, Delete Columns, Wider Column, Narrower Column |
+| Edit | Undo (Z), Redo (Y), Cut (X), Copy (C), Paste (V), Clear, Fill Down (D), Fill Right (R), Select All (A), Find... (F), Find Next (G) |
+| Sheet | Insert Rows, Delete Rows, Insert Columns, Delete Columns, Wider Column, Narrower Column, AutoSum, Sort Ascending, Sort Descending |
+| Format | General, Number, Percent, Currency, More Decimals, Fewer Decimals |
+| View | Ribbon |
 
 The letters are the items' right-Amiga keys.
 
@@ -187,6 +193,80 @@ The letters are the items' right-Amiga keys.
   pushed off the end of the sheet: an insert that would is refused.
 - **Undo** takes back the last change, up to a hundred of them; **Redo**
   does it again.
+- **AutoSum** puts `=SUM(...)` of the numbers right above the current
+  cell into it - or of those right left of it when there are none above.
+  With several cells picked, a sum goes under each column of them that
+  has numbers: into the last row picked when that row is empty, else
+  into the row under it; for a single row, to its right the same way.
+  The ribbon's AutoSum drops down Average, Count, Min and Max as well.
+- **Sort Ascending** and **Sort Descending** put the rows picked in
+  order by the current cell's column: numbers from the smallest, then
+  texts from A to Z with no regard to case, then FALSE and TRUE, then
+  errors - or all of it the other way round. Empty cells go last either
+  way, and rows that sort the same keep their order. With only one cell
+  picked, the rows of the cells round it are sorted, out to the empty
+  rows and columns all round; when the first of them holds only texts and
+  the second a number, the first is a heading and stays on top. A
+  formula moves with its row as a copy of it would.
+
+## The ribbon
+
+The ribbon has one tab, Home, with the menus' commands in groups:
+
+| Group | Buttons |
+|---|---|
+| Clipboard | Paste, Cut, Copy |
+| Undo | Undo, Redo - grey while there is nothing to undo or redo |
+| Number | Number, Percent, Currency - lit for the current cell's format; pressed again, back to General - and a decimal more or fewer |
+| Cells | Insert, Delete - each drops down Rows and Columns |
+| Editing | AutoSum - its arrow drops down Sum, Average, Count, Min, Max - Sort (Ascending, Descending), Find, Fill (Down, Right), Clear |
+
+A button and the menu item of the same name are one command. No label
+has a key: a key typed goes to the cells. A narrow window makes the
+groups smaller, down to a button that drops the group down. A
+double-click on the tab, or the mark at the row's right end, leaves the
+row of tabs alone, a tab then dropping its page down over the cells; in
+a window less than 400 pixels high inside - a small board's - the ribbon
+is that way by itself.
+
+**View → Ribbon** hides the ribbon and shows it again. Sheet keeps that
+in `ENV:Sheet.prefs` and `ENVARC:Sheet.prefs` - a line `RIBBON=NO` or
+`RIBBON=YES` - so it starts the same way next time. Without
+toolbutton.gadget, command.image or ribbon.gadget there is no ribbon,
+and the item is grey.
+
+## Formats
+
+A cell's number is shown in its format:
+
+| Format | Shows 1234.5 as | Decimals to begin with |
+|---|---|---|
+| General | as many digits as the column has room for | - |
+| Number | `1,234.50` - grouped in thousands | 2 |
+| Percent | `123450%` - a hundred times it | 0 |
+| Currency | `$1,234.50` | 2 |
+
+More Decimals and Fewer Decimals change the count, from 0 to 10; on a
+General cell they start from the decimals it shows and make it a Number.
+A number with more digits than the format can write is shown as General
+would, and one that does not fit its column as `###`.
+
+A format is the cell's: it stays while the cell's text changes and goes
+when the cell is emptied. Copy and Paste, Fill and Sort take it along,
+and Undo puts it back. Copy puts the values on the clipboard as they are
+shown. An empty cell has no format to take. **CSV keeps no formats**: a
+sheet saved and read again shows its numbers in General.
+
+## Finding
+
+Find (Ctrl-F) shows a line under the line at the top. What is typed
+there is looked for in every cell - in what was typed into it and in
+what it shows - with no regard to case, from the cell after the current
+one on along the rows, round the end to the first. Return or **Next**
+makes the next cell that holds it current, and the line keeps the
+keyboard for the one after; **Previous** goes the other way. A beep and
+the status line say when no cell holds it. Escape or **Close** hides the
+line. Find Next (G) goes on with what was last looked for.
 
 ## Files
 
@@ -200,18 +280,18 @@ split by. In a file split by semicolons, a number written with a decimal
 comma (`1,5`) is read as that number, and saved back the same way. A file
 in UTF-8 has its characters turned into the system's Latin-1 ones.
 
-The columns' widths are not saved. New, Open, Quit, the close gadget and
+The columns' widths and the cells' formats are not saved. New, Open, Quit, the close gadget and
 Ctrl-C ask whether to save a sheet that has changed.
 
 ## The source
 
 | File | Holds |
 |---|---|
-| `sheet.zig` | the program: the window, drawing the cells, the keys and the pointer, the menus, files and the clipboard |
-| `cells.zig` | the cells, kept in a table by place; working them out; the steps that can be undone; rows and columns put in and taken out; fill, copy and paste |
+| `sheet.zig` | the program: the window, drawing the cells, the keys and the pointer, the menus and the ribbon, finding, files and the clipboard |
+| `cells.zig` | the cells, kept in a table by place; working them out; the steps that can be undone; rows and columns put in and taken out; fill, copy and paste; formats, sorting, finding and AutoSum's ranges |
 | `formula.zig` | reading a formula into code; the names of cells; moving a formula's references |
 | `eval.zig` | values, operators and functions: working a formula's code out |
-| `number.zig` | numbers read from text and written as text |
+| `number.zig` | numbers read from text and written as text, in a format too |
 | `csv.zig` | CSV read and written |
 | `tests/sheet.zig` | host tests of all but the window |
 
@@ -222,7 +302,10 @@ that names one not yet worked out puts it on that stack and is tried
 again after it, so a column of a thousand formulas each naming the one
 above costs memory, not stack. The grid is a `canvas.gadget` whose
 picture is made as big as its box whenever the window is sized, and the
-scroll bars are the window object's.
+scroll bars are the window object's. The ribbon is made from a table
+(`rb.build`), and it and the find line are children of the window's
+layout that are hidden and shown again (`CHILDA_Hidden`), so they come
+and go where they belong.
 
 The host tests run with the system's:
 
