@@ -58,6 +58,34 @@ fn usbPart(comptime unit: u32, comptime registers: usize, comptime source: u32, 
     };
 }
 
+/// PCI Express port 1, the IO board's M.2 slot (M key, one lane, 5 GT/s),
+/// which the bootloader leaves alone: the bridge's registers at
+/// 0x10_0011_0000, its configuration space through them. Its memory
+/// window is 4 MiB at 0x1B_8000_0000, at 0x3FC0_0000 on the bus - where
+/// RAM has the firmware's hole, so no buffer a function moves data to is
+/// in it - and its prefetchable one 14 GiB at 0x18_0000_0000, from 16 GiB
+/// on the bus, above RAM; RAM is on the bus where it is (`bcm2712.zig`).
+/// INTA to INTD are GIC interrupts 251 to 254. The slot's 3.3 V is the
+/// RP1's GPIO28 (PCIE_PWR_EN), which the bootloader leaves on.
+const pcie1 = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PCI),
+    .value(st.PART_Chip, st.CHIP_BCM2712_PCIE),
+    .pointer(st.PART_ChipName, "bcm2712 pcie1"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_BusUnit, 1),
+    .value(st.PART_Address, 0x10_0011_0000),
+    .value(st.PART_PciConfig, 0x10_0011_0000),
+    .value(st.PART_PciMem, 0x1B_8000_0000),
+    .value(st.PART_PciMemBus, 0x3FC0_0000),
+    .value(st.PART_PciMemSize, 0x40_0000),
+    .value(st.PART_PciPref, 0x18_0000_0000),
+    .value(st.PART_PciPrefBus, 0x4_0000_0000),
+    .value(st.PART_PciPrefSize, 0x3_8000_0000),
+    .value(st.PART_Irq, 251),
+    .pointer(st.PART_Label, "PCIe 1: the M.2 slot"),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -76,6 +104,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_Cores, 4),
     .pointer(st.SYSTAG_Part, &usb0),
     .pointer(st.SYSTAG_Part, &usb1),
+    .pointer(st.SYSTAG_Part, &pcie1),
     .done,
 };
 

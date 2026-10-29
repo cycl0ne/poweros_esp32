@@ -521,6 +521,13 @@ pub const CHIP_JH7110_CRYPTO: u32 = 37;
 /// xhci.device unit, the board's controllers before the PCI functions.
 /// The CM5's RP1 has two.
 pub const CHIP_DWC3: u32 = 38;
+/// One of the BCM2712's PCI Express root ports, Broadcom's STB bridge
+/// (PARTKIND_PCI on BUS_MEMORY): PART_BusUnit which one - 1 the CM5 IO
+/// board's M.2 slot; 2 is the RP1's, which the kernel keeps and no board
+/// names - PART_Address and PART_PciConfig its bridge's registers, which
+/// its configuration space is reached through. Its INTA is PART_Irq,
+/// INTB to INTD the three interrupts after it.
+pub const CHIP_BCM2712_PCIE: u32 = 39;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
