@@ -23,6 +23,12 @@
 //! cross-core interrupt, which another core raises on it. Each carries a
 //! flag of its own per core as well, taken after the SGI is acknowledged,
 //! so one raised meanwhile comes again.
+//!
+//! **A board's interrupt bridge** (`boards.interrupt_bridge`: the CM5's
+//! RP1) raises shared interrupts of its own as messages: those are taken
+//! on their edge, the bridge is set up once the distributor is on, a
+//! source is switched on and off at the bridge as at the GIC, and the
+//! bridge is told when a source's servers have run, before the GIC is.
 
 const cpu = @import("cpu.zig");
 const hardware = @import("sdk").hardware;
@@ -32,6 +38,7 @@ const exec = @import("../../rom/libs/exec/exec.zig");
 const exec_base = @import("../../rom/libs/exec/exec_base.zig");
 const trap = @import("trap.zig");
 const rendezvous = @import("rendezvous.zig");
+const boards = @import("../../boards/boards.zig");
 
 const max_cores = exec_base.max_cores;
 
@@ -64,7 +71,8 @@ var cross_core_pending: [max_cores]u32 = @splat(0);
 
 /// Core 0's: the distributor off while every shared interrupt is
 /// disabled, cleared, given the one priority and core 0's interface, and
-/// taken on its level; then on again, and core 0's own interface on.
+/// taken on its level - the bridge's on their edge; then on again, core
+/// 0's own interface on, and the bridge set up.
 pub fn init() void {
     const count = @min(gic.lines(), intbits.INTB_GIC_COUNT);
     gic.setDistributor(false);
@@ -79,10 +87,11 @@ pub fn init() void {
     while (id < count) : (id += 1) {
         gic.setPriority(id, PRIORITY);
         gic.setTargets(id, interfaces[0]);
-        gic.setEdge(id, false);
+        gic.setEdge(id, bridged(id) != null);
     }
     gic.setDistributor(true);
     trap.irq_handler = &onIrq;
+    if (boards.interrupt_bridge) |bridge| bridge.init();
 }
 
 /// Another core's, on that core.
@@ -170,6 +179,7 @@ fn onIrq() void {
             continue;
         }
         if (id < intbits.INTB_GIC_COUNT) dispatch(id);
+        if (bridged(id)) |bridge| bridge.end(id);
         gic.endOfInterrupt(iar);
     }
 }
@@ -192,15 +202,23 @@ fn isShared(source: u32) bool {
     return source >= intbits.INTB_SPI_FIRST and source < intbits.INTB_GIC_COUNT;
 }
 
+/// The board's bridge, if `source` is one of its.
+fn bridged(source: u32) ?*const boards.InterruptBridge {
+    const bridge = boards.interrupt_bridge orelse return null;
+    return if (source >= bridge.first and source - bridge.first < bridge.count) bridge else null;
+}
+
 fn enableSource(source: u32, _: bool) bool {
     if (isAlarm(source)) return true;
     if (!isShared(source)) return false;
     gic.setEnabled(source, true);
+    if (bridged(source)) |bridge| bridge.enable(source);
     return true;
 }
 
 fn disableSource(source: u32) void {
     if (!isShared(source)) return;
+    if (bridged(source)) |bridge| bridge.disable(source);
     gic.setEnabled(source, false);
 }
 

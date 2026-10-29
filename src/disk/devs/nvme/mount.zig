@@ -9,8 +9,10 @@
 //! volume (`NV0`, then `NV0P2`); otherwise `NV<n>` over the whole namespace, with the
 //! handler its first block asks for. A name in use gets a dot added
 //! (`DH0.`). A unit a device node already opens - a MountList entry
-//! mounted by hand before BindDrivers - gets nothing: that entry is its
-//! drive, and is started like the device's own.
+//! mounted by hand before BindDrivers, or the boot nodes the ROM's copy
+//! made for its table - gets none of its table's: that node is its
+//! drive, and is started like the device's own. Its GPT's FAT and posfs
+//! partitions outside the container get theirs all the same.
 //!
 //! An SSD does not change, so the process looks once, tells input a disk
 //! came when one did - so a window showing the device list (the desktop)

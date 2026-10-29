@@ -4,9 +4,13 @@
 //! their DOS process.
 //!
 //! **What the first medium gets** (`mountMedium`), in this order:
-//! 1. **Nothing**, when a device node on dos's list already opens the
-//!    unit - a MountList entry mounted by hand, say - which is the unit's
-//!    drive then: one medium has one claimant.
+//! 1. **Nothing of the table's**, when a device node on dos's list
+//!    already opens the unit - a MountList entry mounted by hand, or a
+//!    partition the device's ROM copy handed dos as a boot node - which
+//!    is the unit's drive then: one medium has one claimant. Only the
+//!    GPT partitions outside its container still get their drives, as
+//!    in 2., where the claimant opens none of their blocks: a FAT
+//!    partition beside the PowerOS container a system starts from.
 //! 2. **A drive per partition**, when the medium holds a sound
 //!    RigidDiskBlock: rdb.library's MountPartition for every partition
 //!    not marked PBFF_NOMOUNT, under the partition's name, with a dot
@@ -125,8 +129,11 @@ pub fn firstMedium(sys: *ExecBase, dl: *DosBase, unit: Unit) bool {
 /// The drives a unit's first medium gets, made and on dos's list, their
 /// names in `drives`; nothing started.
 pub fn mountMedium(sys: *ExecBase, dl: *DosBase, unit: Unit, drives: *Drives) void {
-    if (claimant(dl, unit, drives)) return;
-    if (mountTable(sys, unit, drives)) return;
+    if (claimant(dl, unit, drives)) {
+        _ = mountTable(sys, unit, drives, false);
+        return;
+    }
+    if (mountTable(sys, unit, drives, true)) return;
     ownDrive(sys, dl, unit, drives);
 }
 
@@ -171,9 +178,10 @@ fn nameOf(text: [*:0]const u8) []const u8 {
 }
 
 /// The medium's partitions mounted, when it holds a sound RigidDiskBlock
-/// or a sound GPT. Whether it does: such a medium gets no drive of its
-/// own, even when none of its partitions could be mounted.
-fn mountTable(sys: *ExecBase, unit: Unit, drives: *Drives) bool {
+/// or a sound GPT - without `with_table` only the GPT's. Whether it does:
+/// such a medium gets no drive of its own, even when none of its
+/// partitions could be mounted.
+fn mountTable(sys: *ExecBase, unit: Unit, drives: *Drives, with_table: bool) bool {
     const lib = sys.OpenLibrary(rdb.RDBNAME, rdb_version) orelse return false;
     defer sys.CloseLibrary(lib);
     if (lib.version == rdb_version and lib.revision < rdb_revision) return false;
@@ -183,7 +191,7 @@ fn mountTable(sys: *ExecBase, unit: Unit, drives: *Drives) bool {
     const reads_gpt = lib.version > rdb_version or lib.revision >= gpt_revision;
     const has_gpt = reads_gpt and handle.flags & (rdb.RDBF_GPT | rdb.RDBF_GPTDAMAGED) == rdb.RDBF_GPT;
     if (handle.flags & rdb.RDBF_FOUND == 0 and !has_gpt) return false;
-    if (handle.flags & rdb.RDBF_FOUND != 0) mountPartitions(rb, handle, drives);
+    if (with_table and handle.flags & rdb.RDBF_FOUND != 0) mountPartitions(rb, handle, drives);
     if (has_gpt) mountGpt(rb, handle, unit, drives);
     return true;
 }

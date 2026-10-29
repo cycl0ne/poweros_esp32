@@ -560,14 +560,16 @@ fn MountGPTPartition(base: *RDBBase, handle: *rdb.RDBHandle, partition: *rdb.GPT
   `SD0P3`).
 - `mounted`: where the name the node got goes, or null.
 - `flags`: RDBMF_START to start the handler before the call returns;
-  0 leaves it to the drive's first use.
+  0 leaves it to the drive's first use. RDBMF_FAT (1.7), with a
+  format by `rdb.mountFormat`, mounts a new partition for FAT.
 
 **RESULT**
 
 RDBERR_OK when the node is on the list, and `mounted` holds its name.
 RDBERR_NOGPT for a handle without a GPT; RDBERR_FILESYSTEM for the
 container, or a partition whose first block holds no file system this
-machine reads or one that cannot go on this medium; RDBERR_NAME for a
+machine reads - with RDBMF_FAT, and is not a new one's - or one that
+cannot go on this medium; RDBERR_NAME for a
 name that is empty, too long, holds a colon or a slash, or is taken
 with every dot that fits; RDBERR_RANGE for a partition a cylinder
 cannot be found for (one that starts on an odd block of a disk of 2^32
@@ -585,6 +587,15 @@ the handle's device and unit, its environment names the partition's
 blocks and no more, with the medium's block size and memory, and it is
 called `name`, with a dot added while dos's list has a device or an
 assign of the name, as MountPartition does.
+
+With RDBMF_FAT a partition whose first block holds no volume is
+mounted for FAT (`MSD`, with the format the flags name as its last
+byte) when the block is all zeroes and the partition's type is one a
+FAT volume is in - basic data, or EFI System for the partition a
+firmware starts from: a new partition, whose first block the program
+that made it cleared, so that C:Format can give it a volume. What
+another system put there - an NTFS volume, FAT12 or FAT16 - is not
+mistaken for one.
 
 A node of the same unit whose area shares a block with the partition's
 stops it, as it stops MountPartition: a drive over the whole medium,

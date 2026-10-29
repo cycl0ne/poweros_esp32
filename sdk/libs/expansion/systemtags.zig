@@ -197,7 +197,9 @@ pub const PART_PciPrefSize = PART_Dummy + 18;
 /// Where the station address the board gives a network port is: six
 /// bytes, all zero while there is none. The VisionFive 2's are in its
 /// EEPROM, which U-Boot writes into the device tree it passes, and the
-/// kernel copies them from there into the bytes before anything runs.
+/// Raspberry Pi's firmware writes the CM5's radio's into the tree it
+/// passes; the kernel copies them from there into the bytes before
+/// anything runs.
 pub const PART_StationAddress = PART_Dummy + 19;
 /// The delays a PHY adds on RGMII, in picoseconds: to the receive clock
 /// against its data, and to the send clock. A board whose traces delay
@@ -286,6 +288,11 @@ pub const PART_SenseScale = PART_Dummy + 0x42;
 /// pulses, which the board filters into its jack.
 pub const PART_PinLeft = PART_Dummy + 0x43;
 pub const PART_PinRight = PART_Dummy + 0x44;
+/// A radio's antenna switch: the line that, asserted, gives it the
+/// board's own antenna, and the line that gives it the one on the
+/// connector. The board leaves one asserted and the other not.
+pub const PART_PinAntenna = PART_Dummy + 0x45;
+pub const PART_PinAntennaExternal = PART_Dummy + 0x46;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -327,6 +334,8 @@ pub fn lineName(tag: u32) ?[*:0]const u8 {
         PART_PinCharging => "CHRG",
         PART_PinLeft => "LEFT",
         PART_PinRight => "RIGHT",
+        PART_PinAntenna => "ANT",
+        PART_PinAntennaExternal => "ANT_EXT",
         else => null,
     };
 }
@@ -474,8 +483,9 @@ pub const CHIP_PCI_ECAM: u32 = 26;
 /// bridge's registers; its INTA to INTD are gathered on PART_Irq.
 pub const CHIP_JH7110_PCIE: u32 = 27;
 /// An xHCI USB host controller, found on PCI (PARTKIND_USB on BUS_PCI):
-/// PART_BusUnit says which, counting the machine's xHCI functions in the
-/// order pci.library has them (xhci.device's unit).
+/// PART_BusUnit says which - xhci.device's unit, the PCI functions
+/// counted in the order pci.library has them, after the board's own
+/// controllers (CHIP_DWC3).
 pub const CHIP_XHCI: u32 = 28;
 /// Motorcomm's YT8531, a 10/100/1000 Mbit/s Ethernet PHY (PARTKIND_NET on
 /// BUS_RGMII): PART_BusUnit the MAC it is wired to, PART_Address its
@@ -529,6 +539,41 @@ pub const CHIP_JH7110_JPU: u32 = 38;
 /// on BUS_MEMORY): H.264 and H.265 into 4:2:0 frames, run by a firmware
 /// the host loads, in the video decoder's power domain beside the JPU.
 pub const CHIP_JH7110_VDEC: u32 = 39;
+/// Synopsys's DesignWare USB 3 controller in host mode, an xHCI that is
+/// no PCI function (PARTKIND_USB on BUS_MEMORY): PART_Address its
+/// registers - the xHCI's, the controller's own at 0xC100 above - and
+/// PART_Irq its first interrupter's interrupt; PART_BusUnit its
+/// xhci.device unit, the board's controllers before the PCI functions.
+/// The CM5's RP1 has two.
+pub const CHIP_DWC3: u32 = 40;
+/// One of the BCM2712's PCI Express root ports, Broadcom's STB bridge
+/// (PARTKIND_PCI on BUS_MEMORY): PART_BusUnit which one - 1 the CM5 IO
+/// board's M.2 slot; 2 is the RP1's, which the kernel keeps and no board
+/// names - PART_Address and PART_PciConfig its bridge's registers, which
+/// its configuration space is reached through. Its INTA is PART_Irq,
+/// INTB to INTD the three interrupts after it.
+pub const CHIP_BCM2712_PCIE: u32 = 41;
+/// Infineon's (Cypress's, Broadcom's) CYW43455, an 802.11ac radio of one
+/// stream at 2.4 and 5 GHz that runs a firmware of its own, on an SDIO
+/// bus (PARTKIND_NET on BUS_SDIO): PART_Address the BCM2712's SD host it
+/// is on (an SDHCI, its configuration registers 0x400 above), PART_Irq
+/// that host's interrupt, PART_PinPower its WL_REG_ON on the BCM2712's
+/// own GPIO block, PART_PinClock, PART_PinCommand and PART_PinData0 the
+/// host's lines - the data's four in a row from it.
+pub const CHIP_CYW43455: u32 = 42;
+/// The Raspberry Pi 5's and Compute Module 5's RTC (PARTKIND_RTC on
+/// BUS_MEMORY, PART_Address the VideoCore's mailbox): a count of seconds
+/// since 1970 in the board's power chip, which the VideoCore's firmware
+/// reads and sets for the ARM through its mailbox. It counts while the
+/// board has power, and through a power cut on a cell at the BAT
+/// connector.
+pub const CHIP_RPI_RTC: u32 = 43;
+/// The BCM2712's display behind its first HDMI port (PARTKIND_PANEL on
+/// BUS_MEMORY, PART_Address the hardware video scaler, PART_Irq pixel
+/// valve 0's interrupt): the HVS, which reads the picture out of RAM,
+/// pixel valve 0, and the HDMI0 controller with its PHY and DDC. Its
+/// clocks are the VideoCore firmware's, asked through its mailbox.
+pub const CHIP_BCM2712_HVS: u32 = 44;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

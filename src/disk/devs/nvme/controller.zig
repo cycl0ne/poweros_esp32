@@ -15,9 +15,13 @@
 //! **Its interrupt** is a vector of its own where pci.library gives one
 //! (MSI-X or MSI), its INTx line where not, and a poll every millisecond
 //! where neither works. On INTx the line stays raised while completions
-//! wait, so the server holds it back (INTMS) and the task lets it go
-//! again (INTMC) once it has taken them; a line it shares is answered
-//! only when one of its queues has something.
+//! wait - until the head doorbell is rung past them, not until they are
+//! seen - so the server holds it back (INTMS) every time it comes and
+//! the task lets it go again (INTMC) once it has taken them and rung the
+//! doorbell. It does that even when no completion shows at a queue's
+//! head: the task may have taken one and not rung the doorbell yet,
+//! interrupted on the same core by the line it raised. A line it shares
+//! is answered only when one of its queues has something.
 //!
 //! **Waiting** is the task's: it sleeps until the interrupt or its
 //! timer's tick, then takes what came. A command that is not answered in
@@ -257,17 +261,19 @@ fn hook(c: *Controller) void {
     c.signalling = .polled;
 }
 
-/// The controller's interrupt: the task woken. On a shared INTx line,
-/// only when one of its queues has something, and the line held back
-/// until the task has taken it.
+/// The controller's interrupt: the task woken. On INTx the line is held
+/// back until the task has taken what came and rung the doorbell (see the
+/// top of the file); on a shared line it is answered only when one of its
+/// queues has something.
 fn intServer(data: ?*anyopaque, _: u32) callconv(.c) i32 {
     const c: *Controller = @ptrCast(@alignCast(data.?));
+    var ours = true;
     if (c.signalling == .intx) {
-        if (!waiting(c, &c.admin) and !waiting(c, &c.io)) return 0;
         _nvme.reg(c, regs.INTMS).* = 1;
+        ours = waiting(c, &c.admin) or waiting(c, &c.io);
     }
     if (c.task) |task| c.sys.Signal(task, c.int_signal);
-    return 1;
+    return @intFromBool(ours);
 }
 
 /// Whether a completion waits at the queue's head.

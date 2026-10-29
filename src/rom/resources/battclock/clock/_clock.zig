@@ -9,10 +9,17 @@ const BattClockBase = _base.BattClockBase;
 const rtctimer = @import("../source/rtctimer.zig");
 const pcf8563 = @import("../source/pcf8563.zig");
 const jh7110rtc = @import("../source/jh7110rtc.zig");
+const rpirtc = @import("../source/rpirtc.zig");
 
-/// The ESP32s' RTC timer and the JH7110's RTC, each on its own chip.
+/// The ESP32s' RTC timer, the JH7110's RTC and the Raspberry Pi's, each
+/// on its own chip.
 const has_rtc_timer = sdk.hardware.chip == .esp32s3 or sdk.hardware.chip == .esp32p4;
 const has_jh7110_rtc = sdk.hardware.chip == .rv64sbi;
+const has_rpi_rtc = sdk.hardware.chip == .a64psci;
+
+fn rpiBuffer(cb: *BattClockBase) *align(rpirtc.buffer_bytes) rpirtc.Buffer {
+    return @ptrFromInt(cb.rtc_buffer);
+}
 
 /// The RTC timer's period timed again, over the whole time since the
 /// start.
@@ -43,6 +50,10 @@ pub fn secondsNow(cb: *BattClockBase) ?u32 {
             const ub = cb.utility_base orelse return null;
             return ub.Date2Amiga(&date);
         } else return null,
+        _base.CLOCK_RPI_RTC => if (comptime has_rpi_rtc) {
+            const count = rpirtc.read(cb.sys_base, cb.rtc_address, rpiBuffer(cb)) orelse return null;
+            return rpirtc.secondsOf(count);
+        } else return null,
         else => return null,
     }
 }
@@ -50,7 +61,8 @@ pub fn secondsNow(cb: *BattClockBase) ?u32 {
 /// The clock set to `seconds` since 1 January 1978. A PCF8563 and the
 /// JH7110's RTC keep the years to 2099: a later date is kept as the last
 /// second of 2099. The JH7110's RTC starts in 2000: an earlier date is
-/// no date there, and it stops.
+/// no date there, and it stops. The Raspberry Pi's counts seconds since
+/// 1970 in 32 bits: a date past February 2106 is kept as its last.
 pub fn setSeconds(cb: *BattClockBase, seconds: u32) void {
     switch (cb.clock) {
         _base.CLOCK_RTC_TIMER => if (comptime has_rtc_timer) {
@@ -68,13 +80,16 @@ pub fn setSeconds(cb: *BattClockBase, seconds: u32) void {
             const ub = cb.utility_base orelse return;
             jh7110rtc.write(cb.rtc_address, jh7110rtc.registersAt(ub, seconds));
         },
+        _base.CLOCK_RPI_RTC => if (comptime has_rpi_rtc) {
+            _ = rpirtc.write(cb.sys_base, cb.rtc_address, rpiBuffer(cb), rpirtc.countOf(seconds));
+        },
         else => {},
     }
 }
 
 /// The clock put in working order: a PCF8563's control registers
 /// cleared, so that it runs with no test mode and no interrupt. The RTC
-/// timer and the JH7110's RTC need nothing.
+/// timer, the JH7110's RTC and the Raspberry Pi's need nothing.
 pub fn restart(cb: *BattClockBase) void {
     if (cb.clock == _base.CLOCK_PCF8563) pcf8563.restart(cb);
 }

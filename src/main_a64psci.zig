@@ -59,6 +59,7 @@ pub const rom_modules = .{
     @import("rom/handler/flashfs/flashfs.zig"),
     @import("rom/shell/shell.zig"),
     @import("rom/resources/platform/platform.zig"),
+    @import("rom/resources/battmem/battmem.zig"),
     @import("rom/libs/rtg/rtg.zig"),
     @import("rom/libs/graphics/graphics.zig"),
     @import("rom/libs/layers/layers.zig"),

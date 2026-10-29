@@ -3,13 +3,15 @@
 //! block - its unit, its task, its rings, its device slots, its root
 //! hub - and the small helpers every file uses.
 //!
-//! **A unit is a controller**: unit n is the nth xHCI function
-//! pci.library found (class 0C0330). The first OpenDevice of a unit
-//! makes its block and starts it - the function claimed, the controller
-//! reset and running, its interrupt hooked: a message-signalled one
-//! (MSI or MSI-X, vector 0, the first interrupter's) where pci.library
-//! gives it one, its INTx line otherwise - and the last CloseDevice
-//! stops it again.
+//! **A unit is a controller**: first the board's own, which are no PCI
+//! functions (CHIP_DWC3 parts: the CM5's RP1's two), then each xHCI
+//! function pci.library found (class 0C0330). The first OpenDevice of a
+//! unit makes its block and starts it - a function claimed, the
+//! controller reset and running, its interrupt hooked: a board
+//! controller's the one its part names, a function's a
+//! message-signalled one (MSI or MSI-X, vector 0, the first
+//! interrupter's) where pci.library gives it one, its INTx line
+//! otherwise - and the last CloseDevice stops it again.
 //!
 //! **Everything happens on the unit's task.** BeginIO puts a transfer on
 //! the unit's port and the task takes it: a root hub request is answered
@@ -59,7 +61,7 @@ const regs = @import("regs.zig");
 pub const DEVICE_NAME = "xhci.device";
 
 /// How many controllers the device drives at most.
-pub const max_units = 2;
+pub const max_units = 4;
 /// The device slots a controller is given at most: devices on its bus,
 /// hubs among them.
 pub const max_slots = 32;
@@ -99,11 +101,21 @@ pub const XhciBase = extern struct {
     sys_base: *ExecBase,
     seg_list: ?*anyopaque = null,
     pci_base: ?*PCIBase = null,
-    /// The xHCI functions pci.library has: the units there are.
+    /// The units there are: the board's controllers, the first
+    /// `board_units`, and the xHCI functions pci.library has.
     units: u32 = 0,
+    board_units: u32 = 0,
+    board: [max_units]BoardController = @splat(.{}),
     hosts: [max_units]?*Host = @splat(null),
     /// Who may start and stop a unit: one opener at a time.
     open_lock: exec.SignalSemaphore = .{},
+};
+
+/// A controller of the board's own (CHIP_DWC3): where its registers are,
+/// and the interrupt its part names.
+pub const BoardController = extern struct {
+    regs: usize = 0,
+    irq: u32 = 0,
 };
 
 /// An endpoint of a device: its context's state as the driver set it,
@@ -226,7 +238,10 @@ pub const Host = struct {
     dev_base: *XhciBase,
     sys: *ExecBase,
     number: u32,
-    function: *pci.PCIDevice,
+    /// Its PCI function; null for one of the board's controllers, whose
+    /// registers and interrupt `board` has.
+    function: ?*pci.PCIDevice,
+    board: BoardController = .{},
     /// Whether what it reads and writes in memory sees the processors'
     /// caches (PCIDevice.dma_coherent): then nothing is written back or
     /// dropped for it.
@@ -262,7 +277,7 @@ pub const Host = struct {
     int: exec.Interrupt = .{},
     int_hooked: bool = false,
     /// Whether it is hooked on vector 0 (AllocPCIVectors), not on the
-    /// INTx line.
+    /// INTx line: a PCI function's.
     int_vector: bool = false,
     /// The task's signals: the interrupt, an abort, a command from an
     /// opener (start the controller, or stop it).

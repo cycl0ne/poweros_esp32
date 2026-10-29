@@ -30,7 +30,8 @@
 //! cylinders count from the container's first block, and `geometry` is
 //! the container's. MountPartition puts the container's partitions where
 //! they are on the disk, and MountGPTPartition mounts the GPT's other
-//! partitions by what their first block holds. InitGPT, AddGPTPartition
+//! partitions by what their first block holds, and a new one for FAT, for
+//! C:Format to give a volume. InitGPT, AddGPTPartition
 //! and RemGPTPartition change the GPT in the handle, and WriteGPT puts it
 //! on the disk, both copies; RemGPT takes it out of the handle, for a
 //! table over the whole disk.
@@ -92,7 +93,8 @@ pub const RDBERR_MOUNTED: i32 = -10;
 /// system cannot go on this medium or inside a partition. AddFileSystem:
 /// the code is not a handler's load file for this machine.
 /// MountGPTPartition: the partition's first block holds no file system
-/// this machine reads, or the partition is the container.
+/// this machine reads (and with RDBMF_FAT is not a new one's), or the
+/// partition is the container.
 pub const RDBERR_FILESYSTEM: i32 = -11;
 /// The call does not go with the disk's GPT: InitRDB on a disk with a GPT
 /// and no container (RemGPT first, or a container added), WriteRDB of a
@@ -109,6 +111,23 @@ pub const RDBERR_NOGPT: i32 = -13;
 /// The handler started before the call returns, so the volume is on
 /// dos's list, rather than at the drive's first use.
 pub const RDBMF_START: u32 = 1;
+/// MountGPTPartition (1.7): a basic data or EFI System partition whose
+/// first block is all zeroes - a new one, which C:Format is to give a
+/// volume - is mounted for FAT, with the DosType `MSD` and the format
+/// `mountFormat` puts in the flags as its last byte.
+pub const RDBMF_FAT: u32 = 2;
+
+/// The flags' part that says which format an RDBMF_FAT drive's DosType
+/// names: `fat.FORMAT_FAT32`, `fat.FORMAT_EXFAT`, or `fat.FORMAT_BY_SIZE`
+/// (0, the bits left clear).
+pub fn mountFormat(format: u8) u32 {
+    return @as(u32, format) << 8;
+}
+
+/// The format `mountFormat` put in the flags.
+pub fn formatOfFlags(flags: u32) u8 {
+    return @truncate(flags >> 8);
+}
 
 /// The name a partition is mounted under, without the colon: the
 /// partition's own, or with dots added.

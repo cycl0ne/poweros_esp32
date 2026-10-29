@@ -16,6 +16,9 @@ pub const CLOCK_RTC_TIMER: u32 = 1;
 pub const CLOCK_PCF8563: u32 = 2;
 /// The JH7110's own RTC (source/jh7110rtc.zig).
 pub const CLOCK_JH7110_RTC: u32 = 3;
+/// The Raspberry Pi's RTC, through the VideoCore's firmware
+/// (source/rpirtc.zig).
+pub const CLOCK_RPI_RTC: u32 = 4;
 
 pub const BattClockBase = extern struct {
     lib: exec.Library,
@@ -28,8 +31,10 @@ pub const BattClockBase = extern struct {
     /// The PCF8563's bus - i2c.device's unit - and its address.
     i2c_unit: u32,
     i2c_address: u32,
-    /// The JH7110's RTC: its registers.
+    /// The JH7110's RTC: its registers. The Raspberry Pi's: the
+    /// VideoCore's mailbox, and the buffer its messages are written in.
     rtc_address: usize,
+    rtc_buffer: usize,
     /// The RTC timer's slow clock: microseconds per cycle, 19 bits of them
     /// fraction - measured at this start, then over the time since.
     period: u32,

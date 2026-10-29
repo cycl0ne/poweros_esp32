@@ -122,6 +122,10 @@ pub const gic = if (chip == .a64psci) own.gic else struct {};
 /// The barriers between the processor and a device that reads or writes
 /// memory itself, the same calls on every chip.
 pub const barrier = @import("barrier.zig");
+/// The VideoCore's mailbox, through which the Raspberry Pis' firmware is
+/// asked for what only it reaches (the BCM2712's); its messages are the
+/// same anywhere, so it is built for every chip, and asked only there.
+pub const videocore = @import("videocore.zig");
 
 /// The crystal: the clock the chip starts on, and the UARTs' clock.
 pub const XTAL_HZ = own.XTAL_HZ;

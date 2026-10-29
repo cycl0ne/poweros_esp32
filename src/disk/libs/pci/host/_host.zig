@@ -2,12 +2,14 @@
 //! A host bridge as the library keeps it: the board's PCI part it is,
 //! its configuration space and its windows, and the functions behind it.
 //!
-//! **Configuration space** is reached the same way behind both bridges
+//! **Configuration space** is reached the same way behind most bridges
 //! the library knows, ECAM: a function's 4 KiB at bus << 20 | device <<
 //! 15 | function << 12 in the bridge's window, read and written 1, 2 or
-//! 4 bytes at a time. What differs is the chip's (`ecam.zig`,
-//! `jh7110.zig`): how the bridge is brought up, what of its own space is
-//! hidden, and where a function's INTx line ends up.
+//! 4 bytes at a time; the BCM2712's goes through an index register and a
+//! window of one function's (`bcm2712.zig`). What differs is the chip's
+//! (`ecam.zig`, `jh7110.zig`, `bcm2712.zig`): how the bridge is brought
+//! up, what of its own space is hidden, and where a function's INTx line
+//! ends up.
 //!
 //! **Bringing the bridges up** goes in steps, which the library takes
 //! for every bridge at once - so that the waits PCI Express asks for are
@@ -35,6 +37,7 @@ const place = @import("../scan/place.zig");
 const _state = @import("_state.zig");
 const ecam = @import("ecam.zig");
 const jh7110 = @import("jh7110.zig");
+const bcm2712 = @import("bcm2712.zig");
 const host_module = @This();
 
 pub const Address = scan.Address;
@@ -44,7 +47,7 @@ pub const max_hosts = 4;
 /// The most vectors a host bridge tells apart.
 pub const max_vectors = 32;
 
-pub const Chip = enum { ecam, jh7110 };
+pub const Chip = enum { ecam, jh7110, bcm2712 };
 
 pub const Host = struct {
     sys: *ExecBase,
@@ -117,10 +120,13 @@ pub fn addressOf(device: *const pci.PCIDevice) Address {
 /// VisionFive 2 with an NVMe SSD: what it wrote was read through dirty
 /// lines and through stale clean ones, and it took a command the
 /// processor had not written back; Linux's device tree marks none of the
-/// chip's devices dma-noncoherent either.
+/// chip's devices dma-noncoherent either. The BCM2712's are not: Linux's
+/// device tree gives its PCI Express ports no dma-coherent, and the RP1's
+/// USB controllers behind port 2 are driven with the caches cleaned.
 pub fn coherent(chip: Chip) bool {
     return switch (chip) {
         .ecam, .jh7110 => true,
+        .bcm2712 => false,
     };
 }
 
@@ -130,6 +136,7 @@ pub fn chipOf(chip: u32) ?Chip {
     return switch (chip) {
         st.CHIP_PCI_ECAM => .ecam,
         st.CHIP_JH7110_PCIE => .jh7110,
+        st.CHIP_BCM2712_PCIE => .bcm2712,
         else => null,
     };
 }
@@ -142,6 +149,7 @@ pub fn start(host: *Host) bool {
     return switch (host.chip) {
         .ecam => true,
         .jh7110 => jh7110.start(host),
+        .bcm2712 => bcm2712.start(host),
     };
 }
 
@@ -149,7 +157,7 @@ pub fn start(host: *Host) bool {
 pub fn hasLink(host: *const Host) bool {
     return switch (host.chip) {
         .ecam => false,
-        .jh7110 => true,
+        .jh7110, .bcm2712 => true,
     };
 }
 
@@ -158,6 +166,7 @@ pub fn release(host: *Host) void {
     switch (host.chip) {
         .ecam => {},
         .jh7110 => jh7110.release(host),
+        .bcm2712 => bcm2712.release(host),
     }
 }
 
@@ -166,6 +175,7 @@ pub fn linkUp(host: *Host) bool {
     host.link_up = switch (host.chip) {
         .ecam => true,
         .jh7110 => jh7110.linkUp(host),
+        .bcm2712 => bcm2712.linkUp(host),
     };
     return host.link_up;
 }
@@ -202,7 +212,7 @@ pub fn bringUp(hosts: []const *Host, delay: anytype) void {
 pub fn rootDevices(host: *const Host) u8 {
     return switch (host.chip) {
         .ecam => 32,
-        .jh7110 => 1,
+        .jh7110, .bcm2712 => 1,
     };
 }
 
@@ -210,6 +220,7 @@ pub fn rootDevices(host: *const Host) u8 {
 pub fn read(host: *Host, at: Address, offset: u32, size: u32) u32 {
     if (!reachable(host, at)) return all_ones[sizeIndex(size)];
     if (hidden(host, at, offset)) return 0;
+    if (host.chip == .bcm2712) return bcm2712.read(host, at, offset, size);
     const address = host.config + ecamOffset(at, offset);
     return switch (size) {
         1 => @as(*volatile u8, @ptrFromInt(address)).*,
@@ -222,6 +233,7 @@ pub fn read(host: *Host, at: Address, offset: u32, size: u32) u32 {
 /// `offset`.
 pub fn write(host: *Host, at: Address, offset: u32, size: u32, value: u32) void {
     if (!reachable(host, at) or hidden(host, at, offset)) return;
+    if (host.chip == .bcm2712) return bcm2712.write(host, at, offset, size, value);
     const address = host.config + ecamOffset(at, offset);
     switch (size) {
         1 => @as(*volatile u8, @ptrFromInt(address)).* = @truncate(value),
@@ -255,6 +267,7 @@ fn hidden(host: *const Host, at: Address, offset: u32) bool {
     return switch (host.chip) {
         .ecam => false,
         .jh7110 => jh7110.hidden(at, offset),
+        .bcm2712 => bcm2712.hidden(at, offset),
     };
 }
 
@@ -265,6 +278,7 @@ pub fn interruptOf(host: *const Host, root_device: u8, root_pin: u8) u32 {
     return switch (host.chip) {
         .ecam => ecam.interruptOf(host, root_device, root_pin),
         .jh7110 => host.irq,
+        .bcm2712 => host.irq + root_pin - 1,
     };
 }
 
@@ -272,7 +286,7 @@ pub fn interruptOf(host: *const Host, root_device: u8, root_pin: u8) u32 {
 pub fn addServer(entry: *Entry, server: *exec.Interrupt) void {
     const host = entry.host;
     switch (host.chip) {
-        .ecam => host.sys.AddIntServer(entry.device.interrupt, server),
+        .ecam, .bcm2712 => host.sys.AddIntServer(entry.device.interrupt, server),
         .jh7110 => jh7110.addServer(host, entry.root_pin, server),
     }
 }
@@ -281,7 +295,7 @@ pub fn addServer(entry: *Entry, server: *exec.Interrupt) void {
 pub fn remServer(entry: *Entry, server: *exec.Interrupt) void {
     const host = entry.host;
     switch (host.chip) {
-        .ecam => host.sys.RemIntServer(entry.device.interrupt, server),
+        .ecam, .bcm2712 => host.sys.RemIntServer(entry.device.interrupt, server),
         .jh7110 => jh7110.remServer(host, entry.root_pin, server),
     }
 }
@@ -289,7 +303,7 @@ pub fn remServer(entry: *Entry, server: *exec.Interrupt) void {
 /// `server` on the host's vector `vector`.
 pub fn addVectorServer(host: *Host, vector: u8, server: *exec.Interrupt) void {
     switch (host.chip) {
-        .ecam => {},
+        .ecam, .bcm2712 => {},
         .jh7110 => jh7110.addVectorServer(host, vector, server),
     }
 }
@@ -297,7 +311,7 @@ pub fn addVectorServer(host: *Host, vector: u8, server: *exec.Interrupt) void {
 /// `server` off the host's vector `vector`.
 pub fn remVectorServer(host: *Host, vector: u8, server: *exec.Interrupt) void {
     switch (host.chip) {
-        .ecam => {},
+        .ecam, .bcm2712 => {},
         .jh7110 => {
             // The server's node knows its chain.
             _ = vector;
@@ -309,7 +323,7 @@ pub fn remVectorServer(host: *Host, vector: u8, server: *exec.Interrupt) void {
 /// Every server off the host's vectors `first` to `first + count - 1`.
 pub fn clearVectors(host: *Host, first: u8, count: u16) void {
     switch (host.chip) {
-        .ecam => {},
+        .ecam, .bcm2712 => {},
         .jh7110 => jh7110.clearVectors(host, first, count),
     }
 }

@@ -13,13 +13,16 @@ pub const help =
     \\
 ;
 
+/// How an address is printed: as wide as the machine's.
+const address_format = if (@sizeOf(usize) == 8) "%s0x%010lx:" else "%s0x%08x:";
+
 pub fn run(shell: *Shell, args: *Args) anyerror!void {
-    const address = (try args.number()) & ~@as(u32, 3);
+    const address = (try args.address()) & ~@as(usize, 3);
     const words = try args.numberOr(4);
     var i: u32 = 0;
     while (i < words) : (i += 1) {
         const at = address + i * 4;
-        if (i % 4 == 0) shell.print("%s0x%08x:", .{ if (i == 0) "" else "\n", at });
+        if (i % 4 == 0) shell.print(address_format, .{ if (i == 0) "" else "\n", at });
         shell.print(" %08x", .{reg(at).*});
     }
     shell.print("\n", .{});

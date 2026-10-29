@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! battclock.resource's ROM tag, and the init routine it names: the clock
-//! chosen - the board's clock chip or the JH7110's RTC, else the chip's
-//! RTC timer - and the system time set from it.
+//! chosen - the board's clock chip, the JH7110's RTC or the Raspberry
+//! Pi's, else the chip's RTC timer - and the system time set from it.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -15,11 +15,14 @@ const BattClockBase = _base.BattClockBase;
 const rtctimer = @import("source/rtctimer.zig");
 const pcf8563 = @import("source/pcf8563.zig");
 const jh7110rtc = @import("source/jh7110rtc.zig");
+const rpirtc = @import("source/rpirtc.zig");
 
 /// The ESP32s have an RTC timer that counts through a reset; the JH7110
-/// has an RTC of its own, which the board lists.
+/// has an RTC of its own, which the board lists; so does a Raspberry Pi,
+/// behind its firmware.
 const has_rtc_timer = sdk.hardware.chip == .esp32s3 or sdk.hardware.chip == .esp32p4;
 const has_jh7110_rtc = sdk.hardware.chip == .rv64sbi;
+const has_rpi_rtc = sdk.hardware.chip == .a64psci;
 
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = sdk.resources.battclock.BATTCLOCKNAME;
@@ -37,7 +40,8 @@ fn battClockBase(lib: *exec.Library) *BattClockBase {
 
 /// The board's clock, when it lists one: a PCF8563 on an I2C bus, its
 /// bus and address into the base; or the JH7110's RTC, its registers'
-/// address. Which chip it is - CHIP_NONE for none.
+/// address; or the Raspberry Pi's, the VideoCore's mailbox. Which chip it
+/// is - CHIP_NONE for none.
 fn findChip(cb: *BattClockBase) u32 {
     const sys = cb.sys_base;
     const ub = cb.utility_base orelse return st.CHIP_NONE;
@@ -52,7 +56,7 @@ fn findChip(cb: *BattClockBase) u32 {
             cb.i2c_unit = @truncate(ub.GetTagData(st.PART_BusUnit, 0, part.tags));
             cb.i2c_address = @truncate(ub.GetTagData(st.PART_Address, pcf8563.default_address, part.tags));
         },
-        st.CHIP_JH7110_RTC => {
+        st.CHIP_JH7110_RTC, st.CHIP_RPI_RTC => {
             cb.rtc_address = @intCast(ub.GetTagData(st.PART_Address, 0, part.tags));
             if (cb.rtc_address == 0) return st.CHIP_NONE;
         },
@@ -80,10 +84,12 @@ fn setSystemTime(cb: *BattClockBase) void {
 /// ResInit: the clock chosen and the system time set from it. A board
 /// that lists a PCF8563 that answers keeps the date there; one that lists
 /// the JH7110's RTC keeps it there, the RTC set at once to the date a
-/// reset kept and the time since (source/jh7110rtc.zig); otherwise the
-/// ESP32s' RTC timer does, its slow clock measured and its reckoning
-/// carried over. With none, the resource is made all the same, and its
-/// calls find no clock.
+/// reset kept and the time since (source/jh7110rtc.zig); one that lists
+/// the Raspberry Pi's keeps it there if the firmware answers, its
+/// messages in a buffer of MEMF_DMA; otherwise the ESP32s' RTC timer
+/// does, its slow clock measured and its reckoning carried over. With
+/// none, the resource is made all the same, and its calls find no
+/// clock.
 ///
 /// CONTEXT:
 /// - Waits: yes, for i2c.device and timer.device, and about 8 ms for the
@@ -99,6 +105,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     cb.i2c_unit = 0;
     cb.i2c_address = 0;
     cb.rtc_address = 0;
+    cb.rtc_buffer = 0;
     cb.period = 0;
     cb.start_count = 0;
     cb.start_ticks = 0;
@@ -120,6 +127,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
                 exec.kprintf(sys_base, "%s: the jh7110 rtc stays in reset\n", .{RESOURCE_NAME});
             }
         },
+        st.CHIP_RPI_RTC => if (comptime has_rpi_rtc) startRpi(cb),
         else => {},
     }
     if (comptime has_rtc_timer) {
@@ -135,6 +143,25 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     }
     if (cb.clock != _base.CLOCK_NONE) setSystemTime(cb);
     return lib;
+}
+
+/// The Raspberry Pi's RTC taken if its firmware answers, its buffer kept
+/// for good; said in the log if it does not.
+fn startRpi(cb: *BattClockBase) void {
+    const sys = cb.sys_base;
+    const memory = sys.AllocMem(rpirtc.buffer_bytes * 2, exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return;
+    const buffer = rpirtc.bufferIn(memory) orelse {
+        sys.FreeMem(memory, rpirtc.buffer_bytes * 2);
+        exec.kprintf(sys, "%s: no memory the firmware reaches\n", .{RESOURCE_NAME});
+        return;
+    };
+    if (rpirtc.read(sys, cb.rtc_address, buffer) == null) {
+        sys.FreeMem(memory, rpirtc.buffer_bytes * 2);
+        exec.kprintf(sys, "%s: the firmware does not answer for its rtc\n", .{RESOURCE_NAME});
+        return;
+    }
+    cb.rtc_buffer = @intFromPtr(buffer);
+    cb.clock = _base.CLOCK_RPI_RTC;
 }
 
 const init_table = exec.InitTable{

@@ -8,8 +8,8 @@
 //! ESP32-S3's RTC slow memory, the ESP32-P4's LP RAM, in the 64 bytes
 //! after battclock.resource's (sdk.hardware.rtc_timer.batt_memory) - with
 //! a check sum, so that what a power-on leaves there is taken for no bits
-//! at all. A chip with no such memory (the rv64sbi machines) keeps them
-//! in the base, from 0 at each start. Which bits hold what is
+//! at all. A chip with no such memory (the rv64sbi and AArch64 machines)
+//! keeps them in the base, from 0 at each start. Which bits hold what is
 //! sdk.resources.battmembits.
 //!
 //! Each call is a file of its own under `bits/`. The jump table is

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! The console UART, an Arm PL011 (Arm DDI 0183): QEMU's virt's, and the
-//! BCM2712's debug UART. UART0 is exec's raw console (`consoleInit`,
-//! `consolePut`, `consoleGet`), polled.
+//! The console UART, an Arm PL011 (Arm DDI 0183): QEMU's virt's, the
+//! BCM2712's debug UART, and the CM5's RP1's UART0. UART0 is exec's raw
+//! console (`consoleInit`, `consolePut`, `consoleGet`), polled.
 //!
 //! Where the console is, its clock and its interrupt are `console`, which
 //! the kernel sets from the board before exec's raw port starts.

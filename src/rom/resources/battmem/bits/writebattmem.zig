@@ -41,7 +41,8 @@ const BattMemBase = @import("../battmem_base.zig").BattMemBase;
 ///
 /// NOTES:
 /// The bits outlive a reset on the ESP32-S3 and the ESP32-P4, not a
-/// power-on; on the rv64sbi machines they last until the next start.
+/// power-on; on the rv64sbi and AArch64 machines they last until the
+/// next start.
 /// What should outlive that is kept in a file too, and written here
 /// again as the system starts.
 ///

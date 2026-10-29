@@ -14,7 +14,7 @@ pub const help =
 ;
 
 pub fn run(_: *Shell, args: *Args) anyerror!void {
-    const address = (try args.number()) & ~@as(u32, 3);
+    const address = (try args.address()) & ~@as(usize, 3);
     const value = try args.number();
     reg(address).* = value;
 }

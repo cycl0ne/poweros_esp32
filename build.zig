@@ -48,8 +48,9 @@ const disk_tree = "disk";
 /// RISC-V 64 `virt` machine under OpenSBI, which the `virt` step runs;
 /// `visionfive2` is StarFive's JH7110 board, booted from U-Boot.
 /// `qemu_virt_a64` is upstream QEMU's AArch64 `virt` machine with
-/// Cortex-A76 cores and a GICv2, which the `virt64` steps run.
-const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4, qemu_virt, visionfive2, qemu_virt_a64 };
+/// Cortex-A76 cores and a GICv2, which the `virt64` steps run;
+/// `rpi_cm5` is the Raspberry Pi Compute Module 5, booted from its eMMC.
+const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4, qemu_virt, visionfive2, qemu_virt_a64, rpi_cm5 };
 
 /// The chip a board is built on, which picks the kernel's target, its
 /// root, start code and linker script, and how its image is made.
@@ -60,7 +61,7 @@ fn chipOf(board: Board) Chip {
         .waveshare_7b, .es3c35p, .qemu => .esp32s3,
         .esp32p4_emu, .olimex_p4pc, .crowpanel_p4 => .esp32p4,
         .qemu_virt, .visionfive2 => .rv64sbi,
-        .qemu_virt_a64 => .a64psci,
+        .qemu_virt_a64, .rpi_cm5 => .a64psci,
     };
 }
 
@@ -263,7 +264,7 @@ fn iconSize(board: Board) u32 {
         // 480x320
         .es3c35p => 40,
         // No screen yet.
-        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4, .qemu_virt, .visionfive2, .qemu_virt_a64 => 48,
+        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4, .qemu_virt, .visionfive2, .qemu_virt_a64, .rpi_cm5 => 48,
     };
 }
 
@@ -562,6 +563,9 @@ pub fn build(b: *std.Build) void {
     for (poweros_userland.mac_files) |file| {
         make_rv64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), rv64_disk_dep.namedLazyPath(file.source));
     }
+    for (poweros_userland.a64_files) |file| {
+        make_a64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), a64_disk_dep.namedLazyPath(file.source));
+    }
     if (wifi != null) {
         const wifi_device = poweros_userland.wifi_device;
         make_disk.addPrefixedFileArg(b.fmt("{s}=", .{wifi_device.disk}), disk_dep.namedLazyPath(wifi_device.disk));
@@ -640,6 +644,15 @@ pub fn build(b: *std.Build) void {
         make_rv64_disk.addArg("devs/firmware");
         make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511_dec_fw.bin=", .{ .cwd_relative = b.pathJoin(&.{ dir, "wave511_dec_fw.bin" }) });
         make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE.txt" }) });
+    }
+    // DEVS:networks/firmware/cyw43455/ - what the Raspberry Pi CM5's radio
+    // runs, as scripts/fetch-cyw43455.sh fetched it. On the AArch64 disk
+    // alone, whose networks/cyw43455.device loads it.
+    if (cyw43455Dir(b)) |dir| {
+        make_a64_disk.addArgs(&.{ "devs/networks/firmware", "devs/networks/firmware/cyw43455" });
+        for (cyw43455_files) |name| {
+            make_a64_disk.addPrefixedFileArg(b.fmt("devs/networks/firmware/cyw43455/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
+        }
     }
     // DEVS:pci.ids - the PCI ID Repository's list, which C:PCIInfo names
     // vendors and devices from, as scripts/fetch-pciids.sh fetched it. On
@@ -1351,6 +1364,20 @@ const aic8800_files = [_][]const u8{
     "fmacfw.bin",         "fw_adid.bin",            "fw_adid_u03.bin", "fw_patch.bin", "fw_patch_u03.bin",
     "fw_patch_table.bin", "fw_patch_table_u03.bin",
 };
+
+const cyw43455_files = [_][]const u8{ "cyfmac43455-sdio.bin", "cyfmac43455-sdio.clm_blob", "brcmfmac43455-sdio.txt" };
+
+/// Where scripts/fetch-cyw43455.sh put the CYW43455's firmware, or null
+/// without it.
+fn cyw43455Dir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/cyw43455");
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "cyfmac43455-sdio.bin" }), .{}) catch {
+        std.log.info("no CYW43455 firmware (scripts/fetch-cyw43455.sh): the disk has no DEVS:networks/firmware/cyw43455/", .{});
+        return null;
+    };
+    return path;
+}
 
 /// Where scripts/fetch-aic8800.sh put the AIC8800's firmware, or null
 /// without it.

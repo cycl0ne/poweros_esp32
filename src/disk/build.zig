@@ -209,6 +209,7 @@ const modules = [_]Program{
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
     .{ .disk = "devs/networks/emac.device", .source = "devs/networks/emac/emac.zig", .name = "emac.device" },
     .{ .disk = "devs/networks/slip.device", .source = "devs/networks/slip/slip.zig", .name = "slip.device" },
+    .{ .disk = "devs/networks/cyw43455.device", .source = "devs/networks/cyw43455/cyw43455.zig", .name = "cyw43455.device" },
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
     .{ .disk = "devs/ssh.device", .source = "devs/ssh/ssh.zig", .name = "ssh.device" },
     .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device" },
@@ -244,15 +245,19 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// USB controllers and SSDs on it. And the dock in SYS:WBStartup, started
 /// with the desktop, and the test of a chip's video decoder.
 const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "WBStartup/Dock", "videodec" };
+/// Drivers of what only the Raspberry Pi CM5 has among the AArch64
+/// machines and no other chip does: its radio, a CYW43455 on the
+/// BCM2712's SD host.
+const a64_only = [_][]const u8{"cyw43455.device"};
 
 /// Whether `program` is built for `chip`. The lists name a program by its
 /// name, or by its place on the disk where one program has two. The
 /// AArch64 machines have no Ethernet MAC driven yet.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     const others = switch (chip) {
-        .esp32s3 => &(mac_only ++ rv64_only),
-        .esp32p4 => &(s3_only ++ rv64_only),
-        .rv64sbi => &(s3_only ++ esp_only),
+        .esp32s3 => &(mac_only ++ rv64_only ++ a64_only),
+        .esp32p4 => &(s3_only ++ rv64_only ++ a64_only),
+        .rv64sbi => &(s3_only ++ esp_only ++ a64_only),
         .a64psci => &(s3_only ++ esp_only ++ mac_only),
     };
     for (others) |name| {
@@ -306,6 +311,12 @@ pub const p4_files = [_]File{
     // A photograph the size of the CrowPanel's screen, for C:test/Jpeg to
     // time the codec on.
     .{ .disk = "tests/datatypes/Desktop.jpg", .source = "tests/datatypes/esp32p4/Desktop.jpg" },
+};
+
+/// The AArch64 machines' disk has these in place of the shared files of
+/// the same name: the Wi-Fi interface names the CM5's radio.
+pub const a64_files = [_]File{
+    .{ .disk = "devs/NetInterfaces/WLAN0", .source = "devs/NetInterfaces/a64/WLAN0" },
 };
 
 /// The radio's device: built only when the vendor libraries it links are
@@ -511,5 +522,5 @@ pub fn build(b: *std.Build) void {
     for (catalogs) |catalog| {
         b.addNamedLazyPath(catalog.disk, poweros_sdk.addCatalog(b, sdk, b.path(catalog.descriptor), b.path(catalog.translation), catalog.name));
     }
-    for (mac_files ++ p4_files) |file| b.addNamedLazyPath(file.source, b.path(file.source));
+    for (mac_files ++ p4_files ++ a64_files) |file| b.addNamedLazyPath(file.source, b.path(file.source));
 }
