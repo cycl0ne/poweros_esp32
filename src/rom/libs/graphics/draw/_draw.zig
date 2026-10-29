@@ -17,6 +17,7 @@
 //! RTGERR_NOT_SUPPORTED and lands in the same software path, which is what
 //! the emulator's display and the panel both do today.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const graphics = sdk.graphics;
 const rtg = sdk.rtg;
@@ -1403,37 +1404,88 @@ fn six(channel: u32, threshold: Threshold) u32 {
 /// - `y` - its row.
 /// - `format` - the surface it goes on, for dithering.
 pub fn fillColour(rp: *const RastPort, x: i32, y: i32, format: PixelFormat) Pen {
-    const fill = rp.fill orelse return rp.fg_pen;
-    if (fill.kind == graphics.FILL_TILE) {
-        const tile = fill.tile orelse return rp.fg_pen;
-        if (tile.width == 0 or tile.height == 0) return rp.fg_pen;
-        const pixels = tile.pixels orelse return rp.fg_pen;
-        const bytes = pixelBytes(tile.format);
-        const tx: usize = @intCast(@mod(x, @as(i32, @intCast(tile.width))));
-        const ty: usize = @intCast(@mod(y, @as(i32, @intCast(tile.height))));
-        return rastport.unpackPen(tile.format, getPixel(pixels + ty * tile.pitch + tx * bytes, bytes));
+    var shade = Shade.of(rp);
+    return shade.at(x, y, format);
+}
+
+/// A fill style made ready for the pixels of one shape: `fillColour` for
+/// each of them, with what is the same for all of them worked out once -
+/// where the gradient's ends lie in the box - and the colour at a point
+/// along it kept for the next pixel at the same point, which along a row
+/// of a gradient running straight down is every pixel of the row. Each
+/// pixel comes out exactly as `fillColour` gives it.
+pub const Shade = struct {
+    rp: *const RastPort,
+    fill: ?*const graphics.FillStyle,
+    from: [2]i64 = .{ 0, 0 },
+    dx: i64 = 0,
+    dy: i64 = 0,
+    /// The length of the gradient squared, or for a radial one its reach.
+    length: i64 = 0,
+    /// The last pixel worked out, where it was along the gradient, and
+    /// its colour before dithering.
+    last_x: i32 = std.math.minInt(i32),
+    last_y: i32 = std.math.minInt(i32),
+    last_t: i64 = std.math.minInt(i64),
+    last_pen: Pen = 0,
+
+    pub fn of(rp: *const RastPort) Shade {
+        var shade = Shade{ .rp = rp, .fill = rp.fill };
+        const fill = rp.fill orelse return shade;
+        if (fill.kind == graphics.FILL_TILE) return shade;
+        const from = boxPoint(rp.fill_box, fill.from_x, fill.from_y);
+        const to = boxPoint(rp.fill_box, fill.to_x, fill.to_y);
+        shade.from = from;
+        shade.dx = to[0] - from[0];
+        shade.dy = to[1] - from[1];
+        shade.length = if (fill.kind == graphics.FILL_RADIAL)
+            _round.isqrt(@intCast(@min(shade.dx * shade.dx + shade.dy * shade.dy, 0xFFFF_FFFF)))
+        else
+            shade.dx * shade.dx + shade.dy * shade.dy;
+        return shade;
     }
 
-    const from = boxPoint(rp.fill_box, fill.from_x, fill.from_y);
-    const to = boxPoint(rp.fill_box, fill.to_x, fill.to_y);
-    const dx = to[0] - from[0];
-    const dy = to[1] - from[1];
-    const px = x - from[0];
-    const py = y - from[1];
-    const t: i64 = if (fill.kind == graphics.FILL_RADIAL) radial: {
-        const reach = _round.isqrt(@intCast(@min(dx * dx + dy * dy, 0xFFFF_FFFF)));
-        if (reach == 0) break :radial graphics.FILL_ONE;
-        const far = _round.isqrt(@intCast(@min(px * px + py * py, 0xFFFF_FFFF)));
-        break :radial @divTrunc(@as(i64, far) * graphics.FILL_ONE, reach);
-    } else linear: {
-        const length = dx * dx + dy * dy;
-        if (length == 0) break :linear 0;
-        break :linear @divTrunc((px * dx + py * dy) * graphics.FILL_ONE, length);
-    };
-    const pen = alongStops(fill, t);
-    if (fill.flags & graphics.FILLF_NODITHER != 0) return pen;
-    return dithered(pen, x, y, format);
-}
+    /// The colour of pixel (`x`, `y`) on a surface in `format`.
+    pub fn at(shade: *Shade, x: i32, y: i32, format: PixelFormat) Pen {
+        const fill = shade.fill orelse return shade.rp.fg_pen;
+        const pen = shade.plain(fill, x, y);
+        if (fill.flags & graphics.FILLF_NODITHER != 0) return pen;
+        return dithered(pen, x, y, format);
+    }
+
+    fn plain(shade: *Shade, fill: *const graphics.FillStyle, x: i32, y: i32) Pen {
+        if (fill.kind == graphics.FILL_TILE) {
+            const tile = fill.tile orelse return shade.rp.fg_pen;
+            if (tile.width == 0 or tile.height == 0) return shade.rp.fg_pen;
+            const pixels = tile.pixels orelse return shade.rp.fg_pen;
+            const bytes = pixelBytes(tile.format);
+            const tx: usize = @intCast(@mod(x, @as(i32, @intCast(tile.width))));
+            const ty: usize = @intCast(@mod(y, @as(i32, @intCast(tile.height))));
+            return rastport.unpackPen(tile.format, getPixel(pixels + ty * tile.pitch + tx * bytes, bytes));
+        }
+        const radial = fill.kind == graphics.FILL_RADIAL;
+        // A straight gradient is the same all along a line across it: a
+        // row when it runs straight down, a column when straight across.
+        if (!radial and ((shade.dx == 0 and y == shade.last_y) or (shade.dy == 0 and x == shade.last_x))) return shade.last_pen;
+        const px = x - shade.from[0];
+        const py = y - shade.from[1];
+        const t: i64 = if (radial) radial: {
+            if (shade.length == 0) break :radial graphics.FILL_ONE;
+            const far = _round.isqrt(@intCast(@min(px * px + py * py, 0xFFFF_FFFF)));
+            break :radial @divTrunc(@as(i64, far) * graphics.FILL_ONE, shade.length);
+        } else linear: {
+            if (shade.length == 0) break :linear 0;
+            break :linear @divTrunc((px * shade.dx + py * shade.dy) * graphics.FILL_ONE, shade.length);
+        };
+        if (t != shade.last_t) {
+            shade.last_t = t;
+            shade.last_pen = alongStops(fill, t);
+        }
+        shade.last_x = x;
+        shade.last_y = y;
+        return shade.last_pen;
+    }
+};
 
 /// One pixel of a shape, from the fill style when there is one, from the
 /// pen otherwise.
@@ -1447,21 +1499,29 @@ pub fn plotShape(rp: *RastPort, p: Piece, x: i32, y: i32) void {
 /// a fill style never reaches them.
 pub fn fillShapeSpan(rp: *RastPort, x0: i32, x1: i32, y: i32, bound: *Rect, any: *bool) void {
     if (!styled(rp)) return fillSpan(rp, x0, x1, y, bound, any);
+    var shade = Shade.of(rp);
+    shadeSpan(rp, &shade, x0, x1, y, bound, any);
+}
+
+/// `fillShapeSpan` from a fill style made ready (`Shade`), for a shape
+/// filled a row at a time.
+pub fn shadeSpan(rp: *RastPort, shade: *Shade, x0: i32, x1: i32, y: i32, bound: *Rect, any: *bool) void {
     if (x1 <= x0) return;
     var it = visible(rp, .{ .min_x = x0, .min_y = y, .max_x = x1, .max_y = y + 1 });
     while (it.next()) |r| {
         var x: i32 = r.rect.min_x;
-        while (x < r.rect.max_x) : (x += 1) plotOver(r, x, y, fillColour(rp, x, y, r.surface.format));
+        while (x < r.rect.max_x) : (x += 1) plotOver(r, x, y, shade.at(x, y, r.surface.format));
         grow(bound, y, any);
     }
 }
 
 /// A piece of a rectangle, from the fill style.
 pub fn fillStyled(rp: *RastPort, p: Piece) void {
+    var shade = Shade.of(rp);
     var y: i32 = p.rect.min_y;
     while (y < p.rect.max_y) : (y += 1) {
         var x: i32 = p.rect.min_x;
-        while (x < p.rect.max_x) : (x += 1) plotOver(p, x, y, fillColour(rp, x, y, p.surface.format));
+        while (x < p.rect.max_x) : (x += 1) plotOver(p, x, y, shade.at(x, y, p.surface.format));
     }
 }
 
@@ -1470,7 +1530,7 @@ pub fn fillStyled(rp: *RastPort, p: Piece) void {
 // The loops that use these are held to the pixel-at-a-time path in
 // graphics.zig, where a RastPort can be made to draw with.
 
-const testing = @import("std").testing;
+const testing = std.testing;
 
 test "div255 is a division by 255 for every sum a mix can make" {
     var x: u32 = 0;

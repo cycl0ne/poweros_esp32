@@ -46,10 +46,14 @@ pub const LIBRARY_VERSION = 0;
 /// it again.
 /// 13: RefillLayer - part of a layer painted again by its backfill, for a
 /// program whose hook paints what it shows.
-pub const LIBRARY_REVISION = 13;
+/// 14: a batch of drawing (BeginDraw) goes with a layer through
+/// MoveSizeLayer to its new buffer, and the move - the layer at its new
+/// size, its shadow, what it uncovered - reaches the display with that
+/// batch's EndDraw when the layers are held around it.
+pub const LIBRARY_REVISION = 14;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
-const BUILD_DATE = "26.10.2026";
+const BUILD_DATE = "29.10.2026";
 
 /// The `$VER:` string, NUL first so a scan of the image finds it.
 const LIBRARY_VERSION_STRING =

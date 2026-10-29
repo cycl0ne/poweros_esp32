@@ -66,8 +66,10 @@ const handler_pri = 50;
 /// Above every program, with input.device, so the pointer is followed while
 /// a program computes.
 const task_pri = 20;
-/// The borders are drawn from here, and sysiclass fills polygons.
-const stack_size = 16384;
+/// The borders are drawn from here, sysiclass fills polygons, and every
+/// gadget of a window being sized is drawn: the standard stack, 32 KiB on
+/// a 64-bit machine and 16 KiB on a 32-bit one.
+const stack_size = 4096 * @sizeOf(usize);
 const ring_size = 64;
 /// How many ticks - a tenth of a second each - a program has to answer a
 /// step of its window's sizing before the sizing goes on without it.
@@ -1335,15 +1337,27 @@ fn isStep(ib: *IntuitionBase, w: *Window) bool {
     return pacing(ib) and st.mode == .size and st.window == w and ib.sys_base.FindTask(null) == &st.task;
 }
 
-/// A step of the user's sizing has sized the window's layers: what is
-/// drawn in it from here on - intuition's border and gadgets, then the
-/// program's drawing for IDCMP_NEWSIZE - is gathered (`BeginDraw` on its
-/// buffers) and reaches the display in one go once the program has
-/// replied, or has had `size_answer_ticks` to (`settleGather`). So the
-/// display never shows a step half drawn. Only where the window is
-/// composed: there it draws into a buffer of its own and the rest of the
-/// display goes on meanwhile. Under the screen semaphore.
-pub fn gatherStep(ib: *IntuitionBase, w: *Window) void {
+/// A change of `w`'s box about to be made, under the screen semaphore. A
+/// step of the user's sizing that sizes it is gathered from here
+/// (`gatherStep`), and goes on gathering into the last step's when that
+/// is still awaited; any other change hands on what a step gathered in
+/// the window first.
+pub fn beginChange(ib: *IntuitionBase, w: *Window, sized: bool) void {
+    if (sized and isStep(ib, w)) return gatherStep(ib, w);
+    letGo(ib, w);
+}
+
+/// A step of the user's sizing is about to size the window's layers: the
+/// size and what is drawn in the window from here on - intuition's border
+/// and gadgets, then the program's drawing for IDCMP_NEWSIZE - are
+/// gathered (`BeginDraw` on its buffers, which a size keeps) and reach the
+/// display in one go once the program has replied, or has had
+/// `size_answer_ticks` to (`settleGather`). So the display never shows a
+/// step half drawn, nor its new size before anything is drawn at it. Only
+/// where the window is composed: there it draws into a buffer of its own
+/// and the rest of the display goes on meanwhile. Under the screen
+/// semaphore.
+fn gatherStep(ib: *IntuitionBase, w: *Window) void {
     const st = stateOf(ib);
     if (st.gathered != null or !isStep(ib, w)) return;
     if (!@import("../window/_fade.zig").composed(ib, w.layer)) return;
@@ -1353,13 +1367,18 @@ pub fn gatherStep(ib: *IntuitionBase, w: *Window) void {
     st.gathered = w;
 }
 
-/// What a step gathered handed on to the display, if one has. Under the
+/// What a step gathered handed on to the display, if one has: with the
+/// display's layers held, so that its end shows all of the step - where
+/// the window was, and its shadow, as well as the window. Under the
 /// screen semaphore.
 fn endGather(ib: *IntuitionBase) void {
     const st = stateOf(ib);
     const w = st.gathered orelse return;
     st.gathered = null;
     const gb = ib.graphics_base;
+    const info = w.screen.layer_info;
+    ib.layers_base.LockLayers(info);
+    defer ib.layers_base.UnlockLayers(info);
     if (w.inner_rp) |inner| gb.EndDraw(inner);
     gb.EndDraw(w.rp);
 }
@@ -1372,8 +1391,8 @@ pub fn settleGather(ib: *IntuitionBase) void {
 }
 
 /// What a step gathered in `w` handed on, before anything else is done to
-/// the window: a size gives its layer a new buffer, and a close takes it
-/// away. Under the screen semaphore.
+/// the window: a change of its box that is not a step, or a close, which
+/// takes its buffer away. Under the screen semaphore.
 pub fn letGo(ib: *IntuitionBase, w: *Window) void {
     if (stateOf(ib).gathered == w) endGather(ib);
 }

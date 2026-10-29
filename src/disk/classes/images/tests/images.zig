@@ -23,6 +23,7 @@ const Pen = graphics.Pen;
 const kexec = host_rom.exec;
 
 const command_image = @import("../command/command.zig");
+const command_glyphs = @import("../command/glyphs.zig");
 const media_image = @import("../media/media.zig");
 
 test "shapes: a shape of straight edges set in keeps its edges parallel, whichever way round it goes" {
@@ -257,6 +258,64 @@ test "command.image: drawn in its own box, and in the middle of a box that is no
     ib.DisposeObject(o);
     _ = kexec.SysBase.iface().RemLibrary(lib);
     try host_rom.intuition.tearDown(kib);
+}
+
+test "command.image: a picture kept and put down again is the one painted layer by layer, drawn again the same" {
+    const kib = try host_rom.intuition.setUp();
+    const ib = kib.iface();
+    const gb = kib.graphics_base;
+    const lib: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &command_image.Library.resident_tag, null) orelse return error.NoClassLibrary));
+    const o = ib.NewObjectTagList(null, command.COMMAND_CLASS, &[_]TagItem{ .{ .tag = command.COMMAND_Glyph, .data = command.CMD_SAVE }, .{} }) orelse return error.NoObject;
+    const ground: Pen = 0xFF90_9090;
+    var glyph: u32 = command.CMD_NONE + 1;
+    while (glyph <= command.CMD_LAST) : (glyph += 1) {
+        _ = ib.SetAttrsTagList(o, &[_]TagItem{ .{ .tag = command.COMMAND_Glyph, .data = glyph }, .{} });
+        for ([_]u32{ ic.IDS_NORMAL, ic.IDS_DISABLED }) |state| {
+            // Layer by layer on the canvas, as the painter does without a
+            // picture to lay into.
+            var layered: Canvas(48) = .{};
+            try layered.up(gb, ground);
+            defer gb.FreeRastPort(layered.rp);
+            const frame = shapes.Frame{ .gb = gb, .rp = layered.rp, .x = 0, .y = 0, .size = 48, .pens = .{} };
+            var painter = shapes.Painter.begin(frame, .{ .disabled = state == ic.IDS_DISABLED });
+            command_glyphs.draw(&painter, glyph);
+            painter.end();
+            // Drawn by the image: painted into its picture the first time,
+            // and the kept picture put down the second.
+            var first: Canvas(48) = .{};
+            var second: Canvas(48) = .{};
+            try first.up(gb, ground);
+            try second.up(gb, ground);
+            defer gb.FreeRastPort(first.rp);
+            defer gb.FreeRastPort(second.rp);
+            _ = try drawn(ib, o, &first, 48, state);
+            _ = try drawn(ib, o, &second, 48, state);
+            try testing.expectEqualSlices(u32, &first.pixels, &second.pixels);
+            for (layered.pixels, first.pixels) |want, got| {
+                for ([_]u5{ 0, 8, 16 }) |shift| {
+                    const a: i32 = @intCast((want >> shift) & 0xFF);
+                    const b: i32 = @intCast((got >> shift) & 0xFF);
+                    testing.expect(@abs(a - b) <= 2) catch |err| {
+                        std.debug.print("glyph {d} state {d}: {x} painted layer by layer, {x} from the picture\n", .{ glyph, state, want, got });
+                        return err;
+                    };
+                }
+            }
+        }
+    }
+    ib.DisposeObject(o);
+    _ = kexec.SysBase.iface().RemLibrary(lib);
+    try host_rom.intuition.tearDown(kib);
+}
+
+test "shapes: one colour laid over another is the two laid one after the other" {
+    // Opaque over anything is itself; clear over anything leaves it.
+    try testing.expectEqual(@as(Pen, 0xFF12_3456), shapes.over(0x8065_4321, 0xFF12_3456));
+    try testing.expectEqual(@as(Pen, 0x8065_4321), shapes.over(0x8065_4321, 0x0012_3456));
+    // Half black over half white: three quarters covered, a third white.
+    const both = shapes.over(0x80FF_FFFF, 0x8000_0000);
+    try testing.expect(both >> 24 >= 0xBF and both >> 24 <= 0xC1);
+    try testing.expect(both & 0xFF >= 0x54 and both & 0xFF <= 0x56);
 }
 
 test "media.image: every picture drawn at every size, over part of its square; none drawn as nothing" {

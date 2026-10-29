@@ -90,7 +90,14 @@ const LayersBase = @import("../layers.zig").LayersBase;
 /// as a simple one: where each was and where each is are copied on to the
 /// display again. One that changes size takes a buffer of the new size
 /// with as much of the old as fits; what it gains is painted, and a simple
-/// layer is owed it as damage.
+/// layer is owed it as damage. Its buffer stays the one its RastPort
+/// draws into, so a batch open on it (graphics.library's `BeginDraw`)
+/// goes on across the size - and then the display goes on showing the
+/// layer as it was until the batch's last `EndDraw`, which shows the new
+/// size with what was drawn at it: all of the move, where the layer was
+/// and its shadow too, when the task ending the batch holds the display's
+/// layers (`LockLayers`); otherwise the layer, and the rest when the
+/// layers are next let go of.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the display's layers.
@@ -305,6 +312,8 @@ const Member = struct {
     have: ?*graphics.Region = null,
     /// Composed, and changing size: the buffer of the new size it takes.
     buffer: ?_layerinfo.Buffer = null,
+    /// A batch was open on its buffer, which shows it at its end.
+    held: bool = false,
 };
 
 /// The move in a composed LayerInfo, where every layer has all of its
@@ -314,6 +323,11 @@ const Member = struct {
 /// the old one in it as fits, and what it gained is painted in it; and
 /// everything the move touched - where each was and where each is - is
 /// copied on to the display again.
+///
+/// A layer sized while a batch is open on its buffer (`BeginDraw`) is the
+/// exception: all the move touched is left as the display has it, and the
+/// batch's end shows it with what was drawn (`Layer.unshown`) - never the
+/// new size with nothing drawn in it yet.
 ///
 /// The new buffers are got before anything changes: without the memory
 /// for all of them the move is not made.
@@ -359,7 +373,7 @@ fn moveComposed(lb: *LayersBase, group: []Member, dw: i32, dh: i32) bool {
 
     for (group) |*member| {
         const moving = member.layer;
-        if (member.buffer) |fresh| compose.replace(lb, moving, fresh);
+        if (member.buffer) |fresh| member.held = compose.replace(lb, moving, fresh);
         moving.bounds = member.new;
         const own = ownExtent(moving);
         const clip = [_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&own) }, .{} };
@@ -384,6 +398,13 @@ fn moveComposed(lb: *LayersBase, group: []Member, dw: i32, dh: i32) bool {
             if (moving.flags & (layers.LAYERSMART | layers.LAYERSUPER) != 0) continue;
             if (gb.OrRectRegion(moving.damage, &gained)) moving.flags |= layers.LAYERREFRESH;
         }
+    }
+    for (group) |member| {
+        if (!member.held) continue;
+        var area = Rect{};
+        for (group) |each| area = area.unionWith(effects.reachAt(each.layer, each.old)).unionWith(effects.reachAt(each.layer, each.new));
+        member.layer.unshown = member.layer.unshown.unionWith(area);
+        return true;
     }
     if (exact) compose.showRegion(lb, info, touched.?) else compose.show(lb, info, info.bounds);
     return true;

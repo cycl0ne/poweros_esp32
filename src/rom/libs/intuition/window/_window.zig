@@ -1028,6 +1028,13 @@ pub fn dropPort(ib: *IntuitionBase, w: *Window) void {
 /// the layer hands out damage instead, and that window needs its border
 /// and its gadgets again exactly as a simple one does.
 pub fn repairScreen(ib: *IntuitionBase, s: *Screen) void {
+    repairScreenAfter(ib, s, null);
+}
+
+/// `repairScreen`, after `drawn` has had its border and every gadget of
+/// its room drawn whole, as a size draws them: its damage is not drawn
+/// over again, only its program told or the damage dropped.
+pub fn repairScreenAfter(ib: *IntuitionBase, s: *Screen, drawn: ?*Window) void {
     const lb = ib.layers_base;
     @import("../screen/_screen.zig").settleGround(ib, s);
     var node = s.windows.head;
@@ -1040,8 +1047,10 @@ pub fn repairScreen(ib: *IntuitionBase, s: *Screen) void {
         if (damage == 0 or ib.graphics_base.RegionRectangles(@ptrFromInt(damage), null, 0) == 0) continue;
 
         if (!lb.BeginUpdate(w.layer)) continue;
-        drawBorder(ib, w);
-        _gadget.renderAll(ib, w);
+        if (w != drawn) {
+            drawBorder(ib, w);
+            _gadget.renderAll(ib, w);
+        }
         const tell = w.flags & WF_NOCARE == 0 and w.user_port != null and w.idcmp & wn.IDCMP_REFRESHWINDOW != 0;
         lb.EndUpdate(w.layer, !tell);
         if (tell and w.flags & WF_REFRESH_SENT == 0) {

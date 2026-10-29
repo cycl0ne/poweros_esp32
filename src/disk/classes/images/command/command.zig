@@ -5,9 +5,18 @@
 //! An imageclass subclass whose one attribute is which picture it is.
 //! It draws in the largest square that fits the box it is given, in the
 //! middle, with smooth edges, through a `shapes.Painter` - the pictures
-//! themselves are in `glyphs.zig`. The painter's buffer is made for each
-//! drawing and given back after it; without the memory for it nothing is
-//! drawn.
+//! themselves are in `glyphs.zig`.
+//!
+//! The painter lays its layers into a picture of the square (`into`),
+//! which is put down with one `BlendPixelArray` and kept: drawn again at
+//! the same size, in the same pens and the same state, the image puts the
+//! kept picture down and paints nothing - a window being sized draws its
+//! tool buttons at every step. A new size, glyph or look paints it anew;
+//! `OM_DISPOSE` gives it back. Without the memory for one the picture is
+//! painted straight on, as it always was - and so it is while another
+//! task is drawing the same image: the kept picture is one task's at a
+//! time, tried for and never waited on, so a drawing holding a window's
+//! lock never waits for one that wants it.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -20,19 +29,32 @@ const gadgets = sdk.gadgets;
 const support = gadgets.support;
 const shapes = gadgets.shapes;
 const command = sdk.images.command;
+const exec = sdk.exec;
 const glyphs = @import("glyphs.zig");
 const TagItem = utility.TagItem;
 const Class = classes.Class;
 const Object = classes.Object;
+const rtg = sdk.rtg;
+const Pen = graphics.Pen;
 
 pub const Data = extern struct {
     glyph: u32 = command.CMD_NONE,
+    /// The picture last painted, and what it was painted as: its size, its
+    /// glyph, the ink and ground of the look and whether it was disabled.
+    kept: ?*rtg.Surface = null,
+    kept_size: i32 = 0,
+    kept_glyph: u32 = command.CMD_NONE,
+    kept_ink: Pen = 0,
+    kept_ground: Pen = 0,
+    kept_disabled: u32 = 0,
+    /// Held while the kept picture is painted and put down.
+    lock: exec.SignalSemaphore = .{},
 };
 
 pub const Library = gadgets.ClassLibrary(.{
     .name = command.COMMAND_CLASS,
     .version = 1,
-    .revision = 4,
+    .revision = 5,
     .date = "29.10.2026",
     .super = classusr.IMAGECLASS,
     .Instance = Data,
@@ -69,6 +91,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, obj);
             const ub = base.utility_base;
             own.* = .{ .glyph = @truncate(ub.GetTagData(command.COMMAND_Glyph, command.CMD_NONE, new.attr_list)) };
+            base.sys_base.InitSemaphore(&own.lock);
             // Square, and not imageclass's own size, unless it was given one.
             const image = classes.instData(ic.Image, cl.super.?, obj);
             if (ub.FindTagItem(ic.IA_Width, new.attr_list) == null) image.width = default_size;
@@ -113,11 +136,67 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 .size = size,
                 .pens = shapes.Pens.of(draw.draw_info),
             };
-            var painter = shapes.Painter.begin(frame, shapes.Look.of(draw.draw_info, disabled(draw.state)));
-            defer painter.end();
-            glyphs.draw(&painter, classes.instData(Data, cl, o.?).glyph);
+            const own = classes.instData(Data, cl, o.?);
+            const look = shapes.Look.of(draw.draw_info, disabled(draw.state));
+            const mine = base.sys_base.AttemptSemaphore(&own.lock);
+            defer if (mine) base.sys_base.ReleaseSemaphore(&own.lock);
+            const picture = (if (mine) keptFor(gb, own, size, look) else null) orelse {
+                var painter = shapes.Painter.begin(frame, look);
+                defer painter.end();
+                glyphs.draw(&painter, own.glyph);
+                return 1;
+            };
+            gb.BlendPixelArray(rp, picture.pixels.?, picture.pitch, @intFromEnum(rtg.PixelFormat.bgra32), 0, 0, &.{
+                .min_x = frame.x,
+                .min_y = frame.y,
+                .max_x = frame.x + size,
+                .max_y = frame.y + size,
+            });
             return 1;
+        },
+        classusr.OM_DISPOSE => {
+            if (o) |obj| {
+                const own = classes.instData(Data, cl, obj);
+                base.graphics_base.FreeBitMap(own.kept);
+                own.kept = null;
+            }
+            return ib.SendSuperMessage(cl, o, msg);
         },
         else => return ib.SendSuperMessage(cl, o, msg),
     }
+}
+
+/// The picture of the image at `size` in `look`, painted when what was
+/// kept is not that one; null without the memory for one.
+fn keptFor(gb: *sdk.interface.graphics.GraphicsBase, own: *Data, size: i32, look: shapes.Look) ?*rtg.Surface {
+    const look_disabled: u32 = @intFromBool(look.disabled);
+    if (own.kept) |picture| {
+        if (own.kept_size == size and own.kept_glyph == own.glyph and own.kept_ink == look.ink and
+            own.kept_ground == look.ground and own.kept_disabled == look_disabled) return picture;
+    }
+    if (own.kept_size != size) {
+        gb.FreeBitMap(own.kept);
+        own.kept = null;
+        own.kept_size = 0;
+    }
+    const picture = own.kept orelse gb.AllocBitMapTagList(&[_]TagItem{
+        .{ .tag = graphics.BMTAG_Width, .data = @intCast(size) },
+        .{ .tag = graphics.BMTAG_Height, .data = @intCast(size) },
+        .{ .tag = graphics.BMTAG_Format, .data = @intFromEnum(rtg.PixelFormat.bgra32) },
+        .{},
+    }) orelse return null;
+    own.kept = picture;
+    own.kept_size = size;
+    // Painted from nothing: every pixel clear, the layers laid over it.
+    const bytes: [*]u8 = @ptrCast(picture.pixels.?);
+    @memset(bytes[0 .. @as(usize, picture.pitch) * @as(usize, @intCast(size))], 0);
+    const frame = shapes.Frame{ .gb = gb, .rp = undefined, .x = 0, .y = 0, .size = size, .pens = .{} };
+    var painter = shapes.Painter.begin(frame, look);
+    painter.into = picture;
+    glyphs.draw(&painter, own.glyph);
+    own.kept_glyph = own.glyph;
+    own.kept_ink = look.ink;
+    own.kept_ground = look.ground;
+    own.kept_disabled = look_disabled;
+    return picture;
 }

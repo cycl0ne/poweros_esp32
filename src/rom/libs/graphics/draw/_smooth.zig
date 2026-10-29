@@ -58,8 +58,27 @@ pub const RoundBox = struct {
         return s;
     }
 
-    /// Whether a whole pixel is surely in or out: not worked out here.
-    pub fn state(_: RoundBox, _: i32, _: i32) PixelState {
+    /// Whether every sample of pixel (`x`, `y`) is inside, every one
+    /// outside, or some of each. Outside the box, out. Between the
+    /// corners, across or down, the nearest point of the box less its
+    /// corners is level with every sample and no further than the radius:
+    /// in - so the straight sides of a box on whole pixels are never asked
+    /// about point by point. In a corner every sample's nearest point is
+    /// the corner's centre, and the pixel is decided as a circle's is, by
+    /// its middle's distance from there. A radius too big for the box
+    /// leaves every pixel to its samples.
+    pub fn state(s: RoundBox, x: i32, y: i32) PixelState {
+        if (x < s.box.min_x or x >= s.box.max_x or y < s.box.min_y or y >= s.box.max_y) return .out;
+        const r = s.radius;
+        if (2 * r > s.box.width() or 2 * r > s.box.height()) return .edge;
+        const across = if (x < s.box.min_x + r) s.box.min_x + r else if (x >= s.box.max_x - r) s.box.max_x - r else return .in;
+        const down = if (y < s.box.min_y + r) s.box.min_y + r else if (y >= s.box.max_y - r) s.box.max_y - r else return .in;
+        const dx = unit * @as(i64, x) + unit / 2 - unit * @as(i64, across);
+        const dy = unit * @as(i64, y) + unit / 2 - unit * @as(i64, down);
+        const d = dx * dx + dy * dy;
+        const reach = unit * @as(i64, r);
+        if (reach > sample_reach and d <= (reach - sample_reach) * (reach - sample_reach)) return .in;
+        if (d > (reach + sample_reach) * (reach + sample_reach)) return .out;
         return .edge;
     }
 
@@ -224,7 +243,7 @@ pub fn Cut(comptime Outer: type, comptime Hole: type) type {
         /// edge is first asked about the whole pixel, and only an edge that
         /// runs through it is asked about the sixteen points of it on a
         /// four by four grid. Every point is asked what `inside` asks.
-        fn cover(s: Self, x: i32, y: i32) u32 {
+        fn cover(s: *const Self, x: i32, y: i32) u32 {
             const outer = s.outer.state(x, y);
             if (outer == .out) return 0;
             const hole: PixelState = if (s.hole) |h| h.state(x, y) else .out;
@@ -250,7 +269,7 @@ pub fn Cut(comptime Outer: type, comptime Hole: type) type {
         }
 
         /// The cut's part of `inside`: on the side, and in the sweep.
-        fn cutInside(s: Self, sx: i64, sy: i64) bool {
+        fn cutInside(s: *const Self, sx: i64, sy: i64) bool {
             if (s.side) |side| if (!side.holds(@intCast(@divFloor(sx, unit)), @intCast(@divFloor(sy, unit)))) return false;
             if (s.sweep != null) {
                 const dx: i32 = @intCast(sx - s.centre[0]);
@@ -263,7 +282,7 @@ pub fn Cut(comptime Outer: type, comptime Hole: type) type {
         /// Whether a whole pixel is surely in the sweep and on the side:
         /// all four of its corners are in the sweep, and its middle is on
         /// the side.
-        fn cutHolds(s: Self, x: i32, y: i32) bool {
+        fn cutHolds(s: *const Self, x: i32, y: i32) bool {
             return s.cutState(x, y) == .in;
         }
 
@@ -273,7 +292,7 @@ pub fn Cut(comptime Outer: type, comptime Hole: type) type {
         /// what a sweep of more than half a turn leaves out, which is a wedge
         /// and holds the whole pixel when it holds its corners; else some of
         /// each.
-        fn cutState(s: Self, x: i32, y: i32) PixelState {
+        fn cutState(s: *const Self, x: i32, y: i32) PixelState {
             if (s.side) |side| if (!side.holds(x, y)) return .out;
             if (s.sweep == null) return .in;
             const corners = [_][2]i64{ .{ 0, 0 }, .{ unit, 0 }, .{ 0, unit }, .{ unit, unit } };
@@ -290,19 +309,21 @@ pub fn Cut(comptime Outer: type, comptime Hole: type) type {
     };
 }
 
-/// How much of pixel (`x`, `y`) a shape covers, 0 to 16.
+/// How much of pixel (`x`, `y`) a shape covers, 0 to 16. The shape is
+/// read where it is: it is asked once a pixel, and a copy each time would
+/// cost more than the asking.
 fn coverage(shape: anytype, x: i32, y: i32) u32 {
     return shape.cover(x, y);
 }
 
-/// The pixel's own colour - the fill style's for a fill that has one, the
-/// pen otherwise - laid over what is there by how much of it the shape
-/// covers, `covered` sixteenths. AreaEnd's smooth fill lays its edge
-/// pixels with it too.
-pub fn edgePixel(rp: *RastPort, x: i32, y: i32, covered: u32, styled: bool, bound: *Rect, any: *bool) void {
+/// The pixel's own colour - the fill style's for a fill that has one
+/// (`shade`), the pen otherwise - laid over what is there by how much of
+/// it the shape covers, `covered` sixteenths. AreaEnd's smooth fill lays
+/// its edge pixels with it too.
+pub fn edgePixel(rp: *RastPort, x: i32, y: i32, covered: u32, shade: ?*_draw.Shade, bound: *Rect, any: *bool) void {
     if (covered == 0) return;
     const piece = _draw.pieceAt(rp, x, y) orelse return;
-    const pen = if (styled) _draw.fillColour(rp, x, y, piece.surface.format) else rp.fg_pen;
+    const pen = if (shade) |s| s.at(x, y, piece.surface.format) else rp.fg_pen;
     const alpha = (pen >> 24) * covered / 16;
     _draw.plotOver(piece, x, y, (pen & 0x00FF_FFFF) | alpha << 24);
     _draw.grow(bound, y, any);
@@ -353,7 +374,12 @@ pub fn fill(gb: *GraphicsBase, rp: *RastPort, unready: anytype, top: i32, bottom
     // Everything each of the many inside questions would work out again,
     // worked out once.
     const shape = unready.ready();
-    const styled = as_fill and _draw.styled(rp);
+    // Whether anything cuts across the shape: a sweep, or a side of a
+    // bevel. Without, a pixel is surely in by the rows' spans alone.
+    const plain = shape.sweep == null and shape.side == null;
+    // A fill style made ready once, for every pixel of the shape.
+    var made: ?_draw.Shade = if (as_fill and _draw.styled(rp)) _draw.Shade.of(rp) else null;
+    const shade: ?*_draw.Shade = if (made) |*m| m else null;
     var bound = Rect{};
     var any = false;
     // The columns the rows reached, which with the rows written is what
@@ -377,15 +403,25 @@ pub fn fill(gb: *GraphicsBase, rp: *RastPort, unready: anytype, top: i32, bottom
             const sure_in = !at_end and Band.holds(outer.narrow, x) and !Band.holds(hole.wide, x) and shape.cutHolds(x, y);
             if (sure_in) {
                 if (run_from == null) run_from = x;
+                // Not cut across, the row is surely in from here to the end
+                // of its narrowest span, or to its hole: the run goes on to
+                // there without a pixel of it asked again.
+                if (plain) {
+                    var until = outer.narrow.?[1];
+                    if (hole.wide) |h| if (h[0] > x) {
+                        until = @min(until, h[0]);
+                    };
+                    x = @min(until, reach[1]) - 1;
+                }
                 continue;
             }
             if (run_from) |from| {
-                if (as_fill) _draw.fillShapeSpan(rp, from, x, y, &bound, &any) else _draw.fillSpan(rp, from, x, y, &bound, &any);
+                if (shade) |s| _draw.shadeSpan(rp, s, from, x, y, &bound, &any) else _draw.fillSpan(rp, from, x, y, &bound, &any);
                 run_from = null;
             }
             if (at_end) break;
             if (Band.holds(hole.narrow, x)) continue;
-            edgePixel(rp, x, y, coverage(shape, x, y), styled, &bound, &any);
+            edgePixel(rp, x, y, coverage(&shape, x, y), shade, &bound, &any);
         }
     }
     if (any) _draw.handOn(gb, rp, .{ .min_x = left, .min_y = bound.min_y, .max_x = right, .max_y = bound.max_y });
@@ -448,4 +484,49 @@ pub fn line(gb: *GraphicsBase, rp: *RastPort, x0: i32, y0: i32, x1: i32, y1: i32
     // The pixel past the line's edge is shared too, a column or a row
     // beyond its ends' box.
     if (any) _draw.handOn(gb, rp, .{ .min_x = @min(x0, x1), .min_y = bound.min_y, .max_x = @max(x0, x1) + 2, .max_y = bound.max_y });
+}
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const testing = std.testing;
+
+test "a round box's pixels said to be wholly in or out are what their sixteen points say" {
+    var width: i32 = 1;
+    while (width <= 14) : (width += 1) {
+        var height: i32 = 1;
+        while (height <= 14) : (height += 1) {
+            var radius: i32 = 0;
+            while (radius <= 8) : (radius += 1) {
+                const shape = RoundBox{ .box = .{ .min_x = 3, .min_y = 5, .max_x = 3 + width, .max_y = 5 + height }, .radius = radius };
+                var y: i32 = 3;
+                while (y < 7 + height) : (y += 1) {
+                    var x: i32 = 1;
+                    while (x < 5 + width) : (x += 1) {
+                        var count: u32 = 0;
+                        for (0..4) |j| for (0..4) |i| {
+                            const sx = unit * @as(i64, x) + 2 * @as(i64, @intCast(i)) + 1;
+                            const sy = unit * @as(i64, y) + 2 * @as(i64, @intCast(j)) + 1;
+                            if (shape.inside(sx, sy)) count += 1;
+                        };
+                        switch (shape.state(x, y)) {
+                            .in => try testing.expectEqual(@as(u32, 16), count),
+                            .out => try testing.expectEqual(@as(u32, 0), count),
+                            .edge => {},
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+test "a round box's straight sides are not left to its samples" {
+    const shape = RoundBox{ .box = .{ .min_x = 0, .min_y = 0, .max_x = 40, .max_y = 30 }, .radius = 6 };
+    try testing.expectEqual(PixelState.in, shape.state(0, 15));
+    try testing.expectEqual(PixelState.in, shape.state(39, 15));
+    try testing.expectEqual(PixelState.in, shape.state(20, 0));
+    try testing.expectEqual(PixelState.out, shape.state(-1, 15));
+    try testing.expectEqual(PixelState.out, shape.state(40, 15));
+    try testing.expectEqual(PixelState.out, shape.state(0, 0));
+    try testing.expectEqual(PixelState.in, shape.state(3, 3));
 }

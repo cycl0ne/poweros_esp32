@@ -293,19 +293,33 @@ pub fn keepPicture(lb: *LayersBase, layer: *Layer) void {
     _ = lb.graphics_base.BltBitMap(picture, from_x, from_y, @ptrCast(own.bitmap), area.min_x, area.min_y, area.width(), area.height());
 }
 
-/// A layer that changes size takes `fresh`, a buffer of the new size,
-/// with as much of the old one copied into it as fits at its top left.
-/// The old one is given back. The caller holds every layer and makes the
-/// targets again: they still name the old buffer.
+/// A layer that changes size takes the memory of `fresh`, a buffer of the
+/// new size, with as much of the old picture copied into it as fits at its
+/// top left. The old memory is given back, and so is `fresh`'s handle: the
+/// layer keeps the handle it had, with the new memory and shape in it. So
+/// whatever names the buffer goes on naming it - above all a batch open on
+/// it (`BeginDraw`), which goes on in the new memory: all of it is then
+/// left for the batch's end to show, and the result is true; the caller
+/// leaves the rest of the move to it too (`Layer.unshown`). The caller
+/// holds every layer and makes the targets again, for their rectangles.
 ///
 /// INPUTS:
 /// - `lb` - the library.
 /// - `layer` - the layer.
 /// - `fresh` - its new buffer, from `make`.
-pub fn replace(lb: *LayersBase, layer: *Layer, fresh: Buffer) void {
+///
+/// RESULT:
+/// True when a batch is open on the buffer and the layer is to be shown
+/// at its end, not by the caller.
+///
+/// NOTES:
+/// The batch's fields are graphics.library's, changed under its batches'
+/// lock; here they are written under every layer's, which is as good for
+/// a buffer only its own layer draws in: nothing draws in it meanwhile.
+pub fn replace(lb: *LayersBase, layer: *Layer, fresh: Buffer) bool {
     const old = layer.own orelse {
         adopt(layer, fresh);
-        return;
+        return false;
     };
     const width = @min(old.bitmap.width, fresh.bitmap.width);
     const height = @min(old.bitmap.height, fresh.bitmap.height);
@@ -313,8 +327,47 @@ pub fn replace(lb: *LayersBase, layer: *Layer, fresh: Buffer) void {
     if (lb.rtg_base.CopyRect(old.bitmap, fresh.bitmap, &copy) != rtg.errors.RTGERR_OK) {
         _ = lb.graphics_base.BltBitMap(@ptrCast(old.bitmap), 0, 0, @ptrCast(fresh.bitmap), 0, 0, @intCast(width), @intCast(height));
     }
-    free(lb, old);
-    adopt(layer, fresh);
+    // The memory changes hands, each handle taking the other's: the
+    // layer's handle the new memory, `fresh`'s the old to be given back.
+    const kept = old.bitmap;
+    const spare = fresh.bitmap;
+    const shape = .{ kept.pixels, kept.width, kept.height, kept.pitch, kept.size_bytes };
+    kept.pixels = spare.pixels;
+    kept.width = spare.width;
+    kept.height = spare.height;
+    kept.pitch = spare.pitch;
+    kept.size_bytes = spare.size_bytes;
+    spare.pixels, spare.width, spare.height, spare.pitch, spare.size_bytes = shape;
+    free(lb, .{ .bitmap = spare, .memory = old.memory, .bytes = old.bytes });
+    layer.own = .{ .bitmap = kept, .memory = fresh.memory, .bytes = fresh.bytes };
+    if (kept.held == 0) return false;
+    kept.dirty_left = 0;
+    kept.dirty_top = 0;
+    kept.dirty_right = kept.width;
+    kept.dirty_end = kept.height;
+    return true;
+}
+
+/// Every move left to a batch's end (`replace`) whose batch has ended
+/// shown, all of it: for a batch that ended without the layers held,
+/// whose end showed the layer alone. The caller holds every layer.
+pub fn showUnshown(lb: *LayersBase, info: *LayerInfo) void {
+    if (!on(info)) return;
+    var it = info.layers.iterator();
+    while (it.next()) |node| {
+        const layer: *Layer = @fieldParentPtr("node", node);
+        if (layer.unshown.isEmpty()) continue;
+        if (layer.own) |own| if (own.bitmap.held != 0) continue;
+        const area = layer.unshown;
+        layer.unshown = .{};
+        show(lb, info, area);
+    }
+}
+
+/// Whether this task holds every layer of `info` (`LockLayers`).
+fn holdsAll(lb: *LayersBase, info: *const LayerInfo) bool {
+    const me = lb.sys_base.FindTask(null) orelse return false;
+    return info.locked_all != 0 and info.lock.owner == me;
 }
 
 /// What the hook of a layer's buffer is told: a rectangle of it was
@@ -325,12 +378,22 @@ fn watched(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callc
     const written: *const rtg.RtgRect = @ptrCast(@alignCast(message orelse return 0));
     const lb: *LayersBase = @ptrCast(@alignCast(layer.info.lb));
     const ox, const oy = super.origin(layer);
-    showLayer(lb, layer, .{
+    const area = Rect{
         .min_x = written.x + ox,
         .min_y = written.y + oy,
         .max_x = written.x + written.width + ox,
         .max_y = written.y + written.height + oy,
-    });
+    };
+    // A move left to a batch's end is shown whole - where the layer was,
+    // and its shadow - by `showUnshown` as the layers are let go of. When
+    // the task ending the batch holds them, that is in a moment, and what
+    // was drawn goes with it rather than being copied twice; otherwise the
+    // layer is shown now, and the rest whenever they are next let go of.
+    if (!layer.unshown.isEmpty() and holdsAll(lb, layer.info)) {
+        layer.unshown = layer.unshown.unionWith(area);
+        return 0;
+    }
+    showLayer(lb, layer, area);
     return 0;
 }
 

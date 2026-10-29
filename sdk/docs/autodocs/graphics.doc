@@ -740,6 +740,13 @@ graphics.library/XorRegionRegion
 	They nest. Each `BeginDraw` needs its own `EndDraw`, and nothing is
 	handed on until the last.
 
+	A window's layer sized meanwhile on a composed display (layers'
+	`MoveSizeLayer`) keeps its buffer, and the batch with it: the new size
+	reaches the display at the last `EndDraw`, with what was drawn at it,
+	and until then the window is shown as it was. The whole of the move -
+	where the window was, its shadow - goes with it when the layers are
+	held (`LockLayers`) around that `EndDraw`.
+
 	A RastPort drawing into plain memory has nothing to hand rows to, and
 	this does nothing for it.
 

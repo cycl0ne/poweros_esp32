@@ -215,7 +215,9 @@ const piece_width = 256;
 /// over by how many.
 fn fillSmooth(gb: *GraphicsBase, rp: *RastPort, points: [*]const graphics.Point, list: [*]Edge, count: u32, top: i32, bottom: i32) void {
     const xs = crossings(rp);
-    const styled = drawing.styled(rp);
+    // A fill style made ready once, for every pixel of the shape.
+    var made: ?drawing.Shade = if (drawing.styled(rp)) drawing.Shade.of(rp) else null;
+    const shade: ?*drawing.Shade = if (made) |*m| m else null;
     var cover: [piece_width]u8 = undefined;
     var bound = Rect{};
     var any = false;
@@ -275,7 +277,7 @@ fn fillSmooth(gb: *GraphicsBase, rp: *RastPort, points: [*]const graphics.Point,
                 sortCrossings(xs[0..found]);
                 countSamples(xs[0..found], cover[0..width], from);
             }
-            putPiece(rp, cover[0..width], from, y, styled, &bound, &any);
+            putPiece(rp, cover[0..width], from, y, shade, &bound, &any);
         }
     }
     if (any) drawing.handOn(gb, rp, drawing.written(rp.fill_box, bound));
@@ -344,7 +346,7 @@ fn samplesIn(at: i64, l: i64, r: i64) u8 {
 
 /// One piece of a row: runs of pixels wholly inside go down as the hard
 /// fill puts them, and an edge pixel is laid over by its coverage.
-fn putPiece(rp: *RastPort, cover: []const u8, from: i32, y: i32, styled: bool, bound: *Rect, any: *bool) void {
+fn putPiece(rp: *RastPort, cover: []const u8, from: i32, y: i32, shade: ?*drawing.Shade, bound: *Rect, any: *bool) void {
     var run: ?usize = null;
     for (cover, 0..) |c, i| {
         if (c == 16) {
@@ -352,12 +354,17 @@ fn putPiece(rp: *RastPort, cover: []const u8, from: i32, y: i32, styled: bool, b
             continue;
         }
         if (run) |start| {
-            drawing.fillShapeSpan(rp, from + @as(i32, @intCast(start)), from + @as(i32, @intCast(i)), y, bound, any);
+            putRun(rp, shade, from + @as(i32, @intCast(start)), from + @as(i32, @intCast(i)), y, bound, any);
             run = null;
         }
-        if (c != 0) _smooth.edgePixel(rp, from + @as(i32, @intCast(i)), y, c, styled, bound, any);
+        if (c != 0) _smooth.edgePixel(rp, from + @as(i32, @intCast(i)), y, c, shade, bound, any);
     }
-    if (run) |start| drawing.fillShapeSpan(rp, from + @as(i32, @intCast(start)), from + @as(i32, @intCast(cover.len)), y, bound, any);
+    if (run) |start| putRun(rp, shade, from + @as(i32, @intCast(start)), from + @as(i32, @intCast(cover.len)), y, bound, any);
+}
+
+/// A run of a row wholly inside: from the fill style made ready, or the pen.
+fn putRun(rp: *RastPort, shade: ?*drawing.Shade, x0: i32, x1: i32, y: i32, bound: *Rect, any: *bool) void {
+    if (shade) |s| drawing.shadeSpan(rp, s, x0, x1, y, bound, any) else drawing.fillSpan(rp, x0, x1, y, bound, any);
 }
 
 /// The row an edge begins at.

@@ -62,9 +62,12 @@ pub const LIBRARY_VERSION = 0;
 /// than the four round its place. 34: `BltRastPort` and `BltMaskRastPort`
 /// read a layer's RastPort through its targets, each part from where it is
 /// kept, rather than its surface at the layer's coordinates - the
-/// display's corner where the layers share its buffer. The version stays
-/// 0 until there is something to demand of it.
-pub const LIBRARY_REVISION = 34;
+/// display's corner where the layers share its buffer. 35: a smooth
+/// rounded box tells what of it is surely in or out by its corners'
+/// circles, not by samples, and runs through what is surely in without
+/// asking each pixel; a fill's colour is made ready once a shape. The
+/// version stays 0 until there is something to demand of it.
+pub const LIBRARY_REVISION = 35;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

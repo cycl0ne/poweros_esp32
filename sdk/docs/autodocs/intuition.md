@@ -1004,12 +1004,13 @@ Nothing changes hands.
   three ticks at most - and a frame has passed since the last step
   began. A program that redraws on it and replies after drawing has
   the window follow its drawing, a step at a time.
-- On a composed screen such a step is shown once it is drawn: what is
-  drawn in the window after its layers are sized, by intuition and
-  then by the program, is gathered and reaches the display together
-  when the program has replied (or the three ticks are up). Gadgets the
-  program had refreshed with `QueueGadgetRefresh` before replying are
-  drawn into it first.
+- On a composed screen such a step is shown once it is drawn: the new
+  size and what is drawn in the window at it, by intuition and then by
+  the program, are gathered and reach the display together when the
+  program has replied (or the three ticks are up). Until then the
+  display shows the window as it was. Gadgets the program had
+  refreshed with `QueueGadgetRefresh` before replying are drawn into it
+  first.
 
 **BUGS**
 

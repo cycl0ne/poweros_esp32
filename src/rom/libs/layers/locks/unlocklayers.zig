@@ -9,6 +9,7 @@ const _layerinfo = @import("../layerinfo/_layerinfo.zig");
 const LayerInfo = _layerinfo.LayerInfo;
 const Layer = _layerinfo.Layer;
 const LayersBase = @import("../layers.zig").LayersBase;
+const compose = @import("../compose/_compose.zig");
 
 /// Lets every layer of a display go again.
 ///
@@ -50,6 +51,9 @@ const LayersBase = @import("../layers.zig").LayersBase;
 pub fn UnlockLayers(lb: *LayersBase, info: *LayerInfo) void {
     const layers_lib = lb.iface();
     const layer_info = info;
+    // A size left to a batch that has ended meanwhile, shown while every
+    // layer is still held.
+    compose.showUnshown(lb, info);
     if (layer_info.display_rp) |rp| lb.graphics_base.EndDraw(rp);
     lb.sys_base.ReleaseSemaphoreList(&layer_info.locks);
     if (layer_info.locked_all != 0) layer_info.locked_all -= 1;

@@ -128,6 +128,14 @@ fn cornerOf(ib: *IntuitionBase, o: *Object, gi: ?*classusr.GadgetInfo) _gadget.B
     return .{ .left = g.left, .top = g.top, .width = g.width, .height = g.height };
 }
 
+/// Whether a member's box reaches into what its GadgetInfo lets it draw
+/// on - all of the room, unless the drawing is of part of it.
+fn reaches(ib: *IntuitionBase, o: *Object, gi: *classusr.GadgetInfo) bool {
+    const b = cornerOf(ib, o, gi);
+    const clip = gi.clip;
+    return b.left < clip.max_x and b.left + b.width > clip.min_x and b.top < clip.max_y and b.top + b.height > clip.min_y;
+}
+
 /// A member put somewhere else. The GadgetInfo goes with it, because that
 /// is what tells the member which window it is in - without one it changes
 /// where it thinks it is and never draws itself there.
@@ -317,10 +325,17 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         gc.GM_RENDER => {
             // A member is a gadget of the window with a box of its own, so
-            // it needs nothing said to it but the message as it came.
+            // it needs nothing said to it but the message as it came - and
+            // nothing at all when its box is outside what is being drawn
+            // (`GadgetInfo.clip`): a room drawn a band at a time draws each
+            // member only in the bands it reaches into.
+            const r: *gc.GpRender = @ptrCast(@alignCast(msg));
             const p = own(cl, o.?);
             var walk = Walk.over(ib, p);
-            while (walk.next()) |member| _ = it.SendMessage(member, @ptrCast(msg));
+            while (walk.next()) |member| {
+                if (r.gadget_info) |info| if (!reaches(ib, member, info)) continue;
+                _ = it.SendMessage(member, @ptrCast(msg));
+            }
             return 0;
         },
         // Each member in turn until one takes the key. The first to take

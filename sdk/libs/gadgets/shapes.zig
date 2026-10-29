@@ -515,6 +515,12 @@ const shadow_colour: Pen = 0x3800_0000;
 /// its right edge, would not quite do. The pixels are worked out in a
 /// buffer the size of the square, made at the first shape and given back
 /// by `end`; without the memory for it nothing is drawn.
+///
+/// With `into` the layers are laid into that picture instead, one over
+/// another (`over`), and nothing reaches the frame's RastPort: the caller
+/// puts the picture down in one `BlendPixelArray`, which comes to what the
+/// layers laid one by one would, and may keep it to put down again - a
+/// picture is worked out once, not at every drawing.
 pub const Painter = struct {
     frame: Frame,
     look: Look,
@@ -526,6 +532,9 @@ pub const Painter = struct {
     /// undo arrow mirrored.
     mirror: bool = false,
     buffer: ?*rtg.Surface = null,
+    /// A `bgra32` picture of the square, cleared by the caller, that the
+    /// layers are laid into rather than on the RastPort; null for none.
+    into: ?*rtg.Surface = null,
 
     pub fn begin(frame: Frame, look: Look) Painter {
         return .{ .frame = frame, .look = look, .detail = frame.size >= 20, .rim = @max(1, @divTrunc(frame.size, 32)) };
@@ -645,7 +654,7 @@ pub const Painter = struct {
     /// in a gadget's GM_RENDER, deep in intuition's input task.
     fn lay(p: *Painter, list: []const Shape, paint: Paint, dx: i32, dy: i32) void {
         if (list.len == 0) return;
-        const buffer = p.bufferOf() orelse return;
+        const buffer = p.into orelse p.bufferOf() orelse return;
         const n = p.frame.size;
         const shift_x: f32 = @floatFromInt(dx);
         const shift_y: f32 = @floatFromInt(dy);
@@ -682,14 +691,16 @@ pub const Painter = struct {
                 };
                 const at_pixel = &pixels[@as(usize, @intCast(y)) * pitch + @as(usize, @intCast(x))];
                 if (inside == 0) {
-                    at_pixel.* = 0;
+                    if (p.into == null) at_pixel.* = 0;
                     continue;
                 }
                 const c = p.colour(paint.at(box, @as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5));
                 const alpha = ((c >> 24) * inside + 8) / 16;
-                at_pixel.* = (c & 0x00FF_FFFF) | alpha << 24;
+                const laid = (c & 0x00FF_FFFF) | alpha << 24;
+                at_pixel.* = if (p.into != null) over(at_pixel.*, laid) else laid;
             }
         }
+        if (p.into != null) return;
         p.frame.gb.BlendPixelArray(p.frame.rp, buffer.pixels.?, buffer.pitch, @intFromEnum(rtg.PixelFormat.bgra32), left, top, &.{
             .min_x = p.frame.x + left,
             .min_y = p.frame.y + top,
@@ -712,6 +723,28 @@ pub const Painter = struct {
         return p.buffer;
     }
 };
+
+/// `top` laid over `under`, both colours with their own opacity in the
+/// top byte, as one colour: what `BlendPixelArray` makes of the two put
+/// down one after the other is what it makes of this put down alone.
+pub fn over(under: Pen, top: Pen) Pen {
+    const ta = top >> 24;
+    const ua = under >> 24;
+    if (ta == 0) return under;
+    if (ta == 255 or ua == 0) return top;
+    // In 255ths of 255ths: the top's share of the colour, and what of the
+    // one under it shows through.
+    const through = ua * (255 - ta);
+    const whole = ta * 255 + through;
+    var out: Pen = ((whole + 127) / 255) << 24;
+    var shift: u5 = 0;
+    while (shift <= 16) : (shift += 8) {
+        const tc = (top >> shift) & 0xFF;
+        const uc = (under >> shift) & 0xFF;
+        out |= ((tc * ta * 255 + uc * through + whole / 2) / whole) << shift;
+    }
+    return out;
+}
 
 /// The four corners of a bar `w` wide from (`x0`, `y0`) to (`x1`, `y1`),
 /// in design units.

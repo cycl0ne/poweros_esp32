@@ -458,8 +458,10 @@ fn roomWhole(w: *Window) graphics.Rect {
 /// that reaches into the area, back to front, each as `ObtainGIRPort`
 /// would hand it its RastPort. All of it is drawn into a picture of the
 /// area kept aside, which is put on the window in one copy. An area
-/// larger than `aside_most` is drawn a band of rows at a time, and without
-/// the memory for a picture a band is drawn in place.
+/// larger than `aside_most` is drawn a band of rows at a time - the
+/// GadgetInfo's clip narrowed to the band, so that a group draws only the
+/// members that reach into it - and without the memory for a picture a
+/// band is drawn in place.
 pub fn paintArea(ib: *IntuitionBase, w: *Window, area: graphics.Rect) void {
     if (area.isEmpty()) return;
     const width: u64 = @intCast(area.width());
@@ -514,8 +516,12 @@ fn paintAside(ib: *IntuitionBase, w: *Window, area: graphics.Rect) bool {
         rp: *graphics.RastPort,
         font: usize,
         whole: graphics.Rect,
+        area: graphics.Rect,
         fn each(draw: *const @This(), o: *Object) void {
             var gi = infoFor(draw.ib, draw.w, o);
+            // The band alone: a group draws only the members that reach
+            // into it.
+            gi.clip = graphics.Rect.intersect(gi.clip, draw.area);
             const clip = graphics.Rect.intersect(draw.whole, gi.clip);
             draw.ib.graphics_base.SetRPAttrs(draw.rp, &[_]TagItem{
                 .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&clip) },
@@ -529,7 +535,7 @@ fn paintAside(ib: *IntuitionBase, w: *Window, area: graphics.Rect) bool {
             _ = draw.ib.iface().SendMessage(o, @ptrCast(&msg));
         }
     };
-    const draw = Draw{ .ib = ib, .w = w, .rp = rp, .font = font, .whole = whole };
+    const draw = Draw{ .ib = ib, .w = w, .rp = rp, .font = font, .whole = whole, .area = area };
     eachInRoom(ib, w, area, &draw, Draw.each);
 
     var gi = info(w);

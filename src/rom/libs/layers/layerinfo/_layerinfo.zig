@@ -171,6 +171,11 @@ pub const Layer = struct {
     /// the hook its handle tells of what was drawn. Null in any other.
     own: ?Buffer = null,
     watch: utility.Hook = .{},
+    /// Composed and sized while a batch was open on its buffer: all the
+    /// move touched - where it was and where it is, shadow and all - in
+    /// the display's coordinates, left for the batch's end to show
+    /// (compose `replace`). Empty with nothing left.
+    unshown: Rect = .{},
     /// Composed and with no buffer of its own (`LATAG_NoBuffer`): a handle
     /// on the display's memory, which its backfill paints through where
     /// it is seen. Its hook is `watch`, told nothing: what is painted is

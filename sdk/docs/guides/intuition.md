@@ -316,7 +316,9 @@ most one step a frame. A program that draws on `IDCMP_NEWSIZE` and
 replies after drawing has the window follow its drawing a step at a
 time, rather than drawing a size the window no longer has. On a composed
 screen the display is shown each step only then, with intuition's border
-and gadgets and the program's drawing in it together. What is
+and gadgets and the program's drawing in it together - and the new size
+itself, its shadow and what it uncovered: until then the display shows
+the window as it was, never at a size with nothing drawn in it. What is
 drawn again whole is best drawn into a bitmap of its own
 (`AllocBitMapTagList`, with the window's RastPort as `BMTAG_Friend`) and
 put on the window with one `BltBitMapRastPort`: drawn in place, the

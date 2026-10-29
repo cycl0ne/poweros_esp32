@@ -1147,7 +1147,14 @@ buffer, so none is owed anything for the move, a smart layer as little
 as a simple one: where each was and where each is are copied on to the
 display again. One that changes size takes a buffer of the new size
 with as much of the old as fits; what it gains is painted, and a simple
-layer is owed it as damage.
+layer is owed it as damage. Its buffer stays the one its RastPort
+draws into, so a batch open on it (graphics.library's `BeginDraw`)
+goes on across the size - and then the display goes on showing the
+layer as it was until the batch's last `EndDraw`, which shows the new
+size with what was drawn at it: all of the move, where the layer was
+and its shadow too, when the task ending the batch holds the display's
+layers (`LockLayers`); otherwise the layer, and the rest when the
+layers are next let go of.
 
 **CONTEXT**
 

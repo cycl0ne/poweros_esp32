@@ -190,7 +190,12 @@ pub const LIBRARY_VERSION = 0;
 /// size when a member joins: a layout's child shown again no longer turns
 /// the window's layout into one as big as the whole window, over its
 /// border.
-pub const LIBRARY_REVISION = 72;
+/// 73: a sizing step's new size reaches the display with what is drawn at
+/// it, the whole step at once - no grey band or bare shadow before the
+/// window is drawn; a group draws only the members a band of the room
+/// reaches, and a size draws the border and room once, not again for its
+/// repair. The input task has the standard stack.
+pub const LIBRARY_REVISION = 73;
 const BUILD_DATE = "29.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
