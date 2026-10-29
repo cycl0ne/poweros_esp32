@@ -552,6 +552,12 @@ pub const CHIP_CYW43455: u32 = 40;
 /// board has power, and through a power cut on a cell at the BAT
 /// connector.
 pub const CHIP_RPI_RTC: u32 = 41;
+/// The BCM2712's display behind its first HDMI port (PARTKIND_PANEL on
+/// BUS_MEMORY, PART_Address the hardware video scaler, PART_Irq pixel
+/// valve 0's interrupt): the HVS, which reads the picture out of RAM,
+/// pixel valve 0, and the HDMI0 controller with its PHY and DDC. Its
+/// clocks are the VideoCore firmware's, asked through its mailbox.
+pub const CHIP_BCM2712_HVS: u32 = 42;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

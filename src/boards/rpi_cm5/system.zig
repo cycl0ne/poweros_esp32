@@ -27,6 +27,8 @@
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const rtg = sdk.rtg;
+const tags = rtg.tags;
 const Tag = sdk.utility.FixedTagItem;
 const st = sdk.expansion.systemtags;
 const pins = sdk.expansion.boardpin;
@@ -140,6 +142,44 @@ const rtc = [_]Tag{
     .done,
 };
 
+/// The HDMI port's picture when the monitor gives no EDID: 1920x1080 at
+/// 60 Hz. With one, the monitor's modes are the board's, and the screen
+/// is the one it prefers (`rtg_driver/fbboard/monitor.zig`).
+const screen = struct {
+    pub const width: u32 = 1920;
+    pub const height: u32 = 1080;
+};
+
+/// The display behind the IO board's first HDMI port (HDMI0): the
+/// BCM2712's video scaler at 0x10_7C58_0000, which reads its picture out
+/// of RAM, the HDMI0 controller, and pixel valve 0 between them, which
+/// raises GIC interrupt 133 at each frame - what the fb rtg driver is
+/// told comes with it (`rtg_driver/fbboard/bcm2712.zig`). Its clocks are
+/// the VideoCore firmware's, asked through the mailbox the RTC is read
+/// through.
+const display = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PANEL),
+    .value(st.PART_Chip, st.CHIP_BCM2712_HVS),
+    .pointer(st.PART_ChipName, "bcm2712 hvs hdmi0"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x10_7C58_0000),
+    .value(st.PART_Irq, 133),
+    .value(tags.RTGA_Width, screen.width),
+    .value(tags.RTGA_Height, screen.height),
+    .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
+    // At most sixteen pictures at once - screens, and the buffers behind
+    // them - each taken from memory as it is opened: a ceiling, not memory
+    // set aside.
+    .value(tags.RTGA_Buffers, 16),
+    // The windows of a screen each draw into a buffer of their own, and
+    // what can be seen of them is copied into the screen's: memory here
+    // reads back fast through the caches, and the display is shown only
+    // the driver's own frames, never a buffer drawn in.
+    .value(tags.RTGA_Compose, 1),
+    .pointer(st.PART_Label, "HDMI 0"),
+    .done,
+};
+
 /// The root list: the board's own facts and a SYSTAG_Part per part.
 /// `boards.fact` reads it at compile time for the kernel.
 pub const root = [_]Tag{
@@ -165,6 +205,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &pcie1),
     .pointer(st.SYSTAG_Part, &wifi),
     .pointer(st.SYSTAG_Part, &rtc),
+    .pointer(st.SYSTAG_Part, &display),
     .done,
 };
 

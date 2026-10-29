@@ -163,16 +163,20 @@ test "what a power-on leaves in the JH7110 RTC, and day 0, are no date" {
 }
 
 test "the Raspberry Pi's RTC: its messages, and its count since 1970 as seconds since 1978" {
-    const asked = rpirtc.message(0x0003_8087, 0, 1_700_000_000);
-    try testing.expectEqualSlices(u32, &.{ 32, 0, 0x0003_8087, 8, 0, 0, 1_700_000_000, 0 }, &asked);
+    const videocore = sdk.hardware.videocore;
+    var asked: videocore.Buffer = undefined;
+    const words = videocore.message(&asked, rpirtc.TAG_SET_RTC_REG, &.{ 0, 1_700_000_000 });
+    try testing.expectEqualSlices(u32, &.{ 32, 0, 0x0003_8087, 8, 0, 0, 1_700_000_000, 0 }, asked[0..words]);
     // Not answered: the codes as they were sent.
-    try testing.expectEqual(@as(?u32, null), rpirtc.answer(&asked));
+    var value = [2]u32{ 0, 0 };
+    try testing.expect(!videocore.answer(&asked, &value));
     var answered = asked;
     answered[1] = 0x8000_0000;
     answered[4] = 0x8000_0008;
-    try testing.expectEqual(@as(?u32, 1_700_000_000), rpirtc.answer(&answered));
+    try testing.expect(videocore.answer(&answered, &value));
+    try testing.expectEqual(@as(u32, 1_700_000_000), value[1]);
     answered[1] = 0x8000_0001;
-    try testing.expectEqual(@as(?u32, null), rpirtc.answer(&answered));
+    try testing.expect(!videocore.answer(&answered, &value));
     // 1 January 1978 is the first date; a count from a power-on without a
     // cell is none.
     try testing.expectEqual(@as(?u32, 0), rpirtc.secondsOf(252_460_800));

@@ -38,6 +38,7 @@ test {
     _ = @import("libs/rtg_driver/dsiboard/monitor.zig");
     _ = @import("libs/rtg_driver/edid.zig");
     _ = @import("libs/rtg_driver/fbboard/phy.zig");
+    _ = @import("libs/rtg_driver/fbboard/bcm2712.zig");
     _ = @import("libs/rtg_driver/fbboard/monitor.zig");
     _ = @import("libs/rtg_driver/fbboard/virtio.zig");
     _ = @import("libs/rtg_driver/fbboard/damage.zig");

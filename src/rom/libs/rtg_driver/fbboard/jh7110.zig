@@ -190,6 +190,16 @@ const patience: u32 = 1_000_000;
 /// transmitter's PLL makes no such clock, or it did not lock.
 pub const Failure = enum { none, power, clock, pll };
 
+/// What went wrong, said on the raw port.
+pub fn why(failure: Failure) [*:0]const u8 {
+    return switch (failure) {
+        .none => "the display came up",
+        .power => "the display's power domain did not come on",
+        .clock => "the HDMI transmitter's PLL makes no such pixel clock",
+        .pll => "the HDMI transmitter's PLL did not lock",
+    };
+}
+
 fn hdmi(index: usize) *volatile u32 {
     return reg(HDMI + index * 4);
 }

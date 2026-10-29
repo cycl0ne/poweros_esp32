@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! A display whose picture is in the machine's RAM, as a display board:
-//! QEMU virt's ramfb (`ramfb.zig`) and the JH7110's display controller
-//! behind its HDMI port (`jh7110.zig`), which read it out of RAM by
+//! QEMU virt's ramfb (`ramfb.zig`), the JH7110's display controller
+//! behind its HDMI port (`jh7110.zig`) and the BCM2712's video scaler
+//! behind its first one (`bcm2712.zig`), which read it out of RAM by
 //! themselves, and QEMU's virtio GPU (`virtio.zig`), which is told what
 //! changed.
 //!
@@ -25,19 +26,20 @@
 //! glass, a rectangle at a time, and showing a buffer is naming its copy.
 //!
 //! The emulator's displays have one mode: the ramfb the size the board
-//! names, the virtio GPU the size QEMU's window has for it. The
-//! JH7110's has the modes the monitor on its HDMI port names in its EDID
-//! and the port can send, read when the board is made (`monitor.zig`):
-//! the one the monitor prefers is the default, and any of them can be set.
+//! names, the virtio GPU the size QEMU's window has for it. An HDMI
+//! port's - the JH7110's, the BCM2712's - has the modes the monitor on it
+//! names in its EDID and the port can send, read when the board is made
+//! (`monitor.zig`): the one the monitor prefers is the default, and any
+//! of them can be set.
 //!
 //! The buffers are the machine's RAM below 4 GiB, which every display here
 //! reaches (MEMF_DMA): the library takes each when it is allocated and
 //! gives it back when it is freed (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY),
 //! at most as many pictures of the largest mode as the board asks for
 //! (RTGA_Buffers) - so a screen nobody has opened costs nothing. The
-//! driver's own are a frame to compose in - two the display is shown, on
-//! the JH7110 - and, on a display with a cursor plane, the plane's two
-//! images.
+//! driver's own are a frame to compose in - two the display is shown,
+//! behind an HDMI port - and, on a display with a cursor plane, the
+//! plane's two images.
 //!
 //! The pointer is laid over the picture in that frame, as the qemu board
 //! does it: while a pointer or the overlay is shown, or the picture is
@@ -65,7 +67,7 @@
 //! pointer just laid on another, nor a restore cut a hole into rows just
 //! copied.
 //!
-//! The JH7110's display reads RAM past the caches, and the caches write
+//! The HDMI ports' displays read RAM past the caches, and the caches write
 //! their lines back in an order of their own: a picture drawn over while
 //! it is read shows, for a frame, a patchwork of old and new cache lines,
 //! sixteen pixels each. So there the display never reads a buffer anybody
@@ -82,8 +84,8 @@
 //! the caches; showing a buffer, or bands, is a whole picture made and
 //! waited for.
 //!
-//! The JH7110's controller has a pointer of its own, its cursor plane,
-//! which it lays over the picture itself: there the pointer is that
+//! Their controllers have a pointer of their own, a cursor plane, which
+//! they lay over the picture themselves: there the pointer is that
 //! (`cursor`), the image copied into a buffer of the block's as ARGB, its
 //! mask the alpha, and a move is the plane written again at its new place.
 //! Two buffers take turns, so the one the controller reads is never the
@@ -121,6 +123,7 @@ const st = sdk.expansion.systemtags;
 
 const ramfb = @import("ramfb.zig");
 const jh7110 = @import("jh7110.zig");
+const bcm2712 = @import("bcm2712.zig");
 const virtio = @import("virtio.zig");
 const monitor = @import("monitor.zig");
 const edid = @import("../edid.zig");
@@ -132,15 +135,15 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 15;
-const BUILD_DATE = "28.10.2026";
+const REVISION = 16;
+const BUILD_DATE = "29.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
 /// The chips this drives, as the board's panel part names them.
-const chips = [_]u32{ st.CHIP_QEMU_RAMFB, st.CHIP_JH7110_DC8200, st.CHIP_VIRTIO_GPU };
+const chips = [_]u32{ st.CHIP_QEMU_RAMFB, st.CHIP_JH7110_DC8200, st.CHIP_VIRTIO_GPU, st.CHIP_BCM2712_HVS };
 
 /// What every row and every buffer starts on: whole cache lines, so a
 /// refresh writes back exactly the rows it names, and as wide as any
@@ -165,7 +168,14 @@ const Scanout = union(enum) {
     ramfb: ramfb.Ramfb,
     jh7110,
     virtio: virtio.Gpu,
+    bcm2712,
 };
+
+/// Whether the display is behind an HDMI port, whose monitor names its
+/// modes, and which reads past the caches with a cursor plane of its own.
+fn isHdmi(scanout: Scanout) bool {
+    return scanout == .jh7110 or scanout == .bcm2712;
+}
 
 /// Everything one board of this driver has. The library allocates it
 /// beside the handle.
@@ -179,8 +189,8 @@ const Screen = struct {
     format: rtg.PixelFormat = .bgra32,
     bytes: u32 = 4,
     pitch: u32 = 0,
-    /// The modes: the board's own, or on the JH7110 those the monitor
-    /// takes (`monitor.zig`), with their timings; their names; which one
+    /// The modes: the board's own, or behind an HDMI port those the
+    /// monitor takes (`monitor.zig`), with their timings; their names; which one
     /// the display is in; how long a frame of it takes.
     modes: [monitor.max_modes]rtg.RtgMode = undefined,
     timings: monitor.List = .{},
@@ -320,7 +330,11 @@ fn waitFrames(screen: *Screen, frames: u32) bool {
 fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const screen: *Screen = @ptrCast(@alignCast(data.?));
-    if (jh7110.takeInterrupts() == 0) return 0;
+    const raised = switch (screen.scanout) {
+        .bcm2712 => bcm2712.takeInterrupts(),
+        else => jh7110.takeInterrupts(),
+    };
+    if (raised == 0) return 0;
     screen.frames +%= 1;
     @atomicStore(bool, &screen.frames_come, true, .release);
     var at = screen.frame_waiters;
@@ -432,6 +446,10 @@ fn scanFrom(screen: *Screen, address: usize) void {
         }),
         .jh7110 => done: {
             jh7110.show(address);
+            break :done true;
+        },
+        .bcm2712 => done: {
+            bcm2712.show(address);
             break :done true;
         },
         .virtio => |*gpu| virtio.show(gpu, .{
@@ -808,11 +826,12 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
 
 // --- the pointer, on the controller's cursor plane ---------------------------
 
-/// The bytes of one of the cursor plane's buffers: the JH7110's largest
-/// image, which is the virtio GPU's one size.
+/// The bytes of one of the cursor plane's buffers: the HDMI ports'
+/// largest image, which is the virtio GPU's one size.
 const cursor_bytes = jh7110.cursor_side * jh7110.cursor_side * 4;
 comptime {
     std.debug.assert(virtio.cursor_side == jh7110.cursor_side);
+    std.debug.assert(bcm2712.cursor_side == jh7110.cursor_side);
 }
 
 fn cursorBuffer(screen: *Screen, turn: u1) [*]u8 {
@@ -836,6 +855,15 @@ fn cursorPlane(screen: *Screen) void {
     const at = hotSpot(screen);
     switch (screen.scanout) {
         .virtio => |*gpu| virtio.moveCursor(gpu, at.x, at.y),
+        .bcm2712 => bcm2712.cursor(
+            @intFromPtr(cursorBuffer(screen, screen.cursor_turn)),
+            screen.cursor_small,
+            screen.cursor_hot_x,
+            screen.cursor_hot_y,
+            at.x,
+            at.y,
+            screen.pointer_shown and screen.pointer != null,
+        ),
         else => jh7110.cursor(
             @intFromPtr(cursorBuffer(screen, screen.cursor_turn)),
             screen.cursor_small,
@@ -1157,6 +1185,8 @@ fn findScanout(rb: *RtgBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
         // Its registers do not answer while its domain is off, so nothing
         // is asked of it before the mode is set.
         st.CHIP_JH7110_DC8200 => .jh7110,
+        // Nor of the BCM2712's before the firmware has its clocks running.
+        st.CHIP_BCM2712_HVS => .bcm2712,
         st.CHIP_VIRTIO_GPU => .{ .virtio = virtio.find(
             address,
             @truncate(rb.GetRtgTagData(st.PART_Windows, 1, tag_list)),
@@ -1205,7 +1235,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
             }
         }
     }
-    if (scanout == .jh7110) {
+    if (isHdmi(scanout)) {
         // The modes the monitor takes, the part's size at 60 Hz without
         // one, and the display's frame interrupt.
         if (format != .bgra32) return err.RTGERR_BAD_FORMAT;
@@ -1244,7 +1274,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     }
     // A display that reads past the caches is shown frames of the
     // driver's own, never a buffer drawn in.
-    if (scanout == .jh7110 and !startFlipping(screen)) {
+    if (isHdmi(scanout) and !startFlipping(screen)) {
         if (screen.cursor_memory) |memory| sys.FreeMem(memory, 2 * cursor_bytes + page);
         screen.cursor_memory = null;
         screen.cursor = null;
@@ -1339,24 +1369,32 @@ fn take(screen: *Screen, index: u32) void {
     screen.frame_us = if (mode.refresh_mhz != 0) 1_000_000_000 / mode.refresh_mhz else 16_667;
 }
 
-/// The modes of the monitor on the JH7110's HDMI port (`monitor.zig`),
-/// from its EDID; the monitor's name, how many modes it has and the one
-/// it gets said on the raw port. The board's own alone when no monitor is
-/// on the port (which `begin` says), or its EDID does not read.
+/// The modes of the monitor on the HDMI port (`monitor.zig`), from its
+/// EDID; the monitor's name, how many modes it has and the one it gets
+/// said on the raw port. The board's own alone when no monitor is on the
+/// port (which `begin` says), or its EDID does not read.
 fn hdmiModes(screen: *Screen, own: edid.Timing) monitor.List {
+    return switch (screen.scanout) {
+        .bcm2712 => portModes(bcm2712, screen, own),
+        else => portModes(jh7110, screen, own),
+    };
+}
+
+/// `hdmiModes` on the port `port` drives (`jh7110.zig`, `bcm2712.zig`).
+fn portModes(comptime port: type, screen: *Screen, own: edid.Timing) monitor.List {
     const waiter = Waiter{ .screen = screen };
-    if (jh7110.wake(screen.sys, waiter) != .none or !jh7110.monitor()) return monitor.modesOf(null, null, own, jh7110.sends);
+    if (port.wake(screen.sys, waiter) != .none or !port.monitor()) return monitor.modesOf(null, null, own, port.sends);
     var first: edid.Block = undefined;
     var extension: edid.Block = undefined;
     var name: [14]u8 = @splat(0);
     var base: ?*const edid.Block = null;
     var cea: ?*const edid.Block = null;
-    if (jh7110.readEdid(0, &first, waiter) and edid.isFirst(&first) and edid.valid(&first)) {
+    if (port.readEdid(0, &first, waiter) and edid.isFirst(&first) and edid.valid(&first)) {
         base = &first;
         edid.name(&first, &name);
-        if (first[126] != 0 and jh7110.readEdid(1, &extension, waiter) and edid.valid(&extension)) cea = &extension;
+        if (first[126] != 0 and port.readEdid(1, &extension, waiter) and edid.valid(&extension)) cea = &extension;
     }
-    const found = monitor.modesOf(base, cea, own, jh7110.sends);
+    const found = monitor.modesOf(base, cea, own, port.sends);
     const shown = &found.modes[found.default];
     if (base == null) {
         exec.kprintf(screen.sys, "%s: HDMI to a monitor whose EDID did not read, %dx%d at %d Hz\n", .{ MODULE_NAME, shown.width, shown.height, shown.hz() });
@@ -1397,7 +1435,7 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
     return err.RTGERR_OK;
 }
 
-/// What `jh7110.start` waits with.
+/// What the HDMI ports' `start` waits with.
 const Waiter = struct {
     screen: *Screen,
 
@@ -1411,21 +1449,23 @@ const Waiter = struct {
 fn begin(screen: *Screen, address: usize) bool {
     switch (screen.scanout) {
         .ramfb, .virtio => scanFrom(screen, address),
-        .jh7110 => {
-            const failure = jh7110.start(screen.sys, &screen.timings.modes[screen.current], address, screen.pitch, Waiter{ .screen = screen });
-            switch (failure) {
-                .none => screen.scanning = address,
-                .power => exec.kprintf(screen.sys, "%s: the display's power domain did not come on\n", .{MODULE_NAME}),
-                .clock => exec.kprintf(screen.sys, "%s: the HDMI transmitter's PLL makes no such pixel clock\n", .{MODULE_NAME}),
-                .pll => exec.kprintf(screen.sys, "%s: the HDMI transmitter's PLL did not lock\n", .{MODULE_NAME}),
-            }
-            if (failure == .none and !jh7110.monitor()) {
-                exec.kprintf(screen.sys, "%s: no monitor on the HDMI port\n", .{MODULE_NAME});
-            }
-            if (failure == .none) hookFrames(screen);
-        },
+        .jh7110 => startPort(jh7110, screen, address),
+        .bcm2712 => startPort(bcm2712, screen, address),
     }
     return screen.scanning == address;
+}
+
+/// `begin` on the HDMI port `port` drives: the mode set, and the frame
+/// interrupt hooked once it runs.
+fn startPort(comptime port: type, screen: *Screen, address: usize) void {
+    const failure = port.start(screen.sys, &screen.timings.modes[screen.current], address, screen.pitch, Waiter{ .screen = screen });
+    if (failure != .none) {
+        exec.kprintf(screen.sys, "%s: %s\n", .{ MODULE_NAME, port.why(failure) });
+        return;
+    }
+    screen.scanning = address;
+    if (!port.monitor()) exec.kprintf(screen.sys, "%s: no monitor on the HDMI port\n", .{MODULE_NAME});
+    hookFrames(screen);
 }
 
 /// Show a buffer: the display told where it is, from its next frame. Null
