@@ -51,6 +51,12 @@ pub const Out = struct {
 /// missing glyph), 1 'A' a square 0..500 by 0..700, 2 'B' a square with a
 /// curved top, 3 'C' glyph 1 moved 100 right. Advances 600.
 pub fn buildFont(out: *Out) void {
+    buildFace(out, 0);
+}
+
+/// The same font saying it is drawn in `style_bits`, its `head` table's
+/// style bits: 1 bold, 2 italic.
+pub fn buildFace(out: *Out, style_bits: u8) void {
     const tags = [_]*const [4]u8{ "cmap", "glyf", "head", "hhea", "hmtx", "loca", "maxp" };
     out.u32be(0x0001_0000);
     out.u16be(tags.len);
@@ -142,6 +148,7 @@ pub fn buildFont(out: *Out) void {
     out.len += 54;
     out.bytes[starts[2] + 18] = 1000 >> 8;
     out.bytes[starts[2] + 19] = 1000 & 0xFF;
+    out.bytes[starts[2] + 45] = style_bits;
     out.bytes[starts[2] + 51] = 1;
     ends[2] = out.len;
     out.pad();
@@ -206,6 +213,7 @@ test "a TrueType file rendered: squares full, a curve smooth, a composite moved,
     try testing.expectEqual(@as(u16, 16), image.baseline);
     try testing.expectEqual(fontimage.Kind.alpha4, image.kind);
     try testing.expectEqual(@as(u32, 127), image.default_char);
+    try testing.expectEqual(graphics.FS_NORMAL, image.style);
 
     // 'A': 10 by 14 pixels, two down from the top, every pixel covered.
     const a = fontimage.find(image, 'A').?;
@@ -238,6 +246,38 @@ test "a TrueType file rendered: squares full, a curve smooth, a composite moved,
     // A code the font has no glyph for, and the default: the empty glyph.
     try testing.expectEqual(@as(u16, 0), fontimage.find(image, 'z').?.width);
     try testing.expectEqual(@as(u16, 0), fontimage.glyphFor(image, 300).width);
+
+    sys.FreeVec(image);
+    tb.CloseOutline(outline);
+    sys.CloseLibrary(tb.lib());
+    _ = sys.RemLibrary(library);
+    try kexec.expectNoLeaks();
+    kexec.deinit();
+}
+
+test "a face says what it is: its styles read from the file, and every size rendered in them" {
+    var out: Out = .{};
+    buildFace(&out, 1);
+    try testing.expectEqual(graphics.FSF_BOLD, truetype.styleOf(out.bytes[0..out.len]));
+    out = .{};
+    buildFace(&out, 3);
+    try testing.expectEqual(graphics.FSF_BOLD | graphics.FSF_ITALIC, truetype.styleOf(out.bytes[0..out.len]));
+    // Cut before its head table, or not TrueType at all: no styles.
+    try testing.expectEqual(graphics.FS_NORMAL, truetype.styleOf(out.bytes[0..40]));
+    try testing.expectEqual(graphics.FS_NORMAL, truetype.styleOf("FONT and more bytes"));
+
+    try kexec.setUp();
+    const sys = kexec.SysBase.iface();
+    const made = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoLibrary;
+    const library: *sdk.exec.Library = @ptrCast(@alignCast(made));
+    const tb: *TrueTypeBase = @ptrCast(sys.OpenLibrary(truetype.TRUETYPENAME, 1) orelse return error.NoBase);
+    out = .{};
+    buildFace(&out, 1);
+    const outline = tb.OpenOutline(&out.bytes, out.len) orelse return error.NotRead;
+    const image = tb.RenderFontImage(outline, 20, 32, 126) orelse return error.NoImage;
+    try testing.expectEqual(graphics.FSF_BOLD, image.style);
+    const block: [*]const u8 = @ptrCast(image);
+    try testing.expect(fontimage.sound(block, image.size));
 
     sys.FreeVec(image);
     tb.CloseOutline(outline);

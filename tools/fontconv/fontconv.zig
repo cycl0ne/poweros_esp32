@@ -8,7 +8,8 @@
 //! becomes `<out dir>/<family>/<rows>`, a font image byte for byte, and
 //! `<out dir>/<family>.font` lists them all. A TrueType file is the
 //! family's outline: copied to `<out dir>/<family>/<its name>` and listed
-//! as the entry diskfont renders any height from.
+//! as the entry diskfont renders any height from, in the styles the file
+//! says it is drawn in.
 //!
 //! `--alpha N` takes sources drawn N times too large (2 or 4) and makes
 //! fonts of coverage at 1/N their size, each pixel the share of its N by N
@@ -64,7 +65,7 @@ pub fn main(init: std.process.Init) !void {
 
     const cwd = std.Io.Dir.cwd();
     var fonts: std.ArrayList(Font) = .empty;
-    var outlines: std.ArrayList([]const u8) = .empty;
+    var outlines: std.ArrayList(Outline) = .empty;
     const family_dir = try std.fs.path.join(arena, &.{ out_dir, family });
     try cwd.createDirPath(io, family_dir);
     for (sources.items) |source| {
@@ -73,7 +74,7 @@ pub fn main(init: std.process.Init) !void {
             const name = std.fs.path.basename(source);
             const path = try std.fs.path.join(arena, &.{ family_dir, name });
             try cwd.writeFile(io, .{ .sub_path = path, .data = bytes });
-            try outlines.append(arena, name);
+            try outlines.append(arena, .{ .name = name, .style = sdk.truetype.styleOf(bytes) });
         } else if (amiga.isContents(bytes)) {
             const dir = std.fs.path.dirname(source) orelse ".";
             for (try amiga.listed(arena, bytes)) |size| {
@@ -98,6 +99,10 @@ pub fn main(init: std.process.Init) !void {
     try cwd.writeFile(io, .{ .sub_path = contents_path, .data = contents });
 }
 
+/// A family's outline: its TrueType file's name in the family's
+/// directory, and the styles the file says it is drawn in.
+const Outline = struct { name: []const u8, style: sdk.graphics.FontStyle };
+
 /// One size from its file's bytes, with the options applied.
 fn convert(gpa: Allocator, bytes: []const u8, options: Options) !Font {
     var font = if (amiga.isHunk(bytes))
@@ -118,7 +123,7 @@ fn convert(gpa: Allocator, bytes: []const u8, options: Options) !Font {
 /// Each font's image handed to `sink.write` under its height, and the
 /// family's contents file listing them, sorted by height, and after them
 /// the outlines (file names in the family's directory), answered.
-fn writeFamily(gpa: Allocator, family: []const u8, fonts: []Font, outlines: []const []const u8, sink: anytype) ![]align(4) u8 {
+fn writeFamily(gpa: Allocator, family: []const u8, fonts: []Font, outlines: []const Outline, sink: anytype) ![]align(4) u8 {
     std.mem.sort(Font, fonts, {}, struct {
         fn less(_: void, a: Font, b: Font) bool {
             return a.height < b.height;
@@ -139,10 +144,10 @@ fn writeFamily(gpa: Allocator, family: []const u8, fonts: []Font, outlines: []co
         if (path.len >= fontfile.MAXFONTPATH) return error.NameTooLong;
         entries[i] = fontfile.entryFor(path, @ptrCast(image.ptr));
     }
-    for (outlines, fonts.len..) |name, i| {
-        const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ family, name });
+    for (outlines, fonts.len..) |outline, i| {
+        const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ family, outline.name });
         if (path.len >= fontfile.MAXFONTPATH) return error.NameTooLong;
-        entries[i] = fontfile.outlineEntry(path);
+        entries[i] = fontfile.outlineEntry(path, outline.style);
     }
     fontfile.seal(contents.ptr, size);
     return contents;
@@ -308,12 +313,13 @@ test "a family: the contents file lists every size, sorted, and is sound" {
         }
     };
     var sink = Sink{};
-    const contents = try writeFamily(gpa, "small", &fonts, &.{"small.ttf"}, &sink);
+    const contents = try writeFamily(gpa, "small", &fonts, &.{.{ .name = "small.ttf", .style = sdk.graphics.FSF_BOLD }}, &sink);
     try testing.expectEqual(@as(u32, 6 + 3), sink.written);
     try testing.expect(fontfile.sound(contents.ptr, @intCast(contents.len)));
     const entries = fontfile.entriesOf(contents.ptr);
     try testing.expectEqual(@as(usize, 3), entries.len);
     try testing.expectEqual(@as(u8, 1), entries[2].outline);
+    try testing.expectEqual(sdk.graphics.FSF_BOLD, entries[2].style);
     try testing.expectEqualStrings("small/small.ttf", fontfile.pathOf(&entries[2]));
     try testing.expectEqualStrings("small/3", fontfile.pathOf(&entries[0]));
     try testing.expectEqualStrings("small/6", fontfile.pathOf(&entries[1]));

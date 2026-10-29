@@ -122,8 +122,11 @@ pub fn seal(block: [*]u8, size: u32) void {
 ///
 /// INPUTS:
 /// - `path` - the file, from `FONTS:`; at most `MAXFONTPATH - 1` bytes.
-pub fn outlineEntry(path: []const u8) FontContents {
+/// - `style` - the styles the file says it is drawn in
+///   (`truetype.styleOf`): what every size rendered from it is.
+pub fn outlineEntry(path: []const u8, style: graphics.FontStyle) FontContents {
     var entry = FontContents{
+        .style = style,
         .flags = graphics.FPF_DESIGNED,
         .kind = @intFromEnum(graphics.fontimage.Kind.alpha4),
         .outline = 1,

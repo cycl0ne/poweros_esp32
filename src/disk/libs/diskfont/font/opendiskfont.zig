@@ -35,14 +35,26 @@ const Contents = _font.Contents;
 ///
 /// BEHAVIOR:
 /// **A font in memory that matches perfectly is answered at once.**
+///
+/// **Bold and italic are the family's own faces where it has them.**
+/// Asked for `FSF_BOLD` or `FSF_ITALIC`, the faces installed beside the
+/// family - `go-bolditalic.font`, `go-bold.font`, `go-italic.font` beside
+/// `go.font`, each only for styles asked - are tried first, the one
+/// drawing the most of them first, and opened as the families they are.
+/// A face is drawn in its styles, so graphics' soft styles draw only what
+/// it lacks: bold-italic asked of a family with only a bold face is that
+/// face, leaned.
+///
 /// Otherwise the family's contents file is read - `FONTS:<name>`, or the
 /// name as given when it has a ':' - and:
 ///
 /// - **A family with an outline** (a TrueType file) takes a size drawn
-///   at exactly the height and style asked when it has one, and otherwise
-///   has truetype.library render the outline at that height - at any
-///   height, and with `FPF_DESIGNED` too, since it is drawn and not
-///   scaled.
+///   at exactly the height and style asked when it has one, then a size
+///   of the outline already in memory at that height, and otherwise has
+///   truetype.library render the outline at that height - at any height,
+///   and with `FPF_DESIGNED` too, since it is drawn and not scaled. A
+///   size rendered is in the styles the outline is drawn in, as its entry
+///   says.
 /// - **Without `FPF_DESIGNED`**, a source is looked for at the height
 ///   asked, then twice it, then half it (when even), in memory first and
 ///   then among the family's sizes, the style asked for or one with
@@ -96,33 +108,101 @@ pub fn OpenDiskFont(dfb: *DiskfontBase, text_attr: *const TextAttr) ?*TextFont {
     sys.ObtainSemaphore(&dfb.load_lock);
     defer sys.ReleaseSemaphore(&dfb.load_lock);
 
-    var ram = gb.OpenFont(&want);
-    var ram_weight = weightOf(dfb, &want, ram);
+    if (want.style & face_styles != 0) {
+        if (gb.OpenFont(&want)) |font| {
+            if (weightOf(dfb, &want, font) == graphics.MAXFONTMATCHWEIGHT) return font;
+            gb.CloseFont(font);
+        }
+        if (openFace(dfb, &want, text_attr.name)) |font| return font;
+    }
+    return openFamily(dfb, &want, text_attr.name);
+}
+
+/// The styles a family may have faces of its own for.
+const face_styles = graphics.FSF_BOLD | graphics.FSF_ITALIC;
+
+/// A face of a family: what its name has after the family's, and the
+/// styles it is drawn in. The one drawing the most styles first.
+const Face = struct { suffix: []const u8, style: graphics.FontStyle };
+const faces = [_]Face{
+    .{ .suffix = "-bolditalic", .style = graphics.FSF_BOLD | graphics.FSF_ITALIC },
+    .{ .suffix = "-bold", .style = graphics.FSF_BOLD },
+    .{ .suffix = "-italic", .style = graphics.FSF_ITALIC },
+};
+
+/// The family's own face for the styles `want` asks, opened as the family
+/// it is; null when none is installed. `name` is the family's as given.
+fn openFace(dfb: *DiskfontBase, want: *const TextAttr, name: [*:0]const u8) ?*TextFont {
+    for (faces) |face| {
+        if (want.style & face.style != face.style) continue;
+        var face_name: [256:0]u8 = @splat(0);
+        if (!faceName(name, face.suffix, &face_name)) continue;
+        var ask = want.*;
+        ask.name = dfb.dos_base.FilePart(&face_name);
+        if (openFamily(dfb, &ask, &face_name)) |font| return font;
+    }
+    return null;
+}
+
+/// `name` with `suffix` before its ".font": "FONTS:go.font" and "-bold"
+/// make "FONTS:go-bold.font". False when it does not end in ".font" or
+/// the result does not fit.
+fn faceName(name: [*:0]const u8, suffix: []const u8, into: *[256:0]u8) bool {
+    const ending = ".font";
+    var len: usize = 0;
+    while (name[len] != 0) len += 1;
+    if (len < ending.len or len + suffix.len >= into.len) return false;
+    const stem = len - ending.len;
+    for (name[stem..len], ending) |have, expected| {
+        if (have | 0x20 != expected) return false;
+    }
+    @memcpy(into[0..stem], name[0..stem]);
+    @memcpy(into[stem..][0..suffix.len], suffix);
+    @memcpy(into[stem + suffix.len ..][0..ending.len], name[stem..len]);
+    into[len + suffix.len] = 0;
+    return true;
+}
+
+/// The nearest font to `want` of the family whose name, as given, is
+/// `name`: from memory, its drawn sizes, its outline, or scaled. The
+/// caller holds the load lock.
+fn openFamily(dfb: *DiskfontBase, want: *const TextAttr, name: [*:0]const u8) ?*TextFont {
+    const gb = dfb.graphics_base;
+
+    var ram = gb.OpenFont(want);
+    var ram_weight = weightOf(dfb, want, ram);
     if (ram_weight == graphics.MAXFONTMATCHWEIGHT) return ram;
 
     var path: [256:0]u8 = @splat(0);
-    contentsPath(dfb, text_attr.name, &path);
+    contentsPath(dfb, name, &path);
     var contents = _font.readContents(dfb, &path);
     defer contents.free(dfb);
 
     // A family with an outline: a size drawn at exactly this height and
-    // style as drawn, any other made from the outline at this height.
+    // style as drawn; a size of the outline in memory at this height,
+    // which rendering again would only make twice; any other made from
+    // the outline at this height.
     if (outlineOf(&contents)) |outline| {
-        const made = openExactOnDisk(dfb, &want, &contents) orelse
-            _font.renderOutline(dfb, contents.dir, @ptrCast(&outline.path), want.name, want.y_size);
-        if (made) |font| {
+        if (openExactOnDisk(dfb, want, &contents)) |font| {
+            if (ram) |held| gb.CloseFont(held);
+            return font;
+        }
+        if (ram) |held| {
+            if (held.image.height == want.y_size and held.image.style & drawn_styles == outline.style & drawn_styles) return held;
+        }
+        if (_font.renderOutline(dfb, contents.dir, @ptrCast(&outline.path), want.name, want.y_size)) |font| {
             if (ram) |held| gb.CloseFont(held);
             return font;
         }
     }
 
     if (want.flags & graphics.FPF_DESIGNED != 0) {
-        return openWeighed(dfb, &want, &contents, ram, ram_weight);
+        return openWeighed(dfb, want, &contents, ram, ram_weight);
     }
 
     if (ram) |font| gb.CloseFont(font);
-    const source = scaleSource(dfb, &want, &contents) orelse blk: {
-        var designed = want;
+    const source = scaleSource(dfb, want, &contents) orelse blk: {
+        var designed = want.*;
         designed.flags |= graphics.FPF_DESIGNED;
         ram = gb.OpenFont(&designed);
         ram_weight = weightOf(dfb, &designed, ram);
@@ -130,7 +210,7 @@ pub fn OpenDiskFont(dfb: *DiskfontBase, text_attr: *const TextAttr) ?*TextFont {
     } orelse return null;
     if (source.image.height == want.y_size) return source;
 
-    const scaled = _base.iface(dfb).NewScaledDiskFont(source, &want) orelse return source;
+    const scaled = _base.iface(dfb).NewScaledDiskFont(source, want) orelse return source;
     gb.CloseFont(source);
     return _font.addAndOpen(dfb, _font.recordOf(scaled));
 }

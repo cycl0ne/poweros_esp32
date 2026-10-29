@@ -172,7 +172,8 @@ Every file in the family's directory that is a whole font - its image
 checks and its sum is sound - becomes an entry: its path from `lock`
 ("spleen/16"), height, drawn styles, flags, kind and width, as its own
 header says. A TrueType file becomes the family's outline entry, of
-height 0. Anything else there is passed over. The entries are in
+height 0, in the styles the file says it is drawn in - bold for a
+bold face. Anything else there is passed over. The entries are in
 order of height. At most 64 sizes are listed.
 
 **CONTEXT**
@@ -297,14 +298,26 @@ and no size drawn.
 **BEHAVIOR**
 
 **A font in memory that matches perfectly is answered at once.**
+
+**Bold and italic are the family's own faces where it has them.**
+Asked for `FSF_BOLD` or `FSF_ITALIC`, the faces installed beside the
+family - `go-bolditalic.font`, `go-bold.font`, `go-italic.font` beside
+`go.font`, each only for styles asked - are tried first, the one
+drawing the most of them first, and opened as the families they are.
+A face is drawn in its styles, so graphics' soft styles draw only what
+it lacks: bold-italic asked of a family with only a bold face is that
+face, leaned.
+
 Otherwise the family's contents file is read - `FONTS:<name>`, or the
 name as given when it has a ':' - and:
 
 - **A family with an outline** (a TrueType file) takes a size drawn
-  at exactly the height and style asked when it has one, and otherwise
-  has truetype.library render the outline at that height - at any
-  height, and with `FPF_DESIGNED` too, since it is drawn and not
-  scaled.
+  at exactly the height and style asked when it has one, then a size
+  of the outline already in memory at that height, and otherwise has
+  truetype.library render the outline at that height - at any height,
+  and with `FPF_DESIGNED` too, since it is drawn and not scaled. A
+  size rendered is in the styles the outline is drawn in, as its entry
+  says.
 - **Without `FPF_DESIGNED`**, a source is looked for at the height
   asked, then twice it, then half it (when even), in memory first and
   then among the family's sizes, the style asked for or one with
