@@ -108,3 +108,31 @@ test "Player's playlist: songs added and numbered, filled from their tags, numbe
     try testing.expectEqual(@as(?*playlist.Entry, null), list.first());
     try kexec.expectNoLeaks();
 }
+
+test "Player's playlist: written as M3U, from the drawer it is saved in" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    var list: playlist.Playlist = undefined;
+    list.init();
+    const fire = list.add(sys, "DH0:Music/Fire.mp3").?;
+    _ = list.add(sys, "SD0:Other/Rise.flac").?;
+    const station = list.add(sys, "http://radio.example/live").?;
+    var info: ac.AudioStreamInfo = .{ .rate = 44100, .frames = 44100 * 225 };
+    setText(&info.title, "Fire");
+    setText(&info.artist, "Band");
+    list.filled(sys, fire, &info);
+    station.retitle("A station");
+    // A song inside the drawer by its name from there, one outside by its
+    // whole name; a row that shows its file's name has no #EXTINF.
+    const text = list.listText(sys, "DH0:Music").?;
+    try testing.expectEqualStrings("#EXTM3U\n" ++
+        "#EXTINF:225,Band - Fire\n" ++
+        "Fire.mp3\n" ++
+        "SD0:Other/Rise.flac\n" ++
+        "#EXTINF:-1,A station\n" ++
+        "http://radio.example/live\n", text);
+    sys.FreeVec(text.ptr);
+    list.clear(sys);
+    try kexec.expectNoLeaks();
+}

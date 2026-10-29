@@ -107,6 +107,9 @@ test "what a stream is by its Content-Type" {
     try testing.expectEqual(icy.Kind.vorbis, icy.kindOf("audio/ogg"));
     try testing.expectEqual(icy.Kind.aac, icy.kindOf("audio/aacp"));
     try testing.expectEqual(icy.Kind.aac, icy.kindOf("audio/aac"));
+    try testing.expectEqual(icy.Kind.list, icy.kindOf("audio/x-scpls"));
+    try testing.expectEqual(icy.Kind.list, icy.kindOf("audio/x-mpegurl"));
+    try testing.expectEqual(icy.Kind.list, icy.kindOf("application/vnd.apple.mpegurl"));
     try testing.expectEqual(icy.Kind.unknown, icy.kindOf("text/html"));
     try testing.expectEqual(icy.Kind.unknown, icy.kindOf(""));
 }

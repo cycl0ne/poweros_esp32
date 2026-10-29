@@ -8,10 +8,14 @@
 //! client and its socket base are one task's - asks for the station's
 //! metadata (`Icy-MetaData: 1`) and reads what the answer says of the
 //! station: its name, its genre, its bit rate and, from the Content-Type,
-//! the kind of sound it sends. AAC it refuses. The metadata blocks are taken
-//! out of each piece read (icy.zig); a title one names goes to the window,
-//! the sound into the ring. A full ring holds the reader until the sound
-//! has taken some.
+//! the kind of sound it sends. AAC it refuses. An address that answers
+//! with a list - PLS or M3U, as a station's site hands out, known by its
+//! Content-Type or, sent as plain text, by the address's ending - stands
+//! for the first station the list names, which is called instead, three
+//! lists deep at most; HLS, a list of a stream's pieces, is refused. The
+//! metadata blocks are taken out of each piece read (icy.zig); a title
+//! one names goes to the window, the sound into the ring. A full ring
+//! holds the reader until the sound has taken some.
 //!
 //! **A station that stops sending** is called again, three times in a row:
 //! after a second, a second and five seconds; a connection that brought
@@ -48,6 +52,7 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const HttpBase = sdk.interface.http.HttpBase;
 const TagItem = utility.TagItem;
 const icy = @import("icy.zig");
+const m3u = @import("m3u.zig");
 
 pub const ring_bytes = 256 * 1024;
 const ring_mask = ring_bytes - 1;
@@ -64,6 +69,8 @@ const assumed_kbps = 128;
 /// How often a station that stops sending is called again in a row, and
 /// the seconds waited before each call.
 const call_waits = [_]u32{ 1, 1, 5 };
+/// How many lists in a row an address may lead through to its station.
+const lists_most = 3;
 /// How long a connection may stay quiet before it counts as lost.
 const quiet_seconds = 15;
 
@@ -101,8 +108,9 @@ pub const Facts = struct {
     why: [128:0]u8 = @splat(0),
 };
 
-/// How a connection ended.
-const Outcome = enum { halted, lost };
+/// How a connection ended: told to, lost, or with a list that names the
+/// station to call instead.
+const Outcome = enum { halted, lost, moved };
 
 pub const Radio = struct {
     sys: *ExecBase,
@@ -367,9 +375,18 @@ pub const Radio = struct {
         // The calls in a row that brought no sound, and whether one ever did.
         var calls: usize = 0;
         var ever = false;
+        var lists: usize = 0;
         while (true) {
             station.heard = false;
-            if (station.listen(hb, sb, client) == .halted) return;
+            const outcome = station.listen(hb, sb, client);
+            if (outcome == .halted) return;
+            if (outcome == .moved) {
+                if (lists < lists_most) {
+                    lists += 1;
+                    continue;
+                }
+                station.because("The station's lists lead only to more lists", null);
+            }
             if (station.heard) {
                 calls = 0;
                 ever = true;
@@ -400,6 +417,7 @@ pub const Radio = struct {
             return .lost;
         }
         const kind = icy.kindOf(textOf(hb.GetHeader(request, "Content-Type")));
+        if (kind == .list or (kind == .unknown and m3u.namesList(textOf(&station.url)))) return station.followList(hb, sb, request);
         if (kind == .aac) {
             station.because("The station sends AAC, which is not played", null);
             return .lost;
@@ -421,6 +439,36 @@ pub const Radio = struct {
             if (station.strip.takeBlock()) |block| station.titled(block);
             if (!station.put(station.piece[0..sound])) return .halted;
         }
+    }
+
+    /// An answer that lists addresses read - its first `piece_bytes`, more
+    /// than a station's list holds - and the first station it names made
+    /// the one to call: `moved`. HLS is refused.
+    fn followList(station: *Radio, hb: *HttpBase, sb: *SocketBase, request: *http.Request) Outcome {
+        var length: usize = 0;
+        while (length < piece_bytes) {
+            if (station.isHalted()) return .halted;
+            const got = hb.ReadRequest(request, &station.piece[length], @intCast(piece_bytes - length));
+            if (got == 0) break;
+            if (got < 0) return station.lostBy(sb, got, tls.TLSERR_OK, false);
+            length += @intCast(got);
+        }
+        const text = station.piece[0..length];
+        if (m3u.isHls(text)) {
+            station.because("The station sends HLS, which is not played", null);
+            return .lost;
+        }
+        const address = m3u.firstAddress(text) orelse {
+            station.because("The station's list names no station", null);
+            return .lost;
+        };
+        if (address.len > dos.path_max) {
+            station.because("The station's list names an address too long", null);
+            return .lost;
+        }
+        @memcpy(station.url[0..address.len], address);
+        station.url[address.len] = 0;
+        return .moved;
     }
 
     /// A connection that could not be made, or failed, by http.library's
@@ -455,7 +503,7 @@ pub const Radio = struct {
         const codec: u32 = switch (kind) {
             .mp3 => ac.ACODEC_MP3,
             .vorbis => ac.ACODEC_VORBIS,
-            .unknown, .aac => ac.ACODEC_UNKNOWN,
+            .unknown, .aac, .list => ac.ACODEC_UNKNOWN,
         };
         @atomicStore(u32, &station.codec, codec, .seq_cst);
         const sys = station.sys;

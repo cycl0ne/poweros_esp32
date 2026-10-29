@@ -7,7 +7,7 @@ plasma, the wave, or the spectrum's bars.
 ## Starting it
 
 Double-click its icon, double-click a `.mp3`, `.wav`, `.flac` or `.ogg`
-file, or type in a shell:
+file - or a list, `.m3u`, `.m3u8` or `.pls` - or type in a shell:
 
 ```
 Player FILES/M,ADD/S,VOLUME/K/N,LOOK/K
@@ -16,7 +16,7 @@ Player FILES/M,ADD/S,VOLUME/K/N,LOOK/K
 - `FILES` make the playlist, played one after another - or shuffled,
   with **Shuffle**. A drawer adds its sound files by name, then those of
   the drawers in it; an address - `http://...` or `https://...` - adds
-  a station (see *Stations*).
+  a station (see *Stations*); a list adds what it names (see *Lists*).
 - `ADD` adds the files to the list there is - the one the Player kept -
   instead, and plays none of them.
 - `VOLUME` is in percent of as recorded (100), up to 200: up to 100 as
@@ -43,7 +43,8 @@ are added and the first played; **Project > Open drawer...** picks a
 drawer, whose sound files are added and played the same way. The file
 requester starts in the drawer of the song shown; the sound and the
 picture go on while it is up. **Project > Open URL...** asks for a
-station's address.
+station's address, and the **Radio** page has stations to pick and finds
+more (see *Radio*).
 
 ## What the window shows
 
@@ -98,8 +99,9 @@ The window's title is the song's: `Fire - Player`.
   in the list. In a window too narrow for the whole row, it stands in
   two lines or more, and the window grows to keep everything in it.
 
-Under them, as big as the window lets it be, two tabs: **Now playing**
-with the picture, and **Playlist** with the list.
+Under them, as big as the window lets it be, three tabs: **Now playing**
+with the picture, **Playlist** with the list, and **Radio** with the
+stations.
 
 ## The picture
 
@@ -149,6 +151,31 @@ the song's place in the list.
 With shuffle on, a song added goes to a random place among the songs
 still to come, and a song picked to play starts a new shuffle from it.
 
+## Lists
+
+A list file names songs and stations, a line each: M3U (`.m3u`), its
+UTF-8 form M3U8 (`.m3u8`), or PLS (`.pls`). Wherever a file can be
+given - in a shell, by **Open...** or **Add...**, dropped on the window,
+or double-clicked on the desktop - a list adds what it names, in its
+order:
+
+- A name is found from the list's own drawer: `Demo.mp3`, `More/Demo.mp3`,
+  `../Tones/A.mp3` one drawer up, `/Music/A.mp3` from the root of the
+  list's volume; a full name (`Work:Music/A.mp3`) and an address stand
+  as they are. `\` parts names as `/` does.
+- A list named in a list is read too, four deep at most.
+- `#EXTINF` lines give a title and a length, which stand in the row until
+  the song's own tags are read; a PLS's `Title` and `Length` the same.
+  A station keeps its title.
+- An M3U without `#EXTM3U` is a plain list of names. The text is read as
+  UTF-8 when it is valid UTF-8, and as Latin-1 otherwise.
+
+**Project > Save playlist...** writes the list as an M3U file, with the
+save requester: `#EXTINF` lines with each song's title and length, in
+UTF-8. A song in the drawer the list is saved in, or below it, is named
+from there, so the drawer can move with its list; any other by its full
+name. A name without `.m3u` or `.m3u8` gets `.m3u`.
+
 ## How it plays
 
 A song is shown as it starts: its names and its cover first, then its
@@ -177,6 +204,11 @@ asks for one in a small window: Return or **Open** adds it to the list
 and plays it, Esc or **Cancel** closes the window. An address typed
 without `http://` gets it put in front.
 
+An address that answers with a list - a `.pls` or `.m3u`, as a
+station's site hands out - stands for the first station the list names,
+which is called instead; HLS, a list of a stream's pieces, is not
+played, and says so.
+
 A station is called when it is played. The window says *Calling the
 station*, then *Buffering* and how far, and the sound starts once two
 seconds of it have come. Then it shows the station: its name where an
@@ -198,10 +230,49 @@ Stop ends the call, and play calls the station again. A station kept in
 the list is shown when the Player starts again, not called: play calls
 it.
 
+## Radio
+
+The third page holds stations, one list at a time; the chooser at its
+top left turns between them:
+
+- **Your stations**: the stations kept, their names and addresses. A
+  fresh disk has six to start with: SomaFM's Groove Salad and Drone Zone,
+  Deutschlandfunk, Deutschlandfunk Kultur, FluxFM and Radio Paradise.
+- **Found**: what the last search found - each station's name, country,
+  bit rate and genres - the most listened to first.
+
+A double-click on a station, or Return, plays it: it goes into the
+playlist under its name, or the row there with its address plays.
+**Keep** keeps the station selected in Found, while Found is shown -
+or else the station playing, one opened with **Open URL...** too - and
+says so under the list. **Remove**, or Del, takes the kept station selected out.
+
+**Find** and **Search** look in radio-browser.info, a list of stations
+its listeners keep: type a word or two and press Return or **Search**.
+The chooser beside the field says what the words are looked for in:
+**Name**, **Genre** or **Country** - a country's name, or its two-letter
+code (`DE`, `FR`). The search asks for stations that send MP3 or Ogg
+Vorbis and were found working, fifty of each, and the page turns to
+Found; the line under the list says which of the service's servers it
+asks, how many stations came, or why none did. A search runs on a
+process of its own, so the sound and the window go on while it waits;
+Esc in the field leaves it without searching. A station from Found that
+is played is counted by the service, as it asks of a player.
+
+A station with a picture - one the service knows, or a kept one's
+`tvg-logo` - shows it as its cover once it has come, and a click on the
+cover shows it large under the station's name. A picture on `https://`
+needs the clock set (`C:net/TimeSync`).
+
+The kept stations are `ENVARC:Player/Stations.m3u`, an M3U list that
+can be edited, or used as a playlist; they are written as the Player
+ends when Keep or Remove changed them.
+
 ## Menus
 
-- **Project**: Open..., Open drawer... and Open URL..., as above; About, which says
-  which Player this is while the sound and the picture go on; Quit.
+- **Project**: Open..., Open drawer... and Open URL..., as above; Save
+  playlist... (see *Lists*); About, which says which Player this is
+  while the sound and the picture go on; Quit.
 - **Playlist**: Add..., Remove and Clear, as the buttons on its page;
   Shuffle, ticked while it is on, and Repeat, with Off, All and One.
   Each follows the button beside the deck, and the button follows it.
@@ -215,12 +286,17 @@ it.
   its ends do.
 - Cursor left and right jump ten seconds back and on; cursor up and down
   turn the volume up and down by five.
-- Return plays the song selected in the playlist, Del takes it out.
+- Return plays the song selected in the playlist, Del takes it out; on
+  the Radio page Return plays the station selected, Del lets a kept one
+  go.
 - S turns shuffle on and off, R goes round repeat's three ways, M turns
   the sound off and on, O opens the output's list. On the Playlist page,
-  A adds, E removes and L clears.
+  A adds, E removes and L clears; on the Radio page, F goes to the
+  field, I opens what the words are looked for in, H searches, K keeps
+  and V removes.
 - Right-Amiga O opens songs, Right-Amiga D a drawer of them, Right-Amiga
-  U a station's address, Right-Amiga A adds songs.
+  U a station's address, Right-Amiga S saves the playlist, Right-Amiga
+  A adds songs.
 - Right-Amiga Q ends it.
 
 ## Remembered
@@ -233,6 +309,8 @@ that it lasts past a restart:
   the drawer the file requester was last answered in.
 - `Player.list`, a line for each song in the list, in its order; the song
   shown carries the second it was at.
+- `Player/Stations.m3u`, the kept stations (see *Radio*), when they
+  changed.
 
 Started again, it opens where the window was - squeezed onto the screen
 when that is smaller now - on the page it showed, with its list and the

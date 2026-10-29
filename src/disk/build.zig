@@ -323,6 +323,8 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/WAV", .source = "devs/datatypes/WAV" },
     .{ .disk = "devs/datatypes/FLAC", .source = "devs/datatypes/FLAC" },
     .{ .disk = "devs/datatypes/Ogg", .source = "devs/datatypes/Ogg" },
+    .{ .disk = "devs/datatypes/M3U", .source = "devs/datatypes/M3U" },
+    .{ .disk = "devs/datatypes/PLS", .source = "devs/datatypes/PLS" },
     .{ .disk = "devs/datatypes/ANIM", .source = "devs/datatypes/ANIM" },
     .{ .disk = "devs/datatypes/ASCII", .source = "devs/datatypes/ASCII" },
     .{ .disk = "devs/datatypes/Binary", .source = "devs/datatypes/Binary" },
@@ -341,6 +343,7 @@ pub const files = [_]File{
     .{ .disk = "prefs/env-archive/Sys/audio.prefs", .source = "prefs/env-archive/Sys/audio.prefs" },
     .{ .disk = "prefs/env-archive/Sys/dock.prefs", .source = "prefs/env-archive/Sys/dock.prefs" },
     .{ .disk = "prefs/env-archive/Sys/dock.items", .source = "prefs/env-archive/Sys/dock.items" },
+    .{ .disk = "prefs/env-archive/Player/Stations.m3u", .source = "prefs/env-archive/Player/Stations.m3u" },
     // The looks the preferences editor offers, a style file each.
     .{ .disk = "prefs/presets/styles/Classic.prefs", .source = "prefs/presets/styles/Classic.prefs" },
     .{ .disk = "prefs/presets/styles/Rounded.prefs", .source = "prefs/presets/styles/Rounded.prefs" },

@@ -1,0 +1,16 @@
+#EXTM3U
+# ENVARC:Player/Stations.m3u - the stations the Player keeps, shown on its
+# Radio page: an #EXTINF line with the station's name (and its picture,
+# tvg-logo="..."), then its address. Keep and Remove there write it.
+#EXTINF:-1,SomaFM Groove Salad
+http://ice1.somafm.com/groovesalad-128-mp3
+#EXTINF:-1,SomaFM Drone Zone
+http://ice1.somafm.com/dronezone-128-mp3
+#EXTINF:-1,Deutschlandfunk
+http://st01.dlf.de/dlf/01/128/mp3/stream.mp3
+#EXTINF:-1,Deutschlandfunk Kultur
+http://st02.dlf.de/dlf/02/128/mp3/stream.mp3
+#EXTINF:-1,FluxFM
+http://streams.fluxfm.de/live/mp3-128/audio/
+#EXTINF:-1,Radio Paradise
+http://stream.radioparadise.com/mp3-128
