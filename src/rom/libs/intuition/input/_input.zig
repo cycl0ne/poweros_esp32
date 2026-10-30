@@ -22,7 +22,10 @@
 //!     IDCMP_MOUSEBUTTONS. A move with nothing held
 //!     is IDCMP_MOUSEMOVE to the active window.
 //!   - a key: IDCMP_RAWKEY to the active window, unless it is a
-//!     right-Amiga shortcut of one of its menu items.
+//!     right-Amiga shortcut of one of its menu items. Left-Amiga-M and
+//!     left-Amiga-N are the screens': M sends the front screen of the
+//!     pointer's display to the back, N brings the Workbench screen to the
+//!     front (`screenKey`), and no window gets either.
 //!   - the menu button: the active window's menus (input/menus.zig), which
 //!     take every event until they are gone.
 //!   - the tick: IDCMP_INTUITICKS to the active window, one at a time.
@@ -716,6 +719,7 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
         menus.handle(ib, e);
         return;
     }
+    if (e.class == ie.IECLASS_RAWKEY and screenKey(ib, e)) return;
     if (side(ib, e)) return;
     if (st.mode == .verify) return sizeVerifying(ib, e);
     // The wheel goes to whatever is under the pointer, whether a gadget
@@ -1020,6 +1024,45 @@ fn onPopup(ib: *IntuitionBase) bool {
 
 /// The raw key Escape is.
 const raw_escape = 0x45;
+
+/// The character with left-Amiga that sends the front screen to the back.
+const front_to_back = 'M';
+/// The character with left-Amiga that brings the Workbench screen to the
+/// front.
+const workbench_to_front = 'N';
+
+/// Left-Amiga-M or left-Amiga-N, by the character the key makes without
+/// the Amiga keys: M sends the front screen of the display the pointer is
+/// on to the back, N brings the Workbench screen to the front. Both keys
+/// are taken, the release as well; a repeat, or a press while a screen or
+/// a window is held by the pointer, does nothing. True when the event was
+/// one of the two.
+fn screenKey(ib: *IntuitionBase, e: *const InputEvent) bool {
+    if (e.qualifier & ie.IEQUALIFIER_LCOMMAND == 0) return false;
+    const kb = ib.keymap_base orelse return false;
+    var plain = e.*;
+    plain.code &= ~ie.IECODE_UP_PREFIX;
+    plain.qualifier &= ~(ie.IEQUALIFIER_RCOMMAND | ie.IEQUALIFIER_LCOMMAND | ie.IEQUALIFIER_REPEAT);
+    var text: [8]u8 = undefined;
+    if (kb.MapRawKey(&plain, &text, text.len, null) != 1) return false;
+    const character = ib.utility_base.ToUpper(text[0]);
+    if (character != front_to_back and character != workbench_to_front) return false;
+    if (e.code & ie.IECODE_UP_PREFIX != 0 or e.qualifier & ie.IEQUALIFIER_REPEAT != 0) return true;
+    switch (stateOf(ib).mode) {
+        .none, .active => {},
+        else => return true,
+    }
+    const screens = sdk.intuition.screens;
+    if (character == front_to_back) {
+        const on = screenAt(ib) orelse return true;
+        const front = _kscreen.frontOn(ib, on.board) orelse return true;
+        ib.iface().ScreenDepth(@ptrCast(front), screens.SDEPTH_TOBACK);
+    } else {
+        const workbench = _kscreen.findPublic(ib, screens.WBENCHNAME) orelse return true;
+        ib.iface().ScreenDepth(@ptrCast(workbench), screens.SDEPTH_TOFRONT);
+    }
+    return true;
+}
 
 /// A press on a gadget of the window's own: it goes active if it will.
 fn pressGadget(ib: *IntuitionBase, w: *Window, o: *Object, e: *const InputEvent) void {

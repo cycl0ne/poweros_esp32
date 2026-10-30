@@ -1535,6 +1535,69 @@ test "public screens: the default opened on first use, locks keep it open" {
     try tearDown(ib);
 }
 
+test "screens by key: left-Amiga-M sends the front one back, left-Amiga-N brings the Workbench forward" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const sc = intuition.screens;
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    // The keys of M and N on the default keymap.
+    const raw_m = 0x37;
+    const raw_n = 0x36;
+
+    const wb = it.LockPubScreen(null).?;
+    const workbench: *_kscreen.Screen = @ptrCast(@alignCast(wb));
+    const two = it.OpenScreenTagList(&[_]TagItem{ .{ .tag = sc.SA_ShowTitle, .data = 0 }, .{} }).?;
+    const second: *_kscreen.Screen = @ptrCast(@alignCast(two));
+    try testing.expectEqual(second.bitmap, display.board.showing.?);
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_CustomScreen, .data = @intFromPtr(two) },
+        .{ .tag = wn.WA_Width, .data = 30 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_RAWKEY },
+        .{},
+    }).?;
+    var got: [4]intuition.IntuiMessage = undefined;
+
+    // Left-Amiga-N: the Workbench screen in front; neither the press nor
+    // the release is the window's.
+    keyEvent(ib, raw_n, ie.IEQUALIFIER_LCOMMAND);
+    keyEvent(ib, raw_n | ie.IECODE_UP_PREFIX, ie.IEQUALIFIER_LCOMMAND);
+    try testing.expectEqual(workbench.bitmap, display.board.showing.?);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+    // Left-Amiga-M: the one in front to the back, whichever it is.
+    keyEvent(ib, raw_m, ie.IEQUALIFIER_LCOMMAND);
+    keyEvent(ib, raw_m | ie.IECODE_UP_PREFIX, ie.IEQUALIFIER_LCOMMAND);
+    try testing.expectEqual(second.bitmap, display.board.showing.?);
+    keyEvent(ib, raw_m, ie.IEQUALIFIER_LCOMMAND | ie.IEQUALIFIER_LSHIFT);
+    try testing.expectEqual(workbench.bitmap, display.board.showing.?);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+    // A repeat is taken and does nothing.
+    keyEvent(ib, raw_m, ie.IEQUALIFIER_LCOMMAND | ie.IEQUALIFIER_REPEAT);
+    try testing.expectEqual(workbench.bitmap, display.board.showing.?);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+    // M alone, right-Amiga-M and left-Amiga with another key are the
+    // window's.
+    keyEvent(ib, raw_m, 0);
+    keyEvent(ib, raw_m, ie.IEQUALIFIER_RCOMMAND);
+    keyEvent(ib, 0x35, ie.IEQUALIFIER_LCOMMAND);
+    try testing.expectEqual(@as(usize, 3), drainMessages(ib, w, &got));
+    try testing.expectEqual(@as(u32, raw_m), got[0].code);
+    try testing.expectEqual(@as(u32, 0x35), got[2].code);
+    try testing.expectEqual(workbench.bitmap, display.board.showing.?);
+
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(two));
+    it.UnlockPubScreen(null, wb);
+    try testing.expect(it.CloseScreen(wb));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "public screens: private until opened to visitors, the list, the default, and the owner told" {
     const ib = try setUp();
     defer kexec.deinit();
