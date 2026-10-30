@@ -94,16 +94,37 @@ const pcie1 = [_]Tag{
 /// (`clock.zig`).
 pub const mailbox: usize = 0x10_7C01_3880;
 
-/// The radio's station address. The kernel copies it in from the device
-/// tree the firmware passes - the `local-mac-address` the firmware writes
-/// into wifi@1, on the SD host mmc@1100000 - before anything runs; all
-/// zero when the tree has none.
+/// The radio's station address and the Ethernet port's. The kernel copies
+/// them in from the device tree the firmware passes - the
+/// `local-mac-address` the firmware writes into wifi@1, on the SD host
+/// mmc@1100000, and into the RP1's ethernet@100000 - before anything runs;
+/// all zero when the tree has none.
 pub var wifi_station: [6]u8 = @splat(0);
+pub var ethernet_station: [6]u8 = @splat(0);
 
 /// The station addresses the kernel takes from the device tree: for the
-/// port whose registers are at the first - the radio's SD host, by the
-/// address in the tree's name for it - into the second.
-pub const stations = .{.{ 0x0110_0000, &wifi_station }};
+/// port whose registers are at the first - by the address in the tree's
+/// name for it - into the second.
+pub const stations = .{ .{ 0x0110_0000, &wifi_station }, .{ 0x10_0000, &ethernet_station } };
+
+/// The IO board's Ethernet socket: the RP1's MAC, its source 6, on RGMII to
+/// the module's BCM54210PE, at address 0 on the MAC's management bus. The
+/// PHY adds both delays (the device tree's rgmii-id), and its reset line is
+/// the RP1's GPIO32, which networks/emac.device lets go.
+const ethernet = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_NET),
+    .value(st.PART_Chip, st.CHIP_BCM54210),
+    .pointer(st.PART_ChipName, "bcm54210pe"),
+    .value(st.PART_Bus, st.BUS_RGMII),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_Address, 0),
+    .value(st.PART_Irq, rp1.irq(rp1.INT_ETH)),
+    .value(st.PART_RxDelay, 2000),
+    .value(st.PART_TxDelay, 2000),
+    .pointer(st.PART_StationAddress, &ethernet_station),
+    .pointer(st.PART_Label, "Ethernet eth0"),
+    .done,
+};
 
 /// The module's Wi-Fi, a CYW43455 on the BCM2712's second SD host
 /// ("sdio2", an SDHCI at 0x10_0110_0000 with a 200 MHz clock, GIC
@@ -254,6 +275,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &usb1),
     .pointer(st.SYSTAG_Part, &pcie1),
     .pointer(st.SYSTAG_Part, &wifi),
+    .pointer(st.SYSTAG_Part, &ethernet),
     .pointer(st.SYSTAG_Part, &rtc),
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &hdmi_sound),

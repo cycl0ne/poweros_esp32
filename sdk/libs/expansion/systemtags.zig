@@ -597,6 +597,10 @@ pub const CHIP_BCM2712_TEMP: u32 = 46;
 /// clocked from the RP1's crystal, and the fan's speed as the RP1 counts
 /// it.
 pub const CHIP_RP1_PWM: u32 = 47;
+/// Broadcom's BCM54210PE, a 10/100/1000 Mbit/s Ethernet PHY (PARTKIND_NET
+/// on BUS_RGMII): PART_Address its address on the MAC's management bus,
+/// PART_RxDelay and PART_TxDelay non-zero for the delays it adds itself.
+pub const CHIP_BCM54210: u32 = 48;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

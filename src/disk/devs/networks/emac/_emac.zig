@@ -7,19 +7,27 @@
 //! **Which hardware.** The MAC (`mac`) and how it reaches its PHY
 //! (`port`) are the chip's: on the ESP32-P4 its own 10/100 MAC on RMII
 //! (gmac.zig, rmii.zig), on the JH7110 its gigabit MACs on RGMII
-//! (eqos.zig, rgmii.zig). Both engines answer the same calls for their
-//! descriptors, so the chains below are the same code on either.
+//! (eqos.zig, rgmii.zig), on the CM5 the RP1's gigabit MAC on RGMII
+//! (gem.zig, rp1eth.zig). The engines answer the same calls for their
+//! descriptors, so the chains below are the same code on each.
 //!
 //! **Why a second block of memory.** The base is wherever MakeLibrary put
 //! it, which is external memory. The engine reads its descriptors and the
 //! frames to send from memory and writes received frames there, so all of
 //! them live in one block the init allocates internal - and on the JH7110
 //! below 4 GiB, where the engine's 32-bit tail pointers reach -
-//! aligned to the data cache's 64-byte line: each descriptor and each
-//! buffer is whole lines, written back before the engine reads it and
-//! invalidated before the task reads what the engine wrote. The interrupt
-//! server and what it collects are past them, in lines the engine never
-//! touches.
+//! aligned to the data cache's 64-byte line: each buffer is whole lines,
+//! and each descriptor too where the engine can space them out, written
+//! back before the engine reads it and invalidated before the task reads
+//! what the engine wrote. The interrupt server and what it collects are
+//! past them, in lines the engine never touches.
+//!
+//! **Descriptors that share a line** (`per_line`, the RP1's) would lose
+//! what the engine wrote to one when another in its line is written back,
+//! so the driver writes a line only while the engine has none of it: a
+//! receive descriptor goes back only with all the others of its line, all
+//! filled, and send descriptors are filled only while the engine holds
+//! none, so the frames that came meanwhile go out together.
 //!
 //! **The chains.** `receive_count` descriptors receive and `send_count`
 //! send, each followed by the next and the last by the first, each with a
@@ -53,41 +61,44 @@ pub const mac = switch (sdk.hardware.chip) {
     .esp32p4 => @import("gmac.zig"),
     .rv64sbi => @import("eqos.zig"),
     .esp32s3 => @compileError("the ESP32-S3 has no Ethernet MAC"),
-    .a64psci => @compileError("emac.device: the AArch64 machines' MAC is not driven yet"),
+    .a64psci => @import("gem.zig"),
 };
 pub const port = switch (sdk.hardware.chip) {
     .esp32p4 => @import("rmii.zig"),
     .rv64sbi => @import("rgmii.zig"),
     .esp32s3 => @compileError("the ESP32-S3 has no Ethernet MAC"),
-    .a64psci => @compileError("emac.device: the AArch64 machines' MAC is not driven yet"),
+    .a64psci => @import("rp1eth.zig"),
 };
 
 pub const DEVICE_NAME = "emac.device";
 
 /// Frames that can wait in the receive chain for the task, and frames in
 /// the engine's hands to send. A caller that sends more waits in the
-/// unit's queue; on the JH7110 32 go between two passes of the task, as
+/// unit's queue; on the gigabit MACs 32 go between two passes of the task, as
 /// many as the acknowledgements of a pass of `receive_pass` frames and
 /// more - with 8 they fell behind a read at link speed. A frame that
-/// comes while the receive chain is full is lost, so on the JH7110 it
+/// comes while the receive chain is full is lost, so on those it
 /// holds what a gigabit link brings while the task is late: a whole 256
 /// KiB TCP window, 180 frames 12 us apart. With 128 a window of 256 KiB
 /// lost a few frames each run; 16 lost the rest of each 64 KiB one. The
 /// ESP32-P4's link is 100 Mbit, and its internal memory small.
-pub const receive_count = if (sdk.hardware.chip == .rv64sbi) 256 else 16;
+pub const receive_count = if (mac.gigabit) 256 else 16;
 /// Every how many receive descriptors one asks for an interrupt.
-pub const receive_batch: u32 = if (sdk.hardware.chip == .rv64sbi) 16 else 1;
+pub const receive_batch: u32 = if (mac.gigabit) 16 else 1;
 /// The most frames the task takes from the chain before it sees to the
 /// writes: while a read comes at link speed the chain is never empty, and
 /// taken all at once - 80 frames and more - its acknowledgements waited
 /// for the device so long that the stack's queue of them ran over.
-pub const receive_pass: u32 = if (sdk.hardware.chip == .rv64sbi) 2 * receive_batch else receive_count;
-pub const send_count = if (sdk.hardware.chip == .rv64sbi) 32 else 8;
+pub const receive_pass: u32 = if (mac.gigabit) 2 * receive_batch else receive_count;
+pub const send_count = if (mac.gigabit) 32 else 8;
 /// A buffer: the longest frame, with its checksum and a VLAN tag, in
 /// whole cache lines.
 pub const buffer_bytes = 1536;
-/// The data cache's line, which every descriptor and buffer fills whole.
+/// The data cache's line, which every buffer fills whole.
 pub const line_bytes = 64;
+/// How many descriptors share a line: one, unless the engine cannot space
+/// them out.
+const per_line = line_bytes / @sizeOf(mac.Descriptor);
 
 /// The block the engine and the interrupt reach: internal memory, never
 /// moved once the init has it.
@@ -214,6 +225,7 @@ pub const EmacBase = extern struct {
     /// Every free send descriptor given a write, while there are writes.
     pub fn startWrites(base: *EmacBase) void {
         const work = base.work.?;
+        if (per_line > 1 and base.send_busy != 0) return;
         var started = false;
         while (base.running != 0 and base.send_busy < send_count) {
             const req = base.net.nextWrite() orelse break;
@@ -226,7 +238,7 @@ pub const EmacBase = extern struct {
             base.writeBack(&work.send[slot], length);
             const descriptor = &work.send_chain[slot];
             mac.queueSend(descriptor, &work.send[slot], length, req.req.flags & net.SANA2IOF_CHECKSUM != 0);
-            base.writeBack(descriptor, @sizeOf(mac.Descriptor));
+            base.writeBack(lineOf(descriptor), line_bytes);
             started = true;
         }
         if (started) mac.pollSend(&work.send_chain[base.send_next]);
@@ -261,7 +273,7 @@ pub const EmacBase = extern struct {
             if (base.running == 0) return true;
             const slot = base.receive_next;
             const descriptor = &work.receive_chain[slot];
-            base.invalidate(descriptor, @sizeOf(mac.Descriptor));
+            base.invalidate(lineOf(descriptor), line_bytes);
             const frame = mac.received(descriptor, buffer_bytes) orelse return true;
             if (!frame.good) {
                 base.net.damaged();
@@ -269,10 +281,14 @@ pub const EmacBase = extern struct {
                 base.invalidate(&work.receive[slot], frame.length);
                 base.net.receiveWith(work.receive[slot][0..frame.length], if (frame.checked) net.SANA2IOF_CHECKSUM else 0);
             }
-            mac.giveBack(descriptor, &work.receive[slot], interrupts(slot));
-            base.writeBack(descriptor, @sizeOf(mac.Descriptor));
             base.receive_next = (slot + 1) % receive_count;
-            last = descriptor;
+            if (slot % per_line == per_line - 1) {
+                for (slot + 1 - per_line..slot + 1) |one| {
+                    mac.giveBack(&work.receive_chain[one], &work.receive[one], interrupts(one));
+                }
+                base.writeBack(lineOf(descriptor), line_bytes);
+                last = descriptor;
+            }
         }
         return false;
     }
@@ -288,12 +304,15 @@ pub const EmacBase = extern struct {
         const work = base.work.?;
         while (base.send_busy > 0) {
             const descriptor = &work.send_chain[base.send_done];
-            base.invalidate(descriptor, @sizeOf(mac.Descriptor));
+            base.invalidate(lineOf(descriptor), line_bytes);
             const finished = mac.sendFinished(descriptor);
             if (finished == null and base.running != 0) break;
             base.finishSend(finished orelse false);
         }
         base.startWrites();
+        // An engine that has stopped at a descriptor it read before these
+        // frames reached memory is told again.
+        if (per_line > 1 and base.send_busy != 0) mac.pollSend(&work.send_chain[base.send_next]);
     }
 
     fn finishSend(base: *EmacBase, done: bool) void {
@@ -319,6 +338,11 @@ pub const EmacBase = extern struct {
         base.sys_base.CachePostDMA(address, &bytes, 0);
     }
 };
+
+/// The start of the cache line a descriptor is in.
+fn lineOf(descriptor: *mac.Descriptor) *anyopaque {
+    return @ptrFromInt(@intFromPtr(descriptor) & ~@as(usize, line_bytes - 1));
+}
 
 fn wholeLines(length: u32) u32 {
     return (length + line_bytes - 1) & ~@as(u32, line_bytes - 1);

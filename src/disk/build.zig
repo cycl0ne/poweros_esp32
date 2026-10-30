@@ -239,7 +239,7 @@ const modules = [_]Program{
 /// its UART, Ethernet in Espressif QEMU's S3 machine. The ESP32-P4's come
 /// as drivers of their own.
 const s3_only = [_][]const u8{ "rs485.device", "openeth.device" };
-/// Drivers of hardware the ESP32-P4 and the JH7110 have and the
+/// Drivers of hardware the ESP32-P4, the JH7110 and the RP1 have and the
 /// ESP32-S3 does not: an Ethernet MAC of the chip's own.
 const mac_only = [_][]const u8{"emac.device"};
 /// Drivers of hardware both ESP32s have and a RISC-V 64 machine under SBI
@@ -258,14 +258,13 @@ const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.
 const a64_only = [_][]const u8{"cyw43455.device"};
 
 /// Whether `program` is built for `chip`. The lists name a program by its
-/// name, or by its place on the disk where one program has two. The
-/// AArch64 machines have no Ethernet MAC driven yet.
+/// name, or by its place on the disk where one program has two.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     const others = switch (chip) {
         .esp32s3 => &(mac_only ++ rv64_only ++ a64_only),
         .esp32p4 => &(s3_only ++ rv64_only ++ a64_only),
         .rv64sbi => &(s3_only ++ esp_only ++ a64_only),
-        .a64psci => &(s3_only ++ esp_only ++ mac_only),
+        .a64psci => &(s3_only ++ esp_only),
     };
     for (others) |name| {
         if (std.mem.eql(u8, program.name, name) or std.mem.eql(u8, program.disk, name)) return false;
@@ -321,9 +320,11 @@ pub const p4_files = [_]File{
 };
 
 /// The AArch64 machines' disk has these in place of the shared files of
-/// the same name: the Wi-Fi interface names the CM5's radio.
+/// the same name: the Wi-Fi interface names the CM5's radio, the Ethernet
+/// one its RP1's MAC.
 pub const a64_files = [_]File{
     .{ .disk = "devs/NetInterfaces/WLAN0", .source = "devs/NetInterfaces/a64/WLAN0" },
+    .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/emac/ETH0" },
 };
 
 /// The radio's device: built only when the vendor libraries it links are
