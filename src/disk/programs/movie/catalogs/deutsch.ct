@@ -1,0 +1,36 @@
+## version $VER: programs/Movie.catalog 1.0 (30.10.2026)
+## language deutsch
+## codeset 106
+; Movie's strings in German.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Öffnen...
+MSG_MENU_WHOLE_SCREEN
+Ganzer Bildschirm
+MSG_MENU_ABOUT
+Über
+MSG_MENU_QUIT
+Beenden
+MSG_ASK_OPEN
+Einen Film abspielen
+MSG_ABOUT_TITLE
+Über Movie
+MSG_ABOUT
+%s\n\nSpielt Filme ab - MP4 und QuickTimes MOV:\nBilder in H.264, H.265 und Motion JPEG, Ton in AAC.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nkann nicht abgespielt werden:\n%s
+MSG_VOLUME_HINT
+Lautstärke
+MSG_NOLIBRARY
+%s: %s lässt sich nicht öffnen\n
+MSG_NOMEMORY
+%s: nicht genug Speicher\n
+MSG_NOWINDOW
+%s: sein Fenster lässt sich nicht öffnen\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

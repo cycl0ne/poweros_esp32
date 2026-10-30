@@ -13,6 +13,12 @@
 //! planes of half the size; a grey one has colour planes of 128, the
 //! middle, which are filled once.
 //!
+//! The planes are made where a display's video layer reads them, as it
+//! reads a decoder's frames (`ShowVideoFrame`): below 4 GiB on the 64-bit
+//! machines where there is room there - anywhere otherwise, which a
+//! layer refuses - each plane and each of its rows starting on 16 bytes,
+//! and written out of the caches once the picture is in them.
+//!
 //! The colours are JFIF's: BT.601, the whole byte.
 
 const sdk = @import("sdk");
@@ -27,9 +33,30 @@ const Stream = _stream.Stream;
 /// How a picture keeps its colour, as far as the frame cares.
 const Sampling = enum(u8) { grey = 1, halved, across, full };
 
-/// A slot's planes: one block of memory, and what it was made for.
+/// Where the planes are made: below 4 GiB on the 64-bit machines, where
+/// a display reads them; anywhere on the others, where only the processor
+/// does.
+const planes_memory: u32 = if (@sizeOf(usize) == 8) exec.MEMF_DMA else exec.MEMF_ANY;
+/// What each plane and each of its rows starts on.
+const plane_alignment = 16;
+
+/// `planes_memory` where it has room for `bytes`, any memory otherwise:
+/// asked for only where there is room, since a request that fails runs
+/// the low-memory handlers.
+fn placeFor(s: *Stream, bytes: usize) u32 {
+    if (planes_memory == exec.MEMF_ANY) return exec.MEMF_ANY;
+    return if (s.sys.AvailMem(planes_memory | exec.MEMF_LARGEST) >= bytes) planes_memory else exec.MEMF_ANY;
+}
+
+fn aligned(bytes: u32) u32 {
+    return (bytes + plane_alignment - 1) & ~@as(u32, plane_alignment - 1);
+}
+
+/// A slot's planes: one block of memory - as AllocVec gave it, and where
+/// the planes start in it - and what it was made for.
 const Planes = struct {
     memory: ?[*]u8 = null,
+    start: [*]u8 = undefined,
     size: usize = 0,
     width: u32 = 0,
     height: u32 = 0,
@@ -84,6 +111,7 @@ pub fn decode(s: *Stream, frame: *vc.VideoFrame, slot: u32) i32 {
 
     const luma = &work.component[0];
     const half_width = (work.width + 1) / 2;
+    const half_pitch = aligned(half_width);
     var picture: rtg.RtgYuv = .{
         .y = luma.plane,
         .cb = undefined,
@@ -101,14 +129,15 @@ pub fn decode(s: *Stream, frame: *vc.VideoFrame, slot: u32) i32 {
         .full, .grey => {
             const extra = extraPlanes(planes, work);
             if (sampling == .full) {
-                halve(&work.component[1], extra.cb, half_width, (work.height + 1) / 2);
-                halve(&work.component[2], extra.cr, half_width, (work.height + 1) / 2);
+                halve(&work.component[1], extra.cb, half_width, half_pitch, (work.height + 1) / 2);
+                halve(&work.component[2], extra.cr, half_width, half_pitch, (work.height + 1) / 2);
             }
             picture.cb = extra.cb;
             picture.cr = extra.cr;
-            picture.c_pitch = half_width;
+            picture.c_pitch = half_pitch;
         },
     }
+    if (planes_memory & exec.MEMF_DMA != 0) s.sys.CacheClearE(planes.start, @intCast(planes.size), exec.CACRF_ClearD);
     frame.* = .{ .picture = picture, .width = work.width, .height = work.height, .time = packet.pts };
     return vc.VCERR_OK;
 }
@@ -141,16 +170,17 @@ fn samplingOf(work: *const jpeg.Work) ?Sampling {
 
 /// How many bytes the colour planes of half the size take, each.
 fn halfPlane(work: *const jpeg.Work) usize {
-    return @as(usize, (work.width + 1) / 2) * ((work.height + 1) / 2);
+    return @as(usize, aligned((work.width + 1) / 2)) * ((work.height + 1) / 2);
 }
 
 /// The slot's planes made for the picture, or kept when they were made
-/// for one of its size and sampling; each component given its own.
-/// VCERR_OK, or VCERR_NOMEMORY.
+/// for one of its size and sampling; each component given its own, its
+/// rows a whole number of `plane_alignment` apart. VCERR_OK, or
+/// VCERR_NOMEMORY.
 fn make(s: *Stream, planes: *Planes, work: *jpeg.Work, sampling: Sampling) i32 {
     var size: usize = 0;
     for (work.component[0..work.count]) |*component| {
-        component.stride = jpeg.planeStride(work, component);
+        component.stride = aligned(jpeg.planeStride(work, component));
         component.lines = jpeg.planeLines(work, component);
         size += @as(usize, component.stride) * component.lines;
     }
@@ -160,9 +190,11 @@ fn make(s: *Stream, planes: *Planes, work: *jpeg.Work, sampling: Sampling) i32 {
     if (!same) {
         s.sys.FreeVec(planes.memory);
         planes.* = .{};
-        const memory = s.sys.AllocVec(size, exec.MEMF_ANY) orelse return vc.VCERR_NOMEMORY;
+        const memory = s.sys.AllocVec(size + plane_alignment, placeFor(s, size + plane_alignment)) orelse return vc.VCERR_NOMEMORY;
+        const start = (@intFromPtr(memory) + plane_alignment - 1) & ~@as(usize, plane_alignment - 1);
         planes.* = .{
             .memory = @ptrCast(memory),
+            .start = @ptrFromInt(start),
             .size = size,
             .width = work.width,
             .height = work.height,
@@ -171,11 +203,11 @@ fn make(s: *Stream, planes: *Planes, work: *jpeg.Work, sampling: Sampling) i32 {
     }
     var at: usize = 0;
     for (work.component[0..work.count]) |*component| {
-        component.plane = planes.memory.? + at;
+        component.plane = planes.start + at;
         at += @as(usize, component.stride) * component.lines;
     }
     // A grey picture's colour: the middle, filled once.
-    if (!same and sampling == .grey) s.sys.SetMem(planes.memory.? + at, 128, 2 * halfPlane(work));
+    if (!same and sampling == .grey) s.sys.SetMem(planes.start + at, 128, 2 * halfPlane(work));
     return vc.VCERR_OK;
 }
 
@@ -183,19 +215,19 @@ fn make(s: *Stream, planes: *Planes, work: *jpeg.Work, sampling: Sampling) i32 {
 fn extraPlanes(planes: *const Planes, work: *const jpeg.Work) struct { cb: [*]u8, cr: [*]u8 } {
     var at: usize = 0;
     for (work.component[0..work.count]) |component| at += @as(usize, component.stride) * component.lines;
-    const memory = planes.memory.?;
-    return .{ .cb = memory + at, .cr = memory + at + halfPlane(work) };
+    return .{ .cb = planes.start + at, .cr = planes.start + at + halfPlane(work) };
 }
 
 /// A colour plane at full size averaged two by two into `into`, `width`
-/// by `height` of half the size. The plane runs in whole blocks, past
-/// the picture's edge, so every pair has its second.
-fn halve(component: *const jpeg.Component, into: [*]u8, width: u32, height: u32) void {
+/// by `height` of half the size, its rows `pitch` apart. The plane runs
+/// in whole blocks, past the picture's edge, so every pair has its
+/// second.
+fn halve(component: *const jpeg.Component, into: [*]u8, width: u32, pitch: u32, height: u32) void {
     const stride = component.stride;
     for (0..height) |y| {
         const top = component.plane + 2 * y * stride;
         const bottom = top + stride;
-        const out = into + y * width;
+        const out = into + y * pitch;
         for (0..width) |x| {
             const sum = @as(u32, top[2 * x]) + top[2 * x + 1] + bottom[2 * x] + bottom[2 * x + 1];
             out[x] = @intCast((sum + 2) / 4);

@@ -6605,6 +6605,51 @@ test "windowclass: a size is replied at the next WM_HANDLEINPUT, or when the win
     try tearDown(ib);
 }
 
+test "windowclass: a move is WMHI_CHANGEWINDOW, and the screen names its display" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const lg = intuition.layoutgclass;
+    const wc = intuition.windowclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 112, 56, .rgb565);
+
+    const layout = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(framedButton(ib, "OK", 1)) },
+        .{},
+    }).?;
+    const object = it.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        .{ .tag = wn.WA_Title, .data = @intFromPtr("W") },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_CHANGEWINDOW },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+        .{},
+    }).?;
+    var open = wc.WmOpen{};
+    const w: *intuition.Window = @ptrFromInt(it.SendMessage(object, @ptrCast(&open)));
+    var code: u32 = 0;
+    var handle = wc.WmHandleInput{ .code = &code };
+    try testing.expectEqual(wc.WMHI_LASTMSG, it.SendMessage(object, @ptrCast(&handle)));
+
+    // Moved: the program hears of it, once.
+    it.MoveWindow(w, 4, 2);
+    try testing.expectEqual(wc.WMHI_CHANGEWINDOW, it.SendMessage(object, @ptrCast(&handle)));
+    try testing.expectEqual(wc.WMHI_LASTMSG, it.SendMessage(object, @ptrCast(&handle)));
+
+    // SA_Board: the display the screen is on.
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    try testing.expect(it.LockPubScreen(null) == screen); // held open past the window
+    var board: usize = 0;
+    it.GetScreenAttrs(screen, &[_]TagItem{ .{ .tag = intuition.screens.SA_Board, .data = @intFromPtr(&board) }, .{} });
+    try testing.expectEqual(@intFromPtr(display.board), board);
+
+    it.DisposeObject(object);
+    it.UnlockPubScreen(null, screen);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windowclass: WM_RETHINK - the layout measured again once something in it grew, the window grown to it" {
     const ib = try setUp();
     defer kexec.deinit();

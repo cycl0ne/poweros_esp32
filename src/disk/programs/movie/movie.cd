@@ -1,0 +1,45 @@
+; Movie's strings, in English: the program is built with these, and a
+; translation in LOCALE:Catalogs/<language>/programs/Movie.catalog stands
+; in for them. A text with values is written by RawDoFmt, which takes
+; them in order: a translation keeps them so.
+#version 1
+;
+; The menus.
+MSG_MENU_PROJECT (1//)
+Project
+MSG_MENU_OPEN (//)
+Open...
+MSG_MENU_WHOLE_SCREEN (//)
+Whole screen
+MSG_MENU_ABOUT (//)
+About
+MSG_MENU_QUIT (//)
+Quit
+;
+; The requesters.
+MSG_ASK_OPEN (//)
+Play a film
+MSG_ABOUT_TITLE (//)
+About Movie
+MSG_ABOUT (//)
+%s\n\nPlays films - MP4 and QuickTime's MOV:\nH.264, H.265 and Motion JPEG pictures, AAC sound.
+MSG_OK (//)
+OK
+MSG_CANNOT_PLAY_TITLE (//)
+Movie
+MSG_CANNOT_PLAY (//)
+%s\ncannot be played:\n%s
+;
+; The window.
+MSG_VOLUME_HINT (//)
+Volume
+;
+; In the shell.
+MSG_NOLIBRARY (//)
+%s: cannot open %s\n
+MSG_NOMEMORY (//)
+%s: not enough memory\n
+MSG_NOWINDOW (//)
+%s: cannot open its window\n
+MSG_CANNOT_OPEN (//)
+%s: %s: %s\n

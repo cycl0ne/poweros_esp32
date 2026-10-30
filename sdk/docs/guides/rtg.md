@@ -456,6 +456,64 @@ intuition's `BeginDrag` and `EndDrag` are how a program drags.
 A 32-bit surface's bytes are its channels in the order its format names
 them: `rgba32` is red, green, blue, alpha, a byte each.
 
+## Video layers
+
+A board with `RTGBC_VIDEO` has a plane of its controller that shows a
+picture in YUV itself: a film's frame is handed to it as the decoder
+made it, and the controller reads its planes as it scans the display
+out, turning them into colours and scaling them into a place on the
+display. Nothing is converted, scaled or composed by the processor.
+
+```zig
+const layer = rb.OpenVideoLayer(board, null) orelse return putThroughGraphics();
+defer rb.CloseVideoLayer(layer);
+_ = rb.MoveVideoLayer(layer, &.{ .x = 100, .y = 80, .width = 1280, .height = 720 });
+const all = rtg.RtgRect{ .width = @intCast(frame.width), .height = @intCast(frame.height) };
+if (rb.ShowVideoFrame(layer, &frame.picture, &all) != rtg.errors.RTGERR_OK) putThroughGraphics();
+```
+
+- `OpenVideoLayer(board, tags)` takes one of the board's layers, or
+  answers null with `RtgLastError`: `RTGERR_NOT_SUPPORTED` without
+  `RTGBC_VIDEO`, `RTGERR_IN_USE` when they are all taken. A screen's
+  board is intuition's `SA_Board` (GetScreenAttrs). The layer is under
+  the screens' picture unless `RTGVA_Under` is FALSE, and its fields say
+  what it is: `RTGVLF_UNDER`, the `key` colour it is seen through, and
+  how large a picture it takes and how far it scales one (`max_width`,
+  `max_height`, `max_up`, `max_down`).
+- `MoveVideoLayer(layer, place)` puts it in the display's coordinates -
+  a window's place on its screen, the screen's `SA_Top` added. An empty
+  place hides it.
+- `ShowVideoFrame(layer, picture, src)` shows `src` of the picture,
+  scaled into the place, from the next frame, and returns once the
+  controller has taken it: the frame shown before may then be given
+  back to the decoder. This one stays lent until the next is shown or
+  the layer closes. A picture the layer cannot take - its planes where
+  the controller does not reach, a scale past its limits - shows
+  nothing and answers `RTGERR_BAD_ARG`, and goes through graphics
+  instead.
+- `CloseVideoLayer(layer)` hides it and gives it back, once the last
+  picture is no longer read; before the board is deleted.
+
+**Under the picture** a layer is seen only where the picture has its
+key colour: a program fills its film's place with `key`, and whatever
+lies over the place - another window, a menu, the pointer - hides the
+film as it hides anything. The JH7110's controller keys the shades of
+the key a window's shadow darkens it to as well (layers' compose darkens
+by multiplying), so a shadow on a film shows the film, undarkened, not a
+dark band. A layer over the picture covers whatever is there; a board
+that cannot put its picture over a layer opens it over, and says so.
+
+The place follows a window only as fast as its program moves it:
+dragged, the film trails the window by about a frame.
+
+On the VisionFive 2 the layer is the DC8200's first overlay: NV12 and
+I420, BT.601 and BT.709, video's range and the whole byte - by
+matrices worked out in the driver - pictures up to 4096 x 4096, three
+times up and a tenth down. Each plane's rows start on 16 bytes, below
+4 GiB; a place partly off the display is cut to it, the picture's left
+and top in whole runs of 32 pixels and pairs of rows. The decoder's
+frames and videocodec's Motion JPEG frames are laid out for it.
+
 ## Events
 
 ```zig
@@ -592,6 +650,8 @@ zero in its `show_bitmap`.
 | `set_pointer`, `move_pointer`, `show_pointer` | the pointer |
 | `set_overlay`, `move_overlay` | a second image under the pointer |
 | `blend_pixels`, `blend_rect`, `scale_pixels` | the engine's blends and scale |
+| `refresh_rect`, `copy_rects` | a rectangle written, and the engine's copies in a list |
+| `video_open`, `video_close`, `video_show`, `video_move` | a video layer (all four, or none) |
 
 New slots are only ever added at the end, so a driver built against an
 older SDK keeps its layout.

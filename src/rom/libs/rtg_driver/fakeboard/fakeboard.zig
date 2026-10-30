@@ -103,6 +103,17 @@ pub const Log = struct {
     last_color: u32 = 0,
     last_scale_width: u32 = 0,
     last_scale_height: u32 = 0,
+    /// The video layer: whether it is taken, how often it was opened,
+    /// closed, shown a picture and moved, and the last picture, part and
+    /// place as the driver got them.
+    video_taken: bool = false,
+    video_opens: u32 = 0,
+    video_closes: u32 = 0,
+    video_shows: u32 = 0,
+    video_moves: u32 = 0,
+    video_picture: ?*const rtg.RtgYuv = null,
+    video_src: rtg.RtgRect = .{},
+    video_place: rtg.RtgRect = .{},
 };
 
 /// Everything this driver has that changes, allocated by `create`.
@@ -125,6 +136,9 @@ pub const State = struct {
     /// Come up with a display already running out of the front of the
     /// region, the way a driver that took over a running one does.
     claims_display: bool = false,
+    /// Open the video layer over the picture whatever is asked, as a
+    /// board that cannot lay its picture over a layer does.
+    video_over_only: bool = false,
 };
 
 /// What belongs to one board: the library allocates it beside the handle.
@@ -342,6 +356,58 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     log.overlay_top = top;
 }
 
+/// The one video layer: a key colour, the DC8200's limits, under the
+/// picture unless the test says it cannot be.
+fn videoOpen(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer) callconv(.c) i32 {
+    const state = stateOfBoard(board);
+    if (state.log.video_taken) return err.RTGERR_IN_USE;
+    state.log.video_taken = true;
+    state.log.video_opens += 1;
+    state.log.video_place = .{};
+    if (state.video_over_only) layer.flags &= ~rtg.RTGVLF_UNDER;
+    layer.key = 0x0008_0008;
+    layer.max_width = 4096;
+    layer.max_height = 4096;
+    layer.max_up = 3;
+    layer.max_down = 10;
+    return err.RTGERR_OK;
+}
+
+fn videoClose(board: *rtg.RtgBoard, _: *rtg.RtgVideoLayer) callconv(.c) void {
+    const log = &stateOfBoard(board).log;
+    log.video_taken = false;
+    log.video_closes += 1;
+    log.video_picture = null;
+}
+
+/// Whether `src` scales into `place` within the layer's limits, each way.
+fn videoFits(layer: *const rtg.RtgVideoLayer, src: rtg.RtgRect, place: rtg.RtgRect) bool {
+    if (place.width <= 0 or place.height <= 0) return true;
+    const up: i64 = layer.max_up;
+    const down: i64 = layer.max_down;
+    return place.width <= up * src.width and src.width <= down * place.width and
+        place.height <= up * src.height and src.height <= down * place.height;
+}
+
+fn videoShow(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer, picture: ?*const rtg.RtgYuv, src: ?*const rtg.RtgRect) callconv(.c) i32 {
+    const log = &stateOfBoard(board).log;
+    log.video_shows += 1;
+    if (src) |part| {
+        if (!videoFits(layer, part.*, log.video_place)) return err.RTGERR_BAD_ARG;
+        log.video_src = part.*;
+    }
+    log.video_picture = picture;
+    return err.RTGERR_OK;
+}
+
+fn videoMove(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgRect) callconv(.c) i32 {
+    const log = &stateOfBoard(board).log;
+    log.video_moves += 1;
+    log.video_place = place.*;
+    if (log.video_picture != null and !videoFits(layer, log.video_src, place.*)) return err.RTGERR_BAD_ARG;
+    return err.RTGERR_OK;
+}
+
 /// rgb565 only: what a board's engine would do, done by hand so the tests
 /// can compare bytes.
 fn rows16(bitmap: *rtg.RtgBitMap, y: u32) []u16 {
@@ -549,6 +615,10 @@ const full_ops = rtg.RtgBoardOps{
     .blend_pixels = &blendPixels,
     .blend_rect = &blendRect,
     .scale_pixels = &scalePixels,
+    .video_open = &videoOpen,
+    .video_close = &videoClose,
+    .video_show = &videoShow,
+    .video_move = &videoMove,
 };
 
 /// A board with no engine: it can be shown and refreshed and no more.

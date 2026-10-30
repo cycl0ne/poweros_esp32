@@ -81,6 +81,10 @@ pub const LVO = struct {
     pub const ScalePixels = libraries.lvo(62);
     pub const RefreshRect = libraries.lvo(63);
     pub const CopyRects = libraries.lvo(64);
+    pub const OpenVideoLayer = libraries.lvo(65);
+    pub const CloseVideoLayer = libraries.lvo(66);
+    pub const ShowVideoFrame = libraries.lvo(67);
+    pub const MoveVideoLayer = libraries.lvo(68);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -147,6 +151,10 @@ pub const Fn = struct {
     pub const ScalePixels = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPixels, u32, u32) callconv(.c) i32;
     pub const RefreshRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect) callconv(.c) i32;
     pub const CopyRects = *const fn (*RtgBase, *rtg.RtgBitMap, *rtg.RtgBitMap, [*]const rtg.RtgCopy, u32) callconv(.c) i32;
+    pub const OpenVideoLayer = *const fn (*RtgBase, *rtg.RtgBoard, ?[*]const utility.TagItem) callconv(.c) ?*rtg.RtgVideoLayer;
+    pub const CloseVideoLayer = *const fn (*RtgBase, ?*rtg.RtgVideoLayer) callconv(.c) void;
+    pub const ShowVideoFrame = *const fn (*RtgBase, *rtg.RtgVideoLayer, ?*const rtg.RtgYuv, ?*const rtg.RtgRect) callconv(.c) i32;
+    pub const MoveVideoLayer = *const fn (*RtgBase, *rtg.RtgVideoLayer, *const rtg.RtgRect) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -528,5 +536,33 @@ pub const RtgBase = opaque {
     /// board's engine takes them.
     pub fn CopyRects(self: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) i32 {
         return libraries.call(self, LVO.CopyRects, Fn.CopyRects, .{ src, dest, copies, count });
+    }
+
+    /// One of the board's video layers - a plane that shows a picture in YUV
+    /// itself, scaled into a place - under the picture (RTGVA_Under, the
+    /// default) or over it. Null, and RtgLastError says why: NOT_SUPPORTED
+    /// without RTGBC_VIDEO, IN_USE when its layers are all taken.
+    pub fn OpenVideoLayer(self: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const utility.TagItem) ?*rtg.RtgVideoLayer {
+        return libraries.call(self, LVO.OpenVideoLayer, Fn.OpenVideoLayer, .{ board, tag_list });
+    }
+
+    /// Give a layer back: nothing shown on it from the next frame. Null does
+    /// nothing.
+    pub fn CloseVideoLayer(self: *RtgBase, layer: ?*rtg.RtgVideoLayer) void {
+        return libraries.call(self, LVO.CloseVideoLayer, Fn.CloseVideoLayer, .{layer});
+    }
+
+    /// Show `src` of a picture on the layer from the next frame, scaled into
+    /// its place; returns once the controller has taken it, so the picture
+    /// shown before may be given back. Null shows nothing. A picture needs
+    /// its part. RTGERR_BAD_ARG for one the plane cannot read or scale.
+    pub fn ShowVideoFrame(self: *RtgBase, layer: *rtg.RtgVideoLayer, picture: ?*const rtg.RtgYuv, src: ?*const rtg.RtgRect) i32 {
+        return libraries.call(self, LVO.ShowVideoFrame, Fn.ShowVideoFrame, .{ layer, picture, src });
+    }
+
+    /// The layer's place, in the display's coordinates, from the next frame;
+    /// an empty rectangle hides it.
+    pub fn MoveVideoLayer(self: *RtgBase, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgRect) i32 {
+        return libraries.call(self, LVO.MoveVideoLayer, Fn.MoveVideoLayer, .{ layer, place });
     }
 };

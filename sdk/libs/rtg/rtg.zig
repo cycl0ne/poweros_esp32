@@ -34,6 +34,7 @@ pub const transport = @import("transport.zig");
 pub const events = @import("events.zig");
 pub const errors = @import("errors.zig");
 pub const tags = @import("tags.zig");
+pub const video = @import("video.zig");
 
 pub const RtgBase = @import("../../interface/rtg.zig").RtgBase;
 
@@ -74,6 +75,11 @@ pub const RtgBoardOps = boards.RtgBoardOps;
 pub const RtgPointerImage = boards.RtgPointerImage;
 pub const RtgDriver = boards.RtgDriver;
 pub const RtgDriverOps = boards.RtgDriverOps;
+
+pub const RtgVideoLayer = video.RtgVideoLayer;
+pub const RTGVLF_UNDER = video.RTGVLF_UNDER;
+pub const RTGVA_Dummy = video.RTGVA_Dummy;
+pub const RTGVA_Under = video.RTGVA_Under;
 
 pub const RtgTransport = transport.RtgTransport;
 pub const RtgTransportOps = transport.RtgTransportOps;

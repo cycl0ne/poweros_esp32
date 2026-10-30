@@ -321,6 +321,16 @@ test "frames held and given back; a seek moves the pictures and the sound togeth
     try testing.expectEqual(vc.VCERR_OK, vcb.DecodeVideoFrame(film, &extra));
 }
 
+/// Every plane of a Motion JPEG frame, and each of its rows, starts on 16
+/// bytes, as a display's video layer reads them.
+fn expectLayerReads(picture: *const rtg.RtgYuv) !void {
+    try testing.expectEqual(@as(usize, 0), @intFromPtr(picture.y) % 16);
+    try testing.expectEqual(@as(usize, 0), @intFromPtr(picture.cb) % 16);
+    try testing.expectEqual(@as(usize, 0), @intFromPtr(picture.cr.?) % 16);
+    try testing.expectEqual(@as(u32, 0), picture.y_pitch % 16);
+    try testing.expectEqual(@as(u32, 0), picture.c_pitch % 16);
+}
+
 test "colour halved across, kept whole, and none: the frame in I420 all the same" {
     var rig: Rig = undefined;
     try rig.init();
@@ -339,6 +349,7 @@ test "colour halved across, kept whole, and none: the frame in I420 all the same
     try expectPlane(frame.picture.y, frame.picture.y_pitch, wide_ref[0 .. w * h], w, h, 1);
     try expectPlane(frame.picture.cb, frame.picture.c_pitch, wide_ref[w * h ..][0 .. 45 * 60], 45, 30, 2);
     try expectPlane(frame.picture.cr.?, frame.picture.c_pitch, wide_ref[w * h + 45 * 60 ..][0 .. 45 * 60], 45, 30, 2);
+    try expectLayerReads(&frame.picture);
     vcb.ReleaseVideoFrame(wide, &frame);
     vcb.CloseVideoStream(wide);
 
@@ -347,7 +358,9 @@ test "colour halved across, kept whole, and none: the frame in I420 all the same
     const full = rig.open("WORK:full.mov", &err) orelse return error.NoStream;
     try testing.expectEqual(vc.VCERR_OK, vcb.DecodeVideoFrame(full, &frame));
     try expectPlane(frame.picture.y, frame.picture.y_pitch, full_ref[0 .. w * h], w, h, 1);
-    try testing.expectEqual(@as(u32, 45), frame.picture.c_pitch);
+    // Its rows on 16 bytes, where a video layer reads them.
+    try testing.expectEqual(@as(u32, 48), frame.picture.c_pitch);
+    try expectLayerReads(&frame.picture);
     var halved: [2][45 * 30]u8 = undefined;
     for (0..2) |plane| {
         const from = full_ref[w * h * (plane + 1) ..][0 .. w * h];
@@ -359,8 +372,8 @@ test "colour halved across, kept whole, and none: the frame in I420 all the same
             }
         }
     }
-    try expectPlane(frame.picture.cb, 45, &halved[0], 45, 30, 1);
-    try expectPlane(frame.picture.cr.?, 45, &halved[1], 45, 30, 1);
+    try expectPlane(frame.picture.cb, frame.picture.c_pitch, &halved[0], 45, 30, 1);
+    try expectPlane(frame.picture.cr.?, frame.picture.c_pitch, &halved[1], 45, 30, 1);
     vcb.ReleaseVideoFrame(full, &frame);
     vcb.CloseVideoStream(full);
 
@@ -372,6 +385,7 @@ test "colour halved across, kept whole, and none: the frame in I420 all the same
         try testing.expectEqual(vc.VCERR_OK, vcb.DecodeVideoFrame(grey, &frame));
         try testing.expectEqual(@as(u32, 64), frame.width);
         if (n == 0) try expectPlane(frame.picture.y, frame.picture.y_pitch, grey_ref, 64, 48, 1);
+        try expectLayerReads(&frame.picture);
         for (0..24) |y| {
             for (0..32) |x| {
                 try testing.expectEqual(@as(u8, 128), frame.picture.cb[y * frame.picture.c_pitch + x]);

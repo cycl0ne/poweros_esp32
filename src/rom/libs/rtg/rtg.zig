@@ -127,6 +127,10 @@ test {
     _ = @import("pointer/setboardpointer.zig");
     _ = @import("pointer/moveboardpointer.zig");
     _ = @import("pointer/showboardpointer.zig");
+    _ = @import("video/openvideolayer.zig");
+    _ = @import("video/closevideolayer.zig");
+    _ = @import("video/showvideoframe.zig");
+    _ = @import("video/movevideolayer.zig");
 }
 
 /// The kernel's exec and utility, to set up and tear down around it.
@@ -1207,6 +1211,82 @@ test "a board with no pointer says so" {
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).ShowBoardPointer(board, true));
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).SetBoardOverlay(board, &image, 0, 0));
     base(rb).MoveBoardPointer(board, 3, 3);
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "video layers: one to a board, a picture needs its part, the limits kept, closed before the board goes" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    var info: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expect(info.caps & rtg.boards.RTGBC_VIDEO != 0);
+
+    // Under the picture unless asked otherwise, with its key and limits;
+    // the board's one layer is then taken.
+    const layer = base(rb).OpenVideoLayer(board, null) orelse return error.NoLayer;
+    try testing.expectEqual(board, layer.board);
+    try testing.expect(layer.flags & rtg.RTGVLF_UNDER != 0);
+    try testing.expectEqual(@as(u32, 0x0008_0008), layer.key);
+    try testing.expectEqual(@as(u32, 3), layer.max_up);
+    try testing.expect(base(rb).OpenVideoLayer(board, null) == null);
+    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).RtgLastError());
+
+    // A picture is shown with its part, which says how big it is.
+    var luma: [16]u8 = @splat(16);
+    var chroma: [8]u8 = @splat(128);
+    const picture = rtg.RtgYuv{ .y = &luma, .cb = &chroma, .y_pitch = 4, .c_pitch = 4 };
+    const all = rtg.RtgRect{ .width = 4, .height = 4 };
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowVideoFrame(layer, &picture, null));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowVideoFrame(layer, &picture, &.{ .width = 0, .height = 4 }));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowVideoFrame(layer, &picture, &.{ .x = 4090, .width = 8, .height = 4 }));
+    try testing.expectEqual(@as(u32, 0), fk.log.video_shows);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MoveVideoLayer(layer, &.{ .x = 10, .y = 20, .width = 12, .height = 12 }));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowVideoFrame(layer, &picture, &all));
+    try testing.expectEqual(&picture, fk.log.video_picture.?);
+    try testing.expectEqual(all, fk.log.video_src);
+
+    // A place the picture cannot be scaled into is the driver's to refuse;
+    // nothing shown takes no part.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).MoveVideoLayer(layer, &.{ .width = 13, .height = 12 }));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowVideoFrame(layer, null, &all));
+    try testing.expect(fk.log.video_picture == null);
+
+    // The board is not deleted under an open layer.
+    base(rb).DeleteBoard(board);
+    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).RtgLastError());
+    try testing.expectEqual(@as(u32, 0), fk.log.destroyed);
+    base(rb).CloseVideoLayer(layer);
+    base(rb).CloseVideoLayer(null);
+    try testing.expectEqual(@as(u32, 1), fk.log.video_closes);
+
+    // Over the picture when asked, or when the board cannot lay its
+    // picture over a layer: no key then.
+    const over = base(rb).OpenVideoLayer(board, &[_]TagItem{ .{ .tag = rtg.RTGVA_Under, .data = 0 }, .{} }) orelse return error.NoLayer;
+    try testing.expectEqual(@as(u32, 0), over.flags & rtg.RTGVLF_UNDER);
+    base(rb).CloseVideoLayer(over);
+    fk.video_over_only = true;
+    const forced = base(rb).OpenVideoLayer(board, null) orelse return error.NoLayer;
+    try testing.expectEqual(@as(u32, 0), forced.flags & rtg.RTGVLF_UNDER);
+    try testing.expectEqual(@as(u32, 0), forced.key);
+    base(rb).CloseVideoLayer(forced);
+    base(rb).DeleteBoard(board);
+    try testing.expectEqual(@as(u32, 1), fk.log.destroyed);
+    try tearDown(rb);
+}
+
+test "a board with no video layer says so" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    fakeOf(rb).without_engine = true;
+    const board = try makeBoard(rb);
+    var info: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_VIDEO);
+    try testing.expect(base(rb).OpenVideoLayer(board, null) == null);
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).RtgLastError());
     base(rb).DeleteBoard(board);
     try tearDown(rb);
 }

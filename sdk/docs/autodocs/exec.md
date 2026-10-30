@@ -3471,7 +3471,8 @@ first, and no block in the pool may be touched afterwards.
 
 - Waits: for the pool's lock while another task is in the pool.
 - Interrupts: no; it frees memory.
-- Locks: takes the pool's own lock; no spinlock may be held.
+- Locks: takes the pool's own lock, and lets it go before the pool is
+  freed; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**

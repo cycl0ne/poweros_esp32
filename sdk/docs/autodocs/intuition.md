@@ -3413,8 +3413,9 @@ fn GetScreenAttrs(ib: *IntuitionBase, screen: *Screen,
   `SA_WBorRight`, `SA_WBorBottom`, `SA_Top` (how far down its display
   the screen is now), `SA_Left` (0), `SA_Draggable`, `SA_Exclusive`,
   `SA_PixelFormat` (since 0.49), `SA_Dragging` (since 0.58: whether a
-  picture is being dragged across it). A tag it does not know, or a
-  null data, is passed over.
+  picture is being dragged across it), `SA_Board` (since 0.75: its
+  display, an `*rtg.RtgBoard`). A tag it does not know, or a null data,
+  is passed over.
 
 **RESULT**
 

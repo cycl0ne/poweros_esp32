@@ -213,3 +213,7 @@ pub const WMHI_MOUSEWHEEL: usize = 14 << 16;
 /// or `IESUBCLASS_USB_DETACHED`; which device it was is read from
 /// usb.library's device list.
 pub const WMHI_USBCHANGE: usize = 15 << 16;
+/// The window was moved or sized (it asked for `IDCMP_CHANGEWINDOW`): a
+/// program that hands the display something by where the window is - a
+/// film on a video layer - looks again. Since intuition 0.75.
+pub const WMHI_CHANGEWINDOW: usize = 16 << 16;
