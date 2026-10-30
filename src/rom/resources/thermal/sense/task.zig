@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The task that reads: every two seconds each sensor is read
 //! (`_sense.zig`), its state stored, and the programs that asked told
-//! when a flag of THERMF_CHANGES changed.
+//! when a flag of THERMF_CHANGES changed; and the board's fans turned as
+//! the first sensor's reading asks (`../fan/_fan.zig`).
 //!
 //! **The limits.** THERMF_HOT is set at the sensor's hot temperature and
 //! above, and cleared again only THERMAL_HYSTERESIS below it; THERMF_CRITICAL
@@ -16,6 +17,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const ThermalBase = @import("../thermal_base.zig").ThermalBase;
 const _sense = @import("_sense.zig");
 const _notify = @import("../notify/_notify.zig");
+const _fan = @import("../fan/_fan.zig");
 
 /// How often the sensors are read.
 const period_us: u32 = 2_000_000;
@@ -47,7 +49,11 @@ fn thermalTask(sys: *ExecBase) callconv(.c) void {
     wait.node.message.length = @sizeOf(timer.TimeRequest);
     if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_VBLANK, &wait.node, 0) != 0) return;
     while (true) {
-        for (0..tb.units) |unit| update(tb, @intCast(unit), _sense.read(&tb.sensors[unit]));
+        for (0..tb.units) |unit| {
+            const reading = _sense.read(&tb.sensors[unit]);
+            update(tb, @intCast(unit), reading);
+            if (unit == 0) _fan.turn(tb, reading);
+        }
         wait.node.command = timer.TR_ADDREQUEST;
         wait.time = timer.TimeVal.fromMicros(period_us);
         _ = sys.DoIO(&wait.node);

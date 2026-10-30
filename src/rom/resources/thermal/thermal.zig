@@ -4,11 +4,15 @@
 //!
 //! What a board has is its PARTKIND_THERMAL parts: each is a unit, in the
 //! order the board lists them, started at init by its chip's code
-//! (`sense/_sense.zig`; the JH7110's own sensor, `jh7110/sensor.zig`).
+//! (`sense/_sense.zig`; the JH7110's own sensor, `jh7110/sensor.zig`,
+//! and the BCM2712's, `bcm2712/sensor.zig`).
 //! A task of the resource's reads every sensor every two seconds
 //! (`sense/task.zig`), so ReadTemperature answers at once, and the
 //! programs that asked with AddThermalNotify are signalled when a reading
-//! passes its sensor's hot or critical temperature, either way.
+//! passes its sensor's hot or critical temperature, either way. The same
+//! task turns the board's PARTKIND_FAN parts as fast as its first
+//! sensor's temperature asks (`fan/_fan.zig`; a fan on the RP1's PWM,
+//! `rp1/fan.zig`).
 //!
 //! Each call is a file of its own under `state/` and `notify/`. The jump
 //! table is thermal_lvo.zig, the ROM tag and init thermal_init.zig, the
@@ -43,6 +47,9 @@ const testing = std.testing;
 const kexec = @import("../../libs/exec/exec.zig");
 const task = @import("sense/task.zig");
 const sensor = @import("jh7110/sensor.zig");
+const bcm2712 = @import("bcm2712/sensor.zig");
+const fan = @import("fan/_fan.zig");
+const rp1_fan = @import("rp1/fan.zig");
 
 test {
     _ = @import("thermal_lvo.zig");
@@ -57,6 +64,7 @@ test "with no sensor on the board: no unit, and told so" {
     try testing.expectEqual(@as(i32, 0), state.millicelsius);
     try testing.expect(state.name == null);
     try testing.expect(tb.stack == null);
+    try testing.expectEqual(@as(u32, 0), tb.fan_count);
     try tearDown(tb);
 }
 
@@ -126,6 +134,44 @@ test "the JH7110's conversion: DOUT * 237.5 / 4094 - 81.1 degrees" {
     try testing.expectEqual(@as(i32, 25_525), sensor.millicelsius(1838));
     try testing.expectEqual(@as(i32, 37_708), sensor.millicelsius(2048));
     try testing.expectEqual(@as(i32, 156_458), sensor.millicelsius(4095));
+}
+
+test "the BCM2712's conversion: 450 - 0.55 * code degrees" {
+    // As cpu-thermal's coefficients have it; 685 and 702 were read on a
+    // CM5, at 73.25 and 63.9 degrees.
+    try testing.expectEqual(@as(i32, 73_250), bcm2712.millicelsius(685));
+    try testing.expectEqual(@as(i32, 63_900), bcm2712.millicelsius(702));
+    try testing.expectEqual(@as(i32, 450_000), bcm2712.millicelsius(0));
+}
+
+test "the fan's steps: each trip taken where it is, given up 5 degrees below" {
+    // No reading: full speed.
+    try testing.expectEqual(fan.top, fan.stepFor(0, null));
+    // Up, a step at each trip, and from cold to hot at once.
+    try testing.expectEqual(@as(u8, 0), fan.stepFor(0, 49_999));
+    try testing.expectEqual(@as(u8, 1), fan.stepFor(0, 50_000));
+    try testing.expectEqual(@as(u8, 2), fan.stepFor(1, 60_000));
+    try testing.expectEqual(@as(u8, 3), fan.stepFor(2, 67_500));
+    try testing.expectEqual(@as(u8, 4), fan.stepFor(3, 75_000));
+    try testing.expectEqual(@as(u8, 4), fan.stepFor(0, 80_000));
+    // Down: a step held to 5 degrees below its trip, then given up.
+    try testing.expectEqual(@as(u8, 4), fan.stepFor(4, 70_000));
+    try testing.expectEqual(@as(u8, 3), fan.stepFor(4, 69_999));
+    try testing.expectEqual(@as(u8, 1), fan.stepFor(1, 45_000));
+    try testing.expectEqual(@as(u8, 0), fan.stepFor(1, 44_999));
+    // A step not taken is not held: within 5 degrees of it, still below.
+    try testing.expectEqual(@as(u8, 1), fan.stepFor(1, 58_000));
+    // From full speed at the start, down to what the reading asks.
+    try testing.expectEqual(@as(u8, 0), fan.stepFor(fan.top, 40_000));
+    try testing.expectEqual(@as(u8, 3), fan.stepFor(fan.top, 68_000));
+}
+
+test "the RP1 fan's duty: pwm-fan's share of 41566 ns, in 20 ns ticks" {
+    try testing.expectEqual(@as(u32, 2078), rp1_fan.range_ticks);
+    try testing.expectEqual(@as(u32, 0), rp1_fan.dutyTicks(0));
+    try testing.expectEqual(@as(u32, 611), rp1_fan.dutyTicks(75));
+    try testing.expectEqual(@as(u32, 1426), rp1_fan.dutyTicks(175));
+    try testing.expectEqual(@as(u32, 2078), rp1_fan.dutyTicks(rp1_fan.full));
 }
 
 fn setUp() !*ThermalBase {

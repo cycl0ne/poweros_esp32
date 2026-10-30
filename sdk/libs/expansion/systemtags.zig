@@ -254,7 +254,7 @@ pub const PART_PinDataIn = PART_Dummy + 0x30;
 /// transceiver's select.
 pub const PART_PinEnable = PART_Dummy + 0x31;
 /// The one line of a part that has only one: an LED's data, a battery's
-/// sense.
+/// sense, a fan's speed.
 pub const PART_Pin = PART_Dummy + 0x32;
 /// A panel's backlight, and the chip select of a part on a shared bus.
 pub const PART_PinBacklight = PART_Dummy + 0x33;
@@ -414,6 +414,11 @@ pub const PARTKIND_JPEG: u32 = 25;
 /// PART_Chip which, PART_Address its registers (BUS_MEMORY), PART_Irq its
 /// interrupt.
 pub const PARTKIND_VIDEODEC: u32 = 26;
+/// A fan, which thermal.resource turns as fast as the board's first
+/// sensor's temperature asks: PART_Chip what drives it, PART_Address
+/// that chip's registers (BUS_MEMORY), PART_Pin the pin its speed goes
+/// out on, PART_Label where it is ("fan").
+pub const PARTKIND_FAN: u32 = 27;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -582,6 +587,16 @@ pub const CHIP_BCM2712_HVS: u32 = 44;
 /// controller's MAI FIFO, sent as HDMI's audio packets. Only while the
 /// picture (CHIP_BCM2712_HVS) goes out as HDMI.
 pub const CHIP_BCM2712_HDMI_AUDIO: u32 = 45;
+/// The BCM2712's own temperature sensor (PARTKIND_THERMAL on BUS_MEMORY,
+/// PART_Address its AVS monitor): one reading, 10 bits, which
+/// thermal.resource turns into degrees.
+pub const CHIP_BCM2712_TEMP: u32 = 46;
+/// A fan on one of the RP1's PWM channels (PARTKIND_FAN on BUS_MEMORY,
+/// PART_Address the RP1's peripherals, PART_Pin the RP1's GPIO the
+/// channel goes out on, a line its driver works itself): the channel
+/// clocked from the RP1's crystal, and the fan's speed as the RP1 counts
+/// it.
+pub const CHIP_RP1_PWM: u32 = 47;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

@@ -6,7 +6,8 @@
 //! A sensor whose chip the resource has no code for, or that would not
 //! start, keeps its unit and gives no reading, so the units after it are
 //! still the board's order. The chips there is code for: the JH7110's own
-//! sensor (`../jh7110/sensor.zig`).
+//! sensor (`../jh7110/sensor.zig`) and the BCM2712's
+//! (`../bcm2712/sensor.zig`).
 
 const sdk = @import("sdk");
 const st = sdk.expansion.systemtags;
@@ -17,6 +18,8 @@ const ThermalBase = _base.ThermalBase;
 
 const on_jh7110 = sdk.hardware.chip == .rv64sbi;
 const jh7110 = @import("../jh7110/sensor.zig");
+const on_bcm2712 = sdk.hardware.chip == .a64psci;
+const bcm2712 = @import("../bcm2712/sensor.zig");
 
 /// A sensor: its chip and where it is, as its part gives them, what it
 /// measures, its chip's limits in thousandths of a degree (0: none), and
@@ -67,6 +70,14 @@ fn start(sys: *ExecBase, sensor: *Sensor) void {
             sensor.started = jh7110.start(sys, sensor.base);
         }
     }
+    if (comptime on_bcm2712) {
+        // It runs from reset: nothing to start.
+        if (sensor.chip == st.CHIP_BCM2712_TEMP and sensor.base != 0) {
+            sensor.hot = bcm2712.hot;
+            sensor.critical = bcm2712.critical;
+            sensor.started = true;
+        }
+    }
 }
 
 /// `sensor`'s reading in thousandths of a degree, or null: it did not
@@ -75,6 +86,9 @@ pub fn read(sensor: *const Sensor) ?i32 {
     if (!sensor.started) return null;
     if (comptime on_jh7110) {
         if (sensor.chip == st.CHIP_JH7110_TEMP) return jh7110.read(sensor.base);
+    }
+    if (comptime on_bcm2712) {
+        if (sensor.chip == st.CHIP_BCM2712_TEMP) return bcm2712.read(sensor.base);
     }
     return null;
 }

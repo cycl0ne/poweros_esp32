@@ -147,6 +147,31 @@ const rtc = [_]Tag{
     .done,
 };
 
+/// The BCM2712's own temperature sensor, in its AVS monitor at
+/// 0x10_7D54_2000 (the SoC's bus at 0x7D54_2000).
+const temperature = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_THERMAL),
+    .value(st.PART_Chip, st.CHIP_BCM2712_TEMP),
+    .pointer(st.PART_ChipName, "bcm2712 temp"),
+    .pointer(st.PART_Label, "SoC"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x10_7D54_2000),
+    .done,
+};
+
+/// The IO board's fan connector: a PWM fan, on the RP1's PWM1 channel 3
+/// out on its GPIO45, its speed counted by the RP1.
+const fan = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_FAN),
+    .value(st.PART_Chip, st.CHIP_RP1_PWM),
+    .pointer(st.PART_ChipName, "rp1 pwm"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, rp1.peripherals),
+    .value(st.PART_Pin, pins.driver(45)),
+    .pointer(st.PART_Label, "fan"),
+    .done,
+};
+
 /// The HDMI port's picture when the monitor gives no EDID: 1920x1080 at
 /// 60 Hz. With one, the monitor's modes are the board's, and the screen
 /// is the one it prefers (`rtg_driver/fbboard/monitor.zig`).
@@ -232,6 +257,8 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &rtc),
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &hdmi_sound),
+    .pointer(st.SYSTAG_Part, &temperature),
+    .pointer(st.SYSTAG_Part, &fan),
     .done,
 };
 

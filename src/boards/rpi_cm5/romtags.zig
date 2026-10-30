@@ -9,11 +9,14 @@
 //! SSD's posfs partitions unless their table brings a newer one. And
 //! battclock.resource for the module's RTC, which its firmware keeps. And
 //! sound: rta.library, the HDMI port's sink (rta-hdmi) and audio.device,
-//! which plays through it. The RP1's Ethernet and GPIO come later.
+//! which plays through it. And thermal.resource for the chip's
+//! temperature, which turns the IO board's fan with it. The RP1's
+//! Ethernet and GPIO come later.
 
 pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
     @import("../../rom/resources/battclock/battclock.zig"),
+    @import("../../rom/resources/thermal/thermal.zig"),
     @import("../../disk/libs/pci/pci.zig"),
     @import("../../disk/devs/nvme/nvme.zig"),
     @import("../../disk/devs/handlers/posfs/posfs.zig"),
