@@ -6,7 +6,8 @@
 //! the build hands them. rtg, graphics, dos and the RAM: handler are here
 //! for a module that reads files and makes fonts, expansion.library for
 //! one that makes device nodes, and the fake display board for one that
-//! opens a window and looks at what it drew.
+//! opens a window and looks at what it drew, keymap.library for one that
+//! turns characters into keys.
 //!
 //! It sits at the root of `src/` because utility.library reaches exec by
 //! path, and a module's files have to lie under its root.
@@ -21,3 +22,4 @@ pub const expansion = @import("rom/libs/expansion/expansion.zig");
 pub const dos_process = @import("rom/libs/dos/process/_process.zig");
 pub const ram = @import("rom/handler/ram/ram.zig");
 pub const fakeboard = @import("rom/libs/rtg_driver/fakeboard/fakeboard.zig");
+pub const keymap = @import("rom/libs/keymap/keymap.zig");

@@ -46,6 +46,9 @@ pub const prefs = @import("libs/prefs/prefs.zig");
 pub const truetype = @import("libs/truetype/truetype.zig");
 pub const asl = @import("libs/asl/asl.zig");
 pub const iffparse = @import("libs/iffparse/iffparse.zig");
+/// Programs that watch the input stream and act on it, through
+/// commodities.library.
+pub const commodities = @import("libs/commodities/commodities.zig");
 pub const datatypes = @import("libs/datatypes/datatypes.zig");
 pub const motion = @import("libs/motion/motion.zig");
 /// A disk's RigidDiskBlock and partitions, through rdb.library.
