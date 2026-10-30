@@ -571,3 +571,282 @@ pub fn cursor(address: usize, small: bool, hot_x: u32, hot_y: u32, x: u32, y: u3
     dc(CURSOR_CONFIG).* = if (shown) config | CURSOR_ARGB8888 else config;
     letGo();
 }
+
+// --- the video layer: the first overlay -----------------------------------------
+//
+// Besides the primary plane and the cursor the controller has four
+// overlays. The first scales, and reads a picture in YUV planes - NV12, or
+// I420 as three - turning it into colours by a matrix loaded into it;
+// it is the board's video layer. Its registers are written as the
+// primary's are, between `hold` and `letGo`, with its own commit bit
+// cleared before and set after, and are taken at the next frame. The
+// registers, the formats' numbers and the scaler's filter are StarFive's
+// driver's (vs_dc_hw.c); the matrices are worked out here.
+
+const OVERLAY_CONFIG = 0x1540;
+const OVERLAY_COMMIT: u32 = 1 << 31;
+/// Its colours turned from YUV by the matrix, and the plane on.
+const OVERLAY_YUV: u32 = 1 << 30;
+const OVERLAY_ENABLE: u32 = 1 << 24;
+const OVERLAY_FORMAT_SHIFT = 16;
+/// Which standard the picture's colours are (0 BT.601, 1 BT.709), beside
+/// the matrix that turns them.
+const OVERLAY_SPACE_SHIFT = 5;
+const FORMAT_I420: u32 = 15;
+const FORMAT_NV12: u32 = 17;
+/// What U-Boot leaves it at: ARGB8888, off.
+const OVERLAY_OFF: u32 = 0x0006_0000;
+/// Its place in the order of planes, bottom up (bits 2:0): U-Boot's 1,
+/// over the primary at 0.
+const OVERLAY_ORDER = 0x2540;
+const OVERLAY_Y_ADDRESS = 0x15C0;
+const OVERLAY_U_ADDRESS = 0x1840;
+const OVERLAY_V_ADDRESS = 0x1880;
+const OVERLAY_Y_STRIDE = 0x1600;
+const OVERLAY_U_STRIDE = 0x18C0;
+const OVERLAY_V_STRIDE = 0x1900;
+/// The picture's size read, and its place on the display: (x, y) of the
+/// top left and of the corner past the bottom right, y from bit 15.
+const OVERLAY_SIZE = 0x17C0;
+const OVERLAY_TOP_LEFT = 0x1640;
+const OVERLAY_BOTTOM_RIGHT = 0x1680;
+/// Laid over what is under it unblended, its alpha and theirs full.
+const OVERLAY_BLEND = 0x1580;
+const OVERLAY_BLEND_NONE: u32 = 0x3548;
+const OVERLAY_SRC_ALPHA = 0x16C0;
+const OVERLAY_DST_ALPHA = 0x1700;
+/// The scaler: a step each way in 16.16 - (read - 1) / (shown - 1) - its
+/// configuration, which turns it on (SCALE_ON), and its filter, written a
+/// word at a time after its index is set.
+const OVERLAY_SCALE_X = 0x1A40;
+const OVERLAY_SCALE_Y = 0x1A80;
+const OVERLAY_SCALE_CONFIG = 0x1C00;
+const SCALE_TAPS: u32 = 0x33;
+const SCALE_ON: u32 = 1 << 8;
+const OVERLAY_INIT_OFFSET = 0x1BC0;
+const OVERLAY_H_FILTER_INDEX = 0x1AC0;
+const OVERLAY_H_FILTER_DATA = 0x1B00;
+const OVERLAY_V_FILTER_INDEX = 0x1B40;
+const OVERLAY_V_FILTER_DATA = 0x1B80;
+/// The matrix: nine coefficients two to a word, 0x40 apart, three
+/// offsets, and the bounds Y and the colour are held in before it.
+const OVERLAY_COEFFICIENTS = 0x1EC0;
+const OVERLAY_OFFSETS = 0x2000;
+const OVERLAY_Y_CLAMP = 0x22C0;
+const OVERLAY_UV_CLAMP = 0x2300;
+/// The primary plane's configuration, its transparency in bits 10:9 -
+/// KEYED: clear where its pixel lies between the key's two bounds - and
+/// those bounds, ARGB.
+const FRAMEBUFFER_CONFIG = 0x1518;
+const FRAMEBUFFER_TRANSPARENCY: u32 = 3 << 9;
+const FRAMEBUFFER_KEYED: u32 = 2 << 9;
+const FRAMEBUFFER_KEY_LOW = 0x1508;
+const FRAMEBUFFER_KEY_HIGH = 0x1510;
+/// The primary's place in the order of planes, in its extra
+/// configuration.
+const FRAMEBUFFER_ORDER: u32 = 7 << 16;
+const FRAMEBUFFER_ORDER_SHIFT = 16;
+
+/// The largest picture the layer reads, each way, and how far it scales
+/// one: three times up, a tenth down.
+pub const video_max_side: u32 = 4096;
+pub const video_max_up: u32 = 3;
+pub const video_max_down: u32 = 10;
+
+/// The scaler's filter, StarFive's: the horizontal one whole, and the
+/// vertical one its first 77 words, which are the same.
+const filter = [128]u32{
+    0x00000000, 0x20000000, 0x00002000, 0x00000000, 0x00000000, 0x00000000, 0x23fd1c03, 0x00000000,
+    0x00000000, 0x00000000, 0x181f0000, 0x000027e1, 0x00000000, 0x00000000, 0x00000000, 0x2b981468,
+    0x00000000, 0x00000000, 0x00000000, 0x10f00000, 0x00002f10, 0x00000000, 0x00000000, 0x00000000,
+    0x32390dc7, 0x00000000, 0x00000000, 0x00000000, 0x0af50000, 0x0000350b, 0x00000000, 0x00000000,
+    0x00000000, 0x3781087f, 0x00000000, 0x00000000, 0x00000000, 0x06660000, 0x0000399a, 0x00000000,
+    0x00000000, 0x00000000, 0x3b5904a7, 0x00000000, 0x00000000, 0x00000000, 0x033c0000, 0x00003cc4,
+    0x00000000, 0x00000000, 0x00000000, 0x3de1021f, 0x00000000, 0x00000000, 0x00000000, 0x01470000,
+    0x00003eb9, 0x00000000, 0x00000000, 0x00000000, 0x3f5300ad, 0x00000000, 0x00000000, 0x00000000,
+    0x00480000, 0x00003fb8, 0x00000000, 0x00000000, 0x00000000, 0x3fef0011, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00004000, 0x00000000, 0x00000000, 0x00000000, 0x20002000, 0x00000000,
+    0x00000000, 0x00000000, 0x1c030000, 0x000023fd, 0x00000000, 0x00000000, 0x00000000, 0x27e1181f,
+    0x00000000, 0x00000000, 0x00000000, 0x14680000, 0x00002b98, 0x00000000, 0x00000000, 0x00000000,
+    0x2f1010f0, 0x00000000, 0x00000000, 0x00000000, 0x0dc70000, 0x00003239, 0x00000000, 0x00000000,
+    0x00000000, 0x350b0af5, 0x00000000, 0x00000000, 0x00000000, 0x087f0000, 0x00003781, 0x00000000,
+    0x00000000, 0x00000000, 0x399a0666, 0x00000000, 0x00000000, 0x00000000, 0x04a70000, 0x00003b59,
+    0x00000000, 0x00000000, 0x00000000, 0x3cc4033c, 0x00000000, 0x00000000, 0x00000000, 0x021f0000,
+};
+const vertical_words = 77;
+
+/// What the matrix registers hold for one kind of picture.
+const Matrix = struct {
+    coefficients: [5]u32,
+    offsets: [3]u32,
+    y_clamp: u32,
+    uv_clamp: u32,
+};
+
+/// A coefficient as the controller takes it: ten bits of fraction, in
+/// the low half of a word.
+fn q10(value: f64) u32 {
+    const fixed: i64 = @intFromFloat(@round(value * 1024.0));
+    return @as(u32, @truncate(@as(u64, @bitCast(fixed)))) & 0xFFFF;
+}
+
+/// The matrix for a standard's red and blue weights, the whole byte or
+/// video's range. The controller works in ten bits - black at 64, the
+/// colour's middle at 512 - and adds each offset, ten bits of fraction
+/// deep, to its colour's sum.
+fn matrixOf(comptime kr: f64, comptime kb: f64, comptime full: bool) Matrix {
+    const kg = 1.0 - kr - kb;
+    const y_scale: f64 = if (full) 1.0 else 255.0 / 219.0;
+    const c_scale: f64 = if (full) 1.0 else 255.0 / 224.0;
+    const rv = 2.0 * (1.0 - kr) * c_scale;
+    const bu = 2.0 * (1.0 - kb) * c_scale;
+    const gu = -2.0 * (1.0 - kb) * kb / kg * c_scale;
+    const gv = -2.0 * (1.0 - kr) * kr / kg * c_scale;
+    const black: f64 = if (full) 0.0 else 64.0;
+    const offset = struct {
+        fn of(sum: f64) u32 {
+            const fixed: i64 = -@as(i64, @intFromFloat(@round(sum * 1024.0)));
+            return @truncate(@as(u64, @bitCast(fixed)));
+        }
+    }.of;
+    return .{
+        .coefficients = .{
+            q10(y_scale) | q10(0) << 16,
+            q10(rv) | q10(y_scale) << 16,
+            q10(gu) | q10(gv) << 16,
+            q10(y_scale) | q10(bu) << 16,
+            q10(0),
+        },
+        .offsets = .{
+            offset(y_scale * black + rv * 512.0),
+            offset(y_scale * black + (gu + gv) * 512.0),
+            offset(y_scale * black + bu * 512.0),
+        },
+        .y_clamp = if (full) 0 | 1023 << 16 else 64 | 940 << 16,
+        .uv_clamp = if (full) 0 | 1023 << 16 else 64 | 960 << 16,
+    };
+}
+
+/// BT.601 and BT.709, video's range and the whole byte.
+const matrices = [2][2]Matrix{
+    .{ matrixOf(0.299, 0.114, false), matrixOf(0.299, 0.114, true) },
+    .{ matrixOf(0.2126, 0.0722, false), matrixOf(0.2126, 0.0722, true) },
+};
+
+/// A picture as the layer reads it: where the part shown starts in each
+/// plane, the planes' pitches, whether the colour is in two planes
+/// (`planar`: I420) or one (NV12), the part's size, and its colours
+/// (`RtgYuv`).
+pub const VideoPicture = struct {
+    y: usize,
+    u: usize,
+    v: usize,
+    y_pitch: u32,
+    c_pitch: u32,
+    planar: bool,
+    width: u32,
+    height: u32,
+    bt709: bool,
+    full: bool,
+};
+
+/// Where on the display the picture goes, inside it, at least two pixels
+/// each way, and the scaler's steps across and down (`videoStep`): those
+/// of the whole picture and its whole place, where the display cuts
+/// either.
+pub const VideoPlace = struct {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    step_x: u32,
+    step_y: u32,
+};
+
+/// The scaler's filter loaded and the layer off: for a layer just taken.
+pub fn videoStart() void {
+    hold();
+    dc(OVERLAY_CONFIG).* = OVERLAY_OFF;
+    dc(OVERLAY_SCALE_CONFIG).* = SCALE_TAPS;
+    dc(OVERLAY_INIT_OFFSET).* = 0x8000_8000;
+    dc(OVERLAY_H_FILTER_INDEX).* = 0;
+    for (filter) |word| dc(OVERLAY_H_FILTER_DATA).* = word;
+    dc(OVERLAY_V_FILTER_INDEX).* = 0;
+    for (filter[0..vertical_words]) |word| dc(OVERLAY_V_FILTER_DATA).* = word;
+    dc(OVERLAY_CONFIG).* = OVERLAY_OFF | OVERLAY_COMMIT;
+    letGo();
+}
+
+/// The picture shown in its place from the next frame, scaled by the
+/// place's steps.
+pub fn videoShow(picture: VideoPicture, place: VideoPlace) void {
+    const format = if (picture.planar) FORMAT_I420 else FORMAT_NV12;
+    const config = OVERLAY_YUV | OVERLAY_ENABLE | format << OVERLAY_FORMAT_SHIFT |
+        @as(u32, @intFromBool(picture.bt709)) << OVERLAY_SPACE_SHIFT;
+    const matrix = &matrices[@intFromBool(picture.bt709)][@intFromBool(picture.full)];
+    hold();
+    dc(OVERLAY_CONFIG).* = config;
+    dc(OVERLAY_Y_ADDRESS).* = @truncate(picture.y);
+    dc(OVERLAY_U_ADDRESS).* = @truncate(picture.u);
+    dc(OVERLAY_V_ADDRESS).* = @truncate(picture.v);
+    dc(OVERLAY_Y_STRIDE).* = picture.y_pitch;
+    dc(OVERLAY_U_STRIDE).* = picture.c_pitch;
+    dc(OVERLAY_V_STRIDE).* = picture.c_pitch;
+    dc(OVERLAY_SIZE).* = picture.width | picture.height << 15;
+    dc(OVERLAY_TOP_LEFT).* = place.x | place.y << 15;
+    dc(OVERLAY_BOTTOM_RIGHT).* = (place.x + place.width) | (place.y + place.height) << 15;
+    dc(OVERLAY_SCALE_X).* = place.step_x;
+    dc(OVERLAY_SCALE_Y).* = place.step_y;
+    const scaled = place.step_x != unscaled or place.step_y != unscaled;
+    dc(OVERLAY_SCALE_CONFIG).* = if (scaled) SCALE_TAPS | SCALE_ON else SCALE_TAPS;
+    for (matrix.coefficients, 0..) |word, i| dc(OVERLAY_COEFFICIENTS + 0x40 * i).* = word;
+    for (matrix.offsets, 0..) |word, i| dc(OVERLAY_OFFSETS + 0x40 * i).* = word;
+    dc(OVERLAY_Y_CLAMP).* = matrix.y_clamp;
+    dc(OVERLAY_UV_CLAMP).* = matrix.uv_clamp;
+    dc(OVERLAY_SRC_ALPHA).* = 0xFF00_0000;
+    dc(OVERLAY_DST_ALPHA).* = 0xFF00_0000;
+    dc(OVERLAY_BLEND).* = OVERLAY_BLEND_NONE;
+    dc(OVERLAY_CONFIG).* = config | OVERLAY_COMMIT;
+    letGo();
+}
+
+/// The scaler's step from `read` pixels of the picture to `shown` of the
+/// display, both at least two: 16.16, the first and the last pixel of
+/// each meeting.
+pub fn videoStep(read: u32, shown: u32) u32 {
+    if (read == shown) return unscaled;
+    return @intCast((@as(u64, read - 1) << 16) / (shown - 1));
+}
+
+/// The step of a picture shown at its own size.
+pub const unscaled: u32 = 1 << 16;
+
+/// Nothing on the layer from the next frame.
+pub fn videoHide() void {
+    hold();
+    dc(OVERLAY_CONFIG).* = OVERLAY_OFF;
+    dc(OVERLAY_CONFIG).* = OVERLAY_OFF | OVERLAY_COMMIT;
+    letGo();
+}
+
+/// The colours the primary plane is clear at, over the video layer: each
+/// channel from `low`'s to `high`'s, 0x00RRGGBB, whatever the alpha.
+pub const VideoKey = struct { low: u32, high: u32 };
+
+/// The layer under the primary plane, seen where the primary's pixel is
+/// within `key` - or with null over it, as U-Boot leaves them.
+pub fn videoOrder(key: ?VideoKey) void {
+    hold();
+    if (key) |colours| {
+        dc(FRAMEBUFFER_KEY_LOW).* = colours.low & 0x00FF_FFFF;
+        dc(FRAMEBUFFER_KEY_HIGH).* = 0xFF00_0000 | (colours.high & 0x00FF_FFFF);
+        dc(FRAMEBUFFER_CONFIG).* = (dc(FRAMEBUFFER_CONFIG).* & ~FRAMEBUFFER_TRANSPARENCY) | FRAMEBUFFER_KEYED;
+        dc(FRAMEBUFFER_CONFIG_EX).* = (dc(FRAMEBUFFER_CONFIG_EX).* & ~FRAMEBUFFER_ORDER) | 1 << FRAMEBUFFER_ORDER_SHIFT;
+        dc(OVERLAY_ORDER).* = 0;
+    } else {
+        dc(FRAMEBUFFER_CONFIG).* &= ~FRAMEBUFFER_TRANSPARENCY;
+        dc(FRAMEBUFFER_CONFIG_EX).* &= ~FRAMEBUFFER_ORDER;
+        dc(OVERLAY_ORDER).* = 1;
+    }
+    letGo();
+}

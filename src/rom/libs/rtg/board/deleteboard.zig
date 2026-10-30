@@ -31,7 +31,8 @@ const _board = @import("_board.zig");
 /// BEHAVIOR:
 /// A board that still has an event server on it is refused, with
 /// `RTGERR_IN_USE` in `RtgLastError`, and nothing of it is touched: the
-/// server's node would be left linked into a list that is freed.
+/// server's node would be left linked into a list that is freed. So is
+/// one with a video layer still open (`CloseVideoLayer` first).
 /// Otherwise it is taken off the display first, then every buffer it still has is
 /// freed, the driver's `destroy` is called, and the board leaves the list.
 /// The driver and a transport it used are one open less.
@@ -63,12 +64,17 @@ pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
     const sys = rb.sys_base;
     const private = privateOf(gone);
 
-    // A server still on it is someone's node in a list about to be freed.
+    // A server still on it is someone's node in a list about to be freed,
+    // and a video layer someone's handle on a plane of it.
     for (&gone.event_lists) |*list| {
         if (list.first() != null) {
             rb.last_error = err.RTGERR_IN_USE;
             return;
         }
+    }
+    if (private.video_layers != 0) {
+        rb.last_error = err.RTGERR_IN_USE;
+        return;
     }
 
     // Nothing is left looking at it, and nothing of it is left up.

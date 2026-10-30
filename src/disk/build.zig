@@ -31,6 +31,7 @@ pub const catalogs = [_]Catalog{
     .{ .disk = "locale/Catalogs/deutsch/programs/Notepad.catalog", .descriptor = "programs/notepad/notepad.cd", .translation = "programs/notepad/catalogs/deutsch.ct", .name = "programs/Notepad.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/programs/Sheet.catalog", .descriptor = "programs/sheet/sheet.cd", .translation = "programs/sheet/catalogs/deutsch.ct", .name = "programs/Sheet.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/deutsch.ct", .name = "programs/Player.catalog" },
+    .{ .disk = "locale/Catalogs/deutsch/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/deutsch.ct", .name = "programs/Movie.catalog" },
 };
 
 /// Code compiled into each program that imports it, by name, rather than
@@ -95,6 +96,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet", .strings = "programs/sheet/sheet.cd" },
     .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal" },
     .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player", .strings = "programs/player/player.cd" },
+    .{ .disk = "programs/Movie", .source = "programs/movie/movie.zig", .name = "movie", .strings = "programs/movie/movie.cd" },
     .{ .disk = "programs/Volume", .source = "programs/volume/volume.zig", .name = "volume" },
     // The dock, one program in either place (`builtFor`).
     .{ .disk = "programs/Dock", .source = "programs/dock/dock.zig", .name = "dock" },
@@ -361,6 +363,8 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/Ogg", .source = "devs/datatypes/Ogg" },
     .{ .disk = "devs/datatypes/AAC", .source = "devs/datatypes/AAC" },
     .{ .disk = "devs/datatypes/M4A", .source = "devs/datatypes/M4A" },
+    .{ .disk = "devs/datatypes/MP4", .source = "devs/datatypes/MP4" },
+    .{ .disk = "devs/datatypes/MOV", .source = "devs/datatypes/MOV" },
     .{ .disk = "devs/datatypes/M3U", .source = "devs/datatypes/M3U" },
     .{ .disk = "devs/datatypes/PLS", .source = "devs/datatypes/PLS" },
     .{ .disk = "devs/datatypes/ANIM", .source = "devs/datatypes/ANIM" },
@@ -459,6 +463,7 @@ pub const files = [_]File{
     .{ .disk = "programs/Docs/Battery.md", .source = "programs/battery/README.md" },
     .{ .disk = "programs/Docs/Dock.md", .source = "programs/dock/README.md" },
     .{ .disk = "programs/Docs/FontView.md", .source = "programs/fontview/README.md" },
+    .{ .disk = "programs/Docs/Movie.md", .source = "programs/movie/README.md" },
     .{ .disk = "programs/Docs/MultiView.md", .source = "programs/multiview/README.md" },
     .{ .disk = "programs/Docs/Notepad.md", .source = "programs/notepad/README.md" },
     .{ .disk = "programs/Docs/Player.md", .source = "programs/player/README.md" },

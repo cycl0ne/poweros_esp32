@@ -24,6 +24,7 @@ Generated from the source by `./zig build autodoc`.
 - [BoardControl](#boardcontrol) - Asks a board something only its driver knows about.
 - [BoardDisplayBitMap](#boarddisplaybitmap) - Tells which buffer a board is showing.
 - [BoardMode](#boardmode) - Tells which mode a board is in.
+- [CloseVideoLayer](#closevideolayer) - Gives a video layer back to its board.
 - [CopyRect](#copyrect) - Copies a rectangle between buffers with the board's engine.
 - [CopyRects](#copyrects) - Copies several rectangles from one buffer to another as one job of the board's engine.
 - [CreateBoardTagList](#createboardtaglist) - Makes a board from a driver.
@@ -44,9 +45,11 @@ Generated from the source by `./zig build autodoc`.
 - [MirrorBoard](#mirrorboard) - Mirrors a board's picture about each axis.
 - [MoveBoardOverlay](#moveboardoverlay) - Puts the overlay's point at (x, y), and from then on keeps it there rather than with the pointer.
 - [MoveBoardPointer](#moveboardpointer) - Puts the pointer's point at a place on the picture.
+- [MoveVideoLayer](#movevideolayer) - Puts a video layer somewhere on the display, or hides it.
 - [NextBoard](#nextboard) - Walks the list of boards.
 - [NextBoardMode](#nextboardmode) - Walks a board's modes.
 - [NextRtgDriver](#nextrtgdriver) - Walks the driver list.
+- [OpenVideoLayer](#openvideolayer) - Takes one of a board's video layers: a plane of its controller that shows a picture in YUV itself, scaled into a place on the display.
 - [PackRtgColor](#packrtgcolor) - Packs three eight-bit channels into one pixel of a format.
 - [RefreshBitMap](#refreshbitmap) - Hands rows of a buffer that were written on to the display.
 - [RefreshRect](#refreshrect) - Hands a rectangle of a buffer that was written on to the display.
@@ -65,6 +68,7 @@ Generated from the source by `./zig build autodoc`.
 - [ShowBitMap](#showbitmap) - Shows a buffer on a board's display.
 - [ShowBitMapBands](#showbitmapbands) - Shows several of a board's buffers at once, each in a band of display lines.
 - [ShowBoardPointer](#showboardpointer) - Shows a board's pointer, or hides it.
+- [ShowVideoFrame](#showvideoframe) - Shows a picture in YUV on a video layer, scaled into its place.
 - [SignalRtgEvent](#signalrtgevent) - Tells a board's servers that one of its events happened.
 - [SwapBoardAxes](#swapboardaxes) - Exchanges a board's axes.
 - [TxColor](#txcolor) - Sends a command and a run of pixels to the part on a bus.
@@ -760,6 +764,62 @@ None known.
 const mode = rb.BoardMode(board) orelse return error.NoMode;
 ```
 
+## CloseVideoLayer
+
+Gives a video layer back to its board.
+
+**SYNOPSIS**
+
+```zig
+fn CloseVideoLayer(rb: *RtgBase, layer: ?*rtg.RtgVideoLayer) void
+```
+
+**SINCE**
+
+1.10. LVO -268.
+
+**INPUTS**
+
+- `layer` - what `OpenVideoLayer` answered, or null, which does
+  nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Nothing is shown on the layer from the next frame, and the board's
+picture is seen whole again - its key colour as a colour. When this
+returns the controller no longer reads the last picture shown, which
+may then be given back to whoever lent it.
+
+**CONTEXT**
+
+- Waits: for the next frame.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The layer is freed and must not be used again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenVideoLayer`
+
+**EXAMPLES**
+
+```zig
+rb.CloseVideoLayer(layer);
+vcb.ReleaseVideoFrame(film, &shown);
+```
+
 ## CopyRect
 
 Copies a rectangle between buffers with the board's engine.
@@ -1039,7 +1099,8 @@ Nothing.
 
 A board that still has an event server on it is refused, with
 `RTGERR_IN_USE` in `RtgLastError`, and nothing of it is touched: the
-server's node would be left linked into a list that is freed.
+server's node would be left linked into a list that is freed. So is
+one with a video layer still open (`CloseVideoLayer` first).
 Otherwise it is taken off the display first, then every buffer it still has is
 freed, the driver's `destroy` is called, and the board leaves the list.
 The driver and a transport it used are one open less.
@@ -1913,6 +1974,71 @@ None known.
 rb.MoveBoardPointer(board, event.x, event.y);
 ```
 
+## MoveVideoLayer
+
+Puts a video layer somewhere on the display, or hides it.
+
+**SYNOPSIS**
+
+```zig
+fn MoveVideoLayer(_: *RtgBase, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgRect) i32
+```
+
+**SINCE**
+
+1.10. LVO -276.
+
+**INPUTS**
+
+- `layer` - the layer.
+- `place` - where its picture is shown, scaled to fill it, in the
+  display's coordinates. It may lie partly off the display. An empty
+  one hides the layer.
+
+**RESULT**
+
+`RTGERR_OK`; `RTGERR_BAD_ARG` when the picture shown cannot be scaled
+into the place (`max_up`, `max_down`), which hides the layer until a
+place or a picture it can show.
+
+**BEHAVIOR**
+
+The place is taken from the next frame. The picture shown stays, and
+is shown in the new place: a window dragged with a paused film in it
+takes the film along. Under the board's picture, the layer is seen
+only where the picture has its key colour, so its place is normally
+the place a program filled with that colour.
+
+A screen's coordinates are the display's from its top edge down: a
+window's place on the display is its place on its screen, its screen's
+top edge (`SA_Top`) added.
+
+**CONTEXT**
+
+- Waits: only if the driver does.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ShowVideoFrame`, `OpenVideoLayer`
+
+**EXAMPLES**
+
+```zig
+const place = rtg.RtgRect{ .x = left + box.min_x, .y = top + box.min_y, .width = box.width(), .height = box.height() };
+_ = rb.MoveVideoLayer(layer, &place);
+```
+
 ## NextBoard
 
 Walks the list of boards.
@@ -2073,6 +2199,77 @@ rb.LockRtgDrivers();
 defer rb.UnlockRtgDrivers();
 var driver = rb.NextRtgDriver(null);
 while (driver) |d| : (driver = rb.NextRtgDriver(d)) list(d);
+```
+
+## OpenVideoLayer
+
+Takes one of a board's video layers: a plane of its controller that shows a picture in YUV itself, scaled into a place on the display.
+
+**SYNOPSIS**
+
+```zig
+fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) ?*rtg.RtgVideoLayer
+```
+
+**SINCE**
+
+1.10. LVO -264.
+
+**INPUTS**
+
+- `board` - the board, a screen's (intuition's `SA_Board`) or one of
+  the caller's own.
+- `tag_list` - `RTGVA_Under` (bool): under the board's picture, seen
+  through the layer's key colour - TRUE unless given; FALSE puts it
+  over the picture.
+
+**RESULT**
+
+The layer, or null with `RtgLastError` saying why:
+`RTGERR_NOT_SUPPORTED` for a board without `RTGBC_VIDEO`,
+`RTGERR_IN_USE` when its layers are all taken, `RTGERR_NO_MEMORY`.
+
+**BEHAVIOR**
+
+The layer comes with nothing on it and no place: `MoveVideoLayer`
+puts it somewhere, and `ShowVideoFrame` hands it pictures. Its fields
+say what it is: `RTGVLF_UNDER` in `flags` where it is under the
+picture - a board that cannot put its picture over a layer opens it
+over, asked or not - with `key` the colour the picture shows it
+through; and how large a picture it takes and how far it scales one.
+
+Under the picture, the layer is seen only where the picture is `key`:
+a program fills its film's place with that colour, and whatever is
+laid over the place - another window, a menu, the pointer - hides the
+film as it would hide anything. While a layer is under it, the board's
+whole picture shows that colour as the layer, or as black off the
+layer's place.
+
+**CONTEXT**
+
+- Waits: if the driver does.
+- Interrupts: no.
+- Locks: no spinlock may be held: a driver may wait.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The layer is the caller's until `CloseVideoLayer`, which must come
+before the board is deleted.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CloseVideoLayer`, `ShowVideoFrame`, `MoveVideoLayer`
+
+**EXAMPLES**
+
+```zig
+const layer = rb.OpenVideoLayer(board, null) orelse return putThroughGraphics();
+defer rb.CloseVideoLayer(layer);
 ```
 
 ## PackRtgColor
@@ -3184,6 +3381,78 @@ None known.
 
 ```zig
 _ = rb.ShowBoardPointer(board, false);
+```
+
+## ShowVideoFrame
+
+Shows a picture in YUV on a video layer, scaled into its place.
+
+**SYNOPSIS**
+
+```zig
+fn ShowVideoFrame(_: *RtgBase, layer: *rtg.RtgVideoLayer, picture: ?*const rtg.RtgYuv, src: ?*const rtg.RtgRect) i32
+```
+
+**SINCE**
+
+1.10. LVO -272.
+
+**INPUTS**
+
+- `layer` - the layer.
+- `picture` - the planes, as a decoder lends them (`RtgYuv`), or null
+  to show nothing.
+- `src` - the part of the picture shown, which is how its size is
+  known: the whole of a frame is (0, 0) by its width and height.
+  Needed with a picture; not read without one.
+
+**RESULT**
+
+`RTGERR_OK`; `RTGERR_BAD_ARG` for a picture without a part, an empty
+part, or one the layer cannot read - its planes where the controller
+does not reach, rows it cannot step, more than `max_width` by
+`max_height` - or scale into its place (`max_up`, `max_down`).
+
+**BEHAVIOR**
+
+The picture is shown from the next frame on, its part scaled into the
+layer's place (`MoveVideoLayer`), its colours as `RtgYuv.colors` says.
+The call returns once the controller has taken it: the picture shown
+before is no longer read, and may be given back. This one is read
+until the next is shown, or the layer is closed, so it stays lent
+until then.
+
+A picture the layer cannot take shows nothing, and is put down
+through graphics instead (`ScaleYUVPixelArray`).
+
+**CONTEXT**
+
+- Waits: for the next frame.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The planes stay the caller's; the layer reads them until the next
+picture is shown.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`MoveVideoLayer`, `OpenVideoLayer`
+
+**EXAMPLES**
+
+```zig
+const all = rtg.RtgRect{ .width = @intCast(frame.width), .height = @intCast(frame.height) };
+if (rb.ShowVideoFrame(layer, &frame.picture, &all) == rtg.errors.RTGERR_OK) {
+    if (shown) |*old| vcb.ReleaseVideoFrame(film, old);
+    shown = frame;
+}
 ```
 
 ## SignalRtgEvent

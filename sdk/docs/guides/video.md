@@ -8,11 +8,13 @@ audio.device. Underneath, media.library reads the container (MP4 and
 QuickTime's MOV) and hands out each track's packets, the chip's decoder
 (videodec.resource, the WAVE511 on the VisionFive 2) decodes H.264 and
 H.265, the library decodes Motion JPEG itself, and audiocodec.library
-decodes the sound. graphics' `WriteYUVPixelArray` and
-`ScaleYUVPixelArray` put a frame into a window as it comes out.
+decodes the sound. A display's video layer (rtg's `ShowVideoFrame`)
+shows a frame as it comes out; graphics' `WriteYUVPixelArray` and
+`ScaleYUVPixelArray` put one into a window where there is none.
 
-This guide is opening a film, its pictures, its sound, keeping them
-together, moving in it, and what decodes what.
+This guide is opening a film, its pictures, showing them on a video
+layer, its sound, keeping them together, moving in it, and what decodes
+what.
 
 ## Opening a film
 
@@ -63,6 +65,33 @@ microseconds from the start of what the film presents; `number` counts
 the frames handed out. `VCERR_CORRUPT` is one picture the decoder
 stopped on: calling again goes on with the next. `VCERR_END` follows the
 last.
+
+## On a video layer
+
+Where the screen's display has a video layer
+([Video layers](rtg.md#video-layers)), the frame is handed to it as it
+is, and the processor does nothing more for it:
+
+```zig
+var board: usize = 0;
+ib.GetScreenAttrs(screen, &[_]utility.TagItem{ .{ .tag = sc.SA_Board, .data = @intFromPtr(&board) }, .{} });
+const layer = rb.OpenVideoLayer(@ptrFromInt(board), null);
+// The film's box in the window filled with layer.key, the layer moved there.
+const all = rtg.RtgRect{ .width = @intCast(frame.width), .height = @intCast(frame.height) };
+if (rb.ShowVideoFrame(layer, &frame.picture, &all) == rtg.errors.RTGERR_OK) {
+    if (shown) |*old| vcb.ReleaseVideoFrame(film, old);
+    shown = frame;
+}
+```
+
+Every frame videocodec hands out - the chip's, and its own Motion JPEG
+ones - is where a layer reads it, with nothing of it left in the
+caches. The frame shown stays lent until the next is shown: the
+`VIDEO_HELD_FRAMES` are then one on the layer, one waiting, and one
+being decoded. A program follows its window with the layer - on
+`IDCMP_CHANGEWINDOW`, windowclass's `WMHI_CHANGEWINDOW` - and closes the
+layer before it gives back the last frame. Movie does all of this, and
+puts the film through graphics where it gets no layer.
 
 ## The sound
 

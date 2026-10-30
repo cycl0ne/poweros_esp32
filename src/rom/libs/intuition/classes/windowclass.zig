@@ -388,6 +388,7 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
             },
             wn.IDCMP_MOUSEWHEEL => wc.WMHI_MOUSEWHEEL | (said & 0xFFFF),
             wn.IDCMP_USBCHANGE => wc.WMHI_USBCHANGE | (said & 0xFFFF),
+            wn.IDCMP_CHANGEWINDOW => wc.WMHI_CHANGEWINDOW,
             else => continue,
         };
         if (code) |out| out.* = said;

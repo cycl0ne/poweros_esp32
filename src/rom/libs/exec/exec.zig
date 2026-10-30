@@ -3952,9 +3952,11 @@ test "memory pools: puddles, the threshold, clearing" {
         FreePooled(SysBase, pool, blocks[10], 24);
         try testing.expectEqual(blocks[10], AllocPooled(SysBase, pool, 24).?);
 
-        // Nothing has to be freed first, and it all comes back.
+        // Nothing has to be freed first, and it all comes back - the
+        // pool's lock too: no hold is left naming the freed pool.
         DeletePool(SysBase, pool);
         try testing.expectEqual(before, AvailMem(SysBase, MEMF_ANY));
+        try testing.expectEqual(@as(usize, 0), holdCount(SysBase.cpu().this_task));
 
         DeletePool(SysBase, null); // ignored
         try testing.expect(AllocPooled(SysBase, null, 8) == null);

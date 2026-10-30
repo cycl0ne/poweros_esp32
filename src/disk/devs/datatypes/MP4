@@ -1,0 +1,1 @@
+NAME=MP4 BASE=videocodec GROUP=movi ID=MP4 MASK=????ftyp PATTERN=#?.(mp4|m4v) TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Movie

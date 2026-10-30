@@ -35,6 +35,8 @@ pub const Private = struct {
     mode: ?*rtg.RtgMode = null,
     /// How often a new buffer was shown.
     buffer_swaps: u32 = 0,
+    /// Video layers open on it (OpenVideoLayer).
+    video_layers: u32 = 0,
 };
 
 /// The library's own record around a board's handle.
@@ -160,6 +162,8 @@ pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     if (ops.blend_pixels != null) caps |= rtg.boards.RTGBC_BLEND_PIXELS;
     if (ops.blend_rect != null) caps |= rtg.boards.RTGBC_BLEND_RECT;
     if (ops.scale_pixels != null) caps |= rtg.boards.RTGBC_SCALE_PIXELS;
+    // A layer is all four or none, as the pointer is.
+    if (ops.video_open != null and ops.video_close != null and ops.video_show != null and ops.video_move != null) caps |= rtg.boards.RTGBC_VIDEO;
     return caps;
 }
 

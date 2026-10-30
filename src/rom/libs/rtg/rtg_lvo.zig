@@ -54,6 +54,10 @@ const FillRect = @import("engine/fillrect.zig").FillRect;
 const InvertRect = @import("engine/invertrect.zig").InvertRect;
 const CopyRect = @import("engine/copyrect.zig").CopyRect;
 const CopyRects = @import("engine/copyrects.zig").CopyRects;
+const OpenVideoLayer = @import("video/openvideolayer.zig").OpenVideoLayer;
+const CloseVideoLayer = @import("video/closevideolayer.zig").CloseVideoLayer;
+const ShowVideoFrame = @import("video/showvideoframe.zig").ShowVideoFrame;
+const MoveVideoLayer = @import("video/movevideolayer.zig").MoveVideoLayer;
 const BlitTemplate = @import("engine/blittemplate.zig").BlitTemplate;
 const BlitPattern = @import("engine/blitpattern.zig").BlitPattern;
 const WaitBlit = @import("engine/waitblit.zig").WaitBlit;
@@ -355,6 +359,22 @@ fn lvoCopyRects(rb: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies:
     return CopyRects(rb, src, dest, copies, count);
 }
 
+fn lvoOpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) ?*rtg.RtgVideoLayer {
+    return OpenVideoLayer(rb, board, tag_list);
+}
+
+fn lvoCloseVideoLayer(rb: *RtgBase, layer: ?*rtg.RtgVideoLayer) callconv(.c) void {
+    CloseVideoLayer(rb, layer);
+}
+
+fn lvoShowVideoFrame(rb: *RtgBase, layer: *rtg.RtgVideoLayer, picture: ?*const rtg.RtgYuv, src: ?*const rtg.RtgRect) callconv(.c) i32 {
+    return ShowVideoFrame(rb, layer, picture, src);
+}
+
+fn lvoMoveVideoLayer(rb: *RtgBase, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgRect) callconv(.c) i32 {
+    return MoveVideoLayer(rb, layer, place);
+}
+
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
@@ -423,6 +443,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoScalePixels),
     vec(lvoRefreshRect),
     vec(lvoCopyRects),
+    vec(lvoOpenVideoLayer),
+    vec(lvoCloseVideoLayer),
+    vec(lvoShowVideoFrame),
+    vec(lvoMoveVideoLayer),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -430,7 +454,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 65), vectors.len);
+    try testing.expectEqual(@as(usize, 69), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);
