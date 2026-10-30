@@ -4,7 +4,7 @@
 //! timed beside it, in each pixel format it may be given. Built against
 //! the SDK only.
 //!
-//!   Engine ROUNDS/K/N,LOAD/K/N,DRAG/K/N
+//!   Engine ROUNDS/K/N,LOAD/K/N,DRAG/K/N,PACED/S
 //!
 //! The cases run first in the format the display runs in, then in RGB565
 //! and BGRA32 where that is neither: the formats boards' engines draw in.
@@ -52,6 +52,10 @@
 //! prints the time a step takes and the starved frames before and after:
 //! whether the stream holds up while the board puts the picture back
 //! and lays the images at every step. The pointer goes back where it was.
+//! With PACED it takes one step a frame instead, waiting for the display
+//! between them, so the overlay can be watched as it goes - a display
+//! that lays it as a plane of its own catches it at many places in one
+//! frame otherwise, and shows it in strips.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -70,10 +74,10 @@ const Printf = dos.stdio.Printf;
 const B = rtg.boards;
 
 pub const COMMAND_NAME = "Engine";
-const VERSION_STRING = "\x00$VER: Engine 1.3 (19.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Engine 1.4 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "ROUNDS/K/N,LOAD/K/N,DRAG/K/N";
+const template = "ROUNDS/K/N,LOAD/K/N,DRAG/K/N,PACED/S";
 
 /// A fill: where.
 const FillCase = struct { x: i32, y: i32, width: i32, height: i32 };
@@ -568,8 +572,8 @@ fn starved(rb: *RtgBase, board: *rtg.RtgBoard) u32 {
 const drag_size: u32 = 128;
 
 /// DRAG: an overlay following the pointer, the pointer moved `steps`
-/// times along the diagonal and back.
-fn dragTest(dl: *DosBase, rb: *RtgBase, sys: *ExecBase, board: *rtg.RtgBoard, tb: *TimerBase, info: *const rtg.RtgBoardInfo, steps: u32) i32 {
+/// times along the diagonal and back - one step a frame where `paced`.
+fn dragTest(dl: *DosBase, rb: *RtgBase, sys: *ExecBase, board: *rtg.RtgBoard, tb: *TimerBase, info: *const rtg.RtgBoardInfo, steps: u32, paced: bool) i32 {
     const pitch = drag_size * 2;
     const memory = sys.AllocVec(pitch * drag_size, exec.MEMF_ANY) orelse {
         _ = Printf(dl, "No memory for the overlay\n", .{});
@@ -605,6 +609,7 @@ fn dragTest(dl: *DosBase, rb: *RtgBase, sys: *ExecBase, board: *rtg.RtgBoard, tb
         const lap: i32 = @intCast(step * 4 % @as(u32, @intCast(span * 2)));
         const along = if (lap < span) lap else span * 2 - lap;
         rb.MoveBoardPointer(board, along, along);
+        if (paced) _ = rb.WaitVBlank(board, 0);
     }
     const took = now(tb) - start;
     const after = starved(rb, board);
@@ -628,7 +633,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [3]usize = @splat(0);
+    var argv: [4]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -671,7 +676,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     if (argv[2] != 0) {
         const steps: u32 = @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[2])).*));
-        return dragTest(dl, rb, sys, board, tb, &info, steps);
+        return dragTest(dl, rb, sys, board, tb, &info, steps, argv[3] != 0);
     }
 
     var t = Test{
