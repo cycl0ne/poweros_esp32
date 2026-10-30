@@ -227,7 +227,7 @@ All are in the ROM.
 | battery.resource | the board's battery: whether a cell is there, its voltage and charge, external power and charging, a signal when that changes | [md](autodocs/battery.md) · [doc](autodocs/battery.doc) |
 | battclock.resource | the date kept while the system is off or restarts: the board's clock chip, else the chip's RTC timer; the system time set from it at the boot | [md](autodocs/battclock.md) · [doc](autodocs/battclock.doc) |
 | battmem.resource | a few hundred bits of settings that need no file read, kept over a reset where the chip can (the ESP32s' RTC memory): the time zone the file systems stamp with | [md](autodocs/battmem.md) · [doc](autodocs/battmem.doc) |
-| thermal.resource | the board's temperatures as its sensors read them (the JH7110's own), each with its chip's hot and critical limits, a signal when a reading passes one | [md](autodocs/thermal.md) · [doc](autodocs/thermal.doc) |
+| thermal.resource | the board's temperatures as its sensors read them (the JH7110's own, the BCM2712's), each with its chip's hot and critical limits, a signal when a reading passes one; the board's fans turned as the first sensor's temperature asks (the CM5 IO board's, on the RP1's PWM) | [md](autodocs/thermal.md) · [doc](autodocs/thermal.doc) |
 | watchdog.resource | the chip's watchdog timer, armed, fed and disarmed by programs | [md](autodocs/watchdog.md) · [doc](autodocs/watchdog.doc) |
 
 ## Handlers

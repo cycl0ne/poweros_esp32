@@ -169,6 +169,10 @@ pub const SA_PixelFormat = SA_Dummy + 0x010C;
 /// go on it - a dock, a bin - shows where it would land while it is
 /// still on its way. `GetScreenAttrs` only.
 pub const SA_Dragging = SA_Dummy + 0x010D;
+/// Read only: the display it is on, an `*rtg.RtgBoard` - for a program
+/// that hands the display something of its own, a film to a video layer
+/// (`OpenVideoLayer`). `GetScreenAttrs` only.
+pub const SA_Board = SA_Dummy + 0x010E;
 
 /// `SA_Type`: a screen of its program's own, or a public one.
 pub const PUBLICSCREEN: u32 = 0x0002;

@@ -6,12 +6,13 @@
 //! status) - and asked whether its link is up and what the two ends
 //! agreed on.
 //!
-//! **One maker's part.** On RGMII the PHY delays the clocks against the
+//! **Two makers' parts.** On RGMII the PHY delays the clocks against the
 //! data and drives its lines as the board's wiring needs, which the
 //! board's part says (`Wiring`); Motorcomm's YT8531 is told so through
 //! its extended registers (`configure`), and sends its clock inverted at
-//! the speeds the board asks once the link is up (`settle`). Any other
-//! PHY keeps what it starts with.
+//! the speeds the board asks once the link is up (`settle`); Broadcom's
+//! BCM54210PE takes its two delays through its shadow registers. Any
+//! other PHY keeps what it starts with.
 //!
 //! The PHY has no interrupt line here, so the device asks `link` every
 //! so often.
@@ -112,7 +113,9 @@ pub fn resetDone(address: u32) bool {
 
 /// After its reset: the PHY set up as the board's wiring asks.
 pub fn configure(address: u32, wiring: *const Wiring) void {
-    if (identify(address) == yt8531_id) yt8531.configure(address, wiring);
+    const id = identify(address) orelse return;
+    if (id == yt8531_id) yt8531.configure(address, wiring);
+    if (id & bcm54210.id_mask == bcm54210.id) bcm54210.configure(address, wiring);
 }
 
 /// Negotiation of every speed the PHY and the MAC offer, started.
@@ -154,6 +157,53 @@ pub fn link(address: u32) Link {
 pub fn settle(address: u32, up: Link, wiring: *const Wiring) void {
     if (identify(address) == yt8531_id) yt8531.settle(address, up, wiring);
 }
+
+// --- Broadcom's BCM54210PE ------------------------------------------------
+
+/// The CM5's PHY, and the Pi 5's BCM54213PE beside it in the last bits of
+/// its identifier. It delays each clock by a fixed amount or not at all
+/// (Linux's bcm54xx_config_clock_delay): a delay of 0 is off, any other
+/// on.
+const bcm54210 = struct {
+    const id: u32 = 0x600D_84A0;
+    const id_mask: u32 = 0xFFFF_FFF0;
+
+    /// Auxiliary control, a register of many: the one to read named in
+    /// bits 12 up with 7 in the low bits, the one to write in the low bits
+    /// alone. Its "misc" one: writes taken, the receive clock delayed.
+    const aux_control = 0x18;
+    const aux_read_shift = 12;
+    const aux_select: u16 = 7;
+    const aux_misc: u16 = 7;
+    const misc_write: u16 = 1 << 15;
+    const misc_rx_delay: u16 = 1 << 8;
+
+    /// The shadow registers, the one wanted in bits 10 up, the write bit
+    /// on top, ten bits of data below. Its clock control: the send clock
+    /// delayed.
+    const shadow = 0x1C;
+    const shadow_write: u16 = 1 << 15;
+    const shadow_select_shift = 10;
+    const shadow_data_mask: u16 = 0x3FF;
+    const clock_control: u16 = 3;
+    const clock_tx_delay: u16 = 1 << 9;
+
+    fn configure(address: u32, wiring: *const Wiring) void {
+        if (wiring.rx_delay != unset) {
+            if (!mac.writePhy(address, aux_control, aux_select | aux_misc << aux_read_shift)) return;
+            const misc = mac.readPhy(address, aux_control) orelse return;
+            const value = if (wiring.rx_delay != 0) misc | misc_rx_delay else misc & ~misc_rx_delay;
+            _ = mac.writePhy(address, aux_control, value | misc_write | aux_misc);
+        }
+        if (wiring.tx_delay != unset) {
+            const select = clock_control << shadow_select_shift;
+            if (!mac.writePhy(address, shadow, select)) return;
+            const clock = (mac.readPhy(address, shadow) orelse return) & shadow_data_mask;
+            const value = if (wiring.tx_delay != 0) clock | clock_tx_delay else clock & ~clock_tx_delay;
+            _ = mac.writePhy(address, shadow, shadow_write | select | value);
+        }
+    }
+};
 
 // --- Motorcomm's YT8531 ---------------------------------------------------
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! thermal.resource's ROM tag, and the init routine it names: the board's
-//! sensors found and started, and the task that reads them started.
+//! sensors found and started, its fans found and started at full speed,
+//! and the task that reads the sensors and turns the fans started.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -10,13 +11,14 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const thermal_lvo = @import("thermal_lvo.zig");
 const ThermalBase = @import("thermal_base.zig").ThermalBase;
 const _sense = @import("sense/_sense.zig");
+const _fan = @import("fan/_fan.zig");
 const task = @import("sense/task.zig");
 
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = thermal.THERMALNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 0;
-const BUILD_DATE = "21.10.2026";
+pub const RESOURCE_REVISION = 1;
+const BUILD_DATE = "30.10.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -27,9 +29,10 @@ fn thermalBase(lib: *exec.Library) *ThermalBase {
 }
 
 /// ResInit: the board's sensors found and started, each one's name and
-/// limits stored, and the task that reads started. On a board without a
-/// sensor the resource is made all the same, and answers that it has
-/// none.
+/// limits stored, its fans found and started at full speed, and the task
+/// that reads started. On a board without a sensor the resource is made
+/// all the same, and answers that it has none; its fans, if it has any,
+/// stay at full speed.
 ///
 /// CONTEXT:
 /// - Waits: for memory. - Interrupts: no; it runs on the exec task at
@@ -43,10 +46,13 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     tb.sensors = @splat(.{});
     tb.units = 0;
     tb.states = @splat(.{});
+    tb.fans = @splat(.{});
+    tb.fan_count = 0;
     tb.stack = null;
     sys_base.NewList(&tb.notify);
     sys_base.InitSemaphore(&tb.lock);
     _sense.find(tb);
+    _fan.find(tb);
     for (tb.sensors[0..tb.units], tb.states[0..tb.units]) |sensor, *state| {
         state.* = .{ .hot_millicelsius = sensor.hot, .critical_millicelsius = sensor.critical, .name = sensor.name };
     }

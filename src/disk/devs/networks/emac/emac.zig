@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 //! emac.device: the chip's Ethernet MAC and the board's PHY as a network
 //! device (sdk/devices/network.zig) - the ESP32-P4's 10/100 MAC on RMII,
-//! or one of the JH7110's gigabit MACs on RGMII (_emac.zig has which
-//! files are whose). Unit 0 is the port. It is in DEVS:networks/, and the
+//! or one of the JH7110's gigabit MACs or the RP1's on RGMII (_emac.zig
+//! has which files are whose). Unit 0 is the port. It is in DEVS:networks/, and the
 //! board's system tag list says whether there is a PHY on the chip's bus
 //! for it and how it is wired; a board without one gets no device.
 //!
 //! What it answers is the network device API as that file describes it,
 //! on an Ethernet link: 48-bit addresses, an MTU of 1500, 10 or 100 Mbit/s
-//! and on the JH7110 1000. The station address is the one the board gives
+//! and on the JH7110 and the RP1 1000. The station address is the one the board gives
 //! the port (PART_StationAddress), else the one the factory burned into
 //! the chip, else one made up from the clock, locally administered.
 //!
@@ -28,7 +28,7 @@
 //! **Starting the hardware** is the task's, which can wait: the port made
 //! ready (`port.powerUp`: on the P4 the PHY held in reset while the pads
 //! are set up and let go, on the JH7110 the MAC's clocks on and its
-//! resets let go), the MAC reset - which only ends once the clocks the
+//! resets let go, on the RP1 the PHY's reset line let go), the MAC reset - which only ends once the clocks the
 //! PHY sends run - and set up, then the PHY reset, set up as the board's
 //! wiring asks and told to negotiate. If any of it fails, the device says
 //! so and refuses every OpenDevice.
@@ -52,8 +52,8 @@ const Work = _emac.Work;
 
 pub const DEVICE_NAME = _emac.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 9;
-const BUILD_DATE = "28.10.2026";
+const DEVICE_REVISION = 11;
+const BUILD_DATE = "30.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -67,7 +67,7 @@ const stack_size = if (@sizeOf(usize) == 8) 8192 else 4096;
 /// Where the block the engine and the interrupt reach comes from:
 /// internal memory, and on a machine whose memory runs past 4 GiB the
 /// part below (MEMF_DMA).
-const work_memory: u32 = exec.MEMF_INTERNAL | if (sdk.hardware.chip == .rv64sbi) exec.MEMF_DMA else 0;
+const work_memory: u32 = exec.MEMF_INTERNAL | if (sdk.hardware.chip != .esp32p4) exec.MEMF_DMA else 0;
 /// Above dos's processes, as the other devices' tasks are: a stack waits
 /// on this, and frames should not wait in the chain for a shell.
 const task_pri = 5;

@@ -86,9 +86,12 @@ pub const LIBRARY_VERSION = 1;
 /// another - it was five, each two calls through the interrupt table -
 /// and exec's locks, Disable, Enable, FindTask and the cache calls mask
 /// inline; a task's table of holds is kept packed, so a search ends at
-/// its first free entry.
-pub const LIBRARY_REVISION = 23;
-const BUILD_DATE = "26.10.2026";
+/// its first free entry. 24: DeletePool lets go of the pool's lock before
+/// it frees the pool - the hold stayed on the caller's table naming freed
+/// memory, and the task's end "gave it back", writing into whatever had
+/// the memory by then.
+pub const LIBRARY_REVISION = 24;
+const BUILD_DATE = "30.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

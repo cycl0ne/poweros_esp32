@@ -16,6 +16,7 @@
 const nodes = @import("../exec/nodes.zig");
 const lists = @import("../exec/lists.zig");
 const bitmaps = @import("bitmaps.zig");
+const video = @import("video.zig");
 const transport = @import("transport.zig");
 const events = @import("events.zig");
 const tagitem = @import("../utility/tagitem.zig");
@@ -195,6 +196,9 @@ pub const RTGBC_ENGINE: u32 = 1 << 21;
 pub const RTGBC_BLEND_PIXELS: u32 = 1 << 22;
 pub const RTGBC_BLEND_RECT: u32 = 1 << 23;
 pub const RTGBC_SCALE_PIXELS: u32 = 1 << 24;
+/// It has a video layer: a plane that shows a picture in YUV itself,
+/// scaled into a place (OpenVideoLayer, `video.zig`).
+pub const RTGBC_VIDEO: u32 = 1 << 25;
 
 /// What a board that refreshes itself has been through since the counters
 /// were last reset. A board with no such thing leaves a field 0. Size
@@ -454,6 +458,28 @@ pub const RtgBoardOps = extern struct {
     /// one buffer. A board without it is given them one by one through
     /// `copy_rect`.
     copy_rects: ?*const fn (*RtgBoard, *RtgBitMap, *RtgBitMap, [*]const bitmaps.RtgCopy, u32) callconv(.c) i32 = null,
+
+    // --- a video layer: a plane that shows a picture in YUV itself. A
+    // board fills in all four or none. ---
+
+    /// Take one of the board's layers for `layer`: fill in its `key`,
+    /// limits and `unit`, and clear `RTGVLF_UNDER` from its flags where
+    /// the board cannot put its picture over a layer. Nothing is shown
+    /// until video_show. RTGERR_IN_USE when all its layers are taken.
+    video_open: ?*const fn (*RtgBoard, *video.RtgVideoLayer) callconv(.c) i32 = null,
+    /// Give it back: nothing shown on it from the next frame, and the
+    /// last picture no longer read when this returns.
+    video_close: ?*const fn (*RtgBoard, *video.RtgVideoLayer) callconv(.c) void = null,
+    /// Show `src` of the picture, scaled into the layer's place, from the
+    /// next frame; null shows nothing. Returns once the controller has
+    /// taken it, so the picture shown before is no longer read. The
+    /// library has checked that a picture comes with a part that is not
+    /// empty. RTGERR_BAD_ARG for one the plane cannot read or scale.
+    video_show: ?*const fn (*RtgBoard, *video.RtgVideoLayer, ?*const bitmaps.RtgYuv, ?*const bitmaps.RtgRect) callconv(.c) i32 = null,
+    /// The layer's place on the display from the next frame; an empty
+    /// rectangle hides it. RTGERR_BAD_ARG when the picture shown cannot
+    /// be scaled into it, which hides it too.
+    video_move: ?*const fn (*RtgBoard, *video.RtgVideoLayer, *const bitmaps.RtgRect) callconv(.c) i32 = null,
 };
 
 /// The most rectangles one `copy_rects` call hands a board: rtg cuts a

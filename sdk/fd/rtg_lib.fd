@@ -203,4 +203,20 @@ i32 RefreshRect(*rtg.RtgBitMap bitmap, *const rtg.RtgRect area)
 /// land, and the two buffers are not one. RTGERR_NOT_SUPPORTED unless the
 /// board's engine takes them.
 i32 CopyRects(*rtg.RtgBitMap src, *rtg.RtgBitMap dest, [*]const rtg.RtgCopy copies, u32 count)
+/// One of the board's video layers - a plane that shows a picture in YUV
+/// itself, scaled into a place - under the picture (RTGVA_Under, the
+/// default) or over it. Null, and RtgLastError says why: NOT_SUPPORTED
+/// without RTGBC_VIDEO, IN_USE when its layers are all taken.
+?*rtg.RtgVideoLayer OpenVideoLayer(*rtg.RtgBoard board, ?[*]const utility.TagItem tag_list)
+/// Give a layer back: nothing shown on it from the next frame. Null does
+/// nothing.
+void CloseVideoLayer(?*rtg.RtgVideoLayer layer)
+/// Show `src` of a picture on the layer from the next frame, scaled into
+/// its place; returns once the controller has taken it, so the picture
+/// shown before may be given back. Null shows nothing. A picture needs
+/// its part. RTGERR_BAD_ARG for one the plane cannot read or scale.
+i32 ShowVideoFrame(*rtg.RtgVideoLayer layer, ?*const rtg.RtgYuv picture, ?*const rtg.RtgRect src)
+/// The layer's place, in the display's coordinates, from the next frame;
+/// an empty rectangle hides it.
+i32 MoveVideoLayer(*rtg.RtgVideoLayer layer, *const rtg.RtgRect place)
 ##end

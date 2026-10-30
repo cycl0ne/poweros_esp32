@@ -31,7 +31,8 @@ const Puddle = _memory.Puddle;
 /// CONTEXT:
 /// - Waits: for the pool's lock while another task is in the pool.
 /// - Interrupts: no; it frees memory.
-/// - Locks: takes the pool's own lock; no spinlock may be held.
+/// - Locks: takes the pool's own lock, and lets it go before the pool is
+///   freed; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -57,5 +58,8 @@ pub fn DeletePool(base: *ExecBase, pool_handle: ?*anyopaque) void {
         // already taken the successor out of it.
         sys.FreeMem(puddle, puddle.bytes);
     }
+    // Let go before the pool goes, or the hold stays on the caller's
+    // table naming freed memory, which its end would "give back".
+    sys.ReleaseSemaphore(&pool.lock);
     sys.FreeMem(pool, @sizeOf(Pool));
 }

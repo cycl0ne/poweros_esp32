@@ -201,8 +201,10 @@ pub const LIBRARY_VERSION = 0;
 /// without an answer, and the press opens the menus. Its edit goes to the
 /// start or end with Shift and a cursor key, and Shift-Backspace and
 /// Shift-Delete take out everything before or after the cursor.
-pub const LIBRARY_REVISION = 74;
-const BUILD_DATE = "29.10.2026";
+/// 75: SA_Board - a screen's display, for a video layer - and
+/// windowclass's WMHI_CHANGEWINDOW, the window moved or sized.
+pub const LIBRARY_REVISION = 75;
+const BUILD_DATE = "30.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

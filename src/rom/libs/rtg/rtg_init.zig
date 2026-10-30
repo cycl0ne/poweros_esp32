@@ -23,8 +23,10 @@ pub const LIBRARY_VERSION = 1;
 /// 7: a buffer's `watch` hook told in place of the board, and RTGA_Compose
 /// kept as RTGBF_COMPOSE - a composed screen's windows.
 /// 9: CopyRects - several copies as one job of the engine.
-pub const LIBRARY_REVISION = 9;
-const BUILD_DATE = "25.10.2026";
+/// 10: video layers - OpenVideoLayer, CloseVideoLayer, ShowVideoFrame,
+/// MoveVideoLayer: a plane that shows a picture in YUV itself.
+pub const LIBRARY_REVISION = 10;
+const BUILD_DATE = "30.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

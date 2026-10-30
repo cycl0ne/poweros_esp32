@@ -80,9 +80,22 @@
 //! and tells the display to read it from the next frame on, which it
 //! waits for before the frame read until then is written again. A
 //! drawing is seen a frame or two after it was made, and whole. The
-//! buffers drawn in are never written back, since nothing reads them past
+//! buffers drawn in are not written back, since nothing reads them past
 //! the caches; showing a buffer, or bands, is a whole picture made and
 //! waited for.
+//!
+//! A whole picture is a copy of the whole display - at 2560x1440 14 MB,
+//! which takes the cores 14 ms - and a program that draws each picture in
+//! one buffer while it shows another, and then shows that one, would wait
+//! for one each time: a frame lost to every picture. So on the BCM2712's
+//! port the display reads such a program's buffers themselves
+//! (`directOf`): a whole buffer shown in place of another that nothing was
+//! written in while it was shown is written out of the caches whole and
+//! read as it is, from the next frame on, and nothing is copied. Should
+//! anything then be written in it - a requester opened on that screen -
+//! that is written out at once, and the task takes the frames up again
+//! with the next picture, made whole: for a frame or two the drawing is
+//! seen as it is written out.
 //!
 //! Their controllers have a pointer of their own, a cursor plane, which
 //! they lay over the picture themselves: there the pointer is that
@@ -106,6 +119,19 @@
 //! DDC/CI, where the monitor takes it. A start of the port - a mode set,
 //! a monitor plugged in - puts all three back as the board has them
 //! (`putBack`).
+//!
+//! The JH7110's port has a video layer besides (`jh7110_ops`): the
+//! controller's first overlay, which reads a film's frame in YUV planes
+//! itself - turning it into colours by a matrix loaded into it - and
+//! scales it into a place on the display, under the picture, seen where
+//! the picture has the layer's key colour - or a shade of it a shadow
+//! darkened it to - or over it. A frame shown is
+//! taken from the next frame on and waited for, so that the one before
+//! may be given back; a place partly off the display is cut to it; a
+//! start of the port puts the layer back as it was (`videoPutBack`).
+//! The controller's planes share its hold and its commit bits, so
+//! whatever writes one - the task that makes the pictures, the pointer's
+//! moves, a film - holds `plane_lock`.
 //!
 //! The board's engine is the processor's own cores (`engine.zig`): a
 //! fill, a copy, a colour or a picture with coverage laid over, a picture
@@ -148,7 +174,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 18;
+const REVISION = 20;
 const BUILD_DATE = "30.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -300,9 +326,13 @@ const Screen = struct {
     /// What was written since the last picture was made, and what went
     /// into that picture, which the other frame has not had: under
     /// `damage_lock`, which also keeps the bands and the overlay's place
-    /// still while a refresh reads them.
+    /// still while a refresh reads them. With them, whether the bands were
+    /// written in since they were shown, and the buffer the display reads
+    /// itself in place of a frame (`directOf`), if it does.
     fresh: damage.Damage = .{},
     last: damage.Damage = .{},
+    written: bool = false,
+    direct: ?*const rtg.RtgBitMap = null,
     damage_lock: exec.Lock = .{},
     /// Held while a picture is made and waited for, and while the bands or
     /// the overlay's image change, so that what a picture is made from
@@ -314,6 +344,21 @@ const Screen = struct {
     work: exec.Waitable = .{},
     stopping: bool = false,
     stopped: exec.Waitable = .{},
+    /// Behind the JH7110's port, the video layer on its first overlay
+    /// (`videoOpen`): the layer while it is taken; the colours the picture
+    /// shows it through, null over the picture; the picture last shown -
+    /// a copy of what was handed in - the part of it, and its place on
+    /// the display. Under `plane_lock`.
+    video: ?*rtg.RtgVideoLayer = null,
+    video_key: ?jh7110.VideoKey = null,
+    video_picture: ?rtg.RtgYuv = null,
+    video_src: rtg.RtgRect = .{},
+    video_place: rtg.RtgRect = .{},
+    /// Behind the JH7110's port: held while the controller's planes are
+    /// written - the picture's, the cursor's, the video layer's - which
+    /// share its hold and its commit bits, by the task that makes the
+    /// pictures, intuition's pointer task and a film's, each on any core.
+    plane_lock: exec.Lock = .{},
 };
 
 /// Wait for `frames` frames: for the display's frame interrupt to come
@@ -480,7 +525,9 @@ fn scanFrom(screen: *Screen, address: usize) void {
             else => .bgra32,
         }),
         .jh7110 => done: {
+            screen.sys.AcquireLock(&screen.plane_lock);
             jh7110.show(address);
+            screen.sys.ReleaseLock(&screen.plane_lock);
             break :done true;
         },
         .bcm2712 => done: {
@@ -899,15 +946,19 @@ fn cursorPlane(screen: *Screen) void {
             at.y,
             screen.pointer_shown and screen.pointer != null,
         ),
-        else => jh7110.cursor(
-            @intFromPtr(cursorBuffer(screen, screen.cursor_turn)),
-            screen.cursor_small,
-            screen.cursor_hot_x,
-            screen.cursor_hot_y,
-            at.x,
-            at.y,
-            screen.pointer_shown and screen.pointer != null,
-        ),
+        else => {
+            screen.sys.AcquireLock(&screen.plane_lock);
+            defer screen.sys.ReleaseLock(&screen.plane_lock);
+            jh7110.cursor(
+                @intFromPtr(cursorBuffer(screen, screen.cursor_turn)),
+                screen.cursor_small,
+                screen.cursor_hot_x,
+                screen.cursor_hot_y,
+                at.x,
+                at.y,
+                screen.pointer_shown and screen.pointer != null,
+            );
+        },
     }
 }
 
@@ -1112,6 +1163,236 @@ fn brightness(board: *rtg.RtgBoard) callconv(.c) u32 {
     return screen.brightness;
 }
 
+// --- the video layer, on the JH7110's first overlay -------------------------
+
+/// The colour the picture shows the layer through: near black, and the
+/// same in each format a screen has here - five, six or eight bits a
+/// channel. Keyed with it, each channel down to `video_key_darkest`, are
+/// the shades of it shadows leave: layers' compose darkens what is under
+/// a shadow by multiplying it, to (4, 0, 4) under one, (2, 0, 2) under
+/// two laid over each other, (1, 0, 1) under three - so the film shows
+/// under a window's shadow, undarkened, rather than a dark band.
+const video_key: u32 = 0x0008_0008;
+const video_key_darkest: u32 = 0x0001_0001;
+
+/// What the source is cut by where the display cuts a place: whole runs
+/// of 32 pixels across, which keep each plane's rows on the 16 bytes the
+/// layer reads from, and pairs of rows down, which keep the colour's rows
+/// with them.
+const video_cut_across = 32;
+const video_cut_down = 2;
+
+/// The layer taken: under the picture unless asked over, nothing on it
+/// and no place yet, the scaler's filter loaded.
+fn videoOpen(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    const under = layer.flags & rtg.RTGVLF_UNDER != 0;
+    layer.key = if (under) video_key else 0;
+    layer.max_width = jh7110.video_max_side;
+    layer.max_height = jh7110.video_max_side;
+    layer.max_up = jh7110.video_max_up;
+    layer.max_down = jh7110.video_max_down;
+    sys.AcquireLock(&screen.plane_lock);
+    defer sys.ReleaseLock(&screen.plane_lock);
+    if (screen.video != null) return err.RTGERR_IN_USE;
+    screen.video = layer;
+    screen.video_key = if (under) .{ .low = video_key_darkest, .high = video_key } else null;
+    screen.video_picture = null;
+    screen.video_place = .{};
+    jh7110.videoStart();
+    jh7110.videoOrder(screen.video_key);
+    return err.RTGERR_OK;
+}
+
+/// The layer off and the picture whole again, and a frame waited for, so
+/// that the last picture is no longer read.
+fn videoClose(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer) callconv(.c) void {
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    sys.AcquireLock(&screen.plane_lock);
+    if (screen.video == layer) {
+        jh7110.videoHide();
+        jh7110.videoOrder(null);
+        screen.video = null;
+        screen.video_key = null;
+        screen.video_picture = null;
+    }
+    sys.ReleaseLock(&screen.plane_lock);
+    pace(screen, 1);
+}
+
+/// A picture shown, or none, from the next frame - waited for, so that
+/// the one before is no longer read. One the layer cannot read, or scale
+/// into its place, is not kept: nothing is shown.
+fn videoShow(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer, picture: ?*const rtg.RtgYuv, src: ?*const rtg.RtgRect) callconv(.c) i32 {
+    _ = layer;
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    const result = result: {
+        sys.AcquireLock(&screen.plane_lock);
+        defer sys.ReleaseLock(&screen.plane_lock);
+        screen.video_picture = null;
+        const one = picture orelse {
+            jh7110.videoHide();
+            break :result err.RTGERR_OK;
+        };
+        if (!videoReads(one, src.?.*)) {
+            jh7110.videoHide();
+            break :result err.RTGERR_BAD_ARG;
+        }
+        screen.video_picture = one.*;
+        screen.video_src = src.?.*;
+        if (videoPut(screen)) break :result err.RTGERR_OK;
+        screen.video_picture = null;
+        break :result err.RTGERR_BAD_ARG;
+    };
+    pace(screen, 1);
+    return result;
+}
+
+/// The layer's new place, the picture shown in it from the next frame:
+/// hidden while the picture cannot be scaled into it.
+fn videoMove(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgRect) callconv(.c) i32 {
+    _ = layer;
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    sys.AcquireLock(&screen.plane_lock);
+    defer sys.ReleaseLock(&screen.plane_lock);
+    screen.video_place = place.*;
+    return if (videoPut(screen)) err.RTGERR_OK else err.RTGERR_BAD_ARG;
+}
+
+/// Whether the layer reads `part` of `picture`: its planes laid out as it
+/// takes them - NV12, or I420 with both colour planes - each of the part's
+/// rows starting on 16 bytes, the part's top left on a pair of pixels
+/// each way, at least two of them each way, and every byte of it below
+/// 4 GiB, where the controller reaches.
+fn videoReads(picture: *const rtg.RtgYuv, part: rtg.RtgRect) bool {
+    const planar = picture.layout == rtg.bitmaps.RTGYUV_I420;
+    if (!planar and picture.layout != rtg.bitmaps.RTGYUV_NV12) return false;
+    if (planar and picture.cr == null) return false;
+    if (part.width < 2 or part.height < 2 or @rem(part.x, 2) != 0 or @rem(part.y, 2) != 0) return false;
+    if (picture.y_pitch % 16 != 0 or picture.c_pitch % 16 != 0) return false;
+    const x: u64 = @intCast(part.x);
+    const y: u64 = @intCast(part.y);
+    const rows: u64 = @intCast(part.height);
+    const chroma_x = if (planar) x / 2 else x;
+    const planes = [_]struct { at: ?[*]const u8, x: u64, y: u64, rows: u64, pitch: u64 }{
+        .{ .at = picture.y, .x = x, .y = y, .rows = rows, .pitch = picture.y_pitch },
+        .{ .at = picture.cb, .x = chroma_x, .y = y / 2, .rows = (rows + 1) / 2, .pitch = picture.c_pitch },
+        .{ .at = if (planar) picture.cr else null, .x = chroma_x, .y = y / 2, .rows = (rows + 1) / 2, .pitch = picture.c_pitch },
+    };
+    for (planes) |plane| {
+        const at: u64 = @intFromPtr(plane.at orelse continue);
+        const first = at + plane.y * plane.pitch + plane.x;
+        if (first % 16 != 0) return false;
+        if (first + plane.rows * plane.pitch > 1 << 32) return false;
+    }
+    return true;
+}
+
+/// One way of a place cut to the display: where on the display it starts
+/// and how much of it is seen, and where in the part the source starts
+/// and how much of it is read.
+const VideoCut = struct { at: u32, shown: u32, from: u32, read: u32 };
+
+/// `read` pixels of the source from `from`, scaled by `step` to `shown`
+/// of the display from `at`, cut to the display's `side`: null where
+/// fewer than two pixels are left. The source is cut from its start in
+/// whole `unit`s, so where the display cuts a place's left or top the
+/// picture may start up to a unit early.
+fn videoCut(from: i32, read: i32, at: i32, shown: i32, side: u32, step: u32, unit: u32) ?VideoCut {
+    const start = @max(at, 0);
+    const end = @min(at + shown, @as(i32, @intCast(side)));
+    if (end - start < 2) return null;
+    const off: u64 = @intCast(start - at);
+    const skipped: u32 = @intCast((off * @as(u64, @intCast(read)) / @as(u64, @intCast(shown))) / unit * unit);
+    const left: u32 = @as(u32, @intCast(read)) - skipped;
+    const seen: u32 = @intCast(end - start);
+    const needed: u32 = if (step == jh7110.unscaled) seen else @intCast((@as(u64, seen - 1) * step >> 16) + 2);
+    return .{
+        .at = @intCast(start),
+        .shown = seen,
+        .from = @as(u32, @intCast(from)) + skipped,
+        .read = @min(left, needed),
+    };
+}
+
+/// The picture kept shown in its place, as much of it as the display
+/// has: hidden with no picture or no place on the display, and false,
+/// hidden, where it cannot be scaled into its place. Holding
+/// `plane_lock`.
+fn videoPut(screen: *Screen) bool {
+    const one = screen.video_picture orelse {
+        jh7110.videoHide();
+        return true;
+    };
+    const part = screen.video_src;
+    const place = screen.video_place;
+    if (place.width < 2 or place.height < 2) {
+        jh7110.videoHide();
+        return place.width <= 0 or place.height <= 0;
+    }
+    if (!videoScales(part.width, place.width) or !videoScales(part.height, place.height)) {
+        jh7110.videoHide();
+        return false;
+    }
+    const step_x = jh7110.videoStep(@intCast(part.width), @intCast(place.width));
+    const step_y = jh7110.videoStep(@intCast(part.height), @intCast(place.height));
+    const across = videoCut(part.x, part.width, place.x, place.width, screen.width, step_x, video_cut_across);
+    const down = videoCut(part.y, part.height, place.y, place.height, screen.height, step_y, video_cut_down);
+    if (across == null or down == null) {
+        jh7110.videoHide();
+        return true;
+    }
+    const x = across.?;
+    const y = down.?;
+    const planar = one.layout == rtg.bitmaps.RTGYUV_I420;
+    const chroma_x: usize = if (planar) x.from / 2 else x.from;
+    const chroma = @as(usize, y.from / 2) * one.c_pitch + chroma_x;
+    jh7110.videoShow(.{
+        .y = @intFromPtr(one.y) + @as(usize, y.from) * one.y_pitch + x.from,
+        .u = @intFromPtr(one.cb) + chroma,
+        .v = if (one.cr) |cr| @intFromPtr(cr) + chroma else 0,
+        .y_pitch = one.y_pitch,
+        .c_pitch = one.c_pitch,
+        .planar = planar,
+        .width = x.read,
+        .height = y.read,
+        .bt709 = one.colors & rtg.bitmaps.RTGYUV_MATRIX == rtg.bitmaps.RTGYUV_BT709,
+        .full = one.colors & rtg.bitmaps.RTGYUV_FULL != 0,
+    }, .{
+        .x = x.at,
+        .y = y.at,
+        .width = x.shown,
+        .height = y.shown,
+        .step_x = step_x,
+        .step_y = step_y,
+    });
+    return true;
+}
+
+/// Whether `read` pixels scale to `shown`: three times up at most, a
+/// tenth down.
+fn videoScales(read: i32, shown: i32) bool {
+    const r: u64 = @intCast(read);
+    const s: u64 = @intCast(shown);
+    return s <= r * jh7110.video_max_up and s * jh7110.video_max_down >= r;
+}
+
+/// What a start of the JH7110's port leaves - its first overlay off, in
+/// U-Boot's order, the primary unkeyed - put back as the layer has it.
+fn videoPutBack(screen: *Screen) void {
+    const sys = screen.sys;
+    sys.AcquireLock(&screen.plane_lock);
+    defer sys.ReleaseLock(&screen.plane_lock);
+    if (screen.video == null) return;
+    jh7110.videoStart();
+    jh7110.videoOrder(screen.video_key);
+    _ = videoPut(screen);
+}
+
 // --- a display that reads past the caches: two frames, flipped --------------
 
 /// The task that makes the pictures: above the programs that draw, so that
@@ -1141,6 +1422,7 @@ fn startFlipping(screen: *Screen) bool {
     screen.front = 0;
     sys.InitSemaphore(&screen.flip_lock);
     sys.InitLock(&screen.damage_lock, "rtg-fb damage", exec.LOCKORDER_DRIVER, 0);
+    sys.InitLock(&screen.plane_lock, "rtg-fb planes", exec.LOCKORDER_DRIVER + 1, 0);
     // The task is the system's, not that of whoever made the board.
     sys.BeginSystemMemory();
     const task = sys.CreateTask(flipper_name, flipper_pri, &flipperCode, 0);
@@ -1272,7 +1554,9 @@ fn noteImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top
 }
 
 /// `area` of `bitmap` written: noted where the bands show it, and the task
-/// woken. Nothing is written back - the display never reads the buffer.
+/// woken. Nothing is written back - the display does not read the buffer -
+/// but where it reads it itself (`directOf`): there it is written out at
+/// once, and the task takes the frames up again.
 fn noteWritten(screen: *Screen, bitmap: *const rtg.RtgBitMap, area: Box) void {
     if (area.isEmpty()) return;
     const sys = screen.sys;
@@ -1286,7 +1570,10 @@ fn noteWritten(screen: *Screen, bitmap: *const rtg.RtgBitMap, area: Box) void {
         noteBox(screen, .{ .left = area.left, .top = lines.first, .right = area.right, .end = lines.end });
         noted = true;
     }
+    if (noted) screen.written = true;
+    const read = noted and screen.direct == bitmap;
     sys.ReleaseLock(&screen.damage_lock);
+    if (read) handOn(screen, bitmap, area);
     if (noted) sys.SignalWaitable(&screen.work);
 }
 
@@ -1300,20 +1587,24 @@ const Laid = struct { image: ?*const rtg.RtgPointerImage, left: i32, top: i32 };
 /// display told to read this frame, which it takes up as the next frame
 /// starts - waited for, since until then it reads the other, which the
 /// next picture is made in. False, and nothing switched, when nothing was
-/// noted. Made holding `flip_lock`.
+/// noted. Where the display read a buffer itself, neither frame has had
+/// what it showed: the picture is made whole, and the next one too. Made
+/// holding `flip_lock`.
 fn flipFrames(screen: *Screen) bool {
     const sys = screen.sys;
     sys.AcquireLock(&screen.damage_lock);
     const fresh = screen.fresh;
     screen.fresh = .{};
     const over = Laid{ .image = screen.overlay, .left = screen.overlay_left, .top = screen.overlay_top };
+    const stale = screen.direct != null and !fresh.isEmpty();
+    if (stale) screen.direct = null;
     sys.ReleaseLock(&screen.damage_lock);
     if (fresh.isEmpty()) return false;
     const back = screen.flip_frames[screen.front ^ 1];
     var boxes = fresh;
-    boxes.addAll(&screen.last);
+    if (stale) boxes.add(whole(screen)) else boxes.addAll(&screen.last);
     for (boxes.list()) |box| makeBox(screen, back, box, over);
-    screen.last = fresh;
+    screen.last = if (stale) boxes else fresh;
     scanFrom(screen, @intFromPtr(back));
     pace(screen, 1);
     screen.front ^= 1;
@@ -1343,20 +1634,69 @@ fn makeBox(screen: *Screen, into: [*]u8, box: Box, over: Laid) void {
 
 /// What the display shows changed - `bands`, none for black - and the
 /// picture of it made and waited for, as a flip is: the rows that show
-/// something else than before, nothing when none does.
+/// something else than before, nothing when none does; or a buffer the
+/// display reads itself (`directOf`), and that waited for.
 fn showFlipped(screen: *Screen, bands: []const rtg.RtgBand) void {
     const sys = screen.sys;
     sys.ObtainSemaphore(&screen.flip_lock);
     defer sys.ReleaseSemaphore(&screen.flip_lock);
     sys.AcquireLock(&screen.damage_lock);
+    const direct = directOf(screen, bands);
     var changed: damage.Damage = .{};
     changed.rebanded(screen.bands[0..screen.band_count], bands, screen.width, screen.height);
     @memcpy(screen.bands[0..bands.len], bands);
     screen.band_count = @intCast(bands.len);
     screen.showing = if (bands.len == 0) null else bands[bands.len - 1].bitmap;
-    for (changed.list()) |box| noteBox(screen, box);
+    screen.written = false;
+    if (direct != null) {
+        // The frames are made whole when they are taken up again.
+        screen.fresh = .{};
+        screen.direct = direct;
+    } else {
+        for (changed.list()) |box| noteBox(screen, box);
+    }
     sys.ReleaseLock(&screen.damage_lock);
+    if (direct) |bitmap| return showDirect(screen, bitmap);
     _ = flipFrames(screen);
+}
+
+/// The buffer the display can read itself in place of a frame, as `bands`
+/// show it: one whole buffer - the display's size, rows and format, from
+/// its first row - shown in place of another nothing was written in while
+/// it was shown, or in place of itself while the display reads it so, and
+/// nothing laid over the picture by the cores. That is a program that
+/// draws a picture in one buffer while it shows the other and then shows
+/// that one (ChangeScreenBuffer, facet.library's swapchains): its buffers
+/// are read as they are, and nothing is copied. A screen drawn in while
+/// it is shown - intuition's windows - is shown frames as before. On the
+/// BCM2712's port. Asked holding `damage_lock`.
+fn directOf(screen: *const Screen, bands: []const rtg.RtgBand) ?*const rtg.RtgBitMap {
+    if (screen.scanout != .bcm2712 or screen.overlay != null or screen.written) return null;
+    if (bands.len != 1 or screen.band_count != 1) return null;
+    const new = bands[0];
+    const old = screen.bands[0];
+    if (!wholeBand(screen, new) or !wholeBand(screen, old)) return null;
+    if (new.bitmap == old.bitmap and screen.direct != new.bitmap) return null;
+    return new.bitmap;
+}
+
+/// Whether `band` is a whole buffer the display could be shown.
+fn wholeBand(screen: *const Screen, band: rtg.RtgBand) bool {
+    return band.line == 0 and band.origin == 0 and band.flags & rtg.RTGBANDF_REPEAT == 0 and showable(screen, band.bitmap);
+}
+
+/// `bitmap` read by the display itself: written out of the caches whole -
+/// nothing of it was as it was drawn - and the display told to read it,
+/// which it takes up as the next frame starts: waited for, since until
+/// then it reads what it read before. Nothing where it reads it already.
+/// Made holding `flip_lock`.
+fn showDirect(screen: *Screen, bitmap: *const rtg.RtgBitMap) void {
+    const address = @intFromPtr(bitmap.pixels.?);
+    if (address == screen.scanning) return;
+    handOn(screen, bitmap, whole(screen));
+    scanFrom(screen, address);
+    pace(screen, 1);
+    screen.updates +%= 1;
 }
 
 /// The display brought up, or changed to the mode taken, black: both
@@ -1376,6 +1716,8 @@ fn beginFlipped(screen: *Screen) bool {
     screen.band_count = 0;
     screen.showing = null;
     screen.fresh = .{};
+    screen.written = false;
+    screen.direct = null;
     sys.ReleaseLock(&screen.damage_lock);
     screen.last = .{};
     screen.front = 0;
@@ -1531,7 +1873,11 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED |
             rtg.boards.RTGRF_SYSTEM_MEMORY | rtg.boards.RTGRF_DMA_MEMORY,
     };
-    board.ops = if (scanout == .bcm2712) &bcm2712_ops else &ops;
+    board.ops = switch (scanout) {
+        .bcm2712 => &bcm2712_ops,
+        .jh7110 => &jh7110_ops,
+        else => &ops,
+    };
     board.info.buffers = frames;
     board.info.pixel_clock_hz = screen.modes[screen.current].pixel_clock_hz;
     board.info.refresh_mhz = screen.modes[screen.current].refresh_mhz;
@@ -1721,6 +2067,7 @@ fn startPort(comptime port: type, screen: *Screen, address: usize) void {
     }
     screen.scanning = address;
     if (port == bcm2712) putBack(screen);
+    if (port == jh7110) videoPutBack(screen);
     screen.plugged = port.monitor();
     screen.settling = 0;
     if (!screen.plugged) exec.kprintf(screen.sys, "%s: no monitor on the HDMI port\n", .{MODULE_NAME});
@@ -1962,6 +2309,16 @@ const bcm2712_ops = ops: {
     more.set_brightness = &setBrightness;
     more.brightness = &brightness;
     more.mirror = &mirror;
+    break :ops more;
+};
+
+/// The JH7110's port's: the same, and a video layer, its first overlay.
+const jh7110_ops = ops: {
+    var more = ops;
+    more.video_open = &videoOpen;
+    more.video_close = &videoClose;
+    more.video_show = &videoShow;
+    more.video_move = &videoMove;
     break :ops more;
 };
 

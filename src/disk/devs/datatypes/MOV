@@ -1,0 +1,1 @@
+NAME=MOV BASE=videocodec GROUP=movi ID=MOV PATTERN=#?.mov TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Movie

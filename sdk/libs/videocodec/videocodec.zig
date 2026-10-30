@@ -123,7 +123,9 @@ pub const VideoStreamInfo = extern struct {
 pub const VideoFrame = extern struct {
     /// Its planes, their pitches, their layout and how their numbers
     /// stand for colours: for graphics' WriteYUVPixelArray and
-    /// ScaleYUVPixelArray as it is. The decoder's memory, lent until
+    /// ScaleYUVPixelArray as it is, and for rtg's ShowVideoFrame - since
+    /// 1.1 every frame is where a display's video layer reads it, with
+    /// nothing of it left in the caches. The decoder's memory, lent until
     /// ReleaseVideoFrame.
     picture: rtg.RtgYuv = .{ .y = undefined, .cb = undefined, .y_pitch = 0, .c_pitch = 0 },
     /// The picture as it is shown, in pixels.
