@@ -255,6 +255,12 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     if (exec.SysBase.mem_debug.on) note("memory debugging on since exec started (-Dmemdebug)", .{});
     // Who asks about a task that failed, so the machine need not stop.
     exec.failure.startHelper(exec.SysBase);
+    // The cores' clock the board wants, before it is measured: where the
+    // board's firmware sets it, it is asked (`boards.cpu_clock`).
+    const cpu_speed = comptime boards.fact(st.SYSTAG_CpuSpeed, 0);
+    if (cpu_speed != 0) if (boards.cpu_clock) |ask| {
+        if (ask(sys, cpu_speed) == 0) note("cpu clock not set to %ld MHz: the firmware does not answer", .{@as(u64, cpu_speed)});
+    };
     timer.init(100);
     clock.init();
     // The other cores, where the board has them: let go once exec and the

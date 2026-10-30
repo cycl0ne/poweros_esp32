@@ -5,9 +5,10 @@
 //! reads), and `romtags.zig`, the drivers its parts want in the image. A
 //! board that resets the machine itself, or whose firmware needs something
 //! done before it does, has `reset.zig` too (`before_reset`), one that
-//! sets its cores' supply itself `power.zig` (`cpu_supply`), and one whose
-//! devices' interrupts come through a controller of its own the code for
-//! that (`interrupt_bridge`).
+//! sets its cores' supply itself `power.zig` (`cpu_supply`), one whose
+//! firmware sets the cores' clock when asked `clock.zig` (`cpu_clock`),
+//! and one whose devices' interrupts come through a controller of its own
+//! the code for that (`interrupt_bridge`).
 //!
 //! The kernel's own code reads the same list at compile time, through
 //! `fact` and `partFact`, so a fact is written once whoever reads it.
@@ -59,6 +60,15 @@ pub const before_reset: ?*const fn () void = switch (build_options.board) {
 /// the board has no say in it.
 pub const cpu_supply: ?*const fn (microvolts: u32) bool = switch (build_options.board) {
     .visionfive2 => @import("visionfive2/power.zig").setCpuSupply,
+    else => null,
+};
+
+/// How the board's firmware is asked for the cores' clock, in MHz
+/// (SYSTAG_CpuSpeed), once exec is up and before the clock is measured:
+/// the clock it set, 0 if it did not answer. Null where the kernel sets
+/// the clock itself, or leaves it.
+pub const cpu_clock: ?*const fn (sys: *sdk.interface.exec.ExecBase, mhz: u32) u32 = switch (build_options.board) {
+    .rpi_cm5 => @import("rpi_cm5/clock.zig").setCpuClock,
     else => null,
 };
 

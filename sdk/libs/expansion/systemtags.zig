@@ -120,7 +120,9 @@ pub const SYSTAG_RamEnd = SYSTAG_Dummy + 31;
 /// operating point for, which the kernel sets as it starts - before
 /// anything else runs - with the supply the point wants, through the
 /// board's own code. The JH7110: 1000, as its firmware leaves it, or
-/// 1500. Absent, 0: the clock is left as the firmware left it.
+/// 1500. The BCM2712: up to 2400, which its firmware sets with the supply
+/// when the kernel asks, as far as config.txt's arm_freq lets it. Absent,
+/// 0: the clock is left as the firmware left it.
 pub const SYSTAG_CpuSpeed = SYSTAG_Dummy + 32;
 /// 1: the machine's devices see the cores' data caches - QEMU's virt,
 /// whose devices read and write the machine's RAM through the host's

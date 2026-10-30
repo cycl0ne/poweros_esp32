@@ -89,6 +89,11 @@ const pcie1 = [_]Tag{
     .done,
 };
 
+/// The VideoCore's mailbox, through which its firmware is asked what it
+/// keeps for the ARM: the RTC's count (`rtc`) and the cores' clock
+/// (`clock.zig`).
+pub const mailbox: usize = 0x10_7C01_3880;
+
 /// The radio's station address. The kernel copies it in from the device
 /// tree the firmware passes - the `local-mac-address` the firmware writes
 /// into wifi@1, on the SD host mmc@1100000 - before anything runs; all
@@ -137,7 +142,7 @@ const rtc = [_]Tag{
     .value(st.PART_Chip, st.CHIP_RPI_RTC),
     .pointer(st.PART_ChipName, "rpi rtc"),
     .value(st.PART_Bus, st.BUS_MEMORY),
-    .value(st.PART_Address, 0x10_7C01_3880),
+    .value(st.PART_Address, mailbox),
     .pointer(st.PART_Label, "RTC"),
     .done,
 };
@@ -215,6 +220,11 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_GicDist, 0x10_7FFF_9000),
     .value(st.SYSTAG_GicCpu, 0x10_7FFF_A000),
     .value(st.SYSTAG_Cores, 4),
+    // The A76s at 2.4 GHz, as Linux runs them: the firmware sets the
+    // clock and the supply with it, asked through its mailbox
+    // (clock.zig), as far as config.txt's arm_freq lets it; unasked it
+    // leaves them at 1 GHz.
+    .value(st.SYSTAG_CpuSpeed, 2400),
     .pointer(st.SYSTAG_Part, &usb0),
     .pointer(st.SYSTAG_Part, &usb1),
     .pointer(st.SYSTAG_Part, &pcie1),
