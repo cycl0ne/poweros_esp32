@@ -649,7 +649,13 @@ if (dl.RunCommand(&code, dos.CLI_DEFAULT_STACK, line, line.len) == -1) return do
 
 The shell looks for a command first among dos's resident segments,
 where `Resident` puts one it has loaded; `AddSegment`, `FindSegment`
-and `RemSegment`, under `LockSegmentList`, keep that list.
+and `RemSegment`, under `LockSegmentList`, keep that list. Then for a
+file where the name says, or for a plain name in the command path and
+`C:`: a program it loads runs with the directory it was loaded from as
+the process's home directory, which `PROGDIR:` names
+(`GetProgramDir`); a script - a file with its script bit - runs through
+`Execute`, with its directory as the home directory when it was found in
+the path. A resident command runs with the shell's own.
 
 ### Starting a program with files
 

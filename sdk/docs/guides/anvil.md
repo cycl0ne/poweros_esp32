@@ -172,10 +172,10 @@ pairs that `GetArgList` reads - the program first, a drawer or a disk as
 a lock on itself with an empty name (see [the dos
 guide](dos.md#starting-a-program-with-files)). Its input is NIL:, and its
 output a console that opens only if it prints. It starts in its own
-drawer, with the stack its icon asks for - 24 KiB, the desktop's own, when
-it asks for none - and the priority of its `TOOLPRI` tool type. The
-desktop counts what it started until each has ended: after Quit, its
-process stays, unseen, until then.
+drawer, which is also its `PROGDIR:`, with the stack its icon asks for -
+24 KiB, the desktop's own, when it asks for none - and the priority of
+its `TOOLPRI` tool type. The desktop counts what it started until each
+has ended: after Quit, its process stays, unseen, until then.
 
 The icon's `ARGS` tool type gives the program arguments of its own: its
 text goes on the command line after the files, as it would be typed. The
