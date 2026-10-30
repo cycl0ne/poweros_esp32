@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const ac = sdk.audiocodec;
 const AudioCodecBase = @import("../audiocodec_base.zig").AudioCodecBase;
 const _stream = @import("_stream.zig");
+const _media = @import("_media.zig");
 const wav = @import("../wav/_wav.zig");
 const mp3 = @import("../mp3/_mp3.zig");
 const flac = @import("../flac/_flac.zig");
@@ -47,7 +48,9 @@ const aac = @import("../aac/_aac.zig");
 /// it, `ACA_Link` one more. A link of another kind ends the stream, and
 /// one that cannot be decoded ends it with why. A read function is asked for the
 /// bytes of the frames handed out and `AUDIO_READ_AHEAD` more at most
-/// (SINCE 1.4 said).
+/// (SINCE 1.4 said). A container's sound that begins after the file's
+/// start - a Matroska film's after its first picture - begins with
+/// silence up to there (SINCE 1.7): its frames are the film's time.
 ///
 /// CONTEXT:
 /// - Waits: yes, on the source when the read-ahead runs low.
@@ -80,12 +83,19 @@ const aac = @import("../aac/_aac.zig");
 /// ```
 pub fn DecodeAudio(_: *AudioCodecBase, public: *ac.AudioStream, buffer: [*]i16, frames: u32) i32 {
     const stream = _stream.streamOf(public);
-    return switch (stream.codec) {
-        .wav => |*state| wav.decode(stream, state, buffer, frames),
-        .mp3 => |*state| mp3.decode(stream, state, buffer, frames),
-        .flac => |*state| flac.decode(stream, state, buffer, frames),
-        .vorbis => |*state| vorbis.decode(stream, state, buffer, frames),
-        .aac => |*state| aac.decode(stream, state, buffer, frames),
+    const quiet = _media.silence(stream, buffer, frames);
+    if (quiet == frames) return @intCast(quiet);
+    const rest = buffer + @as(usize, quiet) * stream.info.channels;
+    const left = frames - quiet;
+    const got = switch (stream.codec) {
+        .wav => |*state| wav.decode(stream, state, rest, left),
+        .mp3 => |*state| mp3.decode(stream, state, rest, left),
+        .flac => |*state| flac.decode(stream, state, rest, left),
+        .vorbis => |*state| vorbis.decode(stream, state, rest, left),
+        .aac => |*state| aac.decode(stream, state, rest, left),
         .none => 0,
     };
+    // The silence handed out now, why the sound stopped the next time.
+    if (got < 0) return if (quiet != 0) @intCast(quiet) else got;
+    return @as(i32, @intCast(quiet)) + got;
 }

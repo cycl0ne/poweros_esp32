@@ -8,7 +8,9 @@
 //! opens the file (`OpenMedia`) - by its name, a file it has open, or
 //! bytes a function of its own hands over - and the library finds out
 //! what it is by its first bytes: MP4 (and QuickTime's MOV, which it
-//! comes from; `.mp4`, `.m4a`, `.m4v`, `.mov`). `GetMediaInfo` says what
+//! comes from; `.mp4`, `.m4a`, `.m4v`, `.mov`), or Matroska (and WebM,
+//! which is Matroska with fewer codecs; `.mkv`, `.mka`, `.webm`; SINCE
+//! 1.2). `GetMediaInfo` says what
 //! the file is and how long, `GetMediaTrack` what each track is - its
 //! kind, its codec, its size or its rate, and the setup bytes its decoder
 //! needs - and `ReadMediaPacket` hands out a track's packets one after
@@ -41,6 +43,8 @@ pub const MediaFile = opaque {};
 pub const MEDIA_UNKNOWN: u32 = 0;
 /// ISO's base media file format: MP4, and QuickTime's MOV.
 pub const MEDIA_MP4: u32 = 1;
+/// Matroska, and WebM (SINCE 1.2).
+pub const MEDIA_MKV: u32 = 2;
 
 /// How many bytes `IdentifyMedia` wants to be sure.
 pub const MEDIA_IDENTIFY_BYTES: u32 = 64;
@@ -69,6 +73,11 @@ pub const MCODEC_H265: u32 = 2;
 pub const MCODEC_MJPEG: u32 = 3;
 /// MPEG-4 Part 2 video.
 pub const MCODEC_MPEG4V: u32 = 4;
+/// VP8 and VP9, Google's (SINCE 1.2): no setup.
+pub const MCODEC_VP8: u32 = 5;
+pub const MCODEC_VP9: u32 = 6;
+/// AV1 (SINCE 1.2): the setup is its av1C record.
+pub const MCODEC_AV1: u32 = 7;
 /// AAC: the setup is the AudioSpecificConfig - the object type, the rate,
 /// the channels.
 pub const MCODEC_AAC: u32 = 16;
@@ -81,10 +90,28 @@ pub const MCODEC_AC3: u32 = 19;
 pub const MCODEC_EAC3: u32 = 20;
 /// Opus: the setup is its dOps box.
 pub const MCODEC_OPUS: u32 = 21;
-/// FLAC: the setup is its STREAMINFO.
+/// FLAC: the setup is its metadata blocks, each with its four bytes of
+/// header, STREAMINFO first; each packet a frame whole.
 pub const MCODEC_FLAC: u32 = 22;
+/// Vorbis (SINCE 1.2): the setup is its three header packets laced as
+/// Xiph laces them - a byte of 2, the lengths of the first two in bytes
+/// of 255 and the byte that ends each, then the three packets.
+pub const MCODEC_VORBIS: u32 = 23;
+/// DTS, and DTS-HD (SINCE 1.2): each packet a frame whole.
+pub const MCODEC_DTS: u32 = 24;
 /// Timed text (3GPP, QuickTime's): each packet a length and the text.
 pub const MCODEC_TEXT: u32 = 32;
+/// Subtitles as text, SubRip's (SINCE 1.2): each packet the text, UTF-8,
+/// its lines apart by line ends; due at its `pts` for its `duration`.
+pub const MCODEC_SRT: u32 = 33;
+/// Subtitles of SubStation Alpha, ASS and SSA (SINCE 1.2): the setup is
+/// the script's header - its styles - and each packet one Dialogue line's
+/// fields, as Matroska stores them: ReadOrder, Layer, Style, Name,
+/// MarginL, MarginR, MarginV, Effect, Text.
+pub const MCODEC_ASS: u32 = 34;
+/// Subtitles as pictures, a Blu-ray's (PGS, SINCE 1.2): each packet its
+/// segments.
+pub const MCODEC_PGS: u32 = 35;
 
 /// What `GetMediaTrack` fills in about a track.
 pub const MediaTrack = extern struct {
@@ -93,16 +120,19 @@ pub const MediaTrack = extern struct {
     codec: u32 = MCODEC_UNKNOWN,
     /// The track's number in the container, as it names it.
     id: u32 = 0,
-    /// How many packets it has, 0 when that is not known.
+    /// How many packets it has, 0 when that is not known: a Matroska file
+    /// says so only in the tags its muxer wrote.
     packets: u32 = 0,
     /// The ticks a second the track counts its times in: its packets', and
-    /// `delay` and `length`.
+    /// `delay` and `length`. A Matroska file's sound counts in its rate,
+    /// its other tracks in the file's own ticks - 1000 a second for most.
     timescale: u32 = 0,
     /// The ticks of the track before what is presented - an encoder's
     /// priming, which a decoder starts with and does not play - and how
     /// many ticks are presented: the track's whole length, 0 when not
-    /// known. For a sound track counted in its rate, as it mostly is,
-    /// these are frames of samples.
+    /// known - a Matroska file says it to the millisecond. For a sound
+    /// track counted in its rate, as it mostly is, these are frames of
+    /// samples.
     delay: u32 = 0,
     length: u64 align(4) = 0,
     /// How long it lasts, in microseconds.
@@ -145,16 +175,21 @@ pub const MediaPacket = extern struct {
     flags: u32 = 0,
     /// When it is due - shown, heard - and when it is decoded, in
     /// microseconds from the start of what the file presents. Below 0 for
-    /// a packet before it: priming.
+    /// a packet before it: priming. A Matroska file keeps only when a
+    /// packet is due, its packets in the order they are decoded: there
+    /// `dts` is `pts`.
     pts: i64 align(4) = 0,
     dts: i64 align(4) = 0,
     /// How long it lasts, in microseconds.
     duration: u32 = 0,
-    /// Its number in its track, 0 for the first.
+    /// Its number in its track, 0 for the first. In a Matroska file
+    /// counted from where the track last moved to, which after SeekMedia
+    /// is worked out from the time and the track's packets a second.
     index: u32 = 0,
     /// When it is decoded in the track's own ticks (`MediaTrack.timescale`),
-    /// counted from the track's first packet: exact, where microseconds
-    /// are rounded.
+    /// counted from the track's first packet - in a Matroska file from the
+    /// file's start, as it says when the packet is due: exact, where
+    /// microseconds are rounded.
     ticks: u64 align(4) = 0,
 };
 
@@ -175,7 +210,8 @@ pub const MediaInfo = extern struct {
     /// Whether SeekMedia can move its tracks: a file, read where it lies.
     seekable: u32 = 0,
     /// The first track of pictures and of sound, as GetMediaTrack numbers
-    /// them; ~0 when it has none.
+    /// them - in a Matroska file the first the file marks as one to play
+    /// unless asked, else the first; ~0 when it has none.
     video: u32 = ~@as(u32, 0),
     audio: u32 = ~@as(u32, 0),
     /// What its tags name it, NUL-terminated, cut at 63 characters; empty
@@ -271,7 +307,8 @@ pub const MERR_OPEN: i32 = -2;
 pub const MERR_UNKNOWN: i32 = -3;
 /// A container it knows, in a form it does not read: an MP4 in fragments,
 /// one whose index lies behind its packets read through a function, a
-/// track encrypted.
+/// track encrypted - or, in a Matroska file, compressed other than by the
+/// bytes each packet begins with left out.
 pub const MERR_UNSUPPORTED: i32 = -4;
 /// The source would not give its bytes.
 pub const MERR_READ: i32 = -5;

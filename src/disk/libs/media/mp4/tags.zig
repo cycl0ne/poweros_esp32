@@ -100,7 +100,7 @@ fn cover(t: *_file.Tags, value: Value) void {
 
 /// A year's first four digits, 0 when there are none: "2004",
 /// "2004-05-12T07:00:00Z".
-fn yearOf(text: []const u8) u32 {
+pub fn yearOf(text: []const u8) u32 {
     var year: u32 = 0;
     var digits: usize = 0;
     for (text) |char| {
@@ -146,7 +146,7 @@ fn upToNul(text: []const u8) []const u8 {
 }
 
 /// The block of `count` chapters, cleared; null without memory.
-fn chapterBlock(file: *File, count: usize) ?[*]media.MediaChapter {
+pub fn chapterBlock(file: *File, count: usize) ?[*]media.MediaChapter {
     const memory = file.base.sys_base.AllocVec(@intCast(count * @sizeOf(media.MediaChapter)), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     return @ptrCast(@alignCast(memory));
 }

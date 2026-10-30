@@ -433,7 +433,8 @@ triggers too. A trigger plays on after its open is closed; the query's
 `LIBS:audiocodec.library` turns a sound file into the 16-bit samples a
 stream plays: WAV (PCM of 8 to 32 bits, or float), MP3 (MPEG-1, 2 and
 2.5, Layer III), FLAC (4 to 24 bits), Ogg Vorbis and AAC-LC (ADTS, or in
-an MP4), in one channel or two. `OpenAudioStream` opens a file by name
+an MP4), and the sound of a Matroska file in any of them but WAV, in one
+channel or two. `OpenAudioStream` opens a file by name
 (`ACA_Name`), a file the program has open (`ACA_FileHandle`), or bytes a
 function of the program's hands over (`ACA_ReadFunc`, `ACA_ReadData`) -
 a download, a network stream - and finds the kind by its first bytes.
@@ -524,6 +525,25 @@ length is exact, the priming is left out, and `SeekAudio` lands on the
 very frame: the packet before it is decoded only to fill the overlap.
 The tags - iTunes's items - the cover and the chapters come from
 media.library and are the stream's like any others.
+
+### Matroska
+
+**A Matroska file** - an `.mka`, an `.mkv` film's sound - is a
+container too, and opened the same way, by its first bytes (EBML's
+header) whatever `ACA_Codec` says; `IdentifyAudio` calls it
+ACODEC_UNKNOWN, as its first bytes say nothing of what it holds. Its
+sound track - the one it marks to be played, or the one `ACA_MediaTrack`
+numbers - may be AAC, MP3, FLAC or Vorbis, and `info.codec` says which;
+Opus, AC-3 and DTS are refused with ACERR_UNSUPPORTED, as is MPEG audio
+of layer II. A read function reads it front to back, and it cannot
+seek. Matroska keeps its times in milliseconds, so: the first packet
+says where the sound begins and each after it begins where the one
+before ends; the priming its `CodecDelay` gives is left out; the length
+is the segment's, to the millisecond (a FLAC's STREAMINFO is exact); and
+a seek lands within a millisecond of the frame - FFmpeg's Vorbis up to
+three early, as its times run half a short block late. An MP3 in
+Matroska has no Info frame, so its encoder's delay plays, as it does
+for FFmpeg.
 
 Only the LC core is decoded, mono or stereo: an HE-AAC stream (SBR, PS)
 plays its core, at half the rate, which sounds dull but plays; Main,
@@ -627,10 +647,10 @@ title its metadata names as it changes (`sdk.http.icy`), or an Ogg
 station's songs by their own tags; it ends when the station ends the
 stream, or says why the connection was lost. `SYS:Programs/Player` does
 it in a window, and is
-what the desktop opens a `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a` or
-`.aac` file with, and a list - `.m3u`, `.m3u8`, `.pls` (the `MP3`,
-`WAV`, `FLAC`, `Ogg`, `M4A`, `AAC`, `M3U` and `PLS` descriptors in
-`DEVS:DataTypes`) - with the song's cover
+what the desktop opens a `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`,
+`.aac` or `.mka` file with, and a list - `.m3u`, `.m3u8`, `.pls` (the
+`MP3`, `WAV`, `FLAC`, `Ogg`, `M4A`, `AAC`, `MKA`, `M3U` and `PLS`
+descriptors in `DEVS:DataTypes`) - with the song's cover
 and tags, the chapter of a mix that is playing, a playlist it saves as
 M3U, and internet stations - MP3 or Ogg Vorbis over `http://` or
 `https://`, read on a process of their own and decoded through

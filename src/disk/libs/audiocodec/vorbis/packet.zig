@@ -160,15 +160,28 @@ fn decodeScalar(bits: *Bits, book: *const setup.Codebook) ?u32 {
 
 // --- the packet -------------------------------------------------------------------
 
-/// The next packet decoded: its sound, if it hands any out, in the
-/// stream's outputs, `ready` frames of it.
+/// The next packet of the Ogg stream decoded: its sound, if it hands any
+/// out, in the stream's outputs, `ready` frames of it.
 pub fn decode(stream: *Stream, v: *Vorbis) Outcome {
     if (!ogg.startPacket(stream, &v.ogg)) return .end;
     var bits: Bits = .{ .stream = stream, .ogg = &v.ogg };
+    const outcome = audio(&bits, v);
+    ogg.endPacket(stream, &v.ogg);
+    return outcome;
+}
+
+/// A packet held whole - a container's - decoded, as `decode` does.
+pub fn decodePacket(bytes: []const u8, v: *Vorbis) Outcome {
+    var bits: Bits = .{ .packet = bytes };
+    return audio(&bits, v);
+}
+
+/// An audio packet's bits made sound; any other packet passed over.
+fn audio(bits: *Bits, v: *Vorbis) Outcome {
     const s = &v.setup;
-    if (bits.read(1) != 0) return pass(stream, v);
+    if (bits.read(1) != 0) return .passed;
     const mode_index = bits.read(s.mode_bits);
-    if (bits.ended or mode_index >= s.mode_count) return pass(stream, v);
+    if (bits.ended or mode_index >= s.mode_count) return .passed;
     const mode = s.modes[mode_index];
     const n = v.blocksizes[@intFromBool(mode.long)];
     const short = v.blocksizes[0];
@@ -192,7 +205,7 @@ pub fn decode(stream: *Stream, v: *Vorbis) Outcome {
     var decoded: [2]bool = .{ false, false };
     for (0..channels) |channel| {
         const floor = &s.floors[map.submap_floor[map.mux[channel]]];
-        v.used[channel] = floorDecode(&bits, s, floor, &v.final_y[channel], &v.step2[channel]);
+        v.used[channel] = floorDecode(bits, s, floor, &v.final_y[channel], &v.step2[channel]);
         decoded[channel] = v.used[channel];
     }
     for (0..map.coupling_steps) |step| {
@@ -215,7 +228,7 @@ pub fn decode(stream: *Stream, v: *Vorbis) Outcome {
             skip[count] = !decoded[channel];
             count += 1;
         }
-        residueDecode(&bits, s, v, &s.residues[map.submap_residue[submap]], vectors[0..count], skip[0..count], half);
+        residueDecode(bits, s, v, &s.residues[map.submap_residue[submap]], vectors[0..count], skip[0..count], half);
     }
 
     // The channels uncoupled, last step first.
@@ -257,15 +270,8 @@ pub fn decode(stream: *Stream, v: *Vorbis) Outcome {
         imdct.inverse(&v.transforms[@intFromBool(mode.long)], buffer);
     }
 
-    ogg.endPacket(stream, &v.ogg);
     overlap(v, n, left_start, left_end, right_start, right_end);
     return .decoded;
-}
-
-/// A packet that is no audio, or cannot be decoded, passed over.
-fn pass(stream: *Stream, v: *Vorbis) Outcome {
-    ogg.endPacket(stream, &v.ogg);
-    return .passed;
 }
 
 /// The block windowed and overlapped with the one before: its sound from

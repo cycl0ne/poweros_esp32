@@ -1,24 +1,19 @@
 // SPDX-License-Identifier: MIT
 //! AAC as a stream: ADTS frames - a `.aac` file, a station's stream - read
-//! from the stream's bytes, or the packets of a track of an MP4 - a
-//! `.m4a`, a film's sound - from media.library. Each packet is a raw data
-//! block (`decodeBlock`): its channels' streams read (`ics.zig`), M/S and
-//! intensity stereo, TNS, and the filter bank (`filterbank.zig`).
+//! from the stream's bytes, or the packets of a track of a container - an
+//! `.m4a`, a `.mka`, a film's sound - from media.library (`_media.zig`).
+//! Each packet is a raw data block (`decodeBlock`): its channels' streams
+//! read (`ics.zig`), M/S and intensity stereo, TNS, and the filter bank
+//! (`filterbank.zig`).
 //!
-//! **An MP4** is opened through media.library: the stream's own file
-//! handed to it where the container begins, or the program's read
-//! function behind the bytes already read ahead - an index at the front
-//! then, as media.library reads it; or a file the program has open with
-//! media.library already (`ACA_Media`), which stays the program's. Its
-//! first sound track is decoded unless `ACA_MediaTrack` names another.
-//! **The length is exact**: the track's edit says how many frames the
-//! encoder put before the sound - they are left out - and how many there
-//! are. **A seek is exact**: media.library moves the track to the packet
-//! before the one the frame is in, which is decoded only to fill the
-//! overlap, and the frames before the one asked for are passed over. The
-//! noise of PNS bands is drawn anew from there - the same noise, other
-//! samples - and from its start again after a seek to frame 0, which so
-//! gives the very samples the stream began with.
+//! **A container's track** says how many frames the encoder put before
+//! the sound - they are left out - and how many there are. **A seek is
+//! exact**: the track moves to the packet before the one the frame is in,
+//! which is decoded only to fill the overlap, and the frames before the
+//! one asked for are passed over. The noise of PNS bands is drawn anew
+//! from there - the same noise, other samples - and from its start again
+//! after a seek to frame 0, which so gives the very samples the stream
+//! began with.
 //!
 //! **ADTS** has no index: the length is worked out from the frames read
 //! ahead at the start - their bytes a frame - and the file's size, and a
@@ -36,10 +31,9 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const ac = sdk.audiocodec;
 const media = sdk.media;
-const utility = sdk.utility;
-const MediaBase = sdk.interface.media.MediaBase;
 const _stream = @import("../stream/_stream.zig");
 const Stream = _stream.Stream;
+const _media = @import("../stream/_media.zig");
 const mp3 = @import("../mp3/_mp3.zig");
 const setup = @import("../vorbis/setup.zig");
 const config = @import("config.zig");
@@ -52,16 +46,6 @@ const frame_samples = 1024;
 
 pub const Aac = struct {
     config: config.Config,
-    /// Where the packets come from: media.library's track, else ADTS
-    /// frames in the stream's bytes.
-    media_base: ?*MediaBase,
-    file: ?*media.MediaFile,
-    owns_file: bool,
-    track: u32,
-    /// The track's ticks a second, and the frames of priming its edit
-    /// leaves out.
-    timescale: u32,
-    delay: i64,
     /// The tables and buffers.
     pool: ?*anyopaque,
     bank: filterbank.Bank,
@@ -74,14 +58,11 @@ pub const Aac = struct {
     previous_shape: [2]u8,
     noise: ics.Noise,
     ms: [ics.max_bands]bool,
-    /// Where the next packet's sound lies, in frames from the start of
-    /// the sound; frames before `skip_until` are passed over, frames from
-    /// `total` on cut when the length is `exact`; after a seek the first
-    /// packet only fills the overlap.
+    /// ADTS: where the next frame's sound lies, in frames from the start;
+    /// frames before `skip_until` are passed over; after a seek the first
+    /// frame only fills the overlap.
     position: i64,
     skip_until: i64,
-    exact: bool,
-    total: i64,
     discard: bool,
     /// ADTS: where the first frame lies, the bytes a frame on average,
     /// the header the frames must agree with, and a frame's raw data
@@ -100,12 +81,8 @@ fn reset(a: *Aac) void {
     for (0..2) |ch| @memset(a.overlap[ch][0..frame_samples], 0);
 }
 
-/// The stream's bytes made an AAC stream: ADTS, or an MP4 through
-/// media.library.
+/// The stream's bytes made an AAC stream of ADTS frames.
 pub fn open(stream: *Stream) i32 {
-    _stream.fill(stream);
-    const bytes = _stream.available(stream);
-    if (bytes.len >= 8 and _stream.same(bytes[4..], "ftyp")) return openContainer(stream);
     return openAdts(stream);
 }
 
@@ -114,12 +91,6 @@ fn begin(stream: *Stream) *Aac {
     const a = &stream.codec.aac;
     a.* = .{
         .config = .{},
-        .media_base = null,
-        .file = null,
-        .owns_file = false,
-        .track = 0,
-        .timescale = 0,
-        .delay = 0,
         .pool = null,
         .bank = undefined,
         .powers = undefined,
@@ -133,8 +104,6 @@ fn begin(stream: *Stream) *Aac {
         .ms = @splat(false),
         .position = 0,
         .skip_until = 0,
-        .exact = false,
-        .total = 0,
         .discard = false,
         .first_frame = 0,
         .frame_bytes = 0,
@@ -173,12 +142,6 @@ fn prepare(stream: *Stream, a: *Aac, cfg: config.Config) i32 {
 
 pub fn free(stream: *Stream, a: *Aac) void {
     const sys = stream.base.sys_base;
-    if (a.media_base) |mb| {
-        if (a.owns_file) mb.CloseMedia(a.file);
-        sys.CloseLibrary(mb.lib());
-    }
-    a.media_base = null;
-    a.file = null;
     if (a.pool) |pool| sys.DeletePool(pool);
     a.pool = null;
 }
@@ -280,170 +243,18 @@ fn endAdtsBlock(stream: *Stream, a: *Aac, bits: *const Bits) void {
     if (a.blocks_left == 0) _stream.consume(stream, h.length);
 }
 
-// --- MP4 --------------------------------------------------------------------------
+// --- a container's track --------------------------------------------------------
 
-/// An MP4 opened through media.library: the stream's file where the
-/// container begins, or the program's read function behind what is
-/// already read ahead.
-fn openContainer(stream: *Stream) i32 {
-    const sys = stream.base.sys_base;
-    const mb: *MediaBase = @ptrCast(sys.OpenLibrary(media.MEDIANAME, 1) orelse return ac.ACERR_UNSUPPORTED);
-    var err: i32 = 0;
-    var file: ?*media.MediaFile = null;
-    const keep: usize = @intFromBool(stream.tags.keep_picture);
-    if (stream.file) |handle| {
-        if (!_stream.seekSource(stream, _stream.tell(stream))) {
-            sys.CloseLibrary(mb.lib());
-            return ac.ACERR_READ;
-        }
-        file = mb.OpenMedia(&[_]utility.TagItem{
-            .{ .tag = media.MDA_FileHandle, .data = @intFromPtr(handle) },
-            .{ .tag = media.MDA_KeepPicture, .data = keep },
-            .{},
-        }, &err);
-    } else {
-        file = mb.OpenMedia(&[_]utility.TagItem{
-            .{ .tag = media.MDA_ReadFunc, .data = @intFromPtr(&readThrough) },
-            .{ .tag = media.MDA_ReadData, .data = @intFromPtr(stream) },
-            .{ .tag = media.MDA_KeepPicture, .data = keep },
-            .{},
-        }, &err);
-    }
-    const opened = file orelse {
-        sys.CloseLibrary(mb.lib());
-        return switch (err) {
-            media.MERR_NOMEMORY => ac.ACERR_NOMEMORY,
-            media.MERR_UNKNOWN => ac.ACERR_UNKNOWN,
-            media.MERR_UNSUPPORTED => ac.ACERR_UNSUPPORTED,
-            media.MERR_CORRUPT => ac.ACERR_CORRUPT,
-            else => ac.ACERR_READ,
-        };
-    };
-    return openTrack(stream, mb, opened, true, stream.media_track);
-}
-
-/// The program's read function, behind the bytes the stream read ahead.
-fn readThrough(data: ?*anyopaque, buffer: [*]u8, length: u32) callconv(.c) i32 {
-    const stream: *Stream = @ptrCast(@alignCast(data.?));
-    const here = _stream.available(stream);
-    if (here.len != 0) {
-        const count = @min(here.len, length);
-        @memcpy(buffer[0..count], here[0..count]);
-        _stream.consume(stream, count);
-        return @intCast(count);
-    }
-    const read = stream.read_fn orelse return -1;
-    return read(stream.read_data, buffer, length);
-}
-
-/// A file media.library has open, given with ACA_Media: its track
-/// decoded, the file left the program's.
-pub fn openMedia(stream: *Stream, file: *media.MediaFile, track: u32) i32 {
-    const sys = stream.base.sys_base;
-    const mb: *MediaBase = @ptrCast(sys.OpenLibrary(media.MEDIANAME, 1) orelse return ac.ACERR_UNSUPPORTED);
-    return openTrack(stream, mb, file, false, track);
-}
-
-/// The track - the first sound track for ~0 - checked, its config read,
-/// the tags taken from the file.
-fn openTrack(stream: *Stream, mb: *MediaBase, file: *media.MediaFile, owns: bool, wanted: u32) i32 {
+/// A track of a container (`_media.zig`): its config read, the tables and
+/// buffers made.
+pub fn openTrack(stream: *Stream, track: *const media.MediaTrack) i32 {
     const a = begin(stream);
-    a.media_base = mb;
-    a.file = file;
-    a.owns_file = owns;
-    var info: media.MediaInfo = .{};
-    mb.GetMediaInfo(file, &info);
-    const number = if (wanted == ~@as(u32, 0)) info.audio else wanted;
-    var track: media.MediaTrack = .{};
-    if (number == ~@as(u32, 0) or mb.GetMediaTrack(file, number, &track) != media.MERR_OK) return ac.ACERR_UNKNOWN;
-    if (track.kind != media.MTRACK_AUDIO) return ac.ACERR_UNKNOWN;
-    if (track.codec != media.MCODEC_AAC) return ac.ACERR_UNSUPPORTED;
-    if (track.config == null or track.timescale == 0) return ac.ACERR_CORRUPT;
+    if (track.config == null) return ac.ACERR_CORRUPT;
     const cfg = config.audioSpecific(track.config.?[0..track.config_size]) catch |e| return switch (e) {
         error.Unsupported => ac.ACERR_UNSUPPORTED,
         error.Corrupt => ac.ACERR_CORRUPT,
     };
-    const result = prepare(stream, a, cfg);
-    if (result != ac.ACERR_OK) return result;
-    a.track = number;
-    a.timescale = track.timescale;
-    a.delay = framesOf(a, track.delay);
-    a.exact = track.length != 0;
-    a.total = framesOf(a, @intCast(@min(track.length, std.math.maxInt(i64))));
-    a.skip_until = 0;
-    a.position = -a.delay;
-    stream.info.seekable = info.seekable;
-    stream.info.bitrate = track.bitrate;
-    if (a.exact) stream.info.frames = @intCast(@min(a.total, 0xFFFF_FFFF));
-    tagsOf(stream, mb, file);
-    return ac.ACERR_OK;
-}
-
-/// `ticks` of the track in frames of the sound.
-fn framesOf(a: *const Aac, ticks: i64) i64 {
-    return @intCast(@divFloor(@as(i128, ticks) * a.config.rate, a.timescale));
-}
-
-/// The file's tags as the stream's: the names, the numbers, the chapters,
-/// and the cover copied when the stream keeps one.
-fn tagsOf(stream: *Stream, mb: *MediaBase, file: *media.MediaFile) void {
-    const tags = &stream.tags;
-    var title: [*:0]const u8 = "";
-    var artist: [*:0]const u8 = "";
-    var album: [*:0]const u8 = "";
-    var album_artist: [*:0]const u8 = "";
-    var composer: [*:0]const u8 = "";
-    var genre: [*:0]const u8 = "";
-    var comment: [*:0]const u8 = "";
-    var chapters: u32 = 0;
-    var list: ?[*]const media.MediaChapter = null;
-    var picture: ?*const media.MediaPicture = null;
-    _ = mb.GetMediaAttrs(file, &[_]utility.TagItem{
-        .{ .tag = media.MDA_Title, .data = @intFromPtr(&title) },
-        .{ .tag = media.MDA_Artist, .data = @intFromPtr(&artist) },
-        .{ .tag = media.MDA_Album, .data = @intFromPtr(&album) },
-        .{ .tag = media.MDA_AlbumArtist, .data = @intFromPtr(&album_artist) },
-        .{ .tag = media.MDA_Composer, .data = @intFromPtr(&composer) },
-        .{ .tag = media.MDA_Genre, .data = @intFromPtr(&genre) },
-        .{ .tag = media.MDA_Comment, .data = @intFromPtr(&comment) },
-        .{ .tag = media.MDA_Year, .data = @intFromPtr(&tags.year) },
-        .{ .tag = media.MDA_Track, .data = @intFromPtr(&tags.track) },
-        .{ .tag = media.MDA_Tracks, .data = @intFromPtr(&tags.tracks) },
-        .{ .tag = media.MDA_Chapters, .data = @intFromPtr(&chapters) },
-        .{ .tag = media.MDA_ChapterList, .data = @intFromPtr(&list) },
-        .{ .tag = media.MDA_Picture, .data = @intFromPtr(&picture) },
-        .{},
-    });
-    _stream.copyName(&tags.title, _stream.upToNul(title));
-    _stream.copyName(&tags.artist, _stream.upToNul(artist));
-    _stream.copyName(&tags.album, _stream.upToNul(album));
-    _stream.copyName(&tags.album_artist, _stream.upToNul(album_artist));
-    _stream.copyName(&tags.composer, _stream.upToNul(composer));
-    _stream.copyName(&tags.genre, _stream.upToNul(genre));
-    _stream.copyName(&tags.comment, _stream.upToNul(comment));
-    tags.plain_comment = tags.comment[0] != 0;
-    const sys = stream.base.sys_base;
-    if (chapters != 0 and list != null) {
-        const size = chapters * @sizeOf(ac.AudioChapter);
-        if (sys.AllocVec(size, exec.MEMF_ANY)) |memory| {
-            const into: [*]ac.AudioChapter = @ptrCast(@alignCast(memory));
-            for (0..chapters) |n| {
-                into[n] = .{ .start = list.?[n].start, .end = list.?[n].end, .title = list.?[n].title };
-            }
-            tags.chapters = into;
-            tags.chapter_count = chapters;
-        }
-    }
-    if (tags.keep_picture) {
-        if (picture) |cover| {
-            if (sys.AllocVec(cover.size, exec.MEMF_ANY)) |memory| {
-                const block: [*]u8 = @ptrCast(memory);
-                @memcpy(block[0..cover.size], cover.data[0..cover.size]);
-                tags.picture_block = block;
-                tags.picture = .{ .data = block, .size = cover.size, .kind = cover.kind, .mime = cover.mime };
-            }
-        }
-    }
+    return prepare(stream, a, cfg);
 }
 
 // --- decoding ---------------------------------------------------------------------
@@ -471,28 +282,14 @@ pub fn decode(stream: *Stream, a: *Aac, out: [*]i16, frames: u32) i32 {
 /// The next packet decoded into the stream's samples, the frames passed
 /// over and cut left out: false at the end.
 fn decodeNext(stream: *Stream, a: *Aac) bool {
+    if (stream.media.base != null) return decodePacket(stream, a);
     while (true) {
-        if (a.exact and a.position >= a.total) return false;
-        var start: i64 = a.position;
-        var decoded: ?u32 = null;
-        if (a.media_base) |mb| {
-            var packet: media.MediaPacket = .{};
-            const result = mb.ReadMediaPacket(a.file.?, a.track, &packet);
-            if (result == media.MERR_END) return false;
-            if (result != media.MERR_OK) {
-                stream.failed = true;
-                return false;
-            }
-            start = framesOf(a, @intCast(packet.ticks)) - a.delay;
-            var bits: Bits = .{ .bytes = packet.data.?[0..packet.size] };
-            decoded = decodeBlock(a, &bits) catch null;
-        } else {
-            var bits = nextAdtsBlock(stream, a) orelse return false;
-            decoded = decodeBlock(a, &bits) catch null;
-            endAdtsBlock(stream, a, &bits);
-        }
+        const start: i64 = a.position;
+        var bits = nextAdtsBlock(stream, a) orelse return false;
+        const decoded = decodeBlock(a, &bits) catch null;
+        endAdtsBlock(stream, a, &bits);
         a.position = start + frame_samples;
-        // A packet that would not decode is passed over, and what was
+        // A frame that would not decode is passed over, and what was
         // left of the one before with it.
         const got = decoded orelse {
             reset(a);
@@ -502,12 +299,29 @@ fn decodeNext(stream: *Stream, a: *Aac) bool {
             a.discard = false;
             continue;
         }
-        var first: i64 = @max(0, a.skip_until - start);
-        var last: i64 = frame_samples;
-        if (a.exact) last = @min(last, a.total - start);
-        if (first >= last) continue;
-        first = @min(first, frame_samples);
-        toSamples(stream, a, got, @intCast(first), @intCast(last));
+        const first: i64 = @max(0, a.skip_until - start);
+        if (first >= frame_samples) continue;
+        toSamples(stream, a, got, @intCast(first), frame_samples);
+        return true;
+    }
+}
+
+/// A container's next packet decoded, as `decodeNext` does. The packet a
+/// seek lands on lies before the frame asked for, so it only fills the
+/// overlap.
+fn decodePacket(stream: *Stream, a: *Aac) bool {
+    while (true) {
+        var packet: media.MediaPacket = .{};
+        const bytes = _media.next(stream, &packet) orelse return false;
+        const start = _media.place(&stream.media, packet.ticks);
+        _media.advance(&stream.media, frame_samples);
+        var bits: Bits = .{ .bytes = bytes };
+        const got = decodeBlock(a, &bits) catch {
+            reset(a);
+            continue;
+        };
+        const span = _media.window(&stream.media, start, frame_samples) orelse continue;
+        toSamples(stream, a, got, span.first, span.last);
         return true;
     }
 }
@@ -620,24 +434,18 @@ fn decodeBlock(a: *Aac, bits: *Bits) (ics.Error || config.Error)!u32 {
 
 // --- seeking ----------------------------------------------------------------------
 
-/// The stream moved to `frame`: exactly in an MP4, near it by the bytes a
-/// frame in ADTS. The packet before is decoded only to fill the overlap.
+/// The stream moved to `frame`: exactly in a container, near it by the
+/// bytes a frame in ADTS. The packet before is decoded only to fill the
+/// overlap.
 pub fn seek(stream: *Stream, a: *Aac, frame: u32) i32 {
     stream.pcm_start = 0;
     stream.pcm_stop = 0;
-    if (a.media_base) |mb| {
-        const target: i64 = if (a.exact) @min(frame, a.total) else frame;
+    if (stream.media.base != null) {
         // A packet early: its own sound is passed over, its tail kept.
-        const before = target - frame_samples;
-        const time: i64 = @intCast(@divFloor(@as(i128, before) * 1_000_000, a.config.rate));
-        const result = mb.SeekMedia(a.file.?, a.track, time);
-        if (result == media.MERR_NOSEEK) return ac.ACERR_NOSEEK;
-        if (result != media.MERR_OK) return ac.ACERR_READ;
+        const result = _media.seek(stream, frame, frame_samples);
+        if (result != ac.ACERR_OK) return result;
         reset(a);
         a.noise = .{};
-        a.discard = true;
-        a.skip_until = target;
-        a.position = before;
         return ac.ACERR_OK;
     }
     if (stream.file == null) return ac.ACERR_NOSEEK;

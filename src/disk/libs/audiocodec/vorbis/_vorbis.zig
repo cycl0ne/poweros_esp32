@@ -29,6 +29,11 @@
 //! and a seek moves within it. A link that cannot be decoded ends the
 //! stream with why.
 //!
+//! **A container's track** (`_media.zig`) brings the three headers as its
+//! setup, laced as Xiph laces them, and a packet at a time; its ticks say
+//! where the packet's sound lies, not granule positions, and a seek moves
+//! the track a long block before the frame asked for.
+//!
 //! The samples are handed out at 16 bits, rounded and held at their ends.
 //! A stream of one or two channels is decoded; more are refused, as is
 //! a floor of type 0.
@@ -36,8 +41,10 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ac = sdk.audiocodec;
+const media = sdk.media;
 const _stream = @import("../stream/_stream.zig");
 const Stream = _stream.Stream;
+const _media = @import("../stream/_media.zig");
 const ogg = @import("../ogg/_ogg.zig");
 const setup = @import("setup.zig");
 const imdct = @import("imdct.zig");
@@ -100,6 +107,14 @@ pub const Vorbis = struct {
 /// The headers read: the info filled in, the stream at the first audio
 /// packet.
 pub fn open(stream: *Stream) i32 {
+    const v = fresh(stream);
+    ogg.begin(&v.ogg, null);
+    const result = headers(stream, v);
+    if (result != ac.ACERR_OK) return result;
+    return settle(stream, v);
+}
+
+fn fresh(stream: *Stream) *Vorbis {
     stream.codec = .{ .vorbis = undefined };
     const v = &stream.codec.vorbis;
     v.* = .{
@@ -134,10 +149,62 @@ pub fn open(stream: *Stream) i32 {
         .link_end = 0,
         .broken = 0,
     };
-    ogg.begin(&v.ogg, null);
-    const result = headers(stream, v);
+    return v;
+}
+
+/// A track of a container: its setup's three headers - what the sound
+/// is, its comments, which the container's tags stand for, and the setup
+/// - the info filled in.
+pub fn openTrack(stream: *Stream, track: *const media.MediaTrack) i32 {
+    const v = fresh(stream);
+    const laced = (track.config orelse return ac.ACERR_CORRUPT)[0..track.config_size];
+    // A byte of 2, the first two lengths in bytes of 255 and one less.
+    if (laced.len < 1 or laced[0] != 2) return ac.ACERR_CORRUPT;
+    var at: usize = 1;
+    var lengths: [2]usize = .{ 0, 0 };
+    for (&lengths) |*length| {
+        while (true) {
+            if (at >= laced.len) return ac.ACERR_CORRUPT;
+            const byte = laced[at];
+            at += 1;
+            length.* += byte;
+            if (byte != 255) break;
+        }
+    }
+    if (lengths[0] + lengths[1] > laced.len - at) return ac.ACERR_CORRUPT;
+    const first = laced[at..][0..lengths[0]];
+    const last = laced[at + lengths[0] + lengths[1] ..];
+    var result = identification(v, first);
     if (result != ac.ACERR_OK) return result;
-    return settle(stream, v);
+    if (last.len < 7 or last[0] != 5 or !_stream.same(last[1..], "vorbis")) return ac.ACERR_CORRUPT;
+    var bits: ogg.Bits = .{ .packet = last[7..] };
+    result = setupFrom(stream, v, &bits);
+    if (result != ac.ACERR_OK) return result;
+    restart(v);
+    stream.info.codec = ac.ACODEC_VORBIS;
+    stream.info.rate = v.rate;
+    stream.info.channels = v.channels;
+    stream.info.bits = 16;
+    stream.info.bitrate = if (v.nominal > 0) @intCast(v.nominal) else 0;
+    return ac.ACERR_OK;
+}
+
+/// What the first header says: the channels, the block sizes, the rate
+/// and the bit rate the sound was coded for.
+fn identification(v: *Vorbis, head: []const u8) i32 {
+    if (head.len < 30 or head[0] != 1 or !_stream.same(head[1..], "vorbis")) return ac.ACERR_CORRUPT;
+    const channels: u32 = head[11];
+    const rate = _stream.le32(head[12..16]);
+    const short_bits = head[28] & 0x0F;
+    const long_bits = head[28] >> 4;
+    if (_stream.le32(head[7..11]) != 0 or channels == 0 or rate == 0 or head[29] & 1 == 0) return ac.ACERR_CORRUPT;
+    if (short_bits < 6 or long_bits > 13 or short_bits > long_bits) return ac.ACERR_CORRUPT;
+    if (channels > 2) return ac.ACERR_UNSUPPORTED;
+    v.channels = channels;
+    v.blocksizes = .{ @as(u32, 1) << @intCast(short_bits), @as(u32, 1) << @intCast(long_bits) };
+    v.rate = rate;
+    v.nominal = @bitCast(_stream.le32(head[20..24]));
+    return ac.ACERR_OK;
 }
 
 /// A link's three headers read, the reader at its first page: what the
@@ -150,18 +217,8 @@ fn headers(stream: *Stream, v: *Vorbis) i32 {
     var head: [30]u8 = undefined;
     const got = ogg.readBytes(stream, &v.ogg, &head);
     ogg.endPacket(stream, &v.ogg);
-    if (got < head.len or head[0] != 1 or !_stream.same(head[1..], "vorbis")) return ac.ACERR_CORRUPT;
-    const channels: u32 = head[11];
-    const rate = _stream.le32(head[12..16]);
-    const short_bits = head[28] & 0x0F;
-    const long_bits = head[28] >> 4;
-    if (_stream.le32(head[7..11]) != 0 or channels == 0 or rate == 0 or head[29] & 1 == 0) return ac.ACERR_CORRUPT;
-    if (short_bits < 6 or long_bits > 13 or short_bits > long_bits) return ac.ACERR_CORRUPT;
-    if (channels > 2) return ac.ACERR_UNSUPPORTED;
-    v.channels = channels;
-    v.blocksizes = .{ @as(u32, 1) << @intCast(short_bits), @as(u32, 1) << @intCast(long_bits) };
-    v.rate = rate;
-    v.nominal = @bitCast(_stream.le32(head[20..24]));
+    var result = identification(v, head[0..got]);
+    if (result != ac.ACERR_OK) return result;
 
     // Its comments.
     if (!ogg.startPacket(stream, &v.ogg)) return failure(stream);
@@ -174,14 +231,36 @@ fn headers(stream: *Stream, v: *Vorbis) i32 {
     // The setup.
     if (!ogg.startPacket(stream, &v.ogg)) return failure(stream);
     if (ogg.readBytes(stream, &v.ogg, &kind) != kind.len or kind[0] != 5 or !_stream.same(kind[1..], "vorbis")) return ac.ACERR_CORRUPT;
+    var bits: ogg.Bits = .{ .stream = stream, .ogg = &v.ogg };
+    result = setupFrom(stream, v, &bits);
+    ogg.endPacket(stream, &v.ogg);
+    if (result != ac.ACERR_OK) return result;
+
+    // Where the sound begins, and where its positions start.
+    v.start_offset = 0;
+    if (v.ogg.segment < v.ogg.segments) {
+        v.audio_page = v.ogg.page_offset;
+        v.audio_segment = v.ogg.segment;
+    } else {
+        v.audio_page = _stream.tell(stream);
+        v.audio_segment = 0;
+        v.start_offset = startOffset(stream, v);
+    }
+    v.ogg.chained = true;
+    return ac.ACERR_OK;
+}
+
+/// The setup read from `bits`, after its seven bytes of kind, into memory
+/// of its own - the link before's given back - and the tables and buffers
+/// it needs.
+fn setupFrom(stream: *Stream, v: *Vorbis, bits: *ogg.Bits) i32 {
     const sys = stream.base.sys_base;
+    const channels = v.channels;
     if (v.pool) |before| sys.DeletePool(before);
     v.pool = null;
     const pool = sys.CreatePool(exec.MEMF_ANY | exec.MEMF_CLEAR, 32 * 1024, 8 * 1024) orelse return ac.ACERR_NOMEMORY;
     v.pool = pool;
-    var bits: ogg.Bits = .{ .stream = stream, .ogg = &v.ogg };
-    const result = setup.read(&bits, sys, pool, channels, &v.setup);
-    ogg.endPacket(stream, &v.ogg);
+    const result = setup.read(bits, sys, pool, channels, &v.setup);
     if (result != ac.ACERR_OK) return result;
 
     // The tables and the buffers.
@@ -203,18 +282,6 @@ fn headers(stream: *Stream, v: *Vorbis) i32 {
     }
     v.class_stride = stride;
     v.classifications = setup.allocate(sys, pool, u8, stride * channels) orelse return ac.ACERR_NOMEMORY;
-
-    // Where the sound begins, and where its positions start.
-    v.start_offset = 0;
-    if (v.ogg.segment < v.ogg.segments) {
-        v.audio_page = v.ogg.page_offset;
-        v.audio_segment = v.ogg.segment;
-    } else {
-        v.audio_page = _stream.tell(stream);
-        v.audio_segment = 0;
-        v.start_offset = startOffset(stream, v);
-    }
-    v.ogg.chained = true;
     return ac.ACERR_OK;
 }
 
@@ -486,6 +553,10 @@ pub fn decode(stream: *Stream, v: *Vorbis, out: [*]i16, frames: u32) i32 {
     if (v.broken != 0) return 0;
     var done: u32 = 0;
     while (done < frames) {
+        if (v.ready_start >= v.ready and stream.media.base != null) {
+            if (!nextPacket(stream, v)) break;
+            continue;
+        }
         if (v.ready_start >= v.ready) {
             switch (packet.decode(stream, v)) {
                 .end => {
@@ -513,6 +584,29 @@ pub fn decode(stream: *Stream, v: *Vorbis, out: [*]i16, frames: u32) i32 {
     }
     if (done == 0 and stream.failed) return ac.ACERR_READ;
     return @intCast(done);
+}
+
+/// A container's next packet decoded: false at the end. The first packet
+/// hands nothing out but places the sound; after a seek the first that
+/// hands out does, for the one landed on begins its overlap only.
+fn nextPacket(stream: *Stream, v: *Vorbis) bool {
+    var packet_info: media.MediaPacket = .{};
+    const bytes = _media.next(stream, &packet_info) orelse return false;
+    if (packet.decodePacket(bytes, v) != .decoded) return true;
+    if (v.ready == 0) {
+        if (!v.seeking) _ = _media.place(&stream.media, packet_info.ticks);
+        return true;
+    }
+    v.seeking = false;
+    const start = _media.place(&stream.media, packet_info.ticks);
+    _media.advance(&stream.media, v.ready);
+    const span = _media.window(&stream.media, start, v.ready) orelse {
+        v.ready_start = v.ready;
+        return true;
+    };
+    v.ready_start = span.first;
+    v.ready = span.last;
+    return true;
 }
 
 /// A sample at 16 bits: rounded to the nearest, held at the ends.
@@ -577,6 +671,15 @@ fn account(v: *Vorbis) void {
 
 /// The stream moved to `frame` of the link being played, exactly.
 pub fn seek(stream: *Stream, v: *Vorbis, frame: u32) i32 {
+    if (stream.media.base != null) {
+        // A long block early: the packet landed on only begins the
+        // overlap.
+        const result = _media.seek(stream, frame, v.blocksizes[1]);
+        if (result != ac.ACERR_OK) return result;
+        restart(v);
+        v.seeking = true;
+        return ac.ACERR_OK;
+    }
     if (stream.file == null) return ac.ACERR_NOSEEK;
     if (v.broken != 0) return v.broken;
     const target = @as(u64, frame) + v.start_offset;

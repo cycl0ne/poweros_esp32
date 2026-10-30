@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! media.library: container files - MP4 and QuickTime's MOV - opened,
-//! their tracks listed and each track's packets handed out as they are
-//! coded, for a decoder; on the disk in LIBS:.
+//! media.library: container files - MP4 and QuickTime's MOV, Matroska
+//! and WebM - opened, their tracks listed and each track's packets handed
+//! out as they are coded, for a decoder; on the disk in LIBS:.
 //!
 //! A program opens a file (OpenMedia) by its name, a file it has open, or
 //! a function of its own that hands the bytes over; the library finds out
@@ -12,6 +12,12 @@
 //! reads the packet it points at, through a buffer the track keeps, which
 //! holds the rest of the packet's chunk - the packets of one track lie
 //! together in chunks, so a run of small packets of sound costs one read.
+//!
+//! A Matroska file (`mkv/`) has no tables of its packets: its tracks, its
+//! cues and its tags are read (`mkv/_mkv.zig`, `mkv/tags.zig`), and each
+//! track walks the clusters itself, block by block, through its buffer
+//! (`mkv/blocks.zig`); a seek starts at a cue point. EBML, what the file
+//! is coded in, is `mkv/ebml.zig`.
 //!
 //! A file is its opener's: everything about it is in the file, and the
 //! base, shared by every opener, holds only the libraries it works

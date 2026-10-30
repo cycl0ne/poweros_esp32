@@ -1,7 +1,8 @@
 # Movie
 
-Movie plays films in a window: MP4 and QuickTime's MOV, their pictures
-in H.264, H.265 or Motion JPEG and their sound in AAC. H.264 and H.265
+Movie plays films in a window: MP4, QuickTime's MOV and Matroska's MKV,
+their pictures in H.264, H.265 or Motion JPEG and their sound in AAC -
+or, in an MKV, MP3, FLAC or Vorbis too. H.264 and H.265
 are decoded by the machine's video decoder where it has one - the
 VisionFive 2's - and Motion JPEG by the processor, which is enough for
 small pictures.
@@ -13,7 +14,7 @@ otherwise.
 
 ## Starting it
 
-Double-click a `.mp4`, `.m4v` or `.mov` file, or type in a shell:
+Double-click a `.mp4`, `.m4v`, `.mov` or `.mkv` file, or type in a shell:
 
 ```
 Movie FILE,VOLUME/K/N,FULL/S
@@ -26,8 +27,9 @@ Movie FILE,VOLUME/K/N,FULL/S
 
 A film that cannot be played says why in the shell: one whose pictures
 nothing here decodes - H.264 on a machine without a video decoder,
-MPEG-4 Part 2 anywhere - and one that is not a film. A film whose sound
-nothing decodes plays without it.
+MPEG-4 Part 2, VP9 or AV1 anywhere - and one that is not a film. A film
+whose sound nothing decodes plays without it: an MKV's AC-3, DTS or
+Opus.
 
 ## The window
 
