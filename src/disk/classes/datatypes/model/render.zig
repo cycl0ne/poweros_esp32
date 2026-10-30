@@ -189,13 +189,19 @@ const Renderer = struct {
     fn up(r: *Renderer) Failure!void {
         const fb = r.fb;
         try expect(fb.CreateInstance(&.{ .application_name = "model.datatype" }, &r.instance), error.NoDevice);
-        var count: u32 = 1;
-        var physical: [1]*facet.PhysicalDevice = undefined;
+        var count: u32 = 4;
+        var physical: [4]*facet.PhysicalDevice = undefined;
         if (fb.EnumeratePhysicalDevices(r.instance.?, &count, &physical) != .success or count == 0) return error.NoDevice;
-        r.physical = physical[0];
-        fb.GetPhysicalDeviceMemoryProperties(r.physical, &r.memory);
         const queue_info = facet.DeviceQueueCreateInfo{};
-        try expect(fb.CreateDevice(r.physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) }, &r.device), error.NoDevice);
+        // A GPU if there is one: it is listed after the cores.
+        var k = count;
+        while (r.device == null) {
+            if (k == 0) return error.NoDevice;
+            k -= 1;
+            r.physical = physical[k];
+            _ = fb.CreateDevice(r.physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) }, &r.device);
+        }
+        fb.GetPhysicalDeviceMemoryProperties(r.physical, &r.memory);
         var queue: ?*facet.Queue = null;
         fb.GetDeviceQueue(r.device.?, 0, 0, &queue);
         r.queue = queue.?;

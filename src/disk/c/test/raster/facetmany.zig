@@ -2,7 +2,7 @@
 //! FacetMany: a textured ball of many triangles, to see what a device does
 //! with triangles where C:test/FacetCube sees what it does with pixels.
 //!
-//!   FacetMany TRIANGLES/N,WIDTH/N,HEIGHT/N,FRAMES/N,V3D/S
+//!   FacetMany TRIANGLES/N,WIDTH/N,HEIGHT/N,FRAMES/N,V3D/S,CORES/S
 //!
 //! TRIANGLES triangles (100000 if not given, rounded to what a grid of
 //! squares gives), back faces culled, turned a little each frame, are drawn
@@ -11,8 +11,9 @@
 //! frame took, from its recording until its fence is signalled, on average
 //! and at most, the triangles that makes a second, and how many pixels of the
 //! last frame the ball covers: what tells a frame drawn from one that came
-//! to nothing. With V3D it is all drawn on the device after the cores, a
-//! CM5's GPU.
+//! to nothing. It is all drawn on the device after the cores where there is
+//! one, a CM5's GPU, and with CORES on the cores. With V3D a machine without
+//! a GPU says there is no device.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -35,10 +36,10 @@ const Gpu = facetgpu.Gpu;
 const Failure = facetgpu.Failure;
 
 pub const COMMAND_NAME = "FacetMany";
-const VERSION_STRING = "\x00$VER: FacetMany 1.0 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetMany 1.1 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "TRIANGLES/N,WIDTH/N,HEIGHT/N,FRAMES/N,V3D/S";
+const template = "TRIANGLES/N,WIDTH/N,HEIGHT/N,FRAMES/N,V3D/S,CORES/S";
 
 const radius = 1.4;
 /// How many times the pattern goes round the ball.
@@ -175,7 +176,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [5]usize = @splat(0);
+    var argv: [6]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -185,7 +186,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const width = number(argv[1], 1920, 16);
     const height = number(argv[2], 1080, 16);
     const frames = number(argv[3], 60, 1);
-    const on_gpu = argv[4] != 0;
+    const wanted = facetgpu.Wanted.of(argv[4], argv[5]);
     // Rows by twice as many columns, each square two triangles.
     const rows: u32 = @max(1, std.math.sqrt(triangles / 4));
 
@@ -225,7 +226,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var gpu = Gpu{ .fb = @ptrCast(facet_lib), .ib = ib };
     defer gpu.down();
-    gpu.up(COMMAND_NAME, on_gpu) catch |err| return failed(dl, &gpu, err);
+    gpu.up(COMMAND_NAME, wanted) catch |err| return failed(dl, &gpu, err);
     gpu.onScreen(screen) catch |err| return failed(dl, &gpu, err);
     gpu.prepare(false, &pattern) catch |err| return failed(dl, &gpu, err);
     run(&gpu, dl, tb, rows, width, height, frames) catch |err| return failed(dl, &gpu, err);

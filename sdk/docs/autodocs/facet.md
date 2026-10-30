@@ -3882,7 +3882,9 @@ fn EnumeratePhysicalDevices(base: *FacetBase, instance: *facet.Instance, count: 
 The machine's cores come first, drawing through the rasterizer. On a
 machine with a GPU facet.library drives - the V3D of a Raspberry Pi 5 or
 a Compute Module 5 - that follows, which draws with fixed forms of
-fragment function alone (`shader.fixedFragment`).
+fragment function alone (`shader.fixedFragment`). A program whose
+fragment functions are all of those takes the last device listed, and
+has the GPU where there is one and the cores where not.
 
 **CONTEXT**
 

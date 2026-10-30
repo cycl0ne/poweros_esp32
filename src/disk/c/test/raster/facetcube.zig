@@ -7,7 +7,7 @@
 //! constants. What is made through facet.library is facetgpu.zig's, which
 //! C:test/FacetWindow shares.
 //!
-//!   FacetCube FRAMES/N,NEAREST/S,SIZE/K,CHECK/S,TO/K,V3D/S
+//!   FacetCube FRAMES/N,NEAREST/S,SIZE/K,CHECK/S,TO/K,V3D/S,CORES/S
 //!
 //! The view is SIZE big, WIDTHxHEIGHT: 800x600 if not given. Each frame
 //! an image is acquired, a command buffer recorded - the render pass over
@@ -33,9 +33,10 @@
 //! reference/ keeps them: 8 bits a channel, 565 widened as the display
 //! shows it.
 //!
-//! With V3D it is all drawn on the device after the cores, a CM5's GPU; on a
-//! machine with none it says there is no device. CHECK then lets one pixel in
-//! twenty be further from the reference: the edges fall where the rasterizer
+//! It is all drawn on the device after the cores where there is one, a CM5's
+//! GPU, and with CORES on the cores. With V3D a machine without a GPU says
+//! there is no device. CHECK on a GPU lets one pixel in twenty be further
+//! from the reference: the edges fall where the rasterizer
 //! has them, to a few pixels, but the GPU picks its mipmap levels and places
 //! its samples by its own sums, which the box's grid lines show.
 
@@ -58,10 +59,10 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetCube";
-const VERSION_STRING = "\x00$VER: FacetCube 1.6 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetCube 1.7 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FRAMES/N,NEAREST/S,SIZE/K,CHECK/S,TO/K,V3D/S";
+const template = "FRAMES/N,NEAREST/S,SIZE/K,CHECK/S,TO/K,V3D/S,CORES/S";
 
 /// A view's size, or a still picture's.
 const View = struct {
@@ -156,13 +157,13 @@ fn viewArea(gpu: *const Gpu, view: View) facet.Rect2D {
 
 /// The cube drawn once, still, into a picture of `view`'s size: compared
 /// with the reference for CHECK, written to `to` for TO.
-fn drawStill(dl: *DosBase, gpu: *Gpu, view: View, check: bool, on_gpu: bool, to: ?[*:0]const u8) Failure!i32 {
+fn drawStill(dl: *DosBase, gpu: *Gpu, view: View, check: bool, to: ?[*:0]const u8) Failure!i32 {
     const picture = try gpu.picture(view.width, view.height);
     const transform = scenes.cubeTransform(still_angle, 4.5, view.aspect());
     try gpu.recordInto(picture.framebuffer, .{ .extent = .{ .width = view.width, .height = view.height } }, &transform);
     try gpu.submitAndWait(null, null);
     var result: i32 = dos.RETURN_OK;
-    if (check) result = compare(dl, &picture, if (on_gpu) most_apart_on_gpu else most_apart);
+    if (check) result = compare(dl, &picture, if (gpu.on_gpu) most_apart_on_gpu else most_apart);
     if (to) |name| {
         if (!writePicture(dl, &picture, name)) {
             _ = dl.PrintFault(dl.IoErr(), name);
@@ -327,7 +328,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [6]usize = @splat(0);
+    var argv: [7]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -336,7 +337,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const frames: u32 = if (argv[0] != 0) @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[0])).*)) else 600;
     const nearest = argv[1] != 0;
     const check = argv[3] != 0;
-    const on_gpu = argv[5] != 0;
+    const wanted = facetgpu.Wanted.of(argv[5], argv[6]);
     const to: ?[*:0]const u8 = if (argv[4] != 0) @ptrFromInt(argv[4]) else null;
     const stands = check or to != null;
     const view = if (argv[2] != 0) parseSize(@ptrFromInt(argv[2])) orelse {
@@ -387,10 +388,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var gpu = Gpu{ .fb = @ptrCast(facet_lib), .ib = ib };
     defer gpu.down();
-    gpu.up(COMMAND_NAME, on_gpu) catch |err| return failed(dl, &gpu, err);
+    gpu.up(COMMAND_NAME, wanted) catch |err| return failed(dl, &gpu, err);
     gpu.onScreen(screen) catch |err| return failed(dl, &gpu, err);
     gpu.prepare(nearest, &pattern) catch |err| return failed(dl, &gpu, err);
-    if (stands) return drawStill(dl, &gpu, view, check, on_gpu, to) catch |err| failed(dl, &gpu, err);
+    if (stands) return drawStill(dl, &gpu, view, check, to) catch |err| failed(dl, &gpu, err);
     gpu.chain(2) catch |err| return failed(dl, &gpu, err);
 
     const began = now(tb);

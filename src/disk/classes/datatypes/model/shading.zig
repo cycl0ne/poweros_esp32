@@ -7,9 +7,9 @@
 //! - times the material's colour, and carried over the triangle: a model
 //! drawn by the cores of a microcontroller has its lighting done once a
 //! vertex, not once a pixel. A part without a picture is that colour,
-//! mixed over the triangle (`shader.smooth`); one with a picture is the
-//! picture, filtered, times the colour at the middle of each square of
-//! four pixels.
+//! mixed over the triangle; one with a picture is the picture, filtered,
+//! times that colour. Both are fixed forms of fragment function, so that
+//! a GPU can draw them as well as the cores.
 
 const sdk = @import("sdk");
 const facet = sdk.facet;
@@ -53,10 +53,6 @@ fn colouredVertex(vertices: *const shader.Vertices) callconv(.c) void {
     }
 }
 
-fn colouredFragment(fragments: *const shader.Fragments) callconv(.c) void {
-    shader.smooth(fragments);
-}
-
 fn texturedVertex(vertices: *const shader.Vertices) callconv(.c) void {
     const constants = vertices.resources.constants(Constants);
     for (0..vertices.count) |k| {
@@ -64,40 +60,19 @@ fn texturedVertex(vertices: *const shader.Vertices) callconv(.c) void {
         const uv = vertices.input(@intCast(k), 2);
         const lit = lightOn(constants, vertices.input(@intCast(k), 1));
         const clip = shader.transform(&constants.transform, .{ p[0], p[1], p[2] });
-        vertices.output(@intCast(k))[0..9].* = .{
-            clip[0],                  clip[1],                  clip[2],                  clip[3], uv[0], uv[1],
-            constants.color[0] * lit, constants.color[1] * lit, constants.color[2] * lit,
+        vertices.output(@intCast(k))[0..10].* = .{
+            clip[0],                                  clip[1],                                  clip[2],                                  clip[3],
+            uv[0],                                    uv[1],
+            shader.channel(constants.color[0] * lit), shader.channel(constants.color[1] * lit), shader.channel(constants.color[2] * lit), shader.channel(1),
         };
-    }
-}
-
-/// The picture at each pixel, then each square of four times the light
-/// and colour at its middle.
-fn texturedFragment(fragments: *const shader.Fragments) callconv(.c) void {
-    @setRuntimeSafety(false);
-    shader.textured(.{ .filter = .bilinear }, fragments, fragments.resources.sampled(0, 0, 0));
-    var rows = shader.Rows(6).of(fragments);
-    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
-        const at = rows.centre(quad);
-        const w = 1 / at[0];
-        // In 256ths, held inside 0 to 256.
-        var tint: [3]u32 = undefined;
-        inline for (&tint, 3..) |*each, plane| each.* = @intFromFloat(@min(@max(at[plane] * w * 256, 0), 256));
-        for (out) |*pixel| {
-            const c = pixel.*;
-            const red = (c >> 16 & 0xFF) * tint[0] >> 8;
-            const green = (c >> 8 & 0xFF) * tint[1] >> 8;
-            const blue = (c & 0xFF) * tint[2] >> 8;
-            pixel.* = (c & 0xFF00_0000) | red << 16 | green << 8 | blue;
-        }
     }
 }
 
 const entries = [_]shader.Entry{
     shader.vertex("coloured", &colouredVertex, 4),
-    shader.fragment("coloured", &colouredFragment, 4),
-    shader.vertex("textured", &texturedVertex, 5),
-    shader.fragment("textured", &texturedFragment, 5),
+    shader.fixedFragment("coloured", .{ .kind = .color }),
+    shader.vertex("textured", &texturedVertex, 6),
+    shader.fixedFragment("textured", .{ .kind = .texture_color, .sampling = .{ .filter = .bilinear } }),
 };
 
 /// The functions, for a shader module: "coloured" and "textured", each a

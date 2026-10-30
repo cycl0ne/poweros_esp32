@@ -21,6 +21,17 @@ const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 
 pub const most_images = 4;
 
+/// Which device a program draws on. Told by its switches: `V3D` and `CORES`.
+pub const Wanted = enum {
+    any,
+    gpu,
+    cores,
+
+    pub fn of(v3d: usize, cores: usize) Wanted {
+        return if (cores != 0) .cores else if (v3d != 0) .gpu else .any;
+    }
+};
+
 pub const Failure = error{ NoMemory, NoDevice, NoSurface, Undrawable, NoSwapchain, Refused, DeviceLost };
 
 /// Everything made through facet.library, given back by `down` in the
@@ -34,6 +45,8 @@ pub const Gpu = struct {
     found: PixelFormat = unknown,
     instance: ?*facet.Instance = null,
     physical: *facet.PhysicalDevice = undefined,
+    /// The device is the GPU, not the cores.
+    on_gpu: bool = false,
     memory: facet.PhysicalDeviceMemoryProperties = undefined,
     device: ?*facet.Device = null,
     queue: *facet.Queue = undefined,
@@ -114,16 +127,17 @@ pub const Gpu = struct {
         }
     }
 
-    /// The instance, and the device and its queue: the first the library
-    /// lists, the cores, or with `on_gpu` the one after them.
-    pub fn up(gpu: *Gpu, name: [*:0]const u8, on_gpu: bool) Failure!void {
+    /// The instance, and the device and its queue: the GPU after the cores
+    /// where there is one, as `wanted` allows.
+    pub fn up(gpu: *Gpu, name: [*:0]const u8, wanted: Wanted) Failure!void {
         const fb = gpu.fb;
         try expect(fb.CreateInstance(&.{ .application_name = name }, &gpu.instance), error.NoDevice);
         var count: u32 = 2;
         var physical: [2]*facet.PhysicalDevice = undefined;
         if (fb.EnumeratePhysicalDevices(gpu.instance.?, &count, &physical) != .success or count == 0) return error.NoDevice;
-        if (on_gpu and count < 2) return error.NoDevice;
-        gpu.physical = physical[@intFromBool(on_gpu)];
+        if (wanted == .gpu and count < 2) return error.NoDevice;
+        gpu.on_gpu = wanted != .cores and count > 1;
+        gpu.physical = physical[@intFromBool(gpu.on_gpu)];
         fb.GetPhysicalDeviceMemoryProperties(gpu.physical, &gpu.memory);
         const queue_info = facet.DeviceQueueCreateInfo{};
         try expect(fb.CreateDevice(gpu.physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) }, &gpu.device), error.NoDevice);
