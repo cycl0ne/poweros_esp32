@@ -7,7 +7,7 @@
 //! constants. What is made through facet.library is facetgpu.zig's, which
 //! C:test/FacetWindow shares.
 //!
-//!   FacetCube FRAMES/N,NEAREST/S,SIZE/K,CHECK/S,TO/K
+//!   FacetCube FRAMES/N,NEAREST/S,SIZE/K,CHECK/S,TO/K,V3D/S
 //!
 //! The view is SIZE big, WIDTHxHEIGHT: 800x600 if not given. Each frame
 //! an image is acquired, a command buffer recorded - the render pass over
@@ -32,6 +32,12 @@
 //! than that many are further. TO writes the picture to a file, a PPM as
 //! reference/ keeps them: 8 bits a channel, 565 widened as the display
 //! shows it.
+//!
+//! With V3D it is all drawn on the device after the cores, a CM5's GPU; on a
+//! machine with none it says there is no device. CHECK then lets one pixel in
+//! twenty be further from the reference: the edges fall where the rasterizer
+//! has them, to a few pixels, but the GPU picks its mipmap levels and places
+//! its samples by its own sums, which the box's grid lines show.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -52,10 +58,10 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetCube";
-const VERSION_STRING = "\x00$VER: FacetCube 1.5 (21.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetCube 1.6 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FRAMES/N,NEAREST/S,SIZE/K,CHECK/S,TO/K";
+const template = "FRAMES/N,NEAREST/S,SIZE/K,CHECK/S,TO/K,V3D/S";
 
 /// A view's size, or a still picture's.
 const View = struct {
@@ -87,6 +93,7 @@ comptime {
 /// The pixels of a still picture that may differ from the reference by
 /// more than the format's slack.
 const most_apart = still.width * still.height / 1000;
+const most_apart_on_gpu = still.width * still.height / 20;
 
 const Gpu = facetgpu.Gpu;
 const Failure = facetgpu.Failure;
@@ -111,6 +118,7 @@ fn spin(gpu: *Gpu, dl: *DosBase, tb: *TimerBase, view: View, frames: u32) Failur
                 run.out_of_date = true;
                 break;
             },
+            .error_device_lost => return error.DeviceLost,
             else => return error.NoSwapchain,
         }
         // Black round the view the first time, outside the frame's time.
@@ -130,6 +138,7 @@ fn spin(gpu: *Gpu, dl: *DosBase, tb: *TimerBase, view: View, frames: u32) Failur
                 run.out_of_date = true;
                 break;
             },
+            .error_device_lost => return error.DeviceLost,
             else => return error.NoSwapchain,
         }
         run.frames += 1;
@@ -147,13 +156,13 @@ fn viewArea(gpu: *const Gpu, view: View) facet.Rect2D {
 
 /// The cube drawn once, still, into a picture of `view`'s size: compared
 /// with the reference for CHECK, written to `to` for TO.
-fn drawStill(dl: *DosBase, gpu: *Gpu, view: View, check: bool, to: ?[*:0]const u8) Failure!i32 {
+fn drawStill(dl: *DosBase, gpu: *Gpu, view: View, check: bool, on_gpu: bool, to: ?[*:0]const u8) Failure!i32 {
     const picture = try gpu.picture(view.width, view.height);
     const transform = scenes.cubeTransform(still_angle, 4.5, view.aspect());
     try gpu.recordInto(picture.framebuffer, .{ .extent = .{ .width = view.width, .height = view.height } }, &transform);
     try gpu.submitAndWait(null, null);
     var result: i32 = dos.RETURN_OK;
-    if (check) result = compare(dl, &picture);
+    if (check) result = compare(dl, &picture, if (on_gpu) most_apart_on_gpu else most_apart);
     if (to) |name| {
         if (!writePicture(dl, &picture, name)) {
             _ = dl.PrintFault(dl.IoErr(), name);
@@ -166,8 +175,9 @@ fn drawStill(dl: *DosBase, gpu: *Gpu, view: View, check: bool, to: ?[*:0]const u
 
 /// The still picture, 160 x 120, against the rasterizer's reference of
 /// it, as reference.zig compares them, and what came of it printed: OK,
-/// or WARN when too many pixels are further from it than the slack.
-fn compare(dl: *DosBase, picture: *const facetgpu.Picture) i32 {
+/// or WARN when more than `allowed` pixels are further from it than the
+/// slack.
+fn compare(dl: *DosBase, picture: *const facetgpu.Picture, allowed: u32) i32 {
     const in_565 = picture.format == .r5g6b5_unorm_pack16;
     const kept = if (in_565) reference_565 else reference_32;
     // In steps of the format: 2 of 8 bits, one of 565.
@@ -192,7 +202,7 @@ fn compare(dl: *DosBase, picture: *const facetgpu.Picture) i32 {
             near += 1;
         } else apart += 1;
     };
-    const like = apart <= most_apart;
+    const like = apart <= allowed;
     _ = Printf(dl, "The cube still, 160x120 in %s, against reference/%s.ppm: %lu pixels the same, %lu off by %lu or less, %lu by more (%lu may be), %lu at worst: %s\n", .{
         formatName(picture.format),
         @as([*:0]const u8, if (in_565) "cube-565" else "cube"),
@@ -200,7 +210,7 @@ fn compare(dl: *DosBase, picture: *const facetgpu.Picture) i32 {
         @as(u64, near),
         @as(u64, slack),
         @as(u64, apart),
-        @as(u64, most_apart),
+        @as(u64, allowed),
         @as(u64, worst),
         @as([*:0]const u8, if (like) "alike" else "DIFFERENT"),
     });
@@ -317,7 +327,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [5]usize = @splat(0);
+    var argv: [6]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -326,6 +336,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const frames: u32 = if (argv[0] != 0) @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[0])).*)) else 600;
     const nearest = argv[1] != 0;
     const check = argv[3] != 0;
+    const on_gpu = argv[5] != 0;
     const to: ?[*:0]const u8 = if (argv[4] != 0) @ptrFromInt(argv[4]) else null;
     const stands = check or to != null;
     const view = if (argv[2] != 0) parseSize(@ptrFromInt(argv[2])) orelse {
@@ -376,10 +387,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var gpu = Gpu{ .fb = @ptrCast(facet_lib), .ib = ib };
     defer gpu.down();
-    gpu.up(COMMAND_NAME) catch |err| return failed(dl, &gpu, err);
+    gpu.up(COMMAND_NAME, on_gpu) catch |err| return failed(dl, &gpu, err);
     gpu.onScreen(screen) catch |err| return failed(dl, &gpu, err);
     gpu.prepare(nearest, &pattern) catch |err| return failed(dl, &gpu, err);
-    if (stands) return drawStill(dl, &gpu, view, check, to) catch |err| failed(dl, &gpu, err);
+    if (stands) return drawStill(dl, &gpu, view, check, on_gpu, to) catch |err| failed(dl, &gpu, err);
     gpu.chain(2) catch |err| return failed(dl, &gpu, err);
 
     const began = now(tb);

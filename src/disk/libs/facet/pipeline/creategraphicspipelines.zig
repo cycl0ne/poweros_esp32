@@ -42,7 +42,10 @@ const _instance = @import("../instance/_instance.zig");
 /// BEHAVIOR:
 /// A pipeline takes its vertex and fragment functions from the modules by
 /// stage and name, and settles its state as it is made: the rasterizer's
-/// code for its depth test and blend is chosen then, not as it draws.
+/// code for its depth test and blend is chosen then, not as it draws. On a
+/// device with a processor of its own the fragment function has to be of a
+/// fixed form (`shader.fixedFragment`), or the pipeline is refused with
+/// `error_feature_not_present`.
 ///
 /// What it draws: triangle lists, strips and fans, a restart index ending a
 /// strip or a fan; filled, one sample a pixel, culled by facing as asked; a
@@ -60,6 +63,11 @@ const _instance = @import("../instance/_instance.zig");
 /// more than one drawn front to back, which costs a little more than
 /// without it. For a depth test of LESS or LESS_OR_EQUAL, written, and no
 /// blending; ignored otherwise. Other flags are taken and do nothing.
+///
+/// On a device with a processor of its own, the fragment function has to be
+/// one of the fixed forms (`shader.fixedFragment`), or the pipeline is
+/// refused with `error_feature_not_present`; the cores, always the first
+/// device listed, take any.
 ///
 /// Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
 /// as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
@@ -123,6 +131,12 @@ pub fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?
             if (result == .success) result = settled;
             continue;
         }
+        const translated = owner.physical.ops.make_pipeline(made);
+        if (translated != .success) {
+            _objects.destroy(base.sys_base, made);
+            if (result == .success) result = translated;
+            continue;
+        }
         pipeline.* = _objects.handle(facet.Pipeline, made);
     }
     return result;
@@ -144,14 +158,15 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     }
     const vertex_entry = vertex orelse return .error_invalid_shader_nv;
     const fragment_entry = fragment orelse return .error_invalid_shader_nv;
-    if (vertex_entry.varyings != fragment_entry.varyings) return .error_invalid_shader_nv;
+    if (vertex_entry.varyingCount() != fragment_entry.varyingCount()) return .error_invalid_shader_nv;
     if (info.subpass != 0) return .error_initialization_failed;
 
     made.* = .{
         .device = device,
         .vertex = @ptrCast(@alignCast(vertex_entry.function)),
         .fragment = @ptrCast(@alignCast(fragment_entry.function)),
-        .varyings = vertex_entry.varyings,
+        .fixed = fragment_entry.fixed(),
+        .varyings = vertex_entry.varyingCount(),
         .locations = 0,
         .bindings = @splat(.{}),
         .attributes = undefined,
@@ -212,9 +227,8 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     if (info.depth_stencil_state) |depth| {
         if (depth.stencil_test_enable or depth.depth_bounds_test_enable) return .error_feature_not_present;
         if (depth.depth_test_enable) {
-            const compare = @intFromEnum(depth.depth_compare_op);
-            if (compare > 7) return .error_initialization_failed;
-            made.depth_test = @enumFromInt(compare);
+            if (@intFromEnum(depth.depth_compare_op) > 7) return .error_initialization_failed;
+            made.depth_test = depth.depth_compare_op;
             made.depth_write = depth.depth_write_enable;
         }
     }

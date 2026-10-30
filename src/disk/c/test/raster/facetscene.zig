@@ -34,10 +34,6 @@ fn backdropVertex(vertices: *const shader.Vertices) callconv(.c) void {
     }
 }
 
-fn backdropFragment(fragments: *const shader.Fragments) callconv(.c) void {
-    shader.smooth(fragments);
-}
-
 fn boxVertex(vertices: *const shader.Vertices) callconv(.c) void {
     const transform = vertices.resources.constants([16]f32);
     for (0..vertices.count) |k| {
@@ -48,20 +44,12 @@ fn boxVertex(vertices: *const shader.Vertices) callconv(.c) void {
     }
 }
 
-fn Box(comptime filter: texture.Filter) type {
-    return struct {
-        fn fragment(fragments: *const shader.Fragments) callconv(.c) void {
-            shader.textured(.{ .filter = filter }, fragments, fragments.resources.sampled(0, 0, 0));
-        }
-    };
-}
-
 const entries = [_]shader.Entry{
     shader.vertex("backdrop", &backdropVertex, 4),
-    shader.fragment("backdrop", &backdropFragment, 4),
+    shader.fixedFragment("backdrop", .{ .kind = .color }),
     shader.vertex("box", &boxVertex, 2),
-    shader.fragment("box", &Box(.bilinear).fragment, 2),
-    shader.fragment("box nearest", &Box(.nearest).fragment, 2),
+    shader.fixedFragment("box", .{ .kind = .texture, .sampling = .{ .filter = .bilinear } }),
+    shader.fixedFragment("box nearest", .{ .kind = .texture, .sampling = .{ .filter = .nearest } }),
 };
 
 /// The functions, for a shader module: "backdrop" and "box" each a vertex

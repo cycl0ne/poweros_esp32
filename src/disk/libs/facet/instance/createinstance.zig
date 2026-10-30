@@ -67,7 +67,7 @@ pub fn CreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, i
     if (wanted > facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION)) return .error_initialization_failed;
     const sys = base.sys_base;
     const made = _objects.create(sys, Instance) orelse return .error_out_of_host_memory;
-    made.* = .{ .base = base, .physical = undefined };
+    made.* = .{ .base = base, .physicals = undefined };
     _instance.describe(sys, made);
     _ = @atomicRmw(u32, &base.instances, .Add, 1, .monotonic);
     instance.* = _objects.handle(facet.Instance, made);

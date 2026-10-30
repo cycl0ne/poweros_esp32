@@ -25,7 +25,8 @@ const Fence = @import("../sync/_sync.zig").Fence;
 ///   batches, signalled when all submitted before is done.
 ///
 /// RESULT:
-/// `success`; `error_out_of_host_memory`, and nothing submitted.
+/// `success`; `error_out_of_host_memory`, and nothing submitted;
+/// `error_device_lost`, and nothing submitted, once the device is lost.
 ///
 /// BEHAVIOR:
 /// The queue's task takes the batches in the order they were submitted,
@@ -36,7 +37,9 @@ const Fence = @import("../sync/_sync.zig").Fence;
 /// A command buffer not executable - not ended, or spent by a one-time
 /// submission - is passed over.
 ///
-/// The call returns at once: the work is the task's.
+/// The call returns at once: the work is the task's. If the device is lost
+/// while a batch is on the queue, nothing more of it is played, and its
+/// semaphores and fence are signalled all the same.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -67,6 +70,7 @@ const Fence = @import("../sync/_sync.zig").Fence;
 /// ```
 pub fn QueueSubmit(base: *FacetBase, queue: *facet.Queue, count: u32, submits: ?[*]const facet.SubmitInfo, fence: ?*facet.Fence) facet.Result {
     const made = _objects.of(_queue.Queue, queue);
+    if (made.device.isLost()) return .error_device_lost;
     const given: []const facet.SubmitInfo = if (submits) |infos| infos[0..count] else &.{};
     const done: ?*Fence = if (fence) |handle| _objects.of(Fence, handle) else null;
     return _queue.submit(made, base.sys_base, given, done, base.inline_queues);

@@ -14,10 +14,11 @@
 
 const sdk = @import("sdk");
 const facet = sdk.facet;
-const raster = @import("raster");
 const Device = @import("../device/_device.zig").Device;
-const _image = @import("../image/_image.zig");
-const ImageView = _image.ImageView;
+const ImageView = @import("../image/_image.zig").ImageView;
+
+/// What a colour attachment starts with: cleared, or what the image holds.
+pub const ColorLoad = enum { clear, keep };
 
 pub const RenderPass = struct {
     device: *Device,
@@ -28,7 +29,7 @@ pub const RenderPass = struct {
     depth: ?u32,
     color_format: facet.Format,
     /// What the colour starts with.
-    color_load: raster.Attachments.Load,
+    color_load: ColorLoad,
 };
 
 pub const Framebuffer = struct {
@@ -38,19 +39,6 @@ pub const Framebuffer = struct {
     color: *ImageView,
     depth: ?*ImageView,
 };
-
-/// The surface a framebuffer's colour attachment is: its image's memory,
-/// row after row. Null for an image not bound.
-pub fn surfaceOf(framebuffer: *const Framebuffer) ?raster.Surface {
-    const image = framebuffer.color.image;
-    return .{
-        .pixels = image.data orelse return null,
-        .pitch = image.pitch,
-        .width = image.width,
-        .height = image.height,
-        .format = _image.surfaceFormat(image.format).?,
-    };
-}
 
 /// A clear value's colour, 0 to 1 a channel, as 0xAARRGGBB.
 pub fn colorOf(value: facet.ClearColorValue) u32 {

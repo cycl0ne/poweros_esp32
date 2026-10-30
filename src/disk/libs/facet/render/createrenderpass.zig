@@ -7,7 +7,7 @@ const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
 const Device = @import("../device/_device.zig").Device;
 const _render = @import("_render.zig");
-const _image = @import("../image/_image.zig");
+const _surface = @import("../surface/_surface.zig");
 
 /// A render pass: the attachments it draws into, what each starts with and what is kept of it.
 ///
@@ -85,7 +85,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     const color_index = subpass.color_attachments.?[0].attachment;
     if (color_index >= attachments.len) return .error_initialization_failed;
     const color = attachments[color_index];
-    if (_image.surfaceFormat(color.format) == null) return .error_format_not_supported;
+    if (!_surface.drawable(color.format)) return .error_format_not_supported;
     if (color.samples != 1) return .error_feature_not_present;
     var depth_index: ?u32 = null;
     if (subpass.depth_stencil_attachment) |reference| {

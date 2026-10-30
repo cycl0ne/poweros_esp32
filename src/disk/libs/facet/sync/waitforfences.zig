@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
+const Device = @import("../device/_device.zig").Device;
 const _sync = @import("_sync.zig");
 const exec = sdk.exec;
 
@@ -26,7 +27,8 @@ const exec = sdk.exec;
 ///   to the system tick; 0 only looks; WAIT_FOREVER_NS has no limit.
 ///
 /// RESULT:
-/// `success` once they are; `timeout` when the time ran out first.
+/// `success` once they are; `timeout` when the time ran out first;
+/// `error_device_lost` once the device is lost, at once if it already is.
 ///
 /// BEHAVIOR:
 /// WaitForAny on the fences' waitables: the task sleeps until a queue
@@ -56,7 +58,13 @@ const exec = sdk.exec;
 /// if (fb.WaitForFences(device, 1, @ptrCast(&frame_done), true, facet.WAIT_FOREVER_NS) != .success) return error.Hung;
 /// ```
 pub fn WaitForFences(base: *FacetBase, device: *facet.Device, count: u32, fences: [*]const *facet.Fence, wait_all: bool, timeout: u64) facet.Result {
-    _ = device;
+    const made = _objects.of(Device, device);
+    if (made.isLost()) return .error_device_lost;
+    const waited = waitFor(base, count, fences, wait_all, timeout);
+    return if (made.isLost()) .error_device_lost else waited;
+}
+
+fn waitFor(base: *FacetBase, count: u32, fences: [*]const *facet.Fence, wait_all: bool, timeout: u64) facet.Result {
     const sys = base.sys_base;
     const given = @as([*]const *_sync.Fence, @ptrCast(fences))[0..count];
     const limit = _sync.microseconds(timeout);

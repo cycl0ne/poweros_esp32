@@ -27,6 +27,14 @@
 //!
 //! What a shader reads besides - uniform buffers, textures, push
 //! constants - is in `Resources`, as the draw had them bound.
+//!
+//! **A fragment function can be one of the fixed forms** (`Fixed`, made
+//! with `fixedFragment`): the colour the vertices carry, a texture, or the
+//! two multiplied. The cores run the function that comes with it, as they
+//! run any other; a device with a processor of its own runs its own program
+//! for the form, and a pipeline with any other fragment function cannot be
+//! made on it. A vertex function is always the program's, and always runs
+//! on the cores.
 
 const facet = @import("facet.zig");
 const texture = @import("texture.zig");
@@ -43,11 +51,22 @@ pub const Entry = extern struct {
     stage: u32,
     /// A VertexFn or a FragmentFn, as `stage` says.
     function: *const anyopaque,
-    /// The floats a vertex function writes past the position, and a
-    /// fragment function's planes past the first: no more than
-    /// PhysicalDeviceLimits.max_vertex_output_components. A pipeline's
-    /// two have to agree.
+    /// In its low 8 bits the floats a vertex function writes past the
+    /// position, and a fragment function's planes past the first: no more
+    /// than PhysicalDeviceLimits.max_vertex_output_components. A pipeline's
+    /// two have to agree. Above them, a fragment function's fixed form, if
+    /// it has one (`Fixed`): 0 for one of the program's own.
     varyings: u32,
+
+    /// The floats it hands on, or takes.
+    pub fn varyingCount(entry: *const Entry) u32 {
+        return entry.varyings & 0xFF;
+    }
+
+    /// Its fixed form.
+    pub fn fixed(entry: *const Entry) Fixed {
+        return Fixed.fromBits(entry.varyings);
+    }
 };
 
 /// What ShaderModuleCreateInfo.code points to.
@@ -65,6 +84,69 @@ pub fn vertex(name: [*:0]const u8, function: VertexFn, varyings: u32) Entry {
 /// An entry for a fragment function.
 pub fn fragment(name: [*:0]const u8, function: FragmentFn, varyings: u32) Entry {
     return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings };
+}
+
+/// What a fixed form of fragment function does.
+pub const FixedKind = enum(u8) {
+    /// None: the function is the program's own.
+    none = 0,
+    /// The colour the vertices carry: varyings red, green, blue, alpha, as
+    /// `smooth` has them.
+    color = 1,
+    /// A texture, binding 0 of set 0, at varyings s and t, as `textured`
+    /// has it.
+    texture = 2,
+    /// The two multiplied: varyings s, t, then red, green, blue and alpha.
+    texture_color = 3,
+};
+
+/// A fragment function any device can run.
+pub const Fixed = struct {
+    kind: FixedKind = .none,
+    /// How the texture is sampled, for a form with one. A device that reads
+    /// the format from the image is not held to `format`, the cores' own.
+    sampling: texture.Sampling = .{},
+
+    /// The floats a function of the form takes.
+    pub fn varyings(fixed: Fixed) u32 {
+        return switch (fixed.kind) {
+            .none => 0,
+            .color => 4,
+            .texture => 2,
+            .texture_color => 6,
+        };
+    }
+
+    fn bits(fixed: Fixed) u32 {
+        return @as(u32, @intFromEnum(fixed.kind)) << 8 |
+            @as(u32, @intFromEnum(fixed.sampling.filter)) << 16 |
+            @as(u32, @intFromEnum(fixed.sampling.address)) << 17;
+    }
+
+    fn fromBits(bits_given: u32) Fixed {
+        return .{
+            .kind = @enumFromInt(@as(u8, @truncate(bits_given >> 8))),
+            .sampling = .{
+                .filter = @enumFromInt(@as(u1, @truncate(bits_given >> 16))),
+                .address = @enumFromInt(@as(u1, @truncate(bits_given >> 17))),
+            },
+        };
+    }
+};
+
+/// An entry for a fragment function of a fixed form.
+pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
+    const made = struct {
+        fn function(fragments: *const Fragments) callconv(.c) void {
+            switch (fixed.kind) {
+                .none => @compileError("a fixed form says what it does"),
+                .color => smooth(fragments),
+                .texture => textured(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
+                .texture_color => modulated(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
+            }
+        }
+    };
+    return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = &made.function, .varyings = fixed.varyings() | fixed.bits() };
 }
 
 // --- what they read ---------------------------------------------------------
@@ -342,6 +424,27 @@ pub fn textured(comptime sampling: texture.Sampling, fragments: *const Fragments
     const given = picture orelse return fill(fragments, missing);
     if (given.format != sampling.format) return fill(fragments, missing);
     if (fragments.exact) texturedQuads(sampling, true, fragments, given) else texturedQuads(sampling, false, fragments, given);
+}
+
+/// A texture as `textured` has it, at varyings 0 and 1, times the colour of
+/// varyings 2 to 5: red, green, blue and alpha, each through `channel`.
+pub fn modulated(comptime sampling: texture.Sampling, fragments: *const Fragments, picture: ?*const texture.Texture) void {
+    @setRuntimeSafety(false);
+    textured(sampling, fragments, picture);
+    var rows = Rows(7).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const at = rows.at(quad);
+        const w = @as(Pixels, @splat(1)) / at[0];
+        const seen: @Vector(4, u32) = out.*;
+        const parts = [4]@Vector(4, u32){ bytesOf(at[3] * w), bytesOf(at[4] * w), bytesOf(at[5] * w), bytesOf(at[6] * w) };
+        const shifts = [4]@Vector(4, u5){ @splat(16), @splat(8), @splat(0), @splat(24) };
+        var mixed: @Vector(4, u32) = @splat(0);
+        inline for (parts, shifts) |part, shift| {
+            const texel = (seen >> shift) & @as(@Vector(4, u32), @splat(0xFF));
+            mixed |= ((texel * part + @as(@Vector(4, u32), @splat(127))) / @as(@Vector(4, u32), @splat(255))) << shift;
+        }
+        out.* = mixed;
+    }
 }
 
 inline fn texturedQuads(comptime sampling: texture.Sampling, comptime exact: bool, fragments: *const Fragments, picture: *const texture.Texture) void {

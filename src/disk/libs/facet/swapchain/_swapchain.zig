@@ -197,6 +197,16 @@ pub fn show(swapchain: *Swapchain, sys: *ExecBase, index: u32) void {
     sys.SignalWaitable(&swapchain.freed);
 }
 
+/// On the queue's task: image `index`, handed to the queue, free again
+/// without being shown: what it holds may not be finished.
+pub fn unshown(swapchain: *Swapchain, sys: *ExecBase, index: u32) void {
+    sys.ObtainSemaphore(&swapchain.lock);
+    defer sys.ReleaseSemaphore(&swapchain.lock);
+    swapchain.states[index] = .free;
+    swapchain.presenting -= 1;
+    sys.SignalWaitable(&swapchain.freed);
+}
+
 /// The image the display shows, if one of the swapchain's.
 pub fn shownImage(swapchain: *const Swapchain) ?u32 {
     for (swapchain.states[0..swapchain.count], 0..) |state, k| {

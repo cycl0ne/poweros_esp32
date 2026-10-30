@@ -53,8 +53,8 @@ const DeviceMemory = @import("_memory.zig").DeviceMemory;
 /// ```
 pub fn FreeMemory(base: *FacetBase, device: *facet.Device, memory: ?*facet.DeviceMemory) void {
     const made = _objects.of(DeviceMemory, memory orelse return);
-    const sys = base.sys_base;
-    if (made.block) |block| sys.FreeMem(block, made.block_bytes);
-    _objects.of(Device, device).allocations -= 1;
-    _objects.destroy(sys, made);
+    const owner = _objects.of(Device, device);
+    if (made.block != null) owner.physical.ops.free_memory(owner, made);
+    owner.allocations -= 1;
+    _objects.destroy(base.sys_base, made);
 }

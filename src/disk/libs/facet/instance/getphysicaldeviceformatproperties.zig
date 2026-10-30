@@ -4,7 +4,8 @@
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
-const _image = @import("../image/_image.zig");
+const _objects = @import("../_objects.zig");
+const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 
 /// What the device does with a format, in each tiling and in a buffer.
 ///
@@ -62,6 +63,5 @@ const _image = @import("../image/_image.zig");
 /// ```
 pub fn GetPhysicalDeviceFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, properties: *facet.FormatProperties) void {
     _ = base;
-    _ = physical;
-    properties.* = _image.propertiesOf(format);
+    properties.* = _objects.of(PhysicalDevice, physical).ops.format_properties(format);
 }

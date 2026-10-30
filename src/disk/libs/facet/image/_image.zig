@@ -7,9 +7,10 @@
 //! - an attachment drawn into, and any linear image, is `rows` - row
 //!   after row, each starting on a cache line, as the rasterizer writes
 //!   its tiles back and the display reads them;
-//! - an optimal image to be sampled is a `texture` - the rasterizer's
+//! - an optimal image to be sampled is a `texture` - by the rasterizer's
 //!   texture layout (sdk.facet.texture): blocks of 4 x 4 texels, an 8888
-//!   texel spread to 64 bits, the levels after one another;
+//!   texel spread to 64 bits, the levels after one another; on a device that
+//!   samples in its own way, by that device's (Ops.texture_memory);
 //! - a depth attachment is `depth`: its pixels live in the tiles alone,
 //!   cleared as each tile starts and never stored, so its memory is never
 //!   touched and may be of the lazily allocated type.
@@ -26,11 +27,11 @@ const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const texture = facet.texture;
-const raster = @import("raster");
 const Device = @import("../device/_device.zig").Device;
 const _memory = @import("../memory/_memory.zig");
 const DeviceMemory = _memory.DeviceMemory;
 const max_image_dimension = @import("../instance/_instance.zig").max_image_dimension;
+const drawable = @import("../surface/_surface.zig").drawable;
 const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
@@ -46,16 +47,22 @@ pub const Image = struct {
     kind: Kind,
     /// `rows`: the bytes from one row to the next.
     pitch: u32 = 0,
-    /// What it needs of its memory.
+    /// What it needs of its memory, and what the memory's offset has to be
+    /// a multiple of.
     bytes: u64,
+    alignment: u64 = _memory.alignment,
     /// Where it is bound, and its first byte there; null in lazily
     /// allocated memory.
     memory: ?*DeviceMemory = null,
     offset: u64 = 0,
     data: ?[*]u8 = null,
     /// `texture`: its levels as a sample reads them, over its memory once
-    /// bound.
+    /// bound. On a device that samples in its own way these say nothing of
+    /// where the texels are.
     texels: texture.Texture = undefined,
+    /// Where a device with a processor of its own reaches it; 0 until it has
+    /// been asked for.
+    driver_address: u32 = 0,
     /// A swapchain's: its memory is a buffer of the display's, never
     /// bound or destroyed by the program.
     presentable: bool = false,
@@ -100,17 +107,6 @@ pub fn bytesOf(format: facet.Format) u32 {
     };
 }
 
-/// How a colour attachment of `format` lies in a surface, or null for a
-/// format that cannot be one.
-pub fn surfaceFormat(format: facet.Format) ?raster.Format {
-    return switch (format) {
-        .b8g8r8a8_unorm => .bgra32,
-        .r8g8b8a8_unorm => .rgba32,
-        .r5g6b5_unorm_pack16 => .rgb565,
-        else => null,
-    };
-}
-
 /// How a sampled image of `format` keeps its texels, or null for a format
 /// that cannot be sampled.
 pub fn textureFormat(format: facet.Format) ?texture.Format {
@@ -118,24 +114,6 @@ pub fn textureFormat(format: facet.Format) ?texture.Format {
         .b8g8r8a8_unorm, .r8g8b8a8_unorm => .rgba8888,
         .r5g6b5_unorm_pack16 => .rgb565,
         else => null,
-    };
-}
-
-/// What `format` does.
-pub fn propertiesOf(format: facet.Format) facet.FormatProperties {
-    const transfer = facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
-    const attachment = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND;
-    const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST;
-    return switch (format) {
-        .b8g8r8a8_unorm, .r8g8b8a8_unorm => .{
-            .linear_tiling_features = attachment | transfer,
-            .optimal_tiling_features = attachment | transfer | sampled,
-            .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER,
-        },
-        .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer, .optimal_tiling_features = attachment | transfer | sampled, .buffer_features = 0 },
-        .d16_unorm => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, .buffer_features = 0 },
-        .r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat, .r32g32b32a32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER },
-        else => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = 0 },
     };
 }
 
@@ -174,9 +152,14 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
         image.bytes = texture.Texture.bytes(kept, extent.width, extent.height, info.mip_levels) catch return null;
         // Its levels' layout, over no memory yet: BindImageMemory moves it.
         image.texels = texture.Texture.init(kept, extent.width, extent.height, info.mip_levels, @ptrFromInt(_memory.alignment)) catch return null;
+        if (device.physical.ops.texture_memory) |own| {
+            const memory = own(info.format, extent.width, extent.height, info.mip_levels);
+            image.bytes = memory.bytes;
+            image.alignment = memory.alignment;
+        }
         return image;
     }
-    if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and surfaceFormat(info.format) == null) return null;
+    if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;
     // Rows of a colour format, of one level.
     if (info.mip_levels != 1 or textureFormat(info.format) == null) return null;
     image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
@@ -190,7 +173,7 @@ pub fn requirements(image: *const Image) facet.MemoryRequirements {
     const properties = &image.device.physical.memory;
     return .{
         .size = image.bytes,
-        .alignment = _memory.alignment,
+        .alignment = image.alignment,
         .memory_type_bits = if (image.kind == .depth) _memory.allTypes(properties) else _memory.backedTypes(properties),
     };
 }
@@ -249,7 +232,10 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
 fn texelOf(format: facet.Format, bytes: []const u8) u32 {
     return switch (format) {
         .b8g8r8a8_unorm => std.mem.readInt(u32, bytes[0..4], .little),
-        .r8g8b8a8_unorm => raster.Format.rgba32.pack(std.mem.readInt(u32, bytes[0..4], .little)),
+        .r8g8b8a8_unorm => texel: {
+            const color = std.mem.readInt(u32, bytes[0..4], .little);
+            break :texel color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16;
+        },
         .r5g6b5_unorm_pack16 => std.mem.readInt(u16, bytes[0..2], .little),
         else => 0,
     };

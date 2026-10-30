@@ -1029,10 +1029,15 @@ pub fn build(b: *std.Build) void {
     // The rasterizer core: its own tests, and the module its test programs
     // import, for the scenes they draw (c/test/raster/reference.zig). A
     // file belongs to one module, so the core is tested on its own.
-    const raster_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/facet/raster/raster.zig"), .target = b.graph.host });
+    const raster_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/facet/driver/cpu/raster/raster.zig"), .target = b.graph.host });
     raster_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("raster", raster_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = raster_mod })).step);
+    // The V3D's control list packets and QPU instructions, on their own: the
+    // rest of the driver is only of use on the board.
+    const v3d_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/facet/driver/v3d/v3d.zig"), .target = b.graph.host });
+    v3d_mod.addImport("sdk", sdk);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = v3d_mod })).step);
     // The baseline JPEG decoder, jpeg.datatype's and videocodec.library's,
     // tested on its own as well.
     const jpegdecode_mod = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/jpeg/decode.zig"), .target = b.graph.host });

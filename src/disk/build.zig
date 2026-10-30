@@ -40,7 +40,8 @@ pub const catalogs = [_]Catalog{
 /// per tile - too often to go through a jump table. The baseline JPEG
 /// decoder is jpeg.datatype's, and videocodec.library's for Motion JPEG.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
-    .{ .name = "raster", .source = "libs/facet/raster/raster.zig" },
+    .{ .name = "raster", .source = "libs/facet/driver/cpu/raster/raster.zig" },
+    .{ .name = "v3d", .source = "libs/facet/driver/v3d/v3d.zig" },
     .{ .name = "jpegdecode", .source = "classes/datatypes/jpeg/decode.zig" },
 };
 
@@ -115,6 +116,8 @@ const inner_tests = [_]Program{
     .{ .disk = "c/test/cube", .source = "c/test/raster/cube.zig", .name = "cube", .imports = &.{"raster"} },
     .{ .disk = "c/test/facetcube", .source = "c/test/raster/facetcube.zig", .name = "facetcube", .imports = &.{"raster"} },
     .{ .disk = "c/test/facetwindow", .source = "c/test/raster/facetwindow.zig", .name = "facetwindow", .imports = &.{"raster"} },
+    .{ .disk = "c/test/facetboth", .source = "c/test/raster/facetboth.zig", .name = "facetboth" },
+    .{ .disk = "c/test/v3dtest", .source = "c/test/v3d/v3dtest.zig", .name = "v3dtest", .imports = &.{"v3d"} },
     .{ .disk = "c/test/locale", .source = "c/test/locale/locale.zig", .name = "locale", .strings = "c/test/locale/locale.cd" },
 };
 
@@ -133,7 +136,7 @@ const modules = [_]Program{
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
     .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library" },
     .{ .disk = "libs/pci.library", .source = "libs/pci/pci.zig", .name = "pci.library" },
-    .{ .disk = "libs/facet.library", .source = "libs/facet/facet.zig", .name = "facet.library", .imports = &.{"raster"} },
+    .{ .disk = "libs/facet.library", .source = "libs/facet/facet.zig", .name = "facet.library", .imports = &.{ "raster", "v3d" } },
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/audiocodec.library", .source = "libs/audiocodec/audiocodec.zig", .name = "audiocodec.library" },
     .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library" },
@@ -259,7 +262,7 @@ const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.
-const a64_only = [_][]const u8{"cyw43455.device"};
+const a64_only = [_][]const u8{ "cyw43455.device", "v3dtest", "facetboth" };
 
 /// Whether `program` is built for `chip`. The lists name a program by its
 /// name, or by its place on the disk where one program has two.

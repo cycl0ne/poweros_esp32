@@ -180,6 +180,22 @@ const temperature = [_]Tag{
     .done,
 };
 
+/// The VideoCore VII's 3D core, a V3D 7.1: its hub's registers at
+/// 0x10_0200_0000, GIC interrupt 281 from its core and 282 from its hub
+/// (the device tree's SPIs 249 and 250), its reset in the power manager
+/// at 0x10_7D20_0000.
+const gpu = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_GPU),
+    .value(st.PART_Chip, st.CHIP_BCM2712_V3D),
+    .pointer(st.PART_ChipName, "bcm2712 v3d"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x10_0200_0000),
+    .value(st.PART_Irq, 281),
+    .value(st.PART_PowerManager, 0x10_7D20_0000),
+    .pointer(st.PART_Label, "3D"),
+    .done,
+};
+
 /// The IO board's fan connector: a PWM fan, on the RP1's PWM1 channel 3
 /// out on its GPIO45, its speed counted by the RP1.
 const fan = [_]Tag{
@@ -281,6 +297,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &temperature),
     .pointer(st.SYSTAG_Part, &fan),
+    .pointer(st.SYSTAG_Part, &gpu),
     .done,
 };
 
