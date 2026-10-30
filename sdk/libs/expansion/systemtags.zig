@@ -295,6 +295,9 @@ pub const PART_PinRight = PART_Dummy + 0x44;
 /// connector. The board leaves one asserted and the other not.
 pub const PART_PinAntenna = PART_Dummy + 0x45;
 pub const PART_PinAntennaExternal = PART_Dummy + 0x46;
+/// Where the power manager a part's reset is in lies (BUS_MEMORY): its
+/// registers, where they are not the part's own.
+pub const PART_PowerManager = PART_Dummy + 0x47;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -419,6 +422,10 @@ pub const PARTKIND_VIDEODEC: u32 = 26;
 /// that chip's registers (BUS_MEMORY), PART_Pin the pin its speed goes
 /// out on, PART_Label where it is ("fan").
 pub const PARTKIND_FAN: u32 = 27;
+/// A 3D core in the chip: PART_Chip which, PART_Address its registers
+/// (BUS_MEMORY), PART_Irq its interrupt, PART_PowerManager where its reset
+/// is.
+pub const PARTKIND_GPU: u32 = 28;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -601,6 +608,11 @@ pub const CHIP_RP1_PWM: u32 = 47;
 /// on BUS_RGMII): PART_Address its address on the MAC's management bus,
 /// PART_RxDelay and PART_TxDelay non-zero for the delays it adds itself.
 pub const CHIP_BCM54210: u32 = 48;
+/// The BCM2712's V3D 7.1 (PARTKIND_GPU): PART_Address its hub's registers,
+/// with the core's and its SMS's at their places from them, PART_Irq the
+/// core's interrupt, with the hub's the next. Its clock is the VideoCore
+/// firmware's, asked through the mailbox the RTC is read through.
+pub const CHIP_BCM2712_V3D: u32 = 49;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

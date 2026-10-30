@@ -31,7 +31,8 @@
 //! `driver/` (`_driver.zig` the table and the drivers there are), and
 //! `driver/cpu/` the cores (`cpu.zig` their table, `_play.zig` how the
 //! queue's task plays a command buffer, `_draw.zig` a draw, `raster/` the
-//! rasterizer).
+//! rasterizer). `driver/v3d/` is the BCM2712's 3D core, not yet in the list
+//! of drivers: only its test program (c/test/v3d) uses it.
 
 const sdk = @import("sdk");
 const ExecBase = sdk.interface.exec.ExecBase;
