@@ -303,6 +303,7 @@ pub fn build(b: *std.Build) void {
     // UART1's backend: the RS-485 port's or a SLIP line's.
     const uart1 = rs485 orelse slip_line;
     const usb_devices = b.option([]const u8, "usb", "Plug these QEMU USB devices into the qemu steps' USB port, comma-separated (usb-hub,usb-kbd,usb-mouse); an item with '=' is a property of the device before it (usb-kbd,port=1,id=kbd)");
+    const virt_speaker = virtSpeaker(b, b.option([]const u8, "audio", "The virt and virt64 steps' USB speaker on this QEMU audio backend - an -audiodev's driver and options: pa, pipewire, alsa, sdl, none, wav,path=out.wav (default: QEMU's own choice among the backends it has)"));
     const virt_ui = b.option([]const u8, "virt-ui", "QEMU's -display for the virt and virt64 display steps (default: gtk,show-cursor=off,zoom-to-fit=off - GTK's window at the picture's size, 1:1; default,show-cursor=off takes SDL, or VNC, where there is no GTK)") orelse "gtk,show-cursor=off,zoom-to-fit=off";
     const usb_disk = b.option([]const u8, "usb-disk", "Plug a USB stick into the qemu steps' USB port whose blocks are this raw image file (-snapshot runs keep it unchanged)");
     const usb = qemuUsb(b, usb_devices, usb_disk);
@@ -697,6 +698,12 @@ pub fn build(b: *std.Build) void {
     for (tree.files) |file| {
         disks.addPrefixedFileArg(b.fmt("{s}=", .{file.path}), b.path(file.host));
     }
+    // QEMU's virt machines prefer the USB speaker their steps plug in
+    // (`virtSpeaker`): their system disks' audio.prefs says so, and the
+    // boards' disks keep the one above, which prefers none.
+    for (disks.runs, DiskImages.virt_disks) |run, virt| {
+        if (virt) run.addPrefixedFileArg("--gpt-file=prefs/env-archive/Sys/audio.prefs=", b.path("src/disk/prefs/virt/Sys/audio.prefs"));
+    }
     for (extras) |extra| {
         const host: std.Build.LazyPath = .{ .cwd_relative = extra.host };
         for (disks.runs, DiskImages.chips, DiskImages.virt_disks) |run, chip, virt| {
@@ -845,13 +852,16 @@ pub fn build(b: *std.Build) void {
     // QEMU's RISC-V 64 virt machine, a board of its own: the `virt` step
     // boots its kernel under the OpenSBI QEMU brings (-bios default),
     // which enters it in supervisor mode at 0x80200000, and it starts
-    // from its system disk, an NVMe SSD (`virtDisks`).
+    // from its system disk, an NVMe SSD (`virtDisks`). A USB speaker
+    // (`virtSpeaker`) is on its xHCI controller, as on every virt step.
     const virt_kernel = if (board == .qemu_virt) kernel else addKernel(b, rv64_target, optimize, sdk, .qemu_virt, disk_offset, cores, selftest, memdebug);
     const virt_disks: VirtDisks = .{ .system = rv64_system_disk, .work = keepWorkDisk(b, blank_work_disk, "virt.bin") };
     const run_virt = b.addSystemCommand(&.{
         "qemu-system-riscv64", "-M", "virt",       "-m",    "512M",
         "-smp",                "4",  "-nographic", "-bios", "default",
     });
+    run_virt.addArgs(&.{ "-device", "qemu-xhci" });
+    run_virt.addArgs(virt_speaker);
     virt_disks.addTo(run_virt);
     run_virt.addArg("-kernel");
     run_virt.addArtifactArg(virt_kernel);
@@ -879,6 +889,7 @@ pub fn build(b: *std.Build) void {
             "usb-tablet",
         });
         run_virt_display.addArgs(virt_network);
+        run_virt_display.addArgs(virt_speaker);
         virt_disks.addTo(run_virt_display);
         run_virt_display.addArg("-kernel");
         run_virt_display.addArtifactArg(virt_kernel);
@@ -900,7 +911,8 @@ pub fn build(b: *std.Build) void {
     };
     const virt64_disks: VirtDisks = .{ .system = a64_system_disk, .work = keepWorkDisk(b, blank_work_disk, "virt64.bin") };
     const run_virt64 = b.addSystemCommand(&virt64_machine);
-    run_virt64.addArg("-nographic");
+    run_virt64.addArgs(&.{ "-nographic", "-device", "qemu-xhci" });
+    run_virt64.addArgs(virt_speaker);
     virt64_disks.addTo(run_virt64);
     run_virt64.addArg("-kernel");
     run_virt64.addFileArg(virt64_kernel.image);
@@ -922,6 +934,7 @@ pub fn build(b: *std.Build) void {
             "-device",  "usb-kbd",  "-device", "usb-tablet",
         });
         run_virt64_display.addArgs(virt_network);
+        run_virt64_display.addArgs(virt_speaker);
         virt64_disks.addTo(run_virt64_display);
         run_virt64_display.addArg("-kernel");
         run_virt64_display.addFileArg(virt64_kernel.image);
@@ -937,8 +950,9 @@ pub fn build(b: *std.Build) void {
         "qemu-system-aarch64", "-M",         "virt,gic-version=2,highmem=off,virtualization=on",
         "-cpu",                "cortex-a76", "-m",
         "512M",                "-smp",       "4",
-        "-nographic",
+        "-nographic",          "-device",    "qemu-xhci",
     });
+    run_virt64_el2.addArgs(virt_speaker);
     virt64_disks.addTo(run_virt64_el2);
     run_virt64_el2.addArg("-kernel");
     run_virt64_el2.addFileArg(virt64_kernel.image);
@@ -1878,6 +1892,19 @@ fn virtNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16,
     const adapter = [_][]const u8{ "-netdev", netdev, "-device", "usb-net,netdev=net0" };
     const file = dump orelse return b.dupeStrings(&adapter);
     return b.dupeStrings(&(adapter ++ [_][]const u8{ "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) }));
+}
+
+/// The virt machines' USB speaker, as QEMU's arguments: QEMU's
+/// `usb-audio`, which usb/uac.device plays through as one of the
+/// machine's outputs, `speaker` in the monitor - `device_del speaker`
+/// pulls it out while it plays, `device_add usb-audio,id=speaker` puts it
+/// back. `backend` is an `-audiodev`'s driver and its options - `pa`,
+/// `pipewire`, `wav,path=out.wav` for a file; with none named QEMU takes
+/// the first of the audio backends it has, and plays into nothing when it
+/// has none but `none`.
+fn virtSpeaker(b: *std.Build, backend: ?[]const u8) []const []const u8 {
+    const named = backend orelse return b.dupeStrings(&.{ "-device", "usb-audio,id=speaker" });
+    return b.dupeStrings(&.{ "-audiodev", b.fmt("{s},id=sound", .{named}), "-device", "usb-audio,id=speaker,audiodev=sound" });
 }
 
 /// The user network's port forwards, as a backend's options: `telnet` to

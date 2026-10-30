@@ -830,14 +830,25 @@ C:test/AudioTest TOFILE RAM:note.wav
                               the note into a WAV file (a file sink)
 ```
 
-In QEMU the output is `null`: the sound is mixed as on a board, buffer
-for buffer at 48 kHz, and goes nowhere, so a program that plays runs as
-it would on a board, and `C:test/AudioTest BENCH` measures the mix. QEMU's virt
-machine with `-device qemu-xhci -device usb-audio,audiodev=snd` and an
-audiodev has a USB speaker, which uac.device plays through; with
-`-audiodev wav,id=snd,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`
-what it was sent lands in a WAV file on the host, sample for sample
-(QEMU 11.1.2). QEMU's speaker plays its 0 dB at 240/255 of full scale
+In Espressif's QEMU the output is `null`: the sound is mixed as on a
+board, buffer for buffer at 48 kHz, and goes nowhere, so a program that
+plays runs as it would on a board, and `C:test/AudioTest BENCH`
+measures the mix; the ESP32s' USB controller carries no isochronous
+transfers, so uac.device takes no USB speaker on them. Every step of QEMU's virt machines plugs in QEMU's USB speaker
+(`-device usb-audio` on the xHCI controller), which uac.device plays
+through, and their system disks' audio.prefs prefers it, so what plays
+is heard on the host: through the first of QEMU's audio backends it
+has, or the one `-Daudio` names - `pa`, `pipewire`, `alsa`, `sdl`, or
+`-Daudio=wav,path=out.wav,out.frequency=48000,out.channels=2,out.format=s16`,
+which puts what it was sent in a WAV file on the host, sample for
+sample (QEMU 11.1.2). A QEMU with no backend but `none` plays into
+nothing; some hosts package the backends apart (`qemu-audio-pa`,
+`qemu-audio-pipewire`). A backend runs at 44.1 kHz unless told, and
+QEMU resamples the speaker's 48 kHz to it: `-Daudio=pa,out.frequency=48000`
+plays it as it is sent. In the monitor the speaker is `speaker`:
+`device_del speaker` pulls it out while it plays, and the sound goes on
+through `null`; `device_add usb-audio,id=speaker` puts it back, and it
+takes over again. QEMU's speaker plays its 0 dB at 240/255 of full scale
 and spreads its feature unit's volume over 255 steps: a volume of half,
 -6 dB at the unit, is 229/255.
 
