@@ -56,12 +56,13 @@ const Instance = @import("_instance.zig").Instance;
 pub fn EnumeratePhysicalDevices(base: *FacetBase, instance: *facet.Instance, count: *u32, devices: ?[*]*facet.PhysicalDevice) facet.Result {
     _ = base;
     const made = _objects.of(Instance, instance);
+    const listed = made.physicals[0..made.physical_count];
     const into = devices orelse {
-        count.* = 1;
+        count.* = made.physical_count;
         return .success;
     };
-    if (count.* == 0) return .incomplete;
-    into[0] = _objects.handle(facet.PhysicalDevice, &made.physical);
-    count.* = 1;
-    return .success;
+    const given = @min(count.*, made.physical_count);
+    for (into[0..given], listed[0..given]) |*device, *physical| device.* = _objects.handle(facet.PhysicalDevice, physical);
+    count.* = given;
+    return if (given < made.physical_count) .incomplete else .success;
 }

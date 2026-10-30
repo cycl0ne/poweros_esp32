@@ -3,13 +3,12 @@
 //!
 //! QueueSubmit puts a submission for each SubmitInfo on the queue's list
 //! and signals its `work`; the task wakes, takes them one after the
-//! other and plays each - waits for its semaphores, plays its command
-//! buffers, signals its semaphores and its fence - and sleeps again when
-//! the list is empty. What it plays shares a frame's tiles between the
-//! cores (ShareWork), the task doing a part of them itself. QueuePresent
-//! puts a submission on the list as well, of the images to be shown once
-//! its semaphores are signalled: shown in turn with the work, each
-//! returning when the display has taken it up.
+//! other and plays each - waits for its semaphores, has its command
+//! buffers carried out by the device's driver, one after the other, signals
+//! its semaphores and its fence - and sleeps again when the list is empty.
+//! QueuePresent puts a submission on the list as well, of the images to be
+//! shown once its semaphores are signalled: shown in turn with the work,
+//! each returning when the display has taken it up.
 //!
 //! The task is the device's, made by CreateDevice and ended by
 //! DestroyDevice, which waits until nothing runs on its stack any more.
@@ -27,7 +26,6 @@ const CommandBuffer = _command.CommandBuffer;
 const _sync = @import("../sync/_sync.zig");
 const Fence = _sync.Fence;
 const Semaphore = _sync.Semaphore;
-const _play = @import("../command/_play.zig");
 const _swapchain = @import("../swapchain/_swapchain.zig");
 const Swapchain = _swapchain.Swapchain;
 
@@ -55,8 +53,11 @@ pub const Queue = struct {
     first: ?*Submission = null,
     last: ?*Submission = null,
     outstanding: u32 = 0,
-    /// What playing keeps from one command to the next.
-    player: _play.Player = .{},
+    /// What its driver keeps for it (open_queue).
+    driver: ?*anyopaque = null,
+    /// Signalled by the driver when the command buffer it was given is
+    /// done.
+    done: exec.Waitable = .{},
 };
 
 /// One SubmitInfo, or one present, its arrays copied in after it.
@@ -81,8 +82,13 @@ pub const Present = struct {
 pub fn start(queue: *Queue, sys: *ExecBase, inline_queue: bool) bool {
     sys.InitSemaphore(&queue.lock);
     sys.SignalWaitable(&queue.idle);
+    const ops = queue.device.physical.ops;
+    if (!ops.open_queue(queue)) return false;
     if (inline_queue) return true;
-    const stack = sys.AllocVec(stack_size, exec.MEMF_CLEAR) orelse return false;
+    const stack = sys.AllocVec(stack_size, exec.MEMF_CLEAR) orelse {
+        ops.close_queue(queue);
+        return false;
+    };
     queue.stack = stack;
     queue.task = .{
         .node = .{ .type = .task, .pri = queue.priority, .name = "facet.library queue" },
@@ -97,7 +103,7 @@ pub fn start(queue: *Queue, sys: *ExecBase, inline_queue: bool) bool {
 /// The queue's task ended and waited for, and what it had given back.
 /// False when there was no signal to wait with: the task is left running.
 pub fn stop(queue: *Queue, sys: *ExecBase) bool {
-    _play.finish(queue);
+    queue.device.physical.ops.close_queue(queue);
     if (!queue.started) return true;
     const port = sys.CreateMsgPort() orelse return false;
     defer sys.DeleteMsgPort(port);
@@ -225,7 +231,7 @@ pub fn drain(queue: *Queue, sys: *ExecBase) void {
 }
 
 /// One submission: its semaphores waited for and taken, its command
-/// buffers played and its images shown, its semaphores and its fence
+/// buffers carried out and its images shown, its semaphores and its fence
 /// signalled.
 fn run(queue: *Queue, sys: *ExecBase, submission: *const Submission) void {
     for (submission.waits) |semaphore| {
@@ -234,7 +240,12 @@ fn run(queue: *Queue, sys: *ExecBase, submission: *const Submission) void {
         sys.ResetWaitable(&semaphore.waitable);
     }
     for (submission.buffers) |buffer| {
-        if (buffer.state == .executable) _play.play(queue, buffer);
+        if (buffer.state == .executable) {
+            queue.device.physical.ops.execute(queue, buffer, &queue.done);
+            const one = [1]*exec.Waitable{&queue.done};
+            _ = sys.WaitForAny(&one, 1, exec.WAIT_FOREVER);
+            sys.ResetWaitable(&queue.done);
+        }
         if (buffer.one_time) buffer.state = .spent;
         _ = @atomicRmw(u32, &buffer.pending, .Sub, 1, .release);
     }

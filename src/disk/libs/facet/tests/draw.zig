@@ -17,7 +17,15 @@ const scenes = @import("../../../c/test/raster/scenes.zig");
 const scene = @import("../../../c/test/raster/facetscene.zig");
 const _objects = @import("../_objects.zig");
 const _surface = @import("../surface/_surface.zig");
-const Instance = @import("../instance/_instance.zig").Instance;
+const _instance = @import("../instance/_instance.zig");
+const Instance = _instance.Instance;
+const _driver = @import("../driver/_driver.zig");
+const cpu = @import("../driver/cpu/cpu.zig");
+const _sync = @import("../sync/_sync.zig");
+const Device = @import("../device/_device.zig").Device;
+const DeviceMemory = @import("../memory/_memory.zig").DeviceMemory;
+const Queue = @import("../queue/_queue.zig").Queue;
+const CommandBuffer = @import("../command/_command.zig").CommandBuffer;
 const _render = @import("../render/_render.zig");
 const _shader = @import("../shader/_shader.zig");
 const _descriptor = @import("../descriptor/_descriptor.zig");
@@ -45,8 +53,14 @@ const Bench = struct {
     buffer_count: u32 = 0,
 
     fn up() !Bench {
+        return on(null);
+    }
+
+    /// With `driver`'s table in place of the physical device's own.
+    fn on(driver: ?*const _driver.Ops) !Bench {
         var rig = try Rig.up();
         const instance, const physical = try rig.instance();
+        if (driver) |ops| _objects.of(_instance.PhysicalDevice, physical).ops = ops;
         const device = try rig.device(physical);
         var queue: ?*facet.Queue = null;
         rig.fb.GetDeviceQueue(device, 0, 0, &queue);
@@ -175,6 +189,73 @@ const Flat = struct {
 
     const entries = [_]shader.Entry{ shader.vertex("main", &vertex, 0), shader.fragment("main", &fragment, 0) };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+// --- a driver watched ---------------------------------------------------------
+
+/// The cores as a driver, what they are asked counted. A command buffer is
+/// done before `done` is signalled, as one a piece of hardware runs is
+/// before its interrupt: `told_early` says whether the program heard first.
+const Watched = struct {
+    var opened: u32 = 0;
+    var closed: u32 = 0;
+    var allocated: u32 = 0;
+    var freed: u32 = 0;
+    var made: u32 = 0;
+    var unmade: u32 = 0;
+    var executed: u32 = 0;
+    var told_early = false;
+    var fence: ?*_sync.Fence = null;
+
+    const ops = _driver.Ops{
+        .describe = cpu.ops.describe,
+        .format_properties = cpu.ops.format_properties,
+        .allocate_memory = &allocateMemory,
+        .free_memory = &freeMemory,
+        .make_pipeline = &makeOne,
+        .unmake_pipeline = &unmakePipeline,
+        .open_queue = &openQueue,
+        .close_queue = &closeQueue,
+        .execute = &execute,
+    };
+
+    fn allocateMemory(device: *Device, memory: *DeviceMemory) facet.Result {
+        allocated += 1;
+        return cpu.ops.allocate_memory(device, memory);
+    }
+
+    fn freeMemory(device: *Device, memory: *DeviceMemory) void {
+        freed += 1;
+        cpu.ops.free_memory(device, memory);
+    }
+
+    fn makeOne(pipeline: *_pipeline.Pipeline) facet.Result {
+        made += 1;
+        return cpu.ops.make_pipeline(pipeline);
+    }
+
+    fn unmakePipeline(pipeline: *_pipeline.Pipeline) void {
+        unmade += 1;
+        cpu.ops.unmake_pipeline(pipeline);
+    }
+
+    fn openQueue(queue: *Queue) bool {
+        opened += 1;
+        return cpu.ops.open_queue(queue);
+    }
+
+    fn closeQueue(queue: *Queue) void {
+        closed += 1;
+        cpu.ops.close_queue(queue);
+    }
+
+    fn execute(queue: *Queue, buffer: *CommandBuffer, done: *sdk.exec.Waitable) void {
+        executed += 1;
+        var finished: sdk.exec.Waitable = .{};
+        cpu.ops.execute(queue, buffer, &finished);
+        told_early = fence.?.waitable.signalled != 0;
+        queue.device.sys.SignalWaitable(done);
+    }
 };
 
 // --- what the tests make -----------------------------------------------------
@@ -520,6 +601,40 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
         try testing.expectEqual(change[0], refused);
         try testing.expect(none == null);
     }
+}
+
+test "a device's work goes through its driver's table; its fence waits for the driver's done" {
+    var bench = try Bench.on(&Watched.ops);
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    try testing.expectEqual(@as(u32, 1), Watched.opened);
+
+    _ = try bench.memory(4096, 0);
+    try testing.expectEqual(@as(u32, 1), Watched.allocated);
+    // The lazily allocated type has nothing behind it to ask for.
+    _ = try bench.memory(4096, 2);
+    try testing.expectEqual(@as(u32, 1), Watched.allocated);
+
+    const pass = try renderPass(&bench, .clear, false);
+    const flat = try module(&bench, &Flat.code);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    _, const pipeline = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass });
+    try testing.expectEqual(@as(u32, 1), Watched.made);
+    fb.DestroyPipeline(device, pipeline);
+    try testing.expectEqual(@as(u32, 1), Watched.unmade);
+    fb.DestroyPipelineLayout(device, layout);
+    fb.DestroyShaderModule(device, flat);
+    fb.DestroyRenderPass(device, pass);
+
+    Watched.fence = _objects.of(_sync.Fence, bench.fence);
+    _ = try bench.record();
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 1), Watched.executed);
+    try testing.expect(!Watched.told_early);
+
+    bench.down();
+    try testing.expectEqual(@as(u32, 1), Watched.freed);
+    try testing.expectEqual(@as(u32, 1), Watched.closed);
 }
 
 test "a frame drawn: a triangle coloured by its fragment function, the clear colour round it, a strip after it kept" {

@@ -20,7 +20,6 @@ const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const shader = facet.shader;
-const raster = @import("raster");
 const Device = @import("../device/_device.zig").Device;
 const _instance = @import("../instance/_instance.zig");
 
@@ -44,8 +43,17 @@ pub const Attribute = struct {
     offset: u32,
 };
 
+/// Which triangles are not drawn.
+pub const Cull = enum { none, back, front };
+
+/// What a pixel drawn does to what is there: replaces it, or is laid over
+/// it by its alpha.
+pub const Blend = enum { off, alpha };
+
 pub const Pipeline = struct {
     device: *Device,
+    /// What its driver made of it (make_pipeline).
+    driver: ?*anyopaque = null,
     vertex: shader.VertexFn,
     fragment: shader.FragmentFn,
     varyings: u32,
@@ -61,13 +69,13 @@ pub const Pipeline = struct {
     /// Its draws draw nothing: the rasterizer is switched off, or every
     /// triangle is culled.
     draws_nothing: bool,
-    cull: raster.Cull,
-    front: raster.Winding,
-    depth_test: ?raster.batched.Compare,
+    cull: Cull,
+    front: facet.FrontFace,
+    depth_test: ?facet.CompareOp,
     depth_write: bool,
     /// PIPELINE_CREATE_DEPTH_PREPASS.
     prepass: bool,
-    blend: raster.Blend,
+    blend: Blend,
     /// The viewport and the scissor, or null where commands set them.
     viewport: ?facet.Viewport,
     scissor: ?facet.Rect2D,

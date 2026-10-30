@@ -16,15 +16,25 @@ const sdk = @import("sdk");
 const facet = sdk.facet;
 const shader = facet.shader;
 const raster = @import("raster");
-const Queue = @import("../queue/_queue.zig").Queue;
-const _buffer = @import("../buffer/_buffer.zig");
-const _image = @import("../image/_image.zig");
-const _pipeline = @import("../pipeline/_pipeline.zig");
+const Queue = @import("../../queue/_queue.zig").Queue;
+const _buffer = @import("../../buffer/_buffer.zig");
+const _image = @import("../../image/_image.zig");
+const _pipeline = @import("../../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
-const Player = @import("_play.zig").Player;
+const _play = @import("_play.zig");
+const Player = _play.Player;
 
 /// The most vertices a draw works: past it, the draw draws nothing.
 const most_vertices = 1 << 20;
+
+/// A pipeline's state in the rasterizer's terms, as this driver keeps it
+/// (Pipeline.driver).
+pub const RasterState = struct {
+    cull: raster.Cull,
+    front: raster.Winding,
+    depth_test: ?raster.batched.Compare,
+    blend: raster.Blend,
+};
 
 /// What a draw's indices are: the index buffer's, from its first, or the
 /// vertices in order from the first.
@@ -66,7 +76,7 @@ const Indices = struct {
 /// added to each: the vertices or indices from `first` on, each instance
 /// from `first_instance` to `instances` past it.
 pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instance: u32, instances: u32) void {
-    const player = &queue.player;
+    const player = _play.playerOf(queue);
     const pipeline = player.pipeline orelse return;
     if (pipeline.draws_nothing or count == 0 or instances == 0) return;
     const indices = indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
@@ -102,6 +112,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     };
     const viewport = pipeline.viewport orelse player.viewport;
     const scissor = pipeline.scissor orelse player.scissor;
+    const translated: *const RasterState = @ptrCast(@alignCast(pipeline.driver.?));
     const state = raster.batched.State{
         .viewport = .{ .x = viewport.x, .y = viewport.y, .width = viewport.width, .height = viewport.height },
         .min_depth = viewport.min_depth,
@@ -112,11 +123,11 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
             .width = scissor.extent.width,
             .height = scissor.extent.height,
         },
-        .cull = pipeline.cull,
-        .front = pipeline.front,
-        .depth_test = pipeline.depth_test,
+        .cull = translated.cull,
+        .front = translated.front,
+        .depth_test = translated.depth_test,
         .depth_write = pipeline.depth_write,
-        .blend = pipeline.blend,
+        .blend = translated.blend,
         .prepass = pipeline.prepass,
         .varyings = pipeline.varyings,
         .fragment = pipeline.fragment,
@@ -224,7 +235,7 @@ fn readInputs(player: *const Player, pipeline: *const Pipeline, lowest: u32, ver
 /// `bytes` of the player's memory for a draw's vertices, aligned for a
 /// float; null when there is none to be had.
 fn scratchOf(queue: *Queue, bytes: usize) ?[*]u8 {
-    const player = &queue.player;
+    const player = _play.playerOf(queue);
     if (bytes <= player.scratch_bytes) return player.scratch;
     const sys = queue.device.sys;
     const memory = sys.AllocVec(bytes, sdk.exec.MEMF_ANY) orelse return null;

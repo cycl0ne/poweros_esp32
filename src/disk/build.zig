@@ -40,7 +40,7 @@ pub const catalogs = [_]Catalog{
 /// per tile - too often to go through a jump table. The baseline JPEG
 /// decoder is jpeg.datatype's, and videocodec.library's for Motion JPEG.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
-    .{ .name = "raster", .source = "libs/facet/raster/raster.zig" },
+    .{ .name = "raster", .source = "libs/facet/driver/cpu/raster/raster.zig" },
     .{ .name = "jpegdecode", .source = "classes/datatypes/jpeg/decode.zig" },
 };
 

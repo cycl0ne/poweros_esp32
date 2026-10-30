@@ -32,8 +32,10 @@ pub const LIBRARY_VERSION = 1;
 /// is set up, not again in every tile it touches.
 /// 5: a window on a composed screen shows a swapchain's picture as it is
 /// (layers 0.7's `ShowLayerPicture`), not copied into the window first.
-pub const LIBRARY_REVISION = 5;
-const BUILD_DATE = "25.10.2026";
+/// 6: what draws is a driver behind each physical device's table
+/// (driver/), the cores the first; nothing a program sees changes.
+pub const LIBRARY_REVISION = 6;
+const BUILD_DATE = "30.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

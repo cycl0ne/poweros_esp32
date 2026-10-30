@@ -123,6 +123,12 @@ pub fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?
             if (result == .success) result = settled;
             continue;
         }
+        const translated = owner.physical.ops.make_pipeline(made);
+        if (translated != .success) {
+            _objects.destroy(base.sys_base, made);
+            if (result == .success) result = translated;
+            continue;
+        }
         pipeline.* = _objects.handle(facet.Pipeline, made);
     }
     return result;
@@ -212,9 +218,8 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     if (info.depth_stencil_state) |depth| {
         if (depth.stencil_test_enable or depth.depth_bounds_test_enable) return .error_feature_not_present;
         if (depth.depth_test_enable) {
-            const compare = @intFromEnum(depth.depth_compare_op);
-            if (compare > 7) return .error_initialization_failed;
-            made.depth_test = @enumFromInt(compare);
+            if (@intFromEnum(depth.depth_compare_op) > 7) return .error_initialization_failed;
+            made.depth_test = depth.depth_compare_op;
             made.depth_write = depth.depth_write_enable;
         }
     }

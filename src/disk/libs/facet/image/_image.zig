@@ -26,11 +26,11 @@ const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const texture = facet.texture;
-const raster = @import("raster");
 const Device = @import("../device/_device.zig").Device;
 const _memory = @import("../memory/_memory.zig");
 const DeviceMemory = _memory.DeviceMemory;
 const max_image_dimension = @import("../instance/_instance.zig").max_image_dimension;
+const drawable = @import("../surface/_surface.zig").drawable;
 const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
@@ -100,17 +100,6 @@ pub fn bytesOf(format: facet.Format) u32 {
     };
 }
 
-/// How a colour attachment of `format` lies in a surface, or null for a
-/// format that cannot be one.
-pub fn surfaceFormat(format: facet.Format) ?raster.Format {
-    return switch (format) {
-        .b8g8r8a8_unorm => .bgra32,
-        .r8g8b8a8_unorm => .rgba32,
-        .r5g6b5_unorm_pack16 => .rgb565,
-        else => null,
-    };
-}
-
 /// How a sampled image of `format` keeps its texels, or null for a format
 /// that cannot be sampled.
 pub fn textureFormat(format: facet.Format) ?texture.Format {
@@ -118,24 +107,6 @@ pub fn textureFormat(format: facet.Format) ?texture.Format {
         .b8g8r8a8_unorm, .r8g8b8a8_unorm => .rgba8888,
         .r5g6b5_unorm_pack16 => .rgb565,
         else => null,
-    };
-}
-
-/// What `format` does.
-pub fn propertiesOf(format: facet.Format) facet.FormatProperties {
-    const transfer = facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
-    const attachment = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND;
-    const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST;
-    return switch (format) {
-        .b8g8r8a8_unorm, .r8g8b8a8_unorm => .{
-            .linear_tiling_features = attachment | transfer,
-            .optimal_tiling_features = attachment | transfer | sampled,
-            .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER,
-        },
-        .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer, .optimal_tiling_features = attachment | transfer | sampled, .buffer_features = 0 },
-        .d16_unorm => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, .buffer_features = 0 },
-        .r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat, .r32g32b32a32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER },
-        else => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = 0 },
     };
 }
 
@@ -176,7 +147,7 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
         image.texels = texture.Texture.init(kept, extent.width, extent.height, info.mip_levels, @ptrFromInt(_memory.alignment)) catch return null;
         return image;
     }
-    if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and surfaceFormat(info.format) == null) return null;
+    if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;
     // Rows of a colour format, of one level.
     if (info.mip_levels != 1 or textureFormat(info.format) == null) return null;
     image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
@@ -249,7 +220,10 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
 fn texelOf(format: facet.Format, bytes: []const u8) u32 {
     return switch (format) {
         .b8g8r8a8_unorm => std.mem.readInt(u32, bytes[0..4], .little),
-        .r8g8b8a8_unorm => raster.Format.rgba32.pack(std.mem.readInt(u32, bytes[0..4], .little)),
+        .r8g8b8a8_unorm => texel: {
+            const color = std.mem.readInt(u32, bytes[0..4], .little);
+            break :texel color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16;
+        },
         .r5g6b5_unorm_pack16 => std.mem.readInt(u16, bytes[0..2], .little),
         else => 0,
     };

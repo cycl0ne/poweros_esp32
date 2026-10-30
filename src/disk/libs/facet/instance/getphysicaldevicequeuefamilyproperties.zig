@@ -4,7 +4,8 @@
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
-const _instance = @import("_instance.zig");
+const _objects = @import("../_objects.zig");
+const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 
 /// The physical device's queue families.
 ///
@@ -55,12 +56,11 @@ const _instance = @import("_instance.zig");
 /// ```
 pub fn GetPhysicalDeviceQueueFamilyProperties(base: *FacetBase, physical: *facet.PhysicalDevice, count: *u32, properties: ?[*]facet.QueueFamilyProperties) void {
     _ = base;
-    _ = physical;
     const into = properties orelse {
         count.* = 1;
         return;
     };
     if (count.* == 0) return;
-    into[0] = _instance.queue_family;
+    into[0] = _objects.of(PhysicalDevice, physical).queue_family;
     count.* = 1;
 }

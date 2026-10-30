@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
-//! A command buffer played, on its queue's task: its commands done in the
-//! order they were recorded, each finished before the next starts - so a
-//! barrier has nothing left to wait for, and a layout nothing to change.
+//! A command buffer played by the cores, on its queue's task: its commands
+//! done in the order they were recorded, each finished before the next
+//! starts - so a barrier has nothing left to wait for, and a layout nothing
+//! to change. What it plays shares a frame's tiles between the cores
+//! (ShareWork), the task doing a part of them itself.
 //!
 //! A render pass is a frame of the rasterizer's: CmdBeginRenderPass moves
 //! the queue's target onto the framebuffer's colour attachment and begins
@@ -21,17 +23,18 @@ const exec = sdk.exec;
 const facet = sdk.facet;
 const shader = facet.shader;
 const raster = @import("raster");
-const Queue = @import("../queue/_queue.zig").Queue;
-const _command = @import("_command.zig");
+const _objects = @import("../../_objects.zig");
+const Queue = @import("../../queue/_queue.zig").Queue;
+const _command = @import("../../command/_command.zig");
 const CommandBuffer = _command.CommandBuffer;
-const _stream = @import("_stream.zig");
-const _buffer = @import("../buffer/_buffer.zig");
+const _stream = @import("../../command/_stream.zig");
+const _buffer = @import("../../buffer/_buffer.zig");
 const Buffer = _buffer.Buffer;
-const _image = @import("../image/_image.zig");
-const _render = @import("../render/_render.zig");
-const Pipeline = @import("../pipeline/_pipeline.zig").Pipeline;
-const DescriptorSet = @import("../descriptor/_descriptor.zig").Set;
-const max_vertex_input_bindings = @import("../instance/_instance.zig").max_vertex_input_bindings;
+const _image = @import("../../image/_image.zig");
+const _render = @import("../../render/_render.zig");
+const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
+const DescriptorSet = @import("../../descriptor/_descriptor.zig").Set;
+const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
 const _draw = @import("_draw.zig");
 
 /// A vertex buffer bound.
@@ -70,9 +73,32 @@ pub const Player = struct {
     scratch_bytes: usize = 0,
 };
 
+/// The player a queue keeps while its device lasts: false when there is no
+/// memory for it.
+pub fn open(queue: *Queue) bool {
+    const player = _objects.create(queue.device.sys, Player) orelse return false;
+    player.* = .{};
+    queue.driver = player;
+    return true;
+}
+
+/// What the queue's player kept given back, and the player, as its device
+/// goes.
+pub fn close(queue: *Queue) void {
+    const player = playerOf(queue);
+    if (player.target) |*target| target.deinit();
+    if (player.scratch) |scratch| queue.device.sys.FreeVec(scratch);
+    _objects.destroy(queue.device.sys, player);
+    queue.driver = null;
+}
+
+pub fn playerOf(queue: *const Queue) *Player {
+    return @ptrCast(@alignCast(queue.driver.?));
+}
+
 /// The commands of `buffer`, in order.
 pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
-    const player = &queue.player;
+    const player = playerOf(queue);
     restart(player);
     var commands = buffer.stream.commands();
     while (commands.next()) |head| switch (head.op) {
@@ -107,14 +133,6 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
     endRenderPass(player);
 }
 
-/// What the queue's player kept given back, as its device goes.
-pub fn finish(queue: *Queue) void {
-    const player = &queue.player;
-    if (player.target) |*target| target.deinit();
-    if (player.scratch) |scratch| queue.device.sys.FreeVec(scratch);
-    player.* = .{};
-}
-
 /// Nothing bound, as each command buffer starts.
 fn restart(player: *Player) void {
     player.drawing = false;
@@ -125,11 +143,29 @@ fn restart(player: *Player) void {
     player.drawn = null;
 }
 
+/// The surface a framebuffer's colour attachment is: its image's memory,
+/// row after row. Null for an image not bound.
+fn surfaceOf(framebuffer: *const _render.Framebuffer) ?raster.Surface {
+    const image = framebuffer.color.image;
+    return .{
+        .pixels = image.data orelse return null,
+        .pitch = image.pitch,
+        .width = image.width,
+        .height = image.height,
+        .format = switch (image.format) {
+            .b8g8r8a8_unorm => .bgra32,
+            .r8g8b8a8_unorm => .rgba32,
+            .r5g6b5_unorm_pack16 => .rgb565,
+            else => unreachable,
+        },
+    };
+}
+
 fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void {
-    const player = &queue.player;
+    const player = playerOf(queue);
     endRenderPass(player);
     const framebuffer = command.framebuffer;
-    const surface = _render.surfaceOf(framebuffer) orelse return;
+    const surface = surfaceOf(framebuffer) orelse return;
     const render_pass = command.render_pass;
     // The render area, cut to the framebuffer.
     const offset = command.area.offset;
@@ -139,7 +175,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     const area = raster.Rect{ .x = left, .y = top, .width = right - left, .height = bottom - top };
     const attachments = raster.Attachments{
-        .color = .{ .load = render_pass.color_load, .clear = command.clear_color },
+        .color = .{ .load = if (render_pass.color_load == .clear) .clear else .keep, .clear = command.clear_color },
         .depth = .{ .used = render_pass.depth != null, .clear = @intCast(command.clear_depth) },
     };
     player.display = framebuffer.color.image.display;
@@ -196,7 +232,7 @@ fn share(context: ?*anyopaque, work: raster.Work, data: ?*anyopaque, parts: u32)
 }
 
 fn handOn(context: ?*anyopaque, area: raster.Rect) void {
-    const display = queueOf(context).player.display orelse return;
+    const display = playerOf(queueOf(context)).display orelse return;
     display.handOn(area.x, area.y, area.width, area.height);
 }
 

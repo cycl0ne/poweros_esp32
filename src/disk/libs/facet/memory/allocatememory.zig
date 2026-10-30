@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! AllocateMemory: a block of the device's memory.
 
-const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
@@ -73,19 +72,11 @@ pub fn AllocateMemory(base: *FacetBase, device: *facet.Device, info: *const face
     const made = _objects.create(sys, DeviceMemory) orelse return .error_out_of_host_memory;
     made.* = .{ .device = owner, .size = info.allocation_size, .type_index = index };
     if (!_memory.isLazy(properties, index)) {
-        // Room to move the block up to a cache line: AllocMem's are
-        // aligned to its chunks.
-        const extra = _memory.alignment - sdk.exec.MEM_BLOCKSIZE;
-        const bytes = std.math.cast(usize, info.allocation_size) orelse 0;
-        const attributes = properties.memory_heaps[properties.memory_types[index].heap_index].attributes;
-        const block = if (bytes != 0 and bytes <= std.math.maxInt(usize) - extra) sys.AllocMem(bytes + extra, attributes) else null;
-        const taken: [*]u8 = @ptrCast(block orelse {
+        const result = owner.physical.ops.allocate_memory(owner, made);
+        if (result != .success) {
             _objects.destroy(sys, made);
-            return .error_out_of_device_memory;
-        });
-        made.block = taken;
-        made.block_bytes = bytes + extra;
-        made.data = @ptrFromInt(std.mem.alignForward(usize, @intFromPtr(taken), _memory.alignment));
+            return result;
+        }
     }
     owner.allocations += 1;
     memory.* = _objects.handle(facet.DeviceMemory, made);
