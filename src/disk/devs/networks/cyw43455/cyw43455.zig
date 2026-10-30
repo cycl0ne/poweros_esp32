@@ -47,8 +47,8 @@ const CywBase = _cyw.CywBase;
 
 pub const DEVICE_NAME = _cyw.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
-const BUILD_DATE = "29.10.2026";
+const DEVICE_REVISION = 2;
+const BUILD_DATE = "30.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++

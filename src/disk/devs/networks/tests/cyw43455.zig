@@ -2,7 +2,8 @@
 //! Host tests of cyw43455.device: its NVRAM image - what Linux's
 //! brcmfmac makes of a board's NVRAM file, its strings, the padding and
 //! the length word - what it reads from the firmware: events, and a
-//! scan's networks - and what it tells the firmware to join a network.
+//! scan's networks - and what it tells the firmware to join a network,
+//! and of the multicast groups it takes.
 //! The chip itself is proved on the CM5.
 
 const std = @import("std");
@@ -12,6 +13,7 @@ const firmware = @import("../cyw43455/firmware.zig");
 const events = @import("../cyw43455/events.zig");
 const scan = @import("../cyw43455/scan.zig");
 const join = @import("../cyw43455/join.zig");
+const filter = @import("../cyw43455/filter.zig");
 const nvramImage = firmware.nvramImage;
 
 test "nvramImage: strings, comments, padding and the length word" {
@@ -163,4 +165,22 @@ test "an RSN element's group cipher: TKIP told apart" {
     const element = [_]u8{ 48, 20, 1, 0, 0x00, 0x0F, 0xAC, 2, 1, 0, 0x00, 0x0F, 0xAC, 4, 1, 0, 0x00, 0x0F, 0xAC, 2, 0, 0 };
     const suites = scan.rsnSuites(&element).?;
     try std.testing.expect(suites.group_tkip and suites.ccmp and !suites.tkip and suites.psk);
+}
+
+test "the multicast groups for the firmware: the ones with users, after their count" {
+    const unit = sdk.devices.network.unit;
+    var groups: [unit.groups_max]unit.Group = @splat(.{});
+    // IPv6's all-nodes group, a solicited-node group left again, and
+    // another joined twice.
+    groups[0] = .{ .address = .{ 0x33, 0x33, 0x00, 0x00, 0x00, 0x01 }, .users = 1 };
+    groups[1] = .{ .address = .{ 0x33, 0x33, 0xFF, 0x32, 0x73, 0x9B }, .users = 0 };
+    groups[3] = .{ .address = .{ 0x33, 0x33, 0xFF, 0xDA, 0x31, 0x0B }, .users = 2 };
+    const list = filter.listOf(&groups);
+    try std.testing.expectEqual(@as(usize, 4 + 2 * 6), list.slice().len);
+    try std.testing.expectEqual(@as(u32, 2), std.mem.readInt(u32, list.bytes[0..4], .little));
+    try std.testing.expectEqualSlices(u8, &groups[0].address, list.bytes[4..10]);
+    try std.testing.expectEqualSlices(u8, &groups[3].address, list.bytes[10..16]);
+    // None: the count alone, which the firmware takes as an empty list.
+    const none = filter.listOf(&[_]unit.Group{.{}} ** 3);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0 }, none.slice());
 }

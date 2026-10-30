@@ -19,6 +19,9 @@
 //! Ethernet frame behind a BCDC header - to the unit, and the unit's
 //! writes out the same way, while the firmware gives the host credit.
 //!
+//! **Groups**: the unit's multicast groups are given the firmware
+//! whenever they change, which hands over no others (filter.zig).
+//!
 //! **Scanning** (S2_GETNETWORKS): the firmware's escan, whose results come
 //! as events; every request that comes while one runs is answered with
 //! the same networks.
@@ -68,6 +71,7 @@ const bcdc = @import("bcdc.zig");
 const events = @import("events.zig");
 const scan = @import("scan.zig");
 const join_file = @import("join.zig");
+const filter = @import("filter.zig");
 const wpa = sdk.wpa;
 const utility = sdk.utility;
 const WPABase = sdk.interface.wpa.WPABase;
@@ -203,6 +207,10 @@ pub const Work = struct {
     /// again.
     leave_due: bool = false,
     pause_s: u32 = pause_first_s,
+    /// The unit's groups to be given the firmware (filter.zig): set by
+    /// whatever changes them - an opener's task too - and taken by the
+    /// worker.
+    filter_due: bool = false,
 };
 
 pub const State = enum(u8) { idle, joining, joined };
@@ -306,6 +314,7 @@ fn service(work: *Work) void {
         say(base.sys_base, "the scan did not finish");
         endScan(work);
     }
+    if (@atomicRmw(bool, &work.filter_due, .Xchg, false, .acquire)) giveFilter(work);
     sendWrites(work);
     handshakeDue(work);
     if (work.state == .joining and reached(work.deadline)) {
@@ -322,6 +331,32 @@ fn service(work: *Work) void {
         leave(work);
         cameOff(work);
     }
+}
+
+/// The unit's groups to be given the firmware, and the worker woken for
+/// it: the worker alone speaks to the firmware, and a promiscuous opener
+/// changes them from its own task.
+pub fn filterDue(base: *CywBase) void {
+    const work = workOf(base) orelse return;
+    @atomicStore(bool, &work.filter_due, true, .release);
+    if (base.worker) |worker| base.sys_base.Signal(worker, base.work_mask);
+}
+
+/// The unit's groups given the firmware, and every group and frame while
+/// an opener is promiscuous (filter.zig); said if it refuses.
+fn giveFilter(work: *Work) void {
+    const base = work.base;
+    const list = filter.listOf(&base.net.groups);
+    const every: u32 = @intFromBool(base.net.promiscuous != 0);
+    giveFilterTo(base, list.slice(), every) catch |err| sayError(base.sys_base, "the multicast groups cannot be given", err);
+}
+
+fn giveFilterTo(base: *CywBase, list: []const u8, every: u32) Error!void {
+    const listed = try bcdc.setVar(base, "mcast_list", list);
+    if (listed != 0) exec.kprintf(base.sys_base, "%s: the firmware refuses \"mcast_list\": %d\n", .{ @as([*:0]const u8, DEVICE_NAME), listed });
+    _ = try setting(base, "allmulti", every);
+    const promiscuous = try bcdc.set32(base, filter.C_SET_PROMISC, every);
+    if (promiscuous != 0) exec.kprintf(base.sys_base, "%s: the firmware refuses promiscuity: %d\n", .{ @as([*:0]const u8, DEVICE_NAME), promiscuous });
 }
 
 /// The firmware's frames read and handed on, up to the bound: whether it

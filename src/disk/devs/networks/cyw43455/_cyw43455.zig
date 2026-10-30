@@ -110,12 +110,12 @@ pub const CywBase = extern struct {
         _ = address;
     }
 
-    /// The firmware takes the groups its network sends; the unit sorts out
-    /// the ones it joined.
+    /// The firmware takes only the groups it is told of: the worker tells
+    /// it the unit's (radio.filterDue), which are read there.
     pub fn setFilter(base: *CywBase, groups: []const unit_file.Group, promiscuous: bool) void {
-        _ = base;
         _ = groups;
         _ = promiscuous;
+        radio.filterDue(base);
     }
 
     /// Frames flow whenever the station is on a network.
