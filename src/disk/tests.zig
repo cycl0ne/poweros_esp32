@@ -9,6 +9,9 @@ test {
     _ = @import("classes/gadgets/textedit/undo.zig");
     _ = @import("programs/notepad/highlight.zig");
     _ = @import("programs/boing/bounce.zig");
+    _ = @import("programs/cobra/ship.zig");
+    _ = @import("programs/cobra/flight.zig");
+    _ = @import("programs/cobra/planet.zig");
     _ = @import("programs/sheet/tests/sheet.zig");
     _ = @import("system/hdtoolbox/tests/hdtoolbox.zig");
     _ = @import("system/memmap/tests/memmap.zig");
