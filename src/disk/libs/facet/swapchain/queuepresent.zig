@@ -30,6 +30,7 @@ const Semaphore = @import("../sync/_sync.zig").Semaphore;
 /// `success`; `error_out_of_date` when a swapchain's surface has changed,
 /// or an image was not one the program held - that image is not shown;
 /// `error_surface_lost` when the window a surface is over has closed;
+/// `error_device_lost` once the device is lost, the image given back unshown;
 /// `error_out_of_host_memory`. The worst of them, and each in `results`.
 ///
 /// BEHAVIOR:
@@ -39,7 +40,9 @@ const Semaphore = @import("../sync/_sync.zig").Semaphore;
 /// image shown before it then comes free for AcquireNextImage. The call
 /// itself returns at once. A window closed by then - its program ended, and
 /// its windows closed with it - is not drawn into: the image comes free
-/// unshown, and the next AcquireNextImage answers `error_surface_lost`.
+/// unshown, and the next AcquireNextImage answers `error_surface_lost`. So
+/// does an image on the queue when the device is lost: what it holds may not
+/// be finished, and the display keeps what it shows.
 ///
 /// CONTEXT:
 /// - Waits: on a window's surface, for the screens' semaphore.
@@ -79,7 +82,7 @@ pub fn QueuePresent(base: *FacetBase, queue: *facet.Queue, info: *const facet.Pr
     for (info.swapchains[0..info.swapchain_count], info.image_indices[0..info.swapchain_count], 0..) |handle, index, k| {
         const chain = _objects.of(Swapchain, handle);
         const result: facet.Result = result: {
-            const unfit: ?facet.Result = if (taken == presents.len) .error_out_of_date else switch (_swapchain.fit(chain)) {
+            const unfit: ?facet.Result = if (made.device.isLost()) .error_device_lost else if (taken == presents.len) .error_out_of_date else switch (_swapchain.fit(chain)) {
                 .current => null,
                 .changed => .error_out_of_date,
                 .lost => .error_surface_lost,

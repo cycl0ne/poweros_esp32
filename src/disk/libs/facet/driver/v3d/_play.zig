@@ -137,6 +137,11 @@ fn playerOf(queue: *const Queue) *Player {
     return @ptrCast(@alignCast(queue.driver.?));
 }
 
+/// Whether the V3D has stopped doing what it is sent: `lost` has said why.
+pub fn broken(queue: *const Queue) bool {
+    return playerOf(queue).hardware.broken;
+}
+
 /// A sampled image's layout in memory.
 pub fn layoutOf(format: facet.Format, width: u32, height: u32, levels: u32) tiling.Layout {
     return tiling.layoutOf(_image.bytesOf(format), width, height, @min(levels, tiling.most_levels));

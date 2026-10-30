@@ -34,7 +34,7 @@ export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VER
 
 const template = "SIZE/K,ONLY/K";
 
-const Failure = error{ NoMemory, NoDevice, Refused };
+const Failure = error{ NoMemory, NoDevice, Refused, DeviceLost };
 
 const Vertex = extern struct {
     p: [4]f32,
@@ -237,6 +237,7 @@ const Side = struct {
     made_count: u32 = 0,
 
     fn expect(result: facet.Result, failure: Failure) Failure!void {
+        if (result == .error_device_lost) return error.DeviceLost;
         if (result != .success) return failure;
     }
 
@@ -1067,6 +1068,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             error.NoMemory => "not enough memory",
             error.NoDevice => "no device",
             error.Refused => "facet.library refused something",
+            error.DeviceLost => "the device is lost",
         })});
         return dos.RETURN_FAIL;
     };

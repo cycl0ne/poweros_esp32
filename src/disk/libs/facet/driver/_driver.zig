@@ -62,7 +62,9 @@ pub const Ops = struct {
     close_queue: *const fn (queue: *Queue) void,
     /// A command buffer's commands carried out in order, on the queue's
     /// task: `done` signalled when the last has finished, by the time this
-    /// returns or later, an interrupt included.
+    /// returns or later, an interrupt included. A driver whose device cannot
+    /// carry on says so with `queue.device.lose()` and signals `done` all the
+    /// same.
     execute: *const fn (queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) void,
     /// A sampled image's memory, for a device that does not read textures
     /// in the rasterizer's layout. Null for one that does.

@@ -287,6 +287,7 @@ fn unmakePipeline(pipeline: *Pipeline) void {
 /// signal, so the buffer's work is done by the time this signals.
 fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) void {
     _play.play(queue, buffer);
+    if (_play.broken(queue)) queue.device.lose();
     queue.device.sys.SignalWaitable(done);
 }
 

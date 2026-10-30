@@ -21,7 +21,7 @@ const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 
 pub const most_images = 4;
 
-pub const Failure = error{ NoMemory, NoDevice, NoSurface, Undrawable, NoSwapchain, Refused };
+pub const Failure = error{ NoMemory, NoDevice, NoSurface, Undrawable, NoSwapchain, Refused, DeviceLost };
 
 /// Everything made through facet.library, given back by `down` in the
 /// order it goes.
@@ -553,6 +553,7 @@ pub const Picture = struct {
 };
 
 pub fn expect(result: facet.Result, failure: Failure) Failure!void {
+    if (result == .error_device_lost) return error.DeviceLost;
     if (result != .success) return failure;
 }
 
@@ -565,6 +566,7 @@ pub fn explain(gpu: *const Gpu, err: Failure) [*:0]const u8 {
         error.Undrawable => undrawable(gpu.found),
         error.NoSwapchain => "No swapchain: no room for its images",
         error.Refused => "facet.library refused something",
+        error.DeviceLost => "The device is lost: it stopped drawing",
     };
 }
 

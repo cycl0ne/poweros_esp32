@@ -20,7 +20,7 @@ const _queue = @import("_queue.zig");
 /// - `queue` - the queue.
 ///
 /// RESULT:
-/// `success`.
+/// `success`; `error_device_lost` once the device is lost.
 ///
 /// BEHAVIOR:
 /// Returns once every batch submitted before the call has been played and
@@ -49,6 +49,7 @@ const _queue = @import("_queue.zig");
 /// _ = fb.QueueWaitIdle(queue.?);
 /// ```
 pub fn QueueWaitIdle(base: *FacetBase, queue: *facet.Queue) facet.Result {
-    _queue.waitIdle(_objects.of(_queue.Queue, queue), base.sys_base);
-    return .success;
+    const made = _objects.of(_queue.Queue, queue);
+    _queue.waitIdle(made, base.sys_base);
+    return if (made.device.isLost()) .error_device_lost else .success;
 }

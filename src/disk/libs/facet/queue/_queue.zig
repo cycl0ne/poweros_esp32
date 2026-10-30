@@ -6,6 +6,8 @@
 //! other and plays each - waits for its semaphores, has its command
 //! buffers carried out by the device's driver, one after the other, signals
 //! its semaphores and its fence - and sleeps again when the list is empty.
+//! On a device lost it still takes them, signalling what they signal so that
+//! nobody waits for ever, but plays and shows nothing, and waits for nothing.
 //! QueuePresent puts a submission on the list as well, of the images to be
 //! shown once its semaphores are signalled: shown in turn with the work,
 //! each returning when the display has taken it up.
@@ -234,14 +236,15 @@ pub fn drain(queue: *Queue, sys: *ExecBase) void {
 /// buffers carried out and its images shown, its semaphores and its fence
 /// signalled.
 fn run(queue: *Queue, sys: *ExecBase, submission: *const Submission) void {
-    for (submission.waits) |semaphore| {
+    const device = queue.device;
+    if (!device.isLost()) for (submission.waits) |semaphore| {
         const one = [1]*exec.Waitable{&semaphore.waitable};
         _ = sys.WaitForAny(&one, 1, exec.WAIT_FOREVER);
         sys.ResetWaitable(&semaphore.waitable);
-    }
+    };
     for (submission.buffers) |buffer| {
-        if (buffer.state == .executable) {
-            queue.device.physical.ops.execute(queue, buffer, &queue.done);
+        if (buffer.state == .executable and !device.isLost()) {
+            device.physical.ops.execute(queue, buffer, &queue.done);
             const one = [1]*exec.Waitable{&queue.done};
             _ = sys.WaitForAny(&one, 1, exec.WAIT_FOREVER);
             sys.ResetWaitable(&queue.done);
@@ -249,7 +252,9 @@ fn run(queue: *Queue, sys: *ExecBase, submission: *const Submission) void {
         if (buffer.one_time) buffer.state = .spent;
         _ = @atomicRmw(u32, &buffer.pending, .Sub, 1, .release);
     }
-    for (submission.presents) |each| _swapchain.show(each.swapchain, sys, each.index);
+    for (submission.presents) |each| {
+        if (device.isLost()) _swapchain.unshown(each.swapchain, sys, each.index) else _swapchain.show(each.swapchain, sys, each.index);
+    }
     for (submission.signals) |semaphore| sys.SignalWaitable(&semaphore.waitable);
     if (submission.fence) |fence| sys.SignalWaitable(&fence.waitable);
 }

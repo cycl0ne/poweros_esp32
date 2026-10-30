@@ -22,6 +22,17 @@ pub const Device = struct {
     has_queue: bool = false,
     /// The blocks of memory allocated and not yet freed.
     allocations: u32 = 0,
+    /// Its driver cannot carry on: nothing more is played or shown, and
+    /// what is asked of it answers `error_device_lost`.
+    lost: bool = false,
+
+    pub fn isLost(device: *const Device) bool {
+        return @atomicLoad(bool, &device.lost, .acquire);
+    }
+
+    pub fn lose(device: *Device) void {
+        @atomicStore(bool, &device.lost, true, .release);
+    }
 };
 
 /// The priority a queue's task runs at for a priority of 0.0 to 1.0 (null:

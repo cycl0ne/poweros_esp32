@@ -5,7 +5,7 @@
 //! others and brought forward while it turns, the desktop beside it used
 //! as ever.
 //!
-//!   FacetWindow WIDTH/N,HEIGHT/N,NEAREST/S,FRAMES/N,CLOSE/S
+//!   FacetWindow WIDTH/N,HEIGHT/N,NEAREST/S,FRAMES/N,CLOSE/S,V3D/S
 //!
 //! The window is WIDTH x HEIGHT inside its border (480 x 360 if not
 //! given). Its surface (CreateWindowSurface) hands out pictures in memory
@@ -22,7 +22,8 @@
 //! still on its way - as intuition closes the windows of a program that
 //! ends with them open - and the surface must then say it is lost
 //! (`error_surface_lost`) rather than have the frame drawn into a window
-//! that has gone. What is made through facet.library is facetgpu.zig's,
+//! that has gone. With V3D it is all drawn on the device after the cores, a
+//! CM5's GPU; on a machine with none it says there is no device. What is made through facet.library is facetgpu.zig's,
 //! which C:test/FacetCube shares.
 
 const sdk = @import("sdk");
@@ -44,10 +45,10 @@ const Gpu = facetgpu.Gpu;
 const Failure = facetgpu.Failure;
 
 pub const COMMAND_NAME = "FacetWindow";
-const VERSION_STRING = "\x00$VER: FacetWindow 1.4 (21.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetWindow 1.5 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "WIDTH/N,HEIGHT/N,NEAREST/S,FRAMES/N,CLOSE/S";
+const template = "WIDTH/N,HEIGHT/N,NEAREST/S,FRAMES/N,CLOSE/S,V3D/S";
 
 /// What a run came to.
 const Run = struct {
@@ -74,6 +75,7 @@ fn spin(gpu: *Gpu, ib: *IntuitionBase, dl: *DosBase, window: *intuition.Window, 
                 run.remade += 1;
                 continue;
             },
+            .error_device_lost => return error.DeviceLost,
             else => return error.NoSwapchain,
         }
         const waits_for_acquire = gpu.cleared[index];
@@ -89,6 +91,7 @@ fn spin(gpu: *Gpu, ib: *IntuitionBase, dl: *DosBase, window: *intuition.Window, 
                 try gpu.chain(2);
                 run.remade += 1;
             },
+            .error_device_lost => return error.DeviceLost,
             else => return error.NoSwapchain,
         }
     }
@@ -129,7 +132,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [5]usize = @splat(0);
+    var argv: [6]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -140,6 +143,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const nearest = argv[2] != 0;
     const frames = number(argv[3], 0, 1);
     const close = argv[4] != 0;
+    const on_gpu = argv[5] != 0;
 
     const facet_lib = sys.OpenLibrary(facet.FACETNAME, 1) orelse {
         _ = Printf(dl, "No %s\n", .{facet.FACETNAME});
@@ -190,7 +194,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var gpu = Gpu{ .fb = @ptrCast(facet_lib), .ib = ib };
     // Given back before the window closes: the surface is over it.
     defer gpu.down();
-    gpu.up(COMMAND_NAME, false) catch |err| return failed(dl, &gpu, err);
+    gpu.up(COMMAND_NAME, on_gpu) catch |err| return failed(dl, &gpu, err);
     gpu.onWindow(window) catch |err| return failed(dl, &gpu, err);
     gpu.prepare(nearest, &pattern) catch |err| return failed(dl, &gpu, err);
     gpu.chain(2) catch |err| return failed(dl, &gpu, err);

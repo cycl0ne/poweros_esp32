@@ -16,6 +16,9 @@ const rig_zig = @import("facet.zig");
 const Rig = rig_zig.Rig;
 const _objects = @import("../_objects.zig");
 const _surface = @import("../surface/_surface.zig");
+const _swapchain = @import("../swapchain/_swapchain.zig");
+const _queue = @import("../queue/_queue.zig");
+const Device = @import("../device/_device.zig").Device;
 const Instance = @import("../instance/_instance.zig").Instance;
 const testing = std.testing;
 
@@ -449,6 +452,40 @@ test "lost: what the surface is over gone before a present, and with one on its 
     try testing.expectEqual(facet.Result.error_surface_lost, acquired);
     fb.DestroySwapchain(bench.device, again);
     try testing.expectEqual(@as(u32, 0), fake.made);
+}
+
+test "a device lost: an image held is given back, one on the queue comes free unshown, and the next acquire is told" {
+    var fake = Fake{};
+    var bench = try Bench.up(&fake);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const result, const swapchain = bench.swapchain(2, null);
+    try testing.expectEqual(facet.Result.success, result);
+    const chain = _objects.of(_swapchain.Swapchain, swapchain.?);
+    const device = _objects.of(Device, bench.device);
+    const shown_before = fake.shows;
+
+    var acquired, const held = bench.acquire(swapchain.?, 0);
+    try testing.expectEqual(facet.Result.success, acquired);
+    device.lose();
+    try testing.expectEqual(facet.Result.error_device_lost, bench.present(swapchain.?, held));
+    try testing.expectEqual(_swapchain.State.free, chain.states[held]);
+
+    // Taken from the queue after the work that lost it.
+    device.lost = false;
+    acquired, const on_queue = bench.acquire(swapchain.?, 0);
+    try testing.expectEqual(facet.Result.success, acquired);
+    try testing.expect(_swapchain.hand(chain, bench.rig.sys, on_queue));
+    device.lose();
+    const presents = [1]_queue.Present{.{ .swapchain = chain, .index = on_queue }};
+    try testing.expect(_queue.present(&device.queue, bench.rig.sys, &.{}, &presents, true));
+    try testing.expectEqual(_swapchain.State.free, chain.states[on_queue]);
+    try testing.expectEqual(@as(u32, 0), chain.presenting);
+
+    try testing.expectEqual(shown_before, fake.shows);
+    acquired, _ = bench.acquire(swapchain.?, facet.WAIT_FOREVER_NS);
+    try testing.expectEqual(facet.Result.error_device_lost, acquired);
+    fb.DestroySwapchain(bench.device, swapchain);
 }
 
 test "a surface is kept while a swapchain on it is left" {

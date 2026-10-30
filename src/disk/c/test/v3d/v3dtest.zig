@@ -322,8 +322,10 @@ fn triangleTest(sys: *ExecBase, dl: *DosBase, space: *v3d.Space, engine: *v3d.En
         return reportLost(dl, engine, binned);
     }
     step(sys, "rendering");
+    // Timed apart: that line takes the console longer than the frame.
+    const render_began = sdk.hardware.systimer.uptimeUs();
     const rendered = engine.render(render_list.address, render_list.here());
-    const took = sdk.hardware.systimer.uptimeUs() - began;
+    const took = bin_took + sdk.hardware.systimer.uptimeUs() - render_began;
     space.fromGpu(&image);
     if (how.unmapped_image) {
         if (rendered != .fault) {

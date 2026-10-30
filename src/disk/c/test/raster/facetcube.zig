@@ -58,7 +58,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetCube";
-const VERSION_STRING = "\x00$VER: FacetCube 1.5 (21.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetCube 1.6 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FRAMES/N,NEAREST/S,SIZE/K,CHECK/S,TO/K,V3D/S";
@@ -118,6 +118,7 @@ fn spin(gpu: *Gpu, dl: *DosBase, tb: *TimerBase, view: View, frames: u32) Failur
                 run.out_of_date = true;
                 break;
             },
+            .error_device_lost => return error.DeviceLost,
             else => return error.NoSwapchain,
         }
         // Black round the view the first time, outside the frame's time.
@@ -137,6 +138,7 @@ fn spin(gpu: *Gpu, dl: *DosBase, tb: *TimerBase, view: View, frames: u32) Failur
                 run.out_of_date = true;
                 break;
             },
+            .error_device_lost => return error.DeviceLost,
             else => return error.NoSwapchain,
         }
         run.frames += 1;

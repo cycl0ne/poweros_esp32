@@ -130,7 +130,8 @@ fn AcquireNextImage(base: *FacetBase, device: *facet.Device, swapchain: *facet.S
 came free in time, or none will - each held by the program, or shown
 with nothing presented after it; `error_out_of_date` when the surface's
 size or format has changed, or the swapchain has been handed on;
-`error_surface_lost` when the window the surface is over has closed.
+`error_surface_lost` when the window the surface is over has closed;
+`error_device_lost` once the device is lost.
 
 **BEHAVIOR**
 
@@ -3757,7 +3758,8 @@ fn DeviceWaitIdle(base: *FacetBase, device: *facet.Device) facet.Result
 
 **RESULT**
 
-`success`.
+`success`; `error_device_lost` once the device is lost. The queue is idle
+either way.
 
 **BEHAVIOR**
 
@@ -4227,7 +4229,8 @@ fn GetFenceStatus(base: *FacetBase, device: *facet.Device, fence: *facet.Fence) 
 
 **RESULT**
 
-`success` for a signalled fence, `not_ready` for one not yet.
+`success` for a signalled fence, `not_ready` for one not yet;
+`error_device_lost` once the device is lost.
 
 **BEHAVIOR**
 
@@ -5069,6 +5072,7 @@ fn QueuePresent(base: *FacetBase, queue: *facet.Queue, info: *const facet.Presen
 `success`; `error_out_of_date` when a swapchain's surface has changed,
 or an image was not one the program held - that image is not shown;
 `error_surface_lost` when the window a surface is over has closed;
+`error_device_lost` once the device is lost, the image given back unshown;
 `error_out_of_host_memory`. The worst of them, and each in `results`.
 
 **BEHAVIOR**
@@ -5079,7 +5083,9 @@ returning when the display has taken it up at the start of a frame. The
 image shown before it then comes free for AcquireNextImage. The call
 itself returns at once. A window closed by then - its program ended, and
 its windows closed with it - is not drawn into: the image comes free
-unshown, and the next AcquireNextImage answers `error_surface_lost`.
+unshown, and the next AcquireNextImage answers `error_surface_lost`. So
+does an image on the queue when the device is lost: what it holds may not
+be finished, and the display keeps what it shows.
 
 **CONTEXT**
 
@@ -5140,7 +5146,8 @@ fn QueueSubmit(base: *FacetBase, queue: *facet.Queue, count: u32, submits: ?[*]c
 
 **RESULT**
 
-`success`; `error_out_of_host_memory`, and nothing submitted.
+`success`; `error_out_of_host_memory`, and nothing submitted;
+`error_device_lost`, and nothing submitted, once the device is lost.
 
 **BEHAVIOR**
 
@@ -5152,7 +5159,9 @@ starts; then signals its semaphores, and with the last batch the fence.
 A command buffer not executable - not ended, or spent by a one-time
 submission - is passed over.
 
-The call returns at once: the work is the task's.
+The call returns at once: the work is the task's. If the device is lost
+while a batch is on the queue, nothing more of it is played, and its
+semaphores and fence are signalled all the same.
 
 **CONTEXT**
 
@@ -5208,7 +5217,7 @@ fn QueueWaitIdle(base: *FacetBase, queue: *facet.Queue) facet.Result
 
 **RESULT**
 
-`success`.
+`success`; `error_device_lost` once the device is lost.
 
 **BEHAVIOR**
 
@@ -5626,7 +5635,8 @@ fn WaitForFences(base: *FacetBase, device: *facet.Device, count: u32, fences: [*
 
 **RESULT**
 
-`success` once they are; `timeout` when the time ran out first.
+`success` once they are; `timeout` when the time ran out first;
+`error_device_lost` once the device is lost, at once if it already is.
 
 **BEHAVIOR**
 

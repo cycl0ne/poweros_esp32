@@ -637,6 +637,53 @@ test "a device's work goes through its driver's table; its fence waits for the d
     try testing.expectEqual(@as(u32, 1), Watched.closed);
 }
 
+/// A driver that loses its device at the first command buffer it is given.
+const Losing = struct {
+    var executed: u32 = 0;
+
+    const ops = ops: {
+        var made = cpu.ops;
+        made.execute = &execute;
+        break :ops made;
+    };
+
+    fn execute(queue: *Queue, buffer: *CommandBuffer, done: *sdk.exec.Waitable) void {
+        _ = buffer;
+        executed += 1;
+        queue.device.lose();
+        queue.device.sys.SignalWaitable(done);
+    }
+};
+
+test "a device lost: its fence signalled all the same, nothing more played, and every call says so" {
+    Losing.executed = 0;
+    var bench = try Bench.on(&Losing.ops);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var second: [1]?*facet.CommandBuffer = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateCommandBuffers(device, &.{ .command_pool = bench.pool, .command_buffer_count = 1 }, &second));
+    const both = [2]*facet.CommandBuffer{ bench.commands, second[0].? };
+    for (both) |commands| {
+        try testing.expectEqual(facet.Result.success, fb.BeginCommandBuffer(commands, &.{}));
+        try testing.expectEqual(facet.Result.success, fb.EndCommandBuffer(commands));
+    }
+    const submit_info = facet.SubmitInfo{ .command_buffer_count = both.len, .command_buffers = @ptrCast(&both) };
+    try testing.expectEqual(facet.Result.success, fb.QueueSubmit(bench.queue, 1, @ptrCast(&submit_info), bench.fence));
+    try testing.expectEqual(@as(u32, 1), Losing.executed);
+    try testing.expect(_objects.of(_sync.Fence, bench.fence).waitable.signalled != 0);
+
+    try testing.expectEqual(facet.Result.error_device_lost, fb.GetFenceStatus(device, bench.fence));
+    try testing.expectEqual(facet.Result.error_device_lost, fb.WaitForFences(device, 1, @ptrCast(&bench.fence), true, facet.WAIT_FOREVER_NS));
+    // A fence nothing will signal is not waited for.
+    try testing.expectEqual(facet.Result.success, fb.ResetFences(device, 1, @ptrCast(&bench.fence)));
+    try testing.expectEqual(facet.Result.error_device_lost, fb.WaitForFences(device, 1, @ptrCast(&bench.fence), true, facet.WAIT_FOREVER_NS));
+    try testing.expectEqual(facet.Result.error_device_lost, fb.QueueSubmit(bench.queue, 1, @ptrCast(&submit_info), bench.fence));
+    try testing.expectEqual(@as(u32, 1), Losing.executed);
+    try testing.expectEqual(facet.Result.error_device_lost, fb.QueueWaitIdle(bench.queue));
+    try testing.expectEqual(facet.Result.error_device_lost, fb.DeviceWaitIdle(device));
+}
+
 test "a frame drawn: a triangle coloured by its fragment function, the clear colour round it, a strip after it kept" {
     var bench = try Bench.up();
     defer bench.down();

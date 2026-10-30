@@ -112,7 +112,8 @@ facet.library/WaitForFences
 	came free in time, or none will - each held by the program, or shown
 	with nothing presented after it; `error_out_of_date` when the surface's
 	size or format has changed, or the swapchain has been handed on;
-	`error_surface_lost` when the window the surface is over has closed.
+	`error_surface_lost` when the window the surface is over has closed;
+	`error_device_lost` once the device is lost.
 
    BEHAVIOR
 	An image is handed out when the display no longer reads it: the one
@@ -2899,7 +2900,8 @@ facet.library/WaitForFences
 	- `device` - the device.
 
    RESULT
-	`success`.
+	`success`; `error_device_lost` once the device is lost. The queue is idle
+	either way.
 
    BEHAVIOR
 	QueueWaitIdle on its queue; at once for a device without one.
@@ -3249,7 +3251,8 @@ facet.library/WaitForFences
 	- `fence` - the fence.
 
    RESULT
-	`success` for a signalled fence, `not_ready` for one not yet.
+	`success` for a signalled fence, `not_ready` for one not yet;
+	`error_device_lost` once the device is lost.
 
    BEHAVIOR
 	Nothing changes: the fence stays as it is.
@@ -3896,6 +3899,7 @@ facet.library/WaitForFences
 	`success`; `error_out_of_date` when a swapchain's surface has changed,
 	or an image was not one the program held - that image is not shown;
 	`error_surface_lost` when the window a surface is over has closed;
+	`error_device_lost` once the device is lost, the image given back unshown;
 	`error_out_of_host_memory`. The worst of them, and each in `results`.
 
    BEHAVIOR
@@ -3905,7 +3909,9 @@ facet.library/WaitForFences
 	image shown before it then comes free for AcquireNextImage. The call
 	itself returns at once. A window closed by then - its program ended, and
 	its windows closed with it - is not drawn into: the image comes free
-	unshown, and the next AcquireNextImage answers `error_surface_lost`.
+	unshown, and the next AcquireNextImage answers `error_surface_lost`. So
+	does an image on the queue when the device is lost: what it holds may not
+	be finished, and the display keeps what it shows.
 
    CONTEXT
 	- Waits: on a window's surface, for the screens' semaphore.
@@ -3952,7 +3958,8 @@ facet.library/WaitForFences
 	  batches, signalled when all submitted before is done.
 
    RESULT
-	`success`; `error_out_of_host_memory`, and nothing submitted.
+	`success`; `error_out_of_host_memory`, and nothing submitted;
+	`error_device_lost`, and nothing submitted, once the device is lost.
 
    BEHAVIOR
 	The queue's task takes the batches in the order they were submitted,
@@ -3963,7 +3970,9 @@ facet.library/WaitForFences
 	A command buffer not executable - not ended, or spent by a one-time
 	submission - is passed over.
 
-	The call returns at once: the work is the task's.
+	The call returns at once: the work is the task's. If the device is lost
+	while a batch is on the queue, nothing more of it is played, and its
+	semaphores and fence are signalled all the same.
 
    CONTEXT
 	- Waits: no.
@@ -4005,7 +4014,7 @@ facet.library/WaitForFences
 	- `queue` - the queue.
 
    RESULT
-	`success`.
+	`success`; `error_device_lost` once the device is lost.
 
    BEHAVIOR
 	Returns once every batch submitted before the call has been played and
@@ -4318,7 +4327,8 @@ facet.library/WaitForFences
 	  to the system tick; 0 only looks; WAIT_FOREVER_NS has no limit.
 
    RESULT
-	`success` once they are; `timeout` when the time ran out first.
+	`success` once they are; `timeout` when the time ran out first;
+	`error_device_lost` once the device is lost, at once if it already is.
 
    BEHAVIOR
 	WaitForAny on the fences' waitables: the task sleeps until a queue

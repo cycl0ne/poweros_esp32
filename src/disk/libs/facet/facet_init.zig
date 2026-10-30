@@ -37,7 +37,9 @@ pub const LIBRARY_VERSION = 1;
 /// 7: the BCM2712's V3D a second physical device, listed after the cores;
 /// fragment functions of fixed forms (`shader.fixedFragment`), the only ones
 /// it runs, and the cores run too.
-pub const LIBRARY_REVISION = 7;
+/// 8: a device whose driver cannot carry on is lost: `error_device_lost`,
+/// nothing more played, and no image shown that may not be finished.
+pub const LIBRARY_REVISION = 8;
 const BUILD_DATE = "30.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

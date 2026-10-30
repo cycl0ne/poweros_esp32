@@ -21,7 +21,8 @@ const Device = @import("../device/_device.zig").Device;
 /// - `device` - the device.
 ///
 /// RESULT:
-/// `success`.
+/// `success`; `error_device_lost` once the device is lost. The queue is idle
+/// either way.
 ///
 /// BEHAVIOR:
 /// QueueWaitIdle on its queue; at once for a device without one.
@@ -50,6 +51,7 @@ const Device = @import("../device/_device.zig").Device;
 /// fb.DestroyDevice(device);
 /// ```
 pub fn DeviceWaitIdle(base: *FacetBase, device: *facet.Device) facet.Result {
-    _queue.waitIdle(&_objects.of(Device, device).queue, base.sys_base);
-    return .success;
+    const made = _objects.of(Device, device);
+    _queue.waitIdle(&made.queue, base.sys_base);
+    return if (made.isLost()) .error_device_lost else .success;
 }

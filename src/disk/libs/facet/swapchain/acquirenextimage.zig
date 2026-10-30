@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
+const Device = @import("../device/_device.zig").Device;
 const _swapchain = @import("_swapchain.zig");
 const Swapchain = _swapchain.Swapchain;
 const _sync = @import("../sync/_sync.zig");
@@ -32,7 +33,8 @@ const _sync = @import("../sync/_sync.zig");
 /// came free in time, or none will - each held by the program, or shown
 /// with nothing presented after it; `error_out_of_date` when the surface's
 /// size or format has changed, or the swapchain has been handed on;
-/// `error_surface_lost` when the window the surface is over has closed.
+/// `error_surface_lost` when the window the surface is over has closed;
+/// `error_device_lost` once the device is lost.
 ///
 /// BEHAVIOR:
 /// An image is handed out when the display no longer reads it: the one
@@ -72,7 +74,7 @@ const _sync = @import("../sync/_sync.zig");
 /// }
 /// ```
 pub fn AcquireNextImage(base: *FacetBase, device: *facet.Device, swapchain: *facet.Swapchain, timeout: u64, semaphore: ?*facet.Semaphore, fence: ?*facet.Fence, index: *u32) facet.Result {
-    _ = device;
+    if (_objects.of(Device, device).isLost()) return .error_device_lost;
     const made = _objects.of(Swapchain, swapchain);
     const sys = base.sys_base;
     switch (_swapchain.acquire(made, sys, _sync.microseconds(timeout))) {

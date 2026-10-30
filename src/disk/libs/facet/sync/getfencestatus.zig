@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
+const Device = @import("../device/_device.zig").Device;
 const Fence = @import("_sync.zig").Fence;
 
 /// Whether a fence is signalled, without waiting.
@@ -21,7 +22,8 @@ const Fence = @import("_sync.zig").Fence;
 /// - `fence` - the fence.
 ///
 /// RESULT:
-/// `success` for a signalled fence, `not_ready` for one not yet.
+/// `success` for a signalled fence, `not_ready` for one not yet;
+/// `error_device_lost` once the device is lost.
 ///
 /// BEHAVIOR:
 /// Nothing changes: the fence stays as it is.
@@ -50,7 +52,7 @@ const Fence = @import("_sync.zig").Fence;
 /// ```
 pub fn GetFenceStatus(base: *FacetBase, device: *facet.Device, fence: *facet.Fence) facet.Result {
     _ = base;
-    _ = device;
+    if (_objects.of(Device, device).isLost()) return .error_device_lost;
     const made = _objects.of(Fence, fence);
     return if (@atomicLoad(u32, &made.waitable.signalled, .acquire) != 0) .success else .not_ready;
 }
