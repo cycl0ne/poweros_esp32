@@ -126,6 +126,11 @@ const image_dirs = [_][]const u8{
     // what each of the others is.
     "System",
     "System/Docs",
+    // SYS:Commodities - the programs that work on the input before the
+    // windows see it, Exchange first, which lists and controls them; in
+    // Docs what each is.
+    "Commodities",
+    "Commodities/Docs",
     // The volume's trash: a file put in it is renamed there, and Empty
     // Trash deletes what it holds.
     "Trashcan",
@@ -216,6 +221,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs.info", .picture = "applications-other", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "prefs.info", .picture = "preferences-desktop", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "System.info", .picture = "applications-system", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "Commodities.info", .picture = "input-keyboard", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "WBStartup.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "tests.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "pictures.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
@@ -258,6 +264,11 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/Docs/NetLoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/HDToolBox.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/MemMap.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    // The commodities, each icon with the tool types it reads, and what
+    // each is in SYS:Commodities/Docs.
+    .{ .path = "Commodities/Exchange.info", .picture = "preferences-desktop-keyboard-shortcuts", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0", "TYPE=CX_POPKEY=ctrl alt home", "TYPE=CX_POPUP=YES" } },
+    .{ .path = "Commodities/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "Commodities/Docs/Exchange.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
 };
 
 /// The size the desktop shows icons at on a board's screen - an eighth of
