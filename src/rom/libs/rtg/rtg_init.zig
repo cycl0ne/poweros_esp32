@@ -25,7 +25,8 @@ pub const LIBRARY_VERSION = 1;
 /// 9: CopyRects - several copies as one job of the engine.
 /// 10: video layers - OpenVideoLayer, CloseVideoLayer, ShowVideoFrame,
 /// MoveVideoLayer: a plane that shows a picture in YUV itself.
-pub const LIBRARY_REVISION = 10;
+/// 11: RtgBoardStats.blanks - the display's frames begun.
+pub const LIBRARY_REVISION = 11;
 const BUILD_DATE = "30.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

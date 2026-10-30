@@ -76,6 +76,8 @@ const Window = struct {
     /// copied in, and the picture it shows, if one of the surface's.
     composed: bool,
     showing: ?*Offscreen = null,
+    /// The display's frames as the last picture was copied.
+    blanks: u32 = 0,
 };
 
 /// A picture: its pixels, as the surface BltBitMapRastPort reads, and the
@@ -230,7 +232,11 @@ fn letGo(kept: *Window) void {
     _ = kept.lb.ShowLayerPicture(kept.layer, null, null);
 }
 
-/// The display's next frame waited for, and the picture copied into the
+/// The display's next frame waited for, unless one has begun since the last
+/// picture was copied: that picture took longer than a frame to follow, and
+/// waiting for yet another would halve the rate, though no picture is copied
+/// across what the display reads (`bands_lock`, on a board that counts its
+/// frames). Then the picture copied into the
 /// window with its layer held - as much of it as fits inside the border
 /// now, where the window has been made smaller since the swapchain was -
 /// or, in a composed window, shown there as it is. False once the window
@@ -240,7 +246,10 @@ fn letGo(kept: *Window) void {
 fn show(surface: *Surface, picture: *Picture) bool {
     const kept = of(surface);
     const offscreen = offscreenOf(picture);
-    if (kept.board) |board| _ = kept.rb.WaitVBlank(board, 0);
+    if (kept.board) |board| {
+        if (blanksOf(kept, board) == kept.blanks) _ = kept.rb.WaitVBlank(board, 0);
+        kept.blanks = blanksOf(kept, board);
+    }
     const held = kept.ib.LockIBase(0);
     const window = kept.ib.FindWindowNumber(kept.number) orelse {
         kept.ib.UnlockIBase(held);
@@ -261,6 +270,13 @@ fn show(surface: *Surface, picture: *Picture) bool {
     }
     kept.gb.BltBitMapRastPort(&offscreen.surface, 0, 0, kept.rastport, inside.left, inside.top, @intCast(width), @intCast(height));
     return true;
+}
+
+/// The frames the board has counted, 0 for one that does not count them.
+fn blanksOf(kept: *const Window, board: *rtg.RtgBoard) u32 {
+    var counts: rtg.RtgBoardStats = .{};
+    _ = kept.rb.GetBoardStats(board, &counts, @sizeOf(rtg.RtgBoardStats));
+    return counts.blanks;
 }
 
 fn close(surface: *Surface) void {

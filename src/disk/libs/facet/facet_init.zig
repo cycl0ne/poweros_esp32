@@ -39,7 +39,9 @@ pub const LIBRARY_VERSION = 1;
 /// it runs, and the cores run too.
 /// 8: a device whose driver cannot carry on is lost: `error_device_lost`,
 /// nothing more played, and no image shown that may not be finished.
-pub const LIBRARY_REVISION = 8;
+/// 9: a window's picture that is late for the display's frame is shown at once,
+/// not a whole frame later.
+pub const LIBRARY_REVISION = 9;
 const BUILD_DATE = "30.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

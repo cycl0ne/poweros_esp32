@@ -2244,6 +2244,7 @@ fn waitVBlank(board: *rtg.RtgBoard, frames: u32) callconv(.c) i32 {
 fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
     const screen = screenOf(board);
     into.frames = screen.updates;
+    into.blanks = @atomicLoad(u32, &screen.frames, .acquire);
 }
 
 // --- the engine: the cores (engine.zig) ---------------------------------------

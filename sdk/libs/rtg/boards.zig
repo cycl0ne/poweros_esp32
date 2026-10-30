@@ -248,6 +248,8 @@ pub const RtgBoardStats = extern struct {
     /// picture's. The rows of one are wrong on the glass until they are
     /// sent again.
     underruns: u32 = 0,
+    /// The display's frames begun, where the board hears of them (rtg 11).
+    blanks: u32 = 0,
 };
 
 /// A pointer as a board is handed it: made by SetBoardPointer out of the
