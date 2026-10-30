@@ -114,6 +114,8 @@ pub const File = struct {
     movie_timescale: u32,
     tracks: [max_tracks]Track,
     track_count: u32,
+    /// The text track the file marks to be shown, ~0 for none.
+    subtitles: u32,
     tags: Tags,
     /// A Matroska file's segment, its clocks and its cues.
     mkv: blocks.File,

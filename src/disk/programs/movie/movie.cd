@@ -15,6 +15,17 @@ MSG_MENU_ABOUT (//)
 About
 MSG_MENU_QUIT (//)
 Quit
+MSG_MENU_SOUND (//)
+Sound
+MSG_MENU_NO_SOUND (//)
+None
+MSG_MENU_SUBTITLES (//)
+Subtitles
+MSG_MENU_SUBTITLES_OFF (//)
+Off
+; A track that has neither a name nor a language: "Track 3".
+MSG_MENU_TRACK (//)
+Track
 ;
 ; The requesters.
 MSG_ASK_OPEN (//)
@@ -22,7 +33,7 @@ Play a film
 MSG_ABOUT_TITLE (//)
 About Movie
 MSG_ABOUT (//)
-%s\n\nPlays films - MP4 and QuickTime's MOV:\nH.264, H.265 and Motion JPEG pictures, AAC sound.
+%s\n\nPlays films - MP4, QuickTime's MOV and Matroska's MKV:\nH.264, H.265 and Motion JPEG pictures,\nAAC, AC-3, MP3, FLAC and Vorbis sound, and subtitles.
 MSG_OK (//)
 OK
 MSG_CANNOT_PLAY_TITLE (//)

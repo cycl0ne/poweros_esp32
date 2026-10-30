@@ -16,6 +16,13 @@
 //! same pictures (`-f rawvideo -pix_fmt yuvj420p`, `yuvj422p`, `yuvj444p`,
 //! `gray`): `clip_ref.yuv` frames 0 and 9, the others frame 0.
 //! `clip.mkv` is clip.mov's tracks remuxed into Matroska by ffmpeg.
+//! `subs.mkv` is clip.mkv's with more tracks, muxed by ffmpeg: AC-3 mono
+//! at 48 kHz ("deu", "Kommentar") and Opus, then subtitles - SubRip
+//! ("eng", default), SubStation Alpha ("deu", default and forced: two
+//! lines, a sign, a drawing) and a Blu-ray's pictures (PGS, a .sup made
+//! by hand: a 4 x 2 picture at 0.2 s, an 8 x 4 one cropped to 6 x 4 on a
+//! canvas twice the film's at 0.5 s, cleared at 0.7 s); `subs_ac3_ref.raw`
+//! ffmpeg's decode of its AC-3, the first 4096 frames.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -52,6 +59,9 @@ const grey_mov = @embedFile("grey.mov");
 const grey_ref = @embedFile("grey_ref.y");
 const tiny_mp4 = @embedFile("tiny.mp4");
 const clip_mkv = @embedFile("clip.mkv");
+const subs_mkv = @embedFile("subs.mkv");
+const subs_ac3_ref = @embedFile("subs_ac3_ref.raw");
+const subtitle = @import("../subtitle/_subtitle.zig");
 
 /// How far a sample of ours may be from ffmpeg's: two decoders' inverse
 /// transforms round apart.
@@ -502,6 +512,141 @@ test "what does not open, and a film through a read function: pictures alone, no
         vcb.ReleaseVideoFrame(film, &frame);
     }
     try testing.expectEqual(@as(u32, 5), count);
+}
+
+/// What shows at `time`: text, its flags and when it shows from and to.
+fn expectText(vcb: *VideoCodecBase, film: *vc.VideoStream, time: i64, want: []const u8, flags: u32, start: i64, end: i64) !void {
+    var shown: vc.VideoSubtitle = .{};
+    try testing.expectEqual(vc.VCERR_OK, vcb.GetVideoSubtitle(film, time, &shown));
+    try testing.expectEqualStrings(want, std.mem.span(shown.text.?));
+    try testing.expectEqual(flags, shown.flags);
+    try testing.expectEqual(start, shown.start);
+    try testing.expectEqual(end, shown.end);
+}
+
+fn expectNothing(vcb: *VideoCodecBase, film: *vc.VideoStream, time: i64) !void {
+    var shown: vc.VideoSubtitle = .{ .flags = 99 };
+    try testing.expectEqual(vc.VCERR_END, vcb.GetVideoSubtitle(film, time, &shown));
+    try testing.expectEqual(@as(u32, 0), shown.flags);
+}
+
+test "a film's tracks: listed, what decodes them; subtitles of each kind at their times; another sound, another track" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch |e| std.debug.panic("deinit: {}", .{e});
+    // The host's exec runs no processes: the subtitles are read in line.
+    subtitle.read_inline = true;
+    defer subtitle.read_inline = false;
+    const vcb = rig.vcb;
+    try rig.write("WORK:subs.mkv", subs_mkv);
+    var err: i32 = -99;
+    const film = rig.open("WORK:subs.mkv", &err) orelse return error.NoStream;
+    defer vcb.CloseVideoStream(film);
+
+    // The pictures and the marked sound chosen; of the subtitles the ASS,
+    // marked forced, before the SubRip marked only default. Opus is not
+    // decoded here.
+    const decoded: i32 = vc.VTRK_DECODED;
+    const both: i32 = vc.VTRK_DECODED | vc.VTRK_CHOSEN;
+    const expected = [_]struct { kind: u32, flags: i32 }{
+        .{ .kind = media.MTRACK_VIDEO, .flags = both },
+        .{ .kind = media.MTRACK_AUDIO, .flags = both },
+        .{ .kind = media.MTRACK_AUDIO, .flags = decoded },
+        .{ .kind = media.MTRACK_AUDIO, .flags = 0 },
+        .{ .kind = media.MTRACK_TEXT, .flags = decoded },
+        .{ .kind = media.MTRACK_TEXT, .flags = both },
+        .{ .kind = media.MTRACK_TEXT, .flags = decoded },
+    };
+    var track: media.MediaTrack = .{};
+    for (expected, 0..) |want, number| {
+        try testing.expectEqual(want.flags, vcb.GetVideoTrack(film, @intCast(number), &track));
+        try testing.expectEqual(want.kind, track.kind);
+    }
+    try testing.expectEqual(vc.VCERR_END, vcb.GetVideoTrack(film, 7, &track));
+    _ = vcb.GetVideoTrack(film, 2, &track);
+    try testing.expectEqualStrings("deu", std.mem.sliceTo(&track.language, 0));
+    try testing.expectEqualStrings("Kommentar", std.mem.sliceTo(&track.name, 0));
+
+    // SubStation Alpha: a line with italics in it; two at once, joined -
+    // from the later start to the earlier end; the sign and the drawing
+    // left out; a style's italics.
+    try expectText(vcb, film, 100_000, "Erste schräg Zeile", vc.VSUB_TEXT, 0, 600_000);
+    try expectText(vcb, film, 300_000, "Erste schräg Zeile\nGedacht", vc.VSUB_TEXT, 200_000, 600_000);
+    try expectText(vcb, film, 450_000, "Erste schräg Zeile\nGedacht", vc.VSUB_TEXT, 200_000, 600_000);
+    try expectText(vcb, film, 650_000, "Gedacht", vc.VSUB_TEXT | vc.VSUB_ITALIC, 200_000, 800_000);
+    try expectNothing(vcb, film, 850_000);
+
+    // SubRip, chosen from the start.
+    try testing.expectEqual(vc.VCERR_OK, vcb.SelectVideoTrack(film, 4, 0));
+    try testing.expectEqual(both, vcb.GetVideoTrack(film, 4, &track));
+    try testing.expectEqual(decoded, vcb.GetVideoTrack(film, 5, &track));
+    try expectText(vcb, film, 200_000, "Hello", vc.VSUB_TEXT | vc.VSUB_ITALIC, 100_000, 400_000);
+    try expectNothing(vcb, film, 450_000);
+    try expectText(vcb, film, 600_000, "Two\nlines", vc.VSUB_TEXT, 500_000, 900_000);
+
+    // Pictures: each shows until the next set; the second's canvas is
+    // twice the film's, and it is fitted to it.
+    try testing.expectEqual(vc.VCERR_OK, vcb.SelectVideoTrack(film, 6, 0));
+    try expectNothing(vcb, film, 100_000);
+    const white: u32 = 0xFFFFFFFF;
+    const half: u32 = 0x80000000;
+    var shown: vc.VideoSubtitle = .{};
+    try testing.expectEqual(vc.VCERR_OK, vcb.GetVideoSubtitle(film, 300_000, &shown));
+    try testing.expectEqual(vc.VSUB_BITMAP, shown.flags);
+    try testing.expectEqual(@as(i64, 200_000), shown.start);
+    try testing.expectEqual(@as(i64, 500_000), shown.end);
+    try testing.expectEqual([4]u32{ 10, 40, 4, 2 }, [4]u32{ shown.x, shown.y, shown.width, shown.height });
+    try testing.expectEqualSlices(u32, &.{ white, white, half, half, 0, 0, 0, 0 }, shown.pixels.?[0..8]);
+    try testing.expectEqual(vc.VCERR_OK, vcb.GetVideoSubtitle(film, 600_000, &shown));
+    try testing.expectEqual(@as(i64, 500_000), shown.start);
+    try testing.expectEqual(@as(i64, 700_000), shown.end);
+    try testing.expectEqual([4]u32{ 20, 40, 3, 2 }, [4]u32{ shown.x, shown.y, shown.width, shown.height });
+    try testing.expectEqualSlices(u32, &.{ white, white, half, 0, 0, 0 }, shown.pixels.?[0..6]);
+    try expectNothing(vcb, film, 750_000);
+
+    // None; and what cannot be chosen, what was chosen kept.
+    try testing.expectEqual(vc.VCERR_OK, vcb.SelectVideoTrack(film, vc.VIDEO_NO_TRACK, 0));
+    try expectNothing(vcb, film, 300_000);
+    try testing.expectEqual(decoded, vcb.GetVideoTrack(film, 6, &track));
+    try testing.expectEqual(vc.VCERR_UNSUPPORTED, vcb.SelectVideoTrack(film, 0, 0));
+    try testing.expectEqual(vc.VCERR_NOCODEC, vcb.SelectVideoTrack(film, 3, 0));
+    try testing.expectEqual(vc.VCERR_END, vcb.SelectVideoTrack(film, 7, 0));
+    try testing.expectEqual(both, vcb.GetVideoTrack(film, 1, &track));
+
+    // After a seek the lines still showing where it lands are read too.
+    try testing.expectEqual(vc.VCERR_OK, vcb.SelectVideoTrack(film, 5, 0));
+    try testing.expectEqual(@as(i64, 500_000), vcb.SeekVideo(film, 500_000));
+    try expectText(vcb, film, 550_000, "Erste schräg Zeile\nGedacht", vc.VSUB_TEXT, 200_000, 600_000);
+
+    // The AC-3 commentary from the start: its rate and its one channel,
+    // ffmpeg's samples; the AAC no longer chosen.
+    try testing.expectEqual(vc.VCERR_OK, vcb.SelectVideoTrack(film, 2, 0));
+    var info: vc.VideoStreamInfo = .{};
+    vcb.GetVideoStreamInfo(film, &info);
+    try testing.expectEqual(ac.ACODEC_AC3, info.sound_codec);
+    try testing.expectEqual(@as(u32, 48000), info.sound_rate);
+    try testing.expectEqual(@as(u32, 1), info.sound_channels);
+    try testing.expectEqual(both, vcb.GetVideoTrack(film, 2, &track));
+    try testing.expectEqual(decoded, vcb.GetVideoTrack(film, 1, &track));
+    var samples: [4096]i16 = undefined;
+    try testing.expectEqual(@as(i32, 4096), vcb.DecodeVideoSound(film, &samples, samples.len));
+    var worst: u32 = 0;
+    for (samples, 0..) |sample, n| {
+        const reference = std.mem.readInt(i16, subs_ac3_ref[n * 2 ..][0..2], .little);
+        worst = @max(worst, @abs(@as(i32, sample) - reference));
+    }
+    try testing.expect(worst <= 1);
+    // From half way: the rest of its second.
+    try testing.expectEqual(vc.VCERR_OK, vcb.SelectVideoTrack(film, 1, 0));
+    try testing.expectEqual(vc.VCERR_OK, vcb.SelectVideoTrack(film, 2, 500_000));
+    var total: u32 = 0;
+    while (true) {
+        const got = vcb.DecodeVideoSound(film, &samples, samples.len);
+        try testing.expect(got >= 0);
+        if (got == 0) break;
+        total += @intCast(got);
+    }
+    try testing.expectEqual(@as(u32, 32 * 1536 - 24000), total);
 }
 
 test "every error code says something of its own" {

@@ -432,9 +432,10 @@ triggers too. A trigger plays on after its open is closed; the query's
 
 `LIBS:audiocodec.library` turns a sound file into the 16-bit samples a
 stream plays: WAV (PCM of 8 to 32 bits, or float), MP3 (MPEG-1, 2 and
-2.5, Layer III), FLAC (4 to 24 bits), Ogg Vorbis and AAC-LC (ADTS, or in
-an MP4), and the sound of a Matroska file in any of them but WAV, in one
-channel or two. `OpenAudioStream` opens a file by name
+2.5, Layer III), FLAC (4 to 24 bits), Ogg Vorbis, AAC-LC (ADTS, or in
+an MP4), AC-3 and E-AC-3 (bare, or in an MP4), and the sound of a
+Matroska file in any of them but WAV, in one channel or two - AC-3's
+5.1 mixed into two. `OpenAudioStream` opens a file by name
 (`ACA_Name`), a file the program has open (`ACA_FileHandle`), or bytes a
 function of the program's hands over (`ACA_ReadFunc`, `ACA_ReadData`) -
 a download, a network stream - and finds the kind by its first bytes.
@@ -533,9 +534,9 @@ container too, and opened the same way, by its first bytes (EBML's
 header) whatever `ACA_Codec` says; `IdentifyAudio` calls it
 ACODEC_UNKNOWN, as its first bytes say nothing of what it holds. Its
 sound track - the one it marks to be played, or the one `ACA_MediaTrack`
-numbers - may be AAC, MP3, FLAC or Vorbis, and `info.codec` says which;
-Opus, AC-3 and DTS are refused with ACERR_UNSUPPORTED, as is MPEG audio
-of layer II. A read function reads it front to back, and it cannot
+numbers - may be AAC, MP3, FLAC, Vorbis, AC-3 or E-AC-3, and
+`info.codec` says which; Opus and DTS are refused with
+ACERR_UNSUPPORTED, as is MPEG audio of layer II. A read function reads it front to back, and it cannot
 seek. Matroska keeps its times in milliseconds, so: the first packet
 says where the sound begins and each after it begins where the one
 before ends; the priming its `CodecDelay` gives is left out; the length
@@ -553,6 +554,28 @@ FFmpeg's, so a file decodes to within a step of FFmpeg's samples - but
 after a seek the noise is drawn anew: the same noise, not the same
 samples, except back at frame 0. An AAC stream takes about 80 KiB of
 tables and buffers beside the stream itself.
+
+### AC-3 and E-AC-3
+
+**AC-3** (Dolby Digital) and **E-AC-3** (Dolby Digital Plus) are a
+film's sound: bare syncframes in an `.ac3` or `.eac3` file, read like
+ADTS - the first header the next one agrees with, the length from the
+frames' bytes, a seek to the frame by the same (AC-3's frames are all
+one size, so it lands where it means to) - or a track of an MP4 or a
+Matroska file. Any channels are mixed into two as FFmpeg mixes them:
+the centre and surrounds at the levels the stream gives, the LFE left
+out, each side's weights summing to one so a mix never clips; a mono
+stream stays mono, dual mono plays one program on each side. The
+stream's dynamic range words are applied, as FFmpeg does by default.
+E-AC-3 plays its first program's 5.1 - the frames that add channels
+past it (7.1, Atmos's core) and other programs are passed over - with
+its spectral extension and its other tools; a stream at a reduced rate
+or with enhanced coupling, which encoders hardly write, is silent. A
+frame whose CRC is wrong plays as silence for its 32 ms. The samples
+are within a step of FFmpeg's; the noise the stream asks for in bits it
+codes with none (dither) comes from FFmpeg's generator, so after a seek
+it is other noise and the samples differ by it, except back at frame 0.
+A stream takes about 80 KiB.
 
 A program that has a film open with media.library decodes its sound
 with `ACA_Media`: the stream reads that track's packets itself while
@@ -648,9 +671,10 @@ station's songs by their own tags; it ends when the station ends the
 stream, or says why the connection was lost. `SYS:Programs/Player` does
 it in a window, and is
 what the desktop opens a `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`,
-`.aac` or `.mka` file with, and a list - `.m3u`, `.m3u8`, `.pls` (the
-`MP3`, `WAV`, `FLAC`, `Ogg`, `M4A`, `AAC`, `MKA`, `M3U` and `PLS`
-descriptors in `DEVS:DataTypes`) - with the song's cover
+`.aac`, `.ac3`, `.eac3` or `.mka` file with, and a list - `.m3u`,
+`.m3u8`, `.pls` (the `MP3`, `WAV`, `FLAC`, `Ogg`, `M4A`, `AAC`, `AC3`,
+`MKA`, `M3U` and `PLS` descriptors in `DEVS:DataTypes`) - with the
+song's cover
 and tags, the chapter of a mix that is playing, a playlist it saves as
 M3U, and internet stations - MP3 or Ogg Vorbis over `http://` or
 `https://`, read on a process of their own and decoded through

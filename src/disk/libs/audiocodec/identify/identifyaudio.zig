@@ -21,7 +21,7 @@ const _identify = @import("_identify.zig");
 ///
 /// RESULT:
 /// ACODEC_WAV, ACODEC_MP3, ACODEC_FLAC, ACODEC_VORBIS, ACODEC_AAC (SINCE
-/// 1.6), or ACODEC_UNKNOWN.
+/// 1.6), ACODEC_AC3 or ACODEC_EAC3 (SINCE 1.8), or ACODEC_UNKNOWN.
 ///
 /// BEHAVIOR:
 /// A RIFF header naming WAVE is a WAV. "fLaC" is a FLAC, alone or behind
@@ -33,7 +33,9 @@ const _identify = @import("_identify.zig");
 /// is not AAC is refused when it is opened - since 1.7 it is decoded when
 /// it is MP3, FLAC or Vorbis. A Matroska file's first bytes say nothing
 /// of what it holds: it is ACODEC_UNKNOWN, and opened all the same (SINCE
-/// 1.7). Any other ID3v2 tag is an MP3, and so are
+/// 1.7). An AC-3 or E-AC-3 syncframe's header, the next frame's agreeing
+/// with it, is ACODEC_AC3 or ACODEC_EAC3 (SINCE 1.8). Any other ID3v2 tag
+/// is an MP3, and so are
 /// MPEG audio frames: a header that can be, followed by others at the
 /// distances it gives - one header-like run of bytes alone is not enough.
 /// An MP3 of layer I or II is identified as one, and refused when it is

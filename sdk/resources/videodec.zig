@@ -53,7 +53,7 @@ pub const VDERR_CORRUPT: u32 = 4;
 /// no firmware, or it would not wake.
 pub const VDERR_NO_ENGINE: u32 = 5;
 /// A codec, a stream or a frame the decoder does not take: another
-/// codec, 10-bit samples, a size too large, a size that changes within
+/// codec, 10-bit H.264, a size too large, a size that changes within
 /// the stream.
 pub const VDERR_UNSUPPORTED: u32 = 6;
 /// No memory for the decoder or its frames.
@@ -102,7 +102,8 @@ pub const VideoDecFrame = extern struct {
 
 /// What GetVideoDecoderInfo says of a stream: the picture as shown, the
 /// size it is coded at and where the shown part starts in it, its bit
-/// depth, its codec's profile number (H.264's profile_idc, H.265's
+/// depth (8, or 10 for H.265 Main10 - whose frames come out in 8 bits
+/// all the same; SINCE 1.1), its codec's profile number (H.264's profile_idc, H.265's
 /// general_profile_idc), its frames a second as `rate_num` / `rate_den`
 /// (both 0 when the stream does not say), and how many frame buffers the
 /// decoder made.

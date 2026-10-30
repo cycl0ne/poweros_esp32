@@ -5,6 +5,7 @@
 //! sdk.videocodec.
 ##include libs/videocodec/videocodec as videocodec
 ##include libs/utility/utility as utility
+##include libs/media/media as media
 ##basetype VideoCodecBase
 ##name videocodec.library
 ##bias 4
@@ -36,4 +37,15 @@ u32 IdentifyVideo([*]const u8 bytes, u32 length)
 /// The film's tags (media.library's MDA_*), each into where its data
 /// points: how many of them were answered.
 u32 GetVideoStreamAttrs(*videocodec.VideoStream stream, ?[*]const utility.TagItem tags)
+/// The film's track `number` (as media.library numbers them) into
+/// `track`, and what is done with it: VTRK_* flags, or VCERR_END past
+/// the last (SINCE 1.3).
+i32 GetVideoTrack(*videocodec.VideoStream stream, u32 number, *media.MediaTrack track)
+/// Another sound track played from `time` microseconds on, or other
+/// subtitles shown from there - VIDEO_NO_TRACK for none: 0, or a VCERR_*
+/// (SINCE 1.3).
+i32 SelectVideoTrack(*videocodec.VideoStream stream, u32 track, i64 time)
+/// The subtitle shown at `time` microseconds into `subtitle`: 0, or
+/// VCERR_END when none is (SINCE 1.3).
+i32 GetVideoSubtitle(*videocodec.VideoStream stream, i64 time, *videocodec.VideoSubtitle subtitle)
 ##end

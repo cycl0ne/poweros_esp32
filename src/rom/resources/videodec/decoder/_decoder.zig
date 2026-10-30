@@ -272,7 +272,9 @@ pub const Decoder = struct {
             }
             return types.VDERR_NEED_DATA;
         }
-        if (seq.luma_depth > 8 or seq.chroma_depth > 8 or seq.width == 0 or seq.height == 0 or
+        // 10 bits for H.265 Main10, its frames shown in 8; H.264 in 8 alone.
+        const most_depth: u32 = if (d.instance.std == wave511.STD_HEVC) 10 else 8;
+        if (seq.luma_depth > most_depth or seq.chroma_depth > most_depth or seq.width == 0 or seq.height == 0 or
             seq.width > 8192 or seq.height > 4320 or seq.left + seq.right >= seq.width or
             seq.top + seq.bottom >= seq.height)
         {
@@ -292,7 +294,7 @@ pub const Decoder = struct {
     /// The frames the sequence needs made and given to the chip.
     fn makeFrames(d: *Decoder) u32 {
         const s = d.sys();
-        const l = wave511.Layout.of(d.instance.std, d.seq.width, d.seq.height);
+        const l = wave511.Layout.of(d.instance.std, d.seq.width, d.seq.height, @max(d.seq.luma_depth, d.seq.chroma_depth));
         d.layout = l;
         d.fbc_count = @min(d.seq.frames + 1, wave511.max_frames);
         d.linear_count = @min(d.seq.frames + 1 + d.held, wave511.max_frames);
@@ -333,7 +335,7 @@ pub const Decoder = struct {
             .linear = false,
             .width = d.seq.width,
             .height = d.seq.height,
-            .stride = l.stride,
+            .stride = l.fbc_stride,
             .frames = fbc[0..d.fbc_count],
             .count = d.fbc_count,
             .task = task,

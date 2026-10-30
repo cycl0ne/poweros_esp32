@@ -1,4 +1,4 @@
-## version $VER: programs/Movie.catalog 1.0 (30.10.2026)
+## version $VER: programs/Movie.catalog 1.1 (30.10.2026)
 ## language deutsch
 ## codeset 106
 ; Movie's strings in German.
@@ -12,12 +12,22 @@ MSG_MENU_ABOUT
 Über
 MSG_MENU_QUIT
 Beenden
+MSG_MENU_SOUND
+Ton
+MSG_MENU_NO_SOUND
+Keiner
+MSG_MENU_SUBTITLES
+Untertitel
+MSG_MENU_SUBTITLES_OFF
+Aus
+MSG_MENU_TRACK
+Spur
 MSG_ASK_OPEN
 Einen Film abspielen
 MSG_ABOUT_TITLE
 Über Movie
 MSG_ABOUT
-%s\n\nSpielt Filme ab - MP4 und QuickTimes MOV:\nBilder in H.264, H.265 und Motion JPEG, Ton in AAC.
+%s\n\nSpielt Filme ab - MP4, QuickTimes MOV und Matroskas MKV:\nBilder in H.264, H.265 und Motion JPEG,\nTon in AAC, AC-3, MP3, FLAC und Vorbis, und Untertitel.
 MSG_OK
 OK
 MSG_CANNOT_PLAY_TITLE

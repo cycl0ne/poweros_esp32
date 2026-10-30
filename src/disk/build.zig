@@ -368,6 +368,7 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/Ogg", .source = "devs/datatypes/Ogg" },
     .{ .disk = "devs/datatypes/AAC", .source = "devs/datatypes/AAC" },
     .{ .disk = "devs/datatypes/M4A", .source = "devs/datatypes/M4A" },
+    .{ .disk = "devs/datatypes/AC3", .source = "devs/datatypes/AC3" },
     .{ .disk = "devs/datatypes/MP4", .source = "devs/datatypes/MP4" },
     .{ .disk = "devs/datatypes/MOV", .source = "devs/datatypes/MOV" },
     .{ .disk = "devs/datatypes/MKV", .source = "devs/datatypes/MKV" },

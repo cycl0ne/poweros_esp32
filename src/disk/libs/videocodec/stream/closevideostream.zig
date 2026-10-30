@@ -22,7 +22,8 @@ const _stream = @import("_stream.zig");
 /// None.
 ///
 /// BEHAVIOR:
-/// The sound's stream is closed, the decoder of the pictures with every
+/// The subtitles' process is told to end and waited for (SINCE 1.3), the
+/// sound's stream is closed, the decoder of the pictures with every
 /// frame still lent, the film - and the file, when the stream opened it
 /// (VCA_Name) - and the libraries the stream opened.
 ///

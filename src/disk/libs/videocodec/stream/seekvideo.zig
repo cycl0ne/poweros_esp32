@@ -7,6 +7,7 @@ const vc = sdk.videocodec;
 const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const _stream = @import("_stream.zig");
 const chip = @import("../chip/_chip.zig");
+const subtitle = @import("../subtitle/_subtitle.zig");
 
 /// Moves a film's pictures to the key frame at or before a time, and its
 /// sound to that frame's time.
@@ -34,7 +35,8 @@ const chip = @import("../chip/_chip.zig");
 /// decoder drops what it was fed and not yet shown. The next frame
 /// DecodeVideoFrame hands out is that key frame, `number` 0: frames due
 /// before it are passed over. The sound is moved to the key frame's time,
-/// so the next samples DecodeVideoSound hands out go with it.
+/// so the next samples DecodeVideoSound hands out go with it, and the
+/// subtitles are read from there (SINCE 1.3).
 ///
 /// CONTEXT:
 /// - Waits: yes, on the file - and for a piece of sound being decoded by
@@ -85,6 +87,9 @@ pub fn SeekVideo(_: *VideoCodecBase, stream: *vc.VideoStream, time: i64) i64 {
         s.sys.ObtainSemaphore(&s.sound_lock);
         _ = s.acb.?.SeekAudio(sound, @intCast(@divTrunc(landed * rate, 1_000_000)));
         s.sys.ReleaseSemaphore(&s.sound_lock);
+    }
+    if (s.subtitles) |reader| {
+        if (s.sub_track != vc.VIDEO_NO_TRACK) subtitle.move(reader, s.sub_track, landed);
     }
     return landed;
 }

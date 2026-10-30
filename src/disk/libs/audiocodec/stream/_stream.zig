@@ -47,6 +47,7 @@ const layer3 = @import("../mp3/layer3.zig");
 const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
 const aac = @import("../aac/_aac.zig");
+const ac3 = @import("../ac3/_ac3.zig");
 const _media = @import("_media.zig");
 
 /// How many bytes are read ahead: enough to find an MP3's first frame -
@@ -99,6 +100,7 @@ pub const Codec = union(enum) {
     flac: flac.Flac,
     vorbis: vorbis.Vorbis,
     aac: aac.Aac,
+    ac3: ac3.Ac3,
 };
 
 pub const Stream = struct {
@@ -144,6 +146,7 @@ pub fn destroy(stream: *Stream) void {
         .flac => |*state| flac.free(stream, state),
         .vorbis => |*state| vorbis.free(stream, state),
         .aac => |*state| aac.free(stream, state),
+        .ac3 => |*state| ac3.free(stream, state),
         else => {},
     }
     _media.free(stream);

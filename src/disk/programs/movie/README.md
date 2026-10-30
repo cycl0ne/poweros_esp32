@@ -1,8 +1,9 @@
 # Movie
 
 Movie plays films in a window: MP4, QuickTime's MOV and Matroska's MKV,
-their pictures in H.264, H.265 or Motion JPEG and their sound in AAC -
-or, in an MKV, MP3, FLAC or Vorbis too. H.264 and H.265
+their pictures in H.264, H.265 or Motion JPEG and their sound in AAC or
+AC-3 - or, in an MKV, MP3, FLAC, Vorbis or E-AC-3 too - with their
+subtitles. H.264 and H.265
 are decoded by the machine's video decoder where it has one - the
 VisionFive 2's - and Motion JPEG by the processor, which is enough for
 small pictures.
@@ -28,8 +29,7 @@ Movie FILE,VOLUME/K/N,FULL/S
 A film that cannot be played says why in the shell: one whose pictures
 nothing here decodes - H.264 on a machine without a video decoder,
 MPEG-4 Part 2, VP9 or AV1 anywhere - and one that is not a film. A film
-whose sound nothing decodes plays without it: an MKV's AC-3, DTS or
-Opus.
+whose sound nothing decodes plays without it: an MKV's DTS or Opus.
 
 ## The window
 
@@ -59,6 +59,23 @@ The keys work over the whole screen too.
 
 **Project > Open...** plays another film; **About** says what Movie
 is; **Quit**, or the close gadget, ends it.
+
+## Sound and subtitles
+
+**Sound** lists the film's sound tracks by name and language - "Kommentar
+(deu)" - the one playing ticked; one nothing here decodes, DTS or Opus,
+is there but cannot be picked. Another goes on from where the film is.
+**Subtitles** lists its subtitles, and **Off**. A film starts with the
+tracks it marks: in an MKV its default sound, and the subtitles marked
+forced and default - or default; an MP4 starts with none shown.
+
+Subtitles as text - SubRip's, SubStation Alpha's, an MP4's timed text -
+are white with a black edge at the foot of the picture, sized with it,
+in italics where the film says. Of SubStation Alpha only the dialogue is
+shown: signs placed on the picture and drawings are left out. A
+Blu-ray's subtitles (PGS) are pictures, laid where the disc places them.
+After a move, a line that began more than five seconds before the place
+landed on is not shown.
 
 ## How it keeps time
 

@@ -61,6 +61,8 @@ test {
     _ = @import("../aac/ics.zig");
     _ = @import("../aac/filterbank.zig");
     _ = @import("../aac/config.zig");
+    _ = @import("../ac3/header.zig");
+    _ = @import("../ac3/frame.zig");
 }
 
 const tone_mp3 = @embedFile("tone.mp3");
@@ -1310,6 +1312,9 @@ const opus_mka = @embedFile("opus.mka");
 const film_mkv = @embedFile("../../media/tests/film.mkv");
 /// film.mkv with its sound 100 ms late: its first block at 100 ms.
 const late_mkv = @embedFile("late.mkv");
+/// film.mkv with a hole in its sound: the blocks from 400 ms on 50 ms
+/// later.
+const hole_mkv = @embedFile("hole.mkv");
 
 /// Frames `count` long from frame `from` of `ours`, within a step of
 /// ffmpeg's frames from frame `at` of `reference`.
@@ -1831,4 +1836,203 @@ test "a film's sound that begins late: silence up to its first block, its primin
     try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, late_by + 20000));
     try testing.expectEqual(moved_count, try decodeAll(acb, stream, 1, 1000, &late));
     try testing.expectEqualSlices(i16, moved[0..moved_count], late[0..moved_count]);
+}
+
+test "a hole in a film's sound: silence for it, the sound after it as before, the frames the film's time" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    try rig.write("WORK:film.mkv", &.{film_mkv});
+    try rig.write("WORK:hole.mkv", &.{hole_mkv});
+    var whole: [36000]i16 = undefined;
+    const film = openFile(acb, "WORK:film.mkv", &err) orelse return error.NoStream;
+    const count = try decodeAll(acb, film, 1, 1000, &whole);
+    acb.CloseAudioStream(film);
+
+    const stream = openFile(acb, "WORK:hole.mkv", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    var holed: [40000]i16 = undefined;
+    // Pieces that do not meet the packets: the codec stops at the hole
+    // within a call.
+    const frames = try decodeAll(acb, stream, 1, 700, &holed);
+    try testing.expectEqual(info.frames, frames);
+    // The packet that was at 418 ms: 18 of 1024 frames after the priming.
+    const hole_at = 18 * 1024;
+    try testing.expectEqualSlices(i16, whole[0..hole_at], holed[0..hole_at]);
+    var quiet: usize = 0;
+    while (holed[hole_at + quiet] == 0) quiet += 1;
+    // 50 ms, its ends each to the millisecond.
+    try testing.expect(quiet >= 2205 - 44 and quiet <= 2205 + 44);
+    const after = @min(count - hole_at, frames - hole_at - quiet);
+    try testing.expect(after > count - hole_at - 50);
+    try testing.expectEqualSlices(i16, whole[hole_at..][0..after], holed[hole_at + quiet ..][0..after]);
+
+    // A seek past the hole counts it: a frame of the film's time.
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, @intCast(hole_at + quiet + 4000)));
+    var moved: [20000]i16 = undefined;
+    try testing.expectEqual(frames - (hole_at + quiet + 4000), try decodeAll(acb, stream, 1, 1000, &moved));
+}
+
+// --- AC-3 and E-AC-3 ------------------------------------------------------------
+
+/// Half a second of 5.1 at 192 kbit/s, ffmpeg's: 16 frames of 768 bytes.
+const six_ac3 = @embedFile("six.ac3");
+/// ffmpeg's samples of it mixed to stereo: frames 0 to 2048, then 16384
+/// to 18432.
+const six_ref = @embedFile("six_ref.raw");
+/// Stereo E-AC-3 at 44.1 kHz in Matroska, its CodecDelay the encoder's
+/// 256 frames; the same frames bare; ffmpeg's first 2048 of the track.
+const eac3_mka = @embedFile("eac3.mka");
+const stereo_eac3 = @embedFile("stereo.eac3");
+const eac3_ref = @embedFile("eac3_ref.raw");
+/// Mono AC-3 at 64 kbit/s in an MP4, its edit list leaving the priming
+/// out; ffmpeg's first 2048 frames of it.
+const mono_ac3_m4a = @embedFile("mono_ac3.m4a");
+const mono_ac3_ref = @embedFile("mono_ac3_ref.raw");
+
+/// After a seek to `frame`, 400 frames near those decoding straight
+/// through gave there - the bits coded with none are dithered, and after
+/// a seek the noise is another - and far nearer than to the frames a step
+/// to either side.
+fn expectSeekNear(acb: *AudioCodecBase, stream: *ac.AudioStream, straight: []const i16, channels: usize, frame: u32) !void {
+    var some: [400 * 2]i16 = undefined;
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, frame));
+    try testing.expectEqual(@as(i32, 400), acb.DecodeAudio(stream, &some, 400));
+    const count = 400 * channels;
+    const total = straight.len / channels;
+    const here = squaredDistance(some[0..count], straight[frame * channels ..][0..count]);
+    for ([_]usize{ frame -| 1, frame + 1 }) |other| {
+        if (other == frame or other + 400 > total) continue;
+        try testing.expect(here * 4 < squaredDistance(some[0..count], straight[other * channels ..][0..count]));
+    }
+}
+
+test "what AC-3 and E-AC-3 are, by their first bytes" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    try testing.expectEqual(ac.ACODEC_AC3, acb.IdentifyAudio(six_ac3, ac.AUDIO_IDENTIFY_BYTES));
+    try testing.expectEqual(ac.ACODEC_EAC3, acb.IdentifyAudio(stereo_eac3, ac.AUDIO_IDENTIFY_BYTES));
+    // A header the next frame's does not follow is none.
+    var lone = six_ac3[0..2000].*;
+    lone[768] = 0;
+    try testing.expectEqual(ac.ACODEC_UNKNOWN, acb.IdentifyAudio(&lone, lone.len));
+}
+
+test "AC-3 5.1 by name: mixed to stereo as ffmpeg does, its length, a damaged frame silent, seeks near" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    try rig.write("WORK:six.ac3", &.{six_ac3});
+    const stream = openFile(acb, "WORK:six.ac3", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_AC3, info.codec);
+    try testing.expectEqual(@as(u32, 48000), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 192000), info.bitrate);
+    try testing.expectEqual(@as(u32, 1), info.seekable);
+    try testing.expectEqual(@as(u32, 16 * 1536), info.frames);
+    var straight: [16 * 1536 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 16 * 1536), try decodeAll(acb, stream, 2, 1500, &straight));
+    try expectNear(&straight, 0, six_ref, 0, 2048, 2);
+    try expectNear(&straight, 16384, six_ref, 2048, 2048, 2);
+
+    // Back to the start: the start again; elsewhere, near.
+    var some: [1000 * 2]i16 = undefined;
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 0));
+    try testing.expectEqual(@as(i32, 1000), acb.DecodeAudio(stream, &some, 1000));
+    try testing.expectEqualSlices(i16, straight[0..2000], &some);
+    for ([_]u32{ 100, 1535, 1536, 1537, 5000, 12345, 16 * 1536 - 400 }) |frame| {
+        try expectSeekNear(acb, stream, &straight, 2, frame);
+    }
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 16 * 1536));
+    try testing.expectEqual(@as(i32, 0), acb.DecodeAudio(stream, &some, 1000));
+
+    // A byte of the sixth frame changed, through a read function: its
+    // CRC says so, and its 1536 frames are silence.
+    var damaged = six_ac3.*;
+    damaged[5 * 768 + 300] ^= 0x10;
+    var memory: Memory = .{ .bytes = &damaged, .piece = 900 };
+    const broken = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(broken);
+    acb.GetAudioStreamInfo(broken, &info);
+    try testing.expectEqual(@as(u32, 0), info.seekable);
+    var heard: [16 * 1536 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 16 * 1536), try decodeAll(acb, broken, 2, 1000, &heard));
+    try testing.expectEqualSlices(i16, straight[0 .. 5 * 1536 * 2], heard[0 .. 5 * 1536 * 2]);
+    for (heard[5 * 1536 * 2 .. 6 * 1536 * 2]) |sample| try testing.expectEqual(@as(i16, 0), sample);
+    try testing.expect(squaredDistance(straight[7 * 1536 * 2 ..], heard[7 * 1536 * 2 ..]) < squaredDistance(straight[7 * 1536 * 2 ..], &([_]i16{0} ** (9 * 1536 * 2))) / 1000);
+}
+
+test "E-AC-3 in Matroska: ffmpeg's samples, the encoder's delay left out; the same frames bare" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    var memory: Memory = .{ .bytes = eac3_mka, .piece = 613 };
+    const track = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(track);
+    acb.GetAudioStreamInfo(track, &info);
+    try testing.expectEqual(ac.ACODEC_EAC3, info.codec);
+    try testing.expectEqual(@as(u32, 44100), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    // The segment's 506 ms, less the delay: past ffmpeg's 22050, which
+    // the last block's DiscardPadding cuts.
+    try testing.expectEqual(@as(u32, 22058), info.frames);
+    var film: [22058 * 2]i16 = undefined;
+    const length = try decodeAll(acb, track, 2, 999, &film);
+    try testing.expectEqual(@as(u32, 22058), length);
+    try expectNear(&film, 0, eac3_ref, 0, 2048, 2);
+
+    // Bare, the delay is sound: 256 frames more in front, every one after
+    // the same.
+    try rig.write("WORK:stereo.eac3", &.{stereo_eac3});
+    const bare = openFile(acb, "WORK:stereo.eac3", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(bare);
+    acb.GetAudioStreamInfo(bare, &info);
+    try testing.expectEqual(ac.ACODEC_EAC3, info.codec);
+    // At 44.1 kHz the frames are not all one size: the rate is theirs.
+    try testing.expect(info.bitrate > 95500 and info.bitrate < 96500);
+    try testing.expectEqual(@as(u32, 15 * 1536), info.frames);
+    var raw: [15 * 1536 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 15 * 1536), try decodeAll(acb, bare, 2, 1234, &raw));
+    try testing.expectEqualSlices(i16, raw[256 * 2 ..][0 .. length * 2], film[0 .. length * 2]);
+}
+
+test "AC-3 mono in an MP4: one channel, ffmpeg's samples to the edit list's length, seeks near" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    try rig.write("WORK:mono.m4a", &.{mono_ac3_m4a});
+    const stream = openFile(acb, "WORK:mono.m4a", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_AC3, info.codec);
+    try testing.expectEqual(@as(u32, 48000), info.rate);
+    try testing.expectEqual(@as(u32, 1), info.channels);
+    try testing.expectEqual(@as(u32, 24000), info.frames);
+    var straight: [24000]i16 = undefined;
+    try testing.expectEqual(@as(u32, 24000), try decodeAll(acb, stream, 1, 777, &straight));
+    try expectNear(&straight, 0, mono_ac3_ref, 0, 2048, 1);
+    for ([_]u32{ 0, 1, 255, 256, 1537, 10000, 24000 - 400 }) |frame| {
+        try expectSeekNear(acb, stream, &straight, 1, frame);
+    }
 }

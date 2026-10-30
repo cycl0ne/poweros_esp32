@@ -22,7 +22,8 @@ const _file = @import("_file.zig");
 /// - `tags`: what is asked, each tag's data the address its answer goes
 ///   to: `MDA_Title`, `MDA_Artist`, `MDA_Album`, `MDA_AlbumArtist`,
 ///   `MDA_Composer`, `MDA_Genre` and `MDA_Comment` a `*[*:0]const u8`;
-///   `MDA_Year`, `MDA_Track`, `MDA_Tracks` and `MDA_Chapters` a `*u32`;
+///   `MDA_Year`, `MDA_Track`, `MDA_Tracks`, `MDA_Chapters` and
+///   `MDA_Subtitles` (SINCE 1.3) a `*u32`;
 ///   `MDA_Picture` a `*?*const media.MediaPicture`; `MDA_ChapterList` a
 ///   `*?[*]const media.MediaChapter`.
 ///
@@ -39,7 +40,11 @@ const _file = @import("_file.zig");
 /// `MDA_KeepPicture` and holds a cover (`covr`): then it is the first,
 /// a JPEG or a PNG. The chapters are Nero's list (`chpl`), else the text
 /// track a track names for them - read from a file only - each ending
-/// where the next begins, up to 1000.
+/// where the next begins, up to 1000. `MDA_Subtitles` is the text track,
+/// as `GetMediaTrack` numbers them, a Matroska file marks to be shown:
+/// the first marked forced and to be played (FlagForced, FlagDefault),
+/// else the first marked to be played; ~0 when none is - always for an
+/// MP4, which marks none.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -90,6 +95,7 @@ pub fn GetMediaAttrs(base: *MediaBase, file: *media.MediaFile, tags: ?[*]const u
             media.MDA_Track => numberInto(storage, kept.track),
             media.MDA_Tracks => numberInto(storage, kept.tracks),
             media.MDA_Chapters => numberInto(storage, kept.chapter_count),
+            media.MDA_Subtitles => numberInto(storage, own.subtitles),
             media.MDA_ChapterList => {
                 const answer: *?[*]const media.MediaChapter = @ptrFromInt(storage);
                 answer.* = if (kept.chapter_count != 0) kept.chapters else null;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! OpenVideoStream: a film opened, a decoder found for its pictures and
-//! its sound.
+//! its sound, and its subtitles read.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -18,7 +18,7 @@ const chip = @import("../chip/_chip.zig");
 const mjpeg = @import("../mjpeg/_mjpeg.zig");
 
 /// Opens a film and finds a decoder for its pictures and one for its
-/// sound.
+/// sound - and reads its subtitles.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -32,7 +32,8 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 ///   open), `VCA_FileHandle` (a file the program has open, the film
 ///   beginning where it is) or `VCA_ReadFunc` with `VCA_ReadData` (a
 ///   function of the program's) - and `VCA_Sound` FALSE for the pictures
-///   alone.
+///   alone; `VCA_SoundTrack` and `VCA_Subtitles` choose the tracks
+///   (SINCE 1.3).
 /// - `err`: where why it failed goes (VCERR_*), or null.
 ///
 /// RESULT:
@@ -50,12 +51,18 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 /// played - is taken: H.264 and H.265 go to the chip's decoder (videodec.resource), which is opened for the
 /// stream and reads the track's parameter sets; Motion JPEG to the
 /// library's own. Its first track of sound - in a Matroska file the
-/// marked one - is opened with audiocodec.library 1.6 or later, on the
-/// same file (`ACA_Media`) - AAC, and with 1.7 MP3, FLAC and Vorbis - unless
-/// `VCA_Sound` is FALSE or the film is read through a function. A sound
-/// track nothing decodes leaves the film without sound - `sound_codec` 0
-/// in the info - rather than unopened. The first frame and the first
-/// samples are those at the start of what the film presents.
+/// marked one, or `VCA_SoundTrack`'s - is opened with audiocodec.library
+/// 1.6 or later, on the same file (`ACA_Media`) - AAC, with 1.7 MP3, FLAC
+/// and Vorbis, with 1.8 AC-3 and E-AC-3 - unless `VCA_Sound` is FALSE or
+/// the film is read through a function. A sound track nothing decodes
+/// leaves the film without sound - `sound_codec` 0 in the info - rather
+/// than unopened. The subtitles the film marks to be shown - in a
+/// Matroska file the track marked forced and default, else default
+/// (media.library 1.3's `MDA_Subtitles`) - or `VCA_Subtitles`' are read
+/// from the start by a process of the library's, for GetVideoSubtitle
+/// (SINCE 1.3); none from a film read through a function. The first frame
+/// and the first samples are those at the start of what the film
+/// presents.
 ///
 /// CONTEXT:
 /// - Waits: yes, on the file and the chip.
@@ -75,13 +82,15 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 /// Matroska file, which says not its largest - and audiocodec's stream;
 /// Motion JPEG takes a frame's planes for each frame lent. media.library
 /// reads a Matroska file's tracks ahead, 256 KiB at a time each.
+/// Subtitles take about 12 KiB, a process with a stack of 32 KiB, and
+/// what they read ahead: up to ten seconds of lines, or a picture.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
 /// `CloseVideoStream`, `GetVideoStreamInfo`, `DecodeVideoFrame`,
-/// `DecodeVideoSound`, `IdentifyVideo`
+/// `DecodeVideoSound`, `IdentifyVideo`, `GetVideoTrack`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -176,31 +185,51 @@ fn open(base: *VideoCodecBase, tags: ?[*]const utility.TagItem, code: *i32) ?*vc
         code.* = opened;
         return null;
     }
-    if (want_sound and read_fn == 0 and file_info.audio != ~@as(u32, 0)) openSound(s);
+    s.sound_track = vc.VIDEO_NO_TRACK;
+    s.sub_track = vc.VIDEO_NO_TRACK;
+    const sound_track: u32 = @truncate(ub.GetTagData(vc.VCA_SoundTrack, file_info.audio, tags));
+    if (want_sound and read_fn == 0) openSound(s, sound_track);
+
+    // The subtitles the film marks; media.library before 1.3 says none.
+    var marked: u32 = vc.VIDEO_NO_TRACK;
+    _ = mb.GetMediaAttrs(file, &[_]utility.TagItem{
+        .{ .tag = media.MDA_Subtitles, .data = @intFromPtr(&marked) },
+        .{},
+    });
+    const sub_track: u32 = @truncate(ub.GetTagData(vc.VCA_Subtitles, marked, tags));
+    var sub_info: media.MediaTrack = .{};
+    if (sub_track != vc.VIDEO_NO_TRACK and mb.GetMediaTrack(file, sub_track, &sub_info) == media.MERR_OK and
+        sub_info.kind == media.MTRACK_TEXT and _stream.decodes(s, sub_track, &sub_info))
+    {
+        s.subtitles = _stream.startSubtitles(s, sub_track, 0, false);
+        if (s.subtitles != null) s.sub_track = sub_track;
+    }
     return _stream.publicOf(s);
 }
 
-/// The film's sound track opened with audiocodec.library on the same
-/// file - 1.6 or later, which decodes a track of a film. Without it, or
-/// with a track it does not decode, the film has no sound.
-fn openSound(s: *Stream) void {
+/// audiocodec.library opened for the film - 1.6 or later, which decodes
+/// a track of a film - and kept, for SelectVideoTrack; then sound track
+/// `track` opened with it on the same file. Without the library, or with
+/// a track that is not sound or that it does not decode, the film has no
+/// sound.
+fn openSound(s: *Stream, track: u32) void {
     const lib = s.sys.OpenLibrary(ac.AUDIOCODECNAME, 1) orelse return;
     if (lib.version == 1 and lib.revision < 6) {
         s.sys.CloseLibrary(lib);
         return;
     }
     const acb: *AudioCodecBase = @ptrCast(lib);
+    s.sound_lib = lib;
+    s.acb = acb;
+    var info: media.MediaTrack = .{};
+    if (track == vc.VIDEO_NO_TRACK or s.mb.GetMediaTrack(s.file, track, &info) != media.MERR_OK or info.kind != media.MTRACK_AUDIO) return;
     var err: i32 = ac.ACERR_OK;
     const sound = acb.OpenAudioStream(&[_]utility.TagItem{
         .{ .tag = ac.ACA_Media, .data = @intFromPtr(s.file) },
-        .{ .tag = ac.ACA_MediaTrack, .data = s.file_info.audio },
+        .{ .tag = ac.ACA_MediaTrack, .data = track },
         .{},
-    }, &err) orelse {
-        s.sys.CloseLibrary(lib);
-        return;
-    };
-    s.sound_lib = lib;
-    s.acb = acb;
+    }, &err) orelse return;
     s.sound = sound;
+    s.sound_track = track;
     acb.GetAudioStreamInfo(sound, &s.sound_info);
 }

@@ -7,6 +7,7 @@
 const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const media = sdk.media;
 const vc = sdk.videocodec;
 const utility = sdk.utility;
 const vec = exec.vec;
@@ -23,6 +24,9 @@ const SeekVideo = @import("stream/seekvideo.zig").SeekVideo;
 const IdentifyVideo = @import("identify/identifyvideo.zig").IdentifyVideo;
 const VideoErrorText = @import("text/videoerrortext.zig").VideoErrorText;
 const GetVideoStreamAttrs = @import("stream/getvideostreamattrs.zig").GetVideoStreamAttrs;
+const GetVideoTrack = @import("stream/getvideotrack.zig").GetVideoTrack;
+const SelectVideoTrack = @import("stream/selectvideotrack.zig").SelectVideoTrack;
+const GetVideoSubtitle = @import("stream/getvideosubtitle.zig").GetVideoSubtitle;
 
 /// videocodec.library's interface, as the SDK generates it from
 /// sdk/fd/videocodec_lib.fd.
@@ -58,6 +62,9 @@ const contract_files = [_][]const u8{
     @embedFile("identify/identifyvideo.zig"),
     @embedFile("text/videoerrortext.zig"),
     @embedFile("stream/getvideostreamattrs.zig"),
+    @embedFile("stream/getvideotrack.zig"),
+    @embedFile("stream/selectvideotrack.zig"),
+    @embedFile("stream/getvideosubtitle.zig"),
 };
 
 fn lvoOpenVideoStream(base: *VideoCodecBase, tags: ?[*]const utility.TagItem, err: ?*i32) callconv(.c) ?*vc.VideoStream {
@@ -90,6 +97,15 @@ fn lvoVideoErrorText(base: *VideoCodecBase, code: i32) callconv(.c) [*:0]const u
 fn lvoGetVideoStreamAttrs(base: *VideoCodecBase, stream: *vc.VideoStream, tags: ?[*]const utility.TagItem) callconv(.c) u32 {
     return GetVideoStreamAttrs(base, stream, tags);
 }
+fn lvoGetVideoTrack(base: *VideoCodecBase, stream: *vc.VideoStream, number: u32, track: *media.MediaTrack) callconv(.c) i32 {
+    return GetVideoTrack(base, stream, number, track);
+}
+fn lvoSelectVideoTrack(base: *VideoCodecBase, stream: *vc.VideoStream, track: u32, time: i64) callconv(.c) i32 {
+    return SelectVideoTrack(base, stream, track, time);
+}
+fn lvoGetVideoSubtitle(base: *VideoCodecBase, stream: *vc.VideoStream, time: i64, subtitle: *vc.VideoSubtitle) callconv(.c) i32 {
+    return GetVideoSubtitle(base, stream, time, subtitle);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -108,6 +124,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoIdentifyVideo),
     vec(lvoVideoErrorText),
     vec(lvoGetVideoStreamAttrs),
+    vec(lvoGetVideoTrack),
+    vec(lvoSelectVideoTrack),
+    vec(lvoGetVideoSubtitle),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

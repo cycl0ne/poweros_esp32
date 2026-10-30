@@ -105,7 +105,7 @@ left as it was, and: VDERR_NEED_DATA when every picture fed is decoded
 and none is due yet - feed more; VDERR_END when the stream was ended
 and its last frame handed out; VDERR_FULL when every frame buffer is
 lent - give some back; VDERR_UNSUPPORTED for a stream the chip does
-not take (10-bit, too large, changing its size); VDERR_NO_MEMORY for
+not take (10-bit H.264, too large, changing its size); VDERR_NO_MEMORY for
 its frames; VDERR_CORRUPT when the chip stopped on the stream or did
 not answer in half a second, after which the decoder does nothing
 more.

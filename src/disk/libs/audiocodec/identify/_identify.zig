@@ -2,15 +2,17 @@
 //! What some sound is, by its first bytes: a RIFF WAVE header; "fLaC",
 //! alone or behind an ID3v2 tag; an Ogg page whose first packet names
 //! Vorbis or FLAC; an MP4's `ftyp` box, for AAC; ADTS frames - an AAC
-//! header the next one agrees with - alone or behind an ID3v2 tag; an
-//! ID3v2 tag in front of anything else, which only an MP3 has; or MPEG
-//! audio frames, one that can be followed by others that agree with it.
+//! header the next one agrees with - alone or behind an ID3v2 tag;
+//! AC-3 or E-AC-3 syncframes, the next agreeing likewise; an ID3v2 tag
+//! in front of anything else, which only an MP3 has; or MPEG audio
+//! frames, one that can be followed by others that agree with it.
 
 const sdk = @import("sdk");
 const ac = sdk.audiocodec;
 const _stream = @import("../stream/_stream.zig");
 const layer3 = @import("../mp3/layer3.zig");
 const aac_config = @import("../aac/config.zig");
+const ac3_header = @import("../ac3/header.zig");
 
 pub fn identify(bytes: []const u8) u32 {
     if (bytes.len >= 12 and _stream.same(bytes, "RIFF") and _stream.same(bytes[8..], "WAVE")) return ac.ACODEC_WAV;
@@ -18,6 +20,7 @@ pub fn identify(bytes: []const u8) u32 {
     if (_stream.same(bytes, "OggS")) return oggKind(bytes);
     if (bytes.len >= 8 and _stream.same(bytes[4..], "ftyp")) return ac.ACODEC_AAC;
     if (adtsFrames(bytes)) return ac.ACODEC_AAC;
+    if (syncFrames(bytes)) |kind| return kind;
     if (bytes.len >= 10 and _stream.same(bytes, "ID3")) {
         const size = id3Size(bytes);
         if (bytes.len >= size + 4 and _stream.same(bytes[size..], "fLaC")) return ac.ACODEC_FLAC;
@@ -46,6 +49,17 @@ fn adtsFrames(bytes: []const u8) bool {
     const h = aac_config.adts(bytes) orelse return false;
     if (h.length + 7 > bytes.len) return h.length >= bytes.len;
     return aac_config.adts(bytes[h.length..]) != null and aac_config.sameStream(bytes, bytes[h.length..]);
+}
+
+/// AC-3 or E-AC-3: a syncframe's header at the front, and the next
+/// frame's of the same kind and rate - or the bytes given ending inside
+/// the frame.
+fn syncFrames(bytes: []const u8) ?u32 {
+    const h = ac3_header.peek(bytes) orelse return null;
+    const kind = if (h.eac3) ac.ACODEC_EAC3 else ac.ACODEC_AC3;
+    if (h.size + 8 > bytes.len) return if (h.size >= bytes.len) kind else null;
+    const next = ac3_header.peek(bytes[h.size..]) orelse return null;
+    return if (next.eac3 == h.eac3 and next.rate == h.rate) kind else null;
 }
 
 /// An ID3v2 tag's whole length: its header, its body, its footer.

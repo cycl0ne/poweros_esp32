@@ -322,7 +322,8 @@ test "a film on a file: its tracks, every packet of each as ffprobe has them, it
     var chapters: u32 = 0;
     var list: ?[*]const media.MediaChapter = null;
     var cover: ?*const media.MediaPicture = null;
-    try testing.expectEqual(@as(u32, 7), mb.GetMediaAttrs(film, &[_]utility.TagItem{
+    var subtitles: u32 = 0;
+    try testing.expectEqual(@as(u32, 8), mb.GetMediaAttrs(film, &[_]utility.TagItem{
         .{ .tag = media.MDA_Year, .data = @intFromPtr(&year) },
         .{ .tag = media.MDA_Track, .data = @intFromPtr(&track) },
         .{ .tag = media.MDA_Tracks, .data = @intFromPtr(&tracks) },
@@ -330,9 +331,12 @@ test "a film on a file: its tracks, every packet of each as ffprobe has them, it
         .{ .tag = media.MDA_Chapters, .data = @intFromPtr(&chapters) },
         .{ .tag = media.MDA_ChapterList, .data = @intFromPtr(&list) },
         .{ .tag = media.MDA_Picture, .data = @intFromPtr(&cover) },
+        .{ .tag = media.MDA_Subtitles, .data = @intFromPtr(&subtitles) },
         .{ .tag = utility.TAG_USER, .data = @intFromPtr(&year) },
         .{},
     }));
+    // An MP4 marks no subtitles to be shown.
+    try testing.expectEqual(~@as(u32, 0), subtitles);
     try testing.expectEqual(@as(u32, 2026), year);
     try testing.expectEqual(@as(u32, 3), track);
     try testing.expectEqual(@as(u32, 12), tracks);
@@ -986,14 +990,19 @@ test "Matroska by hand: lacing, header stripping, sizes not known, setups made, 
     try expectPacket(mb, file, 0, "\xFF\xFBDDD", 2_000_000, true);
 
     // The default edition's chapters, the hidden one passed over: the
-    // first ends where the next begins, the second where it says.
+    // first ends where the next begins, the second where it says. The
+    // subtitles marked: the ASS, default as Matroska has it when it says
+    // nothing - the SubRip says it is not.
     var chapters: u32 = 0;
     var list: ?[*]const media.MediaChapter = null;
+    var subtitles: u32 = 0;
     _ = mb.GetMediaAttrs(file, &[_]utility.TagItem{
         .{ .tag = media.MDA_Chapters, .data = @intFromPtr(&chapters) },
         .{ .tag = media.MDA_ChapterList, .data = @intFromPtr(&list) },
+        .{ .tag = media.MDA_Subtitles, .data = @intFromPtr(&subtitles) },
         .{},
     });
+    try testing.expectEqual(@as(u32, 5), subtitles);
     try testing.expectEqual(@as(u32, 2), chapters);
     try testing.expectEqualStrings("Erstes", textOf(&list.?[0].title));
     try testing.expectEqual(@as(u32, 1500), list.?[0].end);
