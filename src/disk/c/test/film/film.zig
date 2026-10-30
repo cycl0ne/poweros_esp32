@@ -36,7 +36,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Film";
-const VERSION_STRING = "\x00$VER: Film 1.0 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Film 1.1 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S";
@@ -70,6 +70,8 @@ fn soundName(codec: u32) [*:0]const u8 {
     return switch (codec) {
         ac.ACODEC_AAC => "AAC",
         ac.ACODEC_MP3 => "MP3",
+        ac.ACODEC_FLAC => "FLAC",
+        ac.ACODEC_VORBIS => "Vorbis",
         else => "sound",
     };
 }

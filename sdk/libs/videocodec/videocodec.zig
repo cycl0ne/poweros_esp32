@@ -59,7 +59,8 @@ pub const VCODEC_MJPEG: u32 = 3;
 pub const VCODEC_MPEG4V: u32 = 4;
 
 /// How many bytes `IdentifyVideo` is best given: an MP4 says what its
-/// pictures are in its index, which is often within them, at the front.
+/// pictures are in its index, which is often within them, at the front;
+/// a Matroska file in its tracks, which are.
 pub const VIDEO_IDENTIFY_BYTES: u32 = 64 * 1024;
 
 /// How many frames a program may hold at once, handed out and not yet

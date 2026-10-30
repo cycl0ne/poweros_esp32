@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const media = sdk.media;
 const MediaBase = @import("../media_base.zig").MediaBase;
 const mp4 = @import("../mp4/_mp4.zig");
+const mkv = @import("../mkv/_mkv.zig");
 
 /// Says what kind of container a file is, by its first bytes.
 ///
@@ -20,13 +21,15 @@ const mp4 = @import("../mp4/_mp4.zig");
 /// - `length`: how many; `MEDIA_IDENTIFY_BYTES` are enough.
 ///
 /// RESULT:
-/// MEDIA_MP4, or MEDIA_UNKNOWN.
+/// MEDIA_MP4, MEDIA_MKV (SINCE 1.2), or MEDIA_UNKNOWN.
 ///
 /// BEHAVIOR:
 /// An MP4 begins with a box: its size - 8 at least, or 1 for a size of 64
 /// bits after it - and a kind one begins with: ISO's `ftyp`, or
-/// QuickTime's `moov`, `mdat`, `wide`, `free`, `skip`, `pnot`. What
-/// OpenMedia then reads may still turn out to be no MP4.
+/// QuickTime's `moov`, `mdat`, `wide`, `free`, `skip`, `pnot`. A Matroska
+/// file begins with EBML's header, whose DocType - where the bytes reach
+/// it - is "matroska" or "webm". What OpenMedia then reads may still turn
+/// out to be no such file.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -51,5 +54,7 @@ const mp4 = @import("../mp4/_mp4.zig");
 /// if (mb.IdentifyMedia(&first, got) == media.MEDIA_MP4) playFilm(name);
 /// ```
 pub fn IdentifyMedia(_: *MediaBase, bytes: [*]const u8, length: u32) u32 {
-    return if (mp4.identify(bytes[0..length])) media.MEDIA_MP4 else media.MEDIA_UNKNOWN;
+    const given = bytes[0..length];
+    if (mkv.identify(given)) return media.MEDIA_MKV;
+    return if (mp4.identify(given)) media.MEDIA_MP4 else media.MEDIA_UNKNOWN;
 }

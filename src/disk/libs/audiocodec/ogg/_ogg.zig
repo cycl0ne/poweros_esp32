@@ -403,11 +403,14 @@ pub const PacketReader = struct {
 // --- bits -------------------------------------------------------------------------
 
 /// A packet's bits, least significant first, as the codecs carried in Ogg
-/// pack them. A read past the packet's end gives 0 and sets `ended`, and
-/// every read after it does the same.
+/// pack them: an Ogg packet's in the stream, or - with no `ogg` - those of
+/// a packet held whole, a container's. A read past the packet's end gives
+/// 0 and sets `ended`, and every read after it does the same.
 pub const Bits = struct {
-    stream: *Stream,
-    ogg: *Ogg,
+    stream: ?*Stream = null,
+    ogg: ?*Ogg = null,
+    /// The bytes of a packet held whole not read yet.
+    packet: []const u8 = &.{},
     cache: u64 = 0,
     count: u32 = 0,
     /// The packet has no more bytes.
@@ -418,13 +421,21 @@ pub const Bits = struct {
     /// The cache filled to more than 56 bits, or with all the packet has.
     pub fn refill(bits: *Bits) void {
         while (bits.count <= 56 and !bits.drained) {
-            if (readByte(bits.stream, bits.ogg)) |byte| {
+            if (bits.nextByte()) |byte| {
                 bits.cache |= @as(u64, byte) << @intCast(bits.count);
                 bits.count += 8;
             } else {
                 bits.drained = true;
             }
         }
+    }
+
+    fn nextByte(bits: *Bits) ?u8 {
+        if (bits.ogg) |ogg| return readByte(bits.stream.?, ogg);
+        if (bits.packet.len == 0) return null;
+        const byte = bits.packet[0];
+        bits.packet = bits.packet[1..];
+        return byte;
     }
 
     /// `width` bits (up to 32), the first read the least significant.

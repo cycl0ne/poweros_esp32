@@ -29,6 +29,14 @@
 //! in mono at 22.05 kHz in ADTS. The `_ref.raw` files are ffmpeg's
 //! decoding of them: frames 0 and 21504 of lossy.m4a (the edit applied),
 //! 0 and 20480 of low.aac, 0 of mono.aac, 2048 each.
+//!
+//! The `.mka` files are Matroska, remuxed by ffmpeg with no tags:
+//! `lossless.mka` lossless.flac's frames and its two chapters;
+//! `vorbis.mka` lossy.ogg's packets, its length set to 102 ms (ffmpeg
+//! wrote 27 hours); `tone.mka` tone.mp3's frames without its Info frame,
+//! so the encoder's delay is sound; `aac.mka` lossy.m4a's packets, the
+//! priming its CodecDelay. `layer2.mka` is 50 ms of MPEG audio layer II,
+//! `opus.mka` 50 ms of Opus.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -1293,6 +1301,15 @@ const low_aac_ref = @embedFile("low_ref.raw");
 const mono_aac = @embedFile("mono.aac");
 const mono_aac_ref = @embedFile("mono_ref.raw");
 const tail_m4a = @embedFile("../../media/tests/tail.m4a");
+const lossless_mka = @embedFile("lossless.mka");
+const vorbis_mka = @embedFile("vorbis.mka");
+const tone_mka = @embedFile("tone.mka");
+const aac_mka = @embedFile("aac.mka");
+const layer2_mka = @embedFile("layer2.mka");
+const opus_mka = @embedFile("opus.mka");
+const film_mkv = @embedFile("../../media/tests/film.mkv");
+/// film.mkv with its sound 100 ms late: its first block at 100 ms.
+const late_mkv = @embedFile("late.mkv");
 
 /// Frames `count` long from frame `from` of `ours`, within a step of
 /// ffmpeg's frames from frame `at` of `reference`.
@@ -1538,4 +1555,280 @@ test "ADTS: ffmpeg's samples, noise and intensity stereo at 48 kHz; mono behind 
     var head: [2048]i16 = undefined;
     try testing.expectEqual(@as(u32, 23 * 1024), try decodeAll(acb, mono, 1, 700, &head));
     try expectNear(&head, 0, mono_aac_ref, 0, 2048, 1);
+}
+
+/// The chapters a stream's tags mark.
+fn chaptersOf(acb: *AudioCodecBase, stream: *ac.AudioStream) []const ac.AudioChapter {
+    var count: u32 = 0;
+    var list: ?[*]const ac.AudioChapter = null;
+    _ = acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
+        .{ .tag = ac.ACA_Chapters, .data = @intFromPtr(&count) },
+        .{ .tag = ac.ACA_ChapterList, .data = @intFromPtr(&list) },
+        .{},
+    });
+    return if (list) |chapters| chapters[0..count] else &.{};
+}
+
+/// After seeks to `frames` of a stereo stream, where the 400 frames
+/// decoded lie in what decoding straight through gave - as near as they
+/// come, and no further off than `most`: `exact` when they are those very
+/// samples there. A seek to the end gives none.
+fn expectLandings(acb: *AudioCodecBase, stream: *ac.AudioStream, straight: []const i16, total: u32, frames: []const u32, most: i64, exact: bool) !void {
+    var some: [400 * 2]i16 = undefined;
+    for (frames) |frame| {
+        try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, frame));
+        if (frame == total) {
+            try testing.expectEqual(@as(i32, 0), acb.DecodeAudio(stream, &some, 400));
+            continue;
+        }
+        try testing.expectEqual(@as(i32, 400), acb.DecodeAudio(stream, &some, 400));
+        var best: i64 = 0;
+        var nearest: u64 = std.math.maxInt(u64);
+        var offset: i64 = -most;
+        while (offset <= most) : (offset += 1) {
+            const at = @as(i64, frame) + offset;
+            if (at < 0 or at + 400 > total) continue;
+            const here = squaredDistance(&some, straight[@as(usize, @intCast(at)) * 2 ..][0..800]);
+            if (here < nearest) {
+                nearest = here;
+                best = offset;
+            }
+        }
+        if (exact and nearest != 0) {
+            std.debug.print("frame {d}: nearest {d} off, {d} apart\n", .{ frame, best, nearest });
+            return error.TestNotLanded;
+        }
+        // Nowhere near as far from it as from a frame to either side.
+        const at: usize = @intCast(@as(i64, frame) + best);
+        if (!exact and at >= 2) {
+            for ([_]usize{ at - 2, at - 1, at + 1, at + 2 }) |other| {
+                if (other + 400 > total) continue;
+                try testing.expect(nearest * 4 < squaredDistance(&some, straight[other * 2 ..][0..800]));
+            }
+        }
+    }
+}
+
+test "Matroska sound by name: FLAC as coded to STREAMINFO's length, its chapters in order, seeks within a millisecond" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    try rig.write("WORK:lossless.mka", &.{lossless_mka});
+    const stream = openFile(acb, "WORK:lossless.mka", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_FLAC, info.codec);
+    try testing.expectEqual(@as(u32, 44100), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 16), info.bits);
+    try testing.expectEqual(@as(u32, 4500), info.frames);
+    try testing.expectEqual(@as(u32, 1), info.seekable);
+    // ffmpeg kept the order the FLAC gave them in, second first.
+    const chapters = chaptersOf(acb, stream);
+    try testing.expectEqual(@as(usize, 2), chapters.len);
+    try testing.expectEqual(@as(u32, 0), chapters[0].start);
+    try testing.expectEqual(@as(u32, 50), chapters[0].end);
+    try testing.expectEqual(@as(u32, 50), chapters[1].start);
+    try testing.expectEqual(@as(u32, 102), chapters[1].end);
+
+    var all: [4500 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 4500), try decodeAll(acb, stream, 2, 999, &all));
+    var expected: [4500 * 2]i16 = undefined;
+    signal(4500, 2, 16, &expected);
+    try testing.expectEqualSlices(i16, &expected, &all);
+    // Its blocks' times are milliseconds: a seek lands within half of one.
+    try expectLandings(acb, stream, &all, 4500, &.{ 3000, 77, 0, 4000, 4500 }, 22, true);
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 0));
+    try testing.expectEqual(@as(u32, 4500), try decodeAll(acb, stream, 2, 999, &all));
+    try testing.expectEqualSlices(i16, &expected, &all);
+}
+
+test "Matroska sound through a read function: Vorbis, MP3 with its encoder's delay, AAC as ffmpeg decodes it" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    // Matroska says how long to the millisecond: 102 ms are 4498 frames.
+    var memory: Memory = .{ .bytes = vorbis_mka, .piece = 501 };
+    const vorbis = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    acb.GetAudioStreamInfo(vorbis, &info);
+    try testing.expectEqual(ac.ACODEC_VORBIS, info.codec);
+    try testing.expectEqual(@as(u32, 44100), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 4498), info.frames);
+    try testing.expectEqual(@as(u32, 0), info.seekable);
+    var head: [1024 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 4498), try decodeAll(acb, vorbis, 2, 999, &head));
+    const vorbis_ref: []align(1) const i16 = std.mem.bytesAsSlice(i16, lossy_head);
+    for (head, vorbis_ref) |ours, theirs| {
+        try testing.expect(@abs(@as(i32, ours) - theirs) <= 1);
+    }
+    try testing.expectEqual(ac.ACERR_NOSEEK, acb.SeekAudio(vorbis, 0));
+    acb.CloseAudioStream(vorbis);
+
+    // No CodecDelay: the encoder's 1105 frames are sound, as for ffmpeg;
+    // its padding is cut where the segment ends, 339 ms in.
+    memory = .{ .bytes = tone_mka, .piece = 333 };
+    const tone = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    acb.GetAudioStreamInfo(tone, &info);
+    try testing.expectEqual(ac.ACODEC_MP3, info.codec);
+    try testing.expectEqual(@as(u32, 44100), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 14949), info.frames);
+    var tone_all: [14949 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 14949), try decodeAll(acb, tone, 2, 1000, &tone_all));
+    const tone_ref: []align(1) const i16 = std.mem.bytesAsSlice(i16, tone_head);
+    for (tone_all[1105 * 2 ..][0..2048], tone_ref) |ours, theirs| {
+        try testing.expect(@abs(@as(i32, ours) - theirs) <= 1);
+    }
+    acb.CloseAudioStream(tone);
+
+    // CodecDelay is the priming, 1024 frames; the segment ends 0.22 ms
+    // short of the sound.
+    memory = .{ .bytes = aac_mka, .piece = 777 };
+    const lossy = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    acb.GetAudioStreamInfo(lossy, &info);
+    try testing.expectEqual(ac.ACODEC_AAC, info.codec);
+    try testing.expectEqual(@as(u32, 44090), info.frames);
+    var straight: [44090 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 44090), try decodeAll(acb, lossy, 2, 1999, &straight));
+    try expectNear(&straight, 0, lossy_m4a_ref, 0, 2048, 2);
+    try expectNear(&straight, 21504, lossy_m4a_ref, 2048, 2048, 2);
+    acb.CloseAudioStream(lossy);
+}
+
+test "Matroska sound on a file: seeks within a millisecond - and FFmpeg's Vorbis times; codecs it does not decode" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+
+    try rig.write("WORK:vorbis.mka", &.{vorbis_mka});
+    const vorbis = openFile(acb, "WORK:vorbis.mka", &err) orelse return error.NoStream;
+    var vorbis_all: [4498 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 4498), try decodeAll(acb, vorbis, 2, 999, &vorbis_all));
+    // FFmpeg's times for Vorbis run half a short block late: 128 frames.
+    try expectLandings(acb, vorbis, &vorbis_all, 4498, &.{ 3000, 77, 2048, 4000, 4498 }, 22 + 128, true);
+    acb.CloseAudioStream(vorbis);
+
+    try rig.write("WORK:tone.mka", &.{tone_mka});
+    const tone = openFile(acb, "WORK:tone.mka", &err) orelse return error.NoStream;
+    var tone_all: [14949 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 14949), try decodeAll(acb, tone, 2, 1000, &tone_all));
+    try expectLandings(acb, tone, &tone_all, 14949, &.{ 0, 1105, 7000, 12345, 14949 }, 22, true);
+    acb.CloseAudioStream(tone);
+
+    // PNS noise is drawn anew after a seek, but the start is the start,
+    // and a seek lands as near the frame as the others.
+    try rig.write("WORK:aac.mka", &.{aac_mka});
+    const lossy = openFile(acb, "WORK:aac.mka", &err) orelse return error.NoStream;
+    var straight: [44090 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 44090), try decodeAll(acb, lossy, 2, 1999, &straight));
+    var some: [600 * 2]i16 = undefined;
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(lossy, 0));
+    try testing.expectEqual(@as(i32, 600), acb.DecodeAudio(lossy, &some, 600));
+    try testing.expectEqualSlices(i16, straight[0..1200], &some);
+    try expectLandings(acb, lossy, &straight, 44090, &.{ 500, 1024, 10000, 33333 }, 22, false);
+    acb.CloseAudioStream(lossy);
+
+    // Layer II is MPEG audio too, but not decoded; Opus is not either.
+    var memory: Memory = .{ .bytes = layer2_mka };
+    try testing.expect(openMemory(acb, &memory, &err) == null);
+    try testing.expectEqual(ac.ACERR_UNSUPPORTED, err);
+    memory = .{ .bytes = opus_mka };
+    try testing.expect(openMemory(acb, &memory, &err) == null);
+    try testing.expectEqual(ac.ACERR_UNSUPPORTED, err);
+    // The first bytes say nothing of what Matroska holds.
+    try testing.expectEqual(ac.ACODEC_UNKNOWN, acb.IdentifyAudio(lossless_mka, ac.AUDIO_IDENTIFY_BYTES));
+}
+
+test "a film's sound in Matroska: by name, the sound track the file marks; through media.library's own file" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    try rig.write("WORK:film.mkv", &.{film_mkv});
+    const stream = openFile(acb, "WORK:film.mkv", &err) orelse return error.NoStream;
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_AAC, info.codec);
+    try testing.expectEqual(@as(u32, 44100), info.rate);
+    try testing.expectEqual(@as(u32, 1), info.channels);
+    try testing.expectEqual(@as(u32, 35270), info.frames);
+    try testing.expectEqual(@as(u32, 35270), try decodeAll(acb, stream, 1, 1000, &.{}));
+    acb.CloseAudioStream(stream);
+
+    const mb: *sdk.interface.media.MediaBase = @ptrCast(rig.sysLib().OpenLibrary(media.MEDIANAME, 1) orelse return error.NoMedia);
+    defer rig.sysLib().CloseLibrary(mb.lib());
+    const film = mb.OpenMedia(&[_]utility.TagItem{
+        .{ .tag = media.MDA_Name, .data = @intFromPtr("WORK:film.mkv") },
+        .{},
+    }, &err) orelse return error.NoFile;
+    defer mb.CloseMedia(film);
+    // The film's pictures are no sound.
+    try testing.expect(acb.OpenAudioStream(&[_]utility.TagItem{
+        .{ .tag = ac.ACA_Media, .data = @intFromPtr(film) },
+        .{ .tag = ac.ACA_MediaTrack, .data = 0 },
+        .{},
+    }, &err) == null);
+    try testing.expectEqual(ac.ACERR_UNKNOWN, err);
+    const sound = acb.OpenAudioStream(&[_]utility.TagItem{
+        .{ .tag = ac.ACA_Media, .data = @intFromPtr(film) },
+        .{},
+    }, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(sound);
+    acb.GetAudioStreamInfo(sound, &info);
+    try testing.expectEqual(@as(u32, 1), info.seekable);
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(sound, 20000));
+    try testing.expectEqual(@as(u32, 15270), try decodeAll(acb, sound, 1, 1000, &.{}));
+}
+
+test "a film's sound that begins late: silence up to its first block, its priming left out; seeks keep the film's time" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+    const late_by = 4410;
+
+    try rig.write("WORK:film.mkv", &.{film_mkv});
+    try rig.write("WORK:late.mkv", &.{late_mkv});
+    var on_time: [36000]i16 = undefined;
+    const film = openFile(acb, "WORK:film.mkv", &err) orelse return error.NoStream;
+    const count = try decodeAll(acb, film, 1, 1000, &on_time);
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(film, 20000));
+    var moved: [16000]i16 = undefined;
+    const moved_count = try decodeAll(acb, film, 1, 1000, &moved);
+    acb.CloseAudioStream(film);
+
+    const stream = openFile(acb, "WORK:late.mkv", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, late_by + count), info.frames);
+    var late: [41000]i16 = undefined;
+    try testing.expectEqual(info.frames, try decodeAll(acb, stream, 1, 1000, &late));
+    for (late[0..late_by]) |sample| try testing.expectEqual(@as(i16, 0), sample);
+    try testing.expectEqualSlices(i16, on_time[0..count], late[late_by..][0..count]);
+
+    // Into the silence: the rest of it, then the sound.
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 1000));
+    @memset(&late, 1);
+    try testing.expectEqual(info.frames - 1000, try decodeAll(acb, stream, 1, 1000, &late));
+    for (late[0 .. late_by - 1000]) |sample| try testing.expectEqual(@as(i16, 0), sample);
+    try testing.expectEqualSlices(i16, on_time[0..count], late[late_by - 1000 ..][0..count]);
+    // Past it: what the film on time gives from as far into its sound.
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, late_by + 20000));
+    try testing.expectEqual(moved_count, try decodeAll(acb, stream, 1, 1000, &late));
+    try testing.expectEqualSlices(i16, moved[0..moved_count], late[0..moved_count]);
 }

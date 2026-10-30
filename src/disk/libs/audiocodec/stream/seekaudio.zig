@@ -35,8 +35,13 @@ const aac = @import("../aac/_aac.zig");
 /// table of contents points to, or the bit rate when it has none - exact
 /// for a constant rate, near for a variable one - and the frame or two
 /// after it may be left out, until the reservoir of bits they reach back
-/// into is filled again. Frame 0 is exact for every kind: an MP3 starts
-/// again where its encoder said the music begins (SINCE 1.3). In a
+/// into is filled again. An AAC stream of ADTS frames goes near the
+/// frame, by the bytes a frame (SINCE 1.6). A container's track goes to
+/// the frame exactly in an MP4 (SINCE 1.6) and within a millisecond in a
+/// Matroska file, whose times are milliseconds (SINCE 1.7) - Vorbis that
+/// FFmpeg muxed up to three early. Frame 0 is exact for every kind: an
+/// MP3 starts again where its encoder said the music begins (SINCE 1.3),
+/// a container's track at its first packet. In a
 /// chained Ogg file (SINCE 1.5) the frame is the link's being decoded,
 /// counted from its start: the seek moves within that link. To start the
 /// file over from its first link, open it again.

@@ -11,11 +11,14 @@
 //! (`esds`) names the codec by a number: 0x6C JPEG, 0x20 MPEG-4 Part 2.
 //!
 //! A file whose index lies behind the bytes given - at its end, as a film
-//! written in one go has it - says nothing yet.
+//! written in one go has it - says nothing yet. A Matroska file names its
+//! codec in its tracks (`matroska.zig`).
 
 const vc = @import("sdk").videocodec;
+const matroska = @import("matroska.zig");
 
 pub fn identify(bytes: []const u8) u32 {
+    if (matroska.matroska(bytes)) return matroska.identify(bytes);
     if (bytes.len < 8 or !opensMp4(bytes[4..8])) return vc.VCODEC_UNKNOWN;
     var boxes = Boxes{ .bytes = bytes };
     while (boxes.next()) |box| {

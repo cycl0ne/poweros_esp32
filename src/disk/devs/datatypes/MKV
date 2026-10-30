@@ -1,0 +1,1 @@
+NAME=MKV BASE=videocodec GROUP=movi ID=MKV MASK=\x1a\x45\xdf\xa3 PATTERN=#?.mkv TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Movie

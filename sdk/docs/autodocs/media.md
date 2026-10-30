@@ -15,7 +15,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetMediaTrack](#getmediatrack) - Says what a track of a container file is.
 - [IdentifyMedia](#identifymedia) - Says what kind of container a file is, by its first bytes.
 - [MediaErrorText](#mediaerrortext) - Says what an error code means, in words.
-- [OpenMedia](#openmedia) - Opens a container file - MP4 - and reads its index.
+- [OpenMedia](#openmedia) - Opens a container file - MP4, Matroska - and reads its index.
 - [ReadMediaPacket](#readmediapacket) - Hands out a track's next packet, as it is coded.
 - [SeekMedia](#seekmedia) - Moves a track to the packet a decoder can start at, at or before a time.
 
@@ -308,14 +308,16 @@ fn IdentifyMedia(base: *MediaBase, bytes: [*]const u8, length: u32) u32
 
 **RESULT**
 
-MEDIA_MP4, or MEDIA_UNKNOWN.
+MEDIA_MP4, MEDIA_MKV (SINCE 1.2), or MEDIA_UNKNOWN.
 
 **BEHAVIOR**
 
 An MP4 begins with a box: its size - 8 at least, or 1 for a size of 64
 bits after it - and a kind one begins with: ISO's `ftyp`, or
-QuickTime's `moov`, `mdat`, `wide`, `free`, `skip`, `pnot`. What
-OpenMedia then reads may still turn out to be no MP4.
+QuickTime's `moov`, `mdat`, `wide`, `free`, `skip`, `pnot`. A Matroska
+file begins with EBML's header, whose DocType - where the bytes reach
+it - is "matroska" or "webm". What OpenMedia then reads may still turn
+out to be no such file.
 
 **CONTEXT**
 
@@ -404,7 +406,7 @@ _ = Printf(dl, "%s\n", .{mb.MediaErrorText(err)});
 
 ## OpenMedia
 
-Opens a container file - MP4 - and reads its index.
+Opens a container file - MP4, Matroska - and reads its index.
 
 **SYNOPSIS**
 
@@ -435,16 +437,25 @@ MERR_READ, MERR_CORRUPT, MERR_NOMEMORY.
 
 **BEHAVIOR**
 
-The kind is found by the first bytes: an MP4 begins with a box of the
-kinds one begins with - `ftyp`, or QuickTime's `moov`, `mdat`, `wide`,
-`free`. Its index, the `moov` box, is read whole into memory, wherever
-it lies in a file; through a read function the boxes before it are
+The kind is found by the first bytes: a Matroska file begins with
+EBML's header, an MP4 with a box of the kinds one begins with -
+`ftyp`, or QuickTime's `moov`, `mdat`, `wide`, `free`.
+
+An MP4's index, the `moov` box, is read whole into memory, wherever it
+lies in a file; through a read function the boxes before it are
 passed, and the packets must come after it. Each track is made out of
 it - its kind, its codec and the codec's setup, its sample tables, its
-edits - and every track's cursor is at its first packet. Up to 16
-tracks are read; past them, tracks are passed over. The tags, the
+edits - and every track's cursor is at its first packet. The tags, the
 chapters - Nero's list, or the text track a track names for them,
 read from a file - and iTunes's note of the priming are read with it.
+
+A Matroska file's segment is read up to its first cluster, and what
+its seek heads say lies behind the clusters is read from there: its
+info, its tracks - whole, into memory - its cues, its tags and its
+chapters (SINCE 1.2). Through a read function only what comes before
+the clusters is read. Each track walks the clusters from the first.
+
+Up to 16 tracks are read; past them, tracks are passed over.
 
 **CONTEXT**
 
@@ -463,7 +474,9 @@ stays the program's, and must stay open until then.
 **NOTES**
 
 It takes the index's size in memory - a few megabytes for a film of
-hours - and 64 KiB or its largest packet for each track read.
+hours - and 64 KiB or its largest packet for each track read; a
+Matroska file its tracks and its cues, and 256 KiB or its largest
+block for each track read.
 
 **BUGS**
 
@@ -508,8 +521,10 @@ fn ReadMediaPacket(base: *MediaBase, file: *media.MediaFile, track: u32, packet:
 **RESULT**
 
 MERR_OK; MERR_END after the track's last packet; MERR_NOTRACK,
-MERR_READ, MERR_NOMEMORY, or MERR_NOSEEK for a packet behind what a
-read function has read. Only with MERR_OK is `packet` filled in.
+MERR_READ, MERR_NOMEMORY, MERR_CORRUPT, MERR_NOSEEK for a packet
+behind what a read function has read, or MERR_UNSUPPORTED for a
+Matroska track compressed or encrypted. Only with MERR_OK is `packet`
+filled in.
 
 **BEHAVIOR**
 
@@ -522,6 +537,12 @@ priming - how long it lasts, its number in the track, and its decode
 time in the track's own ticks. The bytes are read with the rest of
 their chunk, as far as the track's buffer holds them, so the packets
 after it come out of the buffer.
+
+A Matroska track walks the clusters from where it is to its next
+block, past the other tracks', reading the file in runs into its
+buffer; the frames of a block laced are handed out one at a time, the
+time of each after the first from how long the track says a frame
+lasts (SINCE 1.2).
 
 **CONTEXT**
 
@@ -593,12 +614,21 @@ for pictures the key frame before it, for sound that packet itself.
 The next ReadMediaPacket on the track hands that packet out; its `pts`
 says where the track landed. The other tracks stay where they are.
 
+A Matroska track starts at the last cue point at or before the time -
+of its own where it has any, else of any track. A track of pictures
+with cues of its own lands on the block it names; sound, and a track
+without cues of its own, walks on from there to its last block at or
+before the time (SINCE 1.2). A file without cues is walked from its
+first cluster.
+
 **CONTEXT**
 
-- Waits: no.
+- Waits: no for an MP4; on the file for a Matroska file, which it
+  reads.
 - Interrupts: no.
-- Locks: none.
-- Process: a task will do: the one that reads the track.
+- Locks: no spinlock may be held.
+- Process: the one that reads the track: a task will do for an MP4, a
+  Matroska file wants a process.
 
 **OWNERSHIP**
 

@@ -45,11 +45,13 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 ///
 /// BEHAVIOR:
 /// The film is opened with media.library, which finds out what it is and
-/// reads its index. Its first track of pictures is taken: H.264 and H.265
-/// go to the chip's decoder (videodec.resource), which is opened for the
+/// reads its index - an MP4's, a Matroska file's header (SINCE 1.2). Its
+/// first track of pictures - of a Matroska file the first it marks to be
+/// played - is taken: H.264 and H.265 go to the chip's decoder (videodec.resource), which is opened for the
 /// stream and reads the track's parameter sets; Motion JPEG to the
-/// library's own. Its first track of sound is opened with
-/// audiocodec.library 1.6 or later, on the same file (`ACA_Media`), unless
+/// library's own. Its first track of sound - in a Matroska file the
+/// marked one - is opened with audiocodec.library 1.6 or later, on the
+/// same file (`ACA_Media`) - AAC, and with 1.7 MP3, FLAC and Vorbis - unless
 /// `VCA_Sound` is FALSE or the film is read through a function. A sound
 /// track nothing decodes leaves the film without sound - `sound_codec` 0
 /// in the info - rather than unopened. The first frame and the first
@@ -69,8 +71,10 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 ///
 /// NOTES:
 /// It takes the film's index in memory (media.library's), the chip's
-/// stream buffer of 2 MiB or four of the largest packets, and audiocodec's
-/// stream; Motion JPEG takes a frame's planes for each frame lent.
+/// stream buffer of 2 MiB or four of the largest packets - 8 MiB for a
+/// Matroska file, which says not its largest - and audiocodec's stream;
+/// Motion JPEG takes a frame's planes for each frame lent. media.library
+/// reads a Matroska file's tracks ahead, 256 KiB at a time each.
 ///
 /// BUGS:
 /// None known.

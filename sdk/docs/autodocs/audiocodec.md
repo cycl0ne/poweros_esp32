@@ -175,7 +175,9 @@ at its own rate and channels, which the info then gives, its tags with
 it, `ACA_Link` one more. A link of another kind ends the stream, and
 one that cannot be decoded ends it with why. A read function is asked for the
 bytes of the frames handed out and `AUDIO_READ_AHEAD` more at most
-(SINCE 1.4 said).
+(SINCE 1.4 said). A container's sound that begins after the file's
+start - a Matroska film's after its first picture - begins with
+silence up to there (SINCE 1.7): its frames are the film's time.
 
 **CONTEXT**
 
@@ -403,8 +405,10 @@ packet is Vorbis's header is ACODEC_VORBIS, FLAC's is ACODEC_FLAC (and
 refused when it is opened); another, such as Opus, is unknown. An MP4
 - its first box an `ftyp` - is ACODEC_AAC, as is an ADTS header the
 next one agrees with, alone or behind an ID3v2 tag; an MP4 whose sound
-is not AAC is refused when it is opened. Any other ID3v2 tag is an
-MP3, and so are
+is not AAC is refused when it is opened - since 1.7 it is decoded when
+it is MP3, FLAC or Vorbis. A Matroska file's first bytes say nothing
+of what it holds: it is ACODEC_UNKNOWN, and opened all the same (SINCE
+1.7). Any other ID3v2 tag is an MP3, and so are
 MPEG audio frames: a header that can be, followed by others at the
 distances it gives - one header-like run of bytes alone is not enough.
 An MP3 of layer I or II is identified as one, and refused when it is
@@ -461,7 +465,7 @@ fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, err: 
   function) or `ACA_Media` (a file media.library has open, SINCE 1.6)
   - and `ACA_Codec`, the kind, when the program knows it;
   `ACA_KeepPicture` keeps the picture the tags hold (SINCE 1.1);
-  `ACA_MediaTrack` picks an MP4's track (SINCE 1.6).
+  `ACA_MediaTrack` picks a container's track (SINCE 1.6).
 - `err`: where to say why it failed (ACERR_*), or null.
 
 **RESULT**
@@ -476,9 +480,12 @@ finds the kind by the first bytes (as `IdentifyAudio`) unless
 its data, an MP3's tags in front of the sound and its first frame -
 with what its encoder wrote about the rest, when it did - a FLAC's
 metadata blocks, an Ogg Vorbis stream's three header packets, an AAC
-stream's first ADTS frame - or an MP4's index, read by media.library
-(SINCE 1.6), which the stream then reads its track's packets from;
-and the stream's info is filled in. A read function is asked for the header's
+stream's first ADTS frame - or a container's, an MP4's index or a
+Matroska file's header, read by media.library (SINCE 1.6; Matroska
+SINCE 1.7), which the stream then reads its track's packets from: AAC,
+and SINCE 1.7 MP3, FLAC and Vorbis. A container is known by its first
+bytes whatever `ACA_Codec` says. Then the stream's info is filled in.
+A read function is asked for the header's
 bytes and `AUDIO_READ_AHEAD` more at most. An Ogg Vorbis file's last
 page is looked for at its end, for its length. A file's end is looked
 at first: tags there (ID3v1, APE) are not read as sound, and an ID3v1
@@ -510,7 +517,9 @@ A stream takes about 44 KiB: the read-ahead, the samples of a frame,
 an MP3 decoder's state and the tags; a kept picture is as large as it
 is. A FLAC adds a block of samples for each channel - 32 KiB for the
 usual 4096 in stereo - and an Ogg Vorbis its setup, tables and
-buffers: about 250 KiB at 44.1 kHz.
+buffers: about 250 KiB at 44.1 kHz. A container adds what
+media.library holds of it: an MP4's index, a Matroska track's 256 KiB
+read ahead.
 
 FLAC (SINCE 1.2) is decoded at 4 to 24 bits a sample; an Ogg Vorbis
 stream (SINCE 1.2) of floor type 1, as every encoder writes. One or
@@ -569,8 +578,13 @@ on to the frame. An MP3 goes to the frame its encoder's
 table of contents points to, or the bit rate when it has none - exact
 for a constant rate, near for a variable one - and the frame or two
 after it may be left out, until the reservoir of bits they reach back
-into is filled again. Frame 0 is exact for every kind: an MP3 starts
-again where its encoder said the music begins (SINCE 1.3). In a
+into is filled again. An AAC stream of ADTS frames goes near the
+frame, by the bytes a frame (SINCE 1.6). A container's track goes to
+the frame exactly in an MP4 (SINCE 1.6) and within a millisecond in a
+Matroska file, whose times are milliseconds (SINCE 1.7) - Vorbis that
+FFmpeg muxed up to three early. Frame 0 is exact for every kind: an
+MP3 starts again where its encoder said the music begins (SINCE 1.3),
+a container's track at its first packet. In a
 chained Ogg file (SINCE 1.5) the frame is the link's being decoded,
 counted from its start: the seek moves within that link. To start the
 file over from its first link, open it again.

@@ -28,6 +28,10 @@
 //! the chapters into the same block, and the picture handed out before
 //! stays until the link after, for a program that still reads it.
 //!
+//! **A container** - an MP4, a Matroska file - is read through
+//! media.library (`_media.zig`): the stream then holds the file and the
+//! track, and its kind's code decodes the track's packets.
+//!
 //! The stream is one allocation, cleared: every field's starting value is
 //! zero, so nothing large is ever built on a stack. A FLAC's blocks and an
 //! Ogg Vorbis stream's setup are memory of their own, given back with it.
@@ -43,6 +47,7 @@ const layer3 = @import("../mp3/layer3.zig");
 const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
 const aac = @import("../aac/_aac.zig");
+const _media = @import("_media.zig");
 
 /// How many bytes are read ahead: enough to find an MP3's first frame -
 /// it has to agree with the frames after it - and a WAV's header. The
@@ -120,9 +125,10 @@ pub const Stream = struct {
     tags: Tags,
     /// The links of a chain begun after the first (`ACA_Link`).
     links: u32,
-    /// The track of an MP4 to decode (`ACA_MediaTrack`), ~0 for the
-    /// first sound track.
+    /// The track of a container to decode (`ACA_MediaTrack`), ~0 for the
+    /// first sound track; the container while one is read.
     media_track: u32,
+    media: _media.Source,
     codec: Codec,
     /// Samples decoded and not handed out yet, the channels interleaved,
     /// `pcm_start` to `pcm_stop`.
@@ -140,6 +146,7 @@ pub fn destroy(stream: *Stream) void {
         .aac => |*state| aac.free(stream, state),
         else => {},
     }
+    _media.free(stream);
     if (stream.owns_file) {
         if (stream.file) |file| _ = base.dos_base.Close(file);
     }
