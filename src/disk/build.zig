@@ -61,6 +61,7 @@ const commands = [_][]const u8{
     "setclock",      "top",         "play",        "screendump",    "memdebug",
     "makelink",      "posfs",       "binddrivers", "pciinfo",       "record",
     "audio",         "temperature", "hash",        "break",         "status",
+    "cpuclock",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",   "testlib",     "gfx",       "anim",
