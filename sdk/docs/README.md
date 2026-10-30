@@ -105,9 +105,14 @@ tags and constants, each with its doc comment.
   the bus in QEMU.
 - [Sound](guides/audio.md) - audio.device: a stream and its form,
   writing buffers as they play, what the board has, choosing and
-  preferring an output, a volume per output and `audio.prefs`, WAV and
-  MP3 decoded by audiocodec.library, the outputs and their drivers
+  preferring an output, a volume per output and `audio.prefs`, WAV, MP3,
+  FLAC, Ogg Vorbis and AAC decoded by audiocodec.library - an MP4's
+  through media.library - the outputs and their drivers
   (rta.library), recording, `C:Audio`, `C:Play` and `C:test/AudioTest`.
+- [Video](guides/video.md) - films through videocodec.library: opening
+  one, its pictures as frames lent by the decoder, its sound on a process
+  of its own, keeping them together, moving to a key frame, what decodes
+  what (the chip's decoder, Motion JPEG in software), and `C:test/Film`.
 - [USB](guides/usb.md) - a bus and starting it, what is on it, driving
   a device from a program (claims, pipes, control transfers), writing a
   class driver, keyboards and mice as sources, sticks, serial and
@@ -143,6 +148,7 @@ first time something opens it.
 | keymap.library | ROM | raw keys into characters | [md](autodocs/keymap.md) · [doc](autodocs/keymap.doc) |
 | motion.library | ROM | one clock for animations, timers and timelines | [md](autodocs/motion.md) · [doc](autodocs/motion.doc) |
 | asl.library | `LIBS:` | the file, font and device requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
+| audiocodec.library | `LIBS:` | sound files into 16-bit samples as they play: WAV, MP3, FLAC, Ogg Vorbis, AAC; their tags, covers and chapters | [md](autodocs/audiocodec.md) · [doc](autodocs/audiocodec.doc), [`audiocodec.zig`](../libs/audiocodec/audiocodec.zig), [guide](guides/audio.md#decoding-audiocodeclibrary) |
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces, packet hooks | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
 | compression.library | `LIBS:` | DEFLATE packed and unpacked, bare or in a zlib or gzip wrapping, a buffer at a time or in one go; CRC-32 and Adler-32 | [md](autodocs/compression.md) · [doc](autodocs/compression.doc), [`compression.zig`](../libs/compression/compression.zig), [guide](guides/compression.md) |
 | crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines where it has them; X25519, P-256, P-384 and Ed25519; signatures checked and made; ML-KEM-768 | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
@@ -151,6 +157,8 @@ first time something opens it.
 | filter.library | `LIBS:` | a packet filter: rules on what comes in, on bsdsocket.library's packet hooks | [md](autodocs/filter.md) · [doc](autodocs/filter.doc) |
 | http.library | `LIBS:` | HTTP/1.1 requests over plain connections or TLS: a client keeping its connections for the next request, bodies sent and read in pieces, redirects followed, packed answers unpacked | [md](autodocs/http.md) · [doc](autodocs/http.doc), [`http.zig`](../libs/http/http.zig), [guide](guides/network.md#http-httplibrary) |
 | locale.library | `LIBS:` | locales - a country's dates, numbers and money, a language's words and order of letters - the default one, and programs' texts from catalogs | [md](autodocs/locale.md) · [doc](autodocs/locale.doc), [`locale.zig`](../libs/locale/locale.zig), [guide](guides/locale.md) |
+| media.library | `LIBS:` | containers - MP4 and QuickTime - opened: their tracks and the codecs' setup, each track's packets at its own pace with their times, seeks to a key packet, the tags, cover and chapters | [md](autodocs/media.md) · [doc](autodocs/media.doc), [`media.zig`](../libs/media/media.zig), [guide](guides/audio.md#aac-and-mp4) |
+| videocodec.library | `LIBS:` | films played: the pictures as frames in the order they are shown - H.264 and H.265 on the chip's decoder, Motion JPEG in software - lent for graphics' YUV calls, the sound as 16-bit samples on a task of its own, seeks to a key frame | [md](autodocs/videocodec.md) · [doc](autodocs/videocodec.doc), [`videocodec.zig`](../libs/videocodec/videocodec.zig), [guide](guides/video.md) |
 | icon.library | `LIBS:` | icons: the picture a file is shown with and its fields; the default that fits a file without one | [md](autodocs/icon.md) · [doc](autodocs/icon.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |
@@ -213,7 +221,8 @@ All are in the ROM.
 | gpio.resource | who holds which of the chip's pads | [md](autodocs/gpio.md) · [doc](autodocs/gpio.doc) |
 | usbport.resource | who holds each of the chip's USB ports, and which controller it is given to: on the ESP32-S3 the console's USB-Serial-JTAG or the OTG controller | [md](autodocs/usbport.md) · [doc](autodocs/usbport.doc) |
 | dma.resource | the chip's DMA engines, their channels one owner each | [md](autodocs/dma.md) · [doc](autodocs/dma.doc) |
-| jpeg.resource | the ESP32-P4's JPEG codec: a file decoded into pixels | [md](autodocs/jpeg.md) · [doc](autodocs/jpeg.doc) |
+| jpeg.resource | the chip's JPEG codec - the ESP32-P4's, the VisionFive 2's CODAJ12: a file decoded into pixels | [md](autodocs/jpeg.md) · [doc](autodocs/jpeg.doc) |
+| videodec.resource | the chip's video decoder - the VisionFive 2's WAVE511: H.264 and H.265 fed a picture at a time, the frames handed out in the order they are shown | [md](autodocs/videodec.md) · [doc](autodocs/videodec.doc) |
 | expander.resource | the board's IO expander: the pins the panel, the touch controller and the card hang on, the backlight, an analogue input | [md](autodocs/expander.md) · [doc](autodocs/expander.doc) |
 | battery.resource | the board's battery: whether a cell is there, its voltage and charge, external power and charging, a signal when that changes | [md](autodocs/battery.md) · [doc](autodocs/battery.doc) |
 | battclock.resource | the date kept while the system is off or restarts: the board's clock chip, else the chip's RTC timer; the system time set from it at the boot | [md](autodocs/battclock.md) · [doc](autodocs/battclock.doc) |

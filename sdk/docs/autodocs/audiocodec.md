@@ -392,15 +392,19 @@ fn IdentifyAudio(base: *AudioCodecBase, bytes: [*]const u8, length: u32) u32
 
 **RESULT**
 
-ACODEC_WAV, ACODEC_MP3, ACODEC_FLAC, ACODEC_VORBIS, or ACODEC_UNKNOWN.
+ACODEC_WAV, ACODEC_MP3, ACODEC_FLAC, ACODEC_VORBIS, ACODEC_AAC (SINCE
+1.6), or ACODEC_UNKNOWN.
 
 **BEHAVIOR**
 
 A RIFF header naming WAVE is a WAV. "fLaC" is a FLAC, alone or behind
 an ID3v2 tag that ends among the bytes given. An Ogg page whose first
 packet is Vorbis's header is ACODEC_VORBIS, FLAC's is ACODEC_FLAC (and
-refused when it is opened); another, such as Opus, is unknown. Any
-other ID3v2 tag is an MP3, and so are
+refused when it is opened); another, such as Opus, is unknown. An MP4
+- its first box an `ftyp` - is ACODEC_AAC, as is an ADTS header the
+next one agrees with, alone or behind an ID3v2 tag; an MP4 whose sound
+is not AAC is refused when it is opened. Any other ID3v2 tag is an
+MP3, and so are
 MPEG audio frames: a header that can be, followed by others at the
 distances it gives - one header-like run of bytes alone is not enough.
 An MP3 of layer I or II is identified as one, and refused when it is
@@ -453,9 +457,11 @@ fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, err: 
 
 - `tags`: where the bytes come from - one of `ACA_Name` (a file to
   open), `ACA_FileHandle` (a file the program has open, read from where
-  it is) or `ACA_ReadFunc` with `ACA_ReadData` (the program's own
-  function) - and `ACA_Codec`, the kind, when the program knows it;
-  `ACA_KeepPicture` keeps the picture the tags hold (SINCE 1.1).
+  it is), `ACA_ReadFunc` with `ACA_ReadData` (the program's own
+  function) or `ACA_Media` (a file media.library has open, SINCE 1.6)
+  - and `ACA_Codec`, the kind, when the program knows it;
+  `ACA_KeepPicture` keeps the picture the tags hold (SINCE 1.1);
+  `ACA_MediaTrack` picks an MP4's track (SINCE 1.6).
 - `err`: where to say why it failed (ACERR_*), or null.
 
 **RESULT**
@@ -469,8 +475,10 @@ finds the kind by the first bytes (as `IdentifyAudio`) unless
 `ACA_Codec` says. Then the kind's header is read: a WAV's chunks up to
 its data, an MP3's tags in front of the sound and its first frame -
 with what its encoder wrote about the rest, when it did - a FLAC's
-metadata blocks, an Ogg Vorbis stream's three header packets; and the
-stream's info is filled in. A read function is asked for the header's
+metadata blocks, an Ogg Vorbis stream's three header packets, an AAC
+stream's first ADTS frame - or an MP4's index, read by media.library
+(SINCE 1.6), which the stream then reads its track's packets from;
+and the stream's info is filled in. A read function is asked for the header's
 bytes and `AUDIO_READ_AHEAD` more at most. An Ogg Vorbis file's last
 page is looked for at its end, for its length. A file's end is looked
 at first: tags there (ID3v1, APE) are not read as sound, and an ID3v1

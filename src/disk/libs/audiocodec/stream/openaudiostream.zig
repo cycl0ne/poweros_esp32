@@ -14,6 +14,7 @@ const wav = @import("../wav/_wav.zig");
 const mp3 = @import("../mp3/_mp3.zig");
 const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
+const aac = @import("../aac/_aac.zig");
 
 /// Opens a stream on sound.
 ///
@@ -27,9 +28,11 @@ const vorbis = @import("../vorbis/_vorbis.zig");
 /// INPUTS:
 /// - `tags`: where the bytes come from - one of `ACA_Name` (a file to
 ///   open), `ACA_FileHandle` (a file the program has open, read from where
-///   it is) or `ACA_ReadFunc` with `ACA_ReadData` (the program's own
-///   function) - and `ACA_Codec`, the kind, when the program knows it;
-///   `ACA_KeepPicture` keeps the picture the tags hold (SINCE 1.1).
+///   it is), `ACA_ReadFunc` with `ACA_ReadData` (the program's own
+///   function) or `ACA_Media` (a file media.library has open, SINCE 1.6)
+///   - and `ACA_Codec`, the kind, when the program knows it;
+///   `ACA_KeepPicture` keeps the picture the tags hold (SINCE 1.1);
+///   `ACA_MediaTrack` picks an MP4's track (SINCE 1.6).
 /// - `err`: where to say why it failed (ACERR_*), or null.
 ///
 /// RESULT:
@@ -41,8 +44,10 @@ const vorbis = @import("../vorbis/_vorbis.zig");
 /// `ACA_Codec` says. Then the kind's header is read: a WAV's chunks up to
 /// its data, an MP3's tags in front of the sound and its first frame -
 /// with what its encoder wrote about the rest, when it did - a FLAC's
-/// metadata blocks, an Ogg Vorbis stream's three header packets; and the
-/// stream's info is filled in. A read function is asked for the header's
+/// metadata blocks, an Ogg Vorbis stream's three header packets, an AAC
+/// stream's first ADTS frame - or an MP4's index, read by media.library
+/// (SINCE 1.6), which the stream then reads its track's packets from;
+/// and the stream's info is filled in. A read function is asked for the header's
 /// bytes and `AUDIO_READ_AHEAD` more at most. An Ogg Vorbis file's last
 /// page is looked for at its end, for its length. A file's end is looked
 /// at first: tags there (ID3v1, APE) are not read as sound, and an ID3v1
@@ -104,6 +109,8 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
     const read_data: ?*anyopaque = @ptrFromInt(ub.GetTagData(ac.ACA_ReadData, 0, tags));
     const hint: u32 = @truncate(ub.GetTagData(ac.ACA_Codec, ac.ACODEC_UNKNOWN, tags));
     const keep_picture = ub.GetTagData(ac.ACA_KeepPicture, 0, tags) != 0;
+    const media_file: ?*sdk.media.MediaFile = @ptrFromInt(ub.GetTagData(ac.ACA_Media, 0, tags));
+    const track: u32 = @truncate(ub.GetTagData(ac.ACA_MediaTrack, ~@as(u32, 0), tags));
 
     // Cleared: every field of a stream starts at zero.
     const memory = sys.AllocVec(@sizeOf(Stream), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(err, ac.ACERR_NOMEMORY);
@@ -126,11 +133,22 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
     } else if (read_fn) |read| {
         stream.read_fn = read;
         stream.read_data = read_data;
+    } else if (media_file) |file| {
+        // A track of a file media.library has open: no bytes of its own.
+        const result = aac.openMedia(stream, file, track);
+        if (result != ac.ACERR_OK) {
+            _stream.destroy(stream);
+            return failed(err, result);
+        }
+        _stream.nameInfo(stream);
+        if (err) |out| out.* = ac.ACERR_OK;
+        return _stream.publicOf(stream);
     } else {
         sys.FreeVec(memory);
         return failed(err, ac.ACERR_OPEN);
     }
     stream.info.seekable = @intFromBool(stream.file != null);
+    stream.media_track = track;
 
     _stream.fill(stream);
     const codec = if (hint != ac.ACODEC_UNKNOWN) hint else _identify.identify(_stream.available(stream));
@@ -139,6 +157,7 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
         ac.ACODEC_MP3 => mp3.open(stream),
         ac.ACODEC_FLAC => flac.open(stream),
         ac.ACODEC_VORBIS => vorbis.open(stream),
+        ac.ACODEC_AAC => aac.open(stream),
         else => if (stream.failed) ac.ACERR_READ else ac.ACERR_UNKNOWN,
     };
     if (result != ac.ACERR_OK) {

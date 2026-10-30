@@ -1,0 +1,692 @@
+# videocodec.library
+
+videocodec.library's functions: a film opened, its pictures handed out
+as frames in the order they are shown and its sound as 16-bit samples,
+each by a task of its own if need be. Open it with
+OpenLibrary("videocodec.library", 1); the structures are in
+sdk.videocodec.
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [CloseVideoStream](#closevideostream) - Closes a stream.
+- [DecodeVideoFrame](#decodevideoframe) - Hands out the next frame in the order frames are shown.
+- [DecodeVideoSound](#decodevideosound) - Hands out the film's sound as 16-bit samples, as DecodeAudio does.
+- [GetVideoStreamAttrs](#getvideostreamattrs) - Answers media.library's tags for a film: its names, its cover, its chapters.
+- [GetVideoStreamInfo](#getvideostreaminfo) - Says what a film is: its pictures, its length, its sound, its title.
+- [IdentifyVideo](#identifyvideo) - Says what codec the pictures of a film are in, by the first bytes of its file.
+- [OpenVideoStream](#openvideostream) - Opens a film and finds a decoder for its pictures and one for its sound.
+- [ReleaseVideoFrame](#releasevideoframe) - Gives a frame DecodeVideoFrame handed out back to the decoder.
+- [SeekVideo](#seekvideo) - Moves a film's pictures to the key frame at or before a time, and its sound to that frame's time.
+- [VideoErrorText](#videoerrortext) - Says what an error code means, in words.
+
+## CloseVideoStream
+
+Closes a stream.
+
+**SYNOPSIS**
+
+```zig
+fn CloseVideoStream(base: *VideoCodecBase, stream: ?*vc.VideoStream) void
+```
+
+**SINCE**
+
+1.0. LVO -24.
+
+**INPUTS**
+
+- `stream`: what OpenVideoStream made, or null.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The sound's stream is closed, the decoder of the pictures with every
+frame still lent, the film - and the file, when the stream opened it
+(VCA_Name) - and the libraries the stream opened.
+
+**CONTEXT**
+
+- Waits: yes, on the file and the chip.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a process when it closes a file it opened.
+
+**OWNERSHIP**
+
+The stream is gone after the call, and every frame it lent with it:
+none may be shown after. Neither half may be being decoded while it
+closes. A handle the program gave (VCA_FileHandle) is still the
+program's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenVideoStream`
+
+**EXAMPLES**
+
+```zig
+vcb.CloseVideoStream(film);
+```
+
+## DecodeVideoFrame
+
+Hands out the next frame in the order frames are shown.
+
+**SYNOPSIS**
+
+```zig
+fn DecodeVideoFrame(base: *VideoCodecBase, stream: *vc.VideoStream, frame: *vc.VideoFrame) i32
+```
+
+**SINCE**
+
+1.0. LVO -32.
+
+**INPUTS**
+
+- `stream`: what OpenVideoStream made.
+- `frame`: where the frame goes.
+
+**RESULT**
+
+VCERR_OK and the frame in `frame`; VCERR_END when every frame has been
+handed out; VCERR_BUSY with VIDEO_HELD_FRAMES frames held; VCERR_CORRUPT
+for a picture the decoder stopped on - called again, it goes on with
+the next; VCERR_UNSUPPORTED, VCERR_READ, VCERR_NOMEMORY.
+
+**BEHAVIOR**
+
+The picture track's packets are decoded until the next frame comes
+out: the chip's decoder fed them a picture at a time - turned into the
+form it takes, the parameter sets in front of each key picture - and
+asked for its frames, which it hands out in the order they are shown;
+a Motion JPEG picture unpacked into its planes. A frame due before
+what the film presents, or before the key frame a seek landed on, is
+passed over. At the end of the track the chip's decoder hands out the
+frames it still holds back, and then VCERR_END. The frame's `time` is
+when it is due, and `number` counts the frames handed out since the
+stream was opened or moved.
+
+**CONTEXT**
+
+- Waits: yes, on the file and the chip.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a process for a file; a task will do with VCA_ReadFunc.
+
+**OWNERSHIP**
+
+The frame's planes are the decoder's, lent until ReleaseVideoFrame
+gives them back; they do not change while lent. The pictures are
+decoded by one task at a time, which may be another than the one that
+decodes the sound.
+
+**NOTES**
+
+The chip decodes 1080p H.264 at about 150 frames a second. Motion JPEG
+is decoded on the calling task, about a second for a 1080p picture on
+the VisionFive 2: for small pictures.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseVideoFrame`, `SeekVideo`, graphics' `WriteYUVPixelArray`
+
+**EXAMPLES**
+
+```zig
+var frame: vc.VideoFrame = .{};
+while (vcb.DecodeVideoFrame(film, &frame) == vc.VCERR_OK) {
+    waitUntil(frame.time);
+    _ = gfx.WriteYUVPixelArray(rp, &frame.picture, 0, 0, &.{ .x = 0, .y = 0, .w = frame.width, .h = frame.height });
+    vcb.ReleaseVideoFrame(film, &frame);
+}
+```
+
+## DecodeVideoSound
+
+Hands out the film's sound as 16-bit samples, as DecodeAudio does.
+
+**SYNOPSIS**
+
+```zig
+fn DecodeVideoSound(base: *VideoCodecBase, stream: *vc.VideoStream, buffer: [*]i16, frames: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -40.
+
+**INPUTS**
+
+- `stream`: what OpenVideoStream made.
+- `buffer`: room for `frames` frames: `frames` times the channels the
+  info gives, 16-bit samples, the channels interleaved.
+- `frames`: how many frames are wanted.
+
+**RESULT**
+
+How many frames it put there - as many as asked until the end - 0 at
+the end of the sound, or below 0: VCERR_NOSOUND for a film without
+sound, VCERR_CORRUPT, VCERR_READ, VCERR_NOMEMORY.
+
+**BEHAVIOR**
+
+audiocodec.library's stream on the film's sound track decodes it: the
+samples are those DecodeAudio hands out, at the rate and in the
+channels GetVideoStreamInfo says, the encoder's priming left out, so
+the first frame is the one at the start of what the film presents.
+
+**CONTEXT**
+
+- Waits: yes, on the file.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a process: the file is read.
+
+**OWNERSHIP**
+
+`buffer` is the caller's. The sound is decoded by one task at a time,
+which may be another than the one that decodes the pictures, at the
+same time.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DecodeVideoFrame`, `SeekVideo`, audiocodec's `DecodeAudio`
+
+**EXAMPLES**
+
+```zig
+var samples: [2048 * 2]i16 = undefined;
+const got = vcb.DecodeVideoSound(film, &samples, 2048);
+```
+
+## GetVideoStreamAttrs
+
+Answers media.library's tags for a film: its names, its cover, its chapters.
+
+**SYNOPSIS**
+
+```zig
+fn GetVideoStreamAttrs(base: *VideoCodecBase, stream: *vc.VideoStream, tags: ?[*]const utility.TagItem) u32
+```
+
+**SINCE**
+
+1.0. LVO -56.
+
+**INPUTS**
+
+- `stream`: what OpenVideoStream made.
+- `tags`: media.library's `MDA_*` tags, each with where its answer
+  goes.
+
+**RESULT**
+
+How many of the tags were answered.
+
+**BEHAVIOR**
+
+They are media.library's GetMediaAttrs on the film, as it is: the
+title, the artist and the rest at full length, the year, the chapters.
+A cover is not kept: `MDA_Picture` answers null.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a task will do.
+
+**OWNERSHIP**
+
+Texts and the chapters are the film's, good until the stream is
+closed.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetVideoStreamInfo`, media.library's `GetMediaAttrs`
+
+**EXAMPLES**
+
+```zig
+var chapters: u32 = 0;
+_ = vcb.GetVideoStreamAttrs(film, &[_]utility.TagItem{
+    .{ .tag = media.MDA_Chapters, .data = @intFromPtr(&chapters) },
+    .{},
+});
+```
+
+## GetVideoStreamInfo
+
+Says what a film is: its pictures, its length, its sound, its title.
+
+**SYNOPSIS**
+
+```zig
+fn GetVideoStreamInfo(base: *VideoCodecBase, stream: *vc.VideoStream, info: *vc.VideoStreamInfo) void
+```
+
+**SINCE**
+
+1.0. LVO -28.
+
+**INPUTS**
+
+- `stream`: what OpenVideoStream made.
+- `info`: where it goes.
+
+**RESULT**
+
+None; `info` is filled in.
+
+**BEHAVIOR**
+
+The pictures' codec and size and the number of them come from the
+film's index; their rate from it too - the frames a second on average,
+to a thousandth - or else from the stream, once the chip's decoder has
+read it. Where the chip's decoder has read the stream, its size as
+shown - cropped - is the one given. The length is the picture track's,
+or the film's. The sound is audiocodec's stream on the film's sound
+track: its codec, rate and channels, as DecodeVideoSound hands it out.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a task will do.
+
+**OWNERSHIP**
+
+`info` is the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenVideoStream`, `GetVideoStreamAttrs`
+
+**EXAMPLES**
+
+```zig
+var info: vc.VideoStreamInfo = .{};
+vcb.GetVideoStreamInfo(film, &info);
+```
+
+## IdentifyVideo
+
+Says what codec the pictures of a film are in, by the first bytes of its file.
+
+**SYNOPSIS**
+
+```zig
+fn IdentifyVideo(base: *VideoCodecBase, bytes: [*]const u8, length: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -48.
+
+**INPUTS**
+
+- `bytes`, `length`: the file's first bytes - VIDEO_IDENTIFY_BYTES
+  are best.
+
+**RESULT**
+
+The codec of its first track of pictures, VCODEC_*; VCODEC_UNKNOWN when
+the bytes do not show it.
+
+**BEHAVIOR**
+
+The bytes are read as an MP4 - media.library's kind - box by box, to
+its index (`moov`) and in it the first track of pictures, whose first
+sample entry names the codec. An MP4 whose index lies behind the bytes
+given - at its end, as a film written in one go has it - shows
+nothing: VCODEC_UNKNOWN, though OpenVideoStream reads its index
+wherever it is. media.library's IdentifyMedia says whether the bytes
+begin a film at all.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes.
+- Locks: none.
+- Process: a task will do.
+
+**OWNERSHIP**
+
+The bytes are the caller's, only read.
+
+**NOTES**
+
+A codec it names may still be one nothing here decodes: VCODEC_MPEG4V
+always, H.264 and H.265 without the chip's decoder.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenVideoStream`, media.library's `IdentifyMedia`
+
+**EXAMPLES**
+
+```zig
+const got = dl.Read(fh, &head, head.len);
+if (got > 0 and vcb.IdentifyVideo(&head, @intCast(got)) == vc.VCODEC_H264) {
+    // a film for the chip
+}
+```
+
+## OpenVideoStream
+
+Opens a film and finds a decoder for its pictures and one for its sound.
+
+**SYNOPSIS**
+
+```zig
+fn OpenVideoStream(base: *VideoCodecBase, tags: ?[*]const utility.TagItem, err: ?*i32) ?*vc.VideoStream
+```
+
+**SINCE**
+
+1.0. LVO -20.
+
+**INPUTS**
+
+- `tags`: where the bytes come from - one of `VCA_Name` (a file to
+  open), `VCA_FileHandle` (a file the program has open, the film
+  beginning where it is) or `VCA_ReadFunc` with `VCA_ReadData` (a
+  function of the program's) - and `VCA_Sound` FALSE for the pictures
+  alone.
+- `err`: where why it failed goes (VCERR_*), or null.
+
+**RESULT**
+
+The stream, or null - and `err` says why: VCERR_OPEN without a source,
+when the file would not open or media.library could not be;
+VCERR_UNKNOWN for bytes that are not a container media.library knows,
+or a film with no pictures; VCERR_NOCODEC when nothing here decodes
+its pictures; VCERR_BUSY when the chip's decoders are all in use;
+VCERR_UNSUPPORTED, VCERR_READ, VCERR_CORRUPT, VCERR_NOMEMORY.
+
+**BEHAVIOR**
+
+The film is opened with media.library, which finds out what it is and
+reads its index. Its first track of pictures is taken: H.264 and H.265
+go to the chip's decoder (videodec.resource), which is opened for the
+stream and reads the track's parameter sets; Motion JPEG to the
+library's own. Its first track of sound is opened with
+audiocodec.library 1.6 or later, on the same file (`ACA_Media`), unless
+`VCA_Sound` is FALSE or the film is read through a function. A sound
+track nothing decodes leaves the film without sound - `sound_codec` 0
+in the info - rather than unopened. The first frame and the first
+samples are those at the start of what the film presents.
+
+**CONTEXT**
+
+- Waits: yes, on the file and the chip.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a process: the file is read, and the chip's decoder reads
+  its firmware's file.
+
+**OWNERSHIP**
+
+The stream is the caller's, given back with `CloseVideoStream`. A file
+opened with VCA_Name is closed with it; a handle given with
+VCA_FileHandle stays the program's, and must stay open until then.
+
+**NOTES**
+
+It takes the film's index in memory (media.library's), the chip's
+stream buffer of 2 MiB or four of the largest packets, and audiocodec's
+stream; Motion JPEG takes a frame's planes for each frame lent.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CloseVideoStream`, `GetVideoStreamInfo`, `DecodeVideoFrame`,
+`DecodeVideoSound`, `IdentifyVideo`
+
+**EXAMPLES**
+
+```zig
+var err: i32 = 0;
+const film = vcb.OpenVideoStream(&[_]utility.TagItem{
+    .{ .tag = vc.VCA_Name, .data = @intFromPtr("SD0:Films/trip.mp4") },
+    .{},
+}, &err) orelse {
+    _ = Printf(dl, "%s\n", .{vcb.VideoErrorText(err)});
+    return;
+};
+defer vcb.CloseVideoStream(film);
+```
+
+## ReleaseVideoFrame
+
+Gives a frame DecodeVideoFrame handed out back to the decoder.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseVideoFrame(base: *VideoCodecBase, stream: *vc.VideoStream, frame: *vc.VideoFrame) void
+```
+
+**SINCE**
+
+1.0. LVO -36.
+
+**INPUTS**
+
+- `stream`: what OpenVideoStream made.
+- `frame`: a frame it handed out and not yet taken back.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The frame's buffer goes back to the decoder, which decodes into it
+again, and `frame` is cleared. A frame that is not one the stream has
+lent - given back already, or cleared - is passed by.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a task will do.
+
+**OWNERSHIP**
+
+The planes are the decoder's again after the call; the frame may not
+be shown after. Frames may be given back in any order, by the task
+that decodes the pictures.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DecodeVideoFrame`
+
+**EXAMPLES**
+
+```zig
+vcb.ReleaseVideoFrame(film, &frame);
+```
+
+## SeekVideo
+
+Moves a film's pictures to the key frame at or before a time, and its sound to that frame's time.
+
+**SYNOPSIS**
+
+```zig
+fn SeekVideo(base: *VideoCodecBase, stream: *vc.VideoStream, time: i64) i64
+```
+
+**SINCE**
+
+1.0. LVO -44.
+
+**INPUTS**
+
+- `stream`: what OpenVideoStream made.
+- `time`: where to, in microseconds from the start of what the film
+  presents.
+
+**RESULT**
+
+The time of the key frame it moved to, 0 or more; below 0 a VCERR_*:
+VCERR_NOSEEK for a film read through VCA_ReadFunc, VCERR_READ,
+VCERR_CORRUPT.
+
+**BEHAVIOR**
+
+The picture track is moved to the key frame at or before `time` - the
+first, before the first - where a decoder can start; the chip's
+decoder drops what it was fed and not yet shown. The next frame
+DecodeVideoFrame hands out is that key frame, `number` 0: frames due
+before it are passed over. The sound is moved to the key frame's time,
+so the next samples DecodeVideoSound hands out go with it.
+
+**CONTEXT**
+
+- Waits: yes, on the file - and for a piece of sound being decoded by
+  another task to be done.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a process: the file is read.
+
+**OWNERSHIP**
+
+Called by the task that decodes the pictures. The frames lent stay
+lent, and are given back as before.
+
+**NOTES**
+
+A film's key frames are often seconds apart; a program that wants a
+later frame decodes on to it, and shows from there.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DecodeVideoFrame`, `DecodeVideoSound`
+
+**EXAMPLES**
+
+```zig
+const landed = vcb.SeekVideo(film, 60 * 1_000_000);
+if (landed >= 0) clock.restartAt(landed);
+```
+
+## VideoErrorText
+
+Says what an error code means, in words.
+
+**SYNOPSIS**
+
+```zig
+fn VideoErrorText(base: *VideoCodecBase, code: i32) [*:0]const u8
+```
+
+**SINCE**
+
+1.0. LVO -52.
+
+**INPUTS**
+
+- `code`: a VCERR_* code.
+
+**RESULT**
+
+A sentence fragment, lower case, no full stop: "nothing here decodes
+its pictures".
+
+**BEHAVIOR**
+
+A code it does not know is "unknown error".
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes.
+- Locks: none.
+- Process: a task will do.
+
+**OWNERSHIP**
+
+The text is the library's, and does not change.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenVideoStream`, `DecodeVideoFrame`
+
+**EXAMPLES**
+
+```zig
+_ = Printf(dl, "%s\n", .{vcb.VideoErrorText(err)});
+```

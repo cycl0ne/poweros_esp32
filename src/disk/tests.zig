@@ -90,6 +90,8 @@ test {
     _ = @import("libs/filter/tests/filter.zig");
     _ = @import("libs/icon/tests/icon.zig");
     _ = @import("libs/audiocodec/tests/audiocodec.zig");
+    _ = @import("libs/media/tests/media.zig");
+    _ = @import("libs/videocodec/tests/videocodec.zig");
     _ = @import("libs/anvil/tests/anvil.zig");
     _ = @import("libs/anvil/tests/app.zig");
     _ = @import("libs/anvil/tests/drop.zig");
@@ -173,8 +175,6 @@ test {
     _ = @import("classes/datatypes/ilbm/planes.zig");
     _ = @import("classes/datatypes/bmp/decode.zig");
     _ = @import("classes/datatypes/bmp/icon.zig");
-    _ = @import("classes/datatypes/jpeg/idct.zig");
-    _ = @import("classes/datatypes/jpeg/decode.zig");
     _ = @import("classes/datatypes/markdown/parse.zig");
     _ = @import("classes/datatypes/font/sheet.zig");
     _ = @import("classes/gadgets/tests/classes.zig");

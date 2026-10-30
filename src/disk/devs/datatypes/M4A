@@ -1,0 +1,1 @@
+NAME=M4A BASE=audiocodec GROUP=soun ID=M4A MASK=????ftyp PATTERN=#?.m4a TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Player

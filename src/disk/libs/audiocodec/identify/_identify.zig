@@ -1,22 +1,27 @@
 // SPDX-License-Identifier: MIT
 //! What some sound is, by its first bytes: a RIFF WAVE header; "fLaC",
 //! alone or behind an ID3v2 tag; an Ogg page whose first packet names
-//! Vorbis or FLAC; an ID3v2 tag in front of anything else, which only an
-//! MP3 has; or MPEG audio frames, one that can be followed by others that
-//! agree with it.
+//! Vorbis or FLAC; an MP4's `ftyp` box, for AAC; ADTS frames - an AAC
+//! header the next one agrees with - alone or behind an ID3v2 tag; an
+//! ID3v2 tag in front of anything else, which only an MP3 has; or MPEG
+//! audio frames, one that can be followed by others that agree with it.
 
 const sdk = @import("sdk");
 const ac = sdk.audiocodec;
 const _stream = @import("../stream/_stream.zig");
 const layer3 = @import("../mp3/layer3.zig");
+const aac_config = @import("../aac/config.zig");
 
 pub fn identify(bytes: []const u8) u32 {
     if (bytes.len >= 12 and _stream.same(bytes, "RIFF") and _stream.same(bytes[8..], "WAVE")) return ac.ACODEC_WAV;
     if (_stream.same(bytes, "fLaC")) return ac.ACODEC_FLAC;
     if (_stream.same(bytes, "OggS")) return oggKind(bytes);
+    if (bytes.len >= 8 and _stream.same(bytes[4..], "ftyp")) return ac.ACODEC_AAC;
+    if (adtsFrames(bytes)) return ac.ACODEC_AAC;
     if (bytes.len >= 10 and _stream.same(bytes, "ID3")) {
         const size = id3Size(bytes);
         if (bytes.len >= size + 4 and _stream.same(bytes[size..], "fLaC")) return ac.ACODEC_FLAC;
+        if (bytes.len > size and adtsFrames(bytes[size..])) return ac.ACODEC_AAC;
         return ac.ACODEC_MP3;
     }
     if (layer3.startsStream(bytes)) return ac.ACODEC_MP3;
@@ -33,6 +38,14 @@ fn oggKind(bytes: []const u8) u32 {
     if (first[0] == 1 and _stream.same(first[1..], "vorbis")) return ac.ACODEC_VORBIS;
     if (first[0] == 0x7F and _stream.same(first[1..], "FLAC")) return ac.ACODEC_FLAC;
     return ac.ACODEC_UNKNOWN;
+}
+
+/// An ADTS header at the front, and the next frame's agreeing with it -
+/// or the bytes given ending inside the frame.
+fn adtsFrames(bytes: []const u8) bool {
+    const h = aac_config.adts(bytes) orelse return false;
+    if (h.length + 7 > bytes.len) return h.length >= bytes.len;
+    return aac_config.adts(bytes[h.length..]) != null and aac_config.sameStream(bytes, bytes[h.length..]);
 }
 
 /// An ID3v2 tag's whole length: its header, its body, its footer.

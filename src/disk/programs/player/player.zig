@@ -1747,6 +1747,7 @@ const App = struct {
             ac.ACODEC_MP3 => "MP3",
             ac.ACODEC_FLAC => "FLAC",
             ac.ACODEC_VORBIS => "Vorbis",
+            ac.ACODEC_AAC => "AAC",
             else => app.text.get(.MSG_SOUND),
         };
         const sides = app.text.get(if (info.channels == 1) .MSG_MONO else .MSG_STEREO);

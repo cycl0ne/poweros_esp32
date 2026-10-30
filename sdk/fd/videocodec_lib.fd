@@ -1,0 +1,39 @@
+//! videocodec.library's functions: a film opened, its pictures handed out
+//! as frames in the order they are shown and its sound as 16-bit samples,
+//! each by a task of its own if need be. Open it with
+//! OpenLibrary("videocodec.library", 1); the structures are in
+//! sdk.videocodec.
+##include libs/videocodec/videocodec as videocodec
+##include libs/utility/utility as utility
+##basetype VideoCodecBase
+##name videocodec.library
+##bias 4
+##public
+/// A film opened from a name, a file handle or a read function, a decoder
+/// found for its pictures and its sound. Null, and why in `err`
+/// (VCERR_*), when it failed.
+?*videocodec.VideoStream OpenVideoStream(?[*]const utility.TagItem tags, ?*i32 err)
+/// The stream closed and freed, its decoders and the file it opened with
+/// it - and the frames still lent.
+void CloseVideoStream(?*videocodec.VideoStream stream)
+/// What the film is: its pictures, its length, its sound, its title.
+void GetVideoStreamInfo(*videocodec.VideoStream stream, *videocodec.VideoStreamInfo info)
+/// The next frame in the order frames are shown, into `frame`: 0,
+/// VCERR_END after the last, or a VCERR_*.
+i32 DecodeVideoFrame(*videocodec.VideoStream stream, *videocodec.VideoFrame frame)
+/// A frame DecodeVideoFrame handed out given back.
+void ReleaseVideoFrame(*videocodec.VideoStream stream, *videocodec.VideoFrame frame)
+/// Up to `frames` frames of the sound as 16-bit samples into `buffer`:
+/// how many, 0 at the end, or a VCERR_*.
+i32 DecodeVideoSound(*videocodec.VideoStream stream, [*]i16 buffer, u32 frames)
+/// Both halves moved to the key frame at or before `time` microseconds:
+/// its time, or a VCERR_* (below 0).
+i64 SeekVideo(*videocodec.VideoStream stream, i64 time)
+/// The codec (VCODEC_*) of the pictures the first bytes of a film show.
+u32 IdentifyVideo([*]const u8 bytes, u32 length)
+/// What an error code means, in words.
+[*:0]const u8 VideoErrorText(i32 code)
+/// The film's tags (media.library's MDA_*), each into where its data
+/// points: how many of them were answered.
+u32 GetVideoStreamAttrs(*videocodec.VideoStream stream, ?[*]const utility.TagItem tags)
+##end

@@ -976,6 +976,11 @@ pub fn build(b: *std.Build) void {
     raster_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("raster", raster_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = raster_mod })).step);
+    // The baseline JPEG decoder, jpeg.datatype's and videocodec.library's,
+    // tested on its own as well.
+    const jpegdecode_mod = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/jpeg/decode.zig"), .target = b.graph.host });
+    disk_test_mod.addImport("jpegdecode", jpegdecode_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = jpegdecode_mod })).step);
     disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);

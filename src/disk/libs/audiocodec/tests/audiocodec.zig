@@ -19,6 +19,16 @@
 //! frames as libvorbisfile decodes them; `mono.ogg` the same at 22.05 kHz
 //! in mono, 2250 frames, with no names. Their serials differ, so the two
 //! one after the other are a chain of two links.
+//!
+//! The AAC files are a second of a stereo signal - two gliding tones, high
+//! partials alike on both sides, a click in the middle, noise in the
+//! second half - coded by ffmpeg's encoder (AAC-LC; M/S, intensity
+//! stereo, PNS and TNS all on): `lossy.m4a` at 128 kbit/s and 44.1 kHz,
+//! its index in front, with iTunes's tags and a PNG cover; `low.aac` the
+//! first 0.6 s at 48 kHz in ADTS at 40 kbit/s; `mono.aac` the same second
+//! in mono at 22.05 kHz in ADTS. The `_ref.raw` files are ffmpeg's
+//! decoding of them: frames 0 and 21504 of lossy.m4a (the edit applied),
+//! 0 and 20480 of low.aac, 0 of mono.aac, 2048 each.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -29,6 +39,8 @@ const utility = sdk.utility;
 const host = @import("host_rom");
 const kexec = host.exec;
 const audiocodec_init = @import("../audiocodec_init.zig");
+const media_init = @import("../../media/media_init.zig");
+const media = sdk.media;
 
 const testing = std.testing;
 const DosBase = sdk.interface.dos.DosBase;
@@ -36,6 +48,11 @@ const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 
 test {
     _ = @import("../audiocodec_lvo.zig");
+    _ = @import("../aac/bits.zig");
+    _ = @import("../aac/huffman.zig");
+    _ = @import("../aac/ics.zig");
+    _ = @import("../aac/filterbank.zig");
+    _ = @import("../aac/config.zig");
 }
 
 const tone_mp3 = @embedFile("tone.mp3");
@@ -78,6 +95,7 @@ const Rig = struct {
     proc: dos.Process = .{},
     saved: ?*kexec.Task = null,
     library: *exec.Library = undefined,
+    media_library: *exec.Library = undefined,
     acb: *AudioCodecBase = undefined,
 
     fn init(rig: *Rig) !void {
@@ -100,6 +118,9 @@ const Rig = struct {
 
         const lib = kexec.InitResident(kexec.SysBase, &audiocodec_init.audiocodec_library_tag, null) orelse return error.NoLibrary;
         rig.library = @ptrCast(@alignCast(lib));
+        // media.library, which an MP4 is opened through.
+        const media_lib = kexec.InitResident(kexec.SysBase, &media_init.media_library_tag, null) orelse return error.NoLibrary;
+        rig.media_library = @ptrCast(@alignCast(media_lib));
         rig.acb = @ptrCast(rig.sysLib().OpenLibrary(ac.AUDIOCODECNAME, 1) orelse return error.NoBase);
     }
 
@@ -117,6 +138,8 @@ const Rig = struct {
         rig.sysLib().CloseLibrary(rig.acb.lib());
         _ = rig.sysLib().RemLibrary(rig.library);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, ac.AUDIOCODECNAME) == null);
+        _ = rig.sysLib().RemLibrary(rig.media_library);
+        try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, media.MEDIANAME) == null);
         Disk.disk.deinit();
         kexec.SysBase.cpu().this_task = rig.saved.?;
         try host.dos.testTearDown(rig.db);
@@ -1259,4 +1282,260 @@ test "a link cut short - no page ends it - ends where the next link begins" {
     try testing.expectEqual(@as(u32, 0), linkOf(acb, stream));
     try testing.expectEqual(@as(u32, 2250), try decodeAll(acb, stream, 1, 1999, &.{}));
     try testing.expectEqual(@as(u32, 1), linkOf(acb, stream));
+}
+
+// --- AAC --------------------------------------------------------------------------
+
+const lossy_m4a = @embedFile("lossy.m4a");
+const lossy_m4a_ref = @embedFile("lossy_ref.raw");
+const low_aac = @embedFile("low.aac");
+const low_aac_ref = @embedFile("low_ref.raw");
+const mono_aac = @embedFile("mono.aac");
+const mono_aac_ref = @embedFile("mono_ref.raw");
+const tail_m4a = @embedFile("../../media/tests/tail.m4a");
+
+/// Frames `count` long from frame `from` of `ours`, within a step of
+/// ffmpeg's frames from frame `at` of `reference`.
+fn expectNear(ours: []const i16, from: usize, reference: []const u8, at: usize, count: usize, channels: usize) !void {
+    const theirs: []align(1) const i16 = std.mem.bytesAsSlice(i16, reference);
+    for (0..count * channels) |i| {
+        const a: i32 = ours[from * channels + i];
+        const b: i32 = theirs[at * channels + i];
+        if (@abs(a - b) > 1) {
+            std.debug.print("sample {d}: {d}, ffmpeg {d}\n", .{ i, a, b });
+            return error.TestExpectedNear;
+        }
+    }
+}
+
+test "what AAC is, by its first bytes: an MP4, ADTS frames, ADTS behind an ID3v2 tag" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    try testing.expectEqual(ac.ACODEC_AAC, acb.IdentifyAudio(lossy_m4a, ac.AUDIO_IDENTIFY_BYTES));
+    try testing.expectEqual(ac.ACODEC_AAC, acb.IdentifyAudio(low_aac, ac.AUDIO_IDENTIFY_BYTES));
+    const t = &id3_tag;
+    t.* = .{ .version = 3 };
+    t.frame("TIT2", 0, "\x00Mono");
+    try testing.expectEqual(ac.ACODEC_AAC, acb.IdentifyAudio(t.finish(0, mono_aac[0..4096]).ptr, ac.AUDIO_IDENTIFY_BYTES));
+    // An MP3 is none.
+    try testing.expectEqual(ac.ACODEC_MP3, acb.IdentifyAudio(tone_mp3, ac.AUDIO_IDENTIFY_BYTES));
+}
+
+test "AAC in an MP4 by name: ffmpeg's samples to the exact length, the tags and the cover, exact seeks" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+
+    try rig.write("WORK:lossy.m4a", &.{lossy_m4a});
+    const stream = acb.OpenAudioStream(&[_]utility.TagItem{
+        .{ .tag = ac.ACA_Name, .data = @intFromPtr("WORK:lossy.m4a") },
+        .{ .tag = ac.ACA_KeepPicture, .data = 1 },
+        .{},
+    }, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    var info: ac.AudioStreamInfo = .{};
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_AAC, info.codec);
+    try testing.expectEqual(@as(u32, 44100), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 16), info.bits);
+    // The edit leaves out the encoder's 1024 frames of priming.
+    try testing.expectEqual(@as(u32, 44100), info.frames);
+    try testing.expectEqual(@as(u32, 1), info.seekable);
+    try testing.expect(info.bitrate > 100_000 and info.bitrate < 160_000);
+    try testing.expectEqualStrings("Lossy", textOf(&info.title));
+    try testing.expectEqualStrings("The Testers", textOf(&info.artist));
+    try testing.expectEqualStrings("Small Songs", textOf(&info.album));
+
+    var album_artist: [*:0]const u8 = "";
+    var composer: [*:0]const u8 = "";
+    var genre: [*:0]const u8 = "";
+    var comment: [*:0]const u8 = "";
+    var year: u32 = 0;
+    var track: u32 = 0;
+    var tracks: u32 = 0;
+    var cover: ?*const ac.AudioPicture = null;
+    try testing.expectEqual(@as(u32, 8), acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
+        .{ .tag = ac.ACA_AlbumArtist, .data = @intFromPtr(&album_artist) },
+        .{ .tag = ac.ACA_Composer, .data = @intFromPtr(&composer) },
+        .{ .tag = ac.ACA_Genre, .data = @intFromPtr(&genre) },
+        .{ .tag = ac.ACA_Comment, .data = @intFromPtr(&comment) },
+        .{ .tag = ac.ACA_Year, .data = @intFromPtr(&year) },
+        .{ .tag = ac.ACA_Track, .data = @intFromPtr(&track) },
+        .{ .tag = ac.ACA_Tracks, .data = @intFromPtr(&tracks) },
+        .{ .tag = ac.ACA_Picture, .data = @intFromPtr(&cover) },
+        .{},
+    }));
+    try testing.expectEqualStrings("Testers All", std.mem.span(album_artist));
+    try testing.expectEqualStrings("A. Writer", std.mem.span(composer));
+    try testing.expectEqualStrings("Test", std.mem.span(genre));
+    try testing.expectEqualStrings("made with ffmpeg", std.mem.span(comment));
+    try testing.expectEqual(@as(u32, 2026), year);
+    try testing.expectEqual(@as(u32, 4), track);
+    try testing.expectEqual(@as(u32, 9), tracks);
+    try testing.expectEqual(@as(u32, 160), cover.?.size);
+    try testing.expectEqualStrings("image/png", std.mem.sliceTo(&cover.?.mime, 0));
+    try testing.expect(std.mem.eql(u8, cover.?.data[0..4], "\x89PNG"));
+
+    // Straight through in small pieces: the start, and the click in the
+    // middle in short windows.
+    var straight: [44100 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 44100), try decodeAll(acb, stream, 2, 333, &straight));
+    try expectNear(&straight, 0, lossy_m4a_ref, 0, 2048, 2);
+    try expectNear(&straight, 21504, lossy_m4a_ref, 2048, 2048, 2);
+
+    // Back to the start: the start again, its noise too.
+    var some: [600 * 2]i16 = undefined;
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 0));
+    try testing.expectEqual(@as(i32, 600), acb.DecodeAudio(stream, &some, 600));
+    try testing.expectEqualSlices(i16, straight[0..1200], &some);
+    // Elsewhere the noise the encoder sent in bands (PNS) is drawn anew:
+    // the samples differ in those bands, but a seek lands on the very
+    // frame - nowhere near as far from it as from a frame to either side.
+    for ([_]u32{ 500, 1024, 10000, 22000, 33333 }) |frame| {
+        try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, frame));
+        try testing.expectEqual(@as(i32, 600), acb.DecodeAudio(stream, &some, 600));
+        const here = squaredDistance(&some, straight[frame * 2 ..][0..1200]);
+        for ([_]u32{ frame - 2, frame - 1, frame + 1, frame + 2 }) |other| {
+            try testing.expect(here * 4 < squaredDistance(&some, straight[other * 2 ..][0..1200]));
+        }
+    }
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 44000));
+    try testing.expectEqual(@as(i32, 100), acb.DecodeAudio(stream, &some, 600));
+    try testing.expectEqual(@as(i32, 0), acb.DecodeAudio(stream, &some, 600));
+}
+
+fn squaredDistance(a: []const i16, b: []const i16) u64 {
+    var sum: u64 = 0;
+    for (a, b) |x, y| {
+        const d: i64 = @as(i64, x) - y;
+        sum += @intCast(d * d);
+    }
+    return sum;
+}
+
+test "AAC in an MP4 through a read function; a track of a file media.library has open" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+    var head: [2048 * 2]i16 = undefined;
+
+    // Its index at the front: read straight through, never moved.
+    var memory: Memory = .{ .bytes = lossy_m4a, .piece = 777 };
+    const stream = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, 0), info.seekable);
+    try testing.expectEqual(@as(u32, 44100), info.frames);
+    try testing.expectEqual(@as(u32, 44100), try decodeAll(acb, stream, 2, 1999, &head));
+    try expectNear(&head, 0, lossy_m4a_ref, 0, 2048, 2);
+    try testing.expectEqual(ac.ACERR_NOSEEK, acb.SeekAudio(stream, 0));
+    acb.CloseAudioStream(stream);
+
+    // Its index behind the sound: only from a file.
+    memory = .{ .bytes = tail_m4a };
+    try testing.expect(openMemory(acb, &memory, &err) == null);
+    try testing.expectEqual(ac.ACERR_UNSUPPORTED, err);
+    try rig.write("WORK:tail.m4a", &.{tail_m4a});
+    const tail = openFile(acb, "WORK:tail.m4a", &err) orelse return error.NoStream;
+    acb.GetAudioStreamInfo(tail, &info);
+    try testing.expectEqual(@as(u32, 22050), info.rate);
+    try testing.expectEqual(@as(u32, 1), info.channels);
+    try testing.expectEqual(@as(u32, 4410), info.frames);
+    try testing.expectEqual(@as(u32, 4410), try decodeAll(acb, tail, 1, 1000, &.{}));
+    acb.CloseAudioStream(tail);
+
+    // A file the program has open with media.library: its sound decoded,
+    // the file still the program's after.
+    try rig.write("WORK:lossy.m4a", &.{lossy_m4a});
+    const mb: *sdk.interface.media.MediaBase = @ptrCast(rig.sysLib().OpenLibrary(media.MEDIANAME, 1) orelse return error.NoMedia);
+    defer rig.sysLib().CloseLibrary(mb.lib());
+    const film = mb.OpenMedia(&[_]utility.TagItem{
+        .{ .tag = media.MDA_Name, .data = @intFromPtr("WORK:lossy.m4a") },
+        .{},
+    }, &err) orelse return error.NoFile;
+    defer mb.CloseMedia(film);
+    const sound = acb.OpenAudioStream(&[_]utility.TagItem{
+        .{ .tag = ac.ACA_Media, .data = @intFromPtr(film) },
+        .{},
+    }, &err) orelse return error.NoStream;
+    acb.GetAudioStreamInfo(sound, &info);
+    try testing.expectEqual(ac.ACODEC_AAC, info.codec);
+    try testing.expectEqual(@as(u32, 1), info.seekable);
+    try testing.expectEqualStrings("Lossy", textOf(&info.title));
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(sound, 0));
+    try testing.expectEqual(@as(u32, 44100), try decodeAll(acb, sound, 2, 1000, &head));
+    try expectNear(&head, 0, lossy_m4a_ref, 0, 2048, 2);
+    acb.CloseAudioStream(sound);
+    var media_info: media.MediaInfo = .{};
+    mb.GetMediaInfo(film, &media_info);
+    try testing.expectEqual(@as(u32, 1), media_info.tracks);
+    try testing.expectEqual(media.MERR_OK, mb.SeekMedia(film, 0, 0));
+    var packet: media.MediaPacket = .{};
+    try testing.expectEqual(media.MERR_OK, mb.ReadMediaPacket(film, 0, &packet));
+
+    // A track that is none.
+    try testing.expect(acb.OpenAudioStream(&[_]utility.TagItem{
+        .{ .tag = ac.ACA_Media, .data = @intFromPtr(film) },
+        .{ .tag = ac.ACA_MediaTrack, .data = 5 },
+        .{},
+    }, &err) == null);
+    try testing.expectEqual(ac.ACERR_UNKNOWN, err);
+}
+
+test "ADTS: ffmpeg's samples, noise and intensity stereo at 48 kHz; mono behind a tag; a seek near the frame" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    try rig.write("WORK:low.aac", &.{low_aac});
+    const stream = openFile(acb, "WORK:low.aac", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_AAC, info.codec);
+    try testing.expectEqual(@as(u32, 48000), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 1), info.seekable);
+    // ADTS has no index: the length is the frames' bytes over the file's.
+    try testing.expect(info.frames > 28000 and info.frames < 33000);
+    // Every frame is handed out, the encoder's priming too, as ffmpeg
+    // does for ADTS.
+    var straight: [30720 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 30720), try decodeAll(acb, stream, 2, 1500, &straight));
+    try expectNear(&straight, 0, low_aac_ref, 0, 2048, 2);
+    try expectNear(&straight, 20480, low_aac_ref, 2048, 2048, 2);
+    // Back to the start: the start again. Elsewhere: near it, and on to
+    // the end.
+    var some: [1024 * 2]i16 = undefined;
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 0));
+    try testing.expectEqual(@as(i32, 1024), acb.DecodeAudio(stream, &some, 1024));
+    try testing.expectEqualSlices(i16, straight[0..2048], &some);
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 15000));
+    const rest = try decodeAll(acb, stream, 2, 1500, &.{});
+    try testing.expect(rest > 30720 - 15000 - 3 * 1024 and rest < 30720 - 15000 + 3 * 1024);
+
+    // Mono at 22.05 kHz behind an ID3v2 tag, through a read function.
+    const t = &id3_tag;
+    t.* = .{ .version = 3 };
+    t.frame("TIT2", 0, "\x00Mono");
+    var memory: Memory = .{ .bytes = t.finish(0, mono_aac), .piece = 1000 };
+    const mono = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(mono);
+    acb.GetAudioStreamInfo(mono, &info);
+    try testing.expectEqual(@as(u32, 22050), info.rate);
+    try testing.expectEqual(@as(u32, 1), info.channels);
+    try testing.expectEqual(@as(u32, 0), info.seekable);
+    try testing.expectEqualStrings("Mono", textOf(&info.title));
+    var head: [2048]i16 = undefined;
+    try testing.expectEqual(@as(u32, 23 * 1024), try decodeAll(acb, mono, 1, 700, &head));
+    try expectNear(&head, 0, mono_aac_ref, 0, 2048, 1);
 }
