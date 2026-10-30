@@ -38,18 +38,30 @@
 //! off also send the engine's ring pointers back to the rings' starts,
 //! where `setRunning` starts the rings afresh.
 //!
-//! **Checksums** are left to the stack, both ways, for now.
+//! **Checksums**: the MAC's checksum engine checks every received frame's
+//! IP header and its TCP or UDP checksum, and says what it found in the
+//! descriptor: a value of 2 or 3 is both right, for either IP (on a CM5,
+//! TCP over IPv4 and over IPv6 both read 2). It is off while every frame is
+//! passed: a frame with a wrong checksum is then for whoever asked to see
+//! it, and those bits of the descriptor mean something else. What is sent
+//! keeps the stack's checksums: the send side's engine (TXCOEN) is on for
+//! every frame or for none, and on the JH7110 the same kind of engine
+//! filled in some TCP segments wrongly.
 //!
-//! It keeps no state but where its registers are (`registers`). The values
+//! It keeps no state but where its registers are (`registers`) and whether
+//! the checksum engine is on (`checking`). The values
 //! follow Raspberry Pi's Linux (macb_main.c, raspberrypi_rp1_config) and
 //! its device tree for the CM5.
 
 const sdk = @import("sdk");
+const net = sdk.devices.network;
 const reg = sdk.hardware.mmio.reg;
 const systimer = sdk.hardware.systimer;
 
 /// Where the MAC's registers are; the device sets it from its port.
 pub var registers: usize = 0;
+/// Whether received frames' descriptors say what the checksum engine found.
+var checking: bool = false;
 
 fn at(offset: usize) *volatile u32 {
     return reg(registers + offset);
@@ -95,9 +107,9 @@ const ncr_thalt: u32 = 1 << 10;
 
 /// NCFGR: 100 Mbit/s, full duplex, every frame passed, multicast frames
 /// by their hash, frames up to 1536 bytes, 1000 Mbit/s, pause frames
-/// heeded, the checksum stripped from every received frame. MDC is the
-/// MAC's bus clock divided by 96: the RP1's clk_sys of 200 MHz makes it
-/// 2.1 MHz.
+/// heeded, the checksum stripped from every received frame, the checksum
+/// engine on for what comes in. MDC is the MAC's bus clock divided by 96:
+/// the RP1's clk_sys of 200 MHz makes it 2.1 MHz.
 const config_spd: u32 = 1 << 0;
 const config_fd: u32 = 1 << 1;
 const config_caf: u32 = 1 << 4;
@@ -108,6 +120,7 @@ const config_pae: u32 = 1 << 13;
 const config_drfcs: u32 = 1 << 17;
 const config_mdc_div96: u32 = 5 << 18;
 const config_dbw_shift = 21;
+const config_rx_checksum: u32 = 1 << 24;
 
 /// DCFG1: the bus's width as 1, 2 or 4 words of 32 bits, which NCFGR's
 /// DBW says as 0, 1 or 2.
@@ -182,12 +195,15 @@ pub const Descriptor = extern struct {
 };
 
 /// A receive descriptor's first word: filled, the ring's last. Its second:
-/// the frame's length, its first and last buffer.
+/// the frame's length, its first and last buffer, and with the checksum
+/// engine on, in bits 22 and 23, what it found: 2 and 3 are TCP and UDP
+/// packets whose checksums and IP header are right, so the higher bit says.
 const receive_used: u32 = 1 << 0;
 const receive_wrap: u32 = 1 << 1;
 const receive_length_mask: u32 = 0xFFF;
 const receive_sof: u32 = 1 << 14;
 const receive_eof: u32 = 1 << 15;
+const receive_checked: u32 = 1 << 23;
 /// A send descriptor's second word: the frame's length, its last buffer,
 /// what went wrong, the ring's last, sent.
 const send_length_mask: u32 = 0x3FFF;
@@ -232,7 +248,8 @@ pub fn reset() bool {
 
 /// After `reset`: the line RGMII and the management bus on; the MAC
 /// stripping checksums, neither receiving nor sending; the engine's bursts
-/// and the receive buffers' size, `receive_bytes`.
+/// and the receive buffers' size, `receive_bytes`. The checksum engine
+/// checks what comes in.
 pub fn setUp(receive_bytes: u32) void {
     const width = (at(dcfg1).* >> dcfg1_dbw_shift) & dcfg1_dbw_mask;
     const dbw: u32 = switch (width) {
@@ -240,13 +257,21 @@ pub fn setUp(receive_bytes: u32) void {
         2 => 1,
         else => 0,
     };
-    at(ncfgr).* = config_mdc_div96 | config_big | config_drfcs | dbw << config_dbw_shift;
+    at(ncfgr).* = config_mdc_div96 | config_big | config_drfcs | config_rx_checksum | dbw << config_dbw_shift;
+    checking = true;
     at(usrio).* = usrio_rgmii;
     at(amp).* = amp_pipes;
     at(intmod).* = moderation_both;
     at(dmacfg).* = dma_burst16 | dma_rx_buffer_all | dma_tx_buffer_all | dma_addr64 |
         (receive_bytes / dma_rx_size_unit) << dma_rx_size_shift;
     at(ncr).* = ncr_mpe;
+}
+
+/// The checksums the MAC's engine does, as Sana2DeviceQuery's `offload`
+/// says them: those of what comes in checked, IPv4's and IPv6's. Never
+/// those of what is sent (see the top).
+pub fn offload() u32 {
+    return net.S2OFFLOADF_RX_CHECKSUMS | net.S2OFFLOADF_RX_CHECKSUMS_IPV6;
 }
 
 /// The line's speed and duplex, as the PHY agreed them, with RE and TE off
@@ -273,11 +298,13 @@ pub fn setStation(address: *const [6]u8) void {
     at(sa1t).* = @as(u32, address[5]) << 8 | address[4];
 }
 
-/// Every frame passed, or every multicast frame as well as the station's
-/// and broadcasts - the whole hash matches - or only those.
+/// Every frame passed, the checksum engine off so that a wrong one is too,
+/// or every multicast frame as well as the station's and broadcasts - the
+/// whole hash matches - or only those.
 pub fn setFilter(promiscuous: bool, multicast: bool) void {
-    var config = at(ncfgr).* & ~(config_caf | config_mti);
-    if (promiscuous) config |= config_caf;
+    var config = at(ncfgr).* & ~(config_caf | config_mti | config_rx_checksum);
+    config |= if (promiscuous) config_caf else config_rx_checksum;
+    checking = !promiscuous;
     if (multicast) config |= config_mti;
     const hash: u32 = if (multicast) 0xFFFF_FFFF else 0;
     at(hrb).* = hash;
@@ -316,18 +343,22 @@ pub const Frame = struct {
     length: u32,
     /// Whether it came in whole, in the one buffer.
     good: bool,
-    /// The checksum engine is off: nothing has been checked.
-    checked: bool = false,
+    /// Whether the checksum engine checked its TCP or UDP checksum and its
+    /// IP header, and found them right.
+    checked: bool,
 };
 
-/// The frame in a receive descriptor, or null while the engine has it. One
-/// with a wrong checksum the MAC has dropped already.
+/// The frame in a receive descriptor, or null while the engine has it.
 pub fn received(descriptor: *const Descriptor, buffer_bytes: u32) ?Frame {
     if (descriptor.address & receive_used == 0) return null;
     const status = descriptor.control;
     const length = status & receive_length_mask;
     const whole = receive_sof | receive_eof;
-    return .{ .length = length, .good = status & whole == whole and length > 0 and length <= buffer_bytes };
+    return .{
+        .length = length,
+        .good = status & whole == whole and length > 0 and length <= buffer_bytes,
+        .checked = checking and status & receive_checked != 0,
+    };
 }
 
 /// A send descriptor handed to the engine with the frame of `length` bytes
