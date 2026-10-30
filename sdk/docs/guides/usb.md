@@ -744,7 +744,8 @@ usb-net,netdev=n1,id=un1` plug one in, `device_del un1` pulls it out.
 The virt machines' display steps (`virt-display`, `virt64-display` and
 their `ramfb` steps) plug a `usb-net` into the xHCI controller
 themselves, on the user network at 10.0.2.0/24: it is those machines'
-network.
+network. Every virt step plugs in QEMU's USB speaker, `speaker` in the
+monitor, on the backend `-Daudio` names ([sound guide](audio.md)).
 
 `-Dusb-disk=<image>` plugs in a stick whose blocks are a raw image file.
 The volume is in a partition table's first FAT partition, as a stick is
@@ -756,11 +757,11 @@ stick.img`, `echo 'start=2048, type=c' | sfdisk stick.img` and `mkfs.fat
 `drive_add 0 if=none,id=s2,format=raw,file=<image>` and
 `device_add usb-storage,drive=s2,id=stick2`.
 
-`./zig build virt` starts QEMU's RISC-V virt machine without a USB
-controller, so its bus does not start. A QEMU started with `-device
-qemu-xhci` has one, and `-device usb-kbd`, `-device usb-mouse` or a
-`usb-storage` device go on its bus; the machine's `USB AUTO` starts it at
-boot. QEMU puts a `usb-storage` on a USB 3 port, and the stick runs at
+`./zig build virt` starts QEMU's RISC-V virt machine with an xHCI
+controller and QEMU's USB speaker on it; the machine's `USB AUTO` starts
+the bus at boot. A QEMU started by hand with `-device qemu-xhci` has the
+controller as well, and `-device usb-kbd`, `-device usb-mouse` or a
+`usb-storage` device go on its bus. QEMU puts a `usb-storage` on a USB 3 port, and the stick runs at
 SuperSpeed; `-device qemu-xhci,p3=0` gives the controller USB 2 ports
 only, and it comes in at high speed. `-device usb-uas,id=uas -device
 scsi-hd,bus=uas.0,drive=d` is a disk over UAS, on streams at SuperSpeed
