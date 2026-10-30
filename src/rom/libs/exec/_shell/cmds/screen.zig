@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-//! screen [on|off|<percent>|ruler|rows [forget]|refresh [y rows]|reset|
-//! realign|shift <pixels>]: the display graphics.library brought up at
-//! cold start - its mode, backlight and the stream's counters - and the
-//! means to take it apart when the glass looks wrong. It reaches the board
+//! screen [on|off|<percent>|display on|off|mirror [x] [y]|ruler|
+//! rows [forget]|refresh [y rows]|reset|realign|shift <pixels>]: the
+//! display graphics.library brought up at cold start - its mode, backlight
+//! and the stream's counters - and the means to take it apart when the
+//! glass looks wrong. It reaches the board
 //! through rtg.library by the name graphics.library gave it, and owns
 //! nothing.
 
@@ -50,10 +51,14 @@ const Display = struct {
 };
 
 pub const name = "screen";
-pub const usage = "screen [on|off|<percent>|ruler|rows|refresh|reset|realign|shift <pixels>]";
+pub const usage = "screen [on|off|<percent>|display on|off|mirror [x] [y]|ruler|rows|refresh|reset|realign|shift <pixels>]";
 pub const help =
     \\  screen               the panel's mode, backlight and the stream's counters
-    \\  screen on|off|<percent>  the backlight, through expander.resource
+    \\  screen on|off|<percent>  the backlight, through expander.resource - or
+    \\                       a monitor's brightness, where it takes DDC/CI
+    \\  screen display on|off  the display itself: a monitor sent nothing sleeps
+    \\  screen mirror [x] [y]  the picture mirrored left to right, top to
+    \\                       bottom, or - with neither - as it is drawn
     \\  screen ruler         a scale across the glass, to measure where the picture starts
     \\  screen shift <pixels>  move the active area within the line
     \\  screen rows [forget] which rows have been handed on since the marks
@@ -97,6 +102,25 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
         return;
     }
     if (_shell.same(word, "rows")) return askedRows(shell, display, args);
+    if (_shell.same(word, "display")) {
+        const on = args.next() orelse return error.Usage;
+        if (!_shell.same(on, "on") and !_shell.same(on, "off")) return error.Usage;
+        if (rb.SetBoardDisplay(display.board, _shell.same(on, "on")) != rtg.errors.RTGERR_OK) shell.print("the board can't switch its display\n", .{});
+        return;
+    }
+    if (_shell.same(word, "mirror")) {
+        var x = false;
+        var y = false;
+        while (args.next()) |axis| {
+            if (_shell.same(axis, "x")) {
+                x = true;
+            } else if (_shell.same(axis, "y")) {
+                y = true;
+            } else return error.Usage;
+        }
+        if (rb.MirrorBoard(display.board, x, y) != rtg.errors.RTGERR_OK) shell.print("the board can't mirror its picture\n", .{});
+        return;
+    }
     if (_shell.same(word, "refresh")) return refresh(shell, display, args);
     var percent: u32 = 0;
     if (_shell.same(word, "on")) {
@@ -105,7 +129,7 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
         percent = _shell.parseNumber(word) orelse return error.Usage;
         if (percent > 100) return error.Usage;
     }
-    if (rb.SetBoardBrightness(display.board, percent) != rtg.errors.RTGERR_OK) shell.print("the expander does not answer\n", .{});
+    if (rb.SetBoardBrightness(display.board, percent) != rtg.errors.RTGERR_OK) shell.print("the backlight does not answer\n", .{});
 }
 
 /// The board graphics.library made, and the picture it shows. Null when

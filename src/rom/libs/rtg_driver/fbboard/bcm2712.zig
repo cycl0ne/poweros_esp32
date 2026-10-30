@@ -21,23 +21,31 @@
 //!
 //! **The display list** is in the HVS's own memory, 0x4000 into its
 //! registers, from word 32 on (the bootloader's are the 32 before): the
-//! picture as a plane, the cursor as a second plane laid over it, and
-//! the end. A plane is nine words at unity scale - its control word, its
-//! position, its alpha, its size, the context the HVS keeps, the
-//! picture's address in two words and its pitch, and a word past it -
-//! and each takes a piece of the HVS's prefetch memory (UPM) of its own.
-//! The list stays where it is once the display runs: showing another
-//! picture is its address rewritten in place, as Linux's asynchronous
-//! flip does it, and the cursor's place, image and size are its plane's
-//! words rewritten; a hidden cursor is a plane of alpha 0. So a picture
-//! and the cursor change from different tasks without a lock: they write
-//! different words.
+//! picture as a plane, the overlay - a dragged icon - as a second plane
+//! over it, the cursor as a third over both, and the end. A plane is nine
+//! words at unity scale - its control word, its position, its alpha, its
+//! size, the context the HVS keeps, the picture's address in two words
+//! and its pitch, and a word past it - and each takes a piece of the
+//! HVS's prefetch memory (UPM) of its own. The list stays where it is
+//! once the display runs: showing another picture is its address
+//! rewritten in place, as Linux's asynchronous flip does it, and an
+//! image's place and size are its plane's words rewritten; a hidden
+//! image is a plane of alpha 0. So a picture and the images change from
+//! different tasks without a lock: they write different words.
 //!
 //! The picture is XRGB8888, 32 bits a pixel, which is the library's
-//! bgra32, below 4 GiB and out of the caches; the cursor ARGB8888 with
-//! premultiplied alpha - clear where it is 0 - as the board's cursor
-//! buffers have it. The HVS's IOMMU is left off: it reads RAM at the
-//! ARM's addresses.
+//! bgra32, below 4 GiB and out of the caches; the cursor and the overlay
+//! ARGB8888 with premultiplied alpha - clear where it is 0 - as the
+//! board's image buffers have them. The HVS's IOMMU is left off: it reads
+//! RAM at the ARM's addresses.
+//!
+//! **Mirrored** (`mirror`), each plane is read backwards: a row from its
+//! right end with the position word's HFLIP, the rows from the bottom up
+//! with the first pointer word's VFLIP, the plane's address then the
+//! start of its last row (vc6_plane_mode_set). Which way the picture is
+//! turned is kept in its plane's words alone, so the cursor and the
+//! overlay are turned with it wherever they are written from: each is
+//! laid where the turned picture has its place, read backwards too.
 //!
 //! **What the monitor is sent** is eight bits a colour, so the TMDS clock
 //! is the pixel clock, up to 600 MHz (`sends`): 4K at 60 Hz. A monitor
@@ -50,6 +58,18 @@
 //! scrambled, the monitor told so through its SCDC - registers at
 //! address 0x54 on the DDC - and looked at again now and then (`tend`),
 //! since a monitor forgets it when it is switched off and on.
+//!
+//! **Dark** (`transmit`), the controller sends blank pixels without their
+//! syncs, which a monitor takes for no signal and sleeps at. Everything
+//! else runs on - the PHY, the valve with the frame interrupt, the HVS,
+//! the sound's FIFO - and the monitor wakes in the mode as it was once
+//! the syncs come back. (The PHY's lanes powered down, or held in reset,
+//! go on sending the picture.)
+//!
+//! **The monitor's brightness** is its own, asked over the DDC with VESA's
+//! DDC/CI (`feature`, `setFeature`): its MCCS control 0x10, which a
+//! monitor that takes DDC/CI at all has. One that does not answers
+//! nothing.
 //!
 //! **The sound** (`audioStart`) goes into the controller's MAI FIFO,
 //! which a DMA channel feeds IEC 958 subframes (rta-hdmi's
@@ -142,16 +162,24 @@ const W_POS2 = 3;
 const W_PTR0 = 5;
 const W_PTR1 = 6;
 const W_PTR2 = 7;
-/// The picture's plane first, the cursor's over it, then the end.
+/// The picture's plane first, the overlay's over it, the cursor's over
+/// both, then the end.
 const picture_plane = list_start;
-const cursor_plane = list_start + plane_words;
-const list_end = list_start + 2 * plane_words;
+const overlay_plane = list_start + plane_words;
+const cursor_plane = list_start + 2 * plane_words;
+const list_end = list_start + 3 * plane_words;
+/// A plane read backwards: each row (in its position word), and the rows
+/// (in its first pointer word).
+const POS0_HFLIP: u32 = 1 << 15;
+const PTR0_VFLIP: u32 = 1 << 31;
 
 /// The HVS's prefetch memory, in units of 256 bytes, two lines a plane:
-/// the picture's from 0 - room for a row of 4K - and the cursor's after.
+/// the picture's from 0 - room for a row of 4K - then the cursor's and
+/// the overlay's, each as a handle of its own.
 const UPM_UNIT = 256;
 const upm_picture: u32 = 0;
 const upm_cursor: u32 = 128;
+const upm_overlay: u32 = 136;
 
 /// Pixel valve 0: its control, its vertical control, the mode's timing,
 /// its interrupts, the pixel mux and the pipe's start.
@@ -267,6 +295,7 @@ const VID_UNDERFLOW_ENABLE: u32 = 1 << 30;
 const VID_FRAME_COUNTER_RESET: u32 = 1 << 29;
 const VID_VSYNC_LOW: u32 = 1 << 28;
 const VID_HSYNC_LOW: u32 = 1 << 27;
+const VID_CLRSYNC: u32 = 1 << 24;
 const VID_CLRRGB: u32 = 1 << 23;
 const VID_BLANKPIX: u32 = 1 << 18;
 const VID_BLANK_INSERT_EN: u32 = 1 << 16;
@@ -375,6 +404,23 @@ const COND_NOSTART: u32 = 1 << 5;
 const COND_RESTART: u32 = 1 << 6;
 const bsc_chunk = 32;
 const EDID_ADDRESS: u32 = 0x50;
+
+/// The monitor's own controls over the DDC (VESA's DDC/CI): its address,
+/// the host's in a message, the opcodes - a control asked for, its
+/// answer, a control set - and the address each checksum starts from,
+/// the monitor's when it is written to and the host's when it answers.
+/// The monitor wants 40 ms to answer and 50 ms after a control is set.
+const DDCCI_ADDRESS: u32 = 0x37;
+const DDCCI_HOST: u8 = 0x51;
+const DDCCI_GET: u8 = 0x01;
+const DDCCI_REPLY: u8 = 0x02;
+const DDCCI_SET: u8 = 0x03;
+const DDCCI_WRITTEN_SUM: u8 = 0x6E;
+const DDCCI_ANSWER_SUM: u8 = 0x50;
+const ddcci_answer_us = 40_000;
+const ddcci_set_us = 50_000;
+/// MCCS's control for the brightness: the luminance.
+pub const VCP_BRIGHTNESS: u8 = 0x10;
 
 /// How many times a wait reads its register before it gives up.
 const patience: u32 = 1_000_000;
@@ -625,6 +671,71 @@ fn scdcScrambling(on: bool, waiter: anytype) bool {
     return scdcWrite(SCDC_TMDS_CONFIG, if (on) config | both else config & ~both, waiter);
 }
 
+// --- the monitor's own controls (DDC/CI) -------------------------------------
+
+/// A control's value as the monitor answers it, and its largest.
+pub const Feature = struct { value: u16, most: u16 };
+
+/// What a message's checksum makes of `from` and its bytes: each XORed
+/// in.
+fn checksum(from: u8, bytes: []const u8) u8 {
+    var sum = from;
+    for (bytes) |byte| sum ^= byte;
+    return sum;
+}
+
+/// The message that asks for control `code`: from the host, two bytes
+/// long, the opcode and the control, and the checksum.
+pub fn askFor(code: u8) [5]u8 {
+    var message = [5]u8{ DDCCI_HOST, 0x80 | 2, DDCCI_GET, code, 0 };
+    message[4] = checksum(DDCCI_WRITTEN_SUM, message[0..4]);
+    return message;
+}
+
+/// The message that sets control `code` to `value`, high byte first.
+pub fn setTo(code: u8, value: u16) [7]u8 {
+    var message = [7]u8{ DDCCI_HOST, 0x80 | 4, DDCCI_SET, code, @truncate(value >> 8), @truncate(value), 0 };
+    message[6] = checksum(DDCCI_WRITTEN_SUM, message[0..6]);
+    return message;
+}
+
+/// The monitor's answer about control `code`: from the monitor, eight
+/// bytes long, a reply that it has the control, its largest value and
+/// its value, and a checksum that adds up. Null for anything else - a
+/// monitor that has not got the control, or was not ready.
+pub fn answerOf(answer: *const [11]u8, code: u8) ?Feature {
+    if (answer[0] != DDCCI_WRITTEN_SUM or answer[1] != 0x80 | 8) return null;
+    if (answer[2] != DDCCI_REPLY or answer[3] != 0 or answer[4] != code) return null;
+    if (checksum(DDCCI_ANSWER_SUM, answer[0..10]) != answer[10]) return null;
+    const most = @as(u16, answer[6]) << 8 | answer[7];
+    if (most == 0) return null;
+    return .{ .value = @as(u16, answer[8]) << 8 | answer[9], .most = most };
+}
+
+/// The monitor's control `code`, asked for over the DDC: null when it
+/// does not answer. Takes some 50 ms.
+pub fn feature(code: u8, waiter: anytype) ?Feature {
+    if (!on_bcm2712) return null;
+    at(DDC, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1;
+    if (!send(0, &askFor(code), waiter)) return null;
+    waiter.wait(ddcci_answer_us);
+    at(DDC, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1 | 1;
+    var answer: [11]u8 = undefined;
+    if (!receive(readCondition(true, true), &answer, waiter)) return null;
+    return answerOf(&answer, code);
+}
+
+/// The monitor's control `code` set to `value`, and the time it wants
+/// before it is spoken to again waited out: false when it did not take
+/// the message.
+pub fn setFeature(code: u8, value: u16, waiter: anytype) bool {
+    if (!on_bcm2712) return false;
+    at(DDC, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1;
+    const taken = send(0, &setTo(code, value), waiter);
+    waiter.wait(ddcci_set_us);
+    return taken;
+}
+
 // --- the PHY -----------------------------------------------------------------
 
 /// The port's fastest TMDS clock, in kHz, scrambled past 340 MHz
@@ -694,7 +805,8 @@ fn phyStart(tmds_hz: u64) void {
 /// A plane of its picture at `address`, `width` by `height` pixels at
 /// (x, y), rows `pitch` bytes apart, in the UPM from `upm` as handle
 /// `handle`: with alpha its pixels' own (the cursor's), or opaque (the
-/// picture's), and seen or not.
+/// picture's), and seen or not; each row read from its right end, the
+/// rows from the bottom up - `address` then the last row's.
 pub const Plane = struct {
     address: usize,
     pitch: u32,
@@ -706,6 +818,8 @@ pub const Plane = struct {
     handle: u32,
     alpha: bool = false,
     seen: bool = true,
+    hflip: bool = false,
+    vflip: bool = false,
 };
 
 /// The plane's nine words (vc6_plane_mode_set, vc6_plane_allocate_upm).
@@ -714,11 +828,11 @@ pub fn planeOf(plane: Plane) [plane_words]u32 {
     const ctl2 = if (plane.seen) CTL2_PREMULT | ALPHA_OPAQUE << CTL2_ALPHA_SHIFT else CTL2_PREMULT | CTL2_ALPHA_MIX;
     return .{
         CTL0_VALID | plane_words << CTL0_NEXT_SHIFT | mask | CTL0_UNITY | CTL0_ORDER_ARGB | PIXEL_FORMAT_RGBA8888,
-        (plane.y & 0x1FFF) << 16 | (plane.x & 0x1FFF),
+        (plane.y & 0x1FFF) << 16 | (if (plane.hflip) POS0_HFLIP else 0) | (plane.x & 0x1FFF),
         ctl2,
         (plane.height - 1) << 16 | (plane.width - 1),
         CONTEXT,
-        plane.upm << PTR0_UPM_BASE_SHIFT | plane.handle << PTR0_UPM_HANDLE_SHIFT | upper(plane.address),
+        (if (plane.vflip) PTR0_VFLIP else 0) | plane.upm << PTR0_UPM_BASE_SHIFT | plane.handle << PTR0_UPM_HANDLE_SHIFT | upper(plane.address),
         @truncate(plane.address),
         plane.pitch,
         CTL0_END,
@@ -742,30 +856,65 @@ fn writePlane(first: u32, plane: Plane) void {
     for (planeOf(plane), 0..) |value, i| word(first + @as(u32, @intCast(i))).* = value;
 }
 
-/// The cursor's plane - an image `side` pixels square at `address` with
-/// its top left at (left, top) - cut to a picture `width` by `height`:
-/// the part of the image on it, which the hot spot being on the picture
-/// makes at least a pixel.
-pub fn cursorPlaneOf(address: usize, side: u32, left: i32, top: i32, width: u32, height: u32, seen: bool) Plane {
-    const s: i32 = @intCast(side);
-    const from_x: u32 = @intCast(@max(0, -left));
-    const from_y: u32 = @intCast(@max(0, -top));
-    const x: u32 = @intCast(@max(0, left));
-    const y: u32 = @intCast(@max(0, top));
-    const right: u32 = @intCast(@min(@as(i32, @intCast(width)), left + s));
-    const bottom: u32 = @intCast(@min(@as(i32, @intCast(height)), top + s));
-    return .{
-        .address = address + @as(usize, from_y) * side * 4 + @as(usize, from_x) * 4,
-        .pitch = side * 4,
-        .x = x,
-        .y = y,
-        .width = @max(right -| x, 1),
-        .height = @max(bottom -| y, 1),
-        .upm = upm_cursor,
-        .handle = 1,
+/// How the picture is turned: mirrored left to right, top to bottom.
+pub const Turn = struct { x: bool = false, y: bool = false };
+
+/// An image laid over the picture - the cursor, the overlay: `width` by
+/// `height` pixels of ARGB at `address`, rows `pitch` bytes apart, with
+/// its piece of the UPM.
+pub const Image = struct {
+    address: usize,
+    pitch: u32,
+    width: u32,
+    height: u32,
+    upm: u32,
+    handle: u32,
+};
+
+/// The plane of `image`, its top left at (left, top) on a picture
+/// `width` by `height` that is turned `turn`: where the turned picture
+/// has it, cut to the glass, and read backwards where the picture is.
+/// An image wholly off the glass is a hidden pixel.
+pub fn imagePlaneOf(image: Image, left: i32, top: i32, width: u32, height: u32, turn: Turn, seen: bool) Plane {
+    const w: i32 = @intCast(image.width);
+    const h: i32 = @intCast(image.height);
+    const glass_w: i32 = @intCast(width);
+    const glass_h: i32 = @intCast(height);
+    // Its rectangle on the glass, and the part of that on it.
+    const box_x = if (turn.x) glass_w - left - w else left;
+    const box_y = if (turn.y) glass_h - top - h else top;
+    const x = @max(0, box_x);
+    const y = @max(0, box_y);
+    const right = @min(glass_w, box_x + w);
+    const bottom = @min(glass_h, box_y + h);
+    var plane: Plane = .{
+        .address = image.address,
+        .pitch = image.pitch,
+        .width = 1,
+        .height = 1,
+        .upm = image.upm,
+        .handle = image.handle,
         .alpha = true,
-        .seen = seen,
+        .seen = false,
+        .hflip = turn.x,
+        .vflip = turn.y,
     };
+    if (x >= right or y >= bottom) return plane;
+    // Columns and rows of the rectangle cut off at the glass's left and
+    // top, which are the image's last ones where it is turned that way.
+    const cut_x = x - box_x;
+    const cut_y = y - box_y;
+    const shown_w = right - x;
+    const shown_h = bottom - y;
+    const column = if (turn.x) w - cut_x - shown_w else cut_x;
+    const row = if (turn.y) h - 1 - cut_y else cut_y;
+    plane.address = image.address + @as(usize, @intCast(row)) * image.pitch + @as(usize, @intCast(column)) * 4;
+    plane.x = @intCast(x);
+    plane.y = @intCast(y);
+    plane.width = @intCast(shown_w);
+    plane.height = @intCast(shown_h);
+    plane.seen = seen;
+    return plane;
 }
 
 // --- what the monitor is sent ------------------------------------------------
@@ -999,7 +1148,8 @@ fn waitBits(register: *volatile u32, bits: u32, set: bool, tries: u32, waiter: a
 /// The display brought up in `mode` - its pixel clock one the port sends
 /// (`sends`) and the monitor `sink` takes - showing the picture at
 /// `address`, 32 bits a pixel, rows `pitch` bytes apart, below 4 GiB and
-/// out of the caches; the cursor hidden. With the display up, it changes
+/// out of the caches, unturned; the cursor and the overlay hidden, and
+/// the monitor sent the picture. With the display up, it changes
 /// to `mode`; sound that plays goes on in it. The order is
 /// vc4_crtc_atomic_enable's. `waiter.wait(micros)` waits that long.
 pub fn start(sys: *ExecBase, mode: *const edid.Timing, sink: edid.Sink, address: usize, pitch: u32, waiter: anytype) Failure {
@@ -1016,11 +1166,13 @@ pub fn start(sys: *ExecBase, mode: *const edid.Timing, sink: edid.Sink, address:
     if (!clocksFor(sys, tmds_hz)) return .firmware;
 
     // The controller reset (vc5_hdmi_reset), the HVS's channel 0 on with
-    // the list: the picture, and the cursor hidden over it.
+    // the list: the picture, and the overlay and the cursor hidden over
+    // it.
     at(HDMI_HD, HD_DVP_CTL).* = 0;
     at(HDMI_DVP, DVP_CLOCK_STOP).* |= CLOCK_STOP_PIXEL;
     hvsStart();
     writePlane(picture_plane, .{ .address = address, .pitch = pitch, .width = mode.width, .height = mode.height, .upm = upm_picture, .handle = 0 });
+    writePlane(overlay_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_overlay, .handle = 2, .alpha = true, .seen = false });
     writePlane(cursor_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_cursor, .handle = 1, .alpha = true, .seen = false });
     word(list_end).* = CTL0_END;
     hvsDisp(DISP_LPTRS).* = list_start;
@@ -1085,7 +1237,7 @@ pub fn start(sys: *ExecBase, mode: *const edid.Timing, sink: edid.Sink, address:
 /// monitor's scrambling turned on again when it has lost it, as it does
 /// when it is switched off and on (vc4_hdmi_scrambling_wq).
 pub fn tend(waiter: anytype) void {
-    if (!on_bcm2712 or !running()) return;
+    if (!on_bcm2712 or !running() or !transmitting()) return;
     if (at(HDMI, SCRAMBLER_CTL).* & SCRAMBLER_ENABLE == 0) return;
     const status = scdcRead(SCDC_SCRAMBLER_STATUS, waiter) orelse return;
     if (status & SCDC_SCRAMBLING == 0) _ = scdcScrambling(true, waiter);
@@ -1231,12 +1383,73 @@ pub fn takeInterrupts() u32 {
     return raised;
 }
 
+/// The picture's plane's size and pitch, and how it is turned, as its
+/// words have them.
+fn pictureWidth() u32 {
+    return (word(picture_plane + W_POS2).* & 0x1FFF) + 1;
+}
+
+fn pictureHeight() u32 {
+    return (word(picture_plane + W_POS2).* >> 16 & 0x1FFF) + 1;
+}
+
+fn turnOf() Turn {
+    return .{
+        .x = word(picture_plane + W_POS0).* & POS0_HFLIP != 0,
+        .y = word(picture_plane + W_PTR0).* & PTR0_VFLIP != 0,
+    };
+}
+
+/// Where the picture's plane starts reading a picture at `address`: its
+/// last row where it reads from the bottom up.
+fn readFrom(address: usize, turn: Turn) usize {
+    if (!turn.y) return address;
+    return address + @as(usize, pictureHeight() - 1) * word(picture_plane + W_PTR2).*;
+}
+
+fn pointPicture(address: usize, turn: Turn) void {
+    const from = readFrom(address, turn);
+    const flags = word(picture_plane + W_PTR0).* & ~(PTR0_VFLIP | 0xFF);
+    word(picture_plane + W_PTR0).* = flags | (if (turn.y) PTR0_VFLIP else 0) | upper(from);
+    word(picture_plane + W_PTR1).* = @truncate(from);
+}
+
 /// The picture at `address` shown from now on: the picture's plane's
 /// address rewritten. The HVS takes it up as it next fetches.
 pub fn show(address: usize) void {
     if (!running()) return;
-    word(picture_plane + W_PTR0).* = (word(picture_plane + W_PTR0).* & ~@as(u32, 0xFF)) | upper(address);
-    word(picture_plane + W_PTR1).* = @truncate(address);
+    pointPicture(address, turnOf());
+}
+
+/// The picture mirrored as `turn` says from the next frame on, the one
+/// at `address` - the one shown - read backwards. The cursor and the
+/// overlay are turned with it when they are next written.
+pub fn mirror(address: usize, turn: Turn) void {
+    if (!running()) return;
+    const position = word(picture_plane + W_POS0).* & ~POS0_HFLIP;
+    word(picture_plane + W_POS0).* = position | (if (turn.x) POS0_HFLIP else 0);
+    pointPicture(address, turn);
+}
+
+/// The monitor sent the picture, or blank pixels without syncs - no
+/// signal, to a monitor. CLRSYNC reads back as 0 and holds only while it
+/// is written, so the picture is back as soon as a write leaves it out.
+pub fn transmit(on: bool) void {
+    if (!running()) return;
+    const video = at(HDMI_HD, HD_VID_CTL);
+    video.* = if (on) video.* & ~(VID_CLRSYNC | VID_BLANKPIX) else video.* | VID_CLRSYNC | VID_BLANKPIX;
+}
+
+/// Whether the monitor is sent the picture.
+fn transmitting() bool {
+    return at(HDMI_HD, HD_VID_CTL).* & VID_BLANKPIX == 0;
+}
+
+/// An image's plane rewritten - its words but the first, the address
+/// last, so that the HVS does not fetch a new image at an old size.
+fn writeImage(first: u32, plane: Plane) void {
+    const words = planeOf(plane);
+    for ([_]usize{ W_CTL2, W_POS0, W_POS2, W_PTR2, W_PTR0, W_PTR1 }) |i| word(first + @as(u32, @intCast(i))).* = words[i];
 }
 
 /// The largest cursor image, each way.
@@ -1244,18 +1457,33 @@ pub const cursor_side = 64;
 
 /// The cursor's plane: the image at `address` (`cursor_side` square, or
 /// half that when `small`), its hot spot at (x, y) on the picture, shown
-/// or not - its words rewritten, the address last, so that the HVS does
-/// not fetch a new image at an old size.
+/// or not, turned as the picture is.
 pub fn cursor(address: usize, small: bool, hot_x: u32, hot_y: u32, x: u32, y: u32, shown: bool) void {
     if (!running()) return;
-    const control = hvsDisp(DISP_CTRL0).*;
-    const width = (control >> CTRL0_FWIDTH_SHIFT & CTRL0_SIZE_MASK) + 1;
-    const height = (control & CTRL0_SIZE_MASK) + 1;
     const side: u32 = if (small) cursor_side / 2 else cursor_side;
+    const image = Image{ .address = address, .pitch = side * 4, .width = side, .height = side, .upm = upm_cursor, .handle = 1 };
     const left = @as(i32, @intCast(x)) - @as(i32, @intCast(hot_x));
     const top = @as(i32, @intCast(y)) - @as(i32, @intCast(hot_y));
-    const words = planeOf(cursorPlaneOf(address, side, left, top, width, height, shown));
-    for ([_]usize{ W_CTL2, W_POS0, W_POS2, W_PTR2, W_PTR0, W_PTR1 }) |i| word(cursor_plane + @as(u32, @intCast(i))).* = words[i];
+    writeImage(cursor_plane, imagePlaneOf(image, left, top, pictureWidth(), pictureHeight(), turnOf(), shown));
+}
+
+/// The largest overlay, each way: rtg's.
+pub const overlay_side = 160;
+
+/// The overlay's plane: `width` by `height` pixels of the image at
+/// `address`, rows `overlay_side` pixels apart, its top left at (left,
+/// top) on the picture, shown or not, turned as the picture is.
+pub fn overlay(address: usize, width: u32, height: u32, left: i32, top: i32, shown: bool) void {
+    if (!running()) return;
+    const image = Image{
+        .address = address,
+        .pitch = overlay_side * 4,
+        .width = @max(width, 1),
+        .height = @max(height, 1),
+        .upm = upm_overlay,
+        .handle = 2,
+    };
+    writeImage(overlay_plane, imagePlaneOf(image, left, top, pictureWidth(), pictureHeight(), turnOf(), shown and width != 0 and height != 0));
 }
 
 const std = @import("std");
@@ -1298,7 +1526,9 @@ test "the BCM2712's display list: a picture's plane, and the cursor's cut to the
     }, &words);
     // The cursor at the top left, its hot spot 4 pixels in: 4 columns and
     // rows of it are off the picture.
-    const corner = cursorPlaneOf(0x1000, 64, -4, -4, 1920, 1080, true);
+    const big = Image{ .address = 0x1000, .pitch = 256, .width = 64, .height = 64, .upm = upm_cursor, .handle = 1 };
+    const small = Image{ .address = 0x1000, .pitch = 128, .width = 32, .height = 32, .upm = upm_cursor, .handle = 1 };
+    const corner = imagePlaneOf(big, -4, -4, 1920, 1080, .{}, true);
     try testing.expectEqual(@as(usize, 0x1000 + 4 * 256 + 4 * 4), corner.address);
     try testing.expectEqual(@as(u32, 0), corner.x);
     try testing.expectEqual(@as(u32, 60), corner.width);
@@ -1308,17 +1538,84 @@ test "the BCM2712's display list: a picture's plane, and the cursor's cut to the
     try testing.expectEqual(@as(u32, 0), cursor_words[0] & 3 << 18);
     try testing.expectEqual(@as(u32, 128 << 16 | 1 << 10), cursor_words[5]);
     // At the bottom right, only the hot spot's pixel on it.
-    const edge = cursorPlaneOf(0x1000, 32, 1919, 1079, 1920, 1080, true);
+    const edge = imagePlaneOf(small, 1919, 1079, 1920, 1080, .{}, true);
     try testing.expectEqual(@as(u32, 1), edge.width);
     try testing.expectEqual(@as(u32, 1), edge.height);
     try testing.expectEqual(@as(u32, 1919), edge.x);
     // Hidden: alpha 0, mixed.
-    try testing.expectEqual(@as(u32, 0x3000_0000), planeOf(cursorPlaneOf(0x1000, 64, 10, 10, 1920, 1080, false))[2]);
+    try testing.expectEqual(@as(u32, 0x3000_0000), planeOf(imagePlaneOf(big, 10, 10, 1920, 1080, .{}, false))[2]);
+    // Wholly off the picture: a hidden pixel.
+    const gone = imagePlaneOf(big, -64, 10, 1920, 1080, .{}, true);
+    try testing.expect(!gone.seen and gone.width == 1 and gone.height == 1);
     // A row of 1920 takes 61 units of UPM, of 4K 121, the cursor's 3:
     // both fit before the cursor's at 128.
     try testing.expectEqual(@as(u32, 61), upmUnits(7680));
     try testing.expectEqual(@as(u32, 121), upmUnits(15360));
     try testing.expectEqual(@as(u32, 3), upmUnits(256));
+}
+
+test "the BCM2712's display list turned: the picture and an image read backwards" {
+    const flipped = planeOf(.{ .address = 0x3000_0000 + 1079 * 7680, .pitch = 7680, .width = 1920, .height = 1080, .upm = 0, .handle = 0, .hflip = true, .vflip = true });
+    try testing.expectEqual(@as(u32, 1 << 15), flipped[1]);
+    try testing.expectEqual(@as(u32, 1 << 31), flipped[5]);
+    try testing.expectEqual(@as(u32, 0x3000_0000 + 1079 * 7680), flipped[6]);
+
+    // Mirrored left to right, a 64-pixel cursor at (100, 50) is at
+    // 1920 - 164 on the glass, read from its own first column backwards.
+    const big = Image{ .address = 0x1000, .pitch = 256, .width = 64, .height = 64, .upm = upm_cursor, .handle = 1 };
+    const across = imagePlaneOf(big, 100, 50, 1920, 1080, .{ .x = true }, true);
+    try testing.expectEqual(@as(u32, 1920 - 164), across.x);
+    try testing.expectEqual(@as(u32, 50), across.y);
+    try testing.expectEqual(@as(usize, 0x1000), across.address);
+    try testing.expect(across.hflip and !across.vflip and across.width == 64);
+    // At the picture's left edge, 4 columns off: on the glass it is 4
+    // columns off the right, which are the image's first 4 - so it is
+    // read from column 4, 60 wide.
+    const left_edge = imagePlaneOf(big, -4, 50, 1920, 1080, .{ .x = true }, true);
+    try testing.expectEqual(@as(u32, 1920 - 60), left_edge.x);
+    try testing.expectEqual(@as(u32, 60), left_edge.width);
+    try testing.expectEqual(@as(usize, 0x1000 + 4 * 4), left_edge.address);
+    // At the picture's right edge, 4 columns off: on the glass 4 off the
+    // left, the image's last 4 - read from column 0.
+    const right_edge = imagePlaneOf(big, 1920 - 60, 50, 1920, 1080, .{ .x = true }, true);
+    try testing.expectEqual(@as(u32, 0), right_edge.x);
+    try testing.expectEqual(@as(u32, 60), right_edge.width);
+    try testing.expectEqual(@as(usize, 0x1000), right_edge.address);
+    // Upside down, 4 rows off the picture's top: on the glass 4 off the
+    // bottom, the image's first 4; read from row 63 upwards, 60 rows.
+    const top_edge = imagePlaneOf(big, 100, -4, 1920, 1080, .{ .y = true }, true);
+    try testing.expectEqual(@as(u32, 1080 - 60), top_edge.y);
+    try testing.expectEqual(@as(u32, 60), top_edge.height);
+    try testing.expectEqual(@as(usize, 0x1000 + 63 * 256), top_edge.address);
+    try testing.expect(top_edge.vflip);
+    // 4 rows off the picture's bottom: on the glass 4 off the top, the
+    // image's last 4; read from row 59 upwards.
+    const bottom_edge = imagePlaneOf(big, 100, 1080 - 60, 1920, 1080, .{ .y = true }, true);
+    try testing.expectEqual(@as(u32, 0), bottom_edge.y);
+    try testing.expectEqual(@as(u32, 60), bottom_edge.height);
+    try testing.expectEqual(@as(usize, 0x1000 + 59 * 256), bottom_edge.address);
+}
+
+test "the monitor's controls: DDC/CI's messages and answers" {
+    // The brightness asked for, and set to 50: the checksum starts from
+    // the monitor's address, 0x6E.
+    try testing.expectEqualSlices(u8, &.{ 0x51, 0x82, 0x01, 0x10, 0xAC }, &askFor(VCP_BRIGHTNESS));
+    try testing.expectEqualSlices(u8, &.{ 0x51, 0x84, 0x03, 0x10, 0x00, 0x32, 0x9A }, &setTo(VCP_BRIGHTNESS, 50));
+    // The answer: 50 of 100, its checksum from the host's 0x50.
+    var answer = [11]u8{ 0x6E, 0x88, 0x02, 0x00, 0x10, 0x00, 0x00, 0x64, 0x00, 0x32, 0xF2 };
+    const got = answerOf(&answer, VCP_BRIGHTNESS).?;
+    try testing.expectEqual(@as(u16, 50), got.value);
+    try testing.expectEqual(@as(u16, 100), got.most);
+    // A checksum that does not add up, a control the monitor has not got.
+    answer[10] ^= 1;
+    try testing.expect(answerOf(&answer, VCP_BRIGHTNESS) == null);
+    answer[10] ^= 1;
+    answer[3] = 1;
+    answer[10] ^= 1;
+    try testing.expect(answerOf(&answer, VCP_BRIGHTNESS) == null);
+    // Not ready: the null message.
+    const nothing = [11]u8{ 0x6E, 0x80, 0xBE, 0, 0, 0, 0, 0, 0, 0, 0 };
+    try testing.expect(answerOf(&nothing, VCP_BRIGHTNESS) == null);
 }
 
 test "the BCM2712's DDC: how the pieces of a read end and start" {

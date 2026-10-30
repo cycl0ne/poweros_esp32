@@ -89,10 +89,23 @@
 //! (`cursor`), the image copied into a buffer of the block's as ARGB, its
 //! mask the alpha, and a move is the plane written again at its new place.
 //! Two buffers take turns, so the one the controller reads is never the
-//! one written. The overlay is laid in the picture made for it. The
-//! virtio GPU's cursor is the same, laid over its window by the emulator -
-//! with a tablet, as the host's own pointer - and moved by a command; so
-//! there nothing is composed for the pointer either.
+//! one written. On the JH7110's the overlay is laid in the picture made
+//! for it; the BCM2712's HVS lays it as a plane of its own under the
+//! cursor's (`overlayPlane`), the same way, so dragging an icon makes no
+//! picture at all. The virtio GPU's cursor is the same, laid over its
+//! window by the emulator - with a tablet, as the host's own pointer - and
+//! moved by a command; so there nothing is composed for the pointer
+//! either.
+//!
+//! The BCM2712's port does more of what a board can be asked in its own
+//! hardware (`bcm2712_ops`): the picture mirrored either way (MirrorBoard)
+//! is the HVS reading its planes backwards; the display switched off
+//! (SetBoardDisplay) is the controller sending blank pixels without their
+//! syncs, which a monitor sleeps at, the mode and everything else left
+//! running; and the brightness is the monitor's own, set and read over the DDC with
+//! DDC/CI, where the monitor takes it. A start of the port - a mode set,
+//! a monitor plugged in - puts all three back as the board has them
+//! (`putBack`).
 //!
 //! The board's engine is the processor's own cores (`engine.zig`): a
 //! fill, a copy, a colour or a picture with coverage laid over, a picture
@@ -135,8 +148,8 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 17;
-const BUILD_DATE = "29.10.2026";
+const REVISION = 18;
+const BUILD_DATE = "30.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -227,6 +240,20 @@ const Screen = struct {
     /// is composed from, changes. A semaphore: a write-back may wait for
     /// exec's workers.
     compose_lock: exec.SignalSemaphore = .{},
+    /// Behind the BCM2712's port, the overlay's plane's two image buffers,
+    /// as AllocMem gave them and where they start; which of them is the
+    /// plane's, the size of the image in it, and whether it is shown.
+    overlay_memory: ?*anyopaque = null,
+    overlay_images: ?[*]u8 = null,
+    overlay_turn: u1 = 0,
+    overlay_width: u32 = 0,
+    overlay_height: u32 = 0,
+    overlay_shown: bool = false,
+    /// Behind the BCM2712's port: how the picture is turned, whether the
+    /// monitor is sent nothing, and the brightness last set or read.
+    turn: bcm2712.Turn = .{},
+    dark: bool = false,
+    brightness: u32 = 100,
     /// The cursor plane's two image buffers on a display that has one, as
     /// AllocMem gave them and where they start; which of them is the
     /// plane's, whether it is the small size, and its image's hot spot.
@@ -930,6 +957,10 @@ fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
     if (image) |one| {
         if (one.format != screen.format) return err.RTGERR_BAD_FORMAT;
     }
+    if (screen.overlay_images != null) {
+        overlayImage(screen, image);
+        return err.RTGERR_OK;
+    }
     if (flips(screen)) {
         overlayFlipped(screen, image);
         return err.RTGERR_OK;
@@ -944,6 +975,11 @@ fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
 
 fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     const screen = screenOf(board);
+    if (screen.overlay_images != null) {
+        screen.overlay_left = left;
+        screen.overlay_top = top;
+        return overlayPlane(screen);
+    }
     if (flips(screen)) return overlayMoved(screen, left, top);
     change(screen, struct {
         fn apply(on: *Screen, place: anytype) void {
@@ -951,6 +987,129 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
             on.overlay_top = place[1];
         }
     }.apply, .{ left, top });
+}
+
+// --- the overlay, on the BCM2712's plane of its own ------------------------
+
+/// The bytes of one of the overlay plane's buffers: rtg's largest image.
+const overlay_bytes = bcm2712.overlay_side * bcm2712.overlay_side * 4;
+comptime {
+    std.debug.assert(bcm2712.overlay_side == rtg.boards.RTG_OVERLAY_MAX);
+}
+
+fn overlayBuffer(screen: *Screen, turn: u1) [*]u8 {
+    return screen.overlay_images.? + @as(usize, turn) * overlay_bytes;
+}
+
+/// The plane told its buffer, the image's size and place, and whether it
+/// is seen.
+fn overlayPlane(screen: *Screen) void {
+    if (screen.overlay_images == null) return;
+    bcm2712.overlay(
+        @intFromPtr(overlayBuffer(screen, screen.overlay_turn)),
+        screen.overlay_width,
+        screen.overlay_height,
+        screen.overlay_left,
+        screen.overlay_top,
+        screen.overlay_shown,
+    );
+}
+
+/// A new image into the buffer the plane is not reading - ARGB, opaque
+/// where the mask says, clear elsewhere - and the plane turned to it; or
+/// none, and the plane hidden. The library's image is not read again.
+fn overlayImage(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
+    const one = image orelse {
+        screen.overlay_shown = false;
+        return overlayPlane(screen);
+    };
+    const side: u32 = bcm2712.overlay_side;
+    const turn = screen.overlay_turn +% 1;
+    const buffer = overlayBuffer(screen, turn);
+    const pixels: [*]u32 = @ptrCast(@alignCast(buffer));
+    const rows = @min(one.height, side);
+    const columns = @min(one.width, side);
+    var y: u32 = 0;
+    while (y < rows) : (y += 1) {
+        const row: [*]const u32 = @ptrCast(@alignCast(one.pixels + y * one.pitch));
+        var x: u32 = 0;
+        while (x < columns) : (x += 1) {
+            pixels[y * side + x] = if (one.opaqueAt(x, y)) row[x] | 0xFF00_0000 else 0;
+        }
+    }
+    writeBack(screen, buffer, rows * side * 4);
+    screen.overlay_turn = turn;
+    screen.overlay_width = columns;
+    screen.overlay_height = rows;
+    screen.overlay_shown = true;
+    overlayPlane(screen);
+}
+
+// --- what the BCM2712's port does itself ------------------------------------
+
+/// What a start of the BCM2712's port leaves as it makes it - the picture
+/// unturned, the monitor sent it, the cursor and the overlay hidden - put
+/// back as the board has it.
+fn putBack(screen: *Screen) void {
+    bcm2712.mirror(screen.scanning, screen.turn);
+    if (screen.dark) bcm2712.transmit(false);
+    cursorPlane(screen);
+    overlayPlane(screen);
+}
+
+/// The picture mirrored, from the next frame on; the cursor and the
+/// overlay with it.
+fn mirror(board: *rtg.RtgBoard, x: bool, y: bool) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    sys.ObtainSemaphore(&screen.flip_lock);
+    screen.turn = .{ .x = x, .y = y };
+    if (screen.scanning != 0) bcm2712.mirror(screen.scanning, screen.turn);
+    sys.ReleaseSemaphore(&screen.flip_lock);
+    cursorPlane(screen);
+    overlayPlane(screen);
+    return err.RTGERR_OK;
+}
+
+/// The monitor sent the picture, or nothing, which it sleeps at.
+fn display(board: *rtg.RtgBoard, on: bool) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    sys.ObtainSemaphore(&screen.flip_lock);
+    defer sys.ReleaseSemaphore(&screen.flip_lock);
+    screen.dark = !on;
+    bcm2712.transmit(on);
+    return err.RTGERR_OK;
+}
+
+/// The monitor's brightness set over DDC/CI, `percent` of its largest:
+/// RTGERR_IO where it does not answer. Holding `flip_lock`, which keeps
+/// the port's other talk on the DDC away - the EDID, the SCDC.
+fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    const waiter = Waiter{ .screen = screen };
+    sys.ObtainSemaphore(&screen.flip_lock);
+    defer sys.ReleaseSemaphore(&screen.flip_lock);
+    const now = bcm2712.feature(bcm2712.VCP_BRIGHTNESS, waiter) orelse return err.RTGERR_IO;
+    const wanted_percent: u32 = @min(percent, 100);
+    const value: u16 = @intCast((wanted_percent * now.most + 50) / 100);
+    if (!bcm2712.setFeature(bcm2712.VCP_BRIGHTNESS, value, waiter)) return err.RTGERR_IO;
+    screen.brightness = wanted_percent;
+    return err.RTGERR_OK;
+}
+
+/// The monitor's brightness as it answers it - set with its own buttons,
+/// too - in per cent; what was last set or read where it does not answer.
+fn brightness(board: *rtg.RtgBoard) callconv(.c) u32 {
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    sys.ObtainSemaphore(&screen.flip_lock);
+    defer sys.ReleaseSemaphore(&screen.flip_lock);
+    if (bcm2712.feature(bcm2712.VCP_BRIGHTNESS, Waiter{ .screen = screen })) |now| {
+        screen.brightness = (@as(u32, @min(now.value, now.most)) * 100 + now.most / 2) / now.most;
+    }
+    return screen.brightness;
 }
 
 // --- a display that reads past the caches: two frames, flipped --------------
@@ -1095,7 +1254,7 @@ fn watch(screen: *Screen) void {
         exec.kprintf(screen.sys, "%s: %s\n", .{ MODULE_NAME, bcm2712.why(failure) });
         return;
     }
-    cursorPlane(screen);
+    putBack(screen);
 }
 
 /// `box` of the display noted for the next picture. Made holding
@@ -1349,12 +1508,21 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         screen.cursor_memory = own.memory;
         screen.cursor = own.at;
     }
+    if (scanout == .bcm2712) {
+        if (takeOwn(screen, 2 * overlay_bytes)) |own| {
+            screen.overlay_memory = own.memory;
+            screen.overlay_images = own.at;
+        }
+    }
     // A display that reads past the caches is shown frames of the
     // driver's own, never a buffer drawn in.
     if (isHdmi(scanout) and !startFlipping(screen)) {
         if (screen.cursor_memory) |memory| sys.FreeMem(memory, 2 * cursor_bytes + page);
+        if (screen.overlay_memory) |memory| sys.FreeMem(memory, 2 * overlay_bytes + page);
         screen.cursor_memory = null;
         screen.cursor = null;
+        screen.overlay_memory = null;
+        screen.overlay_images = null;
         return err.RTGERR_NO_MEMORY;
     }
     board.region = .{
@@ -1363,7 +1531,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED |
             rtg.boards.RTGRF_SYSTEM_MEMORY | rtg.boards.RTGRF_DMA_MEMORY,
     };
-    board.ops = &ops;
+    board.ops = if (scanout == .bcm2712) &bcm2712_ops else &ops;
     board.info.buffers = frames;
     board.info.pixel_clock_hz = screen.modes[screen.current].pixel_clock_hz;
     board.info.refresh_mhz = screen.modes[screen.current].refresh_mhz;
@@ -1383,6 +1551,9 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     screen.timer_open = false;
     if (screen.composed_memory) |memory| screen.sys.FreeMem(memory, screen.frame_bytes + page);
     if (screen.cursor_memory) |memory| screen.sys.FreeMem(memory, 2 * cursor_bytes + page);
+    if (screen.overlay_memory) |memory| screen.sys.FreeMem(memory, 2 * overlay_bytes + page);
+    screen.overlay_memory = null;
+    screen.overlay_images = null;
     screen.composed_memory = null;
     screen.composed = null;
     screen.cursor_memory = null;
@@ -1549,6 +1720,7 @@ fn startPort(comptime port: type, screen: *Screen, address: usize) void {
         return;
     }
     screen.scanning = address;
+    if (port == bcm2712) putBack(screen);
     screen.plugged = port.monitor();
     screen.settling = 0;
     if (!screen.plugged) exec.kprintf(screen.sys, "%s: no monitor on the HDMI port\n", .{MODULE_NAME});
@@ -1779,6 +1951,18 @@ const ops = rtg.boards.RtgBoardOps{
     .scale_pixels = &scalePixels,
     .refresh_rect = &refreshRect,
     .copy_rects = &copyRects,
+};
+
+/// The BCM2712's port's: the same, and what its hardware does besides -
+/// the display switched off, the monitor's brightness, the picture
+/// mirrored.
+const bcm2712_ops = ops: {
+    var more = ops;
+    more.display = &display;
+    more.set_brightness = &setBrightness;
+    more.brightness = &brightness;
+    more.mirror = &mirror;
+    break :ops more;
 };
 
 const driver_ops = rtg.boards.RtgDriverOps{ .create_board = &createBoard };
