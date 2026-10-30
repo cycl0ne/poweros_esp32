@@ -85,12 +85,15 @@ pub const Track = struct {
     /// by; how long each of its frames lasts in nanoseconds, 0 when not
     /// known; the codec's delay - an encoder's priming, which its
     /// blocks' times count and what is presented does not - in
-    /// nanoseconds; whether it is played unless asked for another.
+    /// nanoseconds; whether it is played unless asked for another, and
+    /// whether it is to be shown even then - subtitles for what the sound
+    /// does not say in the viewer's language.
     number: u64,
     uid: u64,
     frame_ns: u64,
     delay_ns: u64,
     default: bool,
+    forced: bool,
     /// Its frames are compressed other than by header stripping, or
     /// encrypted.
     unreadable: bool,

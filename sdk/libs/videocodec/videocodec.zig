@@ -32,6 +32,16 @@
 //! a time - where a decoder can start - and says where that is; the sound
 //! goes to the same time, so they stay together.
 //!
+//! **Tracks** (SINCE 1.3): a film may hold several sound tracks - other
+//! languages, a commentary - and subtitles. `GetVideoTrack` lists them,
+//! with what decodes each and which are chosen; `VCA_SoundTrack` and
+//! `VCA_Subtitles` choose at the start - by default the ones the film
+//! marks - and `SelectVideoTrack` while it plays. `GetVideoSubtitle`
+//! says what is shown at a time: SubRip's and SubStation Alpha's text -
+//! its dialogue; signs placed on the picture and drawings are left out -
+//! or a Blu-ray's pictures (PGS). The subtitles are read ahead by a
+//! process of the library's, so asking never waits on the file.
+//!
 //! The tags a film carries - its title, a cover, the chapters - are
 //! media.library's, and `GetVideoStreamAttrs` answers its `MDA_*` tags.
 
@@ -85,6 +95,19 @@ pub const VCA_ReadData = VCA_Dummy + 0x04;
 /// Bool: the sound track is opened too, for `DecodeVideoSound`. TRUE by
 /// default; FALSE for the pictures alone.
 pub const VCA_Sound = VCA_Dummy + 0x05;
+/// `u32`: the sound track to play, numbered as media.library's
+/// `GetMediaTrack` numbers the film's tracks - by default the one the
+/// film marks to be played. One that is not sound, or that nothing here
+/// decodes, leaves the film without sound (SINCE 1.3).
+pub const VCA_SoundTrack = VCA_Dummy + 0x06;
+/// `u32`: the subtitles `GetVideoSubtitle` hands out - a text track,
+/// numbered so - or `VIDEO_NO_TRACK` for none. By default the track the
+/// film marks to be shown (media.library's `MDA_Subtitles`), else none
+/// (SINCE 1.3).
+pub const VCA_Subtitles = VCA_Dummy + 0x07;
+
+/// No track: `VCA_Subtitles` and `SelectVideoTrack` for subtitles off.
+pub const VIDEO_NO_TRACK: u32 = 0xFFFF_FFFF;
 
 /// Up to `length` bytes into `buffer`: how many it put there, 0 at the
 /// end, below 0 when it cannot read. Fewer than asked are fine. As
@@ -142,6 +165,45 @@ pub const VideoFrame = extern struct {
     private: [3]u32 = @splat(0),
 };
 
+// --- the tracks and the subtitles (SINCE 1.3) ------------------------------------
+
+/// What `GetVideoTrack` says of a track: something here decodes it - the
+/// chip or the library its pictures, audiocodec.library its sound, the
+/// library its subtitles - and it is the one being played or shown.
+pub const VTRK_DECODED: u32 = 1 << 0;
+pub const VTRK_CHOSEN: u32 = 1 << 1;
+
+/// What a `VideoSubtitle` holds: lines of text, or a picture - and the
+/// text is in italics.
+pub const VSUB_TEXT: u32 = 1 << 0;
+pub const VSUB_BITMAP: u32 = 1 << 1;
+pub const VSUB_ITALIC: u32 = 1 << 2;
+
+/// What GetVideoSubtitle fills in: the subtitle shown at a time.
+pub const VideoSubtitle = extern struct {
+    /// VSUB_TEXT or VSUB_BITMAP, and VSUB_ITALIC.
+    flags: u32 = 0,
+    /// When it is shown from, and up to, in microseconds as frames' times
+    /// are: while both are the same, so is what it shows. `end` is
+    /// `maxInt(i64)` while the track has not said - a picture shows until
+    /// the next.
+    start: i64 align(4) = 0,
+    end: i64 align(4) = 0,
+    /// The text: UTF-8, NUL-terminated, its lines apart by `\n`; the
+    /// codes of SubStation Alpha and SubRip's tags taken out.
+    text: ?[*:0]const u8 = null,
+    /// The picture: `width` by `height` pixels, each a `u32` 0xAARRGGBB,
+    /// row after row - its alpha 0 where nothing is drawn - to be laid at
+    /// (`x`, `y`) of the frame, in the picture's pixels.
+    pixels: ?[*]const u32 = null,
+    x: u32 = 0,
+    y: u32 = 0,
+    width: u32 = 0,
+    height: u32 = 0,
+    /// The library's.
+    private: [2]u32 = @splat(0),
+};
+
 // --- errors -----------------------------------------------------------------------
 
 pub const VCERR_OK: i32 = 0;
@@ -154,8 +216,9 @@ pub const VCERR_OPEN: i32 = -2;
 pub const VCERR_UNKNOWN: i32 = -3;
 /// A container it knows, in a form it does not read - an MP4 in
 /// fragments, one whose index lies behind its packets read through a
-/// function - or pictures the decoder does not take: 10-bit, too large,
-/// a JPEG that is progressive or sampled another way.
+/// function - or pictures the decoder does not take: 10-bit H.264, too large,
+/// a JPEG that is progressive or sampled another way. SelectVideoTrack of
+/// a track of pictures (SINCE 1.3).
 pub const VCERR_UNSUPPORTED: i32 = -4;
 /// The source would not give its bytes.
 pub const VCERR_READ: i32 = -5;
@@ -163,16 +226,21 @@ pub const VCERR_READ: i32 = -5;
 /// stopped on a picture. DecodeVideoFrame can be called again: it goes
 /// on with the next.
 pub const VCERR_CORRUPT: i32 = -6;
-/// SeekVideo on a film read through VCA_ReadFunc.
+/// SeekVideo - or SelectVideoTrack (SINCE 1.3) - on a film read through
+/// VCA_ReadFunc.
 pub const VCERR_NOSEEK: i32 = -7;
-/// DecodeVideoFrame: every frame has been handed out.
+/// DecodeVideoFrame: every frame has been handed out. GetVideoTrack and
+/// SelectVideoTrack: past the last track; GetVideoSubtitle: nothing shows
+/// (SINCE 1.3).
 pub const VCERR_END: i32 = -8;
 /// Nothing here decodes the pictures' codec: H.264 or H.265 on a machine
-/// without the chip's decoder, MPEG-4 Part 2, a codec unknown.
+/// without the chip's decoder, MPEG-4 Part 2, a codec unknown - or the
+/// codec of the track SelectVideoTrack is given (SINCE 1.3).
 pub const VCERR_NOCODEC: i32 = -9;
 /// The decoder is busy: as many are open as the chip runs
 /// (OpenVideoStream), or VIDEO_HELD_FRAMES frames are held and none was
 /// given back (DecodeVideoFrame).
 pub const VCERR_BUSY: i32 = -10;
-/// DecodeVideoSound on a stream without sound.
+/// DecodeVideoSound on a stream without sound; SelectVideoTrack of sound
+/// on one opened without it (SINCE 1.3).
 pub const VCERR_NOSOUND: i32 = -11;

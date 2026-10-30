@@ -125,7 +125,7 @@ Die Wiedergabeliste speichern als
 MSG_ABOUT_TITLE
 Über Player
 MSG_ABOUT
-%s\n\nLieder aus WAV-, MP3-, FLAC-, Ogg-Vorbis- und AAC-Dateien,\neines ins nächste, mit ihren Covern,\nSender aus dem Netz\nund ein Bild des Klangs.
+%s\n\nLieder aus WAV-, MP3-, FLAC-, Ogg-Vorbis-, AAC- und AC-3-Dateien,\neines ins nächste, mit ihren Covern,\nSender aus dem Netz\nund ein Bild des Klangs.
 MSG_OK
 OK
 MSG_NO_SONG

@@ -57,7 +57,7 @@ pub fn VideoErrorText(_: *VideoCodecBase, code: i32) [*:0]const u8 {
         vc.VCERR_CORRUPT => "it is damaged",
         vc.VCERR_NOSEEK => "it cannot move to another place",
         vc.VCERR_END => "it has no more frames",
-        vc.VCERR_NOCODEC => "nothing here decodes its pictures",
+        vc.VCERR_NOCODEC => "nothing here decodes it",
         vc.VCERR_BUSY => "the decoder is busy",
         vc.VCERR_NOSOUND => "it has no sound",
         else => "unknown error",

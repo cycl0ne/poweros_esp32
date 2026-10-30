@@ -9,8 +9,8 @@
 //! front to back - or a file the program has open with media.library
 //! already (`ACA_Media`), which stays the program's. Its first sound track
 //! - in a Matroska file the one it marks to be played - is decoded unless
-//! `ACA_MediaTrack` names another: AAC, MP3, FLAC and Vorbis; any other
-//! codec is refused.
+//! `ACA_MediaTrack` names another: AAC, MP3, FLAC, Vorbis, AC-3 and
+//! E-AC-3; any other codec is refused.
 //!
 //! **Where the sound lies**: the first packet's ticks say where it begins,
 //! in the track's own ticks, and each packet after it begins where the
@@ -28,6 +28,15 @@
 //! pictures: silence is handed out up to where it begins (`gap`). To see
 //! where that is, the first packet is read when the track is opened, and
 //! again when it moves (`held`), and handed out after.
+//!
+//! **Holes**: a packet whose ticks put it more than a fiftieth of a
+//! second after where the sound before it ends - a film cut and joined,
+//! a recording that lost some - has silence before it, so the sound
+//! after the hole keeps time too. The packet is held back and the codec
+//! stops short (`paused`); DecodeAudio hands out the silence and goes on.
+//! Sound that would lie over what was handed out already is passed over.
+//! Packets laced into one Matroska block without a duration share its
+//! time and are counted on.
 //!
 //! **A seek** moves the track to the packet the frame asked for lies in,
 //! or so many frames before it as the codec wants decoded first - an
@@ -50,6 +59,7 @@ const aac = @import("../aac/_aac.zig");
 const mp3 = @import("../mp3/_mp3.zig");
 const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
+const ac3 = @import("../ac3/_ac3.zig");
 
 pub const Source = struct {
     /// media.library and the file - the stream's own to close, or the
@@ -79,9 +89,15 @@ pub const Source = struct {
     /// the next decoded ones, up to where it begins.
     start: i64,
     gap: i64,
-    /// The packet read to see where the sound begins, handed out first.
+    /// The packet read to see where the sound begins, or held back after
+    /// a hole, handed out first.
     held: media.MediaPacket,
     holding: bool,
+    /// A hole stopped the codec: its silence is handed out, then the
+    /// codec goes on.
+    paused: bool,
+    /// The last packet's ticks: one at the same time is laced to it.
+    last_ticks: u64,
 };
 
 /// Whether the bytes begin a container: an MP4's `ftyp` box, or EBML's
@@ -176,6 +192,8 @@ fn openTrack(stream: *Stream, mb: *MediaBase, file: *media.MediaFile, owns: bool
         .gap = 0,
         .held = .{},
         .holding = false,
+        .paused = false,
+        .last_ticks = 0,
     };
     var info: media.MediaInfo = .{};
     mb.GetMediaInfo(file, &info);
@@ -193,6 +211,7 @@ fn openTrack(stream: *Stream, mb: *MediaBase, file: *media.MediaFile, owns: bool
         media.MCODEC_MP3 => mp3.openTrack(stream, &track),
         media.MCODEC_FLAC => flac.openTrack(stream, &track),
         media.MCODEC_VORBIS => vorbis.openTrack(stream, &track),
+        media.MCODEC_AC3, media.MCODEC_EAC3 => ac3.openTrack(stream, &track),
         else => ac.ACERR_UNSUPPORTED,
     };
     if (result != ac.ACERR_OK) return result;
@@ -265,9 +284,45 @@ pub fn next(stream: *Stream, packet: *media.MediaPacket) ?[]const u8 {
             stream.failed = true;
             return null;
         }
+        if (hole(stream, packet)) return null;
     }
+    source.last_ticks = packet.ticks;
     if (packet.size == 0) return &.{};
     return packet.data.?[0..packet.size];
+}
+
+/// Whether the packet comes after a hole in the track's times: then it is
+/// held back, the silence to fill the hole is the gap, and the codec is
+/// to stop. A packet that would lie over sound handed out has that part
+/// passed over.
+fn hole(stream: *Stream, packet: *const media.MediaPacket) bool {
+    const source = &stream.media;
+    if (!source.placed or packet.ticks == source.last_ticks) return false;
+    const begins = framesOf(source, @intCast(@min(packet.ticks, std.math.maxInt(i64)))) - source.delay;
+    const away = begins - source.position;
+    const slack: i64 = source.rate / 50;
+    if (away < -slack) {
+        source.skip_until = @max(source.skip_until, source.position);
+        source.position = begins;
+        return false;
+    }
+    if (away <= slack) return false;
+    source.gap = gapOf(source, @max(source.position, source.skip_until), begins);
+    source.position = begins;
+    if (source.gap == 0) return false;
+    source.held = packet.*;
+    source.holding = true;
+    source.paused = true;
+    return true;
+}
+
+/// Whether a hole stopped the codec - its silence to hand out, then the
+/// codec to go on; the stop forgotten.
+pub fn goOn(stream: *Stream) bool {
+    const source = &stream.media;
+    if (!source.paused) return false;
+    source.paused = false;
+    return true;
 }
 
 /// The track's next packet read into `held`, for `next` to hand out;
@@ -335,6 +390,7 @@ pub fn seek(stream: *Stream, frame: u32, early: u32) i32 {
     source.skip_until = @max(target, source.start);
     source.done = false;
     source.placed = false;
+    source.paused = false;
     stream.failed = false;
     // The packet landed on, and silence up to it where the sound begins
     // after the frame asked for.

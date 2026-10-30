@@ -14,6 +14,9 @@
 //! while the pictures are decoded by another; `sound_lock` keeps a seek
 //! from moving the sound while a piece of it is being decoded.
 //!
+//! **The subtitles** (SINCE 1.3) are read by a reader of their own
+//! (`subtitle/`), on a process, once a text track is chosen.
+//!
 //! The stream is one allocation, cleared; the engines' buffers are memory
 //! of their own, given back with it.
 
@@ -28,6 +31,7 @@ const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const chip = @import("../chip/_chip.zig");
 const mjpeg = @import("../mjpeg/_mjpeg.zig");
+const subtitle = @import("../subtitle/_subtitle.zig");
 
 pub const held_frames = vc.VIDEO_HELD_FRAMES;
 
@@ -71,6 +75,11 @@ pub const Stream = struct {
     sound: ?*ac.AudioStream,
     sound_info: ac.AudioStreamInfo,
     sound_lock: exec.SignalSemaphore,
+    /// The tracks chosen: the sound's, the subtitles' - VIDEO_NO_TRACK for
+    /// none - and the reader of the subtitles, once there have been any.
+    sound_track: u32,
+    sub_track: u32,
+    subtitles: ?*subtitle.Reader,
 };
 
 pub fn of(stream: *vc.VideoStream) *Stream {
@@ -135,10 +144,45 @@ pub fn codecOf(codec: u32) u32 {
     };
 }
 
-/// Everything the stream holds given back: the sound, the decoder with
-/// the frames still lent, the film, the libraries, the stream.
+/// Whether something here decodes track `number`: the pictures being
+/// decoded; sound audiocodec.library's version takes, when the stream has
+/// it; subtitles of a kind the reader knows, from a file.
+pub fn decodes(s: *const Stream, number: u32, track: *const media.MediaTrack) bool {
+    return switch (track.kind) {
+        media.MTRACK_VIDEO => number == s.track,
+        media.MTRACK_AUDIO => soundDecodes(s, track.codec),
+        media.MTRACK_TEXT => s.file_info.seekable != 0 and switch (track.codec) {
+            media.MCODEC_SRT, media.MCODEC_ASS, media.MCODEC_TEXT, media.MCODEC_PGS => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
+/// Whether the stream's audiocodec.library decodes `codec`: AAC since
+/// 1.6, MP3, FLAC and Vorbis since 1.7, AC-3 and E-AC-3 since 1.8.
+fn soundDecodes(s: *const Stream, codec: u32) bool {
+    const lib = s.sound_lib orelse return false;
+    const since: u16 = switch (codec) {
+        media.MCODEC_AAC => 6,
+        media.MCODEC_MP3, media.MCODEC_FLAC, media.MCODEC_VORBIS => 7,
+        media.MCODEC_AC3, media.MCODEC_EAC3 => 8,
+        else => return false,
+    };
+    return lib.version > 1 or lib.revision >= since;
+}
+
+/// A reader of the subtitles on `track`, from `time`.
+pub fn startSubtitles(s: *Stream, track: u32, time: i64, seek: bool) ?*subtitle.Reader {
+    return subtitle.create(s.sys, s.base.dos_base, s.mb, s.file, &s.picture, track, time, seek);
+}
+
+/// Everything the stream holds given back: the subtitles' reader, the
+/// sound, the decoder with the frames still lent, the film, the
+/// libraries, the stream.
 pub fn destroy(s: *Stream) void {
     const sys = s.sys;
+    if (s.subtitles) |reader| subtitle.destroy(reader);
     if (s.sound) |sound| s.acb.?.CloseAudioStream(sound);
     if (s.sound_lib) |lib| sys.CloseLibrary(lib);
     switch (s.engine) {

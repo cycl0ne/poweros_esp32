@@ -269,6 +269,9 @@ pub const MDA_Picture = MDA_Dummy + 0x2A;
 /// MediaChapter`: them, in order, or null when there are none.
 pub const MDA_Chapters = MDA_Dummy + 0x2B;
 pub const MDA_ChapterList = MDA_Dummy + 0x2C;
+/// `*u32`: the text track - subtitles - the file marks to be shown, as
+/// GetMediaTrack numbers them; ~0 when it marks none (SINCE 1.3).
+pub const MDA_Subtitles = MDA_Dummy + 0x2D;
 
 /// A chapter: where it starts and ends, and its title. As audiocodec's
 /// `AudioChapter`.

@@ -12,7 +12,7 @@ const audiocodec_lvo = @import("audiocodec_lvo.zig");
 
 pub const LIBRARY_NAME = sdk.audiocodec.AUDIOCODECNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 7;
+pub const LIBRARY_REVISION = 8;
 const BUILD_DATE = "30.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

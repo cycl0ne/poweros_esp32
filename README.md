@@ -83,7 +83,7 @@ flowchart TB
     subgraph m_programs ["Programs"]
         m_shell["the shell<br/>58 commands in C:"]
         m_desktop["the desktop<br/>anvil.library"]
-        m_apps["SYS:Programs<br/>SYS:System"]
+        m_apps["SYS:Programs<br/>SYS:System<br/>SYS:Commodities"]
     end
 
     subgraph m_modules ["Libraries and devices"]
@@ -243,7 +243,10 @@ Beside them:
   ([locale guide](sdk/docs/guides/locale.md)).
 - **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
   Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
-  HDToolBox, CPULoad, NetLoad and MemMap.
+  HDToolBox, CPULoad, NetLoad and MemMap; in `SYS:Commodities` Exchange,
+  which lists the commodities running and makes each active or
+  inactive, shows or hides its window, or ends it
+  ([commodities guide](sdk/docs/guides/commodities.md)).
 - **When something fails:** a Guru and a ROM debugger on the serial
   port, memory debugging, the system log, and a program that fails held
   for Suspend, Kill or Reboot

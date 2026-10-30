@@ -1748,6 +1748,8 @@ const App = struct {
             ac.ACODEC_FLAC => "FLAC",
             ac.ACODEC_VORBIS => "Vorbis",
             ac.ACODEC_AAC => "AAC",
+            ac.ACODEC_AC3 => "AC-3",
+            ac.ACODEC_EAC3 => "E-AC-3",
             else => app.text.get(.MSG_SOUND),
         };
         const sides = app.text.get(if (info.channels == 1) .MSG_MONO else .MSG_STEREO);

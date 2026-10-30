@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! audiocodec.datatype: a sound file audiocodec.library decodes - WAV,
-//! MP3, FLAC, Ogg Vorbis, AAC - as a sound.
+//! MP3, FLAC, Ogg Vorbis, AAC, AC-3 and E-AC-3 - as a sound.
 //!
 //! A sound.datatype subclass. In `OM_NEW` it opens the object's file and
 //! a stream of audiocodec.library on it, and tells its superclass what

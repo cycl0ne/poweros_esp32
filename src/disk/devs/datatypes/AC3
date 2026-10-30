@@ -1,0 +1,1 @@
+NAME=AC3 BASE=audiocodec GROUP=soun ID=AC3 PATTERN=#?.(ac3|eac3) TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Player

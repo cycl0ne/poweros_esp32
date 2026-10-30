@@ -11,6 +11,7 @@ const mp3 = @import("../mp3/_mp3.zig");
 const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
 const aac = @import("../aac/_aac.zig");
+const ac3 = @import("../ac3/_ac3.zig");
 
 /// Decodes the next frames of a stream.
 ///
@@ -50,7 +51,8 @@ const aac = @import("../aac/_aac.zig");
 /// bytes of the frames handed out and `AUDIO_READ_AHEAD` more at most
 /// (SINCE 1.4 said). A container's sound that begins after the file's
 /// start - a Matroska film's after its first picture - begins with
-/// silence up to there (SINCE 1.7): its frames are the film's time.
+/// silence up to there (SINCE 1.7), and a hole in its times is filled
+/// with silence: its frames are the film's time.
 ///
 /// CONTEXT:
 /// - Waits: yes, on the source when the read-ahead runs low.
@@ -83,19 +85,26 @@ const aac = @import("../aac/_aac.zig");
 /// ```
 pub fn DecodeAudio(_: *AudioCodecBase, public: *ac.AudioStream, buffer: [*]i16, frames: u32) i32 {
     const stream = _stream.streamOf(public);
-    const quiet = _media.silence(stream, buffer, frames);
-    if (quiet == frames) return @intCast(quiet);
-    const rest = buffer + @as(usize, quiet) * stream.info.channels;
-    const left = frames - quiet;
-    const got = switch (stream.codec) {
-        .wav => |*state| wav.decode(stream, state, rest, left),
-        .mp3 => |*state| mp3.decode(stream, state, rest, left),
-        .flac => |*state| flac.decode(stream, state, rest, left),
-        .vorbis => |*state| vorbis.decode(stream, state, rest, left),
-        .aac => |*state| aac.decode(stream, state, rest, left),
-        .none => 0,
-    };
-    // The silence handed out now, why the sound stopped the next time.
-    if (got < 0) return if (quiet != 0) @intCast(quiet) else got;
-    return @as(i32, @intCast(quiet)) + got;
+    var given: u32 = 0;
+    while (true) {
+        given += _media.silence(stream, buffer + @as(usize, given) * stream.info.channels, frames - given);
+        if (given == frames) return @intCast(given);
+        const rest = buffer + @as(usize, given) * stream.info.channels;
+        const left = frames - given;
+        const got = switch (stream.codec) {
+            .wav => |*state| wav.decode(stream, state, rest, left),
+            .mp3 => |*state| mp3.decode(stream, state, rest, left),
+            .flac => |*state| flac.decode(stream, state, rest, left),
+            .vorbis => |*state| vorbis.decode(stream, state, rest, left),
+            .aac => |*state| aac.decode(stream, state, rest, left),
+            .ac3 => |*state| ac3.decode(stream, state, rest, left),
+            .none => 0,
+        };
+        // What was handed out now, why the sound stopped the next time.
+        if (got < 0) return if (given != 0) @intCast(given) else got;
+        given += @intCast(got);
+        // A hole in a container's sound stopped the codec: its silence,
+        // then on.
+        if (!_media.goOn(stream)) return @intCast(given);
+    }
 }

@@ -20,6 +20,7 @@ test {
     _ = @import("programs/player/tests/remembered.zig");
     _ = @import("programs/player/tests/one.zig");
     _ = @import("programs/player/tests/m3u.zig");
+    _ = @import("programs/movie/subtitles.zig");
     _ = @import("programs/player/tests/csv.zig");
     _ = @import("programs/player/tests/stations.zig");
     _ = @import("c/screendump/tests/png.zig");

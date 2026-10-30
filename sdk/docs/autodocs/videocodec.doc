@@ -5,10 +5,13 @@ videocodec.library/DecodeVideoFrame
 videocodec.library/DecodeVideoSound
 videocodec.library/GetVideoStreamAttrs
 videocodec.library/GetVideoStreamInfo
+videocodec.library/GetVideoSubtitle
+videocodec.library/GetVideoTrack
 videocodec.library/IdentifyVideo
 videocodec.library/OpenVideoStream
 videocodec.library/ReleaseVideoFrame
 videocodec.library/SeekVideo
+videocodec.library/SelectVideoTrack
 videocodec.library/VideoErrorText
 videocodec.library/CloseVideoStream        videocodec.library/CloseVideoStream
 
@@ -28,7 +31,8 @@ videocodec.library/VideoErrorText
 	None.
 
    BEHAVIOR
-	The sound's stream is closed, the decoder of the pictures with every
+	The subtitles' process is told to end and waited for (SINCE 1.3), the
+	sound's stream is closed, the decoder of the pictures with every
 	frame still lent, the film - and the file, when the stream opened it
 	(VCA_Name) - and the libraries the stream opened.
 
@@ -266,6 +270,133 @@ videocodec.library/VideoErrorText
    EXAMPLES
 	    var info: vc.VideoStreamInfo = .{};
 	    vcb.GetVideoStreamInfo(film, &info);
+videocodec.library/GetVideoSubtitle        videocodec.library/GetVideoSubtitle
+
+   NAME
+	GetVideoSubtitle -- Says what the chosen subtitles show at a time: lines of text, or a picture.
+
+   SYNOPSIS
+	    fn GetVideoSubtitle(base: *VideoCodecBase, stream: *vc.VideoStream, time: i64, subtitle: *vc.VideoSubtitle) i32
+
+   SINCE
+	1.3. LVO -68.
+
+   INPUTS
+	- `stream`: what OpenVideoStream made.
+	- `time`: the time of the frame being shown, in microseconds.
+	- `subtitle`: where what shows goes.
+
+   RESULT
+	VCERR_OK, `subtitle` filled in; or VCERR_END when nothing shows - no
+	subtitles chosen, none at this time - and `subtitle` is cleared.
+
+   BEHAVIOR
+	The subtitles are read ahead of the film by a process of the
+	library's, so the call does not wait on the file: a subtitle not yet
+	read - just after a seek, on a slow disk - is not shown; after a seek
+	they are read from five seconds before, for the lines still showing.
+	Text is
+	UTF-8, its lines apart by `\n`: SubRip's tags and SubStation Alpha's
+	codes are taken out, and of SubStation Alpha only the dialogue is kept
+	- signs placed on the picture and drawings are left out. Lines that
+	show at once come one under another, in the order they began;
+	VSUB_ITALIC says that all of it is in italics. A Blu-ray's picture
+	(PGS) comes as `pixels`, fitted to the film's size where the disc's
+	is another, and shows until the next; a picture is handed out before
+	text. `start` and `end` say from when up to when it shows the same:
+	a program draws it again only when they change. `end` is
+	`std.math.maxInt(i64)` while the track has not said.
+
+   CONTEXT
+	- Waits: no - but a stream whose subtitles could not get a process of
+	  their own reads the file here.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a task will do.
+
+   OWNERSHIP
+	`subtitle` is the caller's; the text and the pixels are the library's,
+	good until the call is made again, SeekVideo or SelectVideoTrack moves
+	the film, or it is closed. Called by the task that decodes the
+	pictures.
+
+   NOTES
+	Asked about each frame shown, as a player does, it reads ahead
+	ten seconds at most.
+
+   BUGS
+	A subtitle that began more than five seconds before the place a seek
+	lands on is missed there.
+
+   SEE ALSO
+	`SelectVideoTrack`, `GetVideoTrack`, `VCA_Subtitles`
+
+   EXAMPLES
+	    var shown: vc.VideoSubtitle = .{};
+	    if (vcb.GetVideoSubtitle(film, frame.time, &shown) == vc.VCERR_OK and
+	        (shown.start != last.start or shown.end != last.end)) drawSubtitle(&shown);
+videocodec.library/GetVideoTrack              videocodec.library/GetVideoTrack
+
+   NAME
+	GetVideoTrack -- Says what one of a film's tracks is, whether something here decodes it, and whether it is the one being played or shown.
+
+   SYNOPSIS
+	    fn GetVideoTrack(base: *VideoCodecBase, stream: *vc.VideoStream, number: u32, track: *media.MediaTrack) i32
+
+   SINCE
+	1.3. LVO -60.
+
+   INPUTS
+	- `stream`: what OpenVideoStream made.
+	- `number`: the track, from 0, as media.library's GetMediaTrack
+	  numbers them.
+	- `track`: where what it is goes.
+
+   RESULT
+	0 or more, its flags: `VTRK_DECODED` - the chip or the library
+	decodes its pictures, audiocodec.library its sound, the library its
+	subtitles - and `VTRK_CHOSEN` - its pictures are being decoded, its
+	sound is DecodeVideoSound's, its subtitles GetVideoSubtitle's; or
+	VCERR_END past the last track.
+
+   BEHAVIOR
+	`track` is filled in as GetMediaTrack fills it: its kind, codec,
+	language and name. Of the pictures only the track being decoded is
+	VTRK_DECODED. A sound track is when the stream has audiocodec.library
+	- it was opened with sound, from a file - and the library's version
+	decodes its codec: AAC since 1.6, MP3, FLAC and Vorbis since 1.7,
+	AC-3 and E-AC-3 since 1.8. Subtitles are when they are SubRip's,
+	SubStation Alpha's, timed text or a Blu-ray's pictures (PGS), and the
+	stream was opened from a file.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a task will do.
+
+   OWNERSHIP
+	`track` is the caller's; the setup and name it points to are the
+	film's, good until the stream is closed.
+
+   NOTES
+	A program lists the tracks from 0 until VCERR_END - for a menu of the
+	sound and the subtitles, by language and name.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`SelectVideoTrack`, `GetVideoSubtitle`, media.library's `GetMediaTrack`
+
+   EXAMPLES
+	    var number: u32 = 0;
+	    var track: media.MediaTrack = .{};
+	    while (true) : (number += 1) {
+	        const flags = vcb.GetVideoTrack(film, number, &track);
+	        if (flags < 0) break;
+	        if (track.kind == media.MTRACK_AUDIO and flags & vc.VTRK_DECODED != 0) addSoundItem(number, &track);
+	    }
 videocodec.library/IdentifyVideo              videocodec.library/IdentifyVideo
 
    NAME
@@ -324,7 +455,7 @@ videocodec.library/VideoErrorText
 videocodec.library/OpenVideoStream          videocodec.library/OpenVideoStream
 
    NAME
-	OpenVideoStream -- Opens a film and finds a decoder for its pictures and one for its sound.
+	OpenVideoStream -- Opens a film and finds a decoder for its pictures and one for its sound - and reads its subtitles.
 
    SYNOPSIS
 	    fn OpenVideoStream(base: *VideoCodecBase, tags: ?[*]const utility.TagItem, err: ?*i32) ?*vc.VideoStream
@@ -337,7 +468,8 @@ videocodec.library/VideoErrorText
 	  open), `VCA_FileHandle` (a file the program has open, the film
 	  beginning where it is) or `VCA_ReadFunc` with `VCA_ReadData` (a
 	  function of the program's) - and `VCA_Sound` FALSE for the pictures
-	  alone.
+	  alone; `VCA_SoundTrack` and `VCA_Subtitles` choose the tracks
+	  (SINCE 1.3).
 	- `err`: where why it failed goes (VCERR_*), or null.
 
    RESULT
@@ -355,12 +487,18 @@ videocodec.library/VideoErrorText
 	played - is taken: H.264 and H.265 go to the chip's decoder (videodec.resource), which is opened for the
 	stream and reads the track's parameter sets; Motion JPEG to the
 	library's own. Its first track of sound - in a Matroska file the
-	marked one - is opened with audiocodec.library 1.6 or later, on the
-	same file (`ACA_Media`) - AAC, and with 1.7 MP3, FLAC and Vorbis - unless
-	`VCA_Sound` is FALSE or the film is read through a function. A sound
-	track nothing decodes leaves the film without sound - `sound_codec` 0
-	in the info - rather than unopened. The first frame and the first
-	samples are those at the start of what the film presents.
+	marked one, or `VCA_SoundTrack`'s - is opened with audiocodec.library
+	1.6 or later, on the same file (`ACA_Media`) - AAC, with 1.7 MP3, FLAC
+	and Vorbis, with 1.8 AC-3 and E-AC-3 - unless `VCA_Sound` is FALSE or
+	the film is read through a function. A sound track nothing decodes
+	leaves the film without sound - `sound_codec` 0 in the info - rather
+	than unopened. The subtitles the film marks to be shown - in a
+	Matroska file the track marked forced and default, else default
+	(media.library 1.3's `MDA_Subtitles`) - or `VCA_Subtitles`' are read
+	from the start by a process of the library's, for GetVideoSubtitle
+	(SINCE 1.3); none from a film read through a function. The first frame
+	and the first samples are those at the start of what the film
+	presents.
 
    CONTEXT
 	- Waits: yes, on the file and the chip.
@@ -380,13 +518,15 @@ videocodec.library/VideoErrorText
 	Matroska file, which says not its largest - and audiocodec's stream;
 	Motion JPEG takes a frame's planes for each frame lent. media.library
 	reads a Matroska file's tracks ahead, 256 KiB at a time each.
+	Subtitles take about 12 KiB, a process with a stack of 32 KiB, and
+	what they read ahead: up to ten seconds of lines, or a picture.
 
    BUGS
 	None known.
 
    SEE ALSO
 	`CloseVideoStream`, `GetVideoStreamInfo`, `DecodeVideoFrame`,
-	`DecodeVideoSound`, `IdentifyVideo`
+	`DecodeVideoSound`, `IdentifyVideo`, `GetVideoTrack`
 
    EXAMPLES
 	    var err: i32 = 0;
@@ -470,7 +610,8 @@ videocodec.library/VideoErrorText
 	decoder drops what it was fed and not yet shown. The next frame
 	DecodeVideoFrame hands out is that key frame, `number` 0: frames due
 	before it are passed over. The sound is moved to the key frame's time,
-	so the next samples DecodeVideoSound hands out go with it.
+	so the next samples DecodeVideoSound hands out go with it, and the
+	subtitles are read from there (SINCE 1.3).
 
    CONTEXT
 	- Waits: yes, on the file - and for a piece of sound being decoded by
@@ -496,6 +637,68 @@ videocodec.library/VideoErrorText
    EXAMPLES
 	    const landed = vcb.SeekVideo(film, 60 * 1_000_000);
 	    if (landed >= 0) clock.restartAt(landed);
+videocodec.library/SelectVideoTrack        videocodec.library/SelectVideoTrack
+
+   NAME
+	SelectVideoTrack -- Chooses another of a film's sound tracks, or its subtitles - or none.
+
+   SYNOPSIS
+	    fn SelectVideoTrack(base: *VideoCodecBase, stream: *vc.VideoStream, track: u32, time: i64) i32
+
+   SINCE
+	1.3. LVO -64.
+
+   INPUTS
+	- `stream`: what OpenVideoStream made.
+	- `track`: a sound or a text track, numbered as GetVideoTrack numbers
+	  them - or `VIDEO_NO_TRACK`, the subtitles off.
+	- `time`: where the film is, in microseconds: the sound starts there,
+	  and the subtitles are read from there.
+
+   RESULT
+	VCERR_OK; or VCERR_NOCODEC for a track nothing here decodes,
+	VCERR_UNSUPPORTED for a track of pictures, VCERR_NOSOUND for sound on
+	a stream opened without it, VCERR_NOSEEK for a film read through
+	VCA_ReadFunc, VCERR_END for a track past the last, VCERR_NOMEMORY -
+	and what was chosen stays.
+
+   BEHAVIOR
+	A sound track is opened with audiocodec.library on the film, moved to
+	`time`, and takes the place of the one DecodeVideoSound decoded, which
+	is closed: the next samples are the new track's, at its rate and in
+	its channels, which GetVideoStreamInfo then says. A text track is read
+	from `time` by the subtitles' process - started now if none was
+	chosen - and what GetVideoSubtitle hands out is from it. The track
+	already chosen is left as it is.
+
+   CONTEXT
+	- Waits: yes, on the file - and for a piece of sound being decoded by
+	  another task to be done.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a process: the file is read.
+
+   OWNERSHIP
+	Called by the task that decodes the pictures. A program that plays the
+	sound on a task of its own stops it first - the rate and the channels
+	may change - and starts it again after.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`GetVideoTrack`, `GetVideoSubtitle`, `DecodeVideoSound`, `VCA_SoundTrack`,
+	`VCA_Subtitles`
+
+   EXAMPLES
+	    sound.stop();
+	    if (vcb.SelectVideoTrack(film, chosen, clock.now()) == vc.VCERR_OK) {
+	        vcb.GetVideoStreamInfo(film, &info);
+	    }
+	    sound.restart(&info);
 videocodec.library/VideoErrorText            videocodec.library/VideoErrorText
 
    NAME

@@ -1,8 +1,8 @@
 # Video
 
 A film is two things side by side in one file: pictures, coded in H.264,
-H.265 or Motion JPEG, and sound, mostly AAC. **videocodec.library** opens
-the film and hands out both - the pictures as frames, in the order they
+H.265 or Motion JPEG, and sound, mostly AAC or AC-3.
+**videocodec.library** opens the film and hands out both - the pictures as frames, in the order they
 are shown and with the time each is due, the sound as 16-bit samples for
 audio.device. Underneath, media.library reads the container (MP4,
 QuickTime's MOV and Matroska's MKV) and hands out each track's packets,
@@ -14,8 +14,8 @@ shows a frame as it comes out; graphics' `WriteYUVPixelArray` and
 `ScaleYUVPixelArray` put one into a window where there is none.
 
 This guide is opening a film, its pictures, showing them on a video
-layer, its sound, keeping them together, moving in it, and what decodes
-what.
+layer, its sound, keeping them together, moving in it, its tracks and
+subtitles, and what decodes what.
 
 ## Opening a film
 
@@ -128,19 +128,76 @@ pictures land on the key frame the last cue before the time names - a
 muxer names every key frame, or the first of each cluster - and the
 sound within a millisecond of that frame's time.
 
+## Tracks and subtitles
+
+A film may hold several sound tracks - other languages, a commentary -
+and subtitles: SubRip's or SubStation Alpha's text, or a Blu-ray's
+pictures (PGS). videocodec.library 1.3 lists them and chooses among
+them.
+
+```zig
+var track: media.MediaTrack = .{};
+var number: u32 = 0;
+while (true) : (number += 1) {
+    const flags = vcb.GetVideoTrack(film, number, &track);
+    if (flags < 0) break; // VCERR_END: no more
+    // track.kind, .codec, .language, .name; flags: VTRK_DECODED, VTRK_CHOSEN
+}
+```
+
+`GetVideoTrack` fills in a track as media.library's `GetMediaTrack`
+does and says whether something here decodes it and whether it is the
+one playing or shown. A film starts with the tracks it marks - a
+Matroska file's default sound track, and its subtitles marked forced and
+default, else default (media.library's `MDA_Subtitles`); an MP4 marks no
+subtitles - or with `VCA_SoundTrack` and `VCA_Subtitles`
+(`VIDEO_NO_TRACK` for none) at OpenVideoStream.
+
+`SelectVideoTrack(film, number, time)` chooses another while the film
+plays: a sound track from `time` on - the rate and the channels may be
+others, so a program that plays the sound on a process stops it first,
+reads the info again and starts it anew - or subtitles, or
+`VIDEO_NO_TRACK` for none.
+
+```zig
+var shown: vc.VideoSubtitle = .{};
+if (vcb.GetVideoSubtitle(film, frame.time, &shown) == vc.VCERR_OK) {
+    if (shown.start != last.start or shown.end != last.end) draw(&shown);
+}
+```
+
+`GetVideoSubtitle` says what shows at a frame's time: `VSUB_TEXT` - lines
+of UTF-8 apart by `\n`, `VSUB_ITALIC` when all are in italics, SubRip's
+tags and SubStation Alpha's codes taken out, of SubStation Alpha the
+dialogue only (signs placed on the picture and drawings are left out) -
+or `VSUB_BITMAP`: `width` by `height` pixels, 0xAARRGGBB, laid at `x`,
+`y` of the frame, fitted to the film where the disc's canvas is another
+size. `start` and `end` say how long the same thing shows: a program
+draws it again only when they change. The subtitles are read ahead of
+the film by a process of the library's, so the call never waits on the
+file; after a seek they are read from five seconds before, for the
+lines still showing. Movie draws text in the screen's font at an
+eighteenth of the picture's height, white with a black edge, and lays a
+picture over the film with graphics' `ScalePixelArray`, its coverage
+mixed - over a video layer, where the film is seen through the key
+colour, a pixel half covered or more is the subtitle's.
+
 ## What decodes what
 
 | Pictures | Decoded by | On the VisionFive 2 |
 |---|---|---|
-| H.264 (baseline, main, high), H.265 (main), 8-bit | the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300 |
+| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits) | the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300 |
 | Motion JPEG, baseline: grey, 4:2:0, 4:2:2, 4:4:4 | the library, on the calling task | about a second for a 1080p picture: small pictures only |
 | MPEG-4 Part 2 | nothing | - |
 
 The sound is audiocodec.library's: AAC-LC
-([AAC and MP4](audio.md#aac-and-mp4)), and in a Matroska file MP3, FLAC
-and Vorbis too ([Matroska](audio.md#matroska)); another codec - AC-3,
-DTS, Opus - leaves the film without sound. A Matroska film's pictures
-in VP8, VP9 or AV1 are known to nothing here.
+([AAC and MP4](audio.md#aac-and-mp4)), AC-3 and E-AC-3 mixed into
+stereo ([AC-3 and E-AC-3](audio.md#ac-3-and-e-ac-3)), and in a Matroska
+file MP3, FLAC and Vorbis too ([Matroska](audio.md#matroska)); another
+codec - DTS, Opus - leaves the film without sound. A Matroska film's pictures
+in VP8, VP9 or AV1 are known to nothing here. Subtitles (1.3): SubRip,
+SubStation Alpha (ASS and SSA), MP4's timed text and PGS, read by the
+library.
 
 ## From the shell
 

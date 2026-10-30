@@ -163,6 +163,7 @@ pub fn open(file: *File) i32 {
         if (track.info.kind == media.MTRACK_VIDEO) choose(file, &info.video, number);
         if (track.info.kind == media.MTRACK_AUDIO) choose(file, &info.audio, number);
     }
+    file.subtitles = markedText(file);
     _file.copyName(&info.title, &file.tags.title);
     _file.copyName(&info.artist, &file.tags.artist);
     _file.copyName(&info.album, &file.tags.album);
@@ -178,6 +179,18 @@ fn choose(file: *File, chosen: *u32, number: u32) void {
     } else if (marked and !file.tracks[chosen.*].mkv.default) {
         chosen.* = number;
     }
+}
+
+/// The text track the file marks to be shown: the first marked forced and
+/// to be played, else the first marked to be played; ~0 for none.
+fn markedText(file: *const File) u32 {
+    var marked: u32 = ~@as(u32, 0);
+    for (file.tracks[0..file.track_count], 0..) |*track, n| {
+        if (track.info.kind != media.MTRACK_TEXT or !track.mkv.default) continue;
+        if (track.mkv.forced) return @intCast(n);
+        if (marked == ~@as(u32, 0)) marked = @intCast(n);
+    }
+    return marked;
 }
 
 /// The segment's elements read up to the first cluster, and then those
@@ -304,6 +317,7 @@ fn makeTrack(file: *File, entry: []const u8, track: *Track, duration: f64) bool 
     const own = &track.mkv;
     const out = &track.info;
     own.default = true;
+    own.forced = false;
     var enabled = true;
     var kind: u64 = 0;
     var codec: []const u8 = "";
@@ -318,6 +332,7 @@ fn makeTrack(file: *File, entry: []const u8, track: *Track, duration: f64) bool 
         ebml.TrackType => kind = ebml.uint(element.body),
         ebml.FlagEnabled => enabled = ebml.uint(element.body) != 0,
         ebml.FlagDefault => own.default = ebml.uint(element.body) != 0,
+        ebml.FlagForced => own.forced = ebml.uint(element.body) != 0,
         ebml.DefaultDuration => own.frame_ns = ebml.uint(element.body),
         ebml.Name => _file.copyUtf8(&out.name, ebml.string(element.body)),
         ebml.Language => language = ebml.string(element.body),

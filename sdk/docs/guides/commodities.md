@@ -286,6 +286,13 @@ made, deleted, enabled or disabled, the library sends
 `CXCMD_LIST_CHG` to the broker called "Exchange" - the controller - so
 it reads the list again; `BrokerCommand(null, id)` sends it there too.
 
+`SYS:Commodities/Exchange` is that controller: a window with the
+commodities by name, the title and description of the one picked, and
+the commands as gadgets - Active or Inactive, Show Interface, Hide
+Interface, Remove. It is a commodity itself, whose hotkey (`CX_POPKEY`,
+`ctrl alt home` unless given) brings the window up; closing the window
+only hides it. `SYS:Commodities/Docs/Exchange.md` says how it is used.
+
 ## How it runs
 
 Every call that changes the network takes the network's lock for that

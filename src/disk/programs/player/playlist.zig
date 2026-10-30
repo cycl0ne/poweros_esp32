@@ -46,10 +46,10 @@ const icy = sdk.http.icy;
 
 /// The endings of the files that are sound, and the file requester's
 /// pattern for the same.
-pub const endings = [_][]const u8{ "mp3", "wav", "flac", "ogg", "oga", "m4a", "aac", "mka" };
-pub const pattern = "#?.(mp3|wav|flac|ogg|oga|m4a|aac|mka)";
+pub const endings = [_][]const u8{ "mp3", "wav", "flac", "ogg", "oga", "m4a", "aac", "mka", "ac3", "eac3" };
+pub const pattern = "#?.(mp3|wav|flac|ogg|oga|m4a|aac|mka|ac3|eac3)";
 /// What the file requester shows for songs to open: sound and lists.
-pub const open_pattern = "#?.(mp3|wav|flac|ogg|oga|m4a|aac|mka|m3u|m3u8|pls)";
+pub const open_pattern = "#?.(mp3|wav|flac|ogg|oga|m4a|aac|mka|ac3|eac3|m3u|m3u8|pls)";
 
 /// How many drawers down a drawer added is looked into.
 const deepest = 8;

@@ -60,7 +60,7 @@ fn sine(half: []f32) void {
 
 /// The rising half of a Kaiser-Bessel derived window: the square root of
 /// the running sum of a Kaiser kernel of N/2 + 1 points, over its whole.
-fn kaiserBessel(half: []f32, alpha: f64) void {
+pub fn kaiserBessel(half: []f32, alpha: f64) void {
     const n = half.len;
     var total: f64 = 0;
     for (0..n + 1) |p| total += kernel(p, n, alpha);

@@ -5,9 +5,10 @@
 //! A program opens a stream on sound - a file by its name, a file it has
 //! open, or bytes a function of its own hands over (a download, a network
 //! stream) - and the library finds out what it is by its first bytes:
-//! WAV, MP3, FLAC, Vorbis in Ogg, AAC in ADTS frames - or a container,
-//! an MP4 or a Matroska file (SINCE 1.7), which media.library reads for
-//! it: its sound in AAC, MP3, FLAC or Vorbis. A program that has a film
+//! WAV, MP3, FLAC, Vorbis in Ogg, AAC in ADTS frames, AC-3 and E-AC-3
+//! syncframes (SINCE 1.8) - or a container, an MP4 or a Matroska file
+//! (SINCE 1.7), which media.library reads for it: its sound in AAC, MP3,
+//! FLAC or Vorbis, and AC-3 or E-AC-3 (SINCE 1.8). A program that has a film
 //! open with media.library decodes its sound with `ACA_Media`. Then
 //! `DecodeAudio` hands out the sound
 //! as 16-bit samples, one frame after the other (a sample a channel, the
@@ -64,6 +65,12 @@ pub const ACODEC_VORBIS: u32 = 4;
 /// which media.library reads (SINCE 1.6; Matroska SINCE 1.7). An HE-AAC
 /// stream plays its LC core.
 pub const ACODEC_AAC: u32 = 5;
+/// AC-3 (Dolby Digital): syncframes - an .ac3 file - or a track of a
+/// container, a film's sound; mixed into stereo, mono kept (SINCE 1.8).
+pub const ACODEC_AC3: u32 = 6;
+/// E-AC-3 (Dolby Digital Plus): as AC-3, its first program's 5.1 - the
+/// channels past it passed over (SINCE 1.8).
+pub const ACODEC_EAC3: u32 = 7;
 
 /// How many bytes `IdentifyAudio` wants to be sure: enough for a WAV's
 /// header and for several MP3 frames after a short tag.

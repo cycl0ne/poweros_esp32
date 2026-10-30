@@ -36,6 +36,11 @@
 //! frame shown is held by the decoder's display flags until the caller
 //! gives it back (UPDATE_DISP_FLAG clears its flag).
 //!
+//! **10 bits**: an H.265 Main10 stream keeps its 10 bits in the compressed
+//! frames - their rows a quarter wider - and the shown frames are written
+//! in 8, as for any other stream: the decoder drops the rest as it writes
+//! them out. H.264 it decodes in 8 bits only.
+//!
 //! **Memory**: the decoder's address registers are 32 bits wide, so all it
 //! reads and writes is below 4 GiB (MEMF_DMA), and it does not see the
 //! cores' caches.
@@ -718,20 +723,23 @@ pub const Layout = struct {
     rows: u32,
     linear_luma: u32,
     linear_bytes: u32,
-    /// A compressed frame: its planes, its offset tables, its motion
+    /// A compressed frame: rows of `fbc_stride` bytes - a quarter more
+    /// for 10 bits a sample - its planes, its offset tables, its motion
     /// vectors.
+    fbc_stride: u32,
     fbc_luma: u32,
     fbc_bytes: u32,
     y_table: u32,
     c_table: u32,
     mv: u32,
 
-    pub fn of(std: u32, width: u32, height: u32) Layout {
+    pub fn of(std: u32, width: u32, height: u32, depth: u32) Layout {
         const stride = alignUp(width, 32);
         const rows = alignUp(height, 16);
+        const fbc_stride = if (depth > 8) alignUp(alignUp(alignUp(width, 16) * 5, 32) / 4, 32) else stride;
         const fbc_rows = alignUp(rows, 32);
-        const fbc_luma = stride * fbc_rows;
-        const fbc_chroma = alignUp(stride / 2, 16) * fbc_rows;
+        const fbc_luma = fbc_stride * fbc_rows;
+        const fbc_chroma = alignUp(fbc_stride / 2, 16) * fbc_rows;
         const mv = if (std == STD_AVC)
             ((alignUp(width, 256) / 16) * (alignUp(height, 16) / 16) + 16) * 80
         else
@@ -743,6 +751,7 @@ pub const Layout = struct {
             .rows = rows,
             .linear_luma = stride * rows,
             .linear_bytes = stride * rows * 3 / 2,
+            .fbc_stride = fbc_stride,
             .fbc_luma = fbc_luma,
             .fbc_bytes = fbc_luma + fbc_chroma,
             .y_table = alignUp(y_table, margin) + margin,
@@ -763,8 +772,9 @@ pub fn taskSize(seq: Sequence) u32 {
 const testing = @import("std").testing;
 
 test "1080p H.264: the frames' and their companions' sizes as StarFive's driver makes them" {
-    const l = Layout.of(STD_AVC, 1920, 1088);
+    const l = Layout.of(STD_AVC, 1920, 1088, 8);
     try testing.expectEqual(@as(u32, 1920), l.stride);
+    try testing.expectEqual(@as(u32, 1920), l.fbc_stride);
     try testing.expectEqual(@as(u32, 1088), l.rows);
     try testing.expectEqual(@as(u32, 1920 * 1088), l.linear_luma);
     try testing.expectEqual(@as(u32, 1920 * 1088 * 3 / 2), l.linear_bytes);
@@ -778,12 +788,24 @@ test "1080p H.264: the frames' and their companions' sizes as StarFive's driver 
 }
 
 test "an odd size: rows of 32, a height on 16, H.265's motion vectors per 64x64 block" {
-    const l = Layout.of(STD_HEVC, 1000, 562);
+    const l = Layout.of(STD_HEVC, 1000, 562, 8);
     try testing.expectEqual(@as(u32, 1024), l.stride);
     try testing.expectEqual(@as(u32, 576), l.rows);
     try testing.expectEqual(@as(u32, 1024 * 576 * 3 / 2), l.linear_bytes);
     // 16 x 9 blocks of 256 bytes, and 64.
     try testing.expectEqual(@as(u32, 40960 + 4096), l.mv);
+}
+
+test "10-bit H.265: the compressed rows a quarter wider, the shown frames 8-bit as ever" {
+    const l = Layout.of(STD_HEVC, 1920, 1080, 10);
+    try testing.expectEqual(@as(u32, 1920), l.stride);
+    try testing.expectEqual(@as(u32, 1920 * 1088 * 3 / 2), l.linear_bytes);
+    // 1920 * 5 / 4 = 2400, on 32; chroma half of it, on 16.
+    try testing.expectEqual(@as(u32, 2400), l.fbc_stride);
+    try testing.expectEqual(@as(u32, 2400 * 1088 + 1200 * 1088), l.fbc_bytes);
+    // An odd width: 1000 on 16 is 1008, * 5 = 5040, on 32 5056, / 4 1264,
+    // on 32 1280.
+    try testing.expectEqual(@as(u32, 1280), Layout.of(STD_HEVC, 1000, 562, 10).fbc_stride);
 }
 
 test "the task buffer: two VLC buffers, a parameter buffer per queued command" {

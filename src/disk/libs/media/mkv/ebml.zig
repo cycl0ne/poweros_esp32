@@ -162,6 +162,7 @@ pub const TrackUID: u32 = 0x73C5;
 pub const TrackType: u32 = 0x83;
 pub const FlagEnabled: u32 = 0xB9;
 pub const FlagDefault: u32 = 0x88;
+pub const FlagForced: u32 = 0x55AA;
 pub const DefaultDuration: u32 = 0x23E383;
 pub const Name: u32 = 0x536E;
 pub const Language: u32 = 0x22B59C;

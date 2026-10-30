@@ -29,6 +29,8 @@ test "Player's playlist: the endings of sound, a file's name, a station's addres
     try testing.expect(playlist.isSound("x.oga"));
     try testing.expect(playlist.isSound("Books/Chapter.M4A"));
     try testing.expect(playlist.isSound("radio.aac"));
+    try testing.expect(playlist.isSound("Films/Sound.AC3"));
+    try testing.expect(playlist.isSound("x.eac3"));
     try testing.expect(!playlist.isSound("cover.jpg"));
     try testing.expect(!playlist.isSound("mp3"));
     try testing.expect(!playlist.isSound("Music.mp3/notes"));

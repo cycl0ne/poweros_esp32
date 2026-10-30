@@ -24,7 +24,7 @@ const wave511 = @import("codec/_wave511.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.VIDEODECNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 0;
+pub const RESOURCE_REVISION = 1;
 const BUILD_DATE = "29.10.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++

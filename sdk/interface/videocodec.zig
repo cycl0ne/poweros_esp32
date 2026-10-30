@@ -11,6 +11,7 @@
 const libraries = @import("../libs/exec/libraries.zig");
 const videocodec = @import("../libs/videocodec/videocodec.zig");
 const utility = @import("../libs/utility/utility.zig");
+const media = @import("../libs/media/media.zig");
 
 /// The name to open it by (OpenLibrary, OpenDevice).
 pub const NAME = "videocodec.library";
@@ -27,6 +28,9 @@ pub const LVO = struct {
     pub const IdentifyVideo = libraries.lvo(11);
     pub const VideoErrorText = libraries.lvo(12);
     pub const GetVideoStreamAttrs = libraries.lvo(13);
+    pub const GetVideoTrack = libraries.lvo(14);
+    pub const SelectVideoTrack = libraries.lvo(15);
+    pub const GetVideoSubtitle = libraries.lvo(16);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -42,6 +46,9 @@ pub const Fn = struct {
     pub const IdentifyVideo = *const fn (*VideoCodecBase, [*]const u8, u32) callconv(.c) u32;
     pub const VideoErrorText = *const fn (*VideoCodecBase, i32) callconv(.c) [*:0]const u8;
     pub const GetVideoStreamAttrs = *const fn (*VideoCodecBase, *videocodec.VideoStream, ?[*]const utility.TagItem) callconv(.c) u32;
+    pub const GetVideoTrack = *const fn (*VideoCodecBase, *videocodec.VideoStream, u32, *media.MediaTrack) callconv(.c) i32;
+    pub const SelectVideoTrack = *const fn (*VideoCodecBase, *videocodec.VideoStream, u32, i64) callconv(.c) i32;
+    pub const GetVideoSubtitle = *const fn (*VideoCodecBase, *videocodec.VideoStream, i64, *videocodec.VideoSubtitle) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -107,5 +114,25 @@ pub const VideoCodecBase = opaque {
     /// points: how many of them were answered.
     pub fn GetVideoStreamAttrs(self: *VideoCodecBase, stream: *videocodec.VideoStream, tags: ?[*]const utility.TagItem) u32 {
         return libraries.call(self, LVO.GetVideoStreamAttrs, Fn.GetVideoStreamAttrs, .{ stream, tags });
+    }
+
+    /// The film's track `number` (as media.library numbers them) into
+    /// `track`, and what is done with it: VTRK_* flags, or VCERR_END past
+    /// the last (SINCE 1.3).
+    pub fn GetVideoTrack(self: *VideoCodecBase, stream: *videocodec.VideoStream, number: u32, track: *media.MediaTrack) i32 {
+        return libraries.call(self, LVO.GetVideoTrack, Fn.GetVideoTrack, .{ stream, number, track });
+    }
+
+    /// Another sound track played from `time` microseconds on, or other
+    /// subtitles shown from there - VIDEO_NO_TRACK for none: 0, or a VCERR_*
+    /// (SINCE 1.3).
+    pub fn SelectVideoTrack(self: *VideoCodecBase, stream: *videocodec.VideoStream, track: u32, time: i64) i32 {
+        return libraries.call(self, LVO.SelectVideoTrack, Fn.SelectVideoTrack, .{ stream, track, time });
+    }
+
+    /// The subtitle shown at `time` microseconds into `subtitle`: 0, or
+    /// VCERR_END when none is (SINCE 1.3).
+    pub fn GetVideoSubtitle(self: *VideoCodecBase, stream: *videocodec.VideoStream, time: i64, subtitle: *videocodec.VideoSubtitle) i32 {
+        return libraries.call(self, LVO.GetVideoSubtitle, Fn.GetVideoSubtitle, .{ stream, time, subtitle });
     }
 };

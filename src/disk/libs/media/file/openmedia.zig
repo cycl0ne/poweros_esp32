@@ -132,6 +132,7 @@ pub fn OpenMedia(base: *MediaBase, tags: ?[*]const utility.TagItem, err: ?*i32) 
         if (dl.ExamineFH(opened, &fib) and fib.size > file.origin) file.size = fib.size - file.origin;
     }
 
+    file.subtitles = ~@as(u32, 0);
     const kind = if (hint != media.MEDIA_UNKNOWN) hint else kindOf(file);
     const result = switch (kind) {
         media.MEDIA_MP4 => mp4.open(file, hint == media.MEDIA_UNKNOWN),

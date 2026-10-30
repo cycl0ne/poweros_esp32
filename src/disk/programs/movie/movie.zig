@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Movie: films played in a window - MP4, QuickTime's MOV and Matroska's
 //! MKV, their pictures in H.264, H.265 or Motion JPEG and their sound in
-//! AAC, or in an MKV MP3, FLAC or Vorbis too - by videocodec.library.
+//! AAC or AC-3, or in an MKV MP3, FLAC, Vorbis or E-AC-3 too, with their
+//! subtitles - by videocodec.library.
 //!
 //!   Movie FILE,VOLUME/K/N,FULL/S
 //!
@@ -46,6 +47,14 @@
 //! drawn into a canvas gadget, which keeps it - or the key colour - for
 //! when the window is uncovered, or straight into the whole screen's
 //! window.
+//!
+//! **Sound and Subtitles** (videocodec.library 1.3) are menus of the
+//! film's tracks, by name and language, the one playing ticked: a sound
+//! track nothing here decodes is there but cannot be picked. A film
+//! starts with the tracks it marks. Another sound track stops the sound's
+//! process and starts one on the new track from the time heard - its rate
+//! and channels may be others. The subtitles that show at a picture's
+//! time are drawn over it when it is put (subtitles.zig).
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -88,9 +97,14 @@ const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
 const Sound = @import("sound.zig").Sound;
 const Whole = @import("whole.zig").Whole;
+const subtitles = @import("subtitles.zig");
+const Subtitles = subtitles.Subtitles;
+const media = sdk.media;
+const diskfont = sdk.diskfont;
+const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 
 pub const COMMAND_NAME = "Movie";
-const VERSION = "1.0";
+const VERSION = "1.1";
 const DATE = "30.10.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
@@ -114,6 +128,13 @@ const ITEM_OPEN = 0;
 const ITEM_WHOLE = 1;
 const ITEM_ABOUT = 3;
 const ITEM_QUIT = 4;
+/// The film's tracks: each of its sound tracks; Off, then each of its
+/// subtitles. So many of each at most.
+const MENU_SOUND = 1;
+const MENU_SUBTITLES = 2;
+const most_listed = 24;
+/// The menus' entries at most: Project's, then the tracks', and the end.
+const menu_room = 6 + 1 + most_listed + 2 + most_listed + 1;
 
 /// The files the requester shows.
 const open_pattern = "#?.(mp4|m4v|mov|mkv)";
@@ -153,14 +174,13 @@ fn menuItem(text: Id, key: ?[*:0]const u8) MenuEntry {
 
 const bar = MenuEntry{ .menu = .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL } };
 
-const menus = [_]MenuEntry{
+const project_menu = [_]MenuEntry{
     menuTitle(.MSG_MENU_PROJECT),
     menuItem(.MSG_MENU_OPEN, "O"),
     menuItem(.MSG_MENU_WHOLE_SCREEN, "F"),
     bar,
     menuItem(.MSG_MENU_ABOUT, null),
     menuItem(.MSG_MENU_QUIT, "Q"),
-    .{ .menu = .{} },
 };
 
 fn pair(t: sdk.utility.Tag, data: usize) TagItem {
@@ -207,6 +227,10 @@ const App = struct {
     frame_us: i64 = 40_000,
     /// The volume, in percent.
     level: u32 = 100,
+    /// videocodec.library lists the tracks and hands out subtitles (1.3).
+    tracks_known: bool = false,
+    /// The subtitles drawn over the pictures.
+    subs: Subtitles,
 
     // --- the pictures -----------------------------------------------------------
     /// The frame shown - lent, kept until the next is shown - and the one
@@ -248,6 +272,17 @@ const App = struct {
     time: *Object = undefined,
     volume: *Object = undefined,
     strip: ?*intuition.Menu = null,
+    /// What the Sound and Subtitles menus' items are: the tracks' numbers,
+    /// the ones chosen, and their labels. The menus are made again after
+    /// the messages that change them (`menus_stale`).
+    sound_numbers: [most_listed]u32 = @splat(0),
+    sub_numbers: [most_listed]u32 = @splat(0),
+    sound_count: u32 = 0,
+    sub_count: u32 = 0,
+    sound_now: u32 = vc.VIDEO_NO_TRACK,
+    sub_now: u32 = vc.VIDEO_NO_TRACK,
+    labels: [2 * most_listed][80:0]u8 = @splat(@splat(0)),
+    menus_stale: bool = false,
     /// The canvas's RastPort and size, and where in it the picture went
     /// last: the bars around it are filled again when that changes.
     rast_port: ?*graphics.RastPort = null,
@@ -353,6 +388,7 @@ const App = struct {
     fn closeFilm(app: *App) void {
         app.disarm();
         app.closeLayer();
+        app.subs.forget();
         if (app.sound) |sound| sound.destroy();
         app.sound = null;
         const film = app.film orelse return;
@@ -561,18 +597,28 @@ const App = struct {
                 app.gb.RectFill(rp, &box);
             }
             last.* = box;
+            app.subs.forget();
         }
-        if (app.handOver(frame, box)) {
-            if (moved and app.whole == null) app.ib.QueueGadgetRefresh(app.canvas);
-            return;
+        const handed = app.handOver(frame, box);
+        if (!handed) {
+            if (box.width() == frame.width and box.height() == frame.height) {
+                app.gb.WriteYUVPixelArray(rp, &frame.picture, 0, 0, &box);
+            } else {
+                const whole = Rect{ .max_x = @intCast(frame.width), .max_y = @intCast(frame.height) };
+                app.gb.ScaleYUVPixelArray(rp, &frame.picture, &whole, &box);
+            }
         }
-        if (box.width() == frame.width and box.height() == frame.height) {
-            app.gb.WriteYUVPixelArray(rp, &frame.picture, 0, 0, &box);
-        } else {
-            const whole = Rect{ .max_x = @intCast(frame.width), .max_y = @intCast(frame.height) };
-            app.gb.ScaleYUVPixelArray(rp, &frame.picture, &whole, &box);
-        }
-        if (app.whole == null) app.ib.QueueGadgetRefresh(app.canvas);
+        const drew = app.showSubtitle(frame, rp, box, moved or !handed);
+        if (app.whole == null and (moved or !handed or drew)) app.ib.QueueGadgetRefresh(app.canvas);
+    }
+
+    /// The subtitle at the picture's time over it: drawn again when the
+    /// picture was put over the last (`repainted`), or when it changes.
+    fn showSubtitle(app: *App, frame: *const vc.VideoFrame, rp: *graphics.RastPort, box: Rect, repainted: bool) bool {
+        if (!app.tracks_known) return false;
+        const film = app.film orelse return false;
+        const colour: ?u32 = if (app.layer) |layer| layer.key else null;
+        return app.subs.show(app.vcb, film, frame.time, rp, box, frame.width, frame.height, colour, repainted);
     }
 
     // --- the video layer --------------------------------------------------------
@@ -867,15 +913,211 @@ const App = struct {
     }
 
     fn menuPicked(app: *App, number: u32) bool {
-        if (mn.MENUNUM(number) != MENU_PROJECT) return true;
-        switch (mn.ITEMNUM(number)) {
-            ITEM_OPEN => app.askFilm(),
-            ITEM_WHOLE => app.openWhole(),
-            ITEM_ABOUT => app.showAbout(),
-            ITEM_QUIT => return false,
+        const item = mn.ITEMNUM(number);
+        switch (mn.MENUNUM(number)) {
+            MENU_PROJECT => switch (item) {
+                ITEM_OPEN => app.askFilm(),
+                ITEM_WHOLE => app.openWhole(),
+                ITEM_ABOUT => app.showAbout(),
+                ITEM_QUIT => return false,
+                else => {},
+            },
+            MENU_SOUND => if (item < app.sound_count) app.chooseSound(app.sound_numbers[item]),
+            MENU_SUBTITLES => {
+                if (item == 0) app.chooseSubtitles(vc.VIDEO_NO_TRACK);
+                if (item >= 1 and item - 1 < app.sub_count) app.chooseSubtitles(app.sub_numbers[item - 1]);
+            },
             else => {},
         }
         return true;
+    }
+
+    /// Another sound track: the sound's process ended, the film's sound
+    /// moved to the track at the time heard, and a process started on it
+    /// - its rate and channels may be others - playing or held as the film
+    /// is.
+    fn chooseSound(app: *App, track: u32) void {
+        const film = app.film orelse return;
+        app.menus_stale = true;
+        if (track == app.sound_now) return;
+        const at = app.now();
+        const held = app.state != .playing;
+        if (app.sound) |sound| sound.destroy();
+        app.sound = null;
+        _ = app.vcb.SelectVideoTrack(film, track, at);
+        app.vcb.GetVideoStreamInfo(film, &app.info);
+        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level);
+        if (app.sound) |sound| sound.start(at, held);
+        app.timer_clock = !app.soundKeepsTime();
+        app.setClock(at);
+        if (app.state == .playing) app.arm(0);
+    }
+
+    /// Other subtitles, or none: what showed taken away at once.
+    fn chooseSubtitles(app: *App, track: u32) void {
+        const film = app.film orelse return;
+        app.menus_stale = true;
+        if (track == app.sub_now) return;
+        _ = app.vcb.SelectVideoTrack(film, track, app.now());
+        app.showAgain();
+    }
+
+    // --- the menus --------------------------------------------------------------
+
+    /// The menus made for the film: Project, and the film's tracks - set
+    /// on the window, or none when they will not go on.
+    fn makeMenus(app: *App) void {
+        app.dropMenus();
+        app.menus_stale = false;
+        const ib = app.ib;
+        var table: [menu_room]mn.NewMenu = undefined;
+        var used: usize = 0;
+        for (project_menu) |entry| {
+            table[used] = entry.menu;
+            if (entry.text) |id| table[used].label = app.text.get(id);
+            used += 1;
+        }
+        if (app.tracks_known) {
+            if (app.film) |film| used = app.trackMenus(film, &table, used);
+        }
+        table[used] = .{};
+        const made = ib.CreateMenusA(&table, null) orelse return;
+        if (!ib.LayoutMenusA(made, app.screen, null) or !ib.SetMenuStrip(app.window, made)) {
+            ib.FreeMenus(made);
+            return;
+        }
+        app.strip = made;
+    }
+
+    fn dropMenus(app: *App) void {
+        const made = app.strip orelse return;
+        app.ib.ClearMenuStrip(app.window);
+        app.ib.FreeMenus(made);
+        app.strip = null;
+    }
+
+    /// The Sound and Subtitles menus into `table` from `from`: where they
+    /// end. Each track is an item that ticks and unticks the others, the
+    /// one chosen ticked; a sound track nothing decodes cannot be picked.
+    fn trackMenus(app: *App, film: *vc.VideoStream, table: []mn.NewMenu, from: usize) usize {
+        var sound_items: [most_listed]mn.NewMenu = undefined;
+        var sub_items: [most_listed]mn.NewMenu = undefined;
+        app.sound_count = 0;
+        app.sub_count = 0;
+        app.sound_now = vc.VIDEO_NO_TRACK;
+        app.sub_now = vc.VIDEO_NO_TRACK;
+        var track: media.MediaTrack = .{};
+        var number: u32 = 0;
+        while (true) : (number += 1) {
+            const flags = app.vcb.GetVideoTrack(film, number, &track);
+            if (flags < 0) break;
+            const chosen = flags & vc.VTRK_CHOSEN != 0;
+            const item = mn.NewMenu{
+                .type = mn.NM_ITEM,
+                .flags = mn.CHECKIT | (if (chosen) mn.CHECKED else 0) | (if (flags & vc.VTRK_DECODED != 0) 0 else mn.NM_ITEMDISABLED),
+            };
+            if (track.kind == media.MTRACK_AUDIO and app.sound_count < most_listed) {
+                const n = app.sound_count;
+                sound_items[n] = item;
+                sound_items[n].label = app.trackLabel(n, &track, number);
+                app.sound_numbers[n] = number;
+                if (chosen) app.sound_now = number;
+                app.sound_count += 1;
+            } else if (track.kind == media.MTRACK_TEXT and app.sub_count < most_listed) {
+                const n = app.sub_count;
+                sub_items[n] = item;
+                sub_items[n].label = app.trackLabel(most_listed + n, &track, number);
+                app.sub_numbers[n] = number;
+                if (chosen) app.sub_now = number;
+                app.sub_count += 1;
+            }
+        }
+        var used = from;
+        table[used] = .{ .type = mn.NM_TITLE, .label = app.text.get(.MSG_MENU_SOUND) };
+        used += 1;
+        if (app.sound_count == 0) {
+            table[used] = .{ .type = mn.NM_ITEM, .label = app.text.get(.MSG_MENU_NO_SOUND), .flags = mn.NM_ITEMDISABLED };
+            used += 1;
+        }
+        const sounds: u32 = (@as(u32, 1) << @intCast(app.sound_count)) - 1;
+        for (sound_items[0..app.sound_count], 0..) |item, n| {
+            table[used] = item;
+            table[used].mutual_exclude = sounds & ~(@as(u32, 1) << @intCast(n));
+            used += 1;
+        }
+        table[used] = .{ .type = mn.NM_TITLE, .label = app.text.get(.MSG_MENU_SUBTITLES) };
+        used += 1;
+        const subs: u32 = (@as(u32, 1) << @intCast(app.sub_count + 1)) - 1;
+        table[used] = .{
+            .type = mn.NM_ITEM,
+            .label = app.text.get(.MSG_MENU_SUBTITLES_OFF),
+            .flags = mn.CHECKIT | (if (app.sub_now == vc.VIDEO_NO_TRACK) mn.CHECKED else 0),
+            .mutual_exclude = subs & ~@as(u32, 1),
+        };
+        used += 1;
+        for (sub_items[0..app.sub_count], 1..) |item, n| {
+            table[used] = item;
+            table[used].mutual_exclude = subs & ~(@as(u32, 1) << @intCast(n));
+            used += 1;
+        }
+        return used;
+    }
+
+    /// A track's label in `labels[slot]`: its name and its language -
+    /// "Kommentar (deu)" - either alone, or "Track 3" when it says neither.
+    fn trackLabel(app: *App, slot: usize, track: *const media.MediaTrack, number: u32) [*:0]const u8 {
+        const into = &app.labels[slot];
+        var used: usize = 0;
+        var name_length: usize = 0;
+        while (name_length < track.name.len and track.name[name_length] != 0) name_length += 1;
+        var language_length: usize = 0;
+        while (language_length < track.language.len and track.language[language_length] != 0) language_length += 1;
+        const language = track.language[0..language_length];
+        const said = language.len != 0 and !(language.len == 3 and language[0] == 'u' and language[1] == 'n' and language[2] == 'd');
+        if (name_length != 0) {
+            used = subtitles.latin1(track.name[0..name_length], into[0 .. into.len - 8]);
+            if (said) {
+                for (" (") |byte| {
+                    into[used] = byte;
+                    used += 1;
+                }
+            }
+        } else if (!said) {
+            const word = app.text.get(.MSG_MENU_TRACK);
+            var at: usize = 0;
+            while (word[at] != 0 and used < into.len - 12) : (at += 1) {
+                into[used] = word[at];
+                used += 1;
+            }
+            into[used] = ' ';
+            used += 1;
+            var digits: [10]u8 = undefined;
+            var count: usize = 0;
+            var value = number + 1;
+            while (true) {
+                digits[count] = '0' + @as(u8, @intCast(value % 10));
+                count += 1;
+                value /= 10;
+                if (value == 0) break;
+            }
+            while (count > 0) {
+                count -= 1;
+                into[used] = digits[count];
+                used += 1;
+            }
+        }
+        if (said) {
+            for (language) |byte| {
+                into[used] = byte;
+                used += 1;
+            }
+            if (name_length != 0) {
+                into[used] = ')';
+                used += 1;
+            }
+        }
+        into[used] = 0;
+        return into;
     }
 
     /// Open...: a film asked for and played, the one before let go of; it
@@ -895,6 +1137,7 @@ const App = struct {
             if (was_playing) app.play();
             return;
         }
+        app.menus_stale = true;
         app.startFilm();
     }
 
@@ -968,6 +1211,8 @@ const App = struct {
                 else => {},
             }
         }
+        // Made again only now: the messages above may be a menu's.
+        if (app.menus_stale) app.makeMenus();
         return true;
     }
 
@@ -1132,7 +1377,24 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.FreeVec(app_memory);
     const app: *App = @ptrCast(@alignCast(app_memory));
     const percent: u32 = @intCast(@min(@max(rdargs.number(argv[arg_volume]) orelse 100, 0), volume_most));
-    app.* = .{ .sys = sys, .dl = dl, .text = &text, .ib = ib, .gb = gb, .vcb = vcb, .tb = tb, .al = al, .level = percent };
+    // The subtitles' fonts at the picture's size; the screen's own font
+    // without it. Given back before the library.
+    const diskfont_lib = sys.OpenLibrary(diskfont.DISKFONTNAME, 0);
+    defer if (diskfont_lib) |lib| sys.CloseLibrary(lib);
+    app.* = .{
+        .sys = sys,
+        .dl = dl,
+        .text = &text,
+        .ib = ib,
+        .gb = gb,
+        .vcb = vcb,
+        .tb = tb,
+        .al = al,
+        .level = percent,
+        .tracks_known = vcb.lib().version > 1 or vcb.lib().revision >= 3,
+        .subs = .{ .sys = sys, .ib = ib, .gb = gb, .dfb = @ptrCast(diskfont_lib) },
+    };
+    defer app.subs.close();
 
     // The film: named, or asked for.
     var asked: [dos.path_max + 1:0]u8 = @splat(0);
@@ -1274,23 +1536,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
 
     // The menus; the window plays without them when they will not go on.
-    app.strip = blk: {
-        var table: [menus.len]mn.NewMenu = undefined;
-        for (menus, &table) |entry, *made| {
-            made.* = entry.menu;
-            if (entry.text) |id| made.label = text.get(id);
-        }
-        const made = ib.CreateMenusA(&table, null) orelse break :blk null;
-        if (!ib.LayoutMenusA(made, screen, null) or !ib.SetMenuStrip(app.window, made)) {
-            ib.FreeMenus(made);
-            break :blk null;
-        }
-        break :blk made;
-    };
-    defer if (app.strip) |made| {
-        ib.ClearMenuStrip(app.window);
-        ib.FreeMenus(made);
-    };
+    app.makeMenus();
+    defer app.dropMenus();
 
     app.fitCanvas();
     _ = sys.SetSignal(0, exec.SIGBREAKF_CTRL_C);
