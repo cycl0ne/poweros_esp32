@@ -375,6 +375,36 @@ pub fn smoothTest(scene: *Scene) i32 {
     return tally.report(scene.dl, "smooth", scene.took_us);
 }
 
+/// Many layers of a triangle, which is the QPUs' work rather than memory's,
+/// timed with the clock set as slow and as fast as it goes: it should take
+/// about as much longer as the clock is slower. Left as fast as it goes.
+pub fn clockTest(scene: *Scene, gpu: *const v3d.Gpu) i32 {
+    const clocks = gpu.clocks() orelse {
+        _ = Printf(scene.dl, "The firmware does not say how fast the clock goes\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    const corners = [3]Vertex{
+        at(0, 0.8, 0.5, 1, &.{ 1, 0, 0, 1 }),
+        at(-0.8, -0.8, 0.5, 2, &.{ 0, 1, 0, 1 }),
+        at(0.8, -0.8, 0.5, 4, &.{ 0, 0, 1, 1 }),
+    };
+    for ([_]u32{ clocks.least_hz, clocks.most_hz, clocks.least_hz, clocks.most_hz }) |hz| {
+        if (!gpu.runAt(hz)) {
+            _ = Printf(scene.dl, "The firmware does not set the clock\n", .{});
+            return dos.RETURN_FAIL;
+        }
+        var total: u64 = 0;
+        for (0..4) |_| {
+            scene.begin(.{});
+            for (0..30) |_| scene.draw(.{ .fragment = qpu.color_fragment, .vertices = &corners });
+            if (!scene.finish()) return dos.RETURN_FAIL;
+            total += scene.took_us;
+        }
+        _ = Printf(scene.dl, "clock        set to %ld MHz, a picture of 30 layers takes %ld us\n", .{ @as(u64, hz / 1_000_000), total / 4 });
+    }
+    return dos.RETURN_OK;
+}
+
 /// A triangle with a corner behind the eye: what is drawn is what lies in
 /// front of it, as far as the clipper goes.
 pub fn clipTest(scene: *Scene) i32 {

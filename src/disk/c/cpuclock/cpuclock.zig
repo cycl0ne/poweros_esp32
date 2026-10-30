@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! CpuClock: the cores' clock on a Compute Module 5, as the VideoCore's
 //! firmware has it now - the rate it set them to, the rate it measures,
-//! the most it allows - the chip's temperature, and what holds the cores
-//! back, now and since the machine started. Built against the SDK only.
+//! the most it allows - the V3D's the same, the chip's temperature, and what
+//! holds the cores back, now and since the machine started. Built against the
+//! SDK only.
 //!
 //!   CpuClock
 //!
@@ -29,7 +30,7 @@ const st = st_expansion.systemtags;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "CpuClock";
-const VERSION_STRING = "\x00$VER: CpuClock 1.0 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: CpuClock 1.1 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -41,6 +42,7 @@ const TAG_GET_THROTTLED: u32 = 0x0003_0046;
 const TAG_GET_CLOCK_RATE_MEASURED: u32 = 0x0003_0047;
 /// The firmware's number for the cores' clock.
 const CLOCK_ARM: u32 = 3;
+const CLOCK_V3D: u32 = 5;
 
 /// What GET_THROTTLED says holds the cores back, a bit each, in its low
 /// 16 bits for now and the same 16 bits up for since the start.
@@ -91,6 +93,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     _ = Printf(dl, "clock        %lu MHz (set to %lu, at most %lu)\n", .{
         @as(u64, (measured[1] + 500_000) / 1_000_000), @as(u64, set[1] / 1_000_000), @as(u64, most[1] / 1_000_000),
     });
+    var v3d_set = [_]u32{ CLOCK_V3D, 0 };
+    var v3d_measured = [_]u32{ CLOCK_V3D, 0 };
+    var v3d_most = [_]u32{ CLOCK_V3D, 0 };
+    if (videocore.call(sys, mailbox, buffer, TAG_GET_CLOCK_RATE, &v3d_set) and
+        videocore.call(sys, mailbox, buffer, TAG_GET_CLOCK_RATE_MEASURED, &v3d_measured) and
+        videocore.call(sys, mailbox, buffer, TAG_GET_MAX_CLOCK_RATE, &v3d_most))
+    {
+        _ = Printf(dl, "V3D          %lu MHz (set to %lu, at most %lu)\n", .{
+            @as(u64, (v3d_measured[1] + 500_000) / 1_000_000), @as(u64, v3d_set[1] / 1_000_000), @as(u64, v3d_most[1] / 1_000_000),
+        });
+    }
     var temperature = [_]u32{ 0, 0 };
     if (videocore.call(sys, mailbox, buffer, TAG_GET_TEMPERATURE, &temperature)) {
         const tenths = (temperature[1] + 50) / 100;

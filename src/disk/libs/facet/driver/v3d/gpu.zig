@@ -13,7 +13,9 @@
 //! stopped, as Linux does when the driver goes, and then switched on again,
 //! the whole machine stopped on the CM5 (30.10.2026): why is not known. A
 //! later `powerUp` finds the clock on and only resets the SMS, as Linux does
-//! after a hang.
+//! after a hang. Nor does it run slower while idle: the firmware takes a lower
+//! rate and says it has it, and the core works as fast as before (`V3DTest
+//! CLOCK`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -30,6 +32,7 @@ const TAG_GET_CLOCK_STATE: u32 = 0x0003_0001;
 const TAG_SET_CLOCK_STATE: u32 = 0x0003_8001;
 const TAG_GET_CLOCK_RATE: u32 = 0x0003_0002;
 const TAG_GET_MAX_CLOCK_RATE: u32 = 0x0003_0004;
+const TAG_GET_MIN_CLOCK_RATE: u32 = 0x0003_0007;
 const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
 /// The firmware's number for the V3D's clock.
 const CLOCK_V3D: u32 = 5;
@@ -44,6 +47,12 @@ const sms_offset: usize = 0x3_0800;
 pub const Clock = struct {
     on: bool,
     hz: u32,
+    most_hz: u32,
+};
+
+/// How fast the firmware says the clock can run.
+pub const Clocks = struct {
+    least_hz: u32,
     most_hz: u32,
 };
 
@@ -143,6 +152,26 @@ pub const Gpu = struct {
         if (!mailbox.ask(TAG_GET_CLOCK_RATE, &rate)) return null;
         if (!mailbox.ask(TAG_GET_MAX_CLOCK_RATE, &most)) return null;
         return .{ .on = state[1] & 1 != 0, .hz = rate[1], .most_hz = most[1] };
+    }
+
+    /// How fast the clock can run; null when the firmware does not answer.
+    pub fn clocks(gpu: *const Gpu) ?Clocks {
+        var mailbox = Mailbox.open(gpu) orelse return null;
+        defer mailbox.close();
+        var least = [_]u32{ CLOCK_V3D, 0 };
+        var most = [_]u32{ CLOCK_V3D, 0 };
+        if (!mailbox.ask(TAG_GET_MIN_CLOCK_RATE, &least)) return null;
+        if (!mailbox.ask(TAG_GET_MAX_CLOCK_RATE, &most)) return null;
+        return .{ .least_hz = least[1], .most_hz = most[1] };
+    }
+
+    /// The firmware asked to set the clock to `hz`, with no job on the core:
+    /// false when it does not answer.
+    pub fn runAt(gpu: *const Gpu, hz: u32) bool {
+        var mailbox = Mailbox.open(gpu) orelse return false;
+        defer mailbox.close();
+        var rate = [_]u32{ CLOCK_V3D, hz, 0 };
+        return mailbox.ask(TAG_SET_CLOCK_RATE, &rate);
     }
 
     /// The core out of reset, its clock on as fast as the firmware lets

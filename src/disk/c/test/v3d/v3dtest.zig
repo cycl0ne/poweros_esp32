@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! V3DTest: the BCM2712's V3D brought up a step at a time.
 //!
-//!   V3DTest UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,SMOOTH/S,CLIP/S,
+//!   V3DTest UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,CLOCK/S,SMOOTH/S,CLIP/S,
 //!           TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S
 //!
 //! Alone it asks only what is safe with the core off: the firmware's clock
@@ -12,7 +12,9 @@
 //! colour and prints what came out as a map of letters. OVERFLOW draws it
 //! 2000 times with too little memory for the binner, which has to ask for
 //! more. FAULT stores to a page that is not mapped, which the MMU has to
-//! report. SMOOTH to AREA draw with the fragment programs and the state
+//! report. CLOCK times the same picture of many layers with the clock as slow
+//! and as fast as it goes, which says what the firmware's figures do not:
+//! whether it runs at what it is set to. SMOOTH to AREA draw with the fragment programs and the state
 //! a pipeline has, each picture checked against the sum done here
 //! (fragments.zig). The core stays on after any of them. Each step is written to the kernel's log before it
 //! is taken, since a read of a register nothing answers halts the machine
@@ -29,10 +31,10 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "V3DTest";
-const VERSION_STRING = "\x00$VER: V3DTest 0.1 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: V3DTest 0.2 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,SMOOTH/S,CLIP/S,TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S";
+const template = "UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,CLOCK/S,SMOOTH/S,CLIP/S,TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S";
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -41,7 +43,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [14]usize = @splat(0);
+    var argv: [15]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -114,13 +116,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (std.mem.allEqual(usize, argv[5..], 0)) return dos.RETURN_OK;
     var scene = fragments.Scene.open(dl, &space, &engine) orelse return noMemory(dl);
     defer scene.close();
+    if (argv[5] != 0) {
+        const result = fragments.clockTest(&scene, &gpu);
+        if (result != dos.RETURN_OK) return result;
+    }
     const tests = [_]*const fn (*fragments.Scene) i32{
         &fragments.smoothTest, &fragments.clipTest,     &fragments.textureTest, &fragments.mipTest,
         &fragments.filterTest, &fragments.modulateTest, &fragments.depthTest,   &fragments.blendTest,
         &fragments.areaTest,
     };
     var worst: i32 = dos.RETURN_OK;
-    for (tests, argv[5..]) |run, asked| {
+    for (tests, argv[6..]) |run, asked| {
         if (asked == 0) continue;
         const result = run(&scene);
         if (result == dos.RETURN_FAIL) return result;

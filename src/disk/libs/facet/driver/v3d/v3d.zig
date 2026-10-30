@@ -9,6 +9,7 @@
 pub const regs = @import("regs.zig");
 pub const Gpu = @import("gpu.zig").Gpu;
 pub const Clock = @import("gpu.zig").Clock;
+pub const Clocks = @import("gpu.zig").Clocks;
 pub const Ident = @import("gpu.zig").Ident;
 pub const Block = @import("space.zig").Block;
 pub const Space = @import("space.zig").Space;
