@@ -169,6 +169,8 @@ fn coreServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
             gpu.coreWrite(regs.PTB_BPOS, block.bytes);
         } else {
             engine.overflow_short = true;
+            // The binner waits for what will not come.
+            engine.sys.SignalWaitable(&engine.faulted);
         }
     }
     if (raised & regs.INT_FLDONE != 0) engine.sys.SignalWaitable(&engine.bin_done);

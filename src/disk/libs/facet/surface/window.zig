@@ -171,7 +171,7 @@ fn make(surface: *Surface, pictures: []Picture) bool {
     // as the tiles write them back.
     const pitch = std.mem.alignForward(u32, now.width * rtg.bitmaps.formatBytes(kept.format), _memory.alignment);
     for (pictures, 0..) |*picture, k| {
-        const offscreen = allocate(kept.sys, now.width, now.height, pitch, kept.format) orelse {
+        const offscreen = allocate(kept.sys, surface.picture_memory, now.width, now.height, pitch, kept.format) orelse {
             unmake(surface, pictures[0..k], null);
             return false;
         };
@@ -181,13 +181,13 @@ fn make(surface: *Surface, pictures: []Picture) bool {
 }
 
 /// A picture cleared, so that one shown before it is drawn is black.
-fn allocate(sys: *ExecBase, width: u32, height: u32, pitch: u32, format: PixelFormat) ?*Offscreen {
+fn allocate(sys: *ExecBase, attributes: u32, width: u32, height: u32, pitch: u32, format: PixelFormat) ?*Offscreen {
     const made = _objects.create(sys, Offscreen) orelse return null;
     const size = @as(usize, pitch) * height;
     // Room to move the pixels up to a cache line: AllocMem's are aligned
     // to its chunks.
     const bytes = size + (_memory.alignment - exec.MEM_BLOCKSIZE);
-    const block: [*]u8 = @ptrCast(sys.AllocMem(bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+    const block: [*]u8 = @ptrCast(sys.AllocMem(bytes, attributes | exec.MEMF_CLEAR) orelse {
         _objects.destroy(sys, made);
         return null;
     });

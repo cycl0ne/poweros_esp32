@@ -26,7 +26,10 @@ const Instance = @import("_instance.zig").Instance;
 /// `success`, or `incomplete` when `devices` was too short for them all.
 ///
 /// BEHAVIOR:
-/// There is one: the machine's cores, drawing through the rasterizer.
+/// The machine's cores come first, drawing through the rasterizer. On a
+/// machine with a GPU facet.library drives - the V3D of a Raspberry Pi 5 or
+/// a Compute Module 5 - that follows, which draws with fixed forms of
+/// fragment function alone (`shader.fixedFragment`).
 ///
 /// CONTEXT:
 /// - Waits: no.

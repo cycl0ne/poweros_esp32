@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! A frame's render control list: its tiles cleared, what was binned for
-//! them drawn, and each stored in rows of pixels (v3dx_rcl.c in Mesa).
+//! A frame's two lists: the binner's, which says what is drawn, and the
+//! renderer's, which clears each tile or loads it, draws what was binned
+//! for it and stores it in rows of pixels (v3dx_rcl.c and v3dx_emit.c in
+//! Mesa).
 
 const cl = @import("cl.zig");
 const List = cl.List;
@@ -10,15 +12,25 @@ pub const tile_pixels: u32 = 64;
 /// How many supertiles a frame may have, and not this many in a row.
 const most_supertiles: u32 = 256;
 
-/// Batches of 16 vertices the VCM caches, for 1 sector out of half the VPM:
-/// what Mesa's sum comes to for these programs.
+/// Batches of 16 vertices the VCM caches: what Mesa's sum comes to for any
+/// program here, each a small part of half the VPM.
 const vcm_batches: u32 = 4;
+
+/// A rectangle of pixels.
+pub const Area = struct {
+    left: u32,
+    top: u32,
+    right: u32,
+    bottom: u32,
+};
 
 pub const Frame = struct {
     width: u32,
     height: u32,
     image: u32,
     stride: u32,
+    /// How the image holds a pixel.
+    format: u64 = cl.OUTPUT_RGBA8,
     /// The image is blue first, not red.
     swap_rb: bool,
     /// As it lies in the tile buffer: red in the low byte.
@@ -27,6 +39,14 @@ pub const Frame = struct {
     tile_lists: u32,
     /// Whether the binner ran, so that a tile has a list to draw.
     binned: bool,
+    /// The tiles start with what the image holds, not the colour cleared.
+    load: bool = false,
+    /// There is a depth buffer, cleared to this; it stays in the tiles.
+    depth: bool = false,
+    clear_depth: f32 = 1.0,
+    /// The tiles rendered: any others of the image stay as they are. Null
+    /// for all.
+    area: ?Area = null,
 
     pub fn tilesX(frame: *const Frame) u32 {
         return (frame.width + tile_pixels - 1) / tile_pixels;
@@ -37,16 +57,27 @@ pub const Frame = struct {
     }
 };
 
-/// The binner's list for a frame: its fixed state, then `count` vertices as
-/// triangles with the shader state at `record`.
-pub fn writeBin(list: *List, frame: *const Frame, record: u32, attributes: u32, count: u32) void {
+/// What a draw of a frame is drawn with.
+pub const DrawState = struct {
+    /// The pixels it may touch.
+    clip: Area,
+    cfg: cl.Cfg = .{},
+    /// The viewport, as Vulkan gives it.
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    min_depth: f32 = 0,
+    max_depth: f32 = 1,
+};
+
+/// The start of the binner's list for a frame: what stays the same for all
+/// its draws.
+pub fn beginBin(list: *List, frame: *const Frame) void {
     cl.binningMode(list, frame.width, frame.height, tile_pixels);
     list.byte(cl.FLUSH_VCD_CACHE);
     cl.occlusionQueryOff(list);
     list.byte(cl.START_TILE_BINNING);
-
-    cl.clipWindow(list, 0, 0, frame.width, frame.height);
-    cl.cfgBits(list);
     cl.colorWriteMasks(list);
     cl.sampleState(list);
     list.byte(cl.ZERO_ALL_FLAT_SHADE_FLAGS);
@@ -54,22 +85,47 @@ pub fn writeBin(list: *List, frame: *const Frame, record: u32, attributes: u32, 
     list.byte(cl.ZERO_ALL_CENTROID_FLAGS);
     cl.pointSize(list, 1.0);
     cl.lineWidth(list, 1.0);
-    const half_width: f32 = @floatFromInt(frame.width);
-    const half_height: f32 = @floatFromInt(frame.height);
-    cl.clipperXy(list, half_width * 32.0, half_height * 32.0);
-    cl.clipperZ(list, 0.5, 0.5);
-    cl.clipperZLimits(list, 0.0, 1.0);
-    cl.viewportOffset(list, frame.width / 2, frame.height / 2);
     cl.vcmCacheSize(list, vcm_batches, vcm_batches);
+}
+
+/// What the draws after it are drawn with.
+pub fn writeDrawState(list: *List, state: *const DrawState) void {
+    const clip = state.clip;
+    cl.clipWindow(list, clip.left, clip.top, clip.right - clip.left, clip.bottom - clip.top);
+    cl.cfgBits(list, state.cfg);
+    if (state.cfg.blend) cl.blendAlpha(list);
+    cl.clipperXy(list, state.width * 32.0, state.height * 32.0);
+    cl.clipperZ(list, state.max_depth - state.min_depth, state.min_depth);
+    cl.clipperZLimits(list, @min(state.min_depth, state.max_depth), @max(state.min_depth, state.max_depth));
+    cl.viewportOffset(list, state.x + state.width * 0.5, state.y + state.height * 0.5);
+}
+
+/// The end of the binner's list.
+pub fn endBin(list: *List) void {
+    list.byte(cl.FLUSH);
+}
+
+/// The binner's list for a frame of one draw over all of it: `count`
+/// vertices as triangles with the shader state at `record`.
+pub fn writeBin(list: *List, frame: *const Frame, record: u32, attributes: u32, count: u32) void {
+    beginBin(list, frame);
+    writeDrawState(list, &.{
+        .clip = .{ .left = 0, .top = 0, .right = frame.width, .bottom = frame.height },
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(frame.width),
+        .height = @floatFromInt(frame.height),
+    });
     cl.glShaderState(list, record, attributes);
     cl.vertexArrayPrims(list, cl.PRIM_TRIANGLES, count, 0);
-    list.byte(cl.FLUSH);
+    endBin(list);
 }
 
 /// What each tile does, in its own list: `render` branches to it for every
 /// tile.
 pub fn writeTileList(list: *List, frame: *const Frame) void {
     list.byte(cl.TILE_COORDINATES_IMPLICIT);
+    if (frame.load) cl.load(list, frame.format, frame.swap_rb, frame.image, frame.stride);
     list.byte(cl.END_OF_LOADS);
     // The binner starts each tile's list assuming triangles.
     cl.primListFormat(list, cl.LIST_TRIANGLES);
@@ -77,7 +133,7 @@ pub fn writeTileList(list: *List, frame: *const Frame) void {
         cl.setInstanceId(list, 0);
         cl.branchToImplicitTileList(list);
     }
-    cl.store(list, cl.STORE_RENDER_TARGET_0, frame.swap_rb, frame.image, frame.stride);
+    cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride);
     list.byte(cl.CLEAR_RENDER_TARGETS);
     list.byte(cl.END_OF_TILE_MARKER);
     list.byte(cl.RETURN_FROM_SUB_LIST);
@@ -87,9 +143,9 @@ pub fn writeTileList(list: *List, frame: *const Frame) void {
 pub fn writeRender(list: *List, frame: *const Frame, tile_start: u32, tile_end: u32) void {
     const tiles_x = frame.tilesX();
     const tiles_y = frame.tilesY();
-    cl.renderingCommon(list, frame.width, frame.height, tile_pixels);
+    cl.renderingCommon(list, frame.width, frame.height, tile_pixels, frame.depth);
     cl.renderTarget0(list, tile_pixels, frame.clear);
-    cl.zsClear(list, 1.0);
+    cl.zsClear(list, frame.clear_depth);
     cl.tileListInitialBlock(list);
     cl.tileListBase(list, frame.tile_lists);
 
@@ -111,16 +167,19 @@ pub fn writeRender(list: *List, frame: *const Frame, tile_start: u32, tile_end: 
     while (round < 2) : (round += 1) {
         cl.tileCoordinates(list, 0, 0);
         list.byte(cl.END_OF_LOADS);
-        cl.store(list, cl.STORE_NONE, false, 0, 0);
+        cl.store(list, cl.STORE_NONE, frame.format, false, 0, 0);
         if (round == 0) list.byte(cl.CLEAR_RENDER_TARGETS);
         list.byte(cl.END_OF_TILE_MARKER);
     }
     list.byte(cl.FLUSH_VCD_CACHE);
     cl.genericTileList(list, tile_start, tile_end);
-    var row: u32 = 0;
-    while (row < frame_h) : (row += 1) {
-        var column: u32 = 0;
-        while (column < frame_w) : (column += 1) {
+    const area = frame.area orelse Area{ .left = 0, .top = 0, .right = frame.width, .bottom = frame.height };
+    const across = supertile_w * tile_pixels;
+    const down = supertile_h * tile_pixels;
+    var row = area.top / down;
+    while (row < frame_h and row * down < area.bottom) : (row += 1) {
+        var column = area.left / across;
+        while (column < frame_w and column * across < area.right) : (column += 1) {
             cl.supertileCoordinates(list, column, row);
         }
     }

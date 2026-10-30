@@ -33,15 +33,11 @@ const Buffer = _buffer.Buffer;
 const _image = @import("../../image/_image.zig");
 const _render = @import("../../render/_render.zig");
 const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
-const DescriptorSet = @import("../../descriptor/_descriptor.zig").Set;
 const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
+const _vertices = @import("../_vertices.zig");
 const _draw = @import("_draw.zig");
 
-/// A vertex buffer bound.
-pub const VertexBuffer = struct {
-    buffer: ?*Buffer = null,
-    offset: u64 = 0,
-};
+pub const VertexBuffer = _vertices.VertexBuffer;
 
 /// What playing keeps from one command to the next, and from one command
 /// buffer to the next on its queue.
@@ -104,19 +100,25 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
         .copy_buffer_to_image => copyBufferToImage(_stream.as(_command.CopyBufferToImage, head)),
-        .copy_buffer => copyBuffer(_stream.as(_command.CopyBuffer, head)),
+        .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
         .begin_render_pass => beginRenderPass(queue, _stream.as(_command.BeginRenderPass, head)),
         .end_render_pass => endRenderPass(player),
         .bind_pipeline => player.pipeline = _stream.as(_command.BindPipeline, head).pipeline,
-        .bind_vertex_buffers => bindVertexBuffers(player, _stream.as(_command.BindVertexBuffers, head)),
+        .bind_vertex_buffers => _vertices.bindVertexBuffers(player, _stream.as(_command.BindVertexBuffers, head)),
         .bind_index_buffer => {
             const command = _stream.as(_command.BindIndexBuffer, head);
             player.index_buffer = command.buffer;
             player.index_offset = command.offset;
             player.index_type = command.index_type;
         },
-        .bind_descriptor_sets => bindDescriptorSets(player, _stream.as(_command.BindDescriptorSets, head)),
-        .push_constants => pushConstants(player, _stream.as(_command.PushConstants, head)),
+        .bind_descriptor_sets => {
+            _vertices.bindDescriptorSets(&player.resources, _stream.as(_command.BindDescriptorSets, head));
+            player.drawn = null;
+        },
+        .push_constants => {
+            _vertices.pushConstants(&player.resources, _stream.as(_command.PushConstants, head));
+            player.drawn = null;
+        },
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
         .draw => if (player.drawing) {
@@ -196,27 +198,6 @@ fn endRenderPass(player: *Player) void {
     _ = player.target.?.finish();
 }
 
-fn bindVertexBuffers(player: *Player, command: *const _command.BindVertexBuffers) void {
-    for (_stream.items(_command.BindVertexBuffers, _command.VertexBuffer, command, command.count), command.first..) |bound, binding| {
-        if (binding >= player.vertex_buffers.len) break;
-        player.vertex_buffers[binding] = .{ .buffer = bound.buffer, .offset = bound.offset };
-    }
-}
-
-fn bindDescriptorSets(player: *Player, command: *const _command.BindDescriptorSets) void {
-    for (_stream.items(_command.BindDescriptorSets, *DescriptorSet, command, command.count), command.first..) |set, at| {
-        if (at >= shader.MAX_SETS) break;
-        player.resources.sets[at] = &set.view;
-    }
-    player.drawn = null;
-}
-
-fn pushConstants(player: *Player, command: *const _command.PushConstants) void {
-    const bytes = _stream.items(_command.PushConstants, u8, command, command.size);
-    @memcpy(player.resources.push[command.offset..][0..command.size], bytes);
-    player.drawn = null;
-}
-
 /// What the queue's target is given of the system: exec's workers and
 /// memory, and the display the pass draws into, if any.
 fn hostOf(queue: *Queue) raster.Host {
@@ -249,14 +230,5 @@ fn copyBufferToImage(command: *const _command.CopyBufferToImage) void {
     const from = _buffer.bytes(command.source, 0, facet.WHOLE_SIZE) orelse return;
     for (_stream.items(_command.CopyBufferToImage, facet.BufferImageCopy, command, command.count)) |*region| {
         _image.copyFromBuffer(command.image, from, region);
-    }
-}
-
-fn copyBuffer(command: *const _command.CopyBuffer) void {
-    for (_stream.items(_command.CopyBuffer, facet.BufferCopy, command, command.count)) |region| {
-        const from = _buffer.bytes(command.source, region.src_offset, region.size) orelse continue;
-        const into = _buffer.bytes(command.destination, region.dst_offset, region.size) orelse continue;
-        // Overlapping regions are the program's mistake; copied forwards.
-        std.mem.copyForwards(u8, into, from);
     }
 }

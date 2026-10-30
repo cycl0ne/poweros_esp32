@@ -56,6 +56,8 @@ pub const Pipeline = struct {
     driver: ?*anyopaque = null,
     vertex: shader.VertexFn,
     fragment: shader.FragmentFn,
+    /// The fragment function's fixed form, if it has one.
+    fixed: shader.Fixed,
     varyings: u32,
     /// The locations the vertex function's inputs take: the highest an
     /// attribute reads into, and one.

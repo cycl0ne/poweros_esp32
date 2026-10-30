@@ -21,6 +21,8 @@ const Gpu = @import("gpu.zig").Gpu;
 const page_bytes: u32 = 4096;
 const table_bytes: u32 = 4 * 1024 * 1024;
 const line_bytes: u32 = 64;
+/// What the V3D's addresses reach, with each mapped to itself.
+const reach_bytes: u64 = 1 << 32;
 /// How long the MMU's caches are given to empty, as Linux gives them.
 const flush_wait_us: u64 = 100_000;
 /// The command list reader reads ahead of the list's end: a page past each
@@ -126,6 +128,17 @@ pub const Space = struct {
         space.sys.FreeMem(block.memory, block.memory_bytes);
     }
 
+    /// `bytes` of memory that is not a block of the space's mapped as well:
+    /// where the V3D has them, or null past what it reaches. `flush` before
+    /// the V3D uses them.
+    pub fn map(space: *Space, address: usize, bytes: u64) ?u32 {
+        const first = address & ~@as(usize, page_bytes - 1);
+        const end = (address + @as(usize, @intCast(bytes)) + page_bytes - 1) & ~@as(usize, page_bytes - 1);
+        if (end > reach_bytes) return null;
+        space.setPages(@intCast(first), @intCast(end - first), regs.PTE_VALID | regs.PTE_WRITEABLE);
+        return @intCast(address);
+    }
+
     fn setPages(space: *Space, address: u32, bytes: u32, flags: u32) void {
         const first = address >> 12;
         const count = bytes >> 12;
@@ -134,6 +147,19 @@ pub const Space = struct {
             space.table[first + page] = if (flags == 0) 0 else flags | (first + page);
         }
         toMemory(space.sys, @intFromPtr(space.table) + first * 4, count * 4);
+    }
+
+    /// What the CPU wrote in `bytes` from `at` out to memory, for the V3D.
+    pub fn rangeToGpu(space: *const Space, at: [*]const u8, bytes: usize) void {
+        toMemory(space.sys, @intFromPtr(at), @intCast(bytes));
+    }
+
+    /// What the CPU's caches hold of `bytes` from `at` dropped, so it reads
+    /// what the V3D wrote.
+    pub fn rangeFromGpu(space: *const Space, at: [*]const u8, bytes: usize) void {
+        const start = @intFromPtr(at) & ~@as(usize, line_bytes - 1);
+        var length: u32 = wholeLines(@intFromPtr(at) + bytes - start);
+        space.sys.CachePostDMA(@ptrFromInt(start), &length, 0);
     }
 
     /// What the CPU wrote in `block` out to memory, for the V3D.

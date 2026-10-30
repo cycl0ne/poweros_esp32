@@ -34,7 +34,10 @@ pub const LIBRARY_VERSION = 1;
 /// (layers 0.7's `ShowLayerPicture`), not copied into the window first.
 /// 6: what draws is a driver behind each physical device's table
 /// (driver/), the cores the first; nothing a program sees changes.
-pub const LIBRARY_REVISION = 6;
+/// 7: the BCM2712's V3D a second physical device, listed after the cores;
+/// fragment functions of fixed forms (`shader.fixedFragment`), the only ones
+/// it runs, and the cores run too.
+pub const LIBRARY_REVISION = 7;
 const BUILD_DATE = "30.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -46,6 +49,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     const base = _base.facetBase(lib);
     const header = lib.*;
     base.* = .{ .lib = header, .sys_base = sys_base, .seg_list = seg_list };
+    sys_base.InitSemaphore(&base.v3d_lock);
     lib.revision = LIBRARY_REVISION;
     return lib;
 }

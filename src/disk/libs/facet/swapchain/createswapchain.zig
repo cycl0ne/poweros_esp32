@@ -98,6 +98,7 @@ pub fn CreateSwapchain(base: *FacetBase, device: *facet.Device, info: *const fac
     const count = @max(1, @min(info.min_image_count, _swapchain.max_images));
     const made = _objects.create(sys, Swapchain) orelse return .error_out_of_host_memory;
     made.* = .{ .device = owner, .surface = surface, .width = now.width, .height = now.height, .format = now.format, .count = count };
+    surface.picture_memory = owner.physical.ops.picture_memory;
     if (!surface.ops.make(surface, made.pictures[0..count])) {
         _objects.destroy(sys, made);
         return if (surface.ops.shape(surface) == null) .error_surface_lost else .error_out_of_device_memory;

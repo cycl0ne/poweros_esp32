@@ -51,6 +51,7 @@ pub const TILE_COORDINATES_IMPLICIT: u8 = 125;
 const TILE_RENDERING_MODE_CFG: u8 = 121;
 
 pub const OUTPUT_RGBA8: u64 = 27;
+pub const OUTPUT_BGR565: u64 = 7;
 pub const STORE_NONE: u64 = 8;
 pub const STORE_RENDER_TARGET_0: u64 = 0;
 pub const LIST_TRIANGLES: u8 = 2;
@@ -68,11 +69,15 @@ pub fn log2Tile(pixels: u32) u32 {
     };
 }
 
-/// The common part: first of the rendering mode's packets. No depth buffer.
-pub fn renderingCommon(list: *List, width: u32, height: u32, tile: u32) void {
+/// The common part: first of the rendering mode's packets. A depth buffer
+/// of 16 bits, in the tiles alone, or none. The coarse early test stays off:
+/// each pixel is still tested before its program runs.
+pub fn renderingCommon(list: *List, width: u32, height: u32, tile: u32, depth: bool) void {
     const log2 = @as(u64, log2Tile(tile));
+    const no_depth_buffer: u64 = @as(u64, @intFromBool(!depth)) << 44;
+    const depth_16: u64 = 2 << 47;
     list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(@as(u64, width) << 8 | @as(u64, height) << 24 | 1 << 46 | log2 << 52 | log2 << 55);
+    list.double(@as(u64, width) << 8 | @as(u64, height) << 24 | no_depth_buffer | 1 << 46 | depth_16 | log2 << 52 | log2 << 55);
 }
 
 /// Render target 0, at 32 bits a pixel and 8 bits of normalized channel,
@@ -121,9 +126,16 @@ pub fn supertileCoordinates(list: *List, column: u32, row: u32) void {
 }
 
 /// A store to an image in rows of pixels, or to none at all.
-pub fn store(list: *List, buffer: u64, swap_rb: bool, address: u32, stride: u32) void {
+pub fn store(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32, stride: u32) void {
     list.byte(29);
-    list.double(buffer | OUTPUT_RGBA8 << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
+    list.double(buffer | format << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
+    list.word(address);
+}
+
+/// The render target loaded from an image in rows of pixels.
+pub fn load(list: *List, format: u64, swap_rb: bool, address: u32, stride: u32) void {
+    list.byte(30);
+    list.double(STORE_RENDER_TARGET_0 | format << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
     list.word(address);
 }
 
@@ -168,17 +180,45 @@ pub fn clipWindow(list: *List, left: u32, bottom: u32, width: u32, height: u32) 
     list.double(@as(u64, left) | @as(u64, bottom) << 16 | @as(u64, width) << 32 | @as(u64, height) << 48);
 }
 
-/// Both faces drawn, no depth test, depth clipped to -1..1.
-pub fn cfgBits(list: *List) void {
-    const forward: u32 = 1 << 0;
-    const reverse: u32 = 1 << 1;
-    const compare_always: u32 = 7 << 12;
-    const clip_minus_one_to_one: u32 = 1 << 22;
-    const value = forward | reverse | compare_always | clip_minus_one_to_one;
+pub const COMPARE_ALWAYS: u32 = 7;
+const Z_CLIP_ZERO_TO_ONE: u32 = 2;
+
+pub const Cfg = struct {
+    /// The faces drawn: forward is the way `clockwise` says.
+    forward: bool = true,
+    reverse: bool = true,
+    clockwise: bool = false,
+    /// As facet.CompareOp numbers them, from never to always.
+    compare: u32 = COMPARE_ALWAYS,
+    depth_write: bool = false,
+    blend: bool = false,
+};
+
+pub fn cfgBits(list: *List, cfg: Cfg) void {
+    const value: u32 = @as(u32, @intFromBool(cfg.forward)) |
+        @as(u32, @intFromBool(cfg.reverse)) << 1 |
+        @as(u32, @intFromBool(cfg.clockwise)) << 2 |
+        cfg.compare << 12 |
+        @as(u32, @intFromBool(cfg.depth_write)) << 15 |
+        @as(u32, @intFromBool(cfg.blend)) << 19 |
+        Z_CLIP_ZERO_TO_ONE << 22;
     list.byte(96);
     list.byte(@truncate(value));
     list.byte(@truncate(value >> 8));
     list.byte(@truncate(value >> 16));
+}
+
+const BLEND_SRC_ALPHA: u32 = 6;
+const BLEND_INV_SRC_ALPHA: u32 = 7;
+const BLEND_ADD: u32 = 0;
+
+/// Render target 0 blended by the alpha of what is drawn, its alpha too.
+pub fn blendAlpha(list: *List) void {
+    list.byte(83);
+    list.byte(1);
+    list.byte(84);
+    const factors = BLEND_INV_SRC_ALPHA << 4 | BLEND_SRC_ALPHA;
+    list.word(1 << 24 | factors << 16 | BLEND_ADD << 12 | factors << 4 | BLEND_ADD);
 }
 
 /// All channels of all targets written: a bit here says not to.
@@ -227,12 +267,25 @@ pub fn clipperZLimits(list: *List, least: f32, most: f32) void {
     list.word(@bitCast(most));
 }
 
-/// Where the viewport's middle is, in whole pixels: 14 bits and 8 of
-/// fraction, with no coarse part needed for a viewport inside the image.
-pub fn viewportOffset(list: *List, x: u32, y: u32) void {
+/// Where the viewport's middle is: 14 bits and 8 of fraction, which cannot
+/// be below 0, and a coarse part of 64 pixels that can.
+pub fn viewportOffset(list: *List, x: f32, y: f32) void {
     list.byte(108);
-    list.word(x << 8);
-    list.word(y << 8);
+    list.word(viewportPart(x));
+    list.word(viewportPart(y));
+}
+
+fn viewportPart(at: f32) u32 {
+    var fine = at;
+    var coarse: i32 = 0;
+    if (fine < 0) {
+        const blocks: i32 = @intFromFloat(@ceil(-fine / 64));
+        fine += 64 * @as(f32, @floatFromInt(blocks));
+        coarse = -blocks;
+    }
+    const fine_bits: u32 = @intFromFloat(fine * 256);
+    const coarse_bits: u32 = @bitCast(coarse);
+    return fine_bits & 0x3F_FFFF | coarse_bits << 22;
 }
 
 pub fn vcmCacheSize(list: *List, binning: u32, rendering: u32) void {
@@ -247,6 +300,29 @@ pub fn glShaderState(list: *List, record: u32, attributes: u32) void {
 }
 
 pub const PRIM_TRIANGLES: u8 = 4;
+const INDEX_BUFFER_SETUP: u8 = 44;
+
+/// Where the indices of a draw are, in 32 bits each.
+pub fn indexBufferSetup(list: *List, address: u32, bytes: u32) void {
+    list.byte(INDEX_BUFFER_SETUP);
+    list.word(address);
+    list.word(bytes);
+}
+
+/// `count` triangles' corners from the first index of the index buffer.
+pub fn indexedPrimList(list: *List, mode: u8, count: u32) void {
+    const index_32: u8 = 2 << 6;
+    list.byte(32);
+    list.byte(mode | index_32);
+    list.word(count);
+    list.word(0);
+}
+
+/// On to the list at `address`.
+pub fn branch(list: *List, address: u32) void {
+    list.byte(16);
+    list.word(address);
+}
 
 pub fn vertexArrayPrims(list: *List, mode: u8, count: u32, first: u32) void {
     list.byte(36);
@@ -259,8 +335,8 @@ pub fn vertexArrayPrims(list: *List, mode: u8, count: u32, first: u32) void {
 
 /// The record of V3D 7.1.10 (the BCM2712's D0 stepping), which has draw
 /// index and base vertex and so its fields where others have them not:
-/// each program threadable and finishing in its first section, one VPM
-/// sector in and out for each, clipping on.
+/// each program threadable, input and output sharing their place in the
+/// VPM (as Mesa does, for all versions), clipping on.
 pub const shader_record_bytes = 32;
 
 pub const Programs = struct {
@@ -273,15 +349,22 @@ pub const Programs = struct {
     varyings: u32,
 };
 
+/// Values a program writes: its segment's size in sectors of 8.
+const coordinate_values: u32 = 6;
+
 pub fn shaderRecord(list: *List, programs: Programs) void {
     const clipping: u32 = 1 << 1;
     const no_implicit_varyings: u32 = 1 << 21;
     list.word(clipping | no_implicit_varyings | programs.varyings << 24);
-    // Each of 1 sector, and 1 less than the 1 required in play.
-    list.word(1 | 1 << 8 | 1 << 16 | 1 << 24);
+    // Size in sectors, the input's 0 for sharing the output's, and 1 less
+    // than the 1 required in play.
+    const coordinate_sectors = (coordinate_values + 7) / 8;
+    const vertex_sectors = (4 + programs.varyings + 7) / 8;
+    list.word(coordinate_sectors | vertex_sectors << 16);
     const threadable: u32 = 1 << 0;
     const final_section: u32 = 1 << 1;
-    list.word(programs.fragment | threadable | final_section);
+    // A fragment program never starts in its last section: see qpu.zig.
+    list.word(programs.fragment | threadable);
     list.word(programs.fragment_uniforms);
     list.word(programs.vertex | threadable | final_section);
     list.word(programs.vertex_uniforms);
@@ -306,7 +389,7 @@ test "the packets have Mesa's lengths and its fields" {
     var memory: [64]u8 = undefined;
     var list = List{ .at = &memory, .address = 0x1000 };
 
-    renderingCommon(&list, 1280, 720, 64);
+    renderingCommon(&list, 1280, 720, 64, false);
     try std.testing.expectEqual(@as(u32, 9), list.used);
     // Image size at 8 and 24, early-Z off at 46, log2 of the tile at 52, 55.
     try std.testing.expectEqual(@as(u8, 121), memory[0]);
@@ -318,7 +401,7 @@ test "the packets have Mesa's lengths and its fields" {
     try std.testing.expectEqual(@as(u64, 3), common >> 55 & 7);
 
     list.used = 0;
-    store(&list, STORE_RENDER_TARGET_0, true, 0x12345000, 5120);
+    store(&list, STORE_RENDER_TARGET_0, OUTPUT_RGBA8, true, 0x12345000, 5120);
     try std.testing.expectEqual(@as(u32, 13), list.used);
     const fields = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(OUTPUT_RGBA8, fields >> 12 & 0x3F);
@@ -345,7 +428,7 @@ test "the shader record and an attribute are the size the hardware reads" {
         .varyings = 2,
     });
     try std.testing.expectEqual(@as(u32, shader_record_bytes), list.used);
-    try std.testing.expectEqual(@as(u32, 0x103), std.mem.readInt(u32, memory[8..12], .little));
+    try std.testing.expectEqual(@as(u32, 0x101), std.mem.readInt(u32, memory[8..12], .little));
     try std.testing.expectEqual(@as(u32, 2), std.mem.readInt(u32, memory[0..4], .little) >> 24);
     list.used = 0;
     attribute(&list, 0x700, 4, 2, 4, 32);

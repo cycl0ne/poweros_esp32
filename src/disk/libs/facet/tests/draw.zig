@@ -448,7 +448,7 @@ test "a shader module: the entries of a shader.Code, found by stage and name; SP
     const kept = _objects.of(_shader.ShaderModule, made);
     try testing.expectEqual(@as(usize, 5), kept.entries().len);
     const box = _shader.find(kept, facet.SHADER_STAGE_FRAGMENT, "box").?;
-    try testing.expectEqual(@as(u32, 2), box.varyings);
+    try testing.expectEqual(@as(u32, 2), box.varyingCount());
     try testing.expect(_shader.find(kept, facet.SHADER_STAGE_VERTEX, "main") == null);
     fb.DestroyShaderModule(device, null);
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! facet.library: three-dimensional drawing as Vulkan has it, on the
-//! machine's cores, on the disk in LIBS:. A program makes an instance,
-//! finds the physical device - the cores, drawing through the rasterizer
-//! (driver/cpu/raster/) - makes a device on it, allocates memory, binds
+//! machine's cores or on its GPU, on the disk in LIBS:. A program makes an
+//! instance, finds a physical device - the cores, drawing through the
+//! rasterizer (driver/cpu/raster/), and on a CM5 the V3D after them - makes
+//! a device on it, allocates memory, binds
 //! buffers and images into it, records command buffers and submits them to
 //! the device's queue, whose task plays them: copies, and render passes
 //! drawn by pipelines whose shaders are the program's own functions -
@@ -31,8 +32,10 @@
 //! `driver/` (`_driver.zig` the table and the drivers there are), and
 //! `driver/cpu/` the cores (`cpu.zig` their table, `_play.zig` how the
 //! queue's task plays a command buffer, `_draw.zig` a draw, `raster/` the
-//! rasterizer). `driver/v3d/` is the BCM2712's 3D core, not yet in the list
-//! of drivers: only its test program (c/test/v3d) uses it.
+//! rasterizer). `driver/v3d/` is the BCM2712's 3D core: `driver.zig` its
+//! table, `_play.zig` a command buffer made into its control lists, and the
+//! module `v3d.zig` what knows the hardware, which its test program
+//! (c/test/v3d) uses too.
 
 const sdk = @import("sdk");
 const ExecBase = sdk.interface.exec.ExecBase;

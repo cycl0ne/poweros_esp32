@@ -7,9 +7,10 @@
 //! - an attachment drawn into, and any linear image, is `rows` - row
 //!   after row, each starting on a cache line, as the rasterizer writes
 //!   its tiles back and the display reads them;
-//! - an optimal image to be sampled is a `texture` - the rasterizer's
+//! - an optimal image to be sampled is a `texture` - by the rasterizer's
 //!   texture layout (sdk.facet.texture): blocks of 4 x 4 texels, an 8888
-//!   texel spread to 64 bits, the levels after one another;
+//!   texel spread to 64 bits, the levels after one another; on a device that
+//!   samples in its own way, by that device's (Ops.texture_memory);
 //! - a depth attachment is `depth`: its pixels live in the tiles alone,
 //!   cleared as each tile starts and never stored, so its memory is never
 //!   touched and may be of the lazily allocated type.
@@ -46,16 +47,22 @@ pub const Image = struct {
     kind: Kind,
     /// `rows`: the bytes from one row to the next.
     pitch: u32 = 0,
-    /// What it needs of its memory.
+    /// What it needs of its memory, and what the memory's offset has to be
+    /// a multiple of.
     bytes: u64,
+    alignment: u64 = _memory.alignment,
     /// Where it is bound, and its first byte there; null in lazily
     /// allocated memory.
     memory: ?*DeviceMemory = null,
     offset: u64 = 0,
     data: ?[*]u8 = null,
     /// `texture`: its levels as a sample reads them, over its memory once
-    /// bound.
+    /// bound. On a device that samples in its own way these say nothing of
+    /// where the texels are.
     texels: texture.Texture = undefined,
+    /// Where a device with a processor of its own reaches it; 0 until it has
+    /// been asked for.
+    driver_address: u32 = 0,
     /// A swapchain's: its memory is a buffer of the display's, never
     /// bound or destroyed by the program.
     presentable: bool = false,
@@ -145,6 +152,11 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
         image.bytes = texture.Texture.bytes(kept, extent.width, extent.height, info.mip_levels) catch return null;
         // Its levels' layout, over no memory yet: BindImageMemory moves it.
         image.texels = texture.Texture.init(kept, extent.width, extent.height, info.mip_levels, @ptrFromInt(_memory.alignment)) catch return null;
+        if (device.physical.ops.texture_memory) |own| {
+            const memory = own(info.format, extent.width, extent.height, info.mip_levels);
+            image.bytes = memory.bytes;
+            image.alignment = memory.alignment;
+        }
         return image;
     }
     if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;
@@ -161,7 +173,7 @@ pub fn requirements(image: *const Image) facet.MemoryRequirements {
     const properties = &image.device.physical.memory;
     return .{
         .size = image.bytes,
-        .alignment = _memory.alignment,
+        .alignment = image.alignment,
         .memory_type_bits = if (image.kind == .depth) _memory.allTypes(properties) else _memory.backedTypes(properties),
     };
 }

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! V3DTest: the BCM2712's V3D brought up a step at a time.
 //!
-//!   V3DTest UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S
+//!   V3DTest UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,SMOOTH/S,CLIP/S,
+//!           TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S
 //!
 //! Alone it asks only what is safe with the core off: the firmware's clock
 //! and the power manager's reset word. UP switches the core on and prints
@@ -11,12 +12,16 @@
 //! colour and prints what came out as a map of letters. OVERFLOW draws it
 //! 2000 times with too little memory for the binner, which has to ask for
 //! more. FAULT stores to a page that is not mapped, which the MMU has to
-//! report. The core stays on after any of them. Each step is written to the kernel's log before it
+//! report. SMOOTH to AREA draw with the fragment programs and the state
+//! a pipeline has, each picture checked against the sum done here
+//! (fragments.zig). The core stays on after any of them. Each step is written to the kernel's log before it
 //! is taken, since a read of a register nothing answers halts the machine
 //! and the log is what is left.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const v3d = @import("v3d");
+const fragments = @import("fragments.zig");
 const exec = sdk.exec;
 const dos = sdk.dos;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -27,7 +32,7 @@ pub const COMMAND_NAME = "V3DTest";
 const VERSION_STRING = "\x00$VER: V3DTest 0.1 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S";
+const template = "UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,SMOOTH/S,CLIP/S,TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S";
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -36,7 +41,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [5]usize = @splat(0);
+    var argv: [14]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -54,7 +59,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     step(sys, "reading the reset word");
     const held = gpu.resetWord();
     _ = Printf(dl, "reset word   %08lx: the core is %s\n", .{ @as(u64, held), @as([*:0]const u8, if (held & v3d.regs.PM_V3DRSTN != 0) "out of reset" else "in reset") });
-    if (argv[0] == 0 and argv[1] == 0 and argv[2] == 0 and argv[3] == 0 and argv[4] == 0) return dos.RETURN_OK;
+    if (std.mem.allEqual(usize, &argv, 0)) return dos.RETURN_OK;
 
     step(sys, "switching it on");
     gpu.powerUp() catch |err| {
@@ -75,7 +80,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         @as(u64, ident.slices), @as(u64, ident.qpus_per_slice), @as(u64, ident.tmus), @as(u64, ident.vpm_kib),
     });
     _ = Printf(dl, "addresses    %ld bits physical, %ld virtual\n", .{ @as(u64, ident.physical_bits), @as(u64, ident.virtual_bits) });
-    if (argv[1] == 0 and argv[2] == 0 and argv[3] == 0 and argv[4] == 0) return dos.RETURN_OK;
+    if (std.mem.allEqual(usize, argv[1..], 0)) return dos.RETURN_OK;
 
     step(sys, "its page table");
     var space = v3d.Space.open(&gpu) orelse {
@@ -102,8 +107,26 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         const result = triangleTest(sys, dl, &space, &engine, .{ .triangles = 2000, .short_of_lists = true });
         if (result != dos.RETURN_OK) return result;
     }
-    if (argv[4] != 0) return triangleTest(sys, dl, &space, &engine, .{ .unmapped_image = true });
-    return dos.RETURN_OK;
+    if (argv[4] != 0) {
+        const result = triangleTest(sys, dl, &space, &engine, .{ .unmapped_image = true });
+        if (result != dos.RETURN_OK) return result;
+    }
+    if (std.mem.allEqual(usize, argv[5..], 0)) return dos.RETURN_OK;
+    var scene = fragments.Scene.open(dl, &space, &engine) orelse return noMemory(dl);
+    defer scene.close();
+    const tests = [_]*const fn (*fragments.Scene) i32{
+        &fragments.smoothTest, &fragments.clipTest,     &fragments.textureTest, &fragments.mipTest,
+        &fragments.filterTest, &fragments.modulateTest, &fragments.depthTest,   &fragments.blendTest,
+        &fragments.areaTest,
+    };
+    var worst: i32 = dos.RETURN_OK;
+    for (tests, argv[5..]) |run, asked| {
+        if (asked == 0) continue;
+        const result = run(&scene);
+        if (result == dos.RETURN_FAIL) return result;
+        worst = @max(worst, result);
+    }
+    return worst;
 }
 
 const test_width = 1280;
@@ -243,7 +266,7 @@ fn triangleTest(sys: *ExecBase, dl: *DosBase, space: *v3d.Space, engine: *v3d.En
     const record_at = 2048;
     copyProgram(objects.cpu + coordinate_at, &v3d.qpu.coordinate_program);
     copyProgram(objects.cpu + vertex_at, &v3d.qpu.vertex_program);
-    copyProgram(objects.cpu + fragment_at, &v3d.qpu.flat_fragment_program);
+    copyProgram(objects.cpu + fragment_at, v3d.qpu.flat_fragment.code);
     const uniforms: [*]u32 = @ptrCast(@alignCast(objects.cpu + uniforms_at));
     uniforms[0] = half_float_one;
     uniforms[1] = half_float_one << 16;

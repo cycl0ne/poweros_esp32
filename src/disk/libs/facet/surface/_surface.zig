@@ -23,6 +23,9 @@ pub const Surface = struct {
     /// many of its swapchains are not yet destroyed, handed on or not.
     swapchain: ?*Swapchain = null,
     swapchains: u32 = 0,
+    /// What a swapchain's pictures in the machine's memory are allocated
+    /// with: what the device it is made for can reach.
+    picture_memory: u32 = sdk.exec.MEMF_ANY,
 };
 
 /// A surface's size and the format of its pixels now.

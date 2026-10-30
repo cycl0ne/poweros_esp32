@@ -190,7 +190,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var gpu = Gpu{ .fb = @ptrCast(facet_lib), .ib = ib };
     // Given back before the window closes: the surface is over it.
     defer gpu.down();
-    gpu.up(COMMAND_NAME) catch |err| return failed(dl, &gpu, err);
+    gpu.up(COMMAND_NAME, false) catch |err| return failed(dl, &gpu, err);
     gpu.onWindow(window) catch |err| return failed(dl, &gpu, err);
     gpu.prepare(nearest, &pattern) catch |err| return failed(dl, &gpu, err);
     gpu.chain(2) catch |err| return failed(dl, &gpu, err);

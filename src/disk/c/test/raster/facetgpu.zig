@@ -114,14 +114,16 @@ pub const Gpu = struct {
         }
     }
 
-    /// The instance, and the device and its queue.
-    pub fn up(gpu: *Gpu, name: [*:0]const u8) Failure!void {
+    /// The instance, and the device and its queue: the first the library
+    /// lists, the cores, or with `on_gpu` the one after them.
+    pub fn up(gpu: *Gpu, name: [*:0]const u8, on_gpu: bool) Failure!void {
         const fb = gpu.fb;
         try expect(fb.CreateInstance(&.{ .application_name = name }, &gpu.instance), error.NoDevice);
-        var count: u32 = 1;
-        var physical: [1]*facet.PhysicalDevice = undefined;
+        var count: u32 = 2;
+        var physical: [2]*facet.PhysicalDevice = undefined;
         if (fb.EnumeratePhysicalDevices(gpu.instance.?, &count, &physical) != .success or count == 0) return error.NoDevice;
-        gpu.physical = physical[0];
+        if (on_gpu and count < 2) return error.NoDevice;
+        gpu.physical = physical[@intFromBool(on_gpu)];
         fb.GetPhysicalDeviceMemoryProperties(gpu.physical, &gpu.memory);
         const queue_info = facet.DeviceQueueCreateInfo{};
         try expect(fb.CreateDevice(gpu.physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) }, &gpu.device), error.NoDevice);

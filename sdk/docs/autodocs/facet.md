@@ -1930,7 +1930,10 @@ either way.
 
 A pipeline takes its vertex and fragment functions from the modules by
 stage and name, and settles its state as it is made: the rasterizer's
-code for its depth test and blend is chosen then, not as it draws.
+code for its depth test and blend is chosen then, not as it draws. On a
+device with a processor of its own the fragment function has to be of a
+fixed form (`shader.fixedFragment`), or the pipeline is refused with
+`error_feature_not_present`.
 
 What it draws: triangle lists, strips and fans, a restart index ending a
 strip or a fan; filled, one sample a pixel, culled by facing as asked; a
@@ -1948,6 +1951,11 @@ shaded once, by the nearest: a scene drawn back to front costs little
 more than one drawn front to back, which costs a little more than
 without it. For a depth test of LESS or LESS_OR_EQUAL, written, and no
 blending; ignored otherwise. Other flags are taken and do nothing.
+
+On a device with a processor of its own, the fragment function has to be
+one of the fixed forms (`shader.fixedFragment`), or the pipeline is
+refused with `error_feature_not_present`; the cores, always the first
+device listed, take any.
 
 Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
 as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
@@ -3869,7 +3877,10 @@ fn EnumeratePhysicalDevices(base: *FacetBase, instance: *facet.Instance, count: 
 
 **BEHAVIOR**
 
-There is one: the machine's cores, drawing through the rasterizer.
+The machine's cores come first, drawing through the rasterizer. On a
+machine with a GPU facet.library drives - the V3D of a Raspberry Pi 5 or
+a Compute Module 5 - that follows, which draws with fixed forms of
+fragment function alone (`shader.fixedFragment`).
 
 **CONTEXT**
 

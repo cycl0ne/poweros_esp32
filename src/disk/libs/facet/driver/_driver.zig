@@ -7,7 +7,10 @@
 //! a command buffer carried out. Each instance asks every driver in
 //! `drivers` for its physical device (instance/_instance.zig).
 //!
-//! The cores are the first driver (cpu/cpu.zig), and always there.
+//! The cores are the first driver (cpu/cpu.zig), and always there, as the
+//! fallback and as the reference the others are checked against. The V3D of
+//! the BCM2712 is the second (v3d/driver.zig), in the library only where the
+//! processor can be next to one, and listed only where the board has it.
 //!
 //! A command buffer's work need not be done as `execute` returns. The
 //! queue's task waits for `done` before it goes on to the next, and only
@@ -15,6 +18,7 @@
 //! (queue/_queue.zig) - so a driver that hands a command list to its
 //! hardware signals `done` from the interrupt that says the list has run.
 
+const builtin = @import("builtin");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const facet = sdk.facet;
@@ -28,7 +32,13 @@ const CommandBuffer = @import("../command/_command.zig").CommandBuffer;
 const cpu = @import("cpu/cpu.zig");
 
 /// The drivers, in the order an instance lists their physical devices.
-pub const drivers = [_]*const Ops{&cpu.ops};
+pub const drivers = [_]*const Ops{&cpu.ops} ++ if (builtin.cpu.arch == .aarch64) [_]*const Ops{&@import("v3d/driver.zig").ops} else [_]*const Ops{};
+
+/// What a sampled image of a device's own layout needs of its memory.
+pub const TextureMemory = struct {
+    bytes: u64,
+    alignment: u64,
+};
 
 pub const Ops = struct {
     /// `physical`'s properties, queue family and memory filled in: false
@@ -54,4 +64,10 @@ pub const Ops = struct {
     /// task: `done` signalled when the last has finished, by the time this
     /// returns or later, an interrupt included.
     execute: *const fn (queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) void,
+    /// A sampled image's memory, for a device that does not read textures
+    /// in the rasterizer's layout. Null for one that does.
+    texture_memory: ?*const fn (format: facet.Format, width: u32, height: u32, levels: u32) TextureMemory = null,
+    /// What a swapchain's pictures in the machine's memory have to be, for
+    /// the device to reach them.
+    picture_memory: u32 = exec.MEMF_ANY,
 };

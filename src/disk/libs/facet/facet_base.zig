@@ -20,6 +20,10 @@ pub const FacetBase = extern struct {
     /// queue's work is played by the task that submits it, and a device
     /// starts no task.
     inline_queues: bool = false,
+    /// What the V3D's driver keeps while any device has it, and what guards
+    /// its coming and going.
+    v3d: ?*anyopaque = null,
+    v3d_lock: exec.SignalSemaphore = .{},
 };
 
 pub fn facetBase(lib: *exec.Library) *FacetBase {

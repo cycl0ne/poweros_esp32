@@ -77,7 +77,7 @@ pub fn CreateShaderModule(base: *FacetBase, device: *facet.Device, info: *const 
     const entries = code.entries[0..code.entry_count];
     for (entries) |entry| {
         if (entry.stage != facet.SHADER_STAGE_VERTEX and entry.stage != facet.SHADER_STAGE_FRAGMENT) return .error_invalid_shader_nv;
-        if (entry.varyings > max_vertex_output_components) return .error_invalid_shader_nv;
+        if (entry.varyingCount() > max_vertex_output_components) return .error_invalid_shader_nv;
     }
     const memory = base.sys_base.AllocVec(@sizeOf(ShaderModule) + entries.len * @sizeOf(shader.Entry), exec.MEMF_CLEAR) orelse return .error_out_of_host_memory;
     const made: *ShaderModule = @ptrCast(@alignCast(memory));
