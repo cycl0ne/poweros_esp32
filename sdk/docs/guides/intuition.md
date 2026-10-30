@@ -51,7 +51,10 @@ its own, with a title bar, a font, a set of pens and a
 [style](styles.md) that everything on it is drawn in. Several can be
 open on one display, as many as its memory holds; the display shows the
 one in front (`ScreenToFront`, `ScreenToBack`), and that one can be
-pulled down by its bar to show the one behind.
+pulled down by its bar to show the one behind. Two keys are the
+screens' and never reach a window: left-Amiga-M sends the front screen
+of the display the pointer is on to the back, and left-Amiga-N brings
+the Workbench screen to the front.
 
 A program opens its windows on the default public screen - the
 Workbench screen, unless `SetDefaultPubScreen` named another.

@@ -203,7 +203,7 @@ pub const LIBRARY_VERSION = 0;
 /// Shift-Delete take out everything before or after the cursor.
 /// 75: SA_Board - a screen's display, for a video layer - and
 /// windowclass's WMHI_CHANGEWINDOW, the window moved or sized.
-pub const LIBRARY_REVISION = 75;
+pub const LIBRARY_REVISION = 76;
 const BUILD_DATE = "30.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
