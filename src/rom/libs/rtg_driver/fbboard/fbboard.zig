@@ -82,7 +82,10 @@
 //! drawing is seen a frame or two after it was made, and whole. The
 //! buffers drawn in are not written back, since nothing reads them past
 //! the caches; showing a buffer, or bands, is a whole picture made and
-//! waited for.
+//! waited for. A picture copied into a band all at once - a window's next
+//! frame, which starts as the display's does, as the task's copy does - is
+//! not copied while the task reads the bands (`bands_lock`): it would take
+//! the top of the new picture and the rest of the old.
 //!
 //! A whole picture is a copy of the whole display - at 2560x1440 14 MB,
 //! which takes the cores 14 ms - and a program that draws each picture in
@@ -174,7 +177,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 20;
+const REVISION = 21;
 const BUILD_DATE = "30.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -338,6 +341,9 @@ const Screen = struct {
     /// the overlay's image change, so that what a picture is made from
     /// stays for as long as it is made.
     flip_lock: exec.SignalSemaphore = .{},
+    /// Held while the task reads the bands, and while the engine's copies
+    /// are written into one: neither sees half of the other.
+    bands_lock: exec.SignalSemaphore = .{},
     /// The task that makes the pictures, what wakes it, and what tells
     /// that it has stopped.
     flipper: ?*exec.Task = null,
@@ -1421,6 +1427,7 @@ fn startFlipping(screen: *Screen) bool {
     screen.flip_bytes = 2 * size;
     screen.front = 0;
     sys.InitSemaphore(&screen.flip_lock);
+    sys.InitSemaphore(&screen.bands_lock);
     sys.InitLock(&screen.damage_lock, "rtg-fb damage", exec.LOCKORDER_DRIVER, 0);
     sys.InitLock(&screen.plane_lock, "rtg-fb planes", exec.LOCKORDER_DRIVER + 1, 0);
     // The task is the system's, not that of whoever made the board.
@@ -1603,7 +1610,9 @@ fn flipFrames(screen: *Screen) bool {
     const back = screen.flip_frames[screen.front ^ 1];
     var boxes = fresh;
     if (stale) boxes.add(whole(screen)) else boxes.addAll(&screen.last);
+    sys.ObtainSemaphore(&screen.bands_lock);
     for (boxes.list()) |box| makeBox(screen, back, box, over);
+    sys.ReleaseSemaphore(&screen.bands_lock);
     screen.last = if (stale) boxes else fresh;
     scanFrom(screen, @intFromPtr(back));
     pace(screen, 1);
@@ -2244,11 +2253,30 @@ fn fillRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRe
 }
 
 fn copyRect(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, what: *const rtg.RtgCopy) callconv(.c) i32 {
-    return engine.copy(&screenOf(board).engine, src, dest, what);
+    const screen = screenOf(board);
+    const held = holdBands(screen, dest);
+    defer if (held) screen.sys.ReleaseSemaphore(&screen.bands_lock);
+    return engine.copy(&screen.engine, src, dest, what);
 }
 
 fn copyRects(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, list: [*]const rtg.RtgCopy, count: u32) callconv(.c) i32 {
-    return engine.copyMany(&screenOf(board).engine, src, dest, list, count);
+    const screen = screenOf(board);
+    const held = holdBands(screen, dest);
+    defer if (held) screen.sys.ReleaseSemaphore(&screen.bands_lock);
+    return engine.copyMany(&screen.engine, src, dest, list, count);
+}
+
+/// `bands_lock` taken where the display's picture is made from `dest`:
+/// whether it was. A buffer changing bands meanwhile is a flip, whose picture
+/// is made whole after it.
+fn holdBands(screen: *Screen, dest: *const rtg.RtgBitMap) bool {
+    if (!flips(screen)) return false;
+    for (screen.bands[0..screen.band_count]) |band| {
+        if (band.bitmap != dest) continue;
+        screen.sys.ObtainSemaphore(&screen.bands_lock);
+        return true;
+    }
+    return false;
 }
 
 fn blitTemplate(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, shape: *const rtg.bitmaps.RtgTemplate) callconv(.c) i32 {
