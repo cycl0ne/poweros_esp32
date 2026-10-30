@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: MIT
+//! commodities.library's functions: programs that watch the input stream
+//! and act on it - a hotkey, a blanker, a key turned into a string -
+//! through a network of objects every event passes before the windows
+//! see it. Open it with OpenLibrary("commodities.library", 1).
+//!
+//! The table is this library's own: it starts at the first slot after
+//! the standard four and holds only what is here.
+##include libs/exec/exec as exec
+##include libs/keymap/keymap as keymap
+##include libs/commodities/commodities as commodities
+##include devices/inputevent as ie
+##basetype CxBase
+##name commodities.library
+##bias 4
+##public
+/// A new object of `kind` (CX_FILTER ... CX_CUSTOM), what `arg1` and
+/// `arg2` are depending on it: the SDK's CxFilter, CxSender, CxSignal,
+/// CxTranslate, CxDebug and CxCustom make each kind. Null without
+/// memory; a bad description is recorded in the object (CxObjError).
+?*commodities.CxObj CreateCxObj(u32 kind, usize arg1, usize arg2)
+/// A broker, as `nb` describes it, on the network's list, inactive.
+/// Null when it cannot be made; `err` (if not null) says why, CBERR_.
+?*commodities.CxObj CxBroker(*const commodities.NewBroker nb, ?*i32 err)
+/// Turn `co` on (`active`) or off; whether it was on. Null does nothing.
+bool ActivateCxObj(?*commodities.CxObj co, bool active)
+/// An object taken off its list and freed. Null does nothing.
+void DeleteCxObj(?*commodities.CxObj co)
+/// An object and everything attached to it, freed. Null does nothing.
+void DeleteCxObjAll(?*commodities.CxObj co)
+/// What kind `co` is, CX_INVALID for null.
+u32 CxObjType(?*commodities.CxObj co)
+/// The errors recorded in `co` (COERR_ bits), COERR_ISNULL for null.
+u32 CxObjError(?*commodities.CxObj co)
+/// The errors recorded in `co` forgotten. Null does nothing.
+void ClearCxObjError(?*commodities.CxObj co)
+/// `co`'s priority for EnqueueCxObj; the one it had.
+i32 SetCxObjPri(?*commodities.CxObj co, i32 pri)
+/// `co` at the end of `head_obj`'s list. A null `head_obj` deletes `co`
+/// and all attached to it; a null `co` is recorded in `head_obj`.
+void AttachCxObj(?*commodities.CxObj head_obj, ?*commodities.CxObj co)
+/// `co` in `head_obj`'s list by its priority, as AttachCxObj otherwise.
+void EnqueueCxObj(?*commodities.CxObj head_obj, ?*commodities.CxObj co)
+/// `co` in `head_obj`'s list after `pred` (null: first), as AttachCxObj
+/// otherwise.
+void InsertCxObj(?*commodities.CxObj head_obj, ?*commodities.CxObj co, ?*commodities.CxObj pred)
+/// `co` off whatever list it is on. Null, or on none, does nothing.
+void RemoveCxObj(?*commodities.CxObj co)
+/// A translator's events: what it puts in place of each message it gets,
+/// null to swallow them. The list stays the program's and is read as the
+/// messages pass.
+void SetTranslate(?*commodities.CxObj translator, ?*const ie.InputEvent events)
+/// A filter's condition as a description ("ctrl alt f1").
+void SetFilter(?*commodities.CxObj filter, ?[*:0]const u8 text)
+/// A filter's condition as an input expression.
+void SetFilterIX(?*commodities.CxObj filter, *const commodities.InputXpression ix)
+/// `description` into `ix`: 0, -1 when words are left over, -2 for none.
+i32 ParseIX(?[*:0]const u8 description, *commodities.InputXpression ix)
+/// A message's kind: CXM_IEVENT or CXM_COMMAND.
+u32 CxMsgType(*const commodities.CxMsg cxm)
+/// A message's event, null for a command or a null message.
+?*ie.InputEvent CxMsgData(?*commodities.CxMsg cxm)
+/// A message's id: the sender's or custom object's, or the command.
+i32 CxMsgID(*const commodities.CxMsg cxm)
+/// `cxm` down `head_obj`'s list, on to what follows `return_obj` after.
+void DivertCxMsg(*commodities.CxMsg cxm, *commodities.CxObj head_obj, *commodities.CxObj return_obj)
+/// `cxm`'s next object is `co`.
+void RouteCxMsg(*commodities.CxMsg cxm, *commodities.CxObj co)
+/// `cxm` taken out of the network: its event goes no further. Only a
+/// custom object's function may.
+void DisposeCxMsg(*commodities.CxMsg cxm)
+/// The key event that types `ansi_code` through `key_map` (null: the
+/// default) into `event`; false when no key makes it.
+bool InvertKeyMap(u32 ansi_code, *ie.InputEvent event, ?*const keymap.KeyMap key_map)
+/// Copies of `events` into the network, before the next events from the
+/// devices. Null does nothing.
+void AddIEvents(?*const ie.InputEvent events)
+/// A copy of every broker onto `list` (BrokerCopy nodes, what was on it
+/// freed first); how many.
+i32 CopyBrokerList(*exec.List list)
+/// The nodes CopyBrokerList put on `list`, freed.
+void FreeBrokerList(*exec.List list)
+/// CXCMD_ `id` to the broker called `name` (null: "Exchange"): CMDE_.
+i32 BrokerCommand(?[*:0]const u8 name, i32 id)
+/// Whether `event` meets `ix`.
+bool MatchIX(*const ie.InputEvent event, *const commodities.InputXpression ix)
+##end

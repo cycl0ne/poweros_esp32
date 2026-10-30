@@ -99,6 +99,11 @@ tags and constants, each with its doc comment.
   numbers and the order of letters in a program, a program's texts in
   catalogs (descriptors, translations, `catcomp`, `sdk.locale.Strings`),
   dos in the default locale, the code set.
+- [Commodities](guides/commodities.md) - commodities.library: the
+  network every input event passes, a commodity with a hotkey, the
+  descriptions filters are written in, the objects, messages inside the
+  network, events added to the stream, a controller, how it runs, and
+  `C:test/Commodities`.
 - [Modbus](guides/modbus.md) - a device's tables, the RS-485 bus
   (rs485.device), modbus.library as a client over RTU and TCP, what a
   call answers, a server from a program's tables, the commands, and
@@ -150,6 +155,7 @@ first time something opens it.
 | asl.library | `LIBS:` | the file, font and device requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
 | audiocodec.library | `LIBS:` | sound files into 16-bit samples as they play: WAV, MP3, FLAC, Ogg Vorbis, AAC; their tags, covers and chapters | [md](autodocs/audiocodec.md) · [doc](autodocs/audiocodec.doc), [`audiocodec.zig`](../libs/audiocodec/audiocodec.zig), [guide](guides/audio.md#decoding-audiocodeclibrary) |
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces, packet hooks | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
+| commodities.library | `LIBS:` | the input stream through a network of the programs' objects before the windows: hotkeys, filters, events swapped and added | [md](autodocs/commodities.md) · [doc](autodocs/commodities.doc), [`commodities.zig`](../libs/commodities/commodities.zig), [guide](guides/commodities.md) |
 | compression.library | `LIBS:` | DEFLATE packed and unpacked, bare or in a zlib or gzip wrapping, a buffer at a time or in one go; CRC-32 and Adler-32 | [md](autodocs/compression.md) · [doc](autodocs/compression.doc), [`compression.zig`](../libs/compression/compression.zig), [guide](guides/compression.md) |
 | crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines where it has them; X25519, P-256, P-384 and Ed25519; signatures checked and made; ML-KEM-768 | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
 | datatypes.library | `LIBS:` | a file opened by what is in it | [md](autodocs/datatypes.md) · [doc](autodocs/datatypes.doc) |
