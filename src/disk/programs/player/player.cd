@@ -138,7 +138,7 @@ Save the playlist as
 MSG_ABOUT_TITLE (//)
 About Player
 MSG_ABOUT (//)
-%s\n\nSongs from WAV, MP3, FLAC and Ogg Vorbis files,\none into the next, with their covers,\nstations from the network\nand a picture of the sound.
+%s\n\nSongs from WAV, MP3, FLAC, Ogg Vorbis and AAC files,\none into the next, with their covers,\nstations from the network\nand a picture of the sound.
 MSG_OK (//)
 OK
 ;

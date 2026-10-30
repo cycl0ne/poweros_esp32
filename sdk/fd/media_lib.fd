@@ -1,0 +1,33 @@
+//! media.library's functions: container files - MP4 - opened, their
+//! tracks listed, and each track's packets handed out as they are coded,
+//! for a decoder. Open it with OpenLibrary("media.library", 1); the
+//! structures are in sdk.media.
+##include libs/media/media as media
+##include libs/utility/utility as utility
+##basetype MediaBase
+##name media.library
+##bias 4
+##public
+/// A file, a file handle or a read function opened, its kind found by its
+/// first bytes. Null, and why in `err` (MERR_*), when it failed.
+?*media.MediaFile OpenMedia(?[*]const utility.TagItem tags, ?*i32 err)
+/// The file closed and freed, with the file it opened.
+void CloseMedia(?*media.MediaFile file)
+/// What the file is: its kind, its tracks, its length, its names.
+void GetMediaInfo(*media.MediaFile file, *media.MediaInfo info)
+/// What track `track` is: 0, or MERR_NOTRACK.
+i32 GetMediaTrack(*media.MediaFile file, u32 track, *media.MediaTrack info)
+/// Track `track`'s next packet into `packet`: 0, MERR_END after its last,
+/// or an MERR_*.
+i32 ReadMediaPacket(*media.MediaFile file, u32 track, *media.MediaPacket packet)
+/// Track `track` moved to the packet a decoder can start at, at or before
+/// `time` microseconds: 0, or an MERR_*.
+i32 SeekMedia(*media.MediaFile file, u32 track, i64 time)
+/// The kind (MEDIA_*) the first bytes of a file are.
+u32 IdentifyMedia([*]const u8 bytes, u32 length)
+/// What an error code means, in words.
+[*:0]const u8 MediaErrorText(i32 code)
+/// The file's tags, each into where its data points: how many of them
+/// were answered.
+u32 GetMediaAttrs(*media.MediaFile file, ?[*]const utility.TagItem tags)
+##end

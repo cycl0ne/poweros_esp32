@@ -9,6 +9,7 @@ const wav = @import("../wav/_wav.zig");
 const mp3 = @import("../mp3/_mp3.zig");
 const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
+const aac = @import("../aac/_aac.zig");
 
 /// Decodes the next frames of a stream.
 ///
@@ -84,6 +85,7 @@ pub fn DecodeAudio(_: *AudioCodecBase, public: *ac.AudioStream, buffer: [*]i16, 
         .mp3 => |*state| mp3.decode(stream, state, buffer, frames),
         .flac => |*state| flac.decode(stream, state, buffer, frames),
         .vorbis => |*state| vorbis.decode(stream, state, buffer, frames),
+        .aac => |*state| aac.decode(stream, state, buffer, frames),
         .none => 0,
     };
 }

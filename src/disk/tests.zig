@@ -90,6 +90,7 @@ test {
     _ = @import("libs/filter/tests/filter.zig");
     _ = @import("libs/icon/tests/icon.zig");
     _ = @import("libs/audiocodec/tests/audiocodec.zig");
+    _ = @import("libs/media/tests/media.zig");
     _ = @import("libs/anvil/tests/anvil.zig");
     _ = @import("libs/anvil/tests/app.zig");
     _ = @import("libs/anvil/tests/drop.zig");

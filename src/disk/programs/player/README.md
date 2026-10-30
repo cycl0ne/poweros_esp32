@@ -1,9 +1,10 @@
 # Player
 
-Player plays sound files - WAV, MP3, FLAC and Ogg Vorbis - and internet
-stations in a window, with a picture of the sound under its controls: a
-plasma, the wave, the spectrum's bars, left against right, or a meter
-for each side - in the window or over the whole screen.
+Player plays sound files - WAV, MP3, FLAC, Ogg Vorbis and AAC (`.aac`,
+and `.m4a` through media.library) - and internet stations in a window,
+with a picture of the sound under its controls: a plasma, the wave, the
+spectrum's bars, left against right, or a meter for each side - in the
+window or over the whole screen.
 
 Its menus, tabs, buttons, lists' headings, the lines beside the cover
 and why a station or a search failed are in the language chosen on
@@ -13,8 +14,8 @@ English otherwise.
 
 ## Starting it
 
-Double-click its icon, double-click a `.mp3`, `.wav`, `.flac` or `.ogg`
-file - or a list, `.m3u`, `.m3u8` or `.pls` - or type in a shell:
+Double-click its icon, double-click a `.mp3`, `.wav`, `.flac`, `.ogg`,
+`.m4a` or `.aac` file - or a list, `.m3u`, `.m3u8` or `.pls` - or type in a shell:
 
 ```
 Player FILES/M,ADD/S,VOLUME/K/N,LOOK/K

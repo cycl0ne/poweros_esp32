@@ -432,13 +432,13 @@ triggers too. A trigger plays on after its open is closed; the query's
 
 `LIBS:audiocodec.library` turns a sound file into the 16-bit samples a
 stream plays: WAV (PCM of 8 to 32 bits, or float), MP3 (MPEG-1, 2 and
-2.5, Layer III), FLAC (4 to 24 bits) and Ogg Vorbis, in one channel or
-two. `OpenAudioStream` opens a file by name (`ACA_Name`), a
-file the program has open (`ACA_FileHandle`), or bytes a function of the
-program's hands over (`ACA_ReadFunc`, `ACA_ReadData`) - a download, a
-network stream - and finds the kind by its first bytes. `DecodeAudio`
-then fills a buffer with as many frames as asked for, until the end; the
-file is decoded as it plays, never whole.
+2.5, Layer III), FLAC (4 to 24 bits), Ogg Vorbis and AAC-LC (ADTS, or in
+an MP4), in one channel or two. `OpenAudioStream` opens a file by name
+(`ACA_Name`), a file the program has open (`ACA_FileHandle`), or bytes a
+function of the program's hands over (`ACA_ReadFunc`, `ACA_ReadData`) -
+a download, a network stream - and finds the kind by its first bytes.
+`DecodeAudio` then fills a buffer with as many frames as asked for,
+until the end; the file is decoded as it plays, never whole.
 
 ```zig
 const acb: *sdk.interface.audiocodec.AudioCodecBase = @ptrCast(sys.OpenLibrary(ac.AUDIOCODECNAME, 1) orelse return);
@@ -506,6 +506,67 @@ usual 4096 in stereo; an Ogg Vorbis one its codebooks and tables, about
 250 KiB. A FLAC frame whose CRC is wrong plays as silence; an Ogg page
 whose CRC is wrong is passed over.
 
+### AAC and MP4
+
+AAC comes in two wrappings. **ADTS** frames - an `.aac` file, and most
+AAC stations - are read like an MP3's: the stream finds the first
+header the next one agrees with (behind an ID3v2 tag, whose names it
+reads), works the length out from the frames' bytes and the file's
+size, and seeks near a frame by the same. **An MP4** - an `.m4a`, a
+film - is a container, which `LIBS:media.library` reads: audiocodec
+opens it on the stream's file, where the container begins, or on the
+program's read function behind the bytes it read ahead - an MP4 whose
+index (`moov`) lies after its sound can only be read from a file then,
+and is refused with ACERR_UNSUPPORTED. Its first sound track is
+decoded, or the one `ACA_MediaTrack` numbers. The track's edit says how
+many frames the encoder put before the sound and how long it is, so the
+length is exact, the priming is left out, and `SeekAudio` lands on the
+very frame: the packet before it is decoded only to fill the overlap.
+The tags - iTunes's items - the cover and the chapters come from
+media.library and are the stream's like any others.
+
+Only the LC core is decoded, mono or stereo: an HE-AAC stream (SBR, PS)
+plays its core, at half the rate, which sounds dull but plays; Main,
+SSR and LTP streams, frames of 960 and coupling channels are refused.
+Noise a band is sent as (PNS) is drawn from the same generator as
+FFmpeg's, so a file decodes to within a step of FFmpeg's samples - but
+after a seek the noise is drawn anew: the same noise, not the same
+samples, except back at frame 0. An AAC stream takes about 80 KiB of
+tables and buffers beside the stream itself.
+
+A program that has a film open with media.library decodes its sound
+with `ACA_Media`: the stream reads that track's packets itself while
+another task reads the pictures' - media.library lets one task at a
+time at the file - and the file stays the program's, open after
+`CloseAudioStream`.
+
+```zig
+const mb: *sdk.interface.media.MediaBase = @ptrCast(sys.OpenLibrary(media.MEDIANAME, 1) orelse return);
+const film = mb.OpenMedia(&[_]utility.TagItem{
+    .{ .tag = media.MDA_Name, .data = @intFromPtr("SD0:Films/trip.mp4") },
+    .{},
+}, &err) orelse return;
+var about: media.MediaInfo = .{};
+mb.GetMediaInfo(film, &about); // about.video, about.audio: the tracks
+const sound = acb.OpenAudioStream(&[_]utility.TagItem{
+    .{ .tag = ac.ACA_Media, .data = @intFromPtr(film) },
+    .{ .tag = ac.ACA_MediaTrack, .data = about.audio },
+    .{},
+}, &err) orelse return;
+// this task decodes the sound; another reads the pictures:
+var packet: media.MediaPacket = .{};
+_ = mb.ReadMediaPacket(film, about.video, &packet); // packet.pts in us
+```
+
+media.library hands out each track's packets as they are coded - its
+setup (`avcC`, `hvcC`, the AudioSpecificConfig) in `GetMediaTrack`, each
+packet's bytes, whether a decoder can start at it, and when it is shown
+and decoded in microseconds from the start of what the file presents,
+below 0 for priming. `SeekMedia` moves a track to the key packet at or
+before a time. Its tags, cover and chapters (Nero's list, or the text
+track QuickTime marks them in) come with `GetMediaAttrs`, as
+audiocodec's do.
+
 ### Tags, covers and chapters
 
 `GetAudioStreamAttrs` gives the rest of what the tags say, each answer
@@ -566,9 +627,10 @@ title its metadata names as it changes (`sdk.http.icy`), or an Ogg
 station's songs by their own tags; it ends when the station ends the
 stream, or says why the connection was lost. `SYS:Programs/Player` does
 it in a window, and is
-what the desktop opens a `.mp3`, `.wav`, `.flac` or `.ogg` file with,
-and a list - `.m3u`, `.m3u8`, `.pls` (the `MP3`, `WAV`, `FLAC`, `Ogg`,
-`M3U` and `PLS` descriptors in `DEVS:DataTypes`) - with the song's cover
+what the desktop opens a `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a` or
+`.aac` file with, and a list - `.m3u`, `.m3u8`, `.pls` (the `MP3`,
+`WAV`, `FLAC`, `Ogg`, `M4A`, `AAC`, `M3U` and `PLS` descriptors in
+`DEVS:DataTypes`) - with the song's cover
 and tags, the chapter of a mix that is playing, a playlist it saves as
 M3U, and internet stations - MP3 or Ogg Vorbis over `http://` or
 `https://`, read on a process of their own and decoded through

@@ -1,0 +1,1 @@
+NAME=AAC BASE=audiocodec GROUP=soun ID=AAC PATTERN=#?.aac TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Player

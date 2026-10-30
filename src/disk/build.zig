@@ -75,7 +75,7 @@ const tests = [_][]const u8{
     "engine",      "jpeg",       "keysource",   "usbdevice", "scsi",
     "sound",       "memowner",   "records",     "exall",     "disktest",
     "filetest",    "speed2d",    "windraw",     "semtest",   "membench",
-    "glyphs",      "ribbon",     "taskbench",   "videodec",
+    "glyphs",      "ribbon",     "taskbench",   "videodec",  "audiodec",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "mountshare", "git" };
 
@@ -129,6 +129,7 @@ const modules = [_]Program{
     .{ .disk = "libs/facet.library", .source = "libs/facet/facet.zig", .name = "facet.library", .imports = &.{"raster"} },
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/audiocodec.library", .source = "libs/audiocodec/audiocodec.zig", .name = "audiocodec.library" },
+    .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library" },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
     .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
     .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library" },
@@ -353,6 +354,8 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/WAV", .source = "devs/datatypes/WAV" },
     .{ .disk = "devs/datatypes/FLAC", .source = "devs/datatypes/FLAC" },
     .{ .disk = "devs/datatypes/Ogg", .source = "devs/datatypes/Ogg" },
+    .{ .disk = "devs/datatypes/AAC", .source = "devs/datatypes/AAC" },
+    .{ .disk = "devs/datatypes/M4A", .source = "devs/datatypes/M4A" },
     .{ .disk = "devs/datatypes/M3U", .source = "devs/datatypes/M3U" },
     .{ .disk = "devs/datatypes/PLS", .source = "devs/datatypes/PLS" },
     .{ .disk = "devs/datatypes/ANIM", .source = "devs/datatypes/ANIM" },

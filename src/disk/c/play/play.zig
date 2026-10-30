@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! Play: a sound file out of the speaker - WAV, MP3, FLAC or Ogg Vorbis -
-//! or a station, through audiocodec.library and audio.device. Built
-//! against the SDK only.
+//! Play: a sound file out of the speaker - WAV, MP3, FLAC, Ogg Vorbis or
+//! AAC (an `.aac` file, or an `.m4a` through media.library) - or a
+//! station, through audiocodec.library and audio.device. Built against
+//! the SDK only.
 //!
 //!   Play FILE/A,VOLUME/K/N,START/K/N,QUIET/S
 //!
@@ -77,6 +78,7 @@ fn kindName(codec: u32) [*:0]const u8 {
         ac.ACODEC_MP3 => "MP3",
         ac.ACODEC_FLAC => "FLAC",
         ac.ACODEC_VORBIS => "Ogg Vorbis",
+        ac.ACODEC_AAC => "AAC",
         else => "sound",
     };
 }

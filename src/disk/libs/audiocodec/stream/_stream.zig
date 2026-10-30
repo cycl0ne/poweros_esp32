@@ -42,6 +42,7 @@ const mp3 = @import("../mp3/_mp3.zig");
 const layer3 = @import("../mp3/layer3.zig");
 const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
+const aac = @import("../aac/_aac.zig");
 
 /// How many bytes are read ahead: enough to find an MP3's first frame -
 /// it has to agree with the frames after it - and a WAV's header. The
@@ -92,6 +93,7 @@ pub const Codec = union(enum) {
     mp3: mp3.Mp3,
     flac: flac.Flac,
     vorbis: vorbis.Vorbis,
+    aac: aac.Aac,
 };
 
 pub const Stream = struct {
@@ -118,6 +120,9 @@ pub const Stream = struct {
     tags: Tags,
     /// The links of a chain begun after the first (`ACA_Link`).
     links: u32,
+    /// The track of an MP4 to decode (`ACA_MediaTrack`), ~0 for the
+    /// first sound track.
+    media_track: u32,
     codec: Codec,
     /// Samples decoded and not handed out yet, the channels interleaved,
     /// `pcm_start` to `pcm_stop`.
@@ -132,6 +137,7 @@ pub fn destroy(stream: *Stream) void {
     switch (stream.codec) {
         .flac => |*state| flac.free(stream, state),
         .vorbis => |*state| vorbis.free(stream, state),
+        .aac => |*state| aac.free(stream, state),
         else => {},
     }
     if (stream.owns_file) {

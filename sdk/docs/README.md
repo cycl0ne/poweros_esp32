@@ -105,8 +105,9 @@ tags and constants, each with its doc comment.
   the bus in QEMU.
 - [Sound](guides/audio.md) - audio.device: a stream and its form,
   writing buffers as they play, what the board has, choosing and
-  preferring an output, a volume per output and `audio.prefs`, WAV and
-  MP3 decoded by audiocodec.library, the outputs and their drivers
+  preferring an output, a volume per output and `audio.prefs`, WAV, MP3,
+  FLAC, Ogg Vorbis and AAC decoded by audiocodec.library - an MP4's
+  through media.library - the outputs and their drivers
   (rta.library), recording, `C:Audio`, `C:Play` and `C:test/AudioTest`.
 - [USB](guides/usb.md) - a bus and starting it, what is on it, driving
   a device from a program (claims, pipes, control transfers), writing a
@@ -143,6 +144,7 @@ first time something opens it.
 | keymap.library | ROM | raw keys into characters | [md](autodocs/keymap.md) · [doc](autodocs/keymap.doc) |
 | motion.library | ROM | one clock for animations, timers and timelines | [md](autodocs/motion.md) · [doc](autodocs/motion.doc) |
 | asl.library | `LIBS:` | the file, font and device requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
+| audiocodec.library | `LIBS:` | sound files into 16-bit samples as they play: WAV, MP3, FLAC, Ogg Vorbis, AAC; their tags, covers and chapters | [md](autodocs/audiocodec.md) · [doc](autodocs/audiocodec.doc), [`audiocodec.zig`](../libs/audiocodec/audiocodec.zig), [guide](guides/audio.md#decoding-audiocodeclibrary) |
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces, packet hooks | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
 | compression.library | `LIBS:` | DEFLATE packed and unpacked, bare or in a zlib or gzip wrapping, a buffer at a time or in one go; CRC-32 and Adler-32 | [md](autodocs/compression.md) · [doc](autodocs/compression.doc), [`compression.zig`](../libs/compression/compression.zig), [guide](guides/compression.md) |
 | crypto.library | `LIBS:` | random bytes, SHA, HMAC, HKDF, AES-GCM and RSA on the chip's engines where it has them; X25519, P-256, P-384 and Ed25519; signatures checked and made; ML-KEM-768 | [md](autodocs/crypto.md) · [doc](autodocs/crypto.doc) |
@@ -151,6 +153,7 @@ first time something opens it.
 | filter.library | `LIBS:` | a packet filter: rules on what comes in, on bsdsocket.library's packet hooks | [md](autodocs/filter.md) · [doc](autodocs/filter.doc) |
 | http.library | `LIBS:` | HTTP/1.1 requests over plain connections or TLS: a client keeping its connections for the next request, bodies sent and read in pieces, redirects followed, packed answers unpacked | [md](autodocs/http.md) · [doc](autodocs/http.doc), [`http.zig`](../libs/http/http.zig), [guide](guides/network.md#http-httplibrary) |
 | locale.library | `LIBS:` | locales - a country's dates, numbers and money, a language's words and order of letters - the default one, and programs' texts from catalogs | [md](autodocs/locale.md) · [doc](autodocs/locale.doc), [`locale.zig`](../libs/locale/locale.zig), [guide](guides/locale.md) |
+| media.library | `LIBS:` | containers - MP4 and QuickTime - opened: their tracks and the codecs' setup, each track's packets at its own pace with their times, seeks to a key packet, the tags, cover and chapters | [md](autodocs/media.md) · [doc](autodocs/media.doc), [`media.zig`](../libs/media/media.zig), [guide](guides/audio.md#aac-and-mp4) |
 | icon.library | `LIBS:` | icons: the picture a file is shown with and its fields; the default that fits a file without one | [md](autodocs/icon.md) · [doc](autodocs/icon.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |

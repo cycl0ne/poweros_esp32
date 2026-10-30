@@ -5,7 +5,10 @@
 //! A program opens a stream on sound - a file by its name, a file it has
 //! open, or bytes a function of its own hands over (a download, a network
 //! stream) - and the library finds out what it is by its first bytes:
-//! WAV, MP3, FLAC, Vorbis in Ogg. Then `DecodeAudio` hands out the sound
+//! WAV, MP3, FLAC, Vorbis in Ogg, AAC - in ADTS frames, or in an MP4,
+//! which media.library reads for it. A program that has a film open with
+//! media.library decodes its sound with `ACA_Media`. Then `DecodeAudio`
+//! hands out the sound
 //! as 16-bit samples, one frame after the other (a sample a channel, the
 //! channels interleaved, left first), until the end - as much at a time
 //! as the program asks for, so a song is never decoded whole.
@@ -52,6 +55,10 @@ pub const ACODEC_MP3: u32 = 2;
 pub const ACODEC_FLAC: u32 = 3;
 /// Vorbis in Ogg pages - an .ogg or .oga file (SINCE 1.2).
 pub const ACODEC_VORBIS: u32 = 4;
+/// AAC-LC, mono or stereo: ADTS frames - an .aac file, a station's
+/// stream - or a track of an MP4 - an .m4a file, a film's sound - which
+/// media.library reads (SINCE 1.6). An HE-AAC stream plays its LC core.
+pub const ACODEC_AAC: u32 = 5;
 
 /// How many bytes `IdentifyAudio` wants to be sure: enough for a WAV's
 /// header and for several MP3 frames after a short tag.
@@ -85,6 +92,15 @@ pub const ACA_Codec = ACA_Dummy + 0x05;
 /// `ACA_Picture`. Without it a picture is passed over, which costs
 /// nothing however large it is.
 pub const ACA_KeepPicture = ACA_Dummy + 0x06;
+/// `*media.MediaFile`: a file media.library has open, whose sound track
+/// is decoded - a film's, while another task reads its pictures (SINCE
+/// 1.6). The file stays the program's: CloseAudioStream leaves it open,
+/// and it must stay open until then. SeekAudio moves the track.
+pub const ACA_Media = ACA_Dummy + 0x07;
+/// `u32`: which track of the file `ACA_Media` gives, or of an MP4 opened
+/// by name, as GetMediaTrack numbers them; by default the first sound
+/// track (SINCE 1.6).
+pub const ACA_MediaTrack = ACA_Dummy + 0x08;
 
 // --- GetAudioStreamAttrs's tags ---------------------------------------------------
 
@@ -169,7 +185,10 @@ pub const ACERR_OPEN: i32 = -2;
 pub const ACERR_UNKNOWN: i32 = -3;
 /// A kind it knows, in a form it does not decode: an MP3 of layer I or II,
 /// a WAV that is not PCM or float, a FLAC of more than 24 bits or carried
-/// in Ogg, a Vorbis floor of type 0, more than two channels.
+/// in Ogg, a Vorbis floor of type 0, AAC other than LC (Main, SSR, LTP,
+/// frames of 960), an MP4 track that is not AAC, more than two channels.
+/// An MP4 read through a function whose index lies behind its sound, and
+/// any MP4 without media.library.
 pub const ACERR_UNSUPPORTED: i32 = -4;
 /// The source would not give its bytes.
 pub const ACERR_READ: i32 = -5;
