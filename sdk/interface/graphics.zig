@@ -100,6 +100,8 @@ pub const LVO = struct {
     pub const BlurCoverage = libraries.lvo(82);
     pub const TextFitted = libraries.lvo(83);
     pub const DrawRoundBevel = libraries.lvo(84);
+    pub const WriteYUVPixelArray = libraries.lvo(85);
+    pub const ScaleYUVPixelArray = libraries.lvo(86);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -186,6 +188,8 @@ pub const Fn = struct {
     pub const BlurCoverage = *const fn (*GraphicsBase, *rtg.Surface, *const graphics.Rect, u32) callconv(.c) void;
     pub const TextFitted = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, i32) callconv(.c) u32;
     pub const DrawRoundBevel = *const fn (*GraphicsBase, *graphics.RastPort, *const graphics.Rect, u32, graphics.Pen, graphics.Pen) callconv(.c) void;
+    pub const WriteYUVPixelArray = *const fn (*GraphicsBase, *graphics.RastPort, *const rtg.RtgYuv, i32, i32, *const graphics.Rect) callconv(.c) void;
+    pub const ScaleYUVPixelArray = *const fn (*GraphicsBase, *graphics.RastPort, *const rtg.RtgYuv, *const graphics.Rect, *const graphics.Rect) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -744,5 +748,19 @@ pub const GraphicsBase = opaque {
     /// smooth edges under RPTAG_Smooth; the RastPort's pen is left as it was.
     pub fn DrawRoundBevel(self: *GraphicsBase, rp: *graphics.RastPort, area: *const graphics.Rect, radius: u32, light: graphics.Pen, dark: graphics.Pen) void {
         return libraries.call(self, LVO.DrawRoundBevel, Fn.DrawRoundBevel, .{ rp, area, radius, light, dark });
+    }
+
+    /// A YUV picture put down as colours, converted to the surface's format
+    /// through the picture's own colours (BT.601 or BT.709, video's range or
+    /// the whole byte): WritePixelArray for a decoded video frame.
+    pub fn WriteYUVPixelArray(self: *GraphicsBase, rp: *graphics.RastPort, picture: *const rtg.RtgYuv, src_x: i32, src_y: i32, area: *const graphics.Rect) void {
+        return libraries.call(self, LVO.WriteYUVPixelArray, Fn.WriteYUVPixelArray, .{ rp, picture, src_x, src_y, area });
+    }
+
+    /// A YUV picture put down at another size: ScalePixelArray for a decoded
+    /// video frame - the nearest pixel, or between them and averaged under
+    /// RPTAG_Smooth.
+    pub fn ScaleYUVPixelArray(self: *GraphicsBase, rp: *graphics.RastPort, picture: *const rtg.RtgYuv, src_area: *const graphics.Rect, dest_area: *const graphics.Rect) void {
+        return libraries.call(self, LVO.ScaleYUVPixelArray, Fn.ScaleYUVPixelArray, .{ rp, picture, src_area, dest_area });
     }
 };

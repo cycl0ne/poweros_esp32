@@ -216,6 +216,52 @@ pub const RtgPixels = extern struct {
 /// 1.8; a driver from before reads the coverage.
 pub const RTGPIXF_OPAQUE: u8 = 1;
 
+/// A picture in YUV, as a video decoder hands it out: a plane of
+/// brightness (luma, Y) a byte a pixel, and the colour (chroma, Cb and
+/// Cr) at half the size each way - one Cb and one Cr for each two by two
+/// pixels, which is 4:2:0. WriteYUVPixelArray and ScaleYUVPixelArray read
+/// it and put it down as colours; nothing else is kept of it.
+pub const RtgYuv = extern struct {
+    /// The luma: rows of `y_pitch` bytes, a byte a pixel.
+    y: [*]const u8,
+    /// `RTGYUV_NV12`: the chroma, a Cb and a Cr byte for each two pixels
+    /// across, a row for each two rows down. `RTGYUV_I420`: the Cb plane
+    /// alone, a byte for each two by two pixels.
+    cb: [*]const u8,
+    /// `RTGYUV_I420`: the Cr plane, laid out as `cb`. Unused for NV12.
+    cr: ?[*]const u8 = null,
+    /// Bytes from one luma row to the next.
+    y_pitch: u32,
+    /// Bytes from one chroma row to the next - the Cb plane's and the Cr
+    /// plane's alike for I420.
+    c_pitch: u32,
+    /// `RTGYUV_NV12` or `RTGYUV_I420`.
+    layout: u8 = RTGYUV_NV12,
+    /// How the numbers stand for colours: `RTGYUV_BT601` or
+    /// `RTGYUV_BT709`, with `RTGYUV_FULL` for a picture whose numbers take
+    /// the whole 0 to 255 rather than video's 16 to 235 (Y) and 16 to 240
+    /// (Cb, Cr).
+    colors: u8 = RTGYUV_BT709,
+    pad: [2]u8 = .{ 0, 0 },
+};
+
+/// `RtgYuv.layout`: the chroma in one plane, Cb and Cr in turn - what
+/// the VisionFive 2's decoder hands out.
+pub const RTGYUV_NV12: u8 = 0;
+/// `RtgYuv.layout`: the chroma in two planes, Cb's and Cr's.
+pub const RTGYUV_I420: u8 = 1;
+
+/// `RtgYuv.colors`: ITU-R BT.601's colours - a picture of standard
+/// definition, and JPEG's.
+pub const RTGYUV_BT601: u8 = 0;
+/// `RtgYuv.colors`: ITU-R BT.709's colours - high definition video.
+pub const RTGYUV_BT709: u8 = 1;
+/// `RtgYuv.colors`: the part of the byte that says which of the two.
+pub const RTGYUV_MATRIX: u8 = 0x0F;
+/// `RtgYuv.colors`: the numbers take the whole byte (JPEG's), not video's
+/// narrower range.
+pub const RTGYUV_FULL: u8 = 0x80;
+
 /// A colour taken apart, eight bits a channel.
 pub const RtgRGB = extern struct {
     red: u8 = 0,
