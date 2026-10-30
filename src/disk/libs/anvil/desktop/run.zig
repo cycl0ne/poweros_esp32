@@ -20,7 +20,8 @@
 //! the program first, then each file, a drawer or a disk as a lock on
 //! itself with an empty name. Its input is NIL:, its output a console
 //! that opens only if it prints. It starts in the drawer of the program,
-//! with the stack its icon asks for and the priority of its `TOOLPRI`
+//! which the shell that loads it makes its PROGDIR: as well, with the
+//! stack its icon asks for and the priority of its `TOOLPRI`
 //! tool type. The desktop counts it until the message it gave the process
 //! (`NP_EndMsg`) comes back: its process stays, unseen, after Quit until
 //! the last has. A program that asked for a file to be opened with an end

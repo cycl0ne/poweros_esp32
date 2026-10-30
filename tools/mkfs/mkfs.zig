@@ -4,7 +4,7 @@
 //! shell copying programs into RAM: at every start.
 //!
 //! usage: mkfs [--tree=<dir>] [--manifest=<file>]
-//!            [--gpt=<file> --gpt-bytes=<bytes> [--gpt-file=<path>=<host-file> ...]]
+//!            [--gpt=<file> --gpt-bytes=<bytes> [--gpt-file=<path>[=<host-file>] ...]]
 //!            <out.bin> <volume> <partition> <sectors> <partition-sectors>
 //!            <sector-size> <page-size> <rdb-sectors>
 //!            [<path-in-image>[=<host-file>] ...]
@@ -46,8 +46,9 @@
 //! on the host: the rest is a hole, which reads as zeroes. A
 //! `--gpt-file` goes on this disk alone, after everything else: a file
 //! too large for the flash disk - a song to try a player with - on the
-//! SSD that has room for it. The drawer it goes in must be made by a
-//! path of the ordinary list.
+//! SSD that has room for it. One with no `=` is a drawer made there
+//! alone; as in the ordinary list, a drawer comes before what goes in
+//! it.
 //!
 //! **A blank disk** (`--blank`): only that disk, with an empty volume
 //! and its partition not bootable - a disk to keep work on. Its only
@@ -367,10 +368,7 @@ pub fn main(init: std.process.Init) !void {
     var entries: std.ArrayList(Entry) = .empty;
     for (args[9..]) |entry| try entries.append(arena, try entryOf(io, cwd, entry, arena));
     const shared = entries.items.len;
-    for (gpt_only.items) |entry| {
-        if (mem.indexOfScalar(u8, entry, '=') == null) fatal("--gpt-file={s}: it is <path>=<host-file>", .{entry});
-        try entries.append(arena, try entryOf(io, cwd, entry, arena));
-    }
+    for (gpt_only.items) |entry| try entries.append(arena, try entryOf(io, cwd, entry, arena));
 
     if (tree_path) |path| try writeTree(io, cwd, path, entries.items[0..shared]);
     if (manifest_path) |path| try writeManifest(io, cwd, path, entries.items[0..shared], arena);

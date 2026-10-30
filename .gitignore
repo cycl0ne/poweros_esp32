@@ -12,6 +12,10 @@ CLAUDE.md
 # Files dropped onto the disk image (see build.zig: disk_tree)
 /disk/
 
+# Games dropped onto the virt machines' system disks with -Dgames
+# (see build.zig: games_tree)
+/games/
+
 # The QEMU virt machines' work disks, which keep what is saved to them
 # (see build.zig: virt_work_dir)
 /work/
