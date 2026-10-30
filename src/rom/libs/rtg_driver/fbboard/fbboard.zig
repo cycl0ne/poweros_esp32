@@ -80,9 +80,22 @@
 //! and tells the display to read it from the next frame on, which it
 //! waits for before the frame read until then is written again. A
 //! drawing is seen a frame or two after it was made, and whole. The
-//! buffers drawn in are never written back, since nothing reads them past
+//! buffers drawn in are not written back, since nothing reads them past
 //! the caches; showing a buffer, or bands, is a whole picture made and
 //! waited for.
+//!
+//! A whole picture is a copy of the whole display - at 2560x1440 14 MB,
+//! which takes the cores 14 ms - and a program that draws each picture in
+//! one buffer while it shows another, and then shows that one, would wait
+//! for one each time: a frame lost to every picture. So on the BCM2712's
+//! port the display reads such a program's buffers themselves
+//! (`directOf`): a whole buffer shown in place of another that nothing was
+//! written in while it was shown is written out of the caches whole and
+//! read as it is, from the next frame on, and nothing is copied. Should
+//! anything then be written in it - a requester opened on that screen -
+//! that is written out at once, and the task takes the frames up again
+//! with the next picture, made whole: for a frame or two the drawing is
+//! seen as it is written out.
 //!
 //! Their controllers have a pointer of their own, a cursor plane, which
 //! they lay over the picture themselves: there the pointer is that
@@ -148,7 +161,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 18;
+const REVISION = 19;
 const BUILD_DATE = "30.10.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -300,9 +313,13 @@ const Screen = struct {
     /// What was written since the last picture was made, and what went
     /// into that picture, which the other frame has not had: under
     /// `damage_lock`, which also keeps the bands and the overlay's place
-    /// still while a refresh reads them.
+    /// still while a refresh reads them. With them, whether the bands were
+    /// written in since they were shown, and the buffer the display reads
+    /// itself in place of a frame (`directOf`), if it does.
     fresh: damage.Damage = .{},
     last: damage.Damage = .{},
+    written: bool = false,
+    direct: ?*const rtg.RtgBitMap = null,
     damage_lock: exec.Lock = .{},
     /// Held while a picture is made and waited for, and while the bands or
     /// the overlay's image change, so that what a picture is made from
@@ -1272,7 +1289,9 @@ fn noteImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top
 }
 
 /// `area` of `bitmap` written: noted where the bands show it, and the task
-/// woken. Nothing is written back - the display never reads the buffer.
+/// woken. Nothing is written back - the display does not read the buffer -
+/// but where it reads it itself (`directOf`): there it is written out at
+/// once, and the task takes the frames up again.
 fn noteWritten(screen: *Screen, bitmap: *const rtg.RtgBitMap, area: Box) void {
     if (area.isEmpty()) return;
     const sys = screen.sys;
@@ -1286,7 +1305,10 @@ fn noteWritten(screen: *Screen, bitmap: *const rtg.RtgBitMap, area: Box) void {
         noteBox(screen, .{ .left = area.left, .top = lines.first, .right = area.right, .end = lines.end });
         noted = true;
     }
+    if (noted) screen.written = true;
+    const read = noted and screen.direct == bitmap;
     sys.ReleaseLock(&screen.damage_lock);
+    if (read) handOn(screen, bitmap, area);
     if (noted) sys.SignalWaitable(&screen.work);
 }
 
@@ -1300,20 +1322,24 @@ const Laid = struct { image: ?*const rtg.RtgPointerImage, left: i32, top: i32 };
 /// display told to read this frame, which it takes up as the next frame
 /// starts - waited for, since until then it reads the other, which the
 /// next picture is made in. False, and nothing switched, when nothing was
-/// noted. Made holding `flip_lock`.
+/// noted. Where the display read a buffer itself, neither frame has had
+/// what it showed: the picture is made whole, and the next one too. Made
+/// holding `flip_lock`.
 fn flipFrames(screen: *Screen) bool {
     const sys = screen.sys;
     sys.AcquireLock(&screen.damage_lock);
     const fresh = screen.fresh;
     screen.fresh = .{};
     const over = Laid{ .image = screen.overlay, .left = screen.overlay_left, .top = screen.overlay_top };
+    const stale = screen.direct != null and !fresh.isEmpty();
+    if (stale) screen.direct = null;
     sys.ReleaseLock(&screen.damage_lock);
     if (fresh.isEmpty()) return false;
     const back = screen.flip_frames[screen.front ^ 1];
     var boxes = fresh;
-    boxes.addAll(&screen.last);
+    if (stale) boxes.add(whole(screen)) else boxes.addAll(&screen.last);
     for (boxes.list()) |box| makeBox(screen, back, box, over);
-    screen.last = fresh;
+    screen.last = if (stale) boxes else fresh;
     scanFrom(screen, @intFromPtr(back));
     pace(screen, 1);
     screen.front ^= 1;
@@ -1343,20 +1369,69 @@ fn makeBox(screen: *Screen, into: [*]u8, box: Box, over: Laid) void {
 
 /// What the display shows changed - `bands`, none for black - and the
 /// picture of it made and waited for, as a flip is: the rows that show
-/// something else than before, nothing when none does.
+/// something else than before, nothing when none does; or a buffer the
+/// display reads itself (`directOf`), and that waited for.
 fn showFlipped(screen: *Screen, bands: []const rtg.RtgBand) void {
     const sys = screen.sys;
     sys.ObtainSemaphore(&screen.flip_lock);
     defer sys.ReleaseSemaphore(&screen.flip_lock);
     sys.AcquireLock(&screen.damage_lock);
+    const direct = directOf(screen, bands);
     var changed: damage.Damage = .{};
     changed.rebanded(screen.bands[0..screen.band_count], bands, screen.width, screen.height);
     @memcpy(screen.bands[0..bands.len], bands);
     screen.band_count = @intCast(bands.len);
     screen.showing = if (bands.len == 0) null else bands[bands.len - 1].bitmap;
-    for (changed.list()) |box| noteBox(screen, box);
+    screen.written = false;
+    if (direct != null) {
+        // The frames are made whole when they are taken up again.
+        screen.fresh = .{};
+        screen.direct = direct;
+    } else {
+        for (changed.list()) |box| noteBox(screen, box);
+    }
     sys.ReleaseLock(&screen.damage_lock);
+    if (direct) |bitmap| return showDirect(screen, bitmap);
     _ = flipFrames(screen);
+}
+
+/// The buffer the display can read itself in place of a frame, as `bands`
+/// show it: one whole buffer - the display's size, rows and format, from
+/// its first row - shown in place of another nothing was written in while
+/// it was shown, or in place of itself while the display reads it so, and
+/// nothing laid over the picture by the cores. That is a program that
+/// draws a picture in one buffer while it shows the other and then shows
+/// that one (ChangeScreenBuffer, facet.library's swapchains): its buffers
+/// are read as they are, and nothing is copied. A screen drawn in while
+/// it is shown - intuition's windows - is shown frames as before. On the
+/// BCM2712's port. Asked holding `damage_lock`.
+fn directOf(screen: *const Screen, bands: []const rtg.RtgBand) ?*const rtg.RtgBitMap {
+    if (screen.scanout != .bcm2712 or screen.overlay != null or screen.written) return null;
+    if (bands.len != 1 or screen.band_count != 1) return null;
+    const new = bands[0];
+    const old = screen.bands[0];
+    if (!wholeBand(screen, new) or !wholeBand(screen, old)) return null;
+    if (new.bitmap == old.bitmap and screen.direct != new.bitmap) return null;
+    return new.bitmap;
+}
+
+/// Whether `band` is a whole buffer the display could be shown.
+fn wholeBand(screen: *const Screen, band: rtg.RtgBand) bool {
+    return band.line == 0 and band.origin == 0 and band.flags & rtg.RTGBANDF_REPEAT == 0 and showable(screen, band.bitmap);
+}
+
+/// `bitmap` read by the display itself: written out of the caches whole -
+/// nothing of it was as it was drawn - and the display told to read it,
+/// which it takes up as the next frame starts: waited for, since until
+/// then it reads what it read before. Nothing where it reads it already.
+/// Made holding `flip_lock`.
+fn showDirect(screen: *Screen, bitmap: *const rtg.RtgBitMap) void {
+    const address = @intFromPtr(bitmap.pixels.?);
+    if (address == screen.scanning) return;
+    handOn(screen, bitmap, whole(screen));
+    scanFrom(screen, address);
+    pace(screen, 1);
+    screen.updates +%= 1;
 }
 
 /// The display brought up, or changed to the mode taken, black: both
@@ -1376,6 +1451,8 @@ fn beginFlipped(screen: *Screen) bool {
     screen.band_count = 0;
     screen.showing = null;
     screen.fresh = .{};
+    screen.written = false;
+    screen.direct = null;
     sys.ReleaseLock(&screen.damage_lock);
     screen.last = .{};
     screen.front = 0;
