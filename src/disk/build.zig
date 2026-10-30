@@ -99,6 +99,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player", .strings = "programs/player/player.cd" },
     .{ .disk = "programs/Movie", .source = "programs/movie/movie.zig", .name = "movie", .strings = "programs/movie/movie.cd" },
     .{ .disk = "programs/Volume", .source = "programs/volume/volume.zig", .name = "volume" },
+    .{ .disk = "programs/Boing", .source = "programs/boing/boing.zig", .name = "boing" },
     // The dock, one program in either place (`builtFor`).
     .{ .disk = "programs/Dock", .source = "programs/dock/dock.zig", .name = "dock" },
     .{ .disk = "WBStartup/Dock", .source = "programs/dock/dock.zig", .name = "dock" },
@@ -479,6 +480,7 @@ pub const files = [_]File{
     .{ .disk = "programs/Docs/Sheet.md", .source = "programs/sheet/README.md" },
     .{ .disk = "programs/Docs/Terminal.md", .source = "programs/terminal/README.md" },
     .{ .disk = "programs/Docs/Volume.md", .source = "programs/volume/README.md" },
+    .{ .disk = "programs/Docs/Boing.md", .source = "programs/boing/README.md" },
     // SYS:System/Docs - the same for the system's tools.
     .{ .disk = "System/Docs/HDToolBox.md", .source = "system/hdtoolbox/README.md" },
     .{ .disk = "System/Docs/CPULoad.md", .source = "system/cpuload/README.md" },
