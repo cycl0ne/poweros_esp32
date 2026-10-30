@@ -33,6 +33,8 @@ mimetypes/package-x-generic
 apps/accessories-text-editor
 actions/system-search
 apps/preferences-desktop-font
+apps/preferences-desktop-keyboard-shortcuts
+devices/input-keyboard
 categories/preferences-system
 apps/utilities-system-monitor
 devices/computer

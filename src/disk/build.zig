@@ -85,8 +85,8 @@ const tests = [_][]const u8{
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "mountshare", "git" };
 
 /// Programs with windows, in SYS:Programs and - the system's own tools -
-/// SYS:System, and the dock: started by their full name or from a shell
-/// there, not on the command path.
+/// SYS:System, the commodities in SYS:Commodities, and the dock: started
+/// by their full name or from a shell there, not on the command path.
 const window_programs = [_]Program{
     .{ .disk = "programs/FontView", .source = "programs/fontview/fontview.zig", .name = "fontview" },
     .{ .disk = "programs/MultiView", .source = "programs/multiview/multiview.zig", .name = "multiview" },
@@ -106,6 +106,7 @@ const window_programs = [_]Program{
     .{ .disk = "System/CPULoad", .source = "system/cpuload/cpuload.zig", .name = "cpuload" },
     .{ .disk = "System/NetLoad", .source = "system/netload/netload.zig", .name = "netload" },
     .{ .disk = "System/MemMap", .source = "system/memmap/memmap.zig", .name = "memmap" },
+    .{ .disk = "Commodities/Exchange", .source = "commodities/exchange/exchange.zig", .name = "exchange" },
 };
 
 /// Test programs built with an inner module.
@@ -480,6 +481,8 @@ pub const files = [_]File{
     .{ .disk = "System/Docs/CPULoad.md", .source = "system/cpuload/README.md" },
     .{ .disk = "System/Docs/NetLoad.md", .source = "system/netload/README.md" },
     .{ .disk = "System/Docs/MemMap.md", .source = "system/memmap/README.md" },
+    // SYS:Commodities/Docs - the same for the commodities.
+    .{ .disk = "Commodities/Docs/Exchange.md", .source = "commodities/exchange/README.md" },
 };
 
 pub fn build(b: *std.Build) void {
