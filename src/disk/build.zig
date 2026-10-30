@@ -115,6 +115,7 @@ const inner_tests = [_]Program{
     .{ .disk = "c/test/cube", .source = "c/test/raster/cube.zig", .name = "cube", .imports = &.{"raster"} },
     .{ .disk = "c/test/facetcube", .source = "c/test/raster/facetcube.zig", .name = "facetcube", .imports = &.{"raster"} },
     .{ .disk = "c/test/facetwindow", .source = "c/test/raster/facetwindow.zig", .name = "facetwindow", .imports = &.{"raster"} },
+    .{ .disk = "c/test/facetmany", .source = "c/test/raster/facetmany.zig", .name = "facetmany", .imports = &.{"raster"} },
     .{ .disk = "c/test/facetboth", .source = "c/test/raster/facetboth.zig", .name = "facetboth" },
     .{ .disk = "c/test/v3dtest", .source = "c/test/v3d/v3dtest.zig", .name = "v3dtest", .imports = &.{"v3d"} },
     .{ .disk = "c/test/locale", .source = "c/test/locale/locale.zig", .name = "locale", .strings = "c/test/locale/locale.cd" },

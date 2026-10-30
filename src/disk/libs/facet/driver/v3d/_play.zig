@@ -46,7 +46,7 @@ const Block = v3d.Block;
 
 /// The bytes of a chunk, and how many a frame can have.
 const chunk_bytes: u32 = 1024 * 1024;
-const most_chunks = 32;
+const most_chunks = 64;
 /// Of the binner's list at a time; a list in several parts branches on.
 const list_part_bytes: u32 = 64 * 1024;
 /// What is kept free in a part: a draw's packets, then the branch out.
@@ -55,6 +55,9 @@ const packets_bytes: u32 = 160;
 /// it goes on into before it asks for more.
 const tile_list_bytes: u32 = 128;
 const tile_lists_extra: u32 = 1024 * 1024;
+/// And for each triangle sent, most of which fall in one tile.
+const tile_list_triangle_bytes: u32 = 16;
+const most_tile_lists_bytes: u32 = 128 * 1024 * 1024;
 const tile_state_bytes: u32 = 256;
 /// The most vertices a draw works: past it, the draw draws nothing.
 const most_vertices = 1 << 20;
@@ -101,6 +104,10 @@ pub const Player = struct {
     chunk_count: u32 = 0,
     chunk_at: u32 = 0,
     tile_lists: ?Block = null,
+    /// The triangles sent to the binner this render pass.
+    triangles: u64 = 0,
+    /// A draw left out for want of room has been reported.
+    told_no_room: bool = false,
     tile_state: ?Block = null,
 };
 
@@ -239,6 +246,20 @@ fn sized(queue: *Queue, kept: *?Block, bytes: u32) bool {
     return kept.* != null;
 }
 
+/// What the binner's lists are given for a frame of `tiles` and `triangles`.
+fn tileListsBytes(tiles: u32, triangles: u64) u32 {
+    const wanted = tiles * tile_list_bytes + tile_lists_extra + triangles * tile_list_triangle_bytes;
+    return @intCast(@min(wanted, most_tile_lists_bytes));
+}
+
+/// A draw left out for want of memory, said once a queue.
+fn noRoom(queue: *Queue) void {
+    const player = playerOf(queue);
+    if (player.told_no_room) return;
+    player.told_no_room = true;
+    exec.kprintf(queue.device.sys, "v3d: a draw of more than there is room for is left out\n", .{});
+}
+
 /// Where the V3D has an image, mapped the first time it is asked: 0 where it
 /// cannot reach it. What stays mapped after the image goes is reached by no
 /// list, as lists are made only from images there are.
@@ -283,7 +304,8 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
     const whole = left == 0 and top == 0 and right == framebuffer.width and bottom == framebuffer.height;
     const clears = command.render_pass.color_load == .clear;
     const tiles = ((framebuffer.width + 63) / 64) * ((framebuffer.height + 63) / 64);
-    if (!sized(queue, &player.tile_lists, tiles * tile_list_bytes + tile_lists_extra)) return;
+    if (!sized(queue, &player.tile_lists, tileListsBytes(tiles, 0))) return;
+    player.triangles = 0;
     if (!sized(queue, &player.tile_state, tiles * tile_state_bytes)) return;
     for (player.chunks[0..player.chunk_count]) |*chunk| chunk.used = 0;
     player.chunk_at = 0;
@@ -360,6 +382,13 @@ fn endRenderPass(queue: *Queue) void {
     const sys = device.sys;
     frames.endBin(&player.bin);
     player.frame.binned = player.binned;
+    // Only now is it known how many triangles the binner's lists must hold.
+    if (!sized(queue, &player.tile_lists, tileListsBytes(player.frame.tilesX() * player.frame.tilesY(), player.triangles))) {
+        exec.kprintf(sys, "v3d: no memory for the binner's lists of %lu triangles\n", .{player.triangles});
+        hardware.broken = true;
+        return;
+    }
+    player.frame.tile_lists = player.tile_lists.?.address;
 
     const lists = carve(queue, 4096, 16) orelse return;
     var tile_list = cl.List{ .at = lists.cpu, .address = lists.address };
@@ -405,7 +434,9 @@ fn lost(player: *const Player, sys: *ExecBase, finished: v3d.Engine.Finished, wh
     const hardware = player.hardware;
     const engine = &hardware.engine;
     const gpu = &hardware.gpu;
-    switch (finished) {
+    if (engine.overflow_short) {
+        exec.kprintf(sys, "v3d: %s: the binner ran out of memory, all %ld blocks given\n", .{ what, @as(u64, engine.overflow_used) });
+    } else switch (finished) {
         .fault => exec.kprintf(sys, "v3d: %s: MMU fault %lx from client %lx at %lx\n", .{ what, @as(u64, engine.last_fault.status), @as(u64, engine.last_fault.client), engine.last_fault.address }),
         else => exec.kprintf(sys, "v3d: %s: it did not finish, %ld core interrupt(s), %ld hub, the binner short of memory: %ld\n", .{ what, @as(u64, engine.core_interrupts), @as(u64, engine.hub_interrupts), @as(u64, @intFromBool(engine.overflow_short)) }),
     }
@@ -586,7 +617,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     const state = drawStateOf(player, pipeline, &viewport) orelse return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
     const lowest, const highest = _vertices.range(indices) orelse return;
-    if (highest - lowest >= most_vertices) return;
+    if (highest - lowest >= most_vertices) return noRoom(queue);
     const vertices = highest - lowest + 1;
 
     const locations = pipeline.locations;
@@ -603,7 +634,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     // The triangles whose corners are all there.
     const index_bytes: u32 = @intCast(corner_count * 4);
     if (index_bytes == 0) return;
-    const index_place = carve(queue, index_bytes, 4) orelse return;
+    const index_place = carve(queue, index_bytes, 4) orelse return noRoom(queue);
     const kept_indices: [*]u32 = @ptrCast(@alignCast(index_place.cpu));
     var kept: u32 = 0;
     var corner: usize = 0;
@@ -667,7 +698,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             .resources = &player.resources,
         };
         pipeline.vertex(&batch);
-        const records = carve(queue, records_bytes, 4) orelse return;
+        const records = carve(queue, records_bytes, 4) orelse return noRoom(queue);
         for (0..vertices) |vertex| {
             writeRecord(records.cpu + vertex * record_bytes, outputs + vertex * stride, &scale, varyings, carried);
         }
@@ -676,6 +707,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         cl.indexBufferSetup(&player.bin, index_place.address, kept * 4);
         cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, kept);
         player.binned = true;
+        player.triangles += kept / 3;
     }
 }
 

@@ -337,7 +337,7 @@ pub const Gpu = struct {
 
     /// A buffer of `bytes`, bound into memory the program sees, and its
     /// bytes.
-    fn buffer(gpu: *Gpu, bytes: u64, usage: u32) Failure!struct { *facet.Buffer, [*]u8 } {
+    pub fn buffer(gpu: *Gpu, bytes: u64, usage: u32) Failure!struct { *facet.Buffer, [*]u8 } {
         const fb = gpu.fb;
         var made: ?*facet.Buffer = null;
         try expect(fb.CreateBuffer(gpu.device.?, &.{ .size = bytes, .usage = usage }, &made), error.Refused);
@@ -413,7 +413,7 @@ pub const Gpu = struct {
     }
 
     /// The command buffer, begun anew.
-    fn begin(gpu: *Gpu) Failure!*facet.CommandBuffer {
+    pub fn begin(gpu: *Gpu) Failure!*facet.CommandBuffer {
         try expect(gpu.fb.BeginCommandBuffer(gpu.commands.?, &.{ .flags = facet.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT }), error.Refused);
         return gpu.commands.?;
     }
