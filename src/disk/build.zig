@@ -36,9 +36,11 @@ pub const catalogs = [_]Catalog{
 /// Code compiled into each program that imports it, by name, rather than
 /// loaded: a library's inner part that its test programs build in as well.
 /// The rasterizer core is facet.library's, and is called per triangle and
-/// per tile - too often to go through a jump table.
+/// per tile - too often to go through a jump table. The baseline JPEG
+/// decoder is jpeg.datatype's, and videocodec.library's for Motion JPEG.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "raster", .source = "libs/facet/raster/raster.zig" },
+    .{ .name = "jpegdecode", .source = "classes/datatypes/jpeg/decode.zig" },
 };
 
 /// Something copied onto the disk as it is.
@@ -76,6 +78,7 @@ const tests = [_][]const u8{
     "sound",       "memowner",   "records",     "exall",     "disktest",
     "filetest",    "speed2d",    "windraw",     "semtest",   "membench",
     "glyphs",      "ribbon",     "taskbench",   "videodec",  "audiodec",
+    "film",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "mountshare", "git" };
 
@@ -130,6 +133,7 @@ const modules = [_]Program{
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/audiocodec.library", .source = "libs/audiocodec/audiocodec.zig", .name = "audiocodec.library" },
     .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library" },
+    .{ .disk = "libs/videocodec.library", .source = "libs/videocodec/videocodec.zig", .name = "videocodec.library", .imports = &.{"jpegdecode"} },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
     .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
     .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library" },
@@ -201,7 +205,7 @@ const modules = [_]Program{
     .{ .disk = "classes/datatypes/gif.datatype", .source = "classes/datatypes/gif/gif.zig", .name = "gif.datatype" },
     .{ .disk = "classes/datatypes/gifanim.datatype", .source = "classes/datatypes/gif/gifanim.zig", .name = "gifanim.datatype" },
     .{ .disk = "classes/datatypes/lottie.datatype", .source = "classes/datatypes/lottie/lottie.zig", .name = "lottie.datatype" },
-    .{ .disk = "classes/datatypes/jpeg.datatype", .source = "classes/datatypes/jpeg/jpeg.zig", .name = "jpeg.datatype" },
+    .{ .disk = "classes/datatypes/jpeg.datatype", .source = "classes/datatypes/jpeg/jpeg.zig", .name = "jpeg.datatype", .imports = &.{"jpegdecode"} },
     .{ .disk = "classes/datatypes/text.datatype", .source = "classes/datatypes/text/text.zig", .name = "text.datatype" },
     .{ .disk = "classes/datatypes/ascii.datatype", .source = "classes/datatypes/ascii/ascii.zig", .name = "ascii.datatype" },
     .{ .disk = "classes/datatypes/markdown.datatype", .source = "classes/datatypes/markdown/markdown.zig", .name = "markdown.datatype" },

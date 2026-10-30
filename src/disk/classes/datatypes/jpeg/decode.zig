@@ -452,6 +452,10 @@ pub fn toRGB(y: u8, cb: u8, cr: u8, into: []u8) void {
 const std = @import("std");
 const testing = std.testing;
 
+test {
+    _ = idct;
+}
+
 test "a code table read back" {
     var table = Huffman{};
     // One code of two bits, two of three.

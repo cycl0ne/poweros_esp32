@@ -461,7 +461,6 @@ fn pictureEntry(out: *media.MediaTrack, format: u32, body: []const u8) void {
         kind("mp4v") => {
             out.codec = media.MCODEC_MPEG4V;
             if (child(children, kind("esds"))) |esds| elementary(out, esds);
-            out.codec = media.MCODEC_MPEG4V;
         },
         kind("jpeg"), kind("mjpa"), kind("mjpb"), kind("MJPG") => out.codec = media.MCODEC_MJPEG,
         else => {},
@@ -504,6 +503,8 @@ fn elementary(out: *media.MediaTrack, esds: []const u8) void {
         0x69, 0x6B => media.MCODEC_MP3,
         0xA5 => media.MCODEC_AC3,
         0xA6 => media.MCODEC_EAC3,
+        0x20 => media.MCODEC_MPEG4V,
+        0x6C => media.MCODEC_MJPEG,
         else => out.codec,
     };
     const average = be32(config[9..13]);

@@ -64,7 +64,8 @@ pub const MCODEC_UNKNOWN: u32 = 0;
 pub const MCODEC_H264: u32 = 1;
 /// H.265 (HEVC): the setup is the hvcC record.
 pub const MCODEC_H265: u32 = 2;
-/// Motion JPEG: each packet a JPEG picture whole.
+/// Motion JPEG: each packet a JPEG picture whole - QuickTime's `jpeg`
+/// entry and its kin, or MPEG-4's `mp4v` naming JPEG (SINCE 1.1).
 pub const MCODEC_MJPEG: u32 = 3;
 /// MPEG-4 Part 2 video.
 pub const MCODEC_MPEG4V: u32 = 4;

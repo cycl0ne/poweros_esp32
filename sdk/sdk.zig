@@ -60,6 +60,9 @@ pub const audiocodec = @import("libs/audiocodec/audiocodec.zig");
 /// Container files - MP4 - their tracks and packets, through
 /// media.library.
 pub const media = @import("libs/media/media.zig");
+/// Films - their pictures as frames, their sound as samples - through
+/// videocodec.library.
+pub const videocodec = @import("libs/videocodec/videocodec.zig");
 /// What the Player that runs plays, asked at its public port.
 pub const player = @import("libs/player/player.zig");
 /// A packet filter on the stack's packet hooks, through filter.library.

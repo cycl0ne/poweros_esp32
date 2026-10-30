@@ -46,6 +46,7 @@ pub const battmem = @import("battmem.zig");
 pub const thermal = @import("thermal.zig");
 pub const audiocodec = @import("audiocodec.zig");
 pub const media = @import("media.zig");
+pub const videocodec = @import("videocodec.zig");
 pub const wpa = @import("wpa.zig");
 pub const pci = @import("pci.zig");
 pub const facet = @import("facet.zig");
