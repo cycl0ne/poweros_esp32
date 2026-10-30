@@ -30,8 +30,10 @@ const _identify = @import("_identify.zig");
 /// refused when it is opened); another, such as Opus, is unknown. An MP4
 /// - its first box an `ftyp` - is ACODEC_AAC, as is an ADTS header the
 /// next one agrees with, alone or behind an ID3v2 tag; an MP4 whose sound
-/// is not AAC is refused when it is opened. Any other ID3v2 tag is an
-/// MP3, and so are
+/// is not AAC is refused when it is opened - since 1.7 it is decoded when
+/// it is MP3, FLAC or Vorbis. A Matroska file's first bytes say nothing
+/// of what it holds: it is ACODEC_UNKNOWN, and opened all the same (SINCE
+/// 1.7). Any other ID3v2 tag is an MP3, and so are
 /// MPEG audio frames: a header that can be, followed by others at the
 /// distances it gives - one header-like run of bytes alone is not enough.
 /// An MP3 of layer I or II is identified as one, and refused when it is

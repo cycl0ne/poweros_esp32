@@ -19,14 +19,21 @@
 //! the file's size, and a seek from the bit rate - exact for a constant
 //! rate, near for a variable one.
 //!
+//! **A container's track** (`_media.zig`) brings the frames as packets -
+//! one in each, or several - and says where each packet's sound lies; a
+//! seek moves the track four frames before the one asked for, for the
+//! reservoir and the overlap, and passes over what lies between.
+//!
 //! A frame of one channel in a stream of two is handed out on both, and
 //! the other way round both sides together; layers I and II are refused
 //! when the stream is opened.
 
 const sdk = @import("sdk");
 const ac = sdk.audiocodec;
+const media = sdk.media;
 const _stream = @import("../stream/_stream.zig");
 const Stream = _stream.Stream;
+const _media = @import("../stream/_media.zig");
 const layer3 = @import("layer3.zig");
 const genres = @import("genres.zig");
 const exec = sdk.exec;
@@ -53,15 +60,12 @@ pub const Mp3 = struct {
     /// still to leave out.
     delay: u32,
     to_skip: u32,
+    /// A container's packet: its bytes not decoded yet, and its ticks.
+    packet: []const u8,
+    ticks: u64,
 };
 
-/// The tags passed, the first frame found and the encoder's word read:
-/// the info filled in and the stream at the first frame of music.
-pub fn open(stream: *Stream) i32 {
-    _stream.fill(stream);
-    skipId3v2(stream);
-    if (stream.stop - stream.start < _stream.input_bytes / 2) _stream.fill(stream);
-
+fn begin(stream: *Stream) *Mp3 {
     stream.codec = .{ .mp3 = undefined };
     const m = &stream.codec.mp3;
     // The stream came cleared; what the union put there is set again.
@@ -76,6 +80,19 @@ pub fn open(stream: *Stream) i32 {
     m.given = 0;
     m.delay = 0;
     m.to_skip = 0;
+    m.packet = &.{};
+    m.ticks = 0;
+    return m;
+}
+
+/// The tags passed, the first frame found and the encoder's word read:
+/// the info filled in and the stream at the first frame of music.
+pub fn open(stream: *Stream) i32 {
+    _stream.fill(stream);
+    skipId3v2(stream);
+    if (stream.stop - stream.start < _stream.input_bytes / 2) _stream.fill(stream);
+
+    const m = begin(stream);
 
     // The first frame: found, but not decoded.
     var info: layer3.FrameInfo = .{};
@@ -138,6 +155,28 @@ pub fn open(stream: *Stream) i32 {
     return ac.ACERR_OK;
 }
 
+/// A track of a container: its first packet looked at - a frame of layer
+/// III, what the stream is - and kept to be decoded first.
+pub fn openTrack(stream: *Stream, track: *const media.MediaTrack) i32 {
+    _ = track;
+    const m = begin(stream);
+    var packet: media.MediaPacket = .{};
+    const bytes = _media.next(stream, &packet) orelse return if (stream.failed) ac.ACERR_READ else ac.ACERR_CORRUPT;
+    var info: layer3.FrameInfo = .{};
+    if (layer3.decodeFrame(&m.dec, &m.scratch, bytes, null, &info) == 0) return ac.ACERR_CORRUPT;
+    if (info.layer != 3) return ac.ACERR_UNSUPPORTED;
+    m.dec.reset();
+    m.packet = bytes;
+    m.ticks = packet.ticks;
+    m.frame_samples = frameSamplesOf(bytes[info.frame_offset..]);
+    stream.info.codec = ac.ACODEC_MP3;
+    stream.info.rate = info.hz;
+    stream.info.channels = info.channels;
+    stream.info.bits = 16;
+    stream.info.bitrate = info.bitrate_kbps * 1000;
+    return ac.ACERR_OK;
+}
+
 fn frameSamplesOf(frame: []const u8) u32 {
     if (frame.len < 4) return 1152;
     return layer3.headerFrameSamples(frame.ptr);
@@ -166,6 +205,7 @@ pub fn decode(stream: *Stream, m: *Mp3, out: [*]i16, frames: u32) i32 {
 /// The next frame of music decoded into the stream's samples: false at
 /// the end.
 fn decodeNext(stream: *Stream, m: *Mp3) bool {
+    if (stream.media.base != null) return decodePacket(stream, m);
     const channels: usize = stream.info.channels;
     while (true) {
         if (m.exact and m.given >= m.total) return false;
@@ -207,6 +247,38 @@ fn decodeNext(stream: *Stream, m: *Mp3) bool {
     }
 }
 
+/// A container's next frame decoded, as `decodeNext` does: a packet may
+/// hold several.
+fn decodePacket(stream: *Stream, m: *Mp3) bool {
+    const channels: usize = stream.info.channels;
+    while (true) {
+        if (m.packet.len == 0) {
+            var packet: media.MediaPacket = .{};
+            m.packet = _media.next(stream, &packet) orelse return false;
+            m.ticks = packet.ticks;
+            continue;
+        }
+        var info: layer3.FrameInfo = .{};
+        const samples = layer3.decodeFrame(&m.dec, &m.scratch, m.packet, &stream.pcm, &info);
+        if (info.channels == 0) {
+            // No frame in the rest of the packet.
+            m.packet = &.{};
+            continue;
+        }
+        m.packet = m.packet[info.frame_bytes..];
+        const start = _media.place(&stream.media, m.ticks);
+        _media.advance(&stream.media, m.frame_samples);
+        // A layer it does not decode, or a frame whose reservoir is not
+        // there yet: nothing to hand out.
+        if (samples == 0) continue;
+        if (info.channels != channels) toChannels(stream, samples, info.channels);
+        const span = _media.window(&stream.media, start, samples) orelse continue;
+        stream.pcm_start = span.first * channels;
+        stream.pcm_stop = span.last * channels;
+        return true;
+    }
+}
+
 /// A frame of the other number of channels made into the stream's: one
 /// channel onto both sides, or both sides together onto one.
 fn toChannels(stream: *Stream, samples: u32, from: u32) void {
@@ -229,8 +301,16 @@ fn toChannels(stream: *Stream, samples: u32, from: u32) void {
 /// The stream moved to near `frame`: by the encoder's table where there
 /// is one, else by the bit rate. The frames just after it may be left
 /// out, until the reservoir they reach back into is filled again. Frame
-/// 0 is the first frame of music, the encoder's delay left out again.
+/// 0 is the first frame of music, the encoder's delay left out again. A
+/// container's track moves exactly, four frames early.
 pub fn seek(stream: *Stream, m: *Mp3, frame: u32) i32 {
+    if (stream.media.base != null) {
+        const result = _media.seek(stream, frame, 4 * m.frame_samples);
+        if (result != ac.ACERR_OK) return result;
+        m.dec.reset();
+        m.packet = &.{};
+        return ac.ACERR_OK;
+    }
     if (stream.file == null) return ac.ACERR_NOSEEK;
     var offset: u64 = 0;
     if (frame == 0) {

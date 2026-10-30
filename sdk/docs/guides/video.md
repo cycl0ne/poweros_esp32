@@ -4,8 +4,9 @@ A film is two things side by side in one file: pictures, coded in H.264,
 H.265 or Motion JPEG, and sound, mostly AAC. **videocodec.library** opens
 the film and hands out both - the pictures as frames, in the order they
 are shown and with the time each is due, the sound as 16-bit samples for
-audio.device. Underneath, media.library reads the container (MP4 and
-QuickTime's MOV) and hands out each track's packets, the chip's decoder
+audio.device. Underneath, media.library reads the container (MP4,
+QuickTime's MOV and Matroska's MKV) and hands out each track's packets,
+the chip's decoder
 (videodec.resource, the WAVE511 on the VisionFive 2) decodes H.264 and
 H.265, the library decodes Motion JPEG itself, and audiocodec.library
 decodes the sound. A display's video layer (rtg's `ShowVideoFrame`)
@@ -122,7 +123,10 @@ a decoder can only start at one, and they are often seconds apart - and
 the sound to that frame's time; it answers where it landed, so the
 program sets its clock there. The next frame is that key frame. It is
 called by the task that decodes the pictures, and waits for a piece of
-sound being decoded on the other to be done.
+sound being decoded on the other to be done. In a Matroska file the
+pictures land on the key frame the last cue before the time names - a
+muxer names every key frame, or the first of each cluster - and the
+sound within a millisecond of that frame's time.
 
 ## What decodes what
 
@@ -133,8 +137,10 @@ sound being decoded on the other to be done.
 | MPEG-4 Part 2 | nothing | - |
 
 The sound is audiocodec.library's: AAC-LC
-([AAC and MP4](audio.md#aac-and-mp4)); another codec leaves the film
-without sound.
+([AAC and MP4](audio.md#aac-and-mp4)), and in a Matroska file MP3, FLAC
+and Vorbis too ([Matroska](audio.md#matroska)); another codec - AC-3,
+DTS, Opus - leaves the film without sound. A Matroska film's pictures
+in VP8, VP9 or AV1 are known to nothing here.
 
 ## From the shell
 

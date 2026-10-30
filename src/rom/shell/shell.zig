@@ -32,6 +32,10 @@
 //!   (a file with the S bit) where the name says, or in the path and C:,
 //!   which Execute runs; a directory's name changes into it (CD). It runs
 //!   through RunCommand with cli_DefaultStack, the line as its arguments.
+//! - A program loaded from a file - where the name says, or in the path
+//!   and C: - runs with the directory it was loaded from as the process's
+//!   home directory, the one PROGDIR: names; a script found in the path
+//!   or C: has its directory. The shell's own comes back when it ends.
 //! - While it runs, cli_CommandName is its name as typed (SetProgramName);
 //!   between commands it is empty, so `Status` and `Break NAME` find a
 //!   shell that waits running nothing. The name a new shell gets from its
@@ -65,8 +69,8 @@ const workfile = dos.workfile;
 
 pub const SHELL_NAME = "shell";
 const SHELL_VERSION = 1;
-const SHELL_REVISION = 4;
-const BUILD_DATE = "27.10.2026";
+const SHELL_REVISION = 5;
+const BUILD_DATE = "30.10.2026";
 const SHELL_VERSION_STRING =
     "\x00$VER: " ++ SHELL_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ SHELL_VERSION, SHELL_REVISION }) ++
@@ -703,6 +707,13 @@ fn doCommand(gv: *Global, item: i32, name: *[NAMEMAX + 1]u8, failed: *bool) i32 
                 .program => { // a file to load: LoadSeg, run, UnLoadSeg
                     const old_dir = if (search.home) |h| dl.CurrentDir(h) else null;
                     const seg = dl.LoadSeg(name_z);
+                    // The directory it was loaded from: PROGDIR: while it runs.
+                    if (seg != null) {
+                        if (dl.Lock(name_z, dos.SHARED_LOCK)) |file| {
+                            home = dl.ParentDir(file);
+                            dl.UnLock(file);
+                        }
+                    }
                     if (search.home != null) _ = dl.CurrentDir(old_dir);
                     if (search.home) |h| dl.UnLock(h);
                     if (seg) |s| {
@@ -710,6 +721,7 @@ fn doCommand(gv: *Global, item: i32, name: *[NAMEMAX + 1]u8, failed: *bool) i32 
                             loaded = s;
                             cli.module = s;
                             found = .{ .code = .{ .command = @ptrCast(@alignCast(code)) }, .counted = null, .special = false };
+                            if (home) |h| gv.proc.home_dir = h;
                         } else {
                             dl.UnLoadSeg(s);
                             gv.res2 = dos.ERROR_FILE_NOT_OBJECT;

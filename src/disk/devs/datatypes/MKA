@@ -1,0 +1,1 @@
+NAME=MKA BASE=audiocodec GROUP=soun ID=MKA MASK=\x1a\x45\xdf\xa3 PATTERN=#?.mka TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Player

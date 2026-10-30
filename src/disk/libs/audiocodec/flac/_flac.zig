@@ -20,12 +20,18 @@
 //! halving the file finds before it; then frames are decoded, and passed
 //! over, up to the one that holds it. Each frame's header says which
 //! sample it begins with.
+//!
+//! **A container's track** (`_media.zig`) brings the metadata blocks as
+//! its setup - STREAMINFO first, which says how long it is - and a frame
+//! in each packet; a seek moves the track to the frame asked for is in.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ac = sdk.audiocodec;
+const media = sdk.media;
 const _stream = @import("../stream/_stream.zig");
 const Stream = _stream.Stream;
+const _media = @import("../stream/_media.zig");
 const frame = @import("frame.zig");
 const comments = @import("../vorbis/comments.zig");
 const mp3 = @import("../mp3/_mp3.zig");
@@ -76,25 +82,7 @@ pub fn open(stream: *Stream) i32 {
     if (!_stream.same(head, "fLaC")) return if (stream.failed) ac.ACERR_READ else ac.ACERR_CORRUPT;
     _stream.consume(stream, 4);
 
-    stream.codec = .{ .flac = undefined };
-    const f = &stream.codec.flac;
-    f.* = .{
-        .format = .{ .channels = 0, .bits = 0, .rate = 0, .max_block = 0 },
-        .min_block = 0,
-        .total = 0,
-        .first_frame = 0,
-        .samples = undefined,
-        .buffers = null,
-        .points = null,
-        .point_count = 0,
-        .block = 0,
-        .given = 0,
-        .block_start = 0,
-        .seeking = false,
-        .target = 0,
-        .restarted = false,
-    };
-
+    const f = begin(stream);
     var have_info = false;
     while (true) {
         if (stream.stop - stream.start < 4) _stream.fill(stream);
@@ -123,27 +111,75 @@ pub fn open(stream: *Stream) i32 {
         if (final) break;
     }
     if (!have_info) return ac.ACERR_CORRUPT;
+    const result = prepare(stream, f);
+    if (result != ac.ACERR_OK) return result;
+    f.first_frame = _stream.tell(stream);
+    if (f.total != 0 and stream.has_end and stream.end > f.first_frame) {
+        stream.info.bitrate = @intCast(@min((stream.end - f.first_frame) * 8 * f.format.rate / f.total, 0xFFFF_FFFF));
+    }
+    const milliseconds = if (f.format.rate != 0) f.total * 1000 / f.format.rate else 0;
+    comments.finishChapters(stream, @intCast(@min(milliseconds, 0xFFFF_FFFF)));
+    return ac.ACERR_OK;
+}
+
+fn begin(stream: *Stream) *Flac {
+    stream.codec = .{ .flac = undefined };
+    const f = &stream.codec.flac;
+    f.* = .{
+        .format = .{ .channels = 0, .bits = 0, .rate = 0, .max_block = 0 },
+        .min_block = 0,
+        .total = 0,
+        .first_frame = 0,
+        .samples = undefined,
+        .buffers = null,
+        .points = null,
+        .point_count = 0,
+        .block = 0,
+        .given = 0,
+        .block_start = 0,
+        .seeking = false,
+        .target = 0,
+        .restarted = false,
+    };
+    return f;
+}
+
+/// What STREAMINFO said checked, a block for each channel made, and the
+/// info filled in.
+fn prepare(stream: *Stream, f: *Flac) i32 {
     const format = &f.format;
     if (format.rate == 0 or format.bits < 4 or format.max_block < 16) return ac.ACERR_CORRUPT;
-
     const sys = stream.base.sys_base;
     const each: usize = @as(usize, format.max_block) * @sizeOf(i32);
     const memory = sys.AllocVec(@intCast(each * 2), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return ac.ACERR_NOMEMORY;
     f.buffers = memory;
     const base: [*]u8 = @ptrCast(memory);
     f.samples = .{ @ptrCast(@alignCast(base)), @ptrCast(@alignCast(base + each)) };
-
-    f.first_frame = _stream.tell(stream);
     stream.info.codec = ac.ACODEC_FLAC;
     stream.info.rate = format.rate;
     stream.info.channels = format.channels;
     stream.info.bits = format.bits;
     stream.info.frames = @intCast(@min(f.total, 0xFFFF_FFFF));
-    if (f.total != 0 and stream.has_end and stream.end > f.first_frame) {
-        stream.info.bitrate = @intCast(@min((stream.end - f.first_frame) * 8 * format.rate / f.total, 0xFFFF_FFFF));
+    return ac.ACERR_OK;
+}
+
+/// A track of a container: its setup's metadata blocks, STREAMINFO first,
+/// each with its four bytes of header. STREAMINFO's count of samples
+/// makes the length exact.
+pub fn openTrack(stream: *Stream, track: *const media.MediaTrack) i32 {
+    const f = begin(stream);
+    const setup = (track.config orelse return ac.ACERR_CORRUPT)[0..track.config_size];
+    if (setup.len < 4 + 34 or setup[0] & 0x7F != 0) return ac.ACERR_CORRUPT;
+    const length: u32 = @as(u32, setup[1]) << 16 | @as(u32, setup[2]) << 8 | setup[3];
+    if (length < 34) return ac.ACERR_CORRUPT;
+    streamInfo(f, setup[4..38]);
+    if (f.format.channels > 2 or f.format.bits > 24) return ac.ACERR_UNSUPPORTED;
+    const result = prepare(stream, f);
+    if (result != ac.ACERR_OK) return result;
+    if (f.total != 0) {
+        stream.media.exact = true;
+        stream.media.total = @intCast(f.total);
     }
-    const milliseconds = if (format.rate != 0) f.total * 1000 / format.rate else 0;
-    comments.finishChapters(stream, @intCast(@min(milliseconds, 0xFFFF_FFFF)));
     return ac.ACERR_OK;
 }
 
@@ -227,6 +263,7 @@ fn toSixteen(sample: i32, bits: u32) i16 {
 /// The next frame decoded into the block, what a seek passes over left
 /// out: false at the end.
 fn nextBlock(stream: *Stream, f: *Flac) bool {
+    if (stream.media.base != null) return nextPacket(stream, f);
     var header: frame.Header = undefined;
     if (frame.decode(stream, &f.format, f.samples, &header) == .end) return false;
     f.block = header.blocksize;
@@ -254,6 +291,23 @@ fn nextBlock(stream: *Stream, f: *Flac) bool {
     return true;
 }
 
+/// A container's next frame decoded into the block, as `nextBlock` does.
+/// A packet that holds no frame is passed over.
+fn nextPacket(stream: *Stream, f: *Flac) bool {
+    while (true) {
+        var packet: media.MediaPacket = .{};
+        const bytes = _media.next(stream, &packet) orelse return false;
+        var header: frame.Header = undefined;
+        if (!frame.decodePacket(bytes, &f.format, f.samples, &header)) continue;
+        const start = _media.place(&stream.media, packet.ticks);
+        _media.advance(&stream.media, header.blocksize);
+        const span = _media.window(&stream.media, start, header.blocksize) orelse continue;
+        f.given = span.first;
+        f.block = span.last;
+        return true;
+    }
+}
+
 /// The sample a frame begins with: its header's number, or its number
 /// times the block every frame but the last has.
 fn sampleOf(f: *const Flac, header: *const frame.Header) u64 {
@@ -265,6 +319,13 @@ fn sampleOf(f: *const Flac, header: *const frame.Header) u64 {
 /// The stream moved to `target` exactly: decoding goes on from a frame
 /// before it, what lies between passed over.
 pub fn seek(stream: *Stream, f: *Flac, target: u32) i32 {
+    if (stream.media.base != null) {
+        const result = _media.seek(stream, target, 0);
+        if (result != ac.ACERR_OK) return result;
+        f.block = 0;
+        f.given = 0;
+        return ac.ACERR_OK;
+    }
     if (stream.file == null) return ac.ACERR_NOSEEK;
     var start: u64 = f.first_frame;
     if (f.points) |points| {

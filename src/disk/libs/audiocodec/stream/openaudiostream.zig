@@ -15,6 +15,7 @@ const mp3 = @import("../mp3/_mp3.zig");
 const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
 const aac = @import("../aac/_aac.zig");
+const _media = @import("_media.zig");
 
 /// Opens a stream on sound.
 ///
@@ -32,7 +33,7 @@ const aac = @import("../aac/_aac.zig");
 ///   function) or `ACA_Media` (a file media.library has open, SINCE 1.6)
 ///   - and `ACA_Codec`, the kind, when the program knows it;
 ///   `ACA_KeepPicture` keeps the picture the tags hold (SINCE 1.1);
-///   `ACA_MediaTrack` picks an MP4's track (SINCE 1.6).
+///   `ACA_MediaTrack` picks a container's track (SINCE 1.6).
 /// - `err`: where to say why it failed (ACERR_*), or null.
 ///
 /// RESULT:
@@ -45,9 +46,12 @@ const aac = @import("../aac/_aac.zig");
 /// its data, an MP3's tags in front of the sound and its first frame -
 /// with what its encoder wrote about the rest, when it did - a FLAC's
 /// metadata blocks, an Ogg Vorbis stream's three header packets, an AAC
-/// stream's first ADTS frame - or an MP4's index, read by media.library
-/// (SINCE 1.6), which the stream then reads its track's packets from;
-/// and the stream's info is filled in. A read function is asked for the header's
+/// stream's first ADTS frame - or a container's, an MP4's index or a
+/// Matroska file's header, read by media.library (SINCE 1.6; Matroska
+/// SINCE 1.7), which the stream then reads its track's packets from: AAC,
+/// and SINCE 1.7 MP3, FLAC and Vorbis. A container is known by its first
+/// bytes whatever `ACA_Codec` says. Then the stream's info is filled in.
+/// A read function is asked for the header's
 /// bytes and `AUDIO_READ_AHEAD` more at most. An Ogg Vorbis file's last
 /// page is looked for at its end, for its length. A file's end is looked
 /// at first: tags there (ID3v1, APE) are not read as sound, and an ID3v1
@@ -76,7 +80,9 @@ const aac = @import("../aac/_aac.zig");
 /// an MP3 decoder's state and the tags; a kept picture is as large as it
 /// is. A FLAC adds a block of samples for each channel - 32 KiB for the
 /// usual 4096 in stereo - and an Ogg Vorbis its setup, tables and
-/// buffers: about 250 KiB at 44.1 kHz.
+/// buffers: about 250 KiB at 44.1 kHz. A container adds what
+/// media.library holds of it: an MP4's index, a Matroska track's 256 KiB
+/// read ahead.
 ///
 /// FLAC (SINCE 1.2) is decoded at 4 to 24 bits a sample; an Ogg Vorbis
 /// stream (SINCE 1.2) of floor type 1, as every encoder writes. One or
@@ -135,7 +141,7 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
         stream.read_data = read_data;
     } else if (media_file) |file| {
         // A track of a file media.library has open: no bytes of its own.
-        const result = aac.openMedia(stream, file, track);
+        const result = _media.openGiven(stream, file, track);
         if (result != ac.ACERR_OK) {
             _stream.destroy(stream);
             return failed(err, result);
@@ -151,8 +157,10 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
     stream.media_track = track;
 
     _stream.fill(stream);
-    const codec = if (hint != ac.ACODEC_UNKNOWN) hint else _identify.identify(_stream.available(stream));
-    const result = switch (codec) {
+    const bytes = _stream.available(stream);
+    // A container is read through media.library, whatever it holds.
+    const codec = if (_media.container(bytes)) ac.ACODEC_UNKNOWN else if (hint != ac.ACODEC_UNKNOWN) hint else _identify.identify(bytes);
+    const result = if (_media.container(bytes)) _media.open(stream) else switch (codec) {
         ac.ACODEC_WAV => wav.open(stream),
         ac.ACODEC_MP3 => mp3.open(stream),
         ac.ACODEC_FLAC => flac.open(stream),

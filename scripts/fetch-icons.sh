@@ -41,6 +41,7 @@ apps/utilities-terminal
 categories/preferences-desktop
 categories/applications-system
 categories/applications-other
+categories/applications-games
 "
 sizes="48 40"
 

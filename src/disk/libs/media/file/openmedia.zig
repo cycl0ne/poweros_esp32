@@ -10,8 +10,10 @@ const MediaBase = @import("../media_base.zig").MediaBase;
 const _file = @import("_file.zig");
 const File = _file.File;
 const mp4 = @import("../mp4/_mp4.zig");
+const mkv = @import("../mkv/_mkv.zig");
+const ebml = @import("../mkv/ebml.zig");
 
-/// Opens a container file - MP4 - and reads its index.
+/// Opens a container file - MP4, Matroska - and reads its index.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -36,16 +38,25 @@ const mp4 = @import("../mp4/_mp4.zig");
 /// MERR_READ, MERR_CORRUPT, MERR_NOMEMORY.
 ///
 /// BEHAVIOR:
-/// The kind is found by the first bytes: an MP4 begins with a box of the
-/// kinds one begins with - `ftyp`, or QuickTime's `moov`, `mdat`, `wide`,
-/// `free`. Its index, the `moov` box, is read whole into memory, wherever
-/// it lies in a file; through a read function the boxes before it are
+/// The kind is found by the first bytes: a Matroska file begins with
+/// EBML's header, an MP4 with a box of the kinds one begins with -
+/// `ftyp`, or QuickTime's `moov`, `mdat`, `wide`, `free`.
+///
+/// An MP4's index, the `moov` box, is read whole into memory, wherever it
+/// lies in a file; through a read function the boxes before it are
 /// passed, and the packets must come after it. Each track is made out of
 /// it - its kind, its codec and the codec's setup, its sample tables, its
-/// edits - and every track's cursor is at its first packet. Up to 16
-/// tracks are read; past them, tracks are passed over. The tags, the
+/// edits - and every track's cursor is at its first packet. The tags, the
 /// chapters - Nero's list, or the text track a track names for them,
 /// read from a file - and iTunes's note of the priming are read with it.
+///
+/// A Matroska file's segment is read up to its first cluster, and what
+/// its seek heads say lies behind the clusters is read from there: its
+/// info, its tracks - whole, into memory - its cues, its tags and its
+/// chapters (SINCE 1.2). Through a read function only what comes before
+/// the clusters is read. Each track walks the clusters from the first.
+///
+/// Up to 16 tracks are read; past them, tracks are passed over.
 ///
 /// CONTEXT:
 /// - Waits: yes, on the file.
@@ -61,7 +72,9 @@ const mp4 = @import("../mp4/_mp4.zig");
 ///
 /// NOTES:
 /// It takes the index's size in memory - a few megabytes for a film of
-/// hours - and 64 KiB or its largest packet for each track read.
+/// hours - and 64 KiB or its largest packet for each track read; a
+/// Matroska file its tracks and its cues, and 256 KiB or its largest
+/// block for each track read.
 ///
 /// BUGS:
 /// None known.
@@ -119,9 +132,10 @@ pub fn OpenMedia(base: *MediaBase, tags: ?[*]const utility.TagItem, err: ?*i32) 
         if (dl.ExamineFH(opened, &fib) and fib.size > file.origin) file.size = fib.size - file.origin;
     }
 
-    const kind = if (hint != media.MEDIA_UNKNOWN) hint else media.MEDIA_MP4;
+    const kind = if (hint != media.MEDIA_UNKNOWN) hint else kindOf(file);
     const result = switch (kind) {
         media.MEDIA_MP4 => mp4.open(file, hint == media.MEDIA_UNKNOWN),
+        media.MEDIA_MKV => mkv.open(file),
         else => media.MERR_UNKNOWN,
     };
     if (result != media.MERR_OK) {
@@ -130,6 +144,16 @@ pub fn OpenMedia(base: *MediaBase, tags: ?[*]const utility.TagItem, err: ?*i32) 
     }
     if (err) |out| out.* = media.MERR_OK;
     return _file.publicOf(file);
+}
+
+/// The kind by the first four bytes - EBML's header, else an MP4's to be
+/// looked at - kept for a read function, which cannot give them again.
+fn kindOf(file: *File) u32 {
+    var first: [4]u8 = undefined;
+    const got = _file.readSome(file, 0, &first);
+    _file.keep(file, 0, first[0..got]);
+    if (got == first.len and _file.be32(&first) == ebml.EBML) return media.MEDIA_MKV;
+    return media.MEDIA_MP4;
 }
 
 fn failed(err: ?*i32, code: i32) ?*media.MediaFile {

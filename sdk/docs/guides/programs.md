@@ -234,6 +234,13 @@ the disk with `-Dextra=c/window=path/to/window.seg` and
 `disk/c/`), and run them from the shell: `run window` keeps the shell free
 while the window is open.
 
+A program with more than the flash disks hold - a game and its data -
+goes in a drawer of `games/` in the tree's root instead. Built with
+`-Dgames`, the virt machines' system disks have that drawer in
+`SYS:Games/`: `games/Maze/Maze.rv64sbi.seg` is `SYS:Games/Maze/Maze` on
+the RISC-V 64 one's (`.a64psci.seg` on the AArch64 one's), and any other
+file is on both, beside the program, where `PROGDIR:` finds it.
+
 The programs in `src/disk/c/` are all built this way and are the best
 examples: each opens its libraries, reads its arguments with a `ReadArgs`
 template and carries a `$VER:` string.

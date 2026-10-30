@@ -21,7 +21,8 @@
 //! **Bits are read most significant first**, a byte at a time from the
 //! stream, and never a byte more than a read needs: the frame ends on a
 //! byte, so what is left in hand at its end is its padding, and the next
-//! frame starts with the next byte of the stream.
+//! frame starts with the next byte of the stream. A frame held whole - a
+//! container's packet - is read from its bytes the same way.
 //!
 //! The arithmetic wraps rather than traps, so a damaged frame decodes to
 //! noise rather than stopping the program; the CRC then makes it silence.
@@ -178,10 +179,13 @@ pub fn headerAt(bytes: []const u8, format: *const Format) ?Header {
     };
 }
 
-/// Bits from the stream, most significant first, a byte at a time as a
-/// read needs it; the CRC-16 of every byte taken.
+/// Bits from the stream - or, with none, from a frame held whole - most
+/// significant first, a byte at a time as a read needs it; the CRC-16 of
+/// every byte taken.
 const Reader = struct {
-    stream: *Stream,
+    stream: ?*Stream,
+    /// The bytes of a frame held whole not read yet.
+    packet: []const u8 = &.{},
     cache: u64 = 0,
     count: u32 = 0,
     crc: u16 = 0,
@@ -189,7 +193,16 @@ const Reader = struct {
     short: bool = false,
 
     fn byte(reader: *Reader) u8 {
-        const stream = reader.stream;
+        const stream = reader.stream orelse {
+            if (reader.packet.len == 0) {
+                reader.short = true;
+                return 0;
+            }
+            const value = reader.packet[0];
+            reader.packet = reader.packet[1..];
+            reader.crc = crc16(reader.crc, value);
+            return value;
+        };
         if (stream.start == stream.stop) {
             _stream.fill(stream);
             if (stream.start == stream.stop) {
@@ -263,13 +276,32 @@ pub fn decode(stream: *Stream, format: *const Format, samples: [2][*]i32, header
     var reader: Reader = .{ .stream = stream };
     for (_stream.available(stream)[0..header.length]) |value| reader.crc = crc16(reader.crc, value);
     _stream.consume(stream, header.length);
+    return body(&reader, format, samples, header);
+}
 
+/// A frame held whole - a container's packet - decoded into `samples`:
+/// its header, for the block's size. False when no header that agrees
+/// with `format` is at its front; one cut short is silence.
+pub fn decodePacket(bytes: []const u8, format: *const Format, samples: [2][*]i32, header: *Header) bool {
+    header.* = headerAt(bytes, format) orelse return false;
+    var reader: Reader = .{ .stream = null, .packet = bytes[header.length..] };
+    for (bytes[0..header.length]) |value| reader.crc = crc16(reader.crc, value);
+    if (body(&reader, format, samples, header) == .end) {
+        for (0..header.channels) |channel| @memset(samples[channel][0..header.blocksize], 0);
+    }
+    return true;
+}
+
+/// The subframes after the header, the padding and the CRC-16: the
+/// channels made left and right again, or silence when the frame is
+/// damaged; `.end` when the bytes end before it does.
+fn body(reader: *Reader, format: *const Format, samples: [2][*]i32, header: *const Header) Outcome {
     const n = header.blocksize;
     var good = true;
     for (0..header.channels) |channel| {
         // The side channel has one bit more than the others.
         const side = (header.assignment == 8 and channel == 1) or (header.assignment == 9 and channel == 0) or (header.assignment == 10 and channel == 1);
-        if (!subframe(&reader, samples[channel][0..n], format.bits + @intFromBool(side))) {
+        if (!subframe(reader, samples[channel][0..n], format.bits + @intFromBool(side))) {
             good = false;
             break;
         }

@@ -41,6 +41,13 @@ const virt_work_dir = "work";
 /// image: `disk/` in the root of the tree.
 const disk_tree = "disk";
 
+/// Where games built elsewhere are put to have them on the virt
+/// machines' system disks with -Dgames: `games/` in the root of the tree,
+/// which is the disks' `Games` drawer.
+const games_tree = "games";
+const games_drawer = "Games";
+const games_drawer_icon: DiskIcon = .{ .path = games_drawer ++ ".info", .picture = "applications-games", .fields = &.{"KIND=DRAWER"} };
+
 /// The boards there is a description for (src/boards/). One kernel image
 /// is built per board. `qemu` is Espressif QEMU's machine, with its
 /// virtual display, keyboard and mouse: the `qemu*` steps always run that
@@ -487,6 +494,7 @@ pub fn build(b: *std.Build) void {
     made.appendSlice(b.allocator, &image_dirs) catch @panic("OOM");
     const tree = diskTree(b, &made);
     const extras = extraFiles(b, &made);
+    const games = gamesTree(b, &made);
 
     // Four images from one recipe: the ESP32-S3's, the ESP32-P4's, the
     // RISC-V 64 machines' and the AArch64 machines', which differ only in
@@ -666,7 +674,8 @@ pub fn build(b: *std.Build) void {
     // board's size, when they are there. An icon whose picture is
     // missing - one the script gained since it last ran here - is left
     // out until it runs again.
-    if (iconsDir(b, iconSize(board))) |dir| {
+    const icons = iconsDir(b, iconSize(board));
+    if (icons) |dir| {
         for (disk_icons) |one| {
             const picture = b.pathJoin(&.{ dir, b.fmt("{s}.png", .{one.picture}) });
             std.Io.Dir.cwd().access(b.graph.io, picture, .{}) catch {
@@ -715,6 +724,29 @@ pub fn build(b: *std.Build) void {
                 }
             } else run.addPrefixedFileArg(b.fmt("{s}=", .{extra.path}), host);
         }
+    }
+    // -Dgames: `games/` on the virt machines' system disks alone, its
+    // drawers too, a program on its own chip's; and the drawer's icon,
+    // since the volume's window shows only what has one.
+    const games_icon: ?std.Build.LazyPath = if (games.len == 0) null else if (icons) |dir| icon: {
+        const picture = b.pathJoin(&.{ dir, b.fmt("{s}.png", .{games_drawer_icon.picture}) });
+        std.Io.Dir.cwd().access(b.graph.io, picture, .{}) catch {
+            std.log.info("no picture {s} (scripts/fetch-icons.sh): the disk has no {s}", .{ games_drawer_icon.picture, games_drawer_icon.path });
+            break :icon null;
+        };
+        break :icon makeIcon(b, mkicon, picture, games_drawer_icon, "");
+    } else null;
+    for (disks.runs, DiskImages.chips, DiskImages.virt_disks) |run, chip, virt| {
+        if (!virt) continue;
+        for (games) |game| {
+            if (game.chip) |only| {
+                if (only != chip) continue;
+            }
+            if (game.host) |host| {
+                run.addPrefixedFileArg(b.fmt("--gpt-file={s}=", .{game.path}), b.path(host));
+            } else run.addArg(b.fmt("--gpt-file={s}", .{game.path}));
+        }
+        if (games_icon) |icon| run.addPrefixedFileArg(b.fmt("--gpt-file={s}=", .{games_drawer_icon.path}), icon);
     }
     b.getInstallStep().dependOn(&b.addInstallBinFile(disk_bin, "disk.bin").step);
     b.getInstallStep().dependOn(&b.addInstallBinFile(p4_disk_bin, "disk-esp32p4.bin").step);
@@ -1504,6 +1536,76 @@ fn diskTree(b: *std.Build, made: *std.ArrayList([]const u8)) Tree {
 const Tree = struct {
     dirs: []const []const u8 = &.{},
     files: []const Extra = &.{},
+};
+
+/// `games/` in the root of the tree, with -Dgames: what is in it goes in
+/// the `Games` drawer of the virt machines' system disks
+/// (`system-rv64.bin`, `system-a64.bin`) - games and their data, too
+/// large for the boards' flash disks, on the SSDs that have room for
+/// them. A program is built once per chip, so `<name>.<chip>.seg` goes
+/// on that chip's disk alone, as `<name>`:
+/// `games/Millennium/Millennium.a64psci.seg` is
+/// `SYS:Games/Millennium/Millennium` on the AArch64 machine's. Another
+/// `.seg` loses the suffix on both, and any other file keeps its name.
+/// The drawers are made on those disks alone (mkfs's `--gpt-file` with
+/// no file), outermost first, and `Games` gets its icon there
+/// (`games_drawer_icon`): the volume's window shows only what has one.
+///
+/// A name beginning with a dot is left behind, and so is the `README.md`
+/// in the root of `games/`.
+fn gamesTree(b: *std.Build, made: *std.ArrayList([]const u8)) []const Game {
+    const wanted = b.option(bool, "games", "Put what games/ holds in the Games drawer of the virt machines' system disks: <name>.<chip>.seg on that chip's as <name>") orelse false;
+    if (!wanted) return &.{};
+    const io = b.graph.io;
+    var root = b.build_root.handle.openDir(io, games_tree, .{ .iterate = true }) catch
+        std.debug.panic("-Dgames: there is no {s}/ in the tree's root", .{games_tree});
+    defer root.close(io);
+
+    var games: std.ArrayList(Game) = .empty;
+    drawers(b, made, &games, games_drawer, true);
+    var walker = root.walk(b.allocator) catch @panic("OOM");
+    defer walker.deinit();
+    while (walker.next(io) catch @panic("games/: cannot be read")) |entry| {
+        if (entry.basename.len != 0 and entry.basename[0] == '.') continue;
+        if (std.mem.eql(u8, entry.path, "README.md")) continue;
+        const path = b.fmt("{s}/{s}", .{ games_drawer, entry.path });
+        switch (entry.kind) {
+            .directory => drawers(b, made, &games, path, true),
+            .file => {
+                drawers(b, made, &games, path, false);
+                var game: Game = .{ .path = withoutSeg(path), .host = b.fmt("{s}/{s}", .{ games_tree, entry.path }) };
+                if (game.path.len != path.len) {
+                    if (std.mem.lastIndexOfScalar(u8, game.path, '.')) |dot| {
+                        if (std.meta.stringToEnum(Chip, game.path[dot + 1 ..])) |chip| {
+                            game.chip = chip;
+                            game.path = game.path[0..dot];
+                        }
+                    }
+                }
+                games.append(b.allocator, game) catch @panic("OOM");
+            },
+            else => {},
+        }
+    }
+    return games.toOwnedSlice(b.allocator) catch @panic("OOM");
+}
+
+/// The drawers `path` needs that are not made yet, as entries of
+/// `games`.
+fn drawers(b: *std.Build, made: *std.ArrayList([]const u8), games: *std.ArrayList(Game), path: []const u8, include_self: bool) void {
+    for (dirsFor(b, made, path, include_self)) |dir| {
+        games.append(b.allocator, .{ .path = dir }) catch @panic("OOM");
+    }
+}
+
+/// A drawer or a file of `games/`, in the order mkfs makes them.
+const Game = struct {
+    /// Its path on the disk.
+    path: []const u8,
+    /// The file, from the tree's root; null for a drawer.
+    host: ?[]const u8 = null,
+    /// The chip whose disk alone it goes on; null for both.
+    chip: ?Chip = null,
 };
 
 fn withoutSeg(path: []const u8) []const u8 {

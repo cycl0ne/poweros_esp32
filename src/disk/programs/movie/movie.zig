@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! Movie: films played in a window - MP4 and QuickTime's MOV, their
-//! pictures in H.264, H.265 or Motion JPEG and their sound in AAC - by
-//! videocodec.library.
+//! Movie: films played in a window - MP4, QuickTime's MOV and Matroska's
+//! MKV, their pictures in H.264, H.265 or Motion JPEG and their sound in
+//! AAC, or in an MKV MP3, FLAC or Vorbis too - by videocodec.library.
 //!
 //!   Movie FILE,VOLUME/K/N,FULL/S
 //!
@@ -116,7 +116,7 @@ const ITEM_ABOUT = 3;
 const ITEM_QUIT = 4;
 
 /// The files the requester shows.
-const open_pattern = "#?.(mp4|m4v|mov)";
+const open_pattern = "#?.(mp4|m4v|mov|mkv)";
 /// How far the keys and the deck's wind buttons move.
 const jump_seconds = 10;
 /// The volume's steps on the keys, and most.

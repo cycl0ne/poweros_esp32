@@ -15,6 +15,7 @@
 //! pictures of 64 x 48. The `_ref` files are ffmpeg's own decode of the
 //! same pictures (`-f rawvideo -pix_fmt yuvj420p`, `yuvj422p`, `yuvj444p`,
 //! `gray`): `clip_ref.yuv` frames 0 and 9, the others frame 0.
+//! `clip.mkv` is clip.mov's tracks remuxed into Matroska by ffmpeg.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -50,6 +51,7 @@ const full_ref = @embedFile("full_ref.yuv");
 const grey_mov = @embedFile("grey.mov");
 const grey_ref = @embedFile("grey_ref.y");
 const tiny_mp4 = @embedFile("tiny.mp4");
+const clip_mkv = @embedFile("clip.mkv");
 
 /// How far a sample of ours may be from ffmpeg's: two decoders' inverse
 /// transforms round apart.
@@ -265,6 +267,55 @@ test "a Motion JPEG film with sound: its info, every frame near ffmpeg's, its so
         total += @intCast(got);
     }
     try testing.expectEqual(@as(u32, 22050), total);
+}
+
+test "a Motion JPEG film in Matroska: what it is by its tracks, every frame as the MOV's, its sound to the millisecond" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch |e| std.debug.panic("deinit: {}", .{e});
+    const vcb = rig.vcb;
+    try testing.expectEqual(vc.VCODEC_MJPEG, vcb.IdentifyVideo(clip_mkv, clip_mkv.len));
+    // Its tracks cut off: nothing yet.
+    try testing.expectEqual(vc.VCODEC_UNKNOWN, vcb.IdentifyVideo(clip_mkv, 300));
+
+    try rig.write("WORK:clip.mkv", clip_mkv);
+    var err: i32 = -99;
+    const film = rig.open("WORK:clip.mkv", &err) orelse return error.NoStream;
+    defer vcb.CloseVideoStream(film);
+    var info: vc.VideoStreamInfo = .{};
+    vcb.GetVideoStreamInfo(film, &info);
+    try testing.expectEqual(vc.VCODEC_MJPEG, info.codec);
+    try testing.expectEqual(@as(u32, 96), info.width);
+    try testing.expectEqual(@as(u32, 64), info.height);
+    try testing.expectEqual(@as(u32, 10), info.rate_num);
+    try testing.expectEqual(@as(u32, 1), info.rate_den);
+    try testing.expectEqual(@as(u32, 1), info.seekable);
+    try testing.expectEqual(ac.ACODEC_AAC, info.sound_codec);
+    try testing.expectEqual(@as(u32, 22050), info.sound_rate);
+    try testing.expectEqual(@as(u32, 1), info.sound_channels);
+
+    const frame_bytes = 96 * 64 * 3 / 2;
+    var frame: vc.VideoFrame = .{};
+    for (0..10) |n| {
+        try testing.expectEqual(vc.VCERR_OK, vcb.DecodeVideoFrame(film, &frame));
+        try testing.expectEqual(@as(i64, @intCast(n * 100_000)), frame.time);
+        if (n == 0) try expectFrame(&frame, clip_ref[0..frame_bytes]);
+        if (n == 9) try expectFrame(&frame, clip_ref[frame_bytes..]);
+        vcb.ReleaseVideoFrame(film, &frame);
+    }
+    try testing.expectEqual(vc.VCERR_END, vcb.DecodeVideoFrame(film, &frame));
+
+    // The sound's track lasts 1046 ms to the millisecond, its priming of
+    // 46.44 ms with it: 22040 frames of the 22050.
+    var samples: [1000]i16 = undefined;
+    var total: u32 = 0;
+    while (true) {
+        const got = vcb.DecodeVideoSound(film, &samples, samples.len);
+        try testing.expect(got >= 0);
+        if (got == 0) break;
+        total += @intCast(got);
+    }
+    try testing.expectEqual(@as(u32, 22040), total);
 }
 
 test "frames held and given back; a seek moves the pictures and the sound together" {

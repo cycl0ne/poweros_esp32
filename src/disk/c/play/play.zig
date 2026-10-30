@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Play: a sound file out of the speaker - WAV, MP3, FLAC, Ogg Vorbis or
-//! AAC (an `.aac` file, or an `.m4a` through media.library) - or a
-//! station, through audiocodec.library and audio.device. Built against
-//! the SDK only.
+//! AAC (an `.aac` file, or an `.m4a` through media.library), or the sound
+//! of a Matroska file - or a station, through audiocodec.library and
+//! audio.device. Built against the SDK only.
 //!
 //!   Play FILE/A,VOLUME/K/N,START/K/N,QUIET/S
 //!

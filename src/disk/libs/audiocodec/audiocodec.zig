@@ -9,9 +9,12 @@
 //! asks for them (DecodeAudio) - a piece at a time, so a song is never
 //! decoded whole. The kinds are WAV (`wav/`), MP3 (`mp3/`: the Layer III
 //! decoder, `layer3.zig`, and the stream around it, `_mp3.zig`), FLAC
-//! (`flac/`: a frame, `frame.zig`, and the stream, `_flac.zig`) and
-//! Vorbis in Ogg (`ogg/`: pages and packets; `vorbis/`: the setup, a
-//! packet, the inverse MDCT, the stream, and the comments FLAC shares).
+//! (`flac/`: a frame, `frame.zig`, and the stream, `_flac.zig`), Vorbis
+//! in Ogg (`ogg/`: pages and packets; `vorbis/`: the setup, a packet, the
+//! inverse MDCT, the stream, and the comments FLAC shares) and AAC
+//! (`aac/`). A container - an MP4, a Matroska file - is read through
+//! media.library (`stream/_media.zig`), and its track's packets decoded
+//! by their codec's code.
 //!
 //! A stream is its opener's: everything about it is in the stream, and the
 //! base, shared by every opener, holds only the libraries it works through.

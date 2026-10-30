@@ -31,7 +31,10 @@ const _identify = @import("_identify.zig");
 /// sample entry names the codec. An MP4 whose index lies behind the bytes
 /// given - at its end, as a film written in one go has it - shows
 /// nothing: VCODEC_UNKNOWN, though OpenVideoStream reads its index
-/// wherever it is. media.library's IdentifyMedia says whether the bytes
+/// wherever it is. A Matroska file (SINCE 1.2) is read element by element
+/// to its tracks, which muxers put near the front, and the first track of
+/// pictures names the codec by its ID; VP8, VP9 and AV1 are
+/// VCODEC_UNKNOWN. media.library's IdentifyMedia says whether the bytes
 /// begin a film at all.
 ///
 /// CONTEXT:

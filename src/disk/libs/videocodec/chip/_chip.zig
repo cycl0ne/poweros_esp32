@@ -26,7 +26,8 @@ const Stream = _stream.Stream;
 const annexb = @import("annexb.zig");
 
 /// The least the decoder keeps fed - its own default - and how many of
-/// the largest packets at least.
+/// the largest packets at least; a Matroska file says not how large its
+/// largest is, and gets room for four of 2 MiB.
 const stream_bytes: usize = 2 * 1024 * 1024;
 const packets_kept = 4;
 
@@ -75,7 +76,8 @@ pub fn open(s: *Stream) i32 {
     }
 
     var err: u32 = videodec.VDERR_OK;
-    const kept = @max(stream_bytes, @as(usize, s.picture.max_packet) * packets_kept + c.header_size);
+    const largest: usize = if (s.picture.max_packet != 0) s.picture.max_packet else stream_bytes;
+    const kept = @max(stream_bytes, largest * packets_kept + c.header_size);
     c.decoder = vb.OpenVideoDecoder(codec, &[_]utility.TagItem{
         .{ .tag = videodec.VDA_StreamSize, .data = kept },
         .{ .tag = videodec.VDA_HeldFrames, .data = _stream.held_frames },

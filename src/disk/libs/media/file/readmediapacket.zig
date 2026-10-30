@@ -9,6 +9,7 @@ const _file = @import("_file.zig");
 const File = _file.File;
 const Track = _file.Track;
 const cursor = @import("../mp4/cursor.zig");
+const blocks = @import("../mkv/blocks.zig");
 
 /// Hands out a track's next packet, as it is coded.
 ///
@@ -26,8 +27,10 @@ const cursor = @import("../mp4/cursor.zig");
 ///
 /// RESULT:
 /// MERR_OK; MERR_END after the track's last packet; MERR_NOTRACK,
-/// MERR_READ, MERR_NOMEMORY, or MERR_NOSEEK for a packet behind what a
-/// read function has read. Only with MERR_OK is `packet` filled in.
+/// MERR_READ, MERR_NOMEMORY, MERR_CORRUPT, MERR_NOSEEK for a packet
+/// behind what a read function has read, or MERR_UNSUPPORTED for a
+/// Matroska track compressed or encrypted. Only with MERR_OK is `packet`
+/// filled in.
 ///
 /// BEHAVIOR:
 /// The packet the track's cursor is at - its first after OpenMedia, the
@@ -39,6 +42,12 @@ const cursor = @import("../mp4/cursor.zig");
 /// time in the track's own ticks. The bytes are read with the rest of
 /// their chunk, as far as the track's buffer holds them, so the packets
 /// after it come out of the buffer.
+///
+/// A Matroska track walks the clusters from where it is to its next
+/// block, past the other tracks', reading the file in runs into its
+/// buffer; the frames of a block laced are handed out one at a time, the
+/// time of each after the first from how long the track says a frame
+/// lasts (SINCE 1.2).
 ///
 /// CONTEXT:
 /// - Waits: yes, on the file, and while another task reads another track
@@ -73,6 +82,7 @@ pub fn ReadMediaPacket(_: *MediaBase, file: *media.MediaFile, track: u32, packet
     const own = _file.fileOf(file);
     if (track >= own.track_count) return media.MERR_NOTRACK;
     const t = &own.tracks[track];
+    if (own.info.kind == media.MEDIA_MKV) return blocks.read(own, t, packet);
     const tables = &t.tables;
     const at = &t.at;
     if (at.sample >= tables.samples) return media.MERR_END;

@@ -1,24 +1,28 @@
 // SPDX-License-Identifier: MIT
 //! A file opened: where its bytes come from, its index in memory, its
-//! tracks - each with its sample tables, its cursor and its buffer - and
-//! its tags.
+//! tracks - each with its sample tables or its walk through the
+//! clusters, its cursor and its buffer - and its tags.
 //!
 //! **The source** is a file the library opened, one the program has open,
 //! or the program's read function. A file is read where its bytes lie -
 //! a seek and a read - by whichever task reads a track; the semaphore lets
 //! one at a time at it (`readAt`). A read function only goes forward:
-//! `position` is how far it has read, and bytes behind it are gone.
+//! `position` is how far it has read, and bytes behind it are gone - but
+//! for a few kept to be read again (`kept`): its first, which the kind
+//! was found by, or the head of the cluster a Matroska file's opening
+//! stopped at.
 //!
 //! **A track's buffer** holds bytes of the file from `cached_at` on: the
 //! packet asked for and, where they fit, the rest of its chunk - the
 //! packets of a track lie together in chunks, so the packets after it are
 //! handed out of the buffer. It is made at the track's first read, as
 //! large as its largest packet and 64 KiB at least, and a packet handed
-//! out points into it.
+//! out points into it. A Matroska track's holds the bytes its walk through
+//! the clusters reads (`mkv/blocks.zig`).
 //!
-//! The file is one allocation, cleared; the index (an MP4's `moov`), the
-//! chapters and each track's buffer are memory of their own, given back
-//! with it.
+//! The file is one allocation, cleared; the index (an MP4's `moov`, a
+//! Matroska file's tracks), the cues, the chapters and each track's
+//! buffers are memory of their own, given back with it.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -27,6 +31,7 @@ const dos = sdk.dos;
 const media = sdk.media;
 const MediaBase = @import("../media_base.zig").MediaBase;
 const cursor = @import("../mp4/cursor.zig");
+const blocks = @import("../mkv/blocks.zig");
 
 /// The most tracks a file's are read of; past them, tracks are passed
 /// over.
@@ -79,6 +84,8 @@ pub const Track = struct {
     buffer_size: u32,
     cached_at: u64,
     cached: u32,
+    /// A Matroska track's: what it is in the file, and where its walk is.
+    mkv: blocks.Track,
 };
 
 pub const File = struct {
@@ -93,6 +100,11 @@ pub const File = struct {
     position: u64,
     size: u64,
     origin: u64,
+    /// A read function's bytes kept to be read again, as they lie from
+    /// `kept_at`.
+    kept: [16]u8,
+    kept_at: u64,
+    kept_length: u32,
     /// Lets one task at a time at the source.
     lock: exec.SignalSemaphore,
     info: media.MediaInfo,
@@ -103,6 +115,8 @@ pub const File = struct {
     tracks: [max_tracks]Track,
     track_count: u32,
     tags: Tags,
+    /// A Matroska file's segment, its clocks and its cues.
+    mkv: blocks.File,
 };
 
 pub fn fileOf(public: *media.MediaFile) *File {
@@ -119,7 +133,9 @@ pub fn destroy(file: *File) void {
     const sys = base.sys_base;
     for (file.tracks[0..file.track_count]) |*track| {
         if (track.buffer) |buffer| sys.FreeVec(buffer);
+        if (track.mkv.joined) |joined| sys.FreeVec(joined);
     }
+    if (file.mkv.cues) |cues| sys.FreeVec(cues);
     if (file.owns_file) {
         if (file.file) |handle| _ = base.dos_base.Close(handle);
     }
@@ -132,31 +148,62 @@ pub fn destroy(file: *File) void {
 /// are not there, or lie behind what a read function has read. The caller
 /// holds the lock.
 pub fn readAt(file: *File, offset: u64, into: []u8) bool {
+    return readSome(file, offset, into) == into.len;
+}
+
+/// Up to `into.len` bytes from `offset` of the source: how many it had -
+/// fewer where it ends, 0 where it cannot be read, or the bytes lie
+/// behind what a read function has read. The caller holds the lock.
+pub fn readSome(file: *File, offset: u64, into: []u8) usize {
+    var got: usize = 0;
     if (file.file) |handle| {
         const dl = file.base.dos_base;
         const at = offset +| file.origin;
-        if (at > std.math.maxInt(i64)) return false;
-        if (dl.Seek(handle, @intCast(at), dos.OFFSET_BEGINNING) < 0) return false;
-        var got: usize = 0;
+        if (at > std.math.maxInt(i64)) return 0;
+        if (dl.Seek(handle, @intCast(at), dos.OFFSET_BEGINNING) < 0) return 0;
         while (got < into.len) {
             const want: isize = @intCast(@min(into.len - got, 0x4000_0000));
             const read = dl.Read(handle, into.ptr + got, want);
-            if (read <= 0) return false;
+            if (read <= 0) break;
             got += @intCast(read);
         }
-        return true;
+        return got;
     }
-    if (offset < file.position) return false;
-    if (!skipTo(file, offset)) return false;
-    var got: usize = 0;
+    var at = offset;
+    if (at >= file.kept_at and at < file.kept_at + file.kept_length) {
+        const from: usize = @intCast(at - file.kept_at);
+        got = @min(file.kept_length - from, into.len);
+        @memcpy(into[0..got], file.kept[from..][0..got]);
+        at += got;
+        if (got == into.len) return got;
+    }
+    if (at < file.position) return got;
+    if (!skipTo(file, at)) return 0;
     while (got < into.len) {
         const want: u32 = @intCast(@min(into.len - got, 0x4000_0000));
         const read = file.read_fn.?(file.read_data, into.ptr + got, want);
-        if (read <= 0) return false;
+        if (read <= 0) break;
         got += @intCast(read);
+        file.position += @intCast(read);
     }
-    file.position += into.len;
-    return true;
+    return got;
+}
+
+/// Bytes just read from `offset`, kept for a read function to give them
+/// again: as many as `kept` holds.
+pub fn keep(file: *File, offset: u64, bytes: []const u8) void {
+    if (file.file != null) return;
+    const length = @min(bytes.len, file.kept.len);
+    @memcpy(file.kept[0..length], bytes[0..length]);
+    file.kept_at = offset;
+    file.kept_length = @intCast(length);
+}
+
+/// Whether bytes from `offset` are gone: behind what a read function has
+/// read, and not kept.
+pub fn behind(file: *const File, offset: u64) bool {
+    if (file.file != null or offset >= file.position) return false;
+    return offset < file.kept_at or offset >= file.kept_at + file.kept_length;
 }
 
 /// A read function's bytes up to `offset` read and dropped.
