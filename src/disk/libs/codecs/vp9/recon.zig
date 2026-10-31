@@ -45,23 +45,23 @@ pub const Scratch = struct {
 
 pub const Recon = struct {
     frame: *Frame,
-    ps: *const parse.Parse,
+    out: *const parse.Out,
     /// By reference, LAST_FRAME to ALTREF_FRAME; 0 unused.
     refs: [4]Ref = @splat(.{}),
     lossless: bool = false,
 
     /// Superblock row `row` reconstructed.
     pub fn sbRow(rc: *const Recon, comptime P: type, row: u32, s: *Scratch) void {
-        const sb_cols = (rc.ps.mi_cols + 7) >> 3;
+        const sb_cols = (rc.out.mi_cols + 7) >> 3;
         for (0..sb_cols) |c| {
             const i = row * sb_cols + c;
-            const first = rc.ps.sb_first[i];
-            for (rc.ps.blocks[first .. first + rc.ps.sb_count[i]]) |*b| rc.block(P, b, s);
+            const first = rc.out.sb_first[i];
+            for (rc.out.blocks[first .. first + rc.out.sb_count[i]]) |*b| rc.block(P, b, s);
         }
     }
 
     fn block(rc: *const Recon, comptime P: type, b: *const Block, s: *Scratch) void {
-        const ps = rc.ps;
+        const out = rc.out;
         const f = rc.frame;
         const bsize = @max(b.size, common.BLOCK_8X8);
         const max: i32 = (@as(i32, 1) << @intCast(f.bit_depth)) - 1;
@@ -79,8 +79,8 @@ pub const Recon = struct {
             const h4: u32 = tables.num_4x4_high[plane_size];
             const base_x = (@as(u32, b.col) * 8) >> sx;
             const base_y = (@as(u32, b.row) * 8) >> sy;
-            const max_x = (ps.mi_cols * 8) >> sx;
-            const max_y = (ps.mi_rows * 8) >> sy;
+            const max_x = (out.mi_cols * 8) >> sx;
+            const max_y = (out.mi_rows * 8) >> sy;
             if (b.is_inter and !b.coded) continue;
             const stride = f.stride[plane];
             const pl = f.plane(P, plane);
@@ -106,14 +106,14 @@ pub const Recon = struct {
                         }, f.bit_depth);
                     }
                     if (!b.coded) continue;
-                    const eob: u32 = @intCast(ps.coef[ci]);
+                    const eob: u32 = @intCast(out.coef[ci]);
                     ci += 1;
                     if (eob == 0) continue;
                     const tx_type = parse.Parse.txType(b, plane, tx, k, rc.lossless);
                     const scan = parse.scanOf(tx, tx_type);
                     var rows: u32 = 0;
                     const shift: u5 = @intCast(tx + 2);
-                    for (ps.coef[ci .. ci + eob], scan[0..eob]) |v, pos| {
+                    for (out.coef[ci .. ci + eob], scan[0..eob]) |v, pos| {
                         s.coef[pos] = v;
                         rows |= @as(u32, 1) << @intCast(@as(u32, pos) >> shift);
                     }
@@ -132,7 +132,7 @@ pub const Recon = struct {
     /// The inter prediction of a block's plane (8.5.2).
     fn inter(rc: *const Recon, comptime P: type, b: *const Block, plane: usize, s: *Scratch) void {
         const f = rc.frame;
-        const ps = rc.ps;
+        const out = rc.out;
         const sx: u5 = if (plane > 0) f.ss_x else 0;
         const sy: u5 = if (plane > 0) f.ss_y else 0;
         const bsize = @max(b.size, common.BLOCK_8X8);
@@ -141,8 +141,8 @@ pub const Recon = struct {
         const h4: u32 = tables.num_4x4_high[plane_size];
         const base_x = (@as(u32, b.col) * 8) >> sx;
         const base_y = (@as(u32, b.row) * 8) >> sy;
-        const max_x = (ps.mi_cols * 8) >> sx;
-        const max_y = (ps.mi_rows * 8) >> sy;
+        const max_x = (out.mi_cols * 8) >> sx;
+        const max_y = (out.mi_rows * 8) >> sy;
         const compound = b.ref_frame[1] > common.INTRA_FRAME;
         if (b.size < common.BLOCK_8X8) {
             for (0..h4) |y| {
@@ -190,7 +190,7 @@ pub const Recon = struct {
     /// a plane, averaged into what the first left when it is the second.
     fn predict(rc: *const Recon, comptime P: type, b: *const Block, plane: usize, j: usize, px: u32, py: u32, w: u32, h: u32, mv: Mv, s: *Scratch) void {
         const f = rc.frame;
-        const ps = rc.ps;
+        const out = rc.out;
         const ref = &rc.refs[@intCast(b.ref_frame[j])];
         const rf = ref.frame;
         const sx: u5 = if (plane > 0) f.ss_x else 0;
@@ -202,9 +202,9 @@ pub const Recon = struct {
         const row: i32 = b.row;
         const col: i32 = b.col;
         const to_top = -((row * 8) * 16) >> sy;
-        const to_bottom = (((@as(i32, @intCast(ps.mi_rows)) - bh - row) * 8) * 16) >> sy;
+        const to_bottom = (((@as(i32, @intCast(out.mi_rows)) - bh - row) * 8) * 16) >> sy;
         const to_left = -((col * 8) * 16) >> sx;
-        const to_right = (((@as(i32, @intCast(ps.mi_cols)) - bw - col) * 8) * 16) >> sx;
+        const to_right = (((@as(i32, @intCast(out.mi_cols)) - bw - col) * 8) * 16) >> sx;
         const spel_left = (4 + ((bw * 8) >> sx)) << 4;
         const spel_top = (4 + ((bh * 8) >> sy)) << 4;
         const mv_row = clamp((2 * @as(i32, mv.row)) >> sy, to_top - spel_top, to_bottom + spel_top - 16);

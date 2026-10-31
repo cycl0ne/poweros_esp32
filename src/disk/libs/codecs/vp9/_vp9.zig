@@ -12,6 +12,17 @@
 //! not right is passed over, and so is every frame after it until a key
 //! frame or an intra-only one. There is no setup.
 //!
+//! **The cores**: with more than one, the decoder has a worker task on
+//! each (module.zig's `Team`): the decoder reads each frame - its headers
+//! and all its blocks - as its packet comes, and the frames read wait in
+//! turn for whichever worker is free, which puts the frame together and
+//! filters it while the next packets are read: up to twice as many
+//! frames at once as there are workers, each superblock row waiting for
+//! the lines of the references its blocks read. While another frame can
+//! be read a packet is taken before a frame is handed out, as long as no
+//! more frames wait than there are workers; a frame still being decoded
+//! is waited for.
+//!
 //! **The frames** are each frame copied into the planes of the slot it is
 //! lent in, I420 in 8 bits as every frame is: deeper samples are rounded
 //! to 8 bits, colour at full height is averaged two rows by two (4:2:2),
@@ -46,6 +57,9 @@ const plane_alignment = 16;
 /// What a frame's `private[1]` holds, so a frame that is not one of this
 /// decoder's is passed by: "VP90".
 const frame_mark: u32 = 0x5650_3930;
+
+/// The workers, on every core.
+const Team = module.Team(vp9.Cores);
 
 /// VP9's colour spaces (7.2.2).
 const CS_BT_601 = 1;
@@ -89,6 +103,7 @@ const Decoder = struct {
     /// A frame was handed out: one the decoder cannot decode is passed
     /// over from then on, rather than refused for another module.
     started: bool = false,
+    team: Team = .{},
 };
 
 fn of(decoder: *vcodec.VCodecDecoder) *Decoder {
@@ -148,6 +163,8 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
         return failed(code, vc.VCERR_NOMEMORY);
     };
     m.* = .{ .sys = sys, .core = core, .held = params.held };
+    m.team.start(sys, "vp9.vcodec worker");
+    if (m.team.count != 0) core.useCores(&m.team.cores);
     return @ptrCast(m);
 }
 
@@ -160,12 +177,15 @@ fn failed(code: *i32, why: i32) ?*vcodec.VCodecDecoder {
 pub fn CloseVCodec(_: *Base, decoder: ?*vcodec.VCodecDecoder) void {
     const m = of(decoder orelse return);
     const sys = m.sys;
+    // The workers finish what they decode before they end.
     m.core.destroy();
+    m.team.stop();
     for (&m.planes) |*planes| sys.FreeVec(planes.memory);
     sys.FreeVec(m);
 }
 
-/// A packet decoded; the end of the track hands out what is held.
+/// A packet read, the frame begun on a worker or decoded; the end of the
+/// track hands out the frames still being decoded.
 pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const vcodec.VCodecPacket) i32 {
     const m = of(decoder);
     if (m.core.next() != null) return vc.VCERR_FULL;

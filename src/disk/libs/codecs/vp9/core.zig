@@ -9,6 +9,7 @@ pub const Shown = decoder.Shown;
 pub const Error = common.Error;
 pub const Env = common.Env;
 pub const Frame = common.Frame;
+pub const Cores = common.Cores;
 
 test {
     _ = @import("bool.zig");

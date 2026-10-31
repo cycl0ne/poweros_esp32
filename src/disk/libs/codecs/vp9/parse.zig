@@ -18,8 +18,51 @@ const Error = common.Error;
 /// end word for each of their 4x4s.
 pub const max_block_words = 3 * (4096 + 256);
 
-/// What reading a frame needs and makes. The decoder sets the inputs and
-/// sizes the arrays (`size`); `tiles` fills the outputs.
+/// What reading a frame makes, which its reconstruction and loop filter
+/// work from: its blocks and their coefficients.
+pub const Out = struct {
+    mi_cols: u32 = 0,
+    mi_rows: u32 = 0,
+    /// Each 8x8's block: an index into `blocks`.
+    grid: []u32 = &.{},
+    blocks: []Block = &.{},
+    n_blocks: u32 = 0,
+    /// Each superblock's first block and how many it has.
+    sb_first: []u32 = &.{},
+    sb_count: []u32 = &.{},
+    /// For each coded block, by plane, for each of its transform blocks
+    /// on screen in raster order: the number of coefficients, then the
+    /// coefficients dequantised in scan order.
+    coef: []i32 = &.{},
+    n_coef: usize = 0,
+
+    /// The arrays for a frame of `mi_cols` by `mi_rows` 8x8s; false when
+    /// there is no memory.
+    pub fn fit(out: *Out, env: common.Env, mi_cols: u32, mi_rows: u32) bool {
+        const n: usize = @as(usize, mi_cols) * mi_rows;
+        const sbs = @as(usize, (mi_cols + 7) >> 3) * ((mi_rows + 7) >> 3);
+        out.mi_cols = mi_cols;
+        out.mi_rows = mi_rows;
+        if (out.grid.len == n and out.sb_first.len == sbs) return true;
+        if (!env.resize(u32, &out.grid, n)) return false;
+        if (!env.resize(Block, &out.blocks, n)) return false;
+        if (!env.resize(u32, &out.sb_first, sbs)) return false;
+        if (!env.resize(u32, &out.sb_count, sbs)) return false;
+        return true;
+    }
+
+    pub fn deinit(out: *Out, env: common.Env) void {
+        env.freeSlice(u32, out.grid);
+        env.freeSlice(Block, out.blocks);
+        env.freeSlice(u32, out.sb_first);
+        env.freeSlice(u32, out.sb_count);
+        env.freeSlice(i32, out.coef);
+        out.* = .{};
+    }
+};
+
+/// What reading a frame needs. The decoder sets the inputs, sizes the
+/// contexts (`size`) and hands it the `Out` that `tiles` fills.
 pub const Parse = struct {
     env: common.Env,
     h: *const header.Header = undefined,
@@ -44,18 +87,7 @@ pub const Parse = struct {
     prev_seg: []const u8 = &.{},
     cur_seg: []u8 = &.{},
 
-    /// Each 8x8's block: an index into `blocks`.
-    grid: []u32 = &.{},
-    blocks: []Block = &.{},
-    n_blocks: u32 = 0,
-    /// Each superblock's first block and how many it has.
-    sb_first: []u32 = &.{},
-    sb_count: []u32 = &.{},
-    /// For each coded block, by plane, for each of its transform blocks
-    /// on screen in raster order: the number of coefficients, then the
-    /// coefficients dequantised in scan order.
-    coef: []i32 = &.{},
-    n_coef: usize = 0,
+    out: *Out = undefined,
 
     /// By segment, plane > 0 and AC: the dequantiser (8.6.1).
     dq: [8][2][2]i32 = undefined,
@@ -76,19 +108,13 @@ pub const Parse = struct {
     b: Bool = .{},
     token_cache: [1024]u8 = undefined,
 
-    /// The arrays for a frame of `mi_cols` by `mi_rows` 8x8s; false when
+    /// The contexts for a frame of `mi_cols` by `mi_rows` 8x8s; false when
     /// there is no memory.
     pub fn size(ps: *Parse, mi_cols: u32, mi_rows: u32, ss_x: u1) bool {
         const env = ps.env;
-        const n: usize = @as(usize, mi_cols) * mi_rows;
         const sb_cols: usize = (mi_cols + 7) >> 3;
         ps.mi_cols = mi_cols;
         ps.mi_rows = mi_rows;
-        if (!env.resize(u32, &ps.grid, n)) return false;
-        if (!env.resize(Block, &ps.blocks, n)) return false;
-        const sbs = sb_cols * ((mi_rows + 7) >> 3);
-        if (!env.resize(u32, &ps.sb_first, sbs)) return false;
-        if (!env.resize(u32, &ps.sb_count, sbs)) return false;
         if (!env.resize(u8, &ps.above_nz[0], sb_cols * 16)) return false;
         for (1..3) |i| {
             if (!env.resize(u8, &ps.above_nz[i], (sb_cols * 16) >> ss_x)) return false;
@@ -100,14 +126,9 @@ pub const Parse = struct {
 
     pub fn deinit(ps: *Parse) void {
         const env = ps.env;
-        env.freeSlice(u32, ps.grid);
-        env.freeSlice(Block, ps.blocks);
-        env.freeSlice(u32, ps.sb_first);
-        env.freeSlice(u32, ps.sb_count);
         for (ps.above_nz) |a| env.freeSlice(u8, a);
         env.freeSlice(u8, ps.above_part);
         env.freeSlice(u8, ps.above_seg);
-        env.freeSlice(i32, ps.coef);
         ps.* = .{ .env = env };
     }
 
@@ -149,14 +170,15 @@ pub const Parse = struct {
         }
     }
 
-    /// The frame's tiles, `data` from the end of the compressed header.
+    /// The frame's tiles, `data` from the end of the compressed header,
+    /// into `out`, which `Out.fit` made for the frame's size.
     pub fn tiles(ps: *Parse, data: []const u8) Error!void {
         const h = ps.h;
         for (ps.above_nz) |a| @memset(a, 0);
         @memset(ps.above_part, 0);
         @memset(ps.above_seg, 0);
-        ps.n_blocks = 0;
-        ps.n_coef = 0;
+        ps.out.n_blocks = 0;
+        ps.out.n_coef = 0;
         const cols_log2: u5 = @intCast(h.tile_cols_log2);
         const rows_log2: u5 = @intCast(h.tile_rows_log2);
         const tile_cols = @as(u32, 1) << cols_log2;
@@ -191,9 +213,9 @@ pub const Parse = struct {
                     var c = ps.col_start;
                     while (c < ps.col_end) : (c += 8) {
                         const sb = (r >> 3) * ((ps.mi_cols + 7) >> 3) + (c >> 3);
-                        ps.sb_first[sb] = ps.n_blocks;
+                        ps.out.sb_first[sb] = ps.out.n_blocks;
                         try ps.partition(r, c, common.BLOCK_64X64);
-                        ps.sb_count[sb] = ps.n_blocks - ps.sb_first[sb];
+                        ps.out.sb_count[sb] = ps.out.n_blocks - ps.out.sb_first[sb];
                     }
                 }
                 if (ps.b.overrun()) return error.Corrupt;
@@ -270,12 +292,12 @@ pub const Parse = struct {
     };
 
     fn block(ps: *Parse, r: u32, c: u32, bsize: u8) Error!void {
-        if (ps.coef.len - ps.n_coef < max_block_words) try ps.growCoef();
+        if (ps.out.coef.len - ps.out.n_coef < max_block_words) try ps.growCoef();
         if (bsize >= common.BLOCK_8X8 and tables.ss_size_lookup[bsize][ps.ss_x][ps.ss_y] == tables.BLOCK_INVALID)
             return error.Corrupt;
-        const index = ps.n_blocks;
-        const b = &ps.blocks[index];
-        ps.n_blocks += 1;
+        const index = ps.out.n_blocks;
+        const b = &ps.out.blocks[index];
+        ps.out.n_blocks += 1;
         b.* = .{ .row = @intCast(r), .col = @intCast(c), .size = bsize, .avail_l = c > ps.col_start };
         var x: Ctx = .{
             .r = r,
@@ -288,11 +310,11 @@ pub const Parse = struct {
             .left_ref = .{ common.INTRA_FRAME, common.NONE },
         };
         if (x.avail_u) {
-            x.above = &ps.blocks[ps.grid[(r - 1) * ps.mi_cols + c]];
+            x.above = &ps.out.blocks[ps.out.grid[(r - 1) * ps.mi_cols + c]];
             x.above_ref = x.above.?.ref_frame;
         }
         if (x.avail_l) {
-            x.left = &ps.blocks[ps.grid[r * ps.mi_cols + c - 1]];
+            x.left = &ps.out.blocks[ps.out.grid[r * ps.mi_cols + c - 1]];
             x.left_ref = x.left.?.ref_frame;
         }
         if (ps.h.intra) {
@@ -307,7 +329,7 @@ pub const Parse = struct {
         const write_seg = ps.seg.enabled and ps.seg.update_map;
         for (0..bh) |y| {
             const row = (r + y) * ps.mi_cols + c;
-            @memset(ps.grid[row .. row + bw], index);
+            @memset(ps.out.grid[row .. row + bw], index);
             if (write_seg) @memset(ps.cur_seg[row .. row + bw], b.segment_id);
             if (!ps.h.intra) {
                 @memset(ps.cur_mvs[row .. row + bw], .{
@@ -317,7 +339,7 @@ pub const Parse = struct {
             }
         }
 
-        b.coeffs = @intCast(ps.n_coef);
+        b.coeffs = @intCast(ps.out.n_coef);
         const eobs = ps.residual(b);
         b.coded = !b.skip;
         if (b.is_inter and bsize >= common.BLOCK_8X8 and eobs == 0) b.skip = true;
@@ -326,11 +348,11 @@ pub const Parse = struct {
     }
 
     fn growCoef(ps: *Parse) Error!void {
-        const n = @max(ps.coef.len * 2, 64 * 1024);
+        const n = @max(ps.out.coef.len * 2, 64 * 1024);
         const new = ps.env.slice(i32, n) orelse return error.NoMemory;
-        @memcpy(new[0..ps.n_coef], ps.coef[0..ps.n_coef]);
-        ps.env.freeSlice(i32, ps.coef);
-        ps.coef = new;
+        @memcpy(new[0..ps.out.n_coef], ps.out.coef[0..ps.out.n_coef]);
+        ps.env.freeSlice(i32, ps.out.coef);
+        ps.out.coef = new;
     }
 
     // Mode info (6.4.5 to 6.4.20).
@@ -772,7 +794,7 @@ pub const Parse = struct {
         const r = @as(i64, x.r) + pos[0];
         const c = @as(i64, x.c) + pos[1];
         if (r < 0 or r >= ps.mi_rows or c < ps.col_start or c >= ps.col_end) return null;
-        return &ps.blocks[ps.grid[@as(usize, @intCast(r)) * ps.mi_cols + @as(usize, @intCast(c))]];
+        return &ps.out.blocks[ps.out.grid[@as(usize, @intCast(r)) * ps.mi_cols + @as(usize, @intCast(c))]];
     }
 
     /// The context the inter modes are read in: the modes of the two
@@ -1047,7 +1069,7 @@ pub const Parse = struct {
         const dq = ps.dq[b.segment_id][pt];
         const shift: u5 = @intFromBool(tx == common.TX_32X32);
         const max_eob = @as(u32, 16) << @intCast(tx * 2);
-        const out = ps.coef[ps.n_coef + 1 ..];
+        const out = ps.out.coef[ps.out.n_coef + 1 ..];
         const cache = &ps.token_cache;
         const bd = ps.bit_depth;
         const br = &ps.b;
@@ -1118,8 +1140,8 @@ pub const Parse = struct {
             dqv = dq[1];
             if (c < max_eob) ctx = (1 + @as(usize, cache[nb[c][0]]) + cache[nb[c][1]]) >> 1;
         }
-        ps.coef[ps.n_coef] = @intCast(c);
-        ps.n_coef += 1 + c;
+        ps.out.coef[ps.out.n_coef] = @intCast(c);
+        ps.out.n_coef += 1 + c;
         return c;
     }
 

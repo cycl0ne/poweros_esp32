@@ -13,11 +13,11 @@ const Limits = struct { limit: u8, blimit: u8, thresh: u8 };
 
 pub const Filter = struct {
     frame: *Frame,
-    ps: *const parse.Parse,
+    out: *const parse.Out,
     limits: [64]Limits = undefined,
 
-    pub fn init(f: *Frame, ps: *const parse.Parse, sharpness: u8) Filter {
-        var lf: Filter = .{ .frame = f, .ps = ps };
+    pub fn init(f: *Frame, out: *const parse.Out, sharpness: u8) Filter {
+        var lf: Filter = .{ .frame = f, .out = out };
         const shift: u3 = if (sharpness > 4) 2 else if (sharpness > 0) 1 else 0;
         for (&lf.limits, 0..) |*l, lvl| {
             var limit: u32 = @intCast(lvl >> shift);
@@ -30,7 +30,7 @@ pub const Filter = struct {
 
     /// Superblock row `row` filtered.
     pub fn sbRow(lf: *const Filter, comptime P: type, row: u32) void {
-        const sb_cols = (lf.ps.mi_cols + 7) >> 3;
+        const sb_cols = (lf.out.mi_cols + 7) >> 3;
         for (0..sb_cols) |c| {
             for (0..3) |plane| {
                 lf.pass(P, plane, 0, row * 8, @intCast(c * 8));
@@ -44,14 +44,14 @@ pub const Filter = struct {
     /// same over them.
     fn pass(lf: *const Filter, comptime P: type, plane: usize, comptime dir: u1, row: u32, col: u32) void {
         const f = lf.frame;
-        const ps = lf.ps;
+        const out = lf.out;
         const sub_x: u5 = if (plane > 0) f.ss_x else 0;
         const sub_y: u5 = if (plane > 0) f.ss_y else 0;
         const sub = if (dir == 0) sub_x else sub_y;
         const edges = @as(u32, 16) >> sub;
         const len = @as(u32, 64) >> (if (dir == 0) sub_y else sub_x);
-        const mi_cols = ps.mi_cols;
-        const mi_rows = ps.mi_rows;
+        const mi_cols = out.mi_cols;
+        const mi_rows = out.mi_rows;
         const stride = f.stride[plane];
         const pl = f.plane(P, plane);
         const bd: u5 = @intCast(f.bit_depth - 8);
@@ -65,7 +65,7 @@ pub const Filter = struct {
                 if ((dir == 0 and x == 0) or (dir == 1 and y == 0)) continue;
                 const loop_col = ((x >> 3) >> sub_x) << sub_x;
                 const loop_row = ((y >> 3) >> sub_y) << sub_y;
-                const b = &ps.blocks[ps.grid[loop_row * mi_cols + loop_col]];
+                const b = &out.blocks[out.grid[loop_row * mi_cols + loop_col]];
                 const lvl = b.filter_level;
                 if (lvl == 0) continue;
                 const tx = if (plane > 0) parse.Parse.uvTxSize(b, f.ss_x, f.ss_y) else b.tx_size;

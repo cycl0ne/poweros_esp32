@@ -51,10 +51,10 @@ back.
 A task runs on whichever core is free; a task of its own is not tied to
 the caller's priority, and can be pinned (`SetTaskAffinity`).
 
-h264.vcodec and vp8.vcodec keep a task on each core while a film is
-open (the codec modules' `Team`): each decodes a picture of its own and
-waits - by a waitable - for the rows of the pictures it refers to,
-which a posted job may not do.
+h264.vcodec, vp8.vcodec and vp9.vcodec keep a task on each core while
+a film is open (the codec modules' `Team`): each decodes a picture of
+its own and waits - by a waitable - for the rows of the pictures it
+refers to, which a posted job may not do.
 
 ## A job in parts: ShareWork
 

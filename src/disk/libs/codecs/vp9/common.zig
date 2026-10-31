@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! What the parts of the VP9 decoder share: memory from whoever runs it,
-//! a frame's planes, the numbering of block sizes, modes and references,
-//! and what is kept of each block of a frame.
+//! What the parts of the VP9 decoder share: memory and the other cores
+//! from whoever runs it, a frame's planes, the numbering of block sizes,
+//! modes and references, and what is kept of each block of a frame.
 
 pub const Error = error{ Corrupt, Unsupported, NoMemory };
 
@@ -35,6 +35,34 @@ pub const Env = struct {
         s.* = &.{};
         s.* = env.slice(T, n) orelse return false;
         return true;
+    }
+};
+
+/// The other cores, from whoever runs the decoder: a worker task on each,
+/// and a way to wait - as h264.vcodec's and vp8.vcodec's decoders have
+/// them.
+pub const Cores = struct {
+    ctx: *anyopaque,
+    workers: u32,
+    /// `job(arg)` run by worker `worker`, which runs nothing else then.
+    run: *const fn (ctx: *anyopaque, worker: u32, job: *const fn (arg: *anyopaque) void, arg: *anyopaque) void,
+    /// A wait: `arm(who)`, then a look whether what is waited for is
+    /// there, and when it is not `sleep(who)`, which returns once `wake`
+    /// was called after the `arm`, or sooner; then round again. The
+    /// workers are 0 to `workers` - 1, the decoder's caller `workers`.
+    arm: *const fn (ctx: *anyopaque, who: u32) void,
+    sleep: *const fn (ctx: *anyopaque, who: u32) void,
+    /// Something others may wait for changed.
+    wake: *const fn (ctx: *anyopaque) void,
+
+    /// Until the first `n` lines of `f` are final.
+    pub fn lines(c: *const Cores, who: u32, f: *const Frame, n: u32) void {
+        if (@atomicLoad(u32, &f.progress, .acquire) >= n) return;
+        while (true) {
+            c.arm(c.ctx, who);
+            if (@atomicLoad(u32, &f.progress, .seq_cst) >= n) return;
+            c.sleep(c.ctx, who);
+        }
     }
 };
 
@@ -166,8 +194,14 @@ pub const Frame = struct {
     alloc_w: u32 = 0,
     alloc_h: u32 = 0,
     alloc_bytes: u8 = 0,
-    /// How many references it is, and how often it waits to be shown.
+    /// How many lines are final, of the brightness and as many of the
+    /// colour, subsampled: for the frames that read it while it is
+    /// decoded.
+    progress: u32 = 0,
+    /// How many references it is, how many jobs decode it or read it,
+    /// and how often it waits to be shown.
     refs: u8 = 0,
+    pinned: u8 = 0,
     queued: u8 = 0,
 
     pub fn plane(f: *const Frame, comptime P: type, p: usize) [*]P {
