@@ -254,6 +254,11 @@ pub inline fn transform(m: *const [16]f32, p: [3]f32) [4]f32 {
     return out;
 }
 
+/// A channel already of 8 bits as a smooth triangle's planes carry it.
+pub fn channelOfByte(value: u32) f32 {
+    return @as(f32, @floatFromInt(value)) + 0.5;
+}
+
 /// A colour's channel, 0 to 1, as `smooth` mixes it: 0 to 255, and a
 /// half, so that cut to an integer it is rounded.
 pub inline fn channel(value: f32) f32 {

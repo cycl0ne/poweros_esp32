@@ -22,6 +22,7 @@ const _image = @import("../../image/_image.zig");
 const _pipeline = @import("../../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
 const _vertices = @import("../_vertices.zig");
+const _command = @import("../../command/_command.zig");
 const _play = @import("_play.zig");
 const Player = _play.Player;
 
@@ -204,6 +205,51 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         }
         raster.batched.draw(target, &state, outputs[0 .. @as(usize, vertices) * stride], stride, corners[0..corner_count]) catch return;
     }
+}
+
+/// The colour a clear draws with: its corners', all the same.
+fn clearColor(fragments: *const shader.Fragments) callconv(.c) void {
+    shader.smooth(fragments);
+}
+
+const no_resources = shader.Resources{};
+
+/// A part of the attachments cleared in the middle of a pass: a rectangle
+/// drawn over the part, writing what is cleared and no more.
+pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void {
+    const player = _play.playerOf(queue);
+    const target = &player.target.?;
+    const aspect = command.aspect_mask;
+    const clears_stencil = aspect & facet.IMAGE_ASPECT_STENCIL != 0;
+    const clears_depth = aspect & facet.IMAGE_ASPECT_DEPTH != 0;
+    const color = command.color;
+    const rect = command.rect;
+    const surface_width: f32 = @floatFromInt(target.surface.width);
+    const surface_height: f32 = @floatFromInt(target.surface.height);
+    const stencil_face = raster.batched.StencilFace{ .pass = .replace, .compare = .always, .write_mask = 0xFF, .reference = @truncate(command.stencil) };
+    const state = raster.batched.State{
+        .viewport = .{ .x = 0, .y = 0, .width = surface_width, .height = surface_height },
+        .scissor = .{
+            .x = @intCast(@max(rect.offset.x, 0)),
+            .y = @intCast(@max(rect.offset.y, 0)),
+            .width = rect.extent.width,
+            .height = rect.extent.height,
+        },
+        .depth_test = if (clears_depth) .always else null,
+        .depth_write = clears_depth,
+        .blend = .general,
+        .mixing = .{ .mask = if (aspect & facet.IMAGE_ASPECT_COLOR != 0) 0xFFFF_FFFF else 0 },
+        .stencil = if (clears_stencil) .{ stencil_face, stencil_face } else null,
+        .varyings = 4,
+        .fragment = &clearColor,
+        .resources = &no_resources,
+    };
+    const channels = [4]f32{ shader.channelOfByte(color >> 16 & 0xFF), shader.channelOfByte(color >> 8 & 0xFF), shader.channelOfByte(color & 0xFF), shader.channelOfByte(color >> 24) };
+    var vertices: [4 * 8]f32 = undefined;
+    for ([4][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ -1, 1 }, .{ 1, 1 } }, 0..) |corner, k| {
+        vertices[k * 8 ..][0..8].* = .{ corner[0], corner[1], command.depth, 1, channels[0], channels[1], channels[2], channels[3] };
+    }
+    raster.batched.draw(target, &state, &vertices, 8, &[6]u32{ 0, 1, 2, 2, 1, 3 }) catch return;
 }
 
 /// `bytes` of the player's memory for a draw's vertices, aligned for a

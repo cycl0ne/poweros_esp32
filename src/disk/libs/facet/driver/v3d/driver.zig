@@ -57,6 +57,7 @@ pub const ops = _driver.Ops{
     .open_queue = &_play.open,
     .close_queue = &_play.close,
     .execute = &execute,
+    .texture_offset = &textureOffset,
     .texture_memory = &textureMemory,
     .picture_memory = exec.MEMF_DMA,
 };
@@ -294,4 +295,10 @@ fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) void {
 fn textureMemory(format: facet.Format, width: u32, height: u32, levels: u32) _driver.TextureMemory {
     const layout = _play.layoutOf(format, width, height, levels);
     return .{ .bytes = layout.bytes, .alignment = tiling.alignment };
+}
+
+/// Where a texel of a texture is, in bytes from its memory.
+fn textureOffset(image: *const @import("../../image/_image.zig").Image, level: u32, x: u32, y: u32) usize {
+    const layout = _play.layoutOf(image.format, image.width, image.height, image.levels);
+    return tiling.texelOffset(&layout, level, x, y);
 }

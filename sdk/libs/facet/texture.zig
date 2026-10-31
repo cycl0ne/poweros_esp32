@@ -144,6 +144,15 @@ pub const Texture = struct {
         }
     }
 
+    /// Texel (x, y) of a level, as `put` was given it.
+    pub fn peek(texture: *const Texture, lod: u32, x: u32, y: u32) u32 {
+        const at = texture.memory + texture.layout[lod].offset(texture.format, x, y);
+        return switch (texture.format) {
+            .rgba8888 => gather(@as(*const u64, @ptrCast(@alignCast(at))).*),
+            .rgb565 => @as(*const u16, @ptrCast(@alignCast(at))).*,
+        };
+    }
+
     /// A level from a picture kept row by row, `pitch` bytes from one row
     /// to the next, in the texture's format.
     pub fn load(texture: *Texture, lod: u32, pixels: [*]const u8, pitch: usize) void {

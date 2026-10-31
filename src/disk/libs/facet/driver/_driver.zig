@@ -69,6 +69,9 @@ pub const Ops = struct {
     /// A sampled image's memory, for a device that does not read textures
     /// in the rasterizer's layout. Null for one that does.
     texture_memory: ?*const fn (format: facet.Format, width: u32, height: u32, levels: u32) TextureMemory = null,
+    /// Where a texel of such an image is, in bytes from its memory: null for
+    /// the rasterizer's layout, kept as `Image.texels` says.
+    texture_offset: ?*const fn (image: *const @import("../image/_image.zig").Image, level: u32, x: u32, y: u32) usize = null,
     /// What a swapchain's pictures in the machine's memory have to be, for
     /// the device to reach them.
     picture_memory: u32 = exec.MEMF_ANY,

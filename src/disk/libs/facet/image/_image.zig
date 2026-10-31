@@ -252,3 +252,100 @@ fn texelOf(format: facet.Format, bytes: []const u8) u32 {
         else => 0,
     };
 }
+
+/// Where a level's texels are on a device with a layout of its own, in bytes
+/// from the image's memory.
+fn deviceOffset(image: *const Image, level: u32, x: u32, y: u32) ?usize {
+    const offset = image.device.physical.ops.texture_offset orelse return null;
+    return offset(image, level, x, y);
+}
+
+/// Whether an image's texels can be read and written: it has memory, and they
+/// are not only in the tiles.
+pub fn readable(image: *const Image) bool {
+    return image.kind != .depth and image.data != null;
+}
+
+/// A level's width and height.
+pub fn levelSize(image: *const Image, level: u32) [2]u32 {
+    return .{ @max(image.width >> @intCast(level), 1), @max(image.height >> @intCast(level), 1) };
+}
+
+/// Texel (x, y) of a level as a buffer would hold it, in `into`.
+pub fn readTexel(image: *const Image, level: u32, x: u32, y: u32, into: []u8) void {
+    switch (image.kind) {
+        .rows => {
+            const pixel = bytesOf(image.format);
+            const from = image.data.? + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
+            @memcpy(into[0..pixel], from[0..pixel]);
+        },
+        .texture => if (deviceOffset(image, level, x, y)) |offset| {
+            const pixel = bytesOf(image.format);
+            @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
+        } else {
+            bytesOfTexel(image.format, image.texels.peek(level, x, y), into);
+        },
+        .depth => {},
+    }
+}
+
+/// Texel (x, y) of a level set from what a buffer would hold.
+pub fn writeTexel(image: *Image, level: u32, x: u32, y: u32, from: []const u8) void {
+    switch (image.kind) {
+        .rows => {
+            const pixel = bytesOf(image.format);
+            const into = image.data.? + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
+            @memcpy(into[0..pixel], from[0..pixel]);
+        },
+        .texture => if (deviceOffset(image, level, x, y)) |offset| {
+            const pixel = bytesOf(image.format);
+            @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
+        } else {
+            image.texels.put(level, x, y, texelOf(image.format, from));
+        },
+        .depth => {},
+    }
+}
+
+/// A texture's texel as a buffer holds it in `format`: `texelOf` undone.
+fn bytesOfTexel(format: facet.Format, texel: u32, into: []u8) void {
+    switch (format) {
+        .b8g8r8a8_unorm => std.mem.writeInt(u32, into[0..4], texel, .little),
+        .r8g8b8a8_unorm => std.mem.writeInt(u32, into[0..4], texel & 0xFF00_FF00 | (texel >> 16 & 0xFF) | (texel & 0xFF) << 16, .little),
+        .r5g6b5_unorm_pack16 => std.mem.writeInt(u16, into[0..2], @truncate(texel), .little),
+        else => {},
+    }
+}
+
+/// What a buffer holds in `format` as 0xAARRGGBB.
+pub fn colorOfBytes(format: facet.Format, bytes: []const u8) u32 {
+    return switch (format) {
+        .b8g8r8a8_unorm => std.mem.readInt(u32, bytes[0..4], .little),
+        .r8g8b8a8_unorm => color: {
+            const color = std.mem.readInt(u32, bytes[0..4], .little);
+            break :color color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16;
+        },
+        .r5g6b5_unorm_pack16 => color: {
+            const packed_color: u32 = std.mem.readInt(u16, bytes[0..2], .little);
+            const r = packed_color >> 11 & 0x1F;
+            const g = packed_color >> 5 & 0x3F;
+            const b = packed_color & 0x1F;
+            break :color 0xFF00_0000 | (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
+        },
+        else => 0,
+    };
+}
+
+/// 0xAARRGGBB as a buffer holds it in `format`, rounded where it has less.
+pub fn bytesOfColor(format: facet.Format, color: u32, into: []u8) void {
+    switch (format) {
+        .b8g8r8a8_unorm, .r8g8b8a8_unorm => bytesOfTexel(format, color, into),
+        .r5g6b5_unorm_pack16 => {
+            const r = ((color >> 16 & 0xFF) * 31 + 127) / 255;
+            const g = ((color >> 8 & 0xFF) * 63 + 127) / 255;
+            const b = ((color & 0xFF) * 31 + 127) / 255;
+            std.mem.writeInt(u16, into[0..2], @intCast(r << 11 | g << 5 | b), .little);
+        },
+        else => {},
+    }
+}

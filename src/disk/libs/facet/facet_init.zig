@@ -54,7 +54,8 @@ pub const LIBRARY_VERSION = 1;
 /// CmdSetLineWidth.
 /// 15: the stencil test, on an attachment of s8_uint or d16_unorm_s8_uint;
 /// CmdSetStencilCompareMask, CmdSetStencilWriteMask, CmdSetStencilReference.
-pub const LIBRARY_REVISION = 15;
+/// 16: CmdCopyImage, CmdBlitImage, CmdCopyImageToBuffer, CmdClearAttachments.
+pub const LIBRARY_REVISION = 16;
 const BUILD_DATE = "31.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

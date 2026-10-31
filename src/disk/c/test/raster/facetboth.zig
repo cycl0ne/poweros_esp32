@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.4 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.5 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -167,6 +167,7 @@ const entries = [_]shader.Entry{
 const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 
 const texture_side: u32 = 64;
+const picture_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
 const texture_levels = 7;
 const formats = [_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 };
 const Target = enum(u32) { bgra, rgba, rgb565 };
@@ -301,7 +302,7 @@ const Side = struct {
                 const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = if (with_depth != 0) &depth else null };
                 try expect(fb.CreateRenderPass(device, &.{ .attachment_count = @intCast(1 + with_depth), .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.passes[f][with_depth][load]), error.Refused);
             };
-            const block = try side.imageGiving(.{ .format = format, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE, &side.pictures[f]);
+            const block = try side.imageGiving(.{ .format = format, .extent = extent, .tiling = .linear, .usage = picture_usage }, facet.MEMORY_PROPERTY_HOST_VISIBLE, &side.pictures[f]);
             side.picture_views[f] = try side.view(side.pictures[f].?, format, facet.IMAGE_ASPECT_COLOR, 1);
             var data: ?*anyopaque = null;
             try expect(fb.MapMemory(device, block, 0, facet.WHOLE_SIZE, 0, &data), error.Refused);
@@ -784,6 +785,110 @@ const Cases = struct {
         side.draw(quad_at, 6);
         side.end();
     }
+    /// A picture to read from: a strip of triangles over the clear colour.
+    fn drawnPicture(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{});
+        side.draw(clockwise_at, 6);
+        side.end();
+    }
+    fn copied(side: *Side) Failure!void {
+        try Cases.drawnPicture(side);
+        side.begin(.{ .target = .rgba });
+        side.end();
+        const moved = facet.ImageCopy{ .src_offset = .{ .x = 20, .y = 10 }, .dst_offset = .{ .x = 40, .y = 30 }, .extent = .{ .width = side.width - 100, .height = side.height - 50 } };
+        side.fb.CmdCopyImage(side.commands.?, side.pictures[0].?, .general, side.pictures[1].?, .general, 1, @ptrCast(&moved));
+    }
+    fn copiedTexture(side: *Side) Failure!void {
+        side.begin(.{});
+        side.end();
+        const levels = [3]facet.ImageCopy{
+            .{ .dst_offset = .{ .x = 10, .y = 10 }, .extent = .{ .width = 64, .height = 64 } },
+            .{ .src_subresource = .{ .mip_level = 1 }, .dst_offset = .{ .x = 90, .y = 10 }, .extent = .{ .width = 32, .height = 32 } },
+            .{ .src_subresource = .{ .mip_level = 3 }, .src_offset = .{ .x = 2, .y = 3 }, .dst_offset = .{ .x = 140, .y = 10 }, .extent = .{ .width = 4, .height = 4 } },
+        };
+        side.fb.CmdCopyImage(side.commands.?, side.textures[0].?, .general, side.pictures[0].?, .general, levels.len, &levels);
+    }
+    fn blitted(comptime filter: facet.Filter, comptime turned: bool, comptime target: Target) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                try Cases.drawnPicture(side);
+                if (target != .bgra) {
+                    side.begin(.{ .target = target });
+                    side.end();
+                }
+                const w: i32 = @intCast(side.width);
+                const h: i32 = @intCast(side.height);
+                const blit = facet.ImageBlit{
+                    .src_offsets = .{ .{ .x = 0, .y = 0 }, .{ .x = w, .y = h, .z = 1 } },
+                    .dst_offsets = if (turned) .{ .{ .x = w - 20, .y = h - 40 }, .{ .x = 30, .y = 20, .z = 1 } } else .{ .{ .x = 30, .y = 20 }, .{ .x = w - 20, .y = h - 40, .z = 1 } },
+                };
+                if (target == .bgra) {
+                    // Into itself would read what it wrote: a copy first.
+                    const whole = facet.ImageCopy{ .extent = .{ .width = side.width, .height = side.height } };
+                    side.fb.CmdCopyImage(side.commands.?, side.pictures[0].?, .general, side.pictures[1].?, .general, 1, @ptrCast(&whole));
+                    side.fb.CmdBlitImage(side.commands.?, side.pictures[1].?, .general, side.pictures[0].?, .general, 1, @ptrCast(&blit), filter);
+                } else {
+                    side.fb.CmdBlitImage(side.commands.?, side.pictures[0].?, .general, side.pictures[@intFromEnum(target)].?, .general, 1, @ptrCast(&blit), filter);
+                }
+            }
+        }.run;
+    }
+    fn blittedTexture(side: *Side) Failure!void {
+        side.begin(.{});
+        side.end();
+        const blit = facet.ImageBlit{
+            .src_subresource = .{ .mip_level = 1 },
+            .src_offsets = .{ .{}, .{ .x = 32, .y = 32, .z = 1 } },
+            .dst_offsets = .{ .{ .x = 10, .y = 10 }, .{ .x = 300, .y = 200, .z = 1 } },
+        };
+        side.fb.CmdBlitImage(side.commands.?, side.textures[1].?, .general, side.pictures[0].?, .general, 1, @ptrCast(&blit), .nearest);
+    }
+    /// A texture written from a picture, then drawn: last of the cases, as it
+    /// changes the texture.
+    fn intoTexture(side: *Side) Failure!void {
+        try Cases.drawnPicture(side);
+        const blit = facet.ImageBlit{
+            .src_offsets = .{ .{}, .{ .x = @intCast(side.width), .y = @intCast(side.height), .z = 1 } },
+            .dst_offsets = .{ .{}, .{ .x = 64, .y = 64, .z = 1 } },
+        };
+        side.fb.CmdBlitImage(side.commands.?, side.pictures[0].?, .general, side.textures[0].?, .general, 1, @ptrCast(&blit), .linear);
+        side.begin(.{});
+        side.texture(0);
+        try side.use(.{ .vertex = "texture", .fragment = "nearest" });
+        side.draw(quad_at, 6);
+        side.end();
+    }
+    fn readBack(side: *Side) Failure!void {
+        try Cases.drawnPicture(side);
+        side.begin(.{ .target = .rgba, .clear = .{ 0, 0, 0, 1 } });
+        side.end();
+        const there = facet.BufferImageCopy{ .image_offset = .{ .x = 150, .y = 100 }, .image_extent = .{ .width = 64, .height = 64 } };
+        side.fb.CmdCopyImageToBuffer(side.commands.?, side.pictures[0].?, .general, side.staging.?, 1, @ptrCast(&there));
+        const back = facet.BufferImageCopy{ .image_offset = .{ .x = 10, .y = 10 }, .image_extent = .{ .width = 64, .height = 64 } };
+        side.fb.CmdCopyBufferToImage(side.commands.?, side.staging.?, side.pictures[1].?, .general, 1, @ptrCast(&back));
+    }
+    fn clearOf(comptime aspect: u32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                const stenciled = aspect & facet.IMAGE_ASPECT_STENCIL != 0;
+                side.begin(.{ .stencil = if (stenciled) .with_depth else .none });
+                const kind: Stencil = if (stenciled) .with_depth else .none;
+                try side.use(.{ .stencil = kind, .test_depth = true, .write_depth = true });
+                side.draw(near_at, 3);
+                const attachment = facet.ClearAttachment{ .aspect_mask = aspect, .clear_value = if (aspect & facet.IMAGE_ASPECT_COLOR != 0) .{ .color = .{ .float32 = .{ 0.8, 0.5, 0.2, 1 } } } else .{ .depth_stencil = .{ .depth = 1, .stencil = 4 } } };
+                const rects = [2]facet.ClearRect{
+                    .{ .rect = .{ .offset = .{ .x = 100, .y = 80 }, .extent = .{ .width = 200, .height = 100 } } },
+                    .{ .rect = .{ .offset = .{ .x = 340, .y = 200 }, .extent = .{ .width = 90, .height = 60 } } },
+                };
+                side.fb.CmdClearAttachments(side.commands.?, 1, @ptrCast(&attachment), rects.len, &rects);
+                const four = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 4 };
+                try side.use(.{ .stencil = kind, .test_depth = true, .stencil_test = stenciled, .front = four, .back = four });
+                side.draw(quad_at, 6);
+                side.end();
+            }
+        }.run;
+    }
     fn drawnAs(comptime options: Options, comptime first: u32, comptime count: u32) *const fn (side: *Side) Failure!void {
         return &struct {
             fn run(side: *Side) Failure!void {
@@ -1078,6 +1183,18 @@ const cases = [_]Case{
     .{ .name = "stencil: drawn in colour as it marks", .run = Cases.stencilSteps(.with_depth, 0, &.{.{ .first = far_at, .count = 3, .front = marks, .shows = true }}, .{ .compare_op = .not_equal, .compare_mask = 0xFF, .reference = 1 }) },
     .{ .name = "stencil: lines mark", .run = Cases.stencilSteps(.with_depth, 0, &.{.{ .first = clockwise_at, .count = 6, .topology = .line_list, .front = marks, .back = .{ .compare_op = .never } }}, equal_1) },
     .{ .name = "stencil: set by commands", .run = &Cases.stencilByCommands },
+    .{ .name = "copied: picture to picture", .target = .rgba, .run = &Cases.copied },
+    .{ .name = "copied: levels of a texture", .run = &Cases.copiedTexture },
+    .{ .name = "copied: to a buffer and back", .target = .rgba, .run = &Cases.readBack },
+    .{ .name = "blit: nearest", .run = Cases.blitted(.nearest, false, .bgra) },
+    .{ .name = "blit: linear", .run = Cases.blitted(.linear, false, .bgra) },
+    .{ .name = "blit: turned round", .run = Cases.blitted(.nearest, true, .bgra) },
+    .{ .name = "blit: into rgba", .target = .rgba, .run = Cases.blitted(.linear, false, .rgba) },
+    .{ .name = "blit: into 565", .target = .rgb565, .run = Cases.blitted(.nearest, true, .rgb565) },
+    .{ .name = "blit: from a texture", .run = &Cases.blittedTexture },
+    .{ .name = "cleared in the pass: colour", .run = Cases.clearOf(facet.IMAGE_ASPECT_COLOR) },
+    .{ .name = "cleared in the pass: depth", .run = Cases.clearOf(facet.IMAGE_ASPECT_DEPTH) },
+    .{ .name = "cleared in the pass: stencil", .run = Cases.clearOf(facet.IMAGE_ASPECT_STENCIL) },
     .{ .name = "scissor", .run = &Cases.scissor },
     .{ .name = "viewport", .run = &Cases.viewport },
     .{ .name = "depth range", .run = &Cases.depthRange },
@@ -1110,6 +1227,7 @@ const cases = [_]Case{
     .{ .name = "drawn in 565", .target = .rgb565, .run = Cases.onTarget(.rgb565) },
     .{ .name = "mixed by their alpha in rgba", .target = .rgba, .run = Cases.onTargetMixed(.rgba) },
     .{ .name = "mixed by their alpha in 565", .target = .rgb565, .run = Cases.onTargetMixed(.rgb565) },
+    .{ .name = "blit: into a texture, then drawn", .run = &Cases.intoTexture },
 };
 
 /// How far apart two pixels are, in the channel furthest apart: in steps of

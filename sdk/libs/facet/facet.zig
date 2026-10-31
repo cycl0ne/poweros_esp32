@@ -551,6 +551,45 @@ pub const BufferImageCopy = extern struct {
     image_extent: Extent3D,
 };
 
+/// A rectangle of texels copied from one image to another, as they are.
+pub const ImageCopy = extern struct {
+    src_subresource: ImageSubresourceLayers = .{},
+    src_offset: Offset3D = .{},
+    dst_subresource: ImageSubresourceLayers = .{},
+    dst_offset: Offset3D = .{},
+    extent: Extent3D,
+};
+
+/// A rectangle of an image drawn over one of another, its size and direction
+/// as the corners say.
+pub const ImageBlit = extern struct {
+    src_subresource: ImageSubresourceLayers = .{},
+    src_offsets: [2]Offset3D = .{ .{}, .{} },
+    dst_subresource: ImageSubresourceLayers = .{},
+    dst_offsets: [2]Offset3D = .{ .{}, .{} },
+};
+
+/// How CmdBlitImage reads between texels.
+pub const Filter = enum(u32) {
+    nearest = 0,
+    linear = 1,
+    _,
+};
+
+/// What of a render pass's attachments CmdClearAttachments clears, and to what.
+pub const ClearAttachment = extern struct {
+    aspect_mask: u32 = IMAGE_ASPECT_COLOR,
+    color_attachment: u32 = 0,
+    clear_value: ClearValue,
+};
+
+/// Where CmdClearAttachments clears.
+pub const ClearRect = extern struct {
+    rect: Rect2D,
+    base_array_layer: u32 = 0,
+    layer_count: u32 = 1,
+};
+
 /// What a view of an image is made with.
 pub const ImageViewCreateInfo = extern struct {
     flags: u32 = 0,

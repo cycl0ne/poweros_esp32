@@ -24,8 +24,12 @@ Generated from the source by `./zig build autodoc`.
 - [CmdBindIndexBuffer](#cmdbindindexbuffer) - Recorded: the index buffer CmdDrawIndexed reads.
 - [CmdBindPipeline](#cmdbindpipeline) - Recorded: the pipeline the draws after it draw with.
 - [CmdBindVertexBuffers](#cmdbindvertexbuffers) - Recorded: vertex buffers bound, from binding `first_binding` on.
+- [CmdBlitImage](#cmdblitimage) - Recorded: a rectangle of an image drawn over one of another, scaled.
+- [CmdClearAttachments](#cmdclearattachments) - Recorded: parts of a render pass's attachments cleared, in the middle of it.
 - [CmdCopyBuffer](#cmdcopybuffer) - Recorded: bytes copied from one buffer to another.
 - [CmdCopyBufferToImage](#cmdcopybuffertoimage) - Recorded: rectangles of texels copied from a buffer into an image.
+- [CmdCopyImage](#cmdcopyimage) - Recorded: a rectangle of texels copied from one image to another, as they are.
+- [CmdCopyImageToBuffer](#cmdcopyimagetobuffer) - Recorded: a rectangle of texels copied from an image to a buffer.
 - [CmdDraw](#cmddraw) - Recorded: vertices drawn, in the order they are in the vertex buffers.
 - [CmdDrawIndexed](#cmddrawindexed) - Recorded: vertices drawn in the order the index buffer gives them.
 - [CmdEndRenderPass](#cmdendrenderpass) - Recorded: the render pass ended, and what it drew stored.
@@ -878,6 +882,129 @@ const offset: u64 = 0;
 fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertices), @ptrCast(&offset));
 ```
 
+## CmdBlitImage
+
+Recorded: a rectangle of an image drawn over one of another, scaled.
+
+**SYNOPSIS**
+
+```zig
+fn CmdBlitImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageBlit, filter: facet.Filter) void
+```
+
+**SINCE**
+
+1.16. LVO -392.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `source`, `destination` - images of colour, of any formats.
+- `source_layout`, `destination_layout` - not looked at.
+- `region_count`, `regions` - the rectangles: corners the other way round
+  turn it round.
+- `filter` - NEAREST or LINEAR.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Outside a render pass. Colours go by way of 8 bits a channel, and are
+rounded into the destination's format, not dithered. What falls outside
+the destination is left out, and the source's edge is read beyond it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+What is given is copied as the command is recorded; the images and buffers
+have to last until it has been played.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdCopyImage`
+
+**EXAMPLES**
+
+```zig
+fb.CmdBlitImage(commands, from.?, .general, to.?, .general, 1, @ptrCast(&region), .linear);
+```
+
+## CmdClearAttachments
+
+Recorded: parts of a render pass's attachments cleared, in the middle of it.
+
+**SYNOPSIS**
+
+```zig
+fn CmdClearAttachments(base: *FacetBase, buffer: *facet.CommandBuffer, attachment_count: u32, attachments: [*]const facet.ClearAttachment, rect_count: u32, rects: [*]const facet.ClearRect) void
+```
+
+**SINCE**
+
+1.16. LVO -400.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `attachment_count`, `attachments` - what to clear: IMAGE_ASPECT_COLOR for
+  the colour attachment, and IMAGE_ASPECT_DEPTH and IMAGE_ASPECT_STENCIL.
+- `rect_count`, `rects` - where: inside the render area.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Inside a render pass, whatever draws there before or after it. The scissor
+and the pipeline bound have no part in it, and nothing bound changes.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+What is given is copied as the command is recorded; the images and buffers
+have to last until it has been played.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdBeginRenderPass`
+
+**EXAMPLES**
+
+```zig
+fb.CmdClearAttachments(commands, 1, @ptrCast(&attachment), 1, @ptrCast(&rect));
+```
+
 ## CmdCopyBuffer
 
 Recorded: bytes copied from one buffer to another.
@@ -1003,6 +1130,129 @@ None known.
 ```zig
 const region = facet.BufferImageCopy{ .image_extent = .{ .width = 256, .height = 256 } };
 fb.CmdCopyBufferToImage(commands, staging.?, picture.?, .transfer_dst_optimal, 1, @ptrCast(&region));
+```
+
+## CmdCopyImage
+
+Recorded: a rectangle of texels copied from one image to another, as they are.
+
+**SYNOPSIS**
+
+```zig
+fn CmdCopyImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageCopy) void
+```
+
+**SINCE**
+
+1.16. LVO -388.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `source`, `destination` - images of the same size of texel, whatever their
+  formats: the bytes go as they are.
+- `source_layout`, `destination_layout` - not looked at.
+- `region_count`, `regions` - the rectangles.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Outside a render pass. The part of a rectangle outside either image is
+left out, and so are images of depth or stencil, which live in the tiles.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+What is given is copied as the command is recorded; the images and buffers
+have to last until it has been played.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdBlitImage`, `CmdCopyImageToBuffer`, `CmdCopyBufferToImage`
+
+**EXAMPLES**
+
+```zig
+fb.CmdCopyImage(commands, from.?, .general, to.?, .general, 1, @ptrCast(&facet.ImageCopy{ .extent = .{ .width = 64, .height = 64 } }));
+```
+
+## CmdCopyImageToBuffer
+
+Recorded: a rectangle of texels copied from an image to a buffer.
+
+**SYNOPSIS**
+
+```zig
+fn CmdCopyImageToBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, image_layout: facet.ImageLayout, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferImageCopy) void
+```
+
+**SINCE**
+
+1.16. LVO -396.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `image` - an image of colour.
+- `image_layout` - not looked at.
+- `destination` - the buffer.
+- `region_count`, `regions` - the rectangles.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Outside a render pass. In the buffer the texels are in rows, in the image's
+format. The part of a rectangle outside the image, or past the buffer's
+end, is left out.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+What is given is copied as the command is recorded; the images and buffers
+have to last until it has been played.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdCopyBufferToImage`, `CmdCopyImage`
+
+**EXAMPLES**
+
+```zig
+fb.CmdCopyImageToBuffer(commands, picture.?, .general, readback.?, 1, @ptrCast(&region));
 ```
 
 ## CmdDraw

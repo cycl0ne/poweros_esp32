@@ -106,6 +106,48 @@ pub const BeginRenderPass = extern struct {
     clear_stencil: u32,
 };
 
+/// CmdCopyImage, followed by its regions.
+pub const CopyImage = extern struct {
+    pub const op: _stream.Op = .copy_image;
+    head: Head = .{ .op = op },
+    count: u32,
+    pad: u32 = 0,
+    source: *Image,
+    destination: *Image,
+};
+
+/// CmdBlitImage, followed by its regions.
+pub const BlitImage = extern struct {
+    pub const op: _stream.Op = .blit_image;
+    head: Head = .{ .op = op },
+    count: u32,
+    filter: facet.Filter,
+    source: *Image,
+    destination: *Image,
+};
+
+/// CmdCopyImageToBuffer, followed by its regions.
+pub const CopyImageToBuffer = extern struct {
+    pub const op: _stream.Op = .copy_image_to_buffer;
+    head: Head = .{ .op = op },
+    count: u32,
+    pad: u32 = 0,
+    image: *Image,
+    destination: *Buffer,
+};
+
+/// One attachment of CmdClearAttachments over one of its rectangles.
+pub const ClearAttachment = extern struct {
+    pub const op: _stream.Op = .clear_attachment;
+    head: Head = .{ .op = op },
+    aspect_mask: u32,
+    rect: facet.Rect2D,
+    /// 0xAARRGGBB, the depth 0 to 1, and the stencil.
+    color: u32,
+    depth: f32,
+    stencil: u32,
+};
+
 pub const EndRenderPass = extern struct {
     pub const op: _stream.Op = .end_render_pass;
     head: Head = .{ .op = op },

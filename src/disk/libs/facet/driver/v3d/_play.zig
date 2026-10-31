@@ -34,6 +34,7 @@ const _pipeline = @import("../../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
 const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
 const _vertices = @import("../_vertices.zig");
+const _transfer = @import("../_transfer.zig");
 const driver = @import("driver.zig");
 const Hardware = driver.Hardware;
 const regs = v3d.regs;
@@ -171,6 +172,18 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
         .barrier => {},
         .copy_buffer_to_image => copyBufferToImage(queue, _stream.as(_command.CopyBufferToImage, head)),
         .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
+        .copy_image => {
+            const command = _stream.as(_command.CopyImage, head);
+            _transfer.copyImage(command);
+            texturesToGpu(queue, command.destination);
+        },
+        .blit_image => {
+            const command = _stream.as(_command.BlitImage, head);
+            _transfer.blitImage(command);
+            texturesToGpu(queue, command.destination);
+        },
+        .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
+        .clear_attachment => if (player.drawing) clearAttachment(queue, _stream.as(_command.ClearAttachment, head)),
         .begin_render_pass => beginRenderPass(queue, _stream.as(_command.BeginRenderPass, head)),
         .end_render_pass => endRenderPass(queue),
         .bind_pipeline => player.pipeline = _stream.as(_command.BindPipeline, head).pipeline,
@@ -349,6 +362,36 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
 /// and cut to the part.
 fn clearArea(queue: *Queue, color: u32) void {
     const player = playerOf(queue);
+    clearRectangle(queue, player.area, color, 0xF, null, null);
+}
+
+/// A part of the attachments cleared in the middle of a pass.
+fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void {
+    const player = playerOf(queue);
+    const aspect = command.aspect_mask;
+    const rect = command.rect;
+    const x = @as(i64, rect.offset.x);
+    const y = @as(i64, rect.offset.y);
+    const area = player.area;
+    const left: u32 = @intCast(std.math.clamp(x, area.left, area.right));
+    const top: u32 = @intCast(std.math.clamp(y, area.top, area.bottom));
+    const right: u32 = @intCast(std.math.clamp(x + rect.extent.width, left, area.right));
+    const bottom: u32 = @intCast(std.math.clamp(y + rect.extent.height, top, area.bottom));
+    if (left == right or top == bottom) return;
+    clearRectangle(
+        queue,
+        .{ .left = left, .top = top, .right = right, .bottom = bottom },
+        command.color,
+        if (aspect & facet.IMAGE_ASPECT_COLOR != 0) 0xF else 0,
+        if (aspect & facet.IMAGE_ASPECT_DEPTH != 0 and player.frame.depth) command.depth else null,
+        if (aspect & facet.IMAGE_ASPECT_STENCIL != 0 and player.frame.stencil) @truncate(command.stencil) else null,
+    );
+}
+
+/// A rectangle over the whole image, cut to `clip`, writing the `channels` of
+/// the colour and the depth and the stencil given.
+fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, depth: ?f32, stencil: ?u8) void {
+    const player = playerOf(queue);
     const channel = struct {
         fn of(value: u32, shift: u5) f32 {
             return @as(f32, @floatFromInt(value >> shift & 0xFF)) / 255;
@@ -362,12 +405,16 @@ fn clearArea(queue: *Queue, color: u32) void {
     const vertices = carve(queue, 4 * stride, 4) orelse return;
     const half_width = @as(f32, @floatFromInt(player.frame.width)) / 2;
     const half_height = @as(f32, @floatFromInt(player.frame.height)) / 2;
-    const viewport = ViewportScale{ .half_width = half_width, .half_height = half_height, .scale = 0, .offset = 0 };
+    const viewport = ViewportScale{ .half_width = half_width, .half_height = half_height, .scale = 1, .offset = 0 };
     for ([4][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ -1, 1 }, .{ 1, 1 } }, 0..) |corner, k| {
-        writeRecord(vertices.cpu + k * stride, &[4]f32{ corner[0], corner[1], 0, 1 }, &viewport, 4, .{ .constant = rgba });
+        writeRecord(vertices.cpu + k * stride, &[4]f32{ corner[0], corner[1], depth orelse 0, 1 }, &viewport, 4, .{ .constant = rgba });
     }
+    const stencil_face = cl.StencilFace{ .fail = 1, .pass = 2, .depth_fail = 1, .compare = cl.COMPARE_ALWAYS, .compare_mask = 0, .write_mask = 0xFF, .reference = stencil orelse 0 };
     const state = frames.DrawState{
-        .clip = player.area,
+        .clip = clip,
+        .cfg = .{ .compare = cl.COMPARE_ALWAYS, .depth_write = depth != null, .stencil = stencil != null },
+        .mixing = .{ .channels = channels },
+        .stencil = .{ stencil_face, stencil_face },
         .x = 0,
         .y = 0,
         .width = half_width * 2,
@@ -380,6 +427,13 @@ fn clearArea(queue: *Queue, color: u32) void {
     cl.indexBufferSetup(&player.bin, indices.address, @sizeOf(@TypeOf(corners)));
     cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, corners.len);
     player.binned = true;
+}
+
+/// What was written into a texture on the cores seen by the V3D.
+fn texturesToGpu(queue: *Queue, image: *Image) void {
+    if (image.kind == .texture) if (image.data) |data| {
+        playerOf(queue).hardware.space.rangeToGpu(data, @intCast(image.bytes));
+    };
 }
 
 fn endRenderPass(queue: *Queue) void {

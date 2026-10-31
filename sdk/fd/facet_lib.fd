@@ -210,4 +210,12 @@ void CmdSetStencilCompareMask(*facet.CommandBuffer buffer, u32 face_mask, u32 va
 void CmdSetStencilWriteMask(*facet.CommandBuffer buffer, u32 face_mask, u32 value)
 /// Recorded: the stencil test's reference, for a pipeline that leaves it to commands.
 void CmdSetStencilReference(*facet.CommandBuffer buffer, u32 face_mask, u32 value)
+/// Recorded: a rectangle of texels copied from one image to another, as they are.
+void CmdCopyImage(*facet.CommandBuffer buffer, *facet.Image source, facet.ImageLayout source_layout, *facet.Image destination, facet.ImageLayout destination_layout, u32 region_count, [*]const facet.ImageCopy regions)
+/// Recorded: a rectangle of an image drawn over one of another, scaled.
+void CmdBlitImage(*facet.CommandBuffer buffer, *facet.Image source, facet.ImageLayout source_layout, *facet.Image destination, facet.ImageLayout destination_layout, u32 region_count, [*]const facet.ImageBlit regions, facet.Filter filter)
+/// Recorded: a rectangle of texels copied from an image to a buffer.
+void CmdCopyImageToBuffer(*facet.CommandBuffer buffer, *facet.Image image, facet.ImageLayout image_layout, *facet.Buffer destination, u32 region_count, [*]const facet.BufferImageCopy regions)
+/// Recorded: parts of a render pass's attachments cleared, in the middle of it.
+void CmdClearAttachments(*facet.CommandBuffer buffer, u32 attachment_count, [*]const facet.ClearAttachment attachments, u32 rect_count, [*]const facet.ClearRect rects)
 ##end

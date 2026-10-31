@@ -104,6 +104,10 @@ const CmdSetLineWidth = @import("command/cmdsetlinewidth.zig").CmdSetLineWidth;
 const CmdSetStencilCompareMask = @import("command/cmdsetstencilcomparemask.zig").CmdSetStencilCompareMask;
 const CmdSetStencilWriteMask = @import("command/cmdsetstencilwritemask.zig").CmdSetStencilWriteMask;
 const CmdSetStencilReference = @import("command/cmdsetstencilreference.zig").CmdSetStencilReference;
+const CmdCopyImage = @import("command/cmdcopyimage.zig").CmdCopyImage;
+const CmdBlitImage = @import("command/cmdblitimage.zig").CmdBlitImage;
+const CmdCopyImageToBuffer = @import("command/cmdcopyimagetobuffer.zig").CmdCopyImageToBuffer;
+const CmdClearAttachments = @import("command/cmdclearattachments.zig").CmdClearAttachments;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -221,6 +225,10 @@ const contract_files = [_][]const u8{
     @embedFile("command/cmdsetstencilcomparemask.zig"),
     @embedFile("command/cmdsetstencilwritemask.zig"),
     @embedFile("command/cmdsetstencilreference.zig"),
+    @embedFile("command/cmdcopyimage.zig"),
+    @embedFile("command/cmdblitimage.zig"),
+    @embedFile("command/cmdcopyimagetobuffer.zig"),
+    @embedFile("command/cmdclearattachments.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -499,6 +507,18 @@ fn lvoCmdSetStencilWriteMask(base: *FacetBase, buffer: *facet.CommandBuffer, fac
 fn lvoCmdSetStencilReference(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) callconv(.c) void {
     return CmdSetStencilReference(base, buffer, face_mask, value);
 }
+fn lvoCmdCopyImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageCopy) callconv(.c) void {
+    return CmdCopyImage(base, buffer, source, source_layout, destination, destination_layout, region_count, regions);
+}
+fn lvoCmdBlitImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageBlit, filter: facet.Filter) callconv(.c) void {
+    return CmdBlitImage(base, buffer, source, source_layout, destination, destination_layout, region_count, regions, filter);
+}
+fn lvoCmdCopyImageToBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, image_layout: facet.ImageLayout, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferImageCopy) callconv(.c) void {
+    return CmdCopyImageToBuffer(base, buffer, image, image_layout, destination, region_count, regions);
+}
+fn lvoCmdClearAttachments(base: *FacetBase, buffer: *facet.CommandBuffer, attachment_count: u32, attachments: [*]const facet.ClearAttachment, rect_count: u32, rects: [*]const facet.ClearRect) callconv(.c) void {
+    return CmdClearAttachments(base, buffer, attachment_count, attachments, rect_count, rects);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -599,6 +619,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdSetStencilCompareMask),
     vec(lvoCmdSetStencilWriteMask),
     vec(lvoCmdSetStencilReference),
+    vec(lvoCmdCopyImage),
+    vec(lvoCmdBlitImage),
+    vec(lvoCmdCopyImageToBuffer),
+    vec(lvoCmdClearAttachments),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

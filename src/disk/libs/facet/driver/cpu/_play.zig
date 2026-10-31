@@ -35,6 +35,7 @@ const _render = @import("../../render/_render.zig");
 const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
 const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
 const _vertices = @import("../_vertices.zig");
+const _transfer = @import("../_transfer.zig");
 const _draw = @import("_draw.zig");
 
 pub const VertexBuffer = _vertices.VertexBuffer;
@@ -106,6 +107,10 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
         .barrier => {},
         .copy_buffer_to_image => copyBufferToImage(_stream.as(_command.CopyBufferToImage, head)),
         .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
+        .copy_image => _transfer.copyImage(_stream.as(_command.CopyImage, head)),
+        .blit_image => _transfer.blitImage(_stream.as(_command.BlitImage, head)),
+        .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
+        .clear_attachment => if (player.drawing) _draw.clearAttachment(queue, _stream.as(_command.ClearAttachment, head)),
         .begin_render_pass => beginRenderPass(queue, _stream.as(_command.BeginRenderPass, head)),
         .end_render_pass => endRenderPass(player),
         .bind_pipeline => player.pipeline = _stream.as(_command.BindPipeline, head).pipeline,

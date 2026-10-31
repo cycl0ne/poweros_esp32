@@ -997,6 +997,64 @@ test "the stencil: marked, then drawn only where marked; a face's own test; its 
     }
 }
 
+test "images copied, blitted, read back, and parts of an attachment cleared in the middle of a pass" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const one = try Picture.of(&bench, 16, 16);
+    const two = try Picture.of(&bench, 16, 16);
+    const cleared = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, cleared);
+    const frame = try framebuffer(&bench, cleared, &.{one.view}, 16, 16);
+    defer fb.DestroyFramebuffer(device, frame);
+    const blue: u32 = 0xFF00_00FF;
+    const red: u32 = 0xFFFF_0000;
+
+    // A corner cleared red in the middle of the pass, over blue.
+    var commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = cleared, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 16, .height = 16 } }, .clear_value_count = 1, .clear_values = @ptrCast(&clears(blue)) }, .@"inline");
+    const attachment = facet.ClearAttachment{ .clear_value = clears(red)[0] };
+    const rect = facet.ClearRect{ .rect = .{ .extent = .{ .width = 8, .height = 8 } } };
+    fb.CmdClearAttachments(commands, 1, @ptrCast(&attachment), 1, @ptrCast(&rect));
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    try testing.expectEqual(red, one.at(0, 0));
+    try testing.expectEqual(red, one.at(7, 7));
+    try testing.expectEqual(blue, one.at(8, 7));
+    try testing.expectEqual(blue, one.at(7, 8));
+
+    // Copied, moved along.
+    commands = try bench.record();
+    const moved = facet.ImageCopy{ .dst_offset = .{ .x = 4, .y = 4 }, .extent = .{ .width = 8, .height = 8 } };
+    fb.CmdCopyImage(commands, one.image, .general, two.image, .general, 1, @ptrCast(&moved));
+    try bench.submit();
+    try testing.expectEqual(red, two.at(4, 4));
+    try testing.expectEqual(red, two.at(11, 11));
+    try testing.expect(two.at(3, 3) != red);
+    try testing.expect(two.at(12, 12) != red);
+
+    // The whole, turned round left to right.
+    commands = try bench.record();
+    const turned = facet.ImageBlit{ .src_offsets = .{ .{}, .{ .x = 16, .y = 16, .z = 1 } }, .dst_offsets = .{ .{ .x = 16 }, .{ .y = 16, .z = 1 } } };
+    fb.CmdBlitImage(commands, one.image, .general, two.image, .general, 1, @ptrCast(&turned), .nearest);
+    try bench.submit();
+    try testing.expectEqual(red, two.at(15, 0));
+    try testing.expectEqual(red, two.at(8, 7));
+    try testing.expectEqual(blue, two.at(7, 0));
+    try testing.expectEqual(blue, two.at(0, 15));
+
+    // A part of it read back, its first row and the next.
+    const back, const back_bytes = try bench.buffer(64, facet.BUFFER_USAGE_TRANSFER_DST);
+    commands = try bench.record();
+    const part = facet.BufferImageCopy{ .image_offset = .{ .x = 6, .y = 0 }, .image_extent = .{ .width = 4, .height = 2 }, .buffer_row_length = 8 };
+    fb.CmdCopyImageToBuffer(commands, one.image, .general, back, 1, @ptrCast(&part));
+    try bench.submit();
+    try testing.expectEqual(red, std.mem.readInt(u32, back_bytes[0..4], .little));
+    try testing.expectEqual(blue, std.mem.readInt(u32, back_bytes[8..12], .little));
+    try testing.expectEqual(red, std.mem.readInt(u32, back_bytes[32..36], .little));
+}
+
 test "depths in order: nearer kept whatever was drawn first, with the depth pre-pass or without; a scissor and a render area cut what is drawn" {
     for ([_]u32{ 0, facet.PIPELINE_CREATE_DEPTH_PREPASS }) |flags| try depthsInOrder(flags);
 }

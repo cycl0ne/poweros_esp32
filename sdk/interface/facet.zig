@@ -110,6 +110,10 @@ pub const LVO = struct {
     pub const CmdSetStencilCompareMask = libraries.lvo(93);
     pub const CmdSetStencilWriteMask = libraries.lvo(94);
     pub const CmdSetStencilReference = libraries.lvo(95);
+    pub const CmdCopyImage = libraries.lvo(96);
+    pub const CmdBlitImage = libraries.lvo(97);
+    pub const CmdCopyImageToBuffer = libraries.lvo(98);
+    pub const CmdClearAttachments = libraries.lvo(99);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -207,6 +211,10 @@ pub const Fn = struct {
     pub const CmdSetStencilCompareMask = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32) callconv(.c) void;
     pub const CmdSetStencilWriteMask = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32) callconv(.c) void;
     pub const CmdSetStencilReference = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32) callconv(.c) void;
+    pub const CmdCopyImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *facet.Image, facet.ImageLayout, u32, [*]const facet.ImageCopy) callconv(.c) void;
+    pub const CmdBlitImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *facet.Image, facet.ImageLayout, u32, [*]const facet.ImageBlit, facet.Filter) callconv(.c) void;
+    pub const CmdCopyImageToBuffer = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *facet.Buffer, u32, [*]const facet.BufferImageCopy) callconv(.c) void;
+    pub const CmdClearAttachments = *const fn (*FacetBase, *facet.CommandBuffer, u32, [*]const facet.ClearAttachment, u32, [*]const facet.ClearRect) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -691,5 +699,25 @@ pub const FacetBase = opaque {
     /// Recorded: the stencil test's reference, for a pipeline that leaves it to commands.
     pub fn CmdSetStencilReference(self: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void {
         return libraries.call(self, LVO.CmdSetStencilReference, Fn.CmdSetStencilReference, .{ buffer, face_mask, value });
+    }
+
+    /// Recorded: a rectangle of texels copied from one image to another, as they are.
+    pub fn CmdCopyImage(self: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageCopy) void {
+        return libraries.call(self, LVO.CmdCopyImage, Fn.CmdCopyImage, .{ buffer, source, source_layout, destination, destination_layout, region_count, regions });
+    }
+
+    /// Recorded: a rectangle of an image drawn over one of another, scaled.
+    pub fn CmdBlitImage(self: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageBlit, filter: facet.Filter) void {
+        return libraries.call(self, LVO.CmdBlitImage, Fn.CmdBlitImage, .{ buffer, source, source_layout, destination, destination_layout, region_count, regions, filter });
+    }
+
+    /// Recorded: a rectangle of texels copied from an image to a buffer.
+    pub fn CmdCopyImageToBuffer(self: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, image_layout: facet.ImageLayout, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferImageCopy) void {
+        return libraries.call(self, LVO.CmdCopyImageToBuffer, Fn.CmdCopyImageToBuffer, .{ buffer, image, image_layout, destination, region_count, regions });
+    }
+
+    /// Recorded: parts of a render pass's attachments cleared, in the middle of it.
+    pub fn CmdClearAttachments(self: *FacetBase, buffer: *facet.CommandBuffer, attachment_count: u32, attachments: [*]const facet.ClearAttachment, rect_count: u32, rects: [*]const facet.ClearRect) void {
+        return libraries.call(self, LVO.CmdClearAttachments, Fn.CmdClearAttachments, .{ buffer, attachment_count, attachments, rect_count, rects });
     }
 };
