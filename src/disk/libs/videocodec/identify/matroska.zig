@@ -10,8 +10,8 @@
 //! the front - then the clusters with the sound and pictures, where the
 //! search stops. The first track of pictures (type 1) names its codec:
 //! `V_MPEG4/ISO/AVC` H.264, `V_MPEGH/ISO/HEVC` H.265, `V_MJPEG` Motion
-//! JPEG, `V_MPEG4/ISO/...` MPEG-4 Part 2, `V_MS/VFW/FOURCC` by the four
-//! letters of its Windows header. VP8, VP9 and AV1 are none here.
+//! JPEG, `V_MPEG4/ISO/...` MPEG-4 Part 2, `V_VP8`, `V_VP9` and `V_AV1`,
+//! `V_MS/VFW/FOURCC` by the four letters of its Windows header.
 
 const vc = @import("sdk").videocodec;
 
@@ -74,6 +74,9 @@ fn codecOf(id: []const u8, private: []const u8) u32 {
     if (same(id, "V_MPEG4/ISO/AVC")) return vc.VCODEC_H264;
     if (same(id, "V_MPEGH/ISO/HEVC")) return vc.VCODEC_H265;
     if (same(id, "V_MJPEG")) return vc.VCODEC_MJPEG;
+    if (same(id, "V_VP8")) return vc.VCODEC_VP8;
+    if (same(id, "V_VP9")) return vc.VCODEC_VP9;
+    if (same(id, "V_AV1")) return vc.VCODEC_AV1;
     if (id.len > 12 and same(id[0..12], "V_MPEG4/ISO/")) return vc.VCODEC_MPEG4V;
     if (!same(id, "V_MS/VFW/FOURCC") or private.len < 20) return vc.VCODEC_UNKNOWN;
     // A BITMAPINFOHEADER: its compression's four letters 16 bytes in.

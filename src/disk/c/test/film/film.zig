@@ -15,7 +15,7 @@
 //! FRAME (and TO) writes that frame - counted from 0 in the order they
 //! are shown - into TO as its planes are: NV12 (the brightness rows, then
 //! the colour rows, each as wide as the picture) for the chip's, I420
-//! for Motion JPEG and the software's H.264. `ffmpeg -i FILE -vf "select=eq(n\,FRAME)" -frames:v 1
+//! for Motion JPEG and the software's H.264 and VP8. `ffmpeg -i FILE -vf "select=eq(n\,FRAME)" -frames:v 1
 //! -pix_fmt nv12 -f rawvideo ref.nv12` makes ffmpeg's to compare.
 //!
 //! SEEK moves the film to that second at the end and says where it
@@ -36,7 +36,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Film";
-const VERSION_STRING = "\x00$VER: Film 1.1 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Film 1.2 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S";
@@ -62,6 +62,9 @@ fn codecName(codec: u32) [*:0]const u8 {
         vc.VCODEC_H265 => "H.265",
         vc.VCODEC_MJPEG => "Motion JPEG",
         vc.VCODEC_MPEG4V => "MPEG-4 Part 2",
+        vc.VCODEC_VP8 => "VP8",
+        vc.VCODEC_VP9 => "VP9",
+        vc.VCODEC_AV1 => "AV1",
         else => "pictures",
     };
 }

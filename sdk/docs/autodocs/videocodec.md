@@ -566,8 +566,9 @@ The bytes are the caller's, only read.
 **NOTES**
 
 A codec it names may still be one nothing here decodes: VCODEC_MPEG4V,
-for which there is no module; H.264 and H.265 where no module in
-LIBS:codecs/ decodes them - chip.vcodec on a board without the chip.
+VCODEC_VP9 and VCODEC_AV1, for which there is no module; H.265 where
+no module in LIBS:codecs/ decodes it - chip.vcodec on a board without
+the chip.
 
 **BUGS**
 

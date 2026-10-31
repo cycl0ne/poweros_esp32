@@ -133,6 +133,9 @@ pub fn codecOf(codec: u32) u32 {
         media.MCODEC_H265 => vc.VCODEC_H265,
         media.MCODEC_MJPEG => vc.VCODEC_MJPEG,
         media.MCODEC_MPEG4V => vc.VCODEC_MPEG4V,
+        media.MCODEC_VP8 => vc.VCODEC_VP8,
+        media.MCODEC_VP9 => vc.VCODEC_VP9,
+        media.MCODEC_AV1 => vc.VCODEC_AV1,
         else => vc.VCODEC_UNKNOWN,
     };
 }
