@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.2 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.3 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -177,6 +177,8 @@ const Options = struct {
     fragment: [*:0]const u8 = "color",
     topology: facet.PrimitiveTopology = .triangle_list,
     restart: bool = false,
+    polygon_mode: facet.PolygonMode = .fill,
+    line_width: f32 = 1,
     cull: u32 = facet.CULL_MODE_NONE,
     front: facet.FrontFace = .clockwise,
     test_depth: bool = false,
@@ -505,7 +507,7 @@ const Side = struct {
         const viewports = facet.PipelineViewportStateCreateInfo{};
         const dynamic_states = [3]facet.DynamicState{ .viewport, .scissor, .blend_constants };
         const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = if (options.dynamic_constants) 3 else 2, .dynamic_states = &dynamic_states };
-        const rasterization = facet.PipelineRasterizationStateCreateInfo{ .cull_mode = options.cull, .front_face = options.front };
+        const rasterization = facet.PipelineRasterizationStateCreateInfo{ .cull_mode = options.cull, .front_face = options.front, .polygon_mode = options.polygon_mode, .line_width = options.line_width };
         const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = options.test_depth, .depth_write_enable = options.write_depth, .depth_compare_op = options.compare };
         const blend_attachment = options.mixing orelse facet.PipelineColorBlendAttachmentState{
             .blend_enable = options.blend,
@@ -690,6 +692,16 @@ const Cases = struct {
                 try side.use(.{ .mixing = mixing, .constants = constants });
                 side.draw(glass_at, 3);
                 side.draw(near_at, 3);
+                side.end();
+            }
+        }.run;
+    }
+    fn drawnAs(comptime options: Options, comptime first: u32, comptime count: u32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                try side.use(options);
+                side.draw(first, count);
                 side.end();
             }
         }.run;
@@ -948,6 +960,14 @@ const cases = [_]Case{
     .{ .name = "written: green and alpha", .run = Cases.mixed(.{ .color_write_mask = facet.COLOR_COMPONENT_G | facet.COLOR_COMPONENT_A }, .{ 0, 0, 0, 0 }) },
     .{ .name = "written: nothing", .run = Cases.mixed(.{ .color_write_mask = 0 }, .{ 0, 0, 0, 0 }) },
     .{ .name = "written: blue, blended", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .src_alpha, .dst_color_blend_factor = .one_minus_src_alpha, .color_write_mask = facet.COLOR_COMPONENT_B }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "lines", .run = Cases.drawnAs(.{ .topology = .line_list }, clockwise_at, 6) },
+    .{ .name = "line strip", .run = Cases.drawnAs(.{ .topology = .line_strip }, strip_at, 5) },
+    .{ .name = "lines, wide", .run = Cases.drawnAs(.{ .topology = .line_list, .line_width = 5 }, clockwise_at, 6) },
+    .{ .name = "points", .run = Cases.drawnAs(.{ .topology = .point_list }, clockwise_at, 22) },
+    .{ .name = "triangles as edges", .run = Cases.drawnAs(.{ .polygon_mode = .line }, clockwise_at, 6) },
+    .{ .name = "triangles as corners", .run = Cases.drawnAs(.{ .polygon_mode = .point }, clockwise_at, 6) },
+    .{ .name = "triangles as edges, culled", .run = Cases.drawnAs(.{ .polygon_mode = .line, .cull = facet.CULL_MODE_BACK, .front = .clockwise }, clockwise_at, 6) },
+    .{ .name = "a line behind the eye", .run = Cases.drawnAs(.{ .topology = .line_strip }, behind_at, 3) },
     .{ .name = "scissor", .run = &Cases.scissor },
     .{ .name = "viewport", .run = &Cases.viewport },
     .{ .name = "depth range", .run = &Cases.depthRange },

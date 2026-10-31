@@ -202,4 +202,6 @@ facet.Result QueuePresent(*facet.Queue queue, *const facet.PresentInfo info)
 facet.Result CreateWindowSurface(*facet.Instance instance, *const facet.WindowSurfaceCreateInfo info, *?*facet.Surface surface)
 /// Recorded: the blend constants, for a pipeline that leaves them to commands.
 void CmdSetBlendConstants(*facet.CommandBuffer buffer, *const [4]f32 constants)
+/// Recorded: the width of lines, for a pipeline that leaves it to commands.
+void CmdSetLineWidth(*facet.CommandBuffer buffer, f32 width)
 ##end

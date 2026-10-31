@@ -47,15 +47,18 @@ const _instance = @import("../instance/_instance.zig");
 /// fixed form (`shader.fixedFragment`), or the pipeline is refused with
 /// `error_feature_not_present`.
 ///
-/// What it draws: triangle lists, strips and fans, a restart index ending a
-/// strip or a fan; filled, one sample a pixel, culled by facing as asked; a
+/// What it draws: points, lines and line strips, and triangle lists, strips
+/// and fans, a restart index ending a strip or a fan; triangles filled, or as
+/// their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
+/// triangles culled by facing as asked; lines `line_width` pixels wide, set
+/// here or by CmdSetLineWidth, and points one pixel; a
 /// depth test of any compare, written or not, without stencil, bounds,
 /// bias or clamp; the channels of the write mask written, replacing what is
 /// there or mixed with it by any blend factors and operation, the alpha by
 /// its own, and no logic op; one viewport and one scissor, given here or set
 /// by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
-/// and blend_constants with CmdSetBlendConstants; the others are taken and
-/// do nothing). A pipeline with the rasterizer
+/// blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth;
+/// the others are taken and do nothing). A pipeline with the rasterizer
 /// discarding, or culling front and back, draws nothing.
 ///
 /// `PIPELINE_CREATE_DEPTH_PREPASS` in `flags`, facet.library's own, has the
@@ -182,6 +185,8 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .depth_test = null,
         .depth_write = false,
         .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0,
+        .polygon_mode = .fill,
+        .line_width = 1,
         .mixing = .{},
         .viewport = null,
         .scissor = null,
@@ -206,7 +211,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     }
     if (info.input_assembly_state) |assembly| {
         switch (assembly.topology) {
-            .triangle_list, .triangle_strip, .triangle_fan => made.topology = assembly.topology,
+            .point_list, .line_list, .line_strip, .triangle_list, .triangle_strip, .triangle_fan => made.topology = assembly.topology,
             else => return .error_feature_not_present,
         }
         made.restart = assembly.primitive_restart_enable;
@@ -215,7 +220,12 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
 
     // The rasterization.
     const rasterization = info.rasterization_state;
-    if (rasterization.polygon_mode != .fill or rasterization.depth_clamp_enable or rasterization.depth_bias_enable) return .error_feature_not_present;
+    if (rasterization.depth_clamp_enable or rasterization.depth_bias_enable) return .error_feature_not_present;
+    switch (rasterization.polygon_mode) {
+        .fill, .line, .point => made.polygon_mode = rasterization.polygon_mode,
+        else => return .error_feature_not_present,
+    }
+    made.line_width = rasterization.line_width;
     made.front = if (rasterization.front_face == .clockwise) .clockwise else .counter_clockwise;
     switch (rasterization.cull_mode) {
         facet.CULL_MODE_NONE => made.cull = .none,
@@ -264,6 +274,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             .viewport => dynamic_viewport = true,
             .scissor => dynamic_scissor = true,
             .blend_constants => made.mixing.constants = null,
+            .line_width => made.line_width = null,
             else => {},
         };
     }

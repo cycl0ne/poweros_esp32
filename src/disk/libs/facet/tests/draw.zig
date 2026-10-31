@@ -617,7 +617,7 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     const Change = struct { facet.Result, PipelineState };
     var changes: [9]Change = @splat(.{ .success, base });
     changes[0][0] = .error_feature_not_present;
-    changes[0][1].topology = .line_list;
+    changes[0][1].topology = @enumFromInt(10);
     changes[1][0] = .error_feature_not_present;
     changes[1][1].depth = .{ .stencil_test_enable = true };
     changes[2][0] = .error_feature_not_present;
@@ -625,7 +625,7 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     changes[3][0] = .error_feature_not_present;
     changes[3][1].blend = .{ .blend_enable = true, .color_blend_op = @enumFromInt(5) };
     changes[4][0] = .error_feature_not_present;
-    changes[4][1].raster = .{ .polygon_mode = .line };
+    changes[4][1].raster = .{ .polygon_mode = @enumFromInt(3) };
     changes[5][0] = .error_format_not_supported;
     changes[5][1].attributes = &.{.{ .location = 0, .binding = 0, .format = .r5g6b5_unorm_pack16 }};
     changes[6][0] = .error_initialization_failed;
@@ -798,6 +798,122 @@ test "a frame drawn: a triangle coloured by its fragment function, the clear col
     try testing.expectEqual(red, picture.at(62, 62));
     try testing.expectEqual(red, picture.at(33, 62));
     try testing.expectEqual(red, picture.at(62, 33));
+}
+
+test "points and lines: where they should be, and as wide; a triangle's edges and corners, culled as its fill is" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const cleared = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, cleared);
+    const frame = try framebuffer(&bench, cleared, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    // Pixel `n`'s centre, from -1 to 1 over 64 pixels.
+    const c = struct {
+        fn of(n: f32) f32 {
+            return (n + 0.5) / 32 - 1;
+        }
+    }.of;
+    const vertices = [_][3]f32{
+        // A line on row 10, from column 16 to the edge of 48, and one on column 8.
+        .{ c(16) - 0.5 / 32.0, c(10), 0.5 }, .{ c(48) - 0.5 / 32.0, c(10), 0.5 },
+        .{ c(8), c(20), 0.5 },               .{ c(8), c(40), 0.5 },
+        // A strip of the same two, joined.
+        .{ c(20), c(30), 0.5 },              .{ c(40), c(30), 0.5 },
+        .{ c(40), c(50), 0.5 },
+        // Points.
+        .{ c(5), c(5), 0.5 },                .{ c(60), c(60), 0.5 },
+        // A triangle one way round, and the other.
+        .{ -0.5, -0.5, 0.5 },                .{ 0.5, -0.5, 0.5 },
+        .{ -0.5, 0.5, 0.5 },                 .{ -0.5, -0.5, 0.5 },
+        .{ -0.5, 0.5, 0.5 },                 .{ 0.5, -0.5, 0.5 },
+    };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+
+    const offset: u64 = 0;
+    const red: u32 = 0xFFFF_0000;
+    const Way = struct {
+        topology: facet.PrimitiveTopology = .triangle_list,
+        raster: facet.PipelineRasterizationStateCreateInfo = .{},
+        dynamic: []const facet.DynamicState = &.{},
+        width: ?f32 = null,
+        first: u32,
+        count: u32,
+    };
+    const Draw = struct {
+        fn run(on: *Bench, pass: *facet.RenderPass, into: *facet.Framebuffer, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, buffer: *facet.Buffer, way: Way) !void {
+            const facets = on.rig.fb;
+            const result, const pipeline = makePipeline(on, .{ .module = shaders, .layout = by, .pass = pass, .topology = way.topology, .raster = way.raster, .dynamic = way.dynamic });
+            try testing.expectEqual(facet.Result.success, result);
+            const commands = try on.record();
+            facets.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = into, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = @ptrCast(&clears(0xFF00_00FF)) }, .@"inline");
+            facets.CmdBindPipeline(commands, .graphics, pipeline.?);
+            facets.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(&offset));
+            facets.CmdPushConstants(commands, by, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+            if (way.width) |width| facets.CmdSetLineWidth(commands, width);
+            facets.CmdDraw(commands, way.count, 1, way.first, 0);
+            facets.CmdEndRenderPass(commands);
+            try on.submit();
+            facets.DestroyPipeline(on.device, pipeline);
+        }
+    };
+    const clear: u32 = 0xFF00_00FF;
+
+    try Draw.run(&bench, cleared, frame, flat, layout, vertex_buffer, .{ .topology = .line_list, .first = 0, .count = 4 });
+    for ([_]u32{ 16, 30, 47 }) |x| try testing.expectEqual(red, picture.at(x, 10));
+    try testing.expectEqual(clear, picture.at(15, 10));
+    try testing.expectEqual(clear, picture.at(48, 10));
+    try testing.expectEqual(clear, picture.at(30, 9));
+    try testing.expectEqual(clear, picture.at(30, 11));
+    try testing.expectEqual(red, picture.at(8, 30));
+    try testing.expectEqual(clear, picture.at(7, 30));
+    try testing.expectEqual(clear, picture.at(9, 30));
+
+    // Wider, by a command: rows 9 to 11.
+    try Draw.run(&bench, cleared, frame, flat, layout, vertex_buffer, .{ .topology = .line_list, .first = 0, .count = 2, .dynamic = &.{.line_width}, .width = 3 });
+    for ([_]u32{ 9, 10, 11 }) |y| try testing.expectEqual(red, picture.at(30, y));
+    try testing.expectEqual(clear, picture.at(30, 8));
+    try testing.expectEqual(clear, picture.at(30, 12));
+
+    try Draw.run(&bench, cleared, frame, flat, layout, vertex_buffer, .{ .topology = .line_strip, .first = 4, .count = 3 });
+    try testing.expectEqual(red, picture.at(30, 30));
+    try testing.expectEqual(red, picture.at(40, 40));
+    try testing.expectEqual(clear, picture.at(30, 40));
+
+    // A point is one pixel.
+    try Draw.run(&bench, cleared, frame, flat, layout, vertex_buffer, .{ .topology = .point_list, .first = 7, .count = 2 });
+    try testing.expectEqual(red, picture.at(5, 5));
+    try testing.expectEqual(red, picture.at(60, 60));
+    for ([_][2]u32{ .{ 4, 5 }, .{ 6, 5 }, .{ 5, 4 }, .{ 5, 6 } }) |near| try testing.expectEqual(clear, picture.at(near[0], near[1]));
+
+    // Filled, or as edges or corners: the same one way round is culled.
+    const culled = facet.PipelineRasterizationStateCreateInfo{ .cull_mode = facet.CULL_MODE_BACK };
+    for ([2]u32{ 9, 12 }) |first| {
+        var filled = culled;
+        try Draw.run(&bench, cleared, frame, flat, layout, vertex_buffer, .{ .raster = filled, .first = first, .count = 3 });
+        const shows = picture.at(20, 20) == red;
+        filled.polygon_mode = .line;
+        try Draw.run(&bench, cleared, frame, flat, layout, vertex_buffer, .{ .raster = filled, .first = first, .count = 3 });
+        try testing.expectEqual(clear, picture.at(20, 20));
+        // Its top edge, on the row of -0.5.
+        try testing.expectEqual(shows, picture.at(32, 15) == red or picture.at(32, 16) == red);
+        filled.polygon_mode = .point;
+        try Draw.run(&bench, cleared, frame, flat, layout, vertex_buffer, .{ .raster = filled, .first = first, .count = 3 });
+        try testing.expectEqual(clear, picture.at(32, 16));
+        var seen = false;
+        for ([_]u32{ 15, 16 }) |y| for ([_]u32{ 15, 16 }) |x| {
+            if (picture.at(x, y) == red) seen = true;
+        };
+        try testing.expectEqual(shows, seen);
+    }
 }
 
 test "depths in order: nearer kept whatever was drawn first, with the depth pre-pass or without; a scissor and a render area cut what is drawn" {

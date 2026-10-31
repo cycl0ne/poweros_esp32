@@ -64,12 +64,13 @@ const Surface = _surface.Surface;
 /// NOTES:
 /// A display's memory holds a few pictures, and every screen open takes
 /// one: on a display with room for three - Workbench's, the program's screen
-/// and one more - two images is all there is. Make the new swapchain after
-/// destroying the old one where both would not fit.
+/// and one more - two images is all there is. A swapchain made while an
+/// older one is there, even handed on from it, has none of its pictures:
+/// make the new swapchain after destroying the old one where both would not
+/// fit.
 ///
 /// BUGS:
-/// On a screen, a swapchain and the one it was handed on from share the
-/// screen's own buffer as their first image.
+/// None known.
 ///
 /// SEE ALSO:
 /// `DestroySwapchain`, `GetSwapchainImages`, `AcquireNextImage`, `QueuePresent`

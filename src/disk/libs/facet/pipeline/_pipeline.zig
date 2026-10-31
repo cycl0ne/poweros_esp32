@@ -96,6 +96,10 @@ pub const Pipeline = struct {
     attributes: [_instance.max_vertex_input_attributes]Attribute,
     attribute_count: u32,
     topology: facet.PrimitiveTopology,
+    /// Triangles drawn filled, or as their edges or their corners.
+    polygon_mode: facet.PolygonMode,
+    /// In pixels; null where a command sets it (CmdSetLineWidth).
+    line_width: ?f32,
     /// An index of all ones ends a strip or a fan, and the next starts.
     restart: bool,
     /// Its draws draw nothing: the rasterizer is switched off, or every

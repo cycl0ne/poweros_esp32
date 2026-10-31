@@ -109,13 +109,20 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
 
     const locations = pipeline.locations;
     const stride = 4 + pipeline.varyings;
-    const most_corners = (if (pipeline.topology == .triangle_list) count / 3 else count -| 2) * 3;
+    const most_corners = _vertices.mostCorners(pipeline.topology, count);
+    const wide = _vertices.widens(pipeline);
+    const most_wide: _vertices.Wide = if (wide) _vertices.mostWide(pipeline, most_corners) else .{};
+    const wide_vertices_bytes = @as(usize, most_wide.vertices) * stride * @sizeOf(f32);
+    const wide_indices_bytes = @as(usize, most_wide.indices) * @sizeOf(u32);
     const inputs_bytes = @as(usize, vertices) * locations * @sizeOf([4]f32);
     const outputs_bytes = @as(usize, vertices) * stride * @sizeOf(f32);
-    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + most_corners * @sizeOf(u32)) orelse return;
+    const corners_bytes = most_corners * @sizeOf(u32);
+    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes) orelse return;
     const inputs: [*][4]f32 = @ptrCast(@alignCast(scratch));
     const outputs: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes));
     const corners: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes));
+    const wide_vertices: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes));
+    const wide_indices: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes));
     const corner_count = _vertices.assemble(pipeline.topology, indices, lowest, corners[0..most_corners]);
 
     const target = &player.target.?;
@@ -145,7 +152,9 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
             .width = scissor.extent.width,
             .height = scissor.extent.height,
         },
-        .cull = translated.cull,
+        // Lines and points are not culled, and a triangle's edges were as
+        // they were made.
+        .cull = if (wide) .none else translated.cull,
         .front = translated.front,
         .depth_test = translated.depth_test,
         .depth_write = pipeline.depth_write,
@@ -173,6 +182,11 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         pipeline.vertex(&batch);
         // Out of the frame's memory: what was set up is drawn, the rest
         // not, as Vulkan leaves a device that runs out mid-frame.
+        if (wide) {
+            const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, outputs, stride, corners[0..corner_count], wide_vertices, wide_indices);
+            raster.batched.draw(target, &state, wide_vertices[0 .. @as(usize, made.vertices) * stride], stride, wide_indices[0..made.indices]) catch return;
+            continue;
+        }
         raster.batched.draw(target, &state, outputs[0 .. @as(usize, vertices) * stride], stride, corners[0..corner_count]) catch return;
     }
 }

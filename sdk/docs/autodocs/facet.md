@@ -32,6 +32,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdPipelineBarrier](#cmdpipelinebarrier) - Recorded: a barrier between the work before it and the work after.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
 - [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
+- [CmdSetLineWidth](#cmdsetlinewidth) - Recorded: the width of lines, for a pipeline that leaves it to commands.
 - [CmdSetScissor](#cmdsetscissor) - Recorded: the scissor, for a pipeline that leaves it to commands.
 - [CmdSetViewport](#cmdsetviewport) - Recorded: the viewport, for a pipeline that leaves it to commands.
 - [CreateBuffer](#createbuffer) - A buffer of so many bytes, for what its usage says.
@@ -1384,6 +1385,63 @@ None known.
 fb.CmdSetBlendConstants(commands, &.{ 1, 0.5, 0.25, 1 });
 ```
 
+## CmdSetLineWidth
+
+Recorded: the width of lines, for a pipeline that leaves it to commands.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetLineWidth(base: *FacetBase, buffer: *facet.CommandBuffer, width: f32) void
+```
+
+**SINCE**
+
+1.14. LVO -372.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `width` - in pixels.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it with a pipeline whose line width is dynamic draw their
+lines this wide.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateGraphicsPipelines`
+
+**EXAMPLES**
+
+```zig
+fb.CmdSetLineWidth(commands, 2);
+```
+
 ## CmdSetScissor
 
 Recorded: the scissor, for a pipeline that leaves it to commands.
@@ -1994,15 +2052,18 @@ device with a processor of its own the fragment function has to be of a
 fixed form (`shader.fixedFragment`), or the pipeline is refused with
 `error_feature_not_present`.
 
-What it draws: triangle lists, strips and fans, a restart index ending a
-strip or a fan; filled, one sample a pixel, culled by facing as asked; a
+What it draws: points, lines and line strips, and triangle lists, strips
+and fans, a restart index ending a strip or a fan; triangles filled, or as
+their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
+triangles culled by facing as asked; lines `line_width` pixels wide, set
+here or by CmdSetLineWidth, and points one pixel; a
 depth test of any compare, written or not, without stencil, bounds,
 bias or clamp; the channels of the write mask written, replacing what is
 there or mixed with it by any blend factors and operation, the alpha by
 its own, and no logic op; one viewport and one scissor, given here or set
 by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
-and blend_constants with CmdSetBlendConstants; the others are taken and
-do nothing). A pipeline with the rasterizer
+blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth;
+the others are taken and do nothing). A pipeline with the rasterizer
 discarding, or culling front and back, draws nothing.
 
 `PIPELINE_CREATE_DEPTH_PREPASS` in `flags`, facet.library's own, has the
@@ -2698,13 +2759,14 @@ bound, and not destroyed, by the program.
 
 A display's memory holds a few pictures, and every screen open takes
 one: on a display with room for three - Workbench's, the program's screen
-and one more - two images is all there is. Make the new swapchain after
-destroying the old one where both would not fit.
+and one more - two images is all there is. A swapchain made while an
+older one is there, even handed on from it, has none of its pictures:
+make the new swapchain after destroying the old one where both would not
+fit.
 
 **BUGS**
 
-On a screen, a swapchain and the one it was handed on from share the
-screen's own buffer as their first image.
+None known.
 
 **SEE ALSO**
 

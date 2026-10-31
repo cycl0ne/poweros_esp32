@@ -60,6 +60,7 @@ pub const Player = struct {
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
     blend_constants: [4]f32 = @splat(0),
+    line_width: f32 = 1,
     /// The colour attachment has no alpha.
     target_opaque: bool = false,
     /// The sets and the push constants as bound, and the copy of them in
@@ -125,6 +126,7 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
         .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
+        .set_line_width => player.line_width = _stream.as(_command.SetLineWidth, head).width,
         .draw => if (player.drawing) {
             const command = _stream.as(_command.Draw, head);
             _draw.draw(queue, command.first_vertex, command.vertex_count, null, command.first_instance, command.instance_count);

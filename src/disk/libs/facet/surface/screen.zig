@@ -2,7 +2,9 @@
 //! A surface over a screen of intuition's: the swapchain's first image is
 //! the screen's own buffer, the rest are buffers AllocScreenBuffer makes
 //! in the display's memory, and showing one is ChangeScreenBuffer - which
-//! returns when the display has taken it up at the start of a frame.
+//! returns when the display has taken it up at the start of a frame. A
+//! swapchain made while an older one is still there has them all from
+//! AllocScreenBuffer: the own buffer is the older one's.
 //!
 //! intuition.library and rtg.library are opened as the surface is made,
 //! by the task that makes it, and closed as it goes.
@@ -87,8 +89,9 @@ fn most(surface: *Surface) u32 {
 
 fn make(surface: *Surface, pictures: []Picture) bool {
     const screen = of(surface);
+    const own_first = surface.swapchains == 0;
     for (pictures, 0..) |*picture, k| {
-        const buffer = if (k == 0) screen.own else screen.ib.AllocScreenBuffer(screen.screen, 0) orelse {
+        const buffer = if (k == 0 and own_first) screen.own else screen.ib.AllocScreenBuffer(screen.screen, 0) orelse {
             unmake(surface, pictures[0..k], null);
             return false;
         };
@@ -98,7 +101,7 @@ fn make(surface: *Surface, pictures: []Picture) bool {
             .pitch = bitmap.pitch,
             .handle = buffer,
             .display = .{ .rb = screen.rb, .bitmap = bitmap },
-            .shown = k == 0,
+            .shown = k == 0 and own_first,
         };
     }
     return true;
@@ -108,10 +111,12 @@ fn make(surface: *Surface, pictures: []Picture) bool {
 /// goes while the display reads it.
 fn unmake(surface: *Surface, pictures: []Picture, shown: ?u32) void {
     const screen = of(surface);
-    if (shown) |index| if (index != 0) {
+    if (shown) |index| if (bufferOf(&pictures[index]) != screen.own) {
         while (!screen.ib.ChangeScreenBuffer(screen.screen, screen.own)) _ = screen.rb.WaitVBlank(boardOf(screen), 0);
     };
-    for (pictures[@min(1, pictures.len)..]) |*picture| screen.ib.FreeScreenBuffer(screen.screen, bufferOf(picture));
+    for (pictures) |*picture| {
+        if (bufferOf(picture) != screen.own) screen.ib.FreeScreenBuffer(screen.screen, bufferOf(picture));
+    }
 }
 
 /// ChangeScreenBuffer, again at the next frame while the screen's menus

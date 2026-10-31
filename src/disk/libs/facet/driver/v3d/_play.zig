@@ -90,6 +90,7 @@ pub const Player = struct {
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
     blend_constants: [4]f32 = @splat(0),
+    line_width: f32 = 1,
     resources: shader.Resources = .{},
     /// The frame being made.
     frame: Frame = undefined,
@@ -183,6 +184,7 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
         .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
+        .set_line_width => player.line_width = _stream.as(_command.SetLineWidth, head).width,
         .draw => if (player.drawing) {
             const command = _stream.as(_command.Draw, head);
             draw(queue, command.first_vertex, command.vertex_count, null, command.first_instance, command.instance_count);
@@ -607,8 +609,10 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
     return .{
         .clip = .{ .left = left, .top = top, .right = right, .bottom = bottom },
         .cfg = .{
-            .forward = pipeline.cull != .front,
-            .reverse = pipeline.cull != .back,
+            // Lines and points are not culled, and a triangle's edges were
+            // as they were made.
+            .forward = pipeline.cull != .front or _vertices.widens(pipeline),
+            .reverse = pipeline.cull != .back or _vertices.widens(pipeline),
             // As Mesa has it: the hardware calls the other way round so.
             .clockwise = pipeline.front == .counter_clockwise,
             .compare = if (has_depth) (if (pipeline.depth_test) |compare| @intFromEnum(compare) else cl.COMPARE_ALWAYS) else cl.COMPARE_ALWAYS,
@@ -641,29 +645,39 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
 
     const locations = pipeline.locations;
     const stride = 4 + pipeline.varyings;
-    const most_corners = (if (pipeline.topology == .triangle_list) count / 3 else count -| 2) * 3;
+    const most_corners = _vertices.mostCorners(pipeline.topology, count);
+    const wide = _vertices.widens(pipeline);
+    const most_wide: _vertices.Wide = if (wide) _vertices.mostWide(pipeline, most_corners) else .{};
+    const wide_vertices_bytes = @as(usize, most_wide.vertices) * stride * @sizeOf(f32);
+    const wide_indices_bytes = @as(usize, most_wide.indices) * @sizeOf(u32);
     const inputs_bytes = @as(usize, vertices) * locations * @sizeOf([4]f32);
     const outputs_bytes = @as(usize, vertices) * stride * @sizeOf(f32);
-    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + most_corners * @sizeOf(u32)) orelse return;
+    const corners_bytes = most_corners * @sizeOf(u32);
+    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes) orelse return;
     const inputs: [*][4]f32 = @ptrCast(@alignCast(scratch));
     const outputs: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes));
     const corners: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes));
+    const wide_vertices: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes));
+    const wide_indices: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes));
     const corner_count = _vertices.assemble(pipeline.topology, indices, lowest, corners[0..most_corners]);
+    if (corner_count == 0) return;
 
-    // The triangles whose corners are all there.
-    const index_bytes: u32 = @intCast(corner_count * 4);
-    if (index_bytes == 0) return;
-    const index_place = carve(queue, index_bytes, 4) orelse return noRoom(queue);
-    const kept_indices: [*]u32 = @ptrCast(@alignCast(index_place.cpu));
+    // The triangles whose corners are all there: once for all instances,
+    // where rectangles are made anew for each.
+    var index_place: Place = undefined;
     var kept: u32 = 0;
-    var corner: usize = 0;
-    while (corner < corner_count) : (corner += 3) {
-        const three = corners[corner..][0..3];
-        if (three[0] == _vertices.no_corner or three[1] == _vertices.no_corner or three[2] == _vertices.no_corner) continue;
-        @memcpy(kept_indices[kept..][0..3], three);
-        kept += 3;
+    if (!wide) {
+        index_place = carve(queue, @intCast(corner_count * 4), 4) orelse return noRoom(queue);
+        const kept_indices: [*]u32 = @ptrCast(@alignCast(index_place.cpu));
+        var corner: usize = 0;
+        while (corner < corner_count) : (corner += 3) {
+            const three = corners[corner..][0..3];
+            if (three[0] == _vertices.no_corner or three[1] == _vertices.no_corner or three[2] == _vertices.no_corner) continue;
+            @memcpy(kept_indices[kept..][0..3], three);
+            kept += 3;
+        }
+        if (kept == 0) return;
     }
-    if (kept == 0) return;
 
     const programs = &player.hardware.programs;
     const fixed = pipeline.fixed;
@@ -700,7 +714,6 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         .offset = viewport.min_depth,
     };
     const record_bytes = recordStride(varyings);
-    const records_bytes = std.math.cast(u32, @as(u64, vertices) * record_bytes) orelse return;
     if (!roomOnList(queue)) return;
     frames.writeDrawState(&player.bin, &state);
     for (0..instances) |k| {
@@ -717,9 +730,20 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             .resources = &player.resources,
         };
         pipeline.vertex(&batch);
-        const records = carve(queue, records_bytes, 4) orelse return noRoom(queue);
-        for (0..vertices) |vertex| {
-            writeRecord(records.cpu + vertex * record_bytes, outputs + vertex * stride, &scale, varyings, carried);
+        var drawn: [*]const f32 = outputs;
+        var drawn_vertices: usize = vertices;
+        if (wide) {
+            const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, outputs, stride, corners[0..corner_count], wide_vertices, wide_indices);
+            if (made.indices == 0) continue;
+            index_place = carve(queue, made.indices * 4, 4) orelse return noRoom(queue);
+            @memcpy(@as([*]u32, @ptrCast(@alignCast(index_place.cpu)))[0..made.indices], wide_indices[0..made.indices]);
+            kept = made.indices;
+            drawn = wide_vertices;
+            drawn_vertices = made.vertices;
+        }
+        const records = carve(queue, std.math.cast(u32, drawn_vertices * record_bytes) orelse return, 4) orelse return noRoom(queue);
+        for (0..drawn_vertices) |vertex| {
+            writeRecord(records.cpu + vertex * record_bytes, drawn + vertex * stride, &scale, varyings, carried);
         }
         if (!roomOnList(queue)) return;
         if (!sendVertices(queue, records.address, varyings, fragment, uniforms)) return;

@@ -106,6 +106,7 @@ pub const LVO = struct {
     pub const QueuePresent = libraries.lvo(89);
     pub const CreateWindowSurface = libraries.lvo(90);
     pub const CmdSetBlendConstants = libraries.lvo(91);
+    pub const CmdSetLineWidth = libraries.lvo(92);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -199,6 +200,7 @@ pub const Fn = struct {
     pub const QueuePresent = *const fn (*FacetBase, *facet.Queue, *const facet.PresentInfo) callconv(.c) facet.Result;
     pub const CreateWindowSurface = *const fn (*FacetBase, *facet.Instance, *const facet.WindowSurfaceCreateInfo, *?*facet.Surface) callconv(.c) facet.Result;
     pub const CmdSetBlendConstants = *const fn (*FacetBase, *facet.CommandBuffer, *const [4]f32) callconv(.c) void;
+    pub const CmdSetLineWidth = *const fn (*FacetBase, *facet.CommandBuffer, f32) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -663,5 +665,10 @@ pub const FacetBase = opaque {
     /// Recorded: the blend constants, for a pipeline that leaves them to commands.
     pub fn CmdSetBlendConstants(self: *FacetBase, buffer: *facet.CommandBuffer, constants: *const [4]f32) void {
         return libraries.call(self, LVO.CmdSetBlendConstants, Fn.CmdSetBlendConstants, .{ buffer, constants });
+    }
+
+    /// Recorded: the width of lines, for a pipeline that leaves it to commands.
+    pub fn CmdSetLineWidth(self: *FacetBase, buffer: *facet.CommandBuffer, width: f32) void {
+        return libraries.call(self, LVO.CmdSetLineWidth, Fn.CmdSetLineWidth, .{ buffer, width });
     }
 };

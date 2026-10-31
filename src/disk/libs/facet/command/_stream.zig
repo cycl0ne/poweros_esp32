@@ -34,6 +34,7 @@ pub const Op = enum(u16) {
     set_viewport,
     set_scissor,
     set_blend_constants,
+    set_line_width,
     draw,
     draw_indexed,
     _,

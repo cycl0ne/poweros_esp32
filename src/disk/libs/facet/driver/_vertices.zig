@@ -2,7 +2,10 @@
 //! What every driver does the same for a draw, as vertex functions run on
 //! the cores whichever device draws: the vertices it names read from the
 //! vertex buffers, each attribute into its location, and its triangles put
-//! together from its indices as the topology says.
+//! together from its indices as the topology says. Lines and points, and
+//! the edges or corners of triangles drawn so, are made into little
+//! rectangles of two triangles each, once their vertices are worked: a
+//! driver only ever draws triangles.
 //!
 //! A `player` here is a driver's own state of what is bound: it has
 //! `vertex_buffers`, `index_buffer`, `index_offset` and `index_type`.
@@ -95,6 +98,35 @@ pub const no_corner = std.math.maxInt(u32);
 pub fn assemble(topology: facet.PrimitiveTopology, indices: Indices, lowest: u32, into: []u32) usize {
     var made: usize = 0;
     switch (topology) {
+        .point_list => {
+            for (0..indices.count) |k| {
+                into[made] = if (indices.vertex(@intCast(k))) |number| number - lowest else no_corner;
+                made += 1;
+            }
+        },
+        .line_list => {
+            var k: u32 = 0;
+            while (k + 2 <= indices.count) : (k += 2) {
+                for (0..2) |corner| into[made + corner] = if (indices.vertex(k + @as(u32, @intCast(corner)))) |number| number - lowest else no_corner;
+                made += 2;
+            }
+        },
+        .line_strip => {
+            var last: ?u32 = null;
+            for (0..indices.count) |k| {
+                const number = indices.vertex(@intCast(k)) orelse {
+                    last = null;
+                    continue;
+                };
+                const here = number - lowest;
+                if (last) |from| {
+                    into[made] = from;
+                    into[made + 1] = here;
+                    made += 2;
+                }
+                last = here;
+            }
+        },
         .triangle_list => {
             var k: u32 = 0;
             while (k + 3 <= indices.count) : (k += 3) {
@@ -181,4 +213,181 @@ pub fn copyBuffer(command: *const _command.CopyBuffer) void {
         // Overlapping regions are the program's mistake; copied forwards.
         std.mem.copyForwards(u8, into, from);
     }
+}
+
+/// The most corners `assemble` makes of `count` indices.
+pub fn mostCorners(topology: facet.PrimitiveTopology, count: u32) usize {
+    return switch (topology) {
+        .point_list => count,
+        .line_list => count / 2 * 2,
+        .line_strip => @as(usize, count -| 1) * 2,
+        .triangle_list => count / 3 * 3,
+        else => @as(usize, count -| 2) * 3,
+    };
+}
+
+/// Whether a pipeline's draws come to something other than filled triangles.
+pub fn widens(pipeline: *const Pipeline) bool {
+    return switch (pipeline.topology) {
+        .point_list, .line_list, .line_strip => true,
+        else => pipeline.polygon_mode != .fill,
+    };
+}
+
+/// What `widen` makes.
+pub const Wide = struct {
+    vertices: u32 = 0,
+    indices: u32 = 0,
+};
+
+/// The most `widen` makes of `corners` corners.
+pub fn mostWide(pipeline: *const Pipeline, corners: usize) Wide {
+    const rectangles = switch (pipeline.topology) {
+        .point_list => corners,
+        .line_list, .line_strip => corners / 2,
+        // A triangle's three edges, or its three corners.
+        else => corners,
+    };
+    return .{ .vertices = @intCast(rectangles * 4), .indices = @intCast(rectangles * 6) };
+}
+
+/// How near the eye a line is cut, in w: its direction on the picture needs
+/// both ends in front.
+const nearest_w: f32 = 1.0 / 65536.0;
+
+/// The most floats a vertex carries `widen` can work with: a position and
+/// `shader`'s varyings.
+const most_stride = 64;
+
+/// What `widen` writes to.
+const Widening = struct {
+    half_width: f32,
+    half_height: f32,
+    half_line: f32,
+    stride: u32,
+    outputs: [*]const f32,
+    into: [*]f32,
+    indices: [*]u32,
+    made: Wide = .{},
+
+    /// A rectangle whose corners are these two ends, each moved `by` pixels
+    /// either way along x and y.
+    fn rectangle(widening: *Widening, a: []const f32, b: []const f32, by: [2]f32) void {
+        const stride = widening.stride;
+        const first = widening.made.vertices;
+        const dx = by[0] / widening.half_width;
+        const dy = by[1] / widening.half_height;
+        for ([4]struct { []const f32, f32 }{ .{ a, -1 }, .{ a, 1 }, .{ b, -1 }, .{ b, 1 } }, 0..) |corner, k| {
+            const into = (widening.into + (first + k) * stride)[0..stride];
+            @memcpy(into, corner[0]);
+            into[0] += corner[1] * dx * corner[0][3];
+            into[1] += corner[1] * dy * corner[0][3];
+        }
+        for ([6]u32{ 0, 1, 2, 2, 1, 3 }, widening.indices[widening.made.indices..][0..6]) |corner, *index| index.* = first + corner;
+        widening.made.vertices += 4;
+        widening.made.indices += 6;
+    }
+
+    fn vertex(widening: *const Widening, k: u32) []const f32 {
+        return (widening.outputs + @as(usize, k) * widening.stride)[0..widening.stride];
+    }
+
+    fn point(widening: *Widening, k: u32) void {
+        const at = widening.vertex(k);
+        if (at[3] < nearest_w) return;
+        // Two ends the same, moved apart along x, then the whole along y:
+        // the rectangle's corners have it moved both ways.
+        var low: [most_stride]f32 = undefined;
+        var high: [most_stride]f32 = undefined;
+        const stride = widening.stride;
+        @memcpy(low[0..stride], at);
+        @memcpy(high[0..stride], at);
+        low[1] -= 0.5 / widening.half_height * at[3];
+        high[1] += 0.5 / widening.half_height * at[3];
+        widening.rectangle(low[0..stride], high[0..stride], .{ 0.5, 0 });
+    }
+
+    fn line(widening: *Widening, from: u32, to: u32) void {
+        const stride = widening.stride;
+        var a: [most_stride]f32 = undefined;
+        var b: [most_stride]f32 = undefined;
+        @memcpy(a[0..stride], widening.vertex(from));
+        @memcpy(b[0..stride], widening.vertex(to));
+        // Both ends in front of the eye.
+        if (a[3] < nearest_w and b[3] < nearest_w) return;
+        if (a[3] < nearest_w or b[3] < nearest_w) {
+            const along = (nearest_w - a[3]) / (b[3] - a[3]);
+            const moved: *[most_stride]f32 = if (a[3] < nearest_w) &a else &b;
+            for (moved[0..stride], a[0..stride], b[0..stride]) |*value, at_a, at_b| value.* = at_a + (at_b - at_a) * along;
+        }
+        // Across the line on the picture, half its width each way.
+        const across = (b[0] / b[3] - a[0] / a[3]) * widening.half_width;
+        const down = (b[1] / b[3] - a[1] / a[3]) * widening.half_height;
+        const length = @sqrt(across * across + down * down);
+        if (length == 0 or length != length) return;
+        widening.rectangle(a[0..stride], b[0..stride], .{ -down / length * widening.half_line, across / length * widening.half_line });
+    }
+
+    /// Whether the triangle's face is drawn, as the fill's would be: one with
+    /// a corner behind the eye always is.
+    fn faced(widening: *const Widening, pipeline: *const Pipeline, three: []const u32) bool {
+        if (pipeline.cull == .none) return true;
+        const a = widening.vertex(three[0]);
+        const b = widening.vertex(three[1]);
+        const c = widening.vertex(three[2]);
+        if (a[3] <= 0 or b[3] <= 0 or c[3] <= 0) return true;
+        const ax = a[0] / a[3] * widening.half_width;
+        const ay = a[1] / a[3] * widening.half_height;
+        const bx = b[0] / b[3] * widening.half_width;
+        const by = b[1] / b[3] * widening.half_height;
+        const cx = c[0] / c[3] * widening.half_width;
+        const cy = c[1] / c[3] * widening.half_height;
+        // Positive turns from x to y on the picture, y down: clockwise.
+        const area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        const front = if (pipeline.front == .clockwise) area > 0 else area < 0;
+        return if (pipeline.cull == .back) front else !front;
+    }
+};
+
+/// A draw's primitives, `corners` of the vertices in `outputs`, made into
+/// rectangles in `into` - `stride` floats a vertex - and `indices` of three
+/// for each of their triangles. At `width` pixels, for lines.
+pub fn widen(pipeline: *const Pipeline, viewport: *const facet.Viewport, width: f32, outputs: [*]const f32, stride: u32, corners: []const u32, into: [*]f32, indices: [*]u32) Wide {
+    if (stride > most_stride or viewport.width == 0 or viewport.height == 0) return .{};
+    var widening = Widening{
+        .half_width = viewport.width / 2,
+        .half_height = viewport.height / 2,
+        .half_line = width / 2,
+        .stride = stride,
+        .outputs = outputs,
+        .into = into,
+        .indices = indices,
+    };
+    switch (pipeline.topology) {
+        .point_list => for (corners) |corner| {
+            if (corner != no_corner) widening.point(corner);
+        },
+        .line_list, .line_strip => {
+            var k: usize = 0;
+            while (k + 2 <= corners.len) : (k += 2) {
+                if (corners[k] != no_corner and corners[k + 1] != no_corner) widening.line(corners[k], corners[k + 1]);
+            }
+        },
+        else => {
+            var k: usize = 0;
+            while (k + 3 <= corners.len) : (k += 3) {
+                const three = corners[k..][0..3];
+                if (three[0] == no_corner or three[1] == no_corner or three[2] == no_corner) continue;
+                if (!widening.faced(pipeline, three)) continue;
+                for (0..3) |edge| {
+                    if (pipeline.polygon_mode == .point) {
+                        widening.point(three[edge]);
+                    } else {
+                        widening.line(three[edge], three[(edge + 1) % 3]);
+                    }
+                }
+            }
+        },
+    }
+    return widening.made;
 }

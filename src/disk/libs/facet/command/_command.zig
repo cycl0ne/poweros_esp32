@@ -173,6 +173,12 @@ pub const SetBlendConstants = extern struct {
     constants: [4]f32,
 };
 
+pub const SetLineWidth = extern struct {
+    pub const op: _stream.Op = .set_line_width;
+    head: Head = .{ .op = op },
+    width: f32,
+};
+
 pub const Draw = extern struct {
     pub const op: _stream.Op = .draw;
     head: Head = .{ .op = op },
