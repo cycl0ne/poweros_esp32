@@ -12,6 +12,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const facet = sdk.facet;
+const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _base = @import("facet_base.zig");
 const FacetBase = _base.FacetBase;
@@ -43,7 +44,9 @@ pub const LIBRARY_VERSION = 1;
 /// not a whole frame later.
 /// 10: a colour can be added to what is there, as much as its alpha says:
 /// SRC_ALPHA and ONE.
-pub const LIBRARY_REVISION = 10;
+/// 11: a limit on waiting for all of several fences is the whole wait's, not
+/// each fence's.
+pub const LIBRARY_REVISION = 11;
 const BUILD_DATE = "31.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -56,6 +59,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     const header = lib.*;
     base.* = .{ .lib = header, .sys_base = sys_base, .seg_list = seg_list };
     sys_base.InitSemaphore(&base.v3d_lock);
+    base.clock.node.message.length = @sizeOf(timer.TimeRequest);
+    base.clock_open = sys_base.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &base.clock.node, 0) == 0;
     lib.revision = LIBRARY_REVISION;
     return lib;
 }
@@ -70,6 +75,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     }
     const sys = base.sys_base;
     const seg_list = base.seg_list;
+    if (base.clock_open) sys.CloseDevice(&base.clock.node);
     sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);

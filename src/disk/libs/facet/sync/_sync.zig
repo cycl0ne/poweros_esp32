@@ -17,6 +17,12 @@ pub const Semaphore = struct {
     waitable: exec.Waitable = .{},
 };
 
+/// What is left of a limit in microseconds, `began` and `now` read from one
+/// clock: none, once it has run out.
+pub fn timeLeft(limit: u64, began: u64, now: u64) u64 {
+    return limit -| (now -| began);
+}
+
 /// WaitForFences' nanoseconds as WaitForAny's microseconds, rounded up.
 pub fn microseconds(nanoseconds: u64) u64 {
     if (nanoseconds == ~@as(u64, 0)) return exec.WAIT_FOREVER;

@@ -607,6 +607,9 @@ test "semaphores order one submission after another; a fence alone follows all b
     try testing.expectEqual(facet.Result.success, rig.fb.CreateFence(device, &.{ .flags = facet.FENCE_CREATE_SIGNALED }, &signalled));
     try testing.expectEqual(facet.Result.success, rig.fb.GetFenceStatus(device, signalled.?));
     rig.fb.DestroyFence(device, signalled);
+    try testing.expectEqual(@as(u64, 700), @import("../sync/_sync.zig").timeLeft(1000, 50, 350));
+    try testing.expectEqual(@as(u64, 0), @import("../sync/_sync.zig").timeLeft(1000, 50, 2000));
+    try testing.expectEqual(@as(u64, 1000), @import("../sync/_sync.zig").timeLeft(1000, 50, 50));
     try testing.expectEqual(@as(u64, 1), @import("../sync/_sync.zig").microseconds(1));
     try testing.expectEqual(@as(u64, 2), @import("../sync/_sync.zig").microseconds(1001));
     try testing.expectEqual(exec.WAIT_FOREVER, @import("../sync/_sync.zig").microseconds(facet.WAIT_FOREVER_NS));

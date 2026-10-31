@@ -5663,8 +5663,7 @@ None.
 
 **BUGS**
 
-With `wait_all` the limit is each fence's, not the whole wait's:
-waiting for N fences not yet signalled may take up to N times it.
+None known.
 
 **SEE ALSO**
 

@@ -321,6 +321,7 @@ flowchart TB
     m_facet_library --> m_intuition_library
     m_facet_library --> m_layers_library
     m_facet_library --> m_rtg_library
+    m_facet_library --> m_timer_device
     m_fat_handler --> m_battmem_resource
     m_fat_handler --> m_dos_library
     m_fat_handler --> m_input_device

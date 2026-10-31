@@ -8,6 +8,7 @@ const _objects = @import("../_objects.zig");
 const Device = @import("../device/_device.zig").Device;
 const _sync = @import("_sync.zig");
 const exec = sdk.exec;
+const _base = @import("../facet_base.zig");
 
 /// Wait until fences are signalled: all of them, or any.
 ///
@@ -47,8 +48,7 @@ const exec = sdk.exec;
 /// None.
 ///
 /// BUGS:
-/// With `wait_all` the limit is each fence's, not the whole wait's:
-/// waiting for N fences not yet signalled may take up to N times it.
+/// None known.
 ///
 /// SEE ALSO:
 /// `ResetFences`, `GetFenceStatus`, `QueueSubmit`
@@ -69,9 +69,14 @@ fn waitFor(base: *FacetBase, count: u32, fences: [*]const *facet.Fence, wait_all
     const given = @as([*]const *_sync.Fence, @ptrCast(fences))[0..count];
     const limit = _sync.microseconds(timeout);
     if (wait_all) {
+        // The limit is the whole wait's: a fence is given what the ones
+        // before it left.
+        const timed = limit != exec.WAIT_FOREVER and limit != 0 and given.len > 1;
+        const began = if (timed) _base.now(base) else 0;
         for (given) |fence| {
             const one = [1]*exec.Waitable{&fence.waitable};
-            if (sys.WaitForAny(&one, 1, limit) == exec.WAIT_TIMEOUT) return .timeout;
+            const left = if (timed) _sync.timeLeft(limit, began, _base.now(base)) else limit;
+            if (sys.WaitForAny(&one, 1, left) == exec.WAIT_TIMEOUT) return .timeout;
         }
         return .success;
     }
