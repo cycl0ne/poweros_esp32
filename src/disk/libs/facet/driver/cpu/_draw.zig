@@ -85,6 +85,19 @@ fn maskOf(channels: u32) u32 {
     return mask;
 }
 
+/// A pipeline's stencil test in the rasterizer's terms: numbered as it is.
+fn stencilFaceOf(face: _pipeline.StencilFace) raster.batched.StencilFace {
+    return .{
+        .fail = @enumFromInt(@intFromEnum(face.fail)),
+        .pass = @enumFromInt(@intFromEnum(face.pass)),
+        .depth_fail = @enumFromInt(@intFromEnum(face.depth_fail)),
+        .compare = @enumFromInt(@intFromEnum(face.compare)),
+        .compare_mask = face.compare_mask,
+        .write_mask = face.write_mask,
+        .reference = face.reference,
+    };
+}
+
 /// 0 to 1 as 0 to 255, in 0xAARRGGBB.
 fn constantOf(constants: [4]f32) u32 {
     var packed_constant: u32 = 0;
@@ -142,6 +155,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         mixing = made;
         mixing.constant = constantOf(pipeline.mixing.constants orelse player.blend_constants);
     }
+    const stencil: ?[2]raster.batched.StencilFace = if (player.stencil.of(pipeline)) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else null;
     const state = raster.batched.State{
         .viewport = .{ .x = viewport.x, .y = viewport.y, .width = viewport.width, .height = viewport.height },
         .min_depth = viewport.min_depth,
@@ -160,7 +174,8 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .depth_write = pipeline.depth_write,
         .blend = translated.blend,
         .mixing = mixing,
-        .prepass = pipeline.prepass,
+        .stencil = stencil,
+        .prepass = pipeline.prepass and stencil == null,
         .varyings = pipeline.varyings,
         .fragment = pipeline.fragment,
         .resources = resources,

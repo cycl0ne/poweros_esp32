@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.3 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.4 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -170,6 +170,9 @@ const texture_side: u32 = 64;
 const texture_levels = 7;
 const formats = [_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 };
 const Target = enum(u32) { bgra, rgba, rgb565 };
+/// The attachment a stencil case draws with, on a picture in bgra.
+const Stencil = enum(u32) { none, with_depth, alone };
+const stencil_formats = [2]facet.Format{ .d16_unorm_s8_uint, .s8_uint };
 
 /// What a pipeline of a case is.
 const Options = struct {
@@ -180,7 +183,7 @@ const Options = struct {
     polygon_mode: facet.PolygonMode = .fill,
     line_width: f32 = 1,
     cull: u32 = facet.CULL_MODE_NONE,
-    front: facet.FrontFace = .clockwise,
+    winding: facet.FrontFace = .clockwise,
     test_depth: bool = false,
     write_depth: bool = false,
     compare: facet.CompareOp = .less,
@@ -192,6 +195,12 @@ const Options = struct {
     constants: [4]f32 = .{ 0, 0, 0, 0 },
     /// The constants are left to CmdSetBlendConstants.
     dynamic_constants: bool = false,
+    stencil: Stencil = .none,
+    stencil_test: bool = false,
+    front: facet.StencilOpState = .{},
+    back: facet.StencilOpState = .{},
+    /// The reference is left to CmdSetStencilReference.
+    dynamic_reference: bool = false,
     target: Target = .bgra,
     depth: bool = true,
     load: bool = false,
@@ -205,6 +214,8 @@ const Pass = struct {
     /// Parts of 1 of the picture; all of it if null.
     area: ?[4]f32 = null,
     clear: [4]f32 = .{ 0.06, 0.09, 0.2, 1 },
+    stencil: Stencil = .none,
+    clear_stencil: u32 = 0,
 };
 
 /// One device and everything drawn with it.
@@ -233,6 +244,10 @@ const Side = struct {
     /// Render passes by format, depth and load.
     passes: [formats.len][2][2]?*facet.RenderPass = @splat(@splat(@splat(null))),
     framebuffers: [formats.len][2]?*facet.Framebuffer = @splat(@splat(null)),
+    stencil_images: [2]?*facet.Image = @splat(null),
+    stencil_views: [2]?*facet.ImageView = @splat(null),
+    stencil_passes: [2]?*facet.RenderPass = @splat(null),
+    stencil_framebuffers: [2]?*facet.Framebuffer = @splat(null),
     set_layout: ?*facet.DescriptorSetLayout = null,
     descriptor_pool: ?*facet.DescriptorPool = null,
     sets: [formats.len]?*facet.DescriptorSet = @splat(null),
@@ -300,6 +315,21 @@ const Side = struct {
             }
             try side.image(.{ .format = format, .extent = .{ .width = texture_side, .height = texture_side }, .mip_levels = texture_levels, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, 0, &side.textures[f]);
             side.texture_views[f] = try side.view(side.textures[f].?, format, facet.IMAGE_ASPECT_COLOR, texture_levels);
+        }
+
+        for (stencil_formats, 0..) |format, k| {
+            try side.image(.{ .format = format, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, facet.MEMORY_PROPERTY_LAZILY_ALLOCATED, &side.stencil_images[k]);
+            side.stencil_views[k] = try side.view(side.stencil_images[k].?, format, facet.IMAGE_ASPECT_STENCIL, 1);
+            const attachments = [2]facet.AttachmentDescription{
+                .{ .format = formats[0], .load_op = .clear, .store_op = .store, .final_layout = .general },
+                .{ .format = format, .load_op = .clear, .stencil_load_op = .clear, .final_layout = .depth_stencil_attachment_optimal },
+            };
+            const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+            const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+            const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+            try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &side.stencil_passes[k]), error.Refused);
+            const views = [2]*facet.ImageView{ side.picture_views[0].?, side.stencil_views[k].? };
+            try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.stencil_passes[k].?, .attachment_count = 2, .attachments = &views, .width = side.width, .height = side.height }, &side.stencil_framebuffers[k]), error.Refused);
         }
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
@@ -423,6 +453,10 @@ const Side = struct {
         fb.DestroyDescriptorPool(device, side.descriptor_pool);
         fb.DestroyDescriptorSetLayout(device, side.set_layout);
         for (&side.framebuffers) |*pair| for (pair) |each| fb.DestroyFramebuffer(device, each);
+        for (side.stencil_framebuffers) |each| fb.DestroyFramebuffer(device, each);
+        for (side.stencil_passes) |each| fb.DestroyRenderPass(device, each);
+        for (side.stencil_views) |each| fb.DestroyImageView(device, each);
+        for (side.stencil_images) |each| fb.DestroyImage(device, each);
         for (side.picture_views) |each| fb.DestroyImageView(device, each);
         for (side.pictures) |each| fb.DestroyImage(device, each);
         for (side.texture_views) |each| fb.DestroyImageView(device, each);
@@ -455,7 +489,7 @@ const Side = struct {
         const commands = side.commands.?;
         const t = @intFromEnum(pass.target);
         const d = @intFromBool(pass.depth);
-        const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = pass.clear } }, .{ .depth_stencil = .{ .depth = 1 } } };
+        const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = pass.clear } }, .{ .depth_stencil = .{ .depth = 1, .stencil = pass.clear_stencil } } };
         const area: facet.Rect2D = if (pass.area) |part| .{
             .offset = .{ .x = side.partOf(side.width, part[0]), .y = side.partOf(side.height, part[1]) },
             .extent = .{
@@ -463,7 +497,9 @@ const Side = struct {
                 .height = @intCast(side.partOf(side.height, part[3]) - side.partOf(side.height, part[1])),
             },
         } else .{ .extent = .{ .width = side.width, .height = side.height } };
-        fb.CmdBeginRenderPass(commands, &.{ .render_pass = side.passes[t][d][@intFromBool(pass.load)].?, .framebuffer = side.framebuffers[t][d].?, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        const s = @intFromEnum(pass.stencil) -| 1;
+        const stenciled = pass.stencil != .none;
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = if (stenciled) side.stencil_passes[s].? else side.passes[t][d][@intFromBool(pass.load)].?, .framebuffer = if (stenciled) side.stencil_framebuffers[s].? else side.framebuffers[t][d].?, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
         side.setViewport(0, 0, @floatFromInt(side.width), @floatFromInt(side.height), 0, 1);
         const whole = facet.Rect2D{ .extent = .{ .width = side.width, .height = side.height } };
         fb.CmdSetScissor(commands, 0, 1, @ptrCast(&whole));
@@ -505,10 +541,10 @@ const Side = struct {
         const input = facet.PipelineVertexInputStateCreateInfo{ .vertex_binding_description_count = 2, .vertex_binding_descriptions = &bindings, .vertex_attribute_description_count = 4, .vertex_attribute_descriptions = &attributes };
         const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = options.topology, .primitive_restart_enable = options.restart };
         const viewports = facet.PipelineViewportStateCreateInfo{};
-        const dynamic_states = [3]facet.DynamicState{ .viewport, .scissor, .blend_constants };
-        const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = if (options.dynamic_constants) 3 else 2, .dynamic_states = &dynamic_states };
-        const rasterization = facet.PipelineRasterizationStateCreateInfo{ .cull_mode = options.cull, .front_face = options.front, .polygon_mode = options.polygon_mode, .line_width = options.line_width };
-        const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = options.test_depth, .depth_write_enable = options.write_depth, .depth_compare_op = options.compare };
+        const dynamic_states = [3]facet.DynamicState{ .viewport, .scissor, if (options.dynamic_reference) .stencil_reference else .blend_constants };
+        const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = if (options.dynamic_constants or options.dynamic_reference) 3 else 2, .dynamic_states = &dynamic_states };
+        const rasterization = facet.PipelineRasterizationStateCreateInfo{ .cull_mode = options.cull, .front_face = options.winding, .polygon_mode = options.polygon_mode, .line_width = options.line_width };
+        const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = options.test_depth, .depth_write_enable = options.write_depth, .depth_compare_op = options.compare, .stencil_test_enable = options.stencil_test, .front = options.front, .back = options.back };
         const blend_attachment = options.mixing orelse facet.PipelineColorBlendAttachmentState{
             .blend_enable = options.blend,
             .src_color_blend_factor = if (options.blend) .src_alpha else .one,
@@ -528,7 +564,7 @@ const Side = struct {
             .color_blend_state = &blend,
             .dynamic_state = &dynamic,
             .layout = side.layout.?,
-            .render_pass = side.passes[@intFromEnum(options.target)][@intFromBool(options.depth)][@intFromBool(options.load)].?,
+            .render_pass = if (options.stencil != .none) side.stencil_passes[@intFromEnum(options.stencil) - 1].? else side.passes[@intFromEnum(options.target)][@intFromBool(options.depth)][@intFromBool(options.load)].?,
         };
         const slot = &side.made[side.made_count];
         var made: [1]?*facet.Pipeline = undefined;
@@ -613,19 +649,19 @@ const Cases = struct {
     }
     fn cullBack(side: *Side) Failure!void {
         side.begin(.{});
-        try side.use(.{ .cull = facet.CULL_MODE_BACK, .front = .clockwise });
+        try side.use(.{ .cull = facet.CULL_MODE_BACK, .winding = .clockwise });
         side.draw(clockwise_at, 6);
         side.end();
     }
     fn cullFront(side: *Side) Failure!void {
         side.begin(.{});
-        try side.use(.{ .cull = facet.CULL_MODE_FRONT, .front = .clockwise });
+        try side.use(.{ .cull = facet.CULL_MODE_FRONT, .winding = .clockwise });
         side.draw(clockwise_at, 6);
         side.end();
     }
     fn cullBackCounter(side: *Side) Failure!void {
         side.begin(.{});
-        try side.use(.{ .cull = facet.CULL_MODE_BACK, .front = .counter_clockwise });
+        try side.use(.{ .cull = facet.CULL_MODE_BACK, .winding = .counter_clockwise });
         side.draw(clockwise_at, 6);
         side.end();
     }
@@ -695,6 +731,58 @@ const Cases = struct {
                 side.end();
             }
         }.run;
+    }
+    /// A step of a stencil case: `count` vertices from `first`, as its test
+    /// says; nothing written of the colour unless `shows`.
+    const StencilStep = struct {
+        first: u32,
+        count: u32,
+        topology: facet.PrimitiveTopology = .triangle_list,
+        front: facet.StencilOpState = .{},
+        /// The front's if null.
+        back: ?facet.StencilOpState = null,
+        test_depth: bool = false,
+        write_depth: bool = false,
+        shows: bool = false,
+    };
+    /// Steps drawn on a picture cleared with a stencil of `cleared`, and
+    /// then the rectangle wherever the stencil and `last` agree.
+    fn stencilSteps(comptime kind: Stencil, comptime cleared: u32, comptime steps: []const StencilStep, comptime last: facet.StencilOpState) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{ .stencil = kind, .clear_stencil = cleared });
+                for (steps) |step| {
+                    try side.use(.{
+                        .stencil = kind,
+                        .stencil_test = true,
+                        .topology = step.topology,
+                        .front = step.front,
+                        .back = step.back orelse step.front,
+                        .test_depth = step.test_depth,
+                        .write_depth = step.write_depth,
+                        .mixing = .{ .color_write_mask = if (step.shows) facet.COLOR_COMPONENT_ALL else 0 },
+                    });
+                    side.draw(step.first, step.count);
+                }
+                try side.use(.{ .stencil = kind, .stencil_test = true, .front = last, .back = last });
+                side.draw(quad_at, 6);
+                side.end();
+            }
+        }.run;
+    }
+    fn stencilByCommands(side: *Side) Failure!void {
+        side.begin(.{ .stencil = .with_depth });
+        const mark = facet.StencilOpState{ .pass_op = .replace, .compare_op = .always, .write_mask = 0xFF };
+        try side.use(.{ .stencil = .with_depth, .stencil_test = true, .dynamic_reference = true, .front = mark, .back = mark, .mixing = .{ .color_write_mask = 0 } });
+        side.fb.CmdSetStencilReference(side.commands.?, facet.STENCIL_FACE_FRONT_AND_BACK, 7);
+        side.draw(far_at, 3);
+        side.fb.CmdSetStencilReference(side.commands.?, facet.STENCIL_FACE_FRONT_AND_BACK, 9);
+        side.draw(near_at, 3);
+        const equal = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF };
+        try side.use(.{ .stencil = .with_depth, .stencil_test = true, .dynamic_reference = true, .front = equal, .back = equal });
+        side.fb.CmdSetStencilReference(side.commands.?, facet.STENCIL_FACE_FRONT_AND_BACK, 7);
+        side.draw(quad_at, 6);
+        side.end();
     }
     fn drawnAs(comptime options: Options, comptime first: u32, comptime count: u32) *const fn (side: *Side) Failure!void {
         return &struct {
@@ -923,6 +1011,10 @@ const Cases = struct {
     }
 };
 
+const marks = facet.StencilOpState{ .pass_op = .replace, .compare_op = .always, .write_mask = 0xFF, .reference = 1 };
+const counts = facet.StencilOpState{ .pass_op = .increment_and_clamp, .compare_op = .always, .write_mask = 0xFF };
+const equal_1 = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 1 };
+
 const cases = [_]Case{
     .{ .name = "clear", .run = &Cases.clear },
     .{ .name = "triangles", .run = &Cases.triangles },
@@ -966,8 +1058,26 @@ const cases = [_]Case{
     .{ .name = "points", .run = Cases.drawnAs(.{ .topology = .point_list }, clockwise_at, 22) },
     .{ .name = "triangles as edges", .run = Cases.drawnAs(.{ .polygon_mode = .line }, clockwise_at, 6) },
     .{ .name = "triangles as corners", .run = Cases.drawnAs(.{ .polygon_mode = .point }, clockwise_at, 6) },
-    .{ .name = "triangles as edges, culled", .run = Cases.drawnAs(.{ .polygon_mode = .line, .cull = facet.CULL_MODE_BACK, .front = .clockwise }, clockwise_at, 6) },
+    .{ .name = "triangles as edges, culled", .run = Cases.drawnAs(.{ .polygon_mode = .line, .cull = facet.CULL_MODE_BACK, .winding = .clockwise }, clockwise_at, 6) },
     .{ .name = "a line behind the eye", .run = Cases.drawnAs(.{ .topology = .line_strip }, behind_at, 3) },
+    .{ .name = "stencil: where marked", .run = Cases.stencilSteps(.with_depth, 0, &.{.{ .first = far_at, .count = 3, .front = marks }}, equal_1) },
+    .{ .name = "stencil: where not marked", .run = Cases.stencilSteps(.with_depth, 0, &.{.{ .first = far_at, .count = 3, .front = marks }}, .{ .compare_op = .not_equal, .compare_mask = 0xFF, .reference = 1 }) },
+    .{ .name = "stencil: its attachment alone", .run = Cases.stencilSteps(.alone, 0, &.{.{ .first = far_at, .count = 3, .front = marks }}, equal_1) },
+    .{ .name = "stencil: cleared to something", .run = Cases.stencilSteps(.with_depth, 3, &.{.{ .first = far_at, .count = 3, .front = .{ .pass_op = .decrement_and_clamp, .compare_op = .always, .write_mask = 0xFF } }}, .{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 3 }) },
+    .{ .name = "stencil: counted", .run = Cases.stencilSteps(.with_depth, 0, &.{ .{ .first = far_at, .count = 3, .front = counts }, .{ .first = near_at, .count = 3, .front = counts }, .{ .first = glass_at, .count = 3, .front = counts } }, .{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 2 }) },
+    .{ .name = "stencil: wrapped", .run = Cases.stencilSteps(.with_depth, 255, &.{.{ .first = far_at, .count = 3, .front = .{ .pass_op = .increment_and_wrap, .compare_op = .always, .write_mask = 0xFF } }}, .{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 0 }) },
+    .{ .name = "stencil: stopped at the top", .run = Cases.stencilSteps(.with_depth, 255, &.{.{ .first = far_at, .count = 3, .front = .{ .pass_op = .increment_and_clamp, .compare_op = .always, .write_mask = 0xFF } }}, .{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 255 }) },
+    .{ .name = "stencil: wrapped downwards", .run = Cases.stencilSteps(.with_depth, 0, &.{.{ .first = far_at, .count = 3, .front = .{ .pass_op = .decrement_and_wrap, .compare_op = .always, .write_mask = 0xFF } }}, .{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 255 }) },
+    .{ .name = "stencil: inverted", .run = Cases.stencilSteps(.with_depth, 0x0F, &.{.{ .first = far_at, .count = 3, .front = .{ .pass_op = .invert, .compare_op = .always, .write_mask = 0xFF } }}, .{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 0xF0 }) },
+    .{ .name = "stencil: zeroed", .run = Cases.stencilSteps(.with_depth, 5, &.{.{ .first = far_at, .count = 3, .front = .{ .pass_op = .zero, .compare_op = .always, .write_mask = 0xFF } }}, .{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 0 }) },
+    .{ .name = "stencil: masks", .run = Cases.stencilSteps(.with_depth, 0xA0, &.{.{ .first = far_at, .count = 3, .front = .{ .pass_op = .replace, .compare_op = .always, .write_mask = 0x0F, .reference = 0xFB } }}, .{ .compare_op = .equal, .compare_mask = 0x0F, .reference = 0x0B }) },
+    .{ .name = "stencil: a test that fails", .run = Cases.stencilSteps(.with_depth, 2, &.{.{ .first = far_at, .count = 3, .front = .{ .fail_op = .replace, .compare_op = .never, .write_mask = 0xFF, .reference = 1 } }}, equal_1) },
+    .{ .name = "stencil: less than kept", .run = Cases.stencilSteps(.with_depth, 2, &.{.{ .first = far_at, .count = 3, .front = marks }}, .{ .compare_op = .less, .compare_mask = 0xFF, .reference = 1 }) },
+    .{ .name = "stencil: front and back apart", .run = Cases.stencilSteps(.with_depth, 0, &.{.{ .first = clockwise_at, .count = 6, .front = marks, .back = .{ .pass_op = .replace, .compare_op = .always, .write_mask = 0xFF, .reference = 2 } }}, .{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 2 }) },
+    .{ .name = "stencil: where the depth fails", .run = Cases.stencilSteps(.with_depth, 0, &.{ .{ .first = near_at, .count = 3, .front = .{ .compare_op = .always }, .test_depth = true, .write_depth = true }, .{ .first = far_at, .count = 3, .front = .{ .depth_fail_op = .replace, .compare_op = .always, .write_mask = 0xFF, .reference = 1 }, .test_depth = true } }, equal_1) },
+    .{ .name = "stencil: drawn in colour as it marks", .run = Cases.stencilSteps(.with_depth, 0, &.{.{ .first = far_at, .count = 3, .front = marks, .shows = true }}, .{ .compare_op = .not_equal, .compare_mask = 0xFF, .reference = 1 }) },
+    .{ .name = "stencil: lines mark", .run = Cases.stencilSteps(.with_depth, 0, &.{.{ .first = clockwise_at, .count = 6, .topology = .line_list, .front = marks, .back = .{ .compare_op = .never } }}, equal_1) },
+    .{ .name = "stencil: set by commands", .run = &Cases.stencilByCommands },
     .{ .name = "scissor", .run = &Cases.scissor },
     .{ .name = "viewport", .run = &Cases.viewport },
     .{ .name = "depth range", .run = &Cases.depthRange },

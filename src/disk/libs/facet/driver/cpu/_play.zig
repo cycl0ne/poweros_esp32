@@ -61,6 +61,7 @@ pub const Player = struct {
     scissor: facet.Rect2D = .{ .extent = .{} },
     blend_constants: [4]f32 = @splat(0),
     line_width: f32 = 1,
+    stencil: _vertices.StencilSet = .{},
     /// The colour attachment has no alpha.
     target_opaque: bool = false,
     /// The sets and the push constants as bound, and the copy of them in
@@ -127,6 +128,7 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
         .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
         .set_line_width => player.line_width = _stream.as(_command.SetLineWidth, head).width,
+        .set_stencil => player.stencil.apply(_stream.as(_command.SetStencil, head)),
         .draw => if (player.drawing) {
             const command = _stream.as(_command.Draw, head);
             _draw.draw(queue, command.first_vertex, command.vertex_count, null, command.first_instance, command.instance_count);
@@ -185,7 +187,8 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
     const area = raster.Rect{ .x = left, .y = top, .width = right - left, .height = bottom - top };
     const attachments = raster.Attachments{
         .color = .{ .load = if (render_pass.color_load == .clear) .clear else .keep, .clear = command.clear_color },
-        .depth = .{ .used = render_pass.depth != null, .clear = @intCast(command.clear_depth) },
+        .depth = .{ .used = render_pass.tests_depth, .clear = @intCast(command.clear_depth) },
+        .stencil = .{ .used = render_pass.tests_stencil, .clear = @intCast(command.clear_stencil) },
     };
     player.display = framebuffer.color.image.display;
     if (player.target) |*target| {

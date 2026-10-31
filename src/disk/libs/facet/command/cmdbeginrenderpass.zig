@@ -31,7 +31,8 @@ const _render = @import("../render/_render.zig");
 /// Played, the rasterizer's frame begins over the render area of the
 /// framebuffer's colour attachment, cut to the framebuffer: cleared to the
 /// colour attachment's clear value where its load op is CLEAR, else kept,
-/// and with the depth cleared to the depth attachment's - 1.0 where it has
+/// and with the stencil cleared to the depth attachment's, 0 where it has
+/// none, and with the depth cleared to the depth attachment's - 1.0 where it has
 /// none - as each tile starts. The draws until CmdEndRenderPass are
 /// gathered; the tiles are drawn and stored when it ends. A pass begun in
 /// another ends it first.
@@ -82,6 +83,7 @@ pub fn CmdBeginRenderPass(base: *FacetBase, buffer: *facet.CommandBuffer, info: 
         .area = info.render_area,
         .clear_color = if (pass.color < clears.len) _render.colorOf(clears[pass.color].color) else 0xFF00_0000,
         .clear_depth = if (pass.depth) |depth| (if (depth < clears.len) _render.depthOf(clears[depth].depth_stencil) else 0xFFFF) else 0xFFFF,
+        .clear_stencil = if (pass.depth) |depth| (if (depth < clears.len) clears[depth].depth_stencil.stencil & 0xFF else 0) else 0,
     };
     _command.record(made, command, u8, &.{});
 }

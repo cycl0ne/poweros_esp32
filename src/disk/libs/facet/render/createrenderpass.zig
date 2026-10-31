@@ -7,6 +7,7 @@ const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
 const Device = @import("../device/_device.zig").Device;
 const _render = @import("_render.zig");
+const _image = @import("../image/_image.zig");
 const _surface = @import("../surface/_surface.zig");
 
 /// A render pass: the attachments it draws into, what each starts with and what is kept of it.
@@ -32,7 +33,8 @@ const _surface = @import("../surface/_surface.zig");
 /// BEHAVIOR:
 /// The pass has one subpass, which draws into one colour attachment -
 /// b8g8r8a8_unorm or r8g8b8a8_unorm - and may test against a depth
-/// attachment, d16_unorm. No input, resolve or multisampled attachments.
+/// attachment, d16_unorm, s8_uint or d16_unorm_s8_uint. No input, resolve or
+/// multisampled attachments.
 ///
 /// The colour attachment's load op CLEAR clears the render area; LOAD and
 /// DONT_CARE keep what the image holds. What is drawn is stored, whatever
@@ -88,12 +90,17 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     if (!_surface.drawable(color.format)) return .error_format_not_supported;
     if (color.samples != 1) return .error_feature_not_present;
     var depth_index: ?u32 = null;
+    var tests_depth = false;
+    var tests_stencil = false;
     if (subpass.depth_stencil_attachment) |reference| {
         if (reference.attachment != facet.ATTACHMENT_UNUSED) {
             if (reference.attachment >= attachments.len or reference.attachment == color_index) return .error_initialization_failed;
             const depth = attachments[reference.attachment];
-            if (depth.format != .d16_unorm) return .error_format_not_supported;
+            tests_depth = _image.hasDepth(depth.format);
+            tests_stencil = _image.hasStencil(depth.format);
+            if (!tests_depth and !tests_stencil) return .error_format_not_supported;
             if (depth.samples != 1 or depth.load_op == .load or depth.store_op == .store) return .error_feature_not_present;
+            if (depth.stencil_load_op == .load or depth.stencil_store_op == .store) return .error_feature_not_present;
             depth_index = reference.attachment;
         }
     }
@@ -103,6 +110,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         .attachment_count = info.attachment_count,
         .color = color_index,
         .depth = depth_index,
+        .tests_depth = tests_depth,
+        .tests_stencil = tests_stencil,
         .color_format = color.format,
         .color_load = if (color.load_op == .clear) .clear else .keep,
     };

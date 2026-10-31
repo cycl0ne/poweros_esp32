@@ -35,6 +35,7 @@ pub const Op = enum(u16) {
     set_scissor,
     set_blend_constants,
     set_line_width,
+    set_stencil,
     draw,
     draw_indexed,
     _,

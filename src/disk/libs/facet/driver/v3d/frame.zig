@@ -44,6 +44,9 @@ pub const Frame = struct {
     /// There is a depth buffer, cleared to this; it stays in the tiles.
     depth: bool = false,
     clear_depth: f32 = 1.0,
+    /// And a stencil, the same.
+    stencil: bool = false,
+    clear_stencil: u32 = 0,
     /// The tiles rendered: any others of the image stay as they are. Null
     /// for all.
     area: ?Area = null,
@@ -63,6 +66,8 @@ pub const DrawState = struct {
     clip: Area,
     cfg: cl.Cfg = .{},
     mixing: cl.Mixing = .{},
+    /// The front's and the back's test, with `cfg.stencil`.
+    stencil: [2]cl.StencilFace = undefined,
     /// The viewport, as Vulkan gives it.
     x: f32,
     y: f32,
@@ -95,6 +100,10 @@ pub fn writeDrawState(list: *List, state: *const DrawState) void {
     cl.clipWindow(list, clip.left, clip.top, clip.right - clip.left, clip.bottom - clip.top);
     cl.cfgBits(list, state.cfg);
     if (state.cfg.blend) cl.blend(list, &state.mixing);
+    if (state.cfg.stencil) {
+        cl.stencilCfg(list, &state.stencil[0], true);
+        cl.stencilCfg(list, &state.stencil[1], false);
+    }
     cl.colorWriteMasks(list, state.mixing.channels);
     cl.clipperXy(list, state.width * 32.0, state.height * 32.0);
     cl.clipperZ(list, state.max_depth - state.min_depth, state.min_depth);
@@ -145,9 +154,9 @@ pub fn writeTileList(list: *List, frame: *const Frame) void {
 pub fn writeRender(list: *List, frame: *const Frame, tile_start: u32, tile_end: u32) void {
     const tiles_x = frame.tilesX();
     const tiles_y = frame.tilesY();
-    cl.renderingCommon(list, frame.width, frame.height, tile_pixels, frame.depth);
+    cl.renderingCommon(list, frame.width, frame.height, tile_pixels, frame.depth or frame.stencil);
     cl.renderTarget0(list, tile_pixels, frame.clear);
-    cl.zsClear(list, frame.clear_depth);
+    cl.zsClear(list, frame.clear_depth, frame.clear_stencil);
     cl.tileListInitialBlock(list);
     cl.tileListBase(list, frame.tile_lists);
 

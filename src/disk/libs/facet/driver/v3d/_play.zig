@@ -30,7 +30,8 @@ const _buffer = @import("../../buffer/_buffer.zig");
 const Buffer = _buffer.Buffer;
 const _image = @import("../../image/_image.zig");
 const Image = _image.Image;
-const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
+const _pipeline = @import("../../pipeline/_pipeline.zig");
+const Pipeline = _pipeline.Pipeline;
 const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
 const _vertices = @import("../_vertices.zig");
 const driver = @import("driver.zig");
@@ -50,7 +51,7 @@ const most_chunks = 64;
 /// Of the binner's list at a time; a list in several parts branches on.
 const list_part_bytes: u32 = 64 * 1024;
 /// What is kept free in a part: a draw's packets, then the branch out.
-const packets_bytes: u32 = 176;
+const packets_bytes: u32 = 192;
 /// The memory for the binner's lists: its first block of each tile, and what
 /// it goes on into before it asks for more.
 const tile_list_bytes: u32 = 128;
@@ -91,6 +92,7 @@ pub const Player = struct {
     scissor: facet.Rect2D = .{ .extent = .{} },
     blend_constants: [4]f32 = @splat(0),
     line_width: f32 = 1,
+    stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
     /// The frame being made.
     frame: Frame = undefined,
@@ -185,6 +187,7 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
         .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
         .set_line_width => player.line_width = _stream.as(_command.SetLineWidth, head).width,
+        .set_stencil => player.stencil.apply(_stream.as(_command.SetStencil, head)),
         .draw => if (player.drawing) {
             const command = _stream.as(_command.Draw, head);
             draw(queue, command.first_vertex, command.vertex_count, null, command.first_instance, command.instance_count);
@@ -329,8 +332,10 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
         .tile_lists = player.tile_lists.?.address,
         .binned = false,
         .load = !clears or !whole,
-        .depth = command.render_pass.depth != null,
+        .depth = command.render_pass.tests_depth,
         .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / 65535,
+        .stencil = command.render_pass.tests_stencil,
+        .clear_stencil = command.clear_stencil,
         .area = if (whole) null else player.area,
     };
     player.bin = .{ .at = list.cpu, .address = list.address };
@@ -578,6 +583,28 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     return place.address;
 }
 
+/// A stencil operation as the hardware numbers them: keep and zero the other
+/// way round.
+fn stencilOpOf(op: facet.StencilOp) u32 {
+    return switch (op) {
+        .keep => 1,
+        .zero => 0,
+        else => @intFromEnum(op),
+    };
+}
+
+fn stencilFaceOf(face: _pipeline.StencilFace) cl.StencilFace {
+    return .{
+        .fail = stencilOpOf(face.fail),
+        .pass = stencilOpOf(face.pass),
+        .depth_fail = stencilOpOf(face.depth_fail),
+        .compare = @intFromEnum(face.compare),
+        .compare_mask = face.compare_mask,
+        .write_mask = face.write_mask,
+        .reference = face.reference,
+    };
+}
+
 /// A pipeline's mixing in the hardware's terms.
 fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
     // What is there has no alpha: it reads as wholly opaque.
@@ -606,6 +633,7 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
     const bottom: u32 = @intCast(std.math.clamp(y + scissor.extent.height, top, area.bottom));
     if (left == right or top == bottom or viewport.width == 0 or viewport.height == 0) return null;
     const has_depth = player.frame.depth;
+    const stencil = if (player.frame.stencil) player.stencil.of(pipeline) else null;
     return .{
         .clip = .{ .left = left, .top = top, .right = right, .bottom = bottom },
         .cfg = .{
@@ -617,9 +645,11 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
             .clockwise = pipeline.front == .counter_clockwise,
             .compare = if (has_depth) (if (pipeline.depth_test) |compare| @intFromEnum(compare) else cl.COMPARE_ALWAYS) else cl.COMPARE_ALWAYS,
             .depth_write = has_depth and pipeline.depth_test != null and pipeline.depth_write,
+            .stencil = stencil != null,
             .blend = pipeline.mixing.enabled,
         },
         .mixing = mixingOf(player, pipeline),
+        .stencil = if (stencil) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else undefined,
         .x = viewport.x,
         .y = viewport.y,
         .width = viewport.width,

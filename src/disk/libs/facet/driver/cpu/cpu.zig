@@ -113,7 +113,7 @@ fn formatProperties(format: facet.Format) facet.FormatProperties {
             .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER,
         },
         .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer, .optimal_tiling_features = attachment | transfer | sampled, .buffer_features = 0 },
-        .d16_unorm => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, .buffer_features = 0 },
+        .d16_unorm, .s8_uint, .d16_unorm_s8_uint => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, .buffer_features = 0 },
         .r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat, .r32g32b32a32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER },
         else => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = 0 },
     };

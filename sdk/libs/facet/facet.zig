@@ -326,6 +326,8 @@ pub const Format = enum(u32) {
     r32g32b32a32_sfloat = 109,
     /// 16 bits of depth: 0 nearest.
     d16_unorm = 124,
+    s8_uint = 127,
+    d16_unorm_s8_uint = 128,
     _,
 };
 
@@ -462,6 +464,7 @@ pub const ImageCreateInfo = extern struct {
 /// which of an image's parts.
 pub const IMAGE_ASPECT_COLOR: u32 = 1 << 0;
 pub const IMAGE_ASPECT_DEPTH: u32 = 1 << 1;
+pub const IMAGE_ASPECT_STENCIL: u32 = 1 << 2;
 
 /// One level of one layer of an image.
 pub const ImageSubresource = extern struct {
@@ -1057,6 +1060,11 @@ pub const StencilOp = enum(u32) {
     decrement_and_wrap = 7,
     _,
 };
+
+/// CmdSetStencilCompareMask and the like: which faces' values are set.
+pub const STENCIL_FACE_FRONT: u32 = 1 << 0;
+pub const STENCIL_FACE_BACK: u32 = 1 << 1;
+pub const STENCIL_FACE_FRONT_AND_BACK: u32 = 3;
 
 pub const StencilOpState = extern struct {
     fail_op: StencilOp = .keep,

@@ -7,8 +7,8 @@
 //! - the vertex function's inputs read from up to four vertex buffers,
 //!   an attribute a location, of floats or of bytes 0 to 1;
 //! - culled by their facing, front or back or both;
-//! - a depth test of any compare, the depth written or not, and no
-//!   stencil;
+//! - a depth test of any compare, the depth written or not, and a stencil
+//!   test of any compare and operations, a face's own;
 //! - the colour written, the channels asked for, replacing what is there or
 //!   mixed with it by any blend factors and operation, and no logic op;
 //! - one viewport and one scissor, given here or set by commands.
@@ -80,6 +80,17 @@ pub const Mixing = struct {
     }
 };
 
+/// A face's stencil test.
+pub const StencilFace = struct {
+    fail: facet.StencilOp = .keep,
+    pass: facet.StencilOp = .keep,
+    depth_fail: facet.StencilOp = .keep,
+    compare: facet.CompareOp = .never,
+    compare_mask: u8 = 0,
+    write_mask: u8 = 0,
+    reference: u8 = 0,
+};
+
 pub const Pipeline = struct {
     device: *Device,
     /// What its driver made of it (make_pipeline).
@@ -109,6 +120,12 @@ pub const Pipeline = struct {
     front: facet.FrontFace,
     depth_test: ?facet.CompareOp,
     depth_write: bool,
+    /// The front's and the back's test, or null for none.
+    stencil: ?[2]StencilFace,
+    /// What of them commands set (CmdSetStencilCompareMask and the like).
+    dynamic_stencil_compare: bool,
+    dynamic_stencil_write: bool,
+    dynamic_stencil_reference: bool,
     /// PIPELINE_CREATE_DEPTH_PREPASS.
     prepass: bool,
     mixing: Mixing,

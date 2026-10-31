@@ -34,6 +34,9 @@ Generated from the source by `./zig build autodoc`.
 - [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
 - [CmdSetLineWidth](#cmdsetlinewidth) - Recorded: the width of lines, for a pipeline that leaves it to commands.
 - [CmdSetScissor](#cmdsetscissor) - Recorded: the scissor, for a pipeline that leaves it to commands.
+- [CmdSetStencilCompareMask](#cmdsetstencilcomparemask) - Recorded: the stencil test's compare mask, for a pipeline that leaves it to commands.
+- [CmdSetStencilReference](#cmdsetstencilreference) - Recorded: the stencil test's reference, for a pipeline that leaves it to commands.
+- [CmdSetStencilWriteMask](#cmdsetstencilwritemask) - Recorded: the stencil test's write mask, for a pipeline that leaves it to commands.
 - [CmdSetViewport](#cmdsetviewport) - Recorded: the viewport, for a pipeline that leaves it to commands.
 - [CreateBuffer](#createbuffer) - A buffer of so many bytes, for what its usage says.
 - [CreateCommandPool](#createcommandpool) - A pool the device's command buffers are allocated from.
@@ -587,7 +590,8 @@ None.
 Played, the rasterizer's frame begins over the render area of the
 framebuffer's colour attachment, cut to the framebuffer: cleared to the
 colour attachment's clear value where its load op is CLEAR, else kept,
-and with the depth cleared to the depth attachment's - 1.0 where it has
+and with the stencil cleared to the depth attachment's, 0 where it has
+none, and with the depth cleared to the depth attachment's - 1.0 where it has
 none - as each tile starts. The draws until CmdEndRenderPass are
 gathered; the tiles are drawn and stored when it ends. A pass begun in
 another ends it first.
@@ -1500,6 +1504,183 @@ None known.
 fb.CmdSetScissor(commands, 0, 1, @ptrCast(&facet.Rect2D{ .extent = .{ .width = 800, .height = 600 } }));
 ```
 
+## CmdSetStencilCompareMask
+
+Recorded: the stencil test's compare mask, for a pipeline that leaves it to commands.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetStencilCompareMask(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void
+```
+
+**SINCE**
+
+1.15. LVO -376.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `face_mask` - the faces it is for: STENCIL_FACE_FRONT, STENCIL_FACE_BACK
+  or STENCIL_FACE_FRONT_AND_BACK.
+- `value` - its low 8 bits.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it with a pipeline that leaves this to commands test
+their stencil by it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateGraphicsPipelines`
+
+**EXAMPLES**
+
+```zig
+fb.CmdSetStencilCompareMask(commands, facet.STENCIL_FACE_FRONT_AND_BACK, 1);
+```
+
+## CmdSetStencilReference
+
+Recorded: the stencil test's reference, for a pipeline that leaves it to commands.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetStencilReference(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void
+```
+
+**SINCE**
+
+1.15. LVO -384.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `face_mask` - the faces it is for: STENCIL_FACE_FRONT, STENCIL_FACE_BACK
+  or STENCIL_FACE_FRONT_AND_BACK.
+- `value` - its low 8 bits.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it with a pipeline that leaves this to commands test
+their stencil by it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateGraphicsPipelines`
+
+**EXAMPLES**
+
+```zig
+fb.CmdSetStencilReference(commands, facet.STENCIL_FACE_FRONT_AND_BACK, 1);
+```
+
+## CmdSetStencilWriteMask
+
+Recorded: the stencil test's write mask, for a pipeline that leaves it to commands.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetStencilWriteMask(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void
+```
+
+**SINCE**
+
+1.15. LVO -380.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `face_mask` - the faces it is for: STENCIL_FACE_FRONT, STENCIL_FACE_BACK
+  or STENCIL_FACE_FRONT_AND_BACK.
+- `value` - its low 8 bits.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it with a pipeline that leaves this to commands test
+their stencil by it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateGraphicsPipelines`
+
+**EXAMPLES**
+
+```zig
+fb.CmdSetStencilWriteMask(commands, facet.STENCIL_FACE_FRONT_AND_BACK, 1);
+```
+
 ## CmdSetViewport
 
 Recorded: the viewport, for a pipeline that leaves it to commands.
@@ -2057,12 +2238,15 @@ and fans, a restart index ending a strip or a fan; triangles filled, or as
 their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
 triangles culled by facing as asked; lines `line_width` pixels wide, set
 here or by CmdSetLineWidth, and points one pixel; a
-depth test of any compare, written or not, without stencil, bounds,
-bias or clamp; the channels of the write mask written, replacing what is
+depth test of any compare, written or not, without bounds, bias or clamp;
+a stencil test of any compare and operations, a face's own, the masks and
+the reference given here or set by commands; the channels of the write mask written, replacing what is
 there or mixed with it by any blend factors and operation, the alpha by
 its own, and no logic op; one viewport and one scissor, given here or set
 by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
-blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth;
+blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth,
+the stencil's with CmdSetStencilCompareMask, CmdSetStencilWriteMask and
+CmdSetStencilReference;
 the others are taken and do nothing). A pipeline with the rasterizer
 discarding, or culling front and back, draws nothing.
 
@@ -2098,7 +2282,8 @@ to last as long as it does, as the program's code does.
 **NOTES**
 
 A depth test on a render pass without depth is no test, as Vulkan has
-it. On an attachment without alpha, R5G6B5, what is there reads as wholly
+it, nor a stencil test on one without stencil. Lines and points use the
+front's stencil test. On an attachment without alpha, R5G6B5, what is there reads as wholly
 opaque. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
 the alpha's factors the same or ZERO and ONE and the mask whole, cost
 less than any other mixing.
@@ -2443,7 +2628,8 @@ subpass that names an attachment there is not; `error_out_of_host_memory`.
 
 The pass has one subpass, which draws into one colour attachment -
 b8g8r8a8_unorm or r8g8b8a8_unorm - and may test against a depth
-attachment, d16_unorm. No input, resolve or multisampled attachments.
+attachment, d16_unorm, s8_uint or d16_unorm_s8_uint. No input, resolve or
+multisampled attachments.
 
 The colour attachment's load op CLEAR clears the render area; LOAD and
 DONT_CARE keep what the image holds. What is drawn is stored, whatever

@@ -101,6 +101,9 @@ const QueuePresent = @import("swapchain/queuepresent.zig").QueuePresent;
 const CreateWindowSurface = @import("surface/createwindowsurface.zig").CreateWindowSurface;
 const CmdSetBlendConstants = @import("command/cmdsetblendconstants.zig").CmdSetBlendConstants;
 const CmdSetLineWidth = @import("command/cmdsetlinewidth.zig").CmdSetLineWidth;
+const CmdSetStencilCompareMask = @import("command/cmdsetstencilcomparemask.zig").CmdSetStencilCompareMask;
+const CmdSetStencilWriteMask = @import("command/cmdsetstencilwritemask.zig").CmdSetStencilWriteMask;
+const CmdSetStencilReference = @import("command/cmdsetstencilreference.zig").CmdSetStencilReference;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -215,6 +218,9 @@ const contract_files = [_][]const u8{
     @embedFile("surface/createwindowsurface.zig"),
     @embedFile("command/cmdsetblendconstants.zig"),
     @embedFile("command/cmdsetlinewidth.zig"),
+    @embedFile("command/cmdsetstencilcomparemask.zig"),
+    @embedFile("command/cmdsetstencilwritemask.zig"),
+    @embedFile("command/cmdsetstencilreference.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -484,6 +490,15 @@ fn lvoCmdSetBlendConstants(base: *FacetBase, buffer: *facet.CommandBuffer, const
 fn lvoCmdSetLineWidth(base: *FacetBase, buffer: *facet.CommandBuffer, width: f32) callconv(.c) void {
     return CmdSetLineWidth(base, buffer, width);
 }
+fn lvoCmdSetStencilCompareMask(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) callconv(.c) void {
+    return CmdSetStencilCompareMask(base, buffer, face_mask, value);
+}
+fn lvoCmdSetStencilWriteMask(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) callconv(.c) void {
+    return CmdSetStencilWriteMask(base, buffer, face_mask, value);
+}
+fn lvoCmdSetStencilReference(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) callconv(.c) void {
+    return CmdSetStencilReference(base, buffer, face_mask, value);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -581,6 +596,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCreateWindowSurface),
     vec(lvoCmdSetBlendConstants),
     vec(lvoCmdSetLineWidth),
+    vec(lvoCmdSetStencilCompareMask),
+    vec(lvoCmdSetStencilWriteMask),
+    vec(lvoCmdSetStencilReference),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

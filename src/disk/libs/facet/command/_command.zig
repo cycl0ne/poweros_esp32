@@ -103,6 +103,7 @@ pub const BeginRenderPass = extern struct {
     /// 0xAARRGGBB, and the depth buffer's 0 to 65535.
     clear_color: u32,
     clear_depth: u32,
+    clear_stencil: u32,
 };
 
 pub const EndRenderPass = extern struct {
@@ -177,6 +178,16 @@ pub const SetLineWidth = extern struct {
     pub const op: _stream.Op = .set_line_width;
     head: Head = .{ .op = op },
     width: f32,
+};
+
+pub const SetStencil = extern struct {
+    pub const op: _stream.Op = .set_stencil;
+    head: Head = .{ .op = op },
+    which: Which,
+    face_mask: u32,
+    value: u32,
+
+    pub const Which = enum(u32) { compare, write, reference };
 };
 
 pub const Draw = extern struct {

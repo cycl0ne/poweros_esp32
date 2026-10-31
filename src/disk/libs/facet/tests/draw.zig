@@ -619,7 +619,7 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     changes[0][0] = .error_feature_not_present;
     changes[0][1].topology = @enumFromInt(10);
     changes[1][0] = .error_feature_not_present;
-    changes[1][1].depth = .{ .stencil_test_enable = true };
+    changes[1][1].depth = .{ .depth_bounds_test_enable = true };
     changes[2][0] = .error_feature_not_present;
     changes[2][1].blend = .{ .blend_enable = true, .src_color_blend_factor = @enumFromInt(15), .dst_color_blend_factor = .one };
     changes[3][0] = .error_feature_not_present;
@@ -913,6 +913,87 @@ test "points and lines: where they should be, and as wide; a triangle's edges an
             if (picture.at(x, y) == red) seen = true;
         };
         try testing.expectEqual(shows, seen);
+    }
+}
+
+test "the stencil: marked, then drawn only where marked; a face's own test; its own attachment and with depth" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const vertices = [_][3]f32{
+        // All of the picture.
+        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
+        // The left half, one way round, nearer; and the right, the other.
+        .{ -1, -1, 0.25 }, .{ 0, -1, 0.25 }, .{ -1, 1, 0.25 }, .{ -1, 1, 0.25 }, .{ 0, -1, 0.25 }, .{ 0, 1, 0.25 },
+        .{ 0, -1, 0.25 },  .{ 0, 1, 0.25 },  .{ 1, -1, 0.25 }, .{ 1, -1, 0.25 }, .{ 0, 1, 0.25 },  .{ 1, 1, 0.25 },
+    };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const red: u32 = 0xFFFF_0000;
+    const green: u32 = 0xFF00_FF00;
+    const clear: u32 = 0xFF00_00FF;
+
+    for ([2]facet.Format{ .s8_uint, .d16_unorm_s8_uint }) |format| {
+        const usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+        _, const stencil_view = try bench.image(.{ .format = format, .extent = .{ .width = 64, .height = 64 }, .usage = usage }, true);
+        const attachments = [2]facet.AttachmentDescription{
+            .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+            .{ .format = format, .load_op = .clear, .stencil_load_op = .clear, .final_layout = .depth_stencil_attachment_optimal },
+        };
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+        var pass: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass));
+        defer fb.DestroyRenderPass(device, pass);
+        const frame = try framebuffer(&bench, pass.?, &.{ picture.view, stencil_view }, 64, 64);
+        defer fb.DestroyFramebuffer(device, frame);
+
+        const Passes = struct {
+            mark: ?*facet.Pipeline,
+            draw: ?*facet.Pipeline,
+        };
+        const make = struct {
+            fn pipeline(on: *Bench, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, into: *facet.RenderPass, depth_state: facet.PipelineDepthStencilStateCreateInfo, dynamic: []const facet.DynamicState) !?*facet.Pipeline {
+                const result, const made = makePipeline(on, .{ .module = shaders, .layout = by, .pass = into, .depth = depth_state, .dynamic = dynamic });
+                try testing.expectEqual(facet.Result.success, result);
+                return made;
+            }
+        }.pipeline;
+        const always = facet.StencilOpState{ .pass_op = .replace, .compare_op = .always, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = 1 };
+        const equal = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 1 };
+        const marks = Passes{
+            .mark = try make(&bench, flat, layout, pass.?, .{ .stencil_test_enable = true, .front = always, .back = .{ .compare_op = .always } }, &.{}),
+            .draw = try make(&bench, flat, layout, pass.?, .{ .stencil_test_enable = true, .front = equal, .back = equal }, &.{}),
+        };
+        defer fb.DestroyPipeline(device, marks.mark);
+        defer fb.DestroyPipeline(device, marks.draw);
+        const commands = try bench.record();
+        const values = clears(clear);
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(commands, .graphics, marks.mark.?);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+        // Two halves, of faces apart: only one marks.
+        fb.CmdDraw(commands, 12, 1, 6, 0);
+        fb.CmdBindPipeline(commands, .graphics, marks.draw.?);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+        // One half red then green, marked; the other red, its back face
+        // having passed without marking: green over all the marked and
+        // none of the rest.
+        const left = picture.at(16, 32);
+        const right = picture.at(48, 32);
+        try testing.expect((left == green and right == red) or (left == red and right == green));
     }
 }
 

@@ -52,12 +52,15 @@ const _instance = @import("../instance/_instance.zig");
 /// their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
 /// triangles culled by facing as asked; lines `line_width` pixels wide, set
 /// here or by CmdSetLineWidth, and points one pixel; a
-/// depth test of any compare, written or not, without stencil, bounds,
-/// bias or clamp; the channels of the write mask written, replacing what is
+/// depth test of any compare, written or not, without bounds, bias or clamp;
+/// a stencil test of any compare and operations, a face's own, the masks and
+/// the reference given here or set by commands; the channels of the write mask written, replacing what is
 /// there or mixed with it by any blend factors and operation, the alpha by
 /// its own, and no logic op; one viewport and one scissor, given here or set
 /// by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
-/// blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth;
+/// blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth,
+/// the stencil's with CmdSetStencilCompareMask, CmdSetStencilWriteMask and
+/// CmdSetStencilReference;
 /// the others are taken and do nothing). A pipeline with the rasterizer
 /// discarding, or culling front and back, draws nothing.
 ///
@@ -90,7 +93,8 @@ const _instance = @import("../instance/_instance.zig");
 ///
 /// NOTES:
 /// A depth test on a render pass without depth is no test, as Vulkan has
-/// it. On an attachment without alpha, R5G6B5, what is there reads as wholly
+/// it, nor a stencil test on one without stencil. Lines and points use the
+/// front's stencil test. On an attachment without alpha, R5G6B5, what is there reads as wholly
 /// opaque. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
 /// the alpha's factors the same or ZERO and ONE and the mask whole, cost
 /// less than any other mixing.
@@ -185,6 +189,10 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .depth_test = null,
         .depth_write = false,
         .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0,
+        .stencil = null,
+        .dynamic_stencil_compare = false,
+        .dynamic_stencil_write = false,
+        .dynamic_stencil_reference = false,
         .polygon_mode = .fill,
         .line_width = 1,
         .mixing = .{},
@@ -238,7 +246,26 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (multisample.rasterization_samples > 1 or multisample.sample_shading_enable or multisample.alpha_to_coverage_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
     }
     if (info.depth_stencil_state) |depth| {
-        if (depth.stencil_test_enable or depth.depth_bounds_test_enable) return .error_feature_not_present;
+        if (depth.depth_bounds_test_enable) return .error_feature_not_present;
+        if (depth.stencil_test_enable) {
+            var faces: [2]_pipeline.StencilFace = undefined;
+            for ([2]facet.StencilOpState{ depth.front, depth.back }, &faces) |state, *face| {
+                if (@intFromEnum(state.compare_op) > 7) return .error_initialization_failed;
+                for ([3]facet.StencilOp{ state.fail_op, state.pass_op, state.depth_fail_op }) |op| {
+                    if (@intFromEnum(op) > 7) return .error_initialization_failed;
+                }
+                face.* = .{
+                    .fail = state.fail_op,
+                    .pass = state.pass_op,
+                    .depth_fail = state.depth_fail_op,
+                    .compare = state.compare_op,
+                    .compare_mask = @truncate(state.compare_mask),
+                    .write_mask = @truncate(state.write_mask),
+                    .reference = @truncate(state.reference),
+                };
+            }
+            made.stencil = faces;
+        }
         if (depth.depth_test_enable) {
             if (@intFromEnum(depth.depth_compare_op) > 7) return .error_initialization_failed;
             made.depth_test = depth.depth_compare_op;
@@ -275,6 +302,9 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             .scissor => dynamic_scissor = true,
             .blend_constants => made.mixing.constants = null,
             .line_width => made.line_width = null,
+            .stencil_compare_mask => made.dynamic_stencil_compare = true,
+            .stencil_write_mask => made.dynamic_stencil_write = true,
+            .stencil_reference => made.dynamic_stencil_reference = true,
             else => {},
         };
     }

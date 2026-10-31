@@ -204,4 +204,10 @@ facet.Result CreateWindowSurface(*facet.Instance instance, *const facet.WindowSu
 void CmdSetBlendConstants(*facet.CommandBuffer buffer, *const [4]f32 constants)
 /// Recorded: the width of lines, for a pipeline that leaves it to commands.
 void CmdSetLineWidth(*facet.CommandBuffer buffer, f32 width)
+/// Recorded: the stencil test's compare mask, for a pipeline that leaves it to commands.
+void CmdSetStencilCompareMask(*facet.CommandBuffer buffer, u32 face_mask, u32 value)
+/// Recorded: the stencil test's write mask, for a pipeline that leaves it to commands.
+void CmdSetStencilWriteMask(*facet.CommandBuffer buffer, u32 face_mask, u32 value)
+/// Recorded: the stencil test's reference, for a pipeline that leaves it to commands.
+void CmdSetStencilReference(*facet.CommandBuffer buffer, u32 face_mask, u32 value)
 ##end

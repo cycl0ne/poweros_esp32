@@ -27,6 +27,9 @@ pub const RenderPass = struct {
     /// attachment's if there is one.
     color: u32,
     depth: ?u32,
+    /// What that attachment has of the two.
+    tests_depth: bool,
+    tests_stencil: bool,
     color_format: facet.Format,
     /// What the colour starts with.
     color_load: ColorLoad,

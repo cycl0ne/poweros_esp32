@@ -90,10 +90,10 @@ pub fn renderTarget0(list: *List, tile: u32, clear: u32) void {
 }
 
 /// The last of the rendering mode's packets: depth and stencil's clear.
-pub fn zsClear(list: *List, depth: f32) void {
+pub fn zsClear(list: *List, depth: f32, stencil: u32) void {
     const bits: u32 = @bitCast(depth);
     list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(1 | @as(u64, bits) << 16);
+    list.double(1 | @as(u64, stencil) << 8 | @as(u64, bits) << 16);
 }
 
 pub fn tileListInitialBlock(list: *List) void {
@@ -191,6 +191,7 @@ pub const Cfg = struct {
     /// As facet.CompareOp numbers them, from never to always.
     compare: u32 = COMPARE_ALWAYS,
     depth_write: bool = false,
+    stencil: bool = false,
     blend: bool = false,
 };
 
@@ -200,6 +201,7 @@ pub fn cfgBits(list: *List, cfg: Cfg) void {
         @as(u32, @intFromBool(cfg.clockwise)) << 2 |
         cfg.compare << 12 |
         @as(u32, @intFromBool(cfg.depth_write)) << 15 |
+        @as(u32, @intFromBool(cfg.stencil)) << 18 |
         @as(u32, @intFromBool(cfg.blend)) << 19 |
         Z_CLIP_ZERO_TO_ONE << 22;
     list.byte(96);
@@ -245,6 +247,32 @@ fn half(value: f32) u32 {
 pub fn colorWriteMasks(list: *List, channels: u32) void {
     list.byte(87);
     list.word(~channels & 0xF);
+}
+
+/// A face's stencil test, the operations and compare as the hardware numbers
+/// them.
+pub const StencilFace = struct {
+    fail: u32,
+    pass: u32,
+    depth_fail: u32,
+    compare: u32,
+    compare_mask: u8,
+    write_mask: u8,
+    reference: u8,
+};
+
+/// What the front faces, or the back ones, are tested with.
+pub fn stencilCfg(list: *List, face: *const StencilFace, front: bool) void {
+    list.byte(80);
+    list.word(@as(u32, face.reference) |
+        @as(u32, face.compare_mask) << 8 |
+        face.compare << 16 |
+        face.fail << 19 |
+        face.depth_fail << 22 |
+        face.pass << 25 |
+        @as(u32, @intFromBool(front)) << 28 |
+        @as(u32, @intFromBool(!front)) << 29);
+    list.byte(face.write_mask);
 }
 
 /// One sample's worth of coverage, in all 4 of its bits.

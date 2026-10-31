@@ -94,11 +94,23 @@ pub const ImageView = struct {
 /// How a row of an image starts: on a cache line.
 const row_alignment = 64;
 
+/// Whether a format of an attachment has a depth.
+pub fn hasDepth(format: facet.Format) bool {
+    return format == .d16_unorm or format == .d16_unorm_s8_uint;
+}
+
+/// Whether a format of an attachment has a stencil.
+pub fn hasStencil(format: facet.Format) bool {
+    return format == .s8_uint or format == .d16_unorm_s8_uint;
+}
+
 /// The bytes a texel, a pixel or a vertex's value of `format` takes; 0
 /// for one facet.library does not know.
 pub fn bytesOf(format: facet.Format) u32 {
     return switch (format) {
+        .s8_uint => 1,
         .r5g6b5_unorm_pack16, .d16_unorm => 2,
+        .d16_unorm_s8_uint => 4,
         .r8g8b8a8_unorm, .b8g8r8a8_unorm, .r32_sfloat => 4,
         .r32g32_sfloat => 8,
         .r32g32b32_sfloat => 12,
@@ -137,11 +149,11 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
         .bytes = 0,
     };
     const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
-    if (info.format == .d16_unorm) {
+    if (hasDepth(info.format) or hasStencil(info.format)) {
         if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT == 0 or info.usage & ~depth_usage != 0) return null;
         if (info.tiling != .optimal or info.mip_levels != 1) return null;
         image.kind = .depth;
-        image.bytes = @as(u64, extent.width) * extent.height * 2;
+        image.bytes = @as(u64, extent.width) * extent.height * bytesOf(info.format);
         return image;
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;

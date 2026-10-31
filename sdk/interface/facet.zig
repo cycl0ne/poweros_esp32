@@ -107,6 +107,9 @@ pub const LVO = struct {
     pub const CreateWindowSurface = libraries.lvo(90);
     pub const CmdSetBlendConstants = libraries.lvo(91);
     pub const CmdSetLineWidth = libraries.lvo(92);
+    pub const CmdSetStencilCompareMask = libraries.lvo(93);
+    pub const CmdSetStencilWriteMask = libraries.lvo(94);
+    pub const CmdSetStencilReference = libraries.lvo(95);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -201,6 +204,9 @@ pub const Fn = struct {
     pub const CreateWindowSurface = *const fn (*FacetBase, *facet.Instance, *const facet.WindowSurfaceCreateInfo, *?*facet.Surface) callconv(.c) facet.Result;
     pub const CmdSetBlendConstants = *const fn (*FacetBase, *facet.CommandBuffer, *const [4]f32) callconv(.c) void;
     pub const CmdSetLineWidth = *const fn (*FacetBase, *facet.CommandBuffer, f32) callconv(.c) void;
+    pub const CmdSetStencilCompareMask = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32) callconv(.c) void;
+    pub const CmdSetStencilWriteMask = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32) callconv(.c) void;
+    pub const CmdSetStencilReference = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -670,5 +676,20 @@ pub const FacetBase = opaque {
     /// Recorded: the width of lines, for a pipeline that leaves it to commands.
     pub fn CmdSetLineWidth(self: *FacetBase, buffer: *facet.CommandBuffer, width: f32) void {
         return libraries.call(self, LVO.CmdSetLineWidth, Fn.CmdSetLineWidth, .{ buffer, width });
+    }
+
+    /// Recorded: the stencil test's compare mask, for a pipeline that leaves it to commands.
+    pub fn CmdSetStencilCompareMask(self: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void {
+        return libraries.call(self, LVO.CmdSetStencilCompareMask, Fn.CmdSetStencilCompareMask, .{ buffer, face_mask, value });
+    }
+
+    /// Recorded: the stencil test's write mask, for a pipeline that leaves it to commands.
+    pub fn CmdSetStencilWriteMask(self: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void {
+        return libraries.call(self, LVO.CmdSetStencilWriteMask, Fn.CmdSetStencilWriteMask, .{ buffer, face_mask, value });
+    }
+
+    /// Recorded: the stencil test's reference, for a pipeline that leaves it to commands.
+    pub fn CmdSetStencilReference(self: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void {
+        return libraries.call(self, LVO.CmdSetStencilReference, Fn.CmdSetStencilReference, .{ buffer, face_mask, value });
     }
 };

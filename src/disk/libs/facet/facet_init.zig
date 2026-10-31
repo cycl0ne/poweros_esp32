@@ -52,7 +52,9 @@ pub const LIBRARY_VERSION = 1;
 /// image in common.
 /// 14: points and lines, and triangles drawn as their edges or corners;
 /// CmdSetLineWidth.
-pub const LIBRARY_REVISION = 14;
+/// 15: the stencil test, on an attachment of s8_uint or d16_unorm_s8_uint;
+/// CmdSetStencilCompareMask, CmdSetStencilWriteMask, CmdSetStencilReference.
+pub const LIBRARY_REVISION = 15;
 const BUILD_DATE = "31.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

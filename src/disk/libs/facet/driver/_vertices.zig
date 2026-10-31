@@ -391,3 +391,35 @@ pub fn widen(pipeline: *const Pipeline, viewport: *const facet.Viewport, width: 
     }
     return widening.made;
 }
+
+/// What commands set of the stencil, as a player keeps it: front, back.
+pub const StencilSet = struct {
+    compare: [2]u8 = .{ 0, 0 },
+    write: [2]u8 = .{ 0, 0 },
+    reference: [2]u8 = .{ 0, 0 },
+
+    /// A command played.
+    pub fn apply(set: *StencilSet, command: *const _command.SetStencil) void {
+        const values = switch (command.which) {
+            .compare => &set.compare,
+            .write => &set.write,
+            .reference => &set.reference,
+        };
+        const value: u8 = @truncate(command.value);
+        if (command.face_mask & facet.STENCIL_FACE_FRONT != 0) values[0] = value;
+        if (command.face_mask & facet.STENCIL_FACE_BACK != 0) values[1] = value;
+    }
+
+    /// A pipeline's test for its draws now: null for none. Lines and points,
+    /// which have no face, go by the front's.
+    pub fn of(set: *const StencilSet, pipeline: *const Pipeline) ?[2]_pipeline.StencilFace {
+        var faces = pipeline.stencil orelse return null;
+        for (&faces, 0..) |*face, k| {
+            if (pipeline.dynamic_stencil_compare) face.compare_mask = set.compare[k];
+            if (pipeline.dynamic_stencil_write) face.write_mask = set.write[k];
+            if (pipeline.dynamic_stencil_reference) face.reference = set.reference[k];
+        }
+        if (widens(pipeline)) faces[1] = faces[0];
+        return faces;
+    }
+};
