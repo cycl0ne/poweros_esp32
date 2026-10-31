@@ -139,7 +139,8 @@ const modules = [_]Program{
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
     .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library" },
     .{ .disk = "libs/pci.library", .source = "libs/pci/pci.zig", .name = "pci.library" },
-    .{ .disk = "libs/facet.library", .source = "libs/facet/facet.zig", .name = "facet.library", .imports = &.{ "raster", "v3d" } },
+    .{ .disk = "libs/facet.library", .source = "libs/facet/facet.zig", .name = "facet.library", .imports = &.{"raster"} },
+    .{ .disk = "libs/facet/v3d.fdriver", .source = "libs/facet/v3d_fdriver.zig", .name = "v3d.fdriver", .imports = &.{"v3d"} },
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/audiocodec.library", .source = "libs/audiocodec/audiocodec.zig", .name = "audiocodec.library" },
     .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library" },
@@ -267,7 +268,7 @@ const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.
-const a64_only = [_][]const u8{ "cyw43455.device", "v3dtest", "facetboth" };
+const a64_only = [_][]const u8{ "cyw43455.device", "v3dtest", "facetboth", "v3d.fdriver" };
 
 /// Whether `program` is built for `chip`. The lists name a program by its
 /// name, or by its place on the disk where one program has two.

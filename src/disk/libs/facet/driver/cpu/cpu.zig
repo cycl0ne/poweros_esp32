@@ -24,8 +24,9 @@ const exec = sdk.exec;
 const facet = sdk.facet;
 const raster = @import("raster");
 const ExecBase = sdk.interface.exec.ExecBase;
-const facet_init = @import("../../facet_init.zig");
+const facet_version = @import("../../facet_version.zig");
 const _objects = @import("../../_objects.zig");
+const _format = @import("../_format.zig");
 const _render = @import("../../render/_render.zig");
 const _instance = @import("../../instance/_instance.zig");
 const PhysicalDevice = _instance.PhysicalDevice;
@@ -42,7 +43,7 @@ const _draw = @import("_draw.zig");
 
 pub const ops = Ops{
     .describe = &describe,
-    .format_properties = &formatProperties,
+    .format_properties = &_format.properties,
     .allocate_memory = &allocateMemory,
     .free_memory = &freeMemory,
     .make_pipeline = &makePipeline,
@@ -60,11 +61,11 @@ const queue_family: facet.QueueFamilyProperties = .{
     .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
 };
 
-fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
+fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
     const cores = runningCores(sys);
     physical.properties = .{
         .api_version = facet.API_VERSION_1_0,
-        .driver_version = facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION),
+        .driver_version = facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION),
         .vendor_id = 0,
         .device_id = 0,
         .device_type = .cpu,
@@ -102,34 +103,6 @@ fn runningCores(sys: *ExecBase) u32 {
     var count: u32 = 0;
     while (count < 32 and sys.ReadCoreTimes(count, &times)) count += 1;
     return @max(count, 1);
-}
-
-/// What `format` does.
-fn formatProperties(format: facet.Format) facet.FormatProperties {
-    const transfer = facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
-    const attachment = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND;
-    const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST;
-    return switch (format) {
-        .b8g8r8a8_unorm, .r8g8b8a8_unorm => .{
-            .linear_tiling_features = attachment | transfer,
-            .optimal_tiling_features = attachment | transfer | sampled,
-            .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER,
-        },
-        .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer, .optimal_tiling_features = attachment | transfer | sampled, .buffer_features = 0 },
-        .d16_unorm, .s8_uint, .d16_unorm_s8_uint => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, .buffer_features = 0 },
-        .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc2_unorm_block, .bc3_unorm_block, .r16g16b16a16_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
-            .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,
-            .buffer_features = 0,
-        },
-        .r32g32b32a32_sfloat => .{
-            .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,
-            .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER,
-        },
-        .r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER },
-        else => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = 0 },
-    };
 }
 
 /// The attributes that make a heap.
@@ -174,7 +147,7 @@ fn memoryPropertiesOf(attributes: u32) u32 {
     return flags;
 }
 
-fn allocateMemory(device: *Device, memory: *DeviceMemory) facet.Result {
+fn allocateMemory(device: *Device, memory: *DeviceMemory) callconv(.c) facet.Result {
     const properties = &device.physical.memory;
     // Room to move the block up to a cache line: AllocMem's are aligned to
     // its chunks.
@@ -189,11 +162,11 @@ fn allocateMemory(device: *Device, memory: *DeviceMemory) facet.Result {
     return .success;
 }
 
-fn freeMemory(device: *Device, memory: *DeviceMemory) void {
+fn freeMemory(device: *Device, memory: *DeviceMemory) callconv(.c) void {
     device.sys.FreeMem(memory.block.?, memory.block_bytes);
 }
 
-fn makePipeline(pipeline: *Pipeline) facet.Result {
+fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     const made = _objects.create(pipeline.device.sys, _draw.RasterState) orelse return .error_out_of_host_memory;
     made.* = .{
         .cull = switch (pipeline.cull) {
@@ -211,11 +184,11 @@ fn makePipeline(pipeline: *Pipeline) facet.Result {
     return .success;
 }
 
-fn unmakePipeline(pipeline: *Pipeline) void {
+fn unmakePipeline(pipeline: *Pipeline) callconv(.c) void {
     _objects.destroy(pipeline.device.sys, pipeline.driver);
 }
 
-fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) void {
+fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) callconv(.c) void {
     _play.play(queue, buffer);
     queue.device.sys.SignalWaitable(done);
 }

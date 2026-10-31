@@ -89,6 +89,9 @@ const image_dirs = [_][]const u8{
     "c/net",
     "s",
     "libs",
+    // LIBS:facet - the drivers of GPUs facet.library draws with, beside the
+    // cores.
+    "libs/facet",
     // LIBS:codecs - the decoders of pictures videocodec.library chooses
     // among, a library each.
     "libs/codecs",

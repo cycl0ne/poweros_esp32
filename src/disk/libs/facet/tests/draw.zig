@@ -34,6 +34,7 @@ const testing = std.testing;
 
 test {
     _ = @import("../driver/_tessellate.zig");
+    _ = @import("../driver/_driver.zig");
 }
 
 /// What a test draws with: a device and its queue, a command buffer and a
@@ -232,37 +233,37 @@ const Watched = struct {
         .execute = &execute,
     };
 
-    fn allocateMemory(device: *Device, memory: *DeviceMemory) facet.Result {
+    fn allocateMemory(device: *Device, memory: *DeviceMemory) callconv(.c) facet.Result {
         allocated += 1;
         return cpu.ops.allocate_memory(device, memory);
     }
 
-    fn freeMemory(device: *Device, memory: *DeviceMemory) void {
+    fn freeMemory(device: *Device, memory: *DeviceMemory) callconv(.c) void {
         freed += 1;
         cpu.ops.free_memory(device, memory);
     }
 
-    fn makeOne(pipeline: *_pipeline.Pipeline) facet.Result {
+    fn makeOne(pipeline: *_pipeline.Pipeline) callconv(.c) facet.Result {
         made += 1;
         return cpu.ops.make_pipeline(pipeline);
     }
 
-    fn unmakePipeline(pipeline: *_pipeline.Pipeline) void {
+    fn unmakePipeline(pipeline: *_pipeline.Pipeline) callconv(.c) void {
         unmade += 1;
         cpu.ops.unmake_pipeline(pipeline);
     }
 
-    fn openQueue(queue: *Queue) bool {
+    fn openQueue(queue: *Queue) callconv(.c) bool {
         opened += 1;
         return cpu.ops.open_queue(queue);
     }
 
-    fn closeQueue(queue: *Queue) void {
+    fn closeQueue(queue: *Queue) callconv(.c) void {
         closed += 1;
         cpu.ops.close_queue(queue);
     }
 
-    fn execute(queue: *Queue, buffer: *CommandBuffer, done: *sdk.exec.Waitable) void {
+    fn execute(queue: *Queue, buffer: *CommandBuffer, done: *sdk.exec.Waitable) callconv(.c) void {
         executed += 1;
         var finished: sdk.exec.Waitable = .{};
         cpu.ops.execute(queue, buffer, &finished);
@@ -704,7 +705,7 @@ const Losing = struct {
         break :ops made;
     };
 
-    fn execute(queue: *Queue, buffer: *CommandBuffer, done: *sdk.exec.Waitable) void {
+    fn execute(queue: *Queue, buffer: *CommandBuffer, done: *sdk.exec.Waitable) callconv(.c) void {
         _ = buffer;
         executed += 1;
         queue.device.lose();

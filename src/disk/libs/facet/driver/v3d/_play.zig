@@ -123,7 +123,7 @@ pub const Player = struct {
     tile_state: ?Block = null,
 };
 
-pub fn open(queue: *Queue) bool {
+pub fn open(queue: *Queue) callconv(.c) bool {
     const device = queue.device;
     const hardware = driver.hold(device.base) orelse return false;
     const player = _objects.create(device.sys, Player) orelse {
@@ -135,7 +135,7 @@ pub fn open(queue: *Queue) bool {
     return true;
 }
 
-pub fn close(queue: *Queue) void {
+pub fn close(queue: *Queue) callconv(.c) void {
     const device = queue.device;
     const player = playerOf(queue);
     const hardware = player.hardware;

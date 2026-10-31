@@ -9,11 +9,12 @@ const facet = sdk.facet;
 const ExecBase = sdk.interface.exec.ExecBase;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const _driver = @import("../driver/_driver.zig");
+const cpu = @import("../driver/cpu/cpu.zig");
 
 pub const Instance = struct {
     base: *FacetBase,
     /// The physical devices listed, the first `physical_count` of these.
-    physicals: [_driver.drivers.len]PhysicalDevice,
+    physicals: [1 + _driver.most_modules]PhysicalDevice,
     physical_count: u32 = 0,
     /// The devices and the surfaces made from it and not yet destroyed.
     devices: u32 = 0,
@@ -43,12 +44,18 @@ pub const max_image_dimension = 8192;
 pub const max_image_dimension_3d = 256;
 pub const max_image_array_layers = 256;
 
-/// The physical devices of `instance` described, each driver asked in turn.
-pub fn describe(sys: *ExecBase, instance: *Instance) void {
-    for (_driver.drivers) |ops| {
-        const physical = &instance.physicals[instance.physical_count];
-        physical.instance = instance;
-        physical.ops = ops;
-        if (ops.describe(sys, physical)) instance.physical_count += 1;
-    }
+/// The physical devices of `instance` described: the cores' first, then each
+/// module's that finds its hardware.
+pub fn describe(base: *FacetBase, instance: *Instance) void {
+    const sys = base.sys_base;
+    _driver.lookForModules(base);
+    describeOne(sys, instance, &cpu.ops);
+    for (base.module_ops[0..base.module_count]) |ops| describeOne(sys, instance, @ptrCast(@alignCast(ops.?)));
+}
+
+fn describeOne(sys: *ExecBase, instance: *Instance, ops: *const _driver.Ops) void {
+    const physical = &instance.physicals[instance.physical_count];
+    physical.instance = instance;
+    physical.ops = ops;
+    if (ops.describe(sys, physical)) instance.physical_count += 1;
 }

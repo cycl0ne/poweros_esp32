@@ -83,7 +83,7 @@ pub const Player = struct {
 
 /// The player a queue keeps while its device lasts: false when there is no
 /// memory for it.
-pub fn open(queue: *Queue) bool {
+pub fn open(queue: *Queue) callconv(.c) bool {
     const player = _objects.create(queue.device.sys, Player) orelse return false;
     player.* = .{};
     queue.driver = player;
@@ -92,7 +92,7 @@ pub fn open(queue: *Queue) bool {
 
 /// What the queue's player kept given back, and the player, as its device
 /// goes.
-pub fn close(queue: *Queue) void {
+pub fn close(queue: *Queue) callconv(.c) void {
     const player = playerOf(queue);
     if (player.target) |*target| target.deinit();
     if (player.scratch) |scratch| queue.device.sys.FreeVec(scratch);

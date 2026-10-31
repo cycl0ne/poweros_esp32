@@ -10,6 +10,9 @@ const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const TimerBase = sdk.interface.timer.TimerBase;
 
+/// The driver modules from LIBS:facet/ kept open at most.
+pub const most_modules = 3;
+
 pub const FacetBase = extern struct {
     lib: exec.Library,
     sys_base: *ExecBase,
@@ -30,6 +33,13 @@ pub const FacetBase = extern struct {
     /// The host tests have none.
     clock: timer.TimeRequest = .{},
     clock_open: bool = false,
+    /// The driver modules (driver/_driver.zig), open until the library goes,
+    /// their tables, and what guards the looking for them.
+    modules_lock: exec.SignalSemaphore = .{},
+    modules_read: bool = false,
+    module_count: u32 = 0,
+    modules: [most_modules]?*exec.Library = @splat(null),
+    module_ops: [most_modules]?*const anyopaque = @splat(null),
 };
 
 pub fn facetBase(lib: *exec.Library) *FacetBase {
