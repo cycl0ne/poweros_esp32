@@ -42,6 +42,11 @@ pub const Op = enum(u16) {
     set_stencil,
     draw,
     draw_indexed,
+    draw_indirect,
+    execute_commands,
+    bind_compute_pipeline,
+    dispatch,
+    dispatch_indirect,
     _,
 };
 

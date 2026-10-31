@@ -31,7 +31,9 @@ const _instance = @import("../instance/_instance.zig");
 /// RESULT:
 /// `success`; else what the first that could not be made came to:
 /// `error_invalid_shader_nv` for stages that are not one vertex and one
-/// fragment function of the same varyings; `error_feature_not_present`
+/// fragment function of the same varyings, with or without a tessellation
+/// control and evaluation function, whose varyings then the fragment
+/// function's have to be; `error_feature_not_present`
 /// for state facet.library does not draw (see BEHAVIOR);
 /// `error_format_not_supported` for an attribute in a format it does not
 /// read; `error_initialization_failed` for state that does not hold
@@ -46,6 +48,12 @@ const _instance = @import("../instance/_instance.zig");
 /// device with a processor of its own the fragment function has to be of a
 /// fixed form (`shader.fixedFragment`), or the pipeline is refused with
 /// `error_feature_not_present`.
+///
+/// With tessellation functions, the topology is `patch_list` and the
+/// `tessellation_state` says the vertices of a patch, 1 to 32: the cores make
+/// each patch into triangles or lines (`shader.Tessellation`), for a device
+/// with a processor of its own too, and those are drawn; without them,
+/// `patch_list` is `error_initialization_failed`.
 ///
 /// What it draws: points, lines and line strips, and triangle lists, strips
 /// and fans, a restart index ending a strip or a fan; triangles filled, or as
@@ -157,18 +165,24 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // The functions.
     var vertex: ?*const shader.Entry = null;
     var fragment: ?*const shader.Entry = null;
+    var control: ?*const shader.Entry = null;
+    var evaluation: ?*const shader.Entry = null;
     for (info.stages[0..info.stage_count]) |stage| {
         const module = _objects.of(_shader.ShaderModule, stage.module);
         const entry = _shader.find(module, stage.stage, stage.name) orelse return .error_invalid_shader_nv;
         switch (stage.stage) {
             facet.SHADER_STAGE_VERTEX => vertex = entry,
             facet.SHADER_STAGE_FRAGMENT => fragment = entry,
+            facet.SHADER_STAGE_TESSELLATION_CONTROL => control = entry,
+            facet.SHADER_STAGE_TESSELLATION_EVALUATION => evaluation = entry,
             else => return .error_invalid_shader_nv,
         }
     }
     const vertex_entry = vertex orelse return .error_invalid_shader_nv;
     const fragment_entry = fragment orelse return .error_invalid_shader_nv;
-    if (vertex_entry.varyingCount() != fragment_entry.varyingCount()) return .error_invalid_shader_nv;
+    if ((control == null) != (evaluation == null)) return .error_invalid_shader_nv;
+    const last_entry = evaluation orelse vertex_entry;
+    if (last_entry.varyingCount() != fragment_entry.varyingCount()) return .error_invalid_shader_nv;
     if (info.subpass != 0) return .error_initialization_failed;
 
     made.* = .{
@@ -182,6 +196,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .attributes = undefined,
         .attribute_count = 0,
         .topology = .triangle_list,
+        .drawn_topology = .triangle_list,
         .restart = false,
         .draws_nothing = false,
         .cull = .none,
@@ -219,12 +234,26 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     }
     if (info.input_assembly_state) |assembly| {
         switch (assembly.topology) {
-            .point_list, .line_list, .line_strip, .triangle_list, .triangle_strip, .triangle_fan => made.topology = assembly.topology,
+            .point_list, .line_list, .line_strip, .triangle_list, .triangle_strip, .triangle_fan, .patch_list => made.topology = assembly.topology,
             else => return .error_feature_not_present,
         }
         made.restart = assembly.primitive_restart_enable;
     }
-    if (info.tessellation_state != null) return .error_feature_not_present;
+    made.drawn_topology = made.topology;
+    if (evaluation) |entry| {
+        const state = info.tessellation_state orelse return .error_initialization_failed;
+        if (made.topology != .patch_list or state.patch_control_points == 0 or state.patch_control_points > _instance.max_patch_points) return .error_initialization_failed;
+        const way = entry.tessellation();
+        if (@intFromEnum(way.domain) > @intFromEnum(shader.Domain.isolines)) return .error_invalid_shader_nv;
+        made.tessellated = .{
+            .control = @ptrCast(@alignCast(control.?.function)),
+            .evaluation = @ptrCast(@alignCast(entry.function)),
+            .way = way,
+            .points = state.patch_control_points,
+            .vertex_varyings = vertex_entry.varyingCount(),
+        };
+        made.drawn_topology = if (way.domain == .isolines) .line_list else .triangle_list;
+    } else if (made.topology == .patch_list) return .error_initialization_failed;
 
     // The rasterization.
     const rasterization = info.rasterization_state;

@@ -35,6 +35,8 @@ pub const PhysicalDevice = struct {
 pub const max_vertex_input_bindings = 4;
 pub const max_vertex_input_attributes = 8;
 pub const max_vertex_output_components = 8;
+/// The vertices of a tessellated patch.
+pub const max_patch_points = 32;
 pub const max_push_constants_size = 128;
 pub const max_bound_descriptor_sets = 4;
 pub const max_image_dimension = 8192;

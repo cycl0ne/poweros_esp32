@@ -35,6 +35,7 @@ const _render = @import("../../render/_render.zig");
 const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
 const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
 const _vertices = @import("../_vertices.zig");
+const _compute = @import("../_compute.zig");
 const _transfer = @import("../_transfer.zig");
 const _draw = @import("_draw.zig");
 
@@ -69,6 +70,9 @@ pub const Player = struct {
     /// the frame's memory the draws since they last changed read; null
     /// until a draw makes one.
     resources: shader.Resources = .{},
+    /// What compute functions have bound, apart from what draws have.
+    compute_pipeline: ?*Pipeline = null,
+    compute_resources: shader.Resources = .{},
     drawn: ?*const shader.Resources = null,
     /// Memory a draw's vertices are worked in, kept for the next.
     scratch: ?[*]u8 = null,
@@ -102,7 +106,16 @@ pub fn playerOf(queue: *const Queue) *Player {
 pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
     const player = playerOf(queue);
     restart(player);
-    var commands = buffer.stream.commands();
+    playStream(queue, &buffer.stream);
+    // A command buffer that ends inside its render pass ends the pass.
+    endRenderPass(player);
+}
+
+/// The commands of a recording; a secondary command buffer's go on from what
+/// the primary has bound and begun.
+fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
+    const player = playerOf(queue);
+    var commands = stream.commands();
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
         .copy_buffer_to_image => copyBufferToImage(_stream.as(_command.CopyBufferToImage, head)),
@@ -122,11 +135,14 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
             player.index_type = command.index_type;
         },
         .bind_descriptor_sets => {
-            _vertices.bindDescriptorSets(&player.resources, _stream.as(_command.BindDescriptorSets, head));
+            const command = _stream.as(_command.BindDescriptorSets, head);
+            _vertices.bindDescriptorSets(if (command.compute != 0) &player.compute_resources else &player.resources, command);
             player.drawn = null;
         },
         .push_constants => {
-            _vertices.pushConstants(&player.resources, _stream.as(_command.PushConstants, head));
+            const command = _stream.as(_command.PushConstants, head);
+            _vertices.pushConstants(&player.resources, command);
+            _vertices.pushConstants(&player.compute_resources, command);
             player.drawn = null;
         },
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
@@ -142,10 +158,22 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
             const command = _stream.as(_command.DrawIndexed, head);
             _draw.draw(queue, command.first_index, command.index_count, command.vertex_offset, command.first_instance, command.instance_count);
         },
+        .draw_indirect => if (player.drawing) {
+            const command = _stream.as(_command.DrawIndirect, head);
+            for (0..command.count) |k| {
+                const made = _vertices.indirectDraw(command, @intCast(k)) orelse break;
+                _draw.draw(queue, made.first, made.count, made.vertex_offset, made.first_instance, made.instances);
+            }
+        },
+        .bind_compute_pipeline => player.compute_pipeline = _stream.as(_command.BindComputePipeline, head).pipeline,
+        .dispatch => if (!player.drawing) _compute.dispatch(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.Dispatch, head).count),
+        .dispatch_indirect => if (!player.drawing) _compute.dispatchIndirect(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.DispatchIndirect, head)),
+        .execute_commands => {
+            const command = _stream.as(_command.ExecuteCommands, head);
+            for (_stream.items(_command.ExecuteCommands, *CommandBuffer, command, command.count)) |secondary| playStream(queue, &secondary.stream);
+        },
         _ => {},
     };
-    // A command buffer that ends inside its render pass ends the pass.
-    endRenderPass(player);
 }
 
 /// Nothing bound, as each command buffer starts.
@@ -155,6 +183,8 @@ fn restart(player: *Player) void {
     player.vertex_buffers = @splat(.{});
     player.index_buffer = null;
     player.resources = .{};
+    player.compute_pipeline = null;
+    player.compute_resources = .{};
     player.drawn = null;
 }
 

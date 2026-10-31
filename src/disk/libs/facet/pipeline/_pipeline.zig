@@ -4,6 +4,7 @@
 //!
 //! What facet.library's pipelines draw:
 //! - triangles - lists, strips and fans - filled, one sample a pixel;
+//! - patches tessellated on the cores, into triangles or lines;
 //! - the vertex function's inputs read from up to four vertex buffers,
 //!   an attribute a location, of floats or of bytes 0 to 1;
 //! - culled by their facing, front or back or both;
@@ -91,10 +92,25 @@ pub const StencilFace = struct {
     reference: u8 = 0,
 };
 
+/// What a pipeline does between the vertex function and the rasterizer.
+pub const Tessellated = struct {
+    control: shader.ControlFn,
+    evaluation: shader.EvaluationFn,
+    way: shader.Tessellation,
+    /// The vertices of a patch.
+    points: u32,
+    /// What the vertex function writes past the position.
+    vertex_varyings: u32,
+};
+
 pub const Pipeline = struct {
     device: *Device,
     /// What its driver made of it (make_pipeline).
     driver: ?*anyopaque = null,
+    /// A compute pipeline: nothing else here but `device` and `driver` is
+    /// set, and no driver makes anything of it.
+    compute: ?shader.ComputeFn = null,
+    tessellated: ?Tessellated = null,
     vertex: shader.VertexFn,
     fragment: shader.FragmentFn,
     /// The fragment function's fixed form, if it has one.
@@ -107,6 +123,8 @@ pub const Pipeline = struct {
     attributes: [_instance.max_vertex_input_attributes]Attribute,
     attribute_count: u32,
     topology: facet.PrimitiveTopology,
+    /// What comes to be drawn: `topology`, or what patches are made into.
+    drawn_topology: facet.PrimitiveTopology,
     /// Triangles drawn filled, or as their edges or their corners.
     polygon_mode: facet.PolygonMode,
     /// In pixels; null where a command sets it (CmdSetLineWidth).

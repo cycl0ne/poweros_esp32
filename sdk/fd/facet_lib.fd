@@ -218,4 +218,16 @@ void CmdBlitImage(*facet.CommandBuffer buffer, *facet.Image source, facet.ImageL
 void CmdCopyImageToBuffer(*facet.CommandBuffer buffer, *facet.Image image, facet.ImageLayout image_layout, *facet.Buffer destination, u32 region_count, [*]const facet.BufferImageCopy regions)
 /// Recorded: parts of a render pass's attachments cleared, in the middle of it.
 void CmdClearAttachments(*facet.CommandBuffer buffer, u32 attachment_count, [*]const facet.ClearAttachment attachments, u32 rect_count, [*]const facet.ClearRect rects)
+/// Recorded: draws whose numbers, as CmdDraw takes them, are in a buffer.
+void CmdDrawIndirect(*facet.CommandBuffer buffer, *facet.Buffer numbers, u64 offset, u32 draw_count, u32 stride)
+/// Recorded: draws whose numbers, as CmdDrawIndexed takes them, are in a buffer.
+void CmdDrawIndexedIndirect(*facet.CommandBuffer buffer, *facet.Buffer numbers, u64 offset, u32 draw_count, u32 stride)
+/// Recorded: secondary command buffers played, in the order given.
+void CmdExecuteCommands(*facet.CommandBuffer buffer, u32 count, [*]const *facet.CommandBuffer secondaries)
+/// `count` compute pipelines, one for each of `infos`, into `pipelines`.
+facet.Result CreateComputePipelines(*facet.Device device, ?*facet.PipelineCache cache, u32 count, [*]const facet.ComputePipelineCreateInfo infos, [*]?*facet.Pipeline pipelines)
+/// Recorded: the compute function bound run, for each of the groups.
+void CmdDispatch(*facet.CommandBuffer buffer, u32 x, u32 y, u32 z)
+/// Recorded: as CmdDispatch, its numbers in a buffer.
+void CmdDispatchIndirect(*facet.CommandBuffer buffer, *facet.Buffer numbers, u64 offset)
 ##end

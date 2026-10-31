@@ -361,6 +361,7 @@ pub const BUFFER_USAGE_UNIFORM_BUFFER: u32 = 1 << 4;
 pub const BUFFER_USAGE_STORAGE_BUFFER: u32 = 1 << 5;
 pub const BUFFER_USAGE_INDEX_BUFFER: u32 = 1 << 6;
 pub const BUFFER_USAGE_VERTEX_BUFFER: u32 = 1 << 7;
+pub const BUFFER_USAGE_INDIRECT_BUFFER: u32 = 1 << 8;
 
 /// Who may use a buffer or an image at once. There is one queue family,
 /// so both are the same.
@@ -638,12 +639,40 @@ pub const CommandBufferAllocateInfo = extern struct {
 /// CommandBufferBeginInfo.flags.
 /// It is submitted once, then reset or recorded again.
 pub const COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT: u32 = 1 << 0;
+/// A secondary command buffer played wholly inside a render pass. Taken and
+/// not looked at: what it draws goes into the pass it is played in.
+pub const COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE: u32 = 1 << 1;
 /// It may be submitted again while a submission of it is still pending.
 pub const COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE: u32 = 1 << 2;
+
+/// The pass a secondary command buffer is played in. Taken and not looked at.
+pub const CommandBufferInheritanceInfo = extern struct {
+    render_pass: ?*RenderPass = null,
+    subpass: u32 = 0,
+    framebuffer: ?*Framebuffer = null,
+};
 
 /// How a command buffer is to be recorded.
 pub const CommandBufferBeginInfo = extern struct {
     flags: u32 = 0,
+    inheritance_info: ?*const CommandBufferInheritanceInfo = null,
+};
+
+/// What CmdDrawIndirect reads from its buffer for each draw: CmdDraw's numbers.
+pub const DrawIndirectCommand = extern struct {
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32,
+};
+
+/// What CmdDrawIndexedIndirect reads: CmdDrawIndexed's numbers.
+pub const DrawIndexedIndirectCommand = extern struct {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    vertex_offset: i32,
+    first_instance: u32,
 };
 
 /// ResetCommandBuffer's and ResetCommandPool's flags: the memory of the
@@ -932,7 +961,10 @@ pub const PipelineCache = opaque {};
 /// The stages a shader runs at: PipelineShaderStageCreateInfo.stage,
 /// shader.Entry.stage, and the stage masks of layouts and push constants.
 pub const SHADER_STAGE_VERTEX: u32 = 0x01;
+pub const SHADER_STAGE_TESSELLATION_CONTROL: u32 = 0x02;
+pub const SHADER_STAGE_TESSELLATION_EVALUATION: u32 = 0x04;
 pub const SHADER_STAGE_FRAGMENT: u32 = 0x10;
+pub const SHADER_STAGE_COMPUTE: u32 = 0x20;
 pub const SHADER_STAGE_ALL_GRAPHICS: u32 = 0x1F;
 
 /// What a shader module is made with.
@@ -997,6 +1029,9 @@ pub const PrimitiveTopology = enum(u32) {
     triangle_list = 3,
     triangle_strip = 4,
     triangle_fan = 5,
+    /// Patches of PipelineTessellationStateCreateInfo.patch_control_points
+    /// vertices each, for a pipeline that tessellates.
+    patch_list = 10,
     _,
 };
 
@@ -1237,13 +1272,35 @@ pub const PipelineDynamicStateCreateInfo = extern struct {
 pub const PIPELINE_CREATE_DEPTH_PREPASS: u32 = 1 << 31;
 
 /// What a graphics pipeline is made with.
+/// How many vertices make a patch.
+pub const PipelineTessellationStateCreateInfo = extern struct {
+    flags: u32 = 0,
+    patch_control_points: u32,
+};
+
+/// A compute pipeline: its function and its layout.
+pub const ComputePipelineCreateInfo = extern struct {
+    flags: u32 = 0,
+    stage: PipelineShaderStageCreateInfo,
+    layout: *PipelineLayout,
+    base_pipeline_handle: ?*Pipeline = null,
+    base_pipeline_index: i32 = -1,
+};
+
+/// What CmdDispatchIndirect reads from its buffer: CmdDispatch's numbers.
+pub const DispatchIndirectCommand = extern struct {
+    x: u32,
+    y: u32,
+    z: u32,
+};
+
 pub const GraphicsPipelineCreateInfo = extern struct {
     flags: u32 = 0,
     stage_count: u32,
     stages: [*]const PipelineShaderStageCreateInfo,
     vertex_input_state: ?*const PipelineVertexInputStateCreateInfo = null,
     input_assembly_state: ?*const PipelineInputAssemblyStateCreateInfo = null,
-    tessellation_state: ?*const anyopaque = null,
+    tessellation_state: ?*const PipelineTessellationStateCreateInfo = null,
     viewport_state: ?*const PipelineViewportStateCreateInfo = null,
     rasterization_state: *const PipelineRasterizationStateCreateInfo,
     multisample_state: ?*const PipelineMultisampleStateCreateInfo = null,

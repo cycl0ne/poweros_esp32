@@ -53,6 +53,10 @@ const Pipeline = @import("../pipeline/_pipeline.zig").Pipeline;
 pub fn CmdBindPipeline(base: *FacetBase, buffer: *facet.CommandBuffer, bind_point: facet.PipelineBindPoint, pipeline: *facet.Pipeline) void {
     _ = base;
     const made = _command.recording(buffer) orelse return;
-    if (bind_point != .graphics) return;
-    _command.record(made, _command.BindPipeline{ .pipeline = _objects.of(Pipeline, pipeline) }, u8, &.{});
+    const bound = _objects.of(Pipeline, pipeline);
+    switch (bind_point) {
+        .graphics => if (bound.compute == null) _command.record(made, _command.BindPipeline{ .pipeline = bound }, u8, &.{}),
+        .compute => if (bound.compute != null) _command.record(made, _command.BindComputePipeline{ .pipeline = bound }, u8, &.{}),
+        _ => {},
+    }
 }

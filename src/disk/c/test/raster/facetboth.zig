@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.5 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.6 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -153,7 +153,74 @@ fn modulateVertex(vertices: *const shader.Vertices) callconv(.c) void {
     }
 }
 
+/// A triangle a group makes of the far, near and laid over ones in the
+/// geometry, moved along by the push constants.
+fn computeVertices(groups: *const shader.Groups) callconv(.c) void {
+    const out = groups.resources.storage(Vertex, 0, 0) orelse return;
+    const along = groups.resources.constants([2]f32).*;
+    const number = groups.group[0];
+    for (geometry[far_at + number * 3..][0..3], out[number * 3..][0..3]) |given, *into| {
+        into.* = given;
+        into.p[0] += along[0];
+        into.p[1] += along[1];
+    }
+}
+
+/// How many triangles draw, and the first left to the draw after it: the
+/// numbers of a draw, and of a dispatch.
+fn computeNumbers(groups: *const shader.Groups) callconv(.c) void {
+    const out = groups.resources.storage(facet.DrawIndirectCommand, 0, 1) orelse return;
+    out[groups.group[0]] = .{ .vertex_count = 3, .instance_count = 1, .first_vertex = far_at + groups.group[0] * 3, .first_instance = 0 };
+}
+
+/// Mixed from a patch's corners by where a new vertex lies, bent a little so
+/// that how finely it is cut shows on the edges.
+fn mixedPoint(evaluations: *const shader.Evaluations, k: usize, weights: []const f32) void {
+    const out = evaluations.output(@intCast(k));
+    const count = evaluations.output_stride;
+    for (0..count) |float| {
+        var sum: f32 = 0;
+        for (weights, 0..) |weight, corner| sum += evaluations.patch.point(@intCast(corner))[float] * weight;
+        out[float] = sum;
+    }
+    const where = evaluations.coordinates[k];
+    out[0] += 0.06 * (where[0] * (1 - where[0]) + where[1] * (1 - where[1])) * 4;
+    out[1] -= 0.08 * where[0] * (1 - where[1]) * 4;
+}
+
+fn triangleEvaluation(evaluations: *const shader.Evaluations) callconv(.c) void {
+    for (0..evaluations.count) |k| {
+        mixedPoint(evaluations, k, &evaluations.coordinates[k]);
+    }
+}
+
+fn quadEvaluation(evaluations: *const shader.Evaluations) callconv(.c) void {
+    for (0..evaluations.count) |k| {
+        const where = evaluations.coordinates[k];
+        mixedPoint(evaluations, k, &.{ (1 - where[0]) * (1 - where[1]), where[0] * (1 - where[1]), (1 - where[0]) * where[1], where[0] * where[1] });
+    }
+}
+
+fn levelsOf(comptime outer: [4]f32, comptime inner: [2]f32) shader.ControlFn {
+    return &struct {
+        fn control(patch: *const shader.Patch, levels: *shader.Levels) callconv(.c) void {
+            _ = patch;
+            levels.outer = outer;
+            levels.inner = inner;
+        }
+    }.control;
+}
+
 const entries = [_]shader.Entry{
+    shader.compute("vertices", &computeVertices),
+    shader.compute("numbers", &computeNumbers),
+    shader.control("even", levelsOf(.{ 4, 4, 4, 4 }, .{ 4, 4 })),
+    shader.control("uneven", levelsOf(.{ 2, 3, 5, 7 }, .{ 3, 6 })),
+    shader.control("lines", levelsOf(.{ 5, 12, 1, 1 }, .{ 1, 1 })),
+    shader.evaluation("triangles", &triangleEvaluation, 4, .{ .domain = .triangles }),
+    shader.evaluation("triangles other way", &triangleEvaluation, 4, .{ .domain = .triangles, .clockwise = true }),
+    shader.evaluation("quads", &quadEvaluation, 4, .{ .domain = .quads }),
+    shader.evaluation("isolines", &quadEvaluation, 4, .{ .domain = .isolines }),
     shader.vertex("color", &colorVertex, 4),
     shader.vertex("texture", &textureVertex, 2),
     shader.vertex("modulate", &modulateVertex, 6),
@@ -181,6 +248,10 @@ const Options = struct {
     fragment: [*:0]const u8 = "color",
     topology: facet.PrimitiveTopology = .triangle_list,
     restart: bool = false,
+    /// Tessellated, patches of this many: functions of these names.
+    patch_points: u32 = 0,
+    control: [*:0]const u8 = "even",
+    evaluation: [*:0]const u8 = "triangles",
     polygon_mode: facet.PolygonMode = .fill,
     line_width: f32 = 1,
     cull: u32 = facet.CULL_MODE_NONE,
@@ -257,6 +328,15 @@ const Side = struct {
     command_pool: ?*facet.CommandPool = null,
     commands: ?*facet.CommandBuffer = null,
     fence: ?*facet.Fence = null,
+    secondary: ?*facet.CommandBuffer = null,
+    /// What the indirect and compute cases write, and what they bind it with.
+    computed: ?*facet.Buffer = null,
+    numbers: ?*facet.Buffer = null,
+    number_bytes: [*]u8 = undefined,
+    compute_set_layout: ?*facet.DescriptorSetLayout = null,
+    compute_set: ?*facet.DescriptorSet = null,
+    compute_layout: ?*facet.PipelineLayout = null,
+    compute_pipelines: [2]?*facet.Pipeline = @splat(null),
     /// The pipelines of the case being drawn.
     made: [8]?*facet.Pipeline = @splat(null),
     made_count: u32 = 0,
@@ -335,7 +415,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 1 }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -349,6 +429,31 @@ const Side = struct {
         var commands: [1]?*facet.CommandBuffer = undefined;
         try expect(fb.AllocateCommandBuffers(device, &.{ .command_pool = side.command_pool.?, .command_buffer_count = 1 }, &commands), error.Refused);
         side.commands = commands[0];
+        try expect(fb.AllocateCommandBuffers(device, &.{ .command_pool = side.command_pool.?, .level = .secondary }, &commands), error.Refused);
+        side.secondary = commands[0];
+        _ = try side.buffer(@sizeOf(@TypeOf(geometry)), facet.BUFFER_USAGE_STORAGE_BUFFER | facet.BUFFER_USAGE_VERTEX_BUFFER, &side.computed);
+        side.number_bytes = try side.buffer(256, facet.BUFFER_USAGE_STORAGE_BUFFER | facet.BUFFER_USAGE_INDIRECT_BUFFER, &side.numbers);
+        const compute_bindings = [2]facet.DescriptorSetLayoutBinding{
+            .{ .binding = 0, .descriptor_type = .storage_buffer, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+            .{ .binding = 1, .descriptor_type = .storage_buffer, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        };
+        try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &compute_bindings }, &side.compute_set_layout), error.Refused);
+        var made_sets: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.compute_set_layout) }, &made_sets), error.Refused);
+        side.compute_set = made_sets[0];
+        const buffer_infos = [2]facet.DescriptorBufferInfo{ .{ .buffer = side.computed }, .{ .buffer = side.numbers } };
+        const buffer_writes = [2]facet.WriteDescriptorSet{
+            .{ .dst_set = side.compute_set.?, .dst_binding = 0, .descriptor_type = .storage_buffer, .buffer_info = @ptrCast(&buffer_infos[0]) },
+            .{ .dst_set = side.compute_set.?, .dst_binding = 1, .descriptor_type = .storage_buffer, .buffer_info = @ptrCast(&buffer_infos[1]) },
+        };
+        fb.UpdateDescriptorSets(device, 2, &buffer_writes, 0, null);
+        const compute_push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_COMPUTE, .size = 8 };
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.compute_set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&compute_push) }, &side.compute_layout), error.Refused);
+        const compute_infos = [2]facet.ComputePipelineCreateInfo{
+            .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "vertices" }, .layout = side.compute_layout.? },
+            .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = side.module.?, .name = "numbers" }, .layout = side.compute_layout.? },
+        };
+        try expect(fb.CreateComputePipelines(device, null, 2, &compute_infos, &side.compute_pipelines), error.Refused);
         try expect(fb.CreateFence(device, &.{}, &side.fence), error.Refused);
         try side.stageTextures();
     }
@@ -447,6 +552,11 @@ const Side = struct {
         const fb = side.fb;
         const device = side.device orelse return;
         _ = fb.DeviceWaitIdle(device);
+        for (side.compute_pipelines) |each| fb.DestroyPipeline(device, each);
+        fb.DestroyPipelineLayout(device, side.compute_layout);
+        fb.DestroyDescriptorSetLayout(device, side.compute_set_layout);
+        fb.DestroyBuffer(device, side.computed);
+        fb.DestroyBuffer(device, side.numbers);
         fb.DestroyFence(device, side.fence);
         fb.DestroyCommandPool(device, side.command_pool);
         fb.DestroyPipelineLayout(device, side.layout);
@@ -501,12 +611,35 @@ const Side = struct {
         const s = @intFromEnum(pass.stencil) -| 1;
         const stenciled = pass.stencil != .none;
         fb.CmdBeginRenderPass(commands, &.{ .render_pass = if (stenciled) side.stencil_passes[s].? else side.passes[t][d][@intFromBool(pass.load)].?, .framebuffer = if (stenciled) side.stencil_framebuffers[s].? else side.framebuffers[t][d].?, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        side.state();
+    }
+
+    /// The whole viewport and scissor set and the vertex buffers bound.
+    fn state(side: *Side) void {
+        const fb = side.fb;
+        const commands = side.commands.?;
         side.setViewport(0, 0, @floatFromInt(side.width), @floatFromInt(side.height), 0, 1);
         const whole = facet.Rect2D{ .extent = .{ .width = side.width, .height = side.height } };
         fb.CmdSetScissor(commands, 0, 1, @ptrCast(&whole));
         const buffers = [2]*facet.Buffer{ side.vertices.?, side.places.? };
         const offsets = [2]u64{ 0, 0 };
         fb.CmdBindVertexBuffers(commands, 0, 2, &buffers, &offsets);
+    }
+
+    /// The computed buffer in place of the vertices.
+    fn drawComputed(side: *Side) void {
+        const buffers = [2]*facet.Buffer{ side.computed.?, side.places.? };
+        const offsets = [2]u64{ 0, 0 };
+        side.fb.CmdBindVertexBuffers(side.commands.?, 0, 2, &buffers, &offsets);
+    }
+
+    /// A compute pipeline bound, with the set they write through.
+    fn compute(side: *Side, which: usize, push: [2]f32) void {
+        const fb = side.fb;
+        const commands = side.commands.?;
+        fb.CmdBindPipeline(commands, .compute, side.compute_pipelines[which].?);
+        fb.CmdBindDescriptorSets(commands, .compute, side.compute_layout.?, 0, 1, @ptrCast(&side.compute_set), 0, null);
+        fb.CmdPushConstants(commands, side.compute_layout.?, facet.SHADER_STAGE_COMPUTE, 0, 8, &push);
     }
 
     fn partOf(_: *const Side, whole: u32, part: f32) i32 {
@@ -525,10 +658,13 @@ const Side = struct {
     /// A pipeline as `options` say, made for this case and bound.
     fn use(side: *Side, options: Options) Failure!void {
         const fb = side.fb;
-        const stages = [2]facet.PipelineShaderStageCreateInfo{
+        const stages = [4]facet.PipelineShaderStageCreateInfo{
             .{ .stage = facet.SHADER_STAGE_VERTEX, .module = side.module.?, .name = options.vertex },
             .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = side.module.?, .name = options.fragment },
+            .{ .stage = facet.SHADER_STAGE_TESSELLATION_CONTROL, .module = side.module.?, .name = options.control },
+            .{ .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION, .module = side.module.?, .name = options.evaluation },
         };
+        const tessellation = facet.PipelineTessellationStateCreateInfo{ .patch_control_points = options.patch_points };
         const bindings = [2]facet.VertexInputBindingDescription{
             .{ .binding = 0, .stride = @sizeOf(Vertex) },
             .{ .binding = 1, .stride = @sizeOf([2]f32), .input_rate = .instance },
@@ -540,7 +676,7 @@ const Side = struct {
             .{ .location = 3, .binding = 1, .format = .r32g32_sfloat },
         };
         const input = facet.PipelineVertexInputStateCreateInfo{ .vertex_binding_description_count = 2, .vertex_binding_descriptions = &bindings, .vertex_attribute_description_count = 4, .vertex_attribute_descriptions = &attributes };
-        const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = options.topology, .primitive_restart_enable = options.restart };
+        const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = if (options.patch_points != 0) .patch_list else options.topology, .primitive_restart_enable = options.restart };
         const viewports = facet.PipelineViewportStateCreateInfo{};
         const dynamic_states = [3]facet.DynamicState{ .viewport, .scissor, if (options.dynamic_reference) .stencil_reference else .blend_constants };
         const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = if (options.dynamic_constants or options.dynamic_reference) 3 else 2, .dynamic_states = &dynamic_states };
@@ -555,10 +691,11 @@ const Side = struct {
         };
         const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&blend_attachment), .blend_constants = options.constants };
         const info = facet.GraphicsPipelineCreateInfo{
-            .stage_count = 2,
+            .stage_count = if (options.patch_points != 0) 4 else 2,
             .stages = &stages,
             .vertex_input_state = &input,
             .input_assembly_state = &assembly,
+            .tessellation_state = if (options.patch_points != 0) &tessellation else null,
             .viewport_state = &viewports,
             .rasterization_state = &rasterization,
             .depth_stencil_state = &depth,
@@ -885,6 +1022,99 @@ const Cases = struct {
                 const four = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 4 };
                 try side.use(.{ .stencil = kind, .test_depth = true, .stencil_test = stenciled, .front = four, .back = four });
                 side.draw(quad_at, 6);
+                side.end();
+            }
+        }.run;
+    }
+    fn indirect(side: *Side) Failure!void {
+        const draws = [2]facet.DrawIndirectCommand{
+            .{ .vertex_count = 3, .instance_count = 1, .first_vertex = far_at, .first_instance = 0 },
+            .{ .vertex_count = 3, .instance_count = 1, .first_vertex = near_at, .first_instance = 0 },
+        };
+        side.number_bytes[0..@sizeOf(@TypeOf(draws))].* = std.mem.toBytes(draws);
+        side.begin(.{});
+        try side.use(.{});
+        side.fb.CmdDrawIndirect(side.commands.?, side.numbers.?, 0, 2, @sizeOf(facet.DrawIndirectCommand));
+        side.end();
+    }
+    fn indirectIndexed(side: *Side) Failure!void {
+        const draw = facet.DrawIndexedIndirectCommand{ .index_count = 6, .instance_count = 2, .first_index = 0, .vertex_offset = 0, .first_instance = 0 };
+        side.number_bytes[8..][0..@sizeOf(@TypeOf(draw))].* = std.mem.toBytes(draw);
+        side.begin(.{});
+        try side.use(.{ .vertex = "color" });
+        side.fb.CmdBindIndexBuffer(side.commands.?, side.indices.?, offset_32, .uint32);
+        side.fb.CmdDrawIndexedIndirect(side.commands.?, side.numbers.?, 8, 1, 0);
+        side.end();
+    }
+    /// A draw, a secondary's draw and another, all in the primary's pass.
+    fn inSecondary(side: *Side) Failure!void {
+        const fb = side.fb;
+        side.begin(.{});
+        try side.use(.{});
+        side.draw(far_at, 3);
+        const primary = side.commands;
+        side.commands = side.secondary;
+        try expectOk(fb.BeginCommandBuffer(side.commands.?, &.{ .flags = facet.COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE }));
+        side.state();
+        try side.use(.{ .blend = true });
+        side.draw(glass_at, 3);
+        try expectOk(fb.EndCommandBuffer(side.commands.?));
+        side.commands = primary;
+        fb.CmdExecuteCommands(side.commands.?, 1, @ptrCast(&side.secondary));
+        side.state();
+        try side.use(.{});
+        side.draw(near_at, 3);
+        side.end();
+    }
+    fn expectOk(result: facet.Result) Failure!void {
+        return Side.expect(result, error.Refused);
+    }
+    /// Two passes in a secondary, the primary only playing it.
+    fn wholeSecondary(side: *Side) Failure!void {
+        const fb = side.fb;
+        const primary = side.commands;
+        side.commands = side.secondary;
+        try expectOk(fb.BeginCommandBuffer(side.commands.?, &.{}));
+        side.begin(.{});
+        try side.use(.{});
+        side.draw(0, 3);
+        side.end();
+        side.begin(.{ .load = true, .depth = false });
+        try side.use(.{ .depth = false, .load = true });
+        side.draw(3, 3);
+        side.end();
+        try expectOk(fb.EndCommandBuffer(side.commands.?));
+        side.commands = primary;
+        fb.CmdExecuteCommands(side.commands.?, 1, @ptrCast(&side.secondary));
+    }
+    /// The triangles written by groups of a compute function, then drawn.
+    fn computedVertices(side: *Side) Failure!void {
+        side.compute(0, .{ 0.05, -0.07 });
+        side.fb.CmdDispatch(side.commands.?, 3, 1, 1);
+        side.begin(.{});
+        try side.use(.{ .blend = true });
+        side.drawComputed();
+        side.draw(0, 9);
+        side.end();
+    }
+    /// A draw's numbers written by a compute function, how many groups read
+    /// from a buffer too: what is bound to draw stays apart from it.
+    fn computedNumbers(side: *Side) Failure!void {
+        const dispatch = facet.DispatchIndirectCommand{ .x = 3, .y = 1, .z = 1 };
+        side.number_bytes[200..][0..@sizeOf(@TypeOf(dispatch))].* = std.mem.toBytes(dispatch);
+        side.compute(1, .{ 0, 0 });
+        side.fb.CmdDispatchIndirect(side.commands.?, side.numbers.?, 200);
+        side.begin(.{});
+        try side.use(.{ .blend = true });
+        side.fb.CmdDrawIndirect(side.commands.?, side.numbers.?, 0, 3, @sizeOf(facet.DrawIndirectCommand));
+        side.end();
+    }
+    fn tessellated(comptime options: Options, comptime first: u32, comptime count: u32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                try side.use(options);
+                side.draw(first, count);
                 side.end();
             }
         }.run;
@@ -1228,6 +1458,20 @@ const cases = [_]Case{
     .{ .name = "mixed by their alpha in rgba", .target = .rgba, .run = Cases.onTargetMixed(.rgba) },
     .{ .name = "mixed by their alpha in 565", .target = .rgb565, .run = Cases.onTargetMixed(.rgb565) },
     .{ .name = "blit: into a texture, then drawn", .run = &Cases.intoTexture },
+    .{ .name = "indirect: two draws", .run = &Cases.indirect },
+    .{ .name = "indirect: indexed, instanced", .run = &Cases.indirectIndexed },
+    .{ .name = "secondary: in a pass", .run = &Cases.inSecondary },
+    .{ .name = "secondary: with its own passes", .run = &Cases.wholeSecondary },
+    .{ .name = "compute: writes vertices", .run = &Cases.computedVertices },
+    .{ .name = "compute: writes a draw's numbers", .run = &Cases.computedNumbers },
+    .{ .name = "patches: triangles, even", .run = Cases.tessellated(.{ .patch_points = 3 }, 0, 3) },
+    .{ .name = "patches: triangles, uneven", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven" }, 0, 6) },
+    .{ .name = "patches: triangles, edges", .run = Cases.tessellated(.{ .patch_points = 3, .control = "uneven", .polygon_mode = .line }, 0, 3) },
+    .{ .name = "patches: triangles, culled", .run = Cases.tessellated(.{ .patch_points = 3, .cull = facet.CULL_MODE_BACK }, 0, 6) },
+    .{ .name = "patches: triangles, culled the other way", .run = Cases.tessellated(.{ .patch_points = 3, .evaluation = "triangles other way", .cull = facet.CULL_MODE_BACK }, 0, 6) },
+    .{ .name = "patches: quads, even", .run = Cases.tessellated(.{ .patch_points = 4, .evaluation = "quads" }, quad_at, 4) },
+    .{ .name = "patches: quads, uneven", .run = Cases.tessellated(.{ .patch_points = 4, .evaluation = "quads", .control = "uneven", .polygon_mode = .line }, quad_at, 4) },
+    .{ .name = "patches: isolines", .run = Cases.tessellated(.{ .patch_points = 4, .evaluation = "isolines", .control = "lines", .line_width = 3 }, quad_at, 4) },
 };
 
 /// How far apart two pixels are, in the channel furthest apart: in steps of

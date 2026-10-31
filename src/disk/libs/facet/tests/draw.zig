@@ -32,6 +32,10 @@ const _descriptor = @import("../descriptor/_descriptor.zig");
 const _pipeline = @import("../pipeline/_pipeline.zig");
 const testing = std.testing;
 
+test {
+    _ = @import("../driver/_tessellate.zig");
+}
+
 /// What a test draws with: a device and its queue, a command buffer and a
 /// fence, and what it made, given back by `down`.
 const Bench = struct {
@@ -456,8 +460,8 @@ test "a shader module: the entries of a shader.Code, found by stage and name; SP
     const spirv = [5]u32{ 0x0723_0203, 0x0001_0000, 0, 1, 0 };
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code_size = @sizeOf(@TypeOf(spirv)), .code = &spirv }, &none));
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code_size = 4, .code = &Flat.code }, &none));
-    const compute = [1]shader.Entry{.{ .name = "main", .stage = 0x20, .function = &Flat.vertex, .varyings = 0 }};
-    try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code = &shader.Code{ .entry_count = 1, .entries = &compute } }, &none));
+    const unknown = [1]shader.Entry{.{ .name = "main", .stage = 0x40, .function = &Flat.vertex, .varyings = 0 }};
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code = &shader.Code{ .entry_count = 1, .entries = &unknown } }, &none));
     const too_many = [1]shader.Entry{shader.vertex("main", &Flat.vertex, 9)};
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code = &shader.Code{ .entry_count = 1, .entries = &too_many } }, &none));
     try testing.expect(none == null);
@@ -617,7 +621,7 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     const Change = struct { facet.Result, PipelineState };
     var changes: [9]Change = @splat(.{ .success, base });
     changes[0][0] = .error_feature_not_present;
-    changes[0][1].topology = @enumFromInt(10);
+    changes[0][1].topology = @enumFromInt(11);
     changes[1][0] = .error_feature_not_present;
     changes[1][1].depth = .{ .depth_bounds_test_enable = true };
     changes[2][0] = .error_feature_not_present;
@@ -995,6 +999,383 @@ test "the stencil: marked, then drawn only where marked; a face's own test; its 
         const right = picture.at(48, 32);
         try testing.expect((left == green and right == red) or (left == red and right == green));
     }
+}
+
+test "indirect draws read their numbers as they are played; secondary command buffers play into the primary's pass" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const vertices = [_][3]f32{
+        // The left half, and the right.
+        .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 0, -1, 0.5 }, .{ 0, 1, 0.5 },
+        .{ 0, -1, 0.5 },  .{ 1, -1, 0.5 }, .{ 0, 1, 0.5 },  .{ 0, 1, 0.5 },  .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
+    };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const indices = [_]u16{ 6, 7, 8, 9, 10, 11 };
+    const index_buffer, const index_bytes = try bench.buffer(@sizeOf(@TypeOf(indices)), facet.BUFFER_USAGE_INDEX_BUFFER);
+    @memcpy(index_bytes[0..@sizeOf(@TypeOf(indices))], std.mem.asBytes(&indices));
+    const numbers, const number_bytes = try bench.buffer(256, facet.BUFFER_USAGE_INDIRECT_BUFFER);
+    const offset: u64 = 0;
+    const red: u32 = 0xFFFF_0000;
+    const green: u32 = 0xFF00_FF00;
+    const clear: u32 = 0xFF00_00FF;
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const result, const pipeline = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, pipeline);
+    const values = clears(clear);
+    const begin = facet.RenderPassBeginInfo{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &values };
+
+    // Two draws 32 bytes apart, the numbers written once it is recorded.
+    var commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &begin, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+    fb.CmdDrawIndirect(commands, numbers, 8, 2, 32);
+    fb.CmdEndRenderPass(commands);
+    const first = facet.DrawIndirectCommand{ .vertex_count = 6, .instance_count = 1, .first_vertex = 0, .first_instance = 0 };
+    const none = facet.DrawIndirectCommand{ .vertex_count = 6, .instance_count = 0, .first_vertex = 6, .first_instance = 0 };
+    number_bytes[8..][0..@sizeOf(facet.DrawIndirectCommand)].* = std.mem.toBytes(first);
+    number_bytes[40..][0..@sizeOf(facet.DrawIndirectCommand)].* = std.mem.toBytes(none);
+    try bench.submit();
+    try testing.expectEqual(red, picture.at(16, 32));
+    try testing.expectEqual(clear, picture.at(48, 32));
+
+    // Indexed.
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &begin, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindIndexBuffer(commands, index_buffer, 0, .uint16);
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    const indexed = facet.DrawIndexedIndirectCommand{ .index_count = 6, .instance_count = 1, .first_index = 0, .vertex_offset = 0, .first_instance = 0 };
+    number_bytes[0..@sizeOf(facet.DrawIndexedIndirectCommand)].* = std.mem.toBytes(indexed);
+    fb.CmdDrawIndexedIndirect(commands, numbers, 0, 1, 0);
+    // Past the buffer, and a stride too small: no more.
+    fb.CmdDrawIndexedIndirect(commands, numbers, 252, 1, 0);
+    fb.CmdDrawIndexedIndirect(commands, numbers, 0, 2, 4);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    try testing.expectEqual(clear, picture.at(16, 32));
+    try testing.expectEqual(green, picture.at(48, 32));
+
+    // A secondary, in the pass of a primary.
+    var allocated: [1]?*facet.CommandBuffer = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateCommandBuffers(device, &.{ .command_pool = bench.pool, .level = .secondary }, &allocated));
+    const secondary = allocated[0].?;
+    const inherited = facet.CommandBufferInheritanceInfo{ .render_pass = pass, .framebuffer = frame };
+    try testing.expectEqual(facet.Result.success, fb.BeginCommandBuffer(secondary, &.{ .flags = facet.COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE, .inheritance_info = &inherited }));
+    fb.CmdBindVertexBuffers(secondary, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(secondary, .graphics, pipeline.?);
+    fb.CmdPushConstants(secondary, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(secondary, 6, 1, 0, 0);
+    // In a secondary, it does nothing.
+    fb.CmdExecuteCommands(secondary, 1, @ptrCast(&secondary));
+    try testing.expectEqual(facet.Result.success, fb.EndCommandBuffer(secondary));
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &begin, .secondary_command_buffers);
+    fb.CmdExecuteCommands(commands, 1, @ptrCast(&secondary));
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    try testing.expectEqual(green, picture.at(16, 32));
+    try testing.expectEqual(clear, picture.at(48, 32));
+
+    // Given to a queue, it plays nothing; nor is a primary played as one.
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &begin, .@"inline");
+    fb.CmdExecuteCommands(commands, 1, @ptrCast(&commands));
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    try testing.expectEqual(clear, picture.at(16, 32));
+    const submit_info = facet.SubmitInfo{ .command_buffer_count = 1, .command_buffers = @ptrCast(&secondary) };
+    try testing.expectEqual(facet.Result.success, fb.QueueSubmit(bench.queue, 1, @ptrCast(&submit_info), null));
+    try testing.expectEqual(facet.Result.success, fb.QueueWaitIdle(bench.queue));
+    try testing.expectEqual(clear, picture.at(16, 32));
+}
+
+test "a compute function writes a buffer, group by group, apart from what draws have bound" {
+    const Doubler = struct {
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 0).?;
+            const at = groups.group[0] + groups.group[1] * groups.count[0] + groups.group[2] * groups.count[0] * groups.count[1];
+            out[at] = at * 2 + groups.resources.constants(u32).*;
+        }
+        fn other(groups: *const shader.Groups) callconv(.c) void {
+            groups.resources.storage(u32, 0, 0).?[0] = 0xDEAD;
+        }
+        const entries = [_]shader.Entry{ shader.compute("main", &run), shader.compute("other", &other), shader.vertex("main", &Flat.vertex, 0) };
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const doubler = try module(&bench, &Doubler.code);
+    defer fb.DestroyShaderModule(device, doubler);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .storage_buffer, .stage_flags = facet.SHADER_STAGE_COMPUTE };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const out_buffer, const out_bytes = try bench.buffer(240 * @sizeOf(u32), facet.BUFFER_USAGE_STORAGE_BUFFER);
+    const numbers, const number_bytes = try bench.buffer(64, facet.BUFFER_USAGE_INDIRECT_BUFFER);
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = out_buffer, .range = facet.WHOLE_SIZE };
+    const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+    const out: [*]u32 = @ptrCast(@alignCast(out_bytes));
+    @memset(out[0..240], 0);
+
+    const infos = [2]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = doubler }, .layout = layout },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = doubler, .name = "other" }, .layout = layout },
+    };
+    var pipelines: [2]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 2, &infos, &pipelines));
+    defer fb.DestroyPipeline(device, pipelines[0]);
+    defer fb.DestroyPipeline(device, pipelines[1]);
+
+    // Refused: a stage it is not, a name the module has not.
+    var refused: [1]?*facet.Pipeline = undefined;
+    const not_compute = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_VERTEX, .module = doubler }, .layout = layout };
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateComputePipelines(device, null, 1, @ptrCast(&not_compute), &refused));
+    try testing.expectEqual(@as(?*facet.Pipeline, null), refused[0]);
+    const not_there = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = doubler, .name = "nothing" }, .layout = layout };
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateComputePipelines(device, null, 1, @ptrCast(&not_there), &refused));
+
+    const seven: u32 = 7;
+    var commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    // A compute pipeline bound for drawing is not bound at all.
+    fb.CmdBindPipeline(commands, .graphics, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 4, &seven);
+    fb.CmdDispatch(commands, 5, 4, 3);
+    try bench.submit();
+    for (0..60) |k| try testing.expectEqual(@as(u32, @intCast(k)) * 2 + 7, out[k]);
+    try testing.expectEqual(@as(u32, 0), out[60]);
+
+    // Its numbers in a buffer, read as it is played.
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    const nine: u32 = 9;
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 4, &nine);
+    fb.CmdDispatchIndirect(commands, numbers, 4);
+    fb.CmdDispatchIndirect(commands, numbers, 60);
+    number_bytes[4..][0..12].* = std.mem.toBytes(facet.DispatchIndirectCommand{ .x = 10, .y = 1, .z = 1 });
+    try bench.submit();
+    for (0..10) |k| try testing.expectEqual(@as(u32, @intCast(k)) * 2 + 9, out[k]);
+    try testing.expectEqual(@as(u32, 10) * 2 + 7, out[10]);
+}
+
+test "tessellation: patches made into triangles and lines, on the picture where the evaluation function puts them" {
+    const Bent = struct {
+        var last_points: u32 = 0;
+        fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+            for (0..vertices.count) |k| {
+                const p = vertices.input(@intCast(k), 0);
+                // One more float than the fragment function reads.
+                vertices.output(@intCast(k))[0..5].* = .{ p[0], p[1], p[2], 1, 0.5 };
+            }
+        }
+        fn control(patch: *const shader.Patch, levels: *shader.Levels) callconv(.c) void {
+            last_points = patch.count;
+            levels.outer = .{ 3, 4, 5, 6 };
+            levels.inner = .{ 4, 5 };
+        }
+        fn triangleControl(patch: *const shader.Patch, levels: *shader.Levels) callconv(.c) void {
+            control(patch, levels);
+            // The second patch is left out.
+            if (patch.number == 1) levels.outer[0] = 0;
+        }
+        fn triangle(evaluations: *const shader.Evaluations) callconv(.c) void {
+            const a = evaluations.patch.point(0);
+            const b = evaluations.patch.point(1);
+            const c = evaluations.patch.point(2);
+            for (0..evaluations.count) |k| {
+                const at = evaluations.coordinates[k];
+                const out = evaluations.output(@intCast(k));
+                for (0..3) |axis| out[axis] = a[axis] * at[0] + b[axis] * at[1] + c[axis] * at[2];
+                out[3] = 1;
+            }
+        }
+        fn quad(evaluations: *const shader.Evaluations) callconv(.c) void {
+            const a = evaluations.patch.point(0);
+            const b = evaluations.patch.point(1);
+            const c = evaluations.patch.point(2);
+            const d = evaluations.patch.point(3);
+            for (0..evaluations.count) |k| {
+                const u = evaluations.coordinates[k][0];
+                const v = evaluations.coordinates[k][1];
+                const out = evaluations.output(@intCast(k));
+                for (0..3) |axis| out[axis] = (a[axis] * (1 - u) + b[axis] * u) * (1 - v) + (d[axis] * (1 - u) + c[axis] * u) * v;
+                out[3] = 1;
+            }
+        }
+        fn fragment(fragments: *const shader.Fragments) callconv(.c) void {
+            shader.fill(fragments, 0xFFFF_0000);
+        }
+        const entries = [_]shader.Entry{
+            shader.vertex("main", &vertex, 1),
+            shader.fragment("main", &fragment, 0),
+            shader.control("main", &control),
+            shader.control("triangle", &triangleControl),
+            shader.evaluation("triangles", &triangle, 0, .{ .domain = .triangles }),
+            shader.evaluation("clockwise", &triangle, 0, .{ .domain = .triangles, .clockwise = true }),
+            shader.evaluation("quads", &quad, 0, .{ .domain = .quads }),
+            shader.evaluation("isolines", &quad, 0, .{ .domain = .isolines }),
+            shader.evaluation("varied", &quad, 2, .{ .domain = .quads }),
+        };
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const bent = try module(&bench, &Bent.code);
+    defer fb.DestroyShaderModule(device, bent);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const vertices = [_][3]f32{
+        // Going round on the picture: the whole of it.
+        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 }, .{ -1, 1, 0.5 },
+    };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const clear: u32 = 0xFF00_00FF;
+    const red: u32 = 0xFFFF_0000;
+
+    const Made = struct {
+        fn of(on: *Bench, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, into: *facet.RenderPass, control: [*:0]const u8, evaluation: [*:0]const u8, points: u32, topology: facet.PrimitiveTopology, raster: facet.PipelineRasterizationStateCreateInfo) struct { facet.Result, ?*facet.Pipeline } {
+            const stages = [4]facet.PipelineShaderStageCreateInfo{
+                .{ .stage = facet.SHADER_STAGE_VERTEX, .module = shaders },
+                .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = shaders },
+                .{ .stage = facet.SHADER_STAGE_TESSELLATION_CONTROL, .module = shaders, .name = control },
+                .{ .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION, .module = shaders, .name = evaluation },
+            };
+            const stride = facet.VertexInputBindingDescription{ .binding = 0, .stride = 12 };
+            const attribute = facet.VertexInputAttributeDescription{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat };
+            const input = facet.PipelineVertexInputStateCreateInfo{ .vertex_binding_description_count = 1, .vertex_binding_descriptions = @ptrCast(&stride), .vertex_attribute_description_count = 1, .vertex_attribute_descriptions = @ptrCast(&attribute) };
+            const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = topology };
+            const tessellation = facet.PipelineTessellationStateCreateInfo{ .patch_control_points = points };
+            const viewport = facet.Viewport{ .width = 64, .height = 64 };
+            const scissor = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
+            const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
+            const attachment = facet.PipelineColorBlendAttachmentState{};
+            const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment) };
+            const depth = facet.PipelineDepthStencilStateCreateInfo{};
+            const info = facet.GraphicsPipelineCreateInfo{
+                .stage_count = 4,
+                .stages = &stages,
+                .vertex_input_state = &input,
+                .input_assembly_state = &assembly,
+                .tessellation_state = &tessellation,
+                .viewport_state = &view,
+                .rasterization_state = &raster,
+                .depth_stencil_state = &depth,
+                .color_blend_state = &blend,
+                .layout = by,
+                .render_pass = into,
+            };
+            var made: [1]?*facet.Pipeline = undefined;
+            const result = on.rig.fb.CreateGraphicsPipelines(on.device, null, 1, @ptrCast(&info), &made);
+            return .{ result, made[0] };
+        }
+    };
+    const draw = struct {
+        fn run(on: *Bench, into: *facet.RenderPass, onto: *facet.Framebuffer, pipeline: *facet.Pipeline, buffer: *facet.Buffer, where: *const u64, count: u32) !void {
+            const values = clears(0xFF00_00FF);
+            const commands = try on.record();
+            on.rig.fb.CmdBeginRenderPass(commands, &.{ .render_pass = into, .framebuffer = onto, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &values }, .@"inline");
+            on.rig.fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(where));
+            on.rig.fb.CmdBindPipeline(commands, .graphics, pipeline);
+            on.rig.fb.CmdDraw(commands, count, 1, 0, 0);
+            on.rig.fb.CmdEndRenderPass(commands);
+            try on.submit();
+        }
+    }.run;
+
+    // A square, whole, cut however finely.
+    var result, const quads = Made.of(&bench, bent, layout, pass, "main", "quads", 4, .patch_list, .{});
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, quads);
+    try draw(&bench, pass, frame, quads.?, vertex_buffer, &offset, 4);
+    try testing.expectEqual(@as(u32, 4), Bent.last_points);
+    var y: u32 = 0;
+    while (y < 64) : (y += 1) {
+        var x: u32 = 0;
+        while (x < 64) : (x += 1) try testing.expectEqual(red, picture.at(x, y));
+    }
+
+    // Two patches of three, the second left out: half of it, up to the diagonal.
+    result, const triangles = Made.of(&bench, bent, layout, pass, "triangle", "triangles", 3, .patch_list, .{});
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, triangles);
+    try draw(&bench, pass, frame, triangles.?, vertex_buffer, &offset, 4);
+    try testing.expectEqual(red, picture.at(40, 16));
+    try testing.expectEqual(clear, picture.at(16, 40));
+
+    // Culled by the way round it is said to go.
+    result, const culled = Made.of(&bench, bent, layout, pass, "main", "triangles", 3, .patch_list, .{ .cull_mode = facet.CULL_MODE_FRONT, .front_face = .clockwise });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, culled);
+    try draw(&bench, pass, frame, culled.?, vertex_buffer, &offset, 3);
+    const one_way = picture.at(40, 16);
+    result, const other_way = Made.of(&bench, bent, layout, pass, "main", "clockwise", 3, .patch_list, .{ .cull_mode = facet.CULL_MODE_FRONT, .front_face = .clockwise });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, other_way);
+    try draw(&bench, pass, frame, other_way.?, vertex_buffer, &offset, 3);
+    try testing.expect(one_way != picture.at(40, 16));
+
+    // Isolines: lines of constant v, the rest not touched.
+    result, const lines = Made.of(&bench, bent, layout, pass, "main", "isolines", 4, .patch_list, .{ .line_width = 1 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, lines);
+    try draw(&bench, pass, frame, lines.?, vertex_buffer, &offset, 4);
+    // Three lines, at the top and a third and two thirds of the way down.
+    var drawn: u32 = 0;
+    y = 0;
+    while (y < 64) : (y += 1) {
+        if (picture.at(32, y) == red) drawn += 1;
+    }
+    try testing.expect(drawn >= 2 and drawn <= 6);
+    try testing.expectEqual(clear, picture.at(32, 63));
+
+    // Refused: a patch of no vertices or too many; not a patch list; varyings
+    // that do not come to the fragment function's.
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "quads", 0, .patch_list, .{});
+    try testing.expectEqual(facet.Result.error_initialization_failed, result);
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "quads", 33, .patch_list, .{});
+    try testing.expectEqual(facet.Result.error_initialization_failed, result);
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "quads", 4, .triangle_list, .{});
+    try testing.expectEqual(facet.Result.error_initialization_failed, result);
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "varied", 4, .patch_list, .{});
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
+    const plain, _ = makePipeline(&bench, .{ .module = bent, .layout = layout, .pass = pass, .topology = .patch_list });
+    try testing.expect(plain != .success);
 }
 
 test "images copied, blitted, read back, and parts of an attachment cleared in the middle of a pass" {

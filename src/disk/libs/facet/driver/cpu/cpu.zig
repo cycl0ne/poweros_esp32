@@ -53,7 +53,7 @@ pub const ops = Ops{
 
 /// The one queue family: drawing and copying, one queue.
 const queue_family: facet.QueueFamilyProperties = .{
-    .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_TRANSFER,
+    .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER,
     .queue_count = 1,
     .timestamp_valid_bits = 0,
     .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },

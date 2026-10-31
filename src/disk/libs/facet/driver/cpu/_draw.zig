@@ -22,6 +22,7 @@ const _image = @import("../../image/_image.zig");
 const _pipeline = @import("../../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
 const _vertices = @import("../_vertices.zig");
+const _tessellate = @import("../_tessellate.zig");
 const _command = @import("../../command/_command.zig");
 const _play = @import("_play.zig");
 const Player = _play.Player;
@@ -123,13 +124,15 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
 
     const locations = pipeline.locations;
     const stride = 4 + pipeline.varyings;
+    // A patch's vertices may carry other than what comes to be drawn.
+    const point_stride = if (pipeline.tessellated) |tessellated| 4 + tessellated.vertex_varyings else stride;
     const most_corners = _vertices.mostCorners(pipeline.topology, count);
     const wide = _vertices.widens(pipeline);
-    const most_wide: _vertices.Wide = if (wide) _vertices.mostWide(pipeline, most_corners) else .{};
+    const most_wide: _vertices.Wide = if (wide and pipeline.tessellated == null) _vertices.mostWide(pipeline, most_corners) else .{};
     const wide_vertices_bytes = @as(usize, most_wide.vertices) * stride * @sizeOf(f32);
     const wide_indices_bytes = @as(usize, most_wide.indices) * @sizeOf(u32);
     const inputs_bytes = @as(usize, vertices) * locations * @sizeOf([4]f32);
-    const outputs_bytes = @as(usize, vertices) * stride * @sizeOf(f32);
+    const outputs_bytes = @as(usize, vertices) * point_stride * @sizeOf(f32);
     const corners_bytes = most_corners * @sizeOf(u32);
     const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes) orelse return;
     const inputs: [*][4]f32 = @ptrCast(@alignCast(scratch));
@@ -190,12 +193,23 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
             .input_stride = locations,
             .count = vertices,
             .outputs = outputs,
-            .output_stride = stride,
+            .output_stride = point_stride,
             .first_vertex = lowest,
             .instance = instance,
             .resources = resources,
         };
         pipeline.vertex(&batch);
+        if (pipeline.tessellated != null) {
+            const made = _tessellate.run(queue.device.sys, pipeline, resources, outputs, corners[0..corner_count], instance, most_vertices) orelse continue;
+            defer made.free(queue.device.sys);
+            if (wide) {
+                const widened = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, made.vertices, stride, made.corners(), made.wide_vertices, made.wide_indices);
+                raster.batched.draw(target, &state, made.wide_vertices[0 .. @as(usize, widened.vertices) * stride], stride, made.wide_indices[0..widened.indices]) catch return;
+            } else {
+                raster.batched.draw(target, &state, made.vertices[0 .. @as(usize, made.vertex_count) * stride], stride, made.corners()) catch return;
+            }
+            continue;
+        }
         // Out of the frame's memory: what was set up is drawn, the rest
         // not, as Vulkan leaves a device that runs out mid-frame.
         if (wide) {

@@ -55,7 +55,12 @@ pub const LIBRARY_VERSION = 1;
 /// 15: the stencil test, on an attachment of s8_uint or d16_unorm_s8_uint;
 /// CmdSetStencilCompareMask, CmdSetStencilWriteMask, CmdSetStencilReference.
 /// 16: CmdCopyImage, CmdBlitImage, CmdCopyImageToBuffer, CmdClearAttachments.
-pub const LIBRARY_REVISION = 16;
+/// 17: CmdDrawIndirect, CmdDrawIndexedIndirect, secondary command buffers and
+/// CmdExecuteCommands.
+/// 18: compute functions, on the cores: CreateComputePipelines, CmdDispatch,
+/// CmdDispatchIndirect.
+/// 19: tessellation, on the cores.
+pub const LIBRARY_REVISION = 19;
 const BUILD_DATE = "31.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

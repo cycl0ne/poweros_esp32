@@ -35,6 +35,8 @@ pub const CommandBuffer = struct {
     pool: *CommandPool,
     stream: Stream = .{},
     state: State = .initial,
+    /// Played from a primary one (CmdExecuteCommands), not from a queue.
+    secondary: bool = false,
     /// Recorded with ONE_TIME_SUBMIT: spent once played.
     one_time: bool = false,
     /// Its submissions the queue has not finished playing.
@@ -188,6 +190,9 @@ pub const BindDescriptorSets = extern struct {
     head: Head = .{ .op = op },
     first: u32,
     count: u32,
+    /// For compute functions, not for drawing: 1 or 0.
+    compute: u32,
+    pad: u32 = 0,
 };
 
 /// CmdPushConstants, followed by its bytes.
@@ -239,6 +244,48 @@ pub const Draw = extern struct {
     instance_count: u32,
     first_vertex: u32,
     first_instance: u32,
+};
+
+/// CmdDrawIndirect and CmdDrawIndexedIndirect: their numbers are in the
+/// buffer as the command is played.
+pub const DrawIndirect = extern struct {
+    pub const op: _stream.Op = .draw_indirect;
+    head: Head = .{ .op = op },
+    buffer: *Buffer,
+    offset: u64,
+    count: u32,
+    stride: u32,
+    indexed: bool,
+};
+
+/// CmdBindPipeline with a compute pipeline.
+pub const BindComputePipeline = extern struct {
+    pub const op: _stream.Op = .bind_compute_pipeline;
+    head: Head = .{ .op = op },
+    pipeline: *_pipeline.Pipeline,
+};
+
+pub const Dispatch = extern struct {
+    pub const op: _stream.Op = .dispatch;
+    head: Head = .{ .op = op },
+    count: [3]u32,
+    pad: u32 = 0,
+};
+
+/// Its numbers are in the buffer as the command is played.
+pub const DispatchIndirect = extern struct {
+    pub const op: _stream.Op = .dispatch_indirect;
+    head: Head = .{ .op = op },
+    buffer: *Buffer,
+    offset: u64,
+};
+
+/// CmdExecuteCommands, followed by the command buffers.
+pub const ExecuteCommands = extern struct {
+    pub const op: _stream.Op = .execute_commands;
+    head: Head = .{ .op = op },
+    count: u32,
+    pad: u32 = 0,
 };
 
 pub const DrawIndexed = extern struct {

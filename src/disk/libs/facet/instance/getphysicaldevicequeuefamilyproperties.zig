@@ -26,7 +26,7 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 /// None.
 ///
 /// BEHAVIOR:
-/// There is one family, 0: QUEUE_GRAPHICS and QUEUE_TRANSFER, with one
+/// There is one family, 0: QUEUE_GRAPHICS, QUEUE_COMPUTE and QUEUE_TRANSFER, with one
 /// queue. Its queue plays command buffers on a task of its own and
 /// shares each frame's tiles between the cores.
 ///

@@ -34,7 +34,7 @@
 //! run any other; a device with a processor of its own runs its own program
 //! for the form, and a pipeline with any other fragment function cannot be
 //! made on it. A vertex function is always the program's, and always runs
-//! on the cores.
+//! on the cores, and so do tessellation's and compute functions.
 
 const facet = @import("facet.zig");
 const texture = @import("texture.zig");
@@ -47,15 +47,18 @@ pub const MAGIC: u32 = 0x5A54_4346; // "FCTZ"
 /// One function of a module, found by its name and stage.
 pub const Entry = extern struct {
     name: [*:0]const u8,
-    /// facet.SHADER_STAGE_VERTEX or facet.SHADER_STAGE_FRAGMENT.
+    /// One of the facet.SHADER_STAGE_ values.
     stage: u32,
-    /// A VertexFn or a FragmentFn, as `stage` says.
+    /// A VertexFn, a ControlFn, an EvaluationFn, a FragmentFn or a ComputeFn,
+    /// as `stage` says.
     function: *const anyopaque,
-    /// In its low 8 bits the floats a vertex function writes past the
-    /// position, and a fragment function's planes past the first: no more
-    /// than PhysicalDeviceLimits.max_vertex_output_components. A pipeline's
-    /// two have to agree. Above them, a fragment function's fixed form, if
-    /// it has one (`Fixed`): 0 for one of the program's own.
+    /// In its low 8 bits the floats a vertex or evaluation function writes
+    /// past the position, and a fragment function's planes past the first: no
+    /// more than PhysicalDeviceLimits.max_vertex_output_components. What
+    /// comes to the fragment function has to agree with it. Above them, a
+    /// fragment function's fixed form, if it has one (`Fixed`): 0 for one of
+    /// the program's own; or an evaluation function's way of tessellating
+    /// (`Tessellation`).
     varyings: u32,
 
     /// The floats it hands on, or takes.
@@ -66,6 +69,11 @@ pub const Entry = extern struct {
     /// Its fixed form.
     pub fn fixed(entry: *const Entry) Fixed {
         return Fixed.fromBits(entry.varyings);
+    }
+
+    /// An evaluation function's way of tessellating.
+    pub fn tessellation(entry: *const Entry) Tessellation {
+        return .{ .domain = @enumFromInt((entry.varyings >> 8) & 3), .clockwise = entry.varyings & (1 << 10) != 0 };
     }
 };
 
@@ -84,6 +92,26 @@ pub fn vertex(name: [*:0]const u8, function: VertexFn, varyings: u32) Entry {
 /// An entry for a fragment function.
 pub fn fragment(name: [*:0]const u8, function: FragmentFn, varyings: u32) Entry {
     return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings };
+}
+
+/// An entry for a tessellation control function.
+pub fn control(name: [*:0]const u8, function: ControlFn) Entry {
+    return .{ .name = name, .stage = facet.SHADER_STAGE_TESSELLATION_CONTROL, .function = function, .varyings = 0 };
+}
+
+/// An entry for a tessellation evaluation function.
+pub fn evaluation(name: [*:0]const u8, function: EvaluationFn, varyings: u32, way: Tessellation) Entry {
+    return .{
+        .name = name,
+        .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION,
+        .function = function,
+        .varyings = varyings | @as(u32, @intFromEnum(way.domain)) << 8 | @as(u32, @intFromBool(way.clockwise)) << 10,
+    };
+}
+
+/// An entry for a compute function.
+pub fn compute(name: [*:0]const u8, function: ComputeFn) Entry {
+    return .{ .name = name, .stage = facet.SHADER_STAGE_COMPUTE, .function = function, .varyings = 0 };
 }
 
 /// What a fixed form of fragment function does.
@@ -204,6 +232,14 @@ pub const Resources = extern struct {
         return @ptrCast(@alignCast(found.pointer orelse return null));
     }
 
+    /// Binding `binding` of set `set`, a buffer written through, as the
+    /// `T`s it has room for: null where it is not written.
+    pub fn storage(resources: *const Resources, comptime T: type, set: u32, binding: u32) ?[]T {
+        const found = resources.slot(set, binding, 0) orelse return null;
+        const first: [*]T = @ptrCast(@alignCast(@constCast(found.pointer orelse return null)));
+        return first[0 .. found.range / @sizeOf(T)];
+    }
+
     /// The push constants as a `T`.
     pub fn constants(resources: *const Resources, comptime T: type) *const T {
         comptime if (@sizeOf(T) > MAX_PUSH_CONSTANTS_SIZE or @alignOf(T) > 4) @compileError("push constants hold 128 bytes, 4-byte aligned");
@@ -246,6 +282,96 @@ pub const Vertices = extern struct {
 };
 
 pub const VertexFn = *const fn (vertices: *const Vertices) callconv(.c) void;
+
+// --- tessellation -----------------------------------------------------------
+
+/// The shape a patch is made into.
+pub const Domain = enum(u8) {
+    /// Triangles in a triangle, the coordinates three that come to 1.
+    triangles = 0,
+    /// Triangles in a square, the coordinates u, v and 0.
+    quads = 1,
+    /// Lines of a constant v, `outer[0]` of them, of `outer[1]` pieces each:
+    /// the coordinates u, v and 0.
+    isolines = 2,
+};
+
+/// What an evaluation function says of how it tessellates. The pieces are of
+/// equal length, as Vulkan's SpacingEqual.
+pub const Tessellation = struct {
+    domain: Domain = .triangles,
+    /// Triangles go clockwise on the coordinates, not the other way.
+    clockwise: bool = false,
+};
+
+/// How finely a patch is made: a level is rounded up to a whole number, from
+/// 1 to 64. A patch with an outer level its domain uses not above 0 is left
+/// out. Triangles use outer 0 to 2, on the edges where u, v and w are 0, and
+/// inner 0; quads outer 0 to 3, on the edges u = 0, v = 0, u = 1, v = 1, and
+/// inner 0 and 1, along u and v; isolines outer 0 and 1.
+pub const Levels = extern struct {
+    outer: [4]f32 = .{ 1, 1, 1, 1 },
+    inner: [2]f32 = .{ 1, 1 },
+};
+
+/// A patch: the vertices the vertex function worked that make it.
+pub const Patch = extern struct {
+    points: [*]const f32,
+    point_stride: u32,
+    corners: [*]const u32,
+    /// How many vertices it is of.
+    count: u32,
+    /// The patch's number in the draw.
+    number: u32,
+    instance: u32,
+    resources: *const Resources,
+
+    /// Vertex `k` of the patch: its position, then its varyings.
+    pub inline fn point(patch: *const Patch, k: u32) [*]const f32 {
+        return patch.points + patch.corners[k] * patch.point_stride;
+    }
+};
+
+/// Says of a patch how finely it is made, `levels` given all 1. What
+/// Vulkan's control shader does to the vertices, an evaluation function does
+/// from them.
+pub const ControlFn = *const fn (patch: *const Patch, levels: *Levels) callconv(.c) void;
+
+/// What an evaluation function is given: where on the patch `count` new
+/// vertices lie, and where they go.
+pub const Evaluations = extern struct {
+    patch: *const Patch,
+    levels: *const Levels,
+    /// As its `Domain` has them.
+    coordinates: [*]const [3]f32,
+    count: u32,
+    /// Each vertex's position, then its varyings: `output_stride` floats.
+    outputs: [*]f32,
+    output_stride: u32,
+
+    /// Where vertex `k` goes.
+    pub inline fn output(evaluations: *const Evaluations, k: u32) [*]f32 {
+        return evaluations.outputs + k * evaluations.output_stride;
+    }
+};
+
+pub const EvaluationFn = *const fn (evaluations: *const Evaluations) callconv(.c) void;
+
+// --- the compute function ---------------------------------------------------
+
+/// What a compute function is given: a group, of as many invocations as it
+/// makes of it. It is called once for each group, the groups in no order and
+/// on any of the cores at once, so no two may write the same memory, and on a
+/// worker's stack: keep what it puts there small.
+pub const Groups = extern struct {
+    /// This group's number along each axis.
+    group: [3]u32,
+    /// How many groups the dispatch has along each.
+    count: [3]u32,
+    resources: *const Resources,
+};
+
+pub const ComputeFn = *const fn (groups: *const Groups) callconv(.c) void;
 
 /// `m * (p, 1)`, m 4 x 4 column after column.
 pub inline fn transform(m: *const [16]f32, p: [3]f32) [4]f32 {

@@ -34,6 +34,8 @@ const _pipeline = @import("../../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
 const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
 const _vertices = @import("../_vertices.zig");
+const _compute = @import("../_compute.zig");
+const _tessellate = @import("../_tessellate.zig");
 const _transfer = @import("../_transfer.zig");
 const driver = @import("driver.zig");
 const Hardware = driver.Hardware;
@@ -95,6 +97,9 @@ pub const Player = struct {
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
+    /// What compute functions have bound, apart from what draws have.
+    compute_pipeline: ?*Pipeline = null,
+    compute_resources: shader.Resources = .{},
     /// The frame being made.
     frame: Frame = undefined,
     area: Area = undefined,
@@ -167,7 +172,18 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
     player.vertex_buffers = @splat(.{});
     player.index_buffer = null;
     player.resources = .{};
-    var commands = buffer.stream.commands();
+    player.compute_pipeline = null;
+    player.compute_resources = .{};
+    playStream(queue, &buffer.stream);
+    // A command buffer that ends inside its render pass ends the pass.
+    endRenderPass(queue);
+}
+
+/// The commands of a recording; a secondary command buffer's go on from what
+/// the primary has bound and begun.
+fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
+    const player = playerOf(queue);
+    var commands = stream.commands();
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
         .copy_buffer_to_image => copyBufferToImage(queue, _stream.as(_command.CopyBufferToImage, head)),
@@ -194,8 +210,15 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
             player.index_offset = command.offset;
             player.index_type = command.index_type;
         },
-        .bind_descriptor_sets => _vertices.bindDescriptorSets(&player.resources, _stream.as(_command.BindDescriptorSets, head)),
-        .push_constants => _vertices.pushConstants(&player.resources, _stream.as(_command.PushConstants, head)),
+        .bind_descriptor_sets => {
+            const command = _stream.as(_command.BindDescriptorSets, head);
+            _vertices.bindDescriptorSets(if (command.compute != 0) &player.compute_resources else &player.resources, command);
+        },
+        .push_constants => {
+            const command = _stream.as(_command.PushConstants, head);
+            _vertices.pushConstants(&player.resources, command);
+            _vertices.pushConstants(&player.compute_resources, command);
+        },
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
         .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
@@ -209,10 +232,22 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
             const command = _stream.as(_command.DrawIndexed, head);
             draw(queue, command.first_index, command.index_count, command.vertex_offset, command.first_instance, command.instance_count);
         },
+        .draw_indirect => if (player.drawing) {
+            const command = _stream.as(_command.DrawIndirect, head);
+            for (0..command.count) |k| {
+                const made = _vertices.indirectDraw(command, @intCast(k)) orelse break;
+                draw(queue, made.first, made.count, made.vertex_offset, made.first_instance, made.instances);
+            }
+        },
+        .bind_compute_pipeline => player.compute_pipeline = _stream.as(_command.BindComputePipeline, head).pipeline,
+        .dispatch => if (!player.drawing) _compute.dispatch(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.Dispatch, head).count),
+        .dispatch_indirect => if (!player.drawing) _compute.dispatchIndirect(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.DispatchIndirect, head)),
+        .execute_commands => {
+            const command = _stream.as(_command.ExecuteCommands, head);
+            for (_stream.items(_command.ExecuteCommands, *CommandBuffer, command, command.count)) |secondary| playStream(queue, &secondary.stream);
+        },
         _ => {},
     };
-    // A command buffer that ends inside its render pass ends the pass.
-    endRenderPass(queue);
 }
 
 // --- memory -----------------------------------------------------------------
@@ -729,13 +764,15 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
 
     const locations = pipeline.locations;
     const stride = 4 + pipeline.varyings;
+    // A patch's vertices may carry other than what comes to be drawn.
+    const point_stride = if (pipeline.tessellated) |tessellated| 4 + tessellated.vertex_varyings else stride;
     const most_corners = _vertices.mostCorners(pipeline.topology, count);
     const wide = _vertices.widens(pipeline);
-    const most_wide: _vertices.Wide = if (wide) _vertices.mostWide(pipeline, most_corners) else .{};
+    const most_wide: _vertices.Wide = if (wide and pipeline.tessellated == null) _vertices.mostWide(pipeline, most_corners) else .{};
     const wide_vertices_bytes = @as(usize, most_wide.vertices) * stride * @sizeOf(f32);
     const wide_indices_bytes = @as(usize, most_wide.indices) * @sizeOf(u32);
     const inputs_bytes = @as(usize, vertices) * locations * @sizeOf([4]f32);
-    const outputs_bytes = @as(usize, vertices) * stride * @sizeOf(f32);
+    const outputs_bytes = @as(usize, vertices) * point_stride * @sizeOf(f32);
     const corners_bytes = most_corners * @sizeOf(u32);
     const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes) orelse return;
     const inputs: [*][4]f32 = @ptrCast(@alignCast(scratch));
@@ -750,7 +787,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     // where rectangles are made anew for each.
     var index_place: Place = undefined;
     var kept: u32 = 0;
-    if (!wide) {
+    if (!wide and pipeline.tessellated == null) {
         index_place = carve(queue, @intCast(corner_count * 4), 4) orelse return noRoom(queue);
         const kept_indices: [*]u32 = @ptrCast(@alignCast(index_place.cpu));
         var corner: usize = 0;
@@ -808,7 +845,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             .input_stride = locations,
             .count = vertices,
             .outputs = outputs,
-            .output_stride = stride,
+            .output_stride = point_stride,
             .first_vertex = lowest,
             .instance = instance,
             .resources = &player.resources,
@@ -816,13 +853,33 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         pipeline.vertex(&batch);
         var drawn: [*]const f32 = outputs;
         var drawn_vertices: usize = vertices;
+        var drawn_corners: []const u32 = corners[0..corner_count];
+        var into_vertices: [*]f32 = wide_vertices;
+        var into_indices: [*]u32 = wide_indices;
+        var tessellated: ?_tessellate.Made = null;
+        defer if (tessellated) |made| made.free(queue.device.sys);
+        if (pipeline.tessellated != null) {
+            const made = _tessellate.run(queue.device.sys, pipeline, &player.resources, outputs, corners[0..corner_count], instance, most_vertices) orelse continue;
+            tessellated = made;
+            drawn = made.vertices;
+            drawn_vertices = made.vertex_count;
+            drawn_corners = made.corners();
+            into_vertices = made.wide_vertices;
+            into_indices = made.wide_indices;
+            if (!wide) {
+                if (made.corner_count == 0) continue;
+                index_place = carve(queue, made.corner_count * 4, 4) orelse return noRoom(queue);
+                @memcpy(@as([*]u32, @ptrCast(@alignCast(index_place.cpu)))[0..made.corner_count], drawn_corners);
+                kept = made.corner_count;
+            }
+        }
         if (wide) {
-            const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, outputs, stride, corners[0..corner_count], wide_vertices, wide_indices);
+            const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, drawn, stride, drawn_corners, into_vertices, into_indices);
             if (made.indices == 0) continue;
             index_place = carve(queue, made.indices * 4, 4) orelse return noRoom(queue);
-            @memcpy(@as([*]u32, @ptrCast(@alignCast(index_place.cpu)))[0..made.indices], wide_indices[0..made.indices]);
+            @memcpy(@as([*]u32, @ptrCast(@alignCast(index_place.cpu)))[0..made.indices], into_indices[0..made.indices]);
             kept = made.indices;
-            drawn = wide_vertices;
+            drawn = into_vertices;
             drawn_vertices = made.vertices;
         }
         const records = carve(queue, std.math.cast(u32, drawn_vertices * record_bytes) orelse return, 4) orelse return noRoom(queue);

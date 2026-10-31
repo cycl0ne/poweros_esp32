@@ -108,6 +108,12 @@ const CmdCopyImage = @import("command/cmdcopyimage.zig").CmdCopyImage;
 const CmdBlitImage = @import("command/cmdblitimage.zig").CmdBlitImage;
 const CmdCopyImageToBuffer = @import("command/cmdcopyimagetobuffer.zig").CmdCopyImageToBuffer;
 const CmdClearAttachments = @import("command/cmdclearattachments.zig").CmdClearAttachments;
+const CmdDrawIndirect = @import("command/cmddrawindirect.zig").CmdDrawIndirect;
+const CmdDrawIndexedIndirect = @import("command/cmddrawindexedindirect.zig").CmdDrawIndexedIndirect;
+const CmdExecuteCommands = @import("command/cmdexecutecommands.zig").CmdExecuteCommands;
+const CreateComputePipelines = @import("pipeline/createcomputepipelines.zig").CreateComputePipelines;
+const CmdDispatch = @import("command/cmddispatch.zig").CmdDispatch;
+const CmdDispatchIndirect = @import("command/cmddispatchindirect.zig").CmdDispatchIndirect;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -115,6 +121,7 @@ const interface = sdk.interface.facet;
 const LVO = interface.LVO;
 
 comptime {
+    @setEvalBranchQuota(10_000);
     for (@typeInfo(LVO).@"struct".decls) |d| {
         const f = @field(@This(), "lvo" ++ d.name);
         if (!exec.libraries.sameSignature(@TypeOf(&f), @field(interface.Fn, d.name))) {
@@ -229,6 +236,12 @@ const contract_files = [_][]const u8{
     @embedFile("command/cmdblitimage.zig"),
     @embedFile("command/cmdcopyimagetobuffer.zig"),
     @embedFile("command/cmdclearattachments.zig"),
+    @embedFile("command/cmddrawindirect.zig"),
+    @embedFile("command/cmddrawindexedindirect.zig"),
+    @embedFile("command/cmdexecutecommands.zig"),
+    @embedFile("pipeline/createcomputepipelines.zig"),
+    @embedFile("command/cmddispatch.zig"),
+    @embedFile("command/cmddispatchindirect.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -519,6 +532,24 @@ fn lvoCmdCopyImageToBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, image
 fn lvoCmdClearAttachments(base: *FacetBase, buffer: *facet.CommandBuffer, attachment_count: u32, attachments: [*]const facet.ClearAttachment, rect_count: u32, rects: [*]const facet.ClearRect) callconv(.c) void {
     return CmdClearAttachments(base, buffer, attachment_count, attachments, rect_count, rects);
 }
+fn lvoCmdDrawIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64, draw_count: u32, stride: u32) callconv(.c) void {
+    return CmdDrawIndirect(base, buffer, numbers, offset, draw_count, stride);
+}
+fn lvoCmdDrawIndexedIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64, draw_count: u32, stride: u32) callconv(.c) void {
+    return CmdDrawIndexedIndirect(base, buffer, numbers, offset, draw_count, stride);
+}
+fn lvoCmdExecuteCommands(base: *FacetBase, buffer: *facet.CommandBuffer, count: u32, secondaries: [*]const *facet.CommandBuffer) callconv(.c) void {
+    return CmdExecuteCommands(base, buffer, count, secondaries);
+}
+fn lvoCreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache, count: u32, infos: [*]const facet.ComputePipelineCreateInfo, pipelines: [*]?*facet.Pipeline) callconv(.c) facet.Result {
+    return CreateComputePipelines(base, device, cache, count, infos, pipelines);
+}
+fn lvoCmdDispatch(base: *FacetBase, buffer: *facet.CommandBuffer, x: u32, y: u32, z: u32) callconv(.c) void {
+    return CmdDispatch(base, buffer, x, y, z);
+}
+fn lvoCmdDispatchIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64) callconv(.c) void {
+    return CmdDispatchIndirect(base, buffer, numbers, offset);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -623,6 +654,12 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdBlitImage),
     vec(lvoCmdCopyImageToBuffer),
     vec(lvoCmdClearAttachments),
+    vec(lvoCmdDrawIndirect),
+    vec(lvoCmdDrawIndexedIndirect),
+    vec(lvoCmdExecuteCommands),
+    vec(lvoCreateComputePipelines),
+    vec(lvoCmdDispatch),
+    vec(lvoCmdDispatchIndirect),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

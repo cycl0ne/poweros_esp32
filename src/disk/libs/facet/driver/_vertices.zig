@@ -98,7 +98,7 @@ pub const no_corner = std.math.maxInt(u32);
 pub fn assemble(topology: facet.PrimitiveTopology, indices: Indices, lowest: u32, into: []u32) usize {
     var made: usize = 0;
     switch (topology) {
-        .point_list => {
+        .point_list, .patch_list => {
             for (0..indices.count) |k| {
                 into[made] = if (indices.vertex(@intCast(k))) |number| number - lowest else no_corner;
                 made += 1;
@@ -201,6 +201,29 @@ pub fn bindDescriptorSets(resources: *shader.Resources, command: *const _command
     }
 }
 
+/// One draw of an indirect command, as a draw takes it.
+pub const IndirectDraw = struct {
+    first: u32,
+    count: u32,
+    vertex_offset: ?i32,
+    first_instance: u32,
+    instances: u32,
+};
+
+/// Draw `k` of `command`, read from its buffer now; null where the buffer
+/// ends before it.
+pub fn indirectDraw(command: *const _command.DrawIndirect, k: u32) ?IndirectDraw {
+    const at = command.offset + @as(u64, k) * command.stride;
+    if (command.indexed) {
+        const bytes = _buffer.bytes(command.buffer, at, @sizeOf(facet.DrawIndexedIndirectCommand)) orelse return null;
+        const given = std.mem.bytesToValue(facet.DrawIndexedIndirectCommand, bytes);
+        return .{ .first = given.first_index, .count = given.index_count, .vertex_offset = given.vertex_offset, .first_instance = given.first_instance, .instances = given.instance_count };
+    }
+    const bytes = _buffer.bytes(command.buffer, at, @sizeOf(facet.DrawIndirectCommand)) orelse return null;
+    const given = std.mem.bytesToValue(facet.DrawIndirectCommand, bytes);
+    return .{ .first = given.first_vertex, .count = given.vertex_count, .vertex_offset = null, .first_instance = given.first_instance, .instances = given.instance_count };
+}
+
 pub fn pushConstants(resources: *shader.Resources, command: *const _command.PushConstants) void {
     const bytes = _stream.items(_command.PushConstants, u8, command, command.size);
     @memcpy(resources.push[command.offset..][0..command.size], bytes);
@@ -218,7 +241,7 @@ pub fn copyBuffer(command: *const _command.CopyBuffer) void {
 /// The most corners `assemble` makes of `count` indices.
 pub fn mostCorners(topology: facet.PrimitiveTopology, count: u32) usize {
     return switch (topology) {
-        .point_list => count,
+        .point_list, .patch_list => count,
         .line_list => count / 2 * 2,
         .line_strip => @as(usize, count -| 1) * 2,
         .triangle_list => count / 3 * 3,
@@ -228,7 +251,7 @@ pub fn mostCorners(topology: facet.PrimitiveTopology, count: u32) usize {
 
 /// Whether a pipeline's draws come to something other than filled triangles.
 pub fn widens(pipeline: *const Pipeline) bool {
-    return switch (pipeline.topology) {
+    return switch (pipeline.drawn_topology) {
         .point_list, .line_list, .line_strip => true,
         else => pipeline.polygon_mode != .fill,
     };
@@ -242,7 +265,7 @@ pub const Wide = struct {
 
 /// The most `widen` makes of `corners` corners.
 pub fn mostWide(pipeline: *const Pipeline, corners: usize) Wide {
-    const rectangles = switch (pipeline.topology) {
+    const rectangles = switch (pipeline.drawn_topology) {
         .point_list => corners,
         .line_list, .line_strip => corners / 2,
         // A triangle's three edges, or its three corners.
@@ -363,7 +386,7 @@ pub fn widen(pipeline: *const Pipeline, viewport: *const facet.Viewport, width: 
         .into = into,
         .indices = indices,
     };
-    switch (pipeline.topology) {
+    switch (pipeline.drawn_topology) {
         .point_list => for (corners) |corner| {
             if (corner != no_corner) widening.point(corner);
         },

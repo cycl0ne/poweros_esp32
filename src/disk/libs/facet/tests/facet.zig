@@ -100,7 +100,7 @@ test "an instance lists one physical device: the cores, its memory made from exe
     try testing.expectEqual(@as(u32, 1), count);
     var family: [1]facet.QueueFamilyProperties = undefined;
     rig.fb.GetPhysicalDeviceQueueFamilyProperties(physical, &count, &family);
-    try testing.expectEqual(facet.QUEUE_GRAPHICS | facet.QUEUE_TRANSFER, family[0].queue_flags);
+    try testing.expectEqual(facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER, family[0].queue_flags);
     try testing.expectEqual(@as(u32, 1), family[0].queue_count);
 
     // The test's region comes first, as exec prefers it; exec's test RAM,
@@ -517,7 +517,7 @@ test "a submission plays its command buffers in order, then signals its fence; a
     try testing.expectEqual(facet.Result.success, rig.fb.CreateCommandPool(device, &.{}, &pool));
     defer rig.fb.DestroyCommandPool(device, pool);
     var commands: [2]?*facet.CommandBuffer = undefined;
-    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .level = .secondary, .command_buffer_count = 2 }, &commands));
+    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .level = @enumFromInt(2), .command_buffer_count = 2 }, &commands));
     try testing.expectEqual(facet.Result.success, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .command_buffer_count = 2 }, &commands));
 
     // Recorded outside a recording: nothing.

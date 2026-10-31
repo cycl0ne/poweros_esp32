@@ -118,7 +118,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
     const name = "VideoCore VII V3D 7.1";
     @memcpy(physical.properties.device_name[0..name.len], name);
     physical.queue_family = .{
-        .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_TRANSFER,
+        .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER,
         .queue_count = 1,
         .timestamp_valid_bits = 0,
         .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },

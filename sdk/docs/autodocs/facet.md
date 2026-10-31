@@ -30,9 +30,14 @@ Generated from the source by `./zig build autodoc`.
 - [CmdCopyBufferToImage](#cmdcopybuffertoimage) - Recorded: rectangles of texels copied from a buffer into an image.
 - [CmdCopyImage](#cmdcopyimage) - Recorded: a rectangle of texels copied from one image to another, as they are.
 - [CmdCopyImageToBuffer](#cmdcopyimagetobuffer) - Recorded: a rectangle of texels copied from an image to a buffer.
+- [CmdDispatch](#cmddispatch) - Recorded: the compute function bound run, for each of the groups.
+- [CmdDispatchIndirect](#cmddispatchindirect) - Recorded: as CmdDispatch, its numbers in a buffer.
 - [CmdDraw](#cmddraw) - Recorded: vertices drawn, in the order they are in the vertex buffers.
 - [CmdDrawIndexed](#cmddrawindexed) - Recorded: vertices drawn in the order the index buffer gives them.
+- [CmdDrawIndexedIndirect](#cmddrawindexedindirect) - Recorded: draws whose numbers, as CmdDrawIndexed takes them, are in a buffer.
+- [CmdDrawIndirect](#cmddrawindirect) - Recorded: draws whose numbers, as CmdDraw takes them, are in a buffer.
 - [CmdEndRenderPass](#cmdendrenderpass) - Recorded: the render pass ended, and what it drew stored.
+- [CmdExecuteCommands](#cmdexecutecommands) - Recorded: secondary command buffers played, in the order given.
 - [CmdPipelineBarrier](#cmdpipelinebarrier) - Recorded: a barrier between the work before it and the work after.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
 - [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
@@ -44,6 +49,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdSetViewport](#cmdsetviewport) - Recorded: the viewport, for a pipeline that leaves it to commands.
 - [CreateBuffer](#createbuffer) - A buffer of so many bytes, for what its usage says.
 - [CreateCommandPool](#createcommandpool) - A pool the device's command buffers are allocated from.
+- [CreateComputePipelines](#createcomputepipelines) - `count` compute pipelines, one for each of `infos`, into `pipelines`.
 - [CreateDescriptorPool](#createdescriptorpool) - A descriptor pool: the most sets it gives out at once.
 - [CreateDescriptorSetLayout](#createdescriptorsetlayout) - A descriptor set layout: a set's bindings, each of a kind, with its descriptors.
 - [CreateDevice](#createdevice) - A device of the program's own, with its queue.
@@ -204,19 +210,20 @@ fn AllocateCommandBuffers(base: *FacetBase, device: *facet.Device, info: *const 
 **INPUTS**
 
 - `device` - the device.
-- `info` - the pool, and how many: primary ones.
+- `info` - the pool, how many, and whether they are primary or secondary.
 - `buffers` - where they are written, `info.command_buffer_count` of
   them; all null when it fails.
 
 **RESULT**
 
-`success`; `error_feature_not_present` for secondary command buffers;
+`success`; `error_feature_not_present` for a level there is not;
 `error_out_of_host_memory`, none allocated.
 
 **BEHAVIOR**
 
 Each buffer starts with nothing recorded, ready for
-BeginCommandBuffer.
+BeginCommandBuffer. A secondary one is played by CmdExecuteCommands; given
+to QueueSubmit, it plays nothing.
 
 **CONTEXT**
 
@@ -1255,6 +1262,124 @@ None known.
 fb.CmdCopyImageToBuffer(commands, picture.?, .general, readback.?, 1, @ptrCast(&region));
 ```
 
+## CmdDispatch
+
+Recorded: the compute function bound run, for each of the groups.
+
+**SYNOPSIS**
+
+```zig
+fn CmdDispatch(base: *FacetBase, buffer: *facet.CommandBuffer, x: u32, y: u32, z: u32) void
+```
+
+**SINCE**
+
+1.18. LVO -420.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, outside a render pass.
+- `x`, `y`, `z` - how many groups along each axis.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The function of the pipeline bound with `PipelineBindPoint.compute` is
+called once for each group, given the descriptor sets bound for compute and
+the push constants. What it writes is there for the commands after it. It
+runs on the cores, the groups in no order and shared between them; the
+dispatch ends when all are done. In a render pass it does nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+Barriers are taken and need do nothing: the cores run a command at a time.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateComputePipelines`, `CmdDispatchIndirect`, `CmdBindDescriptorSets`
+
+**EXAMPLES**
+
+```zig
+fb.CmdDispatch(commands, 16, 1, 1);
+```
+
+## CmdDispatchIndirect
+
+Recorded: as CmdDispatch, its numbers in a buffer.
+
+**SYNOPSIS**
+
+```zig
+fn CmdDispatchIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64) void
+```
+
+**SINCE**
+
+1.18. LVO -424.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, outside a render pass.
+- `numbers` - the buffer they are in, a `facet.DispatchIndirectCommand`.
+- `offset` - where.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+As `CmdDispatch`, with the numbers read as the command is played. If the
+buffer ends before them, it does nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`numbers` has to last until the work recorded is done.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdDispatch`, `CmdDrawIndirect`
+
+**EXAMPLES**
+
+```zig
+fb.CmdDispatchIndirect(commands, numbers, 0);
+```
+
 ## CmdDraw
 
 Recorded: vertices drawn, in the order they are in the vertex buffers.
@@ -1391,6 +1516,134 @@ None known.
 fb.CmdDrawIndexed(commands, 36, 1, 0, 0, 0);
 ```
 
+## CmdDrawIndexedIndirect
+
+Recorded: draws whose numbers, as CmdDrawIndexed takes them, are in a buffer.
+
+**SYNOPSIS**
+
+```zig
+fn CmdDrawIndexedIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64, draw_count: u32, stride: u32) void
+```
+
+**SINCE**
+
+1.17. LVO -408.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, in a render pass.
+- `numbers` - the buffer they are in.
+- `offset` - where the first draw's are.
+- `draw_count` - how many draws.
+- `stride` - the bytes from one draw's to the next: `facet.DrawIndexedIndirectCommand`'s at
+  least, unless there is one draw at most.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The numbers are read as the command is played, not as it is recorded, so
+a program may write them after recording, up to the submission, and a
+compute function played before it may too. Each draw is as `CmdDrawIndexed` with
+those numbers. The draws past the end of the buffer are left out, and with
+a `stride` too small nothing is recorded.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`numbers` has to last until the work recorded is done.
+
+**NOTES**
+
+The cores read the numbers, whichever device draws.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdDrawIndexed`, `CmdDispatchIndirect`
+
+**EXAMPLES**
+
+```zig
+fb.CmdDrawIndexedIndirect(commands, numbers, 0, 2, @sizeOf(facet.DrawIndexedIndirectCommand));
+```
+
+## CmdDrawIndirect
+
+Recorded: draws whose numbers, as CmdDraw takes them, are in a buffer.
+
+**SYNOPSIS**
+
+```zig
+fn CmdDrawIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64, draw_count: u32, stride: u32) void
+```
+
+**SINCE**
+
+1.17. LVO -404.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, in a render pass.
+- `numbers` - the buffer they are in.
+- `offset` - where the first draw's are.
+- `draw_count` - how many draws.
+- `stride` - the bytes from one draw's to the next: `facet.DrawIndirectCommand`'s at
+  least, unless there is one draw at most.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The numbers are read as the command is played, not as it is recorded, so
+a program may write them after recording, up to the submission, and a
+compute function played before it may too. Each draw is as `CmdDraw` with
+those numbers. The draws past the end of the buffer are left out, and with
+a `stride` too small nothing is recorded.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`numbers` has to last until the work recorded is done.
+
+**NOTES**
+
+The cores read the numbers, whichever device draws.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdDraw`, `CmdDispatchIndirect`
+
+**EXAMPLES**
+
+```zig
+fb.CmdDrawIndirect(commands, numbers, 0, 2, @sizeOf(facet.DrawIndirectCommand));
+```
+
 ## CmdEndRenderPass
 
 Recorded: the render pass ended, and what it drew stored.
@@ -1446,6 +1699,66 @@ None known.
 
 ```zig
 fb.CmdEndRenderPass(commands);
+```
+
+## CmdExecuteCommands
+
+Recorded: secondary command buffers played, in the order given.
+
+**SYNOPSIS**
+
+```zig
+fn CmdExecuteCommands(base: *FacetBase, buffer: *facet.CommandBuffer, count: u32, secondaries: [*]const *facet.CommandBuffer) void
+```
+
+**SINCE**
+
+1.17. LVO -412.
+
+**INPUTS**
+
+- `buffer` - a primary command buffer recording.
+- `count`, `secondaries` - command buffers allocated with
+  `CommandBufferLevel.secondary`, recorded and ended.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Their commands are played where this command stands, inside or outside
+a render pass, into the pass that is begun there. In a secondary command
+buffer it does nothing, nor does a buffer given that is primary or not
+ended count: it is left out.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The secondaries have to last, and stay as they are, until the work recorded is done.
+
+**NOTES**
+
+Vulkan leaves what a secondary finds bound undefined, and what the primary finds after it: here each goes on from what the last left. A program written for Vulkan binds what it uses, and that works.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateCommandBuffers`, `BeginCommandBuffer`, `QueueSubmit`
+
+**EXAMPLES**
+
+```zig
+fb.CmdExecuteCommands(primary, 1, @ptrCast(&secondary));
 ```
 
 ## CmdPipelineBarrier
@@ -2116,6 +2429,73 @@ var pool: ?*facet.CommandPool = null;
 if (fb.CreateCommandPool(device, &.{ .flags = facet.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER }, &pool) != .success) return error.NoPool;
 ```
 
+## CreateComputePipelines
+
+`count` compute pipelines, one for each of `infos`, into `pipelines`.
+
+**SYNOPSIS**
+
+```zig
+fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache, count: u32, infos: [*]const facet.ComputePipelineCreateInfo, pipelines: [*]?*facet.Pipeline) facet.Result
+```
+
+**SINCE**
+
+1.18. LVO -416.
+
+**INPUTS**
+
+- `device` - the device.
+- `cache` - null: facet.library has no pipeline caches.
+- `count`, `infos` - each pipeline's function, of stage
+  SHADER_STAGE_COMPUTE, and layout.
+- `pipelines` - where each is written; null for one that could not be
+  made.
+
+**RESULT**
+
+`success`; else what the first that could not be made came to:
+`error_invalid_shader_nv` for a stage that is not of a compute function
+the module has; `error_out_of_host_memory`. Those made are made either
+way.
+
+**BEHAVIOR**
+
+A compute function runs on the cores, whichever device it was made on: a
+CM5's V3D runs no program of the library's but its fragment programs.
+
+**CONTEXT**
+
+- Waits: yes, for memory.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pipeline is the caller's, given back by DestroyPipeline. The module
+may go once it is made, not the function it names.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdDispatch`, `CmdBindPipeline`, `shader.compute`
+
+**EXAMPLES**
+
+```zig
+const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? };
+var pipeline: [1]?*facet.Pipeline = undefined;
+if (fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &pipeline) != .success) return error.NoPipeline;
+```
+
 ## CreateDescriptorPool
 
 A descriptor pool: the most sets it gives out at once.
@@ -2466,7 +2846,9 @@ fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?*fac
 
 `success`; else what the first that could not be made came to:
 `error_invalid_shader_nv` for stages that are not one vertex and one
-fragment function of the same varyings; `error_feature_not_present`
+fragment function of the same varyings, with or without a tessellation
+control and evaluation function, whose varyings then the fragment
+function's have to be; `error_feature_not_present`
 for state facet.library does not draw (see BEHAVIOR);
 `error_format_not_supported` for an attribute in a format it does not
 read; `error_initialization_failed` for state that does not hold
@@ -2482,6 +2864,12 @@ code for its depth test and blend is chosen then, not as it draws. On a
 device with a processor of its own the fragment function has to be of a
 fixed form (`shader.fixedFragment`), or the pipeline is refused with
 `error_feature_not_present`.
+
+With tessellation functions, the topology is `patch_list` and the
+`tessellation_state` says the vertices of a patch, 1 to 32: the cores make
+each patch into triangles or lines (`shader.Tessellation`), for a device
+with a processor of its own too, and those are drawn; without them,
+`patch_list` is `error_initialization_failed`.
 
 What it draws: points, lines and line strips, and triangle lists, strips
 and fans, a restart index ending a strip or a fan; triangles filled, or as
@@ -5183,7 +5571,7 @@ None.
 
 **BEHAVIOR**
 
-There is one family, 0: QUEUE_GRAPHICS and QUEUE_TRANSFER, with one
+There is one family, 0: QUEUE_GRAPHICS, QUEUE_COMPUTE and QUEUE_TRANSFER, with one
 queue. Its queue plays command buffers on a task of its own and
 shares each frame's tiles between the cores.
 
