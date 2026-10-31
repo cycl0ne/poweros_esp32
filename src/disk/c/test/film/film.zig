@@ -15,7 +15,7 @@
 //! FRAME (and TO) writes that frame - counted from 0 in the order they
 //! are shown - into TO as its planes are: NV12 (the brightness rows, then
 //! the colour rows, each as wide as the picture) for the chip's, I420
-//! for Motion JPEG. `ffmpeg -i FILE -vf "select=eq(n\,FRAME)" -frames:v 1
+//! for Motion JPEG and the software's H.264. `ffmpeg -i FILE -vf "select=eq(n\,FRAME)" -frames:v 1
 //! -pix_fmt nv12 -f rawvideo ref.nv12` makes ffmpeg's to compare.
 //!
 //! SEEK moves the film to that second at the end and says where it

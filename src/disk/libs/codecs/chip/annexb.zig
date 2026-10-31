@@ -66,6 +66,22 @@ pub fn hevcSetup(config: []const u8, out: ?[]u8) ?Setup {
     return .{ .length_size = length_size, .header_size = size };
 }
 
+/// Whether the chip decodes what a setup's profile names - an avcC's
+/// H.264 profile, an hvcC's H.265 one: 8 bits with the colour halved both
+/// ways (H.264's Baseline, Main, Extended and High; H.265's Main and Main
+/// Still Picture), or 10 (H.265's Main 10). The others - H.264's High 10,
+/// High 4:2:2, High 4:4:4 and CAVLC 4:4:4, H.265's range extensions and
+/// what came after them - it refuses only once it has begun, or decodes
+/// wrong.
+pub fn chipTakes(hevc: bool, config: []const u8) bool {
+    if (config.len < 2) return false;
+    if (hevc) return config[1] & 0x1F <= 3;
+    return switch (config[1]) {
+        110, 122, 244, 44 => false,
+        else => true,
+    };
+}
+
 /// `count` units each after a two-byte length, from `at` on, written
 /// after start codes into `out` from `size` on: how far `out` is filled,
 /// or null when they run past the record.
@@ -173,6 +189,18 @@ test "an hvcC record: its arrays of units" {
     try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 1, 0x40, 1, 0x0C, 0, 0, 0, 1, 0x42, 1 }, &header);
     record[22] = 3; // an array more than there is
     try testing.expect(hevcSetup(record[0..38], null) == null);
+}
+
+test "the profiles the chip takes: 8 bits halved both ways, and H.265's Main 10" {
+    // H.264: Baseline, Main, High; High 10, High 4:2:2, High 4:4:4,
+    // CAVLC 4:4:4.
+    for ([_]u8{ 66, 77, 100 }) |profile| try testing.expect(chipTakes(false, &.{ 1, profile }));
+    for ([_]u8{ 110, 122, 244, 44 }) |profile| try testing.expect(!chipTakes(false, &.{ 1, profile }));
+    // H.265, the profile in the low five bits: Main, Main 10, Main Still
+    // Picture; the range extensions, screen content.
+    for ([_]u8{ 1, 0x22, 3 }) |profile| try testing.expect(chipTakes(true, &.{ 1, profile }));
+    for ([_]u8{ 4, 9 }) |profile| try testing.expect(!chipTakes(true, &.{ 1, profile }));
+    try testing.expect(!chipTakes(false, &.{1}));
 }
 
 test "a packet's units after start codes, whatever their lengths' size" {

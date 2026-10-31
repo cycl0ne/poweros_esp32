@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! videocodec.library's host tests: the library made from its ROM tag on
 //! the host's exec, with media.library and audiocodec.library beside it,
-//! the codec modules chip.vcodec and mjpeg.vcodec made from theirs and
-//! given as the table LIBS:codecs/ would make (`_codec.test_modules`),
-//! the films on a RAM disk behind WORK:.
+//! the codec modules chip.vcodec, mjpeg.vcodec and h264.vcodec made from
+//! theirs and given as the table LIBS:codecs/ would make
+//! (`_codec.test_modules`), the films on a RAM disk behind WORK:.
 //!
 //! The host has no chip decoder - chip.vcodec opens none - so the films
-//! decoded here are Motion JPEG, made with ffmpeg from its `testsrc2` pattern: `clip.mov` 96 x 64
+//! decoded here are Motion JPEG and H.264 in software, made with ffmpeg from its `testsrc2` pattern: `clip.mov` 96 x 64
 //! at 10 frames a second for a second, its colour halved both ways, with
 //! a second of AAC at 22050 Hz mono - its index at the end, as ffmpeg
 //! writes a MOV; `clip.mp4` 48 x 32 at 5 a second with sound, MPEG-4's
@@ -14,9 +14,11 @@
 //! `wide.mov` and `full.mov` 90 x 60 with the colour halved across only
 //! and kept whole; `grey.mov` 64 x 48 grey pictures (written by Pillow,
 //! put into a MOV by ffmpeg as they are). `tiny.mp4` is five H.264
-//! pictures of 64 x 48. The `_ref` files are ffmpeg's own decode of the
-//! same pictures (`-f rawvideo -pix_fmt yuvj420p`, `yuvj422p`, `yuvj444p`,
-//! `gray`): `clip_ref.yuv` frames 0 and 9, the others frame 0.
+//! pictures of 64 x 48 (High profile, three B pictures between its I and
+//! its P). The `_ref` files are ffmpeg's own decode of the same pictures
+//! (`-f rawvideo -pix_fmt yuvj420p`, `yuvj422p`, `yuvj444p`, `gray`,
+//! `yuv420p`): `clip_ref.yuv` frames 0 and 9, `tiny_ref.yuv` all five,
+//! the others frame 0.
 //! `clip.mkv` is clip.mov's tracks remuxed into Matroska by ffmpeg.
 //! `subs.mkv` is clip.mkv's with more tracks, muxed by ffmpeg: AC-3 mono
 //! at 48 kHz ("deu", "Kommentar") and Opus, then subtitles - SubRip
@@ -42,6 +44,7 @@ const media_init = @import("../../media/media_init.zig");
 const audiocodec_init = @import("../../audiocodec/audiocodec_init.zig");
 const chip_init = @import("../../codecs/chip/chip_init.zig");
 const mjpeg_init = @import("../../codecs/mjpeg/mjpeg_init.zig");
+const h264_init = @import("../../codecs/h264/h264_init.zig");
 const module = @import("../../codecs/module.zig");
 const _codec = @import("../codec/_codec.zig");
 const vcodec = sdk.vcodec;
@@ -67,6 +70,7 @@ const full_ref = @embedFile("full_ref.yuv");
 const grey_mov = @embedFile("grey.mov");
 const grey_ref = @embedFile("grey_ref.y");
 const tiny_mp4 = @embedFile("tiny.mp4");
+const tiny_ref = @embedFile("tiny_ref.yuv");
 const clip_mkv = @embedFile("clip.mkv");
 const subs_mkv = @embedFile("subs.mkv");
 const subs_ac3_ref = @embedFile("subs_ac3_ref.raw");
@@ -108,6 +112,7 @@ const Rig = struct {
     audio_library: *exec.Library = undefined,
     chip_library: *exec.Library = undefined,
     mjpeg_library: *exec.Library = undefined,
+    h264_library: *exec.Library = undefined,
     vcb: *VideoCodecBase = undefined,
 
     fn init(rig: *Rig) !void {
@@ -133,6 +138,7 @@ const Rig = struct {
         rig.audio_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &audiocodec_init.audiocodec_library_tag, null) orelse return error.NoLibrary));
         rig.chip_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &chip_init.chip_vcodec_tag.resident, null) orelse return error.NoLibrary));
         rig.mjpeg_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &mjpeg_init.mjpeg_vcodec_tag.resident, null) orelse return error.NoLibrary));
+        rig.h264_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &h264_init.h264_vcodec_tag.resident, null) orelse return error.NoLibrary));
         _codec.test_modules = &modules;
         rig.vcb = @ptrCast(rig.sysLib().OpenLibrary(vc.VIDEOCODECNAME, 1) orelse return error.NoBase);
     }
@@ -159,6 +165,8 @@ const Rig = struct {
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, chip_init.LIBRARY_NAME) == null);
         _ = rig.sysLib().RemLibrary(rig.mjpeg_library);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, mjpeg_init.LIBRARY_NAME) == null);
+        _ = rig.sysLib().RemLibrary(rig.h264_library);
+        try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, h264_init.LIBRARY_NAME) == null);
         _codec.test_modules = null;
         Disk.disk.deinit();
         kexec.SysBase.cpu().this_task = rig.saved.?;
@@ -192,10 +200,11 @@ fn moduleOf(name: []const u8, tag: *const vcodec.ResidentVCodec) _codec.Module {
     return made;
 }
 
-/// The two modules on the disk: the chip's, and Motion JPEG's.
+/// The modules on the disk: the chip's, Motion JPEG's and H.264's.
 const modules = [_]_codec.Module{
     moduleOf(chip_init.LIBRARY_NAME, &chip_init.chip_vcodec_tag),
     moduleOf(mjpeg_init.LIBRARY_NAME, &mjpeg_init.mjpeg_vcodec_tag),
+    moduleOf(h264_init.LIBRARY_NAME, &h264_init.h264_vcodec_tag),
 };
 
 /// Bytes in memory, handed over by a read function in pieces.
@@ -490,6 +499,49 @@ test "colour halved across, kept whole, and none: the frame in I420 all the same
     }
 }
 
+test "H.264 in software: every frame as ffmpeg's, in the order shown, at its time; a seek back to the start" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch |e| std.debug.panic("deinit: {}", .{e});
+    const vcb = rig.vcb;
+    try rig.write("WORK:tiny.mp4", tiny_mp4);
+    var err: i32 = -99;
+    const film = rig.open("WORK:tiny.mp4", &err) orelse return error.NoStream;
+    defer vcb.CloseVideoStream(film);
+    try testing.expectEqual(vc.VCERR_OK, err);
+
+    var info: vc.VideoStreamInfo = .{};
+    vcb.GetVideoStreamInfo(film, &info);
+    try testing.expectEqual(vc.VCODEC_H264, info.codec);
+    try testing.expectEqual(@as(u32, 64), info.width);
+    try testing.expectEqual(@as(u32, 48), info.height);
+    try testing.expectEqual(@as(u32, 5), info.frames);
+
+    const frame_bytes = 64 * 48 * 3 / 2;
+    var frame: vc.VideoFrame = .{};
+    for (0..2) |round| {
+        for (0..5) |n| {
+            try testing.expectEqual(vc.VCERR_OK, vcb.DecodeVideoFrame(film, &frame));
+            try testing.expectEqual(@as(i64, @intCast(n * 100_000)), frame.time);
+            try testing.expectEqual(@as(u32, 64), frame.width);
+            try testing.expectEqual(@as(u32, 48), frame.height);
+            const p = frame.picture;
+            try testing.expectEqual(rtg.RTGYUV_I420, p.layout);
+            // No VUI and fewer than 720 rows: BT.601, video's range.
+            try testing.expectEqual(rtg.RTGYUV_BT601, p.colors);
+            const reference = tiny_ref[n * frame_bytes ..][0..frame_bytes];
+            for (0..48) |y| try testing.expectEqualSlices(u8, reference[y * 64 ..][0..64], p.y[y * p.y_pitch ..][0..64]);
+            for (0..24) |y| {
+                try testing.expectEqualSlices(u8, reference[64 * 48 + y * 32 ..][0..32], p.cb[y * p.c_pitch ..][0..32]);
+                try testing.expectEqualSlices(u8, reference[64 * 48 * 5 / 4 + y * 32 ..][0..32], p.cr.?[y * p.c_pitch ..][0..32]);
+            }
+            vcb.ReleaseVideoFrame(film, &frame);
+        }
+        try testing.expectEqual(vc.VCERR_END, vcb.DecodeVideoFrame(film, &frame));
+        if (round == 0) try testing.expectEqual(@as(i64, 0), vcb.SeekVideo(film, 0));
+    }
+}
+
 test "what does not open, and a film through a read function: pictures alone, no seek" {
     var rig: Rig = undefined;
     try rig.init();
@@ -497,10 +549,13 @@ test "what does not open, and a film through a read function: pictures alone, no
     const vcb = rig.vcb;
     var err: i32 = 0;
 
-    // H.264 with no chip decoder on the host.
+    // H.264 with no module for it.
     try rig.write("WORK:tiny.mp4", tiny_mp4);
+    const chip_mjpeg = modules[0..2];
+    _codec.test_modules = chip_mjpeg;
     try testing.expect(rig.open("WORK:tiny.mp4", &err) == null);
     try testing.expectEqual(vc.VCERR_NOCODEC, err);
+    _codec.test_modules = &modules;
     // Not a film; no file; no source.
     try rig.write("WORK:text", "Not a film at all, only words.");
     try testing.expect(rig.open("WORK:text", &err) == null);

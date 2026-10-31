@@ -1046,6 +1046,10 @@ pub fn build(b: *std.Build) void {
     const jpegdecode_mod = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/jpeg/decode.zig"), .target = b.graph.host });
     disk_test_mod.addImport("jpegdecode", jpegdecode_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = jpegdecode_mod })).step);
+    // The H.264 decoder, h264.vcodec's, likewise.
+    const h264core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/h264/core.zig"), .target = b.graph.host });
+    disk_test_mod.addImport("h264core", h264core_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = h264core_mod })).step);
     disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);
