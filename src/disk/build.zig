@@ -38,7 +38,7 @@ pub const catalogs = [_]Catalog{
 /// loaded: a library's inner part that its test programs build in as well.
 /// The rasterizer core is facet.library's, and is called per triangle and
 /// per tile - too often to go through a jump table. The baseline JPEG
-/// decoder is jpeg.datatype's, and videocodec.library's for Motion JPEG.
+/// decoder is jpeg.datatype's, and mjpeg.vcodec's for Motion JPEG.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "raster", .source = "libs/facet/driver/cpu/raster/raster.zig" },
     .{ .name = "v3d", .source = "libs/facet/driver/v3d/v3d.zig" },
@@ -143,7 +143,9 @@ const modules = [_]Program{
     .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
     .{ .disk = "libs/audiocodec.library", .source = "libs/audiocodec/audiocodec.zig", .name = "audiocodec.library" },
     .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library" },
-    .{ .disk = "libs/videocodec.library", .source = "libs/videocodec/videocodec.zig", .name = "videocodec.library", .imports = &.{"jpegdecode"} },
+    .{ .disk = "libs/videocodec.library", .source = "libs/videocodec/videocodec.zig", .name = "videocodec.library" },
+    .{ .disk = "libs/codecs/chip.vcodec", .source = "libs/codecs/chip.zig", .name = "chip.vcodec" },
+    .{ .disk = "libs/codecs/mjpeg.vcodec", .source = "libs/codecs/mjpeg.zig", .name = "mjpeg.vcodec", .imports = &.{"jpegdecode"} },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
     .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
     .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library" },

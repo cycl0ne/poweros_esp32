@@ -20,9 +20,14 @@
 //! work goes to this module's own process through a message port, and the
 //! task waits for the answer. That is the whole reason for the process.
 //!
+//! What was loaded is unloaded when it goes: exec hands the segments an
+//! Expunge gave back to UnLoadModule (unloadmodule.zig, SINCE 1.4), the
+//! module's one call of its own.
+//!
 //! The base is ramlib_base.zig, the ROM tag and init ramlib_init.zig, the
-//! table - the four standard vectors - ramlib_lvo.zig; this file is what
-//! stands in front of exec, and loader.zig does the loading.
+//! table - the four standard vectors and UnLoadModule - ramlib_lvo.zig;
+//! this file is what stands in front of exec, and loader.zig does the
+//! loading.
 //!
 //! Where its state lives: the base exec allocates for it. The process is
 //! handed it at creation as its tc_UserData (NP_UserData). A replaced
@@ -64,8 +69,9 @@ pub const KIND_DEVICE: u32 = 1;
 pub const Loaded = struct {
     node: exec.Node = .{},
     seg_list: ?*dos.SegList = null,
-    /// What it was made as: a library's segments go once it has expunged
-    /// itself, a device's stay.
+    /// What it was made as. Both go when exec says the module went
+    /// (UnLoadModule); a library's also when it is asked for again after
+    /// it went unnoticed, a device's not then.
     kind: u32 = KIND_LIBRARY,
     name_buf: [64]u8 = .{0} ** 64,
 };

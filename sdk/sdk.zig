@@ -66,6 +66,9 @@ pub const media = @import("libs/media/media.zig");
 /// Films - their pictures as frames, their sound as samples - through
 /// videocodec.library.
 pub const videocodec = @import("libs/videocodec/videocodec.zig");
+/// A codec module's structures: a decoder of pictures in LIBS:codecs/,
+/// which videocodec.library chooses for a film.
+pub const vcodec = @import("libs/videocodec/vcodec.zig");
 /// What the Player that runs plays, asked at its public port.
 pub const player = @import("libs/player/player.zig");
 /// A packet filter on the stack's packet hooks, through filter.library.

@@ -117,7 +117,8 @@ tags and constants, each with its doc comment.
 - [Video](guides/video.md) - films through videocodec.library: opening
   one, its pictures as frames lent by the decoder, its sound on a process
   of its own, keeping them together, moving to a key frame, what decodes
-  what (the chip's decoder, Motion JPEG in software), and `C:test/Film`.
+  what (the chip's decoder, Motion JPEG in software), writing a codec
+  module for `LIBS:codecs/`, and `C:test/Film`.
 - [USB](guides/usb.md) - a bus and starting it, what is on it, driving
   a device from a program (claims, pipes, control transfers), writing a
   class driver, keyboards and mice as sources, sticks, serial and
@@ -144,6 +145,7 @@ first time something opens it.
 | exec.library | ROM | tasks, signals, messages, memory, lists, libraries and devices | [md](autodocs/exec.md) · [doc](autodocs/exec.doc) |
 | utility.library | ROM | tag lists, hooks, dates, strings, patterns | [md](autodocs/utility.md) · [doc](autodocs/utility.doc) |
 | dos.library | ROM | processes, files, locks, handlers, assigns, `ReadArgs` | [md](autodocs/dos.md) · [doc](autodocs/dos.doc) |
+| ramlib.library | ROM, after dos | libraries and devices loaded from `LIBS:` and `DEVS:` when they are opened, and unloaded when they go - its one call is exec's | [md](autodocs/ramlib.md) · [doc](autodocs/ramlib.doc) |
 | expansion.library | ROM | the board: which parts it has and how they are wired; the devices by what they speak, with their units on this board; the disks' partitions until dos takes them in | [md](autodocs/expansion.md) · [doc](autodocs/expansion.doc) |
 | rtg.library | ROM | displays and their boards | [md](autodocs/rtg.md) · [doc](autodocs/rtg.doc) |
 | rta.library | ROM, on a board with sound and in QEMU | sound outputs and the drivers behind them | [md](autodocs/rta.md) · [doc](autodocs/rta.doc), [`rta.zig`](../libs/rta/rta.zig) |
@@ -164,7 +166,8 @@ first time something opens it.
 | http.library | `LIBS:` | HTTP/1.1 requests over plain connections or TLS: a client keeping its connections for the next request, bodies sent and read in pieces, redirects followed, packed answers unpacked | [md](autodocs/http.md) · [doc](autodocs/http.doc), [`http.zig`](../libs/http/http.zig), [guide](guides/network.md#http-httplibrary) |
 | locale.library | `LIBS:` | locales - a country's dates, numbers and money, a language's words and order of letters - the default one, and programs' texts from catalogs | [md](autodocs/locale.md) · [doc](autodocs/locale.doc), [`locale.zig`](../libs/locale/locale.zig), [guide](guides/locale.md) |
 | media.library | `LIBS:` | containers - MP4 and QuickTime - opened: their tracks and the codecs' setup, each track's packets at its own pace with their times, seeks to a key packet, the tags, cover and chapters | [md](autodocs/media.md) · [doc](autodocs/media.doc), [`media.zig`](../libs/media/media.zig), [guide](guides/audio.md#aac-and-mp4) |
-| videocodec.library | `LIBS:` | films played: the pictures as frames in the order they are shown - H.264 and H.265 on the chip's decoder, Motion JPEG in software - lent for graphics' YUV calls, the sound as 16-bit samples on a task of its own, seeks to a key frame | [md](autodocs/videocodec.md) · [doc](autodocs/videocodec.doc), [`videocodec.zig`](../libs/videocodec/videocodec.zig), [guide](guides/video.md) |
+| videocodec.library | `LIBS:` | films played: the pictures as frames in the order they are shown - decoded by codec modules in `LIBS:codecs/`: H.264 and H.265 on the chip's decoder, Motion JPEG in software - lent for graphics' YUV calls, the sound as 16-bit samples on a task of its own, seeks to a key frame | [md](autodocs/videocodec.md) · [doc](autodocs/videocodec.doc), [`videocodec.zig`](../libs/videocodec/videocodec.zig), [guide](guides/video.md) |
+| codecs/chip.vcodec, codecs/mjpeg.vcodec | `LIBS:codecs/` | videocodec.library's decoders of pictures, a library each: H.264 and H.265 on the chip, Motion JPEG in software; a codec module | [md](autodocs/vcodec.md) · [doc](autodocs/vcodec.doc), [`vcodec.zig`](../libs/videocodec/vcodec.zig), [guide](guides/video.md#codec-modules) |
 | icon.library | `LIBS:` | icons: the picture a file is shown with and its fields; the default that fits a file without one | [md](autodocs/icon.md) · [doc](autodocs/icon.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |

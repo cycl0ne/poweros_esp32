@@ -248,7 +248,8 @@ total alone.
 **When memory runs short.** An allocation that finds no room asks the
 low-memory handlers, highest priority first, and tries again after each
 one that freed something. exec's own, at priority 0, expunges a library
-or device nobody has open, one per call. A module with a cache adds one
+or device nobody has open, one per call - and one loaded from the disk
+takes its code with it, ramlib.library unloading the segments. A module with a cache adds one
 with `AddMemHandler`: an `exec.Interrupt` whose code is an
 `exec.MemHandlerFn`, answering `MEM_DID_NOTHING`, `MEM_TRY_AGAIN` or
 `MEM_ALL_DONE`. It runs inside someone's `AllocMem`, whose caller may hold

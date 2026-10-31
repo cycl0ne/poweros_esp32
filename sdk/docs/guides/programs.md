@@ -909,11 +909,15 @@ vectors keep to a few rules:
   answered.
 - **An Expunge that goes takes its library off the list with
   `DetachLibrary`**, then frees what it holds - closing the libraries it
-  opened is allowed - and its memory. One that stays answers without
-  detaching.
+  opened is allowed - and its memory, and answers the segments it was
+  loaded in: the `seg_list` its init was given. exec hands them to
+  ramlib.library, which unloads them once the Expunge has returned
+  (exec 1.25); a module from the ROM answers null. One that stays answers
+  null without detaching.
 - A library that hands each opener **a base of its own** gets that base
   back in its Close with nothing of exec's held (the base is on no list),
-  and changes its own open count under `Library.lock` itself.
+  and changes its own open count under `Library.lock` itself. A Close
+  that lets the library go answers its segments, as its Expunge would.
 
 ### When the code goes
 

@@ -17,8 +17,8 @@ const openDevice = ramlib.openDevice;
 
 pub const LIBRARY_NAME = "ramlib.library";
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
-const BUILD_DATE = "13.10.2026";
+pub const LIBRARY_REVISION = 4;
+const BUILD_DATE = "31.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -45,6 +45,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.NewList(&rlb.loaded);
     sys_base.NewList(&rlb.loading);
     sys_base.InitSemaphore(&rlb.lock);
+    sys_base.InitLock(&rlb.notes_lock, "ramlib notes", exec.LOCKORDER_DRIVER, 0);
 
     // The process is handed the base as its tc_UserData, there before it
     // first runs.
@@ -68,9 +69,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
 }
 
 /// In front of exec's two open calls, once the process is there to do the
-/// loading. Nothing else is touched: closing is exec's own business. A
-/// loaded library that expunged itself is noticed at the next ask for it,
-/// and its segments unloaded then (loader.zig). A replaced vector is called with exec's arguments on
+/// loading. Nothing else is touched: closing is exec's own business, and
+/// exec hands the segments of a module that went to UnLoadModule, through
+/// the same base. A replaced vector is called with exec's arguments on
 /// whatever task is opening something, so the base it needs is kept where
 /// exec is: `SetRamLib`, set with the patch.
 fn patch(rlb: *RamLibBase) void {

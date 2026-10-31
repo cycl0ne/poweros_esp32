@@ -89,9 +89,13 @@ pub const LIBRARY_VERSION = 1;
 /// its first free entry. 24: DeletePool lets go of the pool's lock before
 /// it frees the pool - the hold stayed on the caller's table naming freed
 /// memory, and the task's end "gave it back", writing into whatever had
-/// the memory by then.
-pub const LIBRARY_REVISION = 24;
-const BUILD_DATE = "30.10.2026";
+/// the memory by then. 25: the segments an Expunge hands back when its
+/// module goes - at its last close, at the close of an opener's own base,
+/// in the low-memory flush - go to ramlib.library's UnLoadModule, which
+/// unloads them; exec dropped them, and every disk module that went left
+/// its code in memory.
+pub const LIBRARY_REVISION = 25;
+const BUILD_DATE = "31.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

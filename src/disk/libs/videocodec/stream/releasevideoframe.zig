@@ -5,8 +5,7 @@ const sdk = @import("sdk");
 const vc = sdk.videocodec;
 const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const _stream = @import("_stream.zig");
-const chip = @import("../chip/_chip.zig");
-const mjpeg = @import("../mjpeg/_mjpeg.zig");
+const _codec = @import("../codec/_codec.zig");
 
 /// Gives a frame DecodeVideoFrame handed out back to the decoder.
 ///
@@ -56,10 +55,7 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 pub fn ReleaseVideoFrame(_: *VideoCodecBase, stream: *vc.VideoStream, frame: *vc.VideoFrame) void {
     const s = _stream.of(stream);
     const slot = _stream.slotOf(s, frame) orelse return;
-    switch (s.engine) {
-        .chip => chip.release(s, slot),
-        .mjpeg => mjpeg.release(s, slot),
-    }
+    _codec.release(s, slot);
     s.held[slot] = false;
     frame.* = .{};
 }

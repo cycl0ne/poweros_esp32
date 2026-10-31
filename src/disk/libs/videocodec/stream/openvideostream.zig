@@ -14,8 +14,7 @@ const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const _stream = @import("_stream.zig");
 const Stream = _stream.Stream;
-const chip = @import("../chip/_chip.zig");
-const mjpeg = @import("../mjpeg/_mjpeg.zig");
+const _codec = @import("../codec/_codec.zig");
 
 /// Opens a film and finds a decoder for its pictures and one for its
 /// sound - and reads its subtitles.
@@ -40,17 +39,21 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 /// The stream, or null - and `err` says why: VCERR_OPEN without a source,
 /// when the file would not open or media.library could not be;
 /// VCERR_UNKNOWN for bytes that are not a container media.library knows,
-/// or a film with no pictures; VCERR_NOCODEC when nothing here decodes
-/// its pictures; VCERR_BUSY when the chip's decoders are all in use;
+/// or a film with no pictures; VCERR_NOCODEC when no codec module
+/// decodes its pictures here; VCERR_BUSY when the chip's decoders are all
+/// in use and no other module takes them;
 /// VCERR_UNSUPPORTED, VCERR_READ, VCERR_CORRUPT, VCERR_NOMEMORY.
 ///
 /// BEHAVIOR:
 /// The film is opened with media.library, which finds out what it is and
 /// reads its index - an MP4's, a Matroska file's header (SINCE 1.2). Its
 /// first track of pictures - of a Matroska file the first it marks to be
-/// played - is taken: H.264 and H.265 go to the chip's decoder (videodec.resource), which is opened for the
-/// stream and reads the track's parameter sets; Motion JPEG to the
-/// library's own. Its first track of sound - in a Matroska file the
+/// played - is taken, and a decoder for it found among the codec modules
+/// in LIBS:codecs/ whose tags name its codec (SINCE 1.4): a chip's before
+/// software, the higher priority first; the first that opens a decoder
+/// for the track decodes it - chip.vcodec H.264 and H.265 on the chip
+/// (videodec.resource), reading the track's parameter sets; mjpeg.vcodec
+/// Motion JPEG. Its first track of sound - in a Matroska file the
 /// marked one, or `VCA_SoundTrack`'s - is opened with audiocodec.library
 /// 1.6 or later, on the same file (`ACA_Media`) - AAC, with 1.7 MP3, FLAC
 /// and Vorbis, with 1.8 AC-3 and E-AC-3 - unless `VCA_Sound` is FALSE or
@@ -65,11 +68,11 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 /// presents.
 ///
 /// CONTEXT:
-/// - Waits: yes, on the file and the chip.
+/// - Waits: yes, on the file, LIBS:codecs/ and the chip.
 /// - Interrupts: no.
 /// - Locks: no spinlock may be held.
-/// - Process: a process: the file is read, and the chip's decoder reads
-///   its firmware's file.
+/// - Process: a process: the file and the modules' tags are read, a
+///   module is loaded, and the chip's decoder reads its firmware's file.
 ///
 /// OWNERSHIP:
 /// The stream is the caller's, given back with `CloseVideoStream`. A file
@@ -80,7 +83,9 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 /// It takes the film's index in memory (media.library's), the chip's
 /// stream buffer of 2 MiB or four of the largest packets - 8 MiB for a
 /// Matroska file, which says not its largest - and audiocodec's stream;
-/// Motion JPEG takes a frame's planes for each frame lent. media.library
+/// Motion JPEG takes a frame's planes for each frame lent. A module's tag
+/// is read again only when its file changed; a module newer on the disk
+/// than in memory is loaded anew once no film has the old one. media.library
 /// reads a Matroska file's tracks ahead, 256 KiB at a time each.
 /// Subtitles take about 12 KiB, a process with a stack of 32 KiB, and
 /// what they read ahead: up to ten seconds of lines, or a picture.
@@ -172,14 +177,9 @@ fn open(base: *VideoCodecBase, tags: ?[*]const utility.TagItem, code: *i32) ?*vc
     s.track = file_info.video;
     s.picture = picture;
     s.codec = _stream.codecOf(picture.codec);
-    s.engine = .{ .mjpeg = .{} };
     sys.InitSemaphore(&s.sound_lock);
 
-    const opened = switch (s.codec) {
-        vc.VCODEC_H264, vc.VCODEC_H265 => chip.open(s),
-        vc.VCODEC_MJPEG => mjpeg.open(s),
-        else => vc.VCERR_NOCODEC,
-    };
+    const opened = _codec.open(s);
     if (opened != vc.VCERR_OK) {
         _stream.destroy(s);
         code.* = opened;

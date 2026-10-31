@@ -1,0 +1,83 @@
+# ramlib.library
+
+ramlib.library's functions: the module loader's one call of its own
+(SINCE 1.4). What it does otherwise it does by standing in front of
+exec's OpenLibrary and OpenDevice. The base is the one exec keeps with
+SetRamLib; the call is exec's, made when a module goes.
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [UnLoadModule](#unloadmodule) - Unloads the segments a library or device was loaded in, once it has gone.
+
+## UnLoadModule
+
+Unloads the segments a library or device was loaded in, once it has gone.
+
+**SYNOPSIS**
+
+```zig
+fn UnLoadModule(rlb: *RamLibBase, seg_list: ?*anyopaque) void
+```
+
+**SINCE**
+
+1.4. LVO -20.
+
+**INPUTS**
+
+- `seg_list` - what the module's Expunge handed back as it went, or
+  null, which does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+ramlib keeps a note of each module it loaded from the disk and of the
+segments it is in. The note of these segments is taken off its list
+and the segments go with `UnLoadSeg`; the module asked for again is
+loaded anew from its file. Segments ramlib has no note of - a module
+someone else loaded and made with `InitResident` - are left alone, to
+whoever loaded them.
+
+exec calls it whenever an Expunge it ran hands segments back and the
+module has gone: at the last close of a library or device marked to go
+(`LIBF_DELEXP`), at the close of an opener's own base whose Close let
+its library go, and in exec's low-memory flush. `RemLibrary` and
+`RemDevice` hand them to their caller, as before.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: ramlib's notes, a spinlock held for the walk alone, then dos's
+  code lock; no spinlock may be held.
+- Process: a Task will do. It runs inside AllocMem's low-memory handler
+  too.
+
+**OWNERSHIP**
+
+The segments are gone after the call, so nothing may still run in them:
+exec calls it only after the Expunge returned.
+
+**NOTES**
+
+exec's call; a program has nothing to hand it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+exec's `SetRamLib`, `CloseLibrary`, `CloseDevice`; dos's `UnLoadSeg`
+
+**EXAMPLES**
+
+```zig
+const gone = expungeHeld(base, lib, &base.lib_list);
+if (gone.went) unloadModule(base, gone.seg_list);
+```

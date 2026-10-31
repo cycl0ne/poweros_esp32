@@ -5,8 +5,7 @@ const sdk = @import("sdk");
 const vc = sdk.videocodec;
 const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const _stream = @import("_stream.zig");
-const chip = @import("../chip/_chip.zig");
-const mjpeg = @import("../mjpeg/_mjpeg.zig");
+const _codec = @import("../codec/_codec.zig");
 
 /// Hands out the next frame in the order frames are shown.
 ///
@@ -29,15 +28,17 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 ///
 /// BEHAVIOR:
 /// The picture track's packets are decoded until the next frame comes
-/// out: the chip's decoder fed them a picture at a time - turned into the
-/// form it takes, the parameter sets in front of each key picture - and
-/// asked for its frames, which it hands out in the order they are shown;
-/// a Motion JPEG picture unpacked into its planes. A frame due before
-/// what the film presents, or before the key frame a seek landed on, is
-/// passed over. At the end of the track the chip's decoder hands out the
-/// frames it still holds back, and then VCERR_END. The frame's `time` is
-/// when it is due, and `number` counts the frames handed out since the
-/// stream was opened or moved.
+/// out: the codec module's decoder is sent them a packet at a time while
+/// it wants more, and hands out its frames in the order they are shown -
+/// the chip's fed a picture at a time, a Motion JPEG picture unpacked into
+/// its planes. A frame due before what the film presents, or before the
+/// key frame a seek landed on, is passed over. At the end of the track the
+/// decoder hands out the frames it still holds back, and then VCERR_END.
+/// A decoder that refuses the stream before its first frame - the chip
+/// and 10-bit H.264 - gives way to the next module that decodes the codec,
+/// which starts at the key frame again (SINCE 1.4; not for a film read
+/// through a function). The frame's `time` is when it is due, and `number`
+/// counts the frames handed out since the stream was opened or moved.
 ///
 /// CONTEXT:
 /// - Waits: yes, on the file and the chip.
@@ -74,10 +75,7 @@ const mjpeg = @import("../mjpeg/_mjpeg.zig");
 pub fn DecodeVideoFrame(_: *VideoCodecBase, stream: *vc.VideoStream, frame: *vc.VideoFrame) i32 {
     const s = _stream.of(stream);
     const slot = _stream.freeSlot(s) orelse return vc.VCERR_BUSY;
-    const result = switch (s.engine) {
-        .chip => chip.decode(s, frame, slot),
-        .mjpeg => mjpeg.decode(s, frame, slot),
-    };
+    const result = _codec.decode(s, frame, slot);
     if (result != vc.VCERR_OK) return result;
     s.held[slot] = true;
     frame.number = s.number;

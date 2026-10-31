@@ -1859,7 +1859,8 @@ exec.library/WaitPort
 
 	As `CloseLibrary`: the Close vector runs inside the device's own lock,
 	and a device whose last close leaves it marked to go is expunged by
-	exec there and then.
+	exec there and then - the segments it was loaded in going to the
+	module loader, which unloads them (SINCE 1.25).
 
    CONTEXT
 	- Waits: for the device's lock while another task holds it, and a
@@ -1907,8 +1908,10 @@ exec.library/WaitPort
 	it was open goes on its last close. A Close vector does not expunge its
 	library itself.
 
-	The seglist of a library that went is dropped: nothing here loads a
-	module, so nothing here unloads one.
+	The segments a library that went was loaded in - what its Expunge, or
+	an opener's base's Close, handed back - go to the module loader, which
+	unloads them (ramlib.library's UnLoadModule; SINCE 1.25 - they were
+	dropped).
 
 	A library whose Open hands each opener a base of its own (bsdsocket's
 	does) gets that base back here. It is on no list - its node has no
@@ -6662,8 +6665,11 @@ exec.library/WaitPort
 	Nothing.
 
    BEHAVIOR
-	exec stores the word and **never looks at what it points to**. It is one
-	pointer that a module has nowhere else to put.
+	exec stores the word. It is one pointer that a module has nowhere else
+	to put - and the loader's base, through which exec hands it the
+	segments of a module that went (`UnLoadModule`, SINCE 1.25): at a last
+	close, at an opener's base's close, in the low-memory flush. So it is a
+	library's base with that call in its jump table, ramlib.library's.
 
 	The reason it has nowhere else is worth stating, since it is the only
 	thing this call is for. ramlib.library replaces exec's `OpenLibrary` and

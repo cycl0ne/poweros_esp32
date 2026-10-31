@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! videocodec.library's host tests: the library made from its ROM tag on
 //! the host's exec, with media.library and audiocodec.library beside it,
+//! the codec modules chip.vcodec and mjpeg.vcodec made from theirs and
+//! given as the table LIBS:codecs/ would make (`_codec.test_modules`),
 //! the films on a RAM disk behind WORK:.
 //!
-//! The host has no chip decoder, so the films decoded here are Motion
-//! JPEG, made with ffmpeg from its `testsrc2` pattern: `clip.mov` 96 x 64
+//! The host has no chip decoder - chip.vcodec opens none - so the films
+//! decoded here are Motion JPEG, made with ffmpeg from its `testsrc2` pattern: `clip.mov` 96 x 64
 //! at 10 frames a second for a second, its colour halved both ways, with
 //! a second of AAC at 22050 Hz mono - its index at the end, as ffmpeg
 //! writes a MOV; `clip.mp4` 48 x 32 at 5 a second with sound, MPEG-4's
@@ -38,6 +40,12 @@ const kexec = host.exec;
 const videocodec_init = @import("../videocodec_init.zig");
 const media_init = @import("../../media/media_init.zig");
 const audiocodec_init = @import("../../audiocodec/audiocodec_init.zig");
+const chip_init = @import("../../codecs/chip/chip_init.zig");
+const mjpeg_init = @import("../../codecs/mjpeg/mjpeg_init.zig");
+const module = @import("../../codecs/module.zig");
+const _codec = @import("../codec/_codec.zig");
+const vcodec = sdk.vcodec;
+const loadfile = dos.loadfile;
 
 const testing = std.testing;
 const DosBase = sdk.interface.dos.DosBase;
@@ -45,7 +53,8 @@ const VideoCodecBase = sdk.interface.videocodec.VideoCodecBase;
 
 test {
     _ = @import("../videocodec_lvo.zig");
-    _ = @import("../chip/annexb.zig");
+    _ = @import("../../codecs/chip/annexb.zig");
+    _ = @import("../../codecs/module.zig");
 }
 
 const clip_mov = @embedFile("clip.mov");
@@ -97,6 +106,8 @@ const Rig = struct {
     library: *exec.Library = undefined,
     media_library: *exec.Library = undefined,
     audio_library: *exec.Library = undefined,
+    chip_library: *exec.Library = undefined,
+    mjpeg_library: *exec.Library = undefined,
     vcb: *VideoCodecBase = undefined,
 
     fn init(rig: *Rig) !void {
@@ -120,6 +131,9 @@ const Rig = struct {
         rig.library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &videocodec_init.videocodec_library_tag, null) orelse return error.NoLibrary));
         rig.media_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &media_init.media_library_tag, null) orelse return error.NoLibrary));
         rig.audio_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &audiocodec_init.audiocodec_library_tag, null) orelse return error.NoLibrary));
+        rig.chip_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &chip_init.chip_vcodec_tag.resident, null) orelse return error.NoLibrary));
+        rig.mjpeg_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &mjpeg_init.mjpeg_vcodec_tag.resident, null) orelse return error.NoLibrary));
+        _codec.test_modules = &modules;
         rig.vcb = @ptrCast(rig.sysLib().OpenLibrary(vc.VIDEOCODECNAME, 1) orelse return error.NoBase);
     }
 
@@ -141,6 +155,11 @@ const Rig = struct {
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, ac.AUDIOCODECNAME) == null);
         _ = rig.sysLib().RemLibrary(rig.media_library);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, media.MEDIANAME) == null);
+        _ = rig.sysLib().RemLibrary(rig.chip_library);
+        try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, chip_init.LIBRARY_NAME) == null);
+        _ = rig.sysLib().RemLibrary(rig.mjpeg_library);
+        try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, mjpeg_init.LIBRARY_NAME) == null);
+        _codec.test_modules = null;
         Disk.disk.deinit();
         kexec.SysBase.cpu().this_task = rig.saved.?;
         try host.dos.testTearDown(rig.db);
@@ -163,6 +182,20 @@ const Rig = struct {
             .{},
         }, err);
     }
+};
+
+/// A module of the table as LIBS:codecs/ would make it from its tag, by
+/// the name the host's exec finds it under.
+fn moduleOf(name: []const u8, tag: *const vcodec.ResidentVCodec) _codec.Module {
+    var made: _codec.Module = .{ .codecs = tag.codecs, .kind = tag.kind, .priority = tag.priority, .version = tag.resident.version };
+    @memcpy(made.name[0..name.len], name);
+    return made;
+}
+
+/// The two modules on the disk: the chip's, and Motion JPEG's.
+const modules = [_]_codec.Module{
+    moduleOf(chip_init.LIBRARY_NAME, &chip_init.chip_vcodec_tag),
+    moduleOf(mjpeg_init.LIBRARY_NAME, &mjpeg_init.mjpeg_vcodec_tag),
 };
 
 /// Bytes in memory, handed over by a read function in pieces.
@@ -649,11 +682,239 @@ test "a film's tracks: listed, what decodes them; subtitles of each kind at thei
     try testing.expectEqual(@as(u32, 32 * 1536 - 24000), total);
 }
 
+/// A module of the tests' own, which claims Motion JPEG and decodes
+/// nothing: how often each call was made, and what OpenVCodec answers.
+const Fake = struct {
+    var opened: u32 = 0;
+    var closed: u32 = 0;
+    var sent: u32 = 0;
+    var received: u32 = 0;
+    /// A decoder (VCERR_OK), or this error.
+    var open_answer: i32 = vc.VCERR_OK;
+    var decoder: u8 = 0;
+
+    fn reset(answer: i32) void {
+        opened = 0;
+        closed = 0;
+        sent = 0;
+        received = 0;
+        open_answer = answer;
+    }
+
+    pub fn GetVCodecInfo(_: *module.Base, _: *vcodec.VCodecDecoder, _: *vcodec.VCodecInfo) i32 {
+        return vc.VCERR_NEED_DATA;
+    }
+    pub fn OpenVCodec(_: *module.Base, _: *const vcodec.VCodecParams, err: ?*i32) ?*vcodec.VCodecDecoder {
+        opened += 1;
+        if (err) |out| out.* = open_answer;
+        return if (open_answer == vc.VCERR_OK) @ptrCast(&decoder) else null;
+    }
+    pub fn CloseVCodec(_: *module.Base, _: ?*vcodec.VCodecDecoder) void {
+        closed += 1;
+    }
+    pub fn SendVCodecPacket(_: *module.Base, _: *vcodec.VCodecDecoder, _: *const vcodec.VCodecPacket) i32 {
+        sent += 1;
+        return vc.VCERR_OK;
+    }
+    /// A packet asked for, and once it has one the stream refused - as the
+    /// chip does a stream it reads it cannot decode.
+    pub fn ReceiveVCodecFrame(_: *module.Base, _: *vcodec.VCodecDecoder, _: *vc.VideoFrame) i32 {
+        received += 1;
+        return if (sent == 0) vc.VCERR_NEED_DATA else vc.VCERR_UNSUPPORTED;
+    }
+    pub fn ReleaseVCodecFrame(_: *module.Base, _: *vcodec.VCodecDecoder, _: *vc.VideoFrame) void {}
+    pub fn FlushVCodec(_: *module.Base, _: *vcodec.VCodecDecoder) void {}
+};
+
+const FakeModule = module.Module(0, Fake);
+
+const fake_tag: vcodec.ResidentVCodec = .{
+    .resident = .{
+        .match_tag = @ptrCast(&fake_tag),
+        .flags = exec.RTF_AUTOINIT,
+        .version = 1,
+        .type = .library,
+        .name = "fake.vcodec",
+        .id_string = "fake.vcodec 1.0 (30.10.2026)\r\n",
+        .init = &FakeModule.init_table,
+    },
+    .codecs = vcodec.codecBit(vc.VCODEC_MJPEG),
+    .kind = vcodec.VCMOD_CHIP,
+};
+
+/// The fake module in the table as `kind` with `priority`.
+fn fakeAs(kind: u32, priority: i32) _codec.Module {
+    var made = moduleOf("fake.vcodec", &fake_tag);
+    made.kind = kind;
+    made.priority = priority;
+    return made;
+}
+
+/// clip.mov's ten frames from the start, frame 0 near ffmpeg's.
+fn expectClip(vcb: *VideoCodecBase, film: *vc.VideoStream) !void {
+    var frame: vc.VideoFrame = .{};
+    for (0..10) |n| {
+        try testing.expectEqual(vc.VCERR_OK, vcb.DecodeVideoFrame(film, &frame));
+        try testing.expectEqual(@as(i64, @intCast(n * 100_000)), frame.time);
+        if (n == 0) try expectFrame(&frame, clip_ref[0 .. 96 * 64 * 3 / 2]);
+        vcb.ReleaseVideoFrame(film, &frame);
+    }
+    try testing.expectEqual(vc.VCERR_END, vcb.DecodeVideoFrame(film, &frame));
+}
+
+test "the codec modules: a chip's first, software by priority; one that opens nothing, or refuses the stream, gives way to the next" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch |e| std.debug.panic("deinit: {}", .{e});
+    const fake_library: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &fake_tag.resident, null) orelse return error.NoLibrary));
+    defer _ = rig.sysLib().RemLibrary(fake_library);
+    const vcb = rig.vcb;
+    try rig.write("WORK:clip.mov", clip_mov);
+    var err: i32 = 0;
+
+    // A chip's, listed after software: tried first; it takes a packet,
+    // then refuses the stream, and Motion JPEG's decodes it from the
+    // start.
+    const chip_first = [_]_codec.Module{ modules[1], fakeAs(vcodec.VCMOD_CHIP, 0) };
+    _codec.test_modules = &chip_first;
+    Fake.reset(vc.VCERR_OK);
+    {
+        const film = rig.open("WORK:clip.mov", &err) orelse return error.NoStream;
+        defer vcb.CloseVideoStream(film);
+        try expectClip(vcb, film);
+        try testing.expectEqual(@as(u32, 1), Fake.opened);
+        try testing.expectEqual(@as(u32, 1), Fake.sent);
+        try testing.expectEqual(@as(u32, 2), Fake.received);
+        try testing.expectEqual(@as(u32, 1), Fake.closed);
+    }
+
+    // One that opens no decoder here - the board has not its chip.
+    Fake.reset(vc.VCERR_NOCODEC);
+    {
+        const film = rig.open("WORK:clip.mov", &err) orelse return error.NoStream;
+        defer vcb.CloseVideoStream(film);
+        try expectClip(vcb, film);
+        try testing.expectEqual(@as(u32, 1), Fake.opened);
+        try testing.expectEqual(@as(u32, 0), Fake.closed);
+    }
+
+    // Software among software: the higher priority first, and a lower
+    // one never asked.
+    const higher = [_]_codec.Module{ modules[1], fakeAs(vcodec.VCMOD_SOFTWARE, 5) };
+    _codec.test_modules = &higher;
+    Fake.reset(vc.VCERR_OK);
+    {
+        const film = rig.open("WORK:clip.mov", &err) orelse return error.NoStream;
+        defer vcb.CloseVideoStream(film);
+        try expectClip(vcb, film);
+        try testing.expectEqual(@as(u32, 1), Fake.opened);
+    }
+    const lower = [_]_codec.Module{ fakeAs(vcodec.VCMOD_SOFTWARE, -5), modules[1] };
+    _codec.test_modules = &lower;
+    Fake.reset(vc.VCERR_OK);
+    {
+        const film = rig.open("WORK:clip.mov", &err) orelse return error.NoStream;
+        defer vcb.CloseVideoStream(film);
+        try expectClip(vcb, film);
+        try testing.expectEqual(@as(u32, 0), Fake.opened);
+    }
+
+    // Nothing after it: the refusal is the program's.
+    const alone = [_]_codec.Module{fakeAs(vcodec.VCMOD_CHIP, 0)};
+    _codec.test_modules = &alone;
+    Fake.reset(vc.VCERR_OK);
+    {
+        const film = rig.open("WORK:clip.mov", &err) orelse return error.NoStream;
+        defer vcb.CloseVideoStream(film);
+        var frame: vc.VideoFrame = .{};
+        try testing.expectEqual(vc.VCERR_UNSUPPORTED, vcb.DecodeVideoFrame(film, &frame));
+    }
+    // A film read through a function cannot be read again from its key
+    // packet: the refusal stays, though Motion JPEG's would take it.
+    _codec.test_modules = &chip_first;
+    Fake.reset(vc.VCERR_OK);
+    {
+        var memory: Memory = .{ .bytes = clip_mp4 };
+        const film = vcb.OpenVideoStream(&[_]utility.TagItem{
+            .{ .tag = vc.VCA_ReadFunc, .data = @intFromPtr(&Memory.read) },
+            .{ .tag = vc.VCA_ReadData, .data = @intFromPtr(&memory) },
+            .{},
+        }, &err) orelse return error.NoStream;
+        defer vcb.CloseVideoStream(film);
+        var frame: vc.VideoFrame = .{};
+        try testing.expectEqual(vc.VCERR_UNSUPPORTED, vcb.DecodeVideoFrame(film, &frame));
+    }
+
+    // No module opens a decoder: the first refusal that is not "not
+    // here", else "not here"; and none at all for the codec.
+    Fake.reset(vc.VCERR_BUSY);
+    _codec.test_modules = &alone;
+    try testing.expect(rig.open("WORK:clip.mov", &err) == null);
+    try testing.expectEqual(vc.VCERR_BUSY, err);
+    const nothing = [_]_codec.Module{modules[0]};
+    _codec.test_modules = &nothing;
+    try testing.expect(rig.open("WORK:clip.mov", &err) == null);
+    try testing.expectEqual(vc.VCERR_NOCODEC, err);
+    _codec.test_modules = &modules;
+}
+
+fn put32(into: []u8, at: usize, value: u32) void {
+    std.mem.writeInt(u32, into[at..][0..4], value, .little);
+}
+
+test "a codec module's tag read from its load file: what it decodes, its kind, priority and version; nothing else is one" {
+    // The header, then a data segment of 160 bytes with a library's tag
+    // at 32 (as a 32-bit file has it: its name at offset 16, its ID string
+    // at 20, the module's words from 28 on), the name at 96, the ID
+    // string at 112.
+    var file: [20 + 16 + 160]u8 = @splat(0);
+    @memcpy(file[0..4], &loadfile.MAGIC);
+    std.mem.writeInt(u16, file[4..6], loadfile.VERSION, .little);
+    std.mem.writeInt(u16, file[6..8], 1, .little);
+    std.mem.writeInt(u16, file[10..12], loadfile.native_machine, .little);
+    file[16] = 4;
+    file[20] = @intFromEnum(loadfile.SegmentKind.data);
+    put32(&file, 24, 160);
+    put32(&file, 28, 160);
+    const seg = 36;
+    const tag = seg + 32;
+    std.mem.writeInt(u16, file[tag..][0..2], 0x4AFC, .little);
+    put32(&file, tag + 4, 32);
+    file[tag + 12] = exec.RTF_AUTOINIT;
+    file[tag + 13] = 1;
+    file[tag + 14] = @intFromEnum(exec.NodeType.library);
+    put32(&file, tag + 16, 96);
+    put32(&file, tag + 20, 112);
+    put32(&file, tag + 28, vcodec.VCODEC_MAGIC);
+    put32(&file, tag + 32, vcodec.codecBit(vc.VCODEC_H264));
+    put32(&file, tag + 36, vcodec.VCMOD_SOFTWARE);
+    put32(&file, tag + 40, @bitCast(@as(i32, -3)));
+    @memcpy(file[seg + 96 ..][0..12], "h264.vcodec\x00");
+    @memcpy(file[seg + 112 ..][0..29], "h264.vcodec 1.2 (30.10.2026)\x00");
+
+    var bytes = loadfile.Bytes{ .data = &file };
+    var found: _codec.Module = .{};
+    try testing.expect(_codec.readTag(bytes.source(), &found, "h264.vcodec"));
+    try testing.expectEqual(vcodec.codecBit(vc.VCODEC_H264), found.codecs);
+    try testing.expectEqual(vcodec.VCMOD_SOFTWARE, found.kind);
+    try testing.expectEqual(@as(i32, -3), found.priority);
+    try testing.expectEqual(@as(u8, 1), found.version);
+    try testing.expectEqual(@as(u16, 2), found.revision);
+    // Named otherwise than its file: ramlib would not load it by that.
+    try testing.expect(!_codec.readTag(bytes.source(), &found, "hevc.vcodec"));
+    // A library's tag without the module's words; a device's.
+    put32(&file, tag + 28, 0);
+    try testing.expect(!_codec.readTag(bytes.source(), &found, "h264.vcodec"));
+    put32(&file, tag + 28, vcodec.VCODEC_MAGIC);
+    file[tag + 14] = @intFromEnum(exec.NodeType.device);
+    try testing.expect(!_codec.readTag(bytes.source(), &found, "h264.vcodec"));
+}
+
 test "every error code says something of its own" {
     var rig: Rig = undefined;
     try rig.init();
     defer rig.deinit() catch |e| std.debug.panic("deinit: {}", .{e});
-    var code: i32 = vc.VCERR_NOSOUND;
+    var code: i32 = vc.VCERR_FULL;
     while (code <= vc.VCERR_OK) : (code += 1) {
         try testing.expect(!std.mem.eql(u8, "unknown error", std.mem.span(rig.vcb.VideoErrorText(code))));
     }

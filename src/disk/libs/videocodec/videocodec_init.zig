@@ -9,10 +9,11 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const _base = @import("videocodec_base.zig");
 const VideoCodecBase = _base.VideoCodecBase;
 const videocodec_lvo = @import("videocodec_lvo.zig");
+const _codec = @import("codec/_codec.zig");
 
 pub const LIBRARY_NAME = sdk.videocodec.VIDEOCODECNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
+pub const LIBRARY_REVISION = 4;
 const BUILD_DATE = "30.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -36,6 +37,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         .dos_base = @ptrCast(dos_lib),
         .utility_base = @ptrCast(utility_lib),
     };
+    sys_base.InitSemaphore(&base.modules_lock);
     lib.revision = LIBRARY_REVISION;
     return lib;
 }
@@ -50,6 +52,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const base = _base.videoCodecBase(lib);
     const sys = base.sys_base;
     const seg_list = base.seg_list;
+    _codec.forget(base);
     sys.CloseLibrary(@ptrCast(@alignCast(base.dos_base)));
     sys.CloseLibrary(@ptrCast(@alignCast(base.utility_base)));
     sys.DetachLibrary(lib);

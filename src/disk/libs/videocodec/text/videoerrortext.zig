@@ -60,6 +60,8 @@ pub fn VideoErrorText(_: *VideoCodecBase, code: i32) [*:0]const u8 {
         vc.VCERR_NOCODEC => "nothing here decodes it",
         vc.VCERR_BUSY => "the decoder is busy",
         vc.VCERR_NOSOUND => "it has no sound",
+        vc.VCERR_NEED_DATA => "the decoder wants more of it",
+        vc.VCERR_FULL => "the decoder has no room for more",
         else => "unknown error",
     };
 }

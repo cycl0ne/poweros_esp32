@@ -89,6 +89,9 @@ const image_dirs = [_][]const u8{
     "c/net",
     "s",
     "libs",
+    // LIBS:codecs - the decoders of pictures videocodec.library chooses
+    // among, a library each.
+    "libs/codecs",
     // The classes, opened through LIBS: (the startup-sequence adds this
     // directory to it): gadgets/ for the gadget classes, datatypes/ for
     // the classes that read a file's contents, docklets/ for the dock's

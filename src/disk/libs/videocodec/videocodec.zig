@@ -6,19 +6,19 @@
 //! A stream opens its film with media.library, which reads the container
 //! and hands out each track's packets, and takes the first track of
 //! pictures and the first of sound. The pictures go to a decoder by their
-//! codec: H.264 and H.265 to the chip's, videodec.resource (`chip/`: the
-//! container's packets turned into the Annex B form the chip is fed, the
-//! parameter sets in front of each key picture), Motion JPEG to the
-//! library's own (`mjpeg/`: jpeg.datatype's decoder, built in, unpacking
-//! each picture into its planes). The sound is an audiocodec.library
+//! codec: a codec module from LIBS:codecs/ (SINCE 1.4; `codec/`), a
+//! library of its own whose tag says what it decodes - chip.vcodec for
+//! H.264 and H.265 on the chip, through videodec.resource, mjpeg.vcodec
+//! for Motion JPEG in software - a chip's tried before software, and the
+//! next taking over from one that refuses. The sound is an audiocodec.library
 //! stream on the same file (`ACA_Media`), so the two halves are read and
 //! decoded apart - by two tasks, if the program likes; media.library takes
 //! turns at the file.
 //!
 //! A stream is its opener's: everything about it is in the stream, which
-//! opens media.library, audiocodec.library and the resource for itself;
-//! the base, shared by every opener, holds only dos.library and
-//! utility.library.
+//! opens media.library, audiocodec.library and its codec module for
+//! itself; the base, shared by every opener, holds dos.library and
+//! utility.library, and the table of the modules in LIBS:codecs/.
 //!
 //! The jump table is videocodec_lvo.zig, the ROM tag, init and expunge
 //! videocodec_init.zig, the base videocodec_base.zig. Each call is a file

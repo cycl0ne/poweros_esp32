@@ -33,8 +33,10 @@ const Library = sdk.exec.Library;
 /// it was open goes on its last close. A Close vector does not expunge its
 /// library itself.
 ///
-/// The seglist of a library that went is dropped: nothing here loads a
-/// module, so nothing here unloads one.
+/// The segments a library that went was loaded in - what its Expunge, or
+/// an opener's base's Close, handed back - go to the module loader, which
+/// unloads them (ramlib.library's UnLoadModule; SINCE 1.25 - they were
+/// dropped).
 ///
 /// A library whose Open hands each opener a base of its own (bsdsocket's
 /// does) gets that base back here. It is on no list - its node has no
@@ -70,15 +72,18 @@ pub fn CloseLibrary(base: *ExecBase, library: ?*Library) void {
     const sys = base.iface();
     if (lib.node.pred == null) {
         // An opener's own base: its Close frees it, so nothing here may
-        // touch it after.
-        _ = lib.vector(sdk.exec.CloseFn, sdk.exec.LIB_CLOSE)(lib);
+        // touch it after - and lets its library go at the last, handing
+        // back the segments.
+        const gone = lib.vector(sdk.exec.CloseFn, sdk.exec.LIB_CLOSE)(lib);
+        _library.unloadModule(base, gone);
         return;
     }
     sys.ObtainSemaphore(&lib.lock);
     _ = lib.vector(sdk.exec.CloseFn, sdk.exec.LIB_CLOSE)(lib);
     if (lib.open_cnt == 0 and lib.flags & sdk.exec.LIBF_DELEXP != 0) {
         // Gives the lock back, or takes it with the library.
-        _ = _library.expungeHeld(base, lib, &base.lib_list);
+        const gone = _library.expungeHeld(base, lib, &base.lib_list);
+        if (gone.went) _library.unloadModule(base, gone.seg_list);
         return;
     }
     sys.ReleaseSemaphore(&lib.lock);

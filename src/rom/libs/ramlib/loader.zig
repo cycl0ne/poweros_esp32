@@ -269,9 +269,13 @@ fn lower(c: u8) u8 {
 }
 
 fn alreadyLoaded(rlb: *RamLibBase, name: [*:0]const u8) bool {
+    const sys = rlb.sys_base;
+    sys.AcquireLock(&rlb.notes_lock);
+    defer sys.ReleaseLock(&rlb.notes_lock);
     return noteOf(rlb, name) != null;
 }
 
+/// The note of that name. Under the notes' lock.
 fn noteOf(rlb: *RamLibBase, name: [*:0]const u8) ?*ramlib.Loaded {
     var node = rlb.loaded.first();
     while (node) |n| : (node = n.next()) {
@@ -302,17 +306,44 @@ fn deviceListed(rlb: *RamLibBase, name: [*:0]const u8) bool {
     return sys.FindName(list, name) != null;
 }
 
-/// A library that was loaded and has expunged itself since: its base is
-/// gone and its code is used by nothing, so the segments go with the note.
-/// A device's note stays: a device does not go, and its name asked for as
-/// a library says nothing about it - its code is running.
+/// A library that was loaded and has gone since with nobody to say so -
+/// exec hands what goes at a close or a flush to UnLoadModule, `RemLibrary`
+/// to its caller: its base is gone and its code is used by nothing, so the
+/// segments go with the note. A device's note stays: its name asked for as
+/// a library says nothing about it - its code may be running.
 fn forget(rlb: *RamLibBase, name: [*:0]const u8) void {
-    const module = noteOf(rlb, name) orelse return;
-    if (module.kind != ramlib.KIND_LIBRARY) return;
     const sys = rlb.sys_base;
+    sys.AcquireLock(&rlb.notes_lock);
+    const module = noteOf(rlb, name) orelse {
+        sys.ReleaseLock(&rlb.notes_lock);
+        return;
+    };
+    if (module.kind != ramlib.KIND_LIBRARY) {
+        sys.ReleaseLock(&rlb.notes_lock);
+        return;
+    }
     sys.Remove(&module.node);
+    sys.ReleaseLock(&rlb.notes_lock);
     if (module.seg_list) |seg_list| rlb.dos_base.UnLoadSeg(seg_list);
     sys.FreeVec(module);
+}
+
+/// The note of the module in `seg_list`, taken off the list - its
+/// segments and itself the caller's to free - or null when ramlib loaded
+/// nothing in them. For UnLoadModule, which may run inside AllocMem: the
+/// notes' spinlock is held for the walk alone.
+pub fn takeNote(rlb: *RamLibBase, seg_list: *dos.SegList) ?*ramlib.Loaded {
+    const sys = rlb.sys_base;
+    sys.AcquireLock(&rlb.notes_lock);
+    defer sys.ReleaseLock(&rlb.notes_lock);
+    var node = rlb.loaded.first();
+    while (node) |n| : (node = n.next()) {
+        const module: *ramlib.Loaded = @fieldParentPtr("node", n);
+        if (module.seg_list != seg_list) continue;
+        sys.Remove(&module.node);
+        return module;
+    }
+    return null;
 }
 
 /// Note what was loaded, so that a flush has something to walk and a
@@ -327,7 +358,9 @@ fn keep(rlb: *RamLibBase, name: [*:0]const u8, seg_list: *dos.SegList, kind: u32
     while (name[i] != 0 and i + 1 < module.name_buf.len) : (i += 1) module.name_buf[i] = name[i];
     module.name_buf[i] = 0;
     module.node.name = @ptrCast(&module.name_buf);
+    sys.AcquireLock(&rlb.notes_lock);
     sys.AddTail(&rlb.loaded, &module.node);
+    sys.ReleaseLock(&rlb.notes_lock);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -409,6 +442,37 @@ test "a device's name asked for as a library leaves the device's segments alone"
 
     sys.Remove(&note.node);
     sys.FreeVec(note);
+    try kexec.expectNoLeaks();
+}
+
+test "a module that went: its note found by its segments and taken off, a device's too; others' segments are not ramlib's" {
+    const kexec = @import("../exec/exec.zig");
+    try kexec.setUp();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    // No dos: the unloading is UnLoadModule's, after the note is taken.
+    var rlb: RamLibBase = .{ .lib = .{}, .sys_base = sys, .dos_base = undefined };
+    sys.NewList(&rlb.loaded);
+    sys.InitLock(&rlb.notes_lock, "ramlib notes", exec.LOCKORDER_DRIVER, 0);
+    var library_segments = dos.SegList{};
+    var device_segments = dos.SegList{};
+    var others = dos.SegList{};
+
+    keep(&rlb, "gone.library", &library_segments, ramlib.KIND_LIBRARY);
+    keep(&rlb, "gone.device", &device_segments, ramlib.KIND_DEVICE);
+    try testing.expect(takeNote(&rlb, &others) == null);
+
+    const device_note = takeNote(&rlb, &device_segments) orelse return error.NotFound;
+    try testing.expect(device_note.seg_list == &device_segments);
+    try testing.expect(!alreadyLoaded(&rlb, "gone.device"));
+    try testing.expect(alreadyLoaded(&rlb, "gone.library"));
+    sys.FreeVec(device_note);
+
+    const library_note = takeNote(&rlb, &library_segments) orelse return error.NotFound;
+    try testing.expect(takeNote(&rlb, &library_segments) == null);
+    try testing.expect(rlb.loaded.isEmpty());
+    sys.FreeVec(library_note);
+    try testing.expectEqual(@as(u32, 0), rlb.notes_lock.state);
     try kexec.expectNoLeaks();
 }
 

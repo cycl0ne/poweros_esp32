@@ -21,9 +21,10 @@ pub const RamLibBase = extern struct {
     /// The vectors that were replaced, called first on every open.
     old_open_library: ?*const anyopaque = null,
     old_open_device: ?*const anyopaque = null,
-    /// What has been loaded: a `Loaded` per module, by its tail name. A
-    /// library's segments are unloaded when it is asked for again after it
-    /// expunged itself; a device's stay.
+    /// What has been loaded: a `Loaded` per module, by its tail name. Its
+    /// segments are unloaded when exec says the module went
+    /// (UnLoadModule); a library's too when it is asked for again after it
+    /// went with nobody to say so - `RemLibrary` hands them to its caller.
     loaded: exec.List = .{},
     /// What is being loaded now: a `Loading` per module (loader.zig), each
     /// with a lock its loader holds until it is done, which a second task
@@ -33,6 +34,11 @@ pub const RamLibBase = extern struct {
     /// never across a load, so that one module's load does not hold up
     /// another's.
     lock: exec.SignalSemaphore = .{},
+    /// Over `loaded` too, a spinlock held for a walk or a link alone:
+    /// UnLoadModule takes a note off it from inside AllocMem's low-memory
+    /// handler, which waits for no semaphore. Taken after `lock` when both
+    /// are, and nothing is allocated or unloaded while it is held.
+    notes_lock: exec.Lock = .{},
 };
 
 /// LibExpunge: a ROM module stays, and what it has loaded stays with it.

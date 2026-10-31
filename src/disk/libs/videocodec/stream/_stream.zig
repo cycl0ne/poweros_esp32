@@ -3,12 +3,12 @@
 //! and the decoder for it, the frames lent out, and the sound - an
 //! audiocodec.library stream on the same file.
 //!
-//! **The pictures** are decoded by an engine: the chip's (`chip/`) or the
-//! library's own Motion JPEG decoder (`mjpeg/`). Each takes the track's
-//! packets through `nextPacket`, which hands out first the packet a seek
-//! read to find where it landed. A frame lent out has a slot of the
-//! `VIDEO_HELD_FRAMES`; its number is in the frame's `private`, which
-//! ReleaseVideoFrame reads back.
+//! **The pictures** are decoded by a codec module from LIBS:codecs/
+//! (`codec/`: the chip's, chip.vcodec, or software), which is sent the
+//! track's packets read through `nextPacket` - which hands out first the
+//! packet a seek read to find where it landed. A frame lent out has a slot
+//! of the `VIDEO_HELD_FRAMES`; its number is in the frame's `private`,
+//! which ReleaseVideoFrame reads back.
 //!
 //! **The sound** is decoded by whichever task calls DecodeVideoSound
 //! while the pictures are decoded by another; `sound_lock` keeps a seek
@@ -17,8 +17,8 @@
 //! **The subtitles** (SINCE 1.3) are read by a reader of their own
 //! (`subtitle/`), on a process, once a text track is chosen.
 //!
-//! The stream is one allocation, cleared; the engines' buffers are memory
-//! of their own, given back with it.
+//! The stream is one allocation, cleared; the decoder's memory is its
+//! module's, given back with it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -29,8 +29,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const MediaBase = sdk.interface.media.MediaBase;
 const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
-const chip = @import("../chip/_chip.zig");
-const mjpeg = @import("../mjpeg/_mjpeg.zig");
+const _codec = @import("../codec/_codec.zig");
 const subtitle = @import("../subtitle/_subtitle.zig");
 
 pub const held_frames = vc.VIDEO_HELD_FRAMES;
@@ -38,12 +37,6 @@ pub const held_frames = vc.VIDEO_HELD_FRAMES;
 /// What a frame's `private[1]` holds, so a frame that is not one of the
 /// stream's is passed by.
 pub const frame_mark: u32 = 0x5644_4652; // "VDFR"
-
-/// The decoder of the pictures.
-pub const Engine = union(enum) {
-    chip: chip.Chip,
-    mjpeg: mjpeg.Mjpeg,
-};
 
 pub const Stream = struct {
     base: *VideoCodecBase,
@@ -56,7 +49,7 @@ pub const Stream = struct {
     track: u32,
     picture: media.MediaTrack,
     codec: u32,
-    engine: Engine,
+    decoder: _codec.Decoder,
     /// A packet read and not yet decoded: the key packet a seek read.
     peeked: bool,
     packet: media.MediaPacket,
@@ -185,10 +178,7 @@ pub fn destroy(s: *Stream) void {
     if (s.subtitles) |reader| subtitle.destroy(reader);
     if (s.sound) |sound| s.acb.?.CloseAudioStream(sound);
     if (s.sound_lib) |lib| sys.CloseLibrary(lib);
-    switch (s.engine) {
-        .chip => chip.close(s),
-        .mjpeg => mjpeg.close(s),
-    }
+    _codec.close(s);
     s.mb.CloseMedia(s.file);
     sys.CloseLibrary(s.media_lib);
     sys.FreeVec(s);

@@ -17,6 +17,10 @@ pub const VideoCodecBase = extern struct {
     seg_list: ?*anyopaque = null,
     dos_base: *DosBase,
     utility_base: *UtilityBase,
+    /// The codec modules found in LIBS:codecs/ (codec/_codec.zig's
+    /// Table), read when a film is first opened; under `modules_lock`.
+    modules: ?*anyopaque = null,
+    modules_lock: exec.SignalSemaphore = .{},
 };
 
 pub fn videoCodecBase(lib: *exec.Library) *VideoCodecBase {

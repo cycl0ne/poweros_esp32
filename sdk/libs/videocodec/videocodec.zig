@@ -6,9 +6,11 @@
 //! A program opens a stream on a film - a file by its name, a file it has
 //! open, or bytes a function of its own hands over - and the library
 //! opens it with media.library, takes its first track of pictures and
-//! its first of sound, and finds a decoder for each: the chip's for H.264
-//! and H.265 (videodec.resource, where the board has one), its own for
-//! Motion JPEG, and audiocodec.library for the sound. `GetVideoStreamInfo`
+//! its first of sound, and finds a decoder for each: a codec module in
+//! LIBS:codecs/ for the pictures (SINCE 1.4; `sdk.vcodec`) - chip.vcodec
+//! H.264 and H.265 on the chip (videodec.resource, where the board has
+//! one), mjpeg.vcodec Motion JPEG in software - and audiocodec.library for
+//! the sound. `GetVideoStreamInfo`
 //! says what the film is: the pictures' codec, size and rate, how long it
 //! lasts, and the sound's rate and channels.
 //!
@@ -58,11 +60,12 @@ pub const VideoStream = opaque {};
 
 /// Not a codec the library knows, or no pictures.
 pub const VCODEC_UNKNOWN: u32 = 0;
-/// H.264 (AVC) and H.265 (HEVC): the chip's decoder, videodec.resource.
+/// H.264 (AVC) and H.265 (HEVC): chip.vcodec, the chip's decoder through
+/// videodec.resource.
 pub const VCODEC_H264: u32 = 1;
 pub const VCODEC_H265: u32 = 2;
-/// Motion JPEG - each frame a JPEG picture whole - decoded by the
-/// library itself: baseline pictures, grey or with their colour at full
+/// Motion JPEG - each frame a JPEG picture whole - decoded in software
+/// by mjpeg.vcodec: baseline pictures, grey or with their colour at full
 /// size or halved.
 pub const VCODEC_MJPEG: u32 = 3;
 /// MPEG-4 Part 2 video: known, and nothing decodes it.
@@ -233,8 +236,9 @@ pub const VCERR_NOSEEK: i32 = -7;
 /// SelectVideoTrack: past the last track; GetVideoSubtitle: nothing shows
 /// (SINCE 1.3).
 pub const VCERR_END: i32 = -8;
-/// Nothing here decodes the pictures' codec: H.264 or H.265 on a machine
-/// without the chip's decoder, MPEG-4 Part 2, a codec unknown - or the
+/// Nothing here decodes the pictures' codec - no module in LIBS:codecs/
+/// opens a decoder for it: H.264 or H.265 on a machine without the chip's
+/// decoder, MPEG-4 Part 2, a codec unknown - or the
 /// codec of the track SelectVideoTrack is given (SINCE 1.3).
 pub const VCERR_NOCODEC: i32 = -9;
 /// The decoder is busy: as many are open as the chip runs
@@ -244,3 +248,10 @@ pub const VCERR_BUSY: i32 = -10;
 /// DecodeVideoSound on a stream without sound; SelectVideoTrack of sound
 /// on one opened without it (SINCE 1.3).
 pub const VCERR_NOSOUND: i32 = -11;
+/// A codec module's decoder wants a packet before it hands out another
+/// frame (ReceiveVCodecFrame). Never a program's (SINCE 1.4).
+pub const VCERR_NEED_DATA: i32 = -12;
+/// A codec module's decoder has no room for the packet yet: a frame is
+/// to be taken first, and the packet sent again (SendVCodecPacket). Never
+/// a program's (SINCE 1.4).
+pub const VCERR_FULL: i32 = -13;

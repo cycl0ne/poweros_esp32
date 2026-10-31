@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: MIT
+//! ramlib.library's functions: the module loader's one call of its own
+//! (SINCE 1.4). What it does otherwise it does by standing in front of
+//! exec's OpenLibrary and OpenDevice. The base is the one exec keeps with
+//! SetRamLib; the call is exec's, made when a module goes.
+##basetype RamLibBase
+##name ramlib.library
+##bias 4
+##public
+/// The segments a library or device was loaded in, unloaded once it has
+/// gone: what its Expunge handed back to exec at its last close or in the
+/// low-memory flush. Segments ramlib did not load are left alone; null
+/// does nothing. Called by exec, after the Expunge returned; it does not
+/// wait, and runs inside AllocMem's low-memory handler too.
+void UnLoadModule(?*anyopaque seg_list)
+##end
