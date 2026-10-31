@@ -41,8 +41,10 @@ pub const LIBRARY_VERSION = 1;
 /// nothing more played, and no image shown that may not be finished.
 /// 9: a window's picture that is late for the display's frame is shown at once,
 /// not a whole frame later.
-pub const LIBRARY_REVISION = 9;
-const BUILD_DATE = "30.10.2026";
+/// 10: a colour can be added to what is there, as much as its alpha says:
+/// SRC_ALPHA and ONE.
+pub const LIBRARY_REVISION = 10;
+const BUILD_DATE = "31.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

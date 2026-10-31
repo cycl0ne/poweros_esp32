@@ -1940,8 +1940,9 @@ What it draws: triangle lists, strips and fans, a restart index ending a
 strip or a fan; filled, one sample a pixel, culled by facing as asked; a
 depth test of any compare, written or not, without stencil, bounds,
 bias or clamp; the colour written whole, replacing what is there, or
-laid over it by its alpha - SRC_ALPHA and ONE_MINUS_SRC_ALPHA, ADD - and
-no logic op; one viewport and one scissor, given here or set by
+laid over it by its alpha - SRC_ALPHA and ONE_MINUS_SRC_ALPHA, ADD - or
+added to it, as much as its alpha says - SRC_ALPHA and ONE, ADD - and no
+logic op; one viewport and one scissor, given here or set by
 CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
 the others are taken and do nothing). A pipeline with the rasterizer
 discarding, or culling front and back, draws nothing.
@@ -1982,8 +1983,8 @@ it.
 
 **BUGS**
 
-Blending lays the alpha over the attachment's as it does the colour,
-whatever the alpha's blend factors say.
+Blending treats the alpha as it does the colour, laid over the
+attachment's or added to it, whatever the alpha's blend factors say.
 
 **SEE ALSO**
 

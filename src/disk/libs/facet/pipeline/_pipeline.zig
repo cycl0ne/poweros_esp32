@@ -48,7 +48,7 @@ pub const Cull = enum { none, back, front };
 
 /// What a pixel drawn does to what is there: replaces it, or is laid over
 /// it by its alpha.
-pub const Blend = enum { off, alpha };
+pub const Blend = enum { off, alpha, add };
 
 pub const Pipeline = struct {
     device: *Device,

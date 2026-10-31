@@ -567,6 +567,13 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     fb.DestroyPipeline(device, pipeline);
     fb.DestroyPipeline(device, null);
 
+    var added = base;
+    added.blend = .{ .blend_enable = true, .src_color_blend_factor = .src_alpha, .dst_color_blend_factor = .one };
+    const added_result, const added_pipeline = makePipeline(&bench, added);
+    try testing.expectEqual(facet.Result.success, added_result);
+    try testing.expectEqual(.add, _objects.of(_pipeline.Pipeline, added_pipeline.?).blend);
+    fb.DestroyPipeline(device, added_pipeline);
+
     // The rasterizer discarding, or both faces culled: made, draws nothing.
     state = base;
     state.raster = .{ .cull_mode = facet.CULL_MODE_FRONT_AND_BACK };

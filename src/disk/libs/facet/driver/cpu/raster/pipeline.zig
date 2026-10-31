@@ -83,6 +83,9 @@ pub const Blend = enum {
     /// It is laid over what is there by its alpha: 255 covers it, 0
     /// leaves it. All four channels are mixed, the alpha as well.
     alpha,
+    /// It is added to what is there, as much as its alpha says, and what
+    /// comes to more than 255 is 255. All four channels, the alpha as well.
+    add,
 };
 
 /// Which of a triangle's pixels the depth test keeps, against the depth
@@ -328,7 +331,7 @@ pub fn Pipeline(comptime config: Config) type {
             inline fn run(flat: Flat, y: u32, left: u32, right: u32) void {
                 switch (config.blend) {
                     .off => walk.fill(flat.tile.row(y), left, right, flat.pixel),
-                    .alpha => for (flat.tile.row(y)[left..right]) |*pixel| {
+                    .alpha, .add => for (flat.tile.row(y)[left..right]) |*pixel| {
                         pixel.* = blended(flat.pixel, pixel.*);
                     },
                 }
@@ -678,6 +681,16 @@ pub inline fn blendedBy(comptime blend: Blend, color: u32, under: u32) u32 {
             const alpha = color >> 24;
             const weight = alpha + (alpha >> 7);
             break :alpha texture_zig.gather(texture_zig.mix(texture_zig.spread(under), texture_zig.spread(color), weight));
+        },
+        .add => add: {
+            const alpha = color >> 24;
+            const weight = alpha + (alpha >> 7);
+            var sum: u32 = 0;
+            inline for ([4]u5{ 0, 8, 16, 24 }) |shift| {
+                const part = ((color >> shift & 0xFF) * weight >> 8) + (under >> shift & 0xFF);
+                sum |= @as(u32, @min(part, 255)) << shift;
+            }
+            break :add sum;
         },
     };
 }

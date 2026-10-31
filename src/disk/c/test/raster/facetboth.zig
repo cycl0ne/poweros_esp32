@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.0 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.1 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -183,6 +183,8 @@ const Options = struct {
     write_depth: bool = false,
     compare: facet.CompareOp = .less,
     blend: bool = false,
+    /// Blended: added to what is there, not laid over it.
+    add: bool = false,
     target: Target = .bgra,
     depth: bool = true,
     load: bool = false,
@@ -503,7 +505,7 @@ const Side = struct {
         const blend_attachment = facet.PipelineColorBlendAttachmentState{
             .blend_enable = options.blend,
             .src_color_blend_factor = if (options.blend) .src_alpha else .one,
-            .dst_color_blend_factor = if (options.blend) .one_minus_src_alpha else .zero,
+            .dst_color_blend_factor = if (options.add) .one else if (options.blend) .one_minus_src_alpha else .zero,
             .src_alpha_blend_factor = if (options.blend) .src_alpha else .one,
             .dst_alpha_blend_factor = if (options.blend) .one_minus_src_alpha else .zero,
         };
@@ -661,6 +663,15 @@ const Cases = struct {
         try side.use(.{});
         side.draw(far_at, 3);
         try side.use(.{ .blend = true });
+        side.draw(glass_at, 3);
+        side.end();
+    }
+    fn blendAdded(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{});
+        side.draw(far_at, 3);
+        try side.use(.{ .blend = true, .add = true });
+        side.draw(glass_at, 3);
         side.draw(glass_at, 3);
         side.end();
     }
@@ -867,6 +878,7 @@ const cases = [_]Case{
     .{ .name = "depth, not written", .run = &Cases.depthNoWrite },
     .{ .name = "no depth attachment", .run = &Cases.noDepthAttachment },
     .{ .name = "blend", .run = &Cases.blend },
+    .{ .name = "blend, added", .run = &Cases.blendAdded },
     .{ .name = "scissor", .run = &Cases.scissor },
     .{ .name = "viewport", .run = &Cases.viewport },
     .{ .name = "depth range", .run = &Cases.depthRange },

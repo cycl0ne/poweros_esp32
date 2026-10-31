@@ -192,6 +192,9 @@ pub const Cfg = struct {
     compare: u32 = COMPARE_ALWAYS,
     depth_write: bool = false,
     blend: bool = false,
+    /// Blended: added to what is there, not laid over it. It is no bit of
+    /// the configuration's: `writeDrawState` says it with the blend.
+    add: bool = false,
 };
 
 pub fn cfgBits(list: *List, cfg: Cfg) void {
@@ -208,16 +211,19 @@ pub fn cfgBits(list: *List, cfg: Cfg) void {
     list.byte(@truncate(value >> 16));
 }
 
+const BLEND_ONE: u32 = 1;
 const BLEND_SRC_ALPHA: u32 = 6;
 const BLEND_INV_SRC_ALPHA: u32 = 7;
 const BLEND_ADD: u32 = 0;
 
-/// Render target 0 blended by the alpha of what is drawn, its alpha too.
-pub fn blendAlpha(list: *List) void {
+/// Render target 0 blended by the alpha of what is drawn, its alpha too:
+/// laid over what is there, or with `add` added to it.
+pub fn blendAlpha(list: *List, add: bool) void {
     list.byte(83);
     list.byte(1);
     list.byte(84);
-    const factors = BLEND_INV_SRC_ALPHA << 4 | BLEND_SRC_ALPHA;
+    const under = if (add) BLEND_ONE else BLEND_INV_SRC_ALPHA;
+    const factors = under << 4 | BLEND_SRC_ALPHA;
     list.word(1 << 24 | factors << 16 | BLEND_ADD << 12 | factors << 4 | BLEND_ADD);
 }
 

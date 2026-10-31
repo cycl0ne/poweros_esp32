@@ -42,7 +42,7 @@ const Printf = dos.stdio.Printf;
 const Matrix = flight.Matrix;
 
 pub const COMMAND_NAME = "Cobra";
-const VERSION_STRING = "\x00$VER: Cobra 1.0 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Cobra 1.1 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FRAMES/K/N,CORES/S,WINDOW/S,WIRE/S";
@@ -580,6 +580,10 @@ fn expect(result: facet.Result, failure: Failure) Failure!void {
 /// How a pipeline treats the depth buffer.
 const Depth = enum { none, read, write };
 
+/// How a pipeline's colour goes into the picture: what gives off light adds to
+/// what is behind it.
+const Mixing = enum { replaced, added };
+
 const Gpu = struct {
     fb: *FacetBase,
     instance: ?*facet.Instance = null,
@@ -702,7 +706,7 @@ const Gpu = struct {
         return error.NoMemory;
     }
 
-    fn pipeline(gpu: *Gpu, vertex: [*:0]const u8, fragment: [*:0]const u8, front_only: bool, blended: bool, depth_use: Depth) Failure!*facet.Pipeline {
+    fn pipeline(gpu: *Gpu, vertex: [*:0]const u8, fragment: [*:0]const u8, front_only: bool, mixing: Mixing, depth_use: Depth) Failure!*facet.Pipeline {
         const stages = [2]facet.PipelineShaderStageCreateInfo{
             .{ .stage = facet.SHADER_STAGE_VERTEX, .module = gpu.module.?, .name = vertex },
             .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = gpu.module.?, .name = fragment },
@@ -723,12 +727,13 @@ const Gpu = struct {
         const dynamic_states = [2]facet.DynamicState{ .viewport, .scissor };
         const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = dynamic_states.len, .dynamic_states = &dynamic_states };
         const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = depth_use != .none, .depth_write_enable = depth_use == .write };
+        const added = mixing == .added;
         const blend_attachment = facet.PipelineColorBlendAttachmentState{
-            .blend_enable = blended,
-            .src_color_blend_factor = if (blended) .src_alpha else .one,
-            .dst_color_blend_factor = if (blended) .one_minus_src_alpha else .zero,
-            .src_alpha_blend_factor = if (blended) .zero else .one,
-            .dst_alpha_blend_factor = if (blended) .one else .zero,
+            .blend_enable = added,
+            .src_color_blend_factor = if (added) .src_alpha else .one,
+            .dst_color_blend_factor = if (added) .one else .zero,
+            .src_alpha_blend_factor = if (added) .zero else .one,
+            .dst_alpha_blend_factor = .one,
         };
         const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&blend_attachment) };
         const info = facet.GraphicsPipelineCreateInfo{
@@ -766,15 +771,15 @@ const Gpu = struct {
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &gpu.set_layout), error.Refused);
         const range = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_VERTEX, .size = biggest_constants };
         try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&gpu.set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &gpu.layout), error.Refused);
-        gpu.hull = try gpu.pipeline("hull", "flat", true, false, .write);
-        gpu.black = try gpu.pipeline("black", "flat", true, false, .write);
-        gpu.flame = try gpu.pipeline("flame", "flat", false, true, .read);
-        gpu.stars = try gpu.pipeline("sky", "flat", false, false, .none);
-        gpu.glow = try gpu.pipeline("sky", "flat", false, true, .none);
-        gpu.globe = try gpu.pipeline("planet", "pictured", true, false, .none);
-        gpu.air = try gpu.pipeline("air", "flat", true, true, .none);
-        gpu.wire = try gpu.pipeline("wire", "flat", false, false, .read);
-        gpu.dust = try gpu.pipeline("dust", "flat", false, true, .read);
+        gpu.hull = try gpu.pipeline("hull", "flat", true, .replaced, .write);
+        gpu.black = try gpu.pipeline("black", "flat", true, .replaced, .write);
+        gpu.flame = try gpu.pipeline("flame", "flat", false, .added, .read);
+        gpu.stars = try gpu.pipeline("sky", "flat", false, .replaced, .none);
+        gpu.glow = try gpu.pipeline("sky", "flat", false, .added, .none);
+        gpu.globe = try gpu.pipeline("planet", "pictured", true, .replaced, .none);
+        gpu.air = try gpu.pipeline("air", "flat", true, .added, .none);
+        gpu.wire = try gpu.pipeline("wire", "flat", false, .replaced, .read);
+        gpu.dust = try gpu.pipeline("dust", "flat", false, .added, .read);
         gpu.mesh = mesh;
 
         const vertex_bytes = @sizeOf(@TypeOf(mesh.vertices));

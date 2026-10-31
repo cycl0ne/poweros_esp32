@@ -93,7 +93,7 @@ pub fn writeDrawState(list: *List, state: *const DrawState) void {
     const clip = state.clip;
     cl.clipWindow(list, clip.left, clip.top, clip.right - clip.left, clip.bottom - clip.top);
     cl.cfgBits(list, state.cfg);
-    if (state.cfg.blend) cl.blendAlpha(list);
+    if (state.cfg.blend) cl.blendAlpha(list, state.cfg.add);
     cl.clipperXy(list, state.width * 32.0, state.height * 32.0);
     cl.clipperZ(list, state.max_depth - state.min_depth, state.min_depth);
     cl.clipperZLimits(list, @min(state.min_depth, state.max_depth), @max(state.min_depth, state.max_depth));

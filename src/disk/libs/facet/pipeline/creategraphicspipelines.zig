@@ -51,8 +51,9 @@ const _instance = @import("../instance/_instance.zig");
 /// strip or a fan; filled, one sample a pixel, culled by facing as asked; a
 /// depth test of any compare, written or not, without stencil, bounds,
 /// bias or clamp; the colour written whole, replacing what is there, or
-/// laid over it by its alpha - SRC_ALPHA and ONE_MINUS_SRC_ALPHA, ADD - and
-/// no logic op; one viewport and one scissor, given here or set by
+/// laid over it by its alpha - SRC_ALPHA and ONE_MINUS_SRC_ALPHA, ADD - or
+/// added to it, as much as its alpha says - SRC_ALPHA and ONE, ADD - and no
+/// logic op; one viewport and one scissor, given here or set by
 /// CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
 /// the others are taken and do nothing). A pipeline with the rasterizer
 /// discarding, or culling front and back, draws nothing.
@@ -89,8 +90,8 @@ const _instance = @import("../instance/_instance.zig");
 /// it.
 ///
 /// BUGS:
-/// Blending lays the alpha over the attachment's as it does the colour,
-/// whatever the alpha's blend factors say.
+/// Blending treats the alpha as it does the colour, laid over the
+/// attachment's or added to it, whatever the alpha's blend factors say.
 ///
 /// SEE ALSO:
 /// `CreateShaderModule`, `CreatePipelineLayout`, `CreateRenderPass`, `CmdBindPipeline`, `DestroyPipeline`
@@ -238,8 +239,12 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             const attachment = blend.attachments.?[0];
             if (attachment.color_write_mask & facet.COLOR_COMPONENT_ALL != facet.COLOR_COMPONENT_ALL) return .error_feature_not_present;
             if (attachment.blend_enable) {
-                if (attachment.src_color_blend_factor != .src_alpha or attachment.dst_color_blend_factor != .one_minus_src_alpha or attachment.color_blend_op != .add or attachment.alpha_blend_op != .add) return .error_feature_not_present;
-                made.blend = .alpha;
+                if (attachment.src_color_blend_factor != .src_alpha or attachment.color_blend_op != .add or attachment.alpha_blend_op != .add) return .error_feature_not_present;
+                made.blend = switch (attachment.dst_color_blend_factor) {
+                    .one_minus_src_alpha => .alpha,
+                    .one => .add,
+                    else => return .error_feature_not_present,
+                };
             }
         }
     }

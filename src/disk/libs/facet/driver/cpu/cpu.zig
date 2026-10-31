@@ -194,6 +194,7 @@ fn makePipeline(pipeline: *Pipeline) facet.Result {
         .blend = switch (pipeline.blend) {
             .off => .off,
             .alpha => .alpha,
+            .add => .add,
         },
     };
     pipeline.driver = made;
