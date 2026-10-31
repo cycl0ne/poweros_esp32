@@ -3,13 +3,22 @@
 //! as `vp8core` (core.zig here), which takes the stream a frame at a time
 //! and shows each frame as it comes, but those it hides.
 //!
-//! **A packet sent** is a frame, which is decoded at once; the frame it
-//! shows waits until it is asked for, and while it waits another packet
+//! **A packet sent** is a frame: the decoder reads its header and its
+//! macroblocks' modes at once, and the rest is decoded; the frame it
+//! shows waits until it is asked for, and while one waits another packet
 //! is refused (VCERR_FULL). A frame hidden - an alternate reference, for
 //! the frames after it - shows nothing. One marked VCPKT_DROP, due before
 //! what is shown, is decoded for the frames after it and not handed out.
 //! A frame that is not right is passed over: the references stay as they
 //! were. There is no setup.
+//!
+//! **The cores**: with more than one, the decoder has a worker task on
+//! each (module.zig's `Team`), and each frame is decoded by a worker
+//! while the next packets are taken: as many frames at once as there are
+//! workers, each macroblock waiting for the rows of its reference it
+//! reads. While a worker is free a packet is taken before a frame is
+//! handed out, as long as no more frames wait than there are workers; a
+//! frame still being decoded is waited for.
 //!
 //! **The frames** are each frame copied into the planes of the slot it is
 //! lent in, I420 as the decoder has it. The planes are made where a
@@ -40,6 +49,9 @@ const plane_alignment = 16;
 /// decoder's is passed by: "VP80".
 const frame_mark: u32 = 0x5650_3830;
 
+/// The workers, on every core.
+const Team = module.Team(vp8.Cores);
+
 /// `planes_memory` where it has room for `bytes`, any memory otherwise:
 /// asked for only where there is room, since a request that fails runs
 /// the low-memory handlers.
@@ -69,15 +81,12 @@ const Decoder = struct {
     held: u32,
     lent: [vcodec.VCODEC_MOST_HELD]bool = @splat(false),
     planes: [vcodec.VCODEC_MOST_HELD]Planes = @splat(.{}),
-    /// The frame decoded and not yet handed out - the decoder's, until it
-    /// decodes the next - and when it is shown.
-    waiting: ?*const vp8.Frame = null,
-    time: i64 = 0,
-    /// The end of the track was sent.
+    /// The end of the track was sent: what the decoder holds is out.
     ended: bool = false,
     /// A frame was handed out: one the decoder cannot decode is passed
     /// over from then on, rather than refused for another module.
     started: bool = false,
+    team: Team = .{},
 };
 
 fn of(decoder: *vcodec.VCodecDecoder) *Decoder {
@@ -137,6 +146,8 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
         return failed(code, vc.VCERR_NOMEMORY);
     };
     m.* = .{ .sys = sys, .core = core, .held = params.held };
+    m.team.start(sys, "vp8.vcodec worker");
+    if (m.team.count != 0) core.useCores(&m.team.cores);
     return @ptrCast(m);
 }
 
@@ -149,42 +160,41 @@ fn failed(code: *i32, why: i32) ?*vcodec.VCodecDecoder {
 pub fn CloseVCodec(_: *Base, decoder: ?*vcodec.VCodecDecoder) void {
     const m = of(decoder orelse return);
     const sys = m.sys;
+    // The workers finish what they decode before they end.
     m.core.destroy();
+    m.team.stop();
     for (&m.planes) |*planes| sys.FreeVec(planes.memory);
     sys.FreeVec(m);
 }
 
-/// A frame decoded, the one it shows kept until it is asked for; the end
-/// noted.
+/// A frame decoded, or begun on a worker; the end of the track hands out
+/// the frames still being decoded.
 pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const vcodec.VCodecPacket) i32 {
     const m = of(decoder);
-    if (m.waiting != null) return vc.VCERR_FULL;
+    if (m.core.next() != null) return vc.VCERR_FULL;
     if (packet.flags & vcodec.VCPKT_END != 0) {
+        m.core.flush();
         m.ended = true;
         return vc.VCERR_OK;
     }
     const data = packet.data orelse return vc.VCERR_CORRUPT;
-    const shown = m.core.decodeFrame(data[0..packet.size]) catch |failure| return switch (failure) {
+    const drop = packet.flags & vcodec.VCPKT_DROP != 0;
+    m.core.decodeFrame(data[0..packet.size], packet.time, drop) catch |failure| return switch (failure) {
         error.NoMemory => vc.VCERR_NOMEMORY,
         error.Unsupported => if (m.started) vc.VCERR_OK else vc.VCERR_UNSUPPORTED,
         else => vc.VCERR_OK,
     };
-    if (packet.flags & vcodec.VCPKT_DROP != 0) return vc.VCERR_OK;
-    if (shown) |f| {
-        m.waiting = f;
-        m.time = packet.time;
-    }
     return vc.VCERR_OK;
 }
 
-/// The frame waiting copied into a free slot's planes and lent in
-/// `frame`.
+/// The next frame to be shown copied into a free slot's planes and lent
+/// in `frame`.
 pub fn ReceiveVCodecFrame(_: *Base, decoder: *vcodec.VCodecDecoder, frame: *vc.VideoFrame) i32 {
     const m = of(decoder);
     const slot = module.freeSlot(&m.lent, m.held) orelse return vc.VCERR_BUSY;
-    const f = m.waiting orelse return if (m.ended) vc.VCERR_END else vc.VCERR_NEED_DATA;
-    m.waiting = null;
+    const f = m.core.next() orelse return if (m.ended) vc.VCERR_END else vc.VCERR_NEED_DATA;
     const made = copyOut(m, f, frame, slot);
+    m.core.release();
     if (made != vc.VCERR_OK) return made;
     m.lent[slot] = true;
     m.started = true;
@@ -200,20 +210,19 @@ pub fn ReleaseVCodecFrame(_: *Base, decoder: *vcodec.VCodecDecoder, frame: *vc.V
     m.lent[slot] = false;
 }
 
-/// The frame waiting dropped and the references with it, for a seek: the
-/// decoder starts again at the next key frame.
+/// Everything decoded and not yet shown dropped, the references with it,
+/// for a seek: the decoder starts again at the next key frame.
 pub fn FlushVCodec(_: *Base, decoder: *vcodec.VCodecDecoder) void {
     const m = of(decoder);
     m.core.reset();
-    m.waiting = null;
     m.ended = false;
 }
 
 /// Frame `f` copied into `slot`'s planes, the part shown, and lent in
 /// `frame`.
 fn copyOut(m: *Decoder, f: *const vp8.Frame, frame: *vc.VideoFrame, slot: u32) i32 {
-    const width = m.core.width;
-    const height = m.core.height;
+    const width = f.shown_width;
+    const height = f.shown_height;
     const half_width = (width + 1) / 2;
     const half_height = (height + 1) / 2;
     const y_pitch = aligned(width);
@@ -238,11 +247,11 @@ fn copyOut(m: *Decoder, f: *const vp8.Frame, frame: *vc.VideoFrame, slot: u32) i
             .y_pitch = y_pitch,
             .c_pitch = c_pitch,
             .layout = rtg.RTGYUV_I420,
-            .colors = rtg.RTGYUV_BT601 | if (m.core.full_range) rtg.RTGYUV_FULL else 0,
+            .colors = rtg.RTGYUV_BT601 | if (f.full_range) rtg.RTGYUV_FULL else 0,
         },
         .width = width,
         .height = height,
-        .time = m.time,
+        .time = f.time,
     };
     return vc.VCERR_OK;
 }

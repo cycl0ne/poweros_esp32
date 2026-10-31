@@ -14,6 +14,9 @@ pub const Ctx = struct {
     hdr: *const common.Header,
     probs: *const common.Probs,
     seg: *const common.Segmentation,
+    /// Each macroblock's segment, which stays until a frame gives it
+    /// anew.
+    segments: []u8,
     mbs: []MbInfo,
     cols: u32,
     rows: u32,
@@ -34,10 +37,12 @@ pub fn row(m: *const Ctx, b: *Bool, r: u32) void {
     const hdr = m.hdr;
     for (0..m.cols) |cu| {
         const c: u32 = @intCast(cu);
-        const mb = &m.mbs[r * m.cols + c];
+        const i = r * m.cols + c;
+        const mb = &m.mbs[i];
         if (m.seg.update_map) {
-            mb.segment = b.tree(&tables.segment_tree, &m.seg.tree_probs);
-        } else if (hdr.key) mb.segment = 0;
+            m.segments[i] = b.tree(&tables.segment_tree, &m.seg.tree_probs);
+        } else if (hdr.key) m.segments[i] = 0;
+        mb.segment = m.segments[i];
         mb.skip = if (hdr.skip_enabled) b.read(hdr.prob_skip) == 1 else false;
         if (hdr.key) {
             keyModes(m, b, mb, r, c);

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! What the parts of the VP8 decoder share: memory from whoever runs it,
-//! a frame's planes, what is kept of each macroblock, the frame header
-//! and the probabilities that carry from frame to frame.
+//! What the parts of the VP8 decoder share: memory and the other cores
+//! from whoever runs it, a frame's planes, what is kept of each
+//! macroblock, the frame header and the probabilities that carry from
+//! frame to frame.
 
 pub const Error = error{ Corrupt, Unsupported, NoMemory };
 
@@ -21,6 +22,33 @@ pub const Env = struct {
     pub fn freeSlice(env: Env, comptime T: type, s: []T) void {
         if (s.len == 0) return;
         env.free(env.ctx, @ptrCast(s.ptr), s.len * @sizeOf(T));
+    }
+};
+
+/// The other cores, from whoever runs the decoder: a worker task on each,
+/// and a way to wait - as h264.vcodec's decoder has them.
+pub const Cores = struct {
+    ctx: *anyopaque,
+    workers: u32,
+    /// `job(arg)` run by worker `worker`, which runs nothing else then.
+    run: *const fn (ctx: *anyopaque, worker: u32, job: *const fn (arg: *anyopaque) void, arg: *anyopaque) void,
+    /// A wait: `arm(who)`, then a look whether what is waited for is
+    /// there, and when it is not `sleep(who)`, which returns once `wake`
+    /// was called after the `arm`, or sooner; then round again. The
+    /// workers are 0 to `workers` - 1, the decoder's caller `workers`.
+    arm: *const fn (ctx: *anyopaque, who: u32) void,
+    sleep: *const fn (ctx: *anyopaque, who: u32) void,
+    /// Something others may wait for changed.
+    wake: *const fn (ctx: *anyopaque) void,
+
+    /// Until the first `n` macroblock rows of `f` are final.
+    pub fn rows(c: *const Cores, who: u32, f: *const Frame, n: u32) void {
+        if (@atomicLoad(u32, &f.progress, .acquire) >= n) return;
+        while (true) {
+            c.arm(c.ctx, who);
+            if (@atomicLoad(u32, &f.progress, .seq_cst) >= n) return;
+            c.sleep(c.ctx, who);
+        }
     }
 };
 
@@ -73,8 +101,7 @@ pub const Mv = extern struct {
     }
 };
 
-/// What is kept of each macroblock; it stays from frame to frame, for the
-/// segment a frame does not give anew.
+/// What is kept of each macroblock of a frame.
 pub const MbInfo = struct {
     y_mode: u8 = DC_PRED,
     uv_mode: u8 = DC_PRED,
@@ -103,8 +130,21 @@ pub const Frame = struct {
     width: [3]u32 = .{ 0, 0, 0 },
     height: [3]u32 = .{ 0, 0, 0 },
     memory: []u8 = &.{},
-    /// How many hold it: the frame being decoded and the references.
+    /// The size shown, and when: the time its packet came with.
+    shown_width: u32 = 0,
+    shown_height: u32 = 0,
+    time: i64 = 0,
+    /// Its key frame's clamping bit, which ffmpeg takes for the whole
+    /// byte rather than BT.601's range.
+    full_range: bool = false,
+    /// The macroblock rows that are final, for the frames that read it
+    /// while it is decoded.
+    progress: u32 = 0,
+    /// How many references it is, and how many jobs decode it or read
+    /// it; whether it waits to be shown, or is.
     refs: u8 = 0,
+    pinned: u8 = 0,
+    queued: bool = false,
 };
 
 /// The probabilities a frame may change and the next frames keep.

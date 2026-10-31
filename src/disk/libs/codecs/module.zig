@@ -8,7 +8,8 @@
 //! A module's own file gives its tag (a `ResidentVCodec`: what it decodes)
 //! and the seven functions, as `pub fn GetVCodecInfo(base: *Base, ...)`
 //! and so on; `Module(revision, Calls)` makes the rest. Every opener
-//! shares the one base; a decoder opened is its opener's.
+//! shares the one base; a decoder opened is its opener's. A decoder that
+//! decodes on every core has its workers from `Team`.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -131,6 +132,138 @@ pub fn slotOf(lent: []const bool, frame: *const vc.VideoFrame, mark: u32) ?u32 {
     const slot = frame.private[0];
     if (slot == 0 or slot > lent.len or !lent[slot - 1]) return null;
     return slot - 1;
+}
+
+/// Workers at most, and each one's stack: the standard task stack.
+const most_workers = 8;
+const worker_stack: usize = if (@sizeOf(usize) == 8) 32 * 1024 else 16 * 1024;
+
+/// A decoder's workers, when it decodes on every core: a task on each
+/// core, a step below the caller's priority - which gets a core at once
+/// to hand over packets and take pictures - each waiting by a waitable of
+/// its own, the workers' and then the caller's, and a bit in `armed`
+/// while it looks whether to wait. `Cores` is the decoder's way to them,
+/// which each decoder here declares alike: `ctx`, `workers`, `run`,
+/// `arm`, `sleep`, `wake`.
+pub fn Team(comptime Cores: type) type {
+    return struct {
+        const T = @This();
+
+        /// A worker task: the job it is handed - its code and what it
+        /// works on, 0 while there is none - and the message its end is
+        /// told by.
+        const Worker = struct {
+            task: exec.Task = .{},
+            ended: exec.Message = .{},
+            team: *T = undefined,
+            index: u32 = 0,
+            job: usize = 0,
+            arg: usize = 0,
+            stack: ?*anyopaque = null,
+        };
+
+        sys: *ExecBase = undefined,
+        cores: Cores = undefined,
+        workers: [most_workers]Worker = @splat(.{}),
+        count: u32 = 0,
+        waitables: [most_workers + 1]exec.Waitable = @splat(.{}),
+        armed: u32 = 0,
+        quit: bool = false,
+        ends: ?*exec.MsgPort = null,
+
+        fn ofCtx(ctx: *anyopaque) *T {
+            return @ptrCast(@alignCast(ctx));
+        }
+
+        fn run(ctx: *anyopaque, worker: u32, job: *const fn (*anyopaque) void, arg: *anyopaque) void {
+            const team = ofCtx(ctx);
+            const w = &team.workers[worker];
+            w.arg = @intFromPtr(arg);
+            @atomicStore(usize, &w.job, @intFromPtr(job), .seq_cst);
+            team.sys.SignalWaitable(&team.waitables[worker]);
+        }
+
+        fn arm(ctx: *anyopaque, who: u32) void {
+            const team = ofCtx(ctx);
+            team.sys.ResetWaitable(&team.waitables[who]);
+            _ = @atomicRmw(u32, &team.armed, .Or, @as(u32, 1) << @intCast(who), .seq_cst);
+        }
+
+        fn sleep(ctx: *anyopaque, who: u32) void {
+            const team = ofCtx(ctx);
+            const one = [1]*exec.Waitable{&team.waitables[who]};
+            _ = team.sys.WaitForAny(&one, 1, exec.WAIT_FOREVER);
+        }
+
+        fn wake(ctx: *anyopaque) void {
+            const team = ofCtx(ctx);
+            var armed = @atomicRmw(u32, &team.armed, .Xchg, 0, .seq_cst);
+            while (armed != 0) : (armed &= armed - 1) team.sys.SignalWaitable(&team.waitables[@ctz(armed)]);
+        }
+
+        /// A worker named `name` on each core, when there are more than
+        /// one; `count` says how many there are.
+        pub fn start(team: *T, sys: *ExecBase, name: [*:0]const u8) void {
+            team.sys = sys;
+            var cores: u32 = 0;
+            var times: exec.CoreTimes = .{};
+            while (cores < most_workers and sys.ReadCoreTimes(cores, &times)) cores += 1;
+            if (cores < 2) return;
+            const ends = sys.CreateMsgPort() orelse return;
+            team.ends = ends;
+            // A step below the caller, which wants a core at once when it
+            // has packets to hand over or a picture to take.
+            const pri = sys.FindTask(null).?.node.pri -| 1;
+            for (team.workers[0..cores], 0..) |*w, i| {
+                const stack = sys.AllocVec(worker_stack, exec.MEMF_ANY) orelse break;
+                w.* = .{ .team = team, .index = @intCast(i), .stack = stack };
+                w.task = .{
+                    .node = .{ .type = .task, .pri = pri, .name = name },
+                    .sp_lower = @intFromPtr(stack),
+                    .sp_upper = @intFromPtr(stack) + worker_stack,
+                };
+                w.ended.reply_port = ends;
+                w.task.end_msg = &w.ended;
+                _ = sys.AddTask(&w.task, &work, null);
+                team.count += 1;
+            }
+            team.cores = .{ .ctx = team, .workers = team.count, .run = run, .arm = arm, .sleep = sleep, .wake = wake };
+        }
+
+        /// The workers ended, once nothing runs on their stacks any more.
+        pub fn stop(team: *T) void {
+            const ends = team.ends orelse return;
+            const sys = team.sys;
+            @atomicStore(bool, &team.quit, true, .seq_cst);
+            for (team.waitables[0..team.count]) |*w| sys.SignalWaitable(w);
+            for (0..team.count) |_| {
+                _ = sys.WaitPort(ends);
+                _ = sys.GetMsg(ends);
+            }
+            for (team.workers[0..team.count]) |*w| sys.FreeVec(w.stack);
+            sys.DeleteMsgPort(ends);
+            team.ends = null;
+            team.count = 0;
+        }
+
+        /// A worker's code: the jobs it is handed, until it is told to
+        /// end.
+        fn work(sys: *ExecBase) callconv(.c) void {
+            const w: *Worker = @fieldParentPtr("task", sys.FindTask(null).?);
+            const team = w.team;
+            while (true) {
+                arm(team, w.index);
+                const job = @atomicRmw(usize, &w.job, .Xchg, 0, .acq_rel);
+                if (job != 0) {
+                    const code: *const fn (*anyopaque) void = @ptrFromInt(job);
+                    code(@ptrFromInt(w.arg));
+                    continue;
+                }
+                if (@atomicLoad(bool, &team.quit, .acquire)) return;
+                sleep(team, w.index);
+            }
+        }
+    };
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

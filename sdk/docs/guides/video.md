@@ -190,7 +190,7 @@ colour, a pixel half covered or more is the subtitle's.
 |---|---|---|
 | H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300 |
 | H.264, every profile but SVC's and MVC's: up to 4:4:4 and 14 bits, fields, shown in 8 bits; what the chip refuses, and every H.264 where there is no chip | h264.vcodec: software, a worker task on each core, a picture each | 720p High 10 about 32 frames a second, 10 on one core |
-| VP8, every version (WebM, Matroska) | vp8.vcodec: software, on the calling task | 720p about 27 frames a second, 1080p about 11 |
+| VP8, every version (WebM, Matroska) | vp8.vcodec: software, a worker task on each core, a frame each | 720p about 84 frames a second, 1080p about 34; 27 and 11 on one core |
 | Motion JPEG, baseline: grey, 4:2:0, 4:2:2, 4:4:4 | mjpeg.vcodec: software, on the calling task | about a second for a 1080p picture: small pictures only |
 | MPEG-4 Part 2; VP9 and AV1 (known since 1.5) | nothing | - |
 
