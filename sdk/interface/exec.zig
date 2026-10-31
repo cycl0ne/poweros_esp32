@@ -153,6 +153,7 @@ pub const LVO = struct {
     pub const ResetWaitable = libraries.lvo(141);
     pub const WaitForAny = libraries.lvo(142);
     pub const ShareWork = libraries.lvo(143);
+    pub const PostWork = libraries.lvo(144);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -296,6 +297,7 @@ pub const Fn = struct {
     pub const ResetWaitable = *const fn (*ExecBase, *exec.Waitable) callconv(.c) void;
     pub const WaitForAny = *const fn (*ExecBase, [*]const *exec.Waitable, u32, u64) callconv(.c) i32;
     pub const ShareWork = *const fn (*ExecBase, exec.WorkFn, ?*anyopaque, u32) callconv(.c) u32;
+    pub const PostWork = *const fn (*ExecBase, *exec.WorkJob) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -964,5 +966,18 @@ pub const ExecBase = opaque {
     /// semaphore the caller holds: it runs on another task.
     pub fn ShareWork(self: *ExecBase, work: exec.WorkFn, data: ?*anyopaque, parts: u32) u32 {
         return libraries.call(self, LVO.ShareWork, Fn.ShareWork, .{ work, data, parts });
+    }
+
+    /// `job` run beside the poster (SINCE 1.27): a worker task calls
+    /// `job.work(job)` at the poster's priority and replies the job to its
+    /// message's reply port once the code has returned, while the poster goes
+    /// on. Posted jobs wait their turn by priority while every worker is busy.
+    /// On a machine with one core the poster runs it itself, before PostWork
+    /// returns. The job stays the caller's memory and is not posted again
+    /// before it is replied. Its code runs on a worker: no dos, no semaphore
+    /// the poster holds, and no waiting - a job that waits keeps a core's
+    /// worker from the queue.
+    pub fn PostWork(self: *ExecBase, job: *exec.WorkJob) void {
+        return libraries.call(self, LVO.PostWork, Fn.PostWork, .{job});
     }
 };

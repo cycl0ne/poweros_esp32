@@ -96,8 +96,12 @@ pub const LIBRARY_VERSION = 1;
 /// its code in memory. 26: a core that leaves a task behind - ended, or
 /// stopped for RemTask - pokes itself, so the next exception exit frees it
 /// at once: a task's end was heard up to a tick late, 4.3 ms on the VF2,
-/// and is now in 14 us; a process's in 71 us rather than 6.8 ms.
-pub const LIBRARY_REVISION = 26;
+/// and is now in 14 us; a process's in 71 us rather than 6.8 ms. 27:
+/// PostWork - a job run beside its poster on another core's worker, and
+/// replied when done; the workers take posted jobs by priority, ShareWork
+/// hands parts to the idle ones only, and their stacks are the standard
+/// (32 KiB on 64-bit).
+pub const LIBRARY_REVISION = 27;
 const BUILD_DATE = "31.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -202,6 +202,8 @@ pub const WAIT_TIMEOUT = waitables.WAIT_TIMEOUT;
 pub const WAIT_MAX = waitables.WAIT_MAX;
 
 pub const WorkFn = work.WorkFn;
+pub const JobFn = work.JobFn;
+pub const WorkJob = work.WorkJob;
 
 pub const Device = devices.Device;
 pub const Unit = devices.Unit;

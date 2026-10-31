@@ -202,6 +202,8 @@ const contract_files = [_][]const u8{
     @embedFile("memory/deletepool.zig"),
     @embedFile("memory/allocpooled.zig"),
     @embedFile("memory/freepooled.zig"),
+    @embedFile("task/sharework.zig"),
+    @embedFile("task/postwork.zig"),
 };
 
 /// How many slots of the table are kept free.
@@ -354,6 +356,7 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoResetWaitable),
     vec(lvoWaitForAny),
     vec(lvoShareWork),
+    vec(lvoPostWork),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -929,6 +932,9 @@ fn lvoWaitForAny(base: *ExecBase, waitables: [*]const *Waitable, count: u32, tim
 
 fn lvoShareWork(base: *ExecBase, work: WorkFn, data: ?*anyopaque, parts: u32) callconv(.c) u32 {
     return exec.ShareWork(base, work, data, parts);
+}
+fn lvoPostWork(base: *ExecBase, job: *sdk.exec.WorkJob) callconv(.c) void {
+    exec.PostWork(base, job);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

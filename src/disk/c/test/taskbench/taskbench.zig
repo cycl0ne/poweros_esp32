@@ -15,6 +15,10 @@
 //! - **signal**: a signal to a waiting task and one back: on the same core,
 //!   and on another.
 //! - **ShareWork**: a job of nothing in four parts.
+//! - **jobs**: a job of nothing posted (PostWork) until it is replied; and
+//!   four at once until all four are, the time given per job.
+//! - **posters**: three tasks posting jobs at once while the maker shares
+//!   work beside them; every job must run once and come back.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -28,7 +32,7 @@ const Task = exec.Task;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "TaskBench";
-const VERSION_STRING = "\x00$VER: TaskBench 1.1 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: TaskBench 1.2 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/N";
@@ -42,8 +46,42 @@ const Bench = struct {
     go: u32 = 0,
     partner: ?*Task = null,
     stop: bool = false,
+    /// The posters' rounds, the jobs that ran, the jobs that came back,
+    /// and how many posters are still at it.
+    poster_rounds: u32 = 0,
+    jobs_run: u32 = 0,
+    jobs_back: u32 = 0,
+    posters: u32 = 0,
 };
 var bench: Bench = .{};
+
+/// A posted job that counts itself.
+fn countJob(_: *exec.WorkJob) callconv(.c) void {
+    _ = @atomicRmw(u32, &bench.jobs_run, .Add, 1, .monotonic);
+}
+
+/// Posts its rounds of jobs, two at a time, and counts what comes back;
+/// the last poster done tells the maker.
+fn posterCode(sys: *ExecBase) callconv(.c) void {
+    var back: u32 = 0;
+    if (sys.CreateMsgPort()) |port| {
+        var jobs: [2]exec.WorkJob = undefined;
+        for (&jobs) |*job| job.* = .{ .message = .{ .reply_port = port }, .work = &countJob };
+        var posted: u32 = 0;
+        while (posted < bench.poster_rounds) : (posted += 2) {
+            for (&jobs) |*job| sys.PostWork(job);
+            var here: u32 = 0;
+            while (here < 2) {
+                _ = sys.WaitPort(port);
+                while (sys.GetMsg(port) != null) here += 1;
+            }
+            back += here;
+        }
+        sys.DeleteMsgPort(port);
+    }
+    _ = @atomicRmw(u32, &bench.jobs_back, .Add, back, .monotonic);
+    if (@atomicRmw(u32, &bench.posters, .Sub, 1, .acq_rel) == 1) sys.Signal(bench.maker.?, bench.back);
+}
 
 fn startedCode(sys: *ExecBase) callconv(.c) void {
     sys.Signal(bench.maker.?, bench.back);
@@ -77,6 +115,9 @@ fn nothing(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
     _ = part;
     _ = parts;
 }
+
+/// A posted job of nothing.
+fn noJob(_: *exec.WorkJob) callconv(.c) void {}
 
 const Run = struct {
     sys: *ExecBase,
@@ -202,5 +243,44 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         run.report("ShareWork, nothing in 4 parts", count, run.now() - started);
         _ = Printf(dl, "  (in %u parts)\n", .{parts});
     }
+
+    var jobs: [4]exec.WorkJob = undefined;
+    for (&jobs) |*job| job.* = .{ .message = .{ .reply_port = port }, .work = &noJob };
+    for ([_]u32{ 1, 4 }) |at_once| {
+        var count: u32 = 0;
+        const started = run.now();
+        while (count < rounds * 10) : (count += at_once) {
+            for (jobs[0..at_once]) |*job| sys.PostWork(job);
+            var back: u32 = 0;
+            while (back < at_once) {
+                _ = sys.WaitPort(port);
+                while (sys.GetMsg(port) != null) back += 1;
+            }
+        }
+        run.report(if (at_once == 1) "a job posted and back" else "four jobs at once, each", count, run.now() - started);
+    }
+
+    // Three posters at once, and work shared beside them.
+    bench.poster_rounds = rounds * 10;
+    bench.jobs_run = 0;
+    bench.jobs_back = 0;
+    bench.posters = 3;
+    _ = sys.SetSignal(0, bench.back);
+    var started_posters: u32 = 0;
+    while (started_posters < 3) : (started_posters += 1) {
+        if (sys.CreateTask("TaskBench poster", 0, &posterCode, 4096 * @sizeOf(usize)) == null) break;
+    }
+    if (started_posters < 3) _ = @atomicRmw(u32, &bench.posters, .Sub, 3 - started_posters, .acq_rel);
+    var shared: u32 = 0;
+    var parts_seen: u32 = 0;
+    while (@atomicLoad(u32, &bench.posters, .acquire) != 0) {
+        parts_seen += sys.ShareWork(&nothing, null, 4);
+        shared += 1;
+        _ = sys.SetSignal(0, 0);
+    }
+    _ = sys.Wait(bench.back);
+    const wanted = started_posters * bench.poster_rounds;
+    _ = Printf(dl, "  posters: %u jobs of %u run, %u back; ShareWork %u times beside them, %u parts\n", .{ bench.jobs_run, wanted, bench.jobs_back, shared, parts_seen });
+    if (bench.jobs_run != wanted or bench.jobs_back != wanted) return dos.RETURN_WARN;
     return dos.RETURN_OK;
 }
