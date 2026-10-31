@@ -230,4 +230,6 @@ facet.Result CreateComputePipelines(*facet.Device device, ?*facet.PipelineCache 
 void CmdDispatch(*facet.CommandBuffer buffer, u32 x, u32 y, u32 z)
 /// Recorded: as CmdDispatch, its numbers in a buffer.
 void CmdDispatchIndirect(*facet.CommandBuffer buffer, *facet.Buffer numbers, u64 offset)
+/// Recorded: what the subpass drew stored, and the next subpass begun.
+void CmdNextSubpass(*facet.CommandBuffer buffer, facet.SubpassContents contents)
 ##end

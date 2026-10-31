@@ -74,6 +74,8 @@ pub const Player = struct {
     compute_pipeline: ?*Pipeline = null,
     compute_resources: shader.Resources = .{},
     drawn: ?*const shader.Resources = null,
+    /// What was bound where a subpass of several attachments began.
+    saved: _vertices.Bound = undefined,
     /// Memory a draw's vertices are worked in, kept for the next.
     scratch: ?[*]u8 = null,
     scratch_bytes: usize = 0,
@@ -116,6 +118,7 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
 fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
     const player = playerOf(queue);
     var commands = stream.commands();
+    var repeat: ?_vertices.Repeat = null;
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
         .copy_buffer_to_image => copyBufferToImage(_stream.as(_command.CopyBufferToImage, head)),
@@ -124,8 +127,27 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .blit_image => _transfer.blitImage(_stream.as(_command.BlitImage, head)),
         .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
         .clear_attachment => if (player.drawing) _draw.clearAttachment(queue, _stream.as(_command.ClearAttachment, head)),
-        .begin_render_pass => beginRenderPass(queue, _stream.as(_command.BeginRenderPass, head)),
-        .end_render_pass => endRenderPass(player),
+        .begin_render_pass => {
+            const command = _stream.as(_command.BeginRenderPass, head);
+            beginRenderPass(queue, command, 0);
+            if (command.part_count > 1) {
+                player.saved = .of(player);
+                repeat = .{ .begin = command, .from = commands, .output = 1 };
+            }
+        },
+        .end_render_pass => {
+            endRenderPass(player);
+            if (repeat) |*again| {
+                if (again.output == again.begin.part_count) {
+                    repeat = null;
+                } else {
+                    player.saved.restore(player);
+                    beginRenderPass(queue, again.begin, again.output);
+                    commands = again.from;
+                    again.output += 1;
+                }
+            }
+        },
         .bind_pipeline => player.pipeline = _stream.as(_command.BindPipeline, head).pipeline,
         .bind_vertex_buffers => _vertices.bindVertexBuffers(player, _stream.as(_command.BindVertexBuffers, head)),
         .bind_index_buffer => {
@@ -190,7 +212,7 @@ fn restart(player: *Player) void {
 
 /// The surface a framebuffer's colour attachment is: its image's memory,
 /// row after row. Null for an image not bound.
-fn surfaceOf(framebuffer: *const _render.Framebuffer) ?raster.Surface {
+fn surfaceOf(framebuffer: *const _render.Target) ?raster.Surface {
     const image = framebuffer.color.image;
     return .{
         .pixels = image.data orelse return null,
@@ -206,13 +228,14 @@ fn surfaceOf(framebuffer: *const _render.Framebuffer) ?raster.Surface {
     };
 }
 
-fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void {
+fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, output: u32) void {
     const player = playerOf(queue);
     endRenderPass(player);
-    const framebuffer = command.framebuffer;
+    player.resources.output = output;
+    const framebuffer = &command.targets[output];
     const surface = surfaceOf(framebuffer) orelse return;
     player.target_opaque = surface.format == .rgb565;
-    const render_pass = command.render_pass;
+    const render_pass = &command.parts[output];
     // The render area, cut to the framebuffer.
     const offset = command.area.offset;
     const left: u32 = @intCast(std.math.clamp(offset.x, 0, @as(i64, framebuffer.width)));
@@ -221,7 +244,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     const area = raster.Rect{ .x = left, .y = top, .width = right - left, .height = bottom - top };
     const attachments = raster.Attachments{
-        .color = .{ .load = if (render_pass.color_load == .clear) .clear else .keep, .clear = command.clear_color },
+        .color = .{ .load = if (render_pass.color_load == .clear) .clear else .keep, .clear = command.clear_colors[output] },
         .depth = .{ .used = render_pass.tests_depth, .clear = @intCast(command.clear_depth) },
         .stencil = .{ .used = render_pass.tests_stencil, .clear = @intCast(command.clear_stencil) },
     };

@@ -58,7 +58,8 @@ const _render = @import("../render/_render.zig");
 ///
 /// NOTES:
 /// Draws are recorded between CmdBeginRenderPass and CmdEndRenderPass; a
-/// draw recorded outside a pass draws nothing.
+/// draw recorded outside a pass draws nothing. The pass begins with its first
+/// subpass: CmdNextSubpass goes on to the next.
 ///
 /// BUGS:
 /// None known.
@@ -75,15 +76,12 @@ pub fn CmdBeginRenderPass(base: *FacetBase, buffer: *facet.CommandBuffer, info: 
     _ = base;
     _ = contents;
     const made = _command.recording(buffer) orelse return;
-    const pass = _objects.of(_render.RenderPass, info.render_pass);
     const clears: []const facet.ClearValue = if (info.clear_values) |values| values[0..info.clear_value_count] else &.{};
-    const command = _command.BeginRenderPass{
-        .render_pass = pass,
-        .framebuffer = _objects.of(_render.Framebuffer, info.framebuffer),
-        .area = info.render_area,
-        .clear_color = if (pass.color < clears.len) _render.colorOf(clears[pass.color].color) else 0xFF00_0000,
-        .clear_depth = if (pass.depth) |depth| (if (depth < clears.len) _render.depthOf(clears[depth].depth_stencil) else 0xFFFF) else 0xFFFF,
-        .clear_stencil = if (pass.depth) |depth| (if (depth < clears.len) clears[depth].depth_stencil.stencil & 0xFF else 0) else 0,
-    };
-    _command.record(made, command, u8, &.{});
+    made.pass = _objects.of(_render.RenderPass, info.render_pass);
+    made.framebuffer = _objects.of(_render.Framebuffer, info.framebuffer);
+    made.area = info.render_area;
+    made.subpass = 0;
+    made.clear_count = @min(clears.len, made.clears.len);
+    @memcpy(made.clears[0..made.clear_count], clears[0..made.clear_count]);
+    _command.beginSubpass(made, 0);
 }

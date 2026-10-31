@@ -55,6 +55,7 @@ pub fn BeginCommandBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, info: 
     const made = _objects.of(_command.CommandBuffer, buffer);
     _command.clear(made, false);
     made.state = .recording;
+    made.pass = null;
     made.one_time = info.flags & facet.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT != 0;
     return .success;
 }

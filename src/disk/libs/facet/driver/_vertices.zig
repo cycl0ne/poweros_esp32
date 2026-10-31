@@ -21,9 +21,44 @@ const Buffer = _buffer.Buffer;
 const _image = @import("../image/_image.zig");
 const _pipeline = @import("../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
+const max_vertex_input_bindings = @import("../instance/_instance.zig").max_vertex_input_bindings;
 const DescriptorSet = @import("../descriptor/_descriptor.zig").Set;
 
 /// A vertex buffer bound.
+/// What commands have bound of a player, kept where a subpass begins for its
+/// further colour attachments.
+pub const Bound = struct {
+    pipeline: ?*Pipeline,
+    vertex_buffers: [max_vertex_input_bindings]VertexBuffer,
+    index_buffer: ?*Buffer,
+    index_offset: u64,
+    index_type: facet.IndexType,
+    viewport: facet.Viewport,
+    scissor: facet.Rect2D,
+    blend_constants: [4]f32,
+    line_width: f32,
+    stencil: StencilSet,
+    resources: shader.Resources,
+
+    pub fn of(player: anytype) Bound {
+        var made: Bound = undefined;
+        inline for (@typeInfo(Bound).@"struct".fields) |field| @field(made, field.name) = @field(player, field.name);
+        return made;
+    }
+
+    pub fn restore(bound: *const Bound, player: anytype) void {
+        inline for (@typeInfo(Bound).@"struct".fields) |field| @field(player, field.name) = @field(bound, field.name);
+    }
+};
+
+/// A subpass played for its further colour attachments: from its begin, for
+/// the next `output`.
+pub const Repeat = struct {
+    begin: *const _command.BeginRenderPass,
+    from: _stream.Reader,
+    output: u32,
+};
+
 pub const VertexBuffer = struct {
     buffer: ?*Buffer = null,
     offset: u64 = 0,

@@ -252,7 +252,7 @@ pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) 
         .depth_test = if (clears_depth) .always else null,
         .depth_write = clears_depth,
         .blend = .general,
-        .mixing = .{ .mask = if (aspect & facet.IMAGE_ASPECT_COLOR != 0) 0xFFFF_FFFF else 0 },
+        .mixing = .{ .mask = if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output) 0xFFFF_FFFF else 0 },
         .stencil = if (clears_stencil) .{ stencil_face, stencil_face } else null,
         .varyings = 4,
         .fragment = &clearColor,

@@ -32,6 +32,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const facet_init = @import("../../facet_init.zig");
 const FacetBase = @import("../../facet_base.zig").FacetBase;
 const _objects = @import("../../_objects.zig");
+const _render = @import("../../render/_render.zig");
 const _instance = @import("../../instance/_instance.zig");
 const PhysicalDevice = _instance.PhysicalDevice;
 const Device = @import("../../device/_device.zig").Device;
@@ -106,7 +107,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
             .max_framebuffer_height = _instance.max_image_dimension,
             .max_image_dimension_3d = _instance.max_image_dimension_3d,
             .max_image_array_layers = _instance.max_image_array_layers,
-            .max_color_attachments = 1,
+            .max_color_attachments = _render.most_colors,
             .max_vertex_input_bindings = _instance.max_vertex_input_bindings,
             .max_vertex_input_attributes = _instance.max_vertex_input_attributes,
             .max_vertex_input_binding_stride = 2048,

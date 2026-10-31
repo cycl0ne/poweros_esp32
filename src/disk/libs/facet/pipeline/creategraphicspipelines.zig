@@ -5,7 +5,9 @@ const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const shader = facet.shader;
+const std = @import("std");
 const _objects = @import("../_objects.zig");
+const _render = @import("../render/_render.zig");
 const Device = @import("../device/_device.zig").Device;
 const _pipeline = @import("_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
@@ -183,7 +185,9 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     if ((control == null) != (evaluation == null)) return .error_invalid_shader_nv;
     const last_entry = evaluation orelse vertex_entry;
     if (last_entry.varyingCount() != fragment_entry.varyingCount()) return .error_invalid_shader_nv;
-    if (info.subpass != 0) return .error_initialization_failed;
+    const pass = _objects.of(_render.RenderPass, info.render_pass);
+    if (info.subpass >= pass.subpass_count) return .error_initialization_failed;
+    const colors = pass.subpasses[info.subpass].part_count;
 
     made.* = .{
         .device = device,
@@ -302,8 +306,13 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         }
     }
     if (info.color_blend_state) |blend| {
-        if (blend.logic_op_enable or blend.attachment_count > 1) return .error_feature_not_present;
-        if (blend.attachment_count == 1) {
+        if (blend.logic_op_enable) return .error_feature_not_present;
+        if (blend.attachment_count != 0 and blend.attachment_count != colors) return .error_initialization_failed;
+        // One way of mixing for all: they are drawn the same way, in turn.
+        if (blend.attachment_count > 1) for (blend.attachments.?[1..blend.attachment_count]) |other| {
+            if (!std.mem.eql(u8, std.mem.asBytes(&other), std.mem.asBytes(&blend.attachments.?[0]))) return .error_feature_not_present;
+        };
+        if (blend.attachment_count != 0) {
             const attachment = blend.attachments.?[0];
             made.mixing.mask = attachment.color_write_mask & facet.COLOR_COMPONENT_ALL;
             if (attachment.blend_enable) {

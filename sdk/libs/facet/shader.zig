@@ -215,6 +215,9 @@ pub const Set = extern struct {
 pub const Resources = extern struct {
     sets: [MAX_SETS]?*const Set = @splat(null),
     push: [MAX_PUSH_CONSTANTS_SIZE]u8 align(4) = @splat(0),
+    /// A fragment function's colour attachment: which of the subpass's is being
+    /// drawn, each in turn (`CreateRenderPass`).
+    output: u32 = 0,
 
     /// Element `element` of binding `binding` in set `set`, or null where
     /// there is none.

@@ -120,6 +120,7 @@ pub const LVO = struct {
     pub const CreateComputePipelines = libraries.lvo(103);
     pub const CmdDispatch = libraries.lvo(104);
     pub const CmdDispatchIndirect = libraries.lvo(105);
+    pub const CmdNextSubpass = libraries.lvo(106);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -227,6 +228,7 @@ pub const Fn = struct {
     pub const CreateComputePipelines = *const fn (*FacetBase, *facet.Device, ?*facet.PipelineCache, u32, [*]const facet.ComputePipelineCreateInfo, [*]?*facet.Pipeline) callconv(.c) facet.Result;
     pub const CmdDispatch = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32, u32) callconv(.c) void;
     pub const CmdDispatchIndirect = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Buffer, u64) callconv(.c) void;
+    pub const CmdNextSubpass = *const fn (*FacetBase, *facet.CommandBuffer, facet.SubpassContents) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -761,5 +763,10 @@ pub const FacetBase = opaque {
     /// Recorded: as CmdDispatch, its numbers in a buffer.
     pub fn CmdDispatchIndirect(self: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64) void {
         return libraries.call(self, LVO.CmdDispatchIndirect, Fn.CmdDispatchIndirect, .{ buffer, numbers, offset });
+    }
+
+    /// Recorded: what the subpass drew stored, and the next subpass begun.
+    pub fn CmdNextSubpass(self: *FacetBase, buffer: *facet.CommandBuffer, contents: facet.SubpassContents) void {
+        return libraries.call(self, LVO.CmdNextSubpass, Fn.CmdNextSubpass, .{ buffer, contents });
     }
 };

@@ -38,6 +38,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdDrawIndirect](#cmddrawindirect) - Recorded: draws whose numbers, as CmdDraw takes them, are in a buffer.
 - [CmdEndRenderPass](#cmdendrenderpass) - Recorded: the render pass ended, and what it drew stored.
 - [CmdExecuteCommands](#cmdexecutecommands) - Recorded: secondary command buffers played, in the order given.
+- [CmdNextSubpass](#cmdnextsubpass) - Recorded: what the subpass drew stored, and the next subpass begun.
 - [CmdPipelineBarrier](#cmdpipelinebarrier) - Recorded: a barrier between the work before it and the work after.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
 - [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
@@ -631,7 +632,8 @@ done.
 **NOTES**
 
 Draws are recorded between CmdBeginRenderPass and CmdEndRenderPass; a
-draw recorded outside a pass draws nothing.
+draw recorded outside a pass draws nothing. The pass begins with its first
+subpass: CmdNextSubpass goes on to the next.
 
 **BUGS**
 
@@ -1761,6 +1763,70 @@ None known.
 fb.CmdExecuteCommands(primary, 1, @ptrCast(&secondary));
 ```
 
+## CmdNextSubpass
+
+Recorded: what the subpass drew stored, and the next subpass begun.
+
+**SYNOPSIS**
+
+```zig
+fn CmdNextSubpass(base: *FacetBase, buffer: *facet.CommandBuffer, contents: facet.SubpassContents) void
+```
+
+**SINCE**
+
+1.21. LVO -428.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, inside a render pass of a further
+  subpass.
+- `contents` - whether the subpass's draws are in secondary command
+  buffers. Not looked at: either may be played.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+A subpass with other attachments than the one before it is a pass of its
+own: it stores what was drawn, and begins with the clear values
+CmdBeginRenderPass was given. One with the same attachments goes on in the
+same tiles, the depth with them, and only the pipelines it can bind differ.
+
+Past the last subpass, or outside a pass, nothing is recorded. A pipeline
+bound stays bound, though Vulkan would have one made for the subpass.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+A subpass of several colour attachments is played over for each of them from where it began, with what was bound then.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdBeginRenderPass`, `CmdEndRenderPass`, `CreateRenderPass`
+
+**EXAMPLES**
+
+```zig
+fb.CmdNextSubpass(commands, .@"inline");
+```
+
 ## CmdPipelineBarrier
 
 Recorded: a barrier between the work before it and the work after.
@@ -2786,7 +2852,7 @@ made for depth, an image smaller than the size, more than one layer;
 
 **BEHAVIOR**
 
-The colour attachment's view is of its image's first level. The size
+Each colour attachment's view is of its image's first level. The size
 may be smaller than the images: the framebuffer is their top left.
 
 **CONTEXT**
@@ -3268,7 +3334,7 @@ fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const facet.
 **INPUTS**
 
 - `device` - the device.
-- `info` - the attachments and the one subpass that draws into them.
+- `info` - the attachments and the subpasses that draw into them.
 - `render_pass` - where the render pass is written; null when it fails.
 
 **RESULT**
@@ -3280,18 +3346,28 @@ subpass that names an attachment there is not; `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
-The pass has one subpass, which draws into one colour attachment -
-b8g8r8a8_unorm or r8g8b8a8_unorm - and may test against a depth
-attachment, d16_unorm, s8_uint or d16_unorm_s8_uint. No input, resolve or
-multisampled attachments.
+The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
+into 1 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
+the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
+or d16_unorm_s8_uint. No input, resolve or multisampled attachments.
 
-The colour attachment's load op CLEAR clears the render area; LOAD and
-DONT_CARE keep what the image holds. What is drawn is stored, whatever
-its store op. The depth attachment's load op is CLEAR or DONT_CARE -
-both clear it - and its store op DONT_CARE: the depth lives in the
-rasterizer's tiles alone and is never stored.
+The subpasses are drawn one after another. A colour attachment's load op
+CLEAR clears the render area the first time a subpass names it; LOAD,
+DONT_CARE and later subpasses keep what the image holds. What is drawn is
+stored, whatever its store op. The depth attachment's load op is CLEAR or
+DONT_CARE - both clear it - and its store op DONT_CARE: the depth lives in
+the rasterizer's tiles alone and is never stored.
 
-Attachments the subpass does not name are left as they are. The
+So two subpasses share a depth attachment only one right after the other
+and with the same colour attachments too, when the second goes on in the
+tiles of the first; otherwise that is `error_feature_not_present`.
+
+A subpass of several colour attachments is drawn once for each, its commands
+played over, so it costs that much more: its fragment function is called for
+each, and `shader.Resources.output` says for which. A fixed fragment
+function has one colour, which every attachment gets.
+
+Attachments a subpass does not name are left as they are. The
 dependencies are not looked at: a queue's commands are done one after
 the other.
 

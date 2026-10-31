@@ -114,6 +114,7 @@ const CmdExecuteCommands = @import("command/cmdexecutecommands.zig").CmdExecuteC
 const CreateComputePipelines = @import("pipeline/createcomputepipelines.zig").CreateComputePipelines;
 const CmdDispatch = @import("command/cmddispatch.zig").CmdDispatch;
 const CmdDispatchIndirect = @import("command/cmddispatchindirect.zig").CmdDispatchIndirect;
+const CmdNextSubpass = @import("command/cmdnextsubpass.zig").CmdNextSubpass;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -242,6 +243,7 @@ const contract_files = [_][]const u8{
     @embedFile("pipeline/createcomputepipelines.zig"),
     @embedFile("command/cmddispatch.zig"),
     @embedFile("command/cmddispatchindirect.zig"),
+    @embedFile("command/cmdnextsubpass.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -550,6 +552,9 @@ fn lvoCmdDispatch(base: *FacetBase, buffer: *facet.CommandBuffer, x: u32, y: u32
 fn lvoCmdDispatchIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64) callconv(.c) void {
     return CmdDispatchIndirect(base, buffer, numbers, offset);
 }
+fn lvoCmdNextSubpass(base: *FacetBase, buffer: *facet.CommandBuffer, contents: facet.SubpassContents) callconv(.c) void {
+    return CmdNextSubpass(base, buffer, contents);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -660,6 +665,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCreateComputePipelines),
     vec(lvoCmdDispatch),
     vec(lvoCmdDispatchIndirect),
+    vec(lvoCmdNextSubpass),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

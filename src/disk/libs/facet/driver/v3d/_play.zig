@@ -97,6 +97,8 @@ pub const Player = struct {
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
+    /// What was bound where a subpass of several attachments began.
+    saved: _vertices.Bound = undefined,
     /// What compute functions have bound, apart from what draws have.
     compute_pipeline: ?*Pipeline = null,
     compute_resources: shader.Resources = .{},
@@ -184,6 +186,7 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
 fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
     const player = playerOf(queue);
     var commands = stream.commands();
+    var repeat: ?_vertices.Repeat = null;
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
         .copy_buffer_to_image => copyBufferToImage(queue, _stream.as(_command.CopyBufferToImage, head)),
@@ -200,8 +203,27 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         },
         .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
         .clear_attachment => if (player.drawing) clearAttachment(queue, _stream.as(_command.ClearAttachment, head)),
-        .begin_render_pass => beginRenderPass(queue, _stream.as(_command.BeginRenderPass, head)),
-        .end_render_pass => endRenderPass(queue),
+        .begin_render_pass => {
+            const command = _stream.as(_command.BeginRenderPass, head);
+            beginRenderPass(queue, command, 0);
+            if (command.part_count > 1) {
+                player.saved = .of(player);
+                repeat = .{ .begin = command, .from = commands, .output = 1 };
+            }
+        },
+        .end_render_pass => {
+            endRenderPass(queue);
+            if (repeat) |*again| {
+                if (again.output == again.begin.part_count) {
+                    repeat = null;
+                } else {
+                    player.saved.restore(player);
+                    beginRenderPass(queue, again.begin, again.output);
+                    commands = again.from;
+                    again.output += 1;
+                }
+            }
+        },
         .bind_pipeline => player.pipeline = _stream.as(_command.BindPipeline, head).pipeline,
         .bind_vertex_buffers => _vertices.bindVertexBuffers(player, _stream.as(_command.BindVertexBuffers, head)),
         .bind_index_buffer => {
@@ -332,11 +354,12 @@ fn addressOf(queue: *Queue, image: *Image) u32 {
 
 // --- the render pass --------------------------------------------------------
 
-fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void {
+fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part: u32) void {
     endRenderPass(queue);
     const player = playerOf(queue);
     if (player.hardware.broken) return;
-    const framebuffer = command.framebuffer;
+    player.resources.output = part;
+    const framebuffer = &command.targets[part];
     const image = framebuffer.color.image;
     const output: struct { u64, bool } = switch (image.format) {
         .b8g8r8a8_unorm => .{ cl.OUTPUT_RGBA8, true },
@@ -357,7 +380,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     if (left == right or top == bottom) return;
     const whole = left == 0 and top == 0 and right == framebuffer.width and bottom == framebuffer.height;
-    const clears = command.render_pass.color_load == .clear;
+    const clears = command.parts[part].color_load == .clear;
     const tiles = ((framebuffer.width + 63) / 64) * ((framebuffer.height + 63) / 64);
     if (!sized(queue, &player.tile_lists, tileListsBytes(tiles, 0))) return;
     player.triangles = 0;
@@ -365,7 +388,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
     for (player.chunks[0..player.chunk_count]) |*chunk| chunk.used = 0;
     player.chunk_at = 0;
     const list = carve(queue, list_part_bytes, 8) orelse return;
-    const color = command.clear_color;
+    const color = command.clear_colors[part];
     player.image = image;
     player.area = .{ .left = left, .top = top, .right = right, .bottom = bottom };
     player.frame = .{
@@ -380,9 +403,9 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
         .tile_lists = player.tile_lists.?.address,
         .binned = false,
         .load = !clears or !whole,
-        .depth = command.render_pass.tests_depth,
+        .depth = command.parts[part].tests_depth,
         .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / 65535,
-        .stencil = command.render_pass.tests_stencil,
+        .stencil = command.parts[part].tests_stencil,
         .clear_stencil = command.clear_stencil,
         .area = if (whole) null else player.area,
     };
@@ -417,7 +440,7 @@ fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void
         queue,
         .{ .left = left, .top = top, .right = right, .bottom = bottom },
         command.color,
-        if (aspect & facet.IMAGE_ASPECT_COLOR != 0) 0xF else 0,
+        if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output) 0xF else 0,
         if (aspect & facet.IMAGE_ASPECT_DEPTH != 0 and player.frame.depth) command.depth else null,
         if (aspect & facet.IMAGE_ASPECT_STENCIL != 0 and player.frame.stencil) @truncate(command.stencil) else null,
     );

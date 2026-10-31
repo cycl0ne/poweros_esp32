@@ -51,5 +51,6 @@ const _command = @import("_command.zig");
 pub fn CmdEndRenderPass(base: *FacetBase, buffer: *facet.CommandBuffer) void {
     _ = base;
     const made = _command.recording(buffer) orelse return;
+    made.pass = null;
     _command.record(made, _command.EndRenderPass{}, u8, &.{});
 }

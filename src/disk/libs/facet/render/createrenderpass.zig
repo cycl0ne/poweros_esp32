@@ -21,7 +21,7 @@ const _surface = @import("../surface/_surface.zig");
 ///
 /// INPUTS:
 /// - `device` - the device.
-/// - `info` - the attachments and the one subpass that draws into them.
+/// - `info` - the attachments and the subpasses that draw into them.
 /// - `render_pass` - where the render pass is written; null when it fails.
 ///
 /// RESULT:
@@ -31,18 +31,28 @@ const _surface = @import("../surface/_surface.zig");
 /// subpass that names an attachment there is not; `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
-/// The pass has one subpass, which draws into one colour attachment -
-/// b8g8r8a8_unorm or r8g8b8a8_unorm - and may test against a depth
-/// attachment, d16_unorm, s8_uint or d16_unorm_s8_uint. No input, resolve or
-/// multisampled attachments.
+/// The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
+/// into 1 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
+/// the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
+/// or d16_unorm_s8_uint. No input, resolve or multisampled attachments.
 ///
-/// The colour attachment's load op CLEAR clears the render area; LOAD and
-/// DONT_CARE keep what the image holds. What is drawn is stored, whatever
-/// its store op. The depth attachment's load op is CLEAR or DONT_CARE -
-/// both clear it - and its store op DONT_CARE: the depth lives in the
-/// rasterizer's tiles alone and is never stored.
+/// The subpasses are drawn one after another. A colour attachment's load op
+/// CLEAR clears the render area the first time a subpass names it; LOAD,
+/// DONT_CARE and later subpasses keep what the image holds. What is drawn is
+/// stored, whatever its store op. The depth attachment's load op is CLEAR or
+/// DONT_CARE - both clear it - and its store op DONT_CARE: the depth lives in
+/// the rasterizer's tiles alone and is never stored.
 ///
-/// Attachments the subpass does not name are left as they are. The
+/// So two subpasses share a depth attachment only one right after the other
+/// and with the same colour attachments too, when the second goes on in the
+/// tiles of the first; otherwise that is `error_feature_not_present`.
+///
+/// A subpass of several colour attachments is drawn once for each, its commands
+/// played over, so it costs that much more: its fragment function is called for
+/// each, and `shader.Resources.output` says for which. A fixed fragment
+/// function has one colour, which every attachment gets.
+///
+/// Attachments a subpass does not name are left as they are. The
 /// dependencies are not looked at: a queue's commands are done one after
 /// the other.
 ///
@@ -78,43 +88,79 @@ const _surface = @import("../surface/_surface.zig");
 pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const facet.RenderPassCreateInfo, render_pass: *?*facet.RenderPass) facet.Result {
     render_pass.* = null;
     const owner = _objects.of(Device, device);
-    if (info.subpass_count != 1) return .error_feature_not_present;
+    if (info.subpass_count == 0 or info.subpass_count > _render.most_subpasses) return .error_feature_not_present;
+    if (info.attachment_count > _render.most_attachments) return .error_feature_not_present;
     const attachments: []const facet.AttachmentDescription = if (info.attachments) |given| given[0..info.attachment_count] else &.{};
-    const subpass = info.subpasses[0];
-    if (subpass.pipeline_bind_point != .graphics) return .error_feature_not_present;
-    if (subpass.input_attachment_count != 0 or subpass.resolve_attachments != null) return .error_feature_not_present;
-    if (subpass.color_attachment_count != 1) return .error_feature_not_present;
-    const color_index = subpass.color_attachments.?[0].attachment;
-    if (color_index >= attachments.len) return .error_initialization_failed;
-    const color = attachments[color_index];
-    if (!_surface.drawable(color.format)) return .error_format_not_supported;
-    if (color.samples != 1) return .error_feature_not_present;
-    var depth_index: ?u32 = null;
-    var tests_depth = false;
-    var tests_stencil = false;
-    if (subpass.depth_stencil_attachment) |reference| {
-        if (reference.attachment != facet.ATTACHMENT_UNUSED) {
-            if (reference.attachment >= attachments.len or reference.attachment == color_index) return .error_initialization_failed;
-            const depth = attachments[reference.attachment];
-            tests_depth = _image.hasDepth(depth.format);
-            tests_stencil = _image.hasStencil(depth.format);
-            if (!tests_depth and !tests_stencil) return .error_format_not_supported;
-            if (depth.samples != 1 or depth.load_op == .load or depth.store_op == .store) return .error_feature_not_present;
-            if (depth.stencil_load_op == .load or depth.stencil_store_op == .store) return .error_feature_not_present;
-            depth_index = reference.attachment;
+    var plan = _render.RenderPass{ .device = owner, .attachment_count = info.attachment_count, .subpass_count = info.subpass_count };
+    var drawn: [_render.most_attachments]bool = @splat(false);
+    var depths: [_render.most_attachments]bool = @splat(false);
+    for (info.subpasses[0..info.subpass_count], 0..) |subpass, number| {
+        if (subpass.pipeline_bind_point != .graphics) return .error_feature_not_present;
+        if (subpass.input_attachment_count != 0 or subpass.resolve_attachments != null) return .error_feature_not_present;
+        if (subpass.color_attachment_count == 0 or subpass.color_attachment_count > _render.most_colors) return .error_feature_not_present;
+        const colors = subpass.color_attachments.?[0..subpass.color_attachment_count];
+        if (number > 0 and sameTargets(info.subpasses[number - 1], subpass)) {
+            plan.subpasses[number] = plan.subpasses[number - 1];
+            plan.subpasses[number].joined = true;
+            continue;
         }
+        var depth_index: ?u32 = null;
+        var tests_depth = false;
+        var tests_stencil = false;
+        if (subpass.depth_stencil_attachment) |reference| {
+            if (reference.attachment != facet.ATTACHMENT_UNUSED) {
+                if (reference.attachment >= attachments.len) return .error_initialization_failed;
+                const depth = attachments[reference.attachment];
+                tests_depth = _image.hasDepth(depth.format);
+                tests_stencil = _image.hasStencil(depth.format);
+                if (!tests_depth and !tests_stencil) return .error_format_not_supported;
+                if (depth.samples != 1 or depth.load_op == .load or depth.store_op == .store) return .error_feature_not_present;
+                if (depth.stencil_load_op == .load or depth.stencil_store_op == .store) return .error_feature_not_present;
+                // It is not stored: a later subpass would find nothing.
+                if (depths[reference.attachment]) return .error_feature_not_present;
+                depths[reference.attachment] = true;
+                depth_index = reference.attachment;
+            }
+        }
+        plan.subpasses[number] = .{ .first_part = plan.part_count, .part_count = subpass.color_attachment_count, .joined = false };
+        for (colors, 0..) |reference, k| {
+            const color_index = reference.attachment;
+            if (color_index >= attachments.len) return .error_initialization_failed;
+            if (color_index == depth_index) return .error_initialization_failed;
+            for (colors[0..k]) |earlier| if (earlier.attachment == color_index) return .error_initialization_failed;
+            const color = attachments[color_index];
+            if (!_surface.drawable(color.format)) return .error_format_not_supported;
+            if (color.samples != 1) return .error_feature_not_present;
+            if (plan.part_count == _render.most_parts) return .error_feature_not_present;
+            plan.parts[plan.part_count] = .{
+                .color = color_index,
+                .depth = depth_index,
+                .tests_depth = tests_depth,
+                .tests_stencil = tests_stencil,
+                .color_format = color.format,
+                .color_load = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep,
+            };
+            plan.part_count += 1;
+        }
+        for (colors) |reference| drawn[reference.attachment] = true;
     }
+    for (plan.parts[0..plan.part_count]) |part| if (part.depth) |depth| if (drawn[depth]) return .error_initialization_failed;
     const made = _objects.create(base.sys_base, _render.RenderPass) orelse return .error_out_of_host_memory;
-    made.* = .{
-        .device = owner,
-        .attachment_count = info.attachment_count,
-        .color = color_index,
-        .depth = depth_index,
-        .tests_depth = tests_depth,
-        .tests_stencil = tests_stencil,
-        .color_format = color.format,
-        .color_load = if (color.load_op == .clear) .clear else .keep,
-    };
+    made.* = plan;
     render_pass.* = _objects.handle(facet.RenderPass, made);
     return .success;
+}
+
+/// Whether a subpass draws into just what the one before it does.
+fn sameTargets(before: facet.SubpassDescription, subpass: facet.SubpassDescription) bool {
+    if (before.color_attachment_count != subpass.color_attachment_count) return false;
+    for (before.color_attachments.?[0..before.color_attachment_count], subpass.color_attachments.?[0..subpass.color_attachment_count]) |a, b| {
+        if (a.attachment != b.attachment) return false;
+    }
+    return depthOf(before) == depthOf(subpass);
+}
+
+fn depthOf(subpass: facet.SubpassDescription) u32 {
+    const reference = subpass.depth_stencil_attachment orelse return facet.ATTACHMENT_UNUSED;
+    return reference.attachment;
 }

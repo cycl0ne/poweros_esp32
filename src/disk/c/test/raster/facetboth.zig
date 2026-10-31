@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.7 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.8 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -472,6 +472,10 @@ const Options = struct {
     constants: [4]f32 = .{ 0, 0, 0, 0 },
     /// The constants are left to CmdSetBlendConstants.
     dynamic_constants: bool = false,
+    /// In a pass of its own, its subpass and the colour attachments of that.
+    pass: ?*facet.RenderPass = null,
+    subpass: u32 = 0,
+    colors: u32 = 1,
     stencil: Stencil = .none,
     stencil_test: bool = false,
     front: facet.StencilOpState = .{},
@@ -522,6 +526,11 @@ const Side = struct {
     layered_views: [layered_count]?*facet.ImageView = @splat(null),
     layered_sets: [layered_count]?*facet.DescriptorSet = @splat(null),
     layered_staging: ?*facet.Buffer = null,
+    /// A pass of four subpasses over two pictures, and one of two attachments.
+    subpassed: ?*facet.RenderPass = null,
+    subpassed_frame: ?*facet.Framebuffer = null,
+    two_colors: ?*facet.RenderPass = null,
+    two_colors_frame: ?*facet.Framebuffer = null,
     /// Render passes by format, depth and load.
     passes: [formats.len][2][2]?*facet.RenderPass = @splat(@splat(@splat(null))),
     framebuffers: [formats.len][2]?*facet.Framebuffer = @splat(@splat(null)),
@@ -666,6 +675,41 @@ const Side = struct {
         try expect(fb.CreateFence(device, &.{}, &side.fence), error.Refused);
         try side.stageTextures();
         try side.upLayered();
+        try side.upPasses();
+    }
+
+    fn upPasses(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const attachments = [3]facet.AttachmentDescription{
+            .{ .format = formats[0], .load_op = .clear, .store_op = .store, .final_layout = .general },
+            .{ .format = formats[1], .load_op = .clear, .store_op = .store, .final_layout = .general },
+            .{ .format = .d16_unorm, .load_op = .clear, .final_layout = .depth_stencil_attachment_optimal },
+        };
+        const first = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .color_attachment_optimal }};
+        const second = [1]facet.AttachmentReference{.{ .attachment = 1, .layout = .color_attachment_optimal }};
+        const both = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .color_attachment_optimal }, .{ .attachment = 1, .layout = .color_attachment_optimal } };
+        const depth = facet.AttachmentReference{ .attachment = 2, .layout = .depth_stencil_attachment_optimal };
+        const subpasses = [4]facet.SubpassDescription{
+            .{ .color_attachment_count = 1, .color_attachments = &first, .depth_stencil_attachment = &depth },
+            .{ .color_attachment_count = 1, .color_attachments = &first, .depth_stencil_attachment = &depth },
+            .{ .color_attachment_count = 1, .color_attachments = &second },
+            .{ .color_attachment_count = 2, .color_attachments = &both },
+        };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 4, .subpasses = &subpasses }, &side.subpassed), error.Refused);
+        const one = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &both, .depth_stencil_attachment = &depth };
+        try expect(fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&one) }, &side.two_colors), error.Refused);
+        const views = [3]*facet.ImageView{ side.picture_views[0].?, side.picture_views[1].?, side.depth_view.? };
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.subpassed.?, .attachment_count = 3, .attachments = &views, .width = side.width, .height = side.height }, &side.subpassed_frame), error.Refused);
+        try expect(fb.CreateFramebuffer(device, &.{ .render_pass = side.two_colors.?, .attachment_count = 3, .attachments = &views, .width = side.width, .height = side.height }, &side.two_colors_frame), error.Refused);
+    }
+
+    /// A pass of its own begun, the first picture and the second cleared in
+    /// colours of their own.
+    fn beginOwn(side: *Side, pass: *facet.RenderPass, frame: *facet.Framebuffer) void {
+        const clears = [3]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0.06, 0.09, 0.2, 1 } } }, .{ .color = .{ .float32 = .{ 0.25, 0.1, 0.05, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+        side.fb.CmdBeginRenderPass(side.commands.?, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side.width, .height = side.height } }, .clear_value_count = 3, .clear_values = &clears }, .@"inline");
+        side.state();
     }
 
     /// The textures of layers, each a descriptor set of its own, their texels
@@ -853,6 +897,10 @@ const Side = struct {
         fb.DestroyBuffer(device, side.computed);
         fb.DestroyBuffer(device, side.numbers);
         fb.DestroyFence(device, side.fence);
+        fb.DestroyFramebuffer(device, side.subpassed_frame);
+        fb.DestroyFramebuffer(device, side.two_colors_frame);
+        fb.DestroyRenderPass(device, side.subpassed);
+        fb.DestroyRenderPass(device, side.two_colors);
         fb.DestroyCommandPool(device, side.command_pool);
         fb.DestroyPipelineLayout(device, side.layout);
         fb.DestroyShaderModule(device, side.module);
@@ -987,7 +1035,8 @@ const Side = struct {
             .src_alpha_blend_factor = if (options.blend) .src_alpha else .one,
             .dst_alpha_blend_factor = if (options.blend) .one_minus_src_alpha else .zero,
         };
-        const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&blend_attachment), .blend_constants = options.constants };
+        const blend_attachments: [4]facet.PipelineColorBlendAttachmentState = @splat(blend_attachment);
+        const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = options.colors, .attachments = &blend_attachments, .blend_constants = options.constants };
         const info = facet.GraphicsPipelineCreateInfo{
             .stage_count = if (options.patch_points != 0) 4 else 2,
             .stages = &stages,
@@ -1000,7 +1049,8 @@ const Side = struct {
             .color_blend_state = &blend,
             .dynamic_state = &dynamic,
             .layout = side.layout.?,
-            .render_pass = if (options.stencil != .none) side.stencil_passes[@intFromEnum(options.stencil) - 1].? else side.passes[@intFromEnum(options.target)][@intFromBool(options.depth)][@intFromBool(options.load)].?,
+            .render_pass = options.pass orelse if (options.stencil != .none) side.stencil_passes[@intFromEnum(options.stencil) - 1].? else side.passes[@intFromEnum(options.target)][@intFromBool(options.depth)][@intFromBool(options.load)].?,
+            .subpass = options.subpass,
         };
         const slot = &side.made[side.made_count];
         var made: [1]?*facet.Pipeline = undefined;
@@ -1656,6 +1706,37 @@ const Cases = struct {
         side.fb.CmdBlitImage(side.commands.?, side.pictures[0].?, .general, side.layeredImage(.copied).*.?, .general, 1, @ptrCast(&blit), .linear);
         try layerAs2d(.copied, false)(side);
     }
+    /// Far and near, tested over two subpasses that keep the depth; then the
+    /// second picture alone; then the two of them.
+    fn subpasses(side: *Side) Failure!void {
+        const pass = side.subpassed.?;
+        side.beginOwn(pass, side.subpassed_frame.?);
+        try side.use(.{ .pass = pass, .test_depth = true, .write_depth = true, .depth = true });
+        side.draw(near_at, 3);
+        side.fb.CmdNextSubpass(side.commands.?, .@"inline");
+        try side.use(.{ .pass = pass, .subpass = 1, .test_depth = true, .write_depth = true, .depth = true });
+        side.draw(far_at, 3);
+        side.fb.CmdNextSubpass(side.commands.?, .@"inline");
+        try side.use(.{ .pass = pass, .subpass = 2, .depth = false, .target = .rgba });
+        side.draw(clockwise_at, 3);
+        side.fb.CmdNextSubpass(side.commands.?, .@"inline");
+        try side.use(.{ .pass = pass, .subpass = 3, .colors = 2, .depth = false, .blend = true });
+        side.draw(glass_at, 3);
+        side.end();
+    }
+    /// One subpass of both pictures: the second of each drawn over again, what
+    /// was bound put back. The pipeline bound before the pass stays the one
+    /// the second time begins with.
+    fn twoColors(side: *Side) Failure!void {
+        const pass = side.two_colors.?;
+        try side.use(.{ .pass = pass, .colors = 2, .test_depth = true, .write_depth = true });
+        side.beginOwn(pass, side.two_colors_frame.?);
+        side.draw(near_at, 3);
+        side.draw(far_at, 3);
+        try side.use(.{ .pass = pass, .colors = 2, .blend = true });
+        side.draw(glass_at, 3);
+        side.end();
+    }
     fn modulate(side: *Side) Failure!void {
         side.begin(.{});
         side.texture(0);
@@ -1839,6 +1920,10 @@ const cases = [_]Case{
     .{ .name = "floats", .run = Cases.layerAs2d(.float, false) },
     .{ .name = "packed floats", .run = Cases.layerAs2d(.packed_float, false) },
     .{ .name = "shared exponent", .run = Cases.layerAs2d(.shared_exponent, false) },
+    .{ .name = "subpasses, first picture", .run = &Cases.subpasses },
+    .{ .name = "subpasses, second picture", .target = .rgba, .run = &Cases.subpasses },
+    .{ .name = "two attachments, first", .run = &Cases.twoColors },
+    .{ .name = "two attachments, second", .target = .rgba, .run = &Cases.twoColors },
 };
 
 /// How far apart two pixels are, in the channel furthest apart: in steps of
