@@ -804,6 +804,16 @@ fn reap(base: *ExecBase) void {
     cpu.reap = left;
 }
 
+/// A task left behind for the core's next exception exit - an ended one
+/// to free, a stopped one whose taker is told - and that exit brought at
+/// once: the core's own cross-core interrupt, taken as soon as the switch
+/// is done. Without it a core with nothing else to run sleeps in its idle
+/// task until the next tick, and the end of a task is heard up to a tick
+/// late (2.8-4.1 ms measured on the VF2, at 100 Hz).
+fn leftBehind(core: u32) void {
+    pokeCore(core);
+}
+
 /// `task` put on this core's chain of tasks to free at its next exit.
 fn reapLater(cpu: *exec_base.CpuState, task: *Task) void {
     task.node.succ = if (cpu.reap) |kept| &kept.node else null;
@@ -1056,13 +1066,17 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
         current.state = .added;
         cpu.stopping = null;
         cpu.stopped = current;
+        leftBehind(core);
     } else if (current.state == .removed) {
         // Nothing will run on its stack again once this core is off it:
         // at once with one core, at the next exit with two, as the other
         // core could have the memory before this one has left it.
         // A task whose end someone waits to hear of is reaped at the next
         // exit as well, where the signal goes out as an interrupt's would.
-        if (base.cores_running > 1 or current.end_msg != null or !freeRemovedTask(base, current)) reapLater(cpu, current);
+        if (base.cores_running > 1 or current.end_msg != null or !freeRemovedTask(base, current)) {
+            reapLater(cpu, current);
+            leftBehind(core);
+        }
     } else {
         checkStack(current, context);
         current.sp_reg = context;

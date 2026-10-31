@@ -39,7 +39,9 @@ const Message = sdk.exec.Message;
 ///
 /// It is replied from the core's next exception exit after the switch, as
 /// an interrupt would reply it - so the reply port signals its task or
-/// ignores; a port that causes a software interrupt is not served.
+/// ignores; a port that causes a software interrupt is not served. The
+/// core brings that exit at once with its own cross-core interrupt (SINCE
+/// 1.26): the reply comes some 14 us after the task ended on the VF2.
 ///
 /// CONTEXT:
 /// - Waits: no.

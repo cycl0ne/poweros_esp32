@@ -93,8 +93,11 @@ pub const LIBRARY_VERSION = 1;
 /// module goes - at its last close, at the close of an opener's own base,
 /// in the low-memory flush - go to ramlib.library's UnLoadModule, which
 /// unloads them; exec dropped them, and every disk module that went left
-/// its code in memory.
-pub const LIBRARY_REVISION = 25;
+/// its code in memory. 26: a core that leaves a task behind - ended, or
+/// stopped for RemTask - pokes itself, so the next exception exit frees it
+/// at once: a task's end was heard up to a tick late, 4.3 ms on the VF2,
+/// and is now in 14 us; a process's in 71 us rather than 6.8 ms.
+pub const LIBRARY_REVISION = 26;
 const BUILD_DATE = "31.10.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

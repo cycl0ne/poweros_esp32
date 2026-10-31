@@ -28,7 +28,7 @@ const Task = exec.Task;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "TaskBench";
-const VERSION_STRING = "\x00$VER: TaskBench 1.0 (28.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: TaskBench 1.1 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/N";
@@ -147,7 +147,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         run.report(if (stack == 8192) "ended, 8 KiB of stack" else "ended, 32 KiB of stack", count, run.now() - started);
     }
 
-    {
+    // As a shell starts one - its directories locked again and its
+    // variables copied - and with nothing of the maker's.
+    for ([_]bool{ true, false }) |inherits| {
         var count: u32 = 0;
         var ended: exec.Message = .{ .reply_port = port };
         const started = run.now();
@@ -156,13 +158,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                 .{ .tag = dos.NP_Entry, .data = @intFromPtr(&processCode) },
                 .{ .tag = dos.NP_Name, .data = @intFromPtr("TaskBench process") },
                 .{ .tag = dos.NP_EndMsg, .data = @intFromPtr(&ended) },
+                .{ .tag = if (inherits) sdk.utility.TAG_IGNORE else dos.NP_CurrentDir, .data = 0 },
+                .{ .tag = if (inherits) sdk.utility.TAG_IGNORE else dos.NP_HomeDir, .data = 0 },
+                .{ .tag = if (inherits) sdk.utility.TAG_IGNORE else dos.NP_CopyVars, .data = 0 },
                 .{},
             };
             if (dl.CreateNewProc(&tags) == null) break;
             _ = sys.WaitPort(port);
             _ = sys.GetMsg(port);
         }
-        run.report("process, ended", count, run.now() - started);
+        run.report(if (inherits) "process, ended" else "process, nothing inherited", count, run.now() - started);
     }
 
     // The partner on this core, then on another.
