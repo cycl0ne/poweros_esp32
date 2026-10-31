@@ -560,7 +560,8 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     try testing.expectEqual(.greater_or_equal, made.depth_test.?);
     try testing.expect(made.depth_write);
     try testing.expect(!made.prepass);
-    try testing.expectEqual(.alpha, made.blend);
+    try testing.expect(made.mixing.enabled);
+    try testing.expectEqual(.one_minus_src_alpha, made.mixing.dst_color);
     try testing.expectEqual(@as(f32, 64), made.viewport.?.width);
     try testing.expect(made.scissor == null);
     try testing.expectEqual(@as(u32, 1), made.locations);
@@ -571,7 +572,7 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     added.blend = .{ .blend_enable = true, .src_color_blend_factor = .src_alpha, .dst_color_blend_factor = .one };
     const added_result, const added_pipeline = makePipeline(&bench, added);
     try testing.expectEqual(facet.Result.success, added_result);
-    try testing.expectEqual(.add, _objects.of(_pipeline.Pipeline, added_pipeline.?).blend);
+    try testing.expectEqual(.one, _objects.of(_pipeline.Pipeline, added_pipeline.?).mixing.dst_color);
     fb.DestroyPipeline(device, added_pipeline);
 
     // The rasterizer discarding, or both faces culled: made, draws nothing.
@@ -582,6 +583,37 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     try testing.expect(_objects.of(_pipeline.Pipeline, culled.?).draws_nothing);
     fb.DestroyPipeline(device, culled);
 
+    // What the cores draw each with, and that the quick ways keep to their terms.
+    const _cpu_draw = @import("../driver/cpu/_draw.zig");
+    const laid: _pipeline.Mixing = .{ .enabled = true, .src_color = .src_alpha, .dst_color = .one_minus_src_alpha };
+    var mixing = laid;
+    mixing.src_alpha = .src_alpha;
+    mixing.dst_alpha = .one_minus_src_alpha;
+    try testing.expectEqual(.alpha, _cpu_draw.blendOf(&mixing));
+    mixing.src_alpha = .zero;
+    mixing.dst_alpha = .one;
+    try testing.expectEqual(.alpha_keep, _cpu_draw.blendOf(&mixing));
+    mixing.dst_color = .one;
+    try testing.expectEqual(.add_keep, _cpu_draw.blendOf(&mixing));
+    mixing.src_alpha = .src_alpha;
+    mixing.dst_alpha = .one;
+    try testing.expectEqual(.add, _cpu_draw.blendOf(&mixing));
+    mixing.dst_alpha = .zero;
+    try testing.expectEqual(.general, _cpu_draw.blendOf(&mixing));
+    try testing.expectEqual(.general, _cpu_draw.blendOf(&laid));
+    try testing.expectEqual(.off, _cpu_draw.blendOf(&_pipeline.Mixing{}));
+    try testing.expectEqual(.general, _cpu_draw.blendOf(&_pipeline.Mixing{ .mask = facet.COLOR_COMPONENT_R }));
+    mixing = laid;
+    mixing.src_alpha = .src_alpha;
+    mixing.dst_alpha = .one_minus_src_alpha;
+    mixing.mask = facet.COLOR_COMPONENT_R;
+    try testing.expectEqual(.general, _cpu_draw.blendOf(&mixing));
+    // Over no alpha, what is there is opaque.
+    const over = (_pipeline.Mixing{ .enabled = true, .src_color = .one_minus_dst_alpha, .dst_color = .dst_alpha, .src_alpha = .src_alpha_saturate }).overOpaque();
+    try testing.expectEqual(.zero, over.src_color);
+    try testing.expectEqual(.one, over.dst_color);
+    try testing.expectEqual(.zero, over.src_alpha);
+
     const Change = struct { facet.Result, PipelineState };
     var changes: [9]Change = @splat(.{ .success, base });
     changes[0][0] = .error_feature_not_present;
@@ -589,9 +621,9 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     changes[1][0] = .error_feature_not_present;
     changes[1][1].depth = .{ .stencil_test_enable = true };
     changes[2][0] = .error_feature_not_present;
-    changes[2][1].blend = .{ .blend_enable = true, .src_color_blend_factor = .one, .dst_color_blend_factor = .one };
+    changes[2][1].blend = .{ .blend_enable = true, .src_color_blend_factor = @enumFromInt(15), .dst_color_blend_factor = .one };
     changes[3][0] = .error_feature_not_present;
-    changes[3][1].blend = .{ .color_write_mask = facet.COLOR_COMPONENT_R };
+    changes[3][1].blend = .{ .blend_enable = true, .color_blend_op = @enumFromInt(5) };
     changes[4][0] = .error_feature_not_present;
     changes[4][1].raster = .{ .polygon_mode = .line };
     changes[5][0] = .error_format_not_supported;

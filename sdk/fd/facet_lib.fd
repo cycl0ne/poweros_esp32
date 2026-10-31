@@ -200,4 +200,6 @@ facet.Result QueuePresent(*facet.Queue queue, *const facet.PresentInfo info)
 /// A surface over the inside of a window the program has opened, written
 /// to `surface`.
 facet.Result CreateWindowSurface(*facet.Instance instance, *const facet.WindowSurfaceCreateInfo info, *?*facet.Surface surface)
+/// Recorded: the blend constants, for a pipeline that leaves them to commands.
+void CmdSetBlendConstants(*facet.CommandBuffer buffer, *const [4]f32 constants)
 ##end

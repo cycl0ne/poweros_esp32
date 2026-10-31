@@ -46,7 +46,9 @@ pub const LIBRARY_VERSION = 1;
 /// SRC_ALPHA and ONE.
 /// 11: a limit on waiting for all of several fences is the whole wait's, not
 /// each fence's.
-pub const LIBRARY_REVISION = 11;
+/// 12: any blend factors and operation, the alpha's its own; blend constants,
+/// and CmdSetBlendConstants; the colour write mask.
+pub const LIBRARY_REVISION = 12;
 const BUILD_DATE = "31.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

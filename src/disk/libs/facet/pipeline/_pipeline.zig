@@ -9,8 +9,8 @@
 //! - culled by their facing, front or back or both;
 //! - a depth test of any compare, the depth written or not, and no
 //!   stencil;
-//! - the colour written whole, replacing what is there or laid over it by
-//!   its alpha (SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ADD);
+//! - the colour written, the channels asked for, replacing what is there or
+//!   mixed with it by any blend factors and operation, and no logic op;
 //! - one viewport and one scissor, given here or set by commands.
 //!
 //! Anything else is refused as the pipeline is made
@@ -46,9 +46,39 @@ pub const Attribute = struct {
 /// Which triangles are not drawn.
 pub const Cull = enum { none, back, front };
 
-/// What a pixel drawn does to what is there: replaces it, or is laid over
-/// it by its alpha.
-pub const Blend = enum { off, alpha, add };
+/// What a pixel drawn does to what is there. Off, it replaces it, the
+/// channels of `mask` only.
+pub const Mixing = struct {
+    enabled: bool = false,
+    src_color: facet.BlendFactor = .one,
+    dst_color: facet.BlendFactor = .zero,
+    color_op: facet.BlendOp = .add,
+    src_alpha: facet.BlendFactor = .one,
+    dst_alpha: facet.BlendFactor = .zero,
+    alpha_op: facet.BlendOp = .add,
+    mask: u32 = facet.COLOR_COMPONENT_ALL,
+    /// Null where a command sets them (CmdSetBlendConstants).
+    constants: ?[4]f32 = .{ 0, 0, 0, 0 },
+
+    /// The same over a target that has no alpha: what is there reads as
+    /// wholly opaque.
+    pub fn overOpaque(mixing: Mixing) Mixing {
+        var made = mixing;
+        made.src_color = opaqueFactor(mixing.src_color);
+        made.dst_color = opaqueFactor(mixing.dst_color);
+        made.src_alpha = opaqueFactor(mixing.src_alpha);
+        made.dst_alpha = opaqueFactor(mixing.dst_alpha);
+        return made;
+    }
+
+    fn opaqueFactor(factor: facet.BlendFactor) facet.BlendFactor {
+        return switch (factor) {
+            .dst_alpha => .one,
+            .one_minus_dst_alpha, .src_alpha_saturate => .zero,
+            else => factor,
+        };
+    }
+};
 
 pub const Pipeline = struct {
     device: *Device,
@@ -77,7 +107,7 @@ pub const Pipeline = struct {
     depth_write: bool,
     /// PIPELINE_CREATE_DEPTH_PREPASS.
     prepass: bool,
-    blend: Blend,
+    mixing: Mixing,
     /// The viewport and the scissor, or null where commands set them.
     viewport: ?facet.Viewport,
     scissor: ?facet.Rect2D,

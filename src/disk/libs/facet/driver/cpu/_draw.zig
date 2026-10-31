@@ -35,7 +35,65 @@ pub const RasterState = struct {
     front: raster.Winding,
     depth_test: ?raster.batched.Compare,
     blend: raster.Blend,
+    mixing: raster.Mixing,
 };
+
+/// The quickest way the rasterizer has of doing as a pipeline says.
+pub fn blendOf(mixing: *const _pipeline.Mixing) raster.Blend {
+    const whole = mixing.mask == facet.COLOR_COMPONENT_ALL;
+    if (!mixing.enabled) return if (whole) .off else .general;
+    if (!whole or mixing.color_op != .add or mixing.alpha_op != .add or mixing.src_color != .src_alpha) return .general;
+    const keeps = mixing.src_alpha == .zero and mixing.dst_alpha == .one;
+    const same = mixing.src_alpha == .src_alpha and mixing.dst_alpha == mixing.dst_color;
+    return switch (mixing.dst_color) {
+        .one_minus_src_alpha => if (same) .alpha else if (keeps) .alpha_keep else .general,
+        .one => if (same) .add else if (keeps) .add_keep else .general,
+        else => .general,
+    };
+}
+
+/// A pipeline's mixing in the rasterizer's terms: its constants and what a
+/// target without alpha changes are the draw's. Off, the colour replaces what
+/// is there, in the channels of the mask.
+pub fn mixingOf(mixing: *const _pipeline.Mixing) raster.Mixing {
+    return .{
+        .src_color = if (mixing.enabled) factorOf(mixing.src_color) else .one,
+        .dst_color = if (mixing.enabled) factorOf(mixing.dst_color) else .zero,
+        .color_op = if (mixing.enabled) operationOf(mixing.color_op) else .add,
+        .src_alpha = if (mixing.enabled) factorOf(mixing.src_alpha) else .one,
+        .dst_alpha = if (mixing.enabled) factorOf(mixing.dst_alpha) else .zero,
+        .alpha_op = if (mixing.enabled) operationOf(mixing.alpha_op) else .add,
+        .mask = maskOf(mixing.mask),
+    };
+}
+
+fn factorOf(factor: facet.BlendFactor) @TypeOf(@as(raster.Mixing, undefined).src_color) {
+    return @enumFromInt(@intFromEnum(factor));
+}
+
+fn operationOf(operation: facet.BlendOp) @TypeOf(@as(raster.Mixing, undefined).color_op) {
+    return @enumFromInt(@intFromEnum(operation));
+}
+
+/// The bits of 0xAARRGGBB the channels of a write mask are.
+fn maskOf(channels: u32) u32 {
+    var mask: u32 = 0;
+    if (channels & facet.COLOR_COMPONENT_R != 0) mask |= 0x00FF_0000;
+    if (channels & facet.COLOR_COMPONENT_G != 0) mask |= 0x0000_FF00;
+    if (channels & facet.COLOR_COMPONENT_B != 0) mask |= 0x0000_00FF;
+    if (channels & facet.COLOR_COMPONENT_A != 0) mask |= 0xFF00_0000;
+    return mask;
+}
+
+/// 0 to 1 as 0 to 255, in 0xAARRGGBB.
+fn constantOf(constants: [4]f32) u32 {
+    var packed_constant: u32 = 0;
+    for (constants, [4]u5{ 16, 8, 0, 24 }) |value, shift| {
+        const scaled = std.math.clamp(value, 0, 1) * 255 + 0.5;
+        packed_constant |= @as(u32, @intFromFloat(scaled)) << shift;
+    }
+    return packed_constant;
+}
 
 /// A draw of `count` vertices, or of `count` indices with `vertex_offset`
 /// added to each: the vertices or indices from `first` on, each instance
@@ -70,6 +128,13 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const viewport = pipeline.viewport orelse player.viewport;
     const scissor = pipeline.scissor orelse player.scissor;
     const translated: *const RasterState = @ptrCast(@alignCast(pipeline.driver.?));
+    var mixing = translated.mixing;
+    if (translated.blend == .general) {
+        // What is there has no alpha: it reads as wholly opaque.
+        const made = if (player.target_opaque) mixingOf(&pipeline.mixing.overOpaque()) else mixing;
+        mixing = made;
+        mixing.constant = constantOf(pipeline.mixing.constants orelse player.blend_constants);
+    }
     const state = raster.batched.State{
         .viewport = .{ .x = viewport.x, .y = viewport.y, .width = viewport.width, .height = viewport.height },
         .min_depth = viewport.min_depth,
@@ -85,6 +150,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .depth_test = translated.depth_test,
         .depth_write = pipeline.depth_write,
         .blend = translated.blend,
+        .mixing = mixing,
         .prepass = pipeline.prepass,
         .varyings = pipeline.varyings,
         .fragment = pipeline.fragment,

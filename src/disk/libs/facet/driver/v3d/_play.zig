@@ -50,7 +50,7 @@ const most_chunks = 64;
 /// Of the binner's list at a time; a list in several parts branches on.
 const list_part_bytes: u32 = 64 * 1024;
 /// What is kept free in a part: a draw's packets, then the branch out.
-const packets_bytes: u32 = 160;
+const packets_bytes: u32 = 176;
 /// The memory for the binner's lists: its first block of each tile, and what
 /// it goes on into before it asks for more.
 const tile_list_bytes: u32 = 128;
@@ -89,6 +89,7 @@ pub const Player = struct {
     index_type: facet.IndexType = .uint16,
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
+    blend_constants: [4]f32 = @splat(0),
     resources: shader.Resources = .{},
     /// The frame being made.
     frame: Frame = undefined,
@@ -181,6 +182,7 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
         .push_constants => _vertices.pushConstants(&player.resources, _stream.as(_command.PushConstants, head)),
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
+        .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
         .draw => if (player.drawing) {
             const command = _stream.as(_command.Draw, head);
             draw(queue, command.first_vertex, command.vertex_count, null, command.first_instance, command.instance_count);
@@ -574,6 +576,22 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     return place.address;
 }
 
+/// A pipeline's mixing in the hardware's terms.
+fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
+    // What is there has no alpha: it reads as wholly opaque.
+    const mixing = if (player.frame.format == cl.OUTPUT_BGR565) pipeline.mixing.overOpaque() else pipeline.mixing;
+    return .{
+        .src_color = @intFromEnum(mixing.src_color),
+        .dst_color = @intFromEnum(mixing.dst_color),
+        .color_mode = @intFromEnum(mixing.color_op),
+        .src_alpha = @intFromEnum(mixing.src_alpha),
+        .dst_alpha = @intFromEnum(mixing.dst_alpha),
+        .alpha_mode = @intFromEnum(mixing.alpha_op),
+        .constants = mixing.constants orelse player.blend_constants,
+        .channels = mixing.mask,
+    };
+}
+
 /// What a draw is drawn with, or null where nothing of it can be seen.
 fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *const facet.Viewport) ?frames.DrawState {
     const scissor = pipeline.scissor orelse player.scissor;
@@ -595,9 +613,9 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
             .clockwise = pipeline.front == .counter_clockwise,
             .compare = if (has_depth) (if (pipeline.depth_test) |compare| @intFromEnum(compare) else cl.COMPARE_ALWAYS) else cl.COMPARE_ALWAYS,
             .depth_write = has_depth and pipeline.depth_test != null and pipeline.depth_write,
-            .blend = pipeline.blend != .off,
-            .add = pipeline.blend == .add,
+            .blend = pipeline.mixing.enabled,
         },
+        .mixing = mixingOf(player, pipeline),
         .x = viewport.x,
         .y = viewport.y,
         .width = viewport.width,

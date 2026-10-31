@@ -192,9 +192,6 @@ pub const Cfg = struct {
     compare: u32 = COMPARE_ALWAYS,
     depth_write: bool = false,
     blend: bool = false,
-    /// Blended: added to what is there, not laid over it. It is no bit of
-    /// the configuration's: `writeDrawState` says it with the blend.
-    add: bool = false,
 };
 
 pub fn cfgBits(list: *List, cfg: Cfg) void {
@@ -211,26 +208,43 @@ pub fn cfgBits(list: *List, cfg: Cfg) void {
     list.byte(@truncate(value >> 16));
 }
 
-const BLEND_ONE: u32 = 1;
-const BLEND_SRC_ALPHA: u32 = 6;
-const BLEND_INV_SRC_ALPHA: u32 = 7;
-const BLEND_ADD: u32 = 0;
+/// How render target 0 is written: factors and modes as facet.library
+/// numbers them, which is as the hardware does.
+pub const Mixing = struct {
+    src_color: u32 = 1,
+    dst_color: u32 = 0,
+    color_mode: u32 = 0,
+    src_alpha: u32 = 1,
+    dst_alpha: u32 = 0,
+    alpha_mode: u32 = 0,
+    /// Red, green, blue and alpha, 0 to 1.
+    constants: [4]f32 = .{ 0, 0, 0, 0 },
+    /// Red in bit 0: the channels written.
+    channels: u32 = 0xF,
+};
 
-/// Render target 0 blended by the alpha of what is drawn, its alpha too:
-/// laid over what is there, or with `add` added to it.
-pub fn blendAlpha(list: *List, add: bool) void {
+/// Render target 0 blended as `mixing` says.
+pub fn blend(list: *List, mixing: *const Mixing) void {
     list.byte(83);
     list.byte(1);
     list.byte(84);
-    const under = if (add) BLEND_ONE else BLEND_INV_SRC_ALPHA;
-    const factors = under << 4 | BLEND_SRC_ALPHA;
-    list.word(1 << 24 | factors << 16 | BLEND_ADD << 12 | factors << 4 | BLEND_ADD);
+    const color = mixing.dst_color << 4 | mixing.src_color;
+    const alpha = mixing.dst_alpha << 4 | mixing.src_alpha;
+    list.word(1 << 24 | color << 16 | mixing.color_mode << 12 | alpha << 4 | mixing.alpha_mode);
+    list.byte(86);
+    list.word(half(mixing.constants[0]) | half(mixing.constants[1]) << 16);
+    list.word(half(mixing.constants[2]) | half(mixing.constants[3]) << 16);
 }
 
-/// All channels of all targets written: a bit here says not to.
-pub fn colorWriteMasks(list: *List) void {
+fn half(value: f32) u32 {
+    return @as(u16, @bitCast(@as(f16, @floatCast(value))));
+}
+
+/// The channels of render target 0 written, red in bit 0, and all of the
+/// others: a bit here says not to.
+pub fn colorWriteMasks(list: *List, channels: u32) void {
     list.byte(87);
-    list.word(0);
+    list.word(~channels & 0xF);
 }
 
 /// One sample's worth of coverage, in all 4 of its bits.

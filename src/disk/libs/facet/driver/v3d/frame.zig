@@ -62,6 +62,7 @@ pub const DrawState = struct {
     /// The pixels it may touch.
     clip: Area,
     cfg: cl.Cfg = .{},
+    mixing: cl.Mixing = .{},
     /// The viewport, as Vulkan gives it.
     x: f32,
     y: f32,
@@ -78,7 +79,7 @@ pub fn beginBin(list: *List, frame: *const Frame) void {
     list.byte(cl.FLUSH_VCD_CACHE);
     cl.occlusionQueryOff(list);
     list.byte(cl.START_TILE_BINNING);
-    cl.colorWriteMasks(list);
+    cl.colorWriteMasks(list, 0xF);
     cl.sampleState(list);
     list.byte(cl.ZERO_ALL_FLAT_SHADE_FLAGS);
     list.byte(cl.ZERO_ALL_NON_PERSPECTIVE_FLAGS);
@@ -93,7 +94,8 @@ pub fn writeDrawState(list: *List, state: *const DrawState) void {
     const clip = state.clip;
     cl.clipWindow(list, clip.left, clip.top, clip.right - clip.left, clip.bottom - clip.top);
     cl.cfgBits(list, state.cfg);
-    if (state.cfg.blend) cl.blendAlpha(list, state.cfg.add);
+    if (state.cfg.blend) cl.blend(list, &state.mixing);
+    cl.colorWriteMasks(list, state.mixing.channels);
     cl.clipperXy(list, state.width * 32.0, state.height * 32.0);
     cl.clipperZ(list, state.max_depth - state.min_depth, state.min_depth);
     cl.clipperZLimits(list, @min(state.min_depth, state.max_depth), @max(state.min_depth, state.max_depth));

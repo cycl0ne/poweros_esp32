@@ -86,6 +86,11 @@ pub const Blend = enum {
     /// It is added to what is there, as much as its alpha says, and what
     /// comes to more than 255 is 255. All four channels, the alpha as well.
     add,
+    /// As `alpha` and as `add`, with the alpha in the tile left as it is.
+    alpha_keep,
+    add_keep,
+    /// As a `Mixing` says, which goes with it: only for batched draws.
+    general,
 };
 
 /// Which of a triangle's pixels the depth test keeps, against the depth
@@ -331,7 +336,7 @@ pub fn Pipeline(comptime config: Config) type {
             inline fn run(flat: Flat, y: u32, left: u32, right: u32) void {
                 switch (config.blend) {
                     .off => walk.fill(flat.tile.row(y), left, right, flat.pixel),
-                    .alpha, .add => for (flat.tile.row(y)[left..right]) |*pixel| {
+                    else => for (flat.tile.row(y)[left..right]) |*pixel| {
                         pixel.* = blended(flat.pixel, pixel.*);
                     },
                 }
@@ -692,7 +697,135 @@ pub inline fn blendedBy(comptime blend: Blend, color: u32, under: u32) u32 {
             }
             break :add sum;
         },
+        .alpha_keep => (blendedBy(.alpha, color, under) & 0x00FF_FFFF) | (under & 0xFF00_0000),
+        .add_keep => (blendedBy(.add, color, under) & 0x00FF_FFFF) | (under & 0xFF00_0000),
+        .general => @compileError("general mixing goes by a Mixing given as it draws: Mixing.mixed"),
     };
+}
+
+/// What a channel is multiplied by. Numbered as facet.library's are.
+pub const Factor = enum(u4) {
+    zero,
+    one,
+    src_color,
+    one_minus_src_color,
+    dst_color,
+    one_minus_dst_color,
+    src_alpha,
+    one_minus_src_alpha,
+    dst_alpha,
+    one_minus_dst_alpha,
+    constant_color,
+    one_minus_constant_color,
+    constant_alpha,
+    one_minus_constant_alpha,
+    src_alpha_saturate,
+};
+
+/// How the two are put together. Numbered as facet.library's are.
+pub const Operation = enum(u3) { add, subtract, reverse_subtract, min, max };
+
+/// How `Blend.general` mixes.
+pub const Mixing = struct {
+    src_color: Factor = .one,
+    dst_color: Factor = .zero,
+    color_op: Operation = .add,
+    src_alpha: Factor = .one,
+    dst_alpha: Factor = .zero,
+    alpha_op: Operation = .add,
+    /// 0xAARRGGBB.
+    constant: u32 = 0,
+    /// The bits of 0xAARRGGBB written.
+    mask: u32 = 0xFFFF_FFFF,
+
+    /// A pixel's colour put over `under`.
+    pub fn mixed(mixing: *const Mixing, color: u32, under: u32) u32 {
+        @setRuntimeSafety(false);
+        const src_alpha = color >> 24;
+        const dst_alpha = under >> 24;
+        const constant_alpha = mixing.constant >> 24;
+        var out: u32 = 0;
+        inline for ([3]u5{ 0, 8, 16 }) |shift| {
+            const src = color >> shift & 0xFF;
+            const dst = under >> shift & 0xFF;
+            const constant = mixing.constant >> shift & 0xFF;
+            const saturate = @min(src_alpha, 255 - dst_alpha);
+            out |= together(
+                mixing.color_op,
+                src,
+                factorValue(mixing.src_color, src, dst, src_alpha, dst_alpha, constant, constant_alpha, saturate),
+                dst,
+                factorValue(mixing.dst_color, src, dst, src_alpha, dst_alpha, constant, constant_alpha, saturate),
+            ) << shift;
+        }
+        out |= together(
+            mixing.alpha_op,
+            src_alpha,
+            factorValue(mixing.src_alpha, src_alpha, dst_alpha, src_alpha, dst_alpha, constant_alpha, constant_alpha, 255),
+            dst_alpha,
+            factorValue(mixing.dst_alpha, src_alpha, dst_alpha, src_alpha, dst_alpha, constant_alpha, constant_alpha, 255),
+        ) << 24;
+        return (out & mixing.mask) | (under & ~mixing.mask);
+    }
+};
+
+inline fn factorValue(factor: Factor, src: u32, dst: u32, src_alpha: u32, dst_alpha: u32, constant: u32, constant_alpha: u32, saturate: u32) u32 {
+    return switch (factor) {
+        .zero => 0,
+        .one => 255,
+        .src_color => src,
+        .one_minus_src_color => 255 - src,
+        .dst_color => dst,
+        .one_minus_dst_color => 255 - dst,
+        .src_alpha => src_alpha,
+        .one_minus_src_alpha => 255 - src_alpha,
+        .dst_alpha => dst_alpha,
+        .one_minus_dst_alpha => 255 - dst_alpha,
+        .constant_color => constant,
+        .one_minus_constant_color => 255 - constant,
+        .constant_alpha => constant_alpha,
+        .one_minus_constant_alpha => 255 - constant_alpha,
+        .src_alpha_saturate => saturate,
+    };
+}
+
+/// `a` times `b`, each 0 to 255 meaning 0 to 1, rounded.
+inline fn times(a: u32, b: u32) u32 {
+    return (a * b + 128) * 257 >> 16;
+}
+
+inline fn together(operation: Operation, src: u32, src_factor: u32, dst: u32, dst_factor: u32) u32 {
+    return switch (operation) {
+        .add => @min(times(src, src_factor) + times(dst, dst_factor), 255),
+        .subtract => times(src, src_factor) -| times(dst, dst_factor),
+        .reverse_subtract => times(dst, dst_factor) -| times(src, src_factor),
+        .min => @min(src, dst),
+        .max => @max(src, dst),
+    };
+}
+
+test "a mixing's channels" {
+    const mixed = struct {
+        fn of(mixing: Mixing, color: u32, under: u32) u32 {
+            return mixing.mixed(color, under);
+        }
+    }.of;
+    // Multiplied, the alpha kept.
+    try std.testing.expectEqual(@as(u32, 0x8040_0000), mixed(.{ .src_color = .dst_color, .dst_color = .zero, .src_alpha = .zero, .dst_alpha = .one }, 0xFF80_FF00, 0x8080_00FF));
+    // One and one, past the top.
+    try std.testing.expectEqual(@as(u32, 0xFFFF_4030), mixed(.{ .dst_color = .one, .dst_alpha = .one }, 0x80C0_2010, 0x80C0_2020));
+    // Subtracted either way, and the least and the most.
+    try std.testing.expectEqual(@as(u32, 0x0010_0000), mixed(.{ .dst_color = .one, .color_op = .subtract, .src_alpha = .zero }, 0xFF30_0010, 0x0020_0020));
+    try std.testing.expectEqual(@as(u32, 0x0000_0010), mixed(.{ .dst_color = .one, .color_op = .reverse_subtract, .src_alpha = .zero }, 0xFF30_0010, 0x0020_0020));
+    try std.testing.expectEqual(@as(u32, 0x1020_0010), mixed(.{ .color_op = .min, .alpha_op = .min }, 0xFF30_0010, 0x1020_0020));
+    try std.testing.expectEqual(@as(u32, 0xFF30_0020), mixed(.{ .color_op = .max, .alpha_op = .max }, 0xFF30_0010, 0x1020_0020));
+    // By the constant, and by what is there's alpha.
+    try std.testing.expectEqual(@as(u32, 0xFF80_0000), mixed(.{ .src_color = .constant_color, .constant = 0x0080_0000 }, 0xFFFF_FFFF, 0));
+    try std.testing.expectEqual(@as(u32, 0xFF80_8080), mixed(.{ .src_color = .dst_alpha }, 0xFFFF_FFFF, 0x8000_0000));
+    // Saturated: as much of it as there is room for, the alpha whole.
+    try std.testing.expectEqual(@as(u32, 0xFF20_2020), mixed(.{ .src_color = .src_alpha_saturate }, 0xFFFF_FFFF, 0xDF00_0000));
+    // Only the red written.
+    try std.testing.expectEqual(@as(u32, 0x11FF_3344), mixed(.{ .mask = 0x00FF_0000 }, 0xFFFF_FFFF, 0x1122_3344));
 }
 
 /// How much 1 / w may change from a pixel to the next aslant, as a part

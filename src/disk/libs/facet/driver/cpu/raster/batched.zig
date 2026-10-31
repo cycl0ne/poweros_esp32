@@ -77,6 +77,8 @@ pub const State = struct {
     depth_test: ?Compare = null,
     depth_write: bool = false,
     blend: pipeline.Blend = .off,
+    /// How it mixes, with `.general`.
+    mixing: pipeline.Mixing = .{},
     /// The depth pre-pass, where the depth test is less or less or equal,
     /// the depth written and nothing blended; else no pre-pass.
     prepass: bool = false,
@@ -112,6 +114,7 @@ const Shading = struct {
     compare: Compare,
     depth_write: bool,
     blend: pipeline.Blend,
+    mixing: pipeline.Mixing,
 };
 
 /// A triangle set up for the tiles: its planes follow it.
@@ -157,6 +160,7 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .compare = compare,
         .depth_write = depth and state.depth_write,
         .blend = state.blend,
+        .mixing = state.mixing,
     };
     const test_kind: Test = if (!depth) .off else switch (compare) {
         .less => .less,
@@ -477,6 +481,7 @@ const Batch = struct {
         batch.fragments.count = batch.count;
         batch.shading.fragment(&batch.fragments);
         switch (batch.shading.blend) {
+            .general => batch.putMixed(),
             inline else => |blend| batch.put(blend),
         }
         batch.count = 0;
@@ -496,6 +501,19 @@ const Batch = struct {
                 inline for (0..2) |row| @as(*u64, @ptrCast(@alignCast(at + row * tile_size))).* = pairs[row];
             } else inline for (0..4) |i| {
                 if (quad.kept >> i & 1 != 0) at[offset(i)] = pipeline.blendedBy(blend, colors[i], at[offset(i)]);
+            }
+        }
+    }
+
+    /// As `put`, by what the draw's Mixing says.
+    fn putMixed(batch: *Batch) void {
+        @setRuntimeSafety(false);
+        const mixing = &batch.shading.mixing;
+        const pixels: [*]u32 = &batch.tile.buffer.color;
+        for (batch.quads[0..batch.count], batch.colors[0..batch.count]) |quad, *colors| {
+            const at = pixels + @as(u32, quad.y) * tile_size + quad.x;
+            inline for (0..4) |i| {
+                if (quad.kept >> i & 1 != 0) at[offset(i)] = mixing.mixed(colors[i], at[offset(i)]);
             }
         }
     }

@@ -31,6 +31,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdEndRenderPass](#cmdendrenderpass) - Recorded: the render pass ended, and what it drew stored.
 - [CmdPipelineBarrier](#cmdpipelinebarrier) - Recorded: a barrier between the work before it and the work after.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
+- [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
 - [CmdSetScissor](#cmdsetscissor) - Recorded: the scissor, for a pipeline that leaves it to commands.
 - [CmdSetViewport](#cmdsetviewport) - Recorded: the viewport, for a pipeline that leaves it to commands.
 - [CreateBuffer](#createbuffer) - A buffer of so many bytes, for what its usage says.
@@ -1326,6 +1327,63 @@ None known.
 fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_VERTEX, 0, @sizeOf(Matrix), &transform);
 ```
 
+## CmdSetBlendConstants
+
+Recorded: the blend constants, for a pipeline that leaves them to commands.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetBlendConstants(base: *FacetBase, buffer: *facet.CommandBuffer, constants: *const [4]f32) void
+```
+
+**SINCE**
+
+1.12. LVO -368.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `constants` - red, green, blue and alpha, 0 to 1.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it with a pipeline whose blend constants are dynamic mix
+by these.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The constants are copied as the command is recorded.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateGraphicsPipelines`
+
+**EXAMPLES**
+
+```zig
+fb.CmdSetBlendConstants(commands, &.{ 1, 0.5, 0.25, 1 });
+```
+
 ## CmdSetScissor
 
 Recorded: the scissor, for a pipeline that leaves it to commands.
@@ -1939,12 +1997,12 @@ fixed form (`shader.fixedFragment`), or the pipeline is refused with
 What it draws: triangle lists, strips and fans, a restart index ending a
 strip or a fan; filled, one sample a pixel, culled by facing as asked; a
 depth test of any compare, written or not, without stencil, bounds,
-bias or clamp; the colour written whole, replacing what is there, or
-laid over it by its alpha - SRC_ALPHA and ONE_MINUS_SRC_ALPHA, ADD - or
-added to it, as much as its alpha says - SRC_ALPHA and ONE, ADD - and no
-logic op; one viewport and one scissor, given here or set by
-CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
-the others are taken and do nothing). A pipeline with the rasterizer
+bias or clamp; the channels of the write mask written, replacing what is
+there or mixed with it by any blend factors and operation, the alpha by
+its own, and no logic op; one viewport and one scissor, given here or set
+by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
+and blend_constants with CmdSetBlendConstants; the others are taken and
+do nothing). A pipeline with the rasterizer
 discarding, or culling front and back, draws nothing.
 
 `PIPELINE_CREATE_DEPTH_PREPASS` in `flags`, facet.library's own, has the
@@ -1979,12 +2037,14 @@ to last as long as it does, as the program's code does.
 **NOTES**
 
 A depth test on a render pass without depth is no test, as Vulkan has
-it.
+it. On an attachment without alpha, R5G6B5, what is there reads as wholly
+opaque. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
+the alpha's factors the same or ZERO and ONE and the mask whole, cost
+less than any other mixing.
 
 **BUGS**
 
-Blending treats the alpha as it does the colour, laid over the
-attachment's or added to it, whatever the alpha's blend factors say.
+None known.
 
 **SEE ALSO**
 

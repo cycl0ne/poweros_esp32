@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.1 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.2 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -185,6 +185,11 @@ const Options = struct {
     blend: bool = false,
     /// Blended: added to what is there, not laid over it.
     add: bool = false,
+    /// All of how it mixes, in place of `blend` and `add`.
+    mixing: ?facet.PipelineColorBlendAttachmentState = null,
+    constants: [4]f32 = .{ 0, 0, 0, 0 },
+    /// The constants are left to CmdSetBlendConstants.
+    dynamic_constants: bool = false,
     target: Target = .bgra,
     depth: bool = true,
     load: bool = false,
@@ -498,18 +503,18 @@ const Side = struct {
         const input = facet.PipelineVertexInputStateCreateInfo{ .vertex_binding_description_count = 2, .vertex_binding_descriptions = &bindings, .vertex_attribute_description_count = 4, .vertex_attribute_descriptions = &attributes };
         const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = options.topology, .primitive_restart_enable = options.restart };
         const viewports = facet.PipelineViewportStateCreateInfo{};
-        const dynamic_states = [2]facet.DynamicState{ .viewport, .scissor };
-        const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = 2, .dynamic_states = &dynamic_states };
+        const dynamic_states = [3]facet.DynamicState{ .viewport, .scissor, .blend_constants };
+        const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = if (options.dynamic_constants) 3 else 2, .dynamic_states = &dynamic_states };
         const rasterization = facet.PipelineRasterizationStateCreateInfo{ .cull_mode = options.cull, .front_face = options.front };
         const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = options.test_depth, .depth_write_enable = options.write_depth, .depth_compare_op = options.compare };
-        const blend_attachment = facet.PipelineColorBlendAttachmentState{
+        const blend_attachment = options.mixing orelse facet.PipelineColorBlendAttachmentState{
             .blend_enable = options.blend,
             .src_color_blend_factor = if (options.blend) .src_alpha else .one,
             .dst_color_blend_factor = if (options.add) .one else if (options.blend) .one_minus_src_alpha else .zero,
             .src_alpha_blend_factor = if (options.blend) .src_alpha else .one,
             .dst_alpha_blend_factor = if (options.blend) .one_minus_src_alpha else .zero,
         };
-        const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&blend_attachment) };
+        const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&blend_attachment), .blend_constants = options.constants };
         const info = facet.GraphicsPipelineCreateInfo{
             .stage_count = 2,
             .stages = &stages,
@@ -674,6 +679,52 @@ const Cases = struct {
         side.draw(glass_at, 3);
         side.draw(glass_at, 3);
         side.end();
+    }
+    /// Over the far triangle in opaque colour, glass drawn as `mixing` says.
+    fn mixed(comptime mixing: facet.PipelineColorBlendAttachmentState, comptime constants: [4]f32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                try side.use(.{});
+                side.draw(far_at, 3);
+                try side.use(.{ .mixing = mixing, .constants = constants });
+                side.draw(glass_at, 3);
+                side.draw(near_at, 3);
+                side.end();
+            }
+        }.run;
+    }
+    fn mixedDynamic(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{});
+        side.draw(far_at, 3);
+        try side.use(.{ .dynamic_constants = true, .mixing = .{ .blend_enable = true, .src_color_blend_factor = .constant_color, .dst_color_blend_factor = .one_minus_constant_alpha } });
+        side.fb.CmdSetBlendConstants(side.commands.?, &.{ 0.25, 0.75, 0.5, 0.5 });
+        side.draw(glass_at, 3);
+        side.fb.CmdSetBlendConstants(side.commands.?, &.{ 0.75, 0.25, 0.125, 0.25 });
+        side.draw(near_at, 3);
+        side.end();
+    }
+    /// What is there given an alpha of its own, then mixed by it.
+    fn mixedByTheirAlpha(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .mixing = .{ .blend_enable = true, .src_color_blend_factor = .one, .dst_color_blend_factor = .zero, .src_alpha_blend_factor = .src_alpha, .dst_alpha_blend_factor = .zero } });
+        side.draw(glass_at, 3);
+        try side.use(.{ .mixing = .{ .blend_enable = true, .src_color_blend_factor = .dst_alpha, .dst_color_blend_factor = .one_minus_dst_alpha, .src_alpha_blend_factor = .one, .dst_alpha_blend_factor = .one } });
+        side.draw(far_at, 3);
+        side.end();
+    }
+    fn onTargetMixed(comptime target: Target) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{ .target = target });
+                try side.use(.{ .target = target });
+                side.draw(far_at, 3);
+                try side.use(.{ .target = target, .mixing = .{ .blend_enable = true, .src_color_blend_factor = .one_minus_dst_alpha, .dst_color_blend_factor = .dst_alpha } });
+                side.draw(glass_at, 3);
+                side.end();
+            }
+        }.run;
     }
     fn scissor(side: *Side) Failure!void {
         side.begin(.{});
@@ -879,6 +930,24 @@ const cases = [_]Case{
     .{ .name = "no depth attachment", .run = &Cases.noDepthAttachment },
     .{ .name = "blend", .run = &Cases.blend },
     .{ .name = "blend, added", .run = &Cases.blendAdded },
+    .{ .name = "blend, multiplied", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .dst_color, .dst_color_blend_factor = .zero }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, one and one", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .one, .dst_color_blend_factor = .one, .src_alpha_blend_factor = .one, .dst_alpha_blend_factor = .one }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, the alpha kept", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .src_alpha, .dst_color_blend_factor = .one_minus_src_alpha, .src_alpha_blend_factor = .zero, .dst_alpha_blend_factor = .one }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, the alpha replaced", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .src_alpha, .dst_color_blend_factor = .one_minus_src_alpha, .src_alpha_blend_factor = .one, .dst_alpha_blend_factor = .zero }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, added, the alpha kept", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .src_alpha, .dst_color_blend_factor = .one, .src_alpha_blend_factor = .zero, .dst_alpha_blend_factor = .one }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, subtracted", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .one, .dst_color_blend_factor = .one, .color_blend_op = .subtract, .src_alpha_blend_factor = .zero, .dst_alpha_blend_factor = .one }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, subtracted the other way", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .one, .dst_color_blend_factor = .one, .color_blend_op = .reverse_subtract, .src_alpha_blend_factor = .zero, .dst_alpha_blend_factor = .one }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, the least", .run = Cases.mixed(.{ .blend_enable = true, .color_blend_op = .min, .alpha_blend_op = .min }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, the most", .run = Cases.mixed(.{ .blend_enable = true, .color_blend_op = .max, .alpha_blend_op = .max }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, by their colour", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .one_minus_dst_color, .dst_color_blend_factor = .src_color }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, by a constant", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .constant_color, .dst_color_blend_factor = .one_minus_constant_color, .src_alpha_blend_factor = .constant_alpha, .dst_alpha_blend_factor = .one_minus_constant_alpha }, .{ 0.25, 0.5, 0.75, 0.5 }) },
+    .{ .name = "blend, saturated", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .src_alpha_saturate, .dst_color_blend_factor = .one }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "blend, constants set by a command", .run = &Cases.mixedDynamic },
+    .{ .name = "blend, by their alpha", .run = &Cases.mixedByTheirAlpha },
+    .{ .name = "written: red alone", .run = Cases.mixed(.{ .color_write_mask = facet.COLOR_COMPONENT_R }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "written: green and alpha", .run = Cases.mixed(.{ .color_write_mask = facet.COLOR_COMPONENT_G | facet.COLOR_COMPONENT_A }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "written: nothing", .run = Cases.mixed(.{ .color_write_mask = 0 }, .{ 0, 0, 0, 0 }) },
+    .{ .name = "written: blue, blended", .run = Cases.mixed(.{ .blend_enable = true, .src_color_blend_factor = .src_alpha, .dst_color_blend_factor = .one_minus_src_alpha, .color_write_mask = facet.COLOR_COMPONENT_B }, .{ 0, 0, 0, 0 }) },
     .{ .name = "scissor", .run = &Cases.scissor },
     .{ .name = "viewport", .run = &Cases.viewport },
     .{ .name = "depth range", .run = &Cases.depthRange },
@@ -909,6 +978,8 @@ const cases = [_]Case{
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
     .{ .name = "drawn in 565", .target = .rgb565, .run = Cases.onTarget(.rgb565) },
+    .{ .name = "mixed by their alpha in rgba", .target = .rgba, .run = Cases.onTargetMixed(.rgba) },
+    .{ .name = "mixed by their alpha in 565", .target = .rgb565, .run = Cases.onTargetMixed(.rgb565) },
 };
 
 /// How far apart two pixels are, in the channel furthest apart: in steps of

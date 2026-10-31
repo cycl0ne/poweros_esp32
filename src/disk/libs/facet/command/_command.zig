@@ -167,6 +167,12 @@ pub const SetScissor = extern struct {
     scissor: facet.Rect2D,
 };
 
+pub const SetBlendConstants = extern struct {
+    pub const op: _stream.Op = .set_blend_constants;
+    head: Head = .{ .op = op },
+    constants: [4]f32,
+};
+
 pub const Draw = extern struct {
     pub const op: _stream.Op = .draw;
     head: Head = .{ .op = op },

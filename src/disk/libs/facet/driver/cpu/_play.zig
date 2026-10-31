@@ -59,6 +59,9 @@ pub const Player = struct {
     index_type: facet.IndexType = .uint16,
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
+    blend_constants: [4]f32 = @splat(0),
+    /// The colour attachment has no alpha.
+    target_opaque: bool = false,
     /// The sets and the push constants as bound, and the copy of them in
     /// the frame's memory the draws since they last changed read; null
     /// until a draw makes one.
@@ -121,6 +124,7 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
         },
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
+        .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
         .draw => if (player.drawing) {
             const command = _stream.as(_command.Draw, head);
             _draw.draw(queue, command.first_vertex, command.vertex_count, null, command.first_instance, command.instance_count);
@@ -168,6 +172,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
     endRenderPass(player);
     const framebuffer = command.framebuffer;
     const surface = surfaceOf(framebuffer) orelse return;
+    player.target_opaque = surface.format == .rgb565;
     const render_pass = command.render_pass;
     // The render area, cut to the framebuffer.
     const offset = command.area.offset;

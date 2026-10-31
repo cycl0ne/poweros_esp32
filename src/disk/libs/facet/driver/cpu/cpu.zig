@@ -191,11 +191,8 @@ fn makePipeline(pipeline: *Pipeline) facet.Result {
         .front = if (pipeline.front == .clockwise) .clockwise else .counter_clockwise,
         // The rasterizer's compares are numbered as facet.library's are.
         .depth_test = if (pipeline.depth_test) |compare| @enumFromInt(@intFromEnum(compare)) else null,
-        .blend = switch (pipeline.blend) {
-            .off => .off,
-            .alpha => .alpha,
-            .add => .add,
-        },
+        .blend = _draw.blendOf(&pipeline.mixing),
+        .mixing = _draw.mixingOf(&pipeline.mixing),
     };
     pipeline.driver = made;
     return .success;

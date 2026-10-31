@@ -50,12 +50,12 @@ const _instance = @import("../instance/_instance.zig");
 /// What it draws: triangle lists, strips and fans, a restart index ending a
 /// strip or a fan; filled, one sample a pixel, culled by facing as asked; a
 /// depth test of any compare, written or not, without stencil, bounds,
-/// bias or clamp; the colour written whole, replacing what is there, or
-/// laid over it by its alpha - SRC_ALPHA and ONE_MINUS_SRC_ALPHA, ADD - or
-/// added to it, as much as its alpha says - SRC_ALPHA and ONE, ADD - and no
-/// logic op; one viewport and one scissor, given here or set by
-/// CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
-/// the others are taken and do nothing). A pipeline with the rasterizer
+/// bias or clamp; the channels of the write mask written, replacing what is
+/// there or mixed with it by any blend factors and operation, the alpha by
+/// its own, and no logic op; one viewport and one scissor, given here or set
+/// by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
+/// and blend_constants with CmdSetBlendConstants; the others are taken and
+/// do nothing). A pipeline with the rasterizer
 /// discarding, or culling front and back, draws nothing.
 ///
 /// `PIPELINE_CREATE_DEPTH_PREPASS` in `flags`, facet.library's own, has the
@@ -87,11 +87,13 @@ const _instance = @import("../instance/_instance.zig");
 ///
 /// NOTES:
 /// A depth test on a render pass without depth is no test, as Vulkan has
-/// it.
+/// it. On an attachment without alpha, R5G6B5, what is there reads as wholly
+/// opaque. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
+/// the alpha's factors the same or ZERO and ONE and the mask whole, cost
+/// less than any other mixing.
 ///
 /// BUGS:
-/// Blending treats the alpha as it does the colour, laid over the
-/// attachment's or added to it, whatever the alpha's blend factors say.
+/// None known.
 ///
 /// SEE ALSO:
 /// `CreateShaderModule`, `CreatePipelineLayout`, `CreateRenderPass`, `CmdBindPipeline`, `DestroyPipeline`
@@ -180,7 +182,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .depth_test = null,
         .depth_write = false,
         .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0,
-        .blend = .off,
+        .mixing = .{},
         .viewport = null,
         .scissor = null,
     };
@@ -237,16 +239,21 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (blend.logic_op_enable or blend.attachment_count > 1) return .error_feature_not_present;
         if (blend.attachment_count == 1) {
             const attachment = blend.attachments.?[0];
-            if (attachment.color_write_mask & facet.COLOR_COMPONENT_ALL != facet.COLOR_COMPONENT_ALL) return .error_feature_not_present;
+            made.mixing.mask = attachment.color_write_mask & facet.COLOR_COMPONENT_ALL;
             if (attachment.blend_enable) {
-                if (attachment.src_color_blend_factor != .src_alpha or attachment.color_blend_op != .add or attachment.alpha_blend_op != .add) return .error_feature_not_present;
-                made.blend = switch (attachment.dst_color_blend_factor) {
-                    .one_minus_src_alpha => .alpha,
-                    .one => .add,
-                    else => return .error_feature_not_present,
-                };
+                const factors = [4]facet.BlendFactor{ attachment.src_color_blend_factor, attachment.dst_color_blend_factor, attachment.src_alpha_blend_factor, attachment.dst_alpha_blend_factor };
+                for (factors) |factor| if (@intFromEnum(factor) > @intFromEnum(facet.BlendFactor.src_alpha_saturate)) return .error_feature_not_present;
+                if (@intFromEnum(attachment.color_blend_op) > @intFromEnum(facet.BlendOp.max) or @intFromEnum(attachment.alpha_blend_op) > @intFromEnum(facet.BlendOp.max)) return .error_feature_not_present;
+                made.mixing.enabled = true;
+                made.mixing.src_color = factors[0];
+                made.mixing.dst_color = factors[1];
+                made.mixing.color_op = attachment.color_blend_op;
+                made.mixing.src_alpha = factors[2];
+                made.mixing.dst_alpha = factors[3];
+                made.mixing.alpha_op = attachment.alpha_blend_op;
             }
         }
+        made.mixing.constants = blend.blend_constants;
     }
 
     // The viewport and the scissor, unless commands set them.
@@ -256,6 +263,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (dynamic.dynamic_states) |states| for (states[0..dynamic.dynamic_state_count]) |state| switch (state) {
             .viewport => dynamic_viewport = true,
             .scissor => dynamic_scissor = true,
+            .blend_constants => made.mixing.constants = null,
             else => {},
         };
     }

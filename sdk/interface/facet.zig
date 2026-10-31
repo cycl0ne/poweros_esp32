@@ -105,6 +105,7 @@ pub const LVO = struct {
     pub const AcquireNextImage = libraries.lvo(88);
     pub const QueuePresent = libraries.lvo(89);
     pub const CreateWindowSurface = libraries.lvo(90);
+    pub const CmdSetBlendConstants = libraries.lvo(91);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -197,6 +198,7 @@ pub const Fn = struct {
     pub const AcquireNextImage = *const fn (*FacetBase, *facet.Device, *facet.Swapchain, u64, ?*facet.Semaphore, ?*facet.Fence, *u32) callconv(.c) facet.Result;
     pub const QueuePresent = *const fn (*FacetBase, *facet.Queue, *const facet.PresentInfo) callconv(.c) facet.Result;
     pub const CreateWindowSurface = *const fn (*FacetBase, *facet.Instance, *const facet.WindowSurfaceCreateInfo, *?*facet.Surface) callconv(.c) facet.Result;
+    pub const CmdSetBlendConstants = *const fn (*FacetBase, *facet.CommandBuffer, *const [4]f32) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -656,5 +658,10 @@ pub const FacetBase = opaque {
     /// to `surface`.
     pub fn CreateWindowSurface(self: *FacetBase, instance: *facet.Instance, info: *const facet.WindowSurfaceCreateInfo, surface: *?*facet.Surface) facet.Result {
         return libraries.call(self, LVO.CreateWindowSurface, Fn.CreateWindowSurface, .{ instance, info, surface });
+    }
+
+    /// Recorded: the blend constants, for a pipeline that leaves them to commands.
+    pub fn CmdSetBlendConstants(self: *FacetBase, buffer: *facet.CommandBuffer, constants: *const [4]f32) void {
+        return libraries.call(self, LVO.CmdSetBlendConstants, Fn.CmdSetBlendConstants, .{ buffer, constants });
     }
 };

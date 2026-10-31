@@ -99,6 +99,7 @@ const GetSwapchainImages = @import("swapchain/getswapchainimages.zig").GetSwapch
 const AcquireNextImage = @import("swapchain/acquirenextimage.zig").AcquireNextImage;
 const QueuePresent = @import("swapchain/queuepresent.zig").QueuePresent;
 const CreateWindowSurface = @import("surface/createwindowsurface.zig").CreateWindowSurface;
+const CmdSetBlendConstants = @import("command/cmdsetblendconstants.zig").CmdSetBlendConstants;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -211,6 +212,7 @@ const contract_files = [_][]const u8{
     @embedFile("swapchain/acquirenextimage.zig"),
     @embedFile("swapchain/queuepresent.zig"),
     @embedFile("surface/createwindowsurface.zig"),
+    @embedFile("command/cmdsetblendconstants.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -474,6 +476,9 @@ fn lvoQueuePresent(base: *FacetBase, queue: *facet.Queue, info: *const facet.Pre
 fn lvoCreateWindowSurface(base: *FacetBase, instance: *facet.Instance, info: *const facet.WindowSurfaceCreateInfo, surface: *?*facet.Surface) callconv(.c) facet.Result {
     return CreateWindowSurface(base, instance, info, surface);
 }
+fn lvoCmdSetBlendConstants(base: *FacetBase, buffer: *facet.CommandBuffer, constants: *const [4]f32) callconv(.c) void {
+    return CmdSetBlendConstants(base, buffer, constants);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -569,6 +574,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoAcquireNextImage),
     vec(lvoQueuePresent),
     vec(lvoCreateWindowSurface),
+    vec(lvoCmdSetBlendConstants),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
