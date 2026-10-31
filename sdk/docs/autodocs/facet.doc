@@ -2318,9 +2318,20 @@ facet.library/WaitForFences
 	  the lazily allocated type.
 	- Anything else of a colour format, one level: rows.
 
-	Images are two-dimensional, with one layer and one sample a pixel, up
-	to 8192 wide and high. One both SAMPLED and COLOR_ATTACHMENT is not
-	made: a texture and an attachment lie differently.
+	Images have one sample a pixel, and are up to 8192 wide and high. One both
+	SAMPLED and COLOR_ATTACHMENT is not made: a texture and an attachment lie
+	differently.
+
+	A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, as deep
+	as a power of two up to 256, with one level. IMAGE_CREATE_CUBE_COMPATIBLE
+	says a view of type cube will be made: of a square image of 6 layers or
+	more.
+
+	A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
+	R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
+	It is kept as R8G8B8A8, unpacked as it is copied in: it takes that one's
+	memory, and what is in a float image above 1 or below 0 is lost. There is no
+	copying such an image out, nor another image into it, by CmdCopyImage.
 
    CONTEXT
 	- Waits: no.
@@ -2369,14 +2380,19 @@ facet.library/WaitForFences
 
    RESULT
 	`success`; `error_format_not_supported` for a view facet.library does
-	not make - of another format than the image's, of another type than
-	2D, with channels swizzled, of levels the image has not got, or of an
-	image not yet bound into memory; `error_out_of_host_memory`.
+	not make - of another format than the image's, of a type the image is
+	not for, with channels swizzled, of levels or layers the image has not
+	got, or of an image not yet bound into memory; `error_out_of_host_memory`.
 
    BEHAVIOR
 	A view of a texture samples its levels from `base_mip_level` on, as a
 	texture of its own whose first level is that one. A view of an
 	attachment is all of it.
+
+	Of type `2d` it is one layer, of a texture with any number of them. Of type
+	`2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;
+	`cube` is 6 layers of an image made IMAGE_CREATE_CUBE_COMPATIBLE, for
+	`texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`.
 
    CONTEXT
 	- Waits: no.
@@ -4127,6 +4143,10 @@ facet.library/WaitForFences
 	  sampled, filtered, in optimal tiling; copied.
 	- D16_UNORM: a depth attachment, in optimal tiling.
 	- R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
+	- BC1, BC2, BC3, R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT,
+	  B10G11R11_UFLOAT and E5B9G9R9_UFLOAT: sampled, filtered, in optimal
+	  tiling, and copied into. They are kept as 8 bits a channel, floats cut to
+	  0 to 1: they save no memory and hold no more than B8G8R8A8.
 
 	An image to be sampled has sides that are powers of two.
 

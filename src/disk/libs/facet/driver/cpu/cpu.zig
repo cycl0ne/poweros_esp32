@@ -72,6 +72,8 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
             .max_image_dimension_2d = _instance.max_image_dimension,
             .max_framebuffer_width = _instance.max_image_dimension,
             .max_framebuffer_height = _instance.max_image_dimension,
+            .max_image_dimension_3d = _instance.max_image_dimension_3d,
+            .max_image_array_layers = _instance.max_image_array_layers,
             .max_color_attachments = 1,
             .max_vertex_input_bindings = _instance.max_vertex_input_bindings,
             .max_vertex_input_attributes = _instance.max_vertex_input_attributes,
@@ -114,7 +116,17 @@ fn formatProperties(format: facet.Format) facet.FormatProperties {
         },
         .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer, .optimal_tiling_features = attachment | transfer | sampled, .buffer_features = 0 },
         .d16_unorm, .s8_uint, .d16_unorm_s8_uint => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, .buffer_features = 0 },
-        .r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat, .r32g32b32a32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER },
+        .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc2_unorm_block, .bc3_unorm_block, .r16g16b16a16_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,
+            .buffer_features = 0,
+        },
+        .r32g32b32a32_sfloat => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,
+            .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER,
+        },
+        .r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER },
         else => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = 0 },
     };
 }

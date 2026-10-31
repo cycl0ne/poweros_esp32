@@ -66,8 +66,7 @@ pub fn BindImageMemory(base: *FacetBase, device: *facet.Device, image: *facet.Im
     made.offset = offset;
     made.data = _memory.at(block, offset);
     if (made.kind == .texture) {
-        const kept = _image.textureFormat(made.format).?;
-        made.texels = facet.texture.Texture.init(kept, made.width, made.height, made.levels, made.data.?) catch unreachable;
+        made.texels = _image.texelsOver(made, made.data.?) catch unreachable;
     }
     return .success;
 }

@@ -25,6 +25,13 @@ const OP_ADD_NOP: u64 = 187;
 const OP_ADD_LDVPMV_IN: u64 = 188;
 const OP_ADD_STVPMV: u64 = 190;
 const OP_ADD_MOV: u64 = 249;
+/// 1 / a: the form of LDVPMV_IN's opcode with this read address. The result
+/// is in its register from the instruction after next, the hardware waiting.
+const OP_ADD_RECIP: u64 = 188;
+const RECIP_FORM: u64 = 32;
+/// fmax of two floats' sizes: their unpack fields say abs, and the higher
+/// register first makes it fmax, not fmin.
+const OP_ADD_FMAX_ABS: u64 = 128;
 /// fadd of two floats as they are: 01 in the unpack fields of each.
 const OP_ADD_FADD: u64 = 5;
 /// The same for vfpack, two floats into a word of two half-floats.
@@ -50,6 +57,9 @@ const WADDR_NOP: u64 = 6;
 pub const WADDR_TLB: u64 = 7;
 pub const WADDR_TMUS: u64 = 33;
 pub const WADDR_TMUT: u64 = 34;
+pub const WADDR_TMUR: u64 = 35;
+pub const WADDR_TMUI: u64 = 36;
+pub const WADDR_TMUSCM: u64 = 40;
 
 const add_nop: u64 = MA | WADDR_NOP << WADDR_A_SHIFT | OP_ADD_NOP << OP_ADD_SHIFT;
 const mul_nop: u64 = OP_MUL_NOP | MM | WADDR_NOP << WADDR_M_SHIFT | MUL_NOP_FORM << RADDR_D_SHIFT;
@@ -125,6 +135,18 @@ pub fn fadd(to: Rf, a: Rf, b: Rf) u64 {
     const high = @max(a, b);
     return mul_nop | @as(u64, to) << WADDR_A_SHIFT | OP_ADD_FADD << OP_ADD_SHIFT |
         @as(u64, low) << RADDR_A_SHIFT | high;
+}
+
+/// The larger of two floats' sizes. The two have to be different registers.
+pub fn fmaxAbs(to: Rf, a: Rf, b: Rf) u64 {
+    return mul_nop | @as(u64, to) << WADDR_A_SHIFT | OP_ADD_FMAX_ABS << OP_ADD_SHIFT |
+        @as(u64, @max(a, b)) << RADDR_A_SHIFT | @min(a, b);
+}
+
+/// 1 / `from`.
+pub fn recip(to: Rf, from: Rf) u64 {
+    return mul_nop | @as(u64, to) << WADDR_A_SHIFT | OP_ADD_RECIP << OP_ADD_SHIFT |
+        @as(u64, from) << RADDR_A_SHIFT | RECIP_FORM;
 }
 
 /// Two floats, as two half-floats in one word, to a magic address.
@@ -267,6 +289,58 @@ const texture_code = varying(4) ++ varying(5) ++ sampled(4, 5) ++ [_]u64{
 } ++ end_of_program;
 
 pub const texture_fragment = Fragment{ .code = &texture_code, .varyings = 2, .uniforms = 2 };
+
+/// What is left of a sample once it is started by S: the last section, and the
+/// two words read and passed on as they are.
+const sample_end = last_section ++ [_]u64{
+    ldtmu(10),
+    ldtmu(11),
+    movMagic(WADDR_TLB, 10),
+    movMagic(WADDR_TLB, 11),
+} ++ end_of_program;
+
+/// A layer of an array: varyings s, t and the layer, which the TMU takes as a
+/// float, as Mesa gives it.
+const array_code = varying(4) ++ varying(5) ++ varying(6) ++ [_]u64{
+    movMagic(WADDR_TMUT, 5),
+    movMagic(WADDR_TMUI, 6),
+    wrtmuc,
+    wrtmuc,
+    movMagic(WADDR_TMUS, 4),
+} ++ sample_end;
+
+pub const array_fragment = Fragment{ .code = &array_code, .varyings = 3, .uniforms = 2 };
+
+/// A 3D texture: varyings s, t and r.
+const volume_code = varying(4) ++ varying(5) ++ varying(6) ++ [_]u64{
+    movMagic(WADDR_TMUT, 5),
+    movMagic(WADDR_TMUR, 6),
+    wrtmuc,
+    wrtmuc,
+    movMagic(WADDR_TMUS, 4),
+} ++ sample_end;
+
+pub const volume_fragment = Fragment{ .code = &volume_code, .varyings = 3, .uniforms = 2 };
+
+/// A cube map: varyings x, y and z. The TMU takes a direction whose largest
+/// part is 1 (Mesa's nir_normalize_cubemap_coords), so it is divided by that.
+const cube_code = varying(4) ++ varying(5) ++ varying(6) ++ [_]u64{
+    fmaxAbs(12, 4, 5),
+    fmaxAbs(12, 12, 6),
+    recip(13, 12),
+    nop,
+    nop,
+    fmul(4, 4, 13),
+    fmul(5, 5, 13),
+    fmul(6, 6, 13),
+    movMagic(WADDR_TMUT, 5),
+    movMagic(WADDR_TMUR, 6),
+    wrtmuc,
+    wrtmuc,
+    movMagic(WADDR_TMUSCM, 4),
+} ++ sample_end;
+
+pub const cube_fragment = Fragment{ .code = &cube_code, .varyings = 3, .uniforms = 2 };
 
 /// A texture as `texture_code` has it, times the colour of the vertices:
 /// varyings s, t, red, green, blue, alpha.

@@ -87,6 +87,10 @@ pub const Texture = struct {
     /// `levels` undefined.
     layout: [most_levels]Level,
     memory: [*]u8,
+    /// An array's layers, a cube's faces, or a 3D texture's slices: each
+    /// a texture's worth, `layer_bytes` from the one before.
+    layer_count: u32 = 1,
+    layer_bytes: u32 = 0,
 
     pub const Error = error{BadSize};
 
@@ -153,6 +157,104 @@ pub const Texture = struct {
         };
     }
 
+    /// Texel (x, y) of a level of a layer set, in the texture's format.
+    pub fn putLayer(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, texel: u32) void {
+        const at = texture.memory + @as(usize, layer) * texture.layer_bytes + texture.layout[lod].offset(texture.format, x, y);
+        switch (texture.format) {
+            .rgba8888 => @as(*u64, @ptrCast(@alignCast(at))).* = spread(texel),
+            .rgb565 => @as(*u16, @ptrCast(@alignCast(at))).* = @truncate(texel),
+        }
+    }
+
+    /// Texel (x, y) of a level of a layer, as `putLayer` was given it.
+    pub fn peekLayer(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
+        const at = texture.memory + @as(usize, layer) * texture.layer_bytes + texture.layout[lod].offset(texture.format, x, y);
+        return switch (texture.format) {
+            .rgba8888 => gather(@as(*const u64, @ptrCast(@alignCast(at))).*),
+            .rgb565 => @as(*const u16, @ptrCast(@alignCast(at))).*,
+        };
+    }
+
+    /// A texel of a layer as 0xAARRGGBB, whatever its format.
+    fn colorAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
+        const texel = texture.peekLayer(layer, lod, x, y);
+        return switch (texture.format) {
+            .rgba8888 => texel,
+            .rgb565 => expanded565(texel),
+        };
+    }
+
+    /// The colour at (u, v) of a level of a layer. A pixel at a time and by
+    /// floats: what `textured` does for a texture of one layer, far faster.
+    pub fn sampleLayer(texture: *const Texture, sampling: Sampling, layer: u32, lod: u32, u: f32, v: f32) u32 {
+        const across = texture.width(lod);
+        const down = texture.height(lod);
+        const x = sane(u) * @as(f32, @floatFromInt(across));
+        const y = sane(v) * @as(f32, @floatFromInt(down));
+        if (sampling.filter == .nearest) {
+            return texture.colorAt(layer, lod, placeIn(sampling.address, @intFromFloat(@floor(x)), across), placeIn(sampling.address, @intFromFloat(@floor(y)), down));
+        }
+        const low_x = @floor(x - 0.5);
+        const low_y = @floor(y - 0.5);
+        const left: i32 = @intFromFloat(low_x);
+        const top: i32 = @intFromFloat(low_y);
+        const x0 = placeIn(sampling.address, left, across);
+        const x1 = placeIn(sampling.address, left + 1, across);
+        const y0 = placeIn(sampling.address, top, down);
+        const y1 = placeIn(sampling.address, top + 1, down);
+        const part_x = x - 0.5 - low_x;
+        const upper = mixColors(texture.colorAt(layer, lod, x0, y0), texture.colorAt(layer, lod, x1, y0), part_x);
+        const lower = mixColors(texture.colorAt(layer, lod, x0, y1), texture.colorAt(layer, lod, x1, y1), part_x);
+        return mixColors(upper, lower, y - 0.5 - low_y);
+    }
+
+    /// A 3D texture's colour at (u, v, r), each 0 to 1 across it.
+    pub fn sampleVolume(texture: *const Texture, sampling: Sampling, u: f32, v: f32, r: f32) u32 {
+        const z = sane(r) * @as(f32, @floatFromInt(texture.layer_count));
+        if (sampling.filter == .nearest) return texture.sampleLayer(sampling, placeIn(sampling.address, @intFromFloat(@floor(z)), texture.layer_count), 0, u, v);
+        const low = @floor(z - 0.5);
+        const first: i32 = @intFromFloat(low);
+        const near = texture.sampleLayer(sampling, placeIn(sampling.address, first, texture.layer_count), 0, u, v);
+        const far = texture.sampleLayer(sampling, placeIn(sampling.address, first + 1, texture.layer_count), 0, u, v);
+        return mixColors(near, far, z - 0.5 - low);
+    }
+
+    /// A cube's colour the way (x, y, z) looks. Filtered, what lies past
+    /// a face's edge is read from the face next to it, as a GPU has it.
+    pub fn sampleCube(texture: *const Texture, sampling: Sampling, lod: u32, x: f32, y: f32, z: f32) u32 {
+        const hit = cubeHit(sane(x), sane(y), sane(z));
+        var edged = sampling;
+        edged.address = .clamp;
+        if (sampling.filter == .nearest) return texture.sampleLayer(edged, hit.face, lod, hit.u, hit.v);
+        const size: i32 = @intCast(texture.width(lod));
+        const across = hit.u * @as(f32, @floatFromInt(size)) - 0.5;
+        const down = hit.v * @as(f32, @floatFromInt(size)) - 0.5;
+        const left: i32 = @intFromFloat(@floor(across));
+        const top: i32 = @intFromFloat(@floor(down));
+        const part_x = across - @floor(across);
+        const upper = mixColors(texture.cubeTexel(hit.face, lod, left, top), texture.cubeTexel(hit.face, lod, left + 1, top), part_x);
+        const lower = mixColors(texture.cubeTexel(hit.face, lod, left, top + 1), texture.cubeTexel(hit.face, lod, left + 1, top + 1), part_x);
+        return mixColors(upper, lower, down - @floor(down));
+    }
+
+    /// Texel (x, y) of a face, or if that is past its edge, the one of the
+    /// next face in the same direction.
+    fn cubeTexel(texture: *const Texture, face: u32, lod: u32, x: i32, y: i32) u32 {
+        const size: i32 = @intCast(texture.width(lod));
+        if (x >= 0 and y >= 0 and x < size and y < size) return texture.colorAt(face, lod, @intCast(x), @intCast(y));
+        const whole: f32 = @floatFromInt(size);
+        const towards = cubeDirection(face, (@as(f32, @floatFromInt(x)) + 0.5) / whole * 2 - 1, (@as(f32, @floatFromInt(y)) + 0.5) / whole * 2 - 1);
+        const next = cubeHit(towards[0], towards[1], towards[2]);
+        return texture.colorAt(next.face, lod, placeIn(.clamp, @intFromFloat(@floor(next.u * whole)), texture.width(lod)), placeIn(.clamp, @intFromFloat(@floor(next.v * whole)), texture.width(lod)));
+    }
+
+    /// The layer of an array `r` falls on: the nearest there is.
+    pub fn layerNear(texture: *const Texture, r: f32) u32 {
+        const whole = @floor(sane(r) + 0.5);
+        if (whole < 0) return 0;
+        return @min(@as(u32, @intFromFloat(whole)), texture.layer_count - 1);
+    }
+
     /// A level from a picture kept row by row, `pitch` bytes from one row
     /// to the next, in the texture's format.
     pub fn load(texture: *Texture, lod: u32, pixels: [*]const u8, pitch: usize) void {
@@ -168,6 +270,86 @@ pub const Texture = struct {
         }
     }
 };
+
+/// A coordinate that a float's slip cannot make a NaN or too large for a
+/// whole number.
+fn sane(value: f32) f32 {
+    if (!(value > -1_000_000)) return if (value != value) 0 else -1_000_000;
+    return @min(value, 1_000_000);
+}
+
+/// Where a whole coordinate lands in a side of `size`.
+fn placeIn(address: Address, at: i32, size: u32) u32 {
+    const whole: i32 = @intCast(size);
+    return switch (address) {
+        .wrap => @intCast(@mod(at, whole)),
+        .clamp => @intCast(std.math.clamp(at, 0, whole - 1)),
+    };
+}
+
+/// 16 bits of colour as 0xFFRRGGBB, each channel's top bits over its bottom.
+fn expanded565(texel: u32) u32 {
+    const r = texel >> 11 & 0x1F;
+    const g = texel >> 5 & 0x3F;
+    const b = texel & 0x1F;
+    return 0xFF00_0000 | (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
+}
+
+/// Two 0xAARRGGBB, `part` of the way from one to the other.
+fn mixColors(a: u32, b: u32, part: f32) u32 {
+    const by: u32 = @intFromFloat(part * 256);
+    var made: u32 = 0;
+    inline for ([4]u5{ 0, 8, 16, 24 }) |shift| {
+        const from = a >> shift & 0xFF;
+        const to = b >> shift & 0xFF;
+        made |= ((from * (256 - by) + to * by + 128) >> 8) << shift;
+    }
+    return made;
+}
+
+/// Which face of a cube a direction looks at, and where on it, 0 to 1: the
+/// faces +x, -x, +y, -y, +z, -z, as Vulkan has them.
+pub const CubeHit = struct { face: u32, u: f32, v: f32 };
+
+pub fn cubeHit(x: f32, y: f32, z: f32) CubeHit {
+    const ax = @abs(x);
+    const ay = @abs(y);
+    const az = @abs(z);
+    var face: u32 = undefined;
+    var sc: f32 = undefined;
+    var tc: f32 = undefined;
+    var ma: f32 = undefined;
+    if (ax >= ay and ax >= az) {
+        face = if (x >= 0) 0 else 1;
+        sc = if (x >= 0) -z else z;
+        tc = -y;
+        ma = ax;
+    } else if (ay >= az) {
+        face = if (y >= 0) 2 else 3;
+        sc = x;
+        tc = if (y >= 0) z else -z;
+        ma = ay;
+    } else {
+        face = if (z >= 0) 4 else 5;
+        sc = if (z >= 0) x else -x;
+        tc = -y;
+        ma = az;
+    }
+    if (ma == 0) return .{ .face = face, .u = 0.5, .v = 0.5 };
+    return .{ .face = face, .u = (sc / ma + 1) / 2, .v = (tc / ma + 1) / 2 };
+}
+
+/// The way through (a, b), each -1 to 1 across a face: what `cubeHit` undoes.
+fn cubeDirection(face: u32, a: f32, b: f32) [3]f32 {
+    return switch (face) {
+        0 => .{ 1, -b, -a },
+        1 => .{ -1, -b, a },
+        2 => .{ a, 1, b },
+        3 => .{ a, -1, -b },
+        4 => .{ a, -b, 1 },
+        else => .{ -a, -b, -1 },
+    };
+}
 
 /// A texture's size, checked.
 const Sizes = struct {
@@ -209,6 +391,37 @@ pub inline fn levelFor(texture: *const Texture, du_dx: f32, dv_dx: f32, du_dy: f
     if (exponent <= 0) return 0;
     const chosen: u32 = @intCast((exponent + 1) >> 1);
     return @min(chosen, texture.levels - 1);
+}
+
+test "a cube's faces, as Vulkan has them" {
+    const testing = std.testing;
+    const eps = 1e-6;
+    for (0..6) |face| {
+        const towards = cubeDirection(@intCast(face), 0.5, -0.25);
+        const back = cubeHit(towards[0], towards[1], towards[2]);
+        try testing.expectEqual(@as(u32, @intCast(face)), back.face);
+        try testing.expectApproxEqAbs(@as(f32, 0.75), back.u, eps);
+        try testing.expectApproxEqAbs(@as(f32, 0.375), back.v, eps);
+    }
+    var hit = cubeHit(1, 0.5, -0.5);
+    try testing.expectEqual(@as(u32, 0), hit.face);
+    try testing.expectApproxEqAbs(@as(f32, 0.75), hit.u, eps);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), hit.v, eps);
+    hit = cubeHit(-1, 0, 0.5);
+    try testing.expectEqual(@as(u32, 1), hit.face);
+    try testing.expectApproxEqAbs(@as(f32, 0.75), hit.u, eps);
+    hit = cubeHit(0.5, 2, 1);
+    try testing.expectEqual(@as(u32, 2), hit.face);
+    try testing.expectApproxEqAbs(@as(f32, 0.75), hit.v, eps);
+    hit = cubeHit(0.5, -1, 0.5);
+    try testing.expectEqual(@as(u32, 3), hit.face);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), hit.v, eps);
+    hit = cubeHit(0.5, 0, 1);
+    try testing.expectEqual(@as(u32, 4), hit.face);
+    try testing.expectApproxEqAbs(@as(f32, 0.75), hit.u, eps);
+    hit = cubeHit(0.5, 0, -1);
+    try testing.expectEqual(@as(u32, 5), hit.face);
+    try testing.expectApproxEqAbs(@as(f32, 0.25), hit.u, eps);
 }
 
 /// A level of a texture as a sample reads it.

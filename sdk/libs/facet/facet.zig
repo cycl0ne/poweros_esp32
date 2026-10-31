@@ -157,6 +157,9 @@ pub const PhysicalDeviceLimits = extern struct {
     max_image_dimension_2d: u32,
     max_framebuffer_width: u32,
     max_framebuffer_height: u32,
+    /// The deepest 3D image, and the layers of an array.
+    max_image_dimension_3d: u32,
+    max_image_array_layers: u32,
     /// The colour attachments of a subpass.
     max_color_attachments: u32,
     /// The vertex buffers bound at once, and the attributes and the
@@ -319,6 +322,8 @@ pub const Format = enum(u32) {
     /// Bytes blue, green, red, alpha: 0xAARRGGBB as a 32-bit word - the
     /// order the rasterizer keeps its colours in.
     b8g8r8a8_unorm = 44,
+    /// Four half-floats, as a texture: kept in 8 bits a channel, cut to 0 to 1.
+    r16g16b16a16_sfloat = 97,
     /// A float, two, three or four of them.
     r32_sfloat = 100,
     r32g32_sfloat = 103,
@@ -328,6 +333,14 @@ pub const Format = enum(u32) {
     d16_unorm = 124,
     s8_uint = 127,
     d16_unorm_s8_uint = 128,
+    /// As textures: kept in 8 bits a channel, cut to 0 to 1.
+    b10g11r11_ufloat_pack32 = 122,
+    e5b9g9r9_ufloat_pack32 = 123,
+    /// As textures: unpacked as they come in, into 8 bits a channel.
+    bc1_rgb_unorm_block = 131,
+    bc1_rgba_unorm_block = 133,
+    bc2_unorm_block = 135,
+    bc3_unorm_block = 137,
     _,
 };
 
@@ -444,6 +457,9 @@ pub const IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT: u32 = 1 << 5;
 pub const IMAGE_USAGE_TRANSIENT_ATTACHMENT: u32 = 1 << 6;
 
 /// What an image is made with.
+/// ImageCreateInfo.flags: a view of type cube may be made of it.
+pub const IMAGE_CREATE_CUBE_COMPATIBLE: u32 = 1 << 4;
+
 pub const ImageCreateInfo = extern struct {
     flags: u32 = 0,
     image_type: ImageType = .@"2d",
@@ -502,6 +518,7 @@ pub const ImageViewType = enum(u32) {
     @"2d" = 1,
     @"3d" = 2,
     cube = 3,
+    @"2d_array" = 5,
     _,
 };
 

@@ -205,8 +205,8 @@ pub const Texels = enum {
 };
 
 /// A texture's state, into `into`: levels `base` to `last` of it, at
-/// `address` on the V3D.
-pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, address: u32, base: u32, last: u32) void {
+/// `address` on the V3D, and `depth` layers or slices `stride` bytes apart.
+pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, address: u32, base: u32, last: u32, depth: u32, stride: u32) void {
     const level_0 = &layout.levels[0];
     const base_address = address + level_0.offset;
     const strict_uif = level_0.kind == .uif or level_0.kind == .uif_xor;
@@ -215,12 +215,13 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, addr
     const blue: u64 = if (texels == .bgra) SWIZZLE_RED else SWIZZLE_BLUE;
     const alpha: u64 = if (texels == .rgb565) SWIZZLE_ONE else SWIZZLE_ALPHA;
     // Bits 0 to 63: the address, the distance between arrays' worth, and
-    // the width's first 6.
-    const first: u64 = @as(u64, base_address) | @as(u64, level_0.width) << 58;
+    // the width's first 6. That distance starts at bit 33 on this chip, a
+    // V3D 7.1.10; on 7.1.2 it starts at 32 (Mesa's v3d_packet.xml).
+    const first: u64 = @as(u64, base_address) | @as(u64, stride / 64) << 33 | @as(u64, level_0.width) << 58;
     // Bits 64 to 127.
     const second: u64 = @as(u64, level_0.width) >> 6 |
         @as(u64, level_0.height) << (72 - 64) |
-        @as(u64, 1) << (86 - 64) |
+        @as(u64, depth) << (86 - 64) |
         texture_type << (100 - 64) |
         @as(u64, @intFromBool(strict_uif)) << (107 - 64) |
         red << (108 - 64) |
@@ -317,7 +318,7 @@ test "the UIF layout is v3d_tiling.c's" {
 test "the states have their fields where the packet file has them" {
     const layout = layoutOf(4, 64, 32, 1);
     var state: [texture_state_bytes]u8 = undefined;
-    writeTextureState(&state, &layout, .bgra, 0x10_0000, 0, 0);
+    writeTextureState(&state, &layout, .bgra, 0x10_0000, 0, 0, 1, 0);
     const first = std.mem.readInt(u64, state[0..8], .little);
     const second = std.mem.readInt(u64, state[8..16], .little);
     try std.testing.expectEqual(@as(u64, 0x10_0000), first & 0xFFFF_FFFF);

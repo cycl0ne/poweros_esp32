@@ -19,6 +19,7 @@ pub fn copyImage(command: *const _command.CopyImage) void {
     const source = command.source;
     const destination = command.destination;
     if (!_image.readable(source) or !_image.readable(destination)) return;
+    if (_image.unpacks(source) or _image.unpacks(destination)) return;
     const pixel = _image.bytesOf(source.format);
     if (pixel != _image.bytesOf(destination.format)) return;
     for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
@@ -35,11 +36,16 @@ pub fn copyImage(command: *const _command.CopyImage) void {
         if (from_x >= from_size[0] or from_y >= from_size[1] or to_x >= to_size[0] or to_y >= to_size[1]) continue;
         const width = @min(region.extent.width, from_size[0] - from_x, to_size[0] - to_x);
         const height = @min(region.extent.height, from_size[1] - from_y, to_size[1] - to_y);
+        const from_layers = _image.layersOf(source, region.src_subresource, region.src_offset.z, region.extent.depth) orelse continue;
+        const to_layers = _image.layersOf(destination, region.dst_subresource, region.dst_offset.z, region.extent.depth) orelse continue;
         var texel: [4]u8 = undefined;
-        for (0..height) |row| for (0..width) |column| {
-            _image.readTexel(source, from_level, from_x + @as(u32, @intCast(column)), from_y + @as(u32, @intCast(row)), &texel);
-            _image.writeTexel(destination, to_level, to_x + @as(u32, @intCast(column)), to_y + @as(u32, @intCast(row)), &texel);
-        };
+        for (0..@min(from_layers.count, to_layers.count)) |layer_number| {
+            const layer: u32 = @intCast(layer_number);
+            for (0..height) |row| for (0..width) |column| {
+                _image.readTexel(source, from_level, from_layers.first + layer, from_x + @as(u32, @intCast(column)), from_y + @as(u32, @intCast(row)), &texel);
+                _image.writeTexel(destination, to_level, to_layers.first + layer, to_x + @as(u32, @intCast(column)), to_y + @as(u32, @intCast(row)), &texel);
+            };
+        }
     }
 }
 
@@ -47,7 +53,7 @@ pub fn copyImage(command: *const _command.CopyImage) void {
 /// as the buffer goes.
 pub fn copyImageToBuffer(command: *const _command.CopyImageToBuffer) void {
     const image = command.image;
-    if (!_image.readable(image)) return;
+    if (!_image.readable(image) or _image.unpacks(image)) return;
     const into = _buffer.bytes(command.destination, 0, facet.WHOLE_SIZE) orelse return;
     const pixel = _image.bytesOf(image.format);
     for (_stream.items(_command.CopyImageToBuffer, facet.BufferImageCopy, command, command.count)) |*region| {
@@ -62,20 +68,22 @@ pub fn copyImageToBuffer(command: *const _command.CopyImageToBuffer) void {
         const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
         const pitch = @as(usize, row_length) * pixel;
         const start = std.math.cast(usize, region.buffer_offset) orelse continue;
-        for (0..height) |row| {
-            const at = start + row * pitch;
+        const layers = _image.layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse continue;
+        const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
+        for (0..layers.count) |slice| for (0..height) |row| {
+            const at = start + slice * slice_height * pitch + row * pitch;
             if (at + width * pixel > into.len) break;
             for (0..width) |column| {
-                _image.readTexel(image, level, left + @as(u32, @intCast(column)), top + @as(u32, @intCast(row)), into[at + column * pixel ..]);
+                _image.readTexel(image, level, layers.first + @as(u32, @intCast(slice)), left + @as(u32, @intCast(column)), top + @as(u32, @intCast(row)), into[at + column * pixel ..]);
             }
-        }
+        };
     }
 }
 
 /// The colours of a level read by way of 0xAARRGGBB.
-fn colorAt(image: *const Image, level: u32, x: u32, y: u32) u32 {
+fn colorAt(image: *const Image, level: u32, layer: u32, x: u32, y: u32) u32 {
     var texel: [4]u8 = undefined;
-    _image.readTexel(image, level, x, y, &texel);
+    _image.readTexel(image, level, layer, x, y, &texel);
     return _image.colorOfBytes(image.format, &texel);
 }
 
@@ -121,8 +129,13 @@ pub fn blitImage(command: *const _command.BlitImage) void {
         const right = @min(@max(to_x[0], to_x[1]), @as(i32, @intCast(to_size[0])));
         const top = @max(@min(to_y[0], to_y[1]), 0);
         const bottom = @min(@max(to_y[0], to_y[1]), @as(i32, @intCast(to_size[1])));
-        var y = top;
-        while (y < bottom) : (y += 1) {
+        const from_layers = _image.layersOf(source, region.src_subresource, @min(region.src_offsets[0].z, region.src_offsets[1].z), @abs(region.src_offsets[1].z - region.src_offsets[0].z)) orelse continue;
+        const to_layers = _image.layersOf(destination, region.dst_subresource, @min(region.dst_offsets[0].z, region.dst_offsets[1].z), @abs(region.dst_offsets[1].z - region.dst_offsets[0].z)) orelse continue;
+        for (0..to_layers.count) |slice| {
+            const to_layer = to_layers.first + @as(u32, @intCast(slice));
+            const from_layer = from_layers.first + @as(u32, @intCast(slice * from_layers.count / to_layers.count));
+            var y = top;
+            while (y < bottom) : (y += 1) {
             const v = along(y, to_y, from_y);
             var x = left;
             while (x < right) : (x += 1) {
@@ -135,13 +148,14 @@ pub fn blitImage(command: *const _command.BlitImage) void {
                     const first_u: i32 = @intFromFloat(whole_u);
                     const first_v: i32 = @intFromFloat(whole_v);
                     const across = low_u - whole_u;
-                    const upper = mixed(colorAt(source, from_level, held(first_u, from_size[0]), held(first_v, from_size[1])), colorAt(source, from_level, held(first_u + 1, from_size[0]), held(first_v, from_size[1])), across);
-                    const lower = mixed(colorAt(source, from_level, held(first_u, from_size[0]), held(first_v + 1, from_size[1])), colorAt(source, from_level, held(first_u + 1, from_size[0]), held(first_v + 1, from_size[1])), across);
+                    const upper = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v, from_size[1])), across);
+                    const lower = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v + 1, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v + 1, from_size[1])), across);
                     break :linear mixed(upper, lower, low_v - whole_v);
-                } else colorAt(source, from_level, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]));
+                } else colorAt(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]));
                 var texel: [4]u8 = undefined;
                 _image.bytesOfColor(destination.format, color, &texel);
-                _image.writeTexel(destination, to_level, @intCast(x), @intCast(y), &texel);
+                _image.writeTexel(destination, to_level, to_layer, @intCast(x), @intCast(y), &texel);
+            }
             }
         }
     }

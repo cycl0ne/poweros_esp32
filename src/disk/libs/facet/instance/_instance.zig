@@ -40,6 +40,8 @@ pub const max_patch_points = 32;
 pub const max_push_constants_size = 128;
 pub const max_bound_descriptor_sets = 4;
 pub const max_image_dimension = 8192;
+pub const max_image_dimension_3d = 256;
+pub const max_image_array_layers = 256;
 
 /// The physical devices of `instance` described, each driver asked in turn.
 pub fn describe(sys: *ExecBase, instance: *Instance) void {

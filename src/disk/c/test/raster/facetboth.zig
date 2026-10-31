@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.6 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.7 (31.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -153,6 +153,62 @@ fn modulateVertex(vertices: *const shader.Vertices) callconv(.c) void {
     }
 }
 
+/// The quad's corner as a place at the middle of the picture, `scale` of its
+/// size, without the instance's move: the instance here is a layer.
+fn plain(vertices: *const shader.Vertices, k: usize, scale: f32) [4]f32 {
+    const p = vertices.input(@intCast(k), 0);
+    return .{ p[0] * scale, p[1] * scale, p[2], p[3] };
+}
+
+fn arrayVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = plain(vertices, k, 1);
+        const uv = vertices.input(@intCast(k), 2);
+        vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], p[3], uv[0], uv[1], @floatFromInt(vertices.instance) };
+    }
+}
+
+/// So small that its texture's further levels are read.
+fn smallArrayVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = plain(vertices, k, 0.1);
+        const uv = vertices.input(@intCast(k), 2);
+        vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], p[3], uv[0], uv[1], @floatFromInt(vertices.instance) };
+    }
+}
+
+/// A cube's face as it would show flat, for instances 0 to 6; instance 6 looks
+/// across the edge of two.
+fn cubeVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = plain(vertices, k, 1);
+        const uv = vertices.input(@intCast(k), 2);
+        const a = uv[0] * 2 - 1;
+        const b = uv[1] * 2 - 1;
+        const towards: [3]f32 = switch (vertices.instance) {
+            0 => .{ 1, -b, -a },
+            1 => .{ -1, -b, a },
+            2 => .{ a, 1, b },
+            3 => .{ a, -1, -b },
+            4 => .{ a, -b, 1 },
+            5 => .{ -a, -b, -1 },
+            else => .{ 1 - uv[0], -b * 0.7, uv[0] },
+        };
+        vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], p[3], towards[0], towards[1], towards[2] };
+    }
+}
+
+/// A slice of a 3D texture for each instance up to its depth; past that, from
+/// the first slice on the left to the last on the right.
+fn volumeVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = plain(vertices, k, 1);
+        const uv = vertices.input(@intCast(k), 2);
+        const r = if (vertices.instance < volume_depth) (@as(f32, @floatFromInt(vertices.instance)) + 0.5) / volume_depth else uv[0];
+        vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], p[3], uv[0], uv[1], r };
+    }
+}
+
 /// A triangle a group makes of the far, near and laid over ones in the
 /// geometry, moved along by the push constants.
 fn computeVertices(groups: *const shader.Groups) callconv(.c) void {
@@ -224,6 +280,16 @@ const entries = [_]shader.Entry{
     shader.vertex("color", &colorVertex, 4),
     shader.vertex("texture", &textureVertex, 2),
     shader.vertex("modulate", &modulateVertex, 6),
+    shader.vertex("array", &arrayVertex, 3),
+    shader.vertex("small array", &smallArrayVertex, 3),
+    shader.vertex("cube", &cubeVertex, 3),
+    shader.vertex("volume", &volumeVertex, 3),
+    shader.fixedFragment("array", .{ .kind = .texture_array, .sampling = .{ .filter = .nearest } }),
+    shader.fixedFragment("array bilinear", .{ .kind = .texture_array, .sampling = .{ .filter = .bilinear } }),
+    shader.fixedFragment("cube", .{ .kind = .texture_cube, .sampling = .{ .filter = .nearest } }),
+    shader.fixedFragment("cube bilinear", .{ .kind = .texture_cube, .sampling = .{ .filter = .bilinear } }),
+    shader.fixedFragment("volume", .{ .kind = .texture_3d, .sampling = .{ .filter = .nearest } }),
+    shader.fixedFragment("volume bilinear", .{ .kind = .texture_3d, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("color", .{ .kind = .color }),
     shader.fixedFragment("texture", .{ .kind = .texture, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("nearest", .{ .kind = .texture, .sampling = .{ .filter = .nearest } }),
@@ -237,6 +303,145 @@ const texture_side: u32 = 64;
 const picture_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
 const texture_levels = 7;
 const formats = [_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 };
+
+const layer_side: u32 = 32;
+const array_layers = 4;
+const array_levels = 3;
+const volume_side: u32 = 16;
+const volume_depth = 8;
+const unpacked_side: u32 = 16;
+
+/// The textures of layers, and their views.
+const Layered = enum(u8) {
+    array,
+    cube,
+    volume,
+    /// One of the array's layers, as a texture of one.
+    array_layer,
+    /// Filled by a case, from the array.
+    copied,
+    bc1,
+    bc1_clear,
+    bc2,
+    bc3,
+    half,
+    float,
+    packed_float,
+    shared_exponent,
+};
+const layered_count = @typeInfo(Layered).@"enum".fields.len;
+const compressed_and_float = [_]struct { which: Layered, format: facet.Format }{
+    .{ .which = .bc1, .format = .bc1_rgb_unorm_block },
+    .{ .which = .bc1_clear, .format = .bc1_rgba_unorm_block },
+    .{ .which = .bc2, .format = .bc2_unorm_block },
+    .{ .which = .bc3, .format = .bc3_unorm_block },
+    .{ .which = .half, .format = .r16g16b16a16_sfloat },
+    .{ .which = .float, .format = .r32g32b32a32_sfloat },
+    .{ .which = .packed_float, .format = .b10g11r11_ufloat_pack32 },
+    .{ .which = .shared_exponent, .format = .e5b9g9r9_ufloat_pack32 },
+};
+const layer_colors = [8][3]u8{ .{ 0xE0, 0x30, 0x30 }, .{ 0x30, 0xD0, 0x40 }, .{ 0x30, 0x50, 0xE0 }, .{ 0xE0, 0xD0, 0x30 }, .{ 0xD0, 0x30, 0xD0 }, .{ 0x30, 0xD0, 0xD0 }, .{ 0xF0, 0x90, 0x30 }, .{ 0x90, 0x90, 0x90 } };
+
+/// A layer's checks in a colour of its own, a level's bluer, and a white corner
+/// that shows which way up it lies.
+fn layerTexel(layer: usize, level: u32, x: usize, y: usize) [4]u8 {
+    if (x < 4 and y < 4) return .{ 0xFF, 0xFF, 0xFF, 0xFF };
+    const color = layer_colors[layer];
+    const shift: u3 = @intCast(((x >> 2) ^ (y >> 2)) & 1);
+    return .{ color[0] >> shift, color[1] >> shift, @intCast(@min(@as(u32, color[2] >> shift) + level * 0x30, 0xFF)), 0xFF };
+}
+
+fn rgb565(r: u32, g: u32, b: u32) u16 {
+    return @intCast((r >> 3) << 11 | (g >> 2) << 5 | b >> 3);
+}
+
+/// A block's two colours, by where it is, and the order that makes a colour
+/// block of four colours, or of three and clear.
+fn blockColors(into: []u8, row: u32, column: u32, four: bool) void {
+    const a = rgb565(0xF0, 0x40 + column * 0x30, 0x20 + row * 0x30);
+    const b = rgb565(0x10, 0x80, 0xF0 - row * 0x20);
+    const high = @max(a, b);
+    const low = @min(a, b);
+    std.mem.writeInt(u16, into[0..2], if (four) high else low, .little);
+    std.mem.writeInt(u16, into[2..4], if (four) low else high, .little);
+    std.mem.writeInt(u32, into[4..8], 0xE4E4_E4E4, .little);
+}
+
+/// A compressed format's 16 x 16 texels, as blocks: 4 x 4 of them.
+fn stageBlocks(format: facet.Format, into: []u8) usize {
+    var used: usize = 0;
+    for (0..4) |row| for (0..4) |column| {
+        const r: u32 = @intCast(row);
+        const c: u32 = @intCast(column);
+        switch (format) {
+            .bc1_rgb_unorm_block, .bc1_rgba_unorm_block => {
+                blockColors(into[used..], r, c, (r + c) % 2 == 0);
+                used += 8;
+            },
+            .bc2_unorm_block => {
+                // Each texel's alpha of its own, rising.
+                std.mem.writeInt(u64, into[used..][0..8], 0xFEDC_BA98_7654_3210, .little);
+                blockColors(into[used + 8 ..], r, c, true);
+                used += 16;
+            },
+            else => {
+                // Two alphas and the six between, in turn.
+                into[used] = 0xFF;
+                into[used + 1] = 0x20;
+                var bits: u64 = 0;
+                for (0..16) |k| bits |= @as(u64, k % 8) << @intCast(k * 3);
+                for (0..6) |k| into[used + 2 + k] = @truncate(bits >> @intCast(k * 8));
+                blockColors(into[used + 8 ..], r, c, true);
+                used += 16;
+            },
+        }
+    };
+    return used;
+}
+
+/// A float's exponent and mantissa, without its sign, zero below a small one.
+fn floatParts(value: f32) struct { exponent: u32, mantissa: u32 } {
+    const bits: u32 = @bitCast(value);
+    const exponent: i32 = @as(i32, @intCast(bits >> 23 & 0xFF)) - 127 + 15;
+    if (exponent <= 0) return .{ .exponent = 0, .mantissa = 0 };
+    return .{ .exponent = @intCast(exponent), .mantissa = bits & 0x7F_FFFF };
+}
+
+/// A texel of a float format at (x, y): red from 0 to 2 across, so that its
+/// right half is cut to 1, green from 0 to 1 down, and blue a quarter.
+fn stageFloat(format: facet.Format, x: usize, y: usize, into: []u8) usize {
+    const across: f32 = @floatFromInt(x);
+    const down: f32 = @floatFromInt(y);
+    const r = across / 15 * 2;
+    const g = down / 15;
+    const b: f32 = 0.25;
+    switch (format) {
+        .r16g16b16a16_sfloat => {
+            for ([4]f32{ r, g, b, 1 }, 0..) |value, k| {
+                const parts = floatParts(value);
+                std.mem.writeInt(u16, into[k * 2 ..][0..2], @intCast(parts.exponent << 10 | parts.mantissa >> 13), .little);
+            }
+            return 8;
+        },
+        .r32g32b32a32_sfloat => {
+            for ([4]f32{ r, g, b, 1 }, 0..) |value, k| std.mem.writeInt(u32, into[k * 4 ..][0..4], @bitCast(value), .little);
+            return 16;
+        },
+        .b10g11r11_ufloat_pack32 => {
+            const of_r = floatParts(r);
+            const of_g = floatParts(g);
+            const of_b = floatParts(b);
+            std.mem.writeInt(u32, into[0..4], (of_r.exponent << 6 | of_r.mantissa >> 17) | (of_g.exponent << 6 | of_g.mantissa >> 17) << 11 | (of_b.exponent << 5 | of_b.mantissa >> 18) << 22, .little);
+            return 4;
+        },
+        else => {
+            // An exponent of 16: 256 is 1.
+            const word = @as(u32, @intFromFloat(@min(r * 256, 511))) | @as(u32, @intFromFloat(g * 256)) << 9 | @as(u32, @intFromFloat(b * 256)) << 18 | 16 << 27;
+            std.mem.writeInt(u32, into[0..4], word, .little);
+            return 4;
+        },
+    }
+}
 const Target = enum(u32) { bgra, rgba, rgb565 };
 /// The attachment a stencil case draws with, on a picture in bgra.
 const Stencil = enum(u32) { none, with_depth, alone };
@@ -299,7 +504,7 @@ const Side = struct {
     memory: facet.PhysicalDeviceMemoryProperties = undefined,
     device: ?*facet.Device = null,
     queue: *facet.Queue = undefined,
-    blocks: [24]?*facet.DeviceMemory = @splat(null),
+    blocks: [40]?*facet.DeviceMemory = @splat(null),
     block_count: u32 = 0,
     vertices: ?*facet.Buffer = null,
     places: ?*facet.Buffer = null,
@@ -313,6 +518,10 @@ const Side = struct {
     depth_view: ?*facet.ImageView = null,
     textures: [formats.len]?*facet.Image = @splat(null),
     texture_views: [formats.len]?*facet.ImageView = @splat(null),
+    layered_images: [layered_count]?*facet.Image = @splat(null),
+    layered_views: [layered_count]?*facet.ImageView = @splat(null),
+    layered_sets: [layered_count]?*facet.DescriptorSet = @splat(null),
+    layered_staging: ?*facet.Buffer = null,
     /// Render passes by format, depth and load.
     passes: [formats.len][2][2]?*facet.RenderPass = @splat(@splat(@splat(null))),
     framebuffers: [formats.len][2]?*facet.Framebuffer = @splat(@splat(null)),
@@ -415,7 +624,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 1 }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 1 + layered_count }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -456,6 +665,92 @@ const Side = struct {
         try expect(fb.CreateComputePipelines(device, null, 2, &compute_infos, &side.compute_pipelines), error.Refused);
         try expect(fb.CreateFence(device, &.{}, &side.fence), error.Refused);
         try side.stageTextures();
+        try side.upLayered();
+    }
+
+    /// The textures of layers, each a descriptor set of its own, their texels
+    /// copied in.
+    fn upLayered(side: *Side) Failure!void {
+        const fb = side.fb;
+        const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+        const square = facet.Extent3D{ .width = layer_side, .height = layer_side };
+        const kept = facet.Format.r8g8b8a8_unorm;
+        try side.image(.{ .format = kept, .extent = square, .mip_levels = array_levels, .array_layers = array_layers, .usage = usage | facet.IMAGE_USAGE_TRANSFER_SRC }, 0, side.layeredImage(.array));
+        try side.image(.{ .format = kept, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = square, .array_layers = 6, .usage = usage }, 0, side.layeredImage(.cube));
+        try side.image(.{ .format = kept, .image_type = .@"3d", .extent = .{ .width = volume_side, .height = volume_side, .depth = volume_depth }, .usage = usage }, 0, side.layeredImage(.volume));
+        try side.image(.{ .format = kept, .extent = square, .array_layers = 2, .usage = usage }, 0, side.layeredImage(.copied));
+        const small = facet.Extent3D{ .width = unpacked_side, .height = unpacked_side };
+        for (compressed_and_float) |each| try side.image(.{ .format = each.format, .extent = small, .usage = usage }, 0, side.layeredImage(each.which));
+
+        const array = side.layeredImage(.array).*.?;
+        try side.layeredView(.array, .{ .image = array, .format = kept, .view_type = .@"2d_array" });
+        try side.layeredView(.cube, .{ .image = side.layeredImage(.cube).*.?, .format = kept, .view_type = .cube });
+        try side.layeredView(.volume, .{ .image = side.layeredImage(.volume).*.?, .format = kept, .view_type = .@"3d" });
+        try side.layeredView(.array_layer, .{ .image = array, .format = kept, .subresource_range = .{ .level_count = 1, .base_array_layer = 2, .layer_count = 1 } });
+        try side.layeredView(.copied, .{ .image = side.layeredImage(.copied).*.?, .format = kept, .subresource_range = .{ .base_array_layer = 1, .layer_count = 1 } });
+        for (compressed_and_float) |each| try side.layeredView(each.which, .{ .image = side.layeredImage(each.which).*.?, .format = each.format });
+
+        const layouts: [layered_count]?*facet.DescriptorSetLayout = @splat(side.set_layout);
+        try expect(fb.AllocateDescriptorSets(side.device.?, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = layered_count, .set_layouts = @ptrCast(&layouts) }, &side.layered_sets), error.Refused);
+        for (side.layered_sets, side.layered_views) |set, texture_view| {
+            const image_info = facet.DescriptorImageInfo{ .image_view = texture_view };
+            const write = facet.WriteDescriptorSet{ .dst_set = set.?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
+            fb.UpdateDescriptorSets(side.device.?, 1, @ptrCast(&write), 0, null);
+        }
+
+        // A level at a time, all an array's layers in one region; all a
+        // volume's slices in one; a cube's faces each in one.
+        const staged = try side.buffer(1 << 20, facet.BUFFER_USAGE_TRANSFER_SRC, &side.layered_staging);
+        const commands = side.commands.?;
+        try expect(fb.BeginCommandBuffer(commands, &.{ .flags = facet.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT }), error.Refused);
+        var used: usize = 0;
+        for (0..array_levels) |l| {
+            const level: u32 = @intCast(l);
+            const across: u32 = layer_side >> @intCast(level);
+            const region = facet.BufferImageCopy{ .buffer_offset = used, .image_subresource = .{ .mip_level = level, .layer_count = array_layers }, .image_extent = .{ .width = across, .height = across } };
+            for (0..array_layers) |layer| for (0..across) |y| for (0..across) |x| {
+                staged[used..][0..4].* = layerTexel(layer, level, x, y);
+                used += 4;
+            };
+            fb.CmdCopyBufferToImage(commands, side.layered_staging.?, array, .transfer_dst_optimal, 1, @ptrCast(&region));
+        }
+        for (0..6) |face| {
+            const region = facet.BufferImageCopy{ .buffer_offset = used, .image_subresource = .{ .base_array_layer = @intCast(face) }, .image_extent = square };
+            for (0..layer_side) |y| for (0..layer_side) |x| {
+                staged[used..][0..4].* = layerTexel(face, 0, x, y);
+                used += 4;
+            };
+            fb.CmdCopyBufferToImage(commands, side.layered_staging.?, side.layeredImage(.cube).*.?, .transfer_dst_optimal, 1, @ptrCast(&region));
+        }
+        const slices = facet.BufferImageCopy{ .buffer_offset = used, .image_extent = .{ .width = volume_side, .height = volume_side, .depth = volume_depth } };
+        for (0..volume_depth) |slice| for (0..volume_side) |y| for (0..volume_side) |x| {
+            staged[used..][0..4].* = layerTexel(slice, 0, x, y);
+            used += 4;
+        };
+        fb.CmdCopyBufferToImage(commands, side.layered_staging.?, side.layeredImage(.volume).*.?, .transfer_dst_optimal, 1, @ptrCast(&slices));
+        for (compressed_and_float) |each| {
+            const region = facet.BufferImageCopy{ .buffer_offset = used, .image_extent = small };
+            switch (each.format) {
+                .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc2_unorm_block, .bc3_unorm_block => used += stageBlocks(each.format, staged[used..(1 << 20)]),
+                else => for (0..unpacked_side) |y| for (0..unpacked_side) |x| {
+                    used += stageFloat(each.format, x, y, staged[used..(1 << 20)]);
+                },
+            }
+            fb.CmdCopyBufferToImage(commands, side.layered_staging.?, side.layeredImage(each.which).*.?, .transfer_dst_optimal, 1, @ptrCast(&region));
+        }
+        try side.submit();
+    }
+
+    fn layeredImage(side: *Side, which: Layered) *?*facet.Image {
+        return &side.layered_images[@intFromEnum(which)];
+    }
+
+    fn layeredView(side: *Side, which: Layered, info: facet.ImageViewCreateInfo) Failure!void {
+        try expect(side.fb.CreateImageView(side.device.?, &info, &side.layered_views[@intFromEnum(which)]), error.Refused);
+    }
+
+    fn layeredTexture(side: *Side, which: Layered) void {
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.layout.?, 0, 1, @ptrCast(&side.layered_sets[@intFromEnum(which)]), 0, null);
     }
 
     /// Each texture's levels, a level's checks of a colour of its own, so
@@ -572,6 +867,9 @@ const Side = struct {
         for (side.pictures) |each| fb.DestroyImage(device, each);
         for (side.texture_views) |each| fb.DestroyImageView(device, each);
         for (side.textures) |each| fb.DestroyImage(device, each);
+        for (side.layered_views) |each| fb.DestroyImageView(device, each);
+        for (side.layered_images) |each| fb.DestroyImage(device, each);
+        fb.DestroyBuffer(device, side.layered_staging);
         fb.DestroyImageView(device, side.depth_view);
         fb.DestroyImage(device, side.depth);
         for (&side.passes) |*by_depth| for (by_depth) |*by_load| for (by_load) |each| fb.DestroyRenderPass(device, each);
@@ -1319,6 +1617,45 @@ const Cases = struct {
             }
         }.run;
     }
+    fn layer(comptime which: Layered, comptime vertex: [*:0]const u8, comptime fragment: [*:0]const u8, comptime instance: u32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                side.layeredTexture(which);
+                try side.use(.{ .vertex = vertex, .fragment = fragment });
+                side.fb.CmdDraw(side.commands.?, 6, 1, quad_at, instance);
+                side.end();
+            }
+        }.run;
+    }
+    fn layerAs2d(comptime which: Layered, comptime blended: bool) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                side.layeredTexture(which);
+                try side.use(.{ .vertex = "texture", .fragment = "nearest", .blend = blended });
+                side.draw(quad_at, 6);
+                side.end();
+            }
+        }.run;
+    }
+    /// A layer and level of the array over the second of another's, by a copy.
+    fn copiedLayer(side: *Side) Failure!void {
+        const copy = facet.ImageCopy{ .src_subresource = .{ .base_array_layer = 3 }, .dst_subresource = .{ .base_array_layer = 1 }, .extent = .{ .width = layer_side, .height = layer_side } };
+        side.fb.CmdCopyImage(side.commands.?, side.layeredImage(.array).*.?, .general, side.layeredImage(.copied).*.?, .general, 1, @ptrCast(&copy));
+        try layerAs2d(.copied, false)(side);
+    }
+    /// The picture blitted into a layer of an array, then read from it.
+    fn blittedLayer(side: *Side) Failure!void {
+        try Cases.drawnPicture(side);
+        const blit = facet.ImageBlit{
+            .src_offsets = .{ .{}, .{ .x = @intCast(side.width), .y = @intCast(side.height), .z = 1 } },
+            .dst_subresource = .{ .base_array_layer = 1 },
+            .dst_offsets = .{ .{}, .{ .x = layer_side, .y = layer_side, .z = 1 } },
+        };
+        side.fb.CmdBlitImage(side.commands.?, side.pictures[0].?, .general, side.layeredImage(.copied).*.?, .general, 1, @ptrCast(&blit), .linear);
+        try layerAs2d(.copied, false)(side);
+    }
     fn modulate(side: *Side) Failure!void {
         side.begin(.{});
         side.texture(0);
@@ -1472,6 +1809,36 @@ const cases = [_]Case{
     .{ .name = "patches: quads, even", .run = Cases.tessellated(.{ .patch_points = 4, .evaluation = "quads" }, quad_at, 4) },
     .{ .name = "patches: quads, uneven", .run = Cases.tessellated(.{ .patch_points = 4, .evaluation = "quads", .control = "uneven", .polygon_mode = .line }, quad_at, 4) },
     .{ .name = "patches: isolines", .run = Cases.tessellated(.{ .patch_points = 4, .evaluation = "isolines", .control = "lines", .line_width = 3 }, quad_at, 4) },
+    .{ .name = "array, layer 0", .run = Cases.layer(.array, "array", "array", 0) },
+    .{ .name = "array, layer 1", .run = Cases.layer(.array, "array", "array", 1) },
+    .{ .name = "array, layer 3", .run = Cases.layer(.array, "array", "array", 3) },
+    .{ .name = "array, past the last", .run = Cases.layer(.array, "array", "array", 7) },
+    .{ .name = "array, filtered", .run = Cases.layer(.array, "array", "array bilinear", 2) },
+    .{ .name = "array, small", .run = Cases.layer(.array, "small array", "array", 2) },
+    .{ .name = "array, a layer as a texture", .run = Cases.layerAs2d(.array_layer, false) },
+    .{ .name = "array, a layer copied", .run = &Cases.copiedLayer },
+    .{ .name = "array, a layer blitted", .run = &Cases.blittedLayer },
+    .{ .name = "cube, +x", .run = Cases.layer(.cube, "cube", "cube", 0) },
+    .{ .name = "cube, -x", .run = Cases.layer(.cube, "cube", "cube", 1) },
+    .{ .name = "cube, +y", .run = Cases.layer(.cube, "cube", "cube", 2) },
+    .{ .name = "cube, -y", .run = Cases.layer(.cube, "cube", "cube", 3) },
+    .{ .name = "cube, +z", .run = Cases.layer(.cube, "cube", "cube", 4) },
+    .{ .name = "cube, -z", .run = Cases.layer(.cube, "cube", "cube", 5) },
+    .{ .name = "cube, across an edge", .run = Cases.layer(.cube, "cube", "cube", 6) },
+    .{ .name = "cube, filtered", .run = Cases.layer(.cube, "cube", "cube bilinear", 4) },
+    .{ .name = "3D, slice 0", .run = Cases.layer(.volume, "volume", "volume", 0) },
+    .{ .name = "3D, slice 3", .run = Cases.layer(.volume, "volume", "volume", 3) },
+    .{ .name = "3D, slice 7", .run = Cases.layer(.volume, "volume", "volume", 7) },
+    .{ .name = "3D, across", .run = Cases.layer(.volume, "volume", "volume", volume_depth) },
+    .{ .name = "3D, filtered", .run = Cases.layer(.volume, "volume", "volume bilinear", volume_depth) },
+    .{ .name = "BC1", .run = Cases.layerAs2d(.bc1, false) },
+    .{ .name = "BC1, with clear texels", .run = Cases.layerAs2d(.bc1_clear, true) },
+    .{ .name = "BC2", .run = Cases.layerAs2d(.bc2, true) },
+    .{ .name = "BC3", .run = Cases.layerAs2d(.bc3, true) },
+    .{ .name = "half-floats", .run = Cases.layerAs2d(.half, false) },
+    .{ .name = "floats", .run = Cases.layerAs2d(.float, false) },
+    .{ .name = "packed floats", .run = Cases.layerAs2d(.packed_float, false) },
+    .{ .name = "shared exponent", .run = Cases.layerAs2d(.shared_exponent, false) },
 };
 
 /// How far apart two pixels are, in the channel furthest apart: in steps of

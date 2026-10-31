@@ -41,9 +41,20 @@ const _image = @import("_image.zig");
 ///   the lazily allocated type.
 /// - Anything else of a colour format, one level: rows.
 ///
-/// Images are two-dimensional, with one layer and one sample a pixel, up
-/// to 8192 wide and high. One both SAMPLED and COLOR_ATTACHMENT is not
-/// made: a texture and an attachment lie differently.
+/// Images have one sample a pixel, and are up to 8192 wide and high. One both
+/// SAMPLED and COLOR_ATTACHMENT is not made: a texture and an attachment lie
+/// differently.
+///
+/// A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, as deep
+/// as a power of two up to 256, with one level. IMAGE_CREATE_CUBE_COMPATIBLE
+/// says a view of type cube will be made: of a square image of 6 layers or
+/// more.
+///
+/// A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
+/// R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
+/// It is kept as R8G8B8A8, unpacked as it is copied in: it takes that one's
+/// memory, and what is in a float image above 1 or below 0 is lost. There is no
+/// copying such an image out, nor another image into it, by CmdCopyImage.
 ///
 /// CONTEXT:
 /// - Waits: no.

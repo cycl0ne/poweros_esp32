@@ -654,13 +654,13 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     };
     const layout = layoutOf(image.format, image.width, image.height, image.levels);
     const state = carve(queue, tiling.texture_state_bytes, tiling.texture_state_alignment) orelse return null;
-    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, @intCast(@intFromPtr(image.data)), view.base_level, view.base_level + view.level_count - 1);
+    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, @intCast(@intFromPtr(image.data) + view.base_layer * image.layer_bytes), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
     const sampler = carve(queue, tiling.sampler_state_bytes, tiling.sampler_state_alignment) orelse return null;
     const filter: tiling.Filter = switch (fixed.sampling.filter) {
         .nearest => .nearest,
         .bilinear => .bilinear,
     };
-    const wrap: tiling.Wrap = switch (fixed.sampling.address) {
+    const wrap: tiling.Wrap = if (fixed.kind == .texture_cube) .clamp else switch (fixed.sampling.address) {
         .wrap => .repeat,
         .clamp => .clamp,
     };
@@ -813,9 +813,15 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             const place = carve(queue, 4, 4) orelse return;
             uniforms = place.address;
         },
-        .texture, .texture_color => {
+        .texture, .texture_color, .texture_array, .texture_cube, .texture_3d => {
             if (fixed.kind == .texture_color) carried = .{ .colors_from = 2 };
-            fragment = if (fixed.kind == .texture) programs.texture else programs.texture_color;
+            fragment = switch (fixed.kind) {
+                .texture => programs.texture,
+                .texture_color => programs.texture_color,
+                .texture_array => programs.array,
+                .texture_cube => programs.cube,
+                else => programs.volume,
+            };
             uniforms = textureUniforms(queue, fixed) orelse missing: {
                 // As `shader.missing`: the colour says what has gone wrong.
                 varyings = 4;
@@ -914,7 +920,9 @@ fn copyBufferToImage(queue: *Queue, command: *const _command.CopyBufferToImage) 
     const from = _buffer.bytes(command.source, 0, facet.WHOLE_SIZE) orelse return;
     const image = command.image;
     for (_stream.items(_command.CopyBufferToImage, facet.BufferImageCopy, command, command.count)) |*region| {
-        if (image.kind == .texture) {
+        if (_image.unpacks(image)) {
+            _image.copyUnpacking(image, from, region);
+        } else if (image.kind == .texture) {
             copyToTexture(image, from, region);
         } else {
             _image.copyFromBuffer(image, from, region);
@@ -943,14 +951,19 @@ fn copyToTexture(image: *Image, from: []const u8, region: *const facet.BufferIma
     const source_pitch = @as(usize, row_length) * pixel;
     const start = std.math.cast(usize, region.buffer_offset) orelse return;
     const layout = layoutOf(image.format, image.width, image.height, image.levels);
-    for (0..height) |row| {
-        const at = start + row * source_pitch;
-        if (at + width * pixel > from.len) return;
-        const y = top + @as(u32, @intCast(row));
-        for (0..width) |column| {
-            const x = left + @as(u32, @intCast(column));
-            const into = data + tiling.texelOffset(&layout, level, x, y);
-            @memcpy(into[0..pixel], from[at + column * pixel ..][0..pixel]);
+    const range = _image.layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse return;
+    const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
+    for (0..range.count) |slice| {
+        const layer_data = data + (range.first + slice) * @as(usize, @intCast(image.layer_bytes));
+        for (0..height) |row| {
+            const at = start + slice * slice_height * source_pitch + row * source_pitch;
+            if (at + width * pixel > from.len) return;
+            const y = top + @as(u32, @intCast(row));
+            for (0..width) |column| {
+                const x = left + @as(u32, @intCast(column));
+                const into = layer_data + tiling.texelOffset(&layout, level, x, y);
+                @memcpy(into[0..pixel], from[at + column * pixel ..][0..pixel]);
+            }
         }
     }
 }

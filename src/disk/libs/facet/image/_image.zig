@@ -18,6 +18,14 @@
 //! An image both drawn into and sampled is not one facet.library 1.0
 //! makes: the two kinds lie differently.
 //!
+//! **A texture may have layers**: an array's, a cube's six faces, or a 3D
+//! image's slices. Each lies as a whole texture does, `layer_bytes` from the
+//! one before. A 3D image has one level, so its slices need not halve.
+//!
+//! **Some formats are not kept** (`_decode`): compressed and float textures
+//! are unpacked as they are copied in. `format` is what is kept, and
+//! `given_format` what was asked for.
+//!
 //! A swapchain's images are `rows` over the display's buffers, made by the
 //! swapchain and never bound: what is drawn into one is handed on to the
 //! display tile by tile (`Display`), as the display does not see what the
@@ -32,6 +40,8 @@ const _memory = @import("../memory/_memory.zig");
 const DeviceMemory = _memory.DeviceMemory;
 const max_image_dimension = @import("../instance/_instance.zig").max_image_dimension;
 const drawable = @import("../surface/_surface.zig").drawable;
+const _decode = @import("_decode.zig");
+const _instance = @import("../instance/_instance.zig");
 const rtg = sdk.rtg;
 const RtgBase = sdk.interface.rtg.RtgBase;
 
@@ -40,9 +50,18 @@ pub const Kind = enum { rows, texture, depth };
 pub const Image = struct {
     device: *Device,
     format: facet.Format,
+    /// What the program made it as, and copies texels in as.
+    given_format: facet.Format,
     width: u32,
     height: u32,
     levels: u32,
+    /// An array's layers, a cube's faces, or a 3D image's slices.
+    layers: u32 = 1,
+    layer_bytes: u64 = 0,
+    /// A 3D image: its slices are reached by z, not by layer.
+    volume: bool = false,
+    /// IMAGE_CREATE_CUBE_COMPATIBLE.
+    cube: bool = false,
     usage: u32,
     kind: Kind,
     /// `rows`: the bytes from one row to the next.
@@ -87,6 +106,8 @@ pub const ImageView = struct {
     image: *Image,
     base_level: u32,
     level_count: u32,
+    base_layer: u32 = 0,
+    layer_count: u32 = 1,
     /// `texture`: the levels it takes, as a sample reads them.
     texels: texture.Texture = undefined,
 };
@@ -133,14 +154,28 @@ pub fn textureFormat(format: facet.Format) ?texture.Format {
 /// facet.library does not make.
 pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
     const extent = info.extent;
-    if (info.image_type != .@"2d" or extent.depth != 1 or info.array_layers != 1 or info.samples != 1) return null;
+    const volume = info.image_type == .@"3d";
+    if ((info.image_type != .@"2d" and !volume) or info.samples != 1) return null;
+    const layers = if (volume) extent.depth else info.array_layers;
+    if (layers == 0 or (!volume and extent.depth != 1)) return null;
+    if (volume and (info.array_layers != 1 or info.mip_levels != 1 or !std.math.isPowerOfTwo(layers) or layers > _instance.max_image_dimension_3d)) return null;
+    if (layers > _instance.max_image_array_layers) return null;
+    const cube = info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0;
+    if (cube and (volume or layers < 6 or extent.width != extent.height)) return null;
+    // Layers are for sampling: an attachment or rows have one.
+    if ((layers > 1 or _decode.unpacks(info.format)) and (info.usage & facet.IMAGE_USAGE_SAMPLED == 0 or info.tiling != .optimal)) return null;
+    const kept_format: facet.Format = if (_decode.unpacks(info.format)) .r8g8b8a8_unorm else info.format;
     if (extent.width == 0 or extent.height == 0 or extent.width > max_image_dimension or extent.height > max_image_dimension) return null;
     if (info.mip_levels == 0) return null;
-    const pixel = bytesOf(info.format);
+    const pixel = bytesOf(kept_format);
     if (pixel == 0) return null;
     var image = Image{
         .device = device,
-        .format = info.format,
+        .format = kept_format,
+        .given_format = info.format,
+        .layers = layers,
+        .volume = volume,
+        .cube = cube,
         .width = extent.width,
         .height = extent.height,
         .levels = info.mip_levels,
@@ -159,16 +194,19 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
     if (info.usage & facet.IMAGE_USAGE_SAMPLED != 0) {
         if (info.tiling != .optimal or info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
-        const kept = textureFormat(info.format) orelse return null;
+        const kept = textureFormat(kept_format) orelse return null;
         image.kind = .texture;
-        image.bytes = texture.Texture.bytes(kept, extent.width, extent.height, info.mip_levels) catch return null;
-        // Its levels' layout, over no memory yet: BindImageMemory moves it.
-        image.texels = texture.Texture.init(kept, extent.width, extent.height, info.mip_levels, @ptrFromInt(_memory.alignment)) catch return null;
+        var one_layer: u64 = texture.Texture.bytes(kept, extent.width, extent.height, info.mip_levels) catch return null;
+        one_layer = std.mem.alignForward(u64, one_layer, row_alignment);
         if (device.physical.ops.texture_memory) |own| {
-            const memory = own(info.format, extent.width, extent.height, info.mip_levels);
-            image.bytes = memory.bytes;
+            const memory = own(kept_format, extent.width, extent.height, info.mip_levels);
+            one_layer = std.mem.alignForward(u64, memory.bytes, memory.alignment);
             image.alignment = memory.alignment;
         }
+        image.layer_bytes = one_layer;
+        image.bytes = one_layer * layers;
+        // Its levels' layout, over no memory yet: BindImageMemory moves it.
+        image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
         return image;
     }
     if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;
@@ -177,6 +215,14 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
     image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
     image.bytes = @as(u64, image.pitch) * extent.height;
     return image;
+}
+
+/// A texture image's levels and layers as a sample reads them, over `memory`.
+pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!texture.Texture {
+    var made = try texture.Texture.init(textureFormat(image.format).?, image.width, image.height, image.levels, memory);
+    made.layer_count = image.layers;
+    made.layer_bytes = @intCast(image.layer_bytes);
+    return made;
 }
 
 /// What an image needs of its memory: a depth attachment any type, the
@@ -190,15 +236,87 @@ pub fn requirements(image: *const Image) facet.MemoryRequirements {
     };
 }
 
-/// A texture image's levels from `base` on, `count` of them, over its
-/// memory as a sample reads them.
-pub fn levelsFrom(image: *const Image, base: u32, count: u32) texture.Texture {
+/// A texture image's levels from `base` on, `count` of them, of the layers
+/// from `first_layer` on, `layers` of them, over its memory as a sample reads
+/// them.
+pub fn levelsFrom(image: *const Image, base: u32, count: u32, first_layer: u32, layers: u32) texture.Texture {
     const whole = &image.texels;
     const width = @max(image.width >> @intCast(base), 1);
     const height = @max(image.height >> @intCast(base), 1);
     // The levels of the whole from `base` lie as those of a texture that
     // starts with that level: each is laid out by its own size alone.
-    return texture.Texture.init(whole.format, width, height, count, whole.memory + whole.layout[base].start) catch unreachable;
+    var made = texture.Texture.init(whole.format, width, height, count, whole.memory + first_layer * @as(usize, @intCast(image.layer_bytes)) + whole.layout[base].start) catch unreachable;
+    made.layer_count = layers;
+    made.layer_bytes = @intCast(image.layer_bytes);
+    return made;
+}
+
+/// The layers a copy's subresource and depth reach.
+pub const LayerRange = struct { first: u32, count: u32 };
+
+/// Of `image`, the layers a region names and has: by z and depth in a 3D
+/// image, as it has them along z, else by the subresource. Null for none.
+pub fn layersOf(image: *const Image, subresource: facet.ImageSubresourceLayers, z: i32, depth: u32) ?LayerRange {
+    if (image.volume) {
+        if (z < 0 or z >= image.layers or depth == 0) return null;
+        const first: u32 = @intCast(z);
+        return .{ .first = first, .count = @min(depth, image.layers - first) };
+    }
+    if (subresource.base_array_layer >= image.layers or subresource.layer_count == 0) return null;
+    return .{ .first = subresource.base_array_layer, .count = @min(subresource.layer_count, image.layers - subresource.base_array_layer) };
+}
+
+/// Whether what is copied into an image has to be unpacked.
+pub fn unpacks(image: *const Image) bool {
+    return image.given_format != image.format;
+}
+
+/// A rectangle of a compressed or a float format from a buffer's bytes into
+/// a level of an image, unpacked; the part of it outside the image, or past
+/// the end of `from`, left out. Blocks start on a multiple of 4.
+pub fn copyUnpacking(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
+    if (image.data == null) return;
+    const level = region.image_subresource.mip_level;
+    if (level >= image.levels or region.image_offset.x < 0 or region.image_offset.y < 0) return;
+    const size = levelSize(image, level);
+    const left: u32 = @intCast(region.image_offset.x);
+    const top: u32 = @intCast(region.image_offset.y);
+    if (left >= size[0] or top >= size[1]) return;
+    const width = @min(region.image_extent.width, size[0] - left);
+    const height = @min(region.image_extent.height, size[1] - top);
+    const range = layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse return;
+    const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
+    const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
+    const start = std.math.cast(usize, region.buffer_offset) orelse return;
+    const block = _decode.blockBytes(image.given_format);
+    for (0..range.count) |slice| {
+        const layer = range.first + @as(u32, @intCast(slice));
+        if (block != 0) {
+            if (left % 4 != 0 or top % 4 != 0) return;
+            const pitch = @as(usize, (row_length + 3) / 4) * block;
+            const slice_at = start + slice * @as(usize, (slice_height + 3) / 4) * pitch;
+            for (0..(height + 3) / 4) |row| for (0..(width + 3) / 4) |column| {
+                const at = slice_at + row * pitch + column * block;
+                if (at + block > from.len) return;
+                const texels = _decode.block16(image.given_format, from[at..][0..block]);
+                for (texels, 0..) |rgba, k| {
+                    const x = left + @as(u32, @intCast(column * 4 + k % 4));
+                    const y = top + @as(u32, @intCast(row * 4 + k / 4));
+                    if (x < left + width and y < top + height) writeTexel(image, level, layer, x, y, &rgba);
+                }
+            };
+        } else {
+            const texel = _decode.texelBytes(image.given_format);
+            const pitch = @as(usize, row_length) * texel;
+            const slice_at = start + slice * @as(usize, slice_height) * pitch;
+            for (0..height) |row| for (0..width) |column| {
+                const at = slice_at + row * pitch + column * texel;
+                if (at + texel > from.len) return;
+                const rgba = _decode.texel(image.given_format, from[at..][0..texel]);
+                writeTexel(image, level, layer, left + @as(u32, @intCast(column)), top + @as(u32, @intCast(row)), &rgba);
+            };
+        }
+    }
 }
 
 /// A rectangle of texels copied from a buffer's bytes into a level of an
@@ -207,8 +325,10 @@ pub fn levelsFrom(image: *const Image, base: u32, count: u32) texture.Texture {
 /// rectangle outside the image, or past the end of `from`, is left out.
 pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
     if (image.kind == .depth or image.data == null) return;
+    if (unpacks(image)) return copyUnpacking(image, from, region);
     const level = region.image_subresource.mip_level;
     if (level >= image.levels or region.image_offset.x < 0 or region.image_offset.y < 0) return;
+    const range = layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse return;
     const level_width = @max(image.width >> @intCast(level), 1);
     const level_height = @max(image.height >> @intCast(level), 1);
     const left: u32 = @intCast(region.image_offset.x);
@@ -219,22 +339,26 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
     const pixel = bytesOf(image.format);
     const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
     const source_pitch = @as(usize, row_length) * pixel;
+    const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
     const start = std.math.cast(usize, region.buffer_offset) orelse return;
-    for (0..height) |row| {
-        const at = start + row * source_pitch;
-        if (at + width * pixel > from.len) return;
-        const source = from[at..][0 .. width * pixel];
-        const y = top + @as(u32, @intCast(row));
-        switch (image.kind) {
-            .rows => {
-                const into = image.data.? + @as(usize, y) * image.pitch + @as(usize, left) * pixel;
-                @memcpy(into[0..source.len], source);
-            },
-            .texture => for (0..width) |column| {
-                const x = left + @as(u32, @intCast(column));
-                image.texels.put(level, x, y, texelOf(image.format, source[column * pixel ..]));
-            },
-            .depth => unreachable,
+    for (0..range.count) |slice| {
+        const layer = range.first + @as(u32, @intCast(slice));
+        for (0..height) |row| {
+            const at = start + slice * slice_height * source_pitch + row * source_pitch;
+            if (at + width * pixel > from.len) return;
+            const source = from[at..][0 .. width * pixel];
+            const y = top + @as(u32, @intCast(row));
+            switch (image.kind) {
+                .rows => {
+                    const into = image.data.? + @as(usize, y) * image.pitch + @as(usize, left) * pixel;
+                    @memcpy(into[0..source.len], source);
+                },
+                .texture => for (0..width) |column| {
+                    const x = left + @as(u32, @intCast(column));
+                    image.texels.putLayer(layer, level, x, y, texelOf(image.format, source[column * pixel ..]));
+                },
+                .depth => unreachable,
+            }
         }
     }
 }
@@ -255,9 +379,9 @@ fn texelOf(format: facet.Format, bytes: []const u8) u32 {
 
 /// Where a level's texels are on a device with a layout of its own, in bytes
 /// from the image's memory.
-fn deviceOffset(image: *const Image, level: u32, x: u32, y: u32) ?usize {
+fn deviceOffset(image: *const Image, level: u32, layer: u32, x: u32, y: u32) ?usize {
     const offset = image.device.physical.ops.texture_offset orelse return null;
-    return offset(image, level, x, y);
+    return layer * @as(usize, @intCast(image.layer_bytes)) + offset(image, level, x, y);
 }
 
 /// Whether an image's texels can be read and written: it has memory, and they
@@ -271,37 +395,37 @@ pub fn levelSize(image: *const Image, level: u32) [2]u32 {
     return .{ @max(image.width >> @intCast(level), 1), @max(image.height >> @intCast(level), 1) };
 }
 
-/// Texel (x, y) of a level as a buffer would hold it, in `into`.
-pub fn readTexel(image: *const Image, level: u32, x: u32, y: u32, into: []u8) void {
+/// Texel (x, y) of a level of a layer as a buffer would hold it, in `into`.
+pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
     switch (image.kind) {
         .rows => {
             const pixel = bytesOf(image.format);
             const from = image.data.? + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
         },
-        .texture => if (deviceOffset(image, level, x, y)) |offset| {
+        .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
             const pixel = bytesOf(image.format);
             @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
         } else {
-            bytesOfTexel(image.format, image.texels.peek(level, x, y), into);
+            bytesOfTexel(image.format, image.texels.peekLayer(layer, level, x, y), into);
         },
         .depth => {},
     }
 }
 
-/// Texel (x, y) of a level set from what a buffer would hold.
-pub fn writeTexel(image: *Image, level: u32, x: u32, y: u32, from: []const u8) void {
+/// Texel (x, y) of a level of a layer set from what a buffer would hold.
+pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: []const u8) void {
     switch (image.kind) {
         .rows => {
             const pixel = bytesOf(image.format);
             const into = image.data.? + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
         },
-        .texture => if (deviceOffset(image, level, x, y)) |offset| {
+        .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
             const pixel = bytesOf(image.format);
             @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
         } else {
-            image.texels.put(level, x, y, texelOf(image.format, from));
+            image.texels.putLayer(layer, level, x, y, texelOf(image.format, from));
         },
         .depth => {},
     }

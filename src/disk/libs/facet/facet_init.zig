@@ -60,7 +60,10 @@ pub const LIBRARY_VERSION = 1;
 /// 18: compute functions, on the cores: CreateComputePipelines, CmdDispatch,
 /// CmdDispatchIndirect.
 /// 19: tessellation, on the cores.
-pub const LIBRARY_REVISION = 19;
+/// 20: textures of layers, cube maps and 3D textures, with their fixed forms
+/// of fragment function; BC1, BC2, BC3 and float textures, unpacked as they
+/// are copied in.
+pub const LIBRARY_REVISION = 20;
 const BUILD_DATE = "31.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

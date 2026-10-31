@@ -61,6 +61,7 @@ pub fn lay(swapchain: *Swapchain, sys: *ExecBase, usage: u32) void {
         swapchain.images[k] = .{
             .device = swapchain.device,
             .format = swapchain.format,
+            .given_format = swapchain.format,
             .width = swapchain.width,
             .height = swapchain.height,
             .levels = 1,

@@ -69,6 +69,9 @@ pub const Programs = struct {
     color: u32,
     texture: u32,
     texture_color: u32,
+    array: u32,
+    cube: u32,
+    volume: u32,
 };
 
 /// What the V3D has while anything uses it. Its job, and its table, are
@@ -101,6 +104,8 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
             .max_image_dimension_2d = _instance.max_image_dimension,
             .max_framebuffer_width = _instance.max_image_dimension,
             .max_framebuffer_height = _instance.max_image_dimension,
+            .max_image_dimension_3d = _instance.max_image_dimension_3d,
+            .max_image_array_layers = _instance.max_image_array_layers,
             .max_color_attachments = 1,
             .max_vertex_input_bindings = _instance.max_vertex_input_bindings,
             .max_vertex_input_attributes = _instance.max_vertex_input_attributes,
@@ -191,7 +196,7 @@ fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
 
 /// Every program in one block of the V3D's.
 fn loadPrograms(hardware: *Hardware) bool {
-    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment };
+    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment };
     var words: usize = qpu.coordinate_program.len;
     for (0..qpu.most_varyings + 1) |varyings| words += qpu.vertexProgram(@intCast(varyings)).len;
     for (fragments) |fragment| words += fragment.code.len;
@@ -216,6 +221,9 @@ fn loadPrograms(hardware: *Hardware) bool {
     hardware.programs.color = put(block, &used, qpu.color_fragment.code);
     hardware.programs.texture = put(block, &used, qpu.texture_fragment.code);
     hardware.programs.texture_color = put(block, &used, qpu.texture_color_fragment.code);
+    hardware.programs.array = put(block, &used, qpu.array_fragment.code);
+    hardware.programs.cube = put(block, &used, qpu.cube_fragment.code);
+    hardware.programs.volume = put(block, &used, qpu.volume_fragment.code);
     hardware.space.toGpu(&block);
     hardware.programs_block = block;
     return true;
