@@ -28,7 +28,7 @@ Movie FILE,VOLUME/K/N,FULL/S
 
 A film that cannot be played says why in the shell: one whose pictures
 nothing here decodes - H.264 on a machine without a video decoder,
-MPEG-4 Part 2, VP9 or AV1 anywhere - and one that is not a film. A film
+MPEG-4 Part 2 or AV1 anywhere - and one that is not a film. A film
 whose sound nothing decodes plays without it: an MKV's DTS or Opus.
 
 ## The window

@@ -9,8 +9,9 @@
 //! its first of sound, and finds a decoder for each: a codec module in
 //! LIBS:codecs/ for the pictures (SINCE 1.4; `sdk.vcodec`) - chip.vcodec
 //! H.264 and H.265 on the chip (videodec.resource, where the board has
-//! one), h264.vcodec H.264, vp8.vcodec VP8 and mjpeg.vcodec Motion JPEG
-//! in software - and audiocodec.library for the sound. `GetVideoStreamInfo`
+//! one), h264.vcodec H.264, vp8.vcodec VP8, vp9.vcodec VP9 and
+//! mjpeg.vcodec Motion JPEG in software - and audiocodec.library for the
+//! sound. `GetVideoStreamInfo`
 //! says what the film is: the pictures' codec, size and rate, how long it
 //! lasts, and the sound's rate and channels.
 //!
@@ -72,8 +73,9 @@ pub const VCODEC_MJPEG: u32 = 3;
 pub const VCODEC_MPEG4V: u32 = 4;
 /// VP8 (SINCE 1.5): vp8.vcodec, in software.
 pub const VCODEC_VP8: u32 = 5;
-/// VP9 and AV1 (SINCE 1.5): known, and nothing decodes them yet.
+/// VP9 (SINCE 1.5): vp9.vcodec, in software.
 pub const VCODEC_VP9: u32 = 6;
+/// AV1 (SINCE 1.5): known, and nothing decodes it yet.
 pub const VCODEC_AV1: u32 = 7;
 
 /// How many bytes `IdentifyVideo` is best given: an MP4 says what its

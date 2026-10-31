@@ -1,15 +1,15 @@
 # Video
 
 A film is two things side by side in one file: pictures, coded in H.264,
-H.265, VP8 or Motion JPEG, and sound, mostly AAC or AC-3.
+H.265, VP8, VP9 or Motion JPEG, and sound, mostly AAC or AC-3.
 **videocodec.library** opens the film and hands out both - the pictures as frames, in the order they
 are shown and with the time each is due, the sound as 16-bit samples for
 audio.device. Underneath, media.library reads the container (MP4,
 QuickTime's MOV and Matroska's MKV) and hands out each track's packets,
 a codec module in `LIBS:codecs/` decodes the pictures - chip.vcodec
 H.264 and H.265 on the chip's decoder (videodec.resource, the WAVE511
-on the VisionFive 2), h264.vcodec H.264 in software, vp8.vcodec VP8 in
-software, mjpeg.vcodec Motion JPEG in software - and
+on the VisionFive 2), h264.vcodec H.264 in software, vp8.vcodec VP8 and
+vp9.vcodec VP9 in software, mjpeg.vcodec Motion JPEG in software - and
 audiocodec.library decodes the sound. A display's video layer (rtg's `ShowVideoFrame`)
 shows a frame as it comes out; graphics' `WriteYUVPixelArray` and
 `ScaleYUVPixelArray` put one into a window where there is none.
@@ -191,8 +191,9 @@ colour, a pixel half covered or more is the subtitle's.
 | H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300 |
 | H.264, every profile but SVC's and MVC's: up to 4:4:4 and 14 bits, fields, shown in 8 bits; what the chip refuses, and every H.264 where there is no chip | h264.vcodec: software, a worker task on each core, a picture each | 720p High 10 about 32 frames a second, 10 on one core |
 | VP8, every version (WebM, Matroska) | vp8.vcodec: software, a worker task on each core, a frame each | 720p about 84 frames a second, 1080p about 34; 27 and 11 on one core |
+| VP9, every profile: 8, 10 and 12 bits, 4:2:0, 4:2:2, 4:4:0, 4:4:4 (WebM, Matroska), shown in 8 bits | vp9.vcodec: software, on the calling task | 720p about 18 frames a second, 1080p about 9; 720p in 10 bits about 12 |
 | Motion JPEG, baseline: grey, 4:2:0, 4:2:2, 4:4:4 | mjpeg.vcodec: software, on the calling task | about a second for a 1080p picture: small pictures only |
-| MPEG-4 Part 2; VP9 and AV1 (known since 1.5) | nothing | - |
+| MPEG-4 Part 2; AV1 (known since 1.5) | nothing | - |
 
 The sound is audiocodec.library's: AAC-LC
 ([AAC and MP4](audio.md#aac-and-mp4)), AC-3 and E-AC-3 mixed into
@@ -246,8 +247,9 @@ A packet's bytes are videocodec's for the call alone. Its frames are
 on 16 bytes, where a display's video layer reads them and out of the
 caches - its own memory, lent until `ReleaseVCodecFrame`, with
 `private` its own. `FlushVCodec` is a seek. src/disk/libs/codecs/ has
-chip.vcodec, h264.vcodec, vp8.vcodec and mjpeg.vcodec, and module.zig
-the base, init, Expunge and jump table every module there shares.
+chip.vcodec, h264.vcodec, vp8.vcodec, vp9.vcodec and mjpeg.vcodec, and
+module.zig the base, init, Expunge and jump table every module there
+shares.
 
 ## From the shell
 

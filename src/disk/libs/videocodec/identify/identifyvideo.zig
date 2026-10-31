@@ -33,8 +33,8 @@ const _identify = @import("_identify.zig");
 /// nothing: VCODEC_UNKNOWN, though OpenVideoStream reads its index
 /// wherever it is. A Matroska file (SINCE 1.2) is read element by element
 /// to its tracks, which muxers put near the front, and the first track of
-/// pictures names the codec by its ID; VP8, VP9 and AV1 are
-/// VCODEC_UNKNOWN. media.library's IdentifyMedia says whether the bytes
+/// pictures names the codec by its ID, VP8, VP9 and AV1 among them
+/// (SINCE 1.5). media.library's IdentifyMedia says whether the bytes
 /// begin a film at all.
 ///
 /// CONTEXT:
@@ -47,10 +47,9 @@ const _identify = @import("_identify.zig");
 /// The bytes are the caller's, only read.
 ///
 /// NOTES:
-/// A codec it names may still be one nothing here decodes: VCODEC_MPEG4V,
-/// VCODEC_VP9 and VCODEC_AV1, for which there is no module; H.265 where
-/// no module in LIBS:codecs/ decodes it - chip.vcodec on a board without
-/// the chip.
+/// A codec it names may still be one nothing here decodes: VCODEC_MPEG4V
+/// and VCODEC_AV1, for which there is no module; H.265 where no module in
+/// LIBS:codecs/ decodes it - chip.vcodec on a board without the chip.
 ///
 /// BUGS:
 /// None known.

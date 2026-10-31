@@ -1053,6 +1053,9 @@ pub fn build(b: *std.Build) void {
     // The VP8 decoder, vp8.vcodec's, likewise.
     const vp8core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/vp8/core.zig"), .target = b.graph.host });
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = vp8core_mod })).step);
+    // The VP9 decoder, vp9.vcodec's, likewise.
+    const vp9core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/vp9/core.zig"), .target = b.graph.host });
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = vp9core_mod })).step);
     disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);
