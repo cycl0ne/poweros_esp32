@@ -42,6 +42,9 @@ tags and constants, each with its doc comment.
   and what a task's end gives back, Kill, signals, messages and ports,
   I/O requests and a timed wait, interrupts, and a library or a device of
   one's own.
+- [Work on more cores](guides/cores.md) - a task of its own, a job in
+  parts (ShareWork), a job beside its poster (PostWork), what each
+  costs, what the code handed over may do, and cutting a job.
 - [dos.library](guides/dos.md) - files, buffered reading and writing,
   names and paths, locks and directories, patterns, command arguments,
   errors and Ctrl-C, processes, running commands, variables, being told
