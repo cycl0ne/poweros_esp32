@@ -171,13 +171,18 @@ pub const Dpb = struct {
     // --- stores ----------------------------------------------------------
 
     /// A store with nothing in it, emptying the buffer by showing pictures
-    /// when there is none (C.4.5.3). Null when every store is held.
+    /// when there is none (C.4.5.3). Null when every store is held, and
+    /// when the only empty ones are still read by jobs: they are free
+    /// once those are done, and a picture shown now would be too early.
     pub fn freeStore(d: *Dpb) ?*Store {
         while (true) {
+            var pinned = false;
             for (&d.stores) |*s| {
-                if (!s.in_use) return s;
+                if (s.in_use) continue;
+                if (s.pinned == 0) return s;
+                pinned = true;
             }
-            if (!d.bump()) return null;
+            if (pinned or !d.bump()) return null;
         }
     }
 

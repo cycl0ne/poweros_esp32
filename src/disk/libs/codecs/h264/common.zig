@@ -21,6 +21,42 @@ pub const Env = struct {
     }
 };
 
+/// The other cores, from whoever runs the decoder: `workers` of them
+/// that each run a job given them, numbered from 0, and a way for
+/// everyone to wait for the others - the workers and, as number
+/// `workers`, the one that runs the decoder.
+pub const Cores = struct {
+    ctx: *anyopaque,
+    workers: u32,
+    /// `job(arg)` run by worker `worker`, which runs nothing else then.
+    run: *const fn (ctx: *anyopaque, worker: u32, job: *const fn (arg: *anyopaque) void, arg: *anyopaque) void,
+    /// A wait: `arm(who)`, then a look whether what is waited for is
+    /// there, and when it is not `sleep(who)`, which returns once `wake`
+    /// was called after the `arm`, or sooner; then round again.
+    arm: *const fn (ctx: *anyopaque, who: u32) void,
+    sleep: *const fn (ctx: *anyopaque, who: u32) void,
+    /// Something others may wait for changed.
+    wake: *const fn (ctx: *anyopaque) void,
+};
+
+/// How a picture decoded on a worker waits for the rows of the pictures
+/// it refers to.
+pub const Sync = struct {
+    cores: *const Cores,
+    who: u32,
+
+    /// Until the first `rows` macroblock rows of `s` are final.
+    pub fn rows(sy: *const Sync, s: *const Store, n: u32) void {
+        if (@atomicLoad(u32, &s.progress, .acquire) >= n) return;
+        const c = sy.cores;
+        while (true) {
+            c.arm(c.ctx, sy.who);
+            if (@atomicLoad(u32, &s.progress, .seq_cst) >= n) return;
+            c.sleep(c.ctx, sy.who);
+        }
+    }
+};
+
 /// The luma4x4BlkIdx order (6.4.3): block k's place, x and y in 4x4
 /// blocks, and its raster index y * 4 + x.
 pub const blk_x = [16]u8{ 0, 1, 0, 1, 2, 3, 2, 3, 0, 1, 0, 1, 2, 3, 2, 3 };
@@ -145,6 +181,11 @@ pub const Store = struct {
     motion: []Motion = &.{},
     /// Whether some slice was missing or damaged.
     damaged: bool = false,
+    /// The macroblock rows of the frame that are final, filtered and all:
+    /// a picture decoded on a worker counts them up as it goes.
+    progress: u32 = 0,
+    /// The jobs that read it: it is not used again before they are done.
+    pinned: u8 = 0,
 
     pub fn isRef(s: *const Store) bool {
         return s.ref[0] != .none or s.ref[1] != .none;

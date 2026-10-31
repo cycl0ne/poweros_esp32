@@ -35,6 +35,9 @@ pub const Rc = struct {
     /// With separate colour planes, the plane the slice codes: its samples
     /// and its references' are that plane's.
     colour: u2 = 0,
+    /// A picture decoded on a worker: how it waits for its references'
+    /// rows.
+    sync: ?*const common.Sync = null,
 };
 
 /// Where the current macroblock's samples of a plane are.
@@ -611,6 +614,13 @@ pub fn Recon(comptime P: type) type {
             for (0..2) |l| {
                 if (!used[l]) continue;
                 const v = mv.mv[l][cell];
+                if (rc.sync) |sy| {
+                    // The rows the block reads, the filter's taps too.
+                    const rs = refs[l].store.?;
+                    var last: i32 = ly + (v[1] >> 2) + @as(i32, @intCast(4 * h)) + 5;
+                    if (refs[l].structure != 3) last = 2 * last + 1;
+                    sy.rows(rs, if (last < 0) 1 else @min(@as(u32, @intCast(last >> 4)) + 1, rs.height[0] >> 4));
+                }
                 for (0..planes) |p| {
                     inter.luma(P, work, refPlane(rc, refs[l], p), lx + (v[0] >> 2), ly + (v[1] >> 2), @intCast(v[0] & 3), @intCast(v[1] & 3), w * 4, h * 4, &buf[l][p], 16, (@as(i32, 1) << (if (p == 0) rc.depth_y else rc.depth_c)) - 1);
                 }

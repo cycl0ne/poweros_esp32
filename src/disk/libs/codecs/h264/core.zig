@@ -6,6 +6,7 @@ const common = @import("common.zig");
 pub const Decoder = @import("decoder.zig").Decoder;
 pub const Error = @import("bits.zig").Error;
 pub const Env = common.Env;
+pub const Cores = common.Cores;
 pub const Store = common.Store;
 pub const nal = @import("nal.zig");
 pub const params = @import("params.zig");
@@ -23,5 +24,5 @@ test {
     _ = @import("mvpred.zig");
     _ = @import("recon.zig");
     _ = @import("deblock.zig");
-    _ = &Decoder.decodeUnit;
+    _ = @import("decoder.zig");
 }

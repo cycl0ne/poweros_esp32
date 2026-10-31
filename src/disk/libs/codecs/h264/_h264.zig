@@ -11,9 +11,21 @@
 //!
 //! **A packet sent** is decoded at once, each of its units in turn; the
 //! pictures it finishes wait in the decoder until they are asked for, and
-//! while one waits another packet is refused (VCERR_FULL). A unit that is
-//! not right is passed over: the decoder makes up what it lacked. The end
-//! of the track hands out the pictures held back.
+//! while one waits another packet is refused (VCERR_FULL). A packet of
+//! units after their lengths - an MP4's, a Matroska track's - is an
+//! access unit, whose picture is whole at its end. A unit that is not
+//! right is passed over: the decoder makes up what it lacked. The end of
+//! the track hands out the pictures held back.
+//!
+//! **The cores**: with more than one, the decoder has a worker task on
+//! each, a step below the caller's priority - which gets a core at once
+//! to hand over packets and take pictures - and a picture is decoded by
+//! a worker while the next packets are taken: as many pictures at once
+//! as there are workers, each waiting for the rows of the pictures it
+//! refers to. While a worker is free a packet is taken before a picture
+//! is handed out, as long as no more pictures wait than there are
+//! workers; a picture still being decoded is waited for. Each one waits
+//! by a waitable of its own; the workers end with the decoder.
 //!
 //! **The frames** are each picture copied into the planes of the slot it
 //! is lent in, I420 in 8 bits as every frame is: deeper samples are
@@ -46,6 +58,127 @@ const plane_alignment = 16;
 /// What a frame's `private[1]` holds, so a frame that is not one of this
 /// decoder's is passed by: "H264".
 const frame_mark: u32 = 0x4832_3634;
+
+/// Workers at most, and each one's stack: the standard task stack.
+const most_workers = 8;
+const worker_stack: usize = if (@sizeOf(usize) == 8) 32 * 1024 else 16 * 1024;
+
+/// A worker task: the job it is handed - its code and what it works on,
+/// 0 while there is none - and the message its end is told by.
+const Worker = struct {
+    task: exec.Task = .{},
+    ended: exec.Message = .{},
+    team: *Team = undefined,
+    index: u32 = 0,
+    job: usize = 0,
+    arg: usize = 0,
+    stack: ?*anyopaque = null,
+};
+
+/// The workers, and how everyone waits: each by a waitable of its own,
+/// the workers' and then the caller's, and a bit in `armed` while it
+/// looks whether to wait.
+const Team = struct {
+    sys: *ExecBase = undefined,
+    cores: h264.Cores = undefined,
+    workers: [most_workers]Worker = @splat(.{}),
+    count: u32 = 0,
+    waitables: [most_workers + 1]exec.Waitable = @splat(.{}),
+    armed: u32 = 0,
+    quit: bool = false,
+    ends: ?*exec.MsgPort = null,
+
+    fn ofCtx(ctx: *anyopaque) *Team {
+        return @ptrCast(@alignCast(ctx));
+    }
+
+    fn run(ctx: *anyopaque, worker: u32, job: *const fn (*anyopaque) void, arg: *anyopaque) void {
+        const team = ofCtx(ctx);
+        const w = &team.workers[worker];
+        w.arg = @intFromPtr(arg);
+        @atomicStore(usize, &w.job, @intFromPtr(job), .seq_cst);
+        team.sys.SignalWaitable(&team.waitables[worker]);
+    }
+
+    fn arm(ctx: *anyopaque, who: u32) void {
+        const team = ofCtx(ctx);
+        team.sys.ResetWaitable(&team.waitables[who]);
+        _ = @atomicRmw(u32, &team.armed, .Or, @as(u32, 1) << @intCast(who), .seq_cst);
+    }
+
+    fn sleep(ctx: *anyopaque, who: u32) void {
+        const team = ofCtx(ctx);
+        const one = [1]*exec.Waitable{&team.waitables[who]};
+        _ = team.sys.WaitForAny(&one, 1, exec.WAIT_FOREVER);
+    }
+
+    fn wake(ctx: *anyopaque) void {
+        const team = ofCtx(ctx);
+        var armed = @atomicRmw(u32, &team.armed, .Xchg, 0, .seq_cst);
+        while (armed != 0) : (armed &= armed - 1) team.sys.SignalWaitable(&team.waitables[@ctz(armed)]);
+    }
+
+    /// A worker on each core, when there are more than one.
+    fn start(team: *Team, sys: *ExecBase) void {
+        team.sys = sys;
+        var cores: u32 = 0;
+        var times: exec.CoreTimes = .{};
+        while (cores < most_workers and sys.ReadCoreTimes(cores, &times)) cores += 1;
+        if (cores < 2) return;
+        const ends = sys.CreateMsgPort() orelse return;
+        team.ends = ends;
+        // A step below the caller, which wants a core at once when it
+        // has packets to hand over or a picture to take.
+        const pri = sys.FindTask(null).?.node.pri -| 1;
+        for (team.workers[0..cores], 0..) |*w, i| {
+            const stack = sys.AllocVec(worker_stack, exec.MEMF_ANY) orelse break;
+            w.* = .{ .team = team, .index = @intCast(i), .stack = stack };
+            w.task = .{
+                .node = .{ .type = .task, .pri = pri, .name = "h264.vcodec worker" },
+                .sp_lower = @intFromPtr(stack),
+                .sp_upper = @intFromPtr(stack) + worker_stack,
+            };
+            w.ended.reply_port = ends;
+            w.task.end_msg = &w.ended;
+            _ = sys.AddTask(&w.task, &work, null);
+            team.count += 1;
+        }
+        team.cores = .{ .ctx = team, .workers = team.count, .run = run, .arm = arm, .sleep = sleep, .wake = wake };
+    }
+
+    /// The workers ended, once nothing runs on their stacks any more.
+    fn stop(team: *Team) void {
+        const ends = team.ends orelse return;
+        const sys = team.sys;
+        @atomicStore(bool, &team.quit, true, .seq_cst);
+        for (team.waitables[0..team.count]) |*w| sys.SignalWaitable(w);
+        for (0..team.count) |_| {
+            _ = sys.WaitPort(ends);
+            _ = sys.GetMsg(ends);
+        }
+        for (team.workers[0..team.count]) |*w| sys.FreeVec(w.stack);
+        sys.DeleteMsgPort(ends);
+        team.ends = null;
+        team.count = 0;
+    }
+
+    /// A worker's code: the jobs it is handed, until it is told to end.
+    fn work(sys: *ExecBase) callconv(.c) void {
+        const w: *Worker = @fieldParentPtr("task", sys.FindTask(null).?);
+        const team = w.team;
+        while (true) {
+            arm(team, w.index);
+            const job = @atomicRmw(usize, &w.job, .Xchg, 0, .acq_rel);
+            if (job != 0) {
+                const code: *const fn (*anyopaque) void = @ptrFromInt(job);
+                code(@ptrFromInt(w.arg));
+                continue;
+            }
+            if (@atomicLoad(bool, &team.quit, .acquire)) return;
+            sleep(team, w.index);
+        }
+    }
+};
 
 /// `planes_memory` where it has room for `bytes`, any memory otherwise:
 /// asked for only where there is room, since a request that fails runs
@@ -84,6 +217,7 @@ const Decoder = struct {
     /// A frame was handed out: a unit the decoder cannot decode is passed
     /// over from then on, rather than refused for another module.
     started: bool = false,
+    team: Team = .{},
 };
 
 fn of(decoder: *vcodec.VCodecDecoder) *Decoder {
@@ -155,6 +289,8 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
             return failed(code, vc.VCERR_CORRUPT);
         };
     } else m.length_size = 0;
+    m.team.start(sys);
+    if (m.team.count != 0) core.useCores(&m.team.cores);
     return @ptrCast(m);
 }
 
@@ -199,7 +335,9 @@ fn setup(m: *Decoder, config: []const u8) ?u8 {
 pub fn CloseVCodec(_: *Base, decoder: ?*vcodec.VCodecDecoder) void {
     const m = of(decoder orelse return);
     const sys = m.sys;
+    // The workers finish what they decode before they end.
     m.core.destroy();
+    m.team.stop();
     for (&m.planes) |*planes| sys.FreeVec(planes.memory);
     sys.FreeVec(m);
 }
@@ -236,6 +374,8 @@ pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const
         if (fed != vc.VCERR_OK) return fed;
         at += length;
     }
+    // A packet with lengths is an access unit: its picture is whole.
+    m.core.endPicture();
     return vc.VCERR_OK;
 }
 

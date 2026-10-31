@@ -38,6 +38,9 @@ pub const Ctx = struct {
     /// With separate colour planes, where the slice's plane's macroblocks
     /// begin in a store's motion.
     motion_base: usize = 0,
+    /// A picture decoded on a worker: how it waits for the colocated
+    /// picture's rows.
+    sync: ?*const common.Sync = null,
 };
 
 /// A neighbouring 4x4 block's motion for one list: ref -2 when it is not
@@ -351,6 +354,12 @@ fn colocated(ctx: *const Ctx, d: *const Dec, bx: u32, by: u32) ?ColBlock {
 }
 
 fn direct(ctx: *const Ctx, d: *const Dec, t: *const Tab, out: *Direct) Error!void {
+    if (ctx.sync) |sy| {
+        if (ctx.col) |c| {
+            // The colocated macroblock's motion is final with its row.
+            if (c.store) |s| sy.rows(s, @min((d.mb_y | 1) + 1, s.height[0] >> 4));
+        }
+    }
     if (ctx.direct_spatial) return spatial(ctx, d, t, out);
     return temporal(ctx, d, out);
 }

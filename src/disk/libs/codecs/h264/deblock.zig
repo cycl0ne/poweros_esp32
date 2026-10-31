@@ -315,6 +315,15 @@ pub fn Deblock(comptime P: type) type {
             }
         }
 
+        /// Rows `from` to `to` (not included) of a frame without field
+        /// macroblock pairs, each once the row below it was decoded: its
+        /// intra prediction takes this one's samples unfiltered.
+        pub fn rows(db: *const Db, from: u32, to: u32) void {
+            for (from..to) |y| {
+                for (0..db.width) |x| macroblock(db, @intCast(x), @intCast(y));
+            }
+        }
+
         fn macroblock(db: *const Db, mb_x: u32, mb_y: u32) void {
             const xy = mb_y * db.width + mb_x;
             const info = &db.infos[xy];
