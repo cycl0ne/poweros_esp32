@@ -22,7 +22,8 @@
 //! touches against its crc first (`readChecked`): a block that does not
 //! match is `BadChecksum`, never its bytes. On a medium read as memory a
 //! block is checked once (`data_checked`); on any other the last block
-//! read in part is kept, checked, for the next read of it.
+//! read in part is kept, checked, for the next read of it. The blocks of
+//! a long read are checked in parts on the other cores (`checkBlocks`).
 //!
 //! **Writing a node** happens only at a checkpoint, to a block taken for
 //! it then. Until that a changed node is a buffer of its own, numbered in
@@ -99,6 +100,33 @@ const Spare = struct { next: ?*Spare };
 
 /// The most the spare buffers of file blocks hold together.
 const spare_bytes = 256 * 1024;
+
+/// The least checksumming handed to another core is worth: handing a part
+/// over and hearing it back costs about what 4 KiB's checksum does.
+const crc_part_bytes = 32 * 1024;
+
+/// Blocks read checked against their crcs in parts on the other cores:
+/// each part looks at its share of them and says whether one of them does
+/// not match.
+const CheckWork = struct {
+    work: media.Work = .{ .run = run },
+    uuid: *const [16]u8,
+    blocks: []const u8,
+    size: usize,
+    crcs: []const u32,
+    bad: [media.max_parts]bool = @splat(false),
+
+    fn run(work: *media.Work, part: u32, parts: u32) void {
+        const check: *CheckWork = @fieldParentPtr("work", work);
+        const count = check.crcs.len;
+        for (count * part / parts..count * (part + 1) / parts) |index| {
+            if (layout.crcSeeded(check.uuid, check.blocks[index * check.size ..][0..check.size]) != check.crcs[index]) {
+                check.bad[part] = true;
+                return;
+            }
+        }
+    }
+};
 
 pub const Volume = struct {
     dev: media.Device,
@@ -436,10 +464,7 @@ pub const Volume = struct {
                 const whole = left & ~@as(usize, size - 1);
                 const target = into[done..][0..whole];
                 if (!vol.dev.read(vol.byteOf(block), target)) return error.Io;
-                var at: usize = 0;
-                while (at < whole) : (at += size) {
-                    if (layout.crcSeeded(&vol.uuid, target[at..][0..size]) != crcs[index + at / size]) return error.BadChecksum;
-                }
+                try vol.checkBlocks(target, crcs[index..][0 .. whole / size]);
                 done += whole;
                 continue;
             }
@@ -453,6 +478,33 @@ pub const Volume = struct {
             @memcpy(into[done..][0..piece], vol.checked[within..][0..piece]);
             done += piece;
         }
+    }
+
+    /// How many parts the checksums of `bytes` are worth handing to the
+    /// other cores in: one for each 32 KiB, as many as there are cores at
+    /// most; 0 for too little, or no other core.
+    pub fn crcParts(vol: *const Volume, bytes: usize) u32 {
+        const cores = @min(vol.dev.cores(), media.max_parts);
+        if (cores < 2 or bytes < crc_part_bytes) return 0;
+        return @intCast(@min(bytes / crc_part_bytes, cores));
+    }
+
+    /// Whole blocks just read checked against their crcs, a run long
+    /// enough in parts on the other cores: BadChecksum for one that does
+    /// not match.
+    fn checkBlocks(vol: *Volume, blocks: []const u8, crcs: []const u32) Error!void {
+        const size: usize = vol.block_size;
+        const parts = vol.crcParts(blocks.len);
+        if (parts < 2) {
+            for (crcs, 0..) |crc, index| {
+                if (layout.crcSeeded(&vol.uuid, blocks[index * size ..][0..size]) != crc) return error.BadChecksum;
+            }
+            return;
+        }
+        var check: CheckWork = .{ .uuid = &vol.uuid, .blocks = blocks, .size = size, .crcs = crcs };
+        vol.dev.startWork(&check.work, parts);
+        vol.dev.finishWork(&check.work);
+        for (check.bad[0..parts]) |bad| if (bad) return error.BadChecksum;
     }
 
     /// What is kept of blocks [addr, addr + count) as file data read

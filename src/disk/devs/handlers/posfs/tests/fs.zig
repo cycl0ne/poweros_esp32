@@ -854,6 +854,36 @@ test "checksums: a block changed on the medium is ERROR_BAD_CHECKSUM, never its 
     }
 }
 
+test "checksums on the other cores: a long run's worked out beside its write, a long read checked in parts, a block changed found" {
+    const marker = "posfs: damage me";
+    for (kinds) |kind| {
+        var setup: Setup = undefined;
+        try setup.init(kind, 2 * 1024 * 1024, 4096);
+        defer setup.deinit();
+        const data = try testing.allocator.alloc(u8, 300_000);
+        defer testing.allocator.free(data);
+        const back = try testing.allocator.alloc(u8, 300_000);
+        defer testing.allocator.free(back);
+        _ = pattern(11, data);
+        @memcpy(data[40 * 4096 ..][0..marker.len], marker);
+        try writeFile(&setup.fs, "long", data);
+        // The runs went to the medium with their crcs worked out in parts.
+        const written = setup.m.works;
+        try testing.expect(written != 0);
+        try setup.fs.writeJournal();
+        const at = std.mem.indexOf(u8, setup.m.bytes, marker) orelse return error.TestUnexpectedResult;
+        setup.m.bytes[at + 100] ^= 0x10;
+        try testing.expectError(error.ReadFailed, readFile(&setup.fs, "long", back));
+        setup.m.bytes[at + 100] ^= 0x10;
+        try testing.expectEqualSlices(u8, data, back[0..try readFile(&setup.fs, "long", back)]);
+        // Read through the device, not as memory: checked in parts.
+        if (!setup.m.direct) try testing.expect(setup.m.works > written);
+        try setup.remount();
+        try testing.expectEqualSlices(u8, data, back[0..try readFile(&setup.fs, "long", back)]);
+        try expectClean(&setup.fs);
+    }
+}
+
 test "without checksums: data written and read the same, and the switch on later" {
     var setup: Setup = undefined;
     try setup.initWith(.sd, 1024 * 1024, 4096, 0);

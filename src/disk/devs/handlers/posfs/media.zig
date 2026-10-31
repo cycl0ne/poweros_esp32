@@ -15,6 +15,23 @@
 //! The file system sees it as a `Device`: the medium's address and a table
 //! of its calls, so that the file system is one piece of code whatever it
 //! runs on rather than one copy per kind of medium.
+//!
+//! The table also has what the medium's surroundings offer for work in
+//! parts on other cores (`cores`, `startWork`, `finishWork`): the handler
+//! hands the parts to exec's workers; a medium without them - the host
+//! tool's - runs the work whole where it is asked for.
+
+/// Work in parts for the other cores (`Device.startWork`): `run` is called
+/// once for each part, with its number and how many parts there are. The
+/// parts may run at the same time as each other and as the caller, so no
+/// two may write the same memory. The work is the first field of a struct
+/// of the caller's, which `run` finds with `@fieldParentPtr`.
+pub const Work = struct {
+    run: *const fn (work: *Work, part: u32, parts: u32) void,
+};
+
+/// The most parts work is started in, whatever `cores` says.
+pub const max_parts = 4;
 
 pub const Ops = struct {
     size: *const fn (ctx: *anyopaque) u64,
@@ -32,6 +49,9 @@ pub const Ops = struct {
     free: *const fn (ctx: *anyopaque, memory: []u8) void,
     now: *const fn (ctx: *anyopaque) u64,
     random: *const fn (ctx: *anyopaque, into: *[16]u8) void,
+    cores: *const fn (ctx: *anyopaque) u32,
+    startWork: *const fn (ctx: *anyopaque, work: *Work, parts: u32) void,
+    finishWork: *const fn (ctx: *anyopaque, work: *Work) void,
 };
 
 /// A medium as the file system calls it.
@@ -95,6 +115,24 @@ pub const Device = struct {
     pub fn random(dev: Device, into: *[16]u8) void {
         dev.ops.random(dev.ctx, into);
     }
+    /// How many parts work can run in at once: the cores, 1 where there
+    /// are none to hand it to.
+    pub fn cores(dev: Device) u32 {
+        return dev.ops.cores(dev.ctx);
+    }
+    /// `work` begun in `parts` parts, as many as `cores` at most, and
+    /// back at once: the parts run on the other cores while the caller
+    /// goes on - to the device, say - and nothing they write may be looked
+    /// at before `finishWork`. Where there are none, they may run here
+    /// before it returns. One work at a time: `finishWork` before the
+    /// next.
+    pub fn startWork(dev: Device, work: *Work, parts: u32) void {
+        dev.ops.startWork(dev.ctx, work, parts);
+    }
+    /// Back once every part of `work`, the work last started, has run.
+    pub fn finishWork(dev: Device, work: *Work) void {
+        dev.ops.finishWork(dev.ctx, work);
+    }
 };
 
 fn OpsOf(comptime T: type) type {
@@ -147,6 +185,18 @@ fn OpsOf(comptime T: type) type {
         fn random(ctx: *anyopaque, into: *[16]u8) void {
             self(ctx).random(into);
         }
+        // A medium with no cores to hand work to runs it whole, at once.
+        fn cores(ctx: *anyopaque) u32 {
+            return if (@hasDecl(T, "cores")) self(ctx).cores() else 1;
+        }
+        fn startWork(ctx: *anyopaque, work: *Work, parts: u32) void {
+            if (@hasDecl(T, "startWork")) return self(ctx).startWork(work, parts);
+            var part: u32 = 0;
+            while (part < parts) : (part += 1) work.run(work, part, parts);
+        }
+        fn finishWork(ctx: *anyopaque, work: *Work) void {
+            if (@hasDecl(T, "finishWork")) self(ctx).finishWork(work);
+        }
 
         const ops: Ops = .{
             .size = size,
@@ -164,6 +214,9 @@ fn OpsOf(comptime T: type) type {
             .free = free,
             .now = now,
             .random = random,
+            .cores = cores,
+            .startWork = startWork,
+            .finishWork = finishWork,
         };
     };
 }
