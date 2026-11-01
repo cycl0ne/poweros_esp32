@@ -5,28 +5,34 @@
 //! A temporal unit is OBUs (5.3): the sequence header, which names the
 //! profile, the depth and format of the samples and the tools the frames
 //! may use; and frames, each its header (5.9) and its tiles, in tile
-//! groups. The decoder reads each tile as its tile group comes
-//! (parse.zig) into the frame's blocks and coefficients; once the last is
-//! read, the frame goes into the reference slots its header names, of
-//! eight, with what the frames after it read of it - its CDFs, its motion
-//! field and segment map, its size and settings - and the rest is a job:
-//! the frame put together a superblock row at a time (recon.zig), and
-//! behind the rows deblocked, CDEF filtered, upscaled when it was coded
-//! narrower and loop restored (post.zig). A frame shown with film grain
-//! is shown as a copy with the grain added (grain.zig), the job's last
-//! part - or a job of its own for a frame shown again.
+//! groups. The decoder reads the headers and keeps each tile's bytes as
+//! its tile group comes; once the last is there, the frame goes into the
+//! reference slots its header names, of eight, with its size and settings
+//! for the headers after it, and the rest is a job: the tiles read
+//! (parse.zig) into the frame's blocks and coefficients, which leaves the
+//! frames after it its CDFs, motion field and segment map; the frame put
+//! together a superblock row at a time (recon.zig), and behind the rows
+//! deblocked, CDEF filtered, upscaled when it was coded narrower and loop
+//! restored (post.zig). A frame shown with film grain is shown as a copy
+//! with the grain added (grain.zig), the job's last part - or a job of
+//! its own for a frame shown again.
 //!
 //! Of a temporal unit with several frames shown - the layers of a
 //! scalable stream - the last is handed out, as libaom does by default.
 //!
 //! **The cores**: given workers (`useCores`), the jobs wait in turn for
-//! whichever worker is free, and the decoder goes on reading the next
-//! frames meanwhile - up to twice as many as there are workers, so that
-//! a worker finds the next frame read when it is done with one. A job
-//! counts the lines of its frame that are final (`progress`), and each
-//! read of a reference waits for the lines it reaches, which jobs begun
-//! before it put together. Without workers the decoder runs each job
-//! itself.
+//! whichever worker is free, and the decoder goes on with the next
+//! frames' headers meanwhile - up to twice as many frames as there are
+//! workers, so that a worker finds the next one when it is done with one.
+//! A job reads its tiles once the frame its CDFs come from is read (and
+//! with temporal motion vectors, its references), so frames are read side
+//! by side as far as the stream's references allow. It counts the lines
+//! of its frame that are final (`progress`), and each read of a reference
+//! waits for the lines it reaches, which jobs begun before it put
+//! together. Without workers the decoder runs each job itself.
+//!
+//! A frame read wrongly is not shown, nor any predicted from it, until a
+//! key frame - the same with workers and without.
 
 const common = @import("common.zig");
 const header = @import("header.zig");
@@ -59,9 +65,11 @@ pub const Shown = struct { frame: *const Frame, time: i64 };
 /// worker it is.
 const Hand = struct { dec: *Decoder, who: u32 };
 
-/// A frame put together and filtered, on a worker or by the decoder,
-/// from its blocks as the decoder read them; or a frame shown again
-/// given its film grain.
+/// Where a tile's bytes lie in a job's `data`.
+const Tile = struct { num: u32, at: usize, len: usize };
+
+/// A frame read, put together and filtered, on a worker or by the
+/// decoder; or a frame shown again given its film grain.
 const Job = struct {
     // The decoder's: the cores, the worker that took it, whether it runs
     // and which began first.
@@ -89,24 +97,122 @@ const Job = struct {
     post: post.Scratch = .{},
     rows: post.Rows = .{},
     film: grain.Scratch = .{},
+    /// The frame's tiles as they came: `bytes` of `data`, and where each
+    /// lies.
+    data: []u8 = &.{},
+    bytes: usize = 0,
+    tiles: []Tile = &.{},
+    ntiles: u32 = 0,
+    /// The CDFs the frame starts from: those its primary reference left
+    /// (`cdf_frame`'s, there once it is read), or the defaults; and where
+    /// the frame's own go, for the frames after it.
+    cdf_frame: ?*const Frame = null,
+    cdf_from: ?*const Cdfs = null,
+    cdf_to: *Cdfs = undefined,
+    start: Cdfs = undefined,
+    /// What the frame reads of the references, by slot, and the segment
+    /// map it predicts from; the mi rows whose motion field it kept.
+    info: [8]parse.RefInfo = @splat(.{}),
+    prev_segs: []const u8 = &.{},
+    kept: u32 = 0,
 
-    fn decode(j: *Job) void {
+    /// The job's work, with `ps` to read the tiles with.
+    fn decode(j: *Job, ps: *parse.Parse) void {
         const wait: ?recon.Wait = if (j.cores) |c| .{ .cores = c, .who = j.who } else null;
         if (j.again) {
             if (wait) |w| w.cores.lines(w.who, j.cur, j.cur.height);
         } else {
-            const sb_rows = j.out.sb_rows;
-            j.rows = .{};
-            for (0..sb_rows) |ru| {
-                const r: u32 = @intCast(ru);
-                j.rc.row(&j.seq, &j.h, &j.out, j.coded, j.refs, wait, r);
-                j.publish(j.cur, post.advance(&j.post, &j.rows, &j.seq, &j.h, &j.out, j.coded, j.cur, r + 1, r + 1 == sb_rows));
+            j.read(ps, wait);
+            // A frame predicted from one not right is not right either:
+            // known once a line of each reference is final.
+            for (j.refs) |ref| {
+                const f = ref orelse continue;
+                if (wait) |w| w.cores.lines(w.who, f, 1);
+                if (f.broken) j.cur.broken = true;
+            }
+            if (!j.cur.broken) {
+                const sb_rows = j.out.sb_rows;
+                j.rows = .{};
+                for (0..sb_rows) |ru| {
+                    const r: u32 = @intCast(ru);
+                    j.rc.row(&j.seq, &j.h, &j.out, j.coded, j.refs, wait, r);
+                    j.publish(j.cur, post.advance(&j.post, &j.rows, &j.seq, &j.h, &j.out, j.coded, j.cur, r + 1, r + 1 == sb_rows));
+                }
             }
             j.publish(j.cur, 0xFFFF_FFFF);
         }
         if (j.grained) |g| {
-            grain.apply(g, j.cur, &j.h.grain, &j.film);
+            if (j.cur.broken) g.broken = true else grain.apply(g, j.cur, &j.h.grain, &j.film);
             j.publish(g, 0xFFFF_FFFF);
+        }
+    }
+
+    /// The tiles read into the frame's blocks, once the frame its CDFs
+    /// come from is read (the references' motion fields are waited for
+    /// by rows); the motion field kept by rows as they are read, and at
+    /// the end the rest of what the frame leaves the frames after it -
+    /// zeros when it was read wrongly - and the frame marked read.
+    fn read(j: *Job, ps: *parse.Parse, wait: ?recon.Wait) void {
+        const h = &j.h;
+        const cur = j.cur;
+        if (wait) |w| {
+            if (j.cdf_frame) |f| w.cores.read(w.who, f, Frame.whole);
+        }
+        j.kept = 0;
+        ps.hooks = .{ .ctx = j, .until = refRows, .read = rowsRead };
+        j.readTiles(ps) catch {
+            cur.broken = true;
+        };
+        if (cur.broken) {
+            @memset(cur.mvs[(j.kept >> 1) * (h.mi_cols >> 1) ..], .{});
+            @memset(cur.segs, 0);
+        } else {
+            storeMotionField(&j.seq, h, cur, &j.out, j.kept, h.mi_rows);
+            if (h.segmentation_enabled and !h.segmentation_update_map) {
+                if (j.prev_segs.len == cur.segs.len) {
+                    @memcpy(cur.segs, j.prev_segs);
+                } else {
+                    @memset(cur.segs, 0);
+                }
+            }
+        }
+        @atomicStore(u32, &cur.parsed, Frame.whole, .seq_cst);
+        if (j.cores) |c| c.wake(c.ctx);
+    }
+
+    /// parse.Hooks: until reference `ref`'s motion field is there down
+    /// to mi row `rows`.
+    fn refRows(ctx: *anyopaque, ref: i8, rows: u32) void {
+        const j: *Job = @ptrCast(@alignCast(ctx));
+        const c = j.cores orelse return;
+        if (j.refs[@intCast(ref)]) |f| c.read(j.who, f, rows);
+    }
+
+    /// parse.Hooks: the frame read down to mi row `rows`, its motion
+    /// field kept that far.
+    fn rowsRead(ctx: *anyopaque, rows: u32) void {
+        const j: *Job = @ptrCast(@alignCast(ctx));
+        storeMotionField(&j.seq, &j.h, j.cur, &j.out, j.kept, rows);
+        j.kept = rows;
+        @atomicStore(u32, &j.cur.parsed, rows, .seq_cst);
+        if (j.cores) |c| c.wake(c.ctx);
+    }
+
+    fn readTiles(j: *Job, ps: *parse.Parse) Error!void {
+        const h = &j.h;
+        if (j.cdf_from) |from| {
+            j.start = from.*;
+            j.start.clearCounts();
+        } else {
+            j.start.initNonCoeff();
+            j.start.initCoeff(h.base_q_idx);
+        }
+        // What the frame leaves, unless the tile they adapt to is read.
+        j.cdf_to.* = j.start;
+        try ps.begin(&j.out, &j.seq, h, &j.info, j.cur.segs, j.prev_segs);
+        for (j.tiles[0..j.ntiles]) |t| {
+            const keep = !h.disable_frame_end_update_cdf and t.num == h.context_update_tile_id;
+            try ps.tile(t.num, j.data[t.at..][0..t.len], &j.start, if (keep) j.cdf_to else null);
         }
     }
 
@@ -130,6 +236,8 @@ const Job = struct {
     }
 
     fn deinit(j: *Job, env: Env) void {
+        env.freeSlice(u8, j.data);
+        env.freeSlice(Tile, j.tiles);
         j.out.free(env);
         j.rc.deinit(env);
         j.post.deinit(env);
@@ -144,23 +252,22 @@ pub const Decoder = struct {
     height: u32 = 0,
     bit_depth: u8 = 0,
     frames: [max_frames]Frame = @splat(.{}),
+    /// The CDFs each frame leaves, made with its first job.
+    frame_cdfs: [max_frames]?*Cdfs = @splat(null),
     slots: [8]?*Frame = @splat(null),
-    /// What each slot keeps for the headers after it, and its CDFs.
+    /// What each slot keeps for the headers after it.
     states: [8]header.RefState = @splat(.{}),
-    slot_cdfs: [8]Cdfs = undefined,
     seq: header.Sequence = .{},
     have_seq: bool = false,
     carry: header.Carry = .{},
-    /// The frame whose tiles are read: its header, CDFs, the CDFs of
-    /// the tile they adapt to, and its job.
+    /// The frame whose tiles come: its header and its job.
     h: header.Frame = .{},
     in_frame: bool = false,
     next_tile: u32 = 0,
-    cdfs: Cdfs = undefined,
-    saved: Cdfs = undefined,
     job: ?*Job = null,
+    /// What reads the tiles: the decoder's, and each worker's.
     ps: parse.Parse,
-    ref_info: [8]parse.RefInfo = @splat(.{}),
+    parses: [max_workers]?*parse.Parse = @splat(null),
     /// Until a key frame: at the start, after an error and a reset.
     need_key: bool = true,
     /// The temporal unit's frame to show.
@@ -210,6 +317,14 @@ pub const Decoder = struct {
             env.destroy(Job, j);
         }
         for (&dec.frames) |*f| freeFrameMemory(env, f);
+        for (dec.frame_cdfs) |slot| {
+            if (slot) |c| env.destroy(Cdfs, c);
+        }
+        for (dec.parses) |slot| {
+            const ps = slot orelse continue;
+            ps.deinit();
+            env.destroy(parse.Parse, ps);
+        }
         dec.ps.deinit();
         env.free(env.ctx, @ptrCast(dec), @sizeOf(Decoder));
     }
@@ -230,15 +345,19 @@ pub const Decoder = struct {
     /// While the frames are workers' and a job is free, null: the frames
     /// after it first, so that the workers have them while the frame is
     /// shown - as long as no more wait to be shown than there are
-    /// workers. One a worker still decodes is waited for.
+    /// workers. One a worker still decodes is waited for; one not right
+    /// is passed over.
     pub fn next(dec: *Decoder) ?Shown {
-        if (dec.out_count == 0) return null;
-        const s = dec.queue[dec.out_first];
-        if (dec.cores) |c| {
-            if (!dec.flushing and dec.out_count <= c.workers and dec.idle()) return null;
-            c.lines(c.workers, s.frame, s.frame.height);
+        while (dec.out_count != 0) {
+            const s = dec.queue[dec.out_first];
+            if (dec.cores) |c| {
+                if (!dec.flushing and dec.out_count <= c.workers and dec.idle()) return null;
+                c.lines(c.workers, s.frame, s.frame.height);
+            }
+            if (!s.frame.broken) return s;
+            dec.release();
         }
-        return s;
+        return null;
     }
 
     pub fn release(dec: *Decoder) void {
@@ -338,7 +457,6 @@ pub const Decoder = struct {
                 for (0..8) |i| {
                     if (i == idx) continue;
                     dec.states[i] = st;
-                    dec.slot_cdfs[i] = dec.slot_cdfs[idx];
                     dec.setSlot(i, f);
                 }
                 dec.need_key = false;
@@ -377,6 +495,7 @@ pub const Decoder = struct {
             }
         }
         const j = try dec.freeJob();
+        try dec.makeParses();
         const cur = try dec.freeFrame(h.upscaled_width, h.frame_height);
         cur.refs += 1;
         defer cur.refs -= 1;
@@ -396,25 +515,26 @@ pub const Decoder = struct {
             cur.mvs = env.slice(common.MfMv, n8) orelse return error.NoMemory;
         }
 
-        // The CDFs.
-        if (h.primary_ref_frame == common.PRIMARY_REF_NONE) {
-            dec.cdfs.initNonCoeff();
-            dec.cdfs.initCoeff(h.base_q_idx);
-        } else {
-            const slot = h.ref_frame_idx[h.primary_ref_frame];
-            if (dec.slots[slot] == null) return error.Corrupt;
-            dec.cdfs = dec.slot_cdfs[slot];
-            dec.cdfs.clearCounts();
+        // The CDFs it starts from, and where its own go.
+        j.cdf_frame = null;
+        j.cdf_from = null;
+        if (h.primary_ref_frame != common.PRIMARY_REF_NONE) {
+            const f = dec.slots[h.ref_frame_idx[h.primary_ref_frame]] orelse return error.Corrupt;
+            j.cdf_frame = f;
+            j.cdf_from = dec.frame_cdfs[dec.indexOf(f)].?;
         }
+        const own = &dec.frame_cdfs[dec.indexOf(cur)];
+        if (own.* == null) own.* = env.create(Cdfs) orelse return error.NoMemory;
+        j.cdf_to = own.*.?;
 
         // What the frame reads of its references.
         for (0..8) |i| {
             const f = dec.slots[i] orelse {
-                dec.ref_info[i] = .{};
+                j.info[i] = .{};
                 continue;
             };
             const st = &dec.states[i];
-            dec.ref_info[i] = .{
+            j.info[i] = .{
                 .mvs = f.mvs,
                 .segs = f.segs,
                 .mi_cols = st.mi_cols,
@@ -426,12 +546,41 @@ pub const Decoder = struct {
                 .frame_height = st.frame_height,
             };
         }
-        var prev_segs: []const u8 = &.{};
+        j.prev_segs = &.{};
         if (h.primary_ref_frame != common.PRIMARY_REF_NONE and h.segmentation_enabled) {
-            const ri = &dec.ref_info[h.ref_frame_idx[h.primary_ref_frame]];
-            if (ri.mi_cols == h.mi_cols and ri.mi_rows == h.mi_rows and ri.segs.len == n) prev_segs = ri.segs;
+            const ri = &j.info[h.ref_frame_idx[h.primary_ref_frame]];
+            if (ri.mi_cols == h.mi_cols and ri.mi_rows == h.mi_rows and ri.segs.len == n) j.prev_segs = ri.segs;
         }
-        try dec.ps.begin(&j.out, seq, h, &dec.ref_info, cur.segs, prev_segs);
+        j.bytes = 0;
+        j.ntiles = 0;
+    }
+
+    /// Frame `f`'s place in `frames`.
+    fn indexOf(dec: *const Decoder, f: *const Frame) usize {
+        return (@intFromPtr(f) - @intFromPtr(&dec.frames)) / @sizeOf(Frame);
+    }
+
+    /// What reads the tiles for each worker, made here for the workers.
+    fn makeParses(dec: *Decoder) Error!void {
+        const c = dec.cores orelse return;
+        for (dec.parses[0..@min(c.workers, max_workers)]) |*slot| {
+            if (slot.* != null) continue;
+            const ps = dec.env.create(parse.Parse) orelse return error.NoMemory;
+            ps.* = parse.Parse.init(dec.env);
+            slot.* = ps;
+        }
+    }
+
+    /// A tile's bytes kept for the job.
+    fn keepTile(dec: *Decoder, num: u32, bytes: []const u8) Error!void {
+        const j = dec.job.?;
+        const env = dec.env;
+        if (!env.grow(u8, &j.data, j.bytes + bytes.len)) return error.NoMemory;
+        if (!env.grow(Tile, &j.tiles, j.ntiles + 1)) return error.NoMemory;
+        @memcpy(j.data[j.bytes..][0..bytes.len], bytes);
+        j.tiles[j.ntiles] = .{ .num = num, .at = j.bytes, .len = bytes.len };
+        j.bytes += bytes.len;
+        j.ntiles += 1;
     }
 
     /// tile_group_obu (5.11.1).
@@ -460,21 +609,18 @@ pub const Decoder = struct {
                 size = v + 1;
                 if (size > data.len - at) return error.Corrupt;
             }
-            const keep = !h.disable_frame_end_update_cdf and t == h.context_update_tile_id;
-            try dec.ps.tile(t, data[at..][0..size], &dec.cdfs, if (keep) &dec.saved else null);
+            try dec.keepTile(t, data[at..][0..size]);
             at += size;
         }
         dec.next_tile = end + 1;
         if (end == num_tiles - 1) {
-            if (!h.disable_frame_end_update_cdf) dec.cdfs = dec.saved;
             dec.in_frame = false;
             try dec.endFrame();
         }
     }
 
-    /// decode_frame_wrapup (7.4): what the frames after it read of the
-    /// frame kept, the slots set, and the frame put together and
-    /// filtered by its job.
+    /// decode_frame_wrapup (7.4): the frame read, put together and
+    /// filtered by its job, and the slots set.
     fn endFrame(dec: *Decoder) Error!void {
         const h = &dec.h;
         const seq = &dec.seq;
@@ -501,16 +647,6 @@ pub const Decoder = struct {
         if (h.show_frame and seq.film_grain_params_present and h.grain.apply_grain) {
             try grain.prepare(&j.film, env, cur.width);
             j.grained = try dec.freeFrame(cur.width, cur.height);
-        }
-
-        // The motion field (7.19) and the segment map kept.
-        dec.storeMotionField(cur, &j.out);
-        if (h.segmentation_enabled and !h.segmentation_update_map) {
-            if (dec.ps.prev_segs.len == cur.segs.len) {
-                @memcpy(cur.segs, dec.ps.prev_segs);
-            } else {
-                @memset(cur.segs, 0);
-            }
         }
 
         // The rest is the job's.
@@ -546,32 +682,9 @@ pub const Decoder = struct {
                 .feature_data = h.feature_data,
                 .grain = h.grain,
             };
-            dec.slot_cdfs[i] = dec.cdfs;
             dec.setSlot(i, cur);
         }
         if (h.show_frame) dec.show(j.grained orelse cur);
-    }
-
-    fn storeMotionField(dec: *Decoder, cur: *Frame, out: *const parse.Out) void {
-        const h = &dec.h;
-        const seq = &dec.seq;
-        const w8 = h.mi_cols >> 1;
-        const h8 = h.mi_rows >> 1;
-        const limit = (1 << 12) - 1;
-        for (0..h8) |y8| {
-            for (0..w8) |x8| {
-                var m: common.MfMv = .{};
-                const blk = out.block(@intCast(2 * y8 + 1), @intCast(2 * x8 + 1));
-                for (0..2) |list| {
-                    const r = blk.ref[list];
-                    if (r <= common.INTRA_FRAME) continue;
-                    if (seq.dist(h.order_hints[@intCast(r)], h.order_hint) >= 0) continue;
-                    const mv = blk.mv[list];
-                    if (@abs(mv.row) <= limit and @abs(mv.col) <= limit) m = .{ .mv = mv, .ref = r };
-                }
-                cur.mvs[y8 * w8 + x8] = m;
-            }
-        }
     }
 
     /// A frame shown again (show_existing_frame): with film grain `g`, a
@@ -665,6 +778,8 @@ pub const Decoder = struct {
         }
         f.width = w;
         f.height = h;
+        f.parsed = 0;
+        f.broken = false;
         f.mono = seq.mono;
         f.bit_depth = seq.bit_depth;
         f.primaries = seq.primaries;
@@ -713,7 +828,7 @@ pub const Decoder = struct {
         j.order = dec.job_order;
         dec.job_order +%= 1;
         const c = dec.cores orelse {
-            j.decode();
+            j.decode(&dec.ps);
             retireJob(j);
             return;
         };
@@ -749,7 +864,7 @@ pub const Decoder = struct {
             const taken = ((crew & 0xFFFF) - 0x100) | ((head + 1) & 0xFF) << 16;
             crew = @cmpxchgWeak(u32, &dec.crew, crew, taken, .seq_cst, .seq_cst) orelse {
                 j.who = who;
-                j.decode();
+                j.decode(dec.parses[who].?);
                 @atomicStore(bool, &j.done, true, .seq_cst);
                 c.wake(c.ctx);
                 crew = @atomicLoad(u32, &dec.crew, .seq_cst);
@@ -814,6 +929,27 @@ pub const Decoder = struct {
         return false;
     }
 };
+
+/// The motion field kept (7.19) of mi rows `from` to `to`: by 8x8, the
+/// vectors of the blocks that point back.
+fn storeMotionField(seq: *const header.Sequence, h: *const header.Frame, cur: *Frame, out: *const parse.Out, from: u32, to: u32) void {
+    const w8 = h.mi_cols >> 1;
+    const limit = (1 << 12) - 1;
+    for (from >> 1..to >> 1) |y8| {
+        for (0..w8) |x8| {
+            var m: common.MfMv = .{};
+            const blk = out.block(@intCast(2 * y8 + 1), @intCast(2 * x8 + 1));
+            for (0..2) |list| {
+                const r = blk.ref[list];
+                if (r <= common.INTRA_FRAME) continue;
+                if (seq.dist(h.order_hints[@intCast(r)], h.order_hint) >= 0) continue;
+                const mv = blk.mv[list];
+                if (@abs(mv.row) <= limit and @abs(mv.col) <= limit) m = .{ .mv = mv, .ref = r };
+            }
+            cur.mvs[y8 * w8 + x8] = m;
+        }
+    }
+}
 
 fn freeFrameMemory(env: Env, f: *Frame) void {
     env.freeSlice(u8, f.memory);

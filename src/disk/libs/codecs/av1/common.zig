@@ -74,10 +74,20 @@ pub const Cores = struct {
 
     /// Until the first `n` lines of `f` are final.
     pub fn lines(c: *const Cores, who: u32, f: *const Frame, n: u32) void {
-        if (@atomicLoad(u32, &f.progress, .acquire) >= n) return;
+        c.until(who, &f.progress, n);
+    }
+
+    /// Until `f` is read down to mi row `rows`; `Frame.whole`: all of
+    /// it.
+    pub fn read(c: *const Cores, who: u32, f: *const Frame, rows: u32) void {
+        c.until(who, &f.parsed, rows);
+    }
+
+    fn until(c: *const Cores, who: u32, count: *const u32, n: u32) void {
+        if (@atomicLoad(u32, count, .acquire) >= n) return;
         while (true) {
             c.arm(c.ctx, who);
-            if (@atomicLoad(u32, &f.progress, .seq_cst) >= n) return;
+            if (@atomicLoad(u32, count, .seq_cst) >= n) return;
             c.sleep(c.ctx, who);
         }
     }
@@ -308,11 +318,21 @@ pub const Frame = struct {
     /// colour, subsampled: for the frames that read it while it is
     /// decoded.
     progress: u32 = 0,
+    /// The mi rows read, whose motion field is there for the frames after
+    /// it; `whole` once all is, its segment map and CDFs too.
+    parsed: u32 = 0,
+    /// Read wrongly, or predicted from such a frame: not shown, as the
+    /// frames after an error are not. Final once it is read, for what it
+    /// leaves the frames after it (all zeros when it was read wrongly),
+    /// and once a line of it is final, for the rest.
+    broken: bool = false,
     /// How many references it is, how many jobs decode it or read it,
     /// and how often it waits to be shown.
     refs: u8 = 0,
     pinned: u8 = 0,
     queued: u8 = 0,
+
+    pub const whole: u32 = 0xFFFF_FFFF;
 
     pub fn plane(f: *const Frame, comptime P: type, p: usize) [*]P {
         return @ptrCast(@alignCast(f.planes[p]));

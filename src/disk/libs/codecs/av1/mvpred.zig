@@ -698,32 +698,64 @@ fn diag(v: i64, factor: i64, shift: u6) i32 {
     return @intCast(@max(one - lim + 1, @min(one + lim - 1, divide(v, factor, shift))));
 }
 
-/// motion_field_estimation (7.9): each reference's projected field.
-pub fn motionField(ps: *Parse) void {
+/// motion_field_estimation (7.9), planned: the references whose fields
+/// are projected, in turn - a later one's vectors over an earlier one's.
+pub fn planMotionField(ps: *Parse) void {
     const h = ps.h;
-    const out = ps.out;
-    const w8 = out.mi_cols >> 1;
-    const h8 = out.mi_rows >> 1;
-    for (1..8) |r| @memset(ps.mf[r][0 .. w8 * h8], Mv{ .row = INVALID, .col = INVALID });
     const seq = ps.seq;
+    ps.mf_count = 0;
+    ps.mf_rows = 0;
     const last_idx = h.ref_frame_idx[0];
     const cur_gold = h.order_hints[@intCast(common.GOLDEN_FRAME)];
     const last_alt = ps.refs[last_idx].saved_order_hints[@intCast(common.ALTREF_FRAME)];
-    if (last_alt != cur_gold) _ = project(ps, common.LAST_FRAME, -1);
+    if (last_alt != cur_gold) _ = plan(ps, common.LAST_FRAME, -1);
     var stamp: i32 = MFMV_STACK_SIZE - 2;
     if (seq.dist(h.order_hints[@intCast(common.BWDREF_FRAME)], h.order_hint) > 0) {
-        if (project(ps, common.BWDREF_FRAME, 1)) stamp -= 1;
+        if (plan(ps, common.BWDREF_FRAME, 1)) stamp -= 1;
     }
     if (seq.dist(h.order_hints[@intCast(common.ALTREF2_FRAME)], h.order_hint) > 0) {
-        if (project(ps, common.ALTREF2_FRAME, 1)) stamp -= 1;
+        if (plan(ps, common.ALTREF2_FRAME, 1)) stamp -= 1;
     }
     if (seq.dist(h.order_hints[@intCast(common.ALTREF_FRAME)], h.order_hint) > 0 and stamp >= 0) {
-        if (project(ps, common.ALTREF_FRAME, 1)) stamp -= 1;
+        if (plan(ps, common.ALTREF_FRAME, 1)) stamp -= 1;
     }
-    if (stamp >= 0) _ = project(ps, common.LAST2_FRAME, -1);
+    if (stamp >= 0) _ = plan(ps, common.LAST2_FRAME, -1);
 }
 
-fn project(ps: *Parse, src: i8, dst_sign: i32) bool {
+/// Whether reference `src` has a field to project: then planned.
+fn plan(ps: *Parse, src: i8, dst_sign: i32) bool {
+    const out = ps.out;
+    const ri = &ps.refs[ps.h.ref_frame_idx[@intCast(src - common.LAST_FRAME)]];
+    if (ri.mi_rows != out.mi_rows or ri.mi_cols != out.mi_cols or
+        ri.frame_type == common.INTRA_ONLY_FRAME or ri.frame_type == common.KEY_FRAME) return false;
+    if (ri.mvs.len < (out.mi_cols >> 1) * (out.mi_rows >> 1)) return false;
+    ps.mf_plan[ps.mf_count] = .{ .src = src, .sign = dst_sign };
+    ps.mf_count += 1;
+    return true;
+}
+
+/// The projected fields down to mi row `rows`, by bands of 16 rows - a
+/// vector is projected within its band, and read within the band of the
+/// block reading it - once each reference's field is there for the band.
+pub fn projectRows(ps: *Parse, rows: u32) void {
+    const out = ps.out;
+    const w8 = out.mi_cols >> 1;
+    const end = @min(rows, out.mi_rows);
+    while (ps.mf_rows < end) {
+        const to = @min(ps.mf_rows + 16, out.mi_rows);
+        const from8 = ps.mf_rows >> 1;
+        const to8 = to >> 1;
+        for (1..8) |r| @memset(ps.mf[r][from8 * w8 .. to8 * w8], Mv{ .row = INVALID, .col = INVALID });
+        for (ps.mf_plan[0..ps.mf_count]) |p| {
+            if (ps.hooks) |hooks| hooks.until(hooks.ctx, p.src, to);
+            project(ps, p.src, p.sign, from8, to8);
+        }
+        ps.mf_rows = to;
+    }
+}
+
+/// Reference `src`'s field projected, of its rows `from8` to `to8` by 8x8.
+fn project(ps: *Parse, src: i8, dst_sign: i32, from8: u32, to8: u32) void {
     const h = ps.h;
     const seq = ps.seq;
     const out = ps.out;
@@ -731,13 +763,10 @@ fn project(ps: *Parse, src: i8, dst_sign: i32) bool {
     const ri = &ps.refs[src_idx];
     const w8 = out.mi_cols >> 1;
     const h8 = out.mi_rows >> 1;
-    if (ri.mi_rows != out.mi_rows or ri.mi_cols != out.mi_cols or
-        ri.frame_type == common.INTRA_ONLY_FRAME or ri.frame_type == common.KEY_FRAME) return false;
-    if (ri.mvs.len < w8 * h8) return false;
     const ref_to_cur = seq.dist(h.order_hints[@intCast(src)], h.order_hint);
     var ref_to_dst: [8]i32 = undefined;
     for (1..8) |d| ref_to_dst[d] = seq.dist(h.order_hint, h.order_hints[d]);
-    for (0..h8) |y8| {
+    for (from8..to8) |y8| {
         for (0..w8) |x8| {
             const saved = ri.mvs[y8 * w8 + x8];
             if (saved.ref <= common.INTRA_FRAME) continue;
@@ -752,7 +781,6 @@ fn project(ps: *Parse, src: i8, dst_sign: i32) bool {
             for (1..8) |d| ps.mf[d][at] = mvProjection(saved.mv, ref_to_dst[d], ref_offset);
         }
     }
-    return true;
 }
 
 fn mvProjection(m: Mv, numerator: i32, denominator: i32) Mv {
