@@ -282,6 +282,14 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "Commodities/Docs/Exchange.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
 };
 
+/// The directories only the machines whose disk is in RAM have:
+/// SYS:Storage is what belongs to the machine rather than to the running
+/// system, and Storage/Boot in it the files the firmware loads, which
+/// `C:Install` writes to a boot partition - so such a machine installs
+/// itself with no network and no second machine. An ESP32 board's disk is
+/// the flash its kernel is written with and has no use for either.
+const ram_disk_dirs = [_][]const u8{ "Storage", "Storage/Boot" };
+
 /// Whether the directory `dir` is made on `chip`'s image. LIBS:facet
 /// holds the drivers of the GPUs facet.library draws with, and the
 /// ESP32-S3's disk has neither it nor the library (`no_3d` there).
@@ -522,6 +530,7 @@ pub fn build(b: *std.Build) void {
     // already has, so that none is asked for twice - which mkfs refuses.
     var made: std.ArrayList([]const u8) = .empty;
     made.appendSlice(b.allocator, &image_dirs) catch @panic("OOM");
+    made.appendSlice(b.allocator, &ram_disk_dirs) catch @panic("OOM");
     const tree = diskTree(b, &made);
     const extras = extraFiles(b, &made);
     const games = gamesTree(b, &made);
@@ -575,6 +584,10 @@ pub fn build(b: *std.Build) void {
     for (disks.runs, DiskImages.chips) |run, chip| {
         for (image_dirs) |dir| {
             if (dirFor(dir, chip)) run.addArg(dir);
+        }
+        switch (chip) {
+            .esp32s3, .esp32p4 => {},
+            .rv64sbi, .a64psci => run.addArgs(&ram_disk_dirs),
         }
     }
     // The directories those files need, made before anything goes in
@@ -880,6 +893,7 @@ pub fn build(b: *std.Build) void {
     // manifest over both (tools/mkpackage, sdk.install). It is for the
     // machines whose disk is in RAM; an ESP32 board's disk is the flash
     // its kernel is written with, which `flash-disk` writes.
+    const boot_files = bootFiles(b);
     const mkpackage = b.addExecutable(.{
         .name = "mkpackage",
         .root_module = b.createModule(.{
@@ -931,7 +945,7 @@ pub fn build(b: *std.Build) void {
             );
             // What the firmware of this board reads beside them.
             if (board == .rpi_cm5) make_package.addPrefixedFileArg("boot/config.txt=", b.path("src/boards/rpi_cm5/config.txt"));
-            for (bootFiles(b)) |file| {
+            for (boot_files) |file| {
                 make_package.addPrefixedFileArg(b.fmt("boot/{s}=", .{file.name}), .{ .cwd_relative = file.host });
             }
             // The package held against the manifest it was just given, so
@@ -954,6 +968,39 @@ pub fn build(b: *std.Build) void {
             run_serve.has_side_effects = true;
             serve_step.dependOn(&run_serve.step);
             serve_step.dependOn(package_step);
+        },
+    }
+
+    // SYS:Storage/Boot on the image of the machine this build is for: the
+    // files its firmware loads, so it installs itself from what it is
+    // running - no network, no second machine - and SYS:Storage/manifest
+    // over them, a package's boot half written by the same tool, which
+    // says which chip and board they are for. The image of the other
+    // 64-bit chip keeps the drawers and nothing in them: a kernel is the
+    // board's, and a build is for one board.
+    switch (chipOf(board)) {
+        .esp32s3, .esp32p4 => {},
+        .rv64sbi, .a64psci => {
+            const run = if (chipOf(board) == .rv64sbi) make_rv64_disk else make_a64_disk;
+            const list = b.addRunArtifact(mkpackage);
+            const boot_list = list.addPrefixedOutputDirectoryArg("--into=", b.fmt("boot-{s}", .{@tagName(board)}));
+            list.addArg(b.fmt("--chip={s}", .{@tagName(chipOf(board))}));
+            list.addArg(b.fmt("--board={s}", .{@tagName(board)}));
+            // Every file goes into both: the drawer the machine reads it
+            // from, and the list that says what it is.
+            list.addPrefixedFileArg("boot/kernel.bin=", image);
+            run.addPrefixedFileArg("Storage/Boot/kernel.bin=", image);
+            if (board == .rpi_cm5) {
+                const config = b.path("src/boards/rpi_cm5/config.txt");
+                list.addPrefixedFileArg("boot/config.txt=", config);
+                run.addPrefixedFileArg("Storage/Boot/config.txt=", config);
+            }
+            for (boot_files) |file| {
+                const host: std.Build.LazyPath = .{ .cwd_relative = file.host };
+                list.addPrefixedFileArg(b.fmt("boot/{s}=", .{file.name}), host);
+                run.addPrefixedFileArg(b.fmt("Storage/Boot/{s}=", .{file.name}), host);
+            }
+            run.addPrefixedFileArg("Storage/manifest=", boot_list.path(b, "manifest"));
         },
     }
 

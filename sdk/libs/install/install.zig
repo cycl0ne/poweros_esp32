@@ -27,9 +27,9 @@
 //! the bytes.
 //!
 //! A machine keeps the manifest it was given as `installed_manifest`, and
-//! its own copy of the boot half under `boot_store`, so that it can write
-//! its boot partition again - and install another machine - with no
-//! network and no second machine.
+//! its own copy of the boot half under `boot_store` with a list of its
+//! own (`boot_manifest`), so that it can write its boot partition again -
+//! and install another machine - with no network and no second machine.
 
 pub const manifest = @import("manifest.zig");
 
@@ -46,8 +46,18 @@ pub const package_manifest = "manifest";
 /// compares against.
 pub const installed_manifest = "SYS:System/manifest";
 
-/// Where a machine keeps its own copy of the boot half.
+/// Where a machine keeps its own copy of the boot half: `SYS:Storage` is
+/// a package of which only that half is there, so the drawer under it is
+/// the half's own name and the paths in `boot_manifest` are the same ones
+/// a fetched package uses.
 pub const boot_store = "SYS:Storage/Boot";
+
+/// The list over `boot_store`, which says which chip and board those
+/// files are for: a machine that has been given another board's image
+/// would otherwise write that board's kernel to its boot partition and
+/// come up with no console. The build writes it onto the images of the
+/// machines whose disk is in RAM.
+pub const boot_manifest = "SYS:Storage/manifest";
 
 /// A path in a package, split into the half it is in and the rest of it:
 /// `system/C/List` is `.system` and `C/List`. Null for a path in neither
