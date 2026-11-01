@@ -282,6 +282,14 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "Commodities/Docs/Exchange.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
 };
 
+/// Whether the directory `dir` is made on `chip`'s image. LIBS:facet
+/// holds the drivers of the GPUs facet.library draws with, and the
+/// ESP32-S3's disk has neither it nor the library (`no_3d` there).
+fn dirFor(dir: []const u8, chip: Chip) bool {
+    if (std.mem.eql(u8, dir, "libs/facet")) return chip != .esp32s3;
+    return true;
+}
+
 /// The size the desktop shows icons at on a board's screen - an eighth of
 /// its height, at most 48 (the screens are in src/boards/<board>/
 /// system.zig) - so the disk's pictures are drawn at it, not shrunk on
@@ -564,7 +572,11 @@ pub fn build(b: *std.Build) void {
             b.fmt("{d}", .{disk_rdb_blocks}),
         });
     }
-    disks.addArgs(&image_dirs);
+    for (disks.runs, DiskImages.chips) |run, chip| {
+        for (image_dirs) |dir| {
+            if (dirFor(dir, chip)) run.addArg(dir);
+        }
+    }
     // The directories those files need, made before anything goes in
     // them: mkfs takes its paths in the order they are given.
     disks.addArgs(tree.dirs);
@@ -584,7 +596,11 @@ pub fn build(b: *std.Build) void {
         }
     }
     for (poweros_userland.files) |file| {
-        disks.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), disk_dep.namedLazyPath(file.disk));
+        const prefix = b.fmt("{s}=", .{file.disk});
+        const path = disk_dep.namedLazyPath(file.disk);
+        for (disks.runs, DiskImages.chips) |run, chip| {
+            if (poweros_userland.fileFor(file, chip)) run.addPrefixedFileArg(prefix, path);
+        }
     }
     // The programs' catalogs, and the ROM modules' own.
     for (poweros_userland.catalogs) |catalog| {

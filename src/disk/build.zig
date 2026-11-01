@@ -286,17 +286,50 @@ const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.
 /// BCM2712's SD host.
 const a64_only = [_][]const u8{ "cyw43455.device", "v3dtest", "facetboth", "v3d.fdriver" };
 
+/// What draws in three dimensions, left off the ESP32-S3's disk:
+/// facet.library, the programs that drive its rasterizer, the two that
+/// fly a scene past the eye, and the classes that read a model out of a
+/// file. Together they are 2 MB of load files on a flash disk that has
+/// 14 MB for everything, and that board's own room goes to the rest of
+/// the system.
+const no_3d = [_][]const u8{ "facet.library", "raster", "cube", "facetcube", "facetwindow", "facetmany", "model.datatype", "obj.datatype", "boing", "cobra" };
+
+/// The files that go with them: the models in SYS:Tests/datatypes, the
+/// datatype descriptor that names obj.datatype, and what the two
+/// programs are in SYS:Programs/Docs.
+const no_3d_files = [_][]const u8{
+    "devs/datatypes/OBJ",
+    "tests/datatypes/Crate.obj",
+    "tests/datatypes/Crate.mtl",
+    "tests/datatypes/Crate.png",
+    "tests/datatypes/Torus.obj",
+    "tests/datatypes/Torus.mtl",
+    "tests/datatypes/Icosahedron.obj",
+    "programs/Docs/Boing.md",
+    "programs/Docs/Cobra.md",
+};
+
 /// Whether `program` is built for `chip`. The lists name a program by its
 /// name, or by its place on the disk where one program has two.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     const others = switch (chip) {
-        .esp32s3 => &(mac_only ++ rv64_only ++ a64_only),
+        .esp32s3 => &(mac_only ++ rv64_only ++ a64_only ++ no_3d),
         .esp32p4 => &(s3_only ++ rv64_only ++ a64_only),
         .rv64sbi => &(s3_only ++ esp_only ++ a64_only),
         .a64psci => &(s3_only ++ esp_only),
     };
     for (others) |name| {
         if (std.mem.eql(u8, program.name, name) or std.mem.eql(u8, program.disk, name)) return false;
+    }
+    return true;
+}
+
+/// Whether `file` goes on `chip`'s disk. Every chip's has all of them
+/// but the ESP32-S3's, which has nothing that reads a model (`no_3d`).
+pub fn fileFor(file: File, chip: poweros_sdk.Chip) bool {
+    if (chip != .esp32s3) return true;
+    for (no_3d_files) |path| {
+        if (std.mem.eql(u8, file.disk, path)) return false;
     }
     return true;
 }
