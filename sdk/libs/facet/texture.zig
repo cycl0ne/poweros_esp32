@@ -379,6 +379,17 @@ const Sizes = struct {
 /// has. Worked out from the exponent of the larger step squared, so it
 /// costs no logarithm: a level changes where a step is about 1.4, 2.8 and
 /// so on, a power of two times the root of two.
+/// The level for a quad, from how far the coordinates move across it: the
+/// nearest of the texture's levels to log2 of the longer step. Working on
+/// the exponent alone is exact for that, not an approximation - the nearest
+/// level changes where the squared step crosses 2^(2k+1), which is an
+/// exponent and never a mantissa.
+///
+/// Being exact, it is also a step: a step either side of that boundary picks
+/// a different level, and on a patterned texture that is a visible change of
+/// colour rather than a small one. Something to know before trusting a
+/// comparison of two renderings - see `c/test/raster/facetcube.zig` on what
+/// `CHECK CORES` measures on the CM5.
 pub inline fn levelFor(texture: *const Texture, du_dx: f32, dv_dx: f32, du_dy: f32, dv_dy: f32) u32 {
     @setRuntimeSafety(false);
     const across = du_dx * du_dx + dv_dx * dv_dx;
