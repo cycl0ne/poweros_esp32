@@ -134,7 +134,15 @@ pub const FixedKind = enum(u8) {
     texture_cube = 5,
     /// A 3D texture: varyings s, t and r, each 0 to 1 across it.
     texture_3d = 6,
+    /// A texture, as `texture` has it, except that a pixel whose sampled
+    /// alpha is under half is dropped rather than drawn: a cut-out, for the
+    /// leaf and the railing and the sprite with a hole in it. Varyings s
+    /// and t.
+    texture_cutout = 7,
 };
+
+/// Under this alpha, 0 to 255, `texture_cutout` drops a pixel.
+pub const cutout_alpha = 128;
 
 /// A fragment function any device can run.
 pub const Fixed = struct {
@@ -148,10 +156,16 @@ pub const Fixed = struct {
         return switch (fixed.kind) {
             .none => 0,
             .color => 4,
-            .texture => 2,
+            .texture, .texture_cutout => 2,
             .texture_color => 6,
             .texture_array, .texture_cube, .texture_3d => 3,
         };
+    }
+
+    /// Whether the form may drop a pixel instead of colouring it, which is
+    /// what makes a pipeline's depth wait for its fragment function.
+    pub fn discards(fixed: Fixed) bool {
+        return fixed.kind == .texture_cutout;
     }
 
     fn bits(fixed: Fixed) u32 {
@@ -179,6 +193,7 @@ pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
                 .none => @compileError("a fixed form says what it does"),
                 .color => smooth(fragments),
                 .texture => textured(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
+                .texture_cutout => cutout(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_color => modulated(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_array, .texture_cube, .texture_3d => layered(fixed.kind, fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
             }
@@ -414,7 +429,12 @@ pub const Quad = extern struct {
     /// Its pixels inside the triangle: bit 0 the top left, 1 the top
     /// right, 2 the bottom left, 3 the bottom right.
     covered: u8,
-    /// Those the depth test kept, which are written.
+    /// Those the depth test kept, which are written. A fragment function of a
+    /// form that drops pixels may clear a bit to drop that one: a pipeline
+    /// whose form can do it has its depth written after the function has run,
+    /// for the pixels left, so a dropped one leaves behind no depth to hide
+    /// what is past it. `PhysicalDeviceFeatures.discarding_fragment_forms`
+    /// says where that happens.
     kept: u8,
 };
 
@@ -428,7 +448,9 @@ pub const Plane = extern struct {
 
 /// What a fragment function is given.
 pub const Fragments = extern struct {
-    quads: [*]const Quad,
+    /// The quads to colour. A function may clear a bit of a quad's `kept` to
+    /// drop that pixel; nothing else of a quad may be changed.
+    quads: [*]Quad,
     count: u32,
     /// Where each quad's four colours go, 0xAARRGGBB, its pixels in the
     /// order of `covered`'s bits.
@@ -564,6 +586,20 @@ inline fn bytesOf(at: Pixels) @Vector(4, u32) {
 /// centre - one division - and how fast they change there, and its pixels
 /// are the centre's plus or minus half a step each way, in fixed point.
 /// Elsewhere each pixel divides. How fast they change chooses the level.
+/// A texture, with the pixels whose alpha is under `cutout_alpha` dropped.
+/// The colours are those `textured` writes; what this adds is clearing the
+/// bit of every pixel too transparent to draw, so that neither its colour nor
+/// its depth is kept.
+pub fn cutout(comptime sampling: texture.Sampling, fragments: *const Fragments, picture: ?*const texture.Texture) void {
+    @setRuntimeSafety(false);
+    textured(sampling, fragments, picture);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |*quad, *out| {
+        inline for (0..4) |i| {
+            if (out[i] >> 24 < cutout_alpha) quad.kept &= ~(@as(u8, 1) << i);
+        }
+    }
+}
+
 pub fn textured(comptime sampling: texture.Sampling, fragments: *const Fragments, picture: ?*const texture.Texture) void {
     const given = picture orelse return fill(fragments, missing);
     if (given.format != sampling.format) return fill(fragments, missing);

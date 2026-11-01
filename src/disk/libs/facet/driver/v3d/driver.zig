@@ -132,6 +132,8 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // Both run on the cores, whichever device made the pipeline.
         .compute_on_device = false,
         .tessellation_on_device = false,
+        // No QPU program discards yet, so texture_cutout is refused above.
+        .discarding_fragment_forms = false,
         // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
         .depth_prepass = false,
         .points_and_lines = true,
@@ -310,7 +312,9 @@ fn freeMemory(device: *Device, memory: *DeviceMemory) callconv(.c) void {
 
 fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     const fixed = pipeline.fixed;
-    if (fixed.kind == .none or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    // A form that drops pixels needs a QPU program that discards, and there
+    // is none yet: such a pipeline is refused here and drawn on the cores.
+    if (fixed.kind == .none or fixed.discards() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
     return .success;
 }
 

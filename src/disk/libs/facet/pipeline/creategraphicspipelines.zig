@@ -207,7 +207,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .front = .counter_clockwise,
         .depth_test = null,
         .depth_write = false,
-        .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0,
+        .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0 and !fragment_entry.fixed().discards(),
         .stencil = null,
         .dynamic_stencil_compare = false,
         .dynamic_stencil_write = false,

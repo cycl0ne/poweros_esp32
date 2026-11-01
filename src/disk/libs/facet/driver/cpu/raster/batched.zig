@@ -130,6 +130,10 @@ pub const State = struct {
     prepass: bool = false,
     /// Floats past the position a vertex carries.
     varyings: u32 = 0,
+    /// The fragment function may drop a pixel by clearing its bit in
+    /// `shader.Quad.kept`, so the depth is written after it has run and not
+    /// in the walk that gathers the quads.
+    discards: bool = false,
     fragment: shader.FragmentFn,
     resources: *const shader.Resources,
 };
@@ -164,6 +168,8 @@ const Shading = struct {
     /// The depth is tested, with a stencil test.
     has_depth: bool,
     stencil: [2]StencilFace,
+    /// The fragment function may drop a pixel: its depth waits for it.
+    discards: bool,
 };
 
 /// A triangle set up for the tiles: its planes follow it.
@@ -215,6 +221,7 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .mixing = state.mixing,
         .has_depth = depth,
         .stencil = stencil orelse undefined,
+        .discards = state.discards,
     };
     const test_kind: Test = if (stencil != null) .stencil else if (!depth) .off else switch (compare) {
         .less => .less,
@@ -389,6 +396,11 @@ fn Rasterize(comptime kind: Test) type {
             const triangle: *const Triangle = @alignCast(@fieldParentPtr("header", header));
             var batch: Batch = undefined;
             batch.start(tile, triangle);
+            // A dropped pixel must leave no depth behind, so a form that can
+            // drop one has its depths held back until it has run.
+            const tested_here = if (kind == .stencil) triangle.shading.has_depth else kind != .off;
+            const second_here = kind == .second or kind == .second_or_equal;
+            batch.deferred_depth = triangle.shading.discards and tested_here and !second_here and triangle.shading.depth_write;
             walk.quads(tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading, .face = triangle.face }, Walker.run);
             batch.flush();
         }
@@ -443,9 +455,13 @@ fn Rasterize(comptime kind: Test) type {
                         } else inline for (0..4) |i| {
                             if (kept >> i & 1 != 0 and !walker.passes(near[i], depths[offset(i) + x])) kept &= ~(@as(u4, 1) << i);
                         }
-                        if (write) inline for (0..4) |i| {
-                            if (kept >> i & 1 != 0) depths[offset(i) + x] = @truncate(near[i]);
-                        };
+                        if (write) {
+                            if (batch.deferred_depth) {
+                                inline for (0..4) |i| batch.depths[count][i] = @truncate(near[i]);
+                            } else inline for (0..4) |i| {
+                                if (kept >> i & 1 != 0) depths[offset(i) + x] = @truncate(near[i]);
+                            }
+                        }
                     }
                     if (kept == 0) continue;
                     batch.quads[count] = .{ .x = @intCast(x), .y = @intCast(y), .covered = covered, .kept = kept };
@@ -522,6 +538,11 @@ const Batch = struct {
     fragments: shader.Fragments,
     quads: [batch_quads]shader.Quad,
     colors: [batch_quads][4]u32 align(8),
+    /// Each quad's four depths, held while the fragment function runs where
+    /// it may drop pixels: written after it, for those it left.
+    depths: [batch_quads][4]u16,
+    /// Whether that is what happens, worked out once a triangle.
+    deferred_depth: bool,
     /// The triangle's planes moved to the tile's top left, where their
     /// numbers are smallest.
     planes: [1 + most_varyings]shader.Plane,
@@ -566,11 +587,26 @@ const Batch = struct {
         if (batch.count == 0) return;
         batch.fragments.count = batch.count;
         batch.shading.fragment(&batch.fragments);
+        // After it, not before: the quads' `kept` is what the function left.
+        if (batch.deferred_depth) batch.putDepths();
         switch (batch.shading.blend) {
             .general => batch.putMixed(),
             inline else => |blend| batch.put(blend),
         }
         batch.count = 0;
+    }
+
+    /// The depths of the pixels the fragment function left, for a form that
+    /// may drop them.
+    inline fn putDepths(batch: *Batch) void {
+        @setRuntimeSafety(false);
+        const depths: [*]u16 = &batch.tile.buffer.depth;
+        for (batch.quads[0..batch.count], batch.depths[0..batch.count]) |quad, near| {
+            const at = depths + @as(u32, quad.y) * tile_size + quad.x;
+            inline for (0..4) |i| {
+                if (quad.kept >> i & 1 != 0) at[offset(i)] = near[i];
+            }
+        }
     }
 
     inline fn put(batch: *Batch, comptime blend: pipeline.Blend) void {
