@@ -64,5 +64,8 @@ pub const LIBRARY_VERSION = 1;
 /// `shader.Quad.kept`, and such a pipeline has its depth written after the
 /// function instead of before it, so that a dropped pixel hides nothing
 /// behind it. The first such form is `texture_cutout`, on the cores; the V3D
-/// refuses it until it has a program for it.
+/// refuses it until it has a program for it. The branch this leaves in the
+/// walk costs a draw that never drops a pixel about 1 %: 281.8 ms against
+/// 278.9 for a million triangles on the CM5's cores, measured against the
+/// same kernel with 24's walk in it.
 pub const LIBRARY_REVISION = 25;
