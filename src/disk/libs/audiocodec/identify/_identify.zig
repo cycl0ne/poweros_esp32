@@ -31,8 +31,8 @@ pub fn identify(bytes: []const u8) u32 {
     return ac.ACODEC_UNKNOWN;
 }
 
-/// What an Ogg stream carries, by its first packet: Vorbis's header, or
-/// FLAC's mapping of itself into Ogg.
+/// What an Ogg stream carries, by its first packet: Vorbis's header,
+/// Opus's, or FLAC's mapping of itself into Ogg.
 fn oggKind(bytes: []const u8) u32 {
     if (bytes.len < 27) return ac.ACODEC_UNKNOWN;
     const body = 27 + @as(usize, bytes[26]);
@@ -40,6 +40,7 @@ fn oggKind(bytes: []const u8) u32 {
     const first = bytes[body..];
     if (first[0] == 1 and _stream.same(first[1..], "vorbis")) return ac.ACODEC_VORBIS;
     if (first[0] == 0x7F and _stream.same(first[1..], "FLAC")) return ac.ACODEC_FLAC;
+    if (_stream.same(first, "OpusHead")) return ac.ACODEC_OPUS;
     return ac.ACODEC_UNKNOWN;
 }
 

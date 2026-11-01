@@ -396,14 +396,16 @@ fn IdentifyAudio(base: *AudioCodecBase, bytes: [*]const u8, length: u32) u32
 **RESULT**
 
 ACODEC_WAV, ACODEC_MP3, ACODEC_FLAC, ACODEC_VORBIS, ACODEC_AAC (SINCE
-1.6), ACODEC_AC3 or ACODEC_EAC3 (SINCE 1.8), or ACODEC_UNKNOWN.
+1.6), ACODEC_AC3 or ACODEC_EAC3 (SINCE 1.8), ACODEC_OPUS (SINCE 1.9),
+or ACODEC_UNKNOWN.
 
 **BEHAVIOR**
 
 A RIFF header naming WAVE is a WAV. "fLaC" is a FLAC, alone or behind
 an ID3v2 tag that ends among the bytes given. An Ogg page whose first
-packet is Vorbis's header is ACODEC_VORBIS, FLAC's is ACODEC_FLAC (and
-refused when it is opened); another, such as Opus, is unknown. An MP4
+packet is Vorbis's header is ACODEC_VORBIS, Opus's ACODEC_OPUS (SINCE
+1.9; unknown before), FLAC's is ACODEC_FLAC (and refused when it is
+opened); another is unknown. An MP4
 - its first box an `ftyp` - is ACODEC_AAC, as is an ADTS header the
 next one agrees with, alone or behind an ID3v2 tag; an MP4 whose sound
 is not AAC is refused when it is opened - since 1.7 it is decoded when
@@ -479,20 +481,22 @@ The stream, at its first sample; or null, with `err` set.
 
 The stream reads ahead of the decoder into a buffer of its own, and
 finds the kind by the first bytes (as `IdentifyAudio`) unless
-`ACA_Codec` says. Then the kind's header is read: a WAV's chunks up to
+`ACA_Codec` says - an Ogg stream by its first page all the same, Vorbis
+or Opus (SINCE 1.9). Then the kind's header is read: a WAV's chunks up to
 its data, an MP3's tags in front of the sound and its first frame -
 with what its encoder wrote about the rest, when it did - a FLAC's
 metadata blocks, an Ogg Vorbis stream's three header packets, an AAC
 stream's first ADTS frame, an AC-3 or E-AC-3 stream's first syncframe
-(SINCE 1.8) - or a container's, an MP4's index or a Matroska file's
-header, read by media.library (SINCE 1.6; Matroska SINCE 1.7), which
-the stream then reads its track's packets from: AAC, SINCE 1.7 MP3,
-FLAC and Vorbis, SINCE 1.8 AC-3 and E-AC-3. A container is known by
+(SINCE 1.8), an Ogg Opus stream's head and comments (SINCE 1.9) - or a
+container's, an MP4's index or a Matroska file's header, read by
+media.library (SINCE 1.6; Matroska SINCE 1.7), which the stream then
+reads its track's packets from: AAC, SINCE 1.7 MP3, FLAC and Vorbis,
+SINCE 1.8 AC-3 and E-AC-3, SINCE 1.9 Opus. A container is known by
 its first bytes whatever `ACA_Codec` says. Then the stream's info is
 filled in.
 A read function is asked for the header's
-bytes and `AUDIO_READ_AHEAD` more at most. An Ogg Vorbis file's last
-page is looked for at its end, for its length. A file's end is looked
+bytes and `AUDIO_READ_AHEAD` more at most. An Ogg file's last page is
+looked for at its end, for its length. A file's end is looked
 at first: tags there (ID3v1, APE) are not read as sound, and an ID3v1
 tag's names count where the front says nothing. An ID3v2 tag is read whole, frame by
 frame, however large; its picture is read into memory of its own only
@@ -522,14 +526,26 @@ A stream takes about 44 KiB: the read-ahead, the samples of a frame,
 an MP3 decoder's state and the tags; a kept picture is as large as it
 is. A FLAC adds a block of samples for each channel - 32 KiB for the
 usual 4096 in stereo - and an Ogg Vorbis its setup, tables and
-buffers: about 250 KiB at 44.1 kHz; AC-3 about 80 KiB. A container
+buffers: about 250 KiB at 44.1 kHz; AC-3 about 80 KiB; Opus about
+120 KiB, and 60 KiB more for each stream a packet of more channels
+holds - 370 KiB for 5.1. A container
 adds what media.library holds of it: an MP4's index, a Matroska
 track's 256 KiB read ahead.
 
 FLAC (SINCE 1.2) is decoded at 4 to 24 bits a sample; an Ogg Vorbis
 stream (SINCE 1.2) of floor type 1, as every encoder writes. One or
 two channels; more are refused, as is FLAC carried in Ogg. A chained
-Ogg file - streams one after another - ends with the first.
+Ogg file - streams one after another - is played link by link.
+
+Opus (SINCE 1.9) is decoded at 48 kHz, whatever rate its head says it
+was recorded at, its output gain applied: one stream of one or two
+channels, or up to eight channels in Vorbis's order (mapping family 1)
+mixed into stereo - the centre and surrounds at -3 dB, the LFE left
+out, scaled never to be louder than the loudest channel - and the
+peaks bent below full scale. Its length and seeks are exact; a seek
+decodes from 160 ms before the frame asked for, and the samples after
+it are near those decoding straight through gave. A packet that will not
+decode is concealed for as long as it plays.
 
 AC-3 and E-AC-3 (SINCE 1.8) of any channels are mixed into stereo as
 FFmpeg mixes them - the stream's centre and surround levels, the LFE

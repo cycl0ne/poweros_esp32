@@ -9,8 +9,8 @@
 //! front to back - or a file the program has open with media.library
 //! already (`ACA_Media`), which stays the program's. Its first sound track
 //! - in a Matroska file the one it marks to be played - is decoded unless
-//! `ACA_MediaTrack` names another: AAC, MP3, FLAC, Vorbis, AC-3 and
-//! E-AC-3; any other codec is refused.
+//! `ACA_MediaTrack` names another: AAC, MP3, FLAC, Vorbis, AC-3, E-AC-3
+//! and Opus; any other codec is refused.
 //!
 //! **Where the sound lies**: the first packet's ticks say where it begins,
 //! in the track's own ticks, and each packet after it begins where the
@@ -60,6 +60,7 @@ const mp3 = @import("../mp3/_mp3.zig");
 const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
 const ac3 = @import("../ac3/_ac3.zig");
+const opus = @import("../opus/_opus.zig");
 
 pub const Source = struct {
     /// media.library and the file - the stream's own to close, or the
@@ -212,6 +213,7 @@ fn openTrack(stream: *Stream, mb: *MediaBase, file: *media.MediaFile, owns: bool
         media.MCODEC_FLAC => flac.openTrack(stream, &track),
         media.MCODEC_VORBIS => vorbis.openTrack(stream, &track),
         media.MCODEC_AC3, media.MCODEC_EAC3 => ac3.openTrack(stream, &track),
+        media.MCODEC_OPUS => opus.openTrack(stream, &track),
         else => ac.ACERR_UNSUPPORTED,
     };
     if (result != ac.ACERR_OK) return result;

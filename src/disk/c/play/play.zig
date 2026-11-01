@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Play: a sound file out of the speaker - WAV, MP3, FLAC, Ogg Vorbis,
-//! AAC (an `.aac` file, or an `.m4a` through media.library), AC-3 or
-//! E-AC-3 (`.ac3`, `.eac3`), or the sound of a Matroska file - or a
+//! Ogg Opus, AAC (an `.aac` file, or an `.m4a` through media.library),
+//! AC-3 or E-AC-3 (`.ac3`, `.eac3`), or the sound of a Matroska file - or a
 //! station, through audiocodec.library and audio.device. Built against
 //! the SDK only.
 //!
@@ -14,11 +14,11 @@
 //! after song, each said as it begins.
 //!
 //! **A FILE that is an `http://` or `https://` address** is a station:
-//! its sound - MP3 or Ogg Vorbis - is read on a process of its own into a
-//! ring (station.zig) and played a few seconds behind, so the network's
-//! hiccups are not heard. Play says the station's name, and each title
-//! its metadata names as it changes - or, from an Ogg station, each song's
-//! own names. It plays until the station ends the stream, the connection
+//! its sound - MP3, Ogg Vorbis or Ogg Opus - is read on a process of its
+//! own into a ring (station.zig) and played a few seconds behind, so the
+//! network's hiccups are not heard. Play says the station's name, and
+//! each title its metadata names as it changes - or, from an Ogg station,
+//! each song's own names. It plays until the station ends the stream, the connection
 //! is lost - said why - or Ctrl-C; START is a file's only.
 //!
 //! The sound is decoded as it plays: three buffers of samples go round,
@@ -82,6 +82,7 @@ fn kindName(codec: u32) [*:0]const u8 {
         ac.ACODEC_AAC => "AAC",
         ac.ACODEC_AC3 => "AC-3",
         ac.ACODEC_EAC3 => "E-AC-3",
+        ac.ACODEC_OPUS => "Ogg Opus",
         else => "sound",
     };
 }

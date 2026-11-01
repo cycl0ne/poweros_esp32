@@ -47,6 +47,9 @@ pub const Op = enum(u16) {
     bind_compute_pipeline,
     dispatch,
     dispatch_indirect,
+    fill_buffer,
+    update_buffer,
+    clear_color_image,
     _,
 };
 

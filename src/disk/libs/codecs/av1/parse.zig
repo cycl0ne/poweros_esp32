@@ -192,6 +192,16 @@ pub const RefInfo = struct {
     frame_height: u32 = 0,
 };
 
+/// What a frame read beside others needs of whoever reads it: `until`, a
+/// wait for a reference's motion field (LAST_FRAME to ALTREF_FRAME) to be
+/// there down to an mi row; `read`, word that the rows down to one are
+/// read in every tile column, for the frames after it.
+pub const Hooks = struct {
+    ctx: *anyopaque,
+    until: *const fn (ctx: *anyopaque, ref: i8, mi_rows: u32) void,
+    read: *const fn (ctx: *anyopaque, mi_rows: u32) void,
+};
+
 /// The reading's state: the frame's settings, the tile's contexts and
 /// CDFs, and the block being read.
 pub const Parse = struct {
@@ -206,9 +216,14 @@ pub const Parse = struct {
     /// after it.
     segs: []u8 = &.{},
     prev_segs: []const u8 = &.{},
-    /// The projected motion field of each reference (7.9), by 8x8.
+    /// The projected motion field of each reference (7.9), by 8x8: the
+    /// references projected, in turn, and the mi rows projected so far.
     mf: [8][]Mv = @splat(&.{}),
-    mf_valid: bool = false,
+    mf_plan: [5]struct { src: i8, sign: i32 } = undefined,
+    mf_count: u32 = 0,
+    mf_rows: u32 = 0,
+    /// Whoever reads the frame beside others: null alone.
+    hooks: ?Hooks = null,
 
     // The tile.
     r: symbol.Reader = undefined,
@@ -372,7 +387,7 @@ pub const Parse = struct {
             }
             @memset(l.kind, common.RESTORE_NONE);
         }
-        if (h.use_ref_frame_mvs) mvpred.motionField(ps);
+        if (h.use_ref_frame_mvs) mvpred.planMotionField(ps);
     }
 
     /// Tile `tile` of the frame, `data` its bytes, from the frame's CDFs
@@ -416,6 +431,7 @@ pub const Parse = struct {
                 @memset(ps.left_dc[p], 0);
             }
             @memset(ps.left_segpred, 0);
+            if (h.use_ref_frame_mvs) mvpred.projectRows(ps, r + sb4);
             var c = ps.col_start;
             while (c < ps.col_end) : (c += sb4) {
                 const sb = (r >> sb_shift) * out.sb_cols + (c >> sb_shift);
@@ -425,6 +441,9 @@ pub const Parse = struct {
                 try ps.readLr(r, c, sb_size);
                 try ps.partition(r, c, sb_size);
                 out.sb_count[sb] = out.nblocks - out.sb_first[sb];
+            }
+            if (tile_col == h.tile_cols - 1) {
+                if (ps.hooks) |hooks| hooks.read(hooks.ctx, @min(r + sb4, ps.row_end));
             }
         }
         if (saved) |s| s.* = ps.c;

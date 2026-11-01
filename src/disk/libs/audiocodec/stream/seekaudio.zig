@@ -11,6 +11,7 @@ const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
 const aac = @import("../aac/_aac.zig");
 const ac3 = @import("../ac3/_ac3.zig");
+const opus = @import("../opus/_opus.zig");
 
 /// Moves a stream to a frame.
 ///
@@ -82,6 +83,7 @@ pub fn SeekAudio(_: *AudioCodecBase, public: *ac.AudioStream, frame: u32) i32 {
         .vorbis => |*state| vorbis.seek(stream, state, frame),
         .aac => |*state| aac.seek(stream, state, frame),
         .ac3 => |*state| ac3.seek(stream, state, frame),
+        .opus => |*state| opus.seek(stream, state, frame),
         .none => ac.ACERR_NOSEEK,
     };
 }

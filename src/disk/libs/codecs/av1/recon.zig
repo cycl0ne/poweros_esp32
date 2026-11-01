@@ -758,6 +758,11 @@ fn Put(comptime P: type) type {
             const global_mode = b.y_mode == common.GLOBALMV or b.y_mode == common.GLOBAL_GLOBALMV;
             const sx = s.ssx(p);
             const sy = s.ssy(p);
+            // A single prediction goes into the frame as it is made -
+            // but not one copied from the frame itself, which a damaged
+            // vector can make overlap the block.
+            const direct = !compound and !b.interintra and !b.intrabc;
+            var written = false;
             for (0..@as(u32, if (compound) 2 else 1)) |list| {
                 const ref_frame: usize = @intCast(cand.ref[list]);
                 const dst = wk.preds[list][0 .. w * h];
@@ -798,7 +803,7 @@ fn Put(comptime P: type) type {
                     }
                 } else {
                     const sc = s.scale(p, ref_w, ref_h, x, y, cand.mv[list]);
-                    s.blockInter(p, ref, last_x, last_y, sc, w, h, cand, dst, rd);
+                    written = s.blockInter(p, ref, last_x, last_y, sc, w, h, cand, dst, rd, if (direct) s.row(p, y) + x else null);
                 }
             }
 
@@ -834,9 +839,11 @@ fn Put(comptime P: type) type {
             const p0 = &wk.preds[0];
             const p1 = &wk.preds[1];
             if (!compound and !b.interintra) {
-                for (0..h) |i| {
-                    const r = s.row(p, y + i) + x;
-                    for (0..w) |j| r[j] = @intCast(s.clip1(p0[i * w + j]));
+                if (!written) {
+                    for (0..h) |i| {
+                        const r = s.row(p, y + i) + x;
+                        for (0..w) |j| r[j] = @intCast(s.clip1(p0[i * w + j]));
+                    }
                 }
             } else if (b.compound_type == common.COMPOUND_AVERAGE) {
                 for (0..h) |i| {
@@ -877,7 +884,7 @@ fn Put(comptime P: type) type {
         /// The block inter prediction process: `w` by `h` from `ref`
         /// at `sc`, by the filters of `cand`, into `dst` (at the stride
         /// `w`).
-        fn blockInter(s: *S, p: u32, ref: *const Frame, last_x: i32, last_y: i32, sc: Scaled, w: u32, h: u32, cand: *const Block, dst: []i32, rd: Rounding) void {
+        fn blockInter(s: *S, p: u32, ref: *const Frame, last_x: i32, last_y: i32, sc: Scaled, w: u32, h: u32, cand: *const Block, dst: []i32, rd: Rounding, into: ?[*]P) bool {
             const mid = &s.w.mid;
             const inter_h: u32 = @intCast(((@as(i32, @intCast(h)) - 1) * sc.step_y + (1 << 10) - 1 >> 10) + 8);
             var fx: usize = cand.filter[1];
@@ -899,7 +906,8 @@ fn Put(comptime P: type) type {
                 const frac_x: usize = @intCast((sc.x >> 6) & 15);
                 const frac_y: usize = @intCast((sc.y >> 6) & 15);
                 if (x0 >= 3 and y0 >= 3 and x0 + w_ + 4 <= last_x + 1 and y0 + h_ + 4 <= last_y + 1) {
-                    return s.blockInterInside(plane + @as(usize, @intCast(y0)) * stride + @as(usize, @intCast(x0)), stride, frac_x, frac_y, fx, fy, w, h, dst, rd);
+                    s.blockInterInside(plane + @as(usize, @intCast(y0)) * stride + @as(usize, @intCast(x0)), stride, frac_x, frac_y, fx, fy, w, h, dst, rd, into, s.f.stride[p]);
+                    return into != null;
                 }
                 // At the edge: what the taps reach copied, the edge
                 // repeated as the clipped positions would read it.
@@ -912,7 +920,8 @@ fn Put(comptime P: type) type {
                     const src = plane + @as(usize, @intCast(ry)) * stride;
                     for (edge[r * ew ..][0..ew], cols[0..ew]) |*o, c| o.* = src[c];
                 }
-                return s.blockInterInside(edge + 3 * ew + 3, ew, frac_x, frac_y, fx, fy, w, h, dst, rd);
+                s.blockInterInside(edge + 3 * ew + 3, ew, frac_x, frac_y, fx, fy, w, h, dst, rd, into, s.f.stride[p]);
+                return into != null;
             }
             for (0..inter_h) |r| {
                 const ry = common.clip3(0, last_y, (sc.y >> 10) + @as(i32, @intCast(r)) - 3);
@@ -938,58 +947,146 @@ fn Put(comptime P: type) type {
                     dst[r * w + c] = common.round2(sum, rd.r1);
                 }
             }
+            return false;
+        }
+
+        /// The taps of a filter at a position that are not 0: AV1's
+        /// regular and smooth filters have six, the sharp one eight, those
+        /// of blocks 4 wide or high four, the bilinear one two; position
+        /// 0 is the sample itself times 128 (`none`).
+        const Span = enum { none, two, four, six, eight };
+
+        fn spanOf(filter: usize, frac: usize) Span {
+            if (frac == 0) return .none;
+            return switch (filter) {
+                common.BILINEAR => .two,
+                4, 5 => .four,
+                common.EIGHTTAP_SHARP => .eight,
+                else => .six,
+            };
+        }
+
+        /// The first of a span's taps, of 0 to 7, and how many.
+        fn tapsOf(comptime sp: Span) struct { first: usize, count: usize } {
+            return switch (sp) {
+                .none => .{ .first = 3, .count = 1 },
+                .two => .{ .first = 3, .count = 2 },
+                .four => .{ .first = 2, .count = 4 },
+                .six => .{ .first = 1, .count = 6 },
+                .eight => .{ .first = 0, .count = 8 },
+            };
         }
 
         /// blockInter for a block at whole steps whose taps all lie in
         /// the reference, `at` its first sample: the same sums, without a
-        /// clip for each tap, and a filter at position 0 - the sample
-        /// itself, times 128 - taken as the shift it is.
-        fn blockInterInside(s: *S, at: [*]const P, stride: usize, frac_x: usize, frac_y: usize, fx: usize, fy: usize, w: u32, h: u32, dst: []i32, rd: Rounding) void {
-            const mid = &s.w.mid;
-            const up0: u5 = 7 - rd.r0;
-            if (frac_y == 0) {
-                // The rows themselves, filtered across or not.
-                for (0..h) |r| {
-                    const src = at + r * stride;
-                    const o = dst[r * w ..][0..w];
-                    if (frac_x == 0) {
-                        for (o, 0..) |*d, c| d.* = common.round2(@as(i32, src[c]) << (up0 + 7), rd.r1);
-                    } else {
-                        const taps = &tables.subpel_filters[fx][frac_x];
-                        const left = src - 3;
-                        for (o, 0..) |*d, c| {
-                            var sum: i32 = 0;
-                            for (0..8) |t| sum += @as(i32, taps[t]) * @as(i32, left[c + t]);
-                            d.* = common.round2(common.round2(sum, rd.r0) << 7, rd.r1);
-                        }
+        /// clip for each tap, over the taps that are not 0 - into `dst`,
+        /// or with `into` straight into the frame there, clipped (a
+        /// single prediction, which needs nothing more).
+        fn blockInterInside(s: *S, at: [*]const P, stride: usize, frac_x: usize, frac_y: usize, fx: usize, fy: usize, w: u32, h: u32, dst: []i32, rd: Rounding, into: ?[*]P, into_stride: usize) void {
+            const hs = spanOf(fx, frac_x);
+            const vs = spanOf(fy, frac_y);
+            const hx = &tables.subpel_filters[fx][frac_x];
+            if (vs == .none) {
+                if (into) |o| {
+                    if (hs == .none) {
+                        // A whole sample's vector: the samples themselves.
+                        for (0..h) |r| @memcpy(o[r * into_stride ..][0..w], at[r * stride ..][0..w]);
+                    } else switch (hs) {
+                        inline else => |sp| s.across(sp, true, at, stride, hx, h, w, rd, dst, o, into_stride),
                     }
+                } else switch (hs) {
+                    inline else => |sp| s.across(sp, false, at, stride, hx, h, w, rd, dst, undefined, 0),
                 }
                 return;
             }
-            // The rows from 3 above to 4 below, filtered across, then down.
-            const top = at - 3 * stride;
-            for (0..h + 7) |r| {
-                const src = top + r * stride;
-                const m = mid[r * w ..][0..w];
-                if (frac_x == 0) {
-                    for (m, 0..) |*d, c| d.* = @as(i32, src[c]) << up0;
-                } else {
-                    const taps = &tables.subpel_filters[fx][frac_x];
-                    const left = src - 3;
-                    for (m, 0..) |*d, c| {
+            // The rows the taps down reach, filtered across, then down.
+            const mid = &s.w.mid;
+            switch (vs) {
+                inline else => |sp| {
+                    const t = comptime tapsOf(sp);
+                    const rows = h + t.count - 1;
+                    const top = at + t.first * stride - 3 * stride;
+                    switch (hs) {
+                        inline else => |hsp| s.intoMid(hsp, top, stride, hx, rows, w, rd, mid),
+                    }
+                    const vy = &tables.subpel_filters[fy][frac_y];
+                    if (into) |o| s.down(sp, true, mid, vy, h, w, rd, dst, o, into_stride) else s.down(sp, false, mid, vy, h, w, rd, dst, undefined, 0);
+                },
+            }
+        }
+
+        /// The rows filtered across and nothing else: the sums rounded as
+        /// the two passes round them.
+        fn across(s: *const S, comptime sp: Span, comptime direct: bool, at: [*]const P, stride: usize, taps: *const [8]i16, h: u32, w: u32, rd: Rounding, dst: []i32, into: [*]P, into_stride: usize) void {
+            const t = comptime tapsOf(sp);
+            var k: [8]i32 = undefined;
+            inline for (t.first..t.first + t.count) |i| k[i] = taps[i];
+            const bias0 = @as(i32, 1) << (rd.r0 - 1);
+            const bias1 = @as(i32, 1) << (rd.r1 - 1);
+            const up0: u5 = 7 - rd.r0;
+            const hi_ = s.hi();
+            for (0..h) |r| {
+                const src = at + r * stride;
+                const left = src - 3;
+                for (0..w) |c| {
+                    var v: i32 = undefined;
+                    if (sp == .none) {
+                        v = (@as(i32, src[c]) << (up0 + 7)) + bias1 >> rd.r1;
+                    } else {
                         var sum: i32 = 0;
-                        for (0..8) |t| sum += @as(i32, taps[t]) * @as(i32, left[c + t]);
-                        d.* = common.round2(sum, rd.r0);
+                        inline for (t.first..t.first + t.count) |i| sum += k[i] * @as(i32, left[c + i]);
+                        v = ((sum + bias0 >> rd.r0) << 7) + bias1 >> rd.r1;
+                    }
+                    if (direct) {
+                        into[r * into_stride + c] = @intCast(@max(0, @min(hi_, v)));
+                    } else {
+                        dst[r * w + c] = v;
                     }
                 }
             }
-            const taps = &tables.subpel_filters[fy][frac_y];
+        }
+
+        /// `rows` rows from `top` filtered across into `mid`.
+        fn intoMid(s: *const S, comptime sp: Span, top: [*]const P, stride: usize, taps: *const [8]i16, rows: usize, w: u32, rd: Rounding, mid: []i32) void {
+            _ = s;
+            const t = comptime tapsOf(sp);
+            var k: [8]i32 = undefined;
+            inline for (t.first..t.first + t.count) |i| k[i] = taps[i];
+            const bias0 = @as(i32, 1) << (rd.r0 - 1);
+            const up0: u5 = 7 - rd.r0;
+            for (0..rows) |r| {
+                const src = top + r * stride;
+                const m = mid[r * w ..][0..w];
+                if (sp == .none) {
+                    for (m, 0..) |*d, c| d.* = @as(i32, src[c]) << up0;
+                } else {
+                    const left = src - 3;
+                    for (m, 0..) |*d, c| {
+                        var sum: i32 = 0;
+                        inline for (t.first..t.first + t.count) |i| sum += k[i] * @as(i32, left[c + i]);
+                        d.* = sum + bias0 >> rd.r0;
+                    }
+                }
+            }
+        }
+
+        /// `mid`'s rows filtered down, from the span's first row on.
+        fn down(s: *const S, comptime sp: Span, comptime direct: bool, mid: []const i32, taps: *const [8]i16, h: u32, w: u32, rd: Rounding, dst: []i32, into: [*]P, into_stride: usize) void {
+            const t = comptime tapsOf(sp);
+            var k: [8]i32 = undefined;
+            inline for (t.first..t.first + t.count) |i| k[i] = taps[i];
+            const bias1 = @as(i32, 1) << (rd.r1 - 1);
+            const hi_ = s.hi();
             for (0..h) |r| {
-                const o = dst[r * w ..][0..w];
-                for (o, 0..) |*d, c| {
+                for (0..w) |c| {
                     var sum: i32 = 0;
-                    for (0..8) |t| sum += @as(i32, taps[t]) * mid[(r + t) * w + c];
-                    d.* = common.round2(sum, rd.r1);
+                    inline for (0..t.count) |i| sum += k[t.first + i] * mid[(r + i) * w + c];
+                    const v = sum + bias1 >> rd.r1;
+                    if (direct) {
+                        into[r * into_stride + c] = @intCast(@max(0, @min(hi_, v)));
+                    } else {
+                        dst[r * w + c] = v;
+                    }
                 }
             }
         }
@@ -1152,7 +1249,7 @@ fn Put(comptime P: type) type {
             const last_x: i32 = @intCast(((ref.width + sx) >> sx) - 1);
             const last_y: i32 = @intCast(((ref.height + sy) >> sy) - 1);
             const pred = s.w.obmc[0 .. pw * ph];
-            s.blockInter(p, ref, last_x, last_y, sc, pw, ph, cand, pred, rd);
+            _ = s.blockInter(p, ref, last_x, last_y, sc, pw, ph, cand, pred, rd, null);
             for (0..ph) |i| {
                 const r = s.row(p, py + i) + px;
                 for (0..pw) |j| {

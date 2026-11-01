@@ -15,7 +15,14 @@
 //! (`LATAG_GetComposed`), a picture is not copied into the window but
 //! shown in it (`ShowLayerPicture`): layers.library copies it from where
 //! it is on to the display, now and whenever the window is shown again,
-//! and the swapchain keeps it as the one shown until the next is. The
+//! and the swapchain keeps it as the one shown until the next is.
+//!
+//! That copy is what a window costs, and it is layers' and not facet's:
+//! measured on the CM5 on 01.11.2026, `ShowLayerPicture` takes 8.7 ms a
+//! frame for a window of 1920x1080, which is 8.3 MB at about 950 MB/s,
+//! and waiting for the display's frame takes 0.7 ms more. The desktop's
+//! windows are composed, so `BltBitMapRastPort` below does not run there
+//! at all. `_swapchain.zig`'s `show` says what this costs a frame rate. The
 //! picture shown last is put into the window as its swapchain goes, so
 //! the window goes on showing it.
 //!

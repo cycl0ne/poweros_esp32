@@ -28,6 +28,9 @@ const Noise = struct {
     cb: [73][82]i32,
     cr: [73][82]i32,
     lut: [3][256]i32,
+    /// The scaling of each plane by every sample value, the lookup's
+    /// interpolation done.
+    scale: [3][4096]i16,
 };
 
 const Rng = struct {
@@ -55,11 +58,22 @@ pub fn prepare(s: *Scratch, env: Env, width: u32) Error!void {
 }
 
 /// `dst` set to `src` with the grain `g` added: `dst` laid out as `src`,
-/// `s` prepared for its width.
+/// `s` prepared for its width. The planes without grain are copied; the
+/// others are written whole by the grain.
 pub fn apply(dst: *Frame, src: *const Frame, g: *const Grain, s: *const Scratch) void {
     const width: usize = src.width + 64;
-    @memcpy(dst.memory, src.memory);
     const syn: Synth = .{ .g = g, .n = s.noise.?, .bd = @intCast(src.bit_depth), .ss_x = src.ss_x, .ss_y = src.ss_y, .mono = src.mono, .matrix = src.matrix };
+    const grained = [3]bool{
+        g.num_y_points > 0,
+        !src.mono and (g.num_cb_points > 0 or g.chroma_scaling_from_luma),
+        !src.mono and (g.num_cr_points > 0 or g.chroma_scaling_from_luma),
+    };
+    for (0..3) |p| {
+        if (grained[p]) continue;
+        const start = @intFromPtr(src.planes[p]) - @intFromPtr(src.memory.ptr);
+        const end = if (p == 2) src.memory.len else @intFromPtr(src.planes[p + 1]) - @intFromPtr(src.memory.ptr);
+        @memcpy(dst.memory[start..end], src.memory[start..end]);
+    }
     syn.generate();
     syn.scaling();
     if (src.alloc_bytes == 2) {
@@ -200,6 +214,9 @@ const Synth = struct {
             }
             for (pt.x[pt.n - 1]..256) |x| lut[x] = pt.y[pt.n - 1];
         }
+        for (0..planes) |p| {
+            for (syn.n.scale[p][0 .. @as(usize, 1) << syn.bd], 0..) |*v, i| v.* = @intCast(syn.scaleLut(p, @intCast(i)));
+        }
     }
 
     fn scaleLut(syn: *const Synth, p: usize, index: i32) i32 {
@@ -243,51 +260,49 @@ const Synth = struct {
                     const px = if (sx == 1) 6 + off_x else 9 + off_x * 2;
                     const py = if (sy == 1) 6 + off_y else 9 + off_y * 2;
                     const t = if (p == 0) &n.luma else if (p == 1) &n.cb else &n.cr;
-                    const out = cur[p * plane_rows ..];
+                    const col = if (sx == 0) x * 2 else x;
+                    const bw = @as(usize, 34) >> sx;
+                    // The columns the block before reaches, blended.
+                    const blend: usize = if (g.overlap_flag and x > 0) @as(usize, 2) >> sx else 0;
                     for (0..@as(usize, 34) >> sy) |i| {
-                        for (0..@as(usize, 34) >> sx) |j| {
-                            var v = t[py + i][px + j];
-                            const col = if (sx == 0) x * 2 + j else x + j;
-                            if (g.overlap_flag and x > 0) {
-                                if (sx == 0 and j < 2) {
-                                    const old: i32 = out[i * width + col];
-                                    v = if (j == 0) old * 27 + v * 17 else old * 17 + v * 27;
-                                    v = common.clip3(lo, hi, common.round2(v, 5));
-                                } else if (sx == 1 and j == 0) {
-                                    const old: i32 = out[i * width + col];
-                                    v = common.clip3(lo, hi, common.round2(old * 23 + v * 22, 5));
-                                }
-                            }
-                            out[i * width + col] = @intCast(v);
+                        const tr = t[py + i][px..][0..bw];
+                        const o = cur[p * plane_rows + i * width + col ..][0..bw];
+                        if (blend == 2) {
+                            o[0] = @intCast(common.clip3(lo, hi, common.round2(@as(i32, o[0]) * 27 + tr[0] * 17, 5)));
+                            o[1] = @intCast(common.clip3(lo, hi, common.round2(@as(i32, o[1]) * 17 + tr[1] * 27, 5)));
+                        } else if (blend == 1) {
+                            o[0] = @intCast(common.clip3(lo, hi, common.round2(@as(i32, o[0]) * 23 + tr[0] * 22, 5)));
                         }
+                        for (o[blend..], tr[blend..]) |*d, v| d.* = @intCast(v);
                     }
                 }
             }
-            syn.stripe(P, dst, src, cur, prev, luma_num, width);
+            // The rows the stripe above reaches, blended.
+            if (g.overlap_flag and luma_num > 0) {
+                for (0..planes) |p| {
+                    const sy = p > 0 and syn.ss_y == 1;
+                    const cols = if (p > 0) (w + syn.ss_x) >> syn.ss_x else w;
+                    const base = p * plane_rows;
+                    if (!sy) {
+                        for (0..2) |i| {
+                            const o = cur[base + i * width ..][0..cols];
+                            const old = prev[base + (i + 32) * width ..][0..cols];
+                            const a: i32 = if (i == 0) 27 else 17;
+                            for (o, old) |*d, b| d.* = @intCast(common.clip3(lo, hi, common.round2(b * a + @as(i32, d.*) * (44 - a), 5)));
+                        }
+                    } else {
+                        const o = cur[base..][0..cols];
+                        const old = prev[base + 16 * width ..][0..cols];
+                        for (o, old) |*d, b| d.* = @intCast(common.clip3(lo, hi, common.round2(@as(i32, b) * 23 + @as(i32, d.*) * 22, 5)));
+                    }
+                }
+            }
+            syn.stripe(P, dst, src, cur, luma_num, width);
             luma_num += 1;
         }
     }
 
-    fn noiseAt(syn: *const Synth, cur: []const i16, prev: []const i16, p: usize, luma_num: u32, i: usize, x: usize, width: usize) i32 {
-        const lo = syn.grainMin();
-        const hi = syn.grainMax();
-        const plane_rows = 34 * width;
-        const sy = p > 0 and syn.ss_y == 1;
-        var v: i32 = cur[p * plane_rows + i * width + x];
-        if (syn.g.overlap_flag and luma_num > 0) {
-            if (!sy and i < 2) {
-                const old: i32 = prev[p * plane_rows + (i + 32) * width + x];
-                v = if (i == 0) old * 27 + v * 17 else old * 17 + v * 27;
-                v = common.clip3(lo, hi, common.round2(v, 5));
-            } else if (sy and i < 1) {
-                const old: i32 = prev[p * plane_rows + (i + 16) * width + x];
-                v = common.clip3(lo, hi, common.round2(old * 23 + v * 22, 5));
-            }
-        }
-        return v;
-    }
-
-    fn stripe(syn: *const Synth, comptime P: type, dst: *Frame, src: *const Frame, cur: []const i16, prev: []const i16, luma_num: u32, width: usize) void {
+    fn stripe(syn: *const Synth, comptime P: type, dst: *Frame, src: *const Frame, cur: []const i16, luma_num: u32, width: usize) void {
         const g = syn.g;
         const w = src.width;
         const h = src.height;
@@ -301,7 +316,9 @@ const Synth = struct {
             max_chroma = if (syn.matrix == common.MC_IDENTITY) max_luma else @as(i32, 240) << (bd - 8);
         }
         const scaling_shift: u5 = @intCast(g.grain_scaling_minus_8 + 8);
+        const bias = @as(i32, 1) << (scaling_shift - 1);
         const pixel_max = (@as(i32, 1) << bd) - 1;
+        const plane_rows = 34 * width;
         if (!syn.mono) {
             const sx: u5 = syn.ss_x;
             const sy: u5 = syn.ss_y;
@@ -321,36 +338,38 @@ const Synth = struct {
                 for (0..2) |k| {
                     if (!on[k]) continue;
                     const p = k + 1;
+                    const scale = &syn.n.scale[p];
                     const in = src.plane(P, p) + y * src.stride[p];
                     const o = dst.plane(P, p) + y * dst.stride[p];
+                    const noise = cur[p * plane_rows + (y - first) * width ..];
+                    const luma_mult = mults[k][1] - 128;
+                    const mult = mults[k][0] - 128;
+                    const offset = (mults[k][2] - 256) << (bd - 8);
                     for (0..cols) |x| {
                         const lx = x << sx;
                         const nx = @min(lx + 1, w - 1);
-                        const avg: i32 = if (sx == 1) common.round2(@as(i32, yrow[lx]) + yrow[nx], 1) else yrow[lx];
+                        const avg: i32 = if (sx == 1) (@as(i32, yrow[lx]) + yrow[nx] + 1) >> 1 else yrow[lx];
                         const orig: i32 = in[x];
-                        const merged = if (g.chroma_scaling_from_luma) avg else blk: {
-                            const combined = avg * (mults[k][1] - 128) + orig * (mults[k][0] - 128);
-                            break :blk common.clip3(0, pixel_max, (combined >> 6) + ((mults[k][2] - 256) << (bd - 8)));
-                        };
-                        var noise = syn.noiseAt(cur, prev, p, luma_num, y - first, x, width);
-                        noise = common.round2(syn.scaleLut(p, merged) * noise, scaling_shift);
-                        o[x] = @intCast(common.clip3(min_v, max_chroma, orig + noise));
+                        const merged = if (g.chroma_scaling_from_luma) avg else @max(0, @min(pixel_max, ((avg * luma_mult + orig * mult) >> 6) + offset));
+                        const v = (scale[@intCast(merged)] * @as(i32, noise[x]) + bias) >> scaling_shift;
+                        o[x] = @intCast(@max(min_v, @min(max_chroma, orig + v)));
                     }
                 }
             }
         }
         if (g.num_y_points == 0) return;
+        const scale = &syn.n.scale[0];
         const first = luma_num << 5;
         const last = @min(h, (luma_num + 1) << 5);
         var y = first;
         while (y < last) : (y += 1) {
             const in = src.plane(P, 0) + y * src.stride[0];
             const o = dst.plane(P, 0) + y * dst.stride[0];
+            const noise = cur[(y - first) * width ..];
             for (0..w) |x| {
                 const orig: i32 = in[x];
-                var noise = syn.noiseAt(cur, prev, 0, luma_num, y - first, x, width);
-                noise = common.round2(syn.scaleLut(0, orig) * noise, scaling_shift);
-                o[x] = @intCast(common.clip3(min_v, max_luma, orig + noise));
+                const v = (scale[@intCast(orig)] * @as(i32, noise[x]) + bias) >> scaling_shift;
+                o[x] = @intCast(@max(min_v, @min(max_luma, orig + v)));
             }
         }
     }

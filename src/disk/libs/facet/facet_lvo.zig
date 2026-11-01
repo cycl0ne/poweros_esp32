@@ -49,6 +49,9 @@ const ResetCommandBuffer = @import("command/resetcommandbuffer.zig").ResetComman
 const CmdPipelineBarrier = @import("command/cmdpipelinebarrier.zig").CmdPipelineBarrier;
 const CmdCopyBufferToImage = @import("command/cmdcopybuffertoimage.zig").CmdCopyBufferToImage;
 const CmdCopyBuffer = @import("command/cmdcopybuffer.zig").CmdCopyBuffer;
+const CmdFillBuffer = @import("command/cmdfillbuffer.zig").CmdFillBuffer;
+const CmdUpdateBuffer = @import("command/cmdupdatebuffer.zig").CmdUpdateBuffer;
+const CmdClearColorImage = @import("command/cmdclearcolorimage.zig").CmdClearColorImage;
 const QueueSubmit = @import("queue/queuesubmit.zig").QueueSubmit;
 const QueueWaitIdle = @import("queue/queuewaitidle.zig").QueueWaitIdle;
 const DeviceWaitIdle = @import("queue/devicewaitidle.zig").DeviceWaitIdle;
@@ -179,6 +182,9 @@ const contract_files = [_][]const u8{
     @embedFile("command/cmdpipelinebarrier.zig"),
     @embedFile("command/cmdcopybuffertoimage.zig"),
     @embedFile("command/cmdcopybuffer.zig"),
+    @embedFile("command/cmdfillbuffer.zig"),
+    @embedFile("command/cmdupdatebuffer.zig"),
+    @embedFile("command/cmdclearcolorimage.zig"),
     @embedFile("queue/queuesubmit.zig"),
     @embedFile("queue/queuewaitidle.zig"),
     @embedFile("queue/devicewaitidle.zig"),
@@ -356,6 +362,18 @@ fn lvoCmdPipelineBarrier(base: *FacetBase, buffer: *facet.CommandBuffer, src_sta
 fn lvoCmdCopyBufferToImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, image: *facet.Image, layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.BufferImageCopy) callconv(.c) void {
     return CmdCopyBufferToImage(base, buffer, source, image, layout, region_count, regions);
 }
+fn lvoCmdFillBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, destination: *facet.Buffer, offset: u64, size: u64, data: u32) callconv(.c) void {
+    return CmdFillBuffer(base, buffer, destination, offset, size, data);
+}
+
+fn lvoCmdUpdateBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, destination: *facet.Buffer, offset: u64, size: u64, data: *const anyopaque) callconv(.c) void {
+    return CmdUpdateBuffer(base, buffer, destination, offset, size, data);
+}
+
+fn lvoCmdClearColorImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: facet.ImageLayout, color: *const facet.ClearColorValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) callconv(.c) void {
+    return CmdClearColorImage(base, buffer, image, layout, color, range_count, ranges);
+}
+
 fn lvoCmdCopyBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferCopy) callconv(.c) void {
     return CmdCopyBuffer(base, buffer, source, destination, region_count, regions);
 }
@@ -672,6 +690,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdDispatchIndirect),
     vec(lvoCmdNextSubpass),
     vec(lvoGetPhysicalDeviceFeatures),
+    vec(lvoCmdFillBuffer),
+    vec(lvoCmdUpdateBuffer),
+    vec(lvoCmdClearColorImage),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

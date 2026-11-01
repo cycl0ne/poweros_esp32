@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.26**, so that a program need not find out by failing. It covers the API.
+1.27**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -22,7 +22,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 
 | Where | What |
 |---|---|
-| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 104 entries |
+| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 107 entries |
 | `sdk/libs/facet/facet.zig` | The structures and enumerations a program passes |
 | `sdk/libs/facet/shader.zig` | Shaders as functions: the stages, their inputs, the fixed forms |
 | `sdk/libs/facet/texture.zig` | How a texture is kept and sampled |
@@ -30,7 +30,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 | `src/disk/libs/facet/driver/cpu/` | The cores' driver: the tiled rasterizer |
 | `src/disk/libs/facet/driver/v3d/` | The V3D's driver, a module in `LIBS:facet/` |
 
-Of Vulkan 1.0's roughly 137 core entry points, facet has 104. Two of the
+Of Vulkan 1.0's roughly 137 core entry points, facet has 107. Two of the
 absent ones, `GetInstanceProcAddr` and `GetDeviceProcAddr`, do not apply to
 a library called through an LVO table.
 
@@ -105,11 +105,10 @@ No `QueueBindSparse`, `GetImageSparseMemoryRequirements` or
 
 ## Commands that are absent
 
-- `CmdUpdateBuffer` and `CmdFillBuffer`: a buffer is written by mapping its
-  memory or copying into it, and there is no clearing one.
-- `CmdClearColorImage` and `CmdClearDepthStencilImage`: clearing happens
-  through an attachment's `load_op`, or `CmdClearAttachments` inside a
-  render pass, and nowhere else.
+- `CmdClearDepthStencilImage`: a depth attachment's pixels live in the
+  tiles and its memory is never touched, so there is nothing to clear.
+  Colour is cleared by `CmdClearColorImage` (since 1.27), through an
+  attachment's `load_op`, or by `CmdClearAttachments` inside a pass.
 - `CmdResolveImage`: there is no multisampling to resolve.
 - `CmdSetDepthBias` and `CmdSetDepthBounds`.
 

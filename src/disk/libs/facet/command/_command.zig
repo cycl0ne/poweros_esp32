@@ -92,6 +92,38 @@ pub const CopyBufferToImage = extern struct {
     image: *Image,
 };
 
+/// CmdFillBuffer: a run of a buffer set to one value, four bytes at a time.
+pub const FillBuffer = extern struct {
+    pub const op: _stream.Op = .fill_buffer;
+    head: Head = .{ .op = op },
+    destination: *Buffer,
+    offset: u64,
+    /// `facet.WHOLE_SIZE` for the rest of the buffer.
+    size: u64,
+    data: u32,
+    pad: u32 = 0,
+};
+
+/// CmdUpdateBuffer, followed by the bytes it writes: they are the command's
+/// own, so that the program's may go as soon as it is recorded.
+pub const UpdateBuffer = extern struct {
+    pub const op: _stream.Op = .update_buffer;
+    head: Head = .{ .op = op },
+    destination: *Buffer,
+    offset: u64,
+    size: u64,
+};
+
+/// CmdClearColorImage, followed by its ranges.
+pub const ClearColorImage = extern struct {
+    pub const op: _stream.Op = .clear_color_image;
+    head: Head = .{ .op = op },
+    count: u32,
+    /// 0xAARRGGBB.
+    color: u32,
+    image: *Image,
+};
+
 /// CmdCopyBuffer, followed by its regions.
 pub const CopyBuffer = extern struct {
     pub const op: _stream.Op = .copy_buffer;

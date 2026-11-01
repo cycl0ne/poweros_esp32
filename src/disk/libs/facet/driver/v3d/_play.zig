@@ -196,6 +196,9 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .barrier => {},
         .copy_buffer_to_image => copyBufferToImage(queue, _stream.as(_command.CopyBufferToImage, head)),
         .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
+        .fill_buffer => if (!_vertices.fillBuffer(_stream.as(_command.FillBuffer, head))) noRoom(queue, "a fill of bytes that are not the buffer's"),
+        .update_buffer => if (!_vertices.updateBuffer(_stream.as(_command.UpdateBuffer, head))) noRoom(queue, "an update of bytes that are not the buffer's"),
+        .clear_color_image => if (!_transfer.clearColorImage(_stream.as(_command.ClearColorImage, head))) noRoom(queue, "a clear of an image whose format it cannot write"),
         .copy_image => {
             const command = _stream.as(_command.CopyImage, head);
             _transfer.copyImage(command);

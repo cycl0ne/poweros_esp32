@@ -95,6 +95,22 @@ comptime {
 /// more than the format's slack.
 const most_apart = still.width * still.height / 1000;
 const most_apart_on_gpu = still.width * still.height / 20;
+// What CHECK measures on the CM5, 01.11.2026, so that the next reader is not
+// misled by it. CHECK alone goes to the GPU, because that is the device a
+// program is given unless CORES says otherwise, and there it is `alike`: 664
+// pixels further than the slack, inside the 960 allowed.
+//
+// `CHECK CORES` is `DIFFERENT`: 4154 of 19200 further, 197 at worst, against
+// the 19 allowed. That is not from the drivers' work of 01.11.2026 - the
+// figures are identical on facet.library as it stood before it - and the host
+// test of the same scene against the same reference passes
+// (`libs/facet/tests/draw.zig`), so what the cores draw on the board is not
+// what they draw on the host.
+//
+// The shape of it says where to look: 15046 pixels are the same to the bit,
+// 4154 are further than 2, and *none* lie between. A difference in filtering
+// would spread across that gap; whole mip levels differing would not, and
+// `texture.levelFor` turns on a step. Unproven, and the next thing to measure.
 
 const Gpu = facetgpu.Gpu;
 const Failure = facetgpu.Failure;

@@ -6,9 +6,10 @@
 //! open, or bytes a function of its own hands over (a download, a network
 //! stream) - and the library finds out what it is by its first bytes:
 //! WAV, MP3, FLAC, Vorbis in Ogg, AAC in ADTS frames, AC-3 and E-AC-3
-//! syncframes (SINCE 1.8) - or a container, an MP4 or a Matroska file
-//! (SINCE 1.7), which media.library reads for it: its sound in AAC, MP3,
-//! FLAC or Vorbis, and AC-3 or E-AC-3 (SINCE 1.8). A program that has a film
+//! syncframes (SINCE 1.8), Opus in Ogg (SINCE 1.9) - or a container, an
+//! MP4 or a Matroska file (SINCE 1.7), which media.library reads for it:
+//! its sound in AAC, MP3, FLAC or Vorbis, AC-3 or E-AC-3 (SINCE 1.8), and
+//! Opus (SINCE 1.9). A program that has a film
 //! open with media.library decodes its sound with `ACA_Media`. Then
 //! `DecodeAudio` hands out the sound
 //! as 16-bit samples, one frame after the other (a sample a channel, the
@@ -71,6 +72,10 @@ pub const ACODEC_AC3: u32 = 6;
 /// E-AC-3 (Dolby Digital Plus): as AC-3, its first program's 5.1 - the
 /// channels past it passed over (SINCE 1.8).
 pub const ACODEC_EAC3: u32 = 7;
+/// Opus: in Ogg pages - an .opus file, a station's stream - or a track of
+/// a container, a WebM's, a Matroska file's or an MP4's; at 48 kHz, more
+/// than two channels mixed into stereo (SINCE 1.9).
+pub const ACODEC_OPUS: u32 = 8;
 
 /// How many bytes `IdentifyAudio` wants to be sure: enough for a WAV's
 /// header and for several MP3 frames after a short tag.
@@ -199,8 +204,10 @@ pub const ACERR_UNKNOWN: i32 = -3;
 /// A kind it knows, in a form it does not decode: an MP3 of layer I or II,
 /// a WAV that is not PCM or float, a FLAC of more than 24 bits or carried
 /// in Ogg, a Vorbis floor of type 0, AAC other than LC (Main, SSR, LTP,
-/// frames of 960), a container's track in another codec - Opus, AC-3,
-/// DTS; before 1.7 any but AAC - more than two channels. An MP4 read
+/// frames of 960), a container's track in another codec - DTS; Opus
+/// before 1.9, AC-3 before 1.8, any but AAC before 1.7 - more than two
+/// channels, Opus of ambisonics or of channels with no meaning given
+/// (mapping families 2, 3 and 255). An MP4 read
 /// through a function whose index lies behind its sound, and any
 /// container without media.library.
 pub const ACERR_UNSUPPORTED: i32 = -4;

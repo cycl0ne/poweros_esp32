@@ -208,11 +208,6 @@ fn Filter(comptime P: type) type {
             return f.plane(P, p) + y * f.stride[p];
         }
 
-        /// The sample `d` steps (of `step`) from `at`.
-        fn off(at: [*]P, d: isize) *P {
-            return if (d >= 0) &at[@intCast(d)] else &(at - @as(usize, @intCast(-d)))[0];
-        }
-
         fn ssx(ft: *const F, p: usize) u5 {
             return if (p > 0) ft.seq.ss_x else 0;
         }
@@ -235,26 +230,21 @@ fn Filter(comptime P: type) type {
         /// filtered as done whole.
         fn deblock(ft: *const F, f: *Frame, r0: u32, r1: u32) void {
             const h = ft.h;
-            const out = ft.out;
-            for (0..ft.seq.planes()) |p| {
+            for (0..ft.seq.planes()) |pu| {
+                const p: u32 = @intCast(pu);
                 if (p > 0 and h.loop_filter_level[1 + p] == 0) continue;
                 const row_step: u32 = @as(u32, 1) << ft.ssy(p);
-                const col_step: u32 = @as(u32, 1) << ft.ssx(p);
-                for (0..2) |pass| {
+                inline for (0..2) |pass| {
                     var r: u32 = r0;
-                    while (r < r1) : (r += row_step) {
-                        var c: u32 = 0;
-                        while (c < out.mi_cols) : (c += col_step) ft.edge(f, @intCast(p), @intCast(pass), r, c);
-                    }
+                    while (r < r1) : (r += row_step) ft.edges(f, p, pass, r);
                 }
             }
         }
 
         const Strength = struct { lvl: i32, limit: i32, blimit: i32, thresh: i32 };
 
-        fn strength(ft: *const F, r: u32, c: u32, p: u32, pass: u32) Strength {
+        fn strength(ft: *const F, b: *const parse.Block, p: u32, pass: u32) Strength {
             const h = ft.h;
-            const b = ft.out.block(r, c);
             const mode_type: usize = if (b.y_mode >= common.NEARESTMV and b.y_mode != common.GLOBALMV and b.y_mode != common.GLOBAL_GLOBALMV) 1 else 0;
             const i: usize = if (p == 0) pass else p + 1;
             const delta: i32 = if (h.delta_lf_multi) b.delta_lf[i] else b.delta_lf[0];
@@ -279,130 +269,165 @@ fn Filter(comptime P: type) type {
             return .{ .lvl = lvl, .limit = limit, .blimit = 2 * (lvl + 2) + limit, .thresh = lvl >> 4 };
         }
 
-        fn edge(ft: *const F, f: *Frame, p: u32, pass: u32, r0: u32, c0: u32) void {
+        /// The edges of plane `p` on 4x4 row `r0` (of the brightness),
+        /// vertical ones (`pass` 0) or horizontal ones (1): each where a
+        /// transform begins, unless inside a block that skipped its
+        /// residual, by the filter both transforms allow and the strength
+        /// of the block past it - kept from one edge to the next, as most
+        /// in a row are the same block's.
+        fn edges(ft: *const F, f: *Frame, p: u32, comptime pass: u32, r0: u32) void {
             const h = ft.h;
             const out = ft.out;
             const sx = ft.ssx(p);
             const sy = ft.ssy(p);
-            const x = c0 * 4;
             const y = r0 * 4;
-            const r = r0 | sy;
-            const c = c0 | sx;
-            if (x >= h.frame_width or y >= h.frame_height) return;
-            if (pass == 0 and x == 0) return;
-            if (pass == 1 and y == 0) return;
-            const xp = x >> sx;
+            if (y >= h.frame_height or (pass == 1 and y == 0)) return;
             const yp = y >> sy;
+            const r = r0 | sy;
             const prev_r = if (pass == 1) r - (@as(u32, 1) << sy) else r;
-            const prev_c = if (pass == 0) c - (@as(u32, 1) << sx) else c;
-            const b = out.block(r, c);
             const lf = out.lf_tx[p];
-            const tx = lf[(r >> sy) * out.mi_cols + (c >> sx)];
-            const psz = tables.subsampled_size[b.size][sx][sy];
-            const is_intra = b.ref[0] <= common.INTRA_FRAME;
-            const prev_tx = lf[(prev_r >> sy) * out.mi_cols + (prev_c >> sx)];
-            const block_edge = if (pass == 0) xp % parse.blockWidth(psz) == 0 else yp % parse.blockHeight(psz) == 0;
-            const tx_edge = if (pass == 0) xp % tables.tx_width[tx] == 0 else yp % tables.tx_height[tx] == 0;
-            if (!tx_edge) return;
-            if (!(block_edge or !b.skip or is_intra)) return;
-            const base: u32 = if (pass == 0) @min(tables.tx_width[prev_tx], tables.tx_width[tx]) else @min(tables.tx_height[prev_tx], tables.tx_height[tx]);
-            const size: u32 = if (p == 0) @min(16, base) else @min(8, base);
-            var st = ft.strength(r, c, p, pass);
-            if (st.lvl == 0) st = ft.strength(prev_r, prev_c, p, pass);
-            if (st.lvl == 0) return;
-            const dx: i32 = if (pass == 0) 1 else 0;
-            for (0..4) |i| {
-                const ii: u32 = @intCast(i);
-                ft.sample(f, p, if (pass == 1) xp + ii else xp, if (pass == 0) yp + ii else yp, st, dx, size);
+            const line = lf[(r >> sy) * out.mi_cols ..];
+            const above = lf[(prev_r >> sy) * out.mi_cols ..];
+            const col_step: u32 = @as(u32, 1) << sx;
+            const cols = @min(out.mi_cols, (h.frame_width + 3) >> 2);
+            const stride: usize = f.stride[p];
+            const across: usize = if (pass == 0) 1 else stride;
+            const along: usize = if (pass == 0) stride else 1;
+            const first = row(f, p, yp);
+            var known: ?*const parse.Block = null;
+            var known_st: Strength = undefined;
+            var c0: u32 = if (pass == 0) col_step else 0;
+            while (c0 < cols) : (c0 += col_step) {
+                const c = c0 | sx;
+                const xp = (c0 * 4) >> sx;
+                const tx = line[c >> sx];
+                if (pass == 0) {
+                    if (xp & (tables.tx_width[tx] - 1) != 0) continue;
+                } else {
+                    if (yp & (tables.tx_height[tx] - 1) != 0) continue;
+                }
+                const b = out.block(r, c);
+                const psz = tables.subsampled_size[b.size][sx][sy];
+                const block_edge = if (pass == 0) xp & (parse.blockWidth(psz) - 1) == 0 else yp & (parse.blockHeight(psz) - 1) == 0;
+                if (!(block_edge or !b.skip or b.ref[0] <= common.INTRA_FRAME)) continue;
+                const prev_c = if (pass == 0) c - col_step else c;
+                const prev_tx = if (pass == 0) line[prev_c >> sx] else above[c >> sx];
+                const base: u32 = if (pass == 0) @min(tables.tx_width[prev_tx], tables.tx_width[tx]) else @min(tables.tx_height[prev_tx], tables.tx_height[tx]);
+                if (known != b) {
+                    known = b;
+                    known_st = ft.strength(b, p, pass);
+                }
+                var st = known_st;
+                if (st.lvl == 0) {
+                    st = ft.strength(out.block(prev_r, prev_c), p, pass);
+                    if (st.lvl == 0) continue;
+                }
+                const at = first + xp;
+                if (base == 4) {
+                    ft.filterEdge(4, at, across, along, st);
+                } else if (p != 0) {
+                    ft.filterEdge(6, at, across, along, st);
+                } else if (base == 8) {
+                    ft.filterEdge(8, at, across, along, st);
+                } else {
+                    ft.filterEdge(16, at, across, along, st);
+                }
             }
         }
 
-        fn sample(ft: *const F, f: *Frame, p: u32, x: u32, y: u32, st: Strength, dx: i32, size: u32) void {
-            // The samples across the edge: q[ k ] at k, p[ k ] at -1 - k.
-            const stride: isize = @intCast(f.stride[p]);
-            const step: isize = if (dx == 1) 1 else stride;
-            const at: [*]P = row(f, p, y) + x;
-            const n: usize = if (size == 16) 7 else 4;
-            var q: [7]i32 = undefined;
-            var pp: [7]i32 = undefined;
-            for (0..n) |k| {
-                const kk: isize = @intCast(k);
-                q[k] = off(at, kk * step).*;
-                pp[k] = off(at, -(kk + 1) * step).*;
-            }
+        /// The four samples of an edge filtered (7.14.6): `at` the first
+        /// past the edge, the samples across it `across` apart, the four
+        /// `along` apart; `len` the filter's length: 4, 6 (colour), 8 or
+        /// 16 samples.
+        fn filterEdge(ft: *const F, comptime len: u32, at: [*]P, across: usize, along: usize, st: Strength) void {
+            // v[m + k] is q[k], v[m - 1 - k] p[k].
+            const m: usize = switch (len) {
+                4 => 2,
+                6 => 3,
+                8 => 4,
+                else => 7,
+            };
             const shift: u5 = ft.bd - 8;
             const one = @as(i32, 1) << shift;
-            const hev = @abs(pp[1] - pp[0]) > st.thresh << shift or @abs(q[1] - q[0]) > st.thresh << shift;
-            const len: u32 = if (size == 4) 4 else if (p != 0) 6 else if (size == 8) 8 else 16;
+            const thresh = st.thresh << shift;
             const limit = st.limit << shift;
             const blimit = st.blimit << shift;
-            var mask = @abs(pp[1] - pp[0]) > limit or @abs(q[1] - q[0]) > limit or
-                @abs(pp[0] - q[0]) * 2 + @abs(pp[1] - q[1]) / 2 > blimit;
-            if (len >= 6) mask = mask or @abs(pp[2] - pp[1]) > limit or @abs(q[2] - q[1]) > limit;
-            if (len >= 8) mask = mask or @abs(pp[3] - pp[2]) > limit or @abs(q[3] - q[2]) > limit;
-            if (mask) return;
-            var flat = false;
-            if (size >= 8) {
-                var m = @abs(pp[1] - pp[0]) > one or @abs(q[1] - q[0]) > one or @abs(pp[2] - pp[0]) > one or @abs(q[2] - q[0]) > one;
-                if (len >= 8) m = m or @abs(pp[3] - pp[0]) > one or @abs(q[3] - q[0]) > one;
-                flat = !m;
-            }
-            var flat2 = false;
-            if (size >= 16) {
-                const m = @abs(pp[6] - pp[0]) > one or @abs(q[6] - q[0]) > one or @abs(pp[5] - pp[0]) > one or
-                    @abs(q[5] - q[0]) > one or @abs(pp[4] - pp[0]) > one or @abs(q[4] - q[0]) > one;
-                flat2 = !m;
-            }
-            if (size == 4 or !flat) {
-                ft.narrow(at, step, hev);
-            } else if (size == 8 or !flat2) {
-                wide(at, step, p, 3);
-            } else {
-                wide(at, step, p, 4);
-            }
-        }
-
-        fn narrow(ft: *const F, at: [*]P, step: isize, hev: bool) void {
-            const half = @as(i32, 0x80) << (ft.bd - 8);
+            const half = @as(i32, 0x80) << shift;
             const lo = -(@as(i32, 1) << (ft.bd - 1));
             const hi = (@as(i32, 1) << (ft.bd - 1)) - 1;
-            const ps1 = @as(i32, off(at, -2 * step).*) - half;
-            const ps0 = @as(i32, off(at, -step).*) - half;
-            const qs0 = @as(i32, at[0]) - half;
-            const qs1 = @as(i32, off(at, step).*) - half;
-            var filter: i32 = if (hev) common.clip3(lo, hi, ps1 - qs1) else 0;
-            filter = common.clip3(lo, hi, filter + 3 * (qs0 - ps0));
-            const filter1 = common.clip3(lo, hi, filter + 4) >> 3;
-            const filter2 = common.clip3(lo, hi, filter + 3) >> 3;
-            at[0] = @intCast(common.clip3(lo, hi, qs0 - filter1) + half);
-            off(at, -step).* = @intCast(common.clip3(lo, hi, ps0 + filter2) + half);
-            if (!hev) {
-                const f = common.round2(filter1, 1);
-                off(at, step).* = @intCast(common.clip3(lo, hi, qs1 - f) + half);
-                off(at, -2 * step).* = @intCast(common.clip3(lo, hi, ps1 + f) + half);
+            var s = at - m * across;
+            for (0..4) |_| {
+                defer s += along;
+                var v: [2 * m]i32 = undefined;
+                inline for (0..2 * m) |k| v[k] = s[k * across];
+                const p0 = v[m - 1];
+                const p1 = v[m - 2];
+                const q0 = v[m];
+                const q1 = v[m + 1];
+                var over = @abs(p1 - p0) > limit or @abs(q1 - q0) > limit or
+                    @abs(p0 - q0) * 2 + @abs(p1 - q1) / 2 > blimit;
+                if (len >= 6) over = over or @abs(v[m - 3] - p1) > limit or @abs(v[m + 2] - q1) > limit;
+                if (len >= 8) over = over or @abs(v[m - 4] - v[m - 3]) > limit or @abs(v[m + 3] - v[m + 2]) > limit;
+                if (over) continue;
+                var flat = false;
+                if (len >= 6) {
+                    var rough = @abs(p1 - p0) > one or @abs(q1 - q0) > one or @abs(v[m - 3] - p0) > one or @abs(v[m + 2] - q0) > one;
+                    if (len >= 8) rough = rough or @abs(v[m - 4] - p0) > one or @abs(v[m + 3] - q0) > one;
+                    flat = !rough;
+                }
+                var flat2 = false;
+                if (len == 16) {
+                    flat2 = !(@abs(v[m - 7] - p0) > one or @abs(v[m + 6] - q0) > one or @abs(v[m - 6] - p0) > one or
+                        @abs(v[m + 5] - q0) > one or @abs(v[m - 5] - p0) > one or @abs(v[m + 4] - q0) > one);
+                }
+                if (len == 4 or !flat) {
+                    const hev = @abs(p1 - p0) > thresh or @abs(q1 - q0) > thresh;
+                    const ps1 = p1 - half;
+                    const ps0 = p0 - half;
+                    const qs0 = q0 - half;
+                    const qs1 = q1 - half;
+                    var filter: i32 = if (hev) common.clip3(lo, hi, ps1 - qs1) else 0;
+                    filter = common.clip3(lo, hi, filter + 3 * (qs0 - ps0));
+                    const filter1 = common.clip3(lo, hi, filter + 4) >> 3;
+                    const filter2 = common.clip3(lo, hi, filter + 3) >> 3;
+                    s[m * across] = @intCast(common.clip3(lo, hi, qs0 - filter1) + half);
+                    s[(m - 1) * across] = @intCast(common.clip3(lo, hi, ps0 + filter2) + half);
+                    if (!hev) {
+                        const f1 = common.round2(filter1, 1);
+                        s[(m + 1) * across] = @intCast(common.clip3(lo, hi, qs1 - f1) + half);
+                        s[(m - 2) * across] = @intCast(common.clip3(lo, hi, ps1 + f1) + half);
+                    }
+                } else if (len == 6) {
+                    wide(m, 2, 1, 3, &v, s, across);
+                } else if (len == 8 or !flat2) {
+                    wide(m, 3, 0, 3, &v, s, across);
+                } else {
+                    wide(m, 6, 1, 4, &v, s, across);
+                }
             }
         }
 
-        fn wide(at: [*]P, step: isize, p: u32, log2: u5) void {
-            const n: i32 = if (log2 == 4) 6 else if (p == 0) 3 else 2;
-            const n2: i32 = if (log2 == 3 and p == 0) 0 else 1;
-            var v: [14]i32 = undefined;
-            var k: i32 = -(n + 1);
-            while (k <= n) : (k += 1) v[@intCast(k + 7)] = off(at, k * step).*;
-            var fo: [12]i32 = undefined;
-            var i: i32 = -n;
-            while (i < n) : (i += 1) {
-                var t: i32 = 0;
-                var j: i32 = -n;
-                while (j <= n) : (j += 1) {
-                    const pos = common.clip3(-(n + 1), n, i + j);
-                    const tap: i32 = if (@abs(j) <= n2) 2 else 1;
-                    t += v[@intCast(pos + 7)] * tap;
+        /// A wide filter (7.14.6.4) on the samples `v` (from `s`, `across`
+        /// apart), q[0] at `m`: sample i of -n to n - 1 the sum of those
+        /// from i - n to i + n - the first and last repeated beyond -n - 1
+        /// and n - and of those from i - n2 to i + n2 again, rounded by
+        /// 2^log2; the two sums slid along.
+        inline fn wide(comptime m: usize, comptime n: i32, comptime n2: i32, comptime log2: u5, v: *const [2 * m]i32, s: [*]P, across: usize) void {
+            const K = struct {
+                fn at(comptime k: i32) usize {
+                    return @intCast(@as(i32, m) + @max(-(n + 1), @min(n, k)));
                 }
-                fo[@intCast(i + 6)] = common.round2(t, log2);
+            };
+            var s1: i32 = 0;
+            inline for (0..2 * n + 1) |j| s1 += v[K.at(-2 * n + @as(i32, j))];
+            var s2: i32 = 0;
+            inline for (0..2 * n2 + 1) |j| s2 += v[K.at(-n - n2 + @as(i32, j))];
+            inline for (0..2 * n) |ii| {
+                const i = @as(i32, ii) - n;
+                s[K.at(i) * across] = @intCast((s1 + s2 + (1 << (log2 - 1))) >> log2);
+                s1 += v[K.at(i + n + 1)] - v[K.at(i - n)];
+                s2 += v[K.at(i + n2 + 1)] - v[K.at(i - n2)];
             }
-            i = -n;
-            while (i < n) : (i += 1) off(at, i * step).* = @intCast(fo[@intCast(i + 6)]);
         }
 
         // --- CDEF (7.15) ---
