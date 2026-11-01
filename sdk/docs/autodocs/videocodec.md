@@ -543,7 +543,8 @@ the bytes do not show it.
 
 The bytes are read as an MP4 - media.library's kind - box by box, to
 its index (`moov`) and in it the first track of pictures, whose first
-sample entry names the codec. An MP4 whose index lies behind the bytes
+sample entry names the codec, `vp08`, `vp09` and `av01` among them
+(SINCE 1.6). An MP4 whose index lies behind the bytes
 given - at its end, as a film written in one go has it - shows
 nothing: VCODEC_UNKNOWN, though OpenVideoStream reads its index
 wherever it is. A Matroska file (SINCE 1.2) is read element by element
@@ -565,9 +566,9 @@ The bytes are the caller's, only read.
 
 **NOTES**
 
-A codec it names may still be one nothing here decodes: VCODEC_MPEG4V
-and VCODEC_AV1, for which there is no module; H.265 where no module in
-LIBS:codecs/ decodes it - chip.vcodec on a board without the chip.
+A codec it names may still be one nothing here decodes: VCODEC_MPEG4V,
+for which there is no module; H.265 where no module in LIBS:codecs/
+decodes it - chip.vcodec on a board without the chip.
 
 **BUGS**
 

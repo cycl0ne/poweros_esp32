@@ -1056,6 +1056,10 @@ pub fn build(b: *std.Build) void {
     // The VP9 decoder, vp9.vcodec's, likewise.
     const vp9core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/vp9/core.zig"), .target = b.graph.host });
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = vp9core_mod })).step);
+    // The AV1 decoder, av1.vcodec's, likewise.
+    const av1core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/av1/core.zig"), .target = b.graph.host });
+    disk_test_mod.addImport("av1core", av1core_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = av1core_mod })).step);
     disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);

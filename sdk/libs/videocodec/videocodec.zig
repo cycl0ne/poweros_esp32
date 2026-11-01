@@ -75,7 +75,7 @@ pub const VCODEC_MPEG4V: u32 = 4;
 pub const VCODEC_VP8: u32 = 5;
 /// VP9 (SINCE 1.5): vp9.vcodec, in software.
 pub const VCODEC_VP9: u32 = 6;
-/// AV1 (SINCE 1.5): known, and nothing decodes it yet.
+/// AV1 (SINCE 1.5): av1.vcodec, in software.
 pub const VCODEC_AV1: u32 = 7;
 
 /// How many bytes `IdentifyVideo` is best given: an MP4 says what its
