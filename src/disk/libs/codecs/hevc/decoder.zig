@@ -4,9 +4,9 @@
 //! A picture begins with its first slice segment: its order count, its
 //! reference picture set marking the references, the pictures shown
 //! before it is decoded, and its store. Each segment's CTUs are decoded
-//! into the store as they come; a CTB row that is whole lets the row
-//! above it be deblocked and the one above that get its sample adaptive
-//! offset. When the next picture begins (or the access unit or the
+//! into the store as they come; a CTB row that is whole is deblocked and
+//! all but its last few lines get their sample adaptive offset. When the
+//! next picture begins (or the access unit or the
 //! stream ends) the CTBs no segment brought are concealed, the rest of
 //! the rows filtered, and the picture goes into the decoded picture
 //! buffer, which gives the pictures out in their order.
@@ -86,6 +86,13 @@ const Ctx = struct {
         c.st.scales = scales;
         c.st.sync = sync;
         c.st.on_row = onRow;
+        // The contexts kept for a wavefront row or a dependent segment,
+        // which a segment that broke off may not have kept: nothing of an
+        // earlier picture, the same alone as on any worker.
+        @memset(&c.st.wpp_ctx, 0);
+        @memset(&c.st.ds_ctx, 0);
+        c.st.wpp_stat = .{ 0, 0, 0, 0 };
+        c.st.ds_stat = .{ 0, 0, 0, 0 };
     }
 
     /// A CTB row whole: as many rows filtered as that allows.
@@ -93,12 +100,12 @@ const Ctx = struct {
         const c: *Ctx = @fieldParentPtr("st", st);
         const info = &c.info;
         while (c.decoded < info.hctb and info.row_done[c.decoded] == info.wctb) c.decoded += 1;
-        c.advance(false);
+        c.advance();
     }
 
-    fn advance(c: *Ctx, complete: bool) void {
+    fn advance(c: *Ctx) void {
         const before = c.filter.finished;
-        if (c.wide) filter.Loop(u16).advance(&c.filter, c.decoded, complete) else filter.Loop(u8).advance(&c.filter, c.decoded, complete);
+        if (c.wide) filter.Loop(u16).advance(&c.filter, c.decoded) else filter.Loop(u8).advance(&c.filter, c.decoded);
         if (c.filter.finished != before) {
             if (c.cores) |k| k.wake(k.ctx);
         }
@@ -108,12 +115,14 @@ const Ctx = struct {
     fn segment(c: *Ctx, hdr: *const Header, lists: *const picture.Lists, sl: *const picture.SliceInfo, idx: u16, rbsp: []const u8) Error!void {
         const info = &c.info;
         if (idx >= info.slices.len or hdr.data_offset > rbsp.len) return error.Corrupt;
-        // A segment over CTBs decoded before is passed over.
-        if (info.ctb_slice[hdr.segment_address] != picture.Info.no_slice) return error.Corrupt;
+        // The slice's even when the segment is passed over, for the
+        // dependent segments after it - those of a slice not begun are.
         if (!hdr.dependent) {
             info.slices[idx] = sl.*;
             info.num_slices = @as(u32, idx) + 1;
-        }
+        } else if (idx >= info.num_slices) return error.Corrupt;
+        // A segment over CTBs decoded before is passed over.
+        if (info.ctb_slice[hdr.segment_address] != picture.Info.no_slice) return error.Corrupt;
         c.st.hdr = hdr;
         c.st.lists = lists;
         c.st.slice_idx = idx;
@@ -141,7 +150,7 @@ const Ctx = struct {
             concealCtb(c, s, src, @intCast(rs));
         }
         c.decoded = info.hctb;
-        c.advance(true);
+        c.advance();
     }
 };
 
@@ -279,8 +288,10 @@ pub const Decoder = struct {
     indep: Header = .{},
     lists: picture.Lists = .{},
     num_slices: u16 = 0,
-    /// The picture decoded last: what concealment copies.
+    /// The picture decoded last: what concealment copies. Kept from being
+    /// used again while the current picture may need it (`last_kept`).
     last_pic: ?*Store = null,
+    last_kept: ?*Store = null,
     /// The picture the last slice segment was of, which a suffix SEI
     /// unit belongs to: null when that picture was passed over.
     sei_pic: ?*Store = null,
@@ -404,13 +415,20 @@ pub const Decoder = struct {
     }
 
     /// The next picture to show, or null. It stays valid until `release`.
-    /// While the pictures are workers' and one of them is free, null: the
-    /// units after it first, so that the worker decodes while the picture
-    /// is shown - as long as no more pictures wait to be shown than there
-    /// are workers. One a worker still decodes is waited for.
+    /// While the pictures are workers' and that one is still decoded, null
+    /// once a worker is free - waited for when none is - so that the units
+    /// after it keep the workers busy, as long as no more pictures wait to
+    /// be shown than there are workers; past that, and once flushed, the
+    /// picture is waited for.
     pub fn next(dec: *Decoder) ?*Store {
         const s = dec.dpb.peekOutput() orelse return null;
-        if (!dec.flushing and dec.on_workers and dec.dpb.out_count <= dec.cores.?.workers and dec.idle()) return null;
+        if (!dec.flushing and dec.on_workers and dec.dpb.out_count <= dec.cores.?.workers and
+            @atomicLoad(u32, &s.progress, .acquire) < s.height[0])
+        {
+            if (dec.idle()) return null;
+            dec.retireAny();
+            if (@atomicLoad(u32, &s.progress, .acquire) < s.height[0]) return null;
+        }
         dec.finished(s);
         return s;
     }
@@ -423,6 +441,7 @@ pub const Decoder = struct {
     /// picture.
     pub fn reset(dec: *Decoder) void {
         dec.drain();
+        dec.releaseLast();
         dec.flushing = false;
         dec.cur = null;
         dec.last_pic = null;
@@ -641,6 +660,7 @@ pub const Decoder = struct {
         dec.on_workers = job != null;
         dec.ended_early = false;
         try dec.activate(sps);
+        dec.keepLast();
         dec.active_pps = pps;
         dec.scales.init(if (!sps.scaling_enabled) null else if (pps.scaling_present) &pps.scaling else &sps.scaling);
 
@@ -699,8 +719,25 @@ pub const Decoder = struct {
             // Its worker conceals and filters it.
             dec.close();
         } else dec.own.finish(s, dec.last_pic, null);
+        dec.releaseLast();
         dec.dpb.store(s, dec.cur_output);
         dec.last_pic = s;
+    }
+
+    /// The picture decoded last kept from being used again for the next
+    /// one or for those it lacks, which may be concealed from it - alone
+    /// as on the workers, whose job holds it too.
+    fn keepLast(dec: *Decoder) void {
+        dec.releaseLast();
+        const l = dec.last_pic orelse return;
+        l.pinned += 1;
+        dec.last_kept = l;
+    }
+
+    fn releaseLast(dec: *Decoder) void {
+        const l = dec.last_kept orelse return;
+        l.pinned -= 1;
+        dec.last_kept = null;
     }
 
     // --- the workers ------------------------------------------------------------
@@ -880,11 +917,15 @@ pub const Decoder = struct {
     }
 
     /// A store for the next picture; when the only empty ones are still
-    /// read by workers, once the first of those is done.
+    /// read by workers, once the first of those is done - or the picture
+    /// decoded last, as a last resort.
     fn freeStore(dec: *Decoder) Error!*Store {
         while (true) {
             if (dec.dpb.freeStore()) |s| return s;
-            if (!dec.retireOldest()) return error.NoMemory;
+            if (dec.retireOldest()) continue;
+            // The picture decoded last given up: what is concealed is grey.
+            if (dec.last_kept == null) return error.NoMemory;
+            dec.releaseLast();
         }
     }
 };

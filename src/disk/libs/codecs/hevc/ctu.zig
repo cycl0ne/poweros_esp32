@@ -113,6 +113,44 @@ inline fn clip3(lo: i32, hi: i32, v: i32) i32 {
     return if (v < lo) lo else if (v > hi) hi else v;
 }
 
+/// sigCtx (9.3.4.2.5) of the coefficients of a 4x4 sub-block of a larger
+/// block, by their place in its scan: by the coded sub-blocks right of and
+/// below it (bit 0 and 1) and by the scan.
+const sig_by_place: [4][3][16]u8 = blk: {
+    var t: [4][3][16]u8 = undefined;
+    for (0..4) |prev| {
+        for (0..3) |scan| {
+            for (0..16) |k| {
+                const p = tables.scan[2][scan][k];
+                const xp = p & 15;
+                const yp = p >> 4;
+                t[prev][scan][k] = switch (prev) {
+                    0 => if (xp + yp == 0) 2 else if (xp + yp < 3) 1 else 0,
+                    1 => if (yp == 0) 2 else if (yp == 1) 1 else 0,
+                    2 => if (xp == 0) 2 else if (xp == 1) 1 else 0,
+                    else => 2,
+                };
+            }
+        }
+    }
+    break :blk t;
+};
+
+/// sigCtx of the coefficients of a 4x4 block by their place in its scan
+/// (ctxIdxMap).
+const sig_4x4: [3][16]u8 = blk: {
+    var t: [3][16]u8 = undefined;
+    for (0..3) |scan| {
+        for (0..16) |k| {
+            const p = tables.scan[2][scan][k];
+            t[scan][k] = tables.ctx_idx_map[((p >> 4) << 2) + (p & 15)];
+        }
+    }
+    break :blk t;
+};
+
+const sig_none: [16]u8 = @splat(0);
+
 /// The CTUs of a slice segment, with samples of type T.
 pub fn Decode(comptime T: type) type {
     return struct {
@@ -122,6 +160,9 @@ pub fn Decode(comptime T: type) type {
 
         /// The slice segment data `data` of the segment `st.hdr`.
         pub fn segment(st: *State, data: []const u8) Error!void {
+            // A block whose decoding broke off may leave coefficients
+            // behind, which the next block expects cleared.
+            errdefer @memset(&st.coeff, 0);
             const h = st.hdr;
             const pps = st.pps;
             const info = st.info;
@@ -139,8 +180,11 @@ pub fn Decode(comptime T: type) type {
                 info.ctb_slice[rs] = st.slice_idx;
                 ctu(st, rs) catch |failure| {
                     info.broken[rs] = true;
+                    forget(st, rs);
+                    keepLastLine(st, rs);
                     return failure;
                 };
+                keepLastLine(st, rs);
                 if (pps.entropy_coding_sync and (rs % w == 1 or (rs > 1 and info.tiles.tile[rs] != info.tiles.tile[rs - 2]))) {
                     st.wpp_ctx = st.ctx;
                     st.wpp_stat = st.stat;
@@ -172,6 +216,56 @@ pub fn Decode(comptime T: type) type {
                     _ = startContexts(st, rs, ts, false);
                     st.qp_prev = h.qp;
                 }
+            }
+        }
+
+        /// CTB `rs`, whose decoding broke off, made the same whatever it
+        /// left unwritten - grey, its coding units intra, so that no block
+        /// takes its motion, no SAO - for the CTBs decoded after it, until
+        /// it is concealed.
+        fn forget(st: *State, rs: u32) void {
+            const info = st.info;
+            const s = st.store;
+            const size = @as(u32, 1) << info.log2_ctb;
+            const x0 = (rs % info.wctb) * size;
+            const y0 = (rs / info.wctb) * size;
+            var y = y0;
+            while (y < y0 + size) : (y += 4) {
+                @memset(info.mvf[info.at4(x0, y)..][0 .. size >> 2], .{});
+                @memset(info.modes[info.at4(x0, y)..][0 .. size >> 2], 1);
+                if (y & 7 == 0) @memset(info.cus[(y >> 3) * info.w8 + (x0 >> 3) ..][0 .. size >> 3], .{ .flags = picture.cu_intra });
+            }
+            info.sao[rs] = .{};
+            const ncomp: usize = if (st.sps.chromaArrayType() != 0) 3 else 1;
+            for (0..ncomp) |c| {
+                const sw: u5 = if (c == 0) 0 else st.sps.shiftW();
+                const sh: u5 = if (c == 0) 0 else st.sps.shiftH();
+                const depth = if (c == 0) st.sps.bit_depth_luma else st.sps.bit_depth_chroma;
+                const cx = x0 >> sw;
+                const cy = y0 >> sh;
+                const w = @min(size >> sw, s.width[c] - cx);
+                const h = @min(size >> sh, s.height[c] - cy);
+                const p = plane(st, c);
+                for (0..h) |r| @memset(p[(cy + r) * s.stride[c] + cx ..][0..w], @intCast(@as(u32, 1) << @intCast(depth - 1)));
+            }
+        }
+
+        /// CTB `rs`'s last line of each component kept for the intra
+        /// prediction of the CTB below, before the filters change it.
+        fn keepLastLine(st: *State, rs: u32) void {
+            const info = st.info;
+            const s = st.store;
+            const size = @as(u32, 1) << info.log2_ctb;
+            const ncomp: usize = if (st.sps.chromaArrayType() != 0) 3 else 1;
+            for (0..ncomp) |c| {
+                const sw: u5 = if (c == 0) 0 else st.sps.shiftW();
+                const sh: u5 = if (c == 0) 0 else st.sps.shiftH();
+                const x0 = ((rs % info.wctb) * size) >> sw;
+                const x1 = @min(s.width[c], x0 + (size >> sw));
+                const y1 = @min(s.height[c], ((rs / info.wctb + 1) * size) >> sh);
+                if (x0 >= x1) continue;
+                const line = info.aboveLine(T, c, rs / info.wctb);
+                @memcpy(line[x0..x1], plane(st, c)[(y1 - 1) * s.stride[c] + x0 ..][0 .. x1 - x0]);
             }
         }
 
@@ -744,7 +838,7 @@ pub fn Decode(comptime T: type) type {
             const sps = st.sps;
             const pps = st.pps;
             const h = st.hdr;
-            const weighted = if (h.slice_type == .p) pps.weighted_pred else pps.weighted_bipred;
+            const explicit = if (h.slice_type == .p) pps.weighted_pred else pps.weighted_bipred;
             const ncomp: usize = if (sps.chromaArrayType() != 0) 3 else 1;
             var refs: [2]?*common.Store = .{ null, null };
             for (0..2) |l| {
@@ -769,6 +863,9 @@ pub fn Decode(comptime T: type) type {
                 const depth: u5 = if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma;
                 const stride = st.store.stride[c];
                 const dst = plane(st, c) + by * stride + bx;
+                const both = refs[0] != null and refs[1] != null;
+                const one: usize = if (refs[0] != null) 0 else 1;
+                const weighted = explicit and !plainWeights(&h.weights, f, c);
                 for (0..2) |l| {
                     const s = refs[l] orelse continue;
                     const ref: inter.Plane(T) = .{
@@ -777,22 +874,32 @@ pub fn Decode(comptime T: type) type {
                         .width = @intCast(st.store.width[c]),
                         .height = @intCast(st.store.height[c]),
                     };
+                    // Unweighted, the last prediction goes into the picture
+                    // at once: alone, or averaged with the first.
+                    const out: inter.Out(T) = .{ .pred = if (!weighted and both) &st.pred[0] else &st.pred[l], .pred_stride = 64, .pic = dst, .pic_stride = stride };
+                    const put: inter.Put = if (weighted or (both and l == 0)) .keep else if (both) .bi else .uni;
                     const mv = f.mv[l];
-                    const out: [*]i32 = &st.pred[l];
                     if (c == 0) {
-                        inter.luma(T, &st.iw, ref, @as(i32, @intCast(bx)) + (mv[0] >> 2), @as(i32, @intCast(by)) + (mv[1] >> 2), @intCast(mv[0] & 3), @intCast(mv[1] & 3), bw, bh, depth, out, 64);
+                        const px = @as(i32, @intCast(bx)) + (mv[0] >> 2);
+                        const py = @as(i32, @intCast(by)) + (mv[1] >> 2);
+                        const fx: u32 = @intCast(mv[0] & 3);
+                        const fy: u32 = @intCast(mv[1] & 3);
+                        switch (put) {
+                            inline else => |p| inter.luma(T, p, &st.iw, ref, px, py, fx, fy, bw, bh, depth, out),
+                        }
                     } else {
                         const mx: i32 = @divTrunc(@as(i32, mv[0]) * 2, @as(i32, 1) << sw);
                         const my: i32 = @divTrunc(@as(i32, mv[1]) * 2, @as(i32, 1) << sh);
-                        inter.chroma(T, &st.iw, ref, @as(i32, @intCast(bx)) + (mx >> 3), @as(i32, @intCast(by)) + (my >> 3), @intCast(mx & 7), @intCast(my & 7), bw, bh, depth, out, 64);
+                        const px = @as(i32, @intCast(bx)) + (mx >> 3);
+                        const py = @as(i32, @intCast(by)) + (my >> 3);
+                        const fx: u32 = @intCast(mx & 7);
+                        const fy: u32 = @intCast(my & 7);
+                        switch (put) {
+                            inline else => |p| inter.chroma(T, p, &st.iw, ref, px, py, fx, fy, bw, bh, depth, out),
+                        }
                     }
                 }
-                const both = refs[0] != null and refs[1] != null;
-                const one: usize = if (refs[0] != null) 0 else 1;
-                if (!weighted) {
-                    if (both) inter.putBi(T, &st.pred[0], &st.pred[1], 64, bw, bh, depth, dst, stride) else inter.putUni(T, &st.pred[one], 64, bw, bh, depth, dst, stride);
-                    continue;
-                }
+                if (!weighted) continue;
                 const wt = &h.weights;
                 const shift1: u5 = if (depth >= 12) 2 else 14 - depth;
                 const ws: u5 = if (sps.high_precision_offsets) 0 else depth - 8;
@@ -814,6 +921,21 @@ pub fn Decode(comptime T: type) type {
                     inter.putWeightedBi(T, &st.pred[0], &st.pred[1], 64, bw, bh, depth, wv[0], wv[1], ov[0], ov[1], log2wd, dst, stride);
                 } else inter.putWeighted(T, &st.pred[one], 64, bw, bh, depth, wv[one], ov[one], log2wd, dst, stride);
             }
+        }
+
+        /// Whether the explicit weights of the references `f` uses are,
+        /// for component `c`, weight one and no offset: which give the
+        /// samples the default weighting does (8.5.3.3.4.3 against
+        /// 8.5.3.3.4.2).
+        fn plainWeights(wt: *const slice.Weights, f: MvField, c: usize) bool {
+            for (0..2) |l| {
+                if (!f.uses(l)) continue;
+                const r: usize = @intCast(f.ref_idx[l]);
+                if (c == 0) {
+                    if (wt.luma_weight[l][r] != @as(i16, 1) << wt.luma_log2_denom or wt.luma_offset[l][r] != 0) return false;
+                } else if (wt.chroma_weight[l][r][c - 1] != @as(i16, 1) << wt.chroma_log2_denom or wt.chroma_offset[l][r][c - 1] != 0) return false;
+            }
+            return true;
         }
 
         // --- transform tree ----------------------------------------------
@@ -1012,10 +1134,16 @@ pub fn Decode(comptime T: type) type {
                     }
                 }
             }
+            // The line above: the last of the CTB row above as it was
+            // decoded, when the block begins a CTB row.
+            const above: [*]const T = if (yl & ((@as(u32, 1) << info.log2_ctb) - 1) == 0)
+                info.aboveLine(T, c, (yl >> info.log2_ctb) ^ 1)
+            else
+                p + (yt - 1) * stride;
             {
                 const xn: i32 = (@as(i32, @intCast(xt)) - 1) << sw;
                 const yn: i32 = (@as(i32, @intCast(yt)) - 1) << sh;
-                line[n2] = if (Avail(info, xl, yl, xn, yn, cip)) p[(yt - 1) * stride + xt - 1] else intra.missing;
+                line[n2] = if (Avail(info, xl, yl, xn, yn, cip)) above[xt - 1] else intra.missing;
             }
             {
                 const yn: i32 = (@as(i32, @intCast(yt)) - 1) << sh;
@@ -1025,7 +1153,7 @@ pub fn Decode(comptime T: type) type {
                     const ok = Avail(info, xl, yl, xn, yn, cip);
                     for (0..ux) |k| {
                         const xx = x + @as(u32, @intCast(k));
-                        line[n2 + 1 + xx] = if (ok) p[(yt - 1) * stride + xt + xx] else intra.missing;
+                        line[n2 + 1 + xx] = if (ok) above[xt + xx] else intra.missing;
                     }
                 }
             }
@@ -1150,35 +1278,25 @@ pub fn Decode(comptime T: type) type {
                 }
                 csbf |= @as(u64, 1) << @intCast(ys * 8 + xs);
 
-                // The significance of each coefficient.
-                var sig_inc: [16]u8 = undefined;
+                // The significance of each coefficient: sigCtx by its place
+                // in the scan, plus what the block and sub-block add.
                 const prev_csbf = right | below << 1;
-                for (0..16) |k| {
-                    const p = pos_scan[k];
-                    const xp: u32 = p & 15;
-                    const yp: u32 = p >> 4;
-                    var s: u32 = undefined;
-                    if (ts_ctx) {
-                        s = if (luma) 42 else 16;
-                    } else if (log2 == 2) {
-                        s = tables.ctx_idx_map[(yp << 2) + xp];
-                    } else if (xs == 0 and ys == 0 and xp == 0 and yp == 0) {
-                        s = 0;
-                    } else {
-                        s = switch (prev_csbf) {
-                            0 => if (xp + yp == 0) 2 else if (xp + yp < 3) 1 else 0,
-                            1 => if (yp == 0) 2 else if (yp == 1) 1 else 0,
-                            2 => if (xp == 0) 2 else if (xp == 1) 1 else 0,
-                            else => 2,
-                        };
-                        if (luma) {
-                            if (xs + ys > 0) s += 3;
-                            s += if (log2 == 3) (if (scan_idx == 0) @as(u32, 9) else 15) else 21;
-                        } else {
-                            s += if (log2 == 3) @as(u32, 9) else 12;
-                        }
-                    }
-                    sig_inc[k] = @intCast(if (luma) s else 27 + s);
+                var pattern: *const [16]u8 = &sig_by_place[prev_csbf][scan_idx];
+                var sig_off: u32 = if (luma) 0 else 27;
+                // The DC coefficient's of a block larger than 4x4.
+                var dc_inc: u32 = 16;
+                if (ts_ctx) {
+                    pattern = &sig_none;
+                    sig_off = if (luma) 42 else 27 + 16;
+                } else if (log2 == 2) {
+                    pattern = &sig_4x4[scan_idx];
+                } else if (luma) {
+                    if (xs + ys > 0) sig_off += 3;
+                    sig_off += if (log2 == 3) (if (scan_idx == 0) @as(u32, 9) else 15) else 21;
+                    if (xs + ys == 0) dc_inc = 0;
+                } else {
+                    sig_off += if (log2 == 3) @as(u32, 9) else 12;
+                    if (xs + ys == 0) dc_inc = 27;
                 }
                 var sig: u32 = 0;
                 var start: isize = 15;
@@ -1190,7 +1308,8 @@ pub fn Decode(comptime T: type) type {
                 while (k >= 0) : (k -= 1) {
                     const ku: usize = @intCast(k);
                     if (k > 0 or !infer_dc) {
-                        if (e.decision(&ctx[Ctx.sig_coeff + sig_inc[ku]]) == 1) {
+                        const inc = if (ku == 0 and dc_inc != 16) dc_inc else sig_off + pattern[ku];
+                        if (e.decision(&ctx[Ctx.sig_coeff + inc]) == 1) {
                             sig |= @as(u32, 1) << @intCast(ku);
                             infer_dc = false;
                         }
@@ -1412,17 +1531,20 @@ pub fn Decode(comptime T: type) type {
                 .pnLx2N => markV(st, k, q),
                 .pnRx2N => markV(st, k, k - q),
             }
-            // Whether the coding unit's left and top edges are filtered.
+            // Whether the coding unit's left and top edges are filtered:
+            // not against a CTB no segment brought, which is concealed.
             const here = info.ctbOf(cu.x, cu.y);
             var left = cu.x > 0;
             if (left and cu.x & ((@as(u32, 1) << info.log2_ctb) - 1) == 0) {
                 const other = here - 1;
+                if (info.ctb_slice[other] == picture.Info.no_slice) left = false;
                 if (!pps.loop_filter_across_tiles and info.tiles.tile[other] != info.tiles.tile[here]) left = false;
                 if (!h.loop_filter_across_slices and !sameSlice(info, here, other)) left = false;
             }
             var top = cu.y > 0;
             if (top and cu.y & ((@as(u32, 1) << info.log2_ctb) - 1) == 0) {
                 const other = here - info.wctb;
+                if (info.ctb_slice[other] == picture.Info.no_slice) top = false;
                 if (!pps.loop_filter_across_tiles and info.tiles.tile[other] != info.tiles.tile[here]) top = false;
                 if (!h.loop_filter_across_slices and !sameSlice(info, here, other)) top = false;
             }

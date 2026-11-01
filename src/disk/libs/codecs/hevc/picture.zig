@@ -166,6 +166,12 @@ pub const Info = struct {
     tiles: Tiles = .{},
     /// Each CTB row's decoded CTBs.
     row_done: []u32 = &.{},
+    /// Each component's last line of each CTB row as it was decoded, for
+    /// the intra prediction of the row below - so a row is filtered as
+    /// soon as it is whole: two lines of the picture's width in CTBs, the
+    /// even rows' and the odd rows', so that a row does not write over
+    /// the line it reads.
+    above: [3][]u8 = .{ &.{}, &.{}, &.{} },
     /// Some coding unit is cu_nofilter.
     any_nofilter: bool = false,
 
@@ -199,6 +205,8 @@ pub const Info = struct {
         info.tiles.ts2rs = env.slice(u32, ctbs) orelse return info.fail(env);
         info.tiles.tile = env.slice(u16, ctbs) orelse return info.fail(env);
         info.row_done = env.slice(u32, info.hctb) orelse return info.fail(env);
+        const bytes: usize = if (sps.bit_depth_luma > 8 or sps.bit_depth_chroma > 8) 2 else 1;
+        for (&info.above) |*a| a.* = env.slice(u8, 2 * w * bytes) orelse return info.fail(env);
         return true;
     }
 
@@ -220,6 +228,7 @@ pub const Info = struct {
         env.freeSlice(u32, info.tiles.ts2rs);
         env.freeSlice(u16, info.tiles.tile);
         env.freeSlice(u32, info.row_done);
+        for (info.above) |a| env.freeSlice(u8, a);
         info.* = .{};
     }
 
@@ -235,9 +244,17 @@ pub const Info = struct {
         @memset(info.broken, false);
         @memset(info.cus, .{});
         @memset(info.bs, 0);
+        // What a SAO merge takes from a CTB no segment brought.
+        @memset(info.sao, .{});
         @memset(info.row_done, 0);
         info.num_slices = 0;
         info.any_nofilter = false;
+    }
+
+    /// Component `c`'s line kept of CTB row `row`, of samples of type T.
+    pub inline fn aboveLine(info: *const Info, comptime T: type, c: usize, row: u32) [*]T {
+        const line: [*]T = @ptrCast(@alignCast(info.above[c].ptr));
+        return line + (row & 1) * (info.wctb << info.log2_ctb);
     }
 
     pub inline fn cu(info: *const Info, x: u32, y: u32) *Cu {

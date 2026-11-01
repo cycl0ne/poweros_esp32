@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 //! The in-loop filters (8.7): the deblocking filter on the edges the CTU
 //! decoder gave a strength, then the sample adaptive offset, a CTB row
-//! at a time behind the decoding.
+//! at a time as the rows are decoded.
 //!
-//! A row is deblocked once the row below it is decoded - the intra
-//! prediction of that row needs its last line as it was - and its SAO
-//! runs once the row below is deblocked too, from a copy of the row so
-//! that each sample sees its neighbours as the deblocking left them. The
-//! line above a row is kept from before its SAO for the same reason.
+//! A row is deblocked once it is whole - the intra prediction of the row
+//! below takes its last line from a copy the CTU decoder kept. That
+//! leaves all but its last few lines final, which the deblocking of the
+//! next row changes; so the SAO works in bands that end that many lines
+//! above each CTB row's end, from a copy of the band so that each sample
+//! sees its neighbours as the deblocking left them. The line above a band
+//! is kept from before its SAO for the same reason.
 
 const common = @import("common.zig");
 const params = @import("params.zig");
@@ -20,11 +22,10 @@ pub const Filter = struct {
     pps: *const params.Pps = undefined,
     info: *const picture.Info = undefined,
     store: *common.Store = undefined,
-    /// The CTB rows deblocked, and those with their SAO done.
-    deblocked: u32 = 0,
+    /// The CTB rows deblocked, each with the SAO of its band.
     finished: u32 = 0,
-    /// What the SAO works in: each component's band of a CTB row with a
-    /// line above and below, and the last line of the band before.
+    /// What the SAO works in: each component's band with a line above and
+    /// below, and the last line of the band before.
     band: []u8 = &.{},
     saved: [3][]u8 = .{ &.{}, &.{}, &.{} },
 
@@ -32,7 +33,7 @@ pub const Filter = struct {
         f.free(env);
         const bytes: usize = if (sps.bit_depth_luma > 8 or sps.bit_depth_chroma > 8) 2 else 1;
         const w = sps.width;
-        f.band = env.slice(u8, (sps.ctbSize() + 2) * w * bytes) orelse return false;
+        f.band = env.slice(u8, (sps.ctbSize() + band_lag + 2) * w * bytes) orelse return false;
         for (&f.saved) |*s| {
             s.* = env.slice(u8, w * bytes) orelse {
                 f.free(env);
@@ -54,10 +55,15 @@ pub const Filter = struct {
         f.pps = pps;
         f.info = info;
         f.store = store;
-        f.deblocked = 0;
         f.finished = 0;
     }
 };
+
+/// How many luma lines above a CTB row's end its SAO band ends: those the
+/// deblocking of the next row may still change (three, as the luma
+/// filter changes three on each side of an edge), and the one below them
+/// that the SAO looks at.
+const band_lag: u32 = 4;
 
 inline fn clip3(lo: i32, hi: i32, v: i32) i32 {
     return if (v < lo) lo else if (v > hi) hi else v;
@@ -69,26 +75,18 @@ pub fn Loop(comptime T: type) type {
             return @ptrCast(@alignCast(f.store.planes[c]));
         }
 
-        /// The filters as far as `decoded` CTB rows allow, all of them when
-        /// the picture is `complete`; the store's progress set to the luma
-        /// rows that are final.
-        pub fn advance(f: *Filter, decoded: u32, complete: bool) void {
+        /// The filters for the first `decoded` CTB rows; the store's
+        /// progress set to the luma rows that are final.
+        pub fn advance(f: *Filter, decoded: u32) void {
             const rows = f.info.hctb;
-            while (f.deblocked < rows and (f.deblocked + 1 < decoded or (complete and f.deblocked < decoded))) {
-                deblockRow(f, f.deblocked);
-                f.deblocked += 1;
-            }
-            const all = complete and f.deblocked == rows;
-            var moved = false;
-            while (f.finished < f.deblocked and (f.finished + 2 <= f.deblocked or all)) {
-                saoRow(f, f.finished);
+            if (f.finished >= decoded) return;
+            while (f.finished < decoded) {
+                deblockRow(f, f.finished);
+                saoBand(f, f.finished);
                 f.finished += 1;
-                moved = true;
             }
-            if (moved) {
-                const done = if (f.finished == rows) f.sps.height else @min(f.sps.height, f.finished << f.info.log2_ctb);
-                @atomicStore(u32, &f.store.progress, done, .release);
-            }
+            const done = if (f.finished == rows) f.sps.height else @min(f.sps.height, (f.finished << f.info.log2_ctb) - band_lag);
+            @atomicStore(u32, &f.store.progress, done, .release);
         }
 
         // --- deblocking ----------------------------------------------------
@@ -303,58 +301,69 @@ pub fn Loop(comptime T: type) type {
 
         // --- sample adaptive offset ----------------------------------------
 
-        fn saoRow(f: *Filter, r: u32) void {
+        /// The SAO of band `k` once CTB row `k` is deblocked: from
+        /// `band_lag` luma lines above the row to as many above its end, or
+        /// to the picture's end - part of the CTBs of row k - 1 and of row k.
+        fn saoBand(f: *Filter, k: u32) void {
             const sps = f.sps;
             if (!sps.sao) return;
             const info = f.info;
             const ncomp: usize = if (sps.chromaArrayType() != 0) 3 else 1;
             for (0..ncomp) |c| {
-                // Whether any CTB of the row has SAO on this component.
-                var any = false;
-                for (0..info.wctb) |rx| {
-                    const rs = r * info.wctb + @as(u32, @intCast(rx));
-                    const si = info.ctb_slice[rs];
-                    if (si == picture.Info.no_slice) continue;
-                    const s = &info.slices[si];
-                    if ((if (c == 0) s.sao_luma else s.sao_chroma) and info.sao[rs].kind[c] != 0) any = true;
-                }
                 const sw: u5 = if (c == 0) 0 else sps.shiftW();
                 const sh: u5 = if (c == 0) 0 else sps.shiftH();
                 const cw = sps.width >> sw;
                 const ch = sps.height >> sh;
                 const csize = (@as(u32, 1) << info.log2_ctb) >> sh;
-                const y0 = r * csize;
-                const y1 = @min(ch, y0 + csize);
+                const lag = band_lag >> sh;
+                const b0 = (k * csize) -| lag;
+                const b1 = if (k + 1 == info.hctb) ch else (k + 1) * csize - lag;
+                const first = if (b0 < k * csize) k - 1 else k;
+                // Whether any CTB of the band has SAO on this component.
+                var any = false;
+                for (first * info.wctb..(k + 1) * info.wctb) |i| {
+                    const rs: u32 = @intCast(i);
+                    const si = info.ctb_slice[rs];
+                    if (si == picture.Info.no_slice) continue;
+                    const s = &info.slices[si];
+                    if ((if (c == 0) s.sao_luma else s.sao_chroma) and info.sao[rs].kind[c] != 0) any = true;
+                }
                 const stride = f.store.stride[c];
                 const p = plane(f, c);
                 const saved: [*]T = @ptrCast(@alignCast(f.saved[c].ptr));
                 if (!any) {
-                    @memcpy(saved[0..cw], p[(y1 - 1) * stride ..][0..cw]);
+                    @memcpy(saved[0..cw], p[(b1 - 1) * stride ..][0..cw]);
                     continue;
                 }
                 // The band: the line above, the rows, the line below.
                 const band: [*]T = @ptrCast(@alignCast(f.band.ptr));
-                if (r > 0) @memcpy(band[0..cw], saved[0..cw]);
-                var y = y0;
-                while (y < @min(ch, y1 + 1)) : (y += 1) @memcpy(band[(y - y0 + 1) * cw ..][0..cw], p[y * stride ..][0..cw]);
-                @memcpy(saved[0..cw], p[(y1 - 1) * stride ..][0..cw]);
-                for (0..info.wctb) |rx| {
-                    const rs = r * info.wctb + @as(u32, @intCast(rx));
-                    const si = info.ctb_slice[rs];
-                    if (si == picture.Info.no_slice) continue;
-                    const s = &info.slices[si];
-                    if (!(if (c == 0) s.sao_luma else s.sao_chroma)) continue;
-                    const prm = &info.sao[rs];
-                    if (prm.kind[c] == 0) continue;
-                    const x0 = @as(u32, @intCast(rx)) * ((@as(u32, 1) << info.log2_ctb) >> sw);
-                    const x1 = @min(cw, x0 + ((@as(u32, 1) << info.log2_ctb) >> sw));
-                    ctbSao(f, c, rs, prm, band, cw, ch, x0, x1, y0, y1);
+                if (b0 > 0) @memcpy(band[0..cw], saved[0..cw]);
+                var y = b0;
+                while (y < @min(ch, b1 + 1)) : (y += 1) @memcpy(band[(y - b0 + 1) * cw ..][0..cw], p[y * stride ..][0..cw]);
+                @memcpy(saved[0..cw], p[(b1 - 1) * stride ..][0..cw]);
+                for (first..k + 1) |row| {
+                    const y0 = @as(u32, @intCast(row)) * csize;
+                    const y1 = @min(ch, y0 + csize);
+                    for (0..info.wctb) |rx| {
+                        const rs = @as(u32, @intCast(row)) * info.wctb + @as(u32, @intCast(rx));
+                        const si = info.ctb_slice[rs];
+                        if (si == picture.Info.no_slice) continue;
+                        const s = &info.slices[si];
+                        if (!(if (c == 0) s.sao_luma else s.sao_chroma)) continue;
+                        const prm = &info.sao[rs];
+                        if (prm.kind[c] == 0) continue;
+                        const x0 = @as(u32, @intCast(rx)) * ((@as(u32, 1) << info.log2_ctb) >> sw);
+                        const x1 = @min(cw, x0 + ((@as(u32, 1) << info.log2_ctb) >> sw));
+                        ctbSao(f, c, rs, prm, band, b0, cw, x0, x1, y0, y1, @max(y0, b0), @min(y1, b1));
+                    }
                 }
             }
         }
 
-        /// The SAO of one CTB of component `c` (8.7.3.2), from the band.
-        fn ctbSao(f: *Filter, c: usize, rs: u32, prm: *const picture.Sao, band: [*]const T, cw: u32, ch: u32, x0: u32, x1: u32, y0: u32, y1: u32) void {
+        /// The SAO of component `c` of CTB `rs`, which spans the rows `y0`
+        /// to `y1`, on its rows `r0` to `r1` (8.7.3.2), from the band that
+        /// begins at row `top`.
+        fn ctbSao(f: *Filter, c: usize, rs: u32, prm: *const picture.Sao, band: [*]const T, top: u32, cw: u32, x0: u32, x1: u32, y0: u32, y1: u32, r0: u32, r1: u32) void {
             const sps = f.sps;
             const info = f.info;
             const sw: u5 = if (c == 0) 0 else sps.shiftW();
@@ -364,27 +373,21 @@ pub fn Loop(comptime T: type) type {
             const stride = f.store.stride[c];
             const p = plane(f, c);
             const offs = prm.offsets[c];
-            // The band row of picture row y.
-            const B = struct {
-                inline fn at(b: [*]const T, w: u32, top: u32, x: u32, y: u32) i32 {
-                    return b[(y + 1 - top) * w + x];
-                }
-            };
+            // Coding units the filters leave alone.
             const skip = info.any_nofilter;
             if (prm.kind[c] == 1) {
-                var table: [32]u8 = @splat(0);
-                for (0..4) |k| table[(k + prm.class[c]) & 31] = @intCast(k + 1);
+                // Each band's offset; a sample is in range, the mask only
+                // keeps one that is not inside the table.
+                var bands: [32]i32 = @splat(0);
+                for (0..4) |k| bands[(k + prm.class[c]) & 31] = offs[k];
                 const shift: u5 = depth - 5;
-                for (y0..y1) |yy| {
-                    const y: u32 = @intCast(yy);
-                    for (x0..x1) |xx| {
-                        const x: u32 = @intCast(xx);
-                        if (skip and info.cu(x << sw, y << sh).flags & picture.cu_nofilter != 0) continue;
-                        const v = B.at(band, cw, y0, x, y);
-                        // A sample is in range: the mask only keeps one
-                        // that is not inside the table.
-                        const bi = table[@intCast((v >> shift) & 31)];
-                        if (bi != 0) p[y * stride + x] = @intCast(clip3(0, max, v + offs[bi - 1]));
+                for (r0..r1) |y| {
+                    const line = band + (y + 1 - top) * cw;
+                    const d = p + y * stride;
+                    for (x0..x1) |x| {
+                        if (skip and info.cu(@as(u32, @intCast(x)) << sw, @as(u32, @intCast(y)) << sh).flags & picture.cu_nofilter != 0) continue;
+                        const v: i32 = line[x];
+                        d[x] = @intCast(clip3(0, max, v + bands[@intCast((v >> shift) & 31)]));
                     }
                 }
                 return;
@@ -403,40 +406,58 @@ pub fn Loop(comptime T: type) type {
             for (0..3) |j| {
                 for (0..3) |i| ok[j][i] = neighbourOk(f, rs, rx + @as(i32, @intCast(i)) - 1, ry + @as(i32, @intCast(j)) - 1);
             }
+            // The offset by edgeIdx before its remapping (8-283), 2 + the
+            // two signs: none at 2.
             const remap = [5]u8{ 1, 2, 0, 3, 4 };
-            for (y0..y1) |yy| {
+            var edge: [5]i32 = undefined;
+            for (&edge, remap) |*e, ei| e.* = if (ei == 0) 0 else offs[ei - 1];
+            for (r0..r1) |yy| {
                 const y: u32 = @intCast(yy);
-                for (x0..x1) |xx| {
-                    const x: u32 = @intCast(xx);
+                const line = band + (y + 1 - top) * cw;
+                // The rows of the two neighbours, and where they lie.
+                var rows: [2][*]const T = undefined;
+                var dy: [2]usize = undefined;
+                for (0..2) |k| {
+                    const ny = @as(i32, @intCast(y)) + hv[k][1];
+                    dy[k] = if (ny < y0) 0 else if (ny >= y1) 2 else 1;
+                    rows[k] = band + @as(usize, @intCast(ny + 1 - @as(i32, @intCast(top)))) * cw;
+                }
+                const d = p + y * stride;
+                // Between the first and last column the neighbours lie in
+                // the CTB's column: the rows alone say whether they count.
+                const inner = !skip and ok[dy[0]][1] and ok[dy[1]][1];
+                var x = x0;
+                while (x < x1) : (x += 1) {
+                    if (inner and x > x0 and x + 1 < x1) {
+                        // Shifted by one so that x - 1 stays an index.
+                        const a = rows[0] + @as(usize, @intCast(1 + hv[0][0]));
+                        const b = rows[1] + @as(usize, @intCast(1 + hv[1][0]));
+                        while (x + 1 < x1) : (x += 1) {
+                            const v: i32 = line[x];
+                            const k = 2 + sign(v - a[x - 1]) + sign(v - b[x - 1]);
+                            d[x] = @intCast(clip3(0, max, v + edge[@intCast(k)]));
+                        }
+                        x -= 1;
+                        continue;
+                    }
                     if (skip and info.cu(x << sw, y << sh).flags & picture.cu_nofilter != 0) continue;
                     var good = true;
-                    for (hv) |d| {
-                        const nx = @as(i32, @intCast(x)) + d[0];
-                        const ny = @as(i32, @intCast(y)) + d[1];
-                        if (nx < 0 or ny < 0 or nx >= cw or ny >= ch) {
-                            good = false;
-                            break;
-                        }
+                    var n: [2]i32 = undefined;
+                    for (0..2) |k| {
+                        const nx = @as(i32, @intCast(x)) + hv[k][0];
                         const dx: usize = if (nx < x0) 0 else if (nx >= x1) 2 else 1;
-                        const dy: usize = if (ny < y0) 0 else if (ny >= y1) 2 else 1;
-                        if (!ok[dy][dx]) {
-                            good = false;
-                            break;
-                        }
+                        if (!ok[dy[k]][dx]) good = false else n[k] = rows[k][@intCast(nx)];
                     }
                     if (!good) continue;
-                    const v = B.at(band, cw, y0, x, y);
-                    const a = B.at(band, cw, y0, @intCast(@as(i32, @intCast(x)) + hv[0][0]), @intCast(@as(i32, @intCast(y)) + hv[0][1]));
-                    const b = B.at(band, cw, y0, @intCast(@as(i32, @intCast(x)) + hv[1][0]), @intCast(@as(i32, @intCast(y)) + hv[1][1]));
-                    const raw: usize = @intCast(2 + sign(v - a) + sign(v - b));
-                    const ei = remap[raw];
-                    if (ei != 0) p[y * stride + x] = @intCast(clip3(0, max, v + offs[ei - 1]));
+                    const v: i32 = line[x];
+                    const k = 2 + sign(v - n[0]) + sign(v - n[1]);
+                    d[x] = @intCast(clip3(0, max, v + edge[@intCast(k)]));
                 }
             }
         }
 
-        fn sign(v: i32) i32 {
-            return if (v > 0) 1 else if (v < 0) -1 else 0;
+        inline fn sign(v: i32) i32 {
+            return @as(i32, @intFromBool(v > 0)) - @intFromBool(v < 0);
         }
 
         /// Whether the SAO of CTB `rs` may look into the CTB at (nx, ny).

@@ -429,13 +429,20 @@ pub const Decoder = struct {
     }
 
     /// The next picture to show, or null. It stays valid until `release`.
-    /// While the pictures are workers' and one of them is free, null: the
-    /// units after it first, so that the worker decodes while the picture
-    /// is shown - as long as no more pictures wait to be shown than there
-    /// are workers. One a worker still decodes is waited for.
+    /// While the pictures are workers' and that one is still decoded, null
+    /// once a worker is free - waited for when none is - so that the units
+    /// after it keep the workers busy, as long as no more pictures wait to
+    /// be shown than there are workers; past that, and once flushed, the
+    /// picture is waited for.
     pub fn next(dec: *Decoder) ?*Store {
         const s = dec.dpb.peekOutput() orelse return null;
-        if (!dec.flushing and dec.on_workers and dec.dpb.out_count <= dec.cores.?.workers and dec.idle()) return null;
+        if (!dec.flushing and dec.on_workers and dec.dpb.out_count <= dec.cores.?.workers and
+            @atomicLoad(u32, &s.progress, .acquire) < s.height[0] >> 4)
+        {
+            if (dec.idle()) return null;
+            dec.retireAny();
+            if (@atomicLoad(u32, &s.progress, .acquire) < s.height[0] >> 4) return null;
+        }
         dec.finished(s);
         return s;
     }
