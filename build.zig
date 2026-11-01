@@ -328,6 +328,11 @@ pub fn build(b: *std.Build) void {
     const rdb_size_kib = b.option(u32, "rdb-size", "The flash disk's partition table area before DH0:, in KiB, a multiple of 4 and 64 at least: room for more partitions and for file systems kept in the table (default: 64)") orelse default_rdb_size_kib;
     const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 - up to 4 on a RISC-V 64 or AArch64 board (default: what the board's SYSTAG_Cores says)") orelse 0;
     const selftest = b.option(bool, "selftest", "ESP32-P4: the boot task checks the chip and runs test tasks instead of the shell (default: false)") orelse false;
+    // Whether the `disk/` tree goes on the images. It is the builder's own
+    // files, and a package to hand out is built without them
+    // (`qemu-package` refuses rather than pack them unasked), so this is
+    // null when nothing was said about it.
+    const disk_tree_option = b.option(bool, "disk-tree", "Put the disk/ tree on the disk images (default: yes, when there is one)");
     const memdebug = b.option(bool, "memdebug", "Memory debugging on from exec's start: walls behind blocks, patterns in new and freed memory, wide stack guards (default: false; s3> memdebug and C:MemDebug switch it at run time)") orelse false;
     const posfs_soak = b.option(u32, "posfs-soak", "`zig build test`: run posfs's power-cut test on this many more seeds, each on flash, a card and a stick (default: 0)") orelse 0;
     const most_cores: u32 = switch (chipOf(board)) {
@@ -531,7 +536,7 @@ pub fn build(b: *std.Build) void {
     var made: std.ArrayList([]const u8) = .empty;
     made.appendSlice(b.allocator, &image_dirs) catch @panic("OOM");
     made.appendSlice(b.allocator, &ram_disk_dirs) catch @panic("OOM");
-    const tree = diskTree(b, &made);
+    const tree = diskTree(b, &made, disk_tree_option orelse true);
     const extras = extraFiles(b, &made);
     const games = gamesTree(b, &made);
 
@@ -1167,6 +1172,81 @@ pub fn build(b: *std.Build) void {
     run_virt64_el2.stdio = .inherit;
     run_virt64_el2.has_side_effects = true;
     b.step("virt64-el2", "Boot the AArch64 kernel in QEMU's virt machine entered at EL2, PSCI by SMC").dependOn(&run_virt64_el2.step);
+    // `qemu-package` - the kernel, the two disks and a script that starts
+    // QEMU on them, in one archive: for someone who wants to run the
+    // system without building it. `tools/qemupackage/run.sh` goes in as
+    // it is and asks the host's QEMU what it has; `machine.conf` is what
+    // this build knows and that script reads.
+    const qemu_package_step = b.step("qemu-package", "Pack the kernel, the two disks and a run.sh for QEMU into zig-out/poweros-<board>.tar.gz");
+    switch (board) {
+        .qemu_virt, .qemu_virt_a64 => {
+            const rv64 = chipOf(board) == .rv64sbi;
+            const name = b.fmt("poweros-{s}", .{@tagName(board)});
+            // The `disk/` tree is the builder's own, and the network
+            // settings in it hold a passphrase: a package to hand out is
+            // built without it, and `-Ddisk-tree=true` says to pack it
+            // anyway.
+            if (disk_tree_option == null and tree.files.len != 0) {
+                qemu_package_step.dependOn(&b.addFail(b.fmt(
+                    "qemu-package: {d} files from the disk/ tree are on this image, and that tree is yours - the network settings in it hold a passphrase. Build with -Ddisk-tree=false for a package to hand out, or -Ddisk-tree=true to pack it as it is.",
+                    .{tree.files.len},
+                )).step);
+            }
+            const bundle = b.addWriteFiles();
+            _ = bundle.addCopyFile(image, b.fmt("{s}/kernel.bin", .{name}));
+            _ = bundle.addCopyFile(if (rv64) rv64_system_disk else a64_system_disk, b.fmt("{s}/system.bin", .{name}));
+            _ = bundle.addCopyFile(blank_work_disk, b.fmt("{s}/work.bin", .{name}));
+            _ = bundle.addCopyFile(b.path("tools/qemupackage/run.sh"), b.fmt("{s}/run.sh", .{name}));
+            _ = bundle.addCopyFile(b.path("tools/qemupackage/bundle.md"), b.fmt("{s}/README.md", .{name}));
+            _ = bundle.add(b.fmt("{s}/machine.conf", .{name}), b.fmt(
+                \\# What ./run.sh starts, and the files it starts it on. The
+                \\# machine's own arguments are QEMU's, as the project's README
+                \\# gives them for this board.
+                \\BOARD={s}
+                \\QEMU={s}
+                \\QEMU_PACKAGE="{s}"
+                \\MACHINE="{s}"
+                \\CPU="{s}"
+                \\MEMORY={s}
+                \\CORES={d}
+                \\SIZE=1280x720
+                \\KERNEL=kernel.bin
+                \\SYSTEM=system.bin
+                \\WORK=work.bin
+                \\
+            , .{
+                @tagName(board),
+                if (rv64) "qemu-system-riscv64" else "qemu-system-aarch64",
+                if (rv64) "QEMU for RISC-V 64 (qemu-system-riscv64)" else "QEMU for AArch64 (qemu-system-aarch64)",
+                if (rv64) "-M virt -bios default" else "-M virt,gic-version=2,highmem=off",
+                if (rv64) "" else "-cpu cortex-a76",
+                "512M",
+                // What the board's system tag list says
+                // (src/boards/<board>/system.zig: SYSTAG_Cores is 4 on
+                // both virt machines), unless -Dcores said otherwise.
+                if (cores == 0) 4 else cores,
+            }));
+            // The disks are mostly holes - 256 MB with a tenth of it
+            // written, a blank 1 GB work disk - so the archive keeps them
+            // as holes (`-S`) and they are holes again where it is
+            // unpacked.
+            const archive = b.addSystemCommand(&.{ "tar", "-czSf" });
+            const packed_file = archive.addOutputFileArg(b.fmt("{s}.tar.gz", .{name}));
+            archive.addArg("-C");
+            archive.addDirectoryArg(bundle.getDirectory());
+            archive.addArg(name);
+            qemu_package_step.dependOn(&b.addInstallFileWithDir(packed_file, .prefix, b.fmt("{s}.tar.gz", .{name})).step);
+            qemu_package_step.dependOn(&b.addInstallDirectory(.{
+                .source_dir = bundle.getDirectory().path(b, name),
+                .install_dir = .prefix,
+                .install_subdir = name,
+            }).step);
+        },
+        else => qemu_package_step.dependOn(&b.addFail(
+            "qemu-package: this board is not a QEMU machine of its own - it is for -Dboard=qemu_virt (RISC-V 64) and -Dboard=qemu_virt_a64 (AArch64), whose kernel and disks a plain QEMU runs. The ESP32 boards' QEMU is Espressif's own (scripts/build-qemu.sh), which nobody has by downloading this.",
+        ).step),
+    }
+
     // Target-independent code, tested on the host.
     const test_step = b.step("test", "Run the unit tests on the host");
     const test_options = b.addOptions();
@@ -1339,6 +1419,11 @@ pub fn build(b: *std.Build) void {
     _ = try_mkicon.addOutputFileArg("Work.info");
     try_mkicon.addArgs(&.{ "KIND=DRAWER", "AT=20,10", "TOOL=SYS:Programs/MultiView", "TYPE=FILETYPE=text|ascii", "TYPE=DONOTWAIT", "STACK=16384", "WINDOW=40,30,400,200", "SCROLL=0,8", "VIEW=NAME", "SHOW=ALL" });
     test_step.dependOn(&try_mkicon.step);
+    // tools/qemupackage/run.sh is read by `sh` and by nothing else here,
+    // so the test step at least asks the shell whether it parses.
+    const check_run_sh = b.addSystemCommand(&.{ "sh", "-n" });
+    check_run_sh.addFileArg(b.path("tools/qemupackage/run.sh"));
+    test_step.dependOn(&check_run_sh.step);
     // tools/mkpackage and tools/serve compile, whichever board is being
     // built: the `package` and `serve` steps are the only other things
     // that build them, and a tool nothing compiles is a tool that stops
@@ -1723,8 +1808,9 @@ fn wifiDir(b: *std.Build, given: ?[]const u8) ?[]const u8 {
     return path;
 }
 
-fn diskTree(b: *std.Build, made: *std.ArrayList([]const u8)) Tree {
+fn diskTree(b: *std.Build, made: *std.ArrayList([]const u8), include: bool) Tree {
     const io = b.graph.io;
+    if (!include) return .{};
     var root = b.build_root.handle.openDir(io, disk_tree, .{ .iterate = true }) catch return .{};
     defer root.close(io);
 

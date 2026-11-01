@@ -314,6 +314,7 @@ wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
 ./zig build package -Dboard=visionfive2     # a release package in zig-out/package-visionfive2/
 ./zig build serve -Dboard=visionfive2       # hand that package out over HTTP (quit: Ctrl-C)
+./zig build qemu-package -Dboard=qemu_virt -Ddisk-tree=false   # a machine to download: kernel, two disks, run.sh
 ```
 
 Fetched once into `toolchain/`, pinned and checked, never committed:
@@ -533,6 +534,24 @@ shows is what dos starts from, while the bootloader still loads
 `kernel.bin`, which holds everything up to posfs, from the eMMC: it
 reads FAT, not posfs.
 
+### A machine in one archive
+
+`./zig build qemu-package -Dboard=qemu_virt -Ddisk-tree=false` packs what
+somebody needs to run the system without building it:
+`zig-out/poweros-qemu_virt.tar.gz`, 8.8 MB, holding the kernel, the
+system disk, a blank work disk and a `run.sh` that starts QEMU on them -
+`-Dboard=qemu_virt_a64` for the AArch64 machine. Unpacked it takes 18 MB
+on a disk, though the two images are 1.3 GB long: `tools/mkfs` writes
+only the blocks it touches, and the archive keeps the holes as holes.
+`run.sh` asks the host's QEMU what it has - a display backend, the virtio
+GPU or the ramfb, an audio driver, the user-mode network - and leaves out
+what is missing, saying so, since many systems package those apart;
+`./run.sh --help` lists what it takes and `--serial` runs it with no
+window. The `disk/` tree in this root is the builder's own files, and the
+network settings in it hold a passphrase, so the step refuses to pack
+them unasked: `-Ddisk-tree=false` leaves that tree off the images
+([qemu-package](tools/qemupackage/README.md)).
+
 ### Onto a card or an SSD
 
 The 64-bit machines' disk image lives in RAM: what is written to it is
@@ -615,6 +634,7 @@ More build steps and options:
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
 | `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
+| `-Ddisk-tree=false` | leave the `disk/` tree in this root off the disk images: what `qemu-package` wants for a package to hand out, since those files are the builder's own |
 | `-Dboot=/boot/firmware/bcm2712-rpi-cm5-cm5io.dtb` | a file this tree does not hold in a release package's `boot/` and in `SYS:Storage/Boot`, under its own name or the one before a `=`: what a board's firmware reads besides the kernel |
 | `-Dserve-port=8080` | the port `./zig build serve` hands a package out on |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk images; with a chip before the path (`rv64sbi:c/hello=...`) on that chip's only, with `virt:` on the virt machines' system disks only - room for files the flash disks cannot hold |
